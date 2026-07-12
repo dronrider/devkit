@@ -10,6 +10,8 @@ import (
 const usageText = `taskctl: механика канбан-доски docs/TASKS.md
 
 Команды:
+  init --prefix XR [--name "..."]             скелет доски в корне репозитория
+                                              (docs/TASKS.md, TASKS-archive.md, docs/tasks/)
   id                                          следующий свободный ID
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
       [--link "..."] [--status backlog|in-progress|check|blocked]
@@ -77,6 +79,14 @@ func main() {
 	var msg string
 	var err error
 	switch args[0] {
+	case "init":
+		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p InitParams
+		fs.StringVar(&p.Prefix, "prefix", "", "префикс ID задач, заглавными (XR)")
+		fs.StringVar(&p.Name, "name", "", "название проекта в шапке, по умолчанию имя директории")
+		fs.Parse(args[1:])
+		msg, err = cmdInit(*dir, p)
 	case "add":
 		fs := flag.NewFlagSet("add", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

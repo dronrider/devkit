@@ -39,8 +39,10 @@ func checkCell(name, s string) error {
 	return nil
 }
 
+// nextID берёт префикс из существующих строк, а на пустой доске из шапки
+// «(префикс XX)», чтобы первая задача заводилась без --id.
 func nextID(b *Board, a *Archive) (string, error) {
-	prefix := ""
+	prefix := b.Prefix
 	max := 0
 	scan := func(id string, num int) error {
 		m := idRe.FindStringSubmatch(id)
@@ -65,7 +67,7 @@ func nextID(b *Board, a *Archive) (string, error) {
 		}
 	}
 	if prefix == "" {
-		return "", fmt.Errorf("ни одной задачи на доске и в архиве, укажи --id явно")
+		return "", fmt.Errorf("ни одной задачи и нет «(префикс XX)» в шапке доски, укажи --id явно")
 	}
 	return fmt.Sprintf("%s-%03d", prefix, max+1), nil
 }

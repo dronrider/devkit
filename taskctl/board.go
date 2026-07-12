@@ -54,16 +54,18 @@ type Section struct {
 }
 
 type Board struct {
-	Path  string
-	Lines []string
-	Sects map[string]*Section
-	Rows  []*Row
+	Path   string
+	Lines  []string
+	Sects  map[string]*Section
+	Rows   []*Row
+	Prefix string // из шапки «(префикс XX)», пустой если пометки нет
 }
 
 var (
-	idRe   = regexp.MustCompile(`^([A-ZА-Я]+)-([0-9]+)$`)
-	rRe    = regexp.MustCompile(`^([0-9]+) \(([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\)$`)
-	dateRe = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+	idRe          = regexp.MustCompile(`^([A-ZА-Я]+)-([0-9]+)$`)
+	rRe           = regexp.MustCompile(`^([0-9]+) \(([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\)$`)
+	dateRe        = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
+	boardPrefixRe = regexp.MustCompile(`\(префикс ([A-ZА-Я]+)\)`)
 )
 
 func LoadBoard(path string) (*Board, error) {
@@ -96,6 +98,11 @@ func parseLines(path string, lines []string) (*Board, error) {
 			continue
 		}
 		if cur == nil {
+			if b.Prefix == "" {
+				if m := boardPrefixRe.FindStringSubmatch(ln); m != nil {
+					b.Prefix = m[1]
+				}
+			}
 			continue
 		}
 		trimmed := strings.TrimSpace(ln)

@@ -53,6 +53,21 @@ ln -s ../../../devkit/hooks/commit-msg .git/hooks/commit-msg
 Хук смотрит не файл целиком, а записанный фрагмент (new_string/content из
 tool_input), поэтому чужой существующий текст не трогает.
 
+## Линт индекса памяти
+
+`check-memory.py` следит, чтобы индексы памяти Claude Code (`memory/MEMORY.md`
+проектов) не разбухали: каждая запись это одна строка-указатель до 160
+символов, содержимое и статусы живут в файлах памяти. Разжиревший индекс
+грузится в контекст каждой сессии проекта. Подключается вторым PostToolUse-хуком
+рядом с проверкой символов:
+
+```json
+{ "type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook" }
+```
+
+На файлы вне `memory/MEMORY.md` хук не реагирует. Ручной прогон:
+`hooks/check-memory.py <путь к MEMORY.md>`.
+
 ## Самопроверка
 
 ```sh

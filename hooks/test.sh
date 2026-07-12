@@ -50,6 +50,21 @@ printf '{"tool_input":{"file_path":"x.md","new_string":"плохо %s"}}' "$dash
 printf '{"tool_input":{"file_path":"x.md","new_string":"чисто, «ёлочки», № 5"}}' |
     python3 "$here/check-symbols.py" --hook 2>/dev/null || fail "режим --hook ругается на чистое"
 
+# check-memory.py: короткие строки-указатели проходят, жир и прозу ловит.
+long=$(printf 'x%.0s' $(seq 1 170))
+printf -- '- [Запись](file.md) - крючок\n\n- [Вторая](f2.md) - тоже коротко\n' > "$tmp/mem_ok.md"
+printf -- '- [Журнал](file.md) - %s\nпроза без указателя\n' "$long" > "$tmp/mem_bad.md"
+python3 "$here/check-memory.py" "$tmp/mem_ok.md" >/dev/null || fail "чистый индекс памяти не прошёл"
+out=$(python3 "$here/check-memory.py" "$tmp/mem_bad.md")
+[ $? -eq 1 ] || fail "жирный индекс памяти не пойман"
+echo "$out" | grep -q 'длина' || fail "нет находки про длину строки индекса"
+echo "$out" | grep -q 'не строка-указатель' || fail "нет находки про прозу в индексе"
+printf '{"tool_input":{"file_path":"/a/memory/MEMORY.md","new_string":"- [Журнал](f.md) - %s"}}' "$long" |
+    python3 "$here/check-memory.py" --hook 2>/dev/null
+[ $? -eq 2 ] || fail "хук памяти пропустил жирную строку"
+printf '{"tool_input":{"file_path":"/a/b/notes.md","new_string":"%s"}}' "$long" |
+    python3 "$here/check-memory.py" --hook 2>/dev/null || fail "хук памяти лезет в чужие файлы"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

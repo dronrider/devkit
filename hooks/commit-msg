@@ -1,0 +1,13 @@
+#!/bin/sh
+# Запрещённые символы в тексте коммита. Комментарии git и всё после
+# scissors-строки (verbose-режим) не смотрим.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+bad=$(awk '/^# -+ >8 -+$/{exit} !/^#/' "$1" | python3 "$here/check-symbols.py" --stdin)
+status=$?
+if [ $status -eq 1 ]; then
+    echo "запрещённые символы в тексте коммита (RULES.md, «Код и тексты» п. 1):" >&2
+    printf '%s\n' "$bad" >&2
+    exit 1
+fi
+exit $status

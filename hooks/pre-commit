@@ -1,0 +1,20 @@
+#!/bin/sh
+# Запрещённые символы в добавленных строках staged-диффа. Проверяются только
+# добавленные строки: совпадения в чужом существующем тексте не трогаем.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+added=$(git diff --cached -U0 --diff-filter=ACMR |
+    awk '/^\+\+\+ b\//{file=substr($0,7)}
+         /^@@/{split($3,a,","); line=substr(a[1],2)+0; next}
+         /^\+/ && !/^\+\+\+/{printf "%s:%d:%s\n", file, line, substr($0,2); line++}')
+[ -z "$added" ] && exit 0
+
+bad=$(printf '%s\n' "$added" | python3 "$here/check-symbols.py" --stdin)
+status=$?
+if [ $status -eq 1 ]; then
+    echo "запрещённые символы в добавленных строках (RULES.md, «Код и тексты» п. 1):" >&2
+    printf '%s\n' "$bad" >&2
+    echo "если это чужой код или тестовые данные: git commit --no-verify" >&2
+    exit 1
+fi
+exit $status

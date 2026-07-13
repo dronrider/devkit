@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,14 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."]             скелет доски в корне репозитория
+
+Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
+  review add <ID> "суть замечания"            дописать замечание, файл задачи
+                                              создаётся сам
+  review resolve <ID> <N> fixed|rejected [--reason "..."]
+                                              зафиксировать исход замечания N
+  review show <ID>                            замечания с номерами и исходами
+  review stats                                свод по живым задачам и архиву
 
 У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
 тронутые файлы доски (и запушить), чужой индекс не задевается.
@@ -172,6 +181,52 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		fs.Parse(args[2:])
 		msg, err = cmdShow(root(*dir), args[1])
+	case "review":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: review add|resolve|show|stats ..."))
+		}
+		switch args[1] {
+		case "add":
+			if len(args) < 4 {
+				fail(fmt.Errorf("жду: review add <ID> \"суть замечания\""))
+			}
+			fs := flag.NewFlagSet("review add", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			fs.Parse(args[4:])
+			msg, err = cmdReviewAdd(root(*dir), args[2], args[3], c)
+		case "resolve":
+			if len(args) < 5 {
+				fail(fmt.Errorf("жду: review resolve <ID> <N> fixed|rejected [--reason \"...\"]"))
+			}
+			num, aerr := strconv.Atoi(args[3])
+			if aerr != nil {
+				fail(fmt.Errorf("номер замечания %q не число", args[3]))
+			}
+			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			reason := fs.String("reason", "", "причина отклонения (для rejected)")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			fs.Parse(args[5:])
+			msg, err = cmdReviewResolve(root(*dir), args[2], num, args[4], *reason, c)
+		case "show":
+			if len(args) < 3 {
+				fail(fmt.Errorf("жду: review show <ID>"))
+			}
+			fs := flag.NewFlagSet("review show", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			fs.Parse(args[3:])
+			msg, err = cmdReviewShow(root(*dir), args[2])
+		case "stats":
+			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			fs.Parse(args[2:])
+			msg, err = cmdReviewStats(root(*dir))
+		default:
+			fail(fmt.Errorf("неизвестная подкоманда review %q, жду add / resolve / show / stats", args[1]))
+		}
 	case "close":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: close <ID> [--commit ...] [--date ...]"))

@@ -28,18 +28,32 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
   раскладка в приоритеты P0..P3.
 - `taskctl/` - Go-утилита канбан-доски `docs/TASKS.md`
   (init/add/move/close/sort/lint/id), см. [taskctl/README.md](taskctl/README.md).
-- `hooks/` - проверка запрещённых символов: git-хуки `pre-commit` и
-  `commit-msg` плюс PostToolUse-хук Claude Code, см.
-  [hooks/README.md](hooks/README.md).
+- `shipctl/` - Go-утилита слияния и отката задач по правилам доски
+  (status/merge/revert), см. [shipctl/README.md](shipctl/README.md).
+- `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
+  старом коде, см. [regcheck/README.md](regcheck/README.md).
+- `hooks/` - проверки текстов: запрещённые символы, индекс памяти,
+  чувствительное в доске; git-хуки `pre-commit` и `commit-msg` плюс
+  PostToolUse-хуки Claude Code, см. [hooks/README.md](hooks/README.md).
+- `devkitctl/` - подключение проекта и диагностика обвязки (new/doctor),
+  см. [devkitctl/README.md](devkitctl/README.md).
 - `templates/CLAUDE.project.md` - заготовка проектного `CLAUDE.md`: импорт
   правил, подсказка клонирования devkit, объявление доски или трекера.
 
-Установка taskctl в PATH:
+Установка Go-утилит в PATH (для shipctl и regcheck так же, меняется только
+имя):
 
 ```bash
 cd taskctl && go build -o ~/go/bin/taskctl .
 ```
 
-Новый проект подключается так: копия шаблона в корень как `CLAUDE.md`, доска
-через `taskctl init --prefix XX` (если нет внешнего трекера), хуки по
+Новый проект подключается одной командой (шаблон, доска, git-хуки):
+
+```bash
+python3 ~/projects/devkit/devkitctl/devkitctl.py new --prefix XX
+```
+
+а обвязка существующего проверяется `devkitctl.py doctor`. Ручной путь тот
+же, что делает утилита: копия шаблона в корень как `CLAUDE.md`, доска через
+`taskctl init --prefix XX` (если нет внешнего трекера), хуки по
 [hooks/README.md](hooks/README.md).

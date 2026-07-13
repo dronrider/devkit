@@ -116,6 +116,83 @@ func TestMoveToBlockedAndBack(t *testing.T) {
 	}
 }
 
+func TestSetTypeInPlace(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "XR-005: тип task -> bug" {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	old := "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | [tasks/XR-005.md](tasks/XR-005.md) |"
+	want := strings.Replace(fixtureBoard, old, strings.Replace(old, "task", "bug", 1), 1)
+	if string(board) != want {
+		t.Fatalf("доска после set отличается не только типом XR-005:\n%s", board)
+	}
+}
+
+func TestSetRankResortsBacklog(t *testing.T) {
+	root := setup(t)
+	// Хвост Backlog получает максимальный ранг и должен встать первым.
+	msg, err := cmdSet(root, SetParams{ID: "XR-004", Rank: "75+0+1+0+0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "XR-004: R 9 -> 76, P P3 -> P0" {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	got := strings.Join(backlogIDs(t, root), " ")
+	if want := "XR-004 XR-002 XR-001 XR-003"; got != want {
+		t.Fatalf("порядок Backlog: %s, ожидал %s", got, want)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-004 | Хвост | task | P0 | 76 (75+0+1+0+0) | (LLD позже) |") {
+		t.Fatalf("строка XR-004 не пересобралась:\n%s", board)
+	}
+	if finds, err := cmdLint(root); err != nil || len(finds) != 0 {
+		t.Fatalf("lint после set: %v, %v", finds, err)
+	}
+}
+
+func TestSetRankOutsideBacklogStaysPut(t *testing.T) {
+	root := setup(t)
+	// XR-005 в In progress: ранг меняется, строка остаётся в своей секции.
+	if _, err := cmdSet(root, SetParams{ID: "XR-005", Rank: "50+2+1+0+2"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := b.Sects[SectInProgress].Rows
+	if len(rows) != 1 || rows[0].ID != "XR-005" || rows[0].P != "P1" || rows[0].RTotal != 55 {
+		t.Fatalf("In progress после set: %+v", rows)
+	}
+}
+
+func TestSetValidation(t *testing.T) {
+	root := setup(t)
+	cases := []SetParams{
+		{ID: "XR-404", Type: "bug"},
+		{ID: "XR-005"},
+		{ID: "XR-005", Type: "feature"},
+		{ID: "XR-005", Rank: "1+2+3"},
+		{ID: "XR-005", Type: "task"},
+		{ID: "XR-005", Rank: "25+2+1+0+2"},
+	}
+	for _, p := range cases {
+		if _, err := cmdSet(root, p); err == nil {
+			t.Errorf("ожидал ошибку на %+v", p)
+		}
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска изменилась после отбитых set:\n%s", board)
+	}
+}
+
 func TestClose(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdClose(root, CloseParams{ID: "XR-005", Commits: "deadbee", Date: "2026-07-08"})

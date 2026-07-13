@@ -25,6 +25,7 @@ id                                          следующий свободны�
 add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
     [--link "..."] [--status backlog|in-progress|check|blocked] [--id XR-NNN]
 move <ID> <backlog|in-progress|check|blocked> [--reason "..."]
+set <ID> [--type bug|task|LLD] [--rank "а+б+в+г+д"]
 close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
 sort
 lint
@@ -41,6 +42,9 @@ lint
 - Backlog отсортирован по R убыванию, при равенстве по возрастанию ID; `add`
   сразу ставит строку в правильное место;
 - `move` в blocked требует `--reason` и дописывает причину к заголовку;
+- `set` меняет тип и/или ранг существующей строки; P пересчитывается из новой
+  разбивки, строка в Backlog встаёт на место по новому рангу, в остальных
+  секциях остаётся где была;
 - `close` дописывает строку в архив (без колонки R, с датой закрытия),
   переносит файл задачи в `tasks/archive/<год>/` (`git mv` с фолбэком на
   обычный rename) и ставит ссылку уже на новое место; хеши из `--commit`

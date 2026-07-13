@@ -190,6 +190,73 @@ func cmdMove(root, id, target, reason string) (string, error) {
 	return fmt.Sprintf("%s: %s -> %s", id, row.Sect, target), nil
 }
 
+type SetParams struct {
+	ID, Type, Rank string
+}
+
+func cmdSet(root string, p SetParams) (string, error) {
+	if p.Type == "" && p.Rank == "" {
+		return "", fmt.Errorf("нечего менять, жду --type и/или --rank")
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		return "", err
+	}
+	row := b.find(p.ID)
+	if row == nil {
+		return "", fmt.Errorf("%s нет на доске", p.ID)
+	}
+	var changes []string
+	if p.Type != "" {
+		if err := checkType(p.Type); err != nil {
+			return "", err
+		}
+		if p.Type != row.Type {
+			changes = append(changes, fmt.Sprintf("тип %s -> %s", row.Type, p.Type))
+			row.Type = p.Type
+		}
+	}
+	rankChanged := false
+	if p.Rank != "" {
+		total, parts, err := parseRank(p.Rank)
+		if err != nil {
+			return "", err
+		}
+		if total != row.RTotal || parts != row.RParts {
+			changes = append(changes, fmt.Sprintf("R %d -> %d", row.RTotal, total))
+			row.RTotal, row.RParts = total, parts
+			if np := bucket(total); np != row.P {
+				changes = append(changes, fmt.Sprintf("P %s -> %s", row.P, np))
+				row.P = np
+			}
+			rankChanged = true
+		}
+	}
+	if len(changes) == 0 {
+		return "", fmt.Errorf("у %s уже такие тип и ранг", p.ID)
+	}
+	line := formatRow(row)
+	// В Backlog позиция строки зависит от ранга, поэтому при его смене строка
+	// переставляется; в остальных секциях порядок ручной, ячейки меняются на месте.
+	if rankChanged && row.Sect == SectBacklog {
+		b.remove(row.LineIdx)
+		b2, err := parseLines(b.Path, b.Lines)
+		if err != nil {
+			return "", err
+		}
+		if err := insertRowLine(b2, b2.Sects[SectBacklog], row, line); err != nil {
+			return "", err
+		}
+		b = b2
+	} else {
+		b.Lines[row.LineIdx] = line
+	}
+	if err := b.Save(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s: %s", p.ID, strings.Join(changes, ", ")), nil
+}
+
 var commitRe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 type CloseParams struct {

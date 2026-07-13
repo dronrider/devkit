@@ -18,6 +18,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
       [--id XR-NNN] [--reason "..."]          завести задачу (по умолчанию в Backlog)
   move <ID> <backlog|in-progress|check|blocked> [--reason "..."]
                                               перевести между статусами
+  set <ID> [--type bug|task|LLD] [--rank "а+б+в+г+д"]
+                                              поменять тип и/или ранг задачи
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/
   sort                                        пересортировать Backlog по R
@@ -109,6 +111,17 @@ func main() {
 		reason := fs.String("reason", "", "причина блокировки (для blocked)")
 		fs.Parse(args[3:])
 		msg, err = cmdMove(root(*dir), args[1], args[2], *reason)
+	case "set":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: set <ID> [--type ...] [--rank ...]"))
+		}
+		fs := flag.NewFlagSet("set", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := SetParams{ID: args[1]}
+		fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
+		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
+		fs.Parse(args[2:])
+		msg, err = cmdSet(root(*dir), p)
 	case "close":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: close <ID> [--commit ...] [--date ...]"))

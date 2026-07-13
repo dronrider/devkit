@@ -9,26 +9,41 @@ import (
 
 const usageText = `taskctl: механика канбан-доски docs/TASKS.md
 
-Команды:
-  init --prefix XR [--name "..."]             скелет доски в корне репозитория
-                                              (docs/TASKS.md, TASKS-archive.md, docs/tasks/)
+Смотреть доску:
+  list [backlog|in-progress|check|blocked]    доска по секциям без прозы; без
+                                              аргумента Backlog обрезан до 10 строк
+  show <ID>                                   строка задачи, секция, файл задачи
+                                              (закрытые ищутся в архиве)
   id                                          следующий свободный ID
+
+Менять доску:
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
-      [--link "..."] [--status backlog|in-progress|check|blocked]
-      [--id XR-NNN] [--reason "..."]          завести задачу (по умолчанию в Backlog)
-  move <ID> <backlog|in-progress|check|blocked> [--reason "..."]
-                                              перевести между статусами
-  set <ID> [--type bug|task|LLD] [--rank "а+б+в+г+д"]
-                                              поменять тип и/или ранг задачи
+      [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
+                                              завести задачу (по умолчанию в Backlog;
+                                              без --link и файла в ячейке будет «-»)
+  move <ID> <статус> [--reason "..."]         перевести между статусами
+  set <ID> [--title "..."] [--type ...] [--rank "..."] [--link "..."]
+                                              поправить ячейки строки
+  file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
+  init --prefix XR [--name "..."]             скелет доски в корне репозитория
 
+У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
+тронутые файлы доски (и запушить), чужой индекс не задевается.
+Статусы принимаются в любом регистре, «In progress» = in-progress.
+Сумма R и бакет P считаются из разбивки --rank сами, руками их не передать.
 Общий флаг -C <dir>: откуда искать корень репозитория (по умолчанию текущая
 директория), ставится и перед командой, и после неё.
-Сумма R и бакет P считаются из разбивки --rank сами, руками их не передать.
 `
+
+// commitFlags вешает на изменяющую команду флаги -m/--push.
+func commitFlags(fs *flag.FlagSet, c *CommitOpts) {
+	fs.StringVar(&c.Msg, "m", "", "закоммитить тронутые файлы с этим сообщением")
+	fs.BoolVar(&c.Push, "push", false, "после коммита сделать git push (только с -m)")
+}
 
 // Справка обещает общий флаг, значит -C обязан работать и перед подкомандой,
 // а не только внутри её FlagSet. Вырезаем его до выбора команды.
@@ -100,6 +115,7 @@ func main() {
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
 		fs.StringVar(&p.Reason, "reason", "", "причина блокировки (для blocked)")
+		commitFlags(fs, &p.Commit)
 		fs.Parse(args[1:])
 		msg, err = cmdAdd(root(*dir), p)
 	case "move":
@@ -109,19 +125,53 @@ func main() {
 		fs := flag.NewFlagSet("move", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		reason := fs.String("reason", "", "причина блокировки (для blocked)")
+		var c CommitOpts
+		commitFlags(fs, &c)
 		fs.Parse(args[3:])
-		msg, err = cmdMove(root(*dir), args[1], args[2], *reason)
+		msg, err = cmdMove(root(*dir), args[1], args[2], *reason, c)
 	case "set":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: set <ID> [--type ...] [--rank ...]"))
+			fail(fmt.Errorf("жду: set <ID> [--title ...] [--type ...] [--rank ...] [--link ...]"))
 		}
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		p := SetParams{ID: args[1]}
+		fs.StringVar(&p.Title, "title", "", "новый заголовок строки")
 		fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
 		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
+		fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
+		commitFlags(fs, &p.Commit)
 		fs.Parse(args[2:])
 		msg, err = cmdSet(root(*dir), p)
+	case "file":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: file <ID>"))
+		}
+		fs := flag.NewFlagSet("file", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var c CommitOpts
+		commitFlags(fs, &c)
+		fs.Parse(args[2:])
+		msg, err = cmdFile(root(*dir), args[1], c)
+	case "list":
+		fs := flag.NewFlagSet("list", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		sect := ""
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			sect = args[1]
+			fs.Parse(args[2:])
+		} else {
+			fs.Parse(args[1:])
+		}
+		msg, err = cmdList(root(*dir), sect)
+	case "show":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: show <ID>"))
+		}
+		fs := flag.NewFlagSet("show", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		fs.Parse(args[2:])
+		msg, err = cmdShow(root(*dir), args[1])
 	case "close":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: close <ID> [--commit ...] [--date ...]"))
@@ -132,13 +182,16 @@ func main() {
 		fs.StringVar(&p.Commits, "commit", "", "хеши коммитов через запятую")
 		fs.StringVar(&p.Date, "date", "", "дата закрытия, по умолчанию сегодня")
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки в архиве, по умолчанию собирается сама")
+		commitFlags(fs, &p.Commit)
 		fs.Parse(args[2:])
 		msg, err = cmdClose(root(*dir), p)
 	case "sort":
 		fs := flag.NewFlagSet("sort", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
+		var c CommitOpts
+		commitFlags(fs, &c)
 		fs.Parse(args[1:])
-		msg, err = cmdSort(root(*dir))
+		msg, err = cmdSort(root(*dir), c)
 	case "lint":
 		fs := flag.NewFlagSet("lint", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

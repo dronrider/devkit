@@ -72,11 +72,97 @@ func nextID(b *Board, a *Archive) (string, error) {
 	return fmt.Sprintf("%s-%03d", prefix, max+1), nil
 }
 
+// CommitOpts это флаги -m/--push изменяющих команд: закоммитить (и запушить)
+// ровно те файлы, которые тронула операция, не задевая чужой индекс.
+type CommitOpts struct {
+	Msg  string
+	Push bool
+}
+
+// validate зовётся до первой записи на диск, чтобы кривая пара флагов не
+// оставляла доску изменённой, но не закоммиченной.
+func (c CommitOpts) validate() error {
+	if c.Push && c.Msg == "" {
+		return fmt.Errorf("--push работает только вместе с -m")
+	}
+	return nil
+}
+
+// apply возвращает хвост для сообщения команды («, коммит abc1234») либо
+// пустую строку, когда -m не передан.
+func (c CommitOpts) apply(root string, paths []string) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if c.Msg == "" {
+		return "", nil
+	}
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	// В add идут только существующие пути: файл, уехавший через git mv, уже
+	// в индексе, а pathspec по нему упал бы. В pathspec коммита нужны все
+	// пути, тогда staged-переименование попадает в коммит, а что агент
+	// стейджил до этого, не попадает.
+	var addPaths []string
+	for _, p := range paths {
+		if _, err := os.Stat(filepath.Join(root, p)); err == nil {
+			addPaths = append(addPaths, p)
+		}
+	}
+	if len(addPaths) > 0 {
+		if _, err := git(append([]string{"add", "--"}, addPaths...)...); err != nil {
+			return "", err
+		}
+	}
+	if _, err := git(append([]string{"commit", "-m", c.Msg, "--"}, paths...)...); err != nil {
+		return "", err
+	}
+	hash, err := git("rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	suffix := ", коммит " + hash
+	if c.Push {
+		if _, err := git("push"); err != nil {
+			return "", err
+		}
+		suffix += ", запушено"
+	}
+	return suffix, nil
+}
+
+// normalizeStatus приводит статус к ключу секции: «In progress» = in-progress.
+func normalizeStatus(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, " ", "-")
+	return strings.ReplaceAll(s, "_", "-")
+}
+
+var barePathRe = regexp.MustCompile(`^[0-9A-Za-z._/~-]+$`)
+
+// wrapLink оборачивает голый путь вида tasks/XR-001.md в markdown-ссылку,
+// иначе ячейка не кликается и выпадает из проверки ссылок в lint.
+func wrapLink(link string) string {
+	if barePathRe.MatchString(link) && (strings.Contains(link, "/") || strings.HasSuffix(link, ".md")) {
+		return fmt.Sprintf("[%s](%s)", link, link)
+	}
+	return link
+}
+
 type AddParams struct {
 	ID, Title, Type, Rank, Link, Status, Reason string
+	Commit                                      CommitOpts
 }
 
 func cmdAdd(root string, p AddParams) (string, error) {
+	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -109,18 +195,23 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	link := p.Link
+	link := wrapLink(p.Link)
+	taskFile := ""
 	if link == "" {
+		// Без --link ссылка ведёт на файл задачи, а пока файла нет, в ячейке
+		// плейсхолдер: однострочному бэклогу файл не положен.
 		rel := fmt.Sprintf("tasks/%s.md", id)
-		if _, err := os.Stat(filepath.Join(root, "docs", rel)); err != nil {
-			return "", fmt.Errorf("файла docs/%s нет, укажи --link (или сначала создай файл задачи)", rel)
+		if _, err := os.Stat(filepath.Join(root, "docs", rel)); err == nil {
+			link = fmt.Sprintf("[%s](%s)", rel, rel)
+			taskFile = filepath.Join("docs", rel)
+		} else {
+			link = "-"
 		}
-		link = fmt.Sprintf("[%s](%s)", rel, rel)
 	}
 	if err := checkCell("ссылка", link); err != nil {
 		return "", err
 	}
-	status := p.Status
+	status := normalizeStatus(p.Status)
 	if status == "" {
 		status = SectBacklog
 	}
@@ -139,7 +230,15 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := b.Save(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s заведена в %s: %s, R=%d", id, status, row.P, total), nil
+	paths := []string{filepath.Join("docs", "TASKS.md")}
+	if taskFile != "" {
+		paths = append(paths, taskFile)
+	}
+	tail, err := p.Commit.apply(root, paths)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s заведена в %s: %s, R=%d%s", id, status, row.P, total, tail), nil
 }
 
 func mustNum(id string) int {
@@ -149,11 +248,17 @@ func mustNum(id string) int {
 	return n
 }
 
-func cmdMove(root, id, target, reason string) (string, error) {
+var blockSufRe = regexp.MustCompile(`\s*\[блок: [^|]*\]\s*$`)
+
+func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
 	}
+	target = normalizeStatus(target)
 	if _, ok := b.Sects[target]; !ok {
 		return "", fmt.Errorf("неизвестный статус %q, жду backlog / in-progress / check / blocked", target)
 	}
@@ -175,6 +280,12 @@ func cmdMove(root, id, target, reason string) (string, error) {
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"
 		line = formatRow(&moved)
+	} else if row.Sect == SectBlocked {
+		// На выходе из Blocked причина в заголовке больше не нужна.
+		if cleaned := blockSufRe.ReplaceAllString(row.Title, ""); cleaned != row.Title {
+			moved.Title = cleaned
+			line = formatRow(&moved)
+		}
 	}
 	b.remove(row.LineIdx)
 	b2, err := parseLines(b.Path, b.Lines)
@@ -187,16 +298,24 @@ func cmdMove(root, id, target, reason string) (string, error) {
 	if err := b2.Save(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s", id, row.Sect, target), nil
+	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s: %s -> %s%s", id, row.Sect, target, tail), nil
 }
 
 type SetParams struct {
-	ID, Type, Rank string
+	ID, Title, Type, Rank, Link string
+	Commit                      CommitOpts
 }
 
 func cmdSet(root string, p SetParams) (string, error) {
-	if p.Type == "" && p.Rank == "" {
-		return "", fmt.Errorf("нечего менять, жду --type и/или --rank")
+	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
+	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Link == "" {
+		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank и/или --link")
 	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
@@ -207,6 +326,21 @@ func cmdSet(root string, p SetParams) (string, error) {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	}
 	var changes []string
+	if p.Title != "" {
+		if err := checkCell("заголовок", p.Title); err != nil {
+			return "", err
+		}
+		title := p.Title
+		// У заблокированной строки причина живёт в хвосте заголовка, при
+		// замене текста она переносится в новый.
+		if suf := blockSufRe.FindString(row.Title); suf != "" && !strings.Contains(title, "[блок:") {
+			title += suf
+		}
+		if title != row.Title {
+			changes = append(changes, "заголовок")
+			row.Title = title
+		}
+	}
 	if p.Type != "" {
 		if err := checkType(p.Type); err != nil {
 			return "", err
@@ -214,6 +348,16 @@ func cmdSet(root string, p SetParams) (string, error) {
 		if p.Type != row.Type {
 			changes = append(changes, fmt.Sprintf("тип %s -> %s", row.Type, p.Type))
 			row.Type = p.Type
+		}
+	}
+	if p.Link != "" {
+		link := wrapLink(p.Link)
+		if err := checkCell("ссылка", link); err != nil {
+			return "", err
+		}
+		if link != row.Link {
+			changes = append(changes, "ссылка")
+			row.Link = link
 		}
 	}
 	rankChanged := false
@@ -233,7 +377,7 @@ func cmdSet(root string, p SetParams) (string, error) {
 		}
 	}
 	if len(changes) == 0 {
-		return "", fmt.Errorf("у %s уже такие тип и ранг", p.ID)
+		return "", fmt.Errorf("у %s уже такие значения, менять нечего", p.ID)
 	}
 	line := formatRow(row)
 	// В Backlog позиция строки зависит от ранга, поэтому при его смене строка
@@ -254,16 +398,24 @@ func cmdSet(root string, p SetParams) (string, error) {
 	if err := b.Save(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s", p.ID, strings.Join(changes, ", ")), nil
+	tail, err := p.Commit.apply(root, []string{filepath.Join("docs", "TASKS.md")})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s: %s%s", p.ID, strings.Join(changes, ", "), tail), nil
 }
 
 var commitRe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 type CloseParams struct {
 	ID, Commits, Date, Link string
+	Commit                  CommitOpts
 }
 
 func cmdClose(root string, p CloseParams) (string, error) {
+	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -334,11 +486,19 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := b.Save(); err != nil {
 		return "", err
 	}
+	paths := []string{filepath.Join("docs", "TASKS.md"), filepath.Join("docs", "TASKS-archive.md")}
+	if moved != "" {
+		paths = append(paths, filepath.Join("docs", "tasks", p.ID+".md"), filepath.Join("docs", moved))
+	}
+	tail, err := p.Commit.apply(root, paths)
+	if err != nil {
+		return "", err
+	}
 	msg := fmt.Sprintf("%s закрыта %s, строка в архиве", p.ID, date)
 	if moved != "" {
 		msg += ", файл задачи в " + moved
 	}
-	return msg, nil
+	return msg + tail, nil
 }
 
 // gitMv переносит файл через git mv, а вне git-репозитория (или для
@@ -356,7 +516,10 @@ func gitMv(root, from, to string) error {
 	return nil
 }
 
-func cmdSort(root string) (string, error) {
+func cmdSort(root string, c CommitOpts) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -390,7 +553,11 @@ func cmdSort(root string) (string, error) {
 	if err := b.Save(); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Backlog пересортирован, строк переставлено: %d", changed), nil
+	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Backlog пересортирован, строк переставлено: %d%s", changed, tail), nil
 }
 
 func cmdID(root string) (string, error) {

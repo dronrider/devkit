@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,6 @@ func TestAddSorted(t *testing.T) {
 func TestAddValidation(t *testing.T) {
 	root := setup(t)
 	cases := []AddParams{
-		{Title: "Без ссылки и файла", Type: "task", Rank: "0+1+1+0+1"},
 		{Title: "Дубль", Type: "task", Rank: "0+1+1+0+1", Link: "x", ID: "XR-007"},
 		{Title: "С|пайпом", Type: "task", Rank: "0+1+1+0+1", Link: "x"},
 		{Title: "Плохой тип", Type: "feature", Rank: "0+1+1+0+1", Link: "x"},
@@ -88,12 +88,68 @@ func TestAddValidation(t *testing.T) {
 	}
 }
 
+func TestAddWithoutFileAndBareLink(t *testing.T) {
+	root := setup(t)
+	// Файла задачи нет: в ячейке ссылки плейсхолдер, add не падает.
+	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1"}); err != nil {
+		t.Fatal(err)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-008 | Однострочник | task | P3 | 3 (0+1+1+0+1) | - |") {
+		t.Fatalf("нет строки с плейсхолдером:\n%s", board)
+	}
+	// Голый путь в --link оборачивается в markdown-ссылку.
+	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "task", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md"}); err != nil {
+		t.Fatal(err)
+	}
+	board, _ = os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-009 | Голый путь | task | P3 | 3 (0+1+1+0+1) | [tasks/XR-002.md](tasks/XR-002.md) |") {
+		t.Fatalf("голый путь не обёрнут:\n%s", board)
+	}
+}
+
+func TestStatusAliases(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-008", "Check", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := b.find("XR-008"); r == nil || r.Sect != SectCheck {
+		t.Fatalf("XR-008 не дошла до check: %+v", r)
+	}
+}
+
+// Регрессия: причина блокировки не должна оставаться в заголовке после
+// выхода из Blocked.
+func TestMoveUnblockStripsReason(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.find("XR-004").Title; got != "Хвост" {
+		t.Fatalf("заголовок после разблокировки: %q", got)
+	}
+}
+
 func TestMoveToBlockedAndBack(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdMove(root, "XR-004", SectBlocked, ""); err == nil {
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "", CommitOpts{}); err == nil {
 		t.Fatal("blocked без --reason должен падать")
 	}
-	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо"); err != nil {
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -104,10 +160,10 @@ func TestMoveToBlockedAndBack(t *testing.T) {
 	if len(rows) != 1 || !strings.Contains(rows[0].Title, "[блок: ждём железо]") {
 		t.Fatalf("Blocked после move: %+v", rows)
 	}
-	if _, err := cmdMove(root, "XR-004", SectBlocked, "повтор"); err == nil {
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "повтор", CommitOpts{}); err == nil {
 		t.Fatal("повторный move в ту же секцию должен падать")
 	}
-	if _, err := cmdMove(root, "XR-004", SectBacklog, ""); err != nil {
+	if _, err := cmdMove(root, "XR-004", SectBacklog, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	ids := backlogIDs(t, root)
@@ -169,6 +225,122 @@ func TestSetRankOutsideBacklogStaysPut(t *testing.T) {
 	rows := b.Sects[SectInProgress].Rows
 	if len(rows) != 1 || rows[0].ID != "XR-005" || rows[0].P != "P1" || rows[0].RTotal != 55 {
 		t.Fatalf("In progress после set: %+v", rows)
+	}
+}
+
+func TestSetTitleAndLink(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdSet(root, SetParams{ID: "XR-001", Title: "Новый заголовок", Link: "tasks/XR-002.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "XR-001: заголовок, ссылка" {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-001 | Новый заголовок | task/LLD | P2 | 30 (25+2+1+0+2) | [tasks/XR-002.md](tasks/XR-002.md) |") {
+		t.Fatalf("строка не пересобралась:\n%s", board)
+	}
+}
+
+func TestSetTitleKeepsBlockSuffix(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdSet(root, SetParams{ID: "XR-004", Title: "Хвост, уточнённый"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.find("XR-004").Title; got != "Хвост, уточнённый [блок: ждём железо]" {
+		t.Fatalf("заголовок blocked-строки: %q", got)
+	}
+}
+
+func TestFileCreatesAndRelinks(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdFile(root, "XR-001", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "docs/tasks/XR-001.md создан") || !strings.Contains(msg, "ссылка в строке обновлена") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-001.md"))
+	if err != nil || string(data) != "# XR-001: Средняя\n" {
+		t.Fatalf("скелет файла: %q, %v", data, err)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | [tasks/XR-001.md](tasks/XR-001.md) |") {
+		t.Fatalf("ссылка не обновилась:\n%s", board)
+	}
+	if _, err := cmdFile(root, "XR-001", CommitOpts{}); err == nil {
+		t.Fatal("повторный file должен падать: и файл, и ссылка уже есть")
+	}
+}
+
+func TestList(t *testing.T) {
+	root := setup(t)
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"In progress (1)", "Check (0)", "Нет.", "Backlog (4)", "Blocked (0)", "| XR-005 |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в list нет %q:\n%s", want, out)
+		}
+	}
+	// Разросшийся Backlog обрезается с подсказкой, list backlog отдаёт целиком.
+	for i := 0; i < listBacklogTop; i++ {
+		p := AddParams{ID: fmt.Sprintf("XR-%03d", 20+i), Title: "Наполнение", Type: "task", Rank: "0+1+1+0+1", Link: "x"}
+		if _, err := cmdAdd(root, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err = cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Backlog (14, первые 10; целиком: taskctl list backlog)") {
+		t.Fatalf("нет обрезки Backlog:\n%s", out)
+	}
+	// 1 строка In progress + 10 обрезанного Backlog.
+	if got := strings.Count(out, "\n| XR-"); got != 11 {
+		t.Fatalf("строк задач в кратком виде: %d, ожидал 11:\n%s", got, out)
+	}
+	out, err = cmdList(root, "Backlog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(out, "\n| XR-"); got != 14 {
+		t.Fatalf("строк в list backlog: %d, ожидал 14:\n%s", got, out)
+	}
+}
+
+func TestShow(t *testing.T) {
+	root := setup(t)
+	out, err := cmdShow(root, "XR-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"XR-005 в in-progress", "| XR-005 | Задача в работе |", "файл задачи: docs/tasks/XR-005.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в show нет %q:\n%s", want, out)
+		}
+	}
+	out, err = cmdShow(root, "XR-001")
+	if err != nil || !strings.Contains(out, "файла задачи нет") {
+		t.Fatalf("show без файла: %q, %v", out, err)
+	}
+	out, err = cmdShow(root, "XR-007")
+	if err != nil || !strings.Contains(out, "XR-007 в архиве (закрыта 2026-06-12)") {
+		t.Fatalf("show по архиву: %q, %v", out, err)
+	}
+	if _, err := cmdShow(root, "XR-404"); err == nil {
+		t.Fatal("show несуществующей задачи должен падать")
 	}
 }
 
@@ -246,14 +418,14 @@ func TestSort(t *testing.T) {
 	if err := b.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdSort(root); err != nil {
+	if _, err := cmdSort(root, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(backlogIDs(t, root), " ")
 	if want := "XR-002 XR-001 XR-003 XR-004"; got != want {
 		t.Fatalf("после sort: %s, ожидал %s", got, want)
 	}
-	msg, err := cmdSort(root)
+	msg, err := cmdSort(root, CommitOpts{})
 	if err != nil || msg != "Backlog уже отсортирован" {
 		t.Fatalf("повторный sort: %q, %v", msg, err)
 	}
@@ -319,7 +491,7 @@ func TestCycle(t *testing.T) {
 	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdMove(root, "XR-008", SectInProgress, ""); err != nil {
+	if _, err := cmdMove(root, "XR-008", SectInProgress, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdClose(root, CloseParams{ID: "XR-008", Date: "2026-07-08"}); err != nil {

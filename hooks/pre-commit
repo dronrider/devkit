@@ -1,6 +1,7 @@
 #!/bin/sh
-# Запрещённые символы в добавленных строках staged-диффа. Проверяются только
-# добавленные строки: совпадения в чужом существующем тексте не трогаем.
+# Два рубежа по добавленным строкам staged-диффа: запрещённые символы везде,
+# чувствительное в файлах доски. Проверяются только добавленные строки:
+# совпадения в чужом существующем тексте не трогаем.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 added=$(git diff --cached -U0 --diff-filter=ACMR |
@@ -15,6 +16,16 @@ if [ $status -eq 1 ]; then
     echo "запрещённые символы в добавленных строках (RULES.md, «Код и тексты» п. 1):" >&2
     printf '%s\n' "$bad" >&2
     echo "если это чужой код или тестовые данные: git commit --no-verify" >&2
+    exit 1
+fi
+[ $status -ne 0 ] && exit $status
+
+sens=$(printf '%s\n' "$added" | python3 "$here/check-sensitive.py" --diff)
+status=$?
+if [ $status -eq 1 ]; then
+    echo "чувствительное в файлах доски (RULES.board.md, «Трекинг задач» п. 8):" >&2
+    printf '%s\n' "$sens" >&2
+    echo "вместо адресов и доступов роль машины, конкретика в local-docs; осознанно: git commit --no-verify" >&2
     exit 1
 fi
 exit $status

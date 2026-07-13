@@ -65,6 +65,43 @@ printf '{"tool_input":{"file_path":"/a/memory/MEMORY.md","new_string":"- [Жур
 printf '{"tool_input":{"file_path":"/a/b/notes.md","new_string":"%s"}}' "$long" |
     python3 "$here/check-memory.py" --hook 2>/dev/null || fail "хук памяти лезет в чужие файлы"
 
+# check-sensitive.py: IP и токены в файлах доски ловятся, роли машин и
+# loopback проходят, чужие пути не смотрятся.
+printf 'хост роутер DE, локально 127.0.0.1, маска 255.255.255.0\n' > "$tmp/sens_ok.md"
+printf 'сервер живёт на 10.1.2.3, пароль: hunter2secret\n' > "$tmp/sens_bad.md"
+python3 "$here/check-sensitive.py" "$tmp/sens_ok.md" >/dev/null || fail "чистый текст не прошёл check-sensitive"
+out=$(python3 "$here/check-sensitive.py" "$tmp/sens_bad.md")
+[ $? -eq 1 ] || fail "IP и пароль в файле не пойманы"
+echo "$out" | grep -q 'IP-адрес' || fail "нет находки про IP"
+echo "$out" | grep -q 'секрет' || fail "нет находки про секрет"
+printf 'docs/TASKS.md:3:| XR-1 | сервер 10.1.2.3 | task |\n' |
+    python3 "$here/check-sensitive.py" --diff >/dev/null
+[ $? -eq 1 ] || fail "IP в диффе доски не пойман"
+printf 'src/config.go:1:addr := "10.1.2.3"\n' |
+    python3 "$here/check-sensitive.py" --diff >/dev/null || fail "режим --diff лезет в файлы кода"
+token="ghp_$(printf 'a%.0s' $(seq 1 36))"
+printf '{"tool_input":{"file_path":"/a/docs/tasks/XR-1.md","new_string":"токен %s"}}' "$token" |
+    python3 "$here/check-sensitive.py" --hook 2>/dev/null
+[ $? -eq 2 ] || fail "хук пропустил токен в файле задачи"
+printf '{"tool_input":{"file_path":"/a/src/main.go","new_string":"10.1.2.3"}}' |
+    python3 "$here/check-sensitive.py" --hook 2>/dev/null || fail "хук чувствительного лезет вне доски"
+printf '{"tool_input":{"file_path":"/a/docs/tasks/XR-1.md","new_string":"проверить на роутере DE"}}' |
+    python3 "$here/check-sensitive.py" --hook 2>/dev/null || fail "хук ругается на роль машины"
+
+# pre-commit: IP в staged-строках доски ловится вторым рубежом.
+repo2="$tmp/repo2"
+git init -q "$repo2"
+git -C "$repo2" config user.name t
+git -C "$repo2" config user.email t@t
+mkdir -p "$repo2/docs"
+printf '| XR-1 | сервер 10.1.2.3 | task |\n' > "$repo2/docs/TASKS.md"
+git -C "$repo2" add docs/TASKS.md
+(cd "$repo2" && "$here/pre-commit" >/dev/null 2>&1)
+[ $? -eq 1 ] || fail "pre-commit пропустил IP в доске"
+printf '| XR-1 | сервер уехал на роль VPS RU | task |\n' > "$repo2/docs/TASKS.md"
+git -C "$repo2" add docs/TASKS.md
+(cd "$repo2" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на чистую доску"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

@@ -29,7 +29,8 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 - `taskctl/` - Go-утилита канбан-доски `docs/TASKS.md`
   (init/add/move/close/sort/lint/id), см. [taskctl/README.md](taskctl/README.md).
 - `shipctl/` - Go-утилита слияния и отката задач по правилам доски
-  (status/merge/revert), см. [shipctl/README.md](shipctl/README.md).
+  (status/merge/revert); команду выката берёт из гитигнорнутого
+  `.devkit/deploy.local`, см. [shipctl/README.md](shipctl/README.md).
 - `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
   старом коде, см. [regcheck/README.md](regcheck/README.md).
 - `hooks/` - проверки текстов: запрещённые символы, индекс памяти,

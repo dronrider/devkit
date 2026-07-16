@@ -3,13 +3,14 @@
 
   devkitctl new --prefix XX [--name "..."] [--no-board] [-C dir]
       подключить проект: CLAUDE.md из шаблона (импорты пересчитываются под
-      реальный путь до devkit), git-хуки, доска через taskctl init;
-      --no-board для проектов с внешним трекером
+      реальный путь до devkit), git-хуки, доска через taskctl init, болванка
+      .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
   devkitctl doctor [-C dir]
       проверить обвязку: импорты CLAUDE.md разворачиваются, git-хуки и
       PostToolUse-хуки подключены, taskctl в PATH и не старее исходников,
-      инварианты доски (taskctl lint), локальные markdown-ссылки не битые
+      инварианты доски (taskctl lint), обвязка выката (.devkit/deploy.local
+      есть, с командой и гитигнорнута), локальные markdown-ссылки не битые
 
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
@@ -23,6 +24,17 @@ from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
+DEPLOY_CONFIG = ".devkit/deploy.local"
+DEPLOY_IGNORE = ".devkit/*.local"
+DEPLOY_TEMPLATE = (
+    "# Обвязка выката для shipctl (гитигнорнут: в команде выката обычно адрес\n"
+    "# или роль машины, её место в локальном, а не в коммитимом). shipctl merge\n"
+    "# берёт команду отсюда, --deploy на каждый вызов передавать не нужно.\n"
+    "# autonomous=true разрешает агенту катить на прод сам после чистого ревью\n"
+    "# при пустой очереди; false оставляет выкат за пользователем.\n"
+    "deploy =\n"
+    "autonomous = false\n"
+)
 SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
              ".venv", "venv", "__pycache__", ".idea", ".vscode"}
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
@@ -61,6 +73,47 @@ def check_links(root):
                     if not (md.parent / target).exists():
                         findings.append("%s:%d: битая ссылка (%s)" % (rel, i, m.group(1)))
     return findings
+
+
+def read_deploy(root):
+    # None это «файла нет», иначе значение deploy= (может быть пустым).
+    f = root / DEPLOY_CONFIG
+    if not f.exists():
+        return None
+    deploy = ""
+    for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        key, _, val = ln.partition("=")
+        if key.strip() == "deploy":
+            deploy = val.strip().strip("\"'")
+    return deploy
+
+
+def ensure_gitignore(root, pattern):
+    gi = root / ".gitignore"
+    lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
+    if pattern in (ln.strip() for ln in lines):
+        return False
+    sep = "\n" if lines and lines[-1].strip() else ""
+    with gi.open("a", encoding="utf-8") as f:
+        f.write("%s# Локальная обвязка выката, живёт только на машине.\n%s\n" % (sep, pattern))
+    return True
+
+
+def scaffold_deploy(root):
+    dep = root / DEPLOY_CONFIG
+    done = []
+    if dep.exists():
+        done.append("%s уже есть, не трогаю" % DEPLOY_CONFIG)
+    else:
+        dep.parent.mkdir(parents=True, exist_ok=True)
+        dep.write_text(DEPLOY_TEMPLATE, encoding="utf-8")
+        done.append("%s создан: вписать команду выката, autonomous при готовности" % DEPLOY_CONFIG)
+    if ensure_gitignore(root, DEPLOY_IGNORE):
+        done.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
+    return done
 
 
 def check_git_hooks(root):
@@ -119,6 +172,18 @@ def doctor(start):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
+        dep = read_deploy(root)
+        if dep is None:
+            findings.append("нет %s: команда выката не задана, shipctl merge оставит "
+                            "выкат пользователю (болванку заводит devkitctl new)" % DEPLOY_CONFIG)
+        else:
+            if not dep:
+                findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
+                                "вписать команду выката" % DEPLOY_CONFIG)
+            rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
+            if rc != 0:
+                findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
+                                "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
     findings += check_links(root)
     for f in findings:
         print(f)
@@ -181,6 +246,7 @@ def new(start, prefix, name, no_board):
             done.append("taskctl не в PATH; доска заводится после сборки: "
                         "cd %s/taskctl && go build -o ~/go/bin/taskctl . && taskctl -C %s init --prefix %s"
                         % (DEVKIT, root, prefix))
+        done += scaffold_deploy(root)
     print("\n".join(done))
     return 0
 

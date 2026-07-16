@@ -55,6 +55,37 @@ printf '# Задачи\n' > "$proj/docs/TASKS.md"
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'taskctl не в PATH' || fail "нет находки про taskctl: $out"
 
+# Отдельный проект с доской: new заводит болванку выката и гитигнорит её.
+bproj="$tmp/bproj"
+mkdir -p "$bproj"
+git init -q "$bproj"
+git -C "$bproj" config user.name t
+git -C "$bproj" config user.email t@t
+HOME="$home" python3 "$here/devkitctl.py" new --prefix BP -C "$bproj" >/dev/null 2>&1
+[ -f "$bproj/.devkit/deploy.local" ] || fail "new не завёл .devkit/deploy.local"
+grep -q '^autonomous = false' "$bproj/.devkit/deploy.local" || fail "в болванке нет autonomous"
+git -C "$bproj" check-ignore -q .devkit/deploy.local || fail ".devkit/deploy.local не гитигнорнут"
+
+# doctor: пустой deploy= это находка, заполненный и гитигнорнутый чист.
+out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+echo "$out" | grep -q 'пустой deploy=' || fail "нет находки про пустую команду выката: $out"
+printf 'deploy = make deploy\nautonomous = false\n' > "$bproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
+
+# doctor: команда есть, но файл не гитигнорнут это находка.
+nproj="$tmp/nproj"
+mkdir -p "$nproj/.devkit"
+git init -q "$nproj"
+git -C "$nproj" config user.name t
+git -C "$nproj" config user.email t@t
+HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$nproj" >/dev/null 2>&1
+mkdir -p "$nproj/docs"
+printf '# Задачи\n' > "$nproj/docs/TASKS.md"
+printf 'deploy = make deploy\nautonomous = false\n' > "$nproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$nproj" 2>&1)
+echo "$out" | grep -q 'не гитигнорнут' || fail "нет находки про негитигнорнутый конфиг: $out"
+
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"
 else

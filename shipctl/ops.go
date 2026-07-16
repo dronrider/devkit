@@ -108,13 +108,25 @@ func cmdStatus(root string) (string, error) {
 	} else {
 		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", rows[0].ID))
 	}
+	cfg, err := loadDeployConfig(root)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case cfg.Deploy == "":
+		out = append(out, "выкат: команды нет в "+deployConfigPath+", остаётся за пользователем")
+	case cfg.Autonomous:
+		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath)
+	default:
+		out = append(out, "выкат: за пользователем (autonomous=false), команда есть в "+deployConfigPath)
+	}
 	return strings.Join(out, "\n"), nil
 }
 
 type MergeParams struct {
 	ID     string
 	Test   string // команда тестов, обязательна
-	Deploy string // команда выката, пустая оставляет выкат за пользователем
+	Deploy string // явная команда выката; пустую подхватывает .devkit/deploy.local
 	Push   bool
 }
 
@@ -174,12 +186,19 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	git(root, "branch", "-d", branch)
 	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward, ветка %s удалена", p.ID, main, branch)}
-	if p.Deploy != "" {
-		if out, err := runShell(root, p.Deploy); err != nil {
+	deploy, err := resolveDeploy(root, p.Deploy)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case deploy.run != "":
+		if out, err := runShell(root, deploy.run); err != nil {
 			return "", fmt.Errorf("слито, но выкат упал, задача остаётся в In progress:\n%s", tail(out))
 		}
 		msg = append(msg, "выкат прошёл")
-	} else {
+	case deploy.manual != "":
+		msg = append(msg, "выкат за пользователем ("+deploy.manual+")")
+	default:
 		msg = append(msg, "выкат за пользователем, по плейбуку проекта")
 	}
 	if _, err := taskMove(root, p.ID, "check"); err != nil {

@@ -107,6 +107,54 @@ func TestMergeHappyPath(t *testing.T) {
 	}
 }
 
+// TestMergeDeployFromConfig: без --deploy команда выката берётся из
+// .devkit/deploy.local (гитигнорнут, поэтому пишется после ветки, untracked
+// и preflight его не считает грязью), катится только при autonomous=true.
+func TestMergeDeployFromConfig(t *testing.T) {
+	deployed := func(root string) bool {
+		_, err := os.Stat(filepath.Join(root, "deployed.marker"))
+		return err == nil
+	}
+
+	// autonomous=true: shipctl выкатывает сам.
+	root, _ := setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	write(t, root, ".devkit/deploy.local", "deploy = touch deployed.marker\nautonomous = true\n")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deployed(root) || !strings.Contains(msg, "выкат прошёл") {
+		t.Fatalf("автономный выкат не отработал: %q", msg)
+	}
+
+	// autonomous=false: команда есть, но катит пользователь, не shipctl.
+	root, _ = setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	write(t, root, ".devkit/deploy.local", "deploy = touch deployed.marker\nautonomous = false\n")
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployed(root) || !strings.Contains(msg, "за пользователем") {
+		t.Fatalf("при autonomous=false shipctl катить не должен: %q", msg)
+	}
+
+	// Явный --deploy сильнее конфига с autonomous=false.
+	root, _ = setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	write(t, root, ".devkit/deploy.local", "deploy = touch config.marker\nautonomous = false\n")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Deploy: "touch deployed.marker"}); err != nil {
+		t.Fatal(err)
+	}
+	if !deployed(root) {
+		t.Fatal("явный --deploy не выполнен")
+	}
+	if _, err := os.Stat(filepath.Join(root, "config.marker")); err == nil {
+		t.Fatal("при явном --deploy команда конфига не должна запускаться")
+	}
+}
+
 func TestMergeQueueBusy(t *testing.T) {
 	root, _ := setup(t, rowInProg, "| XR-009 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n")
 	branchWithFix(t, root)

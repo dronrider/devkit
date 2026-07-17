@@ -6,11 +6,13 @@
       реальный путь до devkit), git-хуки, доска через taskctl init, болванка
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
-  devkitctl doctor [-C dir]
+  devkitctl doctor [--fix] [-C dir]
       проверить обвязку: импорты CLAUDE.md разворачиваются, git-хуки и
       PostToolUse-хуки подключены, taskctl в PATH и не старее исходников,
       инварианты доски (taskctl lint), обвязка выката (.devkit/deploy.local
-      есть, с командой и гитигнорнута), локальные markdown-ссылки не битые
+      есть, с командой и гитигнорнута), локальные markdown-ссылки не битые;
+      --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore),
+      заполненное не трогает, неоднозначное оставляет находкой
 
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
@@ -134,8 +136,25 @@ def check_git_hooks(root):
     return "git-хуки devkit не подключены; из корня проекта: git config core.hooksPath %s" % rel
 
 
-def doctor(start):
-    findings = []
+def connect_git_hooks(root):
+    # Подключить хуки devkit. Возврат (сделано, находка): либо одно непустое,
+    # либо оба None, когда хуки уже на месте. Свои хуки проекта не трогаются,
+    # это остаётся находкой (симлинки ставит человек). Мутирует.
+    if check_git_hooks(root) is None:
+        return None, None
+    rc, gp = run(["git", "rev-parse", "--git-path", "hooks"], cwd=root)
+    hdir = Path(gp) if os.path.isabs(gp) else root / gp
+    custom = [p.name for p in hdir.glob("*") if p.is_file() and not p.name.endswith(".sample")]
+    if custom:
+        return None, ("в хуках проекта уже есть свои (%s), core.hooksPath не трогается; "
+                      "симлинки на хуки devkit по hooks/README.md" % ", ".join(custom))
+    hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), root)
+    run(["git", "config", "core.hooksPath", hooks_rel], cwd=root)
+    return "git-хуки: core.hooksPath = %s" % hooks_rel, None
+
+
+def doctor(start, fix=False):
+    findings, fixed = [], []
     root, in_git = project_root(start)
     if not in_git:
         findings.append("не git-репозиторий: %s" % root)
@@ -152,10 +171,12 @@ def doctor(start):
                 target = root / target
             if not target.exists():
                 findings.append("CLAUDE.md:%d: импорт %s не разворачивается (devkit склонирован рядом?)" % (i, ln))
-    if in_git:
-        f = check_git_hooks(root)
-        if f:
-            findings.append(f)
+    if in_git and check_git_hooks(root):
+        if fix:
+            done, residual = connect_git_hooks(root)
+            (fixed if done else findings).append(done or residual)
+        else:
+            findings.append(check_git_hooks(root))
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""
     for script in HOOK_SCRIPTS:
@@ -173,18 +194,26 @@ def doctor(start):
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
         dep = read_deploy(root)
+        if dep is None and fix:
+            fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
+            dep = read_deploy(root)         # теперь файл есть, команда пустая
         if dep is None:
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
-                            "выкат пользователю (болванку заводит devkitctl new)" % DEPLOY_CONFIG)
+                            "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
         else:
             if not dep:
                 findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
                                 "вписать команду выката" % DEPLOY_CONFIG)
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
             if rc != 0:
-                findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
-                                "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
+                if fix and ensure_gitignore(root, DEPLOY_IGNORE):
+                    fixed.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
+                else:
+                    findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
+                                    "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
     findings += check_links(root)
+    for m in fixed:
+        print("починено: %s" % m)
     for f in findings:
         print(f)
     if findings:
@@ -216,20 +245,8 @@ def new(start, prefix, name, no_board):
     claude.write_text(text, encoding="utf-8")
     done = ["CLAUDE.md создан из шаблона"]
     if in_git:
-        finding = check_git_hooks(root)
-        if finding is None:
-            done.append("git-хуки уже подключены")
-        else:
-            rc, gp = run(["git", "rev-parse", "--git-path", "hooks"], cwd=root)
-            hdir = Path(gp) if os.path.isabs(gp) else root / gp
-            custom = [p.name for p in hdir.glob("*") if p.is_file() and not p.name.endswith(".sample")]
-            if custom:
-                done.append("в хуках проекта уже есть свои (%s), core.hooksPath не трогается; "
-                            "симлинки на хуки devkit по hooks/README.md" % ", ".join(custom))
-            else:
-                hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), root)
-                run(["git", "config", "core.hooksPath", hooks_rel], cwd=root)
-                done.append("git-хуки: core.hooksPath = %s" % hooks_rel)
+        applied, residual = connect_git_hooks(root)
+        done.append(applied or residual or "git-хуки уже подключены")
     else:
         done.append("не git-репозиторий, git-хуки не подключались")
     if no_board:
@@ -257,6 +274,8 @@ def main(argv):
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("doctor", help="проверить обвязку проекта")
     d.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    d.add_argument("--fix", action="store_true",
+                   help="доводить обвязку до актуальной (additive, заполненное не трогает)")
     n = sub.add_parser("new", help="подключить новый проект")
     n.add_argument("-C", dest="dir", default=".", help="директория проекта")
     n.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
@@ -264,7 +283,7 @@ def main(argv):
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
-        return doctor(a.dir)
+        return doctor(a.dir, a.fix)
     return new(a.dir, a.prefix.upper(), a.name, a.no_board)
 
 

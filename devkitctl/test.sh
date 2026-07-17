@@ -86,6 +86,33 @@ printf 'deploy = make deploy\nautonomous = false\n' > "$nproj/.devkit/deploy.loc
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$nproj" 2>&1)
 echo "$out" | grep -q 'не гитигнорнут' || fail "нет находки про негитигнорнутый конфиг: $out"
 
+# doctor --fix доводит обвязку проекта, подключённого до появления выката:
+# заводит deploy.local с гитигнором и возвращает отвязанные хуки.
+fproj="$tmp/fproj"
+mkdir -p "$fproj"
+git init -q "$fproj"
+git -C "$fproj" config user.name t
+git -C "$fproj" config user.email t@t
+HOME="$home" python3 "$here/devkitctl.py" new --prefix FP -C "$fproj" >/dev/null 2>&1
+rm -f "$fproj/.devkit/deploy.local"
+git -C "$fproj" config --unset core.hooksPath
+out=$(HOME="$home" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'починено' || fail "doctor --fix ничего не починил: $out"
+[ -f "$fproj/.devkit/deploy.local" ] || fail "doctor --fix не завёл deploy.local"
+git -C "$fproj" check-ignore -q .devkit/deploy.local || fail "doctor --fix не гитигнорил deploy.local"
+[ -n "$(git -C "$fproj" config core.hooksPath)" ] || fail "doctor --fix не подключил хуки"
+# Пустой deploy= остаётся находкой: команду выката --fix не выдумывает.
+echo "$out" | grep -q 'пустой deploy=' || fail "doctor --fix должен просить вписать команду: $out"
+
+# Повторный --fix уже ничего не меняет (идемпотентность).
+out=$(HOME="$home" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'починено' && fail "повторный doctor --fix не должен ничего менять: $out"
+
+# Заполненная команда: находки по выкату уходят.
+printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
+echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
+
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"
 else

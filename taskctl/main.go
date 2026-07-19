@@ -19,11 +19,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
 
 Менять доску:
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
-      [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
+      [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
-  set <ID> [--title "..."] [--type ...] [--rank "..."] [--link "..."]
+  set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
@@ -44,6 +44,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
 тронутые файлы доски (и запушить), чужой индекс не задевается.
 Статусы принимаются в любом регистре, «In progress» = in-progress.
 Сумма R и бакет P считаются из разбивки --rank сами, руками их не передать.
+Колонка «Цена» это грубая оценка затрат агента на исполнение (шкала в
+RANKING.md), в ранг не входит; «-» значит «не оценено».
 Общий флаг -C <dir>: откуда искать корень репозитория (по умолчанию текущая
 директория), ставится и перед командой, и после неё.
 `
@@ -121,6 +123,7 @@ func main() {
 		fs.StringVar(&p.Title, "title", "", "заголовок строки")
 		fs.StringVar(&p.Type, "type", "task", "тип: bug / task / LLD")
 		fs.StringVar(&p.Rank, "rank", "", "разбивка ранга «а+б+в+г+д»")
+		fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
 		fs.StringVar(&p.Reason, "reason", "", "причина блокировки (для blocked)")
@@ -140,7 +143,7 @@ func main() {
 		msg, err = cmdMove(root(*dir), args[1], args[2], *reason, c)
 	case "set":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: set <ID> [--title ...] [--type ...] [--rank ...] [--link ...]"))
+			fail(fmt.Errorf("жду: set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...]"))
 		}
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
@@ -148,6 +151,7 @@ func main() {
 		fs.StringVar(&p.Title, "title", "", "новый заголовок строки")
 		fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
 		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
+		fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
 		fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
 		commitFlags(fs, &p.Commit)
 		fs.Parse(args[2:])

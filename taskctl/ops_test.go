@@ -80,6 +80,7 @@ func TestAddValidation(t *testing.T) {
 		{Title: "С|пайпом", Type: "task", Rank: "0+1+1+0+1", Link: "x"},
 		{Title: "Плохой тип", Type: "feature", Rank: "0+1+1+0+1", Link: "x"},
 		{Title: "Плохой статус", Type: "task", Rank: "0+1+1+0+1", Link: "x", Status: "done"},
+		{Title: "Цена вне шкалы", Type: "task", Rank: "0+1+1+0+1", Link: "x", Cost: "XXL"},
 	}
 	for _, p := range cases {
 		if _, err := cmdAdd(root, p); err == nil {
@@ -95,7 +96,7 @@ func TestAddWithoutFileAndBareLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-008 | Однострочник | task | P3 | 3 (0+1+1+0+1) | - |") {
+	if !strings.Contains(string(board), "| XR-008 | Однострочник | task | P3 | 3 (0+1+1+0+1) | - | - |") {
 		t.Fatalf("нет строки с плейсхолдером:\n%s", board)
 	}
 	// Голый путь в --link оборачивается в markdown-ссылку.
@@ -103,8 +104,19 @@ func TestAddWithoutFileAndBareLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	board, _ = os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-009 | Голый путь | task | P3 | 3 (0+1+1+0+1) | [tasks/XR-002.md](tasks/XR-002.md) |") {
+	if !strings.Contains(string(board), "| XR-009 | Голый путь | task | P3 | 3 (0+1+1+0+1) | - | [tasks/XR-002.md](tasks/XR-002.md) |") {
 		t.Fatalf("голый путь не обёрнут:\n%s", board)
+	}
+}
+
+func TestAddWithCost(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Link: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-008 | Оценённая | task | P3 | 3 (0+1+1+0+1) | M | x |") {
+		t.Fatalf("нет строки с ценой:\n%s", board)
 	}
 }
 
@@ -182,7 +194,7 @@ func TestSetTypeInPlace(t *testing.T) {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	old := "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | [tasks/XR-005.md](tasks/XR-005.md) |"
+	old := "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-005.md](tasks/XR-005.md) |"
 	want := strings.Replace(fixtureBoard, old, strings.Replace(old, "task", "bug", 1), 1)
 	if string(board) != want {
 		t.Fatalf("доска после set отличается не только типом XR-005:\n%s", board)
@@ -204,7 +216,7 @@ func TestSetRankResortsBacklog(t *testing.T) {
 		t.Fatalf("порядок Backlog: %s, ожидал %s", got, want)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-004 | Хвост | task | P0 | 76 (75+0+1+0+0) | (LLD позже) |") {
+	if !strings.Contains(string(board), "| XR-004 | Хвост | task | P0 | 76 (75+0+1+0+0) | - | (LLD позже) |") {
 		t.Fatalf("строка XR-004 не пересобралась:\n%s", board)
 	}
 	if finds, err := cmdLint(root); err != nil || len(finds) != 0 {
@@ -238,8 +250,31 @@ func TestSetTitleAndLink(t *testing.T) {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-001 | Новый заголовок | task/LLD | P2 | 30 (25+2+1+0+2) | [tasks/XR-002.md](tasks/XR-002.md) |") {
+	if !strings.Contains(string(board), "| XR-001 | Новый заголовок | task/LLD | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-002.md](tasks/XR-002.md) |") {
 		t.Fatalf("строка не пересобралась:\n%s", board)
+	}
+}
+
+func TestSetCost(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdSet(root, SetParams{ID: "XR-005", Cost: "L"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "XR-005: цена - -> L" {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | L | [tasks/XR-005.md](tasks/XR-005.md) |") {
+		t.Fatalf("цена не встала в строку:\n%s", board)
+	}
+	// Обратно в «не оценено» через --cost -.
+	if _, err := cmdSet(root, SetParams{ID: "XR-005", Cost: "-"}); err != nil {
+		t.Fatal(err)
+	}
+	board, _ = os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска не вернулась к исходной после сброса цены:\n%s", board)
 	}
 }
 
@@ -274,7 +309,7 @@ func TestFileCreatesAndRelinks(t *testing.T) {
 		t.Fatalf("скелет файла: %q, %v", data, err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | [tasks/XR-001.md](tasks/XR-001.md) |") {
+	if !strings.Contains(string(board), "| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-001.md](tasks/XR-001.md) |") {
 		t.Fatalf("ссылка не обновилась:\n%s", board)
 	}
 	if _, err := cmdFile(root, "XR-001", CommitOpts{}); err == nil {
@@ -353,6 +388,8 @@ func TestSetValidation(t *testing.T) {
 		{ID: "XR-005", Rank: "1+2+3"},
 		{ID: "XR-005", Type: "task"},
 		{ID: "XR-005", Rank: "25+2+1+0+2"},
+		{ID: "XR-005", Cost: "XXL"},
+		{ID: "XR-005", Cost: "-"},
 	}
 	for _, p := range cases {
 		if _, err := cmdSet(root, p); err == nil {
@@ -381,7 +418,7 @@ func TestClose(t *testing.T) {
 		t.Fatal("файл задачи остался на старом месте")
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	rowLine := "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | [tasks/XR-005.md](tasks/XR-005.md) |\n"
+	rowLine := "| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-005.md](tasks/XR-005.md) |\n"
 	if want := strings.Replace(fixtureBoard, rowLine, "", 1); string(board) != want {
 		t.Fatalf("доска после close отличается не только строкой XR-005:\n%s", board)
 	}
@@ -431,6 +468,30 @@ func TestSort(t *testing.T) {
 	}
 }
 
+// Штатная миграция доски старого формата: sort сохраняет файл с колонкой
+// «Цена», даже когда переставлять нечего.
+func TestSortMigratesLegacyBoard(t *testing.T) {
+	root := setup(t)
+	if err := os.WriteFile(boardPath(root), []byte(fixtureBoardLegacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdSort(root, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "переведена в формат") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска после миграции:\n%s", board)
+	}
+	msg, err = cmdSort(root, CommitOpts{})
+	if err != nil || msg != "Backlog уже отсортирован" {
+		t.Fatalf("sort после миграции: %q, %v", msg, err)
+	}
+}
+
 func TestLintClean(t *testing.T) {
 	root := setup(t)
 	finds, err := cmdLint(root)
@@ -448,22 +509,22 @@ func TestLintFindings(t *testing.T) {
 
 ## In progress
 
-| ID | Задача | Тип | P | R | Ссылка |
-|--------|--------|-----|---|---|--------|
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
 
 ## Check
 
-| ID | Задача | Тип | P | R | Ссылка |
-|--------|--------|-----|---|---|--------|
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
 
 ## Backlog
 
-| ID | Задача | Тип | P | R | Ссылка |
-|--------|--------|-----|---|---|--------|
-| XR-010 | Не тот бакет | task | P1 | 9 (0+4+1+0+4) | x |
-| XR-011 | Битая ссылка | task | P3 | 9 (0+4+1+0+4) | [tasks/XR-404.md](tasks/XR-404.md) |
-| XR-012 | Стоит ниже старшего | task | P3 | 20 (0+10+5+0+5) | x |
-| XR-007 | Дубль с архивом | bug | P2 | 30 (25+0+0+5+0) | x |
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+| XR-010 | Не тот бакет | task | P1 | 9 (0+4+1+0+4) | - | x |
+| XR-011 | Битая ссылка | task | P3 | 9 (0+4+1+0+4) | - | [tasks/XR-404.md](tasks/XR-404.md) |
+| XR-012 | Стоит ниже старшего | task | P3 | 20 (0+10+5+0+5) | - | x |
+| XR-007 | Дубль с архивом | bug | P2 | 30 (25+0+0+5+0) | - | x |
 
 ## Blocked
 
@@ -481,6 +542,20 @@ func TestLintFindings(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("нет находки %q среди:\n%s", want, joined)
 		}
+	}
+}
+
+func TestLintFlagsLegacyBoard(t *testing.T) {
+	root := setup(t)
+	if err := os.WriteFile(boardPath(root), []byte(fixtureBoardLegacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finds) != 1 || !strings.Contains(finds[0], "без колонки «Цена»") {
+		t.Fatalf("находки на доске старого формата: %v", finds)
 	}
 }
 

@@ -23,6 +23,9 @@ func cmdLint(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if b.Legacy {
+		finds = append(finds, fmt.Sprintf("%s: доска без колонки «Цена», перевести в новый формат: taskctl sort", bp))
+	}
 
 	seen := map[string]string{}
 	note := func(id, where string) {

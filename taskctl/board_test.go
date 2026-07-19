@@ -11,6 +11,37 @@ const fixtureBoard = `# Тест: доска (префикс XR)
 
 ## In progress
 
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-005.md](tasks/XR-005.md) |
+
+## Check (готово, ждёт проверки пользователем)
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Backlog
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+| XR-002 | Верхняя | bug | P1 | 55 (50+0+0+5+0) | - | [tasks/XR-002.md](tasks/XR-002.md) |
+| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | - | (LLD позже) |
+| XR-003 | Та же R, больший ID | LLD | P2 | 30 (25+3+2+0+0) | - | (LLD позже) |
+| XR-004 | Хвост | task | P3 | 9 (0+4+1+0+4) | - | (LLD позже) |
+
+## Blocked
+
+Нет.
+`
+
+// Та же доска в формате до колонки «Цена»: разбор обязан принять её и
+// перевести строки так, что после сохранения файл совпадает с fixtureBoard.
+const fixtureBoardLegacy = `# Тест: доска (префикс XR)
+
+Преамбула, утилита её не трогает.
+
+## In progress
+
 | ID | Задача | Тип | P | R | Ссылка |
 |--------|--------|-----|---|---|--------|
 | XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | [tasks/XR-005.md](tasks/XR-005.md) |
@@ -46,11 +77,45 @@ func TestRoundTrip(t *testing.T) {
 	if got := strings.Join(b.Lines, "\n"); got != fixtureBoard {
 		t.Fatalf("разбор+сборка изменили файл:\n%s", got)
 	}
+	if b.Legacy {
+		t.Fatal("доска нового формата помечена как легаси")
+	}
 	if len(b.Rows) != 5 {
 		t.Fatalf("ожидал 5 строк, получил %d", len(b.Rows))
 	}
 	if b.Sects[SectBlocked].NetIdx == -1 {
 		t.Fatal("не увидел «Нет.» в Blocked")
+	}
+}
+
+// Доска старого формата разбирается, а её строки, шапки и разделители
+// переводятся в памяти в новый формат с ценой-прочерком.
+func TestLegacyBoardUpgradesInMemory(t *testing.T) {
+	b, err := parseLines("board", strings.Split(fixtureBoardLegacy, "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !b.Legacy {
+		t.Fatal("доска старого формата не помечена как легаси")
+	}
+	if got := strings.Join(b.Lines, "\n"); got != fixtureBoard {
+		t.Fatalf("после перевода ожидал fixtureBoard, получил:\n%s", got)
+	}
+	for _, r := range b.Rows {
+		if r.Cost != "-" {
+			t.Fatalf("%s: цена после перевода %q, ожидал прочерк", r.ID, r.Cost)
+		}
+	}
+}
+
+func TestParseRowCost(t *testing.T) {
+	r, legacy, err := parseBoardRow("| XR-001 | С ценой | task | P3 | 9 (0+4+1+0+4) | M | x |")
+	if err != nil || legacy || r.Cost != "M" || r.Link != "x" {
+		t.Fatalf("строка с ценой: %+v, legacy=%v, err=%v", r, legacy, err)
+	}
+	r, legacy, err = parseBoardRow("| XR-001 | Старая | task | P3 | 9 (0+4+1+0+4) | x |")
+	if err != nil || !legacy || r.Cost != "-" || r.Link != "x" {
+		t.Fatalf("строка без цены: %+v, legacy=%v, err=%v", r, legacy, err)
 	}
 }
 
@@ -61,9 +126,11 @@ func TestParseRowErrors(t *testing.T) {
 		"| XR-001 | тип | feature | P3 | 9 (0+4+1+0+4) | x |",
 		"| без-ид | ид | task | P3 | 9 (0+4+1+0+4) | x |",
 		"| XR-001 | нет разбивки | task | P3 | 9 | x |",
+		"| XR-001 | цена вне шкалы | task | P3 | 9 (0+4+1+0+4) | XXL | x |",
+		"| XR-001 | пустая цена | task | P3 | 9 (0+4+1+0+4) |  | x |",
 	}
 	for _, line := range bad {
-		if _, err := parseBoardRow(line); err == nil {
+		if _, _, err := parseBoardRow(line); err == nil {
 			t.Errorf("ожидал ошибку на %q", line)
 		}
 	}

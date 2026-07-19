@@ -155,8 +155,8 @@ func wrapLink(link string) string {
 }
 
 type AddParams struct {
-	ID, Title, Type, Rank, Link, Status, Reason string
-	Commit                                      CommitOpts
+	ID, Title, Type, Rank, Cost, Link, Status, Reason string
+	Commit                                            CommitOpts
 }
 
 func cmdAdd(root string, p AddParams) (string, error) {
@@ -195,6 +195,13 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	cost := p.Cost
+	if cost == "" {
+		cost = "-"
+	}
+	if err := checkCost(cost); err != nil {
+		return "", err
+	}
 	link := wrapLink(p.Link)
 	taskFile := ""
 	if link == "" {
@@ -223,7 +230,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if status == SectBlocked && strings.TrimSpace(p.Reason) != "" {
 		title += " [блок: " + p.Reason + "]"
 	}
-	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Link: link}
+	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost, Link: link}
 	if err := insertRowLine(b, sec, row, formatRow(row)); err != nil {
 		return "", err
 	}
@@ -306,16 +313,16 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 }
 
 type SetParams struct {
-	ID, Title, Type, Rank, Link string
-	Commit                      CommitOpts
+	ID, Title, Type, Rank, Cost, Link string
+	Commit                            CommitOpts
 }
 
 func cmdSet(root string, p SetParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
-	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Link == "" {
-		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank и/или --link")
+	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" {
+		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost и/или --link")
 	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
@@ -348,6 +355,15 @@ func cmdSet(root string, p SetParams) (string, error) {
 		if p.Type != row.Type {
 			changes = append(changes, fmt.Sprintf("тип %s -> %s", row.Type, p.Type))
 			row.Type = p.Type
+		}
+	}
+	if p.Cost != "" {
+		if err := checkCost(p.Cost); err != nil {
+			return "", err
+		}
+		if p.Cost != row.Cost {
+			changes = append(changes, fmt.Sprintf("цена %s -> %s", row.Cost, p.Cost))
+			row.Cost = p.Cost
 		}
 	}
 	if p.Link != "" {
@@ -547,7 +563,9 @@ func cmdSort(root string, c CommitOpts) (string, error) {
 		}
 		b.Lines[idxs[i]] = contents[i]
 	}
-	if changed == 0 {
+	// Разбор доски старого формата уже перевёл строки в памяти, sort тогда
+	// сохраняет файл даже без перестановок: это штатный способ миграции.
+	if changed == 0 && !b.Legacy {
 		return "Backlog уже отсортирован", nil
 	}
 	if err := b.Save(); err != nil {
@@ -556,6 +574,9 @@ func cmdSort(root string, c CommitOpts) (string, error) {
 	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
 	if err != nil {
 		return "", err
+	}
+	if changed == 0 {
+		return "доска переведена в формат с колонкой «Цена»" + tail, nil
 	}
 	return fmt.Sprintf("Backlog пересортирован, строк переставлено: %d%s", changed, tail), nil
 }

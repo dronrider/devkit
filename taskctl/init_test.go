@@ -82,11 +82,11 @@ func TestNextIDWithoutHeaderPrefix(t *testing.T) {
 	}
 	board := strings.Replace(fixtureBoard, "# Тест: доска (префикс XR)", "# Тест: доска", 1)
 	empty := []string{
-		"| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | [tasks/XR-005.md](tasks/XR-005.md) |",
-		"| XR-002 | Верхняя | bug | P1 | 55 (50+0+0+5+0) | [tasks/XR-002.md](tasks/XR-002.md) |",
-		"| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | (LLD позже) |",
-		"| XR-003 | Та же R, больший ID | LLD | P2 | 30 (25+3+2+0+0) | (LLD позже) |",
-		"| XR-004 | Хвост | task | P3 | 9 (0+4+1+0+4) | (LLD позже) |",
+		"| XR-005 | Задача в работе | task | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-005.md](tasks/XR-005.md) |",
+		"| XR-002 | Верхняя | bug | P1 | 55 (50+0+0+5+0) | - | [tasks/XR-002.md](tasks/XR-002.md) |",
+		"| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | - | (LLD позже) |",
+		"| XR-003 | Та же R, больший ID | LLD | P2 | 30 (25+3+2+0+0) | - | (LLD позже) |",
+		"| XR-004 | Хвост | task | P3 | 9 (0+4+1+0+4) | - | (LLD позже) |",
 	}
 	for _, ln := range empty {
 		board = strings.Replace(board, ln+"\n", "", 1)

@@ -25,8 +25,13 @@ var sectByPrefix = []struct{ prefix, key string }{
 }
 
 const (
-	tableHeader = "| ID | Задача | Тип | P | R | Ссылка |"
-	tableSep    = "|--------|--------|-----|---|---|--------|"
+	tableHeader = "| ID | Задача | Тип | P | R | Цена | Ссылка |"
+	tableSep    = "|--------|--------|-----|---|---|------|--------|"
+	// Доски, заведённые до колонки «Цена». Разбор принимает их и на лету
+	// переводит строки в новый формат, на диск перевод попадает вместе с
+	// первой изменяющей командой (см. cmdSort).
+	tableHeaderLegacy = "| ID | Задача | Тип | P | R | Ссылка |"
+	tableSepLegacy    = "|--------|--------|-----|---|---|--------|"
 )
 
 // Row это разобранная строка таблицы доски. Пока строку не меняли, в файл
@@ -41,6 +46,7 @@ type Row struct {
 	P       string
 	RTotal  int
 	RParts  [5]int
+	Cost    string
 	Link    string
 }
 
@@ -59,6 +65,7 @@ type Board struct {
 	Sects  map[string]*Section
 	Rows   []*Row
 	Prefix string // из шапки «(префикс XX)», пустой если пометки нет
+	Legacy bool   // файл был в формате без колонки «Цена»
 }
 
 var (
@@ -113,6 +120,10 @@ func parseLines(path string, lines []string) (*Board, error) {
 		case strings.HasPrefix(trimmed, "|"):
 			if cur.HeaderIdx == -1 {
 				cur.HeaderIdx = i
+				if trimmed == tableHeaderLegacy {
+					b.Lines[i] = tableHeader
+					b.Legacy = true
+				}
 				continue
 			}
 			if cur.SepIdx == -1 {
@@ -120,11 +131,18 @@ func parseLines(path string, lines []string) (*Board, error) {
 					return nil, fmt.Errorf("%s:%d: ожидался разделитель таблицы", path, i+1)
 				}
 				cur.SepIdx = i
+				if trimmed == tableSepLegacy {
+					b.Lines[i] = tableSep
+				}
 				continue
 			}
-			row, err := parseBoardRow(ln)
+			row, legacy, err := parseBoardRow(ln)
 			if err != nil {
 				return nil, fmt.Errorf("%s:%d: %v", path, i+1, err)
+			}
+			if legacy {
+				b.Lines[i] = formatRow(row)
+				b.Legacy = true
 			}
 			row.LineIdx = i
 			row.Sect = cur.Key
@@ -176,26 +194,35 @@ func splitCells(line string) ([]string, error) {
 	return cells, nil
 }
 
-func parseBoardRow(line string) (*Row, error) {
+// parseBoardRow разбирает строку таблицы; второй результат true для строки
+// старого формата без колонки «Цена», у неё цена берётся прочерком.
+func parseBoardRow(line string) (*Row, bool, error) {
 	cells, err := splitCells(line)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if len(cells) != 6 {
-		return nil, fmt.Errorf("ожидалось 6 колонок, получилось %d", len(cells))
+	legacy := len(cells) == 6
+	if len(cells) != 7 && !legacy {
+		return nil, false, fmt.Errorf("ожидалось 7 колонок (6 в досках без «Цены»), получилось %d", len(cells))
 	}
 	m := idRe.FindStringSubmatch(cells[0])
 	if m == nil {
-		return nil, fmt.Errorf("не разобран ID %q", cells[0])
+		return nil, false, fmt.Errorf("не разобран ID %q", cells[0])
 	}
 	num, _ := strconv.Atoi(m[2])
-	r := &Row{ID: cells[0], Num: num, Title: cells[1], Type: cells[2], P: cells[3], Link: cells[5]}
+	r := &Row{ID: cells[0], Num: num, Title: cells[1], Type: cells[2], P: cells[3], Cost: "-", Link: cells[len(cells)-1]}
+	if !legacy {
+		r.Cost = cells[5]
+		if err := checkCost(r.Cost); err != nil {
+			return nil, false, err
+		}
+	}
 	if err := checkType(r.Type); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	rm := rRe.FindStringSubmatch(cells[4])
 	if rm == nil {
-		return nil, fmt.Errorf("не разобрана колонка R %q, жду вид «N (а+б+в+г+д)»", cells[4])
+		return nil, false, fmt.Errorf("не разобрана колонка R %q, жду вид «N (а+б+в+г+д)»", cells[4])
 	}
 	r.RTotal, _ = strconv.Atoi(rm[1])
 	sum := 0
@@ -205,9 +232,19 @@ func parseBoardRow(line string) (*Row, error) {
 		sum += v
 	}
 	if sum != r.RTotal {
-		return nil, fmt.Errorf("R=%d не сходится с разбивкой, сумма слагаемых %d", r.RTotal, sum)
+		return nil, false, fmt.Errorf("R=%d не сходится с разбивкой, сумма слагаемых %d", r.RTotal, sum)
 	}
-	return r, nil
+	return r, legacy, nil
+}
+
+// checkCost проверяет колонку «Цена»: грубая оценка затрат агента на
+// исполнение, прочерк значит «не оценено».
+func checkCost(c string) error {
+	switch c {
+	case "-", "S", "M", "L", "XL":
+		return nil
+	}
+	return fmt.Errorf("цена %q не из шкалы S / M / L / XL («-» = не оценено)", c)
 }
 
 func checkType(t string) error {
@@ -237,7 +274,7 @@ func bucket(r int) string {
 func formatRow(r *Row) string {
 	rcell := fmt.Sprintf("%d (%d+%d+%d+%d+%d)",
 		r.RTotal, r.RParts[0], r.RParts[1], r.RParts[2], r.RParts[3], r.RParts[4])
-	return fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", r.ID, r.Title, r.Type, r.P, rcell, r.Link)
+	return fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |", r.ID, r.Title, r.Type, r.P, rcell, r.Cost, r.Link)
 }
 
 // parseRank разбирает разбивку ранга «а+б+в+г+д» и проверяет диапазоны

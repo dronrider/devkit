@@ -70,6 +70,20 @@ func write(t *testing.T, root, name, content string) {
 	}
 }
 
+// addRemote заводит bare-репозиторий как origin с отслеживанием main, чтобы
+// в тесте отработал `git push` без аргументов. Возвращает чтение истории
+// origin для проверки, что автопуш реально уехал.
+func addRemote(t *testing.T, root string) func() string {
+	t.Helper()
+	bare := t.TempDir()
+	gitT(t, bare, "init", "-q", "--bare", "-b", "main")
+	gitT(t, root, "remote", "add", "origin", bare)
+	gitT(t, root, "push", "-qu", "origin", "main")
+	return func() string {
+		return gitT(t, bare, "log", "main", "--format=%s")
+	}
+}
+
 func branchWithFix(t *testing.T, root string) {
 	t.Helper()
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
@@ -116,8 +130,9 @@ func TestMergeDeployFromConfig(t *testing.T) {
 		return err == nil
 	}
 
-	// autonomous=true: shipctl выкатывает сам.
+	// autonomous=true: shipctl выкатывает сам и пушит сам, без --push.
 	root, _ := setup(t, rowInProg, "")
+	remoteLog := addRemote(t, root)
 	branchWithFix(t, root)
 	write(t, root, ".devkit/deploy.local", "deploy = touch deployed.marker\nautonomous = true\n")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -126,6 +141,12 @@ func TestMergeDeployFromConfig(t *testing.T) {
 	}
 	if !deployed(root) || !strings.Contains(msg, "выкат прошёл") {
 		t.Fatalf("автономный выкат не отработал: %q", msg)
+	}
+	if !strings.Contains(msg, "запушено") {
+		t.Fatalf("автономный merge должен пушить сам: %q", msg)
+	}
+	if rl := remoteLog(); !strings.Contains(rl, "fix: XR-001 правка") || !strings.Contains(rl, "docs(tasks): XR-001 в Check") {
+		t.Fatalf("автопуш не уехал в origin:\n%s", rl)
 	}
 
 	// autonomous=false: команда есть, но катит пользователь, не shipctl.

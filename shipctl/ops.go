@@ -116,7 +116,7 @@ func cmdStatus(root string) (string, error) {
 	case cfg.Deploy == "":
 		out = append(out, "выкат: команды нет в "+deployConfigPath+", остаётся за пользователем")
 	case cfg.Autonomous:
-		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath)
+		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath+", merge катит и пушит сам")
 	default:
 		out = append(out, "выкат: за пользователем (autonomous=false), команда есть в "+deployConfigPath)
 	}
@@ -209,7 +209,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", p.ID, hash))
-	if p.Push {
+	// При autonomous=true пуш это часть автономного конвейера: без него origin
+	// отстал бы от задеплоенного прода и доски, а revert по ID не нашёл бы
+	// коммитов на origin.
+	if p.Push || deploy.autonomous {
 		if _, err := git(root, "push"); err != nil {
 			return "", err
 		}

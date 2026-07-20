@@ -60,24 +60,25 @@ func TestResolveDeploy(t *testing.T) {
 		}
 	}
 
-	// Явный флаг сильнее конфига и выполняется всегда.
-	writeCfg("deploy = from-config\nautonomous = false\n")
-	if p, _ := resolveDeploy(root, "from-flag"); p.run != "from-flag" {
+	// Явный флаг сильнее конфига и выполняется всегда; автопуш он не включает,
+	// пуш при явном --deploy остаётся за флагом --push.
+	writeCfg("deploy = from-config\nautonomous = true\n")
+	if p, _ := resolveDeploy(root, "from-flag"); p.run != "from-flag" || p.autonomous {
 		t.Fatalf("флаг не перебил конфиг: %+v", p)
 	}
-	// autonomous=true: команду из конфига катим сами.
+	// autonomous=true: команду из конфига катим сами и пушим сами.
 	writeCfg("deploy = from-config\nautonomous = true\n")
-	if p, _ := resolveDeploy(root, ""); p.run != "from-config" {
+	if p, _ := resolveDeploy(root, ""); p.run != "from-config" || !p.autonomous {
 		t.Fatalf("автономная команда не подхвачена: %+v", p)
 	}
 	// autonomous=false с командой: выкат за пользователем, но команда названа.
 	writeCfg("deploy = from-config\nautonomous = false\n")
-	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual == "" {
+	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual == "" || p.autonomous {
 		t.Fatalf("при autonomous=false команду катить нельзя: %+v", p)
 	}
-	// Команды нет вовсе: плейбук проекта.
+	// Команды нет вовсе: плейбук проекта, но автономия всё равно включает пуш.
 	writeCfg("autonomous = true\n")
-	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual != "" {
-		t.Fatalf("без команды выката ждал пустой план: %+v", p)
+	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual != "" || !p.autonomous {
+		t.Fatalf("без команды выката ждал пустой план с автономией: %+v", p)
 	}
 }

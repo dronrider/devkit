@@ -59,15 +59,19 @@ func loadDeployConfig(root string) (deployConfig, error) {
 // deployPlan разводит два исхода: run это команда, которую shipctl выполнит
 // сам, manual это пояснение, почему выкат остаётся за пользователем (команда
 // в конфиге есть, но автономия выключена). Оба пустые значат «плейбук проекта».
+// autonomous поднят, когда проект доверил агенту весь конвейер: тогда merge и
+// пушит результат сам, чтобы origin, доска и прод не разошлись.
 type deployPlan struct {
-	run    string
-	manual string
+	run        string
+	manual     string
+	autonomous bool
 }
 
 // resolveDeploy решает, что делать с выкатом. Явный --deploy это указание
-// пользователя прямо сейчас, выполняется всегда. Без флага смотрим конфиг:
-// команду катим сами только при autonomous=true, иначе оставляем её
-// пользователю, показав, что именно запускать.
+// пользователя прямо сейчас, выполняется всегда (пуш тогда за пользователем,
+// по флагу --push). Без флага смотрим конфиг: команду катим сами только при
+// autonomous=true, иначе оставляем её пользователю, показав, что именно
+// запускать.
 func resolveDeploy(root, flag string) (deployPlan, error) {
 	if flag != "" {
 		return deployPlan{run: flag}, nil
@@ -76,14 +80,16 @@ func resolveDeploy(root, flag string) (deployPlan, error) {
 	if err != nil {
 		return deployPlan{}, err
 	}
+	plan := deployPlan{autonomous: cfg.Autonomous}
 	switch {
 	case cfg.Deploy == "":
-		return deployPlan{}, nil
+		// Команды нет: выкат по плейбуку проекта, план пустой.
 	case cfg.Autonomous:
-		return deployPlan{run: cfg.Deploy}, nil
+		plan.run = cfg.Deploy
 	default:
-		return deployPlan{manual: "команда в " + deployConfigPath + ", autonomous=false"}, nil
+		plan.manual = "команда в " + deployConfigPath + ", autonomous=false"
 	}
+	return plan, nil
 }
 
 // unquote снимает одну окружающую пару кавычек, если значение целиком в них

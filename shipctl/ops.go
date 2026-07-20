@@ -108,17 +108,21 @@ func cmdStatus(root string) (string, error) {
 	} else {
 		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", rows[0].ID))
 	}
-	cfg, err := loadDeployConfig(root)
+	// Решение по выкату берётся из resolveDeploy, а не из сырого конфига:
+	// иначе status и merge разъезжаются, как только логика меняется.
+	plan, err := resolveDeploy(root, "")
 	if err != nil {
 		return "", err
 	}
 	switch {
-	case cfg.Deploy == "":
-		out = append(out, "выкат: команды нет в "+deployConfigPath+", остаётся за пользователем")
-	case cfg.Autonomous:
+	case plan.run != "":
 		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath+", merge катит и пушит сам")
-	default:
+	case plan.manual != "":
 		out = append(out, "выкат: за пользователем (autonomous=false), команда есть в "+deployConfigPath)
+	case plan.autonomous:
+		out = append(out, "выкат: по плейбуку проекта, команды нет в "+deployConfigPath+", но merge автономный и пушит сам")
+	default:
+		out = append(out, "выкат: команды нет в "+deployConfigPath+", остаётся за пользователем")
 	}
 	return strings.Join(out, "\n"), nil
 }
@@ -167,6 +171,15 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", fmt.Errorf("в ревью %s замечания без исхода, сначала закрыть их в docs/tasks/%s.md:\n%s",
 			p.ID, p.ID, strings.Join(open, "\n"))
 	}
+	// Конфиг выката и свежесть main проверяются до ребейза: ошибка после
+	// прогона тестов и слияния стоила бы куда дороже, чем сейчас.
+	deploy, err := resolveDeploy(root, p.Deploy)
+	if err != nil {
+		return "", err
+	}
+	if err := freshMain(root, main); err != nil {
+		return "", err
+	}
 	var warn string
 	if subjects, err := git(root, "log", main+"..HEAD", "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
 		warn = fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject, revert по ID их не найдёт\n", p.ID)
@@ -186,20 +199,24 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	git(root, "branch", "-d", branch)
 	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward, ветка %s удалена", p.ID, main, branch)}
-	deploy, err := resolveDeploy(root, p.Deploy)
-	if err != nil {
-		return "", err
-	}
-	// При autonomous=true пуш это часть автономного конвейера: без него origin
-	// отстал бы от задеплоенного прода и доски, а revert по ID не нашёл бы
-	// коммитов на origin. Код пушится до выката: сервер, который тянет из
-	// origin, должен увидеть свежий main, иначе задеплоит ещё не запушенное.
-	push := p.Push || deploy.autonomous
-	if push {
-		if _, err := git(root, "push"); err != nil {
-			return "", err
+	// При autonomous=true пуш это часть автономного конвейера, иначе origin
+	// отстал бы от задеплоенного прода, а revert по ID не нашёл бы коммитов.
+	// Код пушится до выката: pull-выкат тянет код с origin, и без свежего
+	// пуша туда уехала бы прошлая версия. Ошибка пуша называет, что уже
+	// сделано: слияние к этому моменту необратимо.
+	push := func(note, failed string) error {
+		if !p.Push && !deploy.autonomous {
+			return nil
 		}
-		msg = append(msg, "код запушен")
+		if _, err := git(root, "push"); err != nil {
+			return fmt.Errorf("%s: %v", failed, err)
+		}
+		msg = append(msg, note)
+		return nil
+	}
+	if err := push("код запушен",
+		fmt.Sprintf("%s слита в %s, ветка удалена, но пуш не прошёл, выкат не запускался", p.ID, main)); err != nil {
+		return "", err
 	}
 	switch {
 	case deploy.run != "":
@@ -220,14 +237,29 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", p.ID, hash))
-	if push {
-		if _, err := git(root, "push"); err != nil {
-			return "", err
-		}
-		msg = append(msg, "доска запушена")
+	if err := push("доска запушена",
+		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
+		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
 	return strings.Join(msg, "\n"), nil
+}
+
+// freshMain ловит отставший клон до необратимых шагов слияния: на origin
+// доска могла уехать вперёд (например, другая машина поставила задачу в
+// Check), а локальная копия об этом не знает. Без origin проверки нет,
+// локальный проект сверять не с чем.
+func freshMain(root, main string) error {
+	if _, err := git(root, "config", "--get", "remote.origin.url"); err != nil {
+		return nil
+	}
+	if out, err := git(root, "fetch", "origin", main); err != nil {
+		return fmt.Errorf("git fetch origin не прошёл, состояние origin неизвестно:\n%s", tail(out))
+	}
+	if _, err := git(root, "merge-base", "--is-ancestor", "origin/"+main, main); err != nil {
+		return fmt.Errorf("локальный %s отстал от origin/%s, сначала подтянуть его (git pull --rebase)", main, main)
+	}
+	return nil
 }
 
 type RevertParams struct {
@@ -344,7 +376,38 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 			return "", fmt.Errorf("тесты после отката красные:\n%s", tail(out))
 		}
 	}
+	// Автономия действует и на аварийном пути, здесь она нужнее всего: без
+	// пуша отката повторный pull-выкат утащил бы с origin как раз тот код,
+	// который только что откатили.
+	plan, err := resolveDeploy(root, "")
+	if err != nil {
+		return "", err
+	}
 	out := []string{fmt.Sprintf("откачено коммитов: %d (%s)", len(shas), strings.Join(short, ", "))}
+	push := func(note, failed string) error {
+		if !p.Push && !plan.autonomous {
+			return nil
+		}
+		if _, err := git(root, "push"); err != nil {
+			return fmt.Errorf("%s: %v", failed, err)
+		}
+		out = append(out, note)
+		return nil
+	}
+	if err := push("откат запушен", "откат закоммичен, но пуш не прошёл, повторный выкат не запускался"); err != nil {
+		return "", err
+	}
+	switch {
+	case plan.run != "":
+		if o, err := runShell(root, plan.run); err != nil {
+			return "", fmt.Errorf("откат закоммичен, но повторный выкат упал:\n%s", tail(o))
+		}
+		out = append(out, "повторный выкат прошёл")
+	case plan.manual != "":
+		out = append(out, "повторный выкат за пользователем ("+plan.manual+")")
+	default:
+		out = append(out, "прод чинится выкатом откатанного "+main+" по плейбуку проекта")
+	}
 	if b, err := loadBoard(root); err == nil && b.sectOf(p.ID) != "" && b.sectOf(p.ID) != "in-progress" {
 		if _, err := taskMove(root, p.ID, "in-progress"); err != nil {
 			return "", err
@@ -355,12 +418,8 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		}
 		out = append(out, fmt.Sprintf("доска: %s обратно в In progress, коммит %s", p.ID, hash))
 	}
-	if p.Push {
-		if _, err := git(root, "push"); err != nil {
-			return "", err
-		}
-		out = append(out, "запушено")
+	if err := push("доска запушена", "откат и повторный выкат прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
+		return "", err
 	}
-	out = append(out, "прод чинится выкатом откатанного "+main+" по плейбуку проекта")
 	return strings.Join(out, "\n"), nil
 }

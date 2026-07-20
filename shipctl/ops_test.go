@@ -71,17 +71,15 @@ func write(t *testing.T, root, name, content string) {
 }
 
 // addRemote заводит bare-репозиторий как origin с отслеживанием main, чтобы
-// в тесте отработал `git push` без аргументов. Возвращает чтение истории
-// origin для проверки, что автопуш реально уехал.
-func addRemote(t *testing.T, root string) func() string {
+// в тесте отработал `git push` без аргументов. Возвращает путь bare: по нему
+// проверяется история origin и имитируется работа с другой машины.
+func addRemote(t *testing.T, root string) string {
 	t.Helper()
 	bare := t.TempDir()
 	gitT(t, bare, "init", "-q", "--bare", "-b", "main")
 	gitT(t, root, "remote", "add", "origin", bare)
 	gitT(t, root, "push", "-qu", "origin", "main")
-	return func() string {
-		return gitT(t, bare, "log", "main", "--format=%s")
-	}
+	return bare
 }
 
 func branchWithFix(t *testing.T, root string) {
@@ -134,7 +132,7 @@ func TestMergeDeployFromConfig(t *testing.T) {
 	// выката сверяет origin/main с main: маркер появится, только если код уже
 	// запушен на момент деплоя (пуш кода идёт до выката, сервер тянет из origin).
 	root, _ := setup(t, rowInProg, "")
-	remoteLog := addRemote(t, root)
+	bare := addRemote(t, root)
 	branchWithFix(t, root)
 	write(t, root, ".devkit/deploy.local",
 		"deploy = test \"$(git rev-parse origin/main)\" = \"$(git rev-parse main)\" && touch deployed.marker\nautonomous = true\n")
@@ -148,7 +146,7 @@ func TestMergeDeployFromConfig(t *testing.T) {
 	if !strings.Contains(msg, "код запушен") || !strings.Contains(msg, "доска запушена") {
 		t.Fatalf("автономный merge должен пушить код и доску сам: %q", msg)
 	}
-	if rl := remoteLog(); !strings.Contains(rl, "fix: XR-001 правка") || !strings.Contains(rl, "docs(tasks): XR-001 в Check") {
+	if rl := gitT(t, bare, "log", "main", "--format=%s"); !strings.Contains(rl, "fix: XR-001 правка") || !strings.Contains(rl, "docs(tasks): XR-001 в Check") {
 		t.Fatalf("автопуш не уехал в origin:\n%s", rl)
 	}
 
@@ -176,6 +174,35 @@ func TestMergeDeployFromConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "config.marker")); err == nil {
 		t.Fatal("при явном --deploy команда конфига не должна запускаться")
+	}
+}
+
+// TestMergeStaleMain: отставший от origin клон отсекается до слияния. Доска
+// на origin уехала вперёд (другая машина поставила задачу в Check), и merge
+// на такой копии обязан упасть, не тронув ни main, ни фичеветку.
+func TestMergeStaleMain(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	branchWithFix(t, root)
+	tmp := t.TempDir()
+	gitT(t, tmp, "clone", "-q", bare, "other")
+	other := filepath.Join(tmp, "other")
+	gitT(t, other, "config", "user.email", "test@test")
+	gitT(t, other, "config", "user.name", "test")
+	write(t, other, "docs/TASKS.md", "<!-- другая машина двинула доску -->\n")
+	gitT(t, other, "add", ".")
+	gitT(t, other, "commit", "-qm", "docs(tasks): XR-009 в Check")
+	gitT(t, other, "push", "-q")
+
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "отстал") {
+		t.Fatalf("ждал отказ на отставшем main: %v", err)
+	}
+	if gitT(t, root, "branch", "--list", "xr-001-fix") == "" {
+		t.Fatal("фичеветка тронута, отказ должен идти до слияния")
+	}
+	if br := gitT(t, root, "rev-parse", "--abbrev-ref", "HEAD"); br != "xr-001-fix" {
+		t.Fatalf("после отказа стоим на %q", br)
 	}
 }
 
@@ -256,6 +283,16 @@ func TestStatus(t *testing.T) {
 	if !strings.Contains(msg, "очередь занята: XR-001") {
 		t.Fatalf("status с занятой очередью:\n%s", msg)
 	}
+	// Автономия без команды выката: merge всё равно будет пушить сам, и
+	// status обязан об этом предупредить, а не выглядеть чисто ручным.
+	write(t, root, ".devkit/deploy.local", "autonomous = true\n")
+	msg, err = cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "пушит сам") {
+		t.Fatalf("status молчит про автопуш без команды выката:\n%s", msg)
+	}
 }
 
 func TestRevert(t *testing.T) {
@@ -296,6 +333,36 @@ func TestRevert(t *testing.T) {
 	if _, err := cmdRevert(root, RevertParams{ID: "XR-001"}); err == nil ||
 		!strings.Contains(err.Error(), "откатывать нечего") {
 		t.Fatalf("повторный revert должен отбиваться: %v", err)
+	}
+}
+
+// TestRevertAutonomous: аварийный путь в автономном режиме симметричен merge.
+// Revert пушит откат до повторного выката (команда выката сверяет origin/main
+// с main, маркер появится только на свежем origin) и пушит доску следом.
+func TestRevertAutonomous(t *testing.T) {
+	root, _ := setup(t, "", rowInProg) // задача в Check
+	bare := addRemote(t, root)
+	write(t, root, "code.txt", "broken\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: XR-001 фича")
+	gitT(t, root, "push", "-q")
+	write(t, root, ".devkit/deploy.local",
+		"deploy = test \"$(git rev-parse origin/main)\" = \"$(git rev-parse main)\" && touch redeployed.marker\nautonomous = true\n")
+
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "redeployed.marker")); err != nil {
+		t.Fatalf("повторный выкат до пуша отката или не отработал: %q", msg)
+	}
+	if !strings.Contains(msg, "откат запушен") || !strings.Contains(msg, "повторный выкат прошёл") ||
+		!strings.Contains(msg, "доска запушена") {
+		t.Fatalf("автономный revert должен пушить и катить сам: %q", msg)
+	}
+	rl := gitT(t, bare, "log", "main", "--format=%s")
+	if !strings.Contains(rl, "revert: XR-001 откат") || !strings.Contains(rl, "обратно в In progress") {
+		t.Fatalf("откат и доска не уехали в origin:\n%s", rl)
 	}
 }
 

@@ -190,6 +190,17 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// При autonomous=true пуш это часть автономного конвейера: без него origin
+	// отстал бы от задеплоенного прода и доски, а revert по ID не нашёл бы
+	// коммитов на origin. Код пушится до выката: сервер, который тянет из
+	// origin, должен увидеть свежий main, иначе задеплоит ещё не запушенное.
+	push := p.Push || deploy.autonomous
+	if push {
+		if _, err := git(root, "push"); err != nil {
+			return "", err
+		}
+		msg = append(msg, "код запушен")
+	}
 	switch {
 	case deploy.run != "":
 		if out, err := runShell(root, deploy.run); err != nil {
@@ -209,14 +220,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", p.ID, hash))
-	// При autonomous=true пуш это часть автономного конвейера: без него origin
-	// отстал бы от задеплоенного прода и доски, а revert по ID не нашёл бы
-	// коммитов на origin.
-	if p.Push || deploy.autonomous {
+	if push {
 		if _, err := git(root, "push"); err != nil {
 			return "", err
 		}
-		msg = append(msg, "запушено")
+		msg = append(msg, "доска запушена")
 	}
 	msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
 	return strings.Join(msg, "\n"), nil

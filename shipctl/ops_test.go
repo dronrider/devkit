@@ -130,20 +130,23 @@ func TestMergeDeployFromConfig(t *testing.T) {
 		return err == nil
 	}
 
-	// autonomous=true: shipctl выкатывает сам и пушит сам, без --push.
+	// autonomous=true: shipctl выкатывает сам и пушит сам, без --push. Команда
+	// выката сверяет origin/main с main: маркер появится, только если код уже
+	// запушен на момент деплоя (пуш кода идёт до выката, сервер тянет из origin).
 	root, _ := setup(t, rowInProg, "")
 	remoteLog := addRemote(t, root)
 	branchWithFix(t, root)
-	write(t, root, ".devkit/deploy.local", "deploy = touch deployed.marker\nautonomous = true\n")
+	write(t, root, ".devkit/deploy.local",
+		"deploy = test \"$(git rev-parse origin/main)\" = \"$(git rev-parse main)\" && touch deployed.marker\nautonomous = true\n")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !deployed(root) || !strings.Contains(msg, "выкат прошёл") {
-		t.Fatalf("автономный выкат не отработал: %q", msg)
+		t.Fatalf("автономный выкат до пуша кода или не отработал: %q", msg)
 	}
-	if !strings.Contains(msg, "запушено") {
-		t.Fatalf("автономный merge должен пушить сам: %q", msg)
+	if !strings.Contains(msg, "код запушен") || !strings.Contains(msg, "доска запушена") {
+		t.Fatalf("автономный merge должен пушить код и доску сам: %q", msg)
 	}
 	if rl := remoteLog(); !strings.Contains(rl, "fix: XR-001 правка") || !strings.Contains(rl, "docs(tasks): XR-001 в Check") {
 		t.Fatalf("автопуш не уехал в origin:\n%s", rl)

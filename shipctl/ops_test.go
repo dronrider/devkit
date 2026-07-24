@@ -495,12 +495,106 @@ func TestRevertFromTrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	train, err := trainTasks(root, "main", b)
+	train, _, err := trainTasks(root, "main", b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(train) != 1 || train[0] != "XR-001" {
 		t.Fatalf("после отката в поезде должна остаться одна XR-001: %v", train)
+	}
+}
+
+// TestTrainTagPushed: тег deployed уезжает в origin и при поездном слиянии
+// (иначе вторая машина не видит поезда и одиночный merge там увезёт чужие
+// правки), и при ship, уже сдвинутым на выкаченный main.
+func TestTrainTagPushed(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	bare := addRemote(t, root)
+	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = true\n")
+
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err == nil {
+		t.Fatal("merge --train не должен катить выкат даже при autonomous=true")
+	}
+	if gitT(t, bare, "rev-parse", "deployed") != gitT(t, root, "rev-parse", "deployed") {
+		t.Fatal("тег после merge --train не уехал в origin")
+	}
+
+	msg, err := cmdShip(root, ShipParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err != nil {
+		t.Fatalf("автономный ship не выкатил: %q", msg)
+	}
+	if gitT(t, bare, "rev-parse", "deployed") != gitT(t, root, "rev-parse", "deployed") {
+		t.Fatal("сдвинутый тег после ship не уехал в origin")
+	}
+	if !strings.Contains(msg, "код запушен") || !strings.Contains(msg, "доска запушена") {
+		t.Fatalf("автономный ship должен пушить сам: %q", msg)
+	}
+}
+
+// TestTrainStray: задача с кодом в окне выката, выведенная руками из
+// In progress, останавливает и merge, и ship: иначе её непроверенный код
+// уехал бы на прод без Check.
+func TestTrainStray(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Задачу увели в Blocked мимо shipctl.
+	data, _ := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
+	moved := strings.Replace(string(data),
+		"## Blocked\n\nНет.\n", "## Blocked\n\n"+section(rowInProg), 1)
+	moved = strings.Replace(moved, boardTable+rowInProg, boardTable, 1)
+	write(t, root, "docs/TASKS.md", moved)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): руками в Blocked")
+
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "не в In progress") {
+		t.Fatalf("ship с осиротевшей задачей должен отбиваться: %v", err)
+	}
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err == nil ||
+		!strings.Contains(err.Error(), "не в In progress") {
+		t.Fatalf("merge с осиротевшей задачей должен отбиваться: %v", err)
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "аномалия") {
+		t.Fatalf("status молчит про осиротевшую задачу:\n%s", st)
+	}
+}
+
+// TestTrainRevertCustomMsg: откат с кастомным -m (белый список префиксов)
+// распознаётся по слову «откат», задача выбывает из поезда.
+func TestTrainRevertCustomMsg(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdRevert(root, RevertParams{ID: "XR-001", Msg: "fix: XR-001 откат правки"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	train, strays, err := trainTasks(root, "main", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(train) != 0 || len(strays) != 0 {
+		t.Fatalf("после отката поезд должен опустеть: train=%v strays=%v", train, strays)
 	}
 }
 

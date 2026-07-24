@@ -103,14 +103,17 @@ func cmdStatus(root string) (string, error) {
 		}
 	}
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
-	var train []string
+	var train, strays []string
 	if main, err := mainBranch(root); err == nil {
-		if train, err = trainTasks(root, main, b); err != nil {
+		if train, strays, err = trainTasks(root, main, b); err != nil {
 			return "", err
 		}
 	}
 	if len(train) > 0 {
 		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
+	}
+	if len(strays) > 0 {
+		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strings.Join(strays, ", ")+"); merge и ship будут отказывать, пока не разобрано")
 	}
 	if rows := b.sects["check"]; len(rows) == 0 {
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
@@ -142,41 +145,88 @@ func cmdStatus(root string) (string, error) {
 // пометка. Тег двигает cmdShip; пока тега нет, поезд не заводился.
 const deployTag = "deployed"
 
+func hasTag(root string) bool {
+	_, err := git(root, "rev-parse", "--verify", deployTag)
+	return err == nil
+}
+
+// pushTag отправляет тег точки выката вместе с обычным пушем: без него вторая
+// машина считает уже выкаченное всё ещё стоящим в поезде. -f, потому что тег
+// двигается с каждым выкатом. Без origin и без тега пушить нечего.
+func pushTag(root string) error {
+	if !hasTag(root) {
+		return nil
+	}
+	if _, err := git(root, "config", "--get", "remote.origin.url"); err != nil {
+		return nil
+	}
+	if out, err := git(root, "push", "-f", "origin", deployTag); err != nil {
+		return fmt.Errorf("тег %s не запушен (%s), повторить: git push -f origin %s", deployTag, out, deployTag)
+	}
+	return nil
+}
+
+// isRevertSubject распознаёт коммит-откат: штатное «revert: ...» либо своё
+// сообщение со словом «откат» (конвенция для проектов с белым списком
+// префиксов, см. README). Задача, чей новейший коммит с её ID это откат, из
+// поезда выбыла.
+func isRevertSubject(subj string) bool {
+	low := strings.ToLower(subj)
+	return strings.HasPrefix(low, "revert") || strings.Contains(low, "откат")
+}
+
 // trainTasks собирает поезд: задачи из In progress, чьи коммиты кода слиты в
 // main после точки последнего выката. Коммиты только по доске и файлам задач
-// членства не дают (запись «в работу» это не код), а задача, чей новейший
-// коммит с её ID это revert, из поезда выбыла.
-func trainTasks(root, main string, b *board) ([]string, error) {
-	if _, err := git(root, "rev-parse", "--verify", deployTag); err != nil {
-		return nil, nil
+// членства не дают (запись «в работу» это не код). Вторым списком приходят
+// осиротевшие задачи: код в окне выката есть, а строка ушла из In progress
+// (руками в Blocked, обратно в Backlog, в Check мимо ship). Такую аномалию
+// вызывающие не везут на прод молча, а поднимают как ошибку.
+func trainTasks(root, main string, b *board) (train, strays []string, err error) {
+	if !hasTag(root) {
+		return nil, nil, nil
 	}
 	log, err := git(root, "log", deployTag+".."+main, "--format=%H%x09%s")
 	if err != nil || log == "" {
-		return nil, err
+		return nil, nil, err
 	}
 	lines := strings.Split(log, "\n") // новые первыми
-	var train []string
-	for _, r := range b.sects["in-progress"] {
+	inWindow := func(id string) (bool, error) {
 		for _, ln := range lines {
 			sha, subj, ok := strings.Cut(ln, "\t")
-			if !ok || !containsWord(subj, r.ID) {
+			if !ok || !containsWord(subj, id) {
 				continue
 			}
-			if strings.HasPrefix(strings.ToLower(subj), "revert") {
-				break
+			if isRevertSubject(subj) {
+				return false, nil
 			}
 			files, err := git(root, "show", "--name-only", "--pretty=", sha)
 			if err != nil {
-				return nil, err
+				return false, err
 			}
 			if boardOnly(files) {
 				continue
 			}
-			train = append(train, r.ID)
-			break
+			return true, nil
+		}
+		return false, nil
+	}
+	for _, sect := range []string{"in-progress", "check", "blocked", "backlog"} {
+		for _, r := range b.sects[sect] {
+			ok, err := inWindow(r.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !ok {
+				continue
+			}
+			if sect == "in-progress" {
+				train = append(train, r.ID)
+			} else {
+				strays = append(strays, r.ID+" в "+sect)
+			}
 		}
 	}
-	return train, nil
+	return train, strays, nil
 }
 
 type MergeParams struct {
@@ -221,9 +271,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
 	// правки, а в Check перевёл только свою задачу: инвариант ломается молча.
-	train, err := trainTasks(root, main, b)
+	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
 		return "", err
+	}
+	if len(strays) > 0 {
+		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strings.Join(strays, ", "))
 	}
 	if !p.Train && len(train) > 0 {
 		return "", fmt.Errorf("в поезде %s, одиночный выкат смешал бы их со своей задачей: либо merge --train, либо сначала shipctl ship", strings.Join(train, ", "))
@@ -289,6 +342,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		if _, err := git(root, "push"); err != nil {
 			return fmt.Errorf("%s: %v", failed, err)
 		}
+		if err := pushTag(root); err != nil {
+			return err
+		}
 		msg = append(msg, note)
 		return nil
 	}
@@ -298,12 +354,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	// Поездное слияние на этом заканчивается: задача остаётся в In progress,
 	// доска не трогается, выкат и перевод в Check делает cmdShip на весь поезд.
+	// Пересчёт состава здесь чисто информационный, слияние уже необратимо, и
+	// его ошибка не должна хоронить отчёт о том, что реально сделано.
 	if p.Train {
-		now, err := trainTasks(root, main, b)
-		if err != nil {
-			return "", err
+		if now, _, err := trainTasks(root, main, b); err == nil {
+			msg = append(msg, fmt.Sprintf("в поезде: %s; выкат поезда: shipctl ship", strings.Join(now, ", ")))
+		} else {
+			msg = append(msg, fmt.Sprintf("в поезде (состав не пересчитался: %v); выкат поезда: shipctl ship", err))
 		}
-		msg = append(msg, fmt.Sprintf("в поезде: %s; выкат поезда: shipctl ship", strings.Join(now, ", ")))
 		return strings.Join(msg, "\n"), nil
 	}
 	switch {
@@ -316,6 +374,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		msg = append(msg, "выкат за пользователем ("+deploy.manual+")")
 	default:
 		msg = append(msg, "выкат за пользователем, по плейбуку проекта")
+	}
+	// Одиночный выкат это тоже точка последнего выката: если проект уже живёт
+	// с поездами (тег есть), тег двигается и здесь, иначе окно поезда тащило
+	// бы за собой давно выкаченные и закрытые задачи.
+	if hasTag(root) {
+		if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+			return "", err
+		}
 	}
 	if _, err := taskMove(root, p.ID, "check"); err != nil {
 		return "", fmt.Errorf("слито, но доска не переведена: %v", err)
@@ -357,9 +423,12 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if rows := b.sects["check"]; len(rows) > 0 {
 		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", rows[0].ID)
 	}
-	train, err := trainTasks(root, main, b)
+	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
 		return "", err
+	}
+	if len(strays) > 0 {
+		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strings.Join(strays, ", "))
 	}
 	if len(train) == 0 {
 		return "", fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)")
@@ -373,18 +442,13 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	list := strings.Join(train, ", ")
 	var msg []string
+	doPush := p.Push || deploy.autonomous
 	push := func(note, failed string) error {
-		if !p.Push && !deploy.autonomous {
+		if !doPush {
 			return nil
 		}
 		if _, err := git(root, "push"); err != nil {
 			return fmt.Errorf("%s: %v", failed, err)
-		}
-		// Тег едет следом за тем же пушем: без него вторая машина посчитала
-		// бы уже выкаченное всё ещё стоящим в поезде. -f, потому что тег
-		// двигается с каждым выкатом.
-		if _, err := git(root, "push", "-f", "origin", deployTag); err != nil {
-			msg = append(msg, "тег "+deployTag+" не запушен, повторить: git push -f origin "+deployTag)
 		}
 		msg = append(msg, note)
 		return nil
@@ -403,10 +467,19 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	default:
 		msg = append(msg, fmt.Sprintf("поезд собран (%s), выкат за пользователем, по плейбуку проекта", list))
 	}
-	// Тег двигается в момент, когда выкат запущен или передан пользователю:
-	// поезд с этого места пуст, следующий копится заново.
+	// Тег двигается в момент, когда выкат запущен или передан пользователю
+	// (поезд с этого места пуст, следующий копится заново), и пушится сразу
+	// за сдвигом, до правок доски: упади дальше что угодно, вторая машина уже
+	// не посчитает выкаченный поезд стоящим и не выкатит его повторно.
 	if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
 		return "", err
+	}
+	if doPush {
+		if err := pushTag(root); err != nil {
+			return "", err
+		}
+	} else {
+		msg = append(msg, "тег "+deployTag+" сдвинут локально, при пуше руками добавить: git push -f origin "+deployTag)
 	}
 	for _, id := range train {
 		if _, err := taskMove(root, id, "check"); err != nil {
@@ -531,14 +604,20 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	}
 	// Задача из невыкаченного поезда до прода не доехала: откат нужен только в
 	// git, а повторный выкат увёз бы на прод остальной поезд раньше времени.
-	// Считается до коммита-отката, после него задача из поезда уже выбыла.
+	// Считается до коммита-отката (после него задача из поезда уже выбыла), и
+	// ошибки здесь не глотаются: это защитный контур, fail-open на аварийном
+	// пути кончился бы как раз преждевременным выкатом.
 	inTrain := false
-	if b, err := loadBoard(root); err == nil {
-		if tr, err := trainTasks(root, main, b); err == nil {
-			for _, id := range tr {
-				inTrain = inTrain || id == p.ID
-			}
-		}
+	bTrain, err := loadBoard(root)
+	if err != nil {
+		return "", err
+	}
+	tr, _, err := trainTasks(root, main, bTrain)
+	if err != nil {
+		return "", err
+	}
+	for _, id := range tr {
+		inTrain = inTrain || id == p.ID
 	}
 	// Откат одним коммитом: последовательность revert-коммитов на середине
 	// умеет падать в конфликт и оставлять прод полупочиненным.
@@ -583,6 +662,9 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		if _, err := git(root, "push"); err != nil {
 			return fmt.Errorf("%s: %v", failed, err)
 		}
+		if err := pushTag(root); err != nil {
+			return err
+		}
 		out = append(out, note)
 		return nil
 	}
@@ -601,6 +683,13 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		out = append(out, "повторный выкат за пользователем ("+plan.manual+")")
 	default:
 		out = append(out, "прод чинится выкатом откатанного "+main+" по плейбуку проекта")
+	}
+	// Повторный выкат это тоже точка выката, тег двигается как в merge и ship.
+	// У задачи из поезда прод не менялся, тег стоит где стоял.
+	if !inTrain && hasTag(root) {
+		if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+			return "", err
+		}
 	}
 	if b, err := loadBoard(root); err == nil && b.sectOf(p.ID) != "" && b.sectOf(p.ID) != "in-progress" {
 		if _, err := taskMove(root, p.ID, "in-progress"); err != nil {

@@ -598,6 +598,38 @@ func TestTrainStray(t *testing.T) {
 	}
 }
 
+// TestShipTagPushRejected: провал пуша тега (например, хук origin запрещает
+// форс-пуш тегов) не роняет ship: доска доводится до Check и прикрывает
+// вторую машину занятой очередью, напоминание про тег уходит в отчёт.
+func TestShipTagPushRejected(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = true\n")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, bare, "hooks/pre-receive",
+		"#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/tags/*) exit 1;; esac; done\nexit 0\n")
+	if err := os.Chmod(filepath.Join(bare, "hooks", "pre-receive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdShip(root, ShipParams{})
+	if err != nil {
+		t.Fatalf("ship должен пережить провал пуша тега: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err != nil {
+		t.Fatalf("выкат не отработал: %q", msg)
+	}
+	if !strings.Contains(msg, "не запушен") || !strings.Contains(msg, "git push -f origin deployed") {
+		t.Fatalf("нет напоминания про тег: %q", msg)
+	}
+	calls, _ := os.ReadFile(callLog)
+	if !strings.Contains(string(calls), "move XR-001 check") {
+		t.Fatalf("доска не доведена до Check: %q", calls)
+	}
+}
+
 // TestTrainRevertCustomMsg: откат с кастомным -m (белый список префиксов)
 // распознаётся по слову «откат», задача выбывает из поезда.
 func TestTrainRevertCustomMsg(t *testing.T) {

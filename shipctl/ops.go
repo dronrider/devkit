@@ -104,7 +104,8 @@ func cmdStatus(root string) (string, error) {
 		}
 	}
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
-	var train, strays []string
+	var train []string
+	var strays []stray
 	if main, err := mainBranch(root); err == nil {
 		if train, strays, err = trainTasks(root, main, b); err != nil {
 			return "", err
@@ -114,7 +115,7 @@ func cmdStatus(root string) (string, error) {
 		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
 	}
 	if len(strays) > 0 {
-		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strings.Join(strays, ", ")+"); merge и ship будут отказывать, пока не разобрано")
+		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strayList(strays)+"); merge и ship будут отказывать, пока не разобрано")
 	}
 	if rows := b.sects["check"]; len(rows) == 0 {
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
@@ -186,13 +187,24 @@ func isRevertSubject(subj string) bool {
 	return false
 }
 
+// stray это осиротевшая задача: код в окне выката есть, а строка ушла из
+// In progress (руками в Blocked, обратно в Backlog, в Check мимо ship).
+type stray struct{ ID, Sect string }
+
+func strayList(ss []stray) string {
+	var parts []string
+	for _, s := range ss {
+		parts = append(parts, s.ID+" в "+s.Sect)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // trainTasks собирает поезд: задачи из In progress, чьи коммиты кода слиты в
 // main после точки последнего выката. Коммиты только по доске и файлам задач
 // членства не дают (запись «в работу» это не код). Вторым списком приходят
-// осиротевшие задачи: код в окне выката есть, а строка ушла из In progress
-// (руками в Blocked, обратно в Backlog, в Check мимо ship). Такую аномалию
-// вызывающие не везут на прод молча, а поднимают как ошибку.
-func trainTasks(root, main string, b *board) (train, strays []string, err error) {
+// осиротевшие задачи, их вызывающие не везут на прод молча, а поднимают как
+// ошибку.
+func trainTasks(root, main string, b *board) (train []string, strays []stray, err error) {
 	if !hasTag(root) {
 		return nil, nil, nil
 	}
@@ -233,7 +245,7 @@ func trainTasks(root, main string, b *board) (train, strays []string, err error)
 			if sect == "in-progress" {
 				train = append(train, r.ID)
 			} else {
-				strays = append(strays, r.ID+" в "+sect)
+				strays = append(strays, stray{r.ID, sect})
 			}
 		}
 	}
@@ -287,7 +299,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	if len(strays) > 0 {
-		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strings.Join(strays, ", "))
+		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays))
 	}
 	if !p.Train && len(train) > 0 {
 		return "", fmt.Errorf("в поезде %s, одиночный выкат смешал бы их со своей задачей: либо merge --train, либо сначала shipctl ship", strings.Join(train, ", "))
@@ -439,7 +451,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	if len(strays) > 0 {
-		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strings.Join(strays, ", "))
+		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays))
 	}
 	if len(train) == 0 {
 		return "", fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)")
@@ -639,7 +651,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		inTrain = inTrain || id == p.ID
 	}
 	for _, s := range strayRows {
-		inTrain = inTrain || strings.HasPrefix(s, p.ID+" ")
+		inTrain = inTrain || s.ID == p.ID
 	}
 	// Откат одним коммитом: последовательность revert-коммитов на середине
 	// умеет падать в конфликт и оставлять прод полупочиненным.

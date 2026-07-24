@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 func git(root string, args ...string) (string, error) {
@@ -168,11 +169,21 @@ func pushTag(root string) error {
 
 // isRevertSubject распознаёт коммит-откат: штатное «revert: ...» либо своё
 // сообщение со словом «откат» (конвенция для проектов с белым списком
-// префиксов, см. README). Задача, чей новейший коммит с её ID это откат, из
-// поезда выбыла.
+// префиксов, см. README). Слово ищется целиком, иначе фичекоммит про
+// «откатить настройки» тихо выкидывал бы задачу из поезда.
 func isRevertSubject(subj string) bool {
 	low := strings.ToLower(subj)
-	return strings.HasPrefix(low, "revert") || strings.Contains(low, "откат")
+	if strings.HasPrefix(low, "revert") {
+		return true
+	}
+	for _, w := range strings.FieldsFunc(low, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if w == "откат" {
+			return true
+		}
+	}
+	return false
 }
 
 // trainTasks собирает поезд: задачи из In progress, чьи коммиты кода слиты в
@@ -475,8 +486,11 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	if doPush {
+		// Провал пуша тега не роняет ship: доску важнее довести до Check, она
+		// и прикроет вторую машину (ship там упрётся в занятую очередь), а
+		// напоминание про тег уходит в отчёт.
 		if err := pushTag(root); err != nil {
-			return "", err
+			msg = append(msg, err.Error())
 		}
 	} else {
 		msg = append(msg, "тег "+deployTag+" сдвинут локально, при пуше руками добавить: git push -f origin "+deployTag)
@@ -539,7 +553,9 @@ func taskCommits(root, main, id string) ([]string, error) {
 		}
 		// Прошлый откат задачи это граница: всё старше него либо уже
 		// откачено, либо относится к прошлым заходам на ту же задачу.
-		if strings.HasPrefix(strings.ToLower(subj), "revert") {
+		// Распознавание общее с составом поезда, включая откаты с кастомным
+		// -m: иначе второй заход откатил бы и прошлый откат, и старую правку.
+		if isRevertSubject(subj) {
 			break
 		}
 		files, err := git(root, "show", "--name-only", "--pretty=", sha)
@@ -607,17 +623,23 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	// Считается до коммита-отката (после него задача из поезда уже выбыла), и
 	// ошибки здесь не глотаются: это защитный контур, fail-open на аварийном
 	// пути кончился бы как раз преждевременным выкатом.
+	// Осиротевшая задача (код в окне, строка не в In progress) считается так
+	// же: её код тоже не доехал до прода, и повторный выкат при её откате
+	// увёз бы туда остальной поезд.
 	inTrain := false
 	bTrain, err := loadBoard(root)
 	if err != nil {
 		return "", err
 	}
-	tr, _, err := trainTasks(root, main, bTrain)
+	tr, strayRows, err := trainTasks(root, main, bTrain)
 	if err != nil {
 		return "", err
 	}
 	for _, id := range tr {
 		inTrain = inTrain || id == p.ID
+	}
+	for _, s := range strayRows {
+		inTrain = inTrain || strings.HasPrefix(s, p.ID+" ")
 	}
 	// Откат одним коммитом: последовательность revert-коммитов на середине
 	// умеет падать в конфликт и оставлять прод полупочиненным.

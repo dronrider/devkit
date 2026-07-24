@@ -543,8 +543,13 @@ func TestTrainTagPushed(t *testing.T) {
 // уехал бы на прод без Check.
 func TestTrainStray(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
+	addRemote(t, root)
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)
 	}
 	// Задачу увели в Blocked мимо shipctl.
@@ -560,17 +565,36 @@ func TestTrainStray(t *testing.T) {
 		!strings.Contains(err.Error(), "не в In progress") {
 		t.Fatalf("ship с осиротевшей задачей должен отбиваться: %v", err)
 	}
-	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
-	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err == nil ||
-		!strings.Contains(err.Error(), "не в In progress") {
-		t.Fatalf("merge с осиротевшей задачей должен отбиваться: %v", err)
-	}
 	st, err := cmdStatus(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(st, "аномалия") {
 		t.Fatalf("status молчит про осиротевшую задачу:\n%s", st)
+	}
+
+	// Откат осиротевшей не должен катить повторный выкат: он увёз бы на прод
+	// невыкаченную XR-003. После отката аномалия снята и поезд едет.
+	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = true\n")
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err == nil {
+		t.Fatalf("откат осиротевшей задачи покатил выкат: %q", msg)
+	}
+	if !strings.Contains(msg, "повторный выкат не нужен") {
+		t.Fatalf("сообщение отката осиротевшей: %q", msg)
+	}
+	msg, err = cmdShip(root, ShipParams{})
+	if err != nil {
+		t.Fatalf("после отката осиротевшей поезд должен ехать: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err != nil {
+		t.Fatalf("выкат поезда после снятия аномалии не отработал: %q", msg)
+	}
+	if !strings.Contains(msg, "поезд выкачен (XR-003)") {
+		t.Fatalf("в поезде должна остаться одна XR-003: %q", msg)
 	}
 }
 
@@ -595,6 +619,12 @@ func TestTrainRevertCustomMsg(t *testing.T) {
 	}
 	if len(train) != 0 || len(strays) != 0 {
 		t.Fatalf("после отката поезд должен опустеть: train=%v strays=%v", train, strays)
+	}
+	// Кастомное сообщение работает и границей: второй заход не находит, что
+	// откатывать, а не откатывает прошлый откат вместе со старой правкой.
+	if _, err := cmdRevert(root, RevertParams{ID: "XR-001", Msg: "fix: XR-001 откат правки"}); err == nil ||
+		!strings.Contains(err.Error(), "откатывать нечего") {
+		t.Fatalf("второй откат должен упереться в границу: %v", err)
 	}
 }
 

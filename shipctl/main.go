@@ -9,15 +9,21 @@ import (
 
 const usageText = `shipctl: слияние и откат задач по правилам доски (RULES.board.md)
 
-  status                          очередь выката по секциям доски и вердикт,
-                                  можно ли сливать
+  status                          очередь выката по секциям доски, поезд и
+                                  вердикт, можно ли сливать
   merge <ID> --test "cmd"         предусловия (чистое дерево, задача в
         [--deploy "cmd"] [--push] In progress, Check пуст, ревью без открытых
-                                  замечаний), ребейз фичеветки на main, тесты,
-                                  fast-forward-слияние, выкат, перевод в Check
+        [--train]                 замечаний), ребейз фичеветки на main, тесты,
+                                  fast-forward-слияние, выкат, перевод в Check;
+                                  --train копит задачу в поезд: сливает без
+                                  выката, задача остаётся в In progress
+  ship [--deploy "cmd"] [--push]  выкат поезда: один деплой на все слитые
+                                  после прошлого выката задачи, все разом в
+                                  Check, тег deployed сдвигается на main
   revert <ID> [--test "cmd"]      откат коммитов задачи с main (ищутся по ID
          [-m "..."] [--push]      в subject, коммиты доски не трогаются)
-                                  и возврат задачи в In progress
+                                  и возврат задачи в In progress; задачу из
+                                  невыкаченного поезда снимает без деплоя
 
 Команды тестов и выката передаются строкой и выполняются через sh -c. Без
 --deploy команда выката берётся из .devkit/deploy.local (гитигнорнут): shipctl
@@ -98,9 +104,18 @@ func main() {
 		p := MergeParams{ID: args[1]}
 		fs.StringVar(&p.Test, "test", "", "команда тестов проекта (sh -c)")
 		fs.StringVar(&p.Deploy, "deploy", "", "команда выката, без неё выкат за пользователем")
+		fs.BoolVar(&p.Train, "train", false, "слить в поезд: без выката, задача остаётся в In progress")
 		fs.BoolVar(&p.Push, "push", false, "запушить main и доску после слияния")
 		fs.Parse(args[2:])
 		msg, err = cmdMerge(root(*dir), p)
+	case "ship":
+		fs := flag.NewFlagSet("ship", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := ShipParams{}
+		fs.StringVar(&p.Deploy, "deploy", "", "команда выката, без неё берётся из .devkit/deploy.local")
+		fs.BoolVar(&p.Push, "push", false, "запушить main, тег и доску после выката")
+		fs.Parse(args[1:])
+		msg, err = cmdShip(root(*dir), p)
 	case "revert":
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 			fail(fmt.Errorf("жду: revert <ID> [--test \"cmd\"] [-m \"...\"] [--push]"))

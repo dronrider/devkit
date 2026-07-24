@@ -103,6 +103,15 @@ func cmdStatus(root string) (string, error) {
 		}
 	}
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
+	var train []string
+	if main, err := mainBranch(root); err == nil {
+		if train, err = trainTasks(root, main, b); err != nil {
+			return "", err
+		}
+	}
+	if len(train) > 0 {
+		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
+	}
 	if rows := b.sects["check"]; len(rows) == 0 {
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
 	} else {
@@ -127,16 +136,63 @@ func cmdStatus(root string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
+// deployTag отмечает точку последнего выката на main. Состав поезда (слито,
+// но не выкачено) вычисляется из git по окну deployTag..main, а не хранится
+// на доске: git переживает клоны и вторую машину, и доске не нужна ещё одна
+// пометка. Тег двигает cmdShip; пока тега нет, поезд не заводился.
+const deployTag = "deployed"
+
+// trainTasks собирает поезд: задачи из In progress, чьи коммиты кода слиты в
+// main после точки последнего выката. Коммиты только по доске и файлам задач
+// членства не дают (запись «в работу» это не код), а задача, чей новейший
+// коммит с её ID это revert, из поезда выбыла.
+func trainTasks(root, main string, b *board) ([]string, error) {
+	if _, err := git(root, "rev-parse", "--verify", deployTag); err != nil {
+		return nil, nil
+	}
+	log, err := git(root, "log", deployTag+".."+main, "--format=%H%x09%s")
+	if err != nil || log == "" {
+		return nil, err
+	}
+	lines := strings.Split(log, "\n") // новые первыми
+	var train []string
+	for _, r := range b.sects["in-progress"] {
+		for _, ln := range lines {
+			sha, subj, ok := strings.Cut(ln, "\t")
+			if !ok || !containsWord(subj, r.ID) {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(subj), "revert") {
+				break
+			}
+			files, err := git(root, "show", "--name-only", "--pretty=", sha)
+			if err != nil {
+				return nil, err
+			}
+			if boardOnly(files) {
+				continue
+			}
+			train = append(train, r.ID)
+			break
+		}
+	}
+	return train, nil
+}
+
 type MergeParams struct {
 	ID     string
 	Test   string // команда тестов, обязательна
 	Deploy string // явная команда выката; пустую подхватывает .devkit/deploy.local
+	Train  bool   // слить в поезд: без выката и без перевода в Check
 	Push   bool
 }
 
 func cmdMerge(root string, p MergeParams) (string, error) {
 	if p.Test == "" {
 		return "", fmt.Errorf("нужен --test с командой тестов проекта: ветка сливается только зелёной")
+	}
+	if p.Train && p.Deploy != "" {
+		return "", fmt.Errorf("--train откладывает выкат до shipctl ship, вместе с --deploy он не имеет смысла")
 	}
 	main, err := preflight(root)
 	if err != nil {
@@ -161,7 +217,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", fmt.Errorf("%s в %s, сливается только задача из In progress", p.ID, sect)
 	}
 	if rows := b.sects["check"]; len(rows) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенная правка на проде одна, сначала проверка и taskctl close", rows[0].ID)
+		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", rows[0].ID)
+	}
+	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
+	// правки, а в Check перевёл только свою задачу: инвариант ломается молча.
+	train, err := trainTasks(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	if !p.Train && len(train) > 0 {
+		return "", fmt.Errorf("в поезде %s, одиночный выкат смешал бы их со своей задачей: либо merge --train, либо сначала shipctl ship", strings.Join(train, ", "))
 	}
 	open, err := openReviewNotes(root, p.ID)
 	if err != nil {
@@ -194,10 +259,23 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if _, err := git(root, "checkout", main); err != nil {
 		return "", err
 	}
+	preSha, err := git(root, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
 	if out, err := git(root, "merge", "--ff-only", branch); err != nil {
 		return "", fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
 	}
 	git(root, "branch", "-d", branch)
+	// Первое поездное слияние заводит тег на main до себя: что было на main к
+	// этому моменту, считается выкаченным, и окно поезда начинается с этой ветки.
+	if p.Train {
+		if _, err := git(root, "rev-parse", "--verify", deployTag); err != nil {
+			if _, err := git(root, "tag", deployTag, preSha); err != nil {
+				return "", err
+			}
+		}
+	}
 	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward, ветка %s удалена", p.ID, main, branch)}
 	// При autonomous=true пуш это часть автономного конвейера, иначе origin
 	// отстал бы от задеплоенного прода, а revert по ID не нашёл бы коммитов.
@@ -217,6 +295,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := push("код запушен",
 		fmt.Sprintf("%s слита в %s, ветка удалена, но пуш не прошёл, выкат не запускался", p.ID, main)); err != nil {
 		return "", err
+	}
+	// Поездное слияние на этом заканчивается: задача остаётся в In progress,
+	// доска не трогается, выкат и перевод в Check делает cmdShip на весь поезд.
+	if p.Train {
+		now, err := trainTasks(root, main, b)
+		if err != nil {
+			return "", err
+		}
+		msg = append(msg, fmt.Sprintf("в поезде: %s; выкат поезда: shipctl ship", strings.Join(now, ", ")))
+		return strings.Join(msg, "\n"), nil
 	}
 	switch {
 	case deploy.run != "":
@@ -242,6 +330,99 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
+	return strings.Join(msg, "\n"), nil
+}
+
+type ShipParams struct {
+	Deploy string // явная команда выката; пустую подхватывает .devkit/deploy.local
+	Push   bool
+}
+
+// cmdShip выкатывает поезд: один деплой на все задачи, слитые после точки
+// последнего выката, разом переводит их в Check и двигает тег. Проверка идёт
+// на одном билде, каждая задача по своему сценарию; провал одной чинится
+// точечным revert, остальной поезд остаётся на проде.
+func cmdShip(root string, p ShipParams) (string, error) {
+	main, err := preflight(root)
+	if err != nil {
+		return "", err
+	}
+	if _, err := git(root, "checkout", main); err != nil {
+		return "", err
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		return "", err
+	}
+	if rows := b.sects["check"]; len(rows) > 0 {
+		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", rows[0].ID)
+	}
+	train, err := trainTasks(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	if len(train) == 0 {
+		return "", fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)")
+	}
+	deploy, err := resolveDeploy(root, p.Deploy)
+	if err != nil {
+		return "", err
+	}
+	if err := freshMain(root, main); err != nil {
+		return "", err
+	}
+	list := strings.Join(train, ", ")
+	var msg []string
+	push := func(note, failed string) error {
+		if !p.Push && !deploy.autonomous {
+			return nil
+		}
+		if _, err := git(root, "push"); err != nil {
+			return fmt.Errorf("%s: %v", failed, err)
+		}
+		// Тег едет следом за тем же пушем: без него вторая машина посчитала
+		// бы уже выкаченное всё ещё стоящим в поезде. -f, потому что тег
+		// двигается с каждым выкатом.
+		if _, err := git(root, "push", "-f", "origin", deployTag); err != nil {
+			msg = append(msg, "тег "+deployTag+" не запушен, повторить: git push -f origin "+deployTag)
+		}
+		msg = append(msg, note)
+		return nil
+	}
+	if err := push("код запушен", "пуш не прошёл, выкат не запускался"); err != nil {
+		return "", err
+	}
+	switch {
+	case deploy.run != "":
+		if out, err := runShell(root, deploy.run); err != nil {
+			return "", fmt.Errorf("выкат поезда упал, задачи остаются в In progress:\n%s", tail(out))
+		}
+		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
+	case deploy.manual != "":
+		msg = append(msg, fmt.Sprintf("поезд собран (%s), выкат за пользователем (%s)", list, deploy.manual))
+	default:
+		msg = append(msg, fmt.Sprintf("поезд собран (%s), выкат за пользователем, по плейбуку проекта", list))
+	}
+	// Тег двигается в момент, когда выкат запущен или передан пользователю:
+	// поезд с этого места пуст, следующий копится заново.
+	if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+		return "", err
+	}
+	for _, id := range train {
+		if _, err := taskMove(root, id, "check"); err != nil {
+			return "", fmt.Errorf("выкат прошёл, но доска не переведена: %v", err)
+		}
+	}
+	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check поездом", list))
+	if err != nil {
+		return "", err
+	}
+	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", list, hash))
+	if err := push("доска запушена",
+		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
+		return "", err
+	}
+	msg = append(msg, "после проверки каждая задача закрывается своим taskctl close")
 	return strings.Join(msg, "\n"), nil
 }
 
@@ -348,6 +529,17 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	if len(shas) == 0 {
 		return "", fmt.Errorf("на %s нет коммитов кода с %s в subject, откатывать нечего (форвард-фикс?)", main, p.ID)
 	}
+	// Задача из невыкаченного поезда до прода не доехала: откат нужен только в
+	// git, а повторный выкат увёз бы на прод остальной поезд раньше времени.
+	// Считается до коммита-отката, после него задача из поезда уже выбыла.
+	inTrain := false
+	if b, err := loadBoard(root); err == nil {
+		if tr, err := trainTasks(root, main, b); err == nil {
+			for _, id := range tr {
+				inTrain = inTrain || id == p.ID
+			}
+		}
+	}
 	// Откат одним коммитом: последовательность revert-коммитов на середине
 	// умеет падать в конфликт и оставлять прод полупочиненным.
 	if out, err := git(root, append([]string{"revert", "--no-commit"}, shas...)...); err != nil {
@@ -398,6 +590,8 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		return "", err
 	}
 	switch {
+	case inTrain:
+		out = append(out, "задача была в поезде и до прода не доехала, повторный выкат не нужен")
 	case plan.run != "":
 		if o, err := runShell(root, plan.run); err != nil {
 			return "", fmt.Errorf("откат закоммичен, но повторный выкат упал:\n%s", tail(o))

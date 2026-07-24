@@ -366,6 +366,144 @@ func TestRevertAutonomous(t *testing.T) {
 	}
 }
 
+const rowInProg3 = "| XR-003 | Вторая мелочь | task | P3 | 8 (0+3+0+5+0) |  |\n"
+
+// branchFor заводит фичеветку задачи с одним коммитом кода и остаётся на ней:
+// merge запускается с фичеветки.
+func branchFor(t *testing.T, root, id, branch, file string) {
+	t.Helper()
+	gitT(t, root, "checkout", "-qb", branch, "main")
+	write(t, root, file, id+"\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: "+id+" правка")
+}
+
+// TestTrainMergeAndShip: два поездных слияния копятся без выката и без
+// перевода в Check, одиночный merge на непустом поезде отбивается, ship
+// катит один деплой, двигает тег и переводит обе задачи в Check разом.
+func TestTrainMergeAndShip(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3, "")
+
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "в поезде: XR-001") || strings.Contains(msg, "Check") {
+		t.Fatalf("поездное слияние: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move") {
+		t.Fatalf("поездное слияние не должно двигать доску: %q", calls)
+	}
+	gitT(t, root, "rev-parse", "--verify", "deployed") // первый merge --train заводит тег
+
+	// Коммит только по файлам задач попадает в окно тега, но членства в
+	// поезде не даёт: запись «в работу» это не код.
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "поезд: XR-001 слиты") {
+		t.Fatalf("в поезде должна быть одна XR-001, без XR-003:\n%s", st)
+	}
+
+	// Одиночный merge при непустом поезде смешал бы выкаты.
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "в поезде XR-001") {
+		t.Fatalf("одиночный merge на поезде должен отбиваться: %v", err)
+	}
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "в поезде: XR-001, XR-003") {
+		t.Fatalf("состав поезда после второго слияния: %q", msg)
+	}
+
+	write(t, root, ".devkit/deploy.local", "deploy = touch deployed.marker\nautonomous = false\n")
+	msg, err = cmdShip(root, ShipParams{Deploy: "touch shipped.marker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shipped.marker")); err != nil {
+		t.Fatalf("выкат поезда не отработал: %q", msg)
+	}
+	calls, _ := os.ReadFile(callLog)
+	if !strings.Contains(string(calls), "move XR-001 check") || !strings.Contains(string(calls), "move XR-003 check") {
+		t.Fatalf("ship должен перевести обе задачи в Check: %q", calls)
+	}
+	log := gitT(t, root, "log", "--format=%s", "-1")
+	if !strings.Contains(log, "XR-001, XR-003 в Check поездом") {
+		t.Fatalf("коммит доски после ship: %s", log)
+	}
+	if gitT(t, root, "rev-parse", "deployed") != gitT(t, root, "rev-parse", "main^") {
+		// main^ это состояние до коммита доски: тег двигается на выкаченный код.
+		t.Fatal("тег deployed не сдвинут на выкаченный main")
+	}
+	// Поезд после выката пуст.
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "поезд пуст") {
+		t.Fatalf("повторный ship должен отбиваться: %v", err)
+	}
+}
+
+// TestShipPreconditions: пустой поезд и занятая очередь это чистые ошибки.
+func TestShipPreconditions(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if _, err := cmdShip(root, ShipParams{}); err == nil ||
+		!strings.Contains(err.Error(), "поезд пуст") {
+		t.Fatalf("ship без поезда должен отбиваться: %v", err)
+	}
+	root, _ = setup(t, rowInProg, "| XR-009 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n")
+	if _, err := cmdShip(root, ShipParams{}); err == nil ||
+		!strings.Contains(err.Error(), "очередь занята") {
+		t.Fatalf("ship при занятой очереди должен отбиваться: %v", err)
+	}
+}
+
+// TestRevertFromTrain: откат задачи из невыкаченного поезда не катит деплой
+// (он увёз бы на прод остальной поезд) и выводит задачу из состава.
+func TestRevertFromTrain(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	addRemote(t, root)
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	// autonomous=true: без защиты revert покатил бы повторный выкат сам и увёз
+	// на прод невыкаченную XR-001 вместе с откатом.
+	write(t, root, ".devkit/deploy.local", "deploy = touch redeployed.marker\nautonomous = true\n")
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-003", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "redeployed.marker")); err == nil {
+		t.Fatalf("откат из поезда не должен катить выкат: %q", msg)
+	}
+	if !strings.Contains(msg, "повторный выкат не нужен") {
+		t.Fatalf("сообщение отката из поезда: %q", msg)
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	train, err := trainTasks(root, "main", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(train) != 1 || train[0] != "XR-001" {
+		t.Fatalf("после отката в поезде должна остаться одна XR-001: %v", train)
+	}
+}
+
 func TestLoadBoardAndReview(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	b, err := loadBoard(root)

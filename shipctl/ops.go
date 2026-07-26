@@ -106,8 +106,16 @@ func cmdStatus(root string) (string, error) {
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
 	var train []string
 	var strays []stray
+	// Без main очередь по коммитам не посчитать, тогда держит вся секция.
+	busy := make([]string, 0, len(b.sects["check"]))
+	for _, r := range b.sects["check"] {
+		busy = append(busy, r.ID)
+	}
 	if main, err := mainBranch(root); err == nil {
 		if train, strays, err = trainTasks(root, main, b); err != nil {
+			return "", err
+		}
+		if busy, err = checkQueue(root, main, b); err != nil {
 			return "", err
 		}
 	}
@@ -117,10 +125,16 @@ func cmdStatus(root string) (string, error) {
 	if len(strays) > 0 {
 		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strayList(strays)+"); merge и ship будут отказывать, пока не разобрано")
 	}
-	if rows := b.sects["check"]; len(rows) == 0 {
+	switch {
+	case len(busy) > 0:
+		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", strings.Join(busy, ", ")))
+	case len(strays) > 0:
+		// вердикт не печатается: строка аномалии уже сказала, что merge и
+		// ship будут отказывать, «очередь свободна» рядом с ней врала бы.
+	case len(b.sects["check"]) > 0:
+		out = append(out, "очередь свободна: в Check только задачи без выкаченного кода, подтверждение за пользователем, но выкат они не держат")
+	default:
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
-	} else {
-		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", rows[0].ID))
 	}
 	// Решение по выкату берётся из resolveDeploy, а не из сырого конфига:
 	// иначе status и merge разъезжаются, как только логика меняется.
@@ -199,11 +213,36 @@ func strayList(ss []stray) string {
 	return strings.Join(parts, ", ")
 }
 
+// codeCommits проверяет по строкам лога (формат %H\t%s, новые первыми), есть
+// ли у задачи коммиты кода: с ID в subject, трогающие что-то кроме docs/.
+// Правки только под docs/ (доска, файлы задач, LLD) едут с выкатом, но прод
+// не меняют, поэтому кодом не считаются. Прошлый откат это граница, как в
+// taskCommits: всё, что старше него, уже откачено или относится к прошлым
+// заходам на задачу.
+func codeCommits(root string, lines []string, id string) (bool, error) {
+	for _, ln := range lines {
+		sha, subj, ok := strings.Cut(ln, "\t")
+		if !ok || !containsWord(subj, id) {
+			continue
+		}
+		if isRevertSubject(subj) {
+			return false, nil
+		}
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return false, err
+		}
+		if docsOnly(files) {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // trainTasks собирает поезд: задачи из In progress, чьи коммиты кода слиты в
-// main после точки последнего выката. Коммиты только по доске и файлам задач
-// членства не дают (запись «в работу» это не код). Вторым списком приходят
-// осиротевшие задачи, их вызывающие не везут на прод молча, а поднимают как
-// ошибку.
+// main после точки последнего выката. Вторым списком приходят осиротевшие
+// задачи, их вызывающие не везут на прод молча, а поднимают как ошибку.
 func trainTasks(root, main string, b *board) (train []string, strays []stray, err error) {
 	if !hasTag(root) {
 		return nil, nil, nil
@@ -213,29 +252,9 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 		return nil, nil, err
 	}
 	lines := strings.Split(log, "\n") // новые первыми
-	inWindow := func(id string) (bool, error) {
-		for _, ln := range lines {
-			sha, subj, ok := strings.Cut(ln, "\t")
-			if !ok || !containsWord(subj, id) {
-				continue
-			}
-			if isRevertSubject(subj) {
-				return false, nil
-			}
-			files, err := git(root, "show", "--name-only", "--pretty=", sha)
-			if err != nil {
-				return false, err
-			}
-			if boardOnly(files) {
-				continue
-			}
-			return true, nil
-		}
-		return false, nil
-	}
 	for _, sect := range []string{"in-progress", "check", "blocked", "backlog"} {
 		for _, r := range b.sects[sect] {
-			ok, err := inWindow(r.ID)
+			ok, err := codeCommits(root, lines, r.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -250,6 +269,40 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 		}
 	}
 	return train, strays, nil
+}
+
+// checkQueue возвращает задачи из Check, держащие очередь выката: те, у кого
+// есть выкаченный код (коммиты под точкой последнего выката; пока тега нет,
+// весь main). LLD, дока и прочие задачи без кода на проде ждут в Check
+// подтверждения пользователя, но следующему выкату не мешают: инвариант
+// «непроверенный выкат один» про прод, а не про секцию доски. Предел тот же,
+// что у revert: задачу без ID в subject коммитов поиск не увидит, merge о
+// таких предупреждает при слиянии.
+func checkQueue(root, main string, b *board) ([]string, error) {
+	rows := b.sects["check"]
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ref := main
+	if hasTag(root) {
+		ref = deployTag
+	}
+	log, err := git(root, "log", ref, "--format=%H%x09%s")
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(log, "\n")
+	var busy []string
+	for _, r := range rows {
+		ok, err := codeCommits(root, lines, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			busy = append(busy, r.ID)
+		}
+	}
+	return busy, nil
 }
 
 type MergeParams struct {
@@ -289,8 +342,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	default:
 		return "", fmt.Errorf("%s в %s, сливается только задача из In progress", p.ID, sect)
 	}
-	if rows := b.sects["check"]; len(rows) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", rows[0].ID)
+	busy, err := checkQueue(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	if len(busy) > 0 {
+		return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
 	// правки, а в Check перевёл только свою задачу: инвариант ломается молча.
@@ -443,8 +500,12 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rows := b.sects["check"]; len(rows) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", rows[0].ID)
+	busy, err := checkQueue(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	if len(busy) > 0 {
+		return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
 	}
 	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
@@ -615,6 +676,22 @@ func boardOnly(files string) bool {
 	return true
 }
 
+// docsOnly шире boardOnly: коммит не трогает ничего за пределами docs/.
+// Для отката это разные вещи: правку LLD или README revert возвращает вместе
+// с кодом (boardOnly), но на прод она не влияет и грузом выката не считается.
+func docsOnly(files string) bool {
+	for _, f := range strings.Split(files, "\n") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !strings.HasPrefix(f, "docs/") {
+			return false
+		}
+	}
+	return true
+}
+
 func cmdRevert(root string, p RevertParams) (string, error) {
 	main, err := preflight(root)
 	if err != nil {
@@ -629,6 +706,19 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	}
 	if len(shas) == 0 {
 		return "", fmt.Errorf("на %s нет коммитов кода с %s в subject, откатывать нечего (форвард-фикс?)", main, p.ID)
+	}
+	// Откат правок только под docs/ (LLD, дока) прода не касается: повторный
+	// выкат не нужен, а при копящемся поезде он увёз бы туда чужой код.
+	docsRevert := true
+	for _, sha := range shas {
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return "", err
+		}
+		if !docsOnly(files) {
+			docsRevert = false
+			break
+		}
 	}
 	// Задача из невыкаченного поезда до прода не доехала: откат нужен только в
 	// git, а повторный выкат увёз бы на прод остальной поезд раньше времени.
@@ -706,6 +796,8 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		return "", err
 	}
 	switch {
+	case docsRevert:
+		out = append(out, "откачены только правки под docs/, прод не менялся, повторный выкат не нужен")
 	case inTrain:
 		out = append(out, "задача была в поезде и до прода не доехала, повторный выкат не нужен")
 	case plan.run != "":
@@ -719,8 +811,9 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		out = append(out, "прод чинится выкатом откатанного "+main+" по плейбуку проекта")
 	}
 	// Повторный выкат это тоже точка выката, тег двигается как в merge и ship.
-	// У задачи из поезда прод не менялся, тег стоит где стоял.
-	if !inTrain && hasTag(root) {
+	// У задачи из поезда и у документной правки прод не менялся, тег стоит
+	// где стоял.
+	if !inTrain && !docsRevert && hasTag(root) {
 		if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
 			return "", err
 		}

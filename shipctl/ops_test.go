@@ -206,12 +206,77 @@ func TestMergeStaleMain(t *testing.T) {
 	}
 }
 
+// codeCommit кладёт на текущую ветку коммит кода с ID задачи в subject:
+// такая задача в Check считается выкаченной и держит очередь.
+func codeCommit(t *testing.T, root, id, file string) {
+	t.Helper()
+	write(t, root, file, id+"\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: "+id+" фича")
+}
+
 func TestMergeQueueBusy(t *testing.T) {
-	root, _ := setup(t, rowInProg, "| XR-009 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n")
+	root, _ := setup(t, rowInProg, rowCheck)
+	codeCommit(t, root, "XR-009", "nine.txt")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err == nil || !strings.Contains(err.Error(), "очередь занята") {
 		t.Fatalf("ожидал отказ по очереди, получил: %v", err)
+	}
+
+	// Боевой путь с поездами: код задачи под тегом deployed (уехал через
+	// ship), очередь ищет по всему логу тега, а не по окну поезда.
+	root, _ = setup(t, rowInProg, rowCheck)
+	codeCommit(t, root, "XR-009", "nine.txt")
+	gitT(t, root, "tag", "deployed")
+	branchWithFix(t, root)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "очередь занята") {
+		t.Fatalf("ожидал отказ по очереди с тегом: %v", err)
+	}
+}
+
+const rowCheck = "| XR-009 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n"
+const rowLLD = "| XR-005 | LLD поезда | LLD | P2 | 30 (25+5+0+0+0) | [lld/train.md](lld/train.md) |\n"
+
+// lldCommit имитирует сделанную LLD-задачу: правка только под docs/, на прод
+// не едет.
+func lldCommit(t *testing.T, root, id string) {
+	t.Helper()
+	write(t, root, "docs/lld/train.md", "# LLD\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs: "+id+" LLD поезда")
+}
+
+// TestQueueDocsOnly: задача в Check без выкаченного кода (LLD, дока ждут
+// подтверждения пользователя) очередь выката не держит: merge и ship
+// проходят, инвариант про непроверенный выкат, а не про секцию доски.
+func TestQueueDocsOnly(t *testing.T) {
+	// Одиночный merge при LLD в Check.
+	root, _ := setup(t, rowInProg, rowLLD)
+	lldCommit(t, root, "XR-005")
+	branchWithFix(t, root)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatalf("LLD в Check не должна держать merge: %v", err)
+	}
+
+	// Ship поезда при LLD в Check.
+	root, callLog := setup(t, rowInProg, rowLLD)
+	lldCommit(t, root, "XR-005")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdShip(root, ShipParams{Deploy: "true"})
+	if err != nil {
+		t.Fatalf("LLD в Check не должна держать ship: %v", err)
+	}
+	if !strings.Contains(msg, "поезд выкачен (XR-001)") {
+		t.Fatalf("состав поезда: %q", msg)
+	}
+	// Ship переводит в Check только поезд, LLD остаётся ждать как ждала.
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "XR-005") {
+		t.Fatalf("ship не должен трогать LLD-задачу: %q", calls)
 	}
 }
 
@@ -276,12 +341,24 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("status:\n%s", msg)
 	}
 	root2, _ := setup(t, "", rowInProg)
+	codeCommit(t, root2, "XR-001", "one.txt")
 	msg, err = cmdStatus(root2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(msg, "очередь занята: XR-001") {
 		t.Fatalf("status с занятой очередью:\n%s", msg)
+	}
+	// LLD в Check ждёт пользователя, но очередь не держит, и status говорит
+	// об этом явно, а не просто «свободна».
+	root3, _ := setup(t, rowInProg, rowLLD)
+	lldCommit(t, root3, "XR-005")
+	msg, err = cmdStatus(root3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "очередь свободна") || !strings.Contains(msg, "без выкаченного кода") {
+		t.Fatalf("status с LLD в Check:\n%s", msg)
 	}
 	// Автономия без команды выката: merge всё равно будет пушить сам, и
 	// status обязан об этом предупредить, а не выглядеть чисто ручным.
@@ -458,7 +535,8 @@ func TestShipPreconditions(t *testing.T) {
 		!strings.Contains(err.Error(), "поезд пуст") {
 		t.Fatalf("ship без поезда должен отбиваться: %v", err)
 	}
-	root, _ = setup(t, rowInProg, "| XR-009 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n")
+	root, _ = setup(t, rowInProg, rowCheck)
+	codeCommit(t, root, "XR-009", "nine.txt")
 	if _, err := cmdShip(root, ShipParams{}); err == nil ||
 		!strings.Contains(err.Error(), "очередь занята") {
 		t.Fatalf("ship при занятой очереди должен отбиваться: %v", err)
@@ -572,6 +650,9 @@ func TestTrainStray(t *testing.T) {
 	if !strings.Contains(st, "аномалия") {
 		t.Fatalf("status молчит про осиротевшую задачу:\n%s", st)
 	}
+	if strings.Contains(st, "очередь свободна") {
+		t.Fatalf("вердикт про свободную очередь противоречит аномалии:\n%s", st)
+	}
 
 	// Откат осиротевшей не должен катить повторный выкат: он увёз бы на прод
 	// невыкаченную XR-003. После отката аномалия снята и поезд едет.
@@ -627,6 +708,78 @@ func TestShipTagPushRejected(t *testing.T) {
 	calls, _ := os.ReadFile(callLog)
 	if !strings.Contains(string(calls), "move XR-001 check") {
 		t.Fatalf("доска не доведена до Check: %q", calls)
+	}
+}
+
+// TestTrainDocsNotCargo: правка только под docs/ в окне выката не делает
+// задачу ни грузом поезда, ни осиротевшей: LLD-задача из Backlog не роняет
+// ship и не уезжает в Check с чужим выкатом.
+func TestTrainDocsNotCargo(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	lldCommit(t, root, "XR-002") // XR-002 лежит в Backlog
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(st, "аномалия") || !strings.Contains(st, "поезд: XR-001 слиты") {
+		t.Fatalf("LLD-правка не должна давать ни аномалии, ни места в поезде:\n%s", st)
+	}
+	msg, err := cmdShip(root, ShipParams{Deploy: "true"})
+	if err != nil {
+		t.Fatalf("ship с LLD-правкой в окне должен ехать: %v", err)
+	}
+	if !strings.Contains(msg, "поезд выкачен (XR-001)") {
+		t.Fatalf("состав поезда: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "XR-002") {
+		t.Fatalf("ship не должен переводить LLD-задачу: %q", calls)
+	}
+}
+
+// TestRevertDocsOnly: откат задачи, правившей только docs/, не катит
+// повторный выкат (прод не менялся, а деплой увёз бы копящийся поезд) и не
+// двигает тег. Docs-коммит лежит под тегом, вне окна поезда: тут задачу не
+// спасает защита inTrain, работает именно фильтр docs/.
+func TestRevertDocsOnly(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	addRemote(t, root)
+	lldCommit(t, root, "XR-003")
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	tag := gitT(t, root, "rev-parse", "deployed")
+	write(t, root, ".devkit/deploy.local", "deploy = touch redeployed.marker\nautonomous = true\n")
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-003", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "redeployed.marker")); err == nil {
+		t.Fatalf("откат документной правки покатил выкат: %q", msg)
+	}
+	if !strings.Contains(msg, "повторный выкат не нужен") {
+		t.Fatalf("сообщение отката: %q", msg)
+	}
+	if gitT(t, root, "rev-parse", "deployed") != tag {
+		t.Fatal("тег deployed сдвинут, хотя прод не менялся")
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "lld", "train.md")); err == nil {
+		t.Fatal("правка docs/ не откатилась")
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	train, strays, err := trainTasks(root, "main", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(train) != 1 || train[0] != "XR-001" || len(strays) != 0 {
+		t.Fatalf("поезд после отката: train=%v strays=%v", train, strays)
 	}
 }
 

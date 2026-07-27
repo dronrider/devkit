@@ -59,8 +59,10 @@ func main() {
 	}
 	msg, err := Run(p)
 	if err != nil {
+		logRun(*dir, 1)
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
 		os.Exit(1)
 	}
+	logRun(*dir, 0)
 	fmt.Println(msg)
 }

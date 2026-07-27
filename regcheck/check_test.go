@@ -41,6 +41,27 @@ func write(t *testing.T, root, name, content string) {
 	}
 }
 
+// TestRunLog: журнал пишется в .devkit/log репозитория, без .devkit не
+// заводится.
+func TestRunLog(t *testing.T) {
+	root := setupRepo(t)
+	logRun(root, 0)
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "log")); err == nil {
+		t.Fatal("журнал не должен заводиться без .devkit")
+	}
+	if err := os.Mkdir(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logRun(root, 1)
+	data, err := os.ReadFile(filepath.Join(root, ".devkit", "log"))
+	if err != nil {
+		t.Fatalf("журнал не записан: %v", err)
+	}
+	if !strings.Contains(string(data), "\tregcheck\trun\t1\n") {
+		t.Fatalf("строки журнала: %q", data)
+	}
+}
+
 // Пробный «тест» это shell-скрипт с grep, чтобы прогоны не зависели от
 // тулчейнов: на новом коде grep находит «fixed», на старом падает.
 const probe = "grep -q fixed code.txt\n"

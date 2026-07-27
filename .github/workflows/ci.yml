@@ -1,0 +1,30 @@
+# Тесты всех инструментов devkit на каждый push: локально они гоняются
+# руками, и без CI зелёность держалась только на дисциплине.
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: тесты taskctl
+        run: go test ./...
+        working-directory: taskctl
+      - name: тесты shipctl
+        run: go test ./...
+        working-directory: shipctl
+      - name: тесты regcheck
+        run: go test ./...
+        working-directory: regcheck
+      - name: тесты хуков
+        run: sh hooks/test.sh
+      - name: тесты devkitctl
+        run: sh devkitctl/test.sh
+      - name: запрещённые символы по всем файлам
+        run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py

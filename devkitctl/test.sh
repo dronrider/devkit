@@ -66,6 +66,12 @@ HOME="$home" python3 "$here/devkitctl.py" new --prefix BP -C "$bproj" >/dev/null
 grep -q '^autonomous = false' "$bproj/.devkit/deploy.local" || fail "в болванке нет autonomous"
 git -C "$bproj" check-ignore -q .devkit/deploy.local || fail ".devkit/deploy.local не гитигнорнут"
 
+# Журнал запусков: new записал свою строку в .devkit/log, файл гитигнорнут.
+tab=$(printf '\t')
+[ -f "$bproj/.devkit/log" ] || fail "new не записал журнал запусков"
+grep -q "devkitctl${tab}new${tab}0" "$bproj/.devkit/log" || fail "в журнале нет строки про new"
+git -C "$bproj" check-ignore -q .devkit/log || fail ".devkit/log не гитигнорнут"
+
 # doctor: пустой deploy= это находка, заполненный и гитигнорнутый чист.
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'пустой deploy=' || fail "нет находки про пустую команду выката: $out"

@@ -22,12 +22,14 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
+RUN_LOG = ".devkit/log"
 DEPLOY_TEMPLATE = (
     "# Обвязка выката для shipctl (гитигнорнут: в команде выката обычно адрес\n"
     "# или роль машины, её место в локальном, а не в коммитимом). shipctl merge\n"
@@ -96,15 +98,18 @@ def read_deploy(root):
     return deploy
 
 
-def ensure_gitignore(root, pattern):
+def ensure_gitignore(root, pattern, comment="# Локальная обвязка выката, живёт только на машине."):
     gi = root / ".gitignore"
     lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
     if pattern in (ln.strip() for ln in lines):
         return False
     sep = "\n" if lines and lines[-1].strip() else ""
     with gi.open("a", encoding="utf-8") as f:
-        f.write("%s# Локальная обвязка выката, живёт только на машине.\n%s\n" % (sep, pattern))
+        f.write("%s%s\n%s\n" % (sep, comment, pattern))
     return True
+
+
+LOG_IGNORE_COMMENT = "# Журнал запусков инструментов devkit, живёт только на машине."
 
 
 def scaffold_deploy(root):
@@ -118,7 +123,24 @@ def scaffold_deploy(root):
         done.append("%s создан: вписать команду выката, autonomous при готовности" % DEPLOY_CONFIG)
     if ensure_gitignore(root, DEPLOY_IGNORE):
         done.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
+    if ensure_gitignore(root, RUN_LOG, LOG_IGNORE_COMMENT):
+        done.append(".gitignore: добавлен %s" % RUN_LOG)
     return done
+
+
+def log_run(root, cmd, code):
+    # Журнал запусков, общий с taskctl/shipctl/regcheck: статистика, какие
+    # команды реально гоняются и как часто падают. Только там, где есть
+    # .devkit, провал записи работу не ломает.
+    d = root / ".devkit"
+    if not d.is_dir():
+        return
+    try:
+        with (d / "log").open("a", encoding="utf-8") as f:
+            f.write("%s\tdevkitctl\t%s\t%d\n"
+                    % (datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), cmd, code))
+    except OSError:
+        pass
 
 
 def check_git_hooks(root):
@@ -214,6 +236,14 @@ def doctor(start, fix=False):
                 else:
                     findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
                                     "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
+        if (root / ".devkit").is_dir() and in_git:
+            rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", RUN_LOG])
+            if rc != 0:
+                if fix and ensure_gitignore(root, RUN_LOG, LOG_IGNORE_COMMENT):
+                    fixed.append(".gitignore: добавлен %s" % RUN_LOG)
+                else:
+                    findings.append("%s не гитигнорнут: журнал запусков замусорит status, "
+                                    "добавить %s в .gitignore" % (RUN_LOG, RUN_LOG))
     findings += check_links(root)
     for m in fixed:
         print("починено: %s" % m)
@@ -286,8 +316,11 @@ def main(argv):
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
-        return doctor(a.dir, a.fix)
-    return new(a.dir, a.prefix.upper(), a.name, a.no_board)
+        rc = doctor(a.dir, a.fix)
+    else:
+        rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
+    log_run(project_root(a.dir)[0], a.cmd, rc)
+    return rc
 
 
 if __name__ == "__main__":

@@ -79,7 +79,20 @@ func globalDir(args []string) (string, []string, error) {
 	return dir, args, nil
 }
 
+// helpRequested ищет -h/--help среди аргументов до разбора: подкоманды с
+// позиционными аргументами до своего FlagSet не доходят, и «show --help»
+// принимал флаг за ID с ответом «--help нет на доске».
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "-help" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func fail(err error) {
+	logRun(1)
 	fmt.Fprintln(os.Stderr, "ошибка:", err)
 	os.Exit(1)
 }
@@ -103,6 +116,14 @@ func main() {
 	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, usageText)
 		os.Exit(2)
+	}
+	if helpRequested(args) {
+		fmt.Print(usageText)
+		return
+	}
+	logStart, logCmd = gdir, args[0]
+	if args[0] == "review" && len(args) > 1 {
+		logCmd += " " + args[1]
 	}
 	var msg string
 	var err error
@@ -265,6 +286,7 @@ func main() {
 					fmt.Println(f)
 				}
 				fmt.Fprintf(os.Stderr, "находок: %d\n", len(finds))
+				logRun(1)
 				os.Exit(1)
 			}
 		}
@@ -273,15 +295,17 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		fs.Parse(args[1:])
 		msg, err = cmdID(root(*dir))
-	case "help", "-h", "--help":
+	case "help":
 		fmt.Print(usageText)
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", args[0], usageText)
+		logRun(2)
 		os.Exit(2)
 	}
 	if err != nil {
 		fail(err)
 	}
+	logRun(0)
 	fmt.Println(msg)
 }

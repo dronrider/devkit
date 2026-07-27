@@ -63,6 +63,27 @@ func cmdLint(root string) ([]string, error) {
 		}
 	}
 
+	// Взятая в работу задача ведётся файлом (RULES.board.md, «Трекинг задач»
+	// п. 3): ход работы и раздел «Ревью» жить в строке доски не могут. В Check
+	// без файла и со ссылкой-прочерком проверяющему некуда смотреть, а перевод
+	// туда требует готового сценария проверки (п. 6).
+	taskFile := func(id string) bool {
+		_, err := os.Stat(filepath.Join(root, "docs", "tasks", id+".md"))
+		return err == nil
+	}
+	for _, r := range b.Sects[SectInProgress].Rows {
+		if !taskFile(r.ID) {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s в работе без файла задачи, завести: taskctl file %s",
+				bp, r.LineIdx+1, r.ID, r.ID))
+		}
+	}
+	for _, r := range b.Sects[SectCheck].Rows {
+		if r.Link == "-" && !taskFile(r.ID) {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s в Check без файла задачи и без ссылки на сценарий проверки",
+				bp, r.LineIdx+1, r.ID))
+		}
+	}
+
 	for _, r := range arch.Rows {
 		where := fmt.Sprintf("%s:%d: %s", ap, r.LineIdx+1, r.ID)
 		if !dateRe.MatchString(r.Cells[4]) {

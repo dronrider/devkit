@@ -545,6 +545,48 @@ func TestLintFindings(t *testing.T) {
 	}
 }
 
+// TestLintTaskFiles: задача в работе без файла и задача в Check без файла и
+// без ссылки на сценарий это находки; файл и ссылка их снимают.
+func TestLintTaskFiles(t *testing.T) {
+	root := setup(t)
+	if err := os.Remove(filepath.Join(root, "docs", "tasks", "XR-005.md")); err != nil {
+		t.Fatal(err)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(finds, "\n"); !strings.Contains(joined, "XR-005 в работе без файла задачи") {
+		t.Fatalf("нет находки про файл задачи в работе: %v", finds)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte("# XR-005\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check"}); err != nil {
+		t.Fatal(err)
+	}
+	finds, err = cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(finds, "\n"); !strings.Contains(joined, "XR-008 в Check без файла задачи") {
+		t.Fatalf("нет находки про сценарий проверки в Check: %v", finds)
+	}
+
+	// Ссылка на сценарий (существующий файл) снимает находку.
+	if _, err := cmdSet(root, SetParams{ID: "XR-008", Link: "tasks/XR-002.md"}); err != nil {
+		t.Fatal(err)
+	}
+	finds, err = cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finds) != 0 {
+		t.Fatalf("после ссылки на сценарий находки остались: %v", finds)
+	}
+}
+
 func TestLintFlagsLegacyBoard(t *testing.T) {
 	root := setup(t)
 	if err := os.WriteFile(boardPath(root), []byte(fixtureBoardLegacy), 0o644); err != nil {

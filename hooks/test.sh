@@ -34,14 +34,54 @@ printf 'первая строка правлена\nстарое тире %s т�
 git -C "$repo" add f.txt
 (cd "$repo" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на нетронутую чужую строку"
 
-# commit-msg: текст проверяется, комментарии git нет.
+# commit-msg: текст проверяется, комментарии git нет. Запуск из репозитория:
+# хук читает историю для проверки префикса, снаружи она была бы чужой.
 printf 'fix: обычный коммит\n' > "$tmp/msg"
-"$here/commit-msg" "$tmp/msg" >/dev/null 2>&1 || fail "чистый коммит не прошёл"
+(cd "$repo" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1) || fail "чистый коммит не прошёл"
 printf 'fix: коммит с тире %s\n' "$dash" > "$tmp/msg"
-"$here/commit-msg" "$tmp/msg" >/dev/null 2>&1
+(cd "$repo" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1)
 [ $? -eq 1 ] || fail "тире в тексте коммита не поймано"
 printf 'fix: чисто\n# комментарий с тире %s\n' "$dash" > "$tmp/msg"
-"$here/commit-msg" "$tmp/msg" >/dev/null 2>&1 || fail "commit-msg смотрит в комментарии git"
+(cd "$repo" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1) || fail "commit-msg смотрит в комментарии git"
+
+# check-commit.py: следы ассистента и body ловятся, чистое проходит.
+hist='feat(core): раз\nfix: два\ndocs: три'
+printf 'fix: чистая строка\n' > "$tmp/msg"
+printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "чистый коммит не прошёл check-commit"
+printf 'fix: правка\n\nCo-authored-by: Claude <noreply@anthropic.com>\n' > "$tmp/msg"
+out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+[ $? -eq 1 ] || fail "след ассистента не пойман"
+echo "$out" | grep -q 'след ассистента' || fail "нет находки про след ассистента"
+printf 'fix: правка\n\nразвёрнутое body с деталями\n' > "$tmp/msg"
+out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+[ $? -eq 1 ] || fail "body не пойман"
+echo "$out" | grep -q 'одной строкой' || fail "нет находки про body"
+printf 'fix: чисто\n# Co-authored-by в комментарии\n' > "$tmp/msg"
+printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "check-commit смотрит в комментарии git"
+
+# check-commit.py: тип не из истории ловится, revert и свежий репозиторий проходят.
+printf 'perf: чужой тип\n' > "$tmp/msg"
+out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+[ $? -eq 1 ] || fail "чужой тип префикса не пойман"
+echo "$out" | grep -q 'не встречается в истории' || fail "нет находки про тип"
+printf 'revert: XR-1 откат правки\n' > "$tmp/msg"
+printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "revert должен проходить всегда"
+printf 'perf: первый типизированный\n' > "$tmp/msg"
+printf '\n' | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "пустая история не должна включать проверку префикса"
+
+# commit-msg целиком: типизированная история включает проверку префикса.
+repoc="$tmp/repoc"
+git init -q "$repoc"
+git -C "$repoc" config user.name t
+git -C "$repoc" config user.email t@t
+printf 'x\n' > "$repoc/f.txt"
+git -C "$repoc" add f.txt
+git -C "$repoc" commit -qm 'feat: сид истории'
+printf 'perf: чужой тип\n' > "$tmp/msg"
+(cd "$repoc" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1)
+[ $? -eq 1 ] || fail "commit-msg пропустил чужой тип"
+printf 'feat: свой тип\n' > "$tmp/msg"
+(cd "$repoc" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1) || fail "commit-msg отбил тип из истории"
 
 # Режим --hook: тире в new_string даёт выход 2, чистый текст 0.
 printf '{"tool_input":{"file_path":"x.md","new_string":"плохо %s"}}' "$dash" |

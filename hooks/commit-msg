@@ -10,4 +10,14 @@ if [ $status -eq 1 ]; then
     printf '%s\n' "$bad" >&2
     exit 1
 fi
+[ $status -ne 0 ] && exit $status
+
+# Второй рубеж: следы ассистента, body и тип префикса против истории проекта.
+bad=$(git log -n 100 --format=%s 2>/dev/null | python3 "$here/check-commit.py" "$1")
+status=$?
+if [ $status -eq 1 ]; then
+    printf '%s\n' "$bad" >&2
+    echo "осознанный обход: git commit --no-verify" >&2
+    exit 1
+fi
 exit $status

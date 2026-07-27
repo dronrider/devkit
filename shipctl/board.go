@@ -17,7 +17,7 @@ var sectByPrefix = []struct{ prefix, key string }{
 	{"## Blocked", "blocked"},
 }
 
-type row struct{ ID, Title string }
+type row struct{ ID, Title, Type, Cost string }
 
 type board struct {
 	sects map[string][]row
@@ -69,10 +69,19 @@ func loadBoard(root string) (*board, error) {
 		if len(cells) < 2 {
 			continue
 		}
-		b.sects[sect] = append(b.sects[sect], row{
+		r := row{
 			ID:    strings.TrimSpace(cells[0]),
 			Title: strings.TrimSpace(cells[1]),
-		})
+		}
+		if len(cells) > 2 {
+			r.Type = strings.TrimSpace(cells[2])
+		}
+		// Колонка «Цена» есть только в семиколоночных досках, в старом
+		// формате шестая ячейка это ссылка.
+		if len(cells) >= 7 {
+			r.Cost = strings.TrimSpace(cells[5])
+		}
+		b.sects[sect] = append(b.sects[sect], r)
 	}
 	return b, nil
 }
@@ -87,6 +96,18 @@ func (b *board) sectOf(id string) string {
 		}
 	}
 	return ""
+}
+
+// rowOf возвращает строку задачи, nil если её нет на доске.
+func (b *board) rowOf(id string) *row {
+	for _, rows := range b.sects {
+		for i := range rows {
+			if rows[i].ID == id {
+				return &rows[i]
+			}
+		}
+	}
+	return nil
 }
 
 // openReviewNotes возвращает замечания раздела «Ревью» файла задачи без

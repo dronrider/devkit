@@ -62,7 +62,19 @@ func globalDir(args []string) (string, []string, error) {
 	return dir, args, nil
 }
 
+// helpRequested ищет -h/--help среди аргументов до разбора, как в taskctl:
+// «merge --help» без этого отбивался как merge без ID, а не показывал справку.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "-help" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 func fail(err error) {
+	logRun(1)
 	fmt.Fprintln(os.Stderr, "ошибка:", err)
 	os.Exit(1)
 }
@@ -87,6 +99,11 @@ func main() {
 		fmt.Fprint(os.Stderr, usageText)
 		os.Exit(2)
 	}
+	if helpRequested(args) {
+		fmt.Print(usageText)
+		return
+	}
+	logStart, logCmd = gdir, args[0]
 	var msg string
 	var err error
 	switch args[0] {
@@ -128,15 +145,17 @@ func main() {
 		fs.BoolVar(&p.Push, "push", false, "запушить откат и доску")
 		fs.Parse(args[2:])
 		msg, err = cmdRevert(root(*dir), p)
-	case "help", "-h", "--help":
+	case "help":
 		fmt.Print(usageText)
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", args[0], usageText)
+		logRun(2)
 		os.Exit(2)
 	}
 	if err != nil {
 		fail(err)
 	}
+	logRun(0)
 	fmt.Println(msg)
 }

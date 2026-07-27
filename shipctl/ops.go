@@ -378,9 +378,20 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := freshMain(root, main); err != nil {
 		return "", err
 	}
-	var warn string
+	// Предупреждения собираются до ребейза (diff ветки против main ещё
+	// осмысленный) и не валят слияние: это подсказки по правилам, а не
+	// предусловия.
+	var warns []string
 	if subjects, err := git(root, "log", main+"..HEAD", "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
-		warn = fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject, revert по ID их не найдёт\n", p.ID)
+		warns = append(warns, fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject, revert по ID их не найдёт", p.ID))
+	}
+	warns = append(warns, regcheckWarning(root, main, b.rowOf(p.ID).Type)...)
+	if p.Train {
+		warns = append(warns, trainWarnings(root, main, b, p.ID, train)...)
+	}
+	warn := ""
+	if len(warns) > 0 {
+		warn = strings.Join(warns, "\n") + "\n"
 	}
 	if out, err := git(root, "rebase", main); err != nil {
 		git(root, "rebase", "--abort")
@@ -526,6 +537,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	list := strings.Join(train, ", ")
 	var msg []string
+	if len(train) > 5 {
+		msg = append(msg, fmt.Sprintf("предупреждение: в поезде %d задач(и), больше 3-5 не копят, регресс без сценария ищется перебором состава", len(train)))
+	}
 	doPush := p.Push || deploy.autonomous
 	push := func(note, failed string) error {
 		if !doPush {

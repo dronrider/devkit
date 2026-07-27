@@ -1,0 +1,143 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const runLogPath = ".devkit/log"
+
+// regcheckWarning подсказывает при слиянии bug-задачи, если в журнале
+// запусков нет зелёного regcheck за время жизни ветки: регрессионный тест
+// обязан краснеть на старом коде (RULES.md, «Тесты обязательны»), а по
+// статистике этот шаг пропускается чаще других. Именно подсказка, не отказ:
+// где правка и тест живут в одном файле, regcheck не применим и проверяется
+// руками. Без журнала (нет .devkit) подсказывать не по чему.
+func regcheckWarning(root, main, taskType string) []string {
+	if !strings.Contains(taskType, "bug") {
+		return nil
+	}
+	if fi, err := os.Stat(filepath.Join(root, ".devkit")); err != nil || !fi.IsDir() {
+		return nil
+	}
+	// Начало жизни ветки это коммит, где она отошла от main. regcheck прошлой
+	// задачи остаётся за границей: после её слияния main уехал вперёд и
+	// merge-base новой ветки свежее того прогона.
+	base, err := git(root, "merge-base", main, "HEAD")
+	if err != nil {
+		return nil
+	}
+	ctStr, err := git(root, "log", "-1", "--format=%ct", base)
+	if err != nil {
+		return nil
+	}
+	ct, err := strconv.ParseInt(ctStr, 10, 64)
+	if err != nil {
+		return nil
+	}
+	if regcheckLogged(filepath.Join(root, runLogPath), time.Unix(ct, 0)) {
+		return nil
+	}
+	return []string{"предупреждение: задача типа bug, а в " + runLogPath +
+		" нет зелёного regcheck за время жизни ветки; регрессионный тест обязан краснеть на старом коде (RULES.md, «Тесты обязательны»)"}
+}
+
+// regcheckLogged ищет в журнале успешный запуск regcheck не старше since.
+func regcheckLogged(path string, since time.Time) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		f := strings.Split(ln, "\t")
+		if len(f) < 4 || f[1] != "regcheck" || f[3] != "0" {
+			continue
+		}
+		ts, err := time.ParseInLocation("2006-01-02T15:04:05", f[0], time.Local)
+		if err != nil {
+			continue
+		}
+		if !ts.Before(since) {
+			return true
+		}
+	}
+	return false
+}
+
+// trainWarnings проговаривает мягкие критерии поезда из RULES.board.md
+// («Ветки, ревью и деплой» п. 9): цена S или M, не больше 3-5 задач, задачи
+// не трогают одни файлы. Нарушение не валит merge, критерии на суждении
+// (связность «по смыслу» git не видит), но в отчёте оно обязано прозвучать.
+func trainWarnings(root, main string, b *board, id string, train []string) []string {
+	var warns []string
+	if r := b.rowOf(id); r != nil {
+		switch r.Cost {
+		case "", "S", "M":
+		case "-":
+			warns = append(warns, "предупреждение: цена "+id+" не оценена, в поезд берут S или M со снятой неопределённостью (RULES.board.md п. 9)")
+		default:
+			warns = append(warns, "предупреждение: цена "+id+" это "+r.Cost+", в поезд берут S или M, крупное едет одиночным выкатом (RULES.board.md п. 9)")
+		}
+	}
+	if len(train) >= 5 {
+		warns = append(warns, fmt.Sprintf("предупреждение: в поезде уже %d задач(и), больше 3-5 не копят, регресс без сценария ищется перебором состава: пора shipctl ship", len(train)))
+	}
+	if overlaps, err := trainOverlap(root, main, train); err == nil && len(overlaps) > 0 {
+		warns = append(warns, "предупреждение: ветка трогает файлы задач поезда ("+strings.Join(overlaps, "; ")+"), в поезд берут независимые задачи")
+	}
+	return warns
+}
+
+// trainOverlap находит пересечение файлов ветки с файлами коммитов задач
+// поезда. Правки под docs/ (доска, файлы задач, LLD) пересечением не
+// считаются: файл задачи и доску трогает почти каждая ветка.
+func trainOverlap(root, main string, train []string) ([]string, error) {
+	if len(train) == 0 {
+		return nil, nil
+	}
+	branchFiles, err := git(root, "diff", "--name-only", main+"...HEAD")
+	if err != nil {
+		return nil, err
+	}
+	mine := map[string]bool{}
+	for _, f := range strings.Split(branchFiles, "\n") {
+		if f = strings.TrimSpace(f); f != "" && !strings.HasPrefix(f, "docs/") {
+			mine[f] = true
+		}
+	}
+	if len(mine) == 0 {
+		return nil, nil
+	}
+	log, err := git(root, "log", deployTag+".."+main, "--format=%H%x09%s")
+	if err != nil || log == "" {
+		return nil, err
+	}
+	var out []string
+	for _, id := range train {
+		var hit []string
+		for _, ln := range strings.Split(log, "\n") {
+			sha, subj, ok := strings.Cut(ln, "\t")
+			if !ok || !containsWord(subj, id) || isRevertSubject(subj) {
+				continue
+			}
+			files, err := git(root, "show", "--name-only", "--pretty=", sha)
+			if err != nil {
+				return nil, err
+			}
+			for _, f := range strings.Split(files, "\n") {
+				if f = strings.TrimSpace(f); f != "" && mine[f] && !slices.Contains(hit, f) {
+					hit = append(hit, f)
+				}
+			}
+		}
+		if len(hit) > 0 {
+			out = append(out, id+": "+strings.Join(hit, ", "))
+		}
+	}
+	return out, nil
+}

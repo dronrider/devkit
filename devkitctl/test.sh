@@ -79,6 +79,16 @@ printf 'deploy = make deploy\nautonomous = false\n' > "$bproj/.devkit/deploy.loc
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
+# doctor: autonomous=true с пустым deploy= это специальная находка.
+printf 'autonomous = true\n' > "$bproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+echo "$out" | grep -q 'autonomous = true при пустом deploy=' || fail "нет находки про autonomous=true без команды: $out"
+# autonomous=false с пустым deploy= это старая находка, без новой.
+printf 'autonomous = false\n' > "$bproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+echo "$out" | grep -q 'autonomous = true при пустом deploy=' && fail "новая находка не должна быть для autonomous=false: $out"
+echo "$out" | grep -q 'пустой deploy=' || fail "старая находка про пустой deploy должна остаться: $out"
+
 # doctor: команда есть, но файл не гитигнорнут это находка.
 nproj="$tmp/nproj"
 mkdir -p "$nproj/.devkit"

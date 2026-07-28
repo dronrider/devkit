@@ -88,19 +88,25 @@ def check_links(root):
 
 
 def read_deploy(root):
-    # None это «файла нет», иначе значение deploy= (может быть пустым).
+    # Возвращает (deploy, autonomous) кортеж. Если файла нет: (None, None).
+    # Иначе (значение deploy=, значение autonomous=) где оба могут быть пустыми.
     f = root / DEPLOY_CONFIG
     if not f.exists():
-        return None
+        return None, None
     deploy = ""
+    autonomous = False
     for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
         ln = ln.strip()
         if not ln or ln.startswith("#") or "=" not in ln:
             continue
         key, _, val = ln.partition("=")
-        if key.strip() == "deploy":
-            deploy = val.strip().strip("\"'")
-    return deploy
+        key_stripped = key.strip()
+        val_stripped = val.strip().strip("\"'")
+        if key_stripped == "deploy":
+            deploy = val_stripped
+        elif key_stripped == "autonomous":
+            autonomous = val_stripped.lower() in ("1", "true", "t", "yes", "y", "on")
+    return deploy, autonomous
 
 
 def ensure_gitignore(root, pattern, comment="# Локальная обвязка выката, живёт только на машине."):
@@ -223,17 +229,20 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
-        dep = read_deploy(root)
-        if dep is None and fix:
+        deploy, autonomous = read_deploy(root)
+        if deploy is None and fix:
             fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
-            dep = read_deploy(root)         # теперь файл есть, команда пустая
-        if dep is None:
+            deploy, autonomous = read_deploy(root)  # теперь файл есть, команда пустая
+        if deploy is None:
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                             "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
         else:
-            if not dep:
+            if deploy == "":
                 findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
                                 "вписать команду выката" % DEPLOY_CONFIG)
+            if deploy == "" and autonomous:
+                findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
+                                "а катить нечего); вписать команду выката либо снять autonomous" % DEPLOY_CONFIG)
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
             if rc != 0:
                 if fix and ensure_gitignore(root, DEPLOY_IGNORE):

@@ -33,6 +33,9 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
   параллельные сессии не толкались в одном рабочем дереве, команду выката
   берёт из гитигнорнутого `.devkit/deploy.local`,
   см. [shipctl/README.md](shipctl/README.md).
+- `agentctl/` - Go-утилита выбора модели под задачу (pick): вердикт по типу,
+  цене и неопределённости с доски, применяется делегированием субагенту,
+  см. [agentctl/README.md](agentctl/README.md).
 - `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
   старом коде, см. [regcheck/README.md](regcheck/README.md).
 - `hooks/` - проверки текстов: запрещённые символы, индекс памяти,

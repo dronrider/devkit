@@ -19,6 +19,9 @@ jobs:
       - name: тесты shipctl
         run: go test ./...
         working-directory: shipctl
+      - name: тесты agentctl
+        run: go test ./...
+        working-directory: agentctl
       - name: тесты regcheck
         run: go test ./...
         working-directory: regcheck

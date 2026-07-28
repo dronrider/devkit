@@ -27,7 +27,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
-                                              в архив + файл задачи в tasks/archive/<год>/
+                                              в архив + файл задачи в tasks/archive/<год>/,
+                                              со всех строк снимается «[после <ID>]»
+  dep add <ID> <DEP-ID>                       ID делается после DEP-ID
+  dep rm <ID> <DEP-ID>                        снять зависимость
+  dep list [ID]                               кто после кого; без ID вся доска
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."]             скелет доски в корне репозитория
@@ -122,7 +126,7 @@ func main() {
 		return
 	}
 	logStart, logCmd = gdir, args[0]
-	if args[0] == "review" && len(args) > 1 {
+	if (args[0] == "review" || args[0] == "dep") && len(args) > 1 {
 		logCmd += " " + args[1]
 	}
 	var msg string
@@ -265,6 +269,40 @@ func main() {
 		commitFlags(fs, &p.Commit)
 		fs.Parse(args[2:])
 		msg, err = cmdClose(root(*dir), p)
+	case "dep":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: dep add|rm|list ..."))
+		}
+		switch args[1] {
+		case "add", "rm":
+			if len(args) < 4 {
+				fail(fmt.Errorf("жду: dep %s <ID> <DEP-ID>", args[1]))
+			}
+			fs := flag.NewFlagSet("dep "+args[1], flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			fs.Parse(args[4:])
+			p := DepParams{ID: args[2], DepID: args[3], Commit: c}
+			if args[1] == "add" {
+				msg, err = cmdDepAdd(root(*dir), p)
+			} else {
+				msg, err = cmdDepRm(root(*dir), p)
+			}
+		case "list":
+			fs := flag.NewFlagSet("dep list", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			id := ""
+			if len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+				id = args[2]
+				fs.Parse(args[3:])
+			} else {
+				fs.Parse(args[2:])
+			}
+			msg, err = cmdDepList(root(*dir), id)
+		default:
+			fail(fmt.Errorf("неизвестная подкоманда dep %q, жду add / rm / list", args[1]))
+		}
 	case "sort":
 		fs := flag.NewFlagSet("sort", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

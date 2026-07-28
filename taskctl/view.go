@@ -116,6 +116,12 @@ func cmdShow(root, id string) (string, error) {
 	}
 	if row := b.find(id); row != nil {
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
+		sides := depSides(b)
+		s := sides[id]
+		if s == nil {
+			s = &struct{ after, blocks []string }{}
+		}
+		out = append(out, fmt.Sprintf("после: %s", joinOrDash(s.after)), fmt.Sprintf("держит: %s", joinOrDash(s.blocks)))
 		rel := fmt.Sprintf("tasks/%s.md", id)
 		if _, err := os.Stat(filepath.Join(root, "docs", rel)); err == nil {
 			out = append(out, "файл задачи: docs/"+rel)

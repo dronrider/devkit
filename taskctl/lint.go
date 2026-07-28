@@ -91,7 +91,105 @@ func cmdLint(root string) ([]string, error) {
 		}
 		finds = append(finds, checkLinks(root, ap, r.LineIdx, arch.Lines[r.LineIdx])...)
 	}
+	finds = append(finds, lintDeps(b, arch, bp)...)
 	return finds, nil
+}
+
+// lintDeps проверяет инварианты маркера «[после ...]»: ID существует (на
+// доске или в архиве), не сам на себя, без дублей внутри маркера, без
+// циклов; задача в работе или на проверке с незакрытой зависимостью это
+// отдельная находка (её место в Backlog или Blocked).
+func lintDeps(b *Board, arch *Archive, bp string) []string {
+	var finds []string
+	for _, r := range b.Rows {
+		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
+		_, deps, _ := splitTitle(r.Title)
+		seen := map[string]bool{}
+		for _, d := range deps {
+			switch {
+			case d == r.ID:
+				finds = append(finds, fmt.Sprintf("%s: маркер «после» ссылается сам на себя (%s)", where, d))
+			case seen[d]:
+				finds = append(finds, fmt.Sprintf("%s: маркер «после» дублирует %s", where, d))
+			case b.find(d) == nil && !arch.has(d):
+				finds = append(finds, fmt.Sprintf("%s: маркер «после» ссылается на несуществующую задачу %s", where, d))
+			}
+			seen[d] = true
+		}
+	}
+	for _, key := range []string{SectInProgress, SectCheck} {
+		for _, r := range b.Sects[key].Rows {
+			_, deps, _ := splitTitle(r.Title)
+			for _, d := range deps {
+				if !arch.has(d) {
+					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s",
+						bp, r.LineIdx+1, r.ID, sectTitles[key], d))
+				}
+			}
+		}
+	}
+	finds = append(finds, lintDepCycles(b.Rows, bp)...)
+	return finds
+}
+
+// lintDepCycles ищет цикл в графе «после» обходом в глубину с раскраской
+// вершин; при мануальной правке доски цепочка A после B после A может
+// появиться в обход проверки в dep add, здесь её ловит lint.
+func lintDepCycles(rows []*Row, bp string) []string {
+	adj := map[string][]string{}
+	line := map[string]int{}
+	for _, r := range rows {
+		line[r.ID] = r.LineIdx
+		_, deps, _ := splitTitle(r.Title)
+		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
+		// циклом в две строки её дублировать незачем.
+		for _, d := range deps {
+			if d != r.ID {
+				adj[r.ID] = append(adj[r.ID], d)
+			}
+		}
+	}
+	const (
+		white = iota
+		gray
+		black
+	)
+	color := map[string]int{}
+	var stack []string
+	var cycle []string
+	var visit func(id string) bool
+	visit = func(id string) bool {
+		color[id] = gray
+		stack = append(stack, id)
+		for _, d := range adj[id] {
+			if color[d] == gray {
+				i := 0
+				for stack[i] != d {
+					i++
+				}
+				cycle = append(append([]string{}, stack[i:]...), d)
+				return true
+			}
+			if color[d] == white && visit(d) {
+				return true
+			}
+		}
+		stack = stack[:len(stack)-1]
+		color[id] = black
+		return false
+	}
+	for _, r := range rows {
+		if cycle != nil {
+			break
+		}
+		if color[r.ID] == white {
+			visit(r.ID)
+		}
+	}
+	if cycle == nil {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s:%d: цикл зависимостей: %s", bp, line[cycle[0]]+1, strings.Join(cycle, " -> "))}
 }
 
 // checkLinks проверяет, что локальные markdown-ссылки строки ведут на

@@ -276,6 +276,18 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if row.Sect == target {
 		return "", fmt.Errorf("%s уже в %s", id, target)
 	}
+	if target == SectInProgress {
+		arch, err := LoadArchive(archivePath(root))
+		if err != nil {
+			return "", err
+		}
+		_, deps, _ := splitTitle(row.Title)
+		for _, d := range deps {
+			if !arch.has(d) {
+				return "", fmt.Errorf("%s зависит от незакрытой %s, нельзя перевести в in-progress", id, d)
+			}
+		}
+	}
 	line := b.Lines[row.LineIdx]
 	moved := *row
 	if target == SectBlocked {
@@ -338,10 +350,15 @@ func cmdSet(root string, p SetParams) (string, error) {
 			return "", err
 		}
 		title := p.Title
-		// У заблокированной строки причина живёт в хвосте заголовка, при
-		// замене текста она переносится в новый.
-		if suf := blockSufRe.FindString(row.Title); suf != "" && !strings.Contains(title, "[блок:") {
-			title += suf
+		// У строки с зависимостью и/или причиной блокировки эти хвосты живут
+		// в заголовке, при замене текста они переносятся в новый (в исходном
+		// порядке: сначала «после», потом «блок»).
+		_, deps, blockSuf := splitTitle(row.Title)
+		if len(deps) > 0 && !strings.Contains(title, "[после") {
+			title = joinTitle(title, deps, "")
+		}
+		if blockSuf != "" && !strings.Contains(title, "[блок:") {
+			title += blockSuf
 		}
 		if title != row.Title {
 			changes = append(changes, "заголовок")
@@ -494,9 +511,35 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := checkCell("ссылка", linkCell); err != nil {
 		return "", err
 	}
-	cells := []string{p.ID, row.Title, row.Type, row.P, date, linkCell}
+	// В архивную строку маркер зависимости не попадает: закрытая задача
+	// саму себя ждать больше не заставит.
+	archBase, _, archBlockSuf := splitTitle(row.Title)
+	cells := []string{p.ID, joinTitle(archBase, nil, archBlockSuf), row.Type, row.P, date, linkCell}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
+	}
+	// Закрытая зависимость выполнена: снять «[после <ID>]» со всех
+	// остальных строк доски, протухшие маркеры на ней не живут.
+	var depTouched []string
+	for _, r := range b.Rows {
+		if r.ID == p.ID {
+			continue
+		}
+		base, deps, blockSuf := splitTitle(r.Title)
+		idx := -1
+		for i, d := range deps {
+			if d == p.ID {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			continue
+		}
+		deps = append(deps[:idx], deps[idx+1:]...)
+		r.Title = joinTitle(base, deps, blockSuf)
+		b.Lines[r.LineIdx] = formatRow(r)
+		depTouched = append(depTouched, r.ID)
 	}
 	b.remove(row.LineIdx)
 	if err := b.Save(); err != nil {
@@ -513,6 +556,9 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	msg := fmt.Sprintf("%s закрыта %s, строка в архиве", p.ID, date)
 	if moved != "" {
 		msg += ", файл задачи в " + moved
+	}
+	if len(depTouched) > 0 {
+		msg += ", маркер «после» снят у: " + strings.Join(depTouched, ", ")
 	}
 	return msg + tail, nil
 }

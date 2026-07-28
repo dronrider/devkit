@@ -11,6 +11,7 @@ import (
 type verdict struct {
 	Model  string
 	Reason string
+	Groom  bool // вердикт «исполнять рано»: сначала грумминг или разбивка
 }
 
 // pickModel выводит модель из метаданных строки доски. Порядок правил
@@ -19,17 +20,17 @@ func pickModel(r row) verdict {
 	unc := uncertainty(r.Rank)
 	switch {
 	case strings.EqualFold(r.Type, "LLD"):
-		return verdict{"opus", "LLD: дизайн отдаётся сильной модели"}
+		return verdict{Model: "opus", Reason: "LLD: дизайн отдаётся сильной модели"}
 	case unc >= 4:
-		return verdict{"opus", fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc)}
+		return verdict{Model: "opus", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
 	case r.Cost == "XL":
-		return verdict{"opus", "цена XL: сначала разбить на серию, целиком не отдавать"}
+		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
 	case r.Cost == "S" && unc >= 0 && unc <= 1:
-		return verdict{"haiku", "мелочь с ясным подходом, дешёвой модели хватает"}
+		return verdict{Model: "haiku", Reason: "мелочь с ясным подходом, дешёвой модели хватает"}
 	case r.Cost == "" || r.Cost == "-":
-		return verdict{"sonnet", "цена не оценена, до оценки модель по умолчанию"}
+		return verdict{Model: "sonnet", Reason: "цена не оценена, до оценки модель по умолчанию"}
 	default:
-		return verdict{"sonnet", "обычная задача, модель по умолчанию"}
+		return verdict{Model: "sonnet", Reason: "обычная задача, модель по умолчанию"}
 	}
 }
 
@@ -48,7 +49,7 @@ func cmdPick(root, id string, record bool) (string, error) {
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v.Model); err != nil {
+		if err := recordExecution(root, id, v); err != nil {
 			return "", err
 		}
 	}
@@ -58,8 +59,10 @@ func cmdPick(root, id string, record bool) (string, error) {
 
 // recordExecution дописывает строку исполнения в конец раздела «Ход работы»
 // файла задачи (перед хвостовыми пустыми строками, чтобы не оторваться от
-// остальных записей); без раздела он добавляется в конец файла.
-func recordExecution(root, id, model string) error {
+// остальных записей); без раздела он добавляется в конец файла. Грумминговый
+// вердикт пишется словом «Грумминг»: исполнение по нему не начинается, и
+// строка не должна обещать то, чего не было.
+func recordExecution(root, id string, v verdict) error {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -69,8 +72,12 @@ func recordExecution(root, id, model string) error {
 		return err
 	}
 	content := strings.TrimRight(string(data), "\n") + "\n"
-	line := fmt.Sprintf("- Исполнение: субагент %s по вердикту pick, %s.",
-		model, time.Now().Format("2006-01-02"))
+	label := "Исполнение"
+	if v.Groom {
+		label = "Грумминг"
+	}
+	line := fmt.Sprintf("- %s: субагент %s по вердикту pick, %s.",
+		label, v.Model, time.Now().Format("2006-01-02"))
 
 	lines := strings.Split(content, "\n")
 	head := -1

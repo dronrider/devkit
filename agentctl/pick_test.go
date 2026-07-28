@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPickModel(t *testing.T) {
@@ -76,6 +77,7 @@ const sampleBoard = `# demo: задачи (префикс T)
 |---|---|---|---|---|---|---|
 | T-001 | мелкая правка | task | P3 | 6 (0+3+1+0+2) | S | - |
 | T-003 | спайк про синхронизацию | LLD | P1 | 64 (50+6+5+0+3) | - | - |
+| T-004 | неразобранная задача | task | P1 | 64 (50+6+5+0+3) | M | - |
 
 ## Blocked
 
@@ -204,6 +206,87 @@ func TestRecordExecution(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "taskctl file") {
 			t.Fatalf("ошибка без подсказки про taskctl file: %v", err)
+		}
+	})
+
+	t.Run("вставка в конец раздела, а не файла", func(t *testing.T) {
+		// Самая содержательная граница: за «Ход работы» идёт «Ревью», строка
+		// обязана лечь в конец первого раздела, не оторвавшись от записей.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\n## Ход работы\n\n- Начало.\n\n## Ревью\n\n- замечание: исправлено\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cmdPick(root, "T-001", true); err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+		data, _ := os.ReadFile(taskFile)
+		want := "- Начало.\n- Исполнение: субагент haiku по вердикту pick, " +
+			time.Now().Format("2006-01-02") + ".\n\n## Ревью"
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("строка не в конце раздела:\n%s", data)
+		}
+	})
+
+	t.Run("пустой раздел в середине файла", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\n## Ход работы\n\n## Ревью\n\nНет.\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cmdPick(root, "T-001", true); err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+		data, _ := os.ReadFile(taskFile)
+		if !strings.Contains(string(data), "## Ход работы\n\n- Исполнение: субагент haiku") {
+			t.Fatalf("запись не отбита от заголовка пустого раздела:\n%s", data)
+		}
+	})
+
+	t.Run("повторный вызов дописывает вторую строку", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		if err := os.WriteFile(taskFile, []byte("# T-001\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := cmdPick(root, "T-001", true); err != nil {
+				t.Fatalf("pick --record, вызов %d: %v", i+1, err)
+			}
+		}
+		data, _ := os.ReadFile(taskFile)
+		if n := strings.Count(string(data), "- Исполнение: субагент haiku"); n != 2 {
+			t.Fatalf("жду две строки исполнения после двух вызовов, вижу %d:\n%s", n, data)
+		}
+	})
+
+	t.Run("файл без завершающего перевода строки", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		if err := os.WriteFile(taskFile, []byte("# T-001\n\n## Ход работы\n\n- Начало."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cmdPick(root, "T-001", true); err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+		data, _ := os.ReadFile(taskFile)
+		if !strings.Contains(string(data), "- Начало.\n- Исполнение: субагент haiku") {
+			t.Fatalf("строка не приклеилась к записи без перевода строки:\n%s", data)
+		}
+	})
+
+	t.Run("грумминговый вердикт пишется груммингом", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
+		if err := os.WriteFile(taskFile, []byte("# T-004\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cmdPick(root, "T-004", true); err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+		data, _ := os.ReadFile(taskFile)
+		if !strings.Contains(string(data), "- Грумминг: субагент opus") {
+			t.Fatalf("жду строку про грумминг, а не исполнение:\n%s", data)
+		}
+		if strings.Contains(string(data), "- Исполнение:") {
+			t.Fatalf("грумминговый вердикт записан исполнением:\n%s", data)
 		}
 	})
 }

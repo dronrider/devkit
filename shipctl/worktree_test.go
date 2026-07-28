@@ -75,6 +75,18 @@ func TestMergeForeignWorktree(t *testing.T) {
 	if _, err := os.Stat(wt); err != nil {
 		t.Fatal("отказ merge не должен трогать worktree")
 	}
+
+	// Та же защита в старом пути: основной чекаут стоит на фичеветке XR-001,
+	// merge XR-003 слил бы её под чужим ID.
+	root2, _ := setup(t, rowInProg+rowInProg3, "")
+	branchWithFix(t, root2)
+	if _, err := cmdMerge(root2, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "а сливается XR-003") {
+		t.Fatalf("merge чужой задачи с фичеветки должен отбиваться: %v", err)
+	}
+	if br := gitT(t, root2, "rev-parse", "--abbrev-ref", "HEAD"); br != "xr-001-fix" {
+		t.Fatalf("отказ не должен трогать чекаут, стоим на %q", br)
+	}
 }
 
 // TestMergeStaleWorktreeRegistration: merge с main при осиротелой регистрации

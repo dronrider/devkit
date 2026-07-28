@@ -402,6 +402,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	default:
 		return "", fmt.Errorf("%s в %s, сливается только задача из In progress", p.ID, sect)
 	}
+	if wt == "" && !branchOfTask(branch, p.ID) {
+		// Та же защита, что у worktree: с чужой фичеветки merge слил бы её под
+		// ID переданной задачи. Ветка задачи называется по ID (RULES.board.md).
+		return "", fmt.Errorf("стоишь на %s, а сливается %s: перейти на ветку задачи и повторить", branch, p.ID)
+	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
 		return "", err

@@ -152,6 +152,134 @@ func TestMissingCommand(t *testing.T) {
 	}
 }
 
+// setupInlineRepo делает репозиторий с багом в lib.rs, тестового блока
+// в базовой версии ещё нет: он появится вместе с правкой.
+func setupInlineRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	gitT(t, root, "init", "-q", "-b", "main")
+	gitT(t, root, "config", "user.email", "test@test")
+	gitT(t, root, "config", "user.name", "test")
+	write(t, root, "lib.rs", "const CODE: &str = \"bug\";\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "seed")
+	return root
+}
+
+func TestInlineCatchesRegression(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n\n#[cfg(test)]\nmod tests {\n    // проверяет CODE\n}\n")
+	write(t, root, "probe_test.sh", "grep -q fixed lib.rs\n")
+	msg, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: []string{"sh", "probe_test.sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "краснеет") || !strings.Contains(msg, "lib.rs") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+}
+
+func TestInlineMarkers(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n\n"+
+		"# regcheck:test-begin\n# проверка CODE\n# regcheck:test-end\n")
+	write(t, root, "probe_test.sh", "grep -q fixed lib.rs\n")
+	msg, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: []string{"sh", "probe_test.sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "краснеет") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+}
+
+func TestInlineNoRegionFails(t *testing.T) {
+	root := setupInlineRepo(t)
+	// в файле нет ни маркеров, ни #[cfg(test)]: отделить тест от правки нечем.
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n")
+	write(t, root, "probe_test.sh", "grep -q fixed lib.rs\n")
+	_, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: []string{"sh", "probe_test.sh"}})
+	if err == nil || !strings.Contains(err.Error(), "не нашёл тестовый регион") {
+		t.Fatalf("ожидал ошибку про ненайденный регион, получил: %v", err)
+	}
+}
+
+func TestInlineFalseGreen(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n\n"+
+		"#[cfg(test)]\nmod tests {\n    // не проверяет CODE вообще\n}\n")
+	// тест смотрит на сам факт наличия тестового блока, а не на CODE, поэтому
+	// зелёный что с багом, что без.
+	write(t, root, "probe_test.sh", "grep -q cfg lib.rs\n")
+	_, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: []string{"sh", "probe_test.sh"}})
+	if err == nil || !strings.Contains(err.Error(), "зелёный и на старом") {
+		t.Fatalf("ожидал находку про зелёный тест, получил: %v", err)
+	}
+}
+
+func TestFindTestRegionRust(t *testing.T) {
+	lines := splitLines("fn f(){}\n\n#[cfg(test)]\nmod tests {\n    fn g(){}\n}\n")
+	start, end, err := findTestRegion(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != 3 || end != 6 {
+		t.Fatalf("границы %d-%d", start, end)
+	}
+}
+
+func TestFindTestRegionAmbiguous(t *testing.T) {
+	lines := splitLines("#[cfg(test)]\nmod a {}\n#[cfg(test)]\nmod b {}\n")
+	if _, _, err := findTestRegion(lines); err == nil {
+		t.Fatal("ожидал ошибку про несколько блоков")
+	}
+}
+
+func TestFindTestRegionMarkers(t *testing.T) {
+	lines := splitLines("code\n// regcheck:test-begin\ntest\n// regcheck:test-end\nmore\n")
+	start, end, err := findTestRegion(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != 2 || end != 4 {
+		t.Fatalf("границы %d-%d", start, end)
+	}
+}
+
+func TestFindTestRegionNone(t *testing.T) {
+	lines := splitLines("just code\nno tests here\n")
+	if _, _, err := findTestRegion(lines); err != errNoTestRegion {
+		t.Fatalf("ожидал errNoTestRegion, получил %v", err)
+	}
+}
+
+func TestSpliceInlineAppendsWhenBaseHasNoRegion(t *testing.T) {
+	base := "const X: i32 = 1;\n"
+	cur := "const X: i32 = 2;\n\n#[cfg(test)]\nmod tests {\n    fn t(){}\n}\n"
+	got, err := spliceInline(base, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "const X: i32 = 1;") || !strings.Contains(got, "mod tests") {
+		t.Fatalf("итог: %q", got)
+	}
+	if strings.Contains(got, "const X: i32 = 2;") {
+		t.Fatalf("исправление просочилось в базу: %q", got)
+	}
+}
+
+func TestSpliceInlineReplacesExistingRegion(t *testing.T) {
+	base := "const X: i32 = 1;\n\n#[cfg(test)]\nmod tests {\n    fn old(){}\n}\n"
+	cur := "const X: i32 = 2;\n\n#[cfg(test)]\nmod tests {\n    fn newt(){}\n}\n"
+	got, err := spliceInline(base, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "const X: i32 = 2;") || strings.Contains(got, "fn old") || !strings.Contains(got, "fn newt") {
+		t.Fatalf("итог: %q", got)
+	}
+}
+
 func TestIsTestPath(t *testing.T) {
 	yes := []string{
 		"pkg/board_test.go", "tests/api.py", "test_ops.py", "src/app.spec.ts",

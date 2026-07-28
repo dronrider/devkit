@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,10 +10,11 @@ import (
 )
 
 type Params struct {
-	Dir   string   // откуда искать корень репозитория
-	Base  string   // реф старого кода, пустой выбирается эвристикой
-	Tests []string // явный список тестовых файлов вместо автопоиска
-	Cmd   []string // команда теста
+	Dir    string   // откуда искать корень репозитория
+	Base   string   // реф старого кода, пустой выбирается эвристикой
+	Tests  []string // явный список тестовых файлов вместо автопоиска
+	Inline []string // файлы, где правка и тест в одном файле (см. spliceInline)
+	Cmd    []string // команда теста
 }
 
 func gitOut(dir string, args ...string) (string, error) {
@@ -115,6 +117,122 @@ func changedTests(root, base string) ([]string, error) {
 	return tests, nil
 }
 
+// errNoTestRegion значит, что в файле честно нет тестового региона (не
+// ошибка поиска, а факт: например, в базовой версии теста ещё не было).
+var errNoTestRegion = errors.New("тестовый регион не найден")
+
+func splitLines(s string) []string {
+	return strings.Split(strings.TrimRight(s, "\n"), "\n")
+}
+
+// findTestRegion ищет границы тестовой части файла (1-based, включительно).
+// Сначала явные маркеры regcheck:test-begin/regcheck:test-end (работают в
+// комментарии любого языка, ставятся руками), если их нет, то блок Rust
+// #[cfg(test)] mod ... { ... }. Неоднозначность (несколько блоков, маркер без
+// пары, несбалансированные скобки) это ошибка, а не повод угадывать.
+func findTestRegion(lines []string) (start, end int, err error) {
+	beginIdx, endIdx, beginCount, endCount := -1, -1, 0, 0
+	for i, l := range lines {
+		if strings.Contains(l, "regcheck:test-begin") {
+			beginIdx, beginCount = i, beginCount+1
+		}
+		if strings.Contains(l, "regcheck:test-end") {
+			endIdx, endCount = i, endCount+1
+		}
+	}
+	if beginCount > 1 || endCount > 1 {
+		return 0, 0, fmt.Errorf("несколько маркеров regcheck:test-begin/regcheck:test-end, должен быть один")
+	}
+	if beginCount == 1 || endCount == 1 {
+		if beginCount != endCount {
+			return 0, 0, fmt.Errorf("regcheck:test-begin/regcheck:test-end не в паре")
+		}
+		if endIdx < beginIdx {
+			return 0, 0, fmt.Errorf("regcheck:test-end стоит раньше regcheck:test-begin")
+		}
+		return beginIdx + 1, endIdx + 1, nil
+	}
+	return findRustCfgTest(lines)
+}
+
+// findRustCfgTest находит единственный блок #[cfg(test)] mod ... { ... } и
+// возвращает его границы по совпадению фигурных скобок. Скобки внутри строк
+// и комментариев не разбираются: на них эвристика ошибётся, но честно
+// (несбалансированный подсчёт вернёт ошибку, а не тихо неверный регион).
+func findRustCfgTest(lines []string) (start, end int, err error) {
+	var attrs []int
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "#[cfg(test)]" {
+			attrs = append(attrs, i)
+		}
+	}
+	if len(attrs) == 0 {
+		return 0, 0, errNoTestRegion
+	}
+	if len(attrs) > 1 {
+		return 0, 0, fmt.Errorf("несколько блоков #[cfg(test)], нужны явные маркеры regcheck:test-begin/regcheck:test-end")
+	}
+	i := attrs[0]
+	j := i + 1
+	for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+		j++
+	}
+	if j >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[j]), "mod ") {
+		return 0, 0, fmt.Errorf("после #[cfg(test)] на строке %d нет «mod», нужны явные маркеры regcheck:test-begin/regcheck:test-end", i+1)
+	}
+	depth := 0
+	opened := false
+	for k := j; k < len(lines); k++ {
+		for _, ch := range lines[k] {
+			switch ch {
+			case '{':
+				depth++
+				opened = true
+			case '}':
+				depth--
+				if depth < 0 {
+					return 0, 0, fmt.Errorf("несбалансированные скобки начиная со строки %d", j+1)
+				}
+				if depth == 0 && opened {
+					return i + 1, k + 1, nil
+				}
+			}
+		}
+	}
+	return 0, 0, fmt.Errorf("не нашёл закрывающую скобку блока mod, начатого на строке %d", j+1)
+}
+
+// spliceInline строит версию инлайнового файла для базового кода: код
+// базовый (возможно с багом), тестовая часть текущая (новая, должна ловить
+// баг). Если в базе тестового региона ещё нет, он дописывается в конец
+// файла, иначе заменяет собой прежний.
+func spliceInline(base, cur string) (string, error) {
+	curLines := splitLines(cur)
+	start, end, err := findTestRegion(curLines)
+	if err != nil {
+		if err == errNoTestRegion {
+			return "", fmt.Errorf("не нашёл тестовый регион: нет #[cfg(test)] mod и нет маркеров " +
+				"regcheck:test-begin/regcheck:test-end вокруг тестов")
+		}
+		return "", err
+	}
+	testLines := curLines[start-1 : end]
+
+	baseLines := splitLines(base)
+	bStart, bEnd, err := findTestRegion(baseLines)
+	var result []string
+	switch {
+	case err == nil:
+		result = append(append([]string{}, baseLines[:bStart-1]...), testLines...)
+		result = append(result, baseLines[bEnd:]...)
+	case errors.Is(err, errNoTestRegion):
+		result = append(append([]string{}, baseLines...), testLines...)
+	default:
+		return "", fmt.Errorf("в базовой версии: %v", err)
+	}
+	return strings.Join(result, "\n") + "\n", nil
+}
+
 func copyFile(from, to string) error {
 	data, err := os.ReadFile(from)
 	if err != nil {
@@ -147,13 +265,18 @@ func Run(p Params) (string, error) {
 		if tests, err = changedTests(root, base); err != nil {
 			return "", err
 		}
-		if len(tests) == 0 {
-			return "", fmt.Errorf("не нашёл изменённых тестов относительно %s; перечисли их флагом --tests", base)
+		if len(tests) == 0 && len(p.Inline) == 0 {
+			return "", fmt.Errorf("не нашёл изменённых тестов относительно %s; перечисли их флагом --tests или --inline", base)
 		}
 	}
 	for _, t := range tests {
 		if _, err := os.Stat(filepath.Join(root, t)); err != nil {
 			return "", fmt.Errorf("тестовый файл %s не найден в рабочем дереве", t)
+		}
+	}
+	for _, t := range p.Inline {
+		if _, err := os.Stat(filepath.Join(root, t)); err != nil {
+			return "", fmt.Errorf("инлайновый файл %s не найден в рабочем дереве", t)
 		}
 	}
 	if out, err := runCmd(root, p.Cmd); err != nil {
@@ -174,10 +297,30 @@ func Run(p Params) (string, error) {
 			return "", err
 		}
 	}
+	for _, t := range p.Inline {
+		curData, err := os.ReadFile(filepath.Join(root, t))
+		if err != nil {
+			return "", err
+		}
+		basePath := filepath.Join(wt, t)
+		baseData, err := os.ReadFile(basePath)
+		if err != nil {
+			return "", fmt.Errorf("инлайновый файл %s не найден в базе %s; это целиком новый файл, "+
+				"--inline тут ни при чём, перенеси его как обычный тест через --tests", t, base)
+		}
+		result, err := spliceInline(string(baseData), string(curData))
+		if err != nil {
+			return "", fmt.Errorf("инлайновый файл %s: %v", t, err)
+		}
+		if err := os.WriteFile(basePath, []byte(result), 0o644); err != nil {
+			return "", err
+		}
+	}
 	if _, err := runCmd(wt, p.Cmd); err == nil {
 		return "", fmt.Errorf("тест зелёный и на старом коде (%s), регрессию он не ловит; "+
 			"если правка уже закоммичена, укажи базу без неё (--base main)", base)
 	}
+	all := append(append([]string{}, tests...), p.Inline...)
 	return fmt.Sprintf("тест краснеет на %s и проходит на текущем коде, регрессия закрыта (тесты: %s)",
-		base, strings.Join(tests, ", ")), nil
+		base, strings.Join(all, ", ")), nil
 }

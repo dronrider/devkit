@@ -467,6 +467,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if len(warns) > 0 {
 		warn = strings.Join(warns, "\n") + "\n"
 	}
+	// Поездное слияние возвращается до блока выката, поэтому его
+	// предупреждение о конфиге едет здесь, вместе с преребейзными.
+	if deploy.warn != "" && p.Train {
+		warn += "предупреждение: " + deploy.warn + "\n"
+	}
 	// Ребейз и тесты идут там, где ветка стоит в чекауте: в worktree задачи
 	// либо в основном дереве (старый путь без worktree).
 	workDir := root
@@ -547,7 +552,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		}
 		return strings.Join(msg, "\n"), nil
 	}
-	if deploy.warn != "" {
+	if deploy.warn != "" && !p.Train {
 		msg = append(msg, "предупреждение: "+deploy.warn)
 	}
 	switch {
@@ -637,6 +642,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	list := strings.Join(train, ", ")
 	var msg []string
+	if deploy.warn != "" {
+		msg = append(msg, "предупреждение: "+deploy.warn)
+	}
 	if len(train) > 5 {
 		msg = append(msg, fmt.Sprintf("предупреждение: в поезде %d задач(и), больше 3-5 не копят, регресс без сценария ищется перебором состава", len(train)))
 	}
@@ -898,6 +906,9 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		return "", err
 	}
 	out := []string{fmt.Sprintf("откачено коммитов: %d (%s)", len(shas), strings.Join(short, ", "))}
+	if plan.warn != "" {
+		out = append(out, "предупреждение: "+plan.warn)
+	}
 	push := func(note, failed string) error {
 		if !p.Push && !plan.autonomous {
 			return nil

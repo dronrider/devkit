@@ -12,3 +12,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-001 | taskctl: машинно-читаемые зависимости blocks/blocked-by и lint инварианта зависимости | task | P3 | 2026-07-29 | [tasks/archive/2026/DK-001.md](tasks/archive/2026/DK-001.md), `94a6a88`, `16535eb`, `679e536`, `11bdd96` |
 | DK-003 | regcheck: проверка инлайновых тестов, когда правка и тест в одном файле | task | P3 | 2026-07-29 | [tasks/archive/2026/DK-003.md](tasks/archive/2026/DK-003.md) |
 | DK-002 | devkitctl: сводка по журналу запусков .devkit/log (частота команд, доля ошибок) | task | P3 | 2026-07-29 | [tasks/archive/2026/DK-002.md](tasks/archive/2026/DK-002.md), `e6bf0db`, `a774fa4` |
+| DK-004 | devkitctl doctor и shipctl merge: предупреждение про autonomous = true при пустом deploy | task | P3 | 2026-07-29 | [tasks/archive/2026/DK-004.md](tasks/archive/2026/DK-004.md), `681d6a5`, `2b58b7d`, `ace06d1`, `edbd4ee` |

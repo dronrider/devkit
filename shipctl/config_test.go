@@ -77,8 +77,20 @@ func TestResolveDeploy(t *testing.T) {
 		t.Fatalf("при autonomous=false команду катить нельзя: %+v", p)
 	}
 	// Команды нет вовсе: плейбук проекта, но автономия всё равно включает пуш.
+	// Но это проблемное сочетание: autonomous=true без команды означает, что агент
+	// полагает, что ему доверен конвейер, а выкатывать нечего.
 	writeCfg("autonomous = true\n")
-	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual != "" || !p.autonomous {
-		t.Fatalf("без команды выката ждал пустой план с автономией: %+v", p)
+	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual != "" || !p.autonomous || p.warn == "" {
+		t.Fatalf("без команды выката с autonomous=true ждал warn: %+v", p)
+	}
+	// autonomous=false с пустой командой: не ошибка, выкат по плейбуку.
+	writeCfg("autonomous = false\n")
+	if p, _ := resolveDeploy(root, ""); p.run != "" || p.manual != "" || p.autonomous || p.warn != "" {
+		t.Fatalf("пустая команда с autonomous=false не должна давать warn: %+v", p)
+	}
+	// autonomous=true с командой: нормально, warn не нужен.
+	writeCfg("deploy = from-config\nautonomous = true\n")
+	if p, _ := resolveDeploy(root, ""); p.run != "from-config" || p.warn != "" {
+		t.Fatalf("с заполненной командой warn не нужен: %+v", p)
 	}
 }

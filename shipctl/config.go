@@ -61,10 +61,13 @@ func loadDeployConfig(root string) (deployConfig, error) {
 // в конфиге есть, но автономия выключена). Оба пустые значат «плейбук проекта».
 // autonomous поднят, когда агенту доверен весь конвейер: тогда merge и revert
 // пушат результат сами, чтобы origin, доска и прод не разошлись.
+// warn это предупреждение про проблемное конфигурирование (например, autonomous
+// поднят, но команда выката не задана).
 type deployPlan struct {
 	run        string
 	manual     string
 	autonomous bool
+	warn       string
 }
 
 // resolveDeploy решает, что делать с выкатом. Явный --deploy это указание
@@ -83,7 +86,9 @@ func resolveDeploy(root, flag string) (deployPlan, error) {
 	plan := deployPlan{autonomous: cfg.Autonomous}
 	switch {
 	case cfg.Deploy == "":
-		// Команды нет: выкат по плейбуку проекта, план пустой.
+		if cfg.Autonomous {
+			plan.warn = "autonomous = true, но deploy пустой в " + deployConfigPath + ": выкат не запустится; вписать команду выката либо снять autonomous"
+		}
 	case cfg.Autonomous:
 		plan.run = cfg.Deploy
 	default:

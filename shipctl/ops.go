@@ -152,6 +152,9 @@ func cmdStatus(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if plan.warn != "" {
+		out = append(out, "предупреждение: "+plan.warn)
+	}
 	switch {
 	case plan.run != "":
 		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath+", merge катит и пушит сам")
@@ -543,6 +546,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			msg = append(msg, fmt.Sprintf("в поезде (состав не пересчитался: %v); выкат поезда: shipctl ship", err))
 		}
 		return strings.Join(msg, "\n"), nil
+	}
+	if deploy.warn != "" {
+		msg = append(msg, "предупреждение: "+deploy.warn)
 	}
 	switch {
 	case deploy.run != "":

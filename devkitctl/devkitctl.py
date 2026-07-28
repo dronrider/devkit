@@ -293,17 +293,20 @@ def stats(start):
         if code != 0:
             total_errors += 1
 
+    if total_runs == 0:
+        sys.stderr.write("журнал пуст: %s\n" % RUN_LOG)
+        return 2
+
     sorted_runs = sorted(runs.items(), key=lambda x: x[1][0], reverse=True)
 
-    max_len = max(len(f"{t} {c}") for (t, c), _ in sorted_runs) if sorted_runs else 0
+    max_len = max(len(f"{t} {c}") for (t, c), _ in sorted_runs)
     for (tool, cmd), (count, errors) in sorted_runs:
         key_str = f"{tool} {cmd}"
-        error_pct = round(100 * errors / count) if count > 0 else 0
+        error_pct = round(100 * errors / count)
         print(f"{key_str:<{max_len}}  {count:>3}   ошибок {errors} ({error_pct}%)")
 
-    if total_runs > 0:
-        total_pct = round(100 * total_errors / total_runs)
-        print(f"{'итого':<{max_len}}  {total_runs:>3}   ошибок {total_errors} ({total_pct}%)")
+    total_pct = round(100 * total_errors / total_runs)
+    print(f"{'итого':<{max_len}}  {total_runs:>3}   ошибок {total_errors} ({total_pct}%)")
 
     return 0
 

@@ -31,6 +31,19 @@ func TestSplitJoinTitle(t *testing.T) {
 	}
 }
 
+// TestSplitTitleWrongOrderStillExposesDep: регрессия. Ручная правка иногда
+// путает порядок суффиксов («[блок: ...] [после ...]» вместо штатного
+// «[после ...] [блок: ...]»). Раньше жадный blockSufRe дотягивался до конца
+// строки и съедал маркер зависимости целиком, и она пропадала из lint, move
+// и close. Порядок остаётся неверным (это отдельная опечатка), но сама
+// зависимость обязана быть видна.
+func TestSplitTitleWrongOrderStillExposesDep(t *testing.T) {
+	_, deps, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
+	if len(deps) != 1 || deps[0] != "XR-001" {
+		t.Fatalf("зависимость не видна при перепутанном порядке суффиксов: deps=%v", deps)
+	}
+}
+
 func TestDepAddRmList(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdDepAdd(root, DepParams{ID: "XR-002", DepID: "XR-001"})
@@ -129,6 +142,51 @@ func TestMoveBlockedByDep(t *testing.T) {
 	}
 }
 
+// TestMoveAllowedWhenDepAlreadyClosed: маркер «после» на задачу, которая уже
+// в архиве, страховку move не держит (ветка arch.has(d) == true).
+func TestMoveAllowedWhenDepAlreadyClosed(t *testing.T) {
+	root := setup(t)
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := b.find("XR-004")
+	row.Title += " [после XR-007]"
+	b.Lines[row.LineIdx] = formatRow(row)
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatalf("зависимость на закрытую (архивную) задачу не должна держать move: %v", err)
+	}
+}
+
+// TestDepAddGuardsInProgressAndCheck: симметрично страховке move, dep add на
+// задачу, уже стоящую в In progress или Check, с незакрытой зависимостью
+// падает, а не делает доску молча красной по lint.
+func TestDepAddGuardsInProgressAndCheck(t *testing.T) {
+	root := setup(t)
+	_, err := cmdDepAdd(root, DepParams{ID: "XR-005", DepID: "XR-001"})
+	if err == nil {
+		t.Fatal("dep add на задачу в In progress с незакрытой зависимостью должен падать")
+	}
+	if !strings.Contains(err.Error(), "XR-001") {
+		t.Fatalf("в ошибке нет ID зависимости: %v", err)
+	}
+
+	// Зависимость на уже закрытую (архивную) задачу не мешает.
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-005", DepID: "XR-007"}); err != nil {
+		t.Fatalf("зависимость на закрытую задачу не должна падать: %v", err)
+	}
+
+	if _, err := cmdMove(root, "XR-001", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-001", DepID: "XR-002"}); err == nil {
+		t.Fatal("dep add на задачу в Check с незакрытой зависимостью должен падать")
+	}
+}
+
 // TestCloseStripsDeps: close снимает «[после <ID>]» со всех строк доски и не
 // переносит собственный маркер задачи в архив.
 func TestCloseStripsDeps(t *testing.T) {
@@ -139,7 +197,11 @@ func TestCloseStripsDeps(t *testing.T) {
 	if _, err := cmdDepAdd(root, DepParams{ID: "XR-003", DepID: "XR-005"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDepAdd(root, DepParams{ID: "XR-005", DepID: "XR-001"}); err != nil {
+	// XR-005 сама уже в In progress, свежая незакрытая зависимость на неё
+	// не встанет (страховка dep add), поэтому берём уже закрытую XR-007:
+	// проверка бьёт по тому, что маркер не переезжает в архив, а не по тому,
+	// от кого он был.
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-005", DepID: "XR-007"}); err != nil {
 		t.Fatal(err)
 	}
 

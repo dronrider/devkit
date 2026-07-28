@@ -255,7 +255,11 @@ func mustNum(id string) int {
 	return n
 }
 
-var blockSufRe = regexp.MustCompile(`\s*\[блок: [^|]*\]\s*$`)
+// Содержимое причины не пускает «[»: иначе при перепутанном порядке
+// суффиксов («[блок: ...] [после ...]» вместо «[после ...] [блок: ...]»)
+// жадный класс дотягивался до конца строки и съедал маркер зависимости
+// целиком, делая его невидимым для lint, move и close.
+var blockSufRe = regexp.MustCompile(`\s*\[блок: [^|\[]*\]\s*$`)
 
 func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {

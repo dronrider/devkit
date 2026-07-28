@@ -80,6 +80,11 @@ func commitBoard(root, msg string) (string, error) {
 }
 
 func cmdStatus(root string) (string, error) {
+	// Доска и очередь считаются по основному дереву, из worktree тот же ответ.
+	root, _, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
 	b, err := loadBoard(root)
 	if err != nil {
 		return "", err
@@ -90,6 +95,11 @@ func cmdStatus(root string) (string, error) {
 	}
 	var out []string
 	out = append(out, "ветка: "+branch)
+	if _, linked, err := worktrees(root); err == nil {
+		for _, l := range linked {
+			out = append(out, "worktree: "+l.Branch+" в "+l.Path)
+		}
+	}
 	for _, s := range []struct{ key, name string }{
 		{"in-progress", "In progress"}, {"check", "Check"}, {"blocked", "Blocked"},
 	} {
@@ -320,6 +330,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if p.Train && p.Deploy != "" {
 		return "", fmt.Errorf("--train откладывает выкат до shipctl ship, вместе с --deploy он не имеет смысла")
 	}
+	primary, fromWT, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
+	root = primary
 	main, err := preflight(root)
 	if err != nil {
 		return "", err
@@ -328,8 +343,47 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if branch == main {
-		return "", fmt.Errorf("стоишь на %s, сливать нечего: merge запускается с фичеветки", main)
+	// Ветка задачи бывает в трёх местах: чекаут основного дерева (запуск с
+	// фичеветки, как раньше), worktree запуска и worktree, найденный по ID
+	// (запуск с main при работе через shipctl start). Дальше wt != "" значит
+	// «ветка в отдельном дереве»: ребейз и тесты идут там, слияние в основном.
+	wt := ""
+	switch {
+	case fromWT != "":
+		wt = fromWT
+		if branch, err = git(wt, "rev-parse", "--abbrev-ref", "HEAD"); err != nil {
+			return "", err
+		}
+	case branch == main:
+		l, err := taskWorktree(root, p.ID)
+		if err != nil {
+			return "", err
+		}
+		if l == nil {
+			return "", fmt.Errorf("стоишь на %s, и worktree с веткой %s не нашёлся: сливать нечего", main, p.ID)
+		}
+		wt, branch = l.Path, l.Branch
+	}
+	if wt != "" {
+		if branch == main {
+			return "", fmt.Errorf("в worktree %s стоит %s, сливать нечего: merge запускается для фичеветки", wt, main)
+		}
+		// Fast-forward делается в основном дереве, поэтому оно обязано стоять
+		// на main; ветку в нём двигать нельзя, она занята в worktree.
+		cur, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return "", err
+		}
+		if cur != main {
+			return "", fmt.Errorf("ветка задачи в worktree %s, а основной чекаут стоит на %s: перевести его на %s и повторить", wt, cur, main)
+		}
+		st, err := git(wt, "status", "--porcelain", "--untracked-files=no")
+		if err != nil {
+			return "", err
+		}
+		if st != "" {
+			return "", fmt.Errorf("в worktree %s незакоммиченное, сначала закоммить:\n%s", wt, tail(st))
+		}
 	}
 	b, err := loadBoard(root)
 	if err != nil {
@@ -361,7 +415,13 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if !p.Train && len(train) > 0 {
 		return "", fmt.Errorf("в поезде %s, одиночный выкат смешал бы их со своей задачей: либо merge --train, либо сначала shipctl ship", strings.Join(train, ", "))
 	}
-	open, err := openReviewNotes(root, p.ID)
+	// Файл задачи с замечаниями ревью живёт на фичеветке: при слиянии из
+	// worktree читать его надо там, основной чекаут на main этих правок не видит.
+	reviewRoot := root
+	if wt != "" {
+		reviewRoot = wt
+	}
+	open, err := openReviewNotes(reviewRoot, p.ID)
 	if err != nil {
 		return "", err
 	}
@@ -382,26 +442,34 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// осмысленный) и не валят слияние: это подсказки по правилам, а не
 	// предусловия.
 	var warns []string
-	if subjects, err := git(root, "log", main+"..HEAD", "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
+	if subjects, err := git(root, "log", main+".."+branch, "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
 		warns = append(warns, fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject, revert по ID их не найдёт", p.ID))
 	}
-	warns = append(warns, regcheckWarning(root, main, b.rowOf(p.ID).Type)...)
+	warns = append(warns, regcheckWarning(root, reviewRoot, main, branch, b.rowOf(p.ID).Type)...)
 	if p.Train {
-		warns = append(warns, trainWarnings(root, main, b, p.ID, train)...)
+		warns = append(warns, trainWarnings(root, main, branch, b, p.ID, train)...)
 	}
 	warn := ""
 	if len(warns) > 0 {
 		warn = strings.Join(warns, "\n") + "\n"
 	}
-	if out, err := git(root, "rebase", main); err != nil {
-		git(root, "rebase", "--abort")
+	// Ребейз и тесты идут там, где ветка стоит в чекауте: в worktree задачи
+	// либо в основном дереве (старый путь без worktree).
+	workDir := root
+	if wt != "" {
+		workDir = wt
+	}
+	if out, err := git(workDir, "rebase", main); err != nil {
+		git(workDir, "rebase", "--abort")
 		return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, tail(out))
 	}
-	if out, err := runShell(root, p.Test); err != nil {
+	if out, err := runShell(workDir, p.Test); err != nil {
 		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", tail(out))
 	}
-	if _, err := git(root, "checkout", main); err != nil {
-		return "", err
+	if wt == "" {
+		if _, err := git(root, "checkout", main); err != nil {
+			return "", err
+		}
 	}
 	preSha, err := git(root, "rev-parse", "HEAD")
 	if err != nil {
@@ -410,7 +478,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if out, err := git(root, "merge", "--ff-only", branch); err != nil {
 		return "", fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
 	}
-	git(root, "branch", "-d", branch)
+	var wtNote string
+	if wt != "" {
+		wtNote = removeWorktree(root, wt, branch)
+	} else {
+		git(root, "branch", "-d", branch)
+	}
 	// Первое поездное слияние заводит тег на main до себя: что было на main к
 	// этому моменту, считается выкаченным, и окно поезда начинается с этой ветки.
 	if p.Train {
@@ -420,7 +493,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			}
 		}
 	}
-	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward, ветка %s удалена", p.ID, main, branch)}
+	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward", p.ID, main)}
+	if wtNote != "" {
+		msg = append(msg, wtNote)
+	} else {
+		msg[0] += ", ветка " + branch + " удалена"
+	}
 	// При autonomous=true пуш это часть автономного конвейера, иначе origin
 	// отстал бы от задеплоенного прода, а revert по ID не нашёл бы коммитов.
 	// Код пушится до выката: pull-выкат тянет код с origin, и без свежего
@@ -500,6 +578,11 @@ type ShipParams struct {
 // на одном билде, каждая задача по своему сценарию; провал одной чинится
 // точечным revert, остальной поезд остаётся на проде.
 func cmdShip(root string, p ShipParams) (string, error) {
+	// Запуск из worktree допустим, но выкат и доска живут в основном дереве.
+	root, _, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
 	main, err := preflight(root)
 	if err != nil {
 		return "", err
@@ -707,6 +790,11 @@ func docsOnly(files string) bool {
 }
 
 func cmdRevert(root string, p RevertParams) (string, error) {
+	// Как в ship: откат делается в основном дереве, откуда бы ни запустили.
+	root, _, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
 	main, err := preflight(root)
 	if err != nil {
 		return "", err

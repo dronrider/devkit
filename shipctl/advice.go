@@ -17,18 +17,20 @@ const runLogPath = ".devkit/log"
 // обязан краснеть на старом коде (RULES.md, «Тесты обязательны»), а по
 // статистике этот шаг пропускается чаще других. Именно подсказка, не отказ:
 // где правка и тест живут в одном файле, regcheck не применим и проверяется
-// руками. Без журнала (нет .devkit) подсказывать не по чему.
-func regcheckWarning(root, main, taskType string) []string {
+// руками. Без журнала (нет .devkit) подсказывать не по чему. Журнал берётся
+// из logRoot: при работе через worktree прогоны regcheck оседают в дереве
+// задачи, а не в основном чекауте.
+func regcheckWarning(root, logRoot, main, branch, taskType string) []string {
 	if !strings.Contains(taskType, "bug") {
 		return nil
 	}
-	if fi, err := os.Stat(filepath.Join(root, ".devkit")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(logRoot, ".devkit")); err != nil || !fi.IsDir() {
 		return nil
 	}
 	// Начало жизни ветки это коммит, где она отошла от main. regcheck прошлой
 	// задачи остаётся за границей: после её слияния main уехал вперёд и
 	// merge-base новой ветки свежее того прогона.
-	base, err := git(root, "merge-base", main, "HEAD")
+	base, err := git(root, "merge-base", main, branch)
 	if err != nil {
 		return nil
 	}
@@ -40,7 +42,7 @@ func regcheckWarning(root, main, taskType string) []string {
 	if err != nil {
 		return nil
 	}
-	if regcheckLogged(filepath.Join(root, runLogPath), time.Unix(ct, 0)) {
+	if regcheckLogged(filepath.Join(logRoot, runLogPath), time.Unix(ct, 0)) {
 		return nil
 	}
 	return []string{"предупреждение: задача типа bug, а в " + runLogPath +
@@ -73,7 +75,7 @@ func regcheckLogged(path string, since time.Time) bool {
 // («Ветки, ревью и деплой» п. 9): цена S или M, не больше 3-5 задач, задачи
 // не трогают одни файлы. Нарушение не валит merge, критерии на суждении
 // (связность «по смыслу» git не видит), но в отчёте оно обязано прозвучать.
-func trainWarnings(root, main string, b *board, id string, train []string) []string {
+func trainWarnings(root, main, branch string, b *board, id string, train []string) []string {
 	var warns []string
 	if r := b.rowOf(id); r != nil {
 		switch r.Cost {
@@ -87,7 +89,7 @@ func trainWarnings(root, main string, b *board, id string, train []string) []str
 	if len(train) >= 5 {
 		warns = append(warns, fmt.Sprintf("предупреждение: в поезде уже %d задач(и), больше 3-5 не копят, регресс без сценария ищется перебором состава: пора shipctl ship", len(train)))
 	}
-	if overlaps, err := trainOverlap(root, main, train); err == nil && len(overlaps) > 0 {
+	if overlaps, err := trainOverlap(root, main, branch, train); err == nil && len(overlaps) > 0 {
 		warns = append(warns, "предупреждение: ветка трогает файлы задач поезда ("+strings.Join(overlaps, "; ")+"), в поезд берут независимые задачи")
 	}
 	return warns
@@ -96,11 +98,11 @@ func trainWarnings(root, main string, b *board, id string, train []string) []str
 // trainOverlap находит пересечение файлов ветки с файлами коммитов задач
 // поезда. Правки под docs/ (доска, файлы задач, LLD) пересечением не
 // считаются: файл задачи и доску трогает почти каждая ветка.
-func trainOverlap(root, main string, train []string) ([]string, error) {
+func trainOverlap(root, main, branch string, train []string) ([]string, error) {
 	if len(train) == 0 {
 		return nil, nil
 	}
-	branchFiles, err := git(root, "diff", "--name-only", main+"...HEAD")
+	branchFiles, err := git(root, "diff", "--name-only", main+"..."+branch)
 	if err != nil {
 		return nil, err
 	}

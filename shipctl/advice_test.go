@@ -120,7 +120,7 @@ func TestTrainCriteriaWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := trainWarnings(root, "main", b, "XR-003", []string{"A-1", "A-2", "A-3", "A-4", "A-5"})
+	ws := trainWarnings(root, "main", "HEAD", b, "XR-003", []string{"A-1", "A-2", "A-3", "A-4", "A-5"})
 	joined := strings.Join(ws, "\n")
 	if !strings.Contains(joined, "больше 3-5 не копят") {
 		t.Fatalf("нет предупреждения о размере поезда: %v", ws)

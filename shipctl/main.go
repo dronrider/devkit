@@ -9,8 +9,14 @@ import (
 
 const usageText = `shipctl: слияние и откат задач по правилам доски (RULES.board.md)
 
-  status                          очередь выката по секциям доски, поезд и
-                                  вердикт, можно ли сливать
+  status                          очередь выката по секциям доски, поезд,
+                                  worktree задач и вердикт, можно ли сливать
+  start <ID> [--slug хвост]       взять задачу в работу в отдельном дереве:
+        [--push]                  ветка по ID в git worktree рядом с проектом
+                                  (../<проект>-<id>), задача из Backlog
+                                  переводится в In progress; основной чекаут
+                                  остаётся на main, и параллельные сессии не
+                                  толкаются в одном рабочем дереве
   merge <ID> --test "cmd"         предусловия (чистое дерево, задача в
         [--deploy "cmd"] [--push] In progress, Check пуст, ревью без открытых
         [--train]                 замечаний), ребейз фичеветки на main, тесты,
@@ -112,6 +118,17 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		fs.Parse(args[1:])
 		msg, err = cmdStatus(root(*dir))
+	case "start":
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			fail(fmt.Errorf("жду: start <ID> [--slug хвост] [--push]"))
+		}
+		fs := flag.NewFlagSet("start", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := StartParams{ID: args[1]}
+		fs.StringVar(&p.Slug, "slug", "", "хвост имени ветки: <id>-<хвост>")
+		fs.BoolVar(&p.Push, "push", false, "запушить коммит доски после перевода в In progress")
+		fs.Parse(args[2:])
+		msg, err = cmdStart(root(*dir), p)
 	case "merge":
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 			fail(fmt.Errorf("жду: merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push]"))

@@ -312,8 +312,8 @@ func TestMergeRedTests(t *testing.T) {
 func TestMergePreconditions(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
-		!strings.Contains(err.Error(), "фичеветки") {
-		t.Fatalf("merge с main должен отбиваться: %v", err)
+		!strings.Contains(err.Error(), "сливать нечего") {
+		t.Fatalf("merge с main без worktree задачи должен отбиваться: %v", err)
 	}
 	branchWithFix(t, root)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001"}); err == nil ||

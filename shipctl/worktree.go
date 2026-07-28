@@ -1,0 +1,211 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// Изоляция параллельных сессий: у каждой задачи своё рабочее дерево.
+// Ветка задачи живёт не в общем чекауте, а в git worktree рядом с проектом,
+// основной чекаут остаётся на main для доски и мелочи. Незакоммиченные правки
+// одной сессии тогда не лежат под ногами у другой.
+
+type worktreeInfo struct{ Path, Branch string }
+
+// worktrees разбирает `git worktree list --porcelain`: первым блоком git
+// всегда отдаёт основной чекаут, дальше линкованные деревья.
+func worktrees(root string) (primary string, linked []worktreeInfo, err error) {
+	out, err := git(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", nil, err
+	}
+	var cur worktreeInfo
+	flush := func() {
+		if cur.Path == "" {
+			return
+		}
+		if primary == "" {
+			primary = cur.Path
+		} else {
+			linked = append(linked, cur)
+		}
+		cur = worktreeInfo{}
+	}
+	for _, ln := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "worktree "):
+			flush()
+			cur.Path = strings.TrimPrefix(ln, "worktree ")
+		case strings.HasPrefix(ln, "branch refs/heads/"):
+			cur.Branch = strings.TrimPrefix(ln, "branch refs/heads/")
+		}
+	}
+	flush()
+	if primary == "" {
+		return "", nil, fmt.Errorf("git worktree list не вернул ни одного дерева")
+	}
+	return primary, linked, nil
+}
+
+// primaryRoot приводит корень к основному чекауту: команды можно запускать и
+// из worktree задачи, но доска и fast-forward живут в основном дереве. Вторым
+// значением возвращается worktree, из которого запустились (пустая строка,
+// если запуск уже из основного).
+func primaryRoot(root string) (string, string, error) {
+	primary, _, err := worktrees(root)
+	if err != nil {
+		return "", "", err
+	}
+	top, err := git(root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", "", err
+	}
+	// git хранит в списке развёрнутые пути, а снаружи путь может прийти через
+	// симлинк (на macOS /tmp и /var), сравнивать надо канонические.
+	rt, err := filepath.EvalSymlinks(top)
+	if err != nil {
+		return "", "", err
+	}
+	rp, err := filepath.EvalSymlinks(primary)
+	if err != nil {
+		return "", "", err
+	}
+	if rt == rp {
+		return root, "", nil
+	}
+	return rp, rt, nil
+}
+
+// branchOfTask: ветка называется по ID строчными, с хвостом-слагом или без
+// (`dk-005`, `dk-005-worktree`). Точного имени merge не знает, поэтому матч
+// по префиксу до дефиса.
+func branchOfTask(branch, id string) bool {
+	b, low := strings.ToLower(branch), strings.ToLower(id)
+	return b == low || strings.HasPrefix(b, low+"-")
+}
+
+// taskWorktree находит worktree с веткой задачи, nil если такого нет.
+func taskWorktree(root, id string) (*worktreeInfo, error) {
+	_, linked, err := worktrees(root)
+	if err != nil {
+		return nil, err
+	}
+	for i := range linked {
+		if branchOfTask(linked[i].Branch, id) {
+			return &linked[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// removeWorktree прибирает дерево слитой задачи и удаляет ветку. Провал не
+// ошибка: слияние к этому моменту прошло, а неубранное дерево (например, с
+// untracked-черновиками) прибирается руками, подсказка уходит в отчёт.
+func removeWorktree(root, wt, branch string) string {
+	if _, err := git(root, "worktree", "remove", wt); err != nil {
+		return fmt.Sprintf("worktree %s не убрался (незакоммиченное или лишние файлы), прибрать руками: git worktree remove %s && git branch -d %s", wt, wt, branch)
+	}
+	git(root, "branch", "-d", branch)
+	return fmt.Sprintf("worktree %s убран, ветка %s удалена", wt, branch)
+}
+
+type StartParams struct {
+	ID   string
+	Slug string // хвост имени ветки: dk-005-<slug>; без него ветка по ID
+	Push bool   // запушить коммит доски после перевода в In progress
+}
+
+// cmdStart берёт задачу в работу в отдельном дереве: ветка по ID в worktree
+// рядом с проектом, задача из Backlog переводится в In progress. Основной
+// чекаут не трогается и остаётся на main.
+func cmdStart(root string, p StartParams) (string, error) {
+	if _, err := exec.LookPath("taskctl"); err != nil {
+		return "", fmt.Errorf("taskctl не найден в PATH, собери его из devkit/taskctl")
+	}
+	primary, wt, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
+	if wt != "" {
+		return "", fmt.Errorf("start запускается из основного чекаута, а не из worktree %s", wt)
+	}
+	root = primary
+	main, err := mainBranch(root)
+	if err != nil {
+		return "", err
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		return "", err
+	}
+	sect := b.sectOf(p.ID)
+	switch sect {
+	case "backlog", "in-progress":
+	case "":
+		return "", fmt.Errorf("%s нет на доске", p.ID)
+	default:
+		return "", fmt.Errorf("%s в %s, в работу берут из Backlog или In progress", p.ID, sect)
+	}
+	if l, err := taskWorktree(root, p.ID); err != nil {
+		return "", err
+	} else if l != nil {
+		return "", fmt.Errorf("%s уже в работе: ветка %s в worktree %s", p.ID, l.Branch, l.Path)
+	}
+	low := strings.ToLower(p.ID)
+	branch := low
+	if p.Slug != "" {
+		branch = low + "-" + p.Slug
+	}
+	// Второй заход на задачу: ветка осталась с прошлого раза, worktree
+	// заводится на неё, а не на новую от main.
+	exists := false
+	if p.Slug == "" {
+		if names, err := git(root, "branch", "--list", "--format=%(refname:short)"); err == nil {
+			for _, n := range strings.Split(names, "\n") {
+				if branchOfTask(n, p.ID) {
+					branch, exists = n, true
+					break
+				}
+			}
+		}
+	} else if _, err := git(root, "rev-parse", "--verify", "refs/heads/"+branch); err == nil {
+		exists = true
+	}
+	wtPath := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+low)
+	if _, err := os.Stat(wtPath); err == nil {
+		return "", fmt.Errorf("директория %s уже существует, сначала прибрать её", wtPath)
+	}
+	args := []string{"worktree", "add", wtPath}
+	if exists {
+		args = append(args, branch)
+	} else {
+		args = append(args, "-b", branch, main)
+	}
+	if out, err := git(root, args...); err != nil {
+		return "", fmt.Errorf("worktree не создался:\n%s", tail(out))
+	}
+	// .devkit гитигнорнут и в новое дерево не попадает, а без него в worktree
+	// не пишется журнал запусков (по нему merge подсказывает про regcheck).
+	os.Mkdir(filepath.Join(wtPath, ".devkit"), 0o755)
+	msg := []string{fmt.Sprintf("ветка %s в worktree %s", branch, wtPath)}
+	if sect == "backlog" {
+		plan, err := resolveDeploy(root, "")
+		if err != nil {
+			return "", err
+		}
+		mvArgs := []string{"-C", root, "move", p.ID, "in-progress", "-m", "docs(tasks): " + p.ID + " в работу"}
+		if p.Push || plan.autonomous {
+			mvArgs = append(mvArgs, "--push")
+		}
+		out, err := exec.Command("taskctl", mvArgs...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("worktree создан, но taskctl move: %v (%s)", err, strings.TrimSpace(string(out)))
+		}
+		msg = append(msg, "доска: "+strings.TrimSpace(string(out)))
+	}
+	msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
+	return strings.Join(msg, "\n"), nil
+}

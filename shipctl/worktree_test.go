@@ -241,3 +241,46 @@ func TestStatusShowsWorktrees(t *testing.T) {
 		}
 	}
 }
+
+// TestStartBacklogBranchHasTransferCommit: start из backlog создаёт ветку
+// на том же коммите, что и main после перевода задачи на доске. Ветка,
+// отставшая на коммит перевода, ловит конфликт по строке доски при ребейзе.
+func TestStartBacklogBranchHasTransferCommit(t *testing.T) {
+	root := t.TempDir()
+	gitT(t, root, "init", "-q", "-b", "main")
+	gitT(t, root, "config", "user.email", "test@test")
+	gitT(t, root, "config", "user.name", "test")
+	boardTable := "| ID | Задача | Тип | P | R | Ссылка |\n|--------|--------|-----|---|---|--------|\n"
+	board := "# Тест: задачи (префикс XR)\n\n" +
+		"## In progress\n\nНет.\n\n## Check\n\nНет.\n\n## Backlog\n\n" +
+		boardTable + "| XR-002 | Задача | task | P3 | 10 (0+5+0+0+5) |  |\n\n## Blocked\n\nНет.\n"
+	write(t, root, "docs/TASKS.md", board)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "seed")
+	bin := t.TempDir()
+	callLog := filepath.Join(bin, "calls.log")
+	stub := `#!/bin/sh
+echo "$@" >> "` + callLog + `"
+printf '\n' >> "$2/docs/TASKS.md"
+cd "$2"
+git add docs/TASKS.md
+git commit -q -m "docs(tasks): $4"
+`
+	write(t, bin, "taskctl", stub)
+	os.Chmod(filepath.Join(bin, "taskctl"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	mainHeadBefore := gitT(t, root, "rev-parse", "main")
+	_, err := cmdStart(root, StartParams{ID: "XR-002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-xr-002")
+	mainHeadAfter := gitT(t, root, "rev-parse", "main")
+	branchHead := gitT(t, wt, "rev-parse", "HEAD")
+	if mainHeadBefore == mainHeadAfter {
+		t.Fatal("main не продвинулась, коммит перевода не создан")
+	}
+	if branchHead != mainHeadAfter {
+		t.Fatalf("ветка отстаёт: main %s, branch %s", mainHeadAfter, branchHead)
+	}
+}

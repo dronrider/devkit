@@ -194,19 +194,10 @@ func cmdStart(root string, p StartParams) (string, error) {
 	if _, err := os.Stat(wtPath); err == nil {
 		return "", fmt.Errorf("директория %s уже существует, сначала прибрать её", wtPath)
 	}
-	args := []string{"worktree", "add", wtPath}
-	if exists {
-		args = append(args, branch)
-	} else {
-		args = append(args, "-b", branch, main)
-	}
-	if out, err := git(root, args...); err != nil {
-		return "", fmt.Errorf("worktree не создался:\n%s", tail(out))
-	}
-	// .devkit гитигнорнут и в новое дерево не попадает, а без него в worktree
-	// не пишется журнал запусков (по нему merge подсказывает про regcheck).
-	os.Mkdir(filepath.Join(wtPath, ".devkit"), 0o755)
 	msg := []string{fmt.Sprintf("ветка %s в worktree %s", branch, wtPath)}
+	// Перевод доски коммитится раньше создания worktree: ветка тогда ветвится
+	// от main уже с коммитом перевода, и правки доски в дереве задачи не
+	// конфликтуют при ребейзе на merge.
 	if sect == "backlog" {
 		plan, err := resolveDeploy(root, "")
 		if err != nil {
@@ -218,10 +209,25 @@ func cmdStart(root string, p StartParams) (string, error) {
 		}
 		out, err := exec.Command("taskctl", mvArgs...).CombinedOutput()
 		if err != nil {
-			return "", fmt.Errorf("worktree %s создан, но доска не переведена: taskctl move: %v (%s); дочинить руками: taskctl move %s in-progress", wtPath, err, strings.TrimSpace(string(out)), p.ID)
+			return "", fmt.Errorf("taskctl move: %v (%s); дочинить руками: taskctl move %s in-progress", err, strings.TrimSpace(string(out)), p.ID)
 		}
 		msg = append(msg, "доска: "+strings.TrimSpace(string(out)))
 	}
+	args := []string{"worktree", "add", wtPath}
+	if exists {
+		args = append(args, branch)
+	} else {
+		args = append(args, "-b", branch, main)
+	}
+	if out, err := git(root, args...); err != nil {
+		if sect == "backlog" {
+			return "", fmt.Errorf("доска переведена, но worktree не создался:\n%s", tail(out))
+		}
+		return "", fmt.Errorf("worktree не создался:\n%s", tail(out))
+	}
+	// .devkit гитигнорнут и в новое дерево не попадает, а без него в worktree
+	// не пишется журнал запусков (по нему merge подсказывает про regcheck).
+	os.Mkdir(filepath.Join(wtPath, ".devkit"), 0o755)
 	msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
 	return strings.Join(msg, "\n"), nil
 }

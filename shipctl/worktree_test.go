@@ -41,9 +41,14 @@ func TestStartWorktree(t *testing.T) {
 		t.Fatalf("повторный start должен отбиваться: %v", err)
 	}
 
-	// Второй заход: worktree убрали, ветка осталась, start находит её по ID.
-	gitT(t, root, "worktree", "remove", "--force", wt)
-	msg, err = cmdStart(root, StartParams{ID: "XR-002"})
+	// Второй заход: дерево снесли мимо git (rm -rf), регистрация осиротела,
+	// ветка осталась. start чинит регистрацию через prune и подхватывает
+	// старую ветку, даже когда передан другой слаг: вторая ветка задачи
+	// молча появляться не должна.
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	msg, err = cmdStart(root, StartParams{ID: "XR-002", Slug: "другой"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +57,38 @@ func TestStartWorktree(t *testing.T) {
 	}
 	if !strings.Contains(msg, "xr-002-wt") {
 		t.Fatalf("отчёт второго захода: %q", msg)
+	}
+	if bl := gitT(t, root, "branch", "--list", "xr-002-другой"); bl != "" {
+		t.Fatalf("завелась вторая ветка задачи: %q", bl)
+	}
+}
+
+// TestMergeForeignWorktree: merge одной задачи из worktree другой отбивается,
+// иначе в main уехала бы чужая ветка, а в Check перевелась своя.
+func TestMergeForeignWorktree(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	wt := startTask(t, root, "XR-001", "code.txt")
+	if _, err := cmdMerge(wt, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "а сливается XR-003") {
+		t.Fatalf("merge чужой задачи из worktree должен отбиваться: %v", err)
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("отказ merge не должен трогать worktree")
+	}
+}
+
+// TestMergeStaleWorktreeRegistration: merge с main при осиротелой регистрации
+// (дерево снесли rm -rf) не падает на мёртвом пути, а отвечает по делу:
+// после prune ветку сливать неоткуда.
+func TestMergeStaleWorktreeRegistration(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	wt := startTask(t, root, "XR-001", "code.txt")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "сливать нечего") {
+		t.Fatalf("ждал чистый отказ после prune: %v", err)
 	}
 }
 

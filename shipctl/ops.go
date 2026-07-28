@@ -354,6 +354,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		if branch, err = git(wt, "rev-parse", "--abbrev-ref", "HEAD"); err != nil {
 			return "", err
 		}
+		// Ветка дерева обязана быть веткой переданной задачи: запуск merge
+		// одной задачи из worktree другой слил бы чужую ветку, а в Check
+		// перевёл свою. Заодно отсекается detached HEAD (branch тогда «HEAD»).
+		if !branchOfTask(branch, p.ID) {
+			return "", fmt.Errorf("в worktree %s стоит ветка %s, а сливается %s: запускать merge из дерева задачи или из основного чекаута", wt, branch, p.ID)
+		}
 	case branch == main:
 		l, err := taskWorktree(root, p.ID)
 		if err != nil {

@@ -88,17 +88,36 @@ func branchOfTask(branch, id string) bool {
 }
 
 // taskWorktree находит worktree с веткой задачи, nil если такого нет.
+// Осиротелую регистрацию (директорию снесли мимо git, запись в списке
+// осталась) чинит git worktree prune, иначе start и merge упирались бы в
+// несуществующий путь.
 func taskWorktree(root, id string) (*worktreeInfo, error) {
-	_, linked, err := worktrees(root)
-	if err != nil {
-		return nil, err
-	}
-	for i := range linked {
-		if branchOfTask(linked[i].Branch, id) {
-			return &linked[i], nil
+	for attempt := 0; ; attempt++ {
+		_, linked, err := worktrees(root)
+		if err != nil {
+			return nil, err
+		}
+		var stale *worktreeInfo
+		for i := range linked {
+			if !branchOfTask(linked[i].Branch, id) {
+				continue
+			}
+			if _, err := os.Stat(linked[i].Path); err == nil {
+				return &linked[i], nil
+			}
+			stale = &linked[i]
+			break
+		}
+		if stale == nil {
+			return nil, nil
+		}
+		if attempt > 0 {
+			return nil, fmt.Errorf("worktree %s числится в git, но директории нет и prune запись не снял", stale.Path)
+		}
+		if _, err := git(root, "worktree", "prune"); err != nil {
+			return nil, err
 		}
 	}
-	return nil, nil
 }
 
 // removeWorktree прибирает дерево слитой задачи и удаляет ветку. Провал не
@@ -106,7 +125,7 @@ func taskWorktree(root, id string) (*worktreeInfo, error) {
 // untracked-черновиками) прибирается руками, подсказка уходит в отчёт.
 func removeWorktree(root, wt, branch string) string {
 	if _, err := git(root, "worktree", "remove", wt); err != nil {
-		return fmt.Sprintf("worktree %s не убрался (незакоммиченное или лишние файлы), прибрать руками: git worktree remove %s && git branch -d %s", wt, wt, branch)
+		return fmt.Sprintf("worktree %s не убрался (лежат untracked-файлы), прибрать руками: разобрать, что там осталось, затем git worktree remove --force %s && git branch -d %s", wt, wt, branch)
 	}
 	git(root, "branch", "-d", branch)
 	return fmt.Sprintf("worktree %s убран, ветка %s удалена", wt, branch)
@@ -160,19 +179,16 @@ func cmdStart(root string, p StartParams) (string, error) {
 		branch = low + "-" + p.Slug
 	}
 	// Второй заход на задачу: ветка осталась с прошлого раза, worktree
-	// заводится на неё, а не на новую от main.
+	// заводится на неё, а не на новую от main. Уцелевшая ветка сильнее
+	// --slug, иначе у задачи молча появлялась бы вторая ветка.
 	exists := false
-	if p.Slug == "" {
-		if names, err := git(root, "branch", "--list", "--format=%(refname:short)"); err == nil {
-			for _, n := range strings.Split(names, "\n") {
-				if branchOfTask(n, p.ID) {
-					branch, exists = n, true
-					break
-				}
+	if names, err := git(root, "branch", "--list", "--format=%(refname:short)"); err == nil {
+		for _, n := range strings.Split(names, "\n") {
+			if branchOfTask(n, p.ID) {
+				branch, exists = n, true
+				break
 			}
 		}
-	} else if _, err := git(root, "rev-parse", "--verify", "refs/heads/"+branch); err == nil {
-		exists = true
 	}
 	wtPath := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+low)
 	if _, err := os.Stat(wtPath); err == nil {
@@ -202,7 +218,7 @@ func cmdStart(root string, p StartParams) (string, error) {
 		}
 		out, err := exec.Command("taskctl", mvArgs...).CombinedOutput()
 		if err != nil {
-			return "", fmt.Errorf("worktree создан, но taskctl move: %v (%s)", err, strings.TrimSpace(string(out)))
+			return "", fmt.Errorf("worktree %s создан, но доска не переведена: taskctl move: %v (%s); дочинить руками: taskctl move %s in-progress", wtPath, err, strings.TrimSpace(string(out)), p.ID)
 		}
 		msg = append(msg, "доска: "+strings.TrimSpace(string(out)))
 	}

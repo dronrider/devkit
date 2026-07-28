@@ -119,6 +119,43 @@ printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.loc
 out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
+# stats: вывод сводки по журналу запусков, сортировка по частоте.
+sproj="$tmp/sproj"
+mkdir -p "$sproj/.devkit"
+git init -q "$sproj"
+git -C "$sproj" config user.name t
+git -C "$sproj" config user.email t@t
+# Подложить журнал с известными строками.
+cat > "$sproj/.devkit/log" <<'EOF'
+2026-07-29T01:02:40	taskctl	move	0
+2026-07-29T01:02:40	taskctl	move	0
+2026-07-29T01:02:40	taskctl	move	0
+2026-07-29T01:02:40	taskctl	move	1
+2026-07-29T01:02:41	shipctl	merge	0
+2026-07-29T01:02:41	shipctl	merge	0
+2026-07-29T01:02:41	regcheck	run	1
+2026-07-29T01:02:41	broken line	broken
+EOF
+out=$(python3 "$here/devkitctl.py" stats -C "$sproj" 2>&1)
+[ $? -eq 0 ] || fail "stats упал с ошибкой: $out"
+echo "$out" | grep -q "taskctl move" || fail "в выводе stats нет taskctl move: $out"
+echo "$out" | grep -q "shipctl merge" || fail "в выводе stats нет shipctl merge: $out"
+echo "$out" | grep -q "итого" || fail "в выводе stats нет итоговой строки: $out"
+# Проверить числа: taskctl move должно быть первым (4 запуска).
+first_line=$(echo "$out" | grep -v "итого" | head -1)
+echo "$first_line" | grep -q "taskctl move.*4" || fail "taskctl move должно быть первым с 4 запусками: $first_line"
+# Проверить ошибки: taskctl move должно иметь 1 ошибку из 4.
+echo "$out" | grep "taskctl move" | head -1 | grep -q "ошибок 1 (25%)" || fail "taskctl move должно иметь 1 ошибку (25%)"
+# Проверить что bitaya строка пропущена (всего должно быть 3 команды).
+cmd_count=$(echo "$out" | grep -v "итого" | wc -l)
+[ "$cmd_count" -eq 3 ] || fail "должно быть 3 команды, найдено $cmd_count"
+
+# stats без журнала: код выхода 2.
+empty_proj="$tmp/empty"
+mkdir -p "$empty_proj"
+out=$(python3 "$here/devkitctl.py" stats -C "$empty_proj" 2>&1)
+[ $? -eq 2 ] || fail "stats без журнала должен вернуть код 2"
+
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"
 else

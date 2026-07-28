@@ -14,6 +14,11 @@
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore),
       заполненное не трогает, неоднозначное оставляет находкой
 
+  devkitctl stats [-C dir]
+      сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
+      доля ошибок, отсортировано по частоте убыванием, в конце итоговая строка
+      по всему журналу; битые строки молча пропускаются
+
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
@@ -256,6 +261,53 @@ def doctor(start, fix=False):
     return 0
 
 
+def stats(start):
+    root, _ = project_root(start)
+    log_file = root / RUN_LOG
+    if not log_file.exists() or log_file.stat().st_size == 0:
+        sys.stderr.write("журнал запусков не найден: %s\n" % RUN_LOG)
+        return 2
+
+    runs = {}
+    total_runs, total_errors = 0, 0
+
+    for ln in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = ln.split('\t')
+        if len(parts) != 4:
+            continue
+        try:
+            code = int(parts[3])
+        except ValueError:
+            continue
+
+        tool = parts[1]
+        cmd = parts[2]
+        key = (tool, cmd)
+
+        if key not in runs:
+            runs[key] = [0, 0]
+        runs[key][0] += 1
+        if code != 0:
+            runs[key][1] += 1
+        total_runs += 1
+        if code != 0:
+            total_errors += 1
+
+    sorted_runs = sorted(runs.items(), key=lambda x: x[1][0], reverse=True)
+
+    max_len = max(len(f"{t} {c}") for (t, c), _ in sorted_runs) if sorted_runs else 0
+    for (tool, cmd), (count, errors) in sorted_runs:
+        key_str = f"{tool} {cmd}"
+        error_pct = round(100 * errors / count) if count > 0 else 0
+        print(f"{key_str:<{max_len}}  {count:>3}   ошибок {errors} ({error_pct}%)")
+
+    if total_runs > 0:
+        total_pct = round(100 * total_errors / total_runs)
+        print(f"{'итого':<{max_len}}  {total_runs:>3}   ошибок {total_errors} ({total_pct}%)")
+
+    return 0
+
+
 def new(start, prefix, name, no_board):
     root, in_git = project_root(start)
     claude = root / "CLAUDE.md"
@@ -314,11 +366,15 @@ def main(argv):
     n.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
     n.add_argument("--name", default="", help="название проекта, по умолчанию имя директории")
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
+    s = sub.add_parser("stats", help="сводка по журналу запусков")
+    s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         rc = doctor(a.dir, a.fix)
-    else:
+    elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
+    else:
+        rc = stats(a.dir)
     log_run(project_root(a.dir)[0], a.cmd, rc)
     return rc
 

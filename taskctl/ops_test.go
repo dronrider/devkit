@@ -184,6 +184,38 @@ func TestMoveToBlockedAndBack(t *testing.T) {
 	}
 }
 
+// TestMoveToBlockedRejectsBracketInReason: регрессия. checkCell пропускал в
+// --reason квадратную скобку («ждём [DK-5]»), а суффикс «[блок: ...]» тогда
+// собирался с лишней «[» внутри и переставал распознаваться как единый
+// суффикс: на выходе из Blocked он не снимался, set --title приклеивал его
+// к заголовку как обычный текст, lint молчал.
+func TestMoveToBlockedRejectsBracketInReason(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём [DK-5]", CommitOpts{}); err == nil {
+		t.Fatal("причина со скобкой должна падать")
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска изменилась после отбитого move:\n%s", board)
+	}
+}
+
+// TestAddBlockedRejectsBracketInReason: тот же запрет для add --status
+// blocked --reason, второго места, где причина попадает в заголовок.
+func TestAddBlockedRejectsBracketInReason(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{
+		Title: "Со скобкой", Type: "task", Rank: "0+1+1+0+1", Link: "x",
+		Status: "blocked", Reason: "ждём [DK-5]",
+	}); err == nil {
+		t.Fatal("причина со скобкой должна падать")
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска изменилась после отбитого add:\n%s", board)
+	}
+}
+
 func TestSetTypeInPlace(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})

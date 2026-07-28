@@ -39,6 +39,20 @@ func checkCell(name, s string) error {
 	return nil
 }
 
+// checkReason это checkCell плюс запрет на квадратные скобки: причина
+// блокировки приклеивается к заголовку суффиксом «[блок: ...]», и скобка в
+// её тексте притворилась бы ещё одним суффиксом (например, границей
+// «[после ...]»), которую разбор заголовка потом не отличит от настоящей.
+func checkReason(reason string) error {
+	if err := checkCell("причина", reason); err != nil {
+		return err
+	}
+	if strings.ContainsAny(reason, "[]") {
+		return fmt.Errorf("причина не может содержать «[» и «]»")
+	}
+	return nil
+}
+
 // nextID берёт префикс из существующих строк, а на пустой доске из шапки
 // «(префикс XX)», чтобы первая задача заводилась без --id.
 func nextID(b *Board, a *Archive) (string, error) {
@@ -228,6 +242,9 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	}
 	title := p.Title
 	if status == SectBlocked && strings.TrimSpace(p.Reason) != "" {
+		if err := checkReason(p.Reason); err != nil {
+			return "", err
+		}
 		title += " [блок: " + p.Reason + "]"
 	}
 	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost, Link: link}
@@ -298,7 +315,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		if strings.TrimSpace(reason) == "" {
 			return "", fmt.Errorf("для blocked обязателен --reason, одна строка почему")
 		}
-		if err := checkCell("причина", reason); err != nil {
+		if err := checkReason(reason); err != nil {
 			return "", err
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"

@@ -217,8 +217,63 @@ func TestInlineFalseGreen(t *testing.T) {
 	}
 }
 
+// TestFindTestRegionRejectsSameLineMarkers: оба маркера в одной строке (что
+// бывает в комментарии-упоминании вроде «см. regcheck:test-begin/
+// regcheck:test-end») не должны схлопывать регион в begin==end и перекрывать
+// настоящий блок cfg(test) ниже, это должна быть ошибка.
+func TestFindTestRegionRejectsSameLineMarkers(t *testing.T) {
+	lines := splitLines("code\n// см. regcheck:test-begin/regcheck:test-end\n\n" +
+		"#[cfg(test)]\nmod tests {\n    fn t(){}\n}\n")
+	if _, _, err := findTestRegion(lines); err == nil {
+		t.Fatal("маркеры на одной строке должны считаться ошибкой, а не парой begin==end")
+	}
+}
+
+// TestInlineExcludedFromTestsOverlap: файл, попавший и в Tests, и в Inline,
+// не должен копироваться целиком (иначе правка утекает на базу и Run
+// ошибочно решает, что тест не ловит регрессию).
+func TestInlineExcludedFromTestsOverlap(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n\n#[cfg(test)]\nmod tests {\n    // проверяет CODE\n}\n")
+	write(t, root, "probe_test.sh", "grep -q fixed lib.rs\n")
+	msg, err := Run(Params{
+		Dir:    root,
+		Tests:  []string{"lib.rs", "probe_test.sh"},
+		Inline: []string{"lib.rs"},
+		Cmd:    []string{"sh", "probe_test.sh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "краснеет") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+}
+
 func TestFindTestRegionRust(t *testing.T) {
 	lines := splitLines("fn f(){}\n\n#[cfg(test)]\nmod tests {\n    fn g(){}\n}\n")
+	start, end, err := findTestRegion(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != 3 || end != 6 {
+		t.Fatalf("границы %d-%d", start, end)
+	}
+}
+
+func TestFindTestRegionRustSingleLine(t *testing.T) {
+	lines := splitLines("fn f(){}\n\n#[cfg(test)] mod tests {\n    fn g(){}\n}\n")
+	start, end, err := findTestRegion(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start != 3 || end != 5 {
+		t.Fatalf("границы %d-%d", start, end)
+	}
+}
+
+func TestFindTestRegionRustAttrWithComment(t *testing.T) {
+	lines := splitLines("fn f(){}\n\n#[cfg(test)] // юниты\nmod tests {\n    fn g(){}\n}\n")
 	start, end, err := findTestRegion(lines)
 	if err != nil {
 		t.Fatal(err)

@@ -147,8 +147,8 @@ func findTestRegion(lines []string) (start, end int, err error) {
 		if beginCount != endCount {
 			return 0, 0, fmt.Errorf("regcheck:test-begin/regcheck:test-end не в паре")
 		}
-		if endIdx < beginIdx {
-			return 0, 0, fmt.Errorf("regcheck:test-end стоит раньше regcheck:test-begin")
+		if endIdx <= beginIdx {
+			return 0, 0, fmt.Errorf("regcheck:test-end должен стоять на отдельной строке строго после regcheck:test-begin")
 		}
 		return beginIdx + 1, endIdx + 1, nil
 	}
@@ -160,9 +160,12 @@ func findTestRegion(lines []string) (start, end int, err error) {
 // и комментариев не разбираются: на них эвристика ошибётся, но честно
 // (несбалансированный подсчёт вернёт ошибку, а не тихо неверный регион).
 func findRustCfgTest(lines []string) (start, end int, err error) {
+	// атрибут ищем по префиксу, а не по точному совпадению строки: так
+	// ловятся и «#[cfg(test)] mod tests {» одной строкой, и «#[cfg(test)] //
+	// коммент» с mod на следующей строке.
 	var attrs []int
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "#[cfg(test)]" {
+		if strings.HasPrefix(strings.TrimSpace(l), "#[cfg(test)]") {
 			attrs = append(attrs, i)
 		}
 	}
@@ -173,12 +176,22 @@ func findRustCfgTest(lines []string) (start, end int, err error) {
 		return 0, 0, fmt.Errorf("несколько блоков #[cfg(test)], нужны явные маркеры regcheck:test-begin/regcheck:test-end")
 	}
 	i := attrs[0]
-	j := i + 1
-	for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
-		j++
-	}
-	if j >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[j]), "mod ") {
-		return 0, 0, fmt.Errorf("после #[cfg(test)] на строке %d нет «mod», нужны явные маркеры regcheck:test-begin/regcheck:test-end", i+1)
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "#[cfg(test)]"))
+	j := i
+	if !strings.HasPrefix(rest, "mod ") {
+		j = i + 1
+		for j < len(lines) {
+			t := strings.TrimSpace(lines[j])
+			if t == "" || strings.HasPrefix(t, "//") {
+				j++
+				continue
+			}
+			break
+		}
+		if j >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[j]), "mod ") {
+			return 0, 0, fmt.Errorf("после #[cfg(test)] на строке %d не нашёл «mod» в поддерживаемой форме, "+
+				"поставь маркеры regcheck:test-begin/regcheck:test-end", i+1)
+		}
 	}
 	depth := 0
 	opened := false
@@ -265,9 +278,22 @@ func Run(p Params) (string, error) {
 		if tests, err = changedTests(root, base); err != nil {
 			return "", err
 		}
-		if len(tests) == 0 && len(p.Inline) == 0 {
-			return "", fmt.Errorf("не нашёл изменённых тестов относительно %s; перечисли их флагом --tests или --inline", base)
+	}
+	// файл, попавший и в tests (автопоиском или --tests), и в --inline, иначе
+	// копируется целиком, и правка утекает на базу: --inline тут главнее.
+	inlineSet := make(map[string]bool, len(p.Inline))
+	for _, t := range p.Inline {
+		inlineSet[t] = true
+	}
+	var kept []string
+	for _, t := range tests {
+		if !inlineSet[t] {
+			kept = append(kept, t)
 		}
+	}
+	tests = kept
+	if len(tests) == 0 && len(p.Inline) == 0 {
+		return "", fmt.Errorf("не нашёл изменённых тестов относительно %s; перечисли их флагом --tests или --inline", base)
 	}
 	for _, t := range tests {
 		if _, err := os.Stat(filepath.Join(root, t)); err != nil {

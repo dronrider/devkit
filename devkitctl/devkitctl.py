@@ -88,8 +88,8 @@ def check_links(root):
 
 
 def read_deploy(root):
-    # Возвращает (deploy, autonomous) кортеж. Если файла нет: (None, None).
-    # Иначе (значение deploy=, значение autonomous=) где оба могут быть пустыми.
+    # Пара (deploy, autonomous). None вместо deploy это «файла нет», иначе
+    # значение deploy= (может быть пустым) и флаг autonomous.
     f = root / DEPLOY_CONFIG
     if not f.exists():
         return None, None
@@ -237,10 +237,10 @@ def doctor(start, fix=False):
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                             "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
         else:
-            if deploy == "":
+            if deploy == "" and not autonomous:
                 findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
                                 "вписать команду выката" % DEPLOY_CONFIG)
-            if deploy == "" and autonomous:
+            elif deploy == "" and autonomous:
                 findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
                                 "а катить нечего); вписать команду выката либо снять autonomous" % DEPLOY_CONFIG)
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])

@@ -83,6 +83,7 @@ echo "$out" | grep -q 'deploy' && fail "заполненная обвязка в
 printf 'autonomous = true\n' > "$bproj/.devkit/deploy.local"
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'autonomous = true при пустом deploy=' || fail "нет находки про autonomous=true без команды: $out"
+echo "$out" | grep -q 'shipctl нечего выкатывать' && fail "старая находка дублирует новую при autonomous=true: $out"
 # autonomous=false с пустым deploy= это старая находка, без новой.
 printf 'autonomous = false\n' > "$bproj/.devkit/deploy.local"
 out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)

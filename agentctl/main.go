@@ -9,9 +9,11 @@ import (
 
 const usageText = `agentctl: выбор модели под задачу по метаданным доски (RULES.board.md)
 
-  pick <ID>    вердикт, какой моделью исполнять задачу: первая строка
-               model: haiku|sonnet|opus для машинного разбора, вторая
-               строка задачи и причина
+  pick <ID> [--record]    вердикт, какой моделью исполнять задачу: первая
+                          строка model: haiku|sonnet|opus для машинного
+                          разбора, вторая строка задачи и причина; --record
+                          дописывает строку исполнения в раздел «Ход работы»
+                          файла задачи
 
 Свою модель сессия сменить не может, этот рычаг у пользователя, поэтому
 вердикт применяется делегированием: сессия-диспетчер спавнит субагента с
@@ -85,12 +87,13 @@ func main() {
 		}
 		fs := flag.NewFlagSet("pick", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
+		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		fs.Parse(args[2:])
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
 		}
-		msg, err = cmdPick(root, args[1])
+		msg, err = cmdPick(root, args[1], *record)
 	case "help":
 		fmt.Print(usageText)
 		return

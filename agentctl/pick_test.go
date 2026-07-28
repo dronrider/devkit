@@ -106,7 +106,7 @@ func TestCmdPick(t *testing.T) {
 		{"T-003", "model: opus", "дизайн"},
 	}
 	for _, c := range cases {
-		out, err := cmdPick(root, c.id)
+		out, err := cmdPick(root, c.id, false)
 		if err != nil {
 			t.Fatalf("pick %s: %v", c.id, err)
 		}
@@ -122,7 +122,7 @@ func TestCmdPick(t *testing.T) {
 
 func TestCmdPickMissing(t *testing.T) {
 	root := writeBoard(t)
-	if _, err := cmdPick(root, "T-999"); err == nil || !strings.Contains(err.Error(), "нет на доске") {
+	if _, err := cmdPick(root, "T-999", false); err == nil || !strings.Contains(err.Error(), "нет на доске") {
 		t.Fatalf("жду ошибку про отсутствие на доске, получил %v", err)
 	}
 }
@@ -138,7 +138,72 @@ func TestPickOnRealBoardFormat(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "TASKS.md"), []byte(empty), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdPick(root, "T-001"); err == nil {
+	if _, err := cmdPick(root, "T-001", false); err == nil {
 		t.Fatal("жду ошибку на пустой доске")
 	}
+}
+
+func TestRecordExecution(t *testing.T) {
+	root := writeBoard(t)
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("создание раздела в файле без него", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nОписание задачи.\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := cmdPick(root, "T-001", true)
+		if err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+
+		data, _ := os.ReadFile(taskFile)
+		result := string(data)
+		if !strings.Contains(result, "## Ход работы") {
+			t.Fatal("раздел \"Ход работы\" не создан")
+		}
+		if !strings.Contains(result, "- Исполнение: субагент haiku") {
+			t.Fatalf("строка исполнения не добавлена в файл:\n%s", result)
+		}
+	})
+
+	t.Run("дозапись в существующий раздел", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
+		content := "# T-002\n\nОписание задачи.\n\n## Ход работы\n\n- Исполнение: субагент sonnet по вердикту pick, 2026-07-27.\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := cmdPick(root, "T-002", true)
+		if err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+
+		data, _ := os.ReadFile(taskFile)
+		result := string(data)
+		lines := strings.Split(result, "\n")
+		executionLines := []string{}
+		for _, line := range lines {
+			if strings.HasPrefix(line, "- Исполнение:") {
+				executionLines = append(executionLines, line)
+			}
+		}
+		if len(executionLines) != 2 {
+			t.Fatalf("жду две строки исполнения, получил %d:\n%s", len(executionLines), result)
+		}
+	})
+
+	t.Run("ошибка без файла задачи", func(t *testing.T) {
+		_, err := cmdPick(root, "T-003", true)
+		if err == nil {
+			t.Fatal("жду ошибку при отсутствии файла задачи")
+		}
+		if !strings.Contains(err.Error(), "taskctl file") {
+			t.Fatalf("ошибка без подсказки про taskctl file: %v", err)
+		}
+	})
 }

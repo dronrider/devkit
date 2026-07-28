@@ -58,16 +58,22 @@ func loadRows(root string) ([]row, error) {
 			continue
 		}
 		cells := strings.Split(strings.Trim(t, "|"), "|")
-		if len(cells) < 7 {
+		if len(cells) < 5 {
 			continue
 		}
-		rows = append(rows, row{
+		r := row{
 			ID:    strings.TrimSpace(cells[0]),
 			Title: strings.TrimSpace(cells[1]),
 			Type:  strings.TrimSpace(cells[2]),
 			Rank:  strings.TrimSpace(cells[4]),
-			Cost:  strings.TrimSpace(cells[5]),
-		})
+			Cost:  "-",
+		}
+		// Колонка «Цена» есть только в семиколоночных досках, в старом
+		// формате шестая ячейка это ссылка.
+		if len(cells) >= 7 {
+			r.Cost = strings.TrimSpace(cells[5])
+		}
+		rows = append(rows, r)
 	}
 	return rows, nil
 }

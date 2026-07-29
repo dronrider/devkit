@@ -33,6 +33,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 |--------|--------|-----|---|---|------|--------|
 | DK-009 | agentctl: fable-ярус маппинга (LLD по цене, сложный код) и доменный override модели | task | P3 | 11 (0+5+3+0+3) | M | [tasks/DK-009.md](tasks/DK-009.md) |
 | DK-011 | agentctl: effort в вердикте pick и применение через определения субагентов | task | P3 | 10 (0+4+3+0+3) | M | [tasks/DK-011.md](tasks/DK-011.md) |
+| DK-012 | agentctl: квотный корректор вердикта pick по снимку /usage | task | P3 | 8 (0+5+1+0+2) | M | [lld/DK-010-quota-corrector.md](lld/DK-010-quota-corrector.md) |
 
 ## Blocked
 

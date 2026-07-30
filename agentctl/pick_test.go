@@ -10,9 +10,14 @@ import (
 )
 
 func TestPick(t *testing.T) {
-	// Пары вердикта целиком. Оси независимые, но не совсем: у sonnet есть пол
-	// effort, поэтому в таблице видно, как low и medium из маппинга
-	// подтягиваются до high, а остальные модели идут ровно по расчёту.
+	// Пары вердикта целиком. Composition из трёх функций та же, что раньше
+	// собирал pick(): pickModel и pickEffort считаются порознь, floorSonnetEffort
+	// подтягивает effort для sonnet. Отдельной функции-обёртки больше нет, её
+	// рабочий путь (cmdPick) собирает вердикт сам, с этой же тройкой, но с
+	// поправкой на override и корректор; здесь таблица сторожит саму тройку.
+	// Оси независимые, но не совсем: у sonnet есть пол effort, поэтому в
+	// таблице видно, как low и medium из маппинга подтягиваются до high, а
+	// остальные модели идут ровно по расчёту.
 	cases := []struct {
 		name   string
 		r      row
@@ -22,6 +27,7 @@ func TestPick(t *testing.T) {
 	}{
 		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, "haiku", "low", "атомарная"},
 		{"S с неопределённостью 1 это sonnet, effort подтянут полом", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "high", "экономить глубину смысла нет"},
+		{"S с неопределённостью 3 верхняя граница диапазона", row{Type: "task", Rank: "10 (0+3+3+0+4)", Cost: "S"}, "opus", "high", "сильной"},
 		{"M с неопределённостью 0 уходит в дефолт", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "opus", "low", "сильной"},
 		{"M с неопределённостью 1 уходит в дефолт", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "opus", "medium", "сильной"},
 		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+2+0+2)", Cost: "S"}, "opus", "medium", "сильной"},
@@ -47,7 +53,9 @@ func TestPick(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := pick(c.r)
+			v := pickModel(c.r)
+			v.Effort = pickEffort(c.r)
+			floorSonnetEffort(&v)
 			if v.Model != c.model {
 				t.Fatalf("модель %q, жду %q", v.Model, c.model)
 			}
@@ -180,6 +188,9 @@ func TestCmdPick(t *testing.T) {
 		{"T-001", "model: haiku", "effort: low", "цена S"},
 		{"T-002", "model: opus", "effort: medium", "неопределённость 1"},
 		{"T-003", "model: opus", "effort: xhigh", "дизайн"},
+		// Сквозной путь без override и без снимка квоты: T-005 маппингом
+		// sonnet (S/1), effort из пола видно прямо в человеческой строке.
+		{"T-005", "model: sonnet", "effort: high", "экономить глубину смысла нет"},
 	}
 	for _, c := range cases {
 		out, err := cmdPick(root, c.id, false)
@@ -229,6 +240,27 @@ func TestCmdPickOverride(t *testing.T) {
 		// обычного маппинга (LLD, значит xhigh).
 		if !strings.Contains(out, "effort: xhigh") {
 			t.Fatalf("effort не взят из маппинга: %q", out)
+		}
+	})
+
+	t.Run("override sonnet на LLD полом не опускает xhigh", func(t *testing.T) {
+		// T-003 маппингом LLD, pickEffort для него всегда xhigh; override
+		// модели на sonnet меняет только модель, а пол трогает лишь low и
+		// medium, xhigh уже выше и остаётся как есть.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-003.md")
+		content := "# T-003\n\nМодель: sonnet\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-003", false)
+		if err != nil {
+			t.Fatalf("pick T-003: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet\neffort: xhigh\n") {
+			t.Fatalf("жду sonnet с effort xhigh нетронутым полом, получил %q", out)
+		}
+		if strings.Contains(out, "effort поднят до high") {
+			t.Fatalf("пол сработал там, где не должен: %q", out)
 		}
 	})
 

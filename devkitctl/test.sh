@@ -240,18 +240,36 @@ out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1
 echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
 grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "--fix затёр правленое определение"
 
-# Снимок квоты: протухший это находка, свежий нет.
+# Снимок квоты. Возраст берётся из строки taken, порог сутки, поэтому проверка
+# идёт по обе стороны границы, а не «2020 год против сейчас».
 mkdir -p "$mhome/.devkit"
-printf 'taken = 2020-01-01T00:00\nweek_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
-echo "$out" | grep -q 'старее суток' || fail "нет находки про протухший снимок квоты: $out"
-printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
-    > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
-echo "$out" | grep -q 'снимок квоты' && fail "свежий снимок квоты не должен быть находкой: $out"
-# Снимок без разобранного момента снятия это тоже находка.
+snap() { printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$1" > "$mhome/.devkit/quota.local"; }
+taken_at() {
+    python3 -c 'import datetime,sys;print((datetime.datetime.now()-datetime.timedelta(hours=float(sys.argv[1]))).strftime(sys.argv[2]))' "$1" "$2"
+}
+docm() { HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1; }
+
+snap "$(taken_at 25 '%Y-%m-%dT%H:%M')"
+out=$(docm)
+echo "$out" | grep -q 'старее суток' || fail "снимок возрастом 25 часов не признан протухшим: $out"
+snap "$(taken_at 23 '%Y-%m-%dT%H:%M')"
+out=$(docm)
+echo "$out" | grep -q 'quota.local' && fail "снимок возрастом 23 часа попал в находки: $out"
+# Остальные форматы момента снятия разбираются наравне с основным.
+snap "$(taken_at 23 '%Y-%m-%dT%H:%M:%S')"
+out=$(docm)
+echo "$out" | grep -q 'quota.local' && fail "момент снятия с секундами не разобран: $out"
+snap "$(taken_at 23 '%Y-%m-%d %H:%M')"
+out=$(docm)
+echo "$out" | grep -q 'quota.local' && fail "момент снятия через пробел не разобран: $out"
+# Строка taken есть, но не разобрана (снимок заполняют и руками): возрасту
+# верить нельзя, это находка.
+snap вчера
+out=$(docm)
+echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про неразобранный taken: $out"
+# Строки taken нет вовсе: та же находка.
 printf 'week_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
+out=$(docm)
 echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про снимок без taken: $out"
 
 # Бинарь старее исходников devkit (так выходит после git pull): находка, а

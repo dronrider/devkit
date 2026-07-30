@@ -22,7 +22,6 @@ func TestPickModel(t *testing.T) {
 		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "дизайн"},
 		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "сложное проектирование"},
 		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "сложное проектирование"},
-		{"LLD ценой S остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "дизайн"},
 		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "дизайн"},
 		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "грумминг"},
 		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "разбить"},
@@ -31,6 +30,7 @@ func TestPickModel(t *testing.T) {
 		{"L и неопределённость 1 остаётся sonnet", row{Type: "task", Rank: "7 (0+5+1+0+1)", Cost: "L"}, "sonnet", "обычная"},
 		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "sonnet", "не оценена"},
 		{"нечитаемый ранг не даёт haiku", row{Type: "task", Rank: "-", Cost: "S"}, "sonnet", "обычная"},
+		{"L с нечитаемым рангом остаётся sonnet", row{Type: "task", Rank: "-", Cost: "L"}, "sonnet", "обычная"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -359,6 +359,25 @@ func TestRecordExecution(t *testing.T) {
 		}
 		if strings.Contains(string(data), "- Исполнение:") {
 			t.Fatalf("грумминговый вердикт записан исполнением:\n%s", data)
+		}
+	})
+
+	t.Run("override снимает грумминг, пишется исполнением", func(t *testing.T) {
+		// T-004 без override уходит в грумминг (неопределённость 5, см. тест
+		// выше); override-строка перебивает маппинг целиком, включая Groom.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
+		if err := os.WriteFile(taskFile, []byte("# T-004\n\nМодель: sonnet\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cmdPick(root, "T-004", true); err != nil {
+			t.Fatalf("pick --record: %v", err)
+		}
+		data, _ := os.ReadFile(taskFile)
+		if !strings.Contains(string(data), "- Исполнение: субагент sonnet") {
+			t.Fatalf("жду строку исполнения по override, а не грумминг:\n%s", data)
+		}
+		if strings.Contains(string(data), "- Грумминг:") {
+			t.Fatalf("override записан как грумминг:\n%s", data)
 		}
 	})
 }

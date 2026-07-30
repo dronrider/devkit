@@ -55,6 +55,10 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 cd taskctl && go build -o ~/go/bin/taskctl .
 ```
 
+Раскладку машинного контура (бинари утилит, определения исполнителей в
+`~/.claude/agents/`, tmux и снимок квоты) проверяет `devkitctl doctor`, а
+однозначное из этого он же и доводит с `--fix`.
+
 Новый проект подключается одной командой (шаблон, доска, git-хуки):
 
 ```bash

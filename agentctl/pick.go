@@ -89,7 +89,7 @@ type overrides struct {
 // readOverrides ищет в файле задачи строки override (форматы «Модель: opus»
 // и «- Эффорт: xhigh», поясняющий хвост в скобках допустим и отбрасывается);
 // по каждой оси берётся первая встреченная строка. Нет файла или строк,
-// пустой результат без ошибки: работает обычный маппинг pickModel.
+// пустой результат без ошибки: работает обычный маппинг pick.
 func readOverrides(root, id string) (overrides, error) {
 	var ov overrides
 	path := filepath.Join(root, "docs", "tasks", id+".md")

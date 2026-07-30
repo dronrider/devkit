@@ -90,22 +90,45 @@ func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 			}
 		}
 	}
+	// Обязателен только общий бакет: дорогой показывают не все панели, у
+	// клиента 2.1.220 вместо Opus идёт Fable, а на другом тарифе может не
+	// оказаться и его.
 	for _, name := range knownBuckets {
 		b, ok := found[name]
-		if !ok || b.Reset.IsZero() {
-			return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s с датой сброса: панель могла измениться, снимок не тронут", name)
+		if !ok {
+			continue
+		}
+		if b.Reset.IsZero() {
+			return snapshot{}, fmt.Errorf("у бакета %s в панели нет даты сброса: панель могла измениться, снимок не тронут", name)
+		}
+		// Молча записанный ноль читался бы как нетронутый бакет, то есть как
+		// профицит: непрочитанный процент честнее превратить в отказ.
+		if !gotPercent[name] {
+			return snapshot{}, fmt.Errorf("у бакета %s в панели не нашлось процента: панель могла измениться, снимок не тронут", name)
 		}
 		s.Buckets = append(s.Buckets, *b)
+	}
+	if _, ok := s.bucket(requiredBucket); !ok {
+		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s: панель могла измениться, снимок не тронут", requiredBucket)
 	}
 	return s, nil
 }
 
-// panelSection узнаёт заголовок бакета. Пятичасовая сессия узнаётся тоже, но
-// сбрасывает разбор в пустой ключ: в снимок она не пишется.
+// panelSection узнаёт заголовок бакета. Слово «current» в заголовке
+// обязательно: без него на роль заголовка проходят соседние строки панели, где
+// «week» тоже встречается (промо «+50% weekly limits promo», подсказка
+// «w to week»), и процент промо уехал бы в бакет вместо настоящего.
+// Пятичасовая сессия узнаётся тоже, но сбрасывает разбор в пустой ключ: в
+// снимок она не пишется.
 func panelSection(low string) (string, bool) {
+	if !strings.Contains(low, "current") {
+		return "", false
+	}
 	switch {
 	case strings.Contains(low, "week") && strings.Contains(low, "opus"):
 		return "week_opus", true
+	case strings.Contains(low, "week") && strings.Contains(low, "fable"):
+		return "week_fable", true
 	case strings.Contains(low, "week"):
 		return "week_all", true
 	case strings.Contains(low, "session"):
@@ -114,9 +137,14 @@ func panelSection(low string) (string, bool) {
 	return "", false
 }
 
-// panelUsed достаёт долю потраченного. Панель может показывать и остаток, тогда
-// процент переворачивается.
+// panelUsed достаёт долю потраченного. Процент берётся только со строки полоски
+// («41% used»), а не с любой, где есть знак процента: панель печатает внутри
+// секции и посторонние проценты вроде промо на недельные лимиты. Панель может
+// показывать и остаток, тогда процент переворачивается.
 func panelUsed(line, low string) (float64, bool) {
+	if !strings.Contains(low, "used") && !strings.Contains(low, "left") && !strings.Contains(low, "remain") {
+		return 0, false
+	}
 	m := percentRe.FindStringSubmatch(line)
 	if m == nil {
 		return 0, false

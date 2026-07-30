@@ -436,14 +436,14 @@ func TestCmdPickOverride(t *testing.T) {
 
 // writeQuota кладёт свежий снимок во временный HOME: проценты потраченного и
 // остаток окна, из которых считается pace.
-func writeQuota(t *testing.T, path string, allPct, opusPct int, left time.Duration) {
+func writeQuota(t *testing.T, path string, allPct, fablePct int, left time.Duration) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	content := "taken = " + at(testNow.Add(-time.Hour)) + "\n" +
 		"week_all = " + strconv.Itoa(allPct) + "% сброс " + at(testNow.Add(left)) + "\n" +
-		"week_opus = " + strconv.Itoa(opusPct) + "% сброс " + at(testNow.Add(left)) + "\n"
+		"week_fable = " + strconv.Itoa(fablePct) + "% сброс " + at(testNow.Add(left)) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestCmdPickQuota(t *testing.T) {
 	}
 
 	t.Run("дефицит опускает вердикт и виден в строке записи", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -472,11 +472,11 @@ func TestCmdPickQuota(t *testing.T) {
 		if !strings.HasPrefix(out, "model: sonnet\neffort: high\n") {
 			t.Fatalf("жду сдвинутый вердикт, получил %q", out)
 		}
-		if !strings.Contains(out, "корректор: дефицит week_opus, opus -> sonnet") {
+		if !strings.Contains(out, "корректор: дефицит week_all, opus -> sonnet") {
 			t.Fatalf("в человеческой строке нет хвоста корректора: %q", out)
 		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_opus), " +
+		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all), " +
 			testNow.Format("2006-01-02") + "."
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("строка записи разошлась с ожидаемой:\n%s", data)
@@ -489,18 +489,18 @@ func TestCmdPickQuota(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
-		// T-005 маппингом sonnet (S с неопределённостью 1), профицит
-		// добавочного week_opus поднимает её до opus.
+		// T-005 маппингом sonnet (S с неопределённостью 1); отдельного бакета
+		// у opus больше нет, и вверх её двигает профицит общего week_all.
 		if !strings.HasPrefix(out, "model: opus") {
 			t.Fatalf("жду подъём до opus, получил %q", out)
 		}
-		if !strings.Contains(out, "корректор: профицит week_opus, sonnet -> opus") {
+		if !strings.Contains(out, "корректор: профицит week_all, sonnet -> opus") {
 			t.Fatalf("нет хвоста корректора: %q", out)
 		}
 	})
 
 	t.Run("сдвинутому вниз LLD советуют отложить дизайн", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-003", false)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -514,7 +514,7 @@ func TestCmdPickQuota(t *testing.T) {
 	})
 
 	t.Run("сдвинутому вниз вердикту ценой M советуют отложить исполнение", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-002", false)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -528,7 +528,7 @@ func TestCmdPickQuota(t *testing.T) {
 	})
 
 	t.Run("сдвинутому вниз вердикту ценой L тоже советуют отложить исполнение", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-006", false)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -556,7 +556,7 @@ func TestCmdPickQuota(t *testing.T) {
 	})
 
 	t.Run("грумминговый вердикт корректор не трогает", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-004", false)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -567,7 +567,7 @@ func TestCmdPickQuota(t *testing.T) {
 	})
 
 	t.Run("override модели корректор не двигает", func(t *testing.T) {
-		writeQuota(t, quota, 50, 95, halfWindow)
+		writeQuota(t, quota, 95, 50, halfWindow)
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
 		if err := os.WriteFile(taskFile, []byte("# T-002\n\nМодель: opus\n"), 0o644); err != nil {
 			t.Fatal(err)

@@ -1,0 +1,60 @@
+
+ ▐▛███▜▌   Claude Code v2.1.220
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 8s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+   Current session
+                                                      0% used
+   Resets 3am (Europe/Moscow)
+
+   Current week (all models)
+   ████████████████████▌                              41% used
+   Resets Aug 3 at 3pm (Europe/Moscow)
+   +50% weekly limits promo through Aug 19 · clau.de/cc-50-promo
+
+   Current week (Fable)
+   ███████████████████████████████████                70% used
+   Resets Aug 3 at 3pm (Europe/Moscow)
+
+   What's contributing to your limits usage?
+   Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+
+   Last 24h · these are independent characteristics of your usage, not a breakdown
+
+   88% of your usage came from subagent-heavy sessions
+    Each subagent runs its own requests. Be deliberate about spawning them — and
+    consider configuring a cheaper model for simpler subagents.
+
+   58% of your usage was at >150k context
+    Longer sessions are more expensive even when cached. /compact mid-task, /clear
+    when switching to new tasks.
+
+   13% of your usage came from subagents under "general-purpose"
+    If this runs frequently, consider configuring its subagents with a cheaper
+    model or tightening their prompts.
+
+   Skills                  % of usage
+   /claude-api                     6%
+
+   Subagents               % of usage
+   general-purpose                13%
+   exec-medium                     3%
+   exec-high                       2%
+   claude                          1%
+   claude-api                      1%
+
+   MCP servers             % of usage
+   claude-design                   5%
+
+   d to day · w to week
+
+   Usage credits
+   Usage credits are off · /usage-credits to turn them on

@@ -18,6 +18,8 @@ func readFixture(t *testing.T, name string) string {
 }
 
 func TestParseUsagePanel(t *testing.T) {
+	// Панели старых клиентов с бакетом Opus разбираются по-прежнему: у разных
+	// версий клиента и тарифов панель своя, и новая не отменяет старую.
 	t.Run("обратный отсчёт до сброса", func(t *testing.T) {
 		s, err := parseUsagePanel(readFixture(t, "usage-panel-countdown.txt"), testNow)
 		if err != nil {
@@ -57,6 +59,82 @@ func TestParseUsagePanel(t *testing.T) {
 		want := time.Date(2026, 8, 4, 10, 0, 0, 0, mustLoad(t, "America/Los_Angeles"))
 		if !all.Reset.Equal(want) {
 			t.Fatalf("сброс %v, жду %v", all.Reset, want)
+		}
+	})
+
+	t.Run("панель клиента 2.1.220: вместо opus бакет fable", func(t *testing.T) {
+		s, err := parseUsagePanel(readFixture(t, "usage-panel-fable.txt"), testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		if len(s.Buckets) != 2 {
+			t.Fatalf("бакеты: %+v", s.Buckets)
+		}
+		all, _ := s.bucket("week_all")
+		fable, _ := s.bucket("week_fable")
+		// Промо-строка «+50% weekly limits promo» стоит внутри секции всех
+		// моделей, и её процент не должен подменить настоящий.
+		if all.Used != 0.41 || fable.Used != 0.70 {
+			t.Fatalf("проценты разобраны как %.2f и %.2f", all.Used, fable.Used)
+		}
+		if _, ok := s.bucket("week_opus"); ok {
+			t.Fatal("бакет opus выдуман на панели, где его нет")
+		}
+		want := time.Date(2026, 8, 3, 15, 0, 0, 0, mustLoad(t, "Europe/Moscow"))
+		if !all.Reset.Equal(want) || !fable.Reset.Equal(want) {
+			t.Fatalf("сброс %v и %v, жду %v", all.Reset, fable.Reset, want)
+		}
+	})
+
+	t.Run("промо-строка секции не притворяется заголовком", func(t *testing.T) {
+		// Слово «weekly» есть и в промо, и в подсказке внизу панели: пройди они
+		// за заголовок, в бакет уехал бы процент промо.
+		panel := "Current week (all models)\n +50% weekly limits promo through Aug 19\n 41% used\n Resets in 2d\n" +
+			" d to day   w to week\n"
+		s, err := parseUsagePanel(panel, testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		if all, _ := s.bucket("week_all"); all.Used != 0.41 {
+			t.Fatalf("в бакет уехал %.2f вместо 0.41", all.Used)
+		}
+	})
+
+	t.Run("дорогого бакета в панели может не быть", func(t *testing.T) {
+		panel := "Current session\n 48% used\n Resets in 1h 43m\n" +
+			"Current week (all models)\n 34% used\n Resets in 2d\n"
+		s, err := parseUsagePanel(panel, testNow)
+		if err != nil {
+			t.Fatalf("панель с одним недельным бакетом это не отказ: %v", err)
+		}
+		if len(s.Buckets) != 1 || s.Buckets[0].Name != "week_all" {
+			t.Fatalf("бакеты: %+v", s.Buckets)
+		}
+	})
+
+	t.Run("без общего бакета снимок не пишется", func(t *testing.T) {
+		panel := "Current week (Fable)\n 70% used\n Resets in 2d\n"
+		_, err := parseUsagePanel(panel, testNow)
+		if err == nil {
+			t.Fatal("жду отказ: общий бакет обязателен")
+		}
+		if !strings.Contains(err.Error(), "не тронут") {
+			t.Fatalf("отказ без обещания не трогать снимок: %v", err)
+		}
+	})
+
+	t.Run("бакет без даты сброса это отказ", func(t *testing.T) {
+		panel := "Current week (all models)\n 34% used\n Resets in 2d\n" +
+			"Current week (Fable)\n 70% used\n"
+		if _, err := parseUsagePanel(panel, testNow); err == nil {
+			t.Fatal("жду отказ: бакет без сброса разобрать нечем")
+		}
+	})
+
+	t.Run("бакет без процента это отказ, а не нетронутый бакет", func(t *testing.T) {
+		panel := "Current week (all models)\n [полоска без цифр]\n Resets in 2d\n"
+		if _, err := parseUsagePanel(panel, testNow); err == nil {
+			t.Fatal("непрочитанный процент записался нулём, то есть профицитом")
 		}
 	})
 

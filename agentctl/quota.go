@@ -35,20 +35,30 @@ const (
 
 // Известные бакеты панели /usage в порядке вывода. Пятичасовой сессионный сюда
 // не попадает: он протухает быстрее, чем живёт задача, снимок его не догонит.
-var knownBuckets = []string{"week_all", "week_opus"}
+// week_opus остаётся ради снимков и панелей старых клиентов: с 2.1.220 панель
+// показывает вместо него бакет Fable, но снимок пишется и руками, а панель у
+// разных версий клиента и тарифов своя.
+var knownBuckets = []string{"week_all", "week_fable", "week_opus"}
+
+// Бакет, без которого снимка нет: общий показывает любая панель с недельными
+// лимитами, и тратят из него все ярусы.
+const requiredBucket = "week_all"
 
 // Лестница ярусов остаётся данными, корректор двигает индекс: новая модель
 // вставляется строкой сюда и строкой в таблицу трат, формула не меняется.
 var tiers = []string{"haiku", "sonnet", "opus", "fable"}
 
 // Из каких бакетов тратит ярус. week_all по смыслу панели учитывает все модели,
-// week_opus добирает дорогие отдельно, поэтому opus и всё, что выше, жжёт оба
-// сразу. Своего бакета у fable панель пока не показывает.
+// а отдельным бакетом панель добирает самую дорогую: раньше это был Opus, с
+// 2.1.220 это Fable. Отдельного бакета у opus больше нет, и от sonnet он
+// отличается только взвешенной ценой расхода общего бакета; week_fable держит
+// один верхний ярус. Старый week_opus в таблицу не входит: снимок с ним
+// читается и показывается в quota, но лестницу трат он больше не задаёт.
 var tierBuckets = map[string][]string{
 	"haiku":  {"week_all"},
 	"sonnet": {"week_all"},
-	"opus":   {"week_all", "week_opus"},
-	"fable":  {"week_all", "week_opus"},
+	"opus":   {"week_all"},
+	"fable":  {"week_all", "week_fable"},
 }
 
 // bucket это строка снимка: сколько процентов бакета потрачено на момент
@@ -224,7 +234,7 @@ func writeSnapshot(path string, s snapshot) error {
 type correction struct {
 	Model string
 	From  string
-	Note  string // «дефицит week_opus», причина в человеческом виде
+	Note  string // «дефицит week_all», причина в человеческом виде
 	Warn  string // почему причина есть, а сдвига нет
 	Down  bool
 }
@@ -273,8 +283,9 @@ func correctModel(model string, groom bool, s snapshot, now time.Time) correctio
 	}
 	need := extraBuckets(tiers[i+1], model)
 	if len(need) == 0 {
-		// У соседей с одинаковым набором трат (haiku и sonnet) добавочного
-		// бакета нет, и вверх двигает профицит того, из чего ярус уже тратит.
+		// У соседей с одинаковым набором трат (haiku, sonnet и opus)
+		// добавочного бакета нет, и вверх двигает профицит того, из чего ярус
+		// уже тратит.
 		need = tierBuckets[model]
 	}
 	if len(need) == 0 || !allWithStatus(s, need, statusSurplus, now) {

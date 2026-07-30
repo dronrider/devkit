@@ -281,13 +281,12 @@ func correctModel(model string, groom bool, s snapshot, now time.Time) correctio
 	if i+1 >= len(tiers) || !s.fresh(now) {
 		return c
 	}
-	need := extraBuckets(tiers[i+1], model)
-	if len(need) == 0 {
-		// У соседей с одинаковым набором трат (haiku, sonnet и opus)
-		// добавочного бакета нет, и вверх двигает профицит того, из чего ярус
-		// уже тратит.
-		need = tierBuckets[model]
-	}
+	// Вверх двигает профицит всего, из чего будет тратить ярус выше, а не
+	// одного добавочного бакета. Иначе подъём opus -> fable упирался бы в один
+	// week_fable и случался при общем бакете у самой границы дефицита, то есть
+	// на самой дорогой модели решение принималось бы, ничего не зная про запас
+	// общего бакета.
+	need := tierBuckets[tiers[i+1]]
 	if len(need) == 0 || !allWithStatus(s, need, statusSurplus, now) {
 		return c
 	}
@@ -305,15 +304,18 @@ func tierIndex(model string) int {
 	return -1
 }
 
-// extraBuckets это то, что ярус выше добавляет к тратам текущего.
-func extraBuckets(upper, lower string) []string {
-	var extra []string
-	for _, name := range tierBuckets[upper] {
-		if !contains(tierBuckets[lower], name) {
-			extra = append(extra, name)
+// spentByTier отвечает, тратит ли из бакета хоть один ярус. Снимок переживает
+// смену панели: week_opus остаётся и в старых файлах, и на машинах со старым
+// клиентом. Молча печатать его наравне с рабочими нельзя, иначе пользователь
+// видит «week_opus: дефицит», ждёт сдвига вниз и не получает его, а причины в
+// выводе нет.
+func spentByTier(name string) bool {
+	for _, tier := range tiers {
+		if contains(tierBuckets[tier], name) {
+			return true
 		}
 	}
-	return extra
+	return false
 }
 
 func contains(list []string, s string) bool {
@@ -368,7 +370,10 @@ func cmdQuota(path string, now time.Time) (string, error) {
 	for _, bk := range s.Buckets {
 		status := bk.status(now)
 		note := ""
-		if status == statusSurplus && !s.fresh(now) {
+		switch {
+		case !spentByTier(bk.Name):
+			note = " (лестницу трат не задаёт, панель его больше не показывает)"
+		case status == statusSurplus && !s.fresh(now):
 			note = " (снимок старше суток, вверх не двигает)"
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",

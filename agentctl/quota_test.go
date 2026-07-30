@@ -31,7 +31,7 @@ func TestReadSnapshot(t *testing.T) {
 	// своя: оба набора бакетов обязаны читаться без предупреждений.
 	cases := []struct {
 		name string
-		dear string
+		key  string
 		val  string
 	}{
 		{"снимок с панели 2.1.220", "week_fable", "78% сброс 2026-08-04T10:00"},
@@ -43,7 +43,7 @@ func TestReadSnapshot(t *testing.T) {
 			content := "# снято руками с панели /usage\n" +
 				"taken = 2026-07-30T09:00\n" +
 				"week_all = 34% сброс 2026-08-04T10:00\n" +
-				c.dear + " = " + c.val + "\n"
+				c.key + " = " + c.val + "\n"
 			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -57,9 +57,9 @@ func TestReadSnapshot(t *testing.T) {
 			if len(s.Buckets) != 2 {
 				t.Fatalf("бакеты: %+v", s.Buckets)
 			}
-			b, ok := s.bucket(c.dear)
+			b, ok := s.bucket(c.key)
 			if !ok || b.Used != 0.78 {
-				t.Fatalf("%s разобран как %+v", c.dear, b)
+				t.Fatalf("%s разобран как %+v", c.key, b)
 			}
 			if !b.Reset.Equal(time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)) {
 				t.Fatalf("дата сброса %v", b.Reset)
@@ -156,14 +156,14 @@ func TestTierBuckets(t *testing.T) {
 			}
 		}
 	}
-	// Отдельный бакет панель держит один и на самой дорогой модели, поэтому
-	// добавочный бакет есть только у верхней ступени.
-	if got := extraBuckets("fable", "opus"); len(got) != 1 || got[0] != "week_fable" {
-		t.Fatalf("opus -> fable добирает %v, жду week_fable", got)
+	// Отдельный бакет панель держит один и на самой дорогой модели: у нижних
+	// ярусов наборы совпадают, и различает их только взвешенная цена расхода.
+	if got := tierBuckets["fable"]; len(got) != 2 || !contains(got, "week_fable") {
+		t.Fatalf("fable тратит из %v, жду пару с week_fable", got)
 	}
-	for _, pair := range [][2]string{{"sonnet", "haiku"}, {"opus", "sonnet"}} {
-		if got := extraBuckets(pair[0], pair[1]); len(got) != 0 {
-			t.Fatalf("%s добирает к тратам %s бакет %v, которого панель не показывает", pair[0], pair[1], got)
+	for _, tier := range []string{"haiku", "sonnet", "opus"} {
+		if got := tierBuckets[tier]; len(got) != 1 || got[0] != requiredBucket {
+			t.Fatalf("ярус %s тратит из %v, а панель у него своего бакета не показывает", tier, got)
 		}
 	}
 }
@@ -200,8 +200,12 @@ func TestCorrectModel(t *testing.T) {
 			snapOf(time.Hour, normalAll, deficitFable), "opus", "дефицит week_fable"},
 		{"fable снимает вниз и дефицит общего бакета", "fable", false,
 			snapOf(time.Hour, deficitAll, normalFable), "opus", "дефицит week_all"},
-		{"профицит добавочного бакета поднимает opus", "opus", false,
-			snapOf(time.Hour, normalAll, surplusFable), "fable", "профицит week_fable"},
+		{"профицит обоих бакетов поднимает opus", "opus", false,
+			snapOf(time.Hour, surplusAll, surplusFable), "fable", "профицит week_all, week_fable"},
+		{"одного профицита week_fable для подъёма мало", "opus", false,
+			snapOf(time.Hour, normalAll, surplusFable), "opus", ""},
+		{"общий бакет у границы дефицита подъём не пускает", "opus", false,
+			snapOf(time.Hour, bucketAt("week_all", 74, halfWindow), surplusFable), "opus", ""},
 		{"haiku поднимает профицит общего бакета", "haiku", false,
 			snapOf(time.Hour, surplusAll), "sonnet", "профицит week_all"},
 		{"sonnet поднимает тот же общий бакет", "sonnet", false,
@@ -292,6 +296,32 @@ func TestCmdQuota(t *testing.T) {
 		for _, want := range []string{"возраст 3ч 0м", "week_all", "норма", "week_fable", "дефицит", "неизвестный ключ"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("в выводе нет %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("бакет вне лестницы трат идёт с пометкой", func(t *testing.T) {
+		// Снимок со старого клиента доживает до новой версии, и «week_opus:
+		// дефицит» без пояснения обещает сдвиг, которого не будет.
+		content := "taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"week_opus = 95% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(path, testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "week_opus: потрачено 95%") {
+			t.Fatalf("бакет со старого снимка потерялся:\n%s", out)
+		}
+		if !strings.Contains(out, "лестницу трат не задаёт") {
+			t.Fatalf("бакет вне лестницы напечатан наравне с рабочими:\n%s", out)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "week_all") && strings.Contains(line, "лестницу трат не задаёт") {
+				t.Fatalf("пометка уехала на рабочий бакет: %q", line)
 			}
 		}
 	})

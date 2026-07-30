@@ -280,12 +280,12 @@ def check_binaries(fix):
                             "это момент выкладки, и машинный бинарь с непроверенной ветки собирать "
                             "нельзя; пересобрать из основного чекаута: %s" % (name, why, build))
             continue
-        if not fix:
-            findings.append("%s %s: %s" % (name, why, build))
-            continue
         if not shutil.which("go"):
             findings.append("%s %s, а go в PATH нет: собирать нечем, Go ставится пакетным менеджером "
                             "(brew install go), потом %s" % (name, why, build))
+            continue
+        if not fix:
+            findings.append("%s %s: %s" % (name, why, build))
             continue
         gobin.mkdir(parents=True, exist_ok=True)
         rc, out = run(["go", "build", "-o", str(target), "."], cwd=str(DEVKIT / name))
@@ -300,8 +300,11 @@ def check_binaries(fix):
 
 
 def check_agent_defs(fix):
+    # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
+    # определение с ветки задачи уехало бы на машину во все проекты сразу.
     findings, fixed = [], []
-    src_dir = DEVKIT / "agents"
+    main, from_main = devkit_checkout()
+    src_dir = main / "agents" if (main / "agents").is_dir() else DEVKIT / "agents"
     dst_dir = Path(os.path.expanduser(AGENTS_DIR))
     for src in sorted(src_dir.glob("exec-*.md")):
         dst = dst_dir / src.name
@@ -309,14 +312,17 @@ def check_agent_defs(fix):
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
                 findings.append("определение исполнителя %s разошлось с devkit; обновить: cp %s %s"
                                 % (dst, src, dst))
-        elif fix:
+            continue
+        if fix and from_main:
             dst_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             fixed.append("определение исполнителя %s положено в %s" % (src.name, dst_dir))
-        else:
-            findings.append("нет определения исполнителя %s: effort из вердикта pick применять нечем, "
-                            "спавн уйдёт на дефолтного агента; cp %s/exec-*.md %s/"
-                            % (dst, src_dir, dst_dir))
+            continue
+        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
+                                       "определение с непроверенной ветки нельзя; из основного чекаута: ")
+        findings.append("нет определения исполнителя %s: effort из вердикта pick применять нечем, "
+                        "спавн уйдёт на дефолтного агента; %scp %s/exec-*.md %s/"
+                        % (dst, whence, src_dir, dst_dir))
     return findings, fixed
 
 

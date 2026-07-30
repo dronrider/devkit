@@ -266,6 +266,15 @@ out=$(HOME="$mhome" PATH="$spath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1
 echo "$out" | grep -q 'починено' && fail "повторный --fix при затенённом бинаре не должен ничего менять: $out"
 echo "$out" | grep -q 'в PATH выигрывает' || fail "находка про затенённый бинарь должна остаться: $out"
 
+# Симлинк на тот же бинарь впереди в PATH (~/.local/bin поверх ~/go/bin) это
+# не затенение: сверяется realpath, а не строка пути.
+localbin="$tmp/localbin"
+mkdir -p "$localbin"
+ln -sf "$mhome/go/bin/agentctl" "$localbin/agentctl"
+out=$(HOME="$mhome" PATH="$gostub:$localbin:$mhome/go/bin:$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'в PATH выигрывает' && fail "симлинк на тот же бинарь принят за чужую копию: $out"
+echo "$out" | grep -q 'починено' && fail "симлинк на тот же бинарь вызвал пересборку: $out"
+
 # Каталог сборки: GOBIN сильнее умолчания, GOPATH задаёт свой bin.
 gbhome="$tmp/gbhome"
 gb="$tmp/gobin2"
@@ -278,10 +287,13 @@ out=$(HOME="$gphome" GOPATH="$gp" PATH="$gostub:$gp/bin:$sys" python3 "$dkctl" d
 [ -x "$gp/bin/agentctl" ] || fail "--fix собрал не в GOPATH/bin: $out"
 [ -f "$gphome/go/bin/agentctl" ] && fail "--fix при заданном GOPATH лезет в ~/go/bin"
 
-# Нет go: --fix не молчит, а называет находку с командой установки.
+# Нет go: находка с командой установки идёт в обоих режимах, а не только под
+# --fix, иначе doctor советовал бы сборку командой, которой нет.
 nghome="$tmp/nghome"
 out=$(HOME="$nghome" PATH="$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
-echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про отсутствующий go: $out"
+echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про отсутствующий go под --fix: $out"
+out=$(HOME="$nghome" PATH="$sys" python3 "$dkctl" doctor -C "$mproj" 2>&1)
+echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про отсутствующий go без --fix: $out"
 
 # devkit, выложенный worktree ветки задачи: mtime исходников там ничего не
 # значит, сборка не запускается, находка отправляет в основной чекаут.
@@ -291,11 +303,24 @@ git -C "$dk" config user.email t@t
 git -C "$dk" add -A
 git -C "$dk" commit -qm init
 git -C "$dk" worktree add -q -b probe "$tmp/devkit-wt"
+# Пути в находках доктор печатает разрешёнными, а mktemp на macOS отдаёт /var,
+# который на деле симлинк на /private/var.
+dkreal=$(cd "$dk" && pwd -P)
 wthome="$tmp/wthome"
 out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'worktree ветки задачи' || fail "нет находки про worktree devkit: $out"
-echo "$out" | grep -q "$dk/agentctl" || fail "находка не отправляет в основной чекаут: $out"
+echo "$out" | grep -q "$dkreal/agentctl" || fail "находка не отправляет в основной чекаут: $out"
 [ -f "$wthome/go/bin/agentctl" ] && fail "--fix собрал машинный бинарь с фичеветки"
+# Определения исполнителей из worktree так же не раскладываются, а находка
+# зовёт копировать из основного чекаута.
+[ -f "$wthome/.claude/agents/exec-medium.md" ] && fail "--fix разложил определения исполнителей с фичеветки"
+echo "$out" | grep -q "cp $dkreal/agents/exec-\*.md" || fail "находка про определения зовёт не в основной чекаут: $out"
+# Разошедшееся определение из worktree сверяется с основным чекаутом.
+mkdir -p "$wthome/.claude/agents"
+cp "$dk/agents/"exec-*.md "$wthome/.claude/agents/"
+printf '\nсвоя строка\n' >> "$wthome/.claude/agents/exec-high.md"
+out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor -C "$mproj" 2>&1)
+echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "сверка определения идёт не с основным чекаутом: $out"
 
 # stats: вывод сводки по журналу запусков, сортировка по частоте.
 sproj="$tmp/sproj"

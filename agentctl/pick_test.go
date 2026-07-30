@@ -488,6 +488,34 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
+	t.Run("сдвинутому вниз вердикту ценой M и выше советуют отложить исполнение", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		out, err := cmdPick(root, "T-002", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet") {
+			t.Fatalf("жду сдвиг вердикта T-002 вниз, получил %q", out)
+		}
+		if !strings.Contains(out, "отложить") {
+			t.Fatalf("нет совета отложить для цены M: %q", out)
+		}
+	})
+
+	t.Run("сдвинутому вниз вердикту ценой S совета не дают", func(t *testing.T) {
+		writeQuota(t, quota, 90, 50, halfWindow)
+		out, err := cmdPick(root, "T-005", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") {
+			t.Fatalf("жду сдвиг вердикта T-005 вниз, получил %q", out)
+		}
+		if strings.Contains(out, "отложить") {
+			t.Fatalf("S-задаче не положен совет отложить: %q", out)
+		}
+	})
+
 	t.Run("грумминговый вердикт корректор не трогает", func(t *testing.T) {
 		writeQuota(t, quota, 50, 95, halfWindow)
 		out, err := cmdPick(root, "T-004", false)

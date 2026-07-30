@@ -39,6 +39,18 @@ func pickModel(r row) verdict {
 	}
 }
 
+// costAtLeastM отделяет цены, на которых сдвиг вниз стоит проговаривать
+// отдельно от LLD: M, L и XL по DK-015 достойны opus не меньше дизайна, S
+// дешёвая модель тянет и без всякого сдвига.
+func costAtLeastM(cost string) bool {
+	switch cost {
+	case "M", "L", "XL":
+		return true
+	default:
+		return false
+	}
+}
+
 // floorSonnetEffort поднимает effort вердикта с моделью sonnet минимум до
 // high. Запросы sonnet стоят копейки, а риск потерять качество при этом есть,
 // поэтому экономить на глубине размышления смысла нет: low и medium
@@ -184,8 +196,11 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if tail := c.tail(); tail != "" {
 		v.Reason += "; " + tail
 	}
-	if c.Down && strings.EqualFold(r.Type, "LLD") {
+	switch {
+	case c.Down && strings.EqualFold(r.Type, "LLD"):
 		v.Reason += "; дизайн слабой моделью это долгий ущерб, а сброс близко, так что если не горит, лучше отложить"
+	case c.Down && costAtLeastM(r.Cost):
+		v.Reason += "; сдвиг вниз на цене M и выше это заметная потеря качества в исполнении, а сброс близко, так что если не горит, лучше отложить"
 	}
 	for _, w := range warns {
 		v.Reason += "; " + w

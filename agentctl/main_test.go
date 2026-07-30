@@ -98,7 +98,7 @@ func TestOldSixColumnBoard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pick на 6-колоночной доске: %v", err)
 	}
-	if !strings.HasPrefix(out, "model: sonnet") || !strings.Contains(out, "не оценена") {
-		t.Fatalf("жду sonnet с пометкой про цену, получил %q", out)
+	if !strings.HasPrefix(out, "model: opus") || !strings.Contains(out, "не оценена") {
+		t.Fatalf("жду opus с пометкой про цену, получил %q", out)
 	}
 }

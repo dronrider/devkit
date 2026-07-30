@@ -27,14 +27,14 @@ func pickModel(r row) verdict {
 		return verdict{Model: "opus", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
 	case r.Cost == "XL":
 		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
-	case r.Cost == "L" && unc == 3:
-		return verdict{Model: "opus", Reason: "цена L и неопределённость 3: сверхсложный кодинг, дешёвая модель не вытянет"}
-	case r.Cost == "S" && unc >= 0 && unc <= 1:
-		return verdict{Model: "haiku", Reason: "мелочь с ясным подходом, дешёвой модели хватает"}
+	case r.Cost == "S" && unc == 0:
+		return verdict{Model: "haiku", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
+	case (r.Cost == "S" || r.Cost == "M") && unc >= 0 && unc <= 1:
+		return verdict{Model: "sonnet", Reason: "подход уже выбран, размышлять не над чем"}
 	case r.Cost == "" || r.Cost == "-":
-		return verdict{Model: "sonnet", Reason: "цена не оценена, до оценки модель по умолчанию"}
+		return verdict{Model: "opus", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:
-		return verdict{Model: "sonnet", Reason: "обычная задача, модель по умолчанию"}
+		return verdict{Model: "opus", Reason: "обычная задача, модель по умолчанию"}
 	}
 }
 

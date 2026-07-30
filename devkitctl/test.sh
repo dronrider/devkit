@@ -215,6 +215,10 @@ echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про о�
 echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
 echo "$out" | grep -q 'нет снимка квоты' || fail "нет находки про снимок квоты: $out"
 [ -f "$mhome/go/bin/agentctl" ] && fail "doctor без --fix собрал бинарь"
+# Помета «машина» отделяет машинные находки от проектных, на неё опирается и
+# дока, и сценарий проверки.
+echo "$out" | grep -q '^машина: tmux не в PATH' || fail "у машинной находки нет пометы «машина»: $out"
+echo "$out" | grep -q '^нет CLAUDE.md' || fail "проектная находка получила помету «машина»: $out"
 
 # --fix собирает бинари и раскладывает определения, а неоднозначное (tmux,
 # снимок квоты) оставляет находкой с командой.
@@ -307,6 +311,13 @@ echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про 
 out=$(HOME="$nghome" PATH="$sys" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про отсутствующий go без --fix: $out"
 
+# Каталог сборки не в PATH: --fix соберёт, а пользоваться собранным нечем, и
+# эта находка единственный сигнал. Ради такого случая задача и затевалась.
+pphome="$tmp/pphome"
+out=$(HOME="$pphome" PATH="$gostub:$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+[ -x "$pphome/go/bin/agentctl" ] || fail "--fix не собрал бинарь: $out"
+echo "$out" | grep -q 'не в PATH: добавить директорию' || fail "нет находки про каталог сборки вне PATH: $out"
+
 # devkit, выложенный worktree ветки задачи: mtime исходников там ничего не
 # значит, сборка не запускается, находка отправляет в основной чекаут.
 git -C "$dk" init -q .
@@ -333,6 +344,18 @@ cp "$dk/agents/"exec-*.md "$wthome/.claude/agents/"
 printf '\nсвоя строка\n' >> "$wthome/.claude/agents/exec-high.md"
 out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "сверка определения идёт не с основным чекаутом: $out"
+# Бинари на месте, но старее выложенного worktree: свежесть по mtime там ничего
+# не значит, и доктор про них молчит, а не печатает четыре ложные находки.
+wtbin="$tmp/wtbin"
+mkdir -p "$wtbin"
+for t in taskctl shipctl agentctl regcheck; do
+    printf '#!/bin/sh\nexit 0\n' > "$wtbin/$t"
+    chmod +x "$wtbin/$t"
+    touch -t 200001010000 "$wtbin/$t"
+done
+out=$(HOME="$wthome" PATH="$gostub:$wtbin:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'старее исходников devkit' && fail "из worktree бинари объявлены устаревшими: $out"
+echo "$out" | grep -q 'починено' && fail "из worktree --fix что-то пересобрал: $out"
 
 # stats: вывод сводки по журналу запусков, сортировка по частоте.
 sproj="$tmp/sproj"

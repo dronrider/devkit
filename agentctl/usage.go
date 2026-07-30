@@ -270,12 +270,13 @@ func cmdQuotaRefresh(path string, now time.Time) (string, error) {
 	}
 	defer tmuxRun("kill-session", "-t", session)
 
+	var pane string
 	if err := waitPane(session, usageReadyTimeout, func(text string) bool {
-		return strings.TrimSpace(text) != ""
+		pane = text
+		return paneReady(text) || notLoggedIn(text)
 	}); err != nil {
-		return "", fmt.Errorf("claude не отрисовался за %s, снимок не тронут", usageReadyTimeout)
+		return "", fmt.Errorf("claude не отрисовал строку ввода за %s, снимок не тронут", usageReadyTimeout)
 	}
-	pane, _ := capturePane(session)
 	if notLoggedIn(pane) {
 		return "", fmt.Errorf("claude не залогинен, снимать нечего: пройти вход и повторить")
 	}
@@ -322,6 +323,34 @@ func waitPane(session string, limit time.Duration, ready func(string) bool) erro
 		}
 		time.Sleep(usagePollEvery)
 	}
+}
+
+// paneReady отвечает, принимает ли клиент ввод. «В панели что-то появилось» на
+// этот вопрос не отвечает: пока клиент дорисовывается (заставка есть, строки
+// ввода ещё нет), набранная команда пропадает без следа, и refresh уходит ждать
+// панель, которую никто не открывал. Признаком берётся рамка строки ввода:
+// сплошная линия во всю ширину появляется вместе с самой строкой. Слова
+// подсказки под рамкой в признак не годятся, клиент крутит их по очереди.
+func paneReady(pane string) bool {
+	for _, line := range strings.Split(pane, "\n") {
+		if solidRule(ansiRe.ReplaceAllString(line, "")) {
+			return true
+		}
+	}
+	return false
+}
+
+func solidRule(line string) bool {
+	r := []rune(strings.TrimSpace(line))
+	if len(r) < 40 {
+		return false
+	}
+	for _, c := range r {
+		if c != r[0] {
+			return false
+		}
+	}
+	return true
 }
 
 func notLoggedIn(pane string) bool {

@@ -187,6 +187,36 @@ func TestParseUsagePanel(t *testing.T) {
 	})
 }
 
+// TestPaneReady: команду набирают только когда клиенту есть куда её принять.
+// Заставка отрисована, а строки ввода ещё нет, значит набранное потеряется, и
+// refresh потом ждёт панель, которую никто не открывал.
+func TestPaneReady(t *testing.T) {
+	// Рамку строки ввода клиент рисует линией из U+2500, в тесте она набрана
+	// escape-последовательностью, чтобы файл оставался клавиатурным.
+	rule := strings.Repeat("\u2500", 120)
+	notReady := []string{
+		"",
+		"\n Claude Code v2.1.220\n Opus 5 (1M context) with high effort\n ~/projects/devkit\n",
+		"\n Claude Code v2.1.220\n" + strings.Repeat("\u2500", 20) + "\n",
+	}
+	for _, pane := range notReady {
+		if paneReady(pane) {
+			t.Fatalf("недорисованный клиент сочтён готовым: %q", pane)
+		}
+	}
+	ready := "\n Claude Code v2.1.220\n\n" + rule + "\n Try \"fix lint errors\"\n" + rule +
+		"\n manual mode on, install gh for PR status\n"
+	if !paneReady(ready) {
+		t.Fatal("строка ввода нарисована, а клиент не сочтён готовым")
+	}
+	// Подсказку под рамкой клиент меняет от запуска к запуску, признаком
+	// готовности она быть не может.
+	swapped := strings.ReplaceAll(ready, "manual mode on, install gh for PR status", "? for shortcuts")
+	if !paneReady(swapped) {
+		t.Fatal("готовность зависит от того, какую подсказку клиент показал")
+	}
+}
+
 func TestParseResetTime(t *testing.T) {
 	cases := []struct {
 		line string

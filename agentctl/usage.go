@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,9 +18,17 @@ import (
 // видит человек.
 const (
 	usageReadyTimeout = 20 * time.Second
+	usageEchoTimeout  = 5 * time.Second
 	usagePanelTimeout = 25 * time.Second
 	usagePollEvery    = 400 * time.Millisecond
+	// Сколько ждать дорогой бакет, прежде чем поверить панели с одним общим.
+	// Запас к наблюдаемым полсекунды взят широкий: лишние секунды тут дешевле
+	// снимка без дорогого бакета.
+	usagePartialGrace = 3 * time.Second
 )
+
+// usageCommand это то, что набирается в строке ввода клиента.
+const usageCommand = "/usage"
 
 // ansiRe снимает управляющие последовательности: capture-pane отдаёт текст
 // панели вместе с ними, а парсеру нужны только буквы.
@@ -273,38 +282,68 @@ func cmdQuotaRefresh(path string, now time.Time) (string, error) {
 	var pane string
 	if err := waitPane(session, usageReadyTimeout, func(text string) bool {
 		pane = text
-		return paneReady(text) || notLoggedIn(text)
+		return paneReady(text) || paneBlocker(text) != ""
 	}); err != nil {
 		return "", fmt.Errorf("claude не отрисовал строку ввода за %s, снимок не тронут", usageReadyTimeout)
 	}
-	if notLoggedIn(pane) {
-		return "", fmt.Errorf("claude не залогинен, снимать нечего: пройти вход и повторить")
+	if why := paneBlocker(pane); why != "" {
+		return "", errors.New(why)
 	}
-	if _, err := tmuxRun("send-keys", "-t", session, "-l", "/usage"); err != nil {
+	if _, err := tmuxRun("send-keys", "-t", session, "-l", usageCommand); err != nil {
 		return "", fmt.Errorf("не удалось набрать команду: %v", err)
 	}
-	// Слэш открывает список команд, и Enter уходит отдельно: набранному надо
-	// дать отрисоваться, иначе Enter попадает в ещё пустой список.
-	time.Sleep(usagePollEvery)
+	// Enter уходит только после того, как набранное видно в панели. Слэш
+	// открывает список команд, и в пустой список Enter попал бы мимо; а на
+	// незнакомом экране, который перехватил ввод, он подтвердил бы подсвеченное
+	// там, что бы это ни было.
+	if err := waitPane(session, usageEchoTimeout, func(text string) bool {
+		return strings.Contains(text, usageCommand)
+	}); err != nil {
+		return "", fmt.Errorf("клиент не принял набранное %s за %s: Enter не отправлен, снимок не тронут", usageCommand, usageEchoTimeout)
+	}
 	if _, err := tmuxRun("send-keys", "-t", session, "Enter"); err != nil {
 		return "", fmt.Errorf("не удалось отправить команду: %v", err)
 	}
 
-	var snap snapshot
+	w := panelWaiter{}
 	if err := waitPane(session, usagePanelTimeout, func(text string) bool {
 		s, err := parseUsagePanel(text, now)
 		if err != nil {
 			return false
 		}
-		snap = s
-		return true
+		return w.accept(s, time.Now())
 	}); err != nil {
 		return "", fmt.Errorf("панель /usage не узналась за %s: разметка могла измениться, снимок не тронут (образцы панели лежат в agentctl/testdata)", usagePanelTimeout)
 	}
+	snap := w.snap
 	if err := writeSnapshot(path, snap); err != nil {
 		return "", err
 	}
 	return cmdQuota(path, now)
+}
+
+// panelWaiter решает, когда разобранной панели можно верить. Панель приезжает
+// не одним кадром: сначала общий бакет со строками про пересчёт, дорогой
+// дорисовывается примерно полсекунды спустя, и первый же успешный разбор дал бы
+// снимок без него. Такой снимок хуже отказа, он выглядит целым, а корректор по
+// нему молча теряет сдвиг вверх. Поэтому полная панель принимается сразу, а
+// одинокий общий бакет должен продержаться usagePartialGrace: панель без
+// дорогого бакета бывает и настоящей (свой тариф, своя версия клиента).
+type panelWaiter struct {
+	snap    snapshot
+	partial time.Time
+}
+
+func (w *panelWaiter) accept(s snapshot, at time.Time) bool {
+	w.snap = s
+	if len(s.Buckets) > 1 {
+		return true
+	}
+	if w.partial.IsZero() {
+		w.partial = at
+		return false
+	}
+	return at.Sub(w.partial) >= usagePartialGrace
 }
 
 func capturePane(session string) (string, error) {
@@ -326,22 +365,28 @@ func waitPane(session string, limit time.Duration, ready func(string) bool) erro
 }
 
 // paneReady отвечает, принимает ли клиент ввод. «В панели что-то появилось» на
-// этот вопрос не отвечает: пока клиент дорисовывается (заставка есть, строки
-// ввода ещё нет), набранная команда пропадает без следа, и refresh уходит ждать
-// панель, которую никто не открывал. Признаком берётся рамка строки ввода:
-// сплошная линия во всю ширину появляется вместе с самой строкой. Слова
-// подсказки под рамкой в признак не годятся, клиент крутит их по очереди.
+// этот вопрос не отвечает: пока клиент дорисовывается, набранная команда
+// пропадает без следа, и refresh уходит ждать панель, которую никто не
+// открывал. Признак берётся структурный: строка ввода это непустая строка между
+// двумя сплошными линейками, такой рамкой клиент обводит только её. Одной
+// линейки мало, ею начинается и диалог доверия каталогу, а слова подсказок под
+// рамкой не годятся тем более, клиент крутит их по очереди.
 func paneReady(pane string) bool {
-	for _, line := range strings.Split(pane, "\n") {
-		if solidRule(ansiRe.ReplaceAllString(line, "")) {
+	lines := strings.Split(pane, "\n")
+	for i := 0; i+2 < len(lines); i++ {
+		if solidRule(lines[i]) && solidRule(lines[i+2]) && strings.TrimSpace(paneLine(lines[i+1])) != "" {
 			return true
 		}
 	}
 	return false
 }
 
+func paneLine(line string) string {
+	return strings.TrimSpace(ansiRe.ReplaceAllString(line, ""))
+}
+
 func solidRule(line string) bool {
-	r := []rune(strings.TrimSpace(line))
+	r := []rune(paneLine(line))
 	if len(r) < 40 {
 		return false
 	}
@@ -353,7 +398,23 @@ func solidRule(line string) bool {
 	return true
 }
 
-func notLoggedIn(pane string) bool {
+// paneBlocker узнаёт экраны, которые перехватывают ввод до того, как появится
+// строка ввода, и возвращает человеческую причину отказа. Узнавать их надо
+// именно поимённо: на таком экране набранная команда никуда не доедет, а Enter
+// подтвердит подсвеченный там пункт (доверие каталогу, тему оформления), то
+// есть тихо изменит настройки пользователя вместо съёма панели. Экраны
+// узнаются по словам интерфейса, и это осознанная ставка: сменится
+// формулировка, refresh отвалится по таймауту с отказом, а не нажмёт Enter
+// вслепую.
+func paneBlocker(pane string) string {
 	low := strings.ToLower(pane)
-	return strings.Contains(low, "/login") || strings.Contains(low, "sign in") || strings.Contains(low, "log in to")
+	switch {
+	case strings.Contains(low, "/login"), strings.Contains(low, "sign in"), strings.Contains(low, "log in to"):
+		return "claude не залогинен, снимать нечего: пройти вход и повторить"
+	case strings.Contains(low, "trust this folder"), strings.Contains(low, "trust the files"):
+		return "claude спрашивает про доверие каталогу, панель за этим вопросом недоступна: подтвердить доверие руками (claude в этом каталоге) либо гонять refresh из каталога, которому клиент уже доверяет"
+	case strings.Contains(low, "let's get started"):
+		return "claude показывает мастер первого запуска, до панели он не пускает: пройти мастер руками и повторить"
+	}
+	return ""
 }

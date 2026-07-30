@@ -188,33 +188,110 @@ func TestParseUsagePanel(t *testing.T) {
 }
 
 // TestPaneReady: команду набирают только когда клиенту есть куда её принять.
-// Заставка отрисована, а строки ввода ещё нет, значит набранное потеряется, и
-// refresh потом ждёт панель, которую никто не открывал.
+// Образцы сняты живьём с клиента 2.1.220 в трёх окружениях, потому что цена
+// ошибки тут не таймаут: на экране, где ввод перехвачен, Enter подтверждает
+// подсвеченный пункт, то есть меняет настройки пользователя.
 func TestPaneReady(t *testing.T) {
-	// Рамку строки ввода клиент рисует линией из U+2500, в тесте она набрана
-	// escape-последовательностью, чтобы файл оставался клавиатурным.
-	rule := strings.Repeat("\u2500", 120)
-	notReady := []string{
-		"",
-		"\n Claude Code v2.1.220\n Opus 5 (1M context) with high effort\n ~/projects/devkit\n",
-		"\n Claude Code v2.1.220\n" + strings.Repeat("\u2500", 20) + "\n",
+	if !paneReady(readFixture(t, "pane-ready.txt")) {
+		t.Fatal("строка ввода нарисована, а клиент не сочтён готовым")
 	}
-	for _, pane := range notReady {
+	// У диалога доверия и у мастера первого запуска сплошные линейки тоже есть,
+	// но строки ввода они не рисуют: по признаку «линейка есть» refresh набирал
+	// бы команду прямо в них.
+	for _, name := range []string{"pane-trust-dialog.txt", "pane-first-run.txt"} {
+		if paneReady(readFixture(t, name)) {
+			t.Fatalf("%s сочтён готовым к вводу", name)
+		}
+	}
+	// Заставка без строки ввода: клиент ещё дорисовывается.
+	splash := "\n Claude Code v2.1.220\n Opus 5 (1M context) with high effort\n ~/projects/devkit\n"
+	for _, pane := range []string{"", splash} {
 		if paneReady(pane) {
 			t.Fatalf("недорисованный клиент сочтён готовым: %q", pane)
 		}
 	}
-	ready := "\n Claude Code v2.1.220\n\n" + rule + "\n Try \"fix lint errors\"\n" + rule +
-		"\n manual mode on, install gh for PR status\n"
-	if !paneReady(ready) {
-		t.Fatal("строка ввода нарисована, а клиент не сочтён готовым")
-	}
 	// Подсказку под рамкой клиент меняет от запуска к запуску, признаком
 	// готовности она быть не может.
-	swapped := strings.ReplaceAll(ready, "manual mode on, install gh for PR status", "? for shortcuts")
+	swapped := strings.ReplaceAll(readFixture(t, "pane-ready.txt"), "? for shortcuts", "install gh for PR status")
 	if !paneReady(swapped) {
 		t.Fatal("готовность зависит от того, какую подсказку клиент показал")
 	}
+}
+
+// TestPaneBlocker: экраны, которые перехватывают ввод, узнаются поимённо и
+// отказывают по-человечески, иначе refresh давит Enter в чужой диалог.
+func TestPaneBlocker(t *testing.T) {
+	cases := []struct {
+		fixture string
+		want    string
+	}{
+		{"pane-trust-dialog.txt", "доверие каталогу"},
+		{"pane-first-run.txt", "мастер первого запуска"},
+	}
+	for _, c := range cases {
+		why := paneBlocker(readFixture(t, c.fixture))
+		if !strings.Contains(why, c.want) {
+			t.Fatalf("%s: отказ %q, жду упоминание %q", c.fixture, why, c.want)
+		}
+	}
+	if why := paneBlocker(readFixture(t, "pane-ready.txt")); why != "" {
+		t.Fatalf("готовый клиент принят за перехваченный экран: %q", why)
+	}
+	if why := paneBlocker("Welcome to Claude Code\n Please sign in to continue\n"); !strings.Contains(why, "не залогинен") {
+		t.Fatalf("экран входа не узнан: %q", why)
+	}
+}
+
+// TestPanelWaiter: панель приезжает не одним кадром, и первый успешный разбор
+// это ещё не повод писать снимок.
+func TestPanelWaiter(t *testing.T) {
+	partial, err := parseUsagePanel(readFixture(t, "usage-panel-partial.txt"), testNow)
+	if err != nil {
+		t.Fatalf("недорисованный кадр панели не разобран: %v", err)
+	}
+	if len(partial.Buckets) != 1 {
+		t.Fatalf("в кадре ждали один общий бакет, вижу %+v", partial.Buckets)
+	}
+	full, err := parseUsagePanel(readFixture(t, "usage-panel-fable.txt"), testNow)
+	if err != nil {
+		t.Fatalf("дорисованная панель не разобрана: %v", err)
+	}
+
+	t.Run("кадр без дорогого бакета в снимок не идёт", func(t *testing.T) {
+		var w panelWaiter
+		if w.accept(partial, testNow) {
+			t.Fatal("снимок записан по кадру, где дорогой бакет ещё не дорисован")
+		}
+		if w.accept(partial, testNow.Add(usagePartialGrace/2)) {
+			t.Fatal("выдержка кончилась раньше срока")
+		}
+		if !w.accept(full, testNow.Add(usagePartialGrace/2)) {
+			t.Fatal("дорисованная панель не принята")
+		}
+		if _, ok := w.snap.bucket("week_fable"); !ok {
+			t.Fatalf("в снимок ушёл кадр без дорогого бакета: %+v", w.snap.Buckets)
+		}
+	})
+
+	t.Run("панель без дорогого бакета принимается по выдержке", func(t *testing.T) {
+		// Такая панель бывает и настоящей: свой тариф, своя версия клиента.
+		// Ждать её вечно нельзя, иначе refresh отказывает там, где данные есть.
+		var w panelWaiter
+		w.accept(partial, testNow)
+		if !w.accept(partial, testNow.Add(usagePartialGrace)) {
+			t.Fatal("одинокий общий бакет не принят и после выдержки")
+		}
+		if len(w.snap.Buckets) != 1 {
+			t.Fatalf("снимок: %+v", w.snap.Buckets)
+		}
+	})
+
+	t.Run("дорисованная панель принимается сразу", func(t *testing.T) {
+		var w panelWaiter
+		if !w.accept(full, testNow) {
+			t.Fatal("полная панель ждёт непонятно чего")
+		}
+	})
 }
 
 func TestParseResetTime(t *testing.T) {

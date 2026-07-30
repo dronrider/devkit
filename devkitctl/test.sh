@@ -29,7 +29,16 @@ for t in taskctl shipctl agentctl regcheck tmux; do
     printf '#!/bin/sh\nexit 0\n' > "$bin/$t"
     chmod +x "$bin/$t"
 done
-cleanpath="$bin:/usr/bin:/bin"
+# Системная часть PATH тоже подставная: в ней только то, без чего не обойтись.
+# Проверки вида «tmux не в PATH» иначе держались бы на том, чего нет в
+# /usr/bin на этой машине, и на другой краснели бы при исправном коде.
+sys="$tmp/sys"
+mkdir -p "$sys"
+for t in git python3 dirname mkdir chmod rm; do
+    p=$(command -v "$t") || fail "в PATH нет $t, самопроверке не на чем стоять"
+    ln -sf "$p" "$sys/$t"
+done
+cleanpath="$bin:$sys"
 mkdir -p "$home/.claude/agents" "$home/.devkit"
 cp "$here/../agents/"exec-*.md "$home/.claude/agents/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
@@ -70,7 +79,7 @@ echo "$out" | grep -q 'check-memory' || fail "нет находки про пр�
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'taskctl не в PATH' || fail "нет находки про taskctl: $out"
 
 # Отдельный проект с доской: new заводит болванку выката и гитигнорит её.
@@ -91,20 +100,20 @@ grep -q "devkitctl${tab}new${tab}0" "$bproj/.devkit/log" || fail "в журна�
 git -C "$bproj" check-ignore -q .devkit/log || fail ".devkit/log не гитигнорнут"
 
 # doctor: пустой deploy= это находка, заполненный и гитигнорнутый чист.
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'пустой deploy=' || fail "нет находки про пустую команду выката: $out"
 printf 'deploy = make deploy\nautonomous = false\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
 # doctor: autonomous=true с пустым deploy= это специальная находка.
 printf 'autonomous = true\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'autonomous = true при пустом deploy=' || fail "нет находки про autonomous=true без команды: $out"
 echo "$out" | grep -q 'shipctl нечего выкатывать' && fail "старая находка дублирует новую при autonomous=true: $out"
 # autonomous=false с пустым deploy= это старая находка, без новой.
 printf 'autonomous = false\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'autonomous = true при пустом deploy=' && fail "новая находка не должна быть для autonomous=false: $out"
 echo "$out" | grep -q 'пустой deploy=' || fail "старая находка про пустой deploy должна остаться: $out"
 
@@ -118,7 +127,7 @@ HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$nproj" >/dev/null 
 mkdir -p "$nproj/docs"
 printf '# Задачи\n' > "$nproj/docs/TASKS.md"
 printf 'deploy = make deploy\nautonomous = false\n' > "$nproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="/usr/bin:/bin" python3 "$here/devkitctl.py" doctor -C "$nproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$nproj" 2>&1)
 echo "$out" | grep -q 'не гитигнорнут' || fail "нет находки про негитигнорнутый конфиг: $out"
 
 # doctor --fix доводит обвязку проекта, подключённого до появления выката:
@@ -148,6 +157,21 @@ printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.loc
 out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
+# Машинный контур гоняется на копии devkit во временной директории: свежесть
+# бинарей меряется по mtime исходников, и настоящий чекаут для этого трогать
+# нельзя. Копия не под git, так что для доктора это основной чекаут.
+dk="$tmp/devkit"
+mkdir -p "$dk"
+for d in devkitctl agents hooks taskctl shipctl agentctl regcheck; do
+    cp -R "$here/../$d" "$dk/"
+done
+dkctl="$dk/devkitctl/devkitctl.py"
+mproj="$tmp/mproj"
+mkdir -p "$mproj"
+git init -q "$mproj"
+git -C "$mproj" config user.name t
+git -C "$mproj" config user.email t@t
+
 # Машинный контур на пустой машине: бинарей нет, определений исполнителей нет,
 # tmux нет, снимка квоты нет. Сборку изображает заглушка go, гонять настоящую
 # в самопроверке незачем.
@@ -174,9 +198,9 @@ EOF
 chmod +x "$gostub/go"
 SANDBOX="$tmp"
 export SANDBOX
-mpath="$gostub:$mhome/go/bin:/usr/bin:/bin"
+mpath="$gostub:$mhome/go/bin:$sys"
 
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'agentctl не в PATH' || fail "нет находки про бинарь agentctl: $out"
 echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про определения исполнителей: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
@@ -185,7 +209,7 @@ echo "$out" | grep -q 'нет снимка квоты' || fail "нет нахо�
 
 # --fix собирает бинари и раскладывает определения, а неоднозначное (tmux,
 # снимок квоты) оставляет находкой с командой.
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 for t in taskctl shipctl agentctl regcheck; do
     [ -x "$mhome/go/bin/$t" ] || fail "doctor --fix не собрал $t: $out"
 done
@@ -194,28 +218,84 @@ echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux,
 echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
 
 # Повторный --fix по машинному контуру уже ничего не чинит.
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный --fix по машинному контуру не должен ничего менять: $out"
 
 # Правленое руками определение исполнителя это находка, --fix его не затирает.
 printf '\nсвоя строка\n' >> "$mhome/.claude/agents/exec-low.md"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
 grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "--fix затёр правленое определение"
 
 # Снимок квоты: протухший это находка, свежий нет.
 mkdir -p "$mhome/.devkit"
 printf 'taken = 2020-01-01T00:00\nweek_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'старее суток' || fail "нет находки про протухший снимок квоты: $out"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
     > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'снимок квоты' && fail "свежий снимок квоты не должен быть находкой: $out"
 # Снимок без разобранного момента снятия это тоже находка.
 printf 'week_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про снимок без taken: $out"
+
+# Бинарь старее исходников devkit (так выходит после git pull): находка, а
+# --fix пересобирает.
+touch -t 200001010000 "$mhome/go/bin/agentctl"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
+echo "$out" | grep -q 'agentctl старее исходников devkit' || fail "нет находки про устаревший бинарь: $out"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено: agentctl собран' || fail "--fix не пересобрал устаревший бинарь: $out"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
+echo "$out" | grep -q 'старее исходников devkit' && fail "после пересборки находка про устаревший бинарь осталась: $out"
+
+# Затенённый бинарь: свежая сборка на месте, а в PATH выигрывает чужая копия.
+# Это находка, и пересобирать на каждом прогоне нечего.
+shadow="$tmp/shadow"
+mkdir -p "$shadow"
+printf '#!/bin/sh\nexit 0\n' > "$shadow/agentctl"
+chmod +x "$shadow/agentctl"
+touch -t 200001010000 "$shadow/agentctl"
+spath="$gostub:$shadow:$mhome/go/bin:$sys"
+out=$(HOME="$mhome" PATH="$spath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'в PATH выигрывает' || fail "нет находки про затенённый бинарь: $out"
+echo "$out" | grep -q 'починено: agentctl собран' && fail "затенённый бинарь пересобирается впустую: $out"
+out=$(HOME="$mhome" PATH="$spath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено' && fail "повторный --fix при затенённом бинаре не должен ничего менять: $out"
+echo "$out" | grep -q 'в PATH выигрывает' || fail "находка про затенённый бинарь должна остаться: $out"
+
+# Каталог сборки: GOBIN сильнее умолчания, GOPATH задаёт свой bin.
+gbhome="$tmp/gbhome"
+gb="$tmp/gobin2"
+out=$(HOME="$gbhome" GOBIN="$gb" PATH="$gostub:$gb:$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+[ -x "$gb/agentctl" ] || fail "--fix собрал не в GOBIN: $out"
+[ -f "$gbhome/go/bin/agentctl" ] && fail "--fix при заданном GOBIN лезет в ~/go/bin"
+gphome="$tmp/gphome"
+gp="$tmp/gopath2"
+out=$(HOME="$gphome" GOPATH="$gp" PATH="$gostub:$gp/bin:$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+[ -x "$gp/bin/agentctl" ] || fail "--fix собрал не в GOPATH/bin: $out"
+[ -f "$gphome/go/bin/agentctl" ] && fail "--fix при заданном GOPATH лезет в ~/go/bin"
+
+# Нет go: --fix не молчит, а называет находку с командой установки.
+nghome="$tmp/nghome"
+out=$(HOME="$nghome" PATH="$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'go в PATH нет' || fail "нет находки про отсутствующий go: $out"
+
+# devkit, выложенный worktree ветки задачи: mtime исходников там ничего не
+# значит, сборка не запускается, находка отправляет в основной чекаут.
+git -C "$dk" init -q .
+git -C "$dk" config user.name t
+git -C "$dk" config user.email t@t
+git -C "$dk" add -A
+git -C "$dk" commit -qm init
+git -C "$dk" worktree add -q -b probe "$tmp/devkit-wt"
+wthome="$tmp/wthome"
+out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'worktree ветки задачи' || fail "нет находки про worktree devkit: $out"
+echo "$out" | grep -q "$dk/agentctl" || fail "находка не отправляет в основной чекаут: $out"
+[ -f "$wthome/go/bin/agentctl" ] && fail "--fix собрал машинный бинарь с фичеветки"
 
 # stats: вывод сводки по журналу запусков, сортировка по частоте.
 sproj="$tmp/sproj"

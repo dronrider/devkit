@@ -230,27 +230,72 @@ def quota_taken(path):
     return None
 
 
+def devkit_checkout():
+    # Основной чекаут devkit и признак, что скрипт запущен из него. В worktree
+    # ветки задачи mtime исходников это момент выкладки, а не правки, поэтому
+    # свежесть бинарей там не меряется и сборка не запускается: машинный бинарь
+    # с непроверенной ветки уехал бы во все проекты сразу.
+    rc, out = run(["git", "-C", str(DEVKIT), "rev-parse", "--git-common-dir"])
+    if rc != 0:
+        return DEVKIT, True
+    common = Path(out)
+    if not common.is_absolute():
+        common = DEVKIT / common
+    main = common.resolve().parent
+    return main, main == DEVKIT.resolve()
+
+
+def path_winner(name, target, gobin):
+    # Собранный бинарь может проиграть в PATH чужой копии, и тогда doctor
+    # молча чинил бы то, чем никто не пользуется.
+    found = shutil.which(name)
+    if not found:
+        return "свежий %s лежит в %s, но %s не в PATH: добавить директорию в PATH" % (name, target, gobin)
+    if os.path.realpath(found) != os.path.realpath(str(target)):
+        return ("свежий %s лежит в %s, а в PATH выигрывает %s: убрать старую копию либо "
+                "поднять %s выше в PATH" % (name, target, found, gobin))
+    return None
+
+
 def check_binaries(fix):
     findings, fixed = [], []
     gobin = go_bin_dir()
+    main, from_main = devkit_checkout()
     for name in BINARIES:
         src = max((p.stat().st_mtime for p in (DEVKIT / name).glob("*.go")), default=0)
         path = shutil.which(name)
-        if path and os.path.getmtime(path) >= src:
+        if path and (os.path.getmtime(path) >= src or not from_main):
             continue
         why = "не в PATH" if not path else "старее исходников devkit"
-        build = "cd %s/%s && go build -o %s/%s ." % (DEVKIT, name, gobin, name)
-        if fix and shutil.which("go"):
-            gobin.mkdir(parents=True, exist_ok=True)
-            rc, out = run(["go", "build", "-o", str(gobin / name), "."], cwd=str(DEVKIT / name))
-            if rc != 0:
-                findings.append("%s %s, сборка не прошла: %s" % (name, why, out))
-                continue
-            fixed.append("%s собран в %s" % (name, gobin / name))
-            if not shutil.which(name):
-                findings.append("%s собран, но %s не в PATH: добавить директорию в PATH" % (name, gobin))
+        build = "cd %s/%s && go build -o %s/%s ." % (main, name, gobin, name)
+        target = gobin / name
+        if target.exists() and os.path.getmtime(target) >= src:
+            # Свежая сборка уже лежит на месте, дело за PATH.
+            conflict = path_winner(name, target, gobin)
+            if conflict:
+                findings.append(conflict)
             continue
-        findings.append("%s %s: %s" % (name, why, build))
+        if not from_main:
+            findings.append("%s %s, а devkit тут выложен worktree ветки задачи: mtime исходников "
+                            "это момент выкладки, и машинный бинарь с непроверенной ветки собирать "
+                            "нельзя; пересобрать из основного чекаута: %s" % (name, why, build))
+            continue
+        if not fix:
+            findings.append("%s %s: %s" % (name, why, build))
+            continue
+        if not shutil.which("go"):
+            findings.append("%s %s, а go в PATH нет: собирать нечем, Go ставится пакетным менеджером "
+                            "(brew install go), потом %s" % (name, why, build))
+            continue
+        gobin.mkdir(parents=True, exist_ok=True)
+        rc, out = run(["go", "build", "-o", str(target), "."], cwd=str(DEVKIT / name))
+        if rc != 0:
+            findings.append("%s %s, сборка не прошла: %s" % (name, why, out))
+            continue
+        fixed.append("%s собран в %s" % (name, target))
+        conflict = path_winner(name, target, gobin)
+        if conflict:
+            findings.append(conflict)
     return findings, fixed
 
 

@@ -70,7 +70,7 @@ func TestHelpAfterSubcommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: справка по подкоманде упала: %v\n%s", args, err, out)
 		}
-		if !strings.Contains(string(out), "agentctl: выбор модели") {
+		if !strings.Contains(string(out), "agentctl: выбор исполнителя") {
 			t.Fatalf("%v: вместо справки: %s", args, out)
 		}
 	}

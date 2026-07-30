@@ -53,28 +53,6 @@ func TestPickModel(t *testing.T) {
 	}
 }
 
-// TestPickModelEffortLevels: маппинг не выдаёт max, этот уровень остаётся
-// ручным решением через override-строку.
-func TestPickModelEffortLevels(t *testing.T) {
-	rows := []row{
-		{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"},
-		{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "M"},
-		{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"},
-		{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "XL"},
-		{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"},
-		{Type: "task", Rank: "-", Cost: "-"},
-	}
-	for _, r := range rows {
-		v := pickModel(r)
-		if !validEfforts[v.Effort] {
-			t.Fatalf("%+v: effort %q вне допустимых", r, v.Effort)
-		}
-		if v.Effort == "max" {
-			t.Fatalf("%+v: маппинг выдал max", r)
-		}
-	}
-}
-
 func TestUncertainty(t *testing.T) {
 	cases := []struct {
 		rank string

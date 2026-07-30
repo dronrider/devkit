@@ -18,10 +18,12 @@ type verdict struct {
 // pick складывает вердикт из двух независимых осей. Модель это калибр
 // исполнителя, он выводится из типа и цены; effort это глубина размышления, и
 // заставляет размышлять неопределённость. Одна ось другую не диктует: та же
-// модель на задачах с разной неопределённостью получает разный effort.
+// модель на задачах с разной неопределённостью получает разный effort. Для
+// sonnet результат ещё проходит пол: ниже high эта модель не отдаётся.
 func pick(r row) verdict {
 	v := pickModel(r)
 	v.Effort = pickEffort(r)
+	floorSonnetEffort(&v)
 	return v
 }
 
@@ -40,12 +42,27 @@ func pickModel(r row) verdict {
 		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
 	case r.Cost == "S" && unc == 0:
 		return verdict{Model: "haiku", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
-	case (r.Cost == "S" || r.Cost == "M") && unc >= 0 && unc <= 1:
-		return verdict{Model: "sonnet", Reason: "подход уже выбран, задача по силам средней модели"}
+	case r.Cost == "S" && unc == 1:
+		return verdict{Model: "sonnet", Reason: "небольшая задача, подход уже выбран, дешёвая модель справится"}
 	case r.Cost == "" || r.Cost == "-":
 		return verdict{Model: "opus", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:
-		return verdict{Model: "opus", Reason: "обычная задача, модель по умолчанию"}
+		return verdict{Model: "opus", Reason: "цена от M и выше, экономить на модели незачем, средняя и крупная задача идёт сильной"}
+	}
+}
+
+// floorSonnetEffort поднимает effort вердикта с моделью sonnet минимум до
+// high. Запросы sonnet стоят копейки, а риск потерять качество при этом есть,
+// поэтому экономить на глубине размышления смысла нет: low и medium
+// подтягиваются, xhigh и выше не трогаются. Haiku пол не касается: у Haiku
+// 4.5 effort в API не работает вовсе, его low остаётся формальной меткой.
+func floorSonnetEffort(v *verdict) {
+	if v.Model != "sonnet" {
+		return
+	}
+	if v.Effort == "low" || v.Effort == "medium" {
+		v.Reason += ", effort поднят до high: sonnet дёшев, экономить глубину смысла нет"
+		v.Effort = "high"
 	}
 }
 
@@ -142,13 +159,19 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	v := pick(*r)
+	m := pickModel(*r)
+	v := verdict{Model: m.Model, Effort: pickEffort(*r), Reason: m.Reason, Groom: m.Groom}
 	if ov.Model != "" {
 		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
 	}
+	// Пол sonnet применяется здесь, а не через pick(), потому что от override
+	// модели зависит, к какой модели его применять; а явный override effort
+	// должен пол перебить целиком, поэтому если он есть, пол не трогаем.
 	if ov.Effort != "" {
 		v.Effort = ov.Effort
 		v.Reason += ", effort задан override-строкой"
+	} else {
+		floorSonnetEffort(&v)
 	}
 	unc := "?"
 	if n := uncertainty(r.Rank); n >= 0 {

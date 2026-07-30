@@ -22,3 +22,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-012 | agentctl: квотный корректор вердикта pick по снимку /usage | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-012.md](tasks/archive/2026/DK-012.md), `aed6910`, `4415d3e`, `f184092` |
 | DK-016 | agentctl: уборка после DK-015 (pick без вызовов, пробелы тестов, README) | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-016.md](tasks/archive/2026/DK-016.md), `c7b316a`, `ace2a8b` |
 | DK-017 | agentctl: совет отложить до сброса для любого сдвига вниз с цены M и выше | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-017.md](tasks/archive/2026/DK-017.md), `3a17a32`, `2b54873`, `625c1fc`, `2cde743` |
+| DK-022 | agentctl: панель /usage сменила бакет opus на fable, парсер и лестница трат | task | P2 | 2026-07-30 | [tasks/archive/2026/DK-022.md](tasks/archive/2026/DK-022.md), `1f4de4b`, `270cbc7`, `001c3ce`, `65f7810`, `3b4000c`, `e5a5b99` |

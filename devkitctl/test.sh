@@ -6,6 +6,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fails=0
 fail() { echo "FAIL: $1" >&2; fails=$((fails + 1)); }
+# Сборка бинарей идёт в GOBIN либо GOPATH, а они на машине выставлены на
+# настоящий ~/go/bin: без сброса самопроверка положила бы туда заглушки.
+unset GOBIN GOPATH
 
 home="$tmp/home"
 mkdir -p "$home/.claude"
@@ -16,6 +19,21 @@ cat > "$home/.claude/settings.json" <<'EOF'
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
 ]}]}}
 EOF
+
+# Машинный контур подставной: бинари devkit и tmux заглушками в своём PATH,
+# определения исполнителей и свежий снимок квоты в подставном HOME. Иначе
+# проверки цеплялись бы за настоящую машину и в CI шли бы находками.
+bin="$tmp/bin"
+mkdir -p "$bin"
+for t in taskctl shipctl agentctl regcheck tmux; do
+    printf '#!/bin/sh\nexit 0\n' > "$bin/$t"
+    chmod +x "$bin/$t"
+done
+cleanpath="$bin:/usr/bin:/bin"
+mkdir -p "$home/.claude/agents" "$home/.devkit"
+cp "$here/../agents/"exec-*.md "$home/.claude/agents/"
+printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
+    > "$home/.devkit/quota.local"
 
 proj="$tmp/proj"
 mkdir -p "$proj"
@@ -34,20 +52,20 @@ HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$proj" >/dev/null 2
 [ $? -eq 2 ] || fail "повторный new не отбит"
 
 # doctor: свежеподключённый проект чист.
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
 [ $? -eq 0 ] || fail "doctor нашёл находки на чистом проекте: $out"
 
 # doctor: битый импорт, битая ссылка и пропавший PostToolUse-хук ловятся.
 printf '@../devkit/NOPE.md\n' >> "$proj/CLAUDE.md"
 mkdir -p "$proj/docs"
 printf 'смотри [детали](nope.md)\n' > "$proj/docs/note.md"
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
 [ $? -eq 1 ] || fail "doctor не увидел поломок"
 echo "$out" | grep -q 'импорт' || fail "нет находки про битый импорт"
 echo "$out" | grep -q 'битая ссылка' || fail "нет находки про битую ссылку"
 sed -e '/check-memory/d' "$home/.claude/settings.json" > "$home/.claude/settings.json.new" &&
     mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'check-memory' || fail "нет находки про пропавший хук памяти"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
@@ -113,7 +131,7 @@ git -C "$fproj" config user.email t@t
 HOME="$home" python3 "$here/devkitctl.py" new --prefix FP -C "$fproj" >/dev/null 2>&1
 rm -f "$fproj/.devkit/deploy.local"
 git -C "$fproj" config --unset core.hooksPath
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
 echo "$out" | grep -q 'починено' || fail "doctor --fix ничего не починил: $out"
 [ -f "$fproj/.devkit/deploy.local" ] || fail "doctor --fix не завёл deploy.local"
 git -C "$fproj" check-ignore -q .devkit/deploy.local || fail "doctor --fix не гитигнорил deploy.local"
@@ -122,13 +140,82 @@ git -C "$fproj" check-ignore -q .devkit/deploy.local || fail "doctor --fix не 
 echo "$out" | grep -q 'пустой deploy=' || fail "doctor --fix должен просить вписать команду: $out"
 
 # Повторный --fix уже ничего не меняет (идемпотентность).
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный doctor --fix не должен ничего менять: $out"
 
 # Заполненная команда: находки по выкату уходят.
 printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.local"
-out=$(HOME="$home" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
+
+# Машинный контур на пустой машине: бинарей нет, определений исполнителей нет,
+# tmux нет, снимка квоты нет. Сборку изображает заглушка go, гонять настоящую
+# в самопроверке незачем.
+mhome="$tmp/mhome"
+mkdir -p "$mhome/go/bin"
+gostub="$tmp/gostub"
+mkdir -p "$gostub"
+cat > "$gostub/go" <<'EOF'
+#!/bin/sh
+# go build -o <путь> . кладёт по пути пустой исполняемый файл. За пределы
+# временной директории заглушка не пишет: промах настройки в самопроверке
+# иначе затёр бы настоящие бинари в ~/go/bin.
+out=""
+while [ $# -gt 0 ]; do
+    if [ "$1" = "-o" ]; then shift; out=$1; fi
+    shift
+done
+[ -n "$out" ] || exit 1
+case "$out" in "$SANDBOX"/*) ;; *) echo "заглушка go пишет только в $SANDBOX: $out" >&2; exit 1;; esac
+mkdir -p "$(dirname "$out")"
+printf '#!/bin/sh\nexit 0\n' > "$out"
+chmod +x "$out"
+EOF
+chmod +x "$gostub/go"
+SANDBOX="$tmp"
+export SANDBOX
+mpath="$gostub:$mhome/go/bin:/usr/bin:/bin"
+
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'agentctl не в PATH' || fail "нет находки про бинарь agentctl: $out"
+echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про определения исполнителей: $out"
+echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
+echo "$out" | grep -q 'нет снимка квоты' || fail "нет находки про снимок квоты: $out"
+[ -f "$mhome/go/bin/agentctl" ] && fail "doctor без --fix собрал бинарь"
+
+# --fix собирает бинари и раскладывает определения, а неоднозначное (tmux,
+# снимок квоты) оставляет находкой с командой.
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+for t in taskctl shipctl agentctl regcheck; do
+    [ -x "$mhome/go/bin/$t" ] || fail "doctor --fix не собрал $t: $out"
+done
+[ -f "$mhome/.claude/agents/exec-medium.md" ] || fail "doctor --fix не разложил определения исполнителей: $out"
+echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux, находка должна остаться: $out"
+echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
+
+# Повторный --fix по машинному контуру уже ничего не чинит.
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q 'починено' && fail "повторный --fix по машинному контуру не должен ничего менять: $out"
+
+# Правленое руками определение исполнителя это находка, --fix его не затирает.
+printf '\nсвоя строка\n' >> "$mhome/.claude/agents/exec-low.md"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
+grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "--fix затёр правленое определение"
+
+# Снимок квоты: протухший это находка, свежий нет.
+mkdir -p "$mhome/.devkit"
+printf 'taken = 2020-01-01T00:00\nweek_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'старее суток' || fail "нет находки про протухший снимок квоты: $out"
+printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
+    > "$mhome/.devkit/quota.local"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'снимок квоты' && fail "свежий снимок квоты не должен быть находкой: $out"
+# Снимок без разобранного момента снятия это тоже находка.
+printf 'week_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про снимок без taken: $out"
 
 # stats: вывод сводки по журналу запусков, сортировка по частоте.
 sproj="$tmp/sproj"

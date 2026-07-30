@@ -7,12 +7,15 @@
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
   devkitctl doctor [--fix] [-C dir]
-      проверить обвязку: импорты CLAUDE.md разворачиваются, git-хуки и
-      PostToolUse-хуки подключены, taskctl в PATH и не старее исходников,
-      инварианты доски (taskctl lint), обвязка выката (.devkit/deploy.local
-      есть, с командой и гитигнорнута), локальные markdown-ссылки не битые;
-      --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore),
-      заполненное не трогает, неоднозначное оставляет находкой
+      проверить обвязку проекта: импорты CLAUDE.md разворачиваются, git-хуки
+      подключены, инварианты доски (taskctl lint), обвязка выката
+      (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
+      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки, бинари
+      утилит devkit в PATH и не старее исходников, определения исполнителей в
+      ~/.claude/agents, tmux и снимок квоты ~/.devkit/quota.local;
+      --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
+      сборка бинарей, копия определений исполнителей), заполненное не трогает,
+      неоднозначное оставляет находкой
 
   devkitctl stats [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
@@ -32,6 +35,11 @@ from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
+BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
+AGENTS_DIR = "~/.claude/agents"
+QUOTA_FILE = "~/.devkit/quota.local"
+QUOTA_MAX_AGE = 24 * 3600
+QUOTA_TIME_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M")
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
 RUN_LOG = ".devkit/log"
@@ -189,6 +197,118 @@ def connect_git_hooks(root):
     return "git-хуки: core.hooksPath = %s" % hooks_rel, None
 
 
+def go_bin_dir():
+    gobin = os.environ.get("GOBIN")
+    if gobin:
+        return Path(gobin)
+    gopath = os.environ.get("GOPATH")
+    root = Path(gopath) if gopath else Path(os.path.expanduser("~/go"))
+    return root / "bin"
+
+
+def human_age(seconds):
+    hours = int(seconds // 3600)
+    if hours < 48:
+        return "%dч" % hours
+    return "%dд" % (hours // 24)
+
+
+def quota_taken(path):
+    # Момент снятия из снимка. None и когда строки taken нет, и когда она не
+    # разобрана: для доктора это один случай, снимку нельзя верить по возрасту.
+    for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        key, sep, val = ln.partition("=")
+        if not sep or key.strip() != "taken":
+            continue
+        val = val.strip()
+        for fmt in QUOTA_TIME_FORMATS:
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                pass
+        return None
+    return None
+
+
+def check_binaries(fix):
+    findings, fixed = [], []
+    gobin = go_bin_dir()
+    for name in BINARIES:
+        src = max((p.stat().st_mtime for p in (DEVKIT / name).glob("*.go")), default=0)
+        path = shutil.which(name)
+        if path and os.path.getmtime(path) >= src:
+            continue
+        why = "не в PATH" if not path else "старее исходников devkit"
+        build = "cd %s/%s && go build -o %s/%s ." % (DEVKIT, name, gobin, name)
+        if fix and shutil.which("go"):
+            gobin.mkdir(parents=True, exist_ok=True)
+            rc, out = run(["go", "build", "-o", str(gobin / name), "."], cwd=str(DEVKIT / name))
+            if rc != 0:
+                findings.append("%s %s, сборка не прошла: %s" % (name, why, out))
+                continue
+            fixed.append("%s собран в %s" % (name, gobin / name))
+            if not shutil.which(name):
+                findings.append("%s собран, но %s не в PATH: добавить директорию в PATH" % (name, gobin))
+            continue
+        findings.append("%s %s: %s" % (name, why, build))
+    return findings, fixed
+
+
+def check_agent_defs(fix):
+    findings, fixed = [], []
+    src_dir = DEVKIT / "agents"
+    dst_dir = Path(os.path.expanduser(AGENTS_DIR))
+    for src in sorted(src_dir.glob("exec-*.md")):
+        dst = dst_dir / src.name
+        if dst.exists():
+            if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
+                findings.append("определение исполнителя %s разошлось с devkit; обновить: cp %s %s"
+                                % (dst, src, dst))
+        elif fix:
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            fixed.append("определение исполнителя %s положено в %s" % (src.name, dst_dir))
+        else:
+            findings.append("нет определения исполнителя %s: effort из вердикта pick применять нечем, "
+                            "спавн уйдёт на дефолтного агента; cp %s/exec-*.md %s/"
+                            % (dst, src_dir, dst_dir))
+    return findings, fixed
+
+
+def check_machine(fix):
+    # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
+    # определения исполнителей, tmux и снимок квоты.
+    findings, fixed = [], []
+    settings = Path(os.path.expanduser("~/.claude/settings.json"))
+    text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+    for script in HOOK_SCRIPTS:
+        if script not in text:
+            findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)" % (script, settings))
+    for check in (check_binaries, check_agent_defs):
+        f, d = check(fix)
+        findings += f
+        fixed += d
+    if not shutil.which("tmux"):
+        findings.append("tmux не в PATH: agentctl quota refresh не снимет панель /usage, "
+                        "корректор останется без снимка; ставится пакетным менеджером (brew install tmux)")
+    quota = Path(os.path.expanduser(QUOTA_FILE))
+    if not quota.exists():
+        findings.append("нет снимка квоты %s: корректор pick двигать вердикт не будет; "
+                        "снять: agentctl quota refresh" % quota)
+    else:
+        taken = quota_taken(quota)
+        if taken is None:
+            findings.append("в снимке квоты %s не разобран момент снятия (строка taken =), "
+                            "возраст не проверить; переснять: agentctl quota refresh" % quota)
+        else:
+            age = (datetime.now() - taken).total_seconds()
+            if age > QUOTA_MAX_AGE:
+                findings.append("снимок квоты %s старее суток (возраст %s): профицит по нему уже не считается, "
+                                "сдвиг вверх потерян; переснять: agentctl quota refresh"
+                                % (quota, human_age(age)))
+    return findings, fixed
+
+
 def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
@@ -213,19 +333,13 @@ def doctor(start, fix=False):
             (fixed if done else findings).append(done or residual)
         else:
             findings.append(check_git_hooks(root))
-    settings = Path(os.path.expanduser("~/.claude/settings.json"))
-    text = settings.read_text(encoding="utf-8") if settings.exists() else ""
-    for script in HOOK_SCRIPTS:
-        if script not in text:
-            findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)" % (script, settings))
+    mfindings, mfixed = check_machine(fix)
+    findings += ["машина: %s" % m for m in mfindings]
+    fixed += mfixed
     if (root / "docs" / "TASKS.md").exists():
         tc = shutil.which("taskctl")
-        if not tc:
-            findings.append("есть доска, а taskctl не в PATH: cd %s/taskctl && go build -o ~/go/bin/taskctl ." % DEVKIT)
-        else:
-            src = max((p.stat().st_mtime for p in (DEVKIT / "taskctl").glob("*.go")), default=0)
-            if os.path.getmtime(tc) < src:
-                findings.append("бинарь taskctl старее исходников devkit, пересобрать его")
+        if tc:
+            # Про отсутствие бинаря уже сказал машинный раздел, тут только lint.
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)

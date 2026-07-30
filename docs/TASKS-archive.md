@@ -18,3 +18,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-013 | agentctl: opus по умолчанию, sonnet без размышлений, haiku только атомарное | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-013.md](tasks/archive/2026/DK-013.md), `0839d84`, `81454f5`, `f394dab` |
 | DK-011 | agentctl: effort в вердикте pick и применение через определения субагентов | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-011.md](tasks/archive/2026/DK-011.md), `8779e88`, `4efe090`, `073a9ce`, `7c9e604`, `7471172`, `790c2b0` |
 | DK-014 | agentctl: effort в вердикте pick отвязать от модели, считать по неопределённости | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-014.md](tasks/archive/2026/DK-014.md), `be4f083`, `7ccc876`, `752a1f8`, `e11119d`, `96f4194`, `410660a` |
+| DK-015 | agentctl: сдвиг лестницы моделей в pick (M к opus, sonnet не ниже high) | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-015.md](tasks/archive/2026/DK-015.md), `82a3d40`, `2f0b51b`, `297de3a` |

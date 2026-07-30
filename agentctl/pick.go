@@ -15,29 +15,59 @@ type verdict struct {
 	Groom  bool // вердикт «исполнять рано»: сначала грумминг или разбивка
 }
 
-// pickModel выводит модель и effort из метаданных строки доски. Порядок
-// правил значим: грумминг и разбивка перебивают дешевизну, LLD сильнее всего.
-// Уровень max маппингом не выдаётся, он остаётся ручным решением через
-// override-строку файла задачи.
+// pick складывает вердикт из двух независимых осей. Модель это калибр
+// исполнителя, он выводится из типа и цены; effort это глубина размышления, и
+// заставляет размышлять неопределённость. Одна ось другую не диктует: та же
+// модель на задачах с разной неопределённостью получает разный effort.
+func pick(r row) verdict {
+	v := pickModel(r)
+	v.Effort = pickEffort(r)
+	return v
+}
+
+// pickModel выводит модель из метаданных строки доски. Порядок правил значим:
+// грумминг и разбивка перебивают дешевизну, LLD сильнее всего.
 func pickModel(r row) verdict {
 	unc := uncertainty(r.Rank)
 	switch {
 	case strings.EqualFold(r.Type, "LLD") && (r.Cost == "L" || r.Cost == "XL"):
-		return verdict{Model: "fable", Effort: "xhigh", Reason: "LLD ценой L/XL: сложное проектирование, fable делает его лучше opus"}
+		return verdict{Model: "fable", Reason: "LLD ценой L/XL: сложное проектирование, fable делает его лучше opus"}
 	case strings.EqualFold(r.Type, "LLD"):
-		return verdict{Model: "opus", Effort: "xhigh", Reason: "LLD: дизайн отдаётся сильной модели"}
+		return verdict{Model: "opus", Reason: "LLD: дизайн отдаётся сильной модели"}
 	case unc >= 4:
-		return verdict{Model: "opus", Effort: "xhigh", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
+		return verdict{Model: "opus", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
 	case r.Cost == "XL":
-		return verdict{Model: "opus", Effort: "xhigh", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
+		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
 	case r.Cost == "S" && unc == 0:
-		return verdict{Model: "haiku", Effort: "low", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
+		return verdict{Model: "haiku", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
 	case (r.Cost == "S" || r.Cost == "M") && unc >= 0 && unc <= 1:
-		return verdict{Model: "sonnet", Effort: "medium", Reason: "подход уже выбран, размышлять не над чем"}
+		return verdict{Model: "sonnet", Reason: "подход уже выбран, задача по силам средней модели"}
 	case r.Cost == "" || r.Cost == "-":
-		return verdict{Model: "opus", Effort: "high", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
+		return verdict{Model: "opus", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:
-		return verdict{Model: "opus", Effort: "high", Reason: "обычная задача, модель по умолчанию"}
+		return verdict{Model: "opus", Reason: "обычная задача, модель по умолчанию"}
+	}
+}
+
+// pickEffort считает уровень размышления по неопределённости из разбивки ранга.
+// Тип и цена входят только там, где по ним видно, что решение ещё не найдено
+// (LLD, вердикты «исполнять рано») или что метаданным верить рано: цена не
+// оценена, значит грумминг не доведён до конца, и нулю в третьем слагаемом
+// доверия не больше, чем прочерку. Уровень max маппингом не выдаётся, он
+// остаётся ручным решением через override-строку файла задачи.
+func pickEffort(r row) string {
+	unc := uncertainty(r.Rank)
+	switch {
+	case strings.EqualFold(r.Type, "LLD"), unc >= 4, r.Cost == "XL":
+		return "xhigh"
+	case unc < 0, r.Cost == "", r.Cost == "-":
+		return "high"
+	case unc == 0:
+		return "low"
+	case unc <= 2:
+		return "medium"
+	default:
+		return "high"
 	}
 }
 
@@ -112,7 +142,7 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	v := pickModel(*r)
+	v := pick(*r)
 	if ov.Model != "" {
 		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
 	}

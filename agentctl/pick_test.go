@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-func TestPickModel(t *testing.T) {
+func TestPick(t *testing.T) {
+	// Пары вердикта целиком. Оси независимые, поэтому в таблице держится и
+	// расщепление внутри одной модели: sonnet едет и low, и medium, opus
+	// набирает все четыре уровня.
 	cases := []struct {
 		name   string
 		r      row
@@ -17,29 +20,32 @@ func TestPickModel(t *testing.T) {
 		part   string
 	}{
 		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, "haiku", "low", "атомарная"},
-		{"S с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "medium", "подход уже выбран"},
-		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+3+0+2)", Cost: "S"}, "opus", "high", "обычная"},
-		{"M с неопределённостью 0 тоже sonnet", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "sonnet", "medium", "подход уже выбран"},
-		{"M с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "sonnet", "medium", "подход уже выбран"},
-		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, "opus", "high", "обычная"},
-		{"баг L это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "opus", "high", "обычная"},
+		{"S с неопределённостью 1 это sonnet", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "medium", "подход уже выбран"},
+		{"M с неопределённостью 0 это sonnet, но думать не над чем", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "sonnet", "low", "подход уже выбран"},
+		{"M с неопределённостью 1 это sonnet", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "sonnet", "medium", "подход уже выбран"},
+		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+2+0+2)", Cost: "S"}, "opus", "medium", "обычная"},
+		{"M с неопределённостью 3 уходит в дефолт", row{Type: "task", Rank: "36 (25+4+3+0+4)", Cost: "M"}, "opus", "high", "обычная"},
+		{"баг L с неопределённостью 1 это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "opus", "medium", "обычная"},
 		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "xhigh", "дизайн"},
 		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "xhigh", "сложное проектирование"},
 		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "xhigh", "сложное проектирование"},
 		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "xhigh", "дизайн"},
+		{"LLD без неопределённости всё равно xhigh", row{Type: "LLD", Rank: "10 (0+5+0+0+5)", Cost: "S"}, "opus", "xhigh", "дизайн"},
 		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "xhigh", "грумминг"},
 		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "xhigh", "разбить"},
+		{"XL без неопределённости всё равно разбить", row{Type: "task", Rank: "20 (0+10+0+0+5)", Cost: "XL"}, "opus", "xhigh", "разбить"},
 		{"L и неопределённость 3 уходит в дефолт", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, "opus", "high", "обычная"},
-		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "opus", "high", "обычная"},
-		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, "opus", "high", "обычная"},
+		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "opus", "medium", "обычная"},
+		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, "opus", "low", "обычная"},
 		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "opus", "high", "не оценена"},
+		{"цена не оценена при нулевой неопределённости", row{Type: "task", Rank: "7 (0+3+0+0+4)", Cost: "-"}, "opus", "high", "не оценена"},
 		{"нечитаемый ранг с ценой S уходит в дефолт", row{Type: "task", Rank: "-", Cost: "S"}, "opus", "high", "обычная"},
 		{"нечитаемый ранг с ценой M уходит в дефолт", row{Type: "task", Rank: "-", Cost: "M"}, "opus", "high", "обычная"},
 		{"L с нечитаемым рангом уходит в дефолт", row{Type: "task", Rank: "-", Cost: "L"}, "opus", "high", "обычная"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := pickModel(c.r)
+			v := pick(c.r)
 			if v.Model != c.model {
 				t.Fatalf("модель %q, жду %q", v.Model, c.model)
 			}
@@ -48,6 +54,36 @@ func TestPickModel(t *testing.T) {
 			}
 			if !strings.Contains(v.Reason, c.part) {
 				t.Fatalf("причина %q без %q", v.Reason, c.part)
+			}
+		})
+	}
+}
+
+func TestPickEffort(t *testing.T) {
+	// Ось effort отдельно: при одной и той же цене уровень ходит за
+	// неопределённостью, а цена входит только там, где метаданным верить рано.
+	cases := []struct {
+		name string
+		r    row
+		want string
+	}{
+		{"рутина", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "M"}, "low"},
+		{"всё ясно, осталось сделать", row{Type: "task", Rank: "8 (0+5+1+0+1)", Cost: "M"}, "medium"},
+		{"почти ясно", row{Type: "task", Rank: "9 (0+5+2+0+1)", Cost: "M"}, "medium"},
+		{"развилки в деталях", row{Type: "task", Rank: "10 (0+5+3+0+1)", Cost: "M"}, "high"},
+		{"порог готовности снизу", row{Type: "task", Rank: "11 (0+5+4+0+1)", Cost: "M"}, "xhigh"},
+		{"совсем не разобрано", row{Type: "task", Rank: "12 (0+5+5+0+1)", Cost: "M"}, "xhigh"},
+		{"цена не двигает уровень сама по себе", row{Type: "task", Rank: "8 (0+5+1+0+1)", Cost: "L"}, "medium"},
+		{"XL это разбивка", row{Type: "task", Rank: "8 (0+5+1+0+1)", Cost: "XL"}, "xhigh"},
+		{"LLD это проектирование", row{Type: "LLD", Rank: "7 (0+5+0+0+1)", Cost: "S"}, "xhigh"},
+		{"неоценённая цена прочерком", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "-"}, "high"},
+		{"неоценённая цена пустой ячейкой", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: ""}, "high"},
+		{"нечитаемая разбивка", row{Type: "task", Rank: "7", Cost: "S"}, "high"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pickEffort(c.r); got != c.want {
+				t.Fatalf("effort %q, жду %q", got, c.want)
 			}
 		})
 	}
@@ -228,8 +264,10 @@ func TestCmdPickOverride(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pick T-002: %v", err)
 		}
-		if !strings.HasPrefix(out, "model: haiku") {
-			t.Fatalf("жду override на haiku, получил %q", out)
+		// Заодно видно независимость осей на обычной задаче: модель пришла из
+		// override, effort посчитан по неопределённости строки доски.
+		if !strings.HasPrefix(out, "model: haiku\neffort: medium\n") {
+			t.Fatalf("жду override на haiku и effort из маппинга, получил %q", out)
 		}
 	})
 

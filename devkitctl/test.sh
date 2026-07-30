@@ -10,6 +10,19 @@ fail() { echo "FAIL: $1" >&2; fails=$((fails + 1)); }
 # настоящий ~/go/bin: без сброса самопроверка положила бы туда заглушки.
 unset GOBIN GOPATH
 
+# Всё гоняется на копии devkit во временной директории, а не на живом чекауте:
+# доктор судит по mtime исходников и сверяет определения исполнителей с
+# основным чекаутом, так что незакоммиченная правка в ~/projects/devkit красила
+# бы самопроверку на исправном коде. Копия не под git, поэтому для доктора она
+# и есть основной чекаут.
+dk="$tmp/devkit"
+mkdir -p "$dk"
+for d in devkitctl agents hooks templates taskctl shipctl agentctl regcheck; do
+    cp -R "$here/../$d" "$dk/"
+done
+cp "$here/../RULES.md" "$here/../RULES.board.md" "$dk/"
+dkctl="$dk/devkitctl/devkitctl.py"
+
 home="$tmp/home"
 mkdir -p "$home/.claude"
 cat > "$home/.claude/settings.json" <<'EOF'
@@ -35,12 +48,15 @@ done
 sys="$tmp/sys"
 mkdir -p "$sys"
 for t in git python3 dirname mkdir chmod rm; do
-    p=$(command -v "$t") || fail "в PATH нет $t, самопроверке не на чем стоять"
+    if ! p=$(command -v "$t"); then
+        fail "в PATH нет $t, самопроверке не на чем стоять"
+        continue
+    fi
     ln -sf "$p" "$sys/$t"
 done
 cleanpath="$bin:$sys"
 mkdir -p "$home/.claude/agents" "$home/.devkit"
-cp "$here/../agents/"exec-*.md "$home/.claude/agents/"
+cp "$dk/agents/"exec-*.md "$home/.claude/agents/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
     > "$home/.devkit/quota.local"
 
@@ -51,35 +67,35 @@ git -C "$proj" config user.name t
 git -C "$proj" config user.email t@t
 
 # new: CLAUDE.md из шаблона, hooksPath на хуки devkit, повторный запуск отбит.
-HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$proj" >/dev/null || fail "new не прошёл"
+HOME="$home" python3 "$dkctl" new --no-board -C "$proj" >/dev/null || fail "new не прошёл"
 [ -f "$proj/CLAUDE.md" ] || fail "new не создал CLAUDE.md"
 grep -q '<название проекта>' "$proj/CLAUDE.md" && fail "плейсхолдер названия не заменён"
 hp=$(git -C "$proj" config core.hooksPath)
 [ -n "$hp" ] || fail "hooksPath не выставлен"
 [ -f "$proj/$hp/pre-commit" ] || fail "hooksPath смотрит мимо хуков devkit: $hp"
-HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$proj" >/dev/null 2>&1
+HOME="$home" python3 "$dkctl" new --no-board -C "$proj" >/dev/null 2>&1
 [ $? -eq 2 ] || fail "повторный new не отбит"
 
 # doctor: свежеподключённый проект чист.
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 [ $? -eq 0 ] || fail "doctor нашёл находки на чистом проекте: $out"
 
 # doctor: битый импорт, битая ссылка и пропавший PostToolUse-хук ловятся.
 printf '@../devkit/NOPE.md\n' >> "$proj/CLAUDE.md"
 mkdir -p "$proj/docs"
 printf 'смотри [детали](nope.md)\n' > "$proj/docs/note.md"
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 [ $? -eq 1 ] || fail "doctor не увидел поломок"
 echo "$out" | grep -q 'импорт' || fail "нет находки про битый импорт"
 echo "$out" | grep -q 'битая ссылка' || fail "нет находки про битую ссылку"
 sed -e '/check-memory/d' "$home/.claude/settings.json" > "$home/.claude/settings.json.new" &&
     mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'check-memory' || fail "нет находки про пропавший хук памяти"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$proj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'taskctl не в PATH' || fail "нет находки про taskctl: $out"
 
 # Отдельный проект с доской: new заводит болванку выката и гитигнорит её.
@@ -88,7 +104,7 @@ mkdir -p "$bproj"
 git init -q "$bproj"
 git -C "$bproj" config user.name t
 git -C "$bproj" config user.email t@t
-HOME="$home" python3 "$here/devkitctl.py" new --prefix BP -C "$bproj" >/dev/null 2>&1
+HOME="$home" python3 "$dkctl" new --prefix BP -C "$bproj" >/dev/null 2>&1
 [ -f "$bproj/.devkit/deploy.local" ] || fail "new не завёл .devkit/deploy.local"
 grep -q '^autonomous = false' "$bproj/.devkit/deploy.local" || fail "в болванке нет autonomous"
 git -C "$bproj" check-ignore -q .devkit/deploy.local || fail ".devkit/deploy.local не гитигнорнут"
@@ -100,20 +116,20 @@ grep -q "devkitctl${tab}new${tab}0" "$bproj/.devkit/log" || fail "в журна�
 git -C "$bproj" check-ignore -q .devkit/log || fail ".devkit/log не гитигнорнут"
 
 # doctor: пустой deploy= это находка, заполненный и гитигнорнутый чист.
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'пустой deploy=' || fail "нет находки про пустую команду выката: $out"
 printf 'deploy = make deploy\nautonomous = false\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
 # doctor: autonomous=true с пустым deploy= это специальная находка.
 printf 'autonomous = true\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'autonomous = true при пустом deploy=' || fail "нет находки про autonomous=true без команды: $out"
 echo "$out" | grep -q 'shipctl нечего выкатывать' && fail "старая находка дублирует новую при autonomous=true: $out"
 # autonomous=false с пустым deploy= это старая находка, без новой.
 printf 'autonomous = false\n' > "$bproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$bproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'autonomous = true при пустом deploy=' && fail "новая находка не должна быть для autonomous=false: $out"
 echo "$out" | grep -q 'пустой deploy=' || fail "старая находка про пустой deploy должна остаться: $out"
 
@@ -123,11 +139,11 @@ mkdir -p "$nproj/.devkit"
 git init -q "$nproj"
 git -C "$nproj" config user.name t
 git -C "$nproj" config user.email t@t
-HOME="$home" python3 "$here/devkitctl.py" new --no-board -C "$nproj" >/dev/null 2>&1
+HOME="$home" python3 "$dkctl" new --no-board -C "$nproj" >/dev/null 2>&1
 mkdir -p "$nproj/docs"
 printf '# Задачи\n' > "$nproj/docs/TASKS.md"
 printf 'deploy = make deploy\nautonomous = false\n' > "$nproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="$sys" python3 "$here/devkitctl.py" doctor -C "$nproj" 2>&1)
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$nproj" 2>&1)
 echo "$out" | grep -q 'не гитигнорнут' || fail "нет находки про негитигнорнутый конфиг: $out"
 
 # doctor --fix доводит обвязку проекта, подключённого до появления выката:
@@ -137,10 +153,10 @@ mkdir -p "$fproj"
 git init -q "$fproj"
 git -C "$fproj" config user.name t
 git -C "$fproj" config user.email t@t
-HOME="$home" python3 "$here/devkitctl.py" new --prefix FP -C "$fproj" >/dev/null 2>&1
+HOME="$home" python3 "$dkctl" new --prefix FP -C "$fproj" >/dev/null 2>&1
 rm -f "$fproj/.devkit/deploy.local"
 git -C "$fproj" config --unset core.hooksPath
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
 echo "$out" | grep -q 'починено' || fail "doctor --fix ничего не починил: $out"
 [ -f "$fproj/.devkit/deploy.local" ] || fail "doctor --fix не завёл deploy.local"
 git -C "$fproj" check-ignore -q .devkit/deploy.local || fail "doctor --fix не гитигнорил deploy.local"
@@ -149,23 +165,16 @@ git -C "$fproj" check-ignore -q .devkit/deploy.local || fail "doctor --fix не 
 echo "$out" | grep -q 'пустой deploy=' || fail "doctor --fix должен просить вписать команду: $out"
 
 # Повторный --fix уже ничего не меняет (идемпотентность).
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor --fix -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный doctor --fix не должен ничего менять: $out"
 
 # Заполненная команда: находки по выкату уходят.
 printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.local"
-out=$(HOME="$home" PATH="$cleanpath" python3 "$here/devkitctl.py" doctor -C "$fproj" 2>&1)
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
-# Машинный контур гоняется на копии devkit во временной директории: свежесть
-# бинарей меряется по mtime исходников, и настоящий чекаут для этого трогать
-# нельзя. Копия не под git, так что для доктора это основной чекаут.
-dk="$tmp/devkit"
-mkdir -p "$dk"
-for d in devkitctl agents hooks taskctl shipctl agentctl regcheck; do
-    cp -R "$here/../$d" "$dk/"
-done
-dkctl="$dk/devkitctl/devkitctl.py"
+# Машинный контур гоняется на отдельном проекте, чтобы правки --fix не мешали
+# прежним шагам.
 mproj="$tmp/mproj"
 mkdir -p "$mproj"
 git init -q "$mproj"
@@ -267,13 +276,16 @@ echo "$out" | grep -q 'починено' && fail "повторный --fix пр�
 echo "$out" | grep -q 'в PATH выигрывает' || fail "находка про затенённый бинарь должна остаться: $out"
 
 # Симлинк на тот же бинарь впереди в PATH (~/.local/bin поверх ~/go/bin) это
-# не затенение: сверяется realpath, а не строка пути.
+# не затенение: сверяется realpath, а не строка пути. Бинарь в GOBIN нарочно
+# устаревший, иначе до сверки дело не дойдёт: свежий отсекается раньше, и
+# строковое сравнение прошло бы незамеченным.
 localbin="$tmp/localbin"
 mkdir -p "$localbin"
 ln -sf "$mhome/go/bin/agentctl" "$localbin/agentctl"
+touch -t 200001010000 "$mhome/go/bin/agentctl"
 out=$(HOME="$mhome" PATH="$gostub:$localbin:$mhome/go/bin:$sys" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено: agentctl собран' || fail "устаревший бинарь за симлинком не пересобран: $out"
 echo "$out" | grep -q 'в PATH выигрывает' && fail "симлинк на тот же бинарь принят за чужую копию: $out"
-echo "$out" | grep -q 'починено' && fail "симлинк на тот же бинарь вызвал пересборку: $out"
 
 # Каталог сборки: GOBIN сильнее умолчания, GOPATH задаёт свой bin.
 gbhome="$tmp/gbhome"
@@ -340,7 +352,7 @@ cat > "$sproj/.devkit/log" <<'EOF'
 2026-07-29T01:02:41	broken	line	broken
 2026-07-29T01:02:41	broken	code	bad
 EOF
-out=$(python3 "$here/devkitctl.py" stats -C "$sproj" 2>&1)
+out=$(python3 "$dkctl" stats -C "$sproj" 2>&1)
 [ $? -eq 0 ] || fail "stats упал с ошибкой: $out"
 echo "$out" | grep -q "taskctl move" || fail "в выводе stats нет taskctl move: $out"
 echo "$out" | grep -q "shipctl merge" || fail "в выводе stats нет shipctl merge: $out"
@@ -357,14 +369,14 @@ cmd_count=$(echo "$out" | grep -v "итого" | wc -l)
 # stats без журнала: код выхода 2.
 empty_proj="$tmp/empty"
 mkdir -p "$empty_proj"
-out=$(python3 "$here/devkitctl.py" stats -C "$empty_proj" 2>&1)
+out=$(python3 "$dkctl" stats -C "$empty_proj" 2>&1)
 [ $? -eq 2 ] || fail "stats без журнала должен вернуть код 2"
 
 # stats с журналом из одних битых строк: код выхода 2, сообщение про пустой журнал.
 bad_proj="$tmp/bad"
 mkdir -p "$bad_proj/.devkit"
 printf 'broken\tline\tno\tcode\nthis\tis\tbroken\ttoo\n' > "$bad_proj/.devkit/log"
-out=$(python3 "$here/devkitctl.py" stats -C "$bad_proj" 2>&1)
+out=$(python3 "$dkctl" stats -C "$bad_proj" 2>&1)
 [ $? -eq 2 ] || fail "stats с одними битыми строками должен вернуть код 2"
 
 if [ $fails -eq 0 ]; then

@@ -10,31 +10,32 @@ import (
 
 func TestPickModel(t *testing.T) {
 	cases := []struct {
-		name  string
-		r     row
-		model string
-		part  string
+		name   string
+		r      row
+		model  string
+		effort string
+		part   string
 	}{
-		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, "haiku", "атомарная"},
-		{"S с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "подход уже выбран"},
-		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+3+0+2)", Cost: "S"}, "opus", "обычная"},
-		{"M с неопределённостью 0 тоже sonnet", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "sonnet", "подход уже выбран"},
-		{"M с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "sonnet", "подход уже выбран"},
-		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, "opus", "обычная"},
-		{"баг L это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "opus", "обычная"},
-		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "дизайн"},
-		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "сложное проектирование"},
-		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "сложное проектирование"},
-		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "дизайн"},
-		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "грумминг"},
-		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "разбить"},
-		{"L и неопределённость 3 уходит в дефолт", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, "opus", "обычная"},
-		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "opus", "обычная"},
-		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, "opus", "обычная"},
-		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "opus", "не оценена"},
-		{"нечитаемый ранг с ценой S уходит в дефолт", row{Type: "task", Rank: "-", Cost: "S"}, "opus", "обычная"},
-		{"нечитаемый ранг с ценой M уходит в дефолт", row{Type: "task", Rank: "-", Cost: "M"}, "opus", "обычная"},
-		{"L с нечитаемым рангом уходит в дефолт", row{Type: "task", Rank: "-", Cost: "L"}, "opus", "обычная"},
+		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, "haiku", "low", "атомарная"},
+		{"S с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "medium", "подход уже выбран"},
+		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+3+0+2)", Cost: "S"}, "opus", "high", "обычная"},
+		{"M с неопределённостью 0 тоже sonnet", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "sonnet", "medium", "подход уже выбран"},
+		{"M с неопределённостью 1 подход уже выбран", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "sonnet", "medium", "подход уже выбран"},
+		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, "opus", "high", "обычная"},
+		{"баг L это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "opus", "high", "обычная"},
+		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "xhigh", "дизайн"},
+		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "xhigh", "сложное проектирование"},
+		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "xhigh", "сложное проектирование"},
+		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "xhigh", "дизайн"},
+		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "xhigh", "грумминг"},
+		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "xhigh", "разбить"},
+		{"L и неопределённость 3 уходит в дефолт", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, "opus", "high", "обычная"},
+		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "opus", "high", "обычная"},
+		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, "opus", "high", "обычная"},
+		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "opus", "high", "не оценена"},
+		{"нечитаемый ранг с ценой S уходит в дефолт", row{Type: "task", Rank: "-", Cost: "S"}, "opus", "high", "обычная"},
+		{"нечитаемый ранг с ценой M уходит в дефолт", row{Type: "task", Rank: "-", Cost: "M"}, "opus", "high", "обычная"},
+		{"L с нечитаемым рангом уходит в дефолт", row{Type: "task", Rank: "-", Cost: "L"}, "opus", "high", "обычная"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -42,10 +43,35 @@ func TestPickModel(t *testing.T) {
 			if v.Model != c.model {
 				t.Fatalf("модель %q, жду %q", v.Model, c.model)
 			}
+			if v.Effort != c.effort {
+				t.Fatalf("effort %q, жду %q", v.Effort, c.effort)
+			}
 			if !strings.Contains(v.Reason, c.part) {
 				t.Fatalf("причина %q без %q", v.Reason, c.part)
 			}
 		})
+	}
+}
+
+// TestPickModelEffortLevels: маппинг не выдаёт max, этот уровень остаётся
+// ручным решением через override-строку.
+func TestPickModelEffortLevels(t *testing.T) {
+	rows := []row{
+		{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"},
+		{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "M"},
+		{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"},
+		{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "XL"},
+		{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"},
+		{Type: "task", Rank: "-", Cost: "-"},
+	}
+	for _, r := range rows {
+		v := pickModel(r)
+		if !validEfforts[v.Effort] {
+			t.Fatalf("%+v: effort %q вне допустимых", r, v.Effort)
+		}
+		if v.Effort == "max" {
+			t.Fatalf("%+v: маппинг выдал max", r)
+		}
 	}
 }
 
@@ -110,25 +136,32 @@ func writeBoard(t *testing.T) string {
 func TestCmdPick(t *testing.T) {
 	root := writeBoard(t)
 	cases := []struct {
-		id    string
-		first string
-		part  string
+		id     string
+		first  string
+		second string
+		part   string
 	}{
-		{"T-001", "model: haiku", "цена S"},
-		{"T-002", "model: sonnet", "неопределённость 1"},
-		{"T-003", "model: opus", "дизайн"},
+		{"T-001", "model: haiku", "effort: low", "цена S"},
+		{"T-002", "model: sonnet", "effort: medium", "неопределённость 1"},
+		{"T-003", "model: opus", "effort: xhigh", "дизайн"},
 	}
 	for _, c := range cases {
 		out, err := cmdPick(root, c.id, false)
 		if err != nil {
 			t.Fatalf("pick %s: %v", c.id, err)
 		}
-		lines := strings.SplitN(out, "\n", 2)
+		lines := strings.SplitN(out, "\n", 3)
+		if len(lines) != 3 {
+			t.Fatalf("pick %s: жду три строки, получил %q", c.id, out)
+		}
 		if lines[0] != c.first {
 			t.Fatalf("pick %s: первая строка %q, жду %q", c.id, lines[0], c.first)
 		}
-		if !strings.Contains(out, c.part) {
-			t.Fatalf("pick %s: в выводе нет %q: %q", c.id, c.part, out)
+		if lines[1] != c.second {
+			t.Fatalf("pick %s: вторая строка %q, жду %q", c.id, lines[1], c.second)
+		}
+		if !strings.Contains(lines[2], c.part) {
+			t.Fatalf("pick %s: в человеческой строке нет %q: %q", c.id, c.part, out)
 		}
 	}
 }
@@ -154,6 +187,56 @@ func TestCmdPickOverride(t *testing.T) {
 		}
 		if !strings.Contains(out, "override-строкой") {
 			t.Fatalf("в причине нет упоминания override: %q", out)
+		}
+		// Оси независимы: override модели не трогает effort, он остаётся от
+		// обычного маппинга (LLD, значит xhigh).
+		if !strings.Contains(out, "effort: xhigh") {
+			t.Fatalf("effort не взят из маппинга: %q", out)
+		}
+	})
+
+	t.Run("override эффорта не трогает модель", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nЭффорт: max (домен требует)\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false)
+		if err != nil {
+			t.Fatalf("pick T-001: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku\neffort: max\n") {
+			t.Fatalf("жду haiku из маппинга и max из override, получил %q", out)
+		}
+		if !strings.Contains(out, "effort задан override-строкой") {
+			t.Fatalf("в причине нет упоминания override эффорта: %q", out)
+		}
+	})
+
+	t.Run("обе override-строки сразу", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\n- Модель: fable (3D-графика)\n- Эффорт: xhigh\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false)
+		if err != nil {
+			t.Fatalf("pick T-001: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: fable\neffort: xhigh\n") {
+			t.Fatalf("жду обе оси из override, получил %q", out)
+		}
+	})
+
+	t.Run("неизвестный effort это ошибка", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nЭффорт: highest\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := cmdPick(root, "T-001", false)
+		if err == nil || !strings.Contains(err.Error(), "неизвестный effort") {
+			t.Fatalf("жду ошибку про неизвестный effort, получил %v", err)
 		}
 	})
 
@@ -244,14 +327,14 @@ func TestRecordExecution(t *testing.T) {
 		if !strings.Contains(result, "## Ход работы") {
 			t.Fatal("раздел \"Ход работы\" не создан")
 		}
-		if !strings.Contains(result, "- Исполнение: субагент haiku") {
+		if !strings.Contains(result, "- Исполнение: субагент haiku/low") {
 			t.Fatalf("строка исполнения не добавлена в файл:\n%s", result)
 		}
 	})
 
 	t.Run("дозапись в существующий раздел", func(t *testing.T) {
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
-		content := "# T-002\n\nОписание задачи.\n\n## Ход работы\n\n- Исполнение: субагент sonnet по вердикту pick, 2026-07-27.\n"
+		content := "# T-002\n\nОписание задачи.\n\n## Ход работы\n\n- Исполнение: субагент sonnet/medium по вердикту pick, 2026-07-27.\n"
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +380,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Начало.\n- Исполнение: субагент haiku по вердикту pick, " +
+		want := "- Начало.\n- Исполнение: субагент haiku/low по вердикту pick, " +
 			time.Now().Format("2006-01-02") + ".\n\n## Ревью"
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("строка не в конце раздела:\n%s", data)
@@ -314,7 +397,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "## Ход работы\n\n- Исполнение: субагент haiku") {
+		if !strings.Contains(string(data), "## Ход работы\n\n- Исполнение: субагент haiku/low") {
 			t.Fatalf("запись не отбита от заголовка пустого раздела:\n%s", data)
 		}
 	})
@@ -330,7 +413,7 @@ func TestRecordExecution(t *testing.T) {
 			}
 		}
 		data, _ := os.ReadFile(taskFile)
-		if n := strings.Count(string(data), "- Исполнение: субагент haiku"); n != 2 {
+		if n := strings.Count(string(data), "- Исполнение: субагент haiku/low"); n != 2 {
 			t.Fatalf("жду две строки исполнения после двух вызовов, вижу %d:\n%s", n, data)
 		}
 	})
@@ -344,7 +427,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Начало.\n- Исполнение: субагент haiku") {
+		if !strings.Contains(string(data), "- Начало.\n- Исполнение: субагент haiku/low") {
 			t.Fatalf("строка не приклеилась к записи без перевода строки:\n%s", data)
 		}
 	})
@@ -358,7 +441,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Грумминг: субагент opus") {
+		if !strings.Contains(string(data), "- Грумминг: субагент opus/xhigh") {
 			t.Fatalf("жду строку про грумминг, а не исполнение:\n%s", data)
 		}
 		if strings.Contains(string(data), "- Исполнение:") {
@@ -377,7 +460,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Исполнение: субагент sonnet") {
+		if !strings.Contains(string(data), "- Исполнение: субагент sonnet/xhigh") {
 			t.Fatalf("жду строку исполнения по override, а не грумминг:\n%s", data)
 		}
 		if strings.Contains(string(data), "- Грумминг:") {

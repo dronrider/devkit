@@ -10,68 +10,93 @@ import (
 
 type verdict struct {
 	Model  string
+	Effort string // reasoning effort субагента: low, medium, high, xhigh
 	Reason string
 	Groom  bool // вердикт «исполнять рано»: сначала грумминг или разбивка
 }
 
-// pickModel выводит модель из метаданных строки доски. Порядок правил
-// значим: грумминг и разбивка перебивают дешевизну, LLD сильнее всего.
+// pickModel выводит модель и effort из метаданных строки доски. Порядок
+// правил значим: грумминг и разбивка перебивают дешевизну, LLD сильнее всего.
+// Уровень max маппингом не выдаётся, он остаётся ручным решением через
+// override-строку файла задачи.
 func pickModel(r row) verdict {
 	unc := uncertainty(r.Rank)
 	switch {
 	case strings.EqualFold(r.Type, "LLD") && (r.Cost == "L" || r.Cost == "XL"):
-		return verdict{Model: "fable", Reason: "LLD ценой L/XL: сложное проектирование, fable делает его лучше opus"}
+		return verdict{Model: "fable", Effort: "xhigh", Reason: "LLD ценой L/XL: сложное проектирование, fable делает его лучше opus"}
 	case strings.EqualFold(r.Type, "LLD"):
-		return verdict{Model: "opus", Reason: "LLD: дизайн отдаётся сильной модели"}
+		return verdict{Model: "opus", Effort: "xhigh", Reason: "LLD: дизайн отдаётся сильной модели"}
 	case unc >= 4:
-		return verdict{Model: "opus", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
+		return verdict{Model: "opus", Effort: "xhigh", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
 	case r.Cost == "XL":
-		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
+		return verdict{Model: "opus", Effort: "xhigh", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
 	case r.Cost == "S" && unc == 0:
-		return verdict{Model: "haiku", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
+		return verdict{Model: "haiku", Effort: "low", Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
 	case (r.Cost == "S" || r.Cost == "M") && unc >= 0 && unc <= 1:
-		return verdict{Model: "sonnet", Reason: "подход уже выбран, размышлять не над чем"}
+		return verdict{Model: "sonnet", Effort: "medium", Reason: "подход уже выбран, размышлять не над чем"}
 	case r.Cost == "" || r.Cost == "-":
-		return verdict{Model: "opus", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
+		return verdict{Model: "opus", Effort: "high", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:
-		return verdict{Model: "opus", Reason: "обычная задача, модель по умолчанию"}
+		return verdict{Model: "opus", Effort: "high", Reason: "обычная задача, модель по умолчанию"}
 	}
 }
 
-// validModels перечисляет допустимые значения override-строки «Модель: ...»
-// в файле задачи. Опечатка в имени не должна молча провалиться в обычный
+// validModels и validEfforts перечисляют допустимые значения override-строк
+// файла задачи. Опечатка в значении не должна молча провалиться в обычный
 // маппинг, поэтому неизвестное имя это ошибка pick, а не игнорируемая строка.
 var validModels = map[string]bool{"haiku": true, "sonnet": true, "opus": true, "fable": true}
 
-// readOverride ищет в файле задачи строку override модели (форматы
-// «Модель: opus» и «- Модель: opus», поясняющий хвост в скобках допустим и
-// отбрасывается). Нет файла или строки, пустой результат без ошибки: работает
-// обычный маппинг pickModel.
-func readOverride(root, id string) (string, error) {
+var validEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// overrides это ручные развилки из файла задачи. Оси независимы: домен может
+// требовать другой модели, другого effort или того и другого сразу, а пустая
+// ось берётся из обычного маппинга.
+type overrides struct {
+	Model  string
+	Effort string
+}
+
+// readOverrides ищет в файле задачи строки override (форматы «Модель: opus»
+// и «- Эффорт: xhigh», поясняющий хвост в скобках допустим и отбрасывается);
+// по каждой оси берётся первая встреченная строка. Нет файла или строк,
+// пустой результат без ошибки: работает обычный маппинг pickModel.
+func readOverrides(root, id string) (overrides, error) {
+	var ov overrides
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return ov, nil
 		}
-		return "", err
+		return ov, err
 	}
 	for _, ln := range strings.Split(string(data), "\n") {
 		t := strings.TrimSpace(ln)
 		t = strings.TrimPrefix(t, "- ")
-		if !strings.HasPrefix(t, "Модель:") {
-			continue
+		switch {
+		case strings.HasPrefix(t, "Модель:") && ov.Model == "":
+			model := overrideValue(t, "Модель:")
+			if !validModels[model] {
+				return ov, fmt.Errorf("файл задачи %s: override-строка задаёт неизвестную модель %q, допустимы haiku, sonnet, opus, fable", id, model)
+			}
+			ov.Model = model
+		case strings.HasPrefix(t, "Эффорт:") && ov.Effort == "":
+			effort := overrideValue(t, "Эффорт:")
+			if !validEfforts[effort] {
+				return ov, fmt.Errorf("файл задачи %s: override-строка задаёт неизвестный effort %q, допустимы low, medium, high, xhigh, max", id, effort)
+			}
+			ov.Effort = effort
 		}
-		model := strings.TrimSpace(strings.TrimPrefix(t, "Модель:"))
-		if i := strings.Index(model, "("); i >= 0 {
-			model = strings.TrimSpace(model[:i])
-		}
-		if !validModels[model] {
-			return "", fmt.Errorf("файл задачи %s: override-строка задаёт неизвестную модель %q, допустимы haiku, sonnet, opus, fable", id, model)
-		}
-		return model, nil
 	}
-	return "", nil
+	return ov, nil
+}
+
+func overrideValue(line, prefix string) string {
+	v := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if i := strings.Index(v, "("); i >= 0 {
+		v = strings.TrimSpace(v[:i])
+	}
+	return v
 }
 
 func cmdPick(root, id string, record bool) (string, error) {
@@ -83,13 +108,17 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if r == nil {
 		return "", fmt.Errorf("задачи %s нет на доске", id)
 	}
-	override, err := readOverride(root, id)
+	ov, err := readOverrides(root, id)
 	if err != nil {
 		return "", err
 	}
 	v := pickModel(*r)
-	if override != "" {
-		v = verdict{Model: override, Reason: "модель задана override-строкой файла задачи"}
+	if ov.Model != "" {
+		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
+	}
+	if ov.Effort != "" {
+		v.Effort = ov.Effort
+		v.Reason += ", effort задан override-строкой"
 	}
 	unc := "?"
 	if n := uncertainty(r.Rank); n >= 0 {
@@ -100,8 +129,8 @@ func cmdPick(root, id string, record bool) (string, error) {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("model: %s\n%s (%s, цена %s, неопределённость %s): %s",
-		v.Model, r.ID, r.Type, r.Cost, unc, v.Reason), nil
+	return fmt.Sprintf("model: %s\neffort: %s\n%s (%s, цена %s, неопределённость %s): %s",
+		v.Model, v.Effort, r.ID, r.Type, r.Cost, unc, v.Reason), nil
 }
 
 // recordExecution дописывает строку исполнения в конец раздела «Ход работы»
@@ -123,8 +152,8 @@ func recordExecution(root, id string, v verdict) error {
 	if v.Groom {
 		label = "Грумминг"
 	}
-	line := fmt.Sprintf("- %s: субагент %s по вердикту pick, %s.",
-		label, v.Model, time.Now().Format("2006-01-02"))
+	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick, %s.",
+		label, v.Model, v.Effort, time.Now().Format("2006-01-02"))
 
 	lines := strings.Split(content, "\n")
 	head := -1

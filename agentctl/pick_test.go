@@ -325,6 +325,24 @@ func TestCmdPickOverride(t *testing.T) {
 		}
 	})
 
+	t.Run("override модели с sonnet на opus снимает пол", func(t *testing.T) {
+		// T-005 маппингом sonnet (S/1), effort из маппинга medium; override
+		// модели на opus меняет модель, а пол на неё уже не действует, effort
+		// остаётся medium, а не утаскивается за прежней моделью в high.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-005.md")
+		content := "# T-005\n\nМодель: opus\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-005", false)
+		if err != nil {
+			t.Fatalf("pick T-005: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\n") {
+			t.Fatalf("жду override на opus без пола sonnet, получил %q", out)
+		}
+	})
+
 	t.Run("без файла и без строки работает обычный маппинг", func(t *testing.T) {
 		if err := os.RemoveAll(filepath.Join(root, "docs", "tasks")); err != nil {
 			t.Fatal(err)

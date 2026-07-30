@@ -47,7 +47,7 @@ func pickModel(r row) verdict {
 	case r.Cost == "" || r.Cost == "-":
 		return verdict{Model: "opus", Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:
-		return verdict{Model: "opus", Reason: "цена от M и выше, экономить на модели незачем, средняя и крупная задача идёт сильной"}
+		return verdict{Model: "opus", Reason: "задача для дешёвых моделей не подходит, по умолчанию идёт сильной"}
 	}
 }
 
@@ -159,8 +159,8 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m := pickModel(*r)
-	v := verdict{Model: m.Model, Effort: pickEffort(*r), Reason: m.Reason, Groom: m.Groom}
+	v := pickModel(*r)
+	v.Effort = pickEffort(*r)
 	if ov.Model != "" {
 		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
 	}

@@ -52,9 +52,25 @@ func TestParseUsagePanel(t *testing.T) {
 		if all.Used != 0.91 || opus.Used != 0.62 {
 			t.Fatalf("проценты разобраны как %.2f и %.2f", all.Used, opus.Used)
 		}
-		want := time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)
+		// Панель показывает пояс аккаунта, и момент сброса от пояса машины не
+		// зависит: 10:00 в Лос-Анджелесе это не местные 10:00.
+		want := time.Date(2026, 8, 4, 10, 0, 0, 0, mustLoad(t, "America/Los_Angeles"))
 		if !all.Reset.Equal(want) {
 			t.Fatalf("сброс %v, жду %v", all.Reset, want)
+		}
+	})
+
+	t.Run("нетронутый бакет не перезаписывается соседним процентом", func(t *testing.T) {
+		// Честные 0% used ничем не отличаются от пустого поля, если считать
+		// признаком само значение: следующий процент секции затирал бы ноль.
+		panel := "Current week (all models)\n 0% used\n Resets in 2d\n Extra usage: 15% of monthly cap\n" +
+			"Current week (Opus)\n 0% used\n Resets in 2d\n"
+		s, err := parseUsagePanel(panel, testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		if all, _ := s.bucket("week_all"); all.Used != 0 {
+			t.Fatalf("нетронутый бакет разобран как %.2f потраченного", all.Used)
 		}
 	})
 
@@ -99,7 +115,7 @@ func TestParseResetTime(t *testing.T) {
 		want time.Time
 	}{
 		{"Resets Tue Aug 4 at 10:00am", time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)},
-		{"Resets Aug 4, 10:00 AM (America/Los_Angeles)", time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)},
+		{"Resets Aug 4, 10:00 AM", time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)},
 		{"Resets August 4 at 10:00", time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)},
 		{"Resets Aug 4 at 7pm", time.Date(2026, 8, 4, 19, 0, 0, 0, time.Local)},
 		{"Resets Aug 4 at 12am", time.Date(2026, 8, 4, 0, 0, 0, 0, time.Local)},
@@ -120,6 +136,38 @@ func TestParseResetTime(t *testing.T) {
 		if _, err := parseResetTime(line, testNow); err == nil {
 			t.Fatalf("%q: жду отказ, а не выдуманную дату", line)
 		}
+	}
+}
+
+func mustLoad(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Skipf("на машине нет базы часовых поясов: %v", err)
+	}
+	return loc
+}
+
+// TestParseResetTimeZone: пояс в скобках считается явным указанием, а не
+// украшением. Тест не зависит от пояса машины: сравниваются моменты, а не
+// показания часов.
+func TestParseResetTimeZone(t *testing.T) {
+	la := mustLoad(t, "America/Los_Angeles")
+	got, err := parseResetTime("Resets Tue Aug 4 at 10:00am (America/Los_Angeles)", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 8, 4, 10, 0, 0, 0, la)
+	if !got.Equal(want) {
+		t.Fatalf("сброс %v, жду %v", got, want)
+	}
+	// Незнакомая зона это не повод терять бакет: считаем местным временем.
+	got, err = parseResetTime("Resets Tue Aug 4 at 10:00am (Nowhere/Middle_Of)", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)) {
+		t.Fatalf("незнакомая зона разобрана как %v", got)
 	}
 }
 

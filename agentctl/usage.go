@@ -40,6 +40,10 @@ var countdownRe = regexp.MustCompile(`(?i)\bin\s+((?:\d+\s*[dhm][a-z]*\s*)+)`)
 
 var countdownPartRe = regexp.MustCompile(`(?i)(\d+)\s*([dhm])`)
 
+// Имя пояса в скобках: «(America/Los_Angeles)». Слэш обязателен, иначе под
+// правило попали бы обычные скобки вроде «(all models)».
+var tzRe = regexp.MustCompile(`\(([A-Za-z]+(?:/[A-Za-z_+-]+)+)\)`)
+
 var months = map[string]time.Month{
 	"jan": time.January, "feb": time.February, "mar": time.March,
 	"apr": time.April, "may": time.May, "jun": time.June,
@@ -54,6 +58,10 @@ var months = map[string]time.Month{
 func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 	s := snapshot{Taken: now}
 	found := map[string]*bucket{}
+	// Признак «процент уже снят» держится отдельно: у нетронутого бакета
+	// честные 0% used, и по самому полю первое значение от пустого не отличить,
+	// а следующий процент в той же секции затёр бы его.
+	gotPercent := map[string]bool{}
 	current := ""
 	for _, raw := range strings.Split(text, "\n") {
 		line := ansiRe.ReplaceAllString(raw, "")
@@ -70,9 +78,10 @@ func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 			continue
 		}
 		b := found[current]
-		if b.Used == 0 {
+		if !gotPercent[current] {
 			if used, ok := panelUsed(line, low); ok {
 				b.Used = used
+				gotPercent[current] = true
 			}
 		}
 		if b.Reset.IsZero() && strings.Contains(low, "reset") {
@@ -122,6 +131,22 @@ func panelUsed(line, low string) (float64, bool) {
 	return float64(n) / 100, true
 }
 
+// panelLocation достаёт явный пояс из хвоста строки сброса. Панель показывает
+// время в поясе аккаунта, а он не обязан совпадать с поясом машины: без этого
+// сброс уезжает на часы. Зона не грузится (нет базы поясов), значит считаем
+// местным временем, это ближе к правде, чем отказ от целого бакета.
+func panelLocation(line string) *time.Location {
+	m := tzRe.FindStringSubmatch(line)
+	if m == nil {
+		return time.Local
+	}
+	loc, err := time.LoadLocation(m[1])
+	if err != nil {
+		return time.Local
+	}
+	return loc
+}
+
 // parseResetTime разбирает строку сброса. Форм две: календарная («Resets Aug 4
 // at 10:00am») и обратный отсчёт («Resets in 4d 19h»), панель показывала обе.
 // Года в календарной форме нет, он достраивается ближайшим будущим: сброс
@@ -142,7 +167,7 @@ func parseResetTime(line string, now time.Time) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	t := time.Date(now.Year(), months[strings.ToLower(m[1][:3])], day, hour, min, 0, 0, time.Local)
+	t := time.Date(now.Year(), months[strings.ToLower(m[1][:3])], day, hour, min, 0, 0, panelLocation(line))
 	if t.Before(now.Add(-24 * time.Hour)) {
 		t = t.AddDate(1, 0, 0)
 	}

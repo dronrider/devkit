@@ -346,10 +346,13 @@ func cmdQuota(path string, now time.Time) (string, error) {
 		return b.String(), nil
 	}
 	fmt.Fprintf(&b, "снимок %s\n", path)
-	if s.Taken.IsZero() {
+	switch age := now.Sub(s.Taken); {
+	case s.Taken.IsZero():
 		b.WriteString("снят: момента снятия в файле нет, вверх корректор не двинет\n")
-	} else {
-		fmt.Fprintf(&b, "снят %s, возраст %s\n", s.Taken.Format(quotaTimeLayout), humanAge(now.Sub(s.Taken)))
+	case age < 0:
+		fmt.Fprintf(&b, "снят %s, это позже текущего времени: часы разошлись\n", s.Taken.Format(quotaTimeLayout))
+	default:
+		fmt.Fprintf(&b, "снят %s, возраст %s\n", s.Taken.Format(quotaTimeLayout), humanAge(age))
 	}
 	for _, bk := range s.Buckets {
 		status := bk.status(now)
@@ -367,9 +370,6 @@ func cmdQuota(path string, now time.Time) (string, error) {
 }
 
 func humanAge(d time.Duration) string {
-	if d < 0 {
-		return "снят позже текущего времени"
-	}
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	switch {

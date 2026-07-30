@@ -249,6 +249,24 @@ func TestCmdQuota(t *testing.T) {
 		}
 	})
 
+	t.Run("снимок из будущего", func(t *testing.T) {
+		content := "taken = " + at(testNow.Add(2*time.Hour)) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(path, testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "это позже текущего времени: часы разошлись") {
+			t.Fatalf("несогласованная фраза про возраст:\n%s", out)
+		}
+		if strings.Contains(out, "возраст") {
+			t.Fatalf("возраст у снимка из будущего не считается:\n%s", out)
+		}
+	})
+
 	t.Run("протухший профицит помечен", func(t *testing.T) {
 		content := "taken = " + at(testNow.Add(-3*24*time.Hour)) + "\n" +
 			"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"

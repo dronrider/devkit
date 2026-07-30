@@ -177,7 +177,7 @@ func cmdPick(root, id string, record bool) (string, error) {
 		var s snapshot
 		s, err = readSnapshot(quotaPath())
 		if err != nil {
-			warns = append(warns, "снимок квоты не прочитан, вердикт без корректора")
+			warns = append(warns, fmt.Sprintf("снимок квоты не прочитан (%v), вердикт без корректора", err))
 		}
 		warns = append(warns, s.Warns...)
 		c = correctModel(v.Model, v.Groom, s, now)

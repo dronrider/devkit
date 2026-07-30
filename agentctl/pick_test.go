@@ -500,6 +500,27 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
+	t.Run("нечитаемый снимок предупреждает с причиной", func(t *testing.T) {
+		if err := os.RemoveAll(quota); err != nil {
+			t.Fatal(err)
+		}
+		// Директория вместо файла: снимок не читается, но вердикт обязан
+		// доехать, а причина отказа попасть в предупреждение.
+		if err := os.MkdirAll(quota, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false)
+		if err != nil {
+			t.Fatalf("нечитаемый снимок не должен ронять pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") {
+			t.Fatalf("вердикт изменился: %q", out)
+		}
+		if !strings.Contains(out, "снимок квоты не прочитан (") {
+			t.Fatalf("нет предупреждения с причиной: %q", out)
+		}
+	})
+
 	t.Run("без снимка вердикт прежний", func(t *testing.T) {
 		if err := os.Remove(quota); err != nil {
 			t.Fatal(err)

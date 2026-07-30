@@ -19,12 +19,16 @@ type verdict struct {
 func pickModel(r row) verdict {
 	unc := uncertainty(r.Rank)
 	switch {
+	case strings.EqualFold(r.Type, "LLD") && (r.Cost == "L" || r.Cost == "XL"):
+		return verdict{Model: "fable", Reason: "LLD ценой L/XL: сложное проектирование, fable делает его лучше opus"}
 	case strings.EqualFold(r.Type, "LLD"):
 		return verdict{Model: "opus", Reason: "LLD: дизайн отдаётся сильной модели"}
 	case unc >= 4:
 		return verdict{Model: "opus", Reason: fmt.Sprintf("неопределённость %d: сначала грумминг, исполнять рано", unc), Groom: true}
 	case r.Cost == "XL":
 		return verdict{Model: "opus", Reason: "цена XL: сначала разбить на серию, целиком не отдавать", Groom: true}
+	case r.Cost == "L" && unc == 3:
+		return verdict{Model: "opus", Reason: "цена L и неопределённость 3: сверхсложный кодинг, дешёвая модель не вытянет"}
 	case r.Cost == "S" && unc >= 0 && unc <= 1:
 		return verdict{Model: "haiku", Reason: "мелочь с ясным подходом, дешёвой модели хватает"}
 	case r.Cost == "" || r.Cost == "-":
@@ -32,6 +36,42 @@ func pickModel(r row) verdict {
 	default:
 		return verdict{Model: "sonnet", Reason: "обычная задача, модель по умолчанию"}
 	}
+}
+
+// validModels перечисляет допустимые значения override-строки «Модель: ...»
+// в файле задачи. Опечатка в имени не должна молча провалиться в обычный
+// маппинг, поэтому неизвестное имя это ошибка pick, а не игнорируемая строка.
+var validModels = map[string]bool{"haiku": true, "sonnet": true, "opus": true, "fable": true}
+
+// readOverride ищет в файле задачи строку override модели (форматы
+// «Модель: opus» и «- Модель: opus», поясняющий хвост в скобках допустим и
+// отбрасывается). Нет файла или строки, пустой результат без ошибки: работает
+// обычный маппинг pickModel.
+func readOverride(root, id string) (string, error) {
+	path := filepath.Join(root, "docs", "tasks", id+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(ln)
+		t = strings.TrimPrefix(t, "- ")
+		if !strings.HasPrefix(t, "Модель:") {
+			continue
+		}
+		model := strings.TrimSpace(strings.TrimPrefix(t, "Модель:"))
+		if i := strings.Index(model, "("); i >= 0 {
+			model = strings.TrimSpace(model[:i])
+		}
+		if !validModels[model] {
+			return "", fmt.Errorf("файл задачи %s: override-строка задаёт неизвестную модель %q, допустимы haiku, sonnet, opus, fable", id, model)
+		}
+		return model, nil
+	}
+	return "", nil
 }
 
 func cmdPick(root, id string, record bool) (string, error) {
@@ -43,7 +83,14 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if r == nil {
 		return "", fmt.Errorf("задачи %s нет на доске", id)
 	}
+	override, err := readOverride(root, id)
+	if err != nil {
+		return "", err
+	}
 	v := pickModel(*r)
+	if override != "" {
+		v = verdict{Model: override, Reason: "модель задана override-строкой файла задачи"}
+	}
 	unc := "?"
 	if n := uncertainty(r.Rank); n >= 0 {
 		unc = fmt.Sprint(n)

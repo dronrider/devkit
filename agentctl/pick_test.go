@@ -20,8 +20,15 @@ func TestPickModel(t *testing.T) {
 		{"обычная M", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "sonnet", "обычная"},
 		{"баг L", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "sonnet", "обычная"},
 		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "дизайн"},
+		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "сложное проектирование"},
+		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "сложное проектирование"},
+		{"LLD ценой S остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "дизайн"},
+		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "дизайн"},
 		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "грумминг"},
 		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "разбить"},
+		{"L и неопределённость 3 это сверхсложный кодинг", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, "opus", "сверхсложный"},
+		{"L и неопределённость 2 остаётся sonnet", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "sonnet", "обычная"},
+		{"L и неопределённость 1 остаётся sonnet", row{Type: "task", Rank: "7 (0+5+1+0+1)", Cost: "L"}, "sonnet", "обычная"},
 		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "sonnet", "не оценена"},
 		{"нечитаемый ранг не даёт haiku", row{Type: "task", Rank: "-", Cost: "S"}, "sonnet", "обычная"},
 	}
@@ -120,6 +127,71 @@ func TestCmdPick(t *testing.T) {
 			t.Fatalf("pick %s: в выводе нет %q: %q", c.id, c.part, out)
 		}
 	}
+}
+
+func TestCmdPickOverride(t *testing.T) {
+	root := writeBoard(t)
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("override перебивает LLD-правило", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-003.md")
+		content := "# T-003\n\nОписание.\n\nМодель: fable (3D-графика)\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-003", false)
+		if err != nil {
+			t.Fatalf("pick T-003: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: fable") {
+			t.Fatalf("жду override на fable, получил %q", out)
+		}
+		if !strings.Contains(out, "override-строкой") {
+			t.Fatalf("в причине нет упоминания override: %q", out)
+		}
+	})
+
+	t.Run("вариант пунктом списка", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
+		content := "# T-002\n\n- Модель: haiku\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-002", false)
+		if err != nil {
+			t.Fatalf("pick T-002: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") {
+			t.Fatalf("жду override на haiku, получил %q", out)
+		}
+	})
+
+	t.Run("неизвестная модель это ошибка", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nМодель: gpt5\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := cmdPick(root, "T-001", false)
+		if err == nil || !strings.Contains(err.Error(), "неизвестную модель") {
+			t.Fatalf("жду ошибку про неизвестную модель, получил %v", err)
+		}
+	})
+
+	t.Run("без файла и без строки работает обычный маппинг", func(t *testing.T) {
+		if err := os.RemoveAll(filepath.Join(root, "docs", "tasks")); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false)
+		if err != nil {
+			t.Fatalf("pick T-001: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") {
+			t.Fatalf("жду обычный маппинг haiku, получил %q", out)
+		}
+	})
 }
 
 func TestCmdPickMissing(t *testing.T) {

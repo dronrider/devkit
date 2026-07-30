@@ -98,6 +98,30 @@ func TestPickEffort(t *testing.T) {
 	}
 }
 
+func TestCostAtLeastM(t *testing.T) {
+	// Прямая таблица на классификатор: интеграционный путь через cmdPick не
+	// достаёт до XL, у не-LLD она грумминговая, а у LLD её перебивает
+	// LLD-ветка advice раньше, чем дело доходит до цены.
+	cases := []struct {
+		cost string
+		want bool
+	}{
+		{"S", false},
+		{"M", true},
+		{"L", true},
+		{"XL", true},
+		{"-", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run("цена "+c.cost, func(t *testing.T) {
+			if got := costAtLeastM(c.cost); got != c.want {
+				t.Fatalf("costAtLeastM(%q) = %v, жду %v", c.cost, got, c.want)
+			}
+		})
+	}
+}
+
 func TestUncertainty(t *testing.T) {
 	cases := []struct {
 		rank string
@@ -139,6 +163,7 @@ const sampleBoard = `# demo: задачи (префикс T)
 | T-003 | спайк про синхронизацию | LLD | P1 | 64 (50+6+5+0+3) | - | - |
 | T-004 | неразобранная задача | task | P1 | 64 (50+6+5+0+3) | M | - |
 | T-005 | задача поменьше | task | P2 | 6 (0+3+1+0+2) | S | - |
+| T-006 | задача ценой L | task | P2 | 9 (0+5+1+0+1) | L | - |
 
 ## Blocked
 
@@ -488,7 +513,7 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
-	t.Run("сдвинутому вниз вердикту ценой M и выше советуют отложить исполнение", func(t *testing.T) {
+	t.Run("сдвинутому вниз вердикту ценой M советуют отложить исполнение", func(t *testing.T) {
 		writeQuota(t, quota, 50, 95, halfWindow)
 		out, err := cmdPick(root, "T-002", false)
 		if err != nil {
@@ -499,6 +524,20 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 		if !strings.Contains(out, "отложить") {
 			t.Fatalf("нет совета отложить для цены M: %q", out)
+		}
+	})
+
+	t.Run("сдвинутому вниз вердикту ценой L тоже советуют отложить исполнение", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		out, err := cmdPick(root, "T-006", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet") {
+			t.Fatalf("жду сдвиг вердикта T-006 вниз, получил %q", out)
+		}
+		if !strings.Contains(out, "отложить") {
+			t.Fatalf("нет совета отложить для цены L: %q", out)
 		}
 	})
 

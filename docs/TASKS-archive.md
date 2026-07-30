@@ -23,3 +23,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-016 | agentctl: уборка после DK-015 (pick без вызовов, пробелы тестов, README) | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-016.md](tasks/archive/2026/DK-016.md), `c7b316a`, `ace2a8b` |
 | DK-017 | agentctl: совет отложить до сброса для любого сдвига вниз с цены M и выше | task | P3 | 2026-07-30 | [tasks/archive/2026/DK-017.md](tasks/archive/2026/DK-017.md), `3a17a32`, `2b54873`, `625c1fc`, `2cde743` |
 | DK-022 | agentctl: панель /usage сменила бакет opus на fable, парсер и лестница трат | task | P2 | 2026-07-30 | [tasks/archive/2026/DK-022.md](tasks/archive/2026/DK-022.md), `1f4de4b`, `270cbc7`, `001c3ce`, `65f7810`, `3b4000c`, `e5a5b99` |
+| DK-020 | devkitctl doctor закрывает машинный контур, а не только проектный | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-020.md](tasks/archive/2026/DK-020.md), `48f9ffc`, `5c41d36`, `4a75e10`, `3878952`, `03cfb5b`, `7b45cff`, `47e1d80` |

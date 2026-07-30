@@ -1,0 +1,11 @@
+ Claude Code Usage
+
+ Current session
+ Total cost:            $0.55
+ Total duration (API):  6m 20s
+ Total duration (wall): 6h 33m 10s
+ Total code changes:    0 lines added, 0 lines removed
+
+ Plan limits show up for Pro and Max subscriptions.
+
+ esc close

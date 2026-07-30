@@ -146,6 +146,10 @@ func overrideValue(line, prefix string) string {
 	return v
 }
 
+// timeNow это часы утилиты, отдельной переменной ради тестов: формула
+// корректора и дата записи считаются от одного момента.
+var timeNow = time.Now
+
 func cmdPick(root, id string, record bool) (string, error) {
 	rows, err := loadRows(root)
 	if err != nil {
@@ -159,26 +163,51 @@ func cmdPick(root, id string, record bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	now := timeNow()
 	v := pickModel(*r)
 	v.Effort = pickEffort(*r)
+	var c correction
+	var warns []string
 	if ov.Model != "" {
+		// Ручное решение сильнее автоматики: override модели корректор не
+		// двигает, иначе указанную руками модель пришлось бы отстаивать
+		// повторно на каждый снимок квоты.
 		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
+	} else {
+		var s snapshot
+		s, err = readSnapshot(quotaPath())
+		if err != nil {
+			warns = append(warns, "снимок квоты не прочитан, вердикт без корректора")
+		}
+		warns = append(warns, s.Warns...)
+		c = correctModel(v.Model, v.Groom, s, now)
+		v.Model = c.Model
 	}
 	// Пол sonnet применяется здесь, а не через pick(), потому что от override
-	// модели зависит, к какой модели его применять; а явный override effort
-	// должен пол перебить целиком, поэтому если он есть, пол не трогаем.
+	// модели и от сдвига корректора зависит, к какой модели его применять; а
+	// явный override effort должен пол перебить целиком, поэтому если он есть,
+	// пол не трогаем.
 	if ov.Effort != "" {
 		v.Effort = ov.Effort
 		v.Reason += ", effort задан override-строкой"
 	} else {
 		floorSonnetEffort(&v)
 	}
+	if tail := c.tail(); tail != "" {
+		v.Reason += "; " + tail
+	}
+	if c.Down && strings.EqualFold(r.Type, "LLD") {
+		v.Reason += "; дизайн слабой моделью это долгий ущерб, а сброс близко, так что если не горит, лучше отложить"
+	}
+	for _, w := range warns {
+		v.Reason += "; " + w
+	}
 	unc := "?"
 	if n := uncertainty(r.Rank); n >= 0 {
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v); err != nil {
+		if err := recordExecution(root, id, v, c, now); err != nil {
 			return "", err
 		}
 	}
@@ -190,8 +219,10 @@ func cmdPick(root, id string, record bool) (string, error) {
 // файла задачи (перед хвостовыми пустыми строками, чтобы не оторваться от
 // остальных записей); без раздела он добавляется в конец файла. Грумминговый
 // вердикт пишется словом «Грумминг»: исполнение по нему не начинается, и
-// строка не должна обещать то, чего не было.
-func recordExecution(root, id string, v verdict) error {
+// строка не должна обещать то, чего не было. Сдвинутый вердикт несёт и
+// маппинг, и причину сдвига: иначе по файлу задачи не понять, почему модель
+// разошлась с таблицей.
+func recordExecution(root, id string, v verdict, c correction, now time.Time) error {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -205,8 +236,12 @@ func recordExecution(root, id string, v verdict) error {
 	if v.Groom {
 		label = "Грумминг"
 	}
-	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick, %s.",
-		label, v.Model, v.Effort, time.Now().Format("2006-01-02"))
+	shift := ""
+	if c.shifted() {
+		shift = fmt.Sprintf(" (маппинг %s, корректор: %s)", c.From, c.Note)
+	}
+	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick%s, %s.",
+		label, v.Model, v.Effort, shift, now.Format("2006-01-02"))
 
 	lines := strings.Split(content, "\n")
 	head := -1

@@ -1,0 +1,15 @@
+ Claude Code Usage                                                       Max 20x
+
+ Current session
+ ██████████░░░░░░░░░░  48% used
+ Resets in 1h 43m
+
+ Current week (all models)
+ ███████░░░░░░░░░░░░░  34% used
+ Resets in 4d 19h
+
+ Current week (Opus)
+ ████████████████░░░░  78% used
+ Resets in 4d 19h
+
+ d 24 hours   w 7 days   r retry   esc close

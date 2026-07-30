@@ -1,0 +1,291 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Точка отсчёта тестов: середина недельного окна берётся от неё, чтобы pace
+// считался в лоб и пороги было видно глазами.
+var testNow = time.Date(2026, 7, 30, 12, 0, 0, 0, time.Local)
+
+func at(t time.Time) string { return t.Format(quotaTimeLayout) }
+
+// bucketAt собирает бакет по проценту потраченного и остатку окна: pace тогда
+// это (1 - used) / (left / 7 суток).
+func bucketAt(name string, usedPct int, left time.Duration) bucket {
+	return bucket{Name: name, Used: float64(usedPct) / 100, Reset: testNow.Add(left)}
+}
+
+func snapOf(age time.Duration, buckets ...bucket) snapshot {
+	return snapshot{Taken: testNow.Add(-age), Buckets: buckets}
+}
+
+const halfWindow = quotaWindow / 2
+
+func TestReadSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota.local")
+	content := "# снято руками с панели /usage\n" +
+		"taken = 2026-07-30T09:00\n" +
+		"week_all = 34% сброс 2026-08-04T10:00\n" +
+		"week_opus = 78% сброс 2026-08-04T10:00\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := readSnapshot(path)
+	if err != nil {
+		t.Fatalf("снимок не прочитан: %v", err)
+	}
+	if !s.Taken.Equal(time.Date(2026, 7, 30, 9, 0, 0, 0, time.Local)) {
+		t.Fatalf("момент снятия %v", s.Taken)
+	}
+	if len(s.Buckets) != 2 {
+		t.Fatalf("бакеты: %+v", s.Buckets)
+	}
+	b, ok := s.bucket("week_opus")
+	if !ok || b.Used != 0.78 {
+		t.Fatalf("week_opus разобран как %+v", b)
+	}
+	if !b.Reset.Equal(time.Date(2026, 8, 4, 10, 0, 0, 0, time.Local)) {
+		t.Fatalf("дата сброса %v", b.Reset)
+	}
+	if len(s.Warns) != 0 {
+		t.Fatalf("на чистом снимке предупреждения: %v", s.Warns)
+	}
+}
+
+func TestReadSnapshotBroken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota.local")
+	content := "taken = вчера\n" +
+		"week_sonnet = 10% сброс 2026-08-04T10:00\n" +
+		"week_all = 34% сброс не пойми когда\n" +
+		"week_opus = 78% сброс 2026-08-04T10:00\n" +
+		"строка без равенства\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := readSnapshot(path)
+	if err != nil {
+		t.Fatalf("битые строки не должны ронять разбор: %v", err)
+	}
+	// Отбрасывается ровно битое, целый бакет доезжает.
+	if len(s.Buckets) != 1 || s.Buckets[0].Name != "week_opus" {
+		t.Fatalf("бакеты: %+v", s.Buckets)
+	}
+	if !s.Taken.IsZero() {
+		t.Fatalf("нечитаемый момент снятия должен остаться пустым: %v", s.Taken)
+	}
+	if len(s.Warns) != 4 {
+		t.Fatalf("жду предупреждение на каждую битую строку, вижу %v", s.Warns)
+	}
+	joined := strings.Join(s.Warns, "\n")
+	if !strings.Contains(joined, "неизвестный ключ снимка \"week_sonnet\"") {
+		t.Fatalf("незнакомый ключ прошёл молча: %v", s.Warns)
+	}
+}
+
+func TestReadSnapshotMissing(t *testing.T) {
+	s, err := readSnapshot(filepath.Join(t.TempDir(), "нет-такого"))
+	if err != nil {
+		t.Fatalf("отсутствие файла не ошибка: %v", err)
+	}
+	if len(s.Buckets) != 0 || !s.Taken.IsZero() {
+		t.Fatalf("жду пустой снимок, вижу %+v", s)
+	}
+}
+
+func TestBucketStatus(t *testing.T) {
+	// Пороги проверяются с обеих сторон: ровно на границе статус уже стоит, на
+	// процент внутрь зазора уже норма.
+	cases := []struct {
+		name string
+		b    bucket
+		want string
+	}{
+		{"ровно на пороге профицита", bucketAt("week_all", 0, halfWindow), statusSurplus},
+		{"на процент ниже порога профицита", bucketAt("week_all", 1, halfWindow), statusNormal},
+		{"ровно на пороге дефицита", bucketAt("week_all", 75, halfWindow), statusDeficit},
+		{"на процент выше порога дефицита", bucketAt("week_all", 74, halfWindow), statusNormal},
+		{"равномерный расход это норма", bucketAt("week_all", 50, halfWindow), statusNormal},
+		{"почти исчерпан в середине окна", bucketAt("week_opus", 95, halfWindow), statusDeficit},
+		{"нетронут за день до сброса", bucketAt("week_opus", 20, 24*time.Hour), statusSurplus},
+		{"сброс уже прошёл", bucketAt("week_all", 90, -time.Hour), statusExpired},
+		{"сброс ровно сейчас", bucketAt("week_all", 90, 0), statusExpired},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.b.status(testNow); got != c.want {
+				t.Fatalf("статус %q (pace %.2f), жду %q", got, c.b.pace(testNow), c.want)
+			}
+		})
+	}
+}
+
+func TestCorrectModel(t *testing.T) {
+	deficitAll := bucketAt("week_all", 90, halfWindow)
+	deficitOpus := bucketAt("week_opus", 90, halfWindow)
+	// Профицит это выраженный перекос: почти нетронутый бакет за сутки до
+	// сброса. В середине окна нетронутый бакет даёт pace ровно 2, впритык.
+	surplusAll := bucketAt("week_all", 5, 24*time.Hour)
+	surplusOpus := bucketAt("week_opus", 5, 24*time.Hour)
+	normalAll := bucketAt("week_all", 50, halfWindow)
+	normalOpus := bucketAt("week_opus", 50, halfWindow)
+	expiredOpus := bucketAt("week_opus", 5, -time.Hour)
+
+	cases := []struct {
+		name  string
+		model string
+		groom bool
+		snap  snapshot
+		want  string
+		note  string
+	}{
+		{"дефицит week_opus снимает opus на ярус вниз", "opus", false,
+			snapOf(time.Hour, normalAll, deficitOpus), "sonnet", "дефицит week_opus"},
+		{"дефицит общего бакета тоже снимает opus", "opus", false,
+			snapOf(time.Hour, deficitAll, normalOpus), "sonnet", "дефицит week_all"},
+		{"sonnet при дефиците уходит на haiku", "sonnet", false,
+			snapOf(time.Hour, deficitAll), "haiku", "дефицит week_all"},
+		{"ниже haiku двигать некуда", "haiku", false,
+			snapOf(time.Hour, deficitAll), "haiku", "дефицит week_all"},
+		{"fable при дефиците уходит на opus", "fable", false,
+			snapOf(time.Hour, normalAll, deficitOpus), "opus", "дефицит week_opus"},
+		{"профицит добавочного бакета поднимает sonnet", "sonnet", false,
+			snapOf(time.Hour, normalAll, surplusOpus), "opus", "профицит week_opus"},
+		{"haiku поднимает профицит общего бакета", "haiku", false,
+			snapOf(time.Hour, surplusAll), "sonnet", "профицит week_all"},
+		{"opus поднимается только при профиците обоих", "opus", false,
+			snapOf(time.Hour, surplusAll, surplusOpus), "fable", "профицит week_all, week_opus"},
+		{"профицита одного общего бакета для opus мало", "opus", false,
+			snapOf(time.Hour, surplusAll, normalOpus), "opus", ""},
+		{"выше fable ярусов нет", "fable", false,
+			snapOf(time.Hour, surplusAll, surplusOpus), "fable", ""},
+		{"дефицит валиден и по старому снимку", "opus", false,
+			snapOf(3*24*time.Hour, normalAll, deficitOpus), "sonnet", "дефицит week_opus"},
+		{"профицит по старому снимку не поднимает", "sonnet", false,
+			snapOf(3*24*time.Hour, normalAll, surplusOpus), "sonnet", ""},
+		{"снимок без момента снятия вверх не двигает", "sonnet", false,
+			snapshot{Buckets: []bucket{normalAll, surplusOpus}}, "sonnet", ""},
+		{"дефицит сильнее профицита", "opus", false,
+			snapOf(time.Hour, deficitAll, surplusOpus), "sonnet", "дефицит week_all"},
+		{"грумминговый вердикт не корректируется", "opus", true,
+			snapOf(time.Hour, deficitAll, deficitOpus), "opus", ""},
+		{"протухший бакет не двигает", "sonnet", false,
+			snapOf(time.Hour, normalAll, expiredOpus), "sonnet", ""},
+		{"пустой снимок оставляет вердикт как есть", "opus", false,
+			snapshot{}, "opus", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := correctModel(c.model, c.groom, c.snap, testNow)
+			if got.Model != c.want {
+				t.Fatalf("модель %q, жду %q (причина %q)", got.Model, c.want, got.Note)
+			}
+			if got.Note != c.note {
+				t.Fatalf("причина %q, жду %q", got.Note, c.note)
+			}
+		})
+	}
+}
+
+func TestCorrectModelBottomWarning(t *testing.T) {
+	// На дне лестницы причина остаётся, а сдвига нет: предупреждение честнее
+	// молчания, дешевле haiku исполнителя всё равно нет.
+	c := correctModel("haiku", false, snapOf(time.Hour, bucketAt("week_all", 95, halfWindow)), testNow)
+	if c.shifted() {
+		t.Fatalf("сдвиг ниже haiku: %+v", c)
+	}
+	if !strings.Contains(c.tail(), "ниже haiku ярусов нет") {
+		t.Fatalf("нет предупреждения в хвосте: %q", c.tail())
+	}
+}
+
+func TestCorrectionTail(t *testing.T) {
+	c := correctModel("opus", false, snapOf(time.Hour, bucketAt("week_all", 50, halfWindow),
+		bucketAt("week_opus", 95, halfWindow)), testNow)
+	if got := c.tail(); got != "корректор: дефицит week_opus, opus -> sonnet" {
+		t.Fatalf("хвост %q", got)
+	}
+	if tail := (correction{Model: "opus", From: "opus"}).tail(); tail != "" {
+		t.Fatalf("молчащий корректор занял место в выводе: %q", tail)
+	}
+}
+
+func TestCmdQuota(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota.local")
+
+	t.Run("без файла подсказка вместо ошибки", func(t *testing.T) {
+		out, err := cmdQuota(path, testNow)
+		if err != nil {
+			t.Fatalf("отсутствие снимка не ошибка: %v", err)
+		}
+		if !strings.Contains(out, "снимка нет") {
+			t.Fatalf("вывод %q", out)
+		}
+	})
+
+	t.Run("бакеты со статусами", func(t *testing.T) {
+		content := "taken = " + at(testNow.Add(-3*time.Hour)) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"week_opus = 95% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"week_haiku = 5% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(path, testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		for _, want := range []string{"возраст 3ч 0м", "week_all", "норма", "week_opus", "дефицит", "неизвестный ключ"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("в выводе нет %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("протухший профицит помечен", func(t *testing.T) {
+		content := "taken = " + at(testNow.Add(-3*24*time.Hour)) + "\n" +
+			"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(path, testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "профицит (снимок старше суток") {
+			t.Fatalf("непомеченный профицит по старому снимку:\n%s", out)
+		}
+	})
+}
+
+func TestWriteSnapshotRoundTrip(t *testing.T) {
+	// refresh пишет тот же формат, каким снимок заполняют руками: записанное
+	// обязано читаться собственным парсером.
+	path := filepath.Join(t.TempDir(), ".devkit", "quota.local")
+	s := snapOf(0, bucketAt("week_all", 34, halfWindow), bucketAt("week_opus", 78, halfWindow))
+	if err := writeSnapshot(path, s); err != nil {
+		t.Fatalf("запись снимка: %v", err)
+	}
+	back, err := readSnapshot(path)
+	if err != nil {
+		t.Fatalf("чтение снимка: %v", err)
+	}
+	if len(back.Warns) != 0 {
+		t.Fatalf("свой же формат не разобрался: %v", back.Warns)
+	}
+	if !back.Taken.Equal(s.Taken) || len(back.Buckets) != 2 {
+		t.Fatalf("после записи и чтения %+v", back)
+	}
+	for i, b := range back.Buckets {
+		if b != s.Buckets[i] {
+			t.Fatalf("бакет %s разошёлся: %+v против %+v", b.Name, b, s.Buckets[i])
+		}
+	}
+}

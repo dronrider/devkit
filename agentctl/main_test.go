@@ -79,6 +79,7 @@ func TestHelpAfterSubcommand(t *testing.T) {
 // TestOldSixColumnBoard: доска без колонки «Цена» не превращается в «нет на
 // доске», цена трактуется как неоценённая.
 func TestOldSixColumnBoard(t *testing.T) {
+	isolateQuota(t)
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatal(err)

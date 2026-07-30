@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,7 +150,26 @@ func writeBoard(t *testing.T) string {
 	return root
 }
 
+// isolateQuota уводит снимок квоты во временный HOME и возвращает путь к нему.
+// Без этого вердикт зависел бы от того, что лежит в снимке на машине.
+func isolateQuota(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return filepath.Join(home, ".devkit", quotaFileName)
+}
+
+// fixNow останавливает часы утилиты: и формула корректора, и дата в строке
+// --record считаются от одного момента.
+func fixNow(t *testing.T, now time.Time) {
+	t.Helper()
+	prev := timeNow
+	timeNow = func() time.Time { return now }
+	t.Cleanup(func() { timeNow = prev })
+}
+
 func TestCmdPick(t *testing.T) {
+	isolateQuota(t)
 	root := writeBoard(t)
 	cases := []struct {
 		id     string
@@ -183,6 +203,7 @@ func TestCmdPick(t *testing.T) {
 }
 
 func TestCmdPickOverride(t *testing.T) {
+	isolateQuota(t)
 	root := writeBoard(t)
 	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
 		t.Fatal(err)
@@ -357,6 +378,142 @@ func TestCmdPickOverride(t *testing.T) {
 	})
 }
 
+// writeQuota кладёт свежий снимок во временный HOME: проценты потраченного и
+// остаток окна, из которых считается pace.
+func writeQuota(t *testing.T, path string, allPct, opusPct int, left time.Duration) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "taken = " + at(testNow.Add(-time.Hour)) + "\n" +
+		"week_all = " + strconv.Itoa(allPct) + "% сброс " + at(testNow.Add(left)) + "\n" +
+		"week_opus = " + strconv.Itoa(opusPct) + "% сброс " + at(testNow.Add(left)) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCmdPickQuota(t *testing.T) {
+	quota := isolateQuota(t)
+	fixNow(t, testNow)
+	root := writeBoard(t)
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("дефицит опускает вердикт и виден в строке записи", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
+		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-002", true)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		// T-002 маппингом opus/medium; после сдвига на sonnet effort ещё и
+		// подтягивается полом, пол считается по итоговой модели.
+		if !strings.HasPrefix(out, "model: sonnet\neffort: high\n") {
+			t.Fatalf("жду сдвинутый вердикт, получил %q", out)
+		}
+		if !strings.Contains(out, "корректор: дефицит week_opus, opus -> sonnet") {
+			t.Fatalf("в человеческой строке нет хвоста корректора: %q", out)
+		}
+		data, _ := os.ReadFile(taskFile)
+		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_opus), " +
+			testNow.Format("2006-01-02") + "."
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("строка записи разошлась с ожидаемой:\n%s", data)
+		}
+	})
+
+	t.Run("профицит поднимает вердикт", func(t *testing.T) {
+		writeQuota(t, quota, 5, 5, 24*time.Hour)
+		out, err := cmdPick(root, "T-005", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		// T-005 маппингом sonnet (S с неопределённостью 1), профицит
+		// добавочного week_opus поднимает её до opus.
+		if !strings.HasPrefix(out, "model: opus") {
+			t.Fatalf("жду подъём до opus, получил %q", out)
+		}
+		if !strings.Contains(out, "корректор: профицит week_opus, sonnet -> opus") {
+			t.Fatalf("нет хвоста корректора: %q", out)
+		}
+	})
+
+	t.Run("сдвинутому вниз LLD советуют отложить дизайн", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		out, err := cmdPick(root, "T-003", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet") {
+			t.Fatalf("жду сдвиг LLD-вердикта вниз, получил %q", out)
+		}
+		if !strings.Contains(out, "отложить") {
+			t.Fatalf("нет совета отложить дизайн: %q", out)
+		}
+	})
+
+	t.Run("грумминговый вердикт корректор не трогает", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		out, err := cmdPick(root, "T-004", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus") || strings.Contains(out, "корректор") {
+			t.Fatalf("грумминговый вердикт скорректирован: %q", out)
+		}
+	})
+
+	t.Run("override модели корректор не двигает", func(t *testing.T) {
+		writeQuota(t, quota, 50, 95, halfWindow)
+		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
+		if err := os.WriteFile(taskFile, []byte("# T-002\n\nМодель: opus\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-002", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus") || strings.Contains(out, "корректор") {
+			t.Fatalf("ручное решение сдвинуто корректором: %q", out)
+		}
+	})
+
+	t.Run("незнакомый ключ снимка виден предупреждением", func(t *testing.T) {
+		content := "taken = " + at(testNow) + "\nweek_sonnet = 5% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") {
+			t.Fatalf("незнакомый ключ сдвинул вердикт: %q", out)
+		}
+		if !strings.Contains(out, "неизвестный ключ снимка") {
+			t.Fatalf("нет предупреждения про ключ: %q", out)
+		}
+	})
+
+	t.Run("без снимка вердикт прежний", func(t *testing.T) {
+		if err := os.Remove(quota); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-002", false)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\n") || strings.Contains(out, "корректор") {
+			t.Fatalf("отсутствие снимка изменило вердикт: %q", out)
+		}
+	})
+}
+
 func TestCmdPickMissing(t *testing.T) {
 	root := writeBoard(t)
 	if _, err := cmdPick(root, "T-999", false); err == nil || !strings.Contains(err.Error(), "нет на доске") {
@@ -381,6 +538,7 @@ func TestPickOnRealBoardFormat(t *testing.T) {
 }
 
 func TestRecordExecution(t *testing.T) {
+	isolateQuota(t)
 	root := writeBoard(t)
 	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
 		t.Fatal(err)

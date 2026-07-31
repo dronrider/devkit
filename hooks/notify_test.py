@@ -63,6 +63,22 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(len(body), notify.BODY_LIMIT)
         self.assertTrue(body.endswith("..."))
 
+    def test_fields_of_wrong_type(self):
+        # Поля события приходят от харнеса, и их форма это его дело, а не наше:
+        # число вместо строки не должно ни ронять хук, ни съедать повод.
+        key, title, body = notify.parse_event(event(
+            notification_type="permission_prompt", message=42, cwd=7))
+        self.assertEqual((key, title, body), ("permission_prompt", "сессия: нужно разрешение", "42"))
+        _, _, body = notify.parse_event(event(hook_event_name="SubagentStop",
+                                              agent_type=1, last_assistant_message=None))
+        self.assertEqual(body, "1")
+
+    def test_unhashable_reason(self):
+        # Повод объектом по словарю поводов не ищется: разбор роняет TypeError,
+        # и ловит его хук, а не разбор.
+        with self.assertRaises(TypeError):
+            notify.parse_event(event(notification_type={"a": 1}))
+
     def test_title_without_cwd(self):
         _, title, _ = notify.parse_event(event(cwd="", notification_type="idle_prompt"))
         self.assertEqual(title, "сессия: ждёт ввода")

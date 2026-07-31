@@ -250,6 +250,27 @@ event Stop "" sess-quiet | notify_hook || fail "хук вернул не 0 на 
 printf 'не json' | notify_hook || fail "хук вернул не 0 на мусоре вместо события"
 [ -s "$nmark" ] && fail "уведомление ушло на том, на чём слать не должны: $(cat "$nmark")"
 
+# Кривой вход любого вида это код 0 и строка в журнале, а не traceback: хук
+# стоит в каждой сессии, и форма события целиком на стороне харнеса.
+for bad in '42' 'null' '[1,2]' '"строка"'; do
+    err=$(printf '%s' "$bad" | notify_hook 2>&1) ||
+        fail "хук вернул не 0 на событии $bad"
+    [ -n "$err" ] && fail "хук ругался в stderr на событии $bad: $err"
+done
+grep -q 'событие не разобрано: json не объектом' "$nlog" ||
+    fail "непонятое событие не попало в журнал: $(cat "$nlog")"
+err=$(printf '{"hook_event_name":"Notification","notification_type":{"a":1},"session_id":"sess-bad"}' |
+    notify_hook 2>&1) || fail "хук вернул не 0 на поле не той формы"
+[ -n "$err" ] && fail "хук ругался в stderr на поле не той формы: $err"
+grep -q 'сессия sess-bad повод - бэкенд - событие не разобрано: поля не той формы' "$nlog" ||
+    fail "поле не той формы не попало в журнал: $(cat "$nlog")"
+[ -s "$nmark" ] && fail "уведомление ушло на кривом событии: $(cat "$nmark")"
+# Повод при этом не съедается: тело собирается из того, что дали.
+printf '{"hook_event_name":"Notification","notification_type":"permission_prompt","session_id":"sess-num","cwd":"/p/devkit-dk-034","message":42}' |
+    notify_hook || fail "хук вернул не 0 на числовом теле"
+grep -q '^devkit-dk-034: нужно разрешение|42$' "$nmark" ||
+    fail "числовое тело съело повод: $(cat "$nmark")"
+
 # Слать нечем: код 0, отказ в журнале и запасной путь через сам терминал.
 : > "$nmark"
 out=$(HOME="$nhome" PATH="$nsys" python3 "$here/notify.py" --hook claude-code <<EOF

@@ -51,8 +51,12 @@ SUBAGENT_REASON = "субагент отработал"
 def short(text, limit=BODY_LIMIT):
     # Тело уведомления это одна строка: у баннера две строки места, а
     # last_assistant_message субагента бывает на экран.
+    if not isinstance(text, str):
+        # Поле события пришло числом или объектом. Уведомление из-за этого не
+        # теряется: повод известен, а тело собирается из того, что дали.
+        text = "" if text is None else str(text)
     line = ""
-    for raw in (text or "").splitlines():
+    for raw in text.splitlines():
         if raw.strip():
             line = " ".join(raw.split())
             break
@@ -64,7 +68,7 @@ def short(text, limit=BODY_LIMIT):
 def session_label(cwd):
     # Какая из сессий позвала, видно по имени рабочего дерева: у worktree задачи
     # в имени лежит её ID. Без этого при пяти агентах баннер бесполезен.
-    name = os.path.basename((cwd or "").rstrip("/"))
+    name = os.path.basename((cwd if isinstance(cwd, str) else "").rstrip("/"))
     return name or "сессия"
 
 
@@ -224,15 +228,27 @@ def run_hook(harness):
     if harness != "claude-code":
         sys.stderr.write("notify: разбор события %s не заведён\n" % harness)
         return 2
+    # Вход кривой во всех видах (не json, json не объектом, объект с полями не
+    # той формы) заканчивается одинаково: код 0 и строка в журнале. Хук стоит в
+    # каждой сессии, и падать traceback'ом ему нельзя, а молчать про непонятое
+    # значит держать эту дыру незаметной.
     try:
         event = json.load(sys.stdin)
     except (json.JSONDecodeError, UnicodeDecodeError):
+        log("-", "-", None, "событие не разобрано: не json")
         return 0
-    parsed = parse_event(event)
+    if not isinstance(event, dict):
+        log("-", "-", None, "событие не разобрано: json не объектом")
+        return 0
+    session = str(event.get("session_id") or "-")[:8]
+    try:
+        parsed = parse_event(event)
+    except (AttributeError, TypeError, ValueError):
+        log(session, "-", None, "событие не разобрано: поля не той формы")
+        return 0
     if not parsed:
         return 0
     key, title, body = parsed
-    session = (event.get("session_id") or "-")[:8]
     if not allow(session, key):
         log(session, key, None, "пропуск: повтор в окне %dс" % WINDOW)
         return 0

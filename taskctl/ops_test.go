@@ -813,21 +813,17 @@ func TestCloseWithLinks(t *testing.T) {
 	}
 }
 
-// TestCloseRewritesIncomingLinks проверяет, что ссылки на перенесённую задачу
-// переписываются в других файлах репозитория. Это регрессионный тест на погодление,
-// что changedFiles попадают в коммит.
+// TestCloseRewritesIncomingLinks проверяет, что переписанные входящие ссылки
+// уезжают в коммит close, а не остаются правкой в рабочем дереве.
 func TestCloseRewritesIncomingLinks(t *testing.T) {
 	root := setup(t)
 
-	// Добавить новую задачу
 	if _, err := cmdAdd(root, AddParams{ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-077", SectInProgress, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-
-	// Создать файл задачи и файл с ссылкой на неё
 	os.WriteFile(
 		filepath.Join(root, "docs", "tasks", "XR-077.md"),
 		[]byte("# XR-077\nTask\n"),
@@ -838,16 +834,106 @@ func TestCloseRewritesIncomingLinks(t *testing.T) {
 		[]byte("[Task](tasks/XR-077.md)\n"),
 		0o644,
 	)
+	gitSetup(t, root)
 
-	// Закрыть задачу (без коммита, просто чтобы протестировать логику)
-	if _, err := cmdClose(root, CloseParams{ID: "XR-077", Date: "2026-07-31"}); err != nil {
+	p := CloseParams{ID: "XR-077", Date: "2026-07-31", Commit: CommitOpts{Msg: "docs(tasks): XR-077 закрыта"}}
+	if _, err := cmdClose(root, p); err != nil {
 		t.Fatal(err)
 	}
 
-	// Проверить что ссылка в INCOMING.md переписана на архив
-	refContent, _ := os.ReadFile(filepath.Join(root, "docs", "INCOMING.md"))
-	if !strings.Contains(string(refContent), "tasks/archive/2026/XR-077.md") {
-		t.Errorf("Ссылка в INCOMING.md не переписана:\n%s", refContent)
+	if committed := gitOut(t, root, "show", "HEAD:docs/INCOMING.md"); committed != "[Task](tasks/archive/2026/XR-077.md)" {
+		t.Errorf("в коммите не переписанная ссылка: %q", committed)
+	}
+	if st := gitOut(t, root, "status", "--porcelain"); st != "" {
+		t.Errorf("после close осталось незакоммиченное:\n%s", st)
+	}
+}
+
+// rewritten прогоняет содержимое файла задачи через перенос в архив и
+// возвращает то, что легло на диск.
+func rewritten(t *testing.T, content string) string {
+	t.Helper()
+	root := setup(t)
+	oldBaseDir := filepath.Join(root, "docs", "tasks")
+	newBaseDir := filepath.Join(oldBaseDir, "archive", "2026")
+	if err := os.MkdirAll(newBaseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskPath := filepath.Join(newBaseDir, "XR-001.md")
+	if err := os.WriteFile(taskPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteLinksInFile(taskPath, oldBaseDir, newBaseDir); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// TestRewriteLinksKeepsFileTail следит за концом файла: перевод строки не
+// удваивается, а отсутствие перевода не превращается в перевод.
+func TestRewriteLinksKeepsFileTail(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"с переводом строки", "[LLD](../lld/X.md)\n", "[LLD](../../../lld/X.md)\n"},
+		{"без перевода строки", "[LLD](../lld/X.md)", "[LLD](../../../lld/X.md)"},
+		{"без ссылок", "# Заголовок\n\nПроза.\n", "# Заголовок\n\nПроза.\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := rewritten(t, c.in); got != c.want {
+				t.Errorf("получено %q, ждал %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestRewriteLinksFences проверяет разметку заборов: вложенный короткий забор
+// не закрывает длинный внешний, тильды работают наравне с кавычками, отступ
+// забора не больше трёх пробелов, незакрытый забор тянется до конца файла.
+func TestRewriteLinksFences(t *testing.T) {
+	link := "[LLD](../lld/X.md)"
+	moved := "[LLD](../../../lld/X.md)"
+	cases := []struct{ name, in, want string }{
+		{
+			"вложенный забор не закрывает внешний",
+			"````\n```\n" + link + "\n```\n````\n" + link + "\n",
+			"````\n```\n" + link + "\n```\n````\n" + moved + "\n",
+		},
+		{
+			"забор из тильд",
+			"~~~\n" + link + "\n~~~\n" + link + "\n",
+			"~~~\n" + link + "\n~~~\n" + moved + "\n",
+		},
+		{
+			"забор с отступом в три пробела",
+			"   ```\n" + link + "\n   ```\n" + link + "\n",
+			"   ```\n" + link + "\n   ```\n" + moved + "\n",
+		},
+		{
+			"четыре пробела это уже не забор",
+			"    ```\n" + link + "\n",
+			"    ```\n" + moved + "\n",
+		},
+		{
+			"незакрытый забор до конца файла",
+			"```\n" + link + "\n",
+			"```\n" + link + "\n",
+		},
+		{
+			"забор из тильд не закрывается кавычками",
+			"~~~\n```\n" + link + "\n",
+			"~~~\n```\n" + link + "\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := rewritten(t, c.in); got != c.want {
+				t.Errorf("получено %q, ждал %q", got, c.want)
+			}
+		})
 	}
 }
 

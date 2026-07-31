@@ -64,6 +64,7 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
              ".venv", "venv", "__pycache__", ".idea", ".vscode"}
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+CODE_SPAN_RE = re.compile(r"`+[^`]*`+")
 
 
 def run(args, cwd=None):
@@ -105,7 +106,8 @@ def check_links(root):
                     continue
                 if fence:
                     continue
-                for m in LINK_RE.finditer(ln):
+                # Инлайн-код это текст: [текст](путь) в примере команды не ссылка.
+                for m in LINK_RE.finditer(CODE_SPAN_RE.sub(lambda c: " " * len(c.group(0)), ln)):
                     target = m.group(1).split("#")[0]
                     if not target or "://" in target or target.startswith("mailto:"):
                         continue

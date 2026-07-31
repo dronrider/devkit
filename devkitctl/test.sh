@@ -95,6 +95,9 @@ echo "$out" | grep -q 'битая ссылка' || fail "нет находки �
 printf 'пример:\n\n````\n```\nсмотри [детали](nope.md)\n```\n````\n' > "$proj/docs/note.md"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'битая ссылка' && fail "ссылка в блоке кода принята за настоящую"
+printf 'пример команды `смотри [детали](nope.md)` в строке\n' > "$proj/docs/note.md"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'битая ссылка' && fail "ссылка в инлайн-коде принята за настоящую"
 # Отступ в четыре пробела забор уже не открывает (CommonMark), ссылка под ним
 # остаётся настоящей.
 printf 'пример:\n\n    ```\nсмотри [детали](nope.md)\n' > "$proj/docs/note.md"

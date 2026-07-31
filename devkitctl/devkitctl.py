@@ -11,10 +11,10 @@
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
       markdown-ссылки не битые; и машинный контур: PostToolUse-хуки, бинари
-      утилит devkit в PATH и не старее исходников, определения исполнителей в
+      утилит devkit в PATH и не старее исходников, определения агентов в
       ~/.claude/agents, tmux и снимок квоты ~/.devkit/quota.local;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
-      сборка бинарей, копия определений исполнителей), заполненное не трогает,
+      сборка бинарей, копия определений агентов), заполненное не трогает,
       неоднозначное оставляет находкой
 
   devkitctl stats [-C dir]
@@ -306,29 +306,32 @@ def check_agent_defs(fix):
     main, from_main = devkit_checkout()
     src_dir = main / "agents" if (main / "agents").is_dir() else DEVKIT / "agents"
     dst_dir = Path(os.path.expanduser(AGENTS_DIR))
-    for src in sorted(src_dir.glob("exec-*.md")):
+    # Берётся вся директория, а не один префикс: набор растёт ролями (exec-*
+    # для исполнения, review-* для ревью), и новая роль должна раскладываться
+    # сама, без правки доктора.
+    for src in sorted(src_dir.glob("*.md")):
         dst = dst_dir / src.name
         if dst.exists():
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
-                findings.append("определение исполнителя %s разошлось с devkit; обновить: cp %s %s"
+                findings.append("определение агента %s разошлось с devkit; обновить: cp %s %s"
                                 % (dst, src, dst))
             continue
         if fix and from_main:
             dst_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
-            fixed.append("определение исполнителя %s положено в %s" % (src.name, dst_dir))
+            fixed.append("определение агента %s положено в %s" % (src.name, dst_dir))
             continue
         whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                        "определение с непроверенной ветки нельзя; из основного чекаута: ")
-        findings.append("нет определения исполнителя %s: effort из вердикта pick применять нечем, "
-                        "спавн уйдёт на дефолтного агента; %scp %s/exec-*.md %s/"
+        findings.append("нет определения агента %s: effort из вердикта pick применять нечем, "
+                        "спавн уйдёт на дефолтного агента; %scp %s/*.md %s/"
                         % (dst, whence, src_dir, dst_dir))
     return findings, fixed
 
 
 def check_machine(fix):
     # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
-    # определения исполнителей, tmux и снимок квоты.
+    # определения агентов, tmux и снимок квоты.
     findings, fixed = [], []
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""

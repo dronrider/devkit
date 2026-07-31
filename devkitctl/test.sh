@@ -11,7 +11,7 @@ fail() { echo "FAIL: $1" >&2; fails=$((fails + 1)); }
 unset GOBIN GOPATH
 
 # Всё гоняется на копии devkit во временной директории, а не на живом чекауте:
-# доктор судит по mtime исходников и сверяет определения исполнителей с
+# доктор судит по mtime исходников и сверяет определения агентов с
 # основным чекаутом, так что незакоммиченная правка в ~/projects/devkit красила
 # бы самопроверку на исправном коде. Копия не под git, поэтому для доктора она
 # и есть основной чекаут.
@@ -34,7 +34,7 @@ cat > "$home/.claude/settings.json" <<'EOF'
 EOF
 
 # Машинный контур подставной: бинари devkit и tmux заглушками в своём PATH,
-# определения исполнителей и свежий снимок квоты в подставном HOME. Иначе
+# определения агентов и свежий снимок квоты в подставном HOME. Иначе
 # проверки цеплялись бы за настоящую машину и в CI шли бы находками.
 bin="$tmp/bin"
 mkdir -p "$bin"
@@ -56,7 +56,7 @@ for t in git python3 dirname mkdir chmod rm; do
 done
 cleanpath="$bin:$sys"
 mkdir -p "$home/.claude/agents" "$home/.devkit"
-cp "$dk/agents/"exec-*.md "$home/.claude/agents/"
+cp "$dk/agents/"*.md "$home/.claude/agents/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
     > "$home/.devkit/quota.local"
 
@@ -227,6 +227,9 @@ for t in taskctl shipctl agentctl regcheck; do
     [ -x "$mhome/go/bin/$t" ] || fail "doctor --fix не собрал $t: $out"
 done
 [ -f "$mhome/.claude/agents/exec-medium.md" ] || fail "doctor --fix не разложил определения исполнителей: $out"
+# Роли ревьювера в наборе появились позже исполнителей, и раскладка обязана
+# брать директорию целиком, а не один префикс.
+[ -f "$mhome/.claude/agents/review-high.md" ] || fail "doctor --fix не разложил определения ревьюверов: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux, находка должна остаться: $out"
 echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
 
@@ -234,7 +237,7 @@ echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимае�
 out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный --fix по машинному контуру не должен ничего менять: $out"
 
-# Правленое руками определение исполнителя это находка, --fix его не затирает.
+# Правленое руками определение агента это находка, --fix его не затирает.
 printf '\nсвоя строка\n' >> "$mhome/.claude/agents/exec-low.md"
 out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
@@ -352,13 +355,13 @@ out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devki
 echo "$out" | grep -q 'worktree ветки задачи' || fail "нет находки про worktree devkit: $out"
 echo "$out" | grep -q "$dkreal/agentctl" || fail "находка не отправляет в основной чекаут: $out"
 [ -f "$wthome/go/bin/agentctl" ] && fail "--fix собрал машинный бинарь с фичеветки"
-# Определения исполнителей из worktree так же не раскладываются, а находка
+# Определения агентов из worktree так же не раскладываются, а находка
 # зовёт копировать из основного чекаута.
-[ -f "$wthome/.claude/agents/exec-medium.md" ] && fail "--fix разложил определения исполнителей с фичеветки"
-echo "$out" | grep -q "cp $dkreal/agents/exec-\*.md" || fail "находка про определения зовёт не в основной чекаут: $out"
+[ -f "$wthome/.claude/agents/exec-medium.md" ] && fail "--fix разложил определения агентов с фичеветки"
+echo "$out" | grep -q "cp $dkreal/agents/\*.md" || fail "находка про определения зовёт не в основной чекаут: $out"
 # Разошедшееся определение из worktree сверяется с основным чекаутом.
 mkdir -p "$wthome/.claude/agents"
-cp "$dk/agents/"exec-*.md "$wthome/.claude/agents/"
+cp "$dk/agents/"*.md "$wthome/.claude/agents/"
 printf '\nсвоя строка\n' >> "$wthome/.claude/agents/exec-high.md"
 out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "сверка определения идёт не с основным чекаутом: $out"

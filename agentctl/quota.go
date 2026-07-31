@@ -22,9 +22,16 @@ const quotaTimeLayout = "2006-01-02T15:04"
 // Окно недельных бакетов, от него считается равномерный темп расхода.
 const quotaWindow = 7 * 24 * time.Hour
 
-// Профицит из снимка старше суток не применяется: остаток внутри окна только
-// тратится, и вывод «есть запас» протухает быстрее вывода «запаса нет».
-const surplusMaxAge = 24 * time.Hour
+// Снимок старше этого протух: pick говорит про возраст вслух, и профицит по
+// такому снимку не применяется. Порог тут один на оба случая не случайно.
+// Разведи их, и нашлось бы окно, где pick одной строкой зовёт переснять
+// снимок, а другой поднимает по нему вердикт. Величина взята из темпа расхода:
+// он доходит до 10% подписки в час, то есть pace уезжает примерно на 0.2 за
+// час, и за сорок пять минут набегает десятая часть зазора между порогами
+// статуса. Асимметрия при этом никуда не делась: дефицит возрастом не
+// ограничен вовсе, снятый остаток это верхняя граница текущего, и вниз сдвиг
+// идёт по снимку любой давности, лишь бы не прошла дата сброса.
+const snapshotMaxAge = 45 * time.Minute
 
 const (
 	statusSurplus = "профицит"
@@ -90,7 +97,27 @@ func (s snapshot) bucket(name string) (bucket, bool) {
 // неизвестен, и профицит не применяется: неизвестность толкуется в пользу
 // экономии.
 func (s snapshot) fresh(now time.Time) bool {
-	return !s.Taken.IsZero() && now.Sub(s.Taken) <= surplusMaxAge
+	return !s.Taken.IsZero() && now.Sub(s.Taken) <= snapshotMaxAge
+}
+
+// empty это снимок, которого нет: ни момента снятия, ни бакетов. Отсутствие
+// файла readSnapshot отдаёт именно так, ошибкой оно не считается.
+func (s snapshot) empty() bool { return s.Taken.IsZero() && len(s.Buckets) == 0 }
+
+// ageWarn говорит, что не так с самим снимком. Молчать тут нельзя: корректор
+// без снимка выключен целиком, а вердикт выглядит совершенно штатным, и то,
+// что модель выбрана без оглядки на остаток лимитов, ниоткуда не видно.
+func (s snapshot) ageWarn(path string, now time.Time) string {
+	switch age := now.Sub(s.Taken); {
+	case s.empty():
+		return fmt.Sprintf("снимка квоты нет (%s), вердикт идёт без корректора; снять: agentctl quota refresh", path)
+	case s.Taken.IsZero():
+		return "в снимке квоты нет момента снятия, возраст неизвестен, вверх корректор не двинет; переснять: agentctl quota refresh"
+	case age > snapshotMaxAge:
+		return fmt.Sprintf("снимок квоты снят %s назад при пороге %s, вверх корректор не двинет; переснять: agentctl quota refresh",
+			humanAge(age), humanAge(snapshotMaxAge))
+	}
+	return ""
 }
 
 // pace это отношение остатка к доле окна, которая осталась до сброса. Больше
@@ -354,7 +381,7 @@ func cmdQuota(path string, now time.Time) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	if s.Taken.IsZero() && len(s.Buckets) == 0 {
+	if s.empty() {
 		fmt.Fprintf(&b, "снимка нет: %s\nвердикты pick идут без корректора, снимок пишется руками с панели /usage либо командой agentctl quota refresh", path)
 		return b.String(), nil
 	}
@@ -364,6 +391,9 @@ func cmdQuota(path string, now time.Time) (string, error) {
 		b.WriteString("снят: момента снятия в файле нет, вверх корректор не двинет\n")
 	case age < 0:
 		fmt.Fprintf(&b, "снят %s, это позже текущего времени: часы разошлись\n", s.Taken.Format(quotaTimeLayout))
+	case age > snapshotMaxAge:
+		fmt.Fprintf(&b, "снят %s, возраст %s при пороге %s: протух, вверх корректор не двинет\n",
+			s.Taken.Format(quotaTimeLayout), humanAge(age), humanAge(snapshotMaxAge))
 	default:
 		fmt.Fprintf(&b, "снят %s, возраст %s\n", s.Taken.Format(quotaTimeLayout), humanAge(age))
 	}
@@ -374,7 +404,7 @@ func cmdQuota(path string, now time.Time) (string, error) {
 		case !spentByTier(bk.Name):
 			note = " (лестницу трат не задаёт, панель его больше не показывает)"
 		case status == statusSurplus && !s.fresh(now):
-			note = " (снимок старше суток, вверх не двигает)"
+			note = " (снимок протух, вверх не двигает)"
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",
 			bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout), bk.pace(now), status, note)

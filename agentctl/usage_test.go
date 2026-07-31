@@ -369,3 +369,31 @@ func TestParseResetYearRollover(t *testing.T) {
 		t.Fatalf("сброс %v, жду %v", got, want)
 	}
 }
+
+// TestCmdQuotaRefreshIfStale: на этом режиме стоит хук старта сессии, и он
+// зовётся на каждой сессии. Свежий снимок он трогать не должен, иначе клиент в
+// tmux поднимался бы по десятку раз в день впустую.
+func TestCmdQuotaRefreshIfStale(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".devkit", "quota.local")
+	fresh := snapOf(freshAge, bucketAt("week_all", 40, halfWindow))
+	if err := writeSnapshot(path, fresh); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdQuotaRefresh(path, testNow, true)
+	if err != nil {
+		t.Fatalf("свежий снимок не должен ронять refresh: %v", err)
+	}
+	if !strings.Contains(out, "панель не снимаем") {
+		t.Fatalf("на свежем снимке refresh полез за панелью: %q", out)
+	}
+	// Порог живёт в agentctl, а не в хуке: за порогом тот же вызов уходит
+	// снимать панель и упирается уже в окружение (tmux, claude), а не в возраст.
+	stale := snapOf(snapshotMaxAge+time.Minute, bucketAt("week_all", 40, halfWindow))
+	if err := writeSnapshot(path, stale); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdQuotaRefresh(path, testNow, true)
+	if err == nil && strings.Contains(out, "панель не снимаем") {
+		t.Fatalf("протухший снимок не пошёл на съём панели: %q", out)
+	}
+}

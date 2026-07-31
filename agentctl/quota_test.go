@@ -26,6 +26,13 @@ func snapOf(age time.Duration, buckets ...bucket) snapshot {
 
 const halfWindow = quotaWindow / 2
 
+// Возрасты снимка по обе стороны порога свежести: от них зависит только сдвиг
+// вверх, поэтому таблицы корректора берут их отсюда, а не пишут числа руками.
+const (
+	freshAge = snapshotMaxAge / 2
+	staleAge = snapshotMaxAge * 2
+)
+
 func TestReadSnapshot(t *testing.T) {
 	// Снимок пишется и руками, и по панели, а панель у разных версий клиента
 	// своя: оба набора бакетов обязаны читаться без предупреждений.
@@ -189,45 +196,45 @@ func TestCorrectModel(t *testing.T) {
 		note  string
 	}{
 		{"дефицит общего бакета снимает opus на ярус вниз", "opus", false,
-			snapOf(time.Hour, deficitAll, normalFable), "sonnet", "дефицит week_all"},
+			snapOf(freshAge, deficitAll, normalFable), "sonnet", "дефицит week_all"},
 		{"своего бакета у opus больше нет, дефицит fable его не трогает", "opus", false,
-			snapOf(time.Hour, normalAll, deficitFable), "opus", ""},
+			snapOf(freshAge, normalAll, deficitFable), "opus", ""},
 		{"sonnet при дефиците уходит на haiku", "sonnet", false,
-			snapOf(time.Hour, deficitAll), "haiku", "дефицит week_all"},
+			snapOf(freshAge, deficitAll), "haiku", "дефицит week_all"},
 		{"ниже haiku двигать некуда", "haiku", false,
-			snapOf(time.Hour, deficitAll), "haiku", "дефицит week_all"},
+			snapOf(freshAge, deficitAll), "haiku", "дефицит week_all"},
 		{"fable при дефиците своего бакета уходит на opus", "fable", false,
-			snapOf(time.Hour, normalAll, deficitFable), "opus", "дефицит week_fable"},
+			snapOf(freshAge, normalAll, deficitFable), "opus", "дефицит week_fable"},
 		{"fable снимает вниз и дефицит общего бакета", "fable", false,
-			snapOf(time.Hour, deficitAll, normalFable), "opus", "дефицит week_all"},
+			snapOf(freshAge, deficitAll, normalFable), "opus", "дефицит week_all"},
 		{"профицит обоих бакетов поднимает opus", "opus", false,
-			snapOf(time.Hour, surplusAll, surplusFable), "fable", "профицит week_all, week_fable"},
+			snapOf(freshAge, surplusAll, surplusFable), "fable", "профицит week_all, week_fable"},
 		{"одного профицита week_fable для подъёма мало", "opus", false,
-			snapOf(time.Hour, normalAll, surplusFable), "opus", ""},
+			snapOf(freshAge, normalAll, surplusFable), "opus", ""},
 		{"общий бакет у границы дефицита подъём не пускает", "opus", false,
-			snapOf(time.Hour, bucketAt("week_all", 74, halfWindow), surplusFable), "opus", ""},
+			snapOf(freshAge, bucketAt("week_all", 74, halfWindow), surplusFable), "opus", ""},
 		{"haiku поднимает профицит общего бакета", "haiku", false,
-			snapOf(time.Hour, surplusAll), "sonnet", "профицит week_all"},
+			snapOf(freshAge, surplusAll), "sonnet", "профицит week_all"},
 		{"sonnet поднимает тот же общий бакет", "sonnet", false,
-			snapOf(time.Hour, surplusAll, normalFable), "opus", "профицит week_all"},
+			snapOf(freshAge, surplusAll, normalFable), "opus", "профицит week_all"},
 		{"профицита общего бакета для opus мало", "opus", false,
-			snapOf(time.Hour, surplusAll, normalFable), "opus", ""},
+			snapOf(freshAge, surplusAll, normalFable), "opus", ""},
 		{"выше fable ярусов нет", "fable", false,
-			snapOf(time.Hour, surplusAll, surplusFable), "fable", ""},
+			snapOf(freshAge, surplusAll, surplusFable), "fable", ""},
 		{"дефицит валиден и по старому снимку", "opus", false,
-			snapOf(3*24*time.Hour, deficitAll, normalFable), "sonnet", "дефицит week_all"},
+			snapOf(staleAge, deficitAll, normalFable), "sonnet", "дефицит week_all"},
 		{"профицит по старому снимку не поднимает", "sonnet", false,
-			snapOf(3*24*time.Hour, surplusAll, normalFable), "sonnet", ""},
+			snapOf(staleAge, surplusAll, normalFable), "sonnet", ""},
 		{"снимок без момента снятия вверх не двигает", "sonnet", false,
 			snapshot{Buckets: []bucket{surplusAll, normalFable}}, "sonnet", ""},
 		{"дефицит сильнее профицита", "fable", false,
-			snapOf(time.Hour, deficitAll, surplusFable), "opus", "дефицит week_all"},
+			snapOf(freshAge, deficitAll, surplusFable), "opus", "дефицит week_all"},
 		{"грумминговый вердикт не корректируется", "opus", true,
-			snapOf(time.Hour, deficitAll, deficitFable), "opus", ""},
+			snapOf(freshAge, deficitAll, deficitFable), "opus", ""},
 		{"протухший бакет не двигает", "opus", false,
-			snapOf(time.Hour, normalAll, expiredFable), "opus", ""},
+			snapOf(freshAge, normalAll, expiredFable), "opus", ""},
 		{"старый бакет opus лестницу трат больше не задаёт", "opus", false,
-			snapOf(time.Hour, normalAll, deficitOpus), "opus", ""},
+			snapOf(freshAge, normalAll, deficitOpus), "opus", ""},
 		{"пустой снимок оставляет вердикт как есть", "opus", false,
 			snapshot{}, "opus", ""},
 	}
@@ -247,7 +254,7 @@ func TestCorrectModel(t *testing.T) {
 func TestCorrectModelBottomWarning(t *testing.T) {
 	// На дне лестницы причина остаётся, а сдвига нет: предупреждение честнее
 	// молчания, дешевле haiku исполнителя всё равно нет.
-	c := correctModel("haiku", false, snapOf(time.Hour, bucketAt("week_all", 95, halfWindow)), testNow)
+	c := correctModel("haiku", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow)), testNow)
 	if c.shifted() {
 		t.Fatalf("сдвиг ниже haiku: %+v", c)
 	}
@@ -257,7 +264,7 @@ func TestCorrectModelBottomWarning(t *testing.T) {
 }
 
 func TestCorrectionTail(t *testing.T) {
-	c := correctModel("opus", false, snapOf(time.Hour, bucketAt("week_all", 95, halfWindow),
+	c := correctModel("opus", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow),
 		bucketAt("week_fable", 50, halfWindow)), testNow)
 	if got := c.tail(); got != "корректор: дефицит week_all, opus -> sonnet" {
 		t.Fatalf("хвост %q", got)
@@ -345,7 +352,7 @@ func TestCmdQuota(t *testing.T) {
 	})
 
 	t.Run("протухший профицит помечен", func(t *testing.T) {
-		content := "taken = " + at(testNow.Add(-3*24*time.Hour)) + "\n" +
+		content := "taken = " + at(testNow.Add(-staleAge)) + "\n" +
 			"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -354,10 +361,69 @@ func TestCmdQuota(t *testing.T) {
 		if err != nil {
 			t.Fatalf("quota: %v", err)
 		}
-		if !strings.Contains(out, "профицит (снимок старше суток") {
-			t.Fatalf("непомеченный профицит по старому снимку:\n%s", out)
+		if !strings.Contains(out, "профицит (снимок протух, вверх не двигает)") {
+			t.Fatalf("непомеченный профицит по протухшему снимку:\n%s", out)
+		}
+		if !strings.Contains(out, "протух, вверх корректор не двинет") {
+			t.Fatalf("возраст снимка напечатан без слова про протухание:\n%s", out)
 		}
 	})
+}
+
+func TestSnapshotFresh(t *testing.T) {
+	// Порог свежести решает только судьбу сдвига вверх, поэтому проверяется с
+	// обеих сторон: ровно на пороге снимок ещё рабочий, минутой позже уже нет.
+	cases := []struct {
+		name string
+		s    snapshot
+		want bool
+	}{
+		{"ровно на пороге", snapOf(snapshotMaxAge), true},
+		{"минутой позже порога", snapOf(snapshotMaxAge + time.Minute), false},
+		{"только что снятый", snapOf(0), true},
+		{"без момента снятия", snapshot{Buckets: []bucket{bucketAt("week_all", 5, halfWindow)}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.s.fresh(testNow); got != c.want {
+				t.Fatalf("fresh = %v, жду %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestSnapshotAgeWarn(t *testing.T) {
+	// Три немых случая, из-за которых корректор молча выключался: файла нет,
+	// момента снятия нет, снимок протух. Рабочий снимок предупреждения не
+	// получает, иначе строка вердикта зарастает шумом.
+	cases := []struct {
+		name string
+		s    snapshot
+		part string
+	}{
+		{"снимка нет вовсе", snapshot{}, "снимка квоты нет"},
+		{"снимок без момента снятия", snapshot{Buckets: []bucket{bucketAt("week_all", 5, halfWindow)}}, "нет момента снятия"},
+		{"снимок протух", snapOf(snapshotMaxAge+time.Minute, bucketAt("week_all", 5, halfWindow)), "снимок квоты снят"},
+		{"снимок рабочий", snapOf(freshAge, bucketAt("week_all", 5, halfWindow)), ""},
+		{"снимок ровно на пороге", snapOf(snapshotMaxAge, bucketAt("week_all", 5, halfWindow)), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.s.ageWarn("/tmp/quota.local", testNow)
+			if c.part == "" {
+				if got != "" {
+					t.Fatalf("рабочий снимок дал предупреждение %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, c.part) {
+				t.Fatalf("предупреждение %q без %q", got, c.part)
+			}
+			if !strings.Contains(got, "agentctl quota refresh") {
+				t.Fatalf("предупреждение %q без команды, которой снимок чинится", got)
+			}
+		})
+	}
 }
 
 func TestWriteSnapshotRoundTrip(t *testing.T) {

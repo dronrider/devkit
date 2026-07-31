@@ -265,8 +265,17 @@ func tmuxRun(args ...string) (string, error) {
 
 // cmdQuotaRefresh снимает панель /usage и пишет снимок. Отказ честный: нет
 // tmux, нет claude, панель не узналась, значит файл не тронут и pick живёт по
-// прежнему снимку либо без корректора.
-func cmdQuotaRefresh(path string, now time.Time) (string, error) {
+// прежнему снимку либо без корректора. Флаг ifStale это режим для хука старта
+// сессии: снимать панель на каждой сессии незачем, а порог свежести остаётся
+// здесь же, второй копии в хуке нет.
+func cmdQuotaRefresh(path string, now time.Time, ifStale bool) (string, error) {
+	if ifStale {
+		s, err := readSnapshot(path)
+		if err == nil && !s.empty() && s.fresh(now) {
+			return fmt.Sprintf("снимок свежий (возраст %s при пороге %s), панель не снимаем",
+				humanAge(now.Sub(s.Taken)), humanAge(snapshotMaxAge)), nil
+		}
+	}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return "", fmt.Errorf("tmux в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}

@@ -441,7 +441,7 @@ func writeQuota(t *testing.T, path string, allPct, fablePct int, left time.Durat
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	content := "taken = " + at(testNow.Add(-time.Hour)) + "\n" +
+	content := "taken = " + at(testNow.Add(-freshAge)) + "\n" +
 		"week_all = " + strconv.Itoa(allPct) + "% сброс " + at(testNow.Add(left)) + "\n" +
 		"week_fable = " + strconv.Itoa(fablePct) + "% сброс " + at(testNow.Add(left)) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -619,16 +619,76 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
-	t.Run("без снимка вердикт прежний", func(t *testing.T) {
+	t.Run("без снимка вердикт прежний, но молчания нет", func(t *testing.T) {
 		if err := os.Remove(quota); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-002", false, roleExec)
+		// T-006 берётся ради чистоты: у T-002 выше по тесту уже лежит
+		// override-строка, а при override корректор до снимка не доходит.
+		out, err := cmdPick(root, "T-006", false, roleExec)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
-		if !strings.HasPrefix(out, "model: opus\neffort: medium\n") || strings.Contains(out, "корректор") {
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\n") || strings.Contains(out, "корректор:") {
 			t.Fatalf("отсутствие снимка изменило вердикт: %q", out)
+		}
+		// Выключенный корректор обязан быть виден: без этой строки вердикт без
+		// снимка неотличим от вердикта, который снимок посмотрел и сдвигать не
+		// стал, и про то, что квота не читается, никто не узнает.
+		if !strings.Contains(out, "снимка квоты нет") {
+			t.Fatalf("отсутствие снимка прошло молча: %q", out)
+		}
+		if !strings.Contains(out, "agentctl quota refresh") {
+			t.Fatalf("в предупреждении нет команды, которой снимок заводится: %q", out)
+		}
+	})
+
+	t.Run("протухший снимок предупреждает и вверх не двигает", func(t *testing.T) {
+		// Профицит по возрасту как раз за порогом: сдвиг вверх пропадает, и
+		// сказать об этом надо, иначе вердикт выглядит обычным дефолтом.
+		content := "taken = " + at(testNow.Add(-snapshotMaxAge-time.Minute)) + "\n" +
+			"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
+		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-005", false, roleExec)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet") || strings.Contains(out, "корректор:") {
+			t.Fatalf("протухший снимок поднял вердикт: %q", out)
+		}
+		if !strings.Contains(out, "снимок квоты снят") || !strings.Contains(out, "переснять") {
+			t.Fatalf("протухший снимок прошёл молча: %q", out)
+		}
+	})
+
+	t.Run("свежий снимок предупреждения не печатает", func(t *testing.T) {
+		content := "taken = " + at(testNow.Add(-time.Minute)) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-006", false, roleExec)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if strings.Contains(out, "снимок квоты") || strings.Contains(out, "снимка квоты") {
+			t.Fatalf("рабочий снимок занял место в выводе: %q", out)
+		}
+	})
+
+	t.Run("снимок без момента снятия предупреждает про возраст", func(t *testing.T) {
+		content := "week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
+		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-005", false, roleExec)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.Contains(out, "нет момента снятия") {
+			t.Fatalf("снимок без taken прошёл молча: %q", out)
 		}
 	})
 }

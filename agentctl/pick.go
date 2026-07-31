@@ -219,9 +219,12 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 		v = verdict{Model: ov.Model, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
 	} else {
 		var s snapshot
-		s, err = readSnapshot(quotaPath())
+		path := quotaPath()
+		s, err = readSnapshot(path)
 		if err != nil {
 			warns = append(warns, fmt.Sprintf("снимок квоты не прочитан (%v), вердикт без корректора", err))
+		} else if w := s.ageWarn(path, now); w != "" {
+			warns = append(warns, w)
 		}
 		warns = append(warns, s.Warns...)
 		c = correctModel(v.Model, v.Groom, s, now)

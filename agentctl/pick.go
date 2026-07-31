@@ -246,7 +246,12 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	if tail := c.tail(); tail != "" {
 		v.Reason += "; " + tail
 	}
+	// Совет отложить адресован тому, кто решает, браться ли за работу сейчас,
+	// поэтому в вердикте ревьювера его нет: дифф к этому моменту уже написан,
+	// откладывать нечего, а исполнительский вердикт по той же задаче совет и
+	// так печатает.
 	switch {
+	case role == roleReview:
 	case c.Down && strings.EqualFold(r.Type, "LLD"):
 		v.Reason += "; дизайн слабой моделью это долгий ущерб, а сброс близко, так что если не горит, лучше отложить"
 	case c.Down && costAtLeastM(r.Cost):

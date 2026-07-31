@@ -772,6 +772,32 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatalf("ревьювер уехал ниже пола: %q", out)
 		}
 	})
+
+	// Совет отложить работу разбирается отдельно от модели: он живёт в тексте
+	// причины, и сверка одной первой строки его пропускала.
+	t.Run("ревьюверу не советуют отложить сделанную работу", func(t *testing.T) {
+		writeQuota(t, filepath.Join(os.Getenv("HOME"), ".devkit", quotaFileName), 95, 50, halfWindow)
+		for _, id := range []string{"T-002", "T-006", "T-003"} {
+			out, err := cmdPick(root, id, false, roleReview)
+			if err != nil {
+				t.Fatalf("pick %s --role review: %v", id, err)
+			}
+			if strings.Contains(out, "отложить") {
+				t.Fatalf("в вердикте ревьювера %s остался совет отложить: %q", id, out)
+			}
+			// Хвост корректора при этом на месте: сдвиг объяснять всё равно надо.
+			if !strings.Contains(out, "корректор: дефицит week_all") {
+				t.Fatalf("вместе с советом ушёл и хвост корректора для %s: %q", id, out)
+			}
+			exec, err := cmdPick(root, id, false, roleExec)
+			if err != nil {
+				t.Fatalf("pick %s: %v", id, err)
+			}
+			if !strings.Contains(exec, "отложить") {
+				t.Fatalf("исполнительский вердикт %s потерял совет отложить: %q", id, exec)
+			}
+		}
+	})
 }
 
 func TestCmdPickMissing(t *testing.T) {

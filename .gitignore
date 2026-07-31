@@ -9,3 +9,5 @@ shipctl/shipctl
 .devkit/*.local
 # Журнал запусков инструментов devkit, живёт только на машине.
 .devkit/log
+# Кеш python: юниты уведомителя грузят hooks/notify.py как модуль.
+__pycache__/

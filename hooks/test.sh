@@ -193,6 +193,99 @@ mkdir -p "$nohome"
 HOME="$nohome" PATH="$qsys" sh "$here/quota-refresh.sh" || fail "хук без инструментов вернул не 0"
 [ -d "$nohome/.devkit" ] && fail "хук без инструментов насорил в HOME"
 
+# notify.py: уведомитель сессии. Разбор события, выбор бэкенда и окно
+# троттлинга держат юниты, тут прогон целиком: временный HOME, стаб вместо
+# osascript, каждый повод, повтор в окне, посторонние события и пустая машина.
+python3 "$here/notify_test.py" >/dev/null 2>&1 || fail "юниты уведомителя не прошли"
+
+nhome="$tmp/nhome"
+mkdir -p "$nhome"
+nmark="$tmp/notify.mark"
+nstub="$tmp/notify-stub"
+cat > "$nstub" <<EOF
+#!/bin/sh
+printf '%s|%s\n' "\$1" "\$2" >> "$nmark"
+EOF
+chmod +x "$nstub"
+# Своя системная часть PATH: проверка «слать нечем» иначе держалась бы на том,
+# есть ли на этой машине osascript или notify-send.
+nsys="$tmp/nsys"
+mkdir -p "$nsys"
+for t in sh python3; do
+    p=$(command -v "$t") && ln -sf "$p" "$nsys/$t"
+done
+nlog="$nhome/.devkit/notify.log"
+notify_hook() { # событие на stdin, стаб вместо бэкенда
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --hook claude-code
+}
+event() { # тип события, повод, сессия
+    printf '{"hook_event_name":"%s","notification_type":"%s","session_id":"%s",' "$1" "$2" "$3"
+    printf '"cwd":"/p/devkit-dk-034","message":"текст повода","agent_type":"exec-low",'
+    printf '"last_assistant_message":"первая строка\\nвторая"}'
+}
+
+# Каждый согласованный повод доходит до бэкенда, и в заголовке видно, какая сессия.
+for reason in permission_prompt agent_needs_input elicitation_dialog idle_prompt; do
+    : > "$nmark"
+    event Notification "$reason" "sess-$reason" | notify_hook || fail "хук уведомителя вернул не 0 на $reason"
+    grep -q '^devkit-dk-034: ' "$nmark" || fail "повод $reason не дошёл до бэкенда: $(cat "$nmark")"
+done
+: > "$nmark"
+event SubagentStop "" sess-sub | notify_hook || fail "хук уведомителя вернул не 0 на субагенте"
+grep -q 'субагент отработал|exec-low: первая строка' "$nmark" || fail "субагент не дошёл до бэкенда: $(cat "$nmark")"
+
+# Повтор того же повода той же сессии в окне молчит, а соседняя сессия нет.
+: > "$nmark"
+event Notification idle_prompt sess-window | notify_hook
+event Notification idle_prompt sess-window | notify_hook
+[ "$(wc -l < "$nmark")" -eq 1 ] || fail "повтор повода в окне ушёл вторым баннером: $(cat "$nmark")"
+grep -q 'пропуск: повтор в окне' "$nlog" || fail "пропуск по окну не попал в журнал"
+event Notification idle_prompt sess-other | notify_hook
+[ "$(wc -l < "$nmark")" -eq 2 ] || fail "соседняя сессия заглушена чужим окном"
+
+# Посторонние события и молчаливые поводы не шлют ничего.
+: > "$nmark"
+event Notification auth_success sess-quiet | notify_hook || fail "хук вернул не 0 на молчаливом поводе"
+event Stop "" sess-quiet | notify_hook || fail "хук вернул не 0 на постороннем событии"
+printf 'не json' | notify_hook || fail "хук вернул не 0 на мусоре вместо события"
+[ -s "$nmark" ] && fail "уведомление ушло на том, на чём слать не должны: $(cat "$nmark")"
+
+# Слать нечем: код 0, отказ в журнале и запасной путь через сам терминал.
+: > "$nmark"
+out=$(HOME="$nhome" PATH="$nsys" python3 "$here/notify.py" --hook claude-code <<EOF
+{"hook_event_name":"Notification","notification_type":"idle_prompt","session_id":"sess-none","cwd":"/p/devkit-dk-034","message":"текст"}
+EOF
+) || fail "хук без бэкенда вернул не 0"
+grep -q 'бэкенда нет' "$nlog" || fail "отказ бэкенда не попал в журнал"
+echo "$out" | grep -q 'terminalSequence' || fail "без бэкенда нет запасного пути через терминал: $out"
+
+# Журнал пишет сессию, повод и код возврата: жалоба «не приходят» разбирается по нему.
+grep -q 'сессия sess-win повод idle_prompt бэкенд .*код возврата: 0' "$nlog" ||
+    fail "в журнале нет строки отправки: $(cat "$nlog")"
+
+# Выключатель гасит уведомитель целиком, в том числе аргументный режим.
+: > "$nmark"
+event Notification idle_prompt sess-off |
+    HOME="$nhome" DEVKIT_NOTIFY_OFF=1 DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --hook claude-code ||
+    fail "выключенный хук вернул не 0"
+HOME="$nhome" DEVKIT_NOTIFY_OFF=1 DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" "заголовок" "тело" ||
+    fail "выключенный уведомитель вернул не 0"
+[ -s "$nmark" ] && fail "выключатель не сработал: $(cat "$nmark")"
+
+# Аргументный режим: зовётся не только хуком, поэтому заголовок и тело идут прямо.
+: > "$nmark"
+HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" "выкат" "прод обновлён" ||
+    fail "аргументный режим вернул не 0"
+grep -q '^выкат|прод обновлён$' "$nmark" || fail "аргументный режим не дошёл до бэкенда: $(cat "$nmark")"
+
+# Самопроверка говорит, чем именно послано, и краснеет, когда слать нечем.
+out=$(HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --self-test) ||
+    fail "самопроверка со стабом вернула не 0"
+echo "$out" | grep -q "послано через $nstub" || fail "самопроверка молчит про бэкенд: $out"
+out=$(HOME="$nhome" PATH="$nsys" python3 "$here/notify.py" --self-test)
+[ $? -eq 1 ] || fail "самопроверка без бэкенда вернула 0"
+echo "$out" | grep -q 'бэкенда уведомлений нет' || fail "самопроверка молчит про отсутствие бэкенда: $out"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

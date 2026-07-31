@@ -41,9 +41,12 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
   раскладывает их `devkitctl doctor --fix` в `~/.claude/agents/`.
 - `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
   старом коде, см. [regcheck/README.md](regcheck/README.md).
-- `hooks/` - проверки текстов: запрещённые символы, индекс памяти,
-  чувствительное в доске; git-хуки `pre-commit` и `commit-msg` плюс
-  PostToolUse-хуки Claude Code, см. [hooks/README.md](hooks/README.md).
+- `hooks/` - хуки харнеса и git. Проверки текстов (запрещённые символы, индекс
+  памяти, чувствительное в доске) стоят двумя рубежами: `pre-commit` и
+  `commit-msg` в git, PostToolUse в Claude Code. Рядом работа, привязанная к
+  событиям сессии: `notify.py` уведомляет, что сессия ждёт действия или что
+  субагент отработал, `quota-refresh.sh` освежает снимок квоты на старте
+  сессии, см. [hooks/README.md](hooks/README.md).
 - `devkitctl/` - подключение проекта и диагностика обвязки (new/doctor),
   см. [devkitctl/README.md](devkitctl/README.md).
 - `templates/CLAUDE.project.md` - заготовка проектного `CLAUDE.md`: импорт

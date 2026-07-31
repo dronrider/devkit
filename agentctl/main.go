@@ -10,10 +10,12 @@ import (
 const usageText = `agentctl: выбор исполнителя под задачу по метаданным доски (RULES.board.md)
 
   pick <ID> [--record]    вердикт, каким исполнителем закрывать задачу: две
-                          машинные строки model: haiku|sonnet|opus|fable и
-                          effort: low|medium|high|xhigh|max, третья строка
+       [--role exec|      машинные строки model: haiku|sonnet|opus|fable и
+        review]           effort: low|medium|high|xhigh|max, третья строка
                           задачи и причина; --record дописывает строку
-                          исполнения в раздел «Ход работы» файла задачи
+                          исполнения в раздел «Ход работы» файла задачи,
+                          --role review отдаёт вердикт для агента-ревьювера
+                          (модель на ярус ниже исполнителя, пол sonnet)
   quota [refresh]         снимок остатка лимитов: без аргумента печатает
                           разобранный ~/.devkit/quota.local (бакеты, возраст,
                           pace, статус), refresh снимает панель /usage через
@@ -25,9 +27,9 @@ const usageText = `agentctl: выбор исполнителя под задач
 
 Свою модель сессия сменить не может, этот рычаг у пользователя, поэтому
 вердикт применяется делегированием: сессия-диспетчер спавнит субагента с
-моделью из вердикта, а effort приходит из определения агента-исполнителя
-(devkit/agents). Правила маппинга (тип, цена, неопределённость из
-разбивки ранга) описаны в agentctl/README.md.
+моделью из вердикта, а effort приходит из определения агента (devkit/agents,
+exec-* для исполнения и review-* для ревью). Правила маппинга (тип, цена,
+неопределённость из разбивки ранга) описаны в agentctl/README.md.
 Общий флаг -C <dir>: откуда искать корень (директорию с docs/TASKS.md),
 ставится и перед командой, и после неё.
 `
@@ -97,12 +99,13 @@ func main() {
 		fs := flag.NewFlagSet("pick", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
+		role := fs.String("role", roleExec, "роль субагента: exec или review")
 		fs.Parse(args[2:])
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
 		}
-		msg, err = cmdPick(root, args[1], *record)
+		msg, err = cmdPick(root, args[1], *record, *role)
 	case "quota":
 		// Корень с доской команде не нужен: снимок лежит на уровне машины,
 		// а не проекта.

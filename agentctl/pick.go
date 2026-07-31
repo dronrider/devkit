@@ -39,6 +39,47 @@ func pickModel(r row) verdict {
 	}
 }
 
+// Роли, под которые считается вердикт. Исполнитель пишет код, ревьювер читает
+// готовый дифф, и калибр им нужен разный.
+const (
+	roleExec   = "exec"
+	roleReview = "review"
+)
+
+var validRoles = map[string]bool{roleExec: true, roleReview: true}
+
+// reviewShift переводит исполнительский вердикт в ревьюверский. Ревьюверу
+// нужен не калибр автора, а внимательность на готовом диффе, поэтому модель
+// опускается на ярус, но не ниже sonnet: haiku дифф читает бегло и замечаний
+// не находит, а запросы sonnet стоят копейки. Два случая спуска не знают.
+// Дизайн (тип LLD) читается тем же калибром, каким пишется, спуск тут не
+// экономия, а потеря. Грумминговый вердикт значит, что работы ещё не было, и
+// ревьюить нечего. Effort роль не трогает: глубина размышления идёт за
+// неопределённостью задачи, а она от роли не меняется.
+func reviewShift(v *verdict, r row) {
+	switch {
+	case v.Groom:
+		v.Reason += "; роль ревью: вердикт грумминговый, работа по нему не начиналась, ревьюить пока нечего"
+		return
+	case strings.EqualFold(r.Type, "LLD"):
+		v.Reason += "; роль ревью: дизайн читается тем же калибром, каким пишется, спуска нет"
+		return
+	}
+	i := tierIndex(v.Model)
+	switch {
+	case i < 0:
+		return
+	case v.Model == "sonnet":
+		v.Reason += "; роль ревью: sonnet это пол ревьювера, ниже не опускаем"
+	case i == 0:
+		v.Reason += "; роль ревью: haiku -> sonnet, дифф надо читать внимательно, ниже sonnet ревью не опускаем"
+		v.Model = "sonnet"
+	default:
+		v.Reason += fmt.Sprintf("; роль ревью: %s -> %s, ревьюверу нужен не калибр автора, а внимательность на диффе", v.Model, tiers[i-1])
+		v.Model = tiers[i-1]
+	}
+}
+
 // costAtLeastM отделяет цены, на которых сдвиг вниз стоит проговаривать
 // отдельно от LLD: M, L и XL по DK-015 достойны opus не меньше дизайна, S
 // дешёвая модель тянет и без всякого сдвига.
@@ -150,7 +191,10 @@ func overrideValue(line, prefix string) string {
 // корректора и дата записи считаются от одного момента.
 var timeNow = time.Now
 
-func cmdPick(root, id string, record bool) (string, error) {
+func cmdPick(root, id string, record bool, role string) (string, error) {
+	if !validRoles[role] {
+		return "", fmt.Errorf("неизвестная роль %q, допустимы exec и review", role)
+	}
 	rows, err := loadRows(root)
 	if err != nil {
 		return "", err
@@ -183,6 +227,12 @@ func cmdPick(root, id string, record bool) (string, error) {
 		c = correctModel(v.Model, v.Groom, s, now)
 		v.Model = c.Model
 	}
+	// Спуск на роль ревью идёт последним по модельной оси: сдвигается то, что
+	// осталось после override и корректора, иначе корректор увёл бы вердикт
+	// ревьювера ещё на ярус ниже пола.
+	if role == roleReview {
+		reviewShift(&v, *r)
+	}
 	// Пол sonnet применяется здесь, а не сразу после pickEffort, потому что от
 	// override модели и от сдвига корректора зависит, к какой модели его
 	// применять; а явный override effort должен пол перебить целиком, поэтому
@@ -210,7 +260,7 @@ func cmdPick(root, id string, record bool) (string, error) {
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v, c, now); err != nil {
+		if err := recordExecution(root, id, v, c, now, role); err != nil {
 			return "", err
 		}
 	}
@@ -224,8 +274,9 @@ func cmdPick(root, id string, record bool) (string, error) {
 // вердикт пишется словом «Грумминг»: исполнение по нему не начинается, и
 // строка не должна обещать то, чего не было. Сдвинутый вердикт несёт и
 // маппинг, и причину сдвига: иначе по файлу задачи не понять, почему модель
-// разошлась с таблицей.
-func recordExecution(root, id string, v verdict, c correction, now time.Time) error {
+// разошлась с таблицей. Роль ревью пишется словом «Ревью»: по «Ходу работы»
+// тогда видно не только кто исполнял, но и кто читал дифф.
+func recordExecution(root, id string, v verdict, c correction, now time.Time, role string) error {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -236,7 +287,10 @@ func recordExecution(root, id string, v verdict, c correction, now time.Time) er
 	}
 	content := strings.TrimRight(string(data), "\n") + "\n"
 	label := "Исполнение"
-	if v.Groom {
+	switch {
+	case role == roleReview:
+		label = "Ревью"
+	case v.Groom:
 		label = "Грумминг"
 	}
 	shift := ""

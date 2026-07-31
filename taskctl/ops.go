@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -513,6 +514,28 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if err := gitMv(root, taskFile, dst); err != nil {
 			return "", err
 		}
+
+		// Переписать ссылки в самом файле задачи
+		oldBaseDir := filepath.Join(root, "docs", "tasks")
+		newBaseDir := filepath.Join(root, "docs", "tasks", "archive", year)
+		if err := rewriteLinksInFile(dst, oldBaseDir, newBaseDir); err != nil {
+			return "", err
+		}
+
+		// Найти и переписать ссылки на этот файл в других файлах
+		changedFiles, err := findAndRewriteReferencesToFile(root, taskFile, dst)
+		if err != nil {
+			return "", err
+		}
+
+		// Добавить изменённые файлы в индекс
+		if len(changedFiles) > 0 {
+			addCmd := append([]string{"-C", root, "add", "--"}, changedFiles...)
+			if _, err := exec.Command("git", addCmd...).CombinedOutput(); err != nil {
+				// Молча игнорировать ошибку git add (вне репозитория это неприменимо)
+			}
+		}
+
 		moved = fmt.Sprintf("tasks/archive/%s/%s.md", year, p.ID)
 	}
 	linkCell := p.Link
@@ -597,6 +620,150 @@ func gitMv(root, from, to string) error {
 		}
 	}
 	return nil
+}
+
+// fullLinkRe находит markdown-ссылки вида [текст](цель)
+var fullLinkRe = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)\)`)
+
+// rewriteLinksInFile переписывает относительные ссылки в файле при его переносе.
+// Ссылка, которая разрешалась от oldBaseDir, переписывается так, чтобы разрешаться
+// от newBaseDir в один и тот же целевой файл.
+func rewriteLinksInFile(filePath, oldBaseDir, newBaseDir string) error {
+	content, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	result := fullLinkRe.ReplaceAllStringFunc(string(content), func(match string) string {
+		m := fullLinkRe.FindStringSubmatch(match)
+		if len(m) != 3 {
+			return match
+		}
+		text := m[1]
+		target := m[2]
+
+		// Разбить на путь и якорь
+		parts := strings.Split(target, "#")
+		path := parts[0]
+		anchor := ""
+		if len(parts) > 1 {
+			anchor = "#" + parts[1]
+		}
+
+		// Пропустить пустые, внешние и якорные ссылки без пути
+		if path == "" || strings.Contains(path, "://") || strings.HasPrefix(path, "mailto:") {
+			return match
+		}
+
+		// Разрешить старый путь от oldBaseDir
+		oldPath := filepath.Join(oldBaseDir, path)
+		oldPath = filepath.Clean(oldPath)
+
+		// Найти новый путь как относительный от newBaseDir
+		newPath, err := filepath.Rel(newBaseDir, oldPath)
+		if err != nil {
+			return match
+		}
+
+		// Вернуть переписанную ссылку
+		return fmt.Sprintf("[%s](%s%s)", text, newPath, anchor)
+	})
+
+	return ioutil.WriteFile(filePath, []byte(result), 0o644)
+}
+
+// skipDirs это директории, которые пропускаются при поиске файлов
+var skipDirs = map[string]bool{
+	".git": true, "node_modules": true, "vendor": true, "target": true,
+	"local-docs": true, ".venv": true, "venv": true, "__pycache__": true,
+	".idea": true, ".vscode": true,
+}
+
+// findAndRewriteReferencesToFile находит все markdown-файлы со ссылками на
+// oldPath и переписывает их на newPath. Возвращает список изменённых файлов.
+func findAndRewriteReferencesToFile(root, oldPath, newPath string) ([]string, error) {
+	var changed []string
+	oldPath = filepath.Clean(oldPath)
+	newPath = filepath.Clean(newPath)
+
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		// Пропустить директории
+		if info.IsDir() {
+			if skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Обработать только markdown-файлы
+		if !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+
+		content, err := ioutil.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+
+		oldContent := string(content)
+		newContent := oldContent
+		pathChanged := false
+
+		// Найти все ссылки в файле
+		newContent = fullLinkRe.ReplaceAllStringFunc(newContent, func(match string) string {
+			m := fullLinkRe.FindStringSubmatch(match)
+			if len(m) != 3 {
+				return match
+			}
+			text := m[1]
+			target := m[2]
+
+			// Разбить на путь и якорь
+			parts := strings.Split(target, "#")
+			linkPath := parts[0]
+			anchor := ""
+			if len(parts) > 1 {
+				anchor = "#" + parts[1]
+			}
+
+			// Пропустить пустые, внешние и якорные ссылки без пути
+			if linkPath == "" || strings.Contains(linkPath, "://") || strings.HasPrefix(linkPath, "mailto:") {
+				return match
+			}
+
+			// Разрешить ссылку относительно директории файла
+			fileDir := filepath.Dir(path)
+			resolvedPath := filepath.Join(fileDir, linkPath)
+			resolvedPath = filepath.Clean(resolvedPath)
+
+			// Проверить, разрешается ли ссылка в oldPath
+			if resolvedPath != oldPath {
+				return match
+			}
+
+			// Найти новую ссылку как относительный путь от fileDir до newPath
+			newLinkPath, _ := filepath.Rel(fileDir, newPath)
+
+			pathChanged = true
+			return fmt.Sprintf("[%s](%s%s)", text, newLinkPath, anchor)
+		})
+
+		if pathChanged {
+			if err := ioutil.WriteFile(path, []byte(newContent), 0o644); err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			changed = append(changed, rel)
+		}
+
+		return nil
+	})
+
+	return changed, err
 }
 
 func cmdSort(root string, c CommitOpts) (string, error) {

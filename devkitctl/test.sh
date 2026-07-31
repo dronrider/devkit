@@ -90,6 +90,17 @@ out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 [ $? -eq 1 ] || fail "doctor не увидел поломок"
 echo "$out" | grep -q 'импорт' || fail "нет находки про битый импорт"
 echo "$out" | grep -q 'битая ссылка' || fail "нет находки про битую ссылку"
+# Пример ссылки внутри блока кода это не ссылка: документированная команда с
+# [текст](путь) в теле не должна красить доктор.
+printf 'пример:\n\n````\n```\nсмотри [детали](nope.md)\n```\n````\n' > "$proj/docs/note.md"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'битая ссылка' && fail "ссылка в блоке кода принята за настоящую"
+# Отступ в четыре пробела забор уже не открывает (CommonMark), ссылка под ним
+# остаётся настоящей.
+printf 'пример:\n\n    ```\nсмотри [детали](nope.md)\n' > "$proj/docs/note.md"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'битая ссылка' || fail "четыре пробела приняты за забор блока кода"
+printf 'смотри [детали](nope.md)\n' > "$proj/docs/note.md"
 sed -e '/check-memory/d' "$home/.claude/settings.json" > "$home/.claude/settings.json.new" &&
     mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)

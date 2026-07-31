@@ -63,6 +63,7 @@ DEPLOY_TEMPLATE = (
 SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
              ".venv", "venv", "__pycache__", ".idea", ".vscode"}
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
 def run(args, cwd=None):
@@ -90,7 +91,20 @@ def check_links(root):
                 lines = md.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 continue
+            fence = ""
             for i, ln in enumerate(lines, 1):
+                fm = FENCE_RE.match(ln)
+                if fm:
+                    # Закрывает только забор из того же символа и не короче
+                    # открывающего, иначе вложенный ``` оборвал бы внешний ````.
+                    if not fence:
+                        fence = fm.group(1)
+                    elif fm.group(1)[0] == fence[0] and len(fm.group(1)) >= len(fence) \
+                            and not ln[fm.end():].strip():
+                        fence = ""
+                    continue
+                if fence:
+                    continue
                 for m in LINK_RE.finditer(ln):
                     target = m.group(1).split("#")[0]
                     if not target or "://" in target or target.startswith("mailto:"):

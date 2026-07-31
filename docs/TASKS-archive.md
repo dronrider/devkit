@@ -26,4 +26,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-020 | devkitctl doctor закрывает машинный контур, а не только проектный | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-020.md](tasks/archive/2026/DK-020.md), `48f9ffc`, `5c41d36`, `4a75e10`, `3878952`, `03cfb5b`, `7b45cff`, `47e1d80` |
 | DK-023 | выбор модели ревьювера тоже через pick, а не на глаз | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-023.md](tasks/archive/2026/DK-023.md), `9fb6f55`, `8d65628`, `fa177bb`, `0bae361`, `edbadc6`, `27f70cf`, `52400cb` |
 | DK-030 | обоснования из правил в README утилит, в правилах императив | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-030.md](tasks/archive/2026/DK-030.md), `fb7366a`, `990628a`, `78ca896` |
-| DK-019 | agentctl: снимок квоты обновляется сам, отсутствие снимка не молчит | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-019.md](tasks/archive/2026/DK-019.md), `9e02705` |
+| DK-019 | agentctl: снимок квоты обновляется сам, отсутствие снимка не молчит | task | P3 | 2026-07-31 | [tasks/archive/2026/DK-019.md](tasks/archive/2026/DK-019.md), `6c949ce`, `c12cc35`, `9e4b8d9`, `806f25a`, `9e02705` |

@@ -678,6 +678,27 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
+	t.Run("снимок из будущего вверх не двигает и предупреждает", func(t *testing.T) {
+		// Часы разошлись назад, и возраст снимка вышел отрицательным. Такой
+		// снимок молча проходил за свежий, а профицит по нему поднимал вердикт:
+		// «снят только что» тут ничего не значит, снять его могли когда угодно.
+		content := "taken = " + at(testNow.Add(time.Hour)) + "\n" +
+			"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
+		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdPick(root, "T-001", false, roleExec)
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku") || strings.Contains(out, "корректор:") {
+			t.Fatalf("снимок из будущего поднял вердикт: %q", out)
+		}
+		if !strings.Contains(out, "часы разошлись") || !strings.Contains(out, "переснять") {
+			t.Fatalf("снимок из будущего прошёл молча: %q", out)
+		}
+	})
+
 	t.Run("снимок без момента снятия предупреждает про возраст", func(t *testing.T) {
 		content := "week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n"
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {

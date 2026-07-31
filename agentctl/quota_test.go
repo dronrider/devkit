@@ -382,6 +382,7 @@ func TestSnapshotFresh(t *testing.T) {
 		{"минутой позже порога", snapOf(snapshotMaxAge + time.Minute), false},
 		{"только что снятый", snapOf(0), true},
 		{"без момента снятия", snapshot{Buckets: []bucket{bucketAt("week_all", 5, halfWindow)}}, false},
+		{"снят позже текущего времени", snapOf(-time.Hour), false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -404,6 +405,7 @@ func TestSnapshotAgeWarn(t *testing.T) {
 		{"снимка нет вовсе", snapshot{}, "снимка квоты нет"},
 		{"снимок без момента снятия", snapshot{Buckets: []bucket{bucketAt("week_all", 5, halfWindow)}}, "нет момента снятия"},
 		{"снимок протух", snapOf(snapshotMaxAge+time.Minute, bucketAt("week_all", 5, halfWindow)), "снимок квоты снят"},
+		{"снимок из будущего", snapOf(-time.Hour, bucketAt("week_all", 5, halfWindow)), "часы разошлись"},
 		{"снимок рабочий", snapOf(freshAge, bucketAt("week_all", 5, halfWindow)), ""},
 		{"снимок ровно на пороге", snapOf(snapshotMaxAge, bucketAt("week_all", 5, halfWindow)), ""},
 	}

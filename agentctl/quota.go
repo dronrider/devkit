@@ -95,9 +95,14 @@ func (s snapshot) bucket(name string) (bucket, bool) {
 
 // fresh отвечает только за сдвиг вверх. Момента снятия нет, значит возраст
 // неизвестен, и профицит не применяется: неизвестность толкуется в пользу
-// экономии.
+// экономии. Момент снятия позже текущего времени это та же неизвестность:
+// часы разошлись, и «возраст ноль» тут ничего не значит, снимок мог быть снят
+// когда угодно.
 func (s snapshot) fresh(now time.Time) bool {
-	return !s.Taken.IsZero() && now.Sub(s.Taken) <= snapshotMaxAge
+	if s.Taken.IsZero() || s.Taken.After(now) {
+		return false
+	}
+	return now.Sub(s.Taken) <= snapshotMaxAge
 }
 
 // empty это снимок, которого нет: ни момента снятия, ни бакетов. Отсутствие
@@ -113,6 +118,9 @@ func (s snapshot) ageWarn(path string, now time.Time) string {
 		return fmt.Sprintf("снимка квоты нет (%s), вердикт идёт без корректора; снять: agentctl quota refresh", path)
 	case s.Taken.IsZero():
 		return "в снимке квоты нет момента снятия, возраст неизвестен, вверх корректор не двинет; переснять: agentctl quota refresh"
+	case age < 0:
+		return fmt.Sprintf("снимок квоты снят %s, это позже текущего времени: часы разошлись, вверх корректор не двинет; переснять: agentctl quota refresh",
+			s.Taken.Format(quotaTimeLayout))
 	case age > snapshotMaxAge:
 		return fmt.Sprintf("снимок квоты снят %s назад при пороге %s, вверх корректор не двинет; переснять: agentctl quota refresh",
 			humanAge(age), humanAge(snapshotMaxAge))

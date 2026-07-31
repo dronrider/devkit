@@ -10,8 +10,9 @@
       проверить обвязку проекта: импорты CLAUDE.md разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
-      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки и
-      SessionStart-хук освежения квоты, бинари утилит devkit в PATH и не старее
+      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
+      SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
+      которым их слать, бинари утилит devkit в PATH и не старее
       исходников, определения агентов в ~/.claude/agents, tmux и сам снимок
       квоты ~/.devkit/quota.local;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
@@ -26,6 +27,8 @@
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import importlib.util
+import json
 import os
 import re
 import shutil
@@ -37,6 +40,8 @@ from pathlib import Path
 DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 SESSION_HOOK = "quota-refresh.sh"
+NOTIFY_HOOK = "notify.py"
+NOTIFY_EVENTS = ("Notification", "SubagentStop")
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
 QUOTA_FILE = "~/.devkit/quota.local"
@@ -370,6 +375,55 @@ def check_agent_defs(fix):
     return findings, fixed
 
 
+def hook_events(text, script):
+    # События, на которые в настройках повешен скрипт. None значит настройки не
+    # разобрались, и судить остаётся по подстроке.
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        return None
+    found = set()
+    for event, groups in (data.get("hooks") or {}).items():
+        for group in groups or []:
+            for h in (group or {}).get("hooks") or []:
+                if script in (h.get("command") or ""):
+                    found.add(event)
+    return found
+
+
+def check_notify_hook(text, settings):
+    findings = []
+    events = hook_events(text, NOTIFY_HOOK)
+    if events is None:
+        missing = [] if NOTIFY_HOOK in text else list(NOTIFY_EVENTS)
+    else:
+        missing = [e for e in NOTIFY_EVENTS if e not in events]
+    if missing:
+        findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
+                        "разрешения, и не говорит, что субагент отработал (hooks/README.md)"
+                        % (NOTIFY_HOOK, ", ".join(missing), settings))
+    # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
+    src = DEVKIT / "hooks" / NOTIFY_HOOK
+    spec = importlib.util.spec_from_file_location("devkit_notify", src)
+    if not src.exists() or spec is None:
+        return findings
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except (OSError, SyntaxError):
+        return findings
+    if mod.pick_backend():
+        return findings
+    if sys.platform == "darwin":
+        how = "на macOS шлём osascript, а его нет в PATH"
+    elif sys.platform.startswith("linux"):
+        how = "notify-send не в PATH, ставится пакетным менеджером (apt install libnotify-bin)"
+    else:
+        how = "бэкенда под платформу %s в %s пока нет" % (sys.platform, NOTIFY_HOOK)
+    findings.append("уведомлять нечем: %s; проверка канала: python3 %s --self-test" % (how, src))
+    return findings
+
+
 def check_machine(fix):
     # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
     # определения агентов, tmux и снимок квоты.
@@ -383,6 +437,7 @@ def check_machine(fix):
         findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                         "и корректор pick рано или поздно останется с протухшим (hooks/README.md)"
                         % (SESSION_HOOK, settings))
+    findings += check_notify_hook(text, settings)
     for check in (check_binaries, check_agent_defs):
         f, d = check(fix)
         findings += f

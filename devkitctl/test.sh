@@ -32,8 +32,19 @@ cat > "$home/.claude/settings.json" <<'EOF'
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
+]}], "Notification": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "SubagentStop": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
 ]}]}}
 EOF
+
+# Чем слать уведомления, доктор спрашивает у самого уведомителя, а тот смотрит
+# платформу и PATH. Без подставного бэкенда проверка краснела бы на любой машине
+# без osascript или notify-send, поэтому он выставлен на весь прогон; отсутствие
+# бэкенда проверяется отдельным шагом со снятой переменной.
+DEVKIT_NOTIFY_BACKEND="$tmp/notify-stub"
+export DEVKIT_NOTIFY_BACKEND
 
 # Машинный контур подставной: бинари devkit и tmux заглушками в своём PATH,
 # определения агентов и свежий снимок квоты в подставном HOME. Иначе
@@ -113,6 +124,33 @@ sed -e '/quota-refresh/d' "$home/.claude/settings.json" > "$home/.claude/setting
     mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'SessionStart-хук quota-refresh.sh' || fail "нет находки про хук освежения квоты: $out"
+
+# Уведомитель висит на двух событиях сразу, и пропажа любого это находка:
+# без SubagentStop сессия молчит про отработавшего субагента.
+nset="$home/.claude/settings.json"
+cp "$nset" "$tmp/settings.full"
+python3 - "$nset" <<'EOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+del d["hooks"]["SubagentStop"]
+json.dump(d, open(p, "w"))
+EOF
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'notify.py не подключён на события SubagentStop' ||
+    fail "нет находки про неподключённый хук субагента: $out"
+echo "$out" | grep -q 'события Notification' && fail "подключённое событие попало в находку: $out"
+sed -e '/notify.py/d' "$tmp/settings.full" > "$nset"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'notify.py не подключён на события Notification, SubagentStop' ||
+    fail "нет находки про неподключённый уведомитель: $out"
+cp "$tmp/settings.full" "$nset"
+
+# Слать нечем: бэкенда на платформе нет (PATH подставной, переменная снята),
+# и доктор называет это находкой с командой самопроверки.
+out=$( (unset DEVKIT_NOTIFY_BACKEND; HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1) )
+echo "$out" | grep -q 'уведомлять нечем' || fail "нет находки про отсутствие бэкенда уведомлений: $out"
+echo "$out" | grep -q 'notify.py --self-test' || fail "в находке про бэкенд нет команды проверки: $out"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"

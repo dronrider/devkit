@@ -515,14 +515,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			return "", err
 		}
 
-		// Переписать ссылки в самом файле задачи
 		oldBaseDir := filepath.Join(root, "docs", "tasks")
 		newBaseDir := filepath.Join(root, "docs", "tasks", "archive", year)
 		if err := rewriteLinksInFile(dst, oldBaseDir, newBaseDir); err != nil {
 			return "", err
 		}
 
-		// Найти и переписать ссылки на этот файл в других файлах
 		var err2 error
 		changedFiles, err2 = findAndRewriteReferencesToFile(root, taskFile, dst)
 		if err2 != nil {
@@ -586,7 +584,6 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if moved != "" {
 		paths = append(paths, filepath.Join("docs", "tasks", p.ID+".md"), filepath.Join("docs", moved))
 	}
-	// Добавить файлы, где переписаны входящие ссылки на перенесённую задачу
 	paths = append(paths, changedFiles...)
 	tail, err := p.Commit.apply(root, paths)
 	if err != nil {
@@ -620,56 +617,56 @@ func gitMv(root, from, to string) error {
 // fullLinkRe находит markdown-ссылки вида [текст](цель)
 var fullLinkRe = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)\)`)
 
-// rewriteLinksSkippingCodeBlocks применяет функцию fn к ссылкам в тексте,
-// пропуская блоки кода огороженные ``` или ~~~ (с отступом 0-4 пробела)
-func rewriteLinksSkippingCodeBlocks(text string, fn func(match string) string) string {
-	var result strings.Builder
+// fenceRe находит забор блока кода: по CommonMark отступ не больше трёх
+// пробелов, дальше три и больше символов ` или ~ подряд.
+var fenceRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+
+// rewriteLinksSkippingCodeBlocks переписывает ссылки в тексте функцией resolve,
+// которая получает цель ссылки без якоря и возвращает новый путь (пустая строка
+// значит «оставить как было»). Содержимое блоков кода не трогается.
+func rewriteLinksSkippingCodeBlocks(text string, resolve func(path string) string) string {
 	lines := strings.Split(text, "\n")
-	inCodeBlock := false
-	var codeBlockDelim string
-
-	for _, line := range lines {
-		trimmedLine := strings.TrimLeft(line, " ")
-		indent := len(line) - len(trimmedLine)
-
-		// Проверить начало/конец блока кода
-		if indent <= 4 {
-			for _, delim := range []string{"```", "~~~"} {
-				if strings.HasPrefix(trimmedLine, delim) {
-					if !inCodeBlock {
-						// Начало блока кода
-						inCodeBlock = true
-						codeBlockDelim = delim
-					} else if delim == codeBlockDelim && len(trimmedLine) >= len(codeBlockDelim) &&
-						trimmedLine[:len(codeBlockDelim)] == codeBlockDelim {
-						// Проверить что это закрывающий забор (не открывающий с языком)
-						afterDelim := trimmedLine[len(codeBlockDelim):]
-						if afterDelim == "" || strings.TrimSpace(afterDelim) == "" {
-							// Конец блока кода
-							inCodeBlock = false
-							codeBlockDelim = ""
-						}
-					}
-					break
-				}
+	fence := ""
+	for i, line := range lines {
+		if m := fenceRe.FindStringSubmatch(line); m != nil {
+			switch {
+			case fence == "":
+				fence = m[1]
+			// Закрывает только забор из того же символа и не короче
+			// открывающего, иначе вложенный ``` оборвал бы внешний ````.
+			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(line[len(m[0]):]) == "":
+				fence = ""
 			}
+			continue
 		}
-
-		// Обработать ссылки если не в блоке кода
-		if inCodeBlock {
-			result.WriteString(line)
-		} else {
-			result.WriteString(fullLinkRe.ReplaceAllStringFunc(line, fn))
+		if fence == "" {
+			lines[i] = rewriteLinksInLine(line, resolve)
 		}
-		result.WriteString("\n")
 	}
+	return strings.Join(lines, "\n")
+}
 
-	resultStr := result.String()
-	// Убрать лишний перевод строки в конце если его не было
-	if len(text) > 0 && text[len(text)-1] != '\n' && len(resultStr) > 0 && resultStr[len(resultStr)-1] == '\n' {
-		resultStr = resultStr[:len(resultStr)-1]
-	}
-	return resultStr
+// rewriteLinksInLine отделяет у каждой ссылки якорь, отбрасывает пустые,
+// внешние и mailto-цели и собирает ссылку обратно с путём от resolve.
+func rewriteLinksInLine(line string, resolve func(path string) string) string {
+	return fullLinkRe.ReplaceAllStringFunc(line, func(match string) string {
+		m := fullLinkRe.FindStringSubmatch(match)
+		if m == nil {
+			return match
+		}
+		path, anchor, hasAnchor := strings.Cut(m[2], "#")
+		if path == "" || strings.Contains(path, "://") || strings.HasPrefix(path, "mailto:") {
+			return match
+		}
+		newPath := resolve(path)
+		if newPath == "" {
+			return match
+		}
+		if hasAnchor {
+			anchor = "#" + anchor
+		}
+		return fmt.Sprintf("[%s](%s%s)", m[1], newPath, anchor)
+	})
 }
 
 // rewriteLinksInFile переписывает относительные ссылки в файле при его переносе.
@@ -681,39 +678,12 @@ func rewriteLinksInFile(filePath, oldBaseDir, newBaseDir string) error {
 		return err
 	}
 
-	result := rewriteLinksSkippingCodeBlocks(string(content), func(match string) string {
-		m := fullLinkRe.FindStringSubmatch(match)
-		if len(m) != 3 {
-			return match
-		}
-		text := m[1]
-		target := m[2]
-
-		// Разбить на путь и якорь
-		parts := strings.Split(target, "#")
-		path := parts[0]
-		anchor := ""
-		if len(parts) > 1 {
-			anchor = "#" + parts[1]
-		}
-
-		// Пропустить пустые, внешние и якорные ссылки без пути
-		if path == "" || strings.Contains(path, "://") || strings.HasPrefix(path, "mailto:") {
-			return match
-		}
-
-		// Разрешить старый путь от oldBaseDir
-		oldPath := filepath.Join(oldBaseDir, path)
-		oldPath = filepath.Clean(oldPath)
-
-		// Найти новый путь как относительный от newBaseDir
-		newPath, err := filepath.Rel(newBaseDir, oldPath)
+	result := rewriteLinksSkippingCodeBlocks(string(content), func(path string) string {
+		newPath, err := filepath.Rel(newBaseDir, filepath.Join(oldBaseDir, path))
 		if err != nil {
-			return match
+			return ""
 		}
-
-		// Вернуть переписанную ссылку
-		return fmt.Sprintf("[%s](%s%s)", text, newPath, anchor)
+		return newPath
 	})
 
 	return os.WriteFile(filePath, []byte(result), 0o644)
@@ -739,7 +709,6 @@ func findAndRewriteReferencesToFile(root, oldPath, newPath string) ([]string, er
 			return nil
 		}
 
-		// Пропустить директории
 		if info.IsDir() {
 			if skipDirs[info.Name()] {
 				return filepath.SkipDir
@@ -747,7 +716,6 @@ func findAndRewriteReferencesToFile(root, oldPath, newPath string) ([]string, er
 			return nil
 		}
 
-		// Обработать только markdown-файлы
 		if !strings.HasSuffix(path, ".md") {
 			return nil
 		}
@@ -757,46 +725,19 @@ func findAndRewriteReferencesToFile(root, oldPath, newPath string) ([]string, er
 			return nil
 		}
 
-		oldContent := string(content)
+		fileDir := filepath.Dir(path)
 		var pathChanged bool
 
-		// Найти все ссылки в файле, пропуская блоки кода
-		newContent := rewriteLinksSkippingCodeBlocks(oldContent, func(match string) string {
-			m := fullLinkRe.FindStringSubmatch(match)
-			if len(m) != 3 {
-				return match
+		newContent := rewriteLinksSkippingCodeBlocks(string(content), func(linkPath string) string {
+			if filepath.Join(fileDir, linkPath) != oldPath {
+				return ""
 			}
-			text := m[1]
-			target := m[2]
-
-			// Разбить на путь и якорь
-			parts := strings.Split(target, "#")
-			linkPath := parts[0]
-			anchor := ""
-			if len(parts) > 1 {
-				anchor = "#" + parts[1]
+			newLinkPath, err := filepath.Rel(fileDir, newPath)
+			if err != nil {
+				return ""
 			}
-
-			// Пропустить пустые, внешние и якорные ссылки без пути
-			if linkPath == "" || strings.Contains(linkPath, "://") || strings.HasPrefix(linkPath, "mailto:") {
-				return match
-			}
-
-			// Разрешить ссылку относительно директории файла
-			fileDir := filepath.Dir(path)
-			resolvedPath := filepath.Join(fileDir, linkPath)
-			resolvedPath = filepath.Clean(resolvedPath)
-
-			// Проверить, разрешается ли ссылка в oldPath
-			if resolvedPath != oldPath {
-				return match
-			}
-
-			// Найти новую ссылку как относительный путь от fileDir до newPath
-			newLinkPath, _ := filepath.Rel(fileDir, newPath)
-
 			pathChanged = true
-			return fmt.Sprintf("[%s](%s%s)", text, newLinkPath, anchor)
+			return newLinkPath
 		})
 
 		if pathChanged {

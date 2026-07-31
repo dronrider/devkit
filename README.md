@@ -36,8 +36,9 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 - `agentctl/` - Go-утилита выбора исполнителя под задачу (pick): модель и
   reasoning effort по типу, цене и неопределённости с доски, применяется
   делегированием субагенту, см. [agentctl/README.md](agentctl/README.md).
-- `agents/` - определения субагентов-исполнителей, по одному на уровень effort
-  из маппинга agentctl; ставятся копией в `~/.claude/agents/`.
+- `agents/` - определения субагентов, по одному на уровень effort из маппинга
+  agentctl и на роль (`exec-*` исполняют задачу, `review-*` ревьюят дифф);
+  раскладывает их `devkitctl doctor --fix` в `~/.claude/agents/`.
 - `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
   старом коде, см. [regcheck/README.md](regcheck/README.md).
 - `hooks/` - проверки текстов: запрещённые символы, индекс памяти,
@@ -55,7 +56,7 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 cd taskctl && go build -o ~/go/bin/taskctl .
 ```
 
-Раскладку машинного контура (бинари утилит, определения исполнителей в
+Раскладку машинного контура (бинари утилит, определения субагентов в
 `~/.claude/agents/`, tmux и снимок квоты) проверяет `devkitctl doctor`, а
 однозначное из этого он же и доводит с `--fix`.
 

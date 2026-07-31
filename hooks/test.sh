@@ -142,6 +142,57 @@ printf '| XR-1 | сервер уехал на роль VPS RU | task |\n' > "$re
 git -C "$repo2" add docs/TASKS.md
 (cd "$repo2" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на чистую доску"
 
+# quota-refresh.sh: отцепленный съём снимка квоты на старте сессии. Настоящие
+# tmux и claude тут не поднимаются, вместо них заглушки: проверяется обвязка
+# хука (условия запуска, замок, журнал), а не съём панели, у него свои тесты.
+qbin="$tmp/qbin"
+mkdir -p "$qbin"
+for t in tmux claude; do
+    printf '#!/bin/sh\nexit 0\n' > "$qbin/$t"
+    chmod +x "$qbin/$t"
+done
+mark="$tmp/refresh.mark"
+cat > "$qbin/agentctl" <<EOF
+#!/bin/sh
+echo "\$*" >> "$mark"
+EOF
+chmod +x "$qbin/agentctl"
+# Системная часть PATH подставная: проверка «инструментов нет» иначе держалась
+# бы на том, чего нет в /usr/bin именно на этой машине.
+qsys="$tmp/qsys"
+mkdir -p "$qsys"
+for t in sh dirname mkdir rmdir date find sleep; do
+    p=$(command -v "$t") && ln -sf "$p" "$qsys/$t"
+done
+awaited() { # дождаться файла, который пишет фоновый процесс
+    i=0
+    while [ ! -s "$1" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+}
+
+qhome="$tmp/qhome"
+mkdir -p "$qhome"
+HOME="$qhome" PATH="$qbin:$qsys" sh "$here/quota-refresh.sh" || fail "хук вернул не 0"
+awaited "$mark"
+grep -q -- '--if-stale' "$mark" || fail "хук снимает панель мимо режима --if-stale: $(cat "$mark" 2>/dev/null)"
+awaited "$qhome/.devkit/quota-refresh.log"
+grep -q 'код возврата' "$qhome/.devkit/quota-refresh.log" || fail "хук не оставил журнала последнего запуска"
+
+# Взятый замок останавливает второй запуск: иначе claude, поднятый в tmux, своим
+# стартом дёрнул бы этот же хук и увёл бы сессии в воронку.
+: > "$mark"
+mkdir -p "$qhome/.devkit/quota-refresh.lock"
+HOME="$qhome" PATH="$qbin:$qsys" sh "$here/quota-refresh.sh" || fail "хук при взятом замке вернул не 0"
+sleep 1
+[ -s "$mark" ] && fail "хук полез снимать панель при взятом замке"
+rmdir "$qhome/.devkit/quota-refresh.lock"
+
+# Нечем снимать: уходим молча и следов не оставляем, ругаться на это дело
+# devkitctl doctor, а не каждой сессии.
+nohome="$tmp/qnohome"
+mkdir -p "$nohome"
+HOME="$nohome" PATH="$qsys" sh "$here/quota-refresh.sh" || fail "хук без инструментов вернул не 0"
+[ -d "$nohome/.devkit" ] && fail "хук без инструментов насорил в HOME"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

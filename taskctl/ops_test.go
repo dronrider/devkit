@@ -655,3 +655,160 @@ func TestCycle(t *testing.T) {
 		t.Fatalf("хвост архива: %s", arch)
 	}
 }
+
+// TestRewriteLinksInFile проверяет переписывание относительных ссылок в файле
+// при переносе в архив. Ссылка, разрешавшаяся от docs/tasks/, должна
+// разрешаться из docs/tasks/archive/2026/ в тот же целевой файл.
+func TestRewriteLinksInFile(t *testing.T) {
+	root := setup(t)
+	oldBaseDir := filepath.Join(root, "docs", "tasks")
+	newBaseDir := filepath.Join(root, "docs", "tasks", "archive", "2026")
+	os.MkdirAll(newBaseDir, 0o755)
+
+	// Создать целевой файл для ссылок (например, LLD)
+	os.MkdirAll(filepath.Join(root, "docs", "lld"), 0o755)
+	lldPath := filepath.Join(root, "docs", "lld", "XR-001.md")
+	os.WriteFile(lldPath, []byte("# XR-001 LLD\n"), 0o644)
+
+	// Создать файл задачи со ссылками
+	taskContent := `# XR-005
+
+Описание со ссылками:
+- [LLD](../lld/XR-001.md)
+- [Якорь](../lld/XR-001.md#section)
+- [Внешняя](https://example.com)
+- [Relative task](XR-002.md)
+`
+	taskPath := filepath.Join(newBaseDir, "XR-005.md")
+	os.WriteFile(taskPath, []byte(taskContent), 0o644)
+
+	// Переписать ссылки
+	if err := rewriteLinksInFile(taskPath, oldBaseDir, newBaseDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Проверить содержимое
+	result, _ := os.ReadFile(taskPath)
+	resultStr := string(result)
+
+	// Ссылка на LLD должна стать ../../../lld/XR-001.md
+	if !strings.Contains(resultStr, "[LLD](../../../lld/XR-001.md)") {
+		t.Errorf("LLD ссылка не переписана правильно:\n%s", resultStr)
+	}
+
+	// Якорь должен сохраниться
+	if !strings.Contains(resultStr, "[Якорь](../../../lld/XR-001.md#section)") {
+		t.Errorf("Якорь не сохранился:\n%s", resultStr)
+	}
+
+	// Внешняя ссылка не должна измениться
+	if !strings.Contains(resultStr, "[Внешняя](https://example.com)") {
+		t.Errorf("Внешняя ссылка изменилась:\n%s", resultStr)
+	}
+
+	// Ссылка на другую задачу должна стать ../../XR-002.md
+	if !strings.Contains(resultStr, "[Relative task](../../XR-002.md)") {
+		t.Errorf("Ссылка на задачу не переписана правильно:\n%s", resultStr)
+	}
+}
+
+// TestFindAndRewriteReferences проверяет переписывание ссылок на переносимый
+// файл в других файлах репозитория.
+func TestFindAndRewriteReferences(t *testing.T) {
+	root := setup(t)
+	os.MkdirAll(filepath.Join(root, "docs", "tasks", "archive", "2026"), 0o755)
+
+	// Создать файл задачи в архиве
+	oldPath := filepath.Join(root, "docs", "tasks", "XR-008.md")
+	newPath := filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-008.md")
+	os.MkdirAll(filepath.Dir(newPath), 0o755)
+	os.WriteFile(newPath, []byte("# XR-008 archived\n"), 0o644)
+
+	// Создать файл со ссылкой на старый путь
+	refPath := filepath.Join(root, "docs", "REFERENCE.md")
+	refContent := `# Reference
+
+- [Task](tasks/XR-008.md)
+- [Another](tasks/XR-002.md)
+`
+	os.WriteFile(refPath, []byte(refContent), 0o644)
+
+	// Переписать ссылки: ищем ссылки, разрешающиеся в oldPath, и заменяем на newPath
+	changed, err := findAndRewriteReferencesToFile(root, oldPath, newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Проверить, что файл был изменён
+	if len(changed) != 1 || !strings.Contains(changed[0], "REFERENCE.md") {
+		t.Errorf("ожидалась находка REFERENCE.md, получено %v", changed)
+	}
+
+	// Проверить содержимое файла
+	result, _ := os.ReadFile(refPath)
+	resultStr := string(result)
+
+	// Ссылка должна измениться на tasks/archive/2026/XR-008.md
+	if !strings.Contains(resultStr, "[Task](tasks/archive/2026/XR-008.md)") {
+		t.Errorf("Ссылка не переписана правильно:\n%s", resultStr)
+	}
+
+	// Ссылка на XR-002 не должна измениться
+	if !strings.Contains(resultStr, "[Another](tasks/XR-002.md)") {
+		t.Errorf("Ссылка на XR-002 изменилась:\n%s", resultStr)
+	}
+}
+
+// TestCloseWithLinks проверяет, что при закрытии задачи переписываются ссылки
+// как в самом файле задачи, так и в других файлах, ссылающихся на неё.
+func TestCloseWithLinks(t *testing.T) {
+	root := setup(t)
+
+	// Добавить новую задачу в работу
+	if _, err := cmdAdd(root, AddParams{ID: "XR-099", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-099", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Создать LLD-файл
+	os.MkdirAll(filepath.Join(root, "docs", "lld"), 0o755)
+	lldPath := filepath.Join(root, "docs", "lld", "XR-099.md")
+	os.WriteFile(lldPath, []byte("# XR-099 LLD\n"), 0o644)
+
+	// Создать файл задачи со ссылкой на LLD
+	taskContent := `# XR-099
+
+Описание:
+- [LLD](../lld/XR-099.md)
+`
+	taskPath := filepath.Join(root, "docs", "tasks", "XR-099.md")
+	os.WriteFile(taskPath, []byte(taskContent), 0o644)
+
+	// Создать файл со ссылкой на задачу
+	refPath := filepath.Join(root, "docs", "REFERENCE.md")
+	os.WriteFile(refPath, []byte("[Task](tasks/XR-099.md)\n"), 0o644)
+
+	// Закрыть
+	if _, err := cmdClose(root, CloseParams{ID: "XR-099", Date: "2026-07-08"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Проверить, что файл задачи в архиве
+	archivedPath := filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-099.md")
+	archivedContent, _ := os.ReadFile(archivedPath)
+	archivedStr := string(archivedContent)
+
+	// Ссылка в архивированном файле должна быть переписана
+	if !strings.Contains(archivedStr, "[LLD](../../../lld/XR-099.md)") {
+		t.Errorf("Ссылка в архивированном файле не переписана:\n%s", archivedStr)
+	}
+
+	// Проверить, что ссылка в REFERENCE.md переписана
+	refContent, _ := os.ReadFile(refPath)
+	refStr := string(refContent)
+	if !strings.Contains(refStr, "[Task](tasks/archive/2026/XR-099.md)") {
+		t.Errorf("Ссылка в REFERENCE.md не переписана:\n%s", refStr)
+	}
+}

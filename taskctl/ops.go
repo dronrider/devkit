@@ -617,6 +617,10 @@ func gitMv(root, from, to string) error {
 // fullLinkRe находит markdown-ссылки вида [текст](цель)
 var fullLinkRe = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)\)`)
 
+// codeSpanRe находит инлайн-код в обратных кавычках: ссылка в примере команды
+// это текст, а не ссылка.
+var codeSpanRe = regexp.MustCompile("`+[^`]*`+")
+
 // fenceRe находит забор блока кода: по CommonMark отступ не больше трёх
 // пробелов, дальше три и больше символов ` или ~ подряд.
 var fenceRe = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
@@ -649,6 +653,18 @@ func rewriteLinksSkippingCodeBlocks(text string, resolve func(path string) strin
 // rewriteLinksInLine отделяет у каждой ссылки якорь, отбрасывает пустые,
 // внешние и mailto-цели и собирает ссылку обратно с путём от resolve.
 func rewriteLinksInLine(line string, resolve func(path string) string) string {
+	var out strings.Builder
+	pos := 0
+	for _, span := range codeSpanRe.FindAllStringIndex(line, -1) {
+		out.WriteString(rewriteLinksOutsideCode(line[pos:span[0]], resolve))
+		out.WriteString(line[span[0]:span[1]])
+		pos = span[1]
+	}
+	out.WriteString(rewriteLinksOutsideCode(line[pos:], resolve))
+	return out.String()
+}
+
+func rewriteLinksOutsideCode(line string, resolve func(path string) string) string {
 	return fullLinkRe.ReplaceAllStringFunc(line, func(match string) string {
 		m := fullLinkRe.FindStringSubmatch(match)
 		if m == nil {

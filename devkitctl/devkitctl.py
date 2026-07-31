@@ -10,9 +10,10 @@
       проверить обвязку проекта: импорты CLAUDE.md разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
-      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки, бинари
-      утилит devkit в PATH и не старее исходников, определения агентов в
-      ~/.claude/agents, tmux и снимок квоты ~/.devkit/quota.local;
+      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки и
+      SessionStart-хук освежения квоты, бинари утилит devkit в PATH и не старее
+      исходников, определения агентов в ~/.claude/agents, tmux и сам снимок
+      квоты ~/.devkit/quota.local;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
       сборка бинарей, копия определений агентов), заполненное не трогает,
       неоднозначное оставляет находкой
@@ -35,10 +36,14 @@ from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
+SESSION_HOOK = "quota-refresh.sh"
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
 QUOTA_FILE = "~/.devkit/quota.local"
-QUOTA_MAX_AGE = 24 * 3600
+# Порог свежести снимка держит agentctl (snapshotMaxAge в agentctl/quota.go), тут
+# его копия: доктор про снимок говорит то же самое, что pick, иначе одна утилита
+# звала бы переснимать, а вторая молчала.
+QUOTA_MAX_AGE = 45 * 60
 QUOTA_TIME_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M")
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
@@ -207,7 +212,10 @@ def go_bin_dir():
 
 
 def human_age(seconds):
-    hours = int(seconds // 3600)
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return "%dм" % minutes
+    hours = minutes // 60
     if hours < 48:
         return "%dч" % hours
     return "%dд" % (hours // 24)
@@ -355,6 +363,10 @@ def check_machine(fix):
     for script in HOOK_SCRIPTS:
         if script not in text:
             findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)" % (script, settings))
+    if SESSION_HOOK not in text:
+        findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
+                        "и корректор pick рано или поздно останется с протухшим (hooks/README.md)"
+                        % (SESSION_HOOK, settings))
     for check in (check_binaries, check_agent_defs):
         f, d = check(fix)
         findings += f
@@ -374,9 +386,9 @@ def check_machine(fix):
         else:
             age = (datetime.now() - taken).total_seconds()
             if age > QUOTA_MAX_AGE:
-                findings.append("снимок квоты %s старее суток (возраст %s): профицит по нему уже не считается, "
+                findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
                                 "сдвиг вверх потерян; переснять: agentctl quota refresh"
-                                % (quota, human_age(age)))
+                                % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))
     return findings, fixed
 
 

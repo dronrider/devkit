@@ -30,6 +30,8 @@ cat > "$home/.claude/settings.json" <<'EOF'
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
+]}], "SessionStart": [{"hooks": [
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
 ]}]}}
 EOF
 
@@ -92,6 +94,11 @@ sed -e '/check-memory/d' "$home/.claude/settings.json" > "$home/.claude/settings
     mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'check-memory' || fail "нет находки про пропавший хук памяти"
+# Хук освежения квоты живёт в другом событии, и проверяться должен своей строкой.
+sed -e '/quota-refresh/d' "$home/.claude/settings.json" > "$home/.claude/settings.json.new" &&
+    mv "$home/.claude/settings.json.new" "$home/.claude/settings.json"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'SessionStart-хук quota-refresh.sh' || fail "нет находки про хук освежения квоты: $out"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"
@@ -217,6 +224,7 @@ echo "$out" | grep -q 'agentctl не в PATH' || fail "нет находки п�
 echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про определения исполнителей: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
 echo "$out" | grep -q 'нет снимка квоты' || fail "нет находки про снимок квоты: $out"
+echo "$out" | grep -q 'SessionStart-хук' || fail "нет находки про хук освежения квоты на пустой машине: $out"
 [ -f "$mhome/go/bin/agentctl" ] && fail "doctor без --fix собрал бинарь"
 # Помета «машина» отделяет машинные находки от проектных, на неё опирается и
 # дока, и сценарий проверки.
@@ -248,8 +256,9 @@ out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1
 echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
 grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "--fix затёр правленое определение"
 
-# Снимок квоты. Возраст берётся из строки taken, порог сутки, поэтому проверка
-# идёт по обе стороны границы, а не «2020 год против сейчас».
+# Снимок квоты. Возраст берётся из строки taken, порог 45 минут (тот же, что у
+# корректора pick), поэтому проверка идёт по обе стороны границы, а не «2020 год
+# против сейчас».
 mkdir -p "$mhome/.devkit"
 snap() { printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$1" > "$mhome/.devkit/quota.local"; }
 taken_at() {
@@ -257,17 +266,17 @@ taken_at() {
 }
 docm() { HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1; }
 
-snap "$(taken_at 25 '%Y-%m-%dT%H:%M')"
+snap "$(taken_at 1 '%Y-%m-%dT%H:%M')"
 out=$(docm)
-echo "$out" | grep -q 'старее суток' || fail "снимок возрастом 25 часов не признан протухшим: $out"
-snap "$(taken_at 23 '%Y-%m-%dT%H:%M')"
+echo "$out" | grep -q 'снимок квоты .* протух' || fail "снимок возрастом час не признан протухшим: $out"
+snap "$(taken_at 0.5 '%Y-%m-%dT%H:%M')"
 out=$(docm)
-echo "$out" | grep -q 'quota.local' && fail "снимок возрастом 23 часа попал в находки: $out"
+echo "$out" | grep -q 'quota.local' && fail "снимок возрастом полчаса попал в находки: $out"
 # Остальные форматы момента снятия разбираются наравне с основным.
-snap "$(taken_at 23 '%Y-%m-%dT%H:%M:%S')"
+snap "$(taken_at 0.5 '%Y-%m-%dT%H:%M:%S')"
 out=$(docm)
 echo "$out" | grep -q 'quota.local' && fail "момент снятия с секундами не разобран: $out"
-snap "$(taken_at 23 '%Y-%m-%d %H:%M')"
+snap "$(taken_at 0.5 '%Y-%m-%d %H:%M')"
 out=$(docm)
 echo "$out" | grep -q 'quota.local' && fail "момент снятия через пробел не разобран: $out"
 # Строка taken есть, но не разобрана (снимок заполняют и руками): возрасту

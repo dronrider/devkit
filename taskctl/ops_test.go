@@ -918,6 +918,11 @@ func TestRewriteLinksFences(t *testing.T) {
 			"    ```\n" + moved + "\n",
 		},
 		{
+			"инлайн-код это не ссылка",
+			"пример: `" + link + "` и " + link + "\n",
+			"пример: `" + link + "` и " + moved + "\n",
+		},
+		{
 			"незакрытый забор до конца файла",
 			"```\n" + link + "\n",
 			"```\n" + link + "\n",

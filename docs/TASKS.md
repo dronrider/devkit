@@ -31,6 +31,17 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
+| DK-036 | профиль харнеса и слои конфигурации: claude-code.toml описывает сегодняшнее поведение | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-037 | ярусы light/standard/strong/frontier в agentctl, третья строка вердикта tier [после DK-036] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-038 | снимок остатка по харнесам: директория quota/, бакеты ярусами, сменный съёмщик [после DK-037] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами [после DK-036] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности [после DK-037] | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit [после DK-036] | task | P3 | 12 (0+6+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-038, DK-039, DK-041] | task | P3 | 12 (0+7+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-018 | agentctl: строка --record всегда несёт состояние квоты, а не только сдвиг | task | P3 | 9 (0+5+1+0+3) | S | [tasks/DK-018.md](tasks/DK-018.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |
 | DK-021 | agentctl: refresh честно говорит про экран входа и сохраняет неузнанную панель | task | P3 | 8 (0+5+1+0+2) | S | [tasks/DK-021.md](tasks/DK-021.md) |

@@ -812,3 +812,92 @@ func TestCloseWithLinks(t *testing.T) {
 		t.Errorf("Ссылка в REFERENCE.md не переписана:\n%s", refStr)
 	}
 }
+
+// TestCloseRewritesIncomingLinks проверяет, что ссылки на перенесённую задачу
+// переписываются в других файлах репозитория. Это регрессионный тест на погодление,
+// что changedFiles попадают в коммит.
+func TestCloseRewritesIncomingLinks(t *testing.T) {
+	root := setup(t)
+
+	// Добавить новую задачу
+	if _, err := cmdAdd(root, AddParams{ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-077", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Создать файл задачи и файл с ссылкой на неё
+	os.WriteFile(
+		filepath.Join(root, "docs", "tasks", "XR-077.md"),
+		[]byte("# XR-077\nTask\n"),
+		0o644,
+	)
+	os.WriteFile(
+		filepath.Join(root, "docs", "INCOMING.md"),
+		[]byte("[Task](tasks/XR-077.md)\n"),
+		0o644,
+	)
+
+	// Закрыть задачу (без коммита, просто чтобы протестировать логику)
+	if _, err := cmdClose(root, CloseParams{ID: "XR-077", Date: "2026-07-31"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Проверить что ссылка в INCOMING.md переписана на архив
+	refContent, _ := os.ReadFile(filepath.Join(root, "docs", "INCOMING.md"))
+	if !strings.Contains(string(refContent), "tasks/archive/2026/XR-077.md") {
+		t.Errorf("Ссылка в INCOMING.md не переписана:\n%s", refContent)
+	}
+}
+
+// TestRewriteLinksSkipsCodeBlocks проверяет, что ссылки внутри блоков кода
+// не переписываются. Одна и та же ссылка стоит и в прозе, и внутри кода;
+// только первая должна измениться.
+func TestRewriteLinksSkipsCodeBlocks(t *testing.T) {
+	root := setup(t)
+	oldBaseDir := filepath.Join(root, "docs", "tasks")
+	newBaseDir := filepath.Join(root, "docs", "tasks", "archive", "2026")
+	os.MkdirAll(newBaseDir, 0o755)
+
+	// Создать целевой файл
+	os.MkdirAll(filepath.Join(root, "docs", "lld"), 0o755)
+	os.WriteFile(filepath.Join(root, "docs", "lld", "XR-001.md"), []byte("# LLD\n"), 0o644)
+
+	// Файл со ссылкой в прозе и в блоке кода (```)
+	content := `# Task
+
+Описание: [LLD](../lld/XR-001.md)
+
+` + "```" + `regcheck -- sh -c 'cd taskctl && go test ./...'
+# Ссылка на LLD: [LLD](../lld/XR-001.md)
+` + "```" + `
+
+[Ещё ссылка](../lld/XR-001.md)
+`
+	taskPath := filepath.Join(newBaseDir, "XR-001.md")
+	os.WriteFile(taskPath, []byte(content), 0o644)
+
+	// Переписать ссылки
+	if err := rewriteLinksInFile(taskPath, oldBaseDir, newBaseDir); err != nil {
+		t.Fatal(err)
+	}
+
+	result, _ := os.ReadFile(taskPath)
+	resultStr := string(result)
+
+	// Ссылка в прозе должна быть переписана
+	if !strings.Contains(resultStr, "Описание: [LLD](../../../lld/XR-001.md)") {
+		t.Errorf("Ссылка в прозе не переписана:\n%s", resultStr)
+	}
+
+	// Ссылка в блоке кода НЕ должна быть переписана
+	if !strings.Contains(resultStr, "# Ссылка на LLD: [LLD](../lld/XR-001.md)") {
+		t.Errorf("Ссылка в блоке кода была переписана (не должна быть):\n%s", resultStr)
+	}
+
+	// Ссылка после блока кода должна быть переписана
+	if !strings.Contains(resultStr, "[Ещё ссылка](../../../lld/XR-001.md)") {
+		t.Errorf("Ссылка после блока кода не переписана:\n%s", resultStr)
+	}
+}

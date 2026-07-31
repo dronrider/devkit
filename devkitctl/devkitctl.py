@@ -299,6 +299,20 @@ def check_binaries(fix):
     return findings, fixed
 
 
+def is_agent_def(path):
+    # Определение субагента опознаётся по frontmatter с effort: именно оттуда
+    # харнес берёт глубину размышления, и файл без него агентом не работает.
+    head = path.read_text(encoding="utf-8", errors="replace").split("\n", 40)
+    if not head or head[0].strip() != "---":
+        return False
+    for line in head[1:]:
+        if line.strip() == "---":
+            return False
+        if line.startswith("effort:"):
+            return True
+    return False
+
+
 def check_agent_defs(fix):
     # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
     # определение с ветки задачи уехало бы на машину во все проекты сразу.
@@ -306,10 +320,13 @@ def check_agent_defs(fix):
     main, from_main = devkit_checkout()
     src_dir = main / "agents" if (main / "agents").is_dir() else DEVKIT / "agents"
     dst_dir = Path(os.path.expanduser(AGENTS_DIR))
-    # Берётся вся директория, а не один префикс: набор растёт ролями (exec-*
-    # для исполнения, review-* для ревью), и новая роль должна раскладываться
-    # сама, без правки доктора.
+    # Директория перебирается целиком, а не по префиксу: набор растёт ролями
+    # (exec-* для исполнения, review-* для ревью), и новая роль должна
+    # раскладываться сама, без правки доктора. Отбор идёт по frontmatter, иначе
+    # на машину как агент уехал бы любой соседний markdown вроде README.
     for src in sorted(src_dir.glob("*.md")):
+        if not is_agent_def(src):
+            continue
         dst = dst_dir / src.name
         if dst.exists():
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
@@ -324,8 +341,8 @@ def check_agent_defs(fix):
         whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                        "определение с непроверенной ветки нельзя; из основного чекаута: ")
         findings.append("нет определения агента %s: effort из вердикта pick применять нечем, "
-                        "спавн уйдёт на дефолтного агента; %scp %s/*.md %s/"
-                        % (dst, whence, src_dir, dst_dir))
+                        "спавн уйдёт на дефолтного агента; %scp %s %s"
+                        % (dst, whence, src, dst))
     return findings, fixed
 
 

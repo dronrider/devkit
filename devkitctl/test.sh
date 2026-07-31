@@ -183,7 +183,10 @@ git -C "$mproj" config user.email t@t
 
 # Машинный контур на пустой машине: бинарей нет, определений исполнителей нет,
 # tmux нет, снимка квоты нет. Сборку изображает заглушка go, гонять настоящую
-# в самопроверке незачем.
+# в самопроверке незачем. Соседний markdown без frontmatter в agents/ имитирует
+# README: раскладка берёт директорию целиком и обязана отличать определение от
+# постороннего файла, иначе тот уедет на машину как агент.
+printf '# agents\n\nПроза, не определение.\n' > "$dk/agents/README.md"
 mhome="$tmp/mhome"
 mkdir -p "$mhome/go/bin"
 gostub="$tmp/gostub"
@@ -230,6 +233,8 @@ done
 # Роли ревьювера в наборе появились позже исполнителей, и раскладка обязана
 # брать директорию целиком, а не один префикс.
 [ -f "$mhome/.claude/agents/review-high.md" ] || fail "doctor --fix не разложил определения ревьюверов: $out"
+[ -f "$mhome/.claude/agents/README.md" ] && fail "--fix положил на машину markdown без frontmatter: $out"
+echo "$out" | grep -q 'README.md положено' && fail "--fix отчитался о README как об определении агента: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux, находка должна остаться: $out"
 echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
 
@@ -358,7 +363,7 @@ echo "$out" | grep -q "$dkreal/agentctl" || fail "находка не отпра
 # Определения агентов из worktree так же не раскладываются, а находка
 # зовёт копировать из основного чекаута.
 [ -f "$wthome/.claude/agents/exec-medium.md" ] && fail "--fix разложил определения агентов с фичеветки"
-echo "$out" | grep -q "cp $dkreal/agents/\*.md" || fail "находка про определения зовёт не в основной чекаут: $out"
+echo "$out" | grep -q "cp $dkreal/agents/review-high.md" || fail "находка про определения зовёт не в основной чекаут: $out"
 # Разошедшееся определение из worktree сверяется с основным чекаутом.
 mkdir -p "$wthome/.claude/agents"
 cp "$dk/agents/"*.md "$wthome/.claude/agents/"

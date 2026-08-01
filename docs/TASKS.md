@@ -26,7 +26,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами | task | P3 | 14 (0+8+1+0+5) | M | [tasks/DK-039.md](tasks/DK-039.md) |
 
 ## Backlog
 
@@ -34,7 +33,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 |--------|--------|-----|---|---|------|--------|
 | DK-063 | громкие уведомления из taskctl и shipctl: Check, блокер, провал выката [после DK-062] | task | P2 | 34 (25+6+1+0+2) | S | - |
 | DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-039, DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 13 (0+7+1+0+5) | M | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-051 | agentctl budget: размер пачки из остатка лимитов | task | P3 | 13 (0+7+1+0+5) | S | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

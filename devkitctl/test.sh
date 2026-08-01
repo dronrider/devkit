@@ -34,7 +34,11 @@ cat > "$home/.claude/settings.json" <<'EOF'
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
 ]}], "SubagentStop": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "UserPromptSubmit": [{"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
 ]}]}}
 EOF
@@ -135,8 +139,9 @@ sed -e '/quota-refresh/d' "$home/.claude/settings.json" > "$home/.claude/setting
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'SessionStart-хук quota-refresh.sh' || fail "нет находки про хук освежения квоты: $out"
 
-# Уведомитель висит на двух событиях сразу, и пропажа любого это находка:
-# без SubagentStop сессия молчит про отработавшего субагента.
+# Уведомитель висит на четырёх событиях сразу, и пропажа любого это находка:
+# без SubagentStop сессия молчит про отработавшего субагента, а без
+# UserPromptSubmit конец хода теряет порог длительности.
 nset="$home/.claude/settings.json"
 cp "$nset" "$tmp/settings.full"
 python3 - "$nset" <<'EOF'
@@ -144,15 +149,16 @@ import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
 del d["hooks"]["SubagentStop"]
+del d["hooks"]["UserPromptSubmit"]
 json.dump(d, open(p, "w"))
 EOF
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
-echo "$out" | grep -q 'notify.py не подключён на события SubagentStop' ||
+echo "$out" | grep -q 'notify.py не подключён на события SubagentStop, UserPromptSubmit' ||
     fail "нет находки про неподключённый хук субагента: $out"
 echo "$out" | grep -q 'события Notification' && fail "подключённое событие попало в находку: $out"
 sed -e '/notify.py/d' "$tmp/settings.full" > "$nset"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
-echo "$out" | grep -q 'notify.py не подключён на события Notification, SubagentStop' ||
+echo "$out" | grep -q 'notify.py не подключён на события Notification, Stop, SubagentStop, UserPromptSubmit' ||
     fail "нет находки про неподключённый уведомитель: $out"
 cp "$tmp/settings.full" "$nset"
 

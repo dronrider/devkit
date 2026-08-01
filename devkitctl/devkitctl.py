@@ -46,7 +46,7 @@ DEVKIT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
-NOTIFY_EVENTS = ("Notification", "SubagentStop")
+NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
@@ -421,7 +421,8 @@ def check_notify_hook(text, settings):
         missing = [e for e in NOTIFY_EVENTS if e not in events]
     if missing:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
-                        "разрешения, и не говорит, что субагент отработал (hooks/README.md)"
+                        "разрешения, и не говорит, что закончила ход или что субагент "
+                        "отработал (hooks/README.md)"
                         % (NOTIFY_HOOK, ", ".join(missing), settings))
     # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
     src = DEVKIT / "hooks" / NOTIFY_HOOK

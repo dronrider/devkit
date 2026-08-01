@@ -14,7 +14,8 @@
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, бинари утилит devkit в PATH и не старее
       исходников, определения агентов в ~/.claude/agents, tmux и сам снимок
-      квоты ~/.devkit/quota.local;
+      квоты ~/.devkit/quota.local; профили харнесов devkit/harness прогоняются
+      через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
       сборка бинарей, копия определений агентов), заполненное не трогает,
       неоднозначное оставляет находкой
@@ -27,6 +28,7 @@
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import harness
 import importlib.util
 import json
 import os
@@ -503,6 +505,10 @@ def doctor(start, fix=False):
             (fixed if done else findings).append(done or residual)
         else:
             findings.append(check_git_hooks(root))
+    # Профили харнесов проверяются все, а не только активный: битый профиль
+    # находится до того, как кто-то на него переключится, а починить его
+    # автоматике нечем, это правка в devkit.
+    findings += harness.check_profiles(str(DEVKIT / "harness"))
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed

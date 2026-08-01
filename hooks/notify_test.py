@@ -84,10 +84,61 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(title, "сессия: ждёт ввода")
 
 
+class TestClickTarget(unittest.TestCase):
+    VSCODE = {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"}
+
+    def test_worktree_becomes_url(self):
+        self.assertEqual(notify.click_target(self.VSCODE, "/Users/x/projects/devkit-dk-047"),
+                         ("-open", "vscode://file/Users/x/projects/devkit-dk-047"))
+
+    def test_awkward_path_is_quoted(self):
+        # Пробелы и кириллица в пути ссылку не ломают: она уезжает аргументом,
+        # но открывает её система, а не мы.
+        self.assertEqual(notify.click_target(self.VSCODE, "/Users/x/мои проекты/dk"),
+                         ("-open", "vscode://file/Users/x/%D0%BC%D0%BE%D0%B8%20"
+                                   "%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D1%8B/dk"))
+
+    def test_vscode_without_cwd_activates_editor(self):
+        self.assertEqual(notify.click_target(self.VSCODE, ""),
+                         ("-activate", "com.microsoft.VSCode"))
+        self.assertEqual(notify.click_target({"TERM_PROGRAM": "vscode"}, None),
+                         ("-activate", "com.microsoft.VSCode"))
+
+    def test_terminal_is_activated_whole(self):
+        # Окно терминала по рабочему дереву не найти, поднимаем сам терминал.
+        self.assertEqual(notify.click_target({"TERM_PROGRAM": "Apple_Terminal"}, "/p/dk"),
+                         ("-activate", "com.apple.Terminal"))
+        self.assertEqual(notify.click_target({"TERM_PROGRAM": "iTerm.app"}, "/p/dk"),
+                         ("-activate", "com.googlecode.iterm2"))
+
+    def test_unknown_terminal_has_no_target(self):
+        self.assertIsNone(notify.click_target({"TERM_PROGRAM": "Hyper"}, "/p/dk"))
+        self.assertIsNone(notify.click_target({}, "/p/dk"))
+
+    def test_own_template(self):
+        env = {"DEVKIT_NOTIFY_OPEN": "x-terminal://{cwd}", "TERM_PROGRAM": "vscode"}
+        self.assertEqual(notify.click_target(env, "/p/dk"), ("-open", "x-terminal:///p/dk"))
+
+    def test_empty_template_turns_click_off(self):
+        env = {"DEVKIT_NOTIFY_OPEN": "", "CLAUDE_CODE_ENTRYPOINT": "claude-vscode"}
+        self.assertIsNone(notify.click_target(env, "/p/dk"))
+
+    def test_supports_click(self):
+        self.assertTrue(notify.supports_click("/opt/homebrew/bin/terminal-notifier"))
+        self.assertFalse(notify.supports_click("/usr/bin/osascript"))
+        self.assertFalse(notify.supports_click(None))
+
+
 class TestPickBackend(unittest.TestCase):
-    def test_macos_osascript(self):
+    def test_macos_prefers_terminal_notifier(self):
+        # osascript есть на любой macOS, поэтому без предпочтения клик не
+        # достался бы никому.
         self.assertEqual(notify.pick_backend({}, "darwin", lambda n: "/usr/bin/" + n),
-                         "osascript")
+                         "terminal-notifier")
+
+    def test_macos_osascript(self):
+        which = lambda n: "/usr/bin/osascript" if n == "osascript" else None
+        self.assertEqual(notify.pick_backend({}, "darwin", which), "osascript")
         self.assertIsNone(notify.pick_backend({}, "darwin", lambda n: None))
 
     def test_linux_notify_send(self):
@@ -111,6 +162,26 @@ class TestPickBackend(unittest.TestCase):
         self.assertEqual(argv[:2], ["/usr/bin/osascript", "-e"])
         self.assertEqual(argv[2],
                          'display notification "тело" with title "сессия \\"dk\\""')
+
+    def test_terminal_notifier_argv(self):
+        target = ("-open", "vscode://file/p/dk")
+        self.assertEqual(
+            notify.backend_argv("/bin/terminal-notifier", "заголовок", "тело", target),
+            ["/bin/terminal-notifier", "-title", "заголовок", "-message", "тело",
+             "-open", "vscode://file/p/dk"])
+        # Без цели уведомление всё равно уходит, просто не кликается.
+        self.assertEqual(
+            notify.backend_argv("/bin/terminal-notifier", "заголовок", "тело"),
+            ["/bin/terminal-notifier", "-title", "заголовок", "-message", "тело"])
+        # Пустое тело она показала бы пустой строкой.
+        self.assertEqual(
+            notify.backend_argv("/bin/terminal-notifier", "заголовок", "")[4], "заголовок")
+
+    def test_backends_without_click_ignore_target(self):
+        target = ("-open", "vscode://file/p/dk")
+        self.assertEqual(notify.backend_argv("/usr/bin/notify-send", "з", "т", target),
+                         ["/usr/bin/notify-send", "з", "т"])
+        self.assertEqual(len(notify.backend_argv("/usr/bin/osascript", "з", "т", target)), 3)
 
 
 class TestThrottle(unittest.TestCase):

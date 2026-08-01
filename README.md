@@ -36,6 +36,10 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 - `agentctl/` - Go-утилита выбора исполнителя под задачу (pick): модель и
   reasoning effort по типу, цене и неопределённости с доски, применяется
   делегированием субагенту, см. [agentctl/README.md](agentctl/README.md).
+- `harness/` - профили инструментов, в которых живёт сессия агента
+  (`claude-code.toml` и дальше по одному на инструмент): что инструмент умеет
+  по пяти осям (детект, правила, делегирование, хуки, квота). Читают профили
+  agentctl и devkitctl, разбор в [agentctl/README.md](agentctl/README.md).
 - `agents/` - определения субагентов, по одному на уровень effort из маппинга
   agentctl и на роль (`exec-*` исполняют задачу, `review-*` ревьюят дифф);
   раскладывает их `devkitctl doctor --fix` в `~/.claude/agents/`.

@@ -33,7 +33,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 |--------|--------|-----|---|---|------|--------|
 | DK-048 | LLD: диспетчер пачки задач, параллельное исполнение независимых задач бэклога | LLD | P3 | 15 (0+7+4+0+4) | M | [tasks/DK-048.md](tasks/DK-048.md) |
 | DK-036 | профиль харнеса и слои конфигурации: claude-code.toml описывает сегодняшнее поведение | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-037 | ярусы light/standard/strong/frontier в agentctl, третья строка вердикта tier [после DK-036] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-037 | ярусы mini/base/pro/max в agentctl, третья строка вердикта tier [после DK-036] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-038 | снимок остатка по харнесам: директория quota/, бакеты ярусами, сменный съёмщик [после DK-037] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами [после DK-036] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit [после DK-036] | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

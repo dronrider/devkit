@@ -39,3 +39,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-037 | ярусы mini/base/pro/max в agentctl, третья строка вердикта tier | task | P3 | 2026-08-01 | [tasks/archive/2026/DK-037.md](tasks/archive/2026/DK-037.md), `4e52b0a`, `edb4a80`, `c26a92b`, `301a373` |
 | DK-038 | снимок остатка по харнесам: директория quota/, бакеты ярусами, сменный съёмщик | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-038.md](tasks/archive/2026/DK-038.md), `bab801c`, `cefc245`, `9368262`, `5578b4f`, `d205861`, `a978e96` |
 | DK-060 | CI-шаг проверки символов всегда красный: он ловит чужой вывод панели в agentctl/testdata | bug | P2 | 2026-08-02 | [tasks/archive/2026/DK-060.md](tasks/archive/2026/DK-060.md), `ca754bc` |
+| DK-061 | клик по уведомлению открывает лишнее окно worktree вместо окна сессии | bug | P2 | 2026-08-01 | [tasks/archive/2026/DK-061.md](tasks/archive/2026/DK-061.md), `9d5f21c`, `2e81b3f`, `20fea02` |

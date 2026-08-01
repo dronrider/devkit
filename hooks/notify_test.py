@@ -111,6 +111,16 @@ class TestClickTarget(unittest.TestCase):
         self.assertEqual(notify.click_target({"TERM_PROGRAM": "iTerm.app"}, "/p/dk"),
                          ("-activate", "com.googlecode.iterm2"))
 
+    def test_cwd_of_wrong_type(self):
+        # cwd приходит от харнеса, и не-строка тут не должна ронять сборку цели:
+        # квотирование числа кинуло бы TypeError уже мимо разбора события.
+        self.assertEqual(notify.click_target(self.VSCODE, 7),
+                         ("-activate", "com.microsoft.VSCode"))
+        self.assertEqual(notify.click_target(self.VSCODE, ["/a"]),
+                         ("-activate", "com.microsoft.VSCode"))
+        env = dict(self.VSCODE, DEVKIT_NOTIFY_OPEN="x-devkit://{cwd}")
+        self.assertEqual(notify.click_target(env, 7), ("-open", "x-devkit://"))
+
     def test_unknown_terminal_has_no_target(self):
         self.assertIsNone(notify.click_target({"TERM_PROGRAM": "Hyper"}, "/p/dk"))
         self.assertIsNone(notify.click_target({}, "/p/dk"))

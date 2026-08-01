@@ -299,6 +299,13 @@ grep -q 'open' "$nmark" && fail "цель ушла отправителю, ко�
 grep -q 'сессия sess-noc повод idle_prompt бэкенд .* цель - код возврата: 0' "$nlog" ||
     fail "в журнале нет отправки без цели: $(cat "$nlog")"
 
+# cwd не строкой цель не роняет: уведомление уходит, клик поднимает редактор.
+: > "$nmark"
+printf '{"hook_event_name":"Notification","notification_type":"idle_prompt","session_id":"sess-cwd","cwd":7,"message":"проба"}' |
+    notify_click || fail "хук вернул не 0 на cwd числом"
+grep -q -- '-activate com.microsoft.VSCode$' "$nmark" ||
+    fail "на cwd числом цель не собралась запасным путём: $(cat "$nmark")"
+
 # Своя цель перебивает нашу, пустая гасит клик совсем.
 : > "$nmark"
 event Notification idle_prompt sess-own |

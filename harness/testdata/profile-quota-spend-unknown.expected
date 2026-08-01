@@ -1,1 +1,0 @@
-error: profile-quota-spend-unknown.toml: [quota] spend_max ссылается на бакет "week_max", которого нет в buckets

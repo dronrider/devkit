@@ -1,0 +1,1 @@
+error: profile-no-rules.toml: нет секции [rules], в профиле обязаны быть все пять (detect, rules, delegate, hooks, quota)

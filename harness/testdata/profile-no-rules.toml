@@ -1,0 +1,10 @@
+[detect]
+env = "SOMETOOL"
+bin = "sometool"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

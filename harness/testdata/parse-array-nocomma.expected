@@ -1,0 +1,1 @@
+error: parse-array-nocomma.toml:2: ключ buckets: жду запятую или ] после элемента массива, вижу "\"week_max\"]"

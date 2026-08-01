@@ -1,0 +1,1 @@
+error: profile-quota-outside-pro.toml: [quota] spend_pro ссылается на бакет "week_max", которого нет в buckets

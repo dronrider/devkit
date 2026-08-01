@@ -1,0 +1,1 @@
+error: profile-quota-nospend-base.toml: [quota] нет ключа spend_base (секция непуста, ярусы объявляются все четыре)

@@ -1,0 +1,1 @@
+error: profile-no-detect.toml: нет секции [detect], в профиле обязаны быть все пять (detect, rules, delegate, hooks, quota)

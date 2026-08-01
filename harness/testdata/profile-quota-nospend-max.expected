@@ -1,0 +1,1 @@
+error: profile-quota-nospend-max.toml: [quota] нет ключа spend_max (секция непуста, ярусы объявляются все четыре)

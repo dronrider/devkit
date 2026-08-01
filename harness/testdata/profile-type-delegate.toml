@@ -1,0 +1,14 @@
+[detect]
+env = "SOMETOOL"
+bin = "sometool"
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "cli"
+command = "sometool"
+
+[hooks]
+
+[quota]

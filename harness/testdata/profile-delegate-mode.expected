@@ -1,0 +1,1 @@
+error: profile-delegate-mode.toml: [delegate] mode = "spawn", допустимы native, cli, none

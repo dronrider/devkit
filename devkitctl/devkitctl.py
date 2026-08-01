@@ -357,18 +357,27 @@ def check_agent_defs(fix):
         if not is_agent_def(src):
             continue
         dst = dst_dir / src.name
+        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
+                                       "определение с непроверенной ветки нельзя; из основного чекаута: ")
         if dst.exists():
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
-                findings.append("определение агента %s разошлось с devkit; обновить: cp %s %s"
-                                % (dst, src, dst))
+                # devkit источник правды для промптов агентов: правка, сделанная в
+                # репозитории, обязана доехать на машину сама, а не остаться
+                # находкой навсегда. Ручную правку на машине --fix затирает, но не
+                # молча: отчёт называет, что именно переложил.
+                if fix and from_main:
+                    shutil.copyfile(src, dst)
+                    fixed.append("определение агента %s разошлось с devkit, переложено из %s"
+                                % (dst, src))
+                else:
+                    findings.append("определение агента %s разошлось с devkit; обновить: %scp %s %s"
+                                    % (dst, whence, src, dst))
             continue
         if fix and from_main:
             dst_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             fixed.append("определение агента %s положено в %s" % (src.name, dst_dir))
             continue
-        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
-                                       "определение с непроверенной ветки нельзя; из основного чекаута: ")
         findings.append("нет определения агента %s: effort из вердикта pick применять нечем, "
                         "спавн уйдёт на дефолтного агента; %scp %s %s"
                         % (dst, whence, src, dst))

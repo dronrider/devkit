@@ -322,11 +322,22 @@ echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимае�
 out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный --fix по машинному контуру не должен ничего менять: $out"
 
-# Правленое руками определение агента это находка, --fix его не затирает.
+# Определение, разошедшееся на машине (правка руками или отставшая копия):
+# plain doctor называет находку с командой cp, файл не трогает.
 printf '\nсвоя строка\n' >> "$mhome/.claude/agents/exec-low.md"
-out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'exec-low.md разошлось' || fail "нет находки про разошедшееся определение: $out"
-grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "--fix затёр правленое определение"
+grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" || fail "doctor без --fix тронул определение"
+
+# devkit источник правды для промптов: --fix перекладывает разошедшееся
+# определение и называет в отчёте, что переложил, а не затирает молча.
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено:.*exec-low.md разошлось' || fail "--fix не отчитался о перекладке разошедшегося определения: $out"
+grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" && fail "--fix не переложил разошедшееся определение: $out"
+
+# Повторный --fix уже не находит расхождения: переложенное совпало с devkit.
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено' && fail "повторный --fix после перекладки не должен ничего менять: $out"
 
 # Снимок квоты. Возраст берётся из строки taken, порог 45 минут (тот же, что у
 # корректора pick), поэтому проверка идёт по обе стороны границы, а не «2020 год
@@ -451,6 +462,11 @@ cp "$dk/agents/"*.md "$wthome/.claude/agents/"
 printf '\nсвоя строка\n' >> "$wthome/.claude/agents/exec-high.md"
 out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "сверка определения идёт не с основным чекаутом: $out"
+# Защита from_main действует и для перезаписи: --fix с worktree ветки задачи
+# разошедшееся определение не перекладывает, находка остаётся.
+out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "с worktree --fix потерял находку про разошедшееся определение: $out"
+grep -q 'своя строка' "$wthome/.claude/agents/exec-high.md" || fail "с worktree --fix переложил определение с непроверенной ветки: $out"
 # Бинари на месте, но старее выложенного worktree: свежесть по mtime там ничего
 # не значит, и доктор про них молчит, а не печатает четыре ложные находки.
 wtbin="$tmp/wtbin"

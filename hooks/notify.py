@@ -3,13 +3,22 @@
 субагент отработал. Параллельных сессий на машине несколько, и та, что упёрлась
 в запрос разрешения, иначе стоит, пока на её окно не посмотрят.
 
+Поводы двух сортов. Громкий зовёт подключиться (сессия упёрлась в вопрос,
+закончила ход) и приходит со звуком и своим баннером. Фоновый рассказывает о
+ходе работы (субагент отработал), приходит молча и схлопывается по сессии,
+чтобы не копить ленту.
+
 Режимы:
-  notify.py <заголовок> [<текст>]   позвать уведомитель из чего угодно: скрипт
-                                    выката, другой харнес, проверка расписания
+  notify.py [--quiet] <заголовок> [<текст>]
+                                    позвать уведомитель из чего угодно: скрипт
+                                    выката, другой харнес, проверка расписания;
+                                    --quiet понижает повод до фонового
   notify.py --hook claude-code      хук Claude Code: событие читается со stdin,
                                     заголовок и тело собираются из него;
-                                    события Notification (по поводу) и
-                                    SubagentStop, остальное молча пропускается
+                                    события Notification (по поводу), Stop,
+                                    SubagentStop и UserPromptSubmit (та только
+                                    отмечает начало хода), остальное молча
+                                    пропускается
   notify.py --self-test             послать пробное уведомление и напечатать,
                                     чем именно послано
 
@@ -20,10 +29,12 @@
                              как «команда заголовок тело»
   DEVKIT_NOTIFY_OPEN=...     своя цель перехода по клику, `{cwd}` подставляется
                              рабочим деревом сессии; пустое значение гасит клик
+  DEVKIT_NOTIFY_TURN_MIN=... порог длительности хода в секундах, короче него
+                             конец хода уведомления не даёт (по умолчанию 60)
 
 Журнал последних отправок лежит в ~/.devkit/notify.log: время, сессия, повод,
-бэкенд, цель перехода и код возврата. Жалоба «уведомления не приходят»
-разбирается по нему.
+уровень, бэкенд, цель перехода и код возврата. Жалоба «уведомления не приходят»
+разбирается по нему, как и «важное не отличается от фонового».
 """
 import hashlib
 import json
@@ -41,6 +52,11 @@ BODY_LIMIT = 200
 LOG_LIMIT = 100 * 1024
 LOG_KEEP = 500
 
+# Уровень повода. Он же слово журнала: жалоба «важное не отличается от
+# фонового» разбирается по строке, а не на глаз.
+LOUD = "громкий"
+QUIET = "фоновый"
+
 # Поводы события Notification, на которые шлём, и подпись в заголовке. Остальные
 # (auth_success, elicitation_complete, elicitation_response) пользователя ни к
 # чему не зовут и молчат. Отбор дублируется матчерами в settings.json, но
@@ -52,6 +68,18 @@ NOTIFICATION_REASONS = {
     "idle_prompt": "ждёт ввода",
 }
 SUBAGENT_REASON = "субагент отработал"
+TURN_DONE = "turn_done"
+TURN_REASON = "ход закончен"
+# Ход короче этого уведомления не даёт: пользователь эти секунды смотрит в то
+# же окно, и звать его некуда. Порог перебивается DEVKIT_NOTIFY_TURN_MIN.
+TURN_MIN = 60
+# Конец хода и idle_prompt это один и тот же повод «сессия ждёт тебя», поэтому
+# троттлится он общим ключом. Окно шире минуты: idle_prompt харнес присылает
+# примерно через минуту после конца хода, и своим окном он продублировал бы
+# баннер.
+WAIT_KEY = "session_waiting"
+WAIT_REASONS = ("idle_prompt", TURN_DONE)
+WAIT_WINDOW = 180
 
 # Куда переключает клик по баннеру. Умеет это только terminal-notifier: она шлёт
 # от своего имени, а display notification постит от имени Script Editor, и клик
@@ -144,15 +172,22 @@ def transcript_cwd(path):
 
 
 def parse_event(event, root=None):
-    """Событие харнеса в (ключ повода, заголовок, тело). None значит не шлём."""
+    """Событие харнеса в (ключ повода, заголовок, тело, уровень). None значит
+    не шлём."""
     name = event.get("hook_event_name")
+    level = LOUD
     if name == "Notification":
         key = event.get("notification_type") or ""
         label = NOTIFICATION_REASONS.get(key)
         if not label:
             return None
         body = short(event.get("message"))
+    elif name == "Stop":
+        # Конец хода главной сессии. Своего текста у события нет, тело собирать
+        # не из чего, и баннеру хватает заголовка.
+        key, label, body = TURN_DONE, TURN_REASON, ""
     elif name == "SubagentStop":
+        level = QUIET
         # Обычный субагент приходит сюда, а не поводом agent_completed события
         # Notification: тот повод про фоновые сессии, не про субагентов.
         key = "subagent_stop"
@@ -165,7 +200,7 @@ def parse_event(event, root=None):
             body = short("%s: %s" % (agent, body) if body else agent)
     else:
         return None
-    return key, "%s: %s" % (session_label(event.get("cwd"), root), label), body
+    return key, "%s: %s" % (session_label(event.get("cwd"), root), label), body, level
 
 
 def in_vscode(env):
@@ -225,19 +260,39 @@ def pick_backend(env=None, platform=None, which=None):
     return None
 
 
-def backend_argv(backend, title, body, target=None):
+def group_id(session):
+    # Схлопывание идёт по сессии, а не по поводу: лента копится именно из
+    # фоновых баннеров одной сессии, и новый должен вытеснять её же прошлый.
+    session = str(session or "").strip()
+    return "devkit-%s" % session if session and session != "-" else "devkit"
+
+
+def backend_argv(backend, title, body, target=None, level=LOUD, session=None):
+    """Как уровень выглядит на баннере, решает бэкенд: со звуком и своей
+    строкой громкий, молча и схлопываясь по сессии фоновый."""
     name = os.path.basename(backend)
     if name == "terminal-notifier":
         # Пустое тело она показывает пустой строкой, поэтому в теле хотя бы
         # заголовок: баннер без второй строки выглядит обрезанным.
         argv = [backend, "-title", title, "-message", body or title]
+        argv += ["-sound", "default"] if level == LOUD else ["-group", group_id(session)]
         return argv + list(target) if target else argv
     if name == "osascript":
-        script = 'display notification "%s" with title "%s"' % (
-            applescript_quote(body), applescript_quote(title))
+        # Группировки у display notification нет вовсе, остаётся звук.
+        sound = ' sound name "default"' if level == LOUD else ""
+        script = 'display notification "%s" with title "%s"%s' % (
+            applescript_quote(body), applescript_quote(title), sound)
         return [backend, "-e", script]
-    # notify-send и своя команда зовутся одинаково: заголовок и тело аргументами.
-    # Цель перехода они не понимают, и уведомление уходит без неё.
+    if name == "notify-send":
+        # Схлопывание тут держит подсказка synchronous: баннер с той же меткой
+        # заменяет предыдущий, а не ложится под него.
+        if level == LOUD:
+            return [backend, "-u", "critical", title, body]
+        return [backend, "-u", "low",
+                "-h", "string:x-canonical-private-synchronous:%s" % group_id(session),
+                title, body]
+    # Своя команда зовётся как «команда заголовок тело»: ни уровня, ни цели
+    # перехода она не понимает, и уведомление уходит без них.
     return [backend, title, body]
 
 
@@ -245,10 +300,10 @@ def applescript_quote(text):
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def send(backend, title, body, target=None):
+def send(backend, title, body, target=None, level=LOUD, session=None):
     """Код возврата бэкенда, None если запустить не удалось."""
     try:
-        p = subprocess.run(backend_argv(backend, title, body, target),
+        p = subprocess.run(backend_argv(backend, title, body, target, level, session),
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         return None
@@ -275,37 +330,81 @@ def sweep(path, now):
             pass
 
 
-def allow(session, key, now=None, path=None):
-    """Можно ли слать этот повод этой сессии: прошлая отправка старше окна.
-    Разрешив, отметку сдвигает."""
-    now = time.time() if now is None else now
-    path = state_dir() if path is None else path
-    mark = os.path.join(path, hashlib.sha1(
-        ("%s|%s" % (session, key)).encode("utf-8")).hexdigest()[:16])
+def throttle(key):
+    """Ключ и окно троттлинга повода. Конец хода и idle_prompt считаются одним
+    поводом «сессия ждёт тебя»: иначе пришедший следом idle_prompt повторил бы
+    баннер конца хода."""
+    return (WAIT_KEY, WAIT_WINDOW) if key in WAIT_REASONS else (key, WINDOW)
+
+
+def stamp(mark, now):
     try:
-        with open(mark, encoding="utf-8") as f:
-            last = float(f.read().strip())
-    except (OSError, ValueError):
-        last = None
-    if last is not None and 0 <= now - last < WINDOW:
-        return False
-    try:
-        os.makedirs(path, exist_ok=True)
+        os.makedirs(os.path.dirname(mark), exist_ok=True)
         with open(mark, "w", encoding="utf-8") as f:
             f.write("%.3f" % now)
         os.utime(mark, (now, now))
     except OSError:
         pass
+
+
+def read_stamp(mark):
+    try:
+        with open(mark, encoding="utf-8") as f:
+            return float(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def allow(session, key, now=None, path=None):
+    """Можно ли слать этот повод этой сессии: прошлая отправка старше окна.
+    Разрешив, отметку сдвигает."""
+    now = time.time() if now is None else now
+    path = state_dir() if path is None else path
+    key, window = throttle(key)
+    mark = os.path.join(path, hashlib.sha1(
+        ("%s|%s" % (session, key)).encode("utf-8")).hexdigest()[:16])
+    last = read_stamp(mark)
+    if last is not None and 0 <= now - last < window:
+        return False
+    stamp(mark, now)
     sweep(path, now)
     return True
 
 
-def log(session, key, backend, result, target=None):
+def turn_mark(session, path=None):
+    path = state_dir() if path is None else path
+    return os.path.join(path, "turn-" + hashlib.sha1(
+        str(session).encode("utf-8")).hexdigest()[:16])
+
+
+def mark_turn(session, now=None, path=None):
+    """Отметить начало хода: с этой метки считается его длительность."""
+    stamp(turn_mark(session, path), time.time() if now is None else now)
+
+
+def turn_min(env=None):
+    env = os.environ if env is None else env
+    try:
+        return max(0.0, float((env.get("DEVKIT_NOTIFY_TURN_MIN") or "").strip()))
+    except ValueError:
+        return float(TURN_MIN)
+
+
+def short_turn(session, now=None, path=None, env=None):
+    """Ход короче порога, звать некуда: пользователь эти секунды смотрит в то
+    же окно. Метки нет (сессия поднялась до правки настроек, ход первый),
+    значит порог не срабатывает и уведомление уходит."""
+    now = time.time() if now is None else now
+    started = read_stamp(turn_mark(session, path))
+    return started is not None and 0 <= now - started < turn_min(env)
+
+
+def log(session, key, backend, result, target=None, level=None):
     d = os.path.join(os.path.expanduser("~"), ".devkit")
     path = os.path.join(d, "notify.log")
-    line = "%s сессия %s повод %s бэкенд %s цель %s %s\n" % (
+    line = "%s сессия %s повод %s уровень %s бэкенд %s цель %s %s\n" % (
         time.strftime("%Y-%m-%dT%H:%M:%S"), session or "-", key or "-",
-        backend or "-", target[1] if target else "-", result)
+        level or "-", backend or "-", target[1] if target else "-", result)
     try:
         os.makedirs(d, exist_ok=True)
         if os.path.exists(path) and os.path.getsize(path) > LOG_LIMIT:
@@ -329,18 +428,18 @@ def terminal_sequence(title, body):
     return "\033]9;%s\007" % text
 
 
-def deliver(title, body, session="-", key="-", target=None):
+def deliver(title, body, session="-", key="-", target=None, level=LOUD):
     """Отправить и записать в журнал. Возврат (бэкенд, код возврата)."""
     backend = pick_backend()
     if not backend:
-        log(session, key, None, "бэкенда нет: слать нечем")
+        log(session, key, None, "бэкенда нет: слать нечем", level=level)
         return None, None
     # В журнал идёт цель, которая реально уехала: бэкенд без клика её не берёт,
     # и жалоба «клик не работает» тогда разбирается по строке, а не на глаз.
     sent = target if supports_click(backend) else None
-    code = send(backend, title, body, sent)
+    code = send(backend, title, body, sent, level, session)
     log(session, key, backend,
-        "код возврата: %s" % ("не запустился" if code is None else code), sent)
+        "код возврата: %s" % ("не запустился" if code is None else code), sent, level)
     return backend, code
 
 
@@ -361,6 +460,11 @@ def run_hook(harness):
         log("-", "-", None, "событие не разобрано: json не объектом")
         return 0
     session = str(event.get("session_id") or "-")[:8]
+    if event.get("hook_event_name") == "UserPromptSubmit":
+        # Ввод пользователя ничего не шлёт, он только отмечает начало хода: от
+        # этой метки конец хода считает свою длительность.
+        mark_turn(session)
+        return 0
     try:
         root = session_tree(event)
         parsed = parse_event(event, root)
@@ -369,11 +473,15 @@ def run_hook(harness):
         return 0
     if not parsed:
         return 0
-    key, title, body = parsed
-    if not allow(session, key):
-        log(session, key, None, "пропуск: повтор в окне %dс" % WINDOW)
+    key, title, body, level = parsed
+    if key == TURN_DONE and short_turn(session):
+        log(session, key, None, "пропуск: ход короче %gс" % turn_min(), level=level)
         return 0
-    backend, _ = deliver(title, body, session, key, click_target(cwd=root))
+    if not allow(session, key):
+        log(session, key, None,
+            "пропуск: повтор в окне %dс" % throttle(key)[1], level=level)
+        return 0
+    backend, _ = deliver(title, body, session, key, click_target(cwd=root), level)
     if not backend:
         # Системного бэкенда нет, остаётся сам терминал: харнес выдаст
         # последовательность за нас.
@@ -417,13 +525,22 @@ def main(argv):
         return run_hook(argv[1] if len(argv) > 1 else "claude-code")
     if argv[0] == "--self-test":
         return self_test()
+    # Без флага зовущий скрипт считается громким: он зовёт человека к делу, а
+    # не рассказывает о ходе работы. Старые вызовы от этого не меняются.
+    level = LOUD
+    if argv[0] == "--quiet":
+        level, argv = QUIET, argv[1:]
+    if not argv:
+        sys.stderr.write(__doc__)
+        return 2
     if os.environ.get("DEVKIT_NOTIFY_OFF"):
         return 0
     title = short(argv[0])
     body = short(argv[1]) if len(argv) > 1 else ""
     # Троттлинга тут нет: позвал скрипт, значит шлём. Окно держит поток событий
     # харнеса, а не осознанный вызов.
-    backend, code = deliver(title, body, target=click_target(cwd=os.getcwd()))
+    backend, code = deliver(title, body, target=click_target(cwd=os.getcwd()),
+                            level=level)
     return 0 if backend and code == 0 else 1
 
 

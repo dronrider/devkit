@@ -261,6 +261,47 @@ done
 event SubagentStop "" sess-sub | notify_hook || fail "хук уведомителя вернул не 0 на субагенте"
 grep -q 'субагент отработал|exec-low: первая строка' "$nmark" || fail "субагент не дошёл до бэкенда: $(cat "$nmark")"
 
+# Уровень доезжает до баннера: громкий со звуком, фоновый молча и с группой по
+# сессии, чтобы новый баннер вытеснял её же предыдущий.
+: > "$nmark"
+event Notification permission_prompt sess-loud | notify_click || fail "громкий повод вернул не 0"
+grep -q -- '-sound default' "$nmark" || fail "громкий повод ушёл без звука: $(cat "$nmark")"
+grep -q -- '-group' "$nmark" && fail "громкий повод схлопнулся в группу: $(cat "$nmark")"
+: > "$nmark"
+event SubagentStop "" sess-bg | notify_click || fail "фоновый повод вернул не 0"
+grep -q -- '-group devkit-sess-bg' "$nmark" || fail "фоновый повод ушёл без группы: $(cat "$nmark")"
+grep -q -- '-sound' "$nmark" && fail "фоновый повод ушёл со звуком: $(cat "$nmark")"
+grep -q 'повод subagent_stop уровень фоновый' "$nlog" ||
+    fail "уровень не попал в журнал: $(cat "$nlog")"
+
+# Конец хода: метки начала нет, значит порог не срабатывает и уведомление
+# уходит громким.
+: > "$nmark"
+event Stop "" sess-turn | notify_hook || fail "хук вернул не 0 на конце хода"
+grep -q '^devkit-dk-034: ход закончен|$' "$nmark" || fail "конец хода не дошёл до бэкенда: $(cat "$nmark")"
+grep -q 'повод turn_done уровень громкий' "$nlog" || fail "конец хода в журнале без уровня: $(cat "$nlog")"
+
+# Короткий ход молчит: пользователь эти секунды смотрит в то же окно. Ход
+# считается от метки, которую кладёт ввод пользователя.
+: > "$nmark"
+event UserPromptSubmit "" sess-short | notify_hook || fail "хук вернул не 0 на вводе пользователя"
+[ -s "$nmark" ] && fail "ввод пользователя послал уведомление: $(cat "$nmark")"
+event Stop "" sess-short | notify_hook || fail "хук вернул не 0 на коротком ходе"
+[ -s "$nmark" ] && fail "короткий ход послал уведомление: $(cat "$nmark")"
+grep -q 'пропуск: ход короче' "$nlog" || fail "пропуск по длине хода не попал в журнал: $(cat "$nlog")"
+# Тот же ход с нулевым порогом уведомление даёт: молчание держит именно порог.
+event Stop "" sess-short |
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" DEVKIT_NOTIFY_TURN_MIN=0 \
+    python3 "$here/notify.py" --hook claude-code || fail "хук вернул не 0 на нулевом пороге"
+grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+    fail "нулевой порог не пропустил конец хода: $(cat "$nmark")"
+
+# Конец хода и idle_prompt это один повод, и второй не повторяет баннер первого.
+: > "$nmark"
+event Stop "" sess-wait | notify_hook || fail "хук вернул не 0 на конце хода сессии ожидания"
+event Notification idle_prompt sess-wait | notify_hook || fail "хук вернул не 0 на idle_prompt следом"
+[ "$(wc -l < "$nmark")" -eq 1 ] || fail "idle_prompt повторил баннер конца хода: $(cat "$nmark")"
+
 # Повтор того же повода той же сессии в окне молчит, а соседняя сессия нет.
 : > "$nmark"
 event Notification idle_prompt sess-window | notify_hook
@@ -273,7 +314,7 @@ event Notification idle_prompt sess-other | notify_hook
 # Посторонние события и молчаливые поводы не шлют ничего.
 : > "$nmark"
 event Notification auth_success sess-quiet | notify_hook || fail "хук вернул не 0 на молчаливом поводе"
-event Stop "" sess-quiet | notify_hook || fail "хук вернул не 0 на постороннем событии"
+event PreToolUse "" sess-quiet | notify_hook || fail "хук вернул не 0 на постороннем событии"
 printf 'не json' | notify_hook || fail "хук вернул не 0 на мусоре вместо события"
 [ -s "$nmark" ] && fail "уведомление ушло на том, на чём слать не должны: $(cat "$nmark")"
 
@@ -289,7 +330,7 @@ grep -q 'событие не разобрано: json не объектом' "$n
 err=$(printf '{"hook_event_name":"Notification","notification_type":{"a":1},"session_id":"sess-bad"}' |
     notify_hook 2>&1) || fail "хук вернул не 0 на поле не той формы"
 [ -n "$err" ] && fail "хук ругался в stderr на поле не той формы: $err"
-grep -q 'сессия sess-bad повод - бэкенд - цель - событие не разобрано: поля не той формы' "$nlog" ||
+grep -q 'сессия sess-bad повод - уровень - бэкенд - цель - событие не разобрано: поля не той формы' "$nlog" ||
     fail "поле не той формы не попало в журнал: $(cat "$nlog")"
 [ -s "$nmark" ] && fail "уведомление ушло на кривом событии: $(cat "$nmark")"
 # Повод при этом не съедается: тело собирается из того, что дали.
@@ -325,7 +366,7 @@ grep -q -- '-open vscode://file/p/devkit?windowId=_blank$' "$nmark" ||
 : > "$nmark"
 event Notification idle_prompt sess-noclick | notify_hook || fail "хук без клика вернул не 0"
 grep -q 'open' "$nmark" && fail "цель ушла отправителю, который клик не умеет: $(cat "$nmark")"
-grep -q 'сессия sess-noc повод idle_prompt бэкенд .* цель - код возврата: 0' "$nlog" ||
+grep -q 'сессия sess-noc повод idle_prompt уровень громкий бэкенд .* цель - код возврата: 0' "$nlog" ||
     fail "в журнале нет отправки без цели: $(cat "$nlog")"
 
 # cwd не строкой цель не роняет: уведомление уходит, клик поднимает редактор.
@@ -360,8 +401,9 @@ EOF
 grep -q 'бэкенда нет' "$nlog" || fail "отказ бэкенда не попал в журнал"
 echo "$out" | grep -q 'terminalSequence' || fail "без бэкенда нет запасного пути через терминал: $out"
 
-# Журнал пишет сессию, повод и код возврата: жалоба «не приходят» разбирается по нему.
-grep -q 'сессия sess-win повод idle_prompt бэкенд .*код возврата: 0' "$nlog" ||
+# Журнал пишет сессию, повод, уровень и код возврата: жалоба «не приходят»
+# разбирается по нему, а «важное не отличается от фонового» по уровню.
+grep -q 'сессия sess-win повод idle_prompt уровень громкий бэкенд .*код возврата: 0' "$nlog" ||
     fail "в журнале нет строки отправки: $(cat "$nlog")"
 
 # Выключатель гасит уведомитель целиком, в том числе аргументный режим.
@@ -378,6 +420,20 @@ HOME="$nhome" DEVKIT_NOTIFY_OFF=1 DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/
 HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" "выкат" "прод обновлён" ||
     fail "аргументный режим вернул не 0"
 grep -q '^выкат|прод обновлён$' "$nmark" || fail "аргументный режим не дошёл до бэкенда: $(cat "$nmark")"
+grep -q 'уровень громкий' "$nlog" || fail "внешний вызов ушёл не громким: $(cat "$nlog")"
+
+# Внешний вызов громкий по умолчанию, --quiet понижает его до фонового.
+: > "$nmark"
+HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
+    python3 "$here/notify.py" "выкат" "прод обновлён" || fail "громкий вызов вернул не 0"
+grep -q -- '-sound default' "$nmark" || fail "внешний вызов ушёл без звука: $(cat "$nmark")"
+: > "$nmark"
+HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
+    python3 "$here/notify.py" --quiet "поезд собран" "три задачи" || fail "тихий вызов вернул не 0"
+grep -q '^-title поезд собран -message три задачи -group devkit' "$nmark" ||
+    fail "--quiet не понизил повод: $(cat "$nmark")"
+HOME="$nhome" python3 "$here/notify.py" --quiet >/dev/null 2>&1
+[ $? -eq 2 ] || fail "--quiet без заголовка не показал справку"
 
 # Самопроверка говорит, чем именно послано, и краснеет, когда слать нечем.
 out=$(HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --self-test) ||

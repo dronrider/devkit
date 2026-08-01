@@ -27,50 +27,60 @@ class TestParseEvent(unittest.TestCase):
                             ("agent_needs_input", "нужен ответ"),
                             ("elicitation_dialog", "диалог MCP"),
                             ("idle_prompt", "ждёт ввода")):
-            key, title, body = notify.parse_event(
+            key, title, body, level = notify.parse_event(
                 event(notification_type=kind, message="Claude ждёт"))
             self.assertEqual(key, kind)
             self.assertEqual(title, "devkit-dk-034: %s" % label)
             self.assertEqual(body, "Claude ждёт")
+            # Сессия упёрлась в вопрос, и это повод подключиться, а не сводка.
+            self.assertEqual(level, notify.LOUD)
 
     def test_silent_reasons(self):
         for kind in ("auth_success", "elicitation_complete", "elicitation_response", ""):
             self.assertIsNone(notify.parse_event(event(notification_type=kind)))
 
+    def test_turn_done_is_loud(self):
+        key, title, body, level = notify.parse_event(event(hook_event_name="Stop"))
+        self.assertEqual((key, title, body), (notify.TURN_DONE,
+                                              "devkit-dk-034: ход закончен", ""))
+        self.assertEqual(level, notify.LOUD)
+
     def test_other_events(self):
-        # Stop не подключается вовсе: уведомление на каждом ответе это фон.
-        for name in ("Stop", "PreToolUse", "SessionStart"):
+        # UserPromptSubmit разбором не проходит: он только метит начало хода.
+        for name in ("UserPromptSubmit", "PreToolUse", "SessionStart"):
             self.assertIsNone(notify.parse_event(event(hook_event_name=name)))
 
     def test_subagent_takes_first_line(self):
-        key, title, body = notify.parse_event(event(
+        key, title, body, level = notify.parse_event(event(
             hook_event_name="SubagentStop", agent_type="review-high",
             last_assistant_message="\n\nЗамечаний нет\nдалее детали\nи ещё"))
         self.assertEqual(key, "subagent_stop")
         self.assertEqual(title, "devkit-dk-034: субагент отработал")
         self.assertEqual(body, "review-high: Замечаний нет")
+        # Субагент это рассказ о ходе работы, звать по нему некуда.
+        self.assertEqual(level, notify.QUIET)
 
     def test_empty_body(self):
-        _, _, body = notify.parse_event(event(notification_type="idle_prompt", message=""))
+        body = notify.parse_event(event(notification_type="idle_prompt", message=""))[2]
         self.assertEqual(body, "")
-        _, _, body = notify.parse_event(event(hook_event_name="SubagentStop",
-                                              agent_type="exec-low"))
+        body = notify.parse_event(event(hook_event_name="SubagentStop",
+                                        agent_type="exec-low"))[2]
         self.assertEqual(body, "exec-low")
 
     def test_body_is_cut(self):
-        _, _, body = notify.parse_event(event(notification_type="idle_prompt",
-                                              message="ы" * 500))
+        body = notify.parse_event(event(notification_type="idle_prompt",
+                                        message="ы" * 500))[2]
         self.assertEqual(len(body), notify.BODY_LIMIT)
         self.assertTrue(body.endswith("..."))
 
     def test_fields_of_wrong_type(self):
         # Поля события приходят от харнеса, и их форма это его дело, а не наше:
         # число вместо строки не должно ни ронять хук, ни съедать повод.
-        key, title, body = notify.parse_event(event(
+        key, title, body, _ = notify.parse_event(event(
             notification_type="permission_prompt", message=42, cwd=7))
         self.assertEqual((key, title, body), ("permission_prompt", "сессия: нужно разрешение", "42"))
-        _, _, body = notify.parse_event(event(hook_event_name="SubagentStop",
-                                              agent_type=1, last_assistant_message=None))
+        body = notify.parse_event(event(hook_event_name="SubagentStop",
+                                        agent_type=1, last_assistant_message=None))[2]
         self.assertEqual(body, "1")
 
     def test_unhashable_reason(self):
@@ -80,7 +90,7 @@ class TestParseEvent(unittest.TestCase):
             notify.parse_event(event(notification_type={"a": 1}))
 
     def test_title_without_cwd(self):
-        _, title, _ = notify.parse_event(event(cwd="", notification_type="idle_prompt"))
+        title = notify.parse_event(event(cwd="", notification_type="idle_prompt"))[1]
         self.assertEqual(title, "сессия: ждёт ввода")
 
 
@@ -148,9 +158,9 @@ class TestSessionLabel(unittest.TestCase):
         self.assertEqual(notify.session_label("", ""), "сессия")
 
     def test_title_carries_both(self):
-        _, title, _ = notify.parse_event(
+        title = notify.parse_event(
             event(cwd="/p/it-road-course-irc-75", notification_type="permission_prompt"),
-            "/p/it-road-course")
+            "/p/it-road-course")[1]
         self.assertEqual(title, "it-road-course (irc-75): нужно разрешение")
 
 
@@ -247,32 +257,63 @@ class TestPickBackend(unittest.TestCase):
                          "/tmp/stub")
         self.assertEqual(notify.pick_backend(env, "win32", lambda n: None), "/tmp/stub")
 
-    def test_backend_argv(self):
-        self.assertEqual(notify.backend_argv("/usr/bin/notify-send", "заголовок", "тело"),
-                         ["/usr/bin/notify-send", "заголовок", "тело"])
-        argv = notify.backend_argv("/usr/bin/osascript", 'сессия "dk"', "тело")
+    def test_osascript_argv(self):
+        argv = notify.backend_argv("/usr/bin/osascript", 'сессия "dk"', "тело",
+                                   level=notify.QUIET)
         self.assertEqual(argv[:2], ["/usr/bin/osascript", "-e"])
         self.assertEqual(argv[2],
                          'display notification "тело" with title "сессия \\"dk\\""')
+        # Группировки у display notification нет вовсе, весь уровень это звук.
+        self.assertEqual(notify.backend_argv("/usr/bin/osascript", "з", "т")[2],
+                         'display notification "т" with title "з" sound name "default"')
+
+    def test_notify_send_argv(self):
+        self.assertEqual(notify.backend_argv("/usr/bin/notify-send", "з", "т"),
+                         ["/usr/bin/notify-send", "-u", "critical", "з", "т"])
+        self.assertEqual(
+            notify.backend_argv("/usr/bin/notify-send", "з", "т", level=notify.QUIET,
+                                session="sess1"),
+            ["/usr/bin/notify-send", "-u", "low",
+             "-h", "string:x-canonical-private-synchronous:devkit-sess1", "з", "т"])
+
+    def test_own_command_knows_no_level(self):
+        # Своя команда зовётся как «команда заголовок тело» и на уровень не
+        # смотрит: договор с ней старый.
+        for level in (notify.LOUD, notify.QUIET):
+            self.assertEqual(notify.backend_argv("/tmp/stub", "з", "т", level=level,
+                                                 session="sess1"),
+                             ["/tmp/stub", "з", "т"])
 
     def test_terminal_notifier_argv(self):
         target = ("-open", "vscode://file/p/dk")
         self.assertEqual(
             notify.backend_argv("/bin/terminal-notifier", "заголовок", "тело", target),
             ["/bin/terminal-notifier", "-title", "заголовок", "-message", "тело",
-             "-open", "vscode://file/p/dk"])
+             "-sound", "default", "-open", "vscode://file/p/dk"])
         # Без цели уведомление всё равно уходит, просто не кликается.
         self.assertEqual(
             notify.backend_argv("/bin/terminal-notifier", "заголовок", "тело"),
-            ["/bin/terminal-notifier", "-title", "заголовок", "-message", "тело"])
+            ["/bin/terminal-notifier", "-title", "заголовок", "-message", "тело",
+             "-sound", "default"])
         # Пустое тело она показала бы пустой строкой.
         self.assertEqual(
             notify.backend_argv("/bin/terminal-notifier", "заголовок", "")[4], "заголовок")
 
+    def test_terminal_notifier_collapses_background(self):
+        # Фоновый идёт молча и с группой по сессии: новый баннер сессии
+        # вытесняет её же предыдущий, а не ложится под него.
+        argv = notify.backend_argv("/bin/terminal-notifier", "з", "т", None,
+                                   notify.QUIET, "sess1")
+        self.assertEqual(argv[5:], ["-group", "devkit-sess1"])
+        self.assertNotIn("-sound", argv)
+        # Сессии нет (аргументный режим), группа всё равно одна на devkit.
+        self.assertEqual(notify.backend_argv("/bin/terminal-notifier", "з", "т", None,
+                                             notify.QUIET, "-")[6], "devkit")
+
     def test_backends_without_click_ignore_target(self):
         target = ("-open", "vscode://file/p/dk")
         self.assertEqual(notify.backend_argv("/usr/bin/notify-send", "з", "т", target),
-                         ["/usr/bin/notify-send", "з", "т"])
+                         ["/usr/bin/notify-send", "-u", "critical", "з", "т"])
         self.assertEqual(len(notify.backend_argv("/usr/bin/osascript", "з", "т", target)), 3)
 
 
@@ -282,17 +323,31 @@ class TestThrottle(unittest.TestCase):
 
     def test_window_on_both_sides(self):
         now = 1000.0
-        self.assertTrue(notify.allow("sess1", "idle_prompt", now, self.dir))
-        self.assertFalse(notify.allow("sess1", "idle_prompt", now + 1, self.dir))
-        self.assertFalse(notify.allow("sess1", "idle_prompt",
+        self.assertTrue(notify.allow("sess1", "subagent_stop", now, self.dir))
+        self.assertFalse(notify.allow("sess1", "subagent_stop", now + 1, self.dir))
+        self.assertFalse(notify.allow("sess1", "subagent_stop",
                                       now + notify.WINDOW - 0.5, self.dir))
-        self.assertTrue(notify.allow("sess1", "idle_prompt",
+        self.assertTrue(notify.allow("sess1", "subagent_stop",
                                      now + notify.WINDOW, self.dir))
+
+    def test_turn_done_and_idle_share_the_key(self):
+        # idle_prompt приходит примерно через минуту после конца хода, и это
+        # тот же повод «сессия ждёт тебя»: своим ключом он повторил бы баннер.
+        now = 1000.0
+        self.assertTrue(notify.allow("sess1", notify.TURN_DONE, now, self.dir))
+        self.assertFalse(notify.allow("sess1", "idle_prompt", now + 61, self.dir))
+        self.assertFalse(notify.allow("sess1", "idle_prompt",
+                                      now + notify.WAIT_WINDOW - 0.5, self.dir))
+        self.assertTrue(notify.allow("sess1", "idle_prompt",
+                                     now + notify.WAIT_WINDOW, self.dir))
+        # Окно ожидания шире минуты, иначе idle_prompt проскакивал бы следом.
+        self.assertGreater(notify.WAIT_WINDOW, 60)
 
     def test_reasons_do_not_mute_each_other(self):
         now = 1000.0
         self.assertTrue(notify.allow("sess1", "idle_prompt", now, self.dir))
         self.assertTrue(notify.allow("sess1", "permission_prompt", now, self.dir))
+        self.assertTrue(notify.allow("sess1", "subagent_stop", now, self.dir))
 
     def test_sessions_do_not_mute_each_other(self):
         # Без session_id в ключе пять параллельных агентов слились бы в один.
@@ -307,6 +362,56 @@ class TestThrottle(unittest.TestCase):
         self.assertEqual(len(stale), 1)
         notify.allow("sess2", "idle_prompt", now, self.dir)
         self.assertNotIn(stale[0], os.listdir(self.dir))
+
+
+class TestTurnLength(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def test_short_turn_stays_quiet(self):
+        # Пользователь эти секунды смотрит в то же окно, звать его некуда.
+        now = 1000.0
+        notify.mark_turn("sess1", now, self.dir)
+        self.assertTrue(notify.short_turn("sess1", now + 1, self.dir, {}))
+        self.assertTrue(notify.short_turn("sess1", now + notify.TURN_MIN - 0.5,
+                                          self.dir, {}))
+
+    def test_long_turn_notifies(self):
+        now = 1000.0
+        notify.mark_turn("sess1", now, self.dir)
+        self.assertFalse(notify.short_turn("sess1", now + notify.TURN_MIN, self.dir, {}))
+        self.assertFalse(notify.short_turn("sess1", now + 3600, self.dir, {}))
+
+    def test_turn_without_mark_notifies(self):
+        # Сессия поднялась до правки настроек, метку класть было некому: порог
+        # не срабатывает, и уведомление уходит.
+        self.assertFalse(notify.short_turn("sess1", 1000.0, self.dir, {}))
+        notify.mark_turn("sess1", 1000.0, self.dir)
+        self.assertFalse(notify.short_turn("sess2", 1000.5, self.dir, {}))
+
+    def test_broken_mark_notifies(self):
+        with open(notify.turn_mark("sess1", self.dir), "w", encoding="utf-8") as f:
+            f.write("не число")
+        self.assertFalse(notify.short_turn("sess1", 1000.0, self.dir, {}))
+
+    def test_own_threshold(self):
+        now = 1000.0
+        notify.mark_turn("sess1", now, self.dir)
+        self.assertFalse(notify.short_turn("sess1", now + 90, self.dir, {}))
+        self.assertTrue(notify.short_turn("sess1", now + 90, self.dir,
+                                          {"DEVKIT_NOTIFY_TURN_MIN": "300"}))
+        # Порог нулём выключает проверку, мусор в переменной оставляет свой.
+        self.assertFalse(notify.short_turn("sess1", now + 1, self.dir,
+                                           {"DEVKIT_NOTIFY_TURN_MIN": "0"}))
+        self.assertTrue(notify.short_turn("sess1", now + 1, self.dir,
+                                          {"DEVKIT_NOTIFY_TURN_MIN": "минута"}))
+        self.assertEqual(notify.turn_min({}), float(notify.TURN_MIN))
+
+    def test_mark_is_swept_with_the_rest(self):
+        now = time.time()
+        notify.mark_turn("sess1", now - notify.STALE - 60, self.dir)
+        notify.allow("sess2", "idle_prompt", now, self.dir)
+        self.assertFalse(os.path.exists(notify.turn_mark("sess1", self.dir)))
 
 
 class TestTerminalSequence(unittest.TestCase):

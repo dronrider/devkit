@@ -79,10 +79,19 @@ git init -q "$proj"
 git -C "$proj" config user.name t
 git -C "$proj" config user.email t@t
 
-# new: CLAUDE.md из шаблона, hooksPath на хуки devkit, повторный запуск отбит.
+# new: AGENTS.md из шаблона, тонкий CLAUDE.md генератором, hooksPath на хуки
+# devkit, повторный запуск отбит.
 HOME="$home" python3 "$dkctl" new --no-board -C "$proj" >/dev/null || fail "new не прошёл"
-[ -f "$proj/CLAUDE.md" ] || fail "new не создал CLAUDE.md"
-grep -q '<название проекта>' "$proj/CLAUDE.md" && fail "плейсхолдер названия не заменён"
+[ -f "$proj/AGENTS.md" ] || fail "new не создал AGENTS.md"
+grep -q '<название проекта>' "$proj/AGENTS.md" && fail "плейсхолдер названия не заменён"
+grep -q '^@' "$proj/AGENTS.md" && fail "в AGENTS.md из шаблона есть строка импорта"
+[ -f "$proj/CLAUDE.md" ] || fail "new не сгенерил тонкий CLAUDE.md"
+head -1 "$proj/CLAUDE.md" | grep -q '^<!-- devkit:generated body=[0-9a-f]\{12\} -->$' ||
+    fail "у тонкого CLAUDE.md нет маркера с хешем: $(head -1 "$proj/CLAUDE.md")"
+grep -q '^@AGENTS.md$' "$proj/CLAUDE.md" || fail "тонкий CLAUDE.md не ссылается на AGENTS.md"
+grep -q '^@../devkit/RULES.md$' "$proj/CLAUDE.md" || fail "тонкий CLAUDE.md не ссылается на правила devkit"
+grep -q 'RULES.board.md' "$proj/CLAUDE.md" && fail "проекту без доски выписаны правила доски"
+cp "$proj/CLAUDE.md" "$tmp/thin.gen"
 hp=$(git -C "$proj" config core.hooksPath)
 [ -n "$hp" ] || fail "hooksPath не выставлен"
 [ -f "$proj/$hp/pre-commit" ] || fail "hooksPath смотрит мимо хуков devkit: $hp"
@@ -99,7 +108,8 @@ mkdir -p "$proj/docs"
 printf 'смотри [детали](nope.md)\n' > "$proj/docs/note.md"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 [ $? -eq 1 ] || fail "doctor не увидел поломок"
-echo "$out" | grep -q 'импорт' || fail "нет находки про битый импорт"
+echo "$out" | grep -q 'импорт @../devkit/NOPE.md не разворачивается' || fail "нет находки про битый импорт: $out"
+cp "$tmp/thin.gen" "$proj/CLAUDE.md"
 echo "$out" | grep -q 'битая ссылка' || fail "нет находки про битую ссылку"
 # Пример ссылки внутри блока кода это не ссылка: документированная команда с
 # [текст](путь) в теле не должна красить доктор.
@@ -199,7 +209,195 @@ printf '[detect]\n\n[rules]\nmode = "import"\n\n[delegate]\nmode = "none"\n\n[ho
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 echo "$out" | grep -q 'профиль харнеса битый: claude-code.toml: \[rules\] нет ключа file' ||
     fail "нет находки про битый профиль харнеса: $out"
+# Следствие битого профиля называется отдельно: генерировать по нему нечего, и
+# молчать об этом нельзя, иначе правила просто перестали бы доезжать.
+echo "$out" | grep -q 'харнес claude-code включён, а его профиль не проходит валидацию' ||
+    fail "нет находки про генерацию по битому профилю: $out"
 cp "$tmp/claude-code.toml.bak" "$dk/harness/claude-code.toml"
+
+# Юниты генератора правил: хеш маркера, поломанные маркеры, забор кода. Гоняются
+# прямо по модулю, доктор до них не нужен.
+python3 - "$dk/devkitctl" <<'EOF' || fail "юниты генератора правил не прошли"
+import sys
+sys.path.insert(0, sys.argv[1])
+import harness
+import rules
+
+prof = harness.parse("p.toml", '[rules]\nmode = "import"\nfile = "CLAUDE.md"\nimport_line = "@{path}"\n')
+thin = rules.thin_text(prof, "/proj", "/proj/../devkit", board=False, embed=True)
+stamp, body = rules.generated_parts(thin)
+assert body == "@AGENTS.md\n", body
+assert stamp == rules.digest(body), thin
+assert rules.generated_parts("# рукописный\n") == (None, None)
+
+block = rules.block_text("aabbccddeeff", "правила\n")
+text = rules.put_block("# проект\n", block)
+assert rules.find_block(text)[1] == "aabbccddeeff", text
+assert rules.find_block(text)[3] == "правила\n", text
+assert rules.drop_block(text) == "# проект\n", repr(rules.drop_block(text))
+try:
+    rules.find_block("# проект\n<!-- devkit:rules end -->\n")
+    raise AssertionError("конец без начала принят за целую вклейку")
+except rules.BrokenMarkers:
+    pass
+try:
+    rules.find_block(block.split("\n")[0] + "\nтекст\n")
+    raise AssertionError("начало без конца принято за целую вклейку")
+except rules.BrokenMarkers:
+    pass
+
+# Пример в блоке кода это текст, а не вклейка и не импорт: и то и другое
+# показано в дизайне DK-033 и в доке, скан по ним не должен спотыкаться.
+sample = "пример:\n\n```\n" + block + "@../devkit/RULES.md\n```\n"
+assert rules.find_block(sample) is None, sample
+assert rules.handwritten_imports(sample) == [], rules.handwritten_imports(sample)
+assert rules.handwritten_imports("# проект\n@../devkit/RULES.md\n") == [(2, "@../devkit/RULES.md")]
+EOF
+
+# Файлы правил: рукописный AGENTS.md источник, тонкие файлы харнесов генерятся.
+# Гоняется на своём проекте, чтобы правки --fix не мешали прежним шагам.
+rproj="$tmp/rproj"
+mkdir -p "$rproj"
+git init -q "$rproj"
+git -C "$rproj" config user.name t
+git -C "$rproj" config user.email t@t
+HOME="$home" PATH="$cleanpath" python3 "$dkctl" new --prefix RP -C "$rproj" >/dev/null 2>&1
+docr() { HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor "$@" -C "$rproj" 2>&1; }
+# taskctl в PATH заглушка, доски она не заводит: кладём её руками, и тонкий файл
+# от этого устаревает, ему не хватает правил доски.
+mkdir -p "$rproj/docs"
+printf '# Задачи\n' > "$rproj/docs/TASKS.md"
+out=$(docr)
+echo "$out" | grep -q 'CLAUDE.md устарел' || fail "появление доски не сделало тонкий файл устаревшим: $out"
+grep -q 'RULES.board.md' "$rproj/CLAUDE.md" && fail "doctor без --fix сам перегенерил тонкий файл"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: CLAUDE.md перегенерирован' || fail "--fix не перегенерил устаревший файл: $out"
+grep -q '^@../devkit/RULES.board.md$' "$rproj/CLAUDE.md" || fail "в перегенерённом файле нет правил доски"
+out=$(docr)
+echo "$out" | grep -qE 'CLAUDE.md|AGENTS.md' && fail "после перегенерации остались находки по правилам: $out"
+
+# Правка руками: генератор файл не перетирает даже под --fix, а зовёт перенести
+# её в AGENTS.md. Иначе чужой текст пропал бы молча.
+printf 'своя строка\n' >> "$rproj/CLAUDE.md"
+out=$(docr --fix)
+echo "$out" | grep -q 'CLAUDE.md правлен руками' || fail "нет находки про правленый руками тонкий файл: $out"
+grep -q 'своя строка' "$rproj/CLAUDE.md" || fail "--fix затёр правку в тонком файле"
+rm -f "$rproj/CLAUDE.md"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: CLAUDE.md сгенерирован' || fail "--fix не сгенерил пропавший тонкий файл: $out"
+
+# Проект, подключённый до переезда на AGENTS.md: рукописный CLAUDE.md остаётся
+# нетронутым, а доктор подсказывает переезд. Автоматом его не делают: в живых
+# CLAUDE.md бывают локальные импорты, автоматике их не разобрать.
+hproj="$tmp/hproj"
+mkdir -p "$hproj"
+git init -q "$hproj"
+git -C "$hproj" config user.name t
+git -C "$hproj" config user.email t@t
+printf '# Старый проект\n\n@../devkit/RULES.md\n' > "$hproj/CLAUDE.md"
+doch() { HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor "$@" -C "$hproj" 2>&1; }
+out=$(doch --fix)
+echo "$out" | grep -q 'git mv CLAUDE.md AGENTS.md' || fail "нет подсказки про переезд на AGENTS.md: $out"
+[ -f "$hproj/AGENTS.md" ] && fail "--fix перенёс рукописный файл сам"
+grep -q '@../devkit/RULES.md' "$hproj/CLAUDE.md" || fail "--fix тронул рукописный CLAUDE.md"
+mv "$hproj/CLAUDE.md" "$hproj/AGENTS.md"
+out=$(doch)
+echo "$out" | grep -q 'AGENTS.md:3: строка импорта @../devkit/RULES.md' ||
+    fail "импорт, переехавший в AGENTS.md, не назван находкой: $out"
+out=$(doch --fix)
+echo "$out" | grep -q 'починено: CLAUDE.md сгенерирован' || fail "--fix не сгенерил тонкий файл после переезда: $out"
+printf '# Старый проект\n' > "$hproj/AGENTS.md"
+out=$(doch)
+echo "$out" | grep -q 'строка импорта' && fail "находка про импорт осталась после его удаления: $out"
+echo "$out" | grep -qE 'CLAUDE.md|AGENTS.md' && fail "после переезда остались находки по правилам: $out"
+
+# embed-инструмент: правила вклеиваются в AGENTS.md единственной копией, а
+# тонкие файлы на devkit больше не ходят, иначе правила приехали бы дважды.
+cat > "$dk/harness/embed-tool.toml" <<'EOF'
+# Подставной профиль для самопроверки: импортов инструмент не понимает, правила
+# доезжают до него только вклейкой, остальных осей у него нет.
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+EOF
+mkdir -p "$home/.devkit"
+printf 'enabled = ["claude-code", "embed-tool"]\n' > "$home/.devkit/harness.local"
+out=$(docr)
+echo "$out" | grep -q 'нет вклейки правил' || fail "нет находки про недостающую вклейку: $out"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: вклейка правил добавлена в AGENTS.md' || fail "--fix не вклеил правила: $out"
+echo "$out" | grep -q 'починено: CLAUDE.md перегенерирован' || fail "тонкий файл не перегенерён под вклейку: $out"
+grep -q '^<!-- devkit:rules begin src=[0-9a-f]\{12\} body=[0-9a-f]\{12\} -->$' "$rproj/AGENTS.md" ||
+    fail "у вклейки нет маркера начала с двумя хешами"
+grep -q '^<!-- devkit:rules end -->$' "$rproj/AGENTS.md" || fail "у вклейки нет маркера конца"
+grep -q 'Правила работы с ассистентом' "$rproj/AGENTS.md" || fail "во вклейке нет текста RULES.md"
+grep -q 'Правила проектов с доской' "$rproj/AGENTS.md" || fail "во вклейке нет правил доски"
+[ "$(grep -c '^@' "$rproj/CLAUDE.md")" -eq 1 ] || fail "при вклейке тонкий файл всё ещё ходит в devkit"
+out=$(docr)
+echo "$out" | grep -qE 'вклейка|CLAUDE.md' && fail "после вклейки остались находки по правилам: $out"
+cp "$rproj/AGENTS.md" "$tmp/agents.embed"
+
+# Тронутая руками вклейка: находка, текст не перетирается.
+python3 - "$rproj/AGENTS.md" <<'EOF'
+import sys
+p = sys.argv[1]
+t = open(p, encoding="utf-8").read().replace("<!-- devkit:rules end -->",
+                                             "своя правка\n<!-- devkit:rules end -->")
+open(p, "w", encoding="utf-8").write(t)
+EOF
+out=$(docr --fix)
+echo "$out" | grep -q 'вклейку правил в AGENTS.md правили руками' || fail "тронутая вклейка не названа: $out"
+grep -q 'своя правка' "$rproj/AGENTS.md" || fail "--fix затёр правку внутри маркеров"
+cp "$tmp/agents.embed" "$rproj/AGENTS.md"
+
+# Правила devkit обновились: src разошёлся, body цел, вклейка перегенерируется.
+printf '\nновая строка правил доски\n' >> "$dk/RULES.board.md"
+out=$(docr)
+echo "$out" | grep -q 'вклейка правил в AGENTS.md протухла против devkit' || fail "протухшая вклейка не названа: $out"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: вклейка правил в AGENTS.md обновлена под devkit' ||
+    fail "--fix не обновил протухшую вклейку: $out"
+grep -q 'новая строка правил доски' "$rproj/AGENTS.md" || fail "обновлённая вклейка без новой строки правил"
+
+# Копия текста правил в дереве должна быть одна.
+cp "$rproj/AGENTS.md" "$rproj/docs/copy.md"
+out=$(docr)
+echo "$out" | grep -q 'вклейка правил лежит не в одном файле' || fail "две вклейки в дереве не названы: $out"
+rm -f "$rproj/docs/copy.md"
+# Маркеры в примере кода это документация, а не вторая копия.
+printf 'пример:\n\n```\n<!-- devkit:rules begin src=aaaaaaaaaaaa body=bbbbbbbbbbbb -->\nтекст\n<!-- devkit:rules end -->\n```\n' \
+    > "$rproj/docs/sample.md"
+out=$(docr)
+echo "$out" | grep -q 'вклейка правил лежит не в одном файле' && fail "пример в блоке кода принят за вклейку: $out"
+rm -f "$rproj/docs/sample.md"
+
+# Последний embed-инструмент выключен: вклейка убирается, импорты возвращаются.
+# Это единственный случай, когда --fix удаляет, и только целый блок со своим body.
+printf 'enabled = ["claude-code"]\n' > "$home/.devkit/harness.local"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: вклейка правил убрана из AGENTS.md' || fail "--fix не убрал ненужную вклейку: $out"
+echo "$out" | grep -q 'починено: CLAUDE.md перегенерирован' || fail "тонкий файл не вернул импорты devkit: $out"
+grep -q 'devkit:rules' "$rproj/AGENTS.md" && fail "в AGENTS.md остались маркеры вклейки"
+grep -q '^@../devkit/RULES.md$' "$rproj/CLAUDE.md" || fail "в тонком файле не вернулись правила devkit"
+rm -f "$home/.devkit/harness.local"
+
+# Проектный слой только сужает машинный список: профиль embed-tool на месте, но
+# в машинном слое его нет, и сужением его не включить. Остаться совсем без
+# харнесов это находка, а не тишина: правила иначе молча перестали бы доезжать.
+mkdir -p "$rproj/.devkit"
+printf 'enabled = ["embed-tool"]\n' > "$rproj/.devkit/harness.local"
+out=$(docr)
+echo "$out" | grep -q 'включённых харнесов нет' || fail "сужение до невключённого харнеса прошло молча: $out"
+rm -f "$rproj/.devkit/harness.local"
+rm -f "$dk/harness/embed-tool.toml"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"
@@ -330,7 +528,7 @@ echo "$out" | grep -q 'SessionStart-хук' || fail "нет находки пр�
 # Помета «машина» отделяет машинные находки от проектных, на неё опирается и
 # дока, и сценарий проверки.
 echo "$out" | grep -q '^машина: tmux не в PATH' || fail "у машинной находки нет пометы «машина»: $out"
-echo "$out" | grep -q '^нет CLAUDE.md' || fail "проектная находка получила помету «машина»: $out"
+echo "$out" | grep -q '^нет AGENTS.md' || fail "проектная находка получила помету «машина»: $out"
 
 # --fix собирает бинари и раскладывает определения, а неоднозначное (tmux,
 # снимок квоты) оставляет находкой с командой.

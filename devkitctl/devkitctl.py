@@ -2,12 +2,13 @@
 """devkitctl: обвязка devkit в проекте одной командой.
 
   devkitctl new --prefix XX [--name "..."] [--no-board] [-C dir]
-      подключить проект: CLAUDE.md из шаблона (импорты пересчитываются под
-      реальный путь до devkit), git-хуки, доска через taskctl init, болванка
+      подключить проект: AGENTS.md из шаблона, тонкие файлы правил под
+      включённые харнесы, git-хуки, доска через taskctl init, болванка
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
   devkitctl doctor [--fix] [-C dir]
-      проверить обвязку проекта: импорты CLAUDE.md разворачиваются, git-хуки
+      проверить обвязку проекта: AGENTS.md на месте, генерённые файлы правил
+      свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
       markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
@@ -18,8 +19,8 @@
       через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
       сборка бинарей, копия определений агентов, переезд одиночного снимка
-      квоты в директорию), заполненное не трогает, неоднозначное оставляет
-      находкой
+      квоты в директорию, генерация файлов правил), заполненное не трогает,
+      неоднозначное оставляет находкой
 
   devkitctl stats [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
@@ -34,6 +35,7 @@ import importlib.util
 import json
 import os
 import re
+import rules
 import shutil
 import subprocess
 import sys
@@ -521,19 +523,9 @@ def doctor(start, fix=False):
     root, in_git = project_root(start)
     if not in_git:
         findings.append("не git-репозиторий: %s" % root)
-    claude = root / "CLAUDE.md"
-    if not claude.exists():
-        findings.append("нет CLAUDE.md в корне проекта; подключение: devkitctl new --prefix XX")
-    else:
-        for i, ln in enumerate(claude.read_text(encoding="utf-8").splitlines(), 1):
-            ln = ln.strip()
-            if not ln.startswith("@"):
-                continue
-            target = Path(os.path.expanduser(ln[1:]))
-            if not target.is_absolute():
-                target = root / target
-            if not target.exists():
-                findings.append("CLAUDE.md:%d: импорт %s не разворачивается (devkit склонирован рядом?)" % (i, ln))
+    rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
+    findings += rfindings
+    fixed += rfixed
     if in_git and check_git_hooks(root):
         if fix:
             done, residual = connect_git_hooks(root)
@@ -647,32 +639,28 @@ def stats(start):
 
 def new(start, prefix, name, no_board):
     root, in_git = project_root(start)
-    claude = root / "CLAUDE.md"
-    if claude.exists():
-        sys.stderr.write("CLAUDE.md уже есть, проект подключён; проверка: devkitctl doctor\n")
+    agents = root / rules.AGENTS_FILE
+    if agents.exists():
+        sys.stderr.write("%s уже есть, проект подключён; проверка: devkitctl doctor\n"
+                         % rules.AGENTS_FILE)
         return 2
     if not no_board and not prefix:
         sys.stderr.write("нужен --prefix для доски либо --no-board, когда задачи во внешнем трекере\n")
         return 2
-    text = (DEVKIT / "templates" / "CLAUDE.project.md").read_text(encoding="utf-8")
+    text = (DEVKIT / "templates" / "AGENTS.project.md").read_text(encoding="utf-8")
     if text.startswith("<!--"):
         text = text[text.index("-->") + 3:].lstrip("\n")
     name = name or root.name
     text = text.replace("<название проекта>", name).replace("<XX>", prefix or "XX")
-    rel = Path(os.path.relpath(DEVKIT, root)).as_posix()
-    if rel != "../devkit":
-        # Шаблон рассчитан на devkit в соседней директории; когда он лежит
-        # иначе, импорты без пересчёта молча не развернутся.
-        text = text.replace("@../devkit/", "@%s/" % rel)
-    claude.write_text(text, encoding="utf-8")
-    done = ["CLAUDE.md создан из шаблона"]
+    agents.write_text(text, encoding="utf-8")
+    done = ["%s создан из шаблона" % rules.AGENTS_FILE]
     if in_git:
         applied, residual = connect_git_hooks(root)
         done.append(applied or residual or "git-хуки уже подключены")
     else:
         done.append("не git-репозиторий, git-хуки не подключались")
     if no_board:
-        done.append("доска не заводилась: убрать импорт RULES.board.md из CLAUDE.md и вписать внешний трекер")
+        done.append("доска не заводилась: вписать в %s, какой это трекер" % rules.AGENTS_FILE)
     else:
         tc = shutil.which("taskctl")
         if tc:
@@ -686,6 +674,10 @@ def new(start, prefix, name, no_board):
                         "cd %s/taskctl && go build -o ~/go/bin/taskctl . && taskctl -C %s init --prefix %s"
                         % (DEVKIT, root, prefix))
         done += scaffold_deploy(root)
+    # Тонкие файлы генерятся последними: доска к этому моменту уже заведена, и в
+    # импорты попадает RULES.board.md.
+    _, generated = rules.check(root, DEVKIT, fix=True, skip_dirs=SKIP_DIRS)
+    done += generated
     print("\n".join(done))
     return 0
 

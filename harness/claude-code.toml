@@ -25,7 +25,7 @@ map_max = "fable"
 [hooks]
 protocol = "claude-code"
 config = "~/.claude/settings.json"
-events = ["write", "session-start", "notify", "subagent-done"]
+events = ["write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"]
 memory_index = "/memory/MEMORY.md"
 
 [quota]

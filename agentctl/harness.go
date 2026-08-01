@@ -60,7 +60,7 @@ var profileSchema = []sectionSpec{
 		{"spend_pro", tomlArr}, {"spend_max", tomlArr}, {"budget_based", tomlBool}}},
 }
 
-var knownEvents = []string{"write", "session-start", "notify", "subagent-done"}
+var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"}
 
 // Свод машинного слоя. Ярусы в секции харнеса обязательны все четыре: сложенные
 // в одну модель соседние ярусы пишутся повторением значения, а пропуск ключа

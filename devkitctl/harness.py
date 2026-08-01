@@ -43,7 +43,8 @@ TIERS = ("mini", "base", "pro", "max")
 # Префиксы имён бакетов, из которых берётся окно расчёта: week_ это 7 суток,
 # month_ это 30. Длины окон живут в agentctl (quota.go), тут только перечень.
 BUCKET_PREFIXES = ("week_", "month_")
-KNOWN_EVENTS = ("write", "session-start", "notify", "subagent-done")
+KNOWN_EVENTS = ("write", "session-start", "notify", "subagent-done", "turn-done",
+                "prompt-submit")
 
 
 class TomlError(Exception):

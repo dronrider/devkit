@@ -192,6 +192,37 @@ func TestMachineConfigPartialTiers(t *testing.T) {
 	}
 }
 
+// TestMachineConfigTypes: тип значения в слоях машины и проекта проверяется
+// так же жёстко, как в профиле. Фикстурами это не покрыть, машинный слой читает
+// только agentctl, а перепутанный тип молча выключил бы харнес: строка вместо
+// массива в enabled дала бы пустой список, целое в ярусе пустую модель.
+func TestMachineConfigTypes(t *testing.T) {
+	dir := writeProfiles(t, map[string][2]string{"claude-code": {"CLAUDECODE", "native"}})
+	cases := []struct{ name, machine, project, want string }{
+		{"enabled строкой", "enabled = \"claude-code\"\n", "", "enabled: жду массив строк, вижу строку"},
+		{"default массивом", "default = [\"claude-code\"]\n", "", "default: жду строку, вижу массив строк"},
+		{"ярус целым", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = 1\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\n", "",
+			"mini: жду строку, вижу целое"},
+		{"бюджет строкой", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"h\"\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\nbudget = \"200\"\n", "",
+			"budget: жду целое, вижу строку"},
+		{"enabled проекта строкой", "enabled = [\"claude-code\"]\n", "enabled = \"claude-code\"\n",
+			"enabled: жду массив строк, вижу строку"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			machine := writeFile(t, t.TempDir(), "harness.local", c.machine)
+			project := ""
+			if c.project != "" {
+				project = writeFile(t, t.TempDir(), "harness.local", c.project)
+			}
+			_, err := mergeLayers(dir, machine, project)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("ошибка %v, жду про %q", err, c.want)
+			}
+		})
+	}
+}
+
 // TestProjectNarrow: проектный слой только сужает. Имени вне машинного списка
 // он не добавляет, лишний ключ это находка, а пустое пересечение равносильно
 // «не определилось».

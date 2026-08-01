@@ -89,14 +89,26 @@ class TestClickTarget(unittest.TestCase):
 
     def test_worktree_becomes_url(self):
         self.assertEqual(notify.click_target(self.VSCODE, "/Users/x/projects/devkit-dk-047"),
-                         ("-open", "vscode://file/Users/x/projects/devkit-dk-047"))
+                         ("-open", "vscode://file/Users/x/projects/devkit-dk-047"
+                                   "?windowId=_blank"))
+
+    def test_target_never_replaces_a_window(self):
+        # Без windowId=_blank редактор открывает дерево в активном окне, а не в
+        # своём: дерева нет ни в одном окне, значит под замену идёт то, где
+        # сейчас работают. Параметр обязателен на любой цели vscode://.
+        for cwd in ("/p/dk", "/Users/x/мои проекты/dk", "/p/dk?a=1"):
+            flag, url = notify.click_target(self.VSCODE, cwd)
+            self.assertEqual(flag, "-open")
+            self.assertTrue(url.endswith("?windowId=_blank"), url)
+            self.assertEqual(url.count("?"), 1, url)
 
     def test_awkward_path_is_quoted(self):
         # Пробелы и кириллица в пути ссылку не ломают: она уезжает аргументом,
         # но открывает её система, а не мы.
         self.assertEqual(notify.click_target(self.VSCODE, "/Users/x/мои проекты/dk"),
                          ("-open", "vscode://file/Users/x/%D0%BC%D0%BE%D0%B8%20"
-                                   "%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D1%8B/dk"))
+                                   "%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D1%8B/dk"
+                                   "?windowId=_blank"))
 
     def test_vscode_without_cwd_activates_editor(self):
         self.assertEqual(notify.click_target(self.VSCODE, ""),

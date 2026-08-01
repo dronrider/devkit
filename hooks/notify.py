@@ -57,6 +57,12 @@ SUBAGENT_REASON = "субагент отработал"
 # по такому баннеру открывает Finder с папкой скриптов.
 CLICK_BACKENDS = ("terminal-notifier",)
 VSCODE_URL = "vscode://file"
+# Без этого параметра редактор открывает дерево в активном окне, а не в
+# отдельном: у сессии из worktree своего окна обычно нет, и под замену уходит
+# то окно, в котором сейчас работают, вместе со всеми его агентами. С
+# параметром уже открытое дерево по-прежнему поднимается, второго окна на него
+# не заводится.
+VSCODE_NEW_WINDOW = "?windowId=_blank"
 VSCODE_BUNDLE = "com.microsoft.VSCode"
 TERMINAL_BUNDLES = {
     "Apple_Terminal": "com.apple.Terminal",
@@ -137,7 +143,7 @@ def click_target(env=None, cwd=None):
         # первое попавшееся окно. Уже открытое окно поднимается, второго
         # VS Code не заводит.
         if cwd:
-            return "-open", VSCODE_URL + urllib.parse.quote(cwd)
+            return "-open", VSCODE_URL + urllib.parse.quote(cwd) + VSCODE_NEW_WINDOW
         return "-activate", VSCODE_BUNDLE
     bundle = TERMINAL_BUNDLES.get(env.get("TERM_PROGRAM") or "")
     # Окно терминала по рабочему дереву не найти, поднимаем сам терминал.

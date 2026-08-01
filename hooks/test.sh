@@ -284,12 +284,14 @@ printf '{"hook_event_name":"Notification","notification_type":"permission_prompt
 grep -q '^devkit-dk-034: нужно разрешение|42$' "$nmark" ||
     fail "числовое тело съело повод: $(cat "$nmark")"
 
-# Клик по баннеру ведёт в рабочее дерево позвавшей сессии, а не в общее место.
+# Клик по баннеру ведёт в рабочее дерево позвавшей сессии, а не в общее место,
+# и открывает его отдельным окном: без windowId=_blank редактор подменил бы
+# деревом задачи то окно, в котором сейчас работают.
 : > "$nmark"
 event Notification idle_prompt sess-click | notify_click || fail "хук с кликом вернул не 0"
-grep -q '\-open vscode://file/p/devkit-dk-034$' "$nmark" ||
+grep -q '\-open vscode://file/p/devkit-dk-034?windowId=_blank$' "$nmark" ||
     fail "цель перехода не уехала отправителю: $(cat "$nmark")"
-grep -q 'цель vscode://file/p/devkit-dk-034 код возврата: 0' "$nlog" ||
+grep -q 'цель vscode://file/p/devkit-dk-034?windowId=_blank код возврата: 0' "$nlog" ||
     fail "цель перехода не попала в журнал: $(cat "$nlog")"
 
 # Отправитель без клика цель не получает, и журнал говорит об этом прямо.

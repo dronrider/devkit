@@ -214,9 +214,22 @@ mkdir -p "$nsys"
 for t in sh python3; do
     p=$(command -v "$t") && ln -sf "$p" "$nsys/$t"
 done
+# Стаб отправителя с кликом зовётся именно terminal-notifier: по имени бэкенда
+# уведомитель и решает, брать ли цель перехода.
+ntn="$tmp/tn"
+mkdir -p "$ntn"
+cat > "$ntn/terminal-notifier" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$nmark"
+EOF
+chmod +x "$ntn/terminal-notifier"
 nlog="$nhome/.devkit/notify.log"
 notify_hook() { # событие на stdin, стаб вместо бэкенда
     HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --hook claude-code
+}
+notify_click() { # то же, но отправителем стаб terminal-notifier
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
+        CLAUDE_CODE_ENTRYPOINT=claude-vscode python3 "$here/notify.py" --hook claude-code
 }
 event() { # тип события, повод, сессия
     printf '{"hook_event_name":"%s","notification_type":"%s","session_id":"%s",' "$1" "$2" "$3"
@@ -262,7 +275,7 @@ grep -q 'событие не разобрано: json не объектом' "$n
 err=$(printf '{"hook_event_name":"Notification","notification_type":{"a":1},"session_id":"sess-bad"}' |
     notify_hook 2>&1) || fail "хук вернул не 0 на поле не той формы"
 [ -n "$err" ] && fail "хук ругался в stderr на поле не той формы: $err"
-grep -q 'сессия sess-bad повод - бэкенд - событие не разобрано: поля не той формы' "$nlog" ||
+grep -q 'сессия sess-bad повод - бэкенд - цель - событие не разобрано: поля не той формы' "$nlog" ||
     fail "поле не той формы не попало в журнал: $(cat "$nlog")"
 [ -s "$nmark" ] && fail "уведомление ушло на кривом событии: $(cat "$nmark")"
 # Повод при этом не съедается: тело собирается из того, что дали.
@@ -270,6 +283,37 @@ printf '{"hook_event_name":"Notification","notification_type":"permission_prompt
     notify_hook || fail "хук вернул не 0 на числовом теле"
 grep -q '^devkit-dk-034: нужно разрешение|42$' "$nmark" ||
     fail "числовое тело съело повод: $(cat "$nmark")"
+
+# Клик по баннеру ведёт в рабочее дерево позвавшей сессии, а не в общее место.
+: > "$nmark"
+event Notification idle_prompt sess-click | notify_click || fail "хук с кликом вернул не 0"
+grep -q '\-open vscode://file/p/devkit-dk-034$' "$nmark" ||
+    fail "цель перехода не уехала отправителю: $(cat "$nmark")"
+grep -q 'цель vscode://file/p/devkit-dk-034 код возврата: 0' "$nlog" ||
+    fail "цель перехода не попала в журнал: $(cat "$nlog")"
+
+# Отправитель без клика цель не получает, и журнал говорит об этом прямо.
+: > "$nmark"
+event Notification idle_prompt sess-noclick | notify_hook || fail "хук без клика вернул не 0"
+grep -q 'open' "$nmark" && fail "цель ушла отправителю, который клик не умеет: $(cat "$nmark")"
+grep -q 'сессия sess-noc повод idle_prompt бэкенд .* цель - код возврата: 0' "$nlog" ||
+    fail "в журнале нет отправки без цели: $(cat "$nlog")"
+
+# Своя цель перебивает нашу, пустая гасит клик совсем.
+: > "$nmark"
+event Notification idle_prompt sess-own |
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
+    DEVKIT_NOTIFY_OPEN='x-devkit://{cwd}' python3 "$here/notify.py" --hook claude-code ||
+    fail "хук со своей целью вернул не 0"
+grep -q -- '-open x-devkit:///p/devkit-dk-034$' "$nmark" ||
+    fail "своя цель не уехала отправителю: $(cat "$nmark")"
+: > "$nmark"
+event Notification idle_prompt sess-nogo |
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
+    CLAUDE_CODE_ENTRYPOINT=claude-vscode DEVKIT_NOTIFY_OPEN= \
+    python3 "$here/notify.py" --hook claude-code || fail "хук с погашенным кликом вернул не 0"
+[ -s "$nmark" ] || fail "уведомление с погашенным кликом не ушло вовсе"
+grep -q 'open' "$nmark" && fail "пустая DEVKIT_NOTIFY_OPEN клик не погасила: $(cat "$nmark")"
 
 # Слать нечем: код 0, отказ в журнале и запасной путь через сам терминал.
 : > "$nmark"

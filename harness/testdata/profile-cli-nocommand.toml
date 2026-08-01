@@ -1,0 +1,11 @@
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "cli"
+
+[hooks]
+
+[quota]

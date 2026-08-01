@@ -1,0 +1,11 @@
+[detect]
+
+[rules]
+mode = "render"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

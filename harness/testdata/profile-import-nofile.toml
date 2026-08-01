@@ -1,0 +1,12 @@
+[detect]
+
+[rules]
+mode = "import"
+import_line = "@{path}"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

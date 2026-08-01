@@ -1,0 +1,28 @@
+# Всё подмножество разом: комментарии, ключи верхнего уровня, пустая секция,
+# строки с экранированием, целые со знаком, булевы и массивы строк.
+default = "claude-code"
+enabled = ["claude-code", "codex"]
+
+[strings]
+plain = "значение"
+quoted = "он сказал \"да\""
+escaped = "путь\\сюда"
+hashed = "решётка # внутри строки"
+tabbed = "колонка\tвторая"
+
+[numbers]
+zero = 0
+plus = +12
+minus = -7   # хвостовой комментарий
+
+[flags]
+on = true
+off = false
+
+[arrays]
+one = ["week_all"]
+two = ["week_all", "week_max"]
+empty = []
+trailing = ["a", "b",]
+
+[empty]

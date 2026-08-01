@@ -1,0 +1,17 @@
+# Машинный слой ~/.devkit/harness.local тем же подмножеством.
+default = "claude-code"
+enabled = ["claude-code", "codex"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[codex]
+mini = "gpt-5-mini"
+base = "gpt-5-mini"
+pro = "gpt-5.2"
+max = "gpt-5.2-pro"
+budget = 200
+bin = "/opt/codex/bin/codex"

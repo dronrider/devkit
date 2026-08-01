@@ -1,0 +1,1 @@
+error: profile-render-nodir.toml: [rules] нет ключа dir (при mode = "render")

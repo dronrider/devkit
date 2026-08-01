@@ -1,0 +1,1 @@
+error: profile-delegate-nomode.toml: [delegate] нет ключа mode (обязателен всегда, у инструмента без делегирования это none)

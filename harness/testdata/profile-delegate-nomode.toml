@@ -1,0 +1,11 @@
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+agents_dir = ".sometool/agents"
+
+[hooks]
+
+[quota]

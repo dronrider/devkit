@@ -1,0 +1,1 @@
+error: parse-multiline-array.toml:2: ключ buckets: массив не закрыт: многострочные массивы вне подмножества

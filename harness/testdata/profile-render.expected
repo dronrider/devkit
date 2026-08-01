@@ -1,0 +1,12 @@
+[detect]
+env = "RENDERTOOL"
+bin = "rendertool"
+[rules]
+mode = "render"
+dir = ".rendertool/rules"
+[delegate]
+mode = "native"
+[hooks]
+protocol = "rendertool"
+events = ["write"]
+[quota]

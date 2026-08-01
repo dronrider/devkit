@@ -1,0 +1,34 @@
+[detect]
+env = "SOMETOOL"
+value = "1"
+bin = "sometool"
+[rules]
+mode = "import"
+file = "SOMETOOL.md"
+import_line = "@{path}"
+config = "sometool.json"
+global_file = "~/.sometool/rules.md"
+[delegate]
+mode = "cli"
+command = ["sometool", "run", "--model", "{model}", "--effort", "{effort}", "{prompt}"]
+agents_dir = ".sometool/agents"
+agents_format = "sometool"
+map_mini = "st-mini"
+map_base = "st-base"
+map_pro = "st-pro"
+map_max = "st-max"
+[hooks]
+protocol = "sometool"
+config = "~/.sometool/settings.json"
+events = ["write", "session-start", "notify", "subagent-done"]
+memory_index = "/memory/MEMORY.md"
+[quota]
+snap = "script"
+script = "snap/sometool.sh"
+buckets = ["month_all"]
+required = "month_all"
+spend_mini = ["month_all"]
+spend_base = ["month_all"]
+spend_pro = ["month_all"]
+spend_max = ["month_all"]
+budget_based = true

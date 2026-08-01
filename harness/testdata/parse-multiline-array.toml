@@ -1,0 +1,4 @@
+[quota]
+buckets = [
+  "week_all",
+]

@@ -1,0 +1,11 @@
+[detect]
+
+[rules]
+mode = "copy"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

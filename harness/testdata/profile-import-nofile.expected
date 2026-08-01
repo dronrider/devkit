@@ -1,0 +1,1 @@
+error: profile-import-nofile.toml: [rules] нет ключа file (при mode = "import")

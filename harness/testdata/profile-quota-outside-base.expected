@@ -1,0 +1,1 @@
+error: profile-quota-outside-base.toml: [quota] spend_base ссылается на бакет "week_max", которого нет в buckets

@@ -1,0 +1,14 @@
+[detect]
+env = "SOMETOOL"
+bin = "sometool"
+
+[rules]
+mode = "import"
+file = "SOMETOOL.md"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

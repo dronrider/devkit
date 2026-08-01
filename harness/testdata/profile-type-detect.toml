@@ -1,0 +1,13 @@
+[detect]
+env = 1
+bin = "sometool"
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

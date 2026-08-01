@@ -1,0 +1,5 @@
+[rules]
+mode = "import"
+
+[rules]
+mode = "embed"

@@ -1,0 +1,1 @@
+error: profile-quota-nospend-mini.toml: [quota] нет ключа spend_mini (секция непуста, ярусы объявляются все четыре)

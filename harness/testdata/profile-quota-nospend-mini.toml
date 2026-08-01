@@ -1,0 +1,17 @@
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+snap = "usage-pane"
+buckets = ["week_all"]
+required = "week_all"
+spend_base = ["week_all"]
+spend_pro = ["week_all"]
+spend_max = ["week_all"]

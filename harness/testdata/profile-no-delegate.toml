@@ -1,0 +1,10 @@
+[detect]
+env = "SOMETOOL"
+bin = "sometool"
+
+[rules]
+mode = "embed"
+
+[hooks]
+
+[quota]

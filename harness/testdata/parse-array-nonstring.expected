@@ -1,0 +1,1 @@
+error: parse-array-nonstring.toml:2: ключ buckets: в массиве допустимы только строки в кавычках, вижу "1, 2]"

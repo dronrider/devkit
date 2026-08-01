@@ -1,0 +1,1 @@
+error: parse-trailing-garbage.toml:2: ключ mode: после значения лишнее: "file = \"X.md\""

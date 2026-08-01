@@ -1,0 +1,9 @@
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]

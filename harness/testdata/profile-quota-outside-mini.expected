@@ -1,0 +1,1 @@
+error: profile-quota-outside-mini.toml: [quota] spend_mini ссылается на бакет "week_max", которого нет в buckets

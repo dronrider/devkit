@@ -1,0 +1,1 @@
+error: profile-import-noline.toml: [rules] нет ключа import_line (при mode = "import")

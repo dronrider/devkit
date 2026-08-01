@@ -1,0 +1,13 @@
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+protocol = "sometool"
+events = "write"
+
+[quota]

@@ -1,0 +1,19 @@
+tool = "sometool"
+[detect]
+env = "SOMETOOL"
+bin = "sometool"
+container = "docker"
+[rules]
+mode = "embed"
+[delegate]
+mode = "none"
+[hooks]
+protocol = "sometool"
+events = ["write", "telepathy"]
+[quota]
+[telemetry]
+endpoint = "https://example.invalid"
+warn: profile-unknown.toml: незнакомый ключ tool на верхнем уровне, пропущен
+warn: profile-unknown.toml: [detect] незнакомый ключ container, пропущен
+warn: profile-unknown.toml: незнакомая секция [telemetry], пропущена
+warn: profile-unknown.toml: [hooks] events: незнакомое событие "telepathy", пропущено

@@ -1,0 +1,5 @@
+[quota]
+snap = "usage-pane"
+
+[quota.spend]
+mini = ["week_all"]

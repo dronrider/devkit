@@ -1,0 +1,38 @@
+# Профиль Claude Code: чем инструмент располагает и как devkit им пользуется.
+# Формат это подмножество TOML из docs/lld/DK-033-universal-kit.md, читают его
+# agentctl (Go) и devkitctl (Python), каждый своим парсером.
+
+[detect]
+env = "CLAUDECODE"
+value = "1"
+bin = "claude"
+
+[rules]
+mode = "import"
+file = "CLAUDE.md"
+import_line = "@{path}"
+global_file = "~/.claude/CLAUDE.md"
+
+[delegate]
+mode = "native"
+agents_dir = "~/.claude/agents"
+agents_format = "claude-code"
+map_mini = "haiku"
+map_base = "sonnet"
+map_pro = "opus"
+map_max = "fable"
+
+[hooks]
+protocol = "claude-code"
+config = "~/.claude/settings.json"
+events = ["write", "session-start", "notify", "subagent-done"]
+memory_index = "/memory/MEMORY.md"
+
+[quota]
+snap = "usage-pane"
+buckets = ["week_all", "week_max"]
+required = "week_all"
+spend_mini = ["week_all"]
+spend_base = ["week_all"]
+spend_pro = ["week_all"]
+spend_max = ["week_all", "week_max"]

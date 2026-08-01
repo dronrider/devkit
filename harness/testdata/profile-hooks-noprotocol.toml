@@ -1,0 +1,12 @@
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+events = ["write"]
+
+[quota]

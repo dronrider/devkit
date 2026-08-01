@@ -17,7 +17,7 @@ unset GOBIN GOPATH
 # и есть основной чекаут.
 dk="$tmp/devkit"
 mkdir -p "$dk"
-for d in devkitctl agents hooks templates taskctl shipctl agentctl regcheck; do
+for d in devkitctl agents harness hooks templates taskctl shipctl agentctl regcheck; do
     cp -R "$here/../$d" "$dk/"
 done
 cp "$here/../RULES.md" "$here/../RULES.board.md" "$dk/"
@@ -171,6 +171,35 @@ if [ "$(uname)" = Darwin ]; then
     echo "$out" | grep -q 'клик по баннеру' &&
         fail "находка про клик осталась при отправителе, который клик умеет: $out"
 fi
+
+# Профили харнесов: общие с agentctl фикстуры. На каждый вход отчёт парсера
+# сверяется побайтно с .expected, тот же файл сверяет Go-реализация
+# (agentctl/harness_test.go). Разъедься парсеры, и один и тот же профиль
+# читался бы двумя утилитами по-разному.
+seen=0
+for f in "$dk"/harness/testdata/*.toml; do
+    seen=$((seen + 1))
+    base=$(basename "$f" .toml)
+    if ! python3 "$dk/devkitctl/harness.py" "$f" > "$tmp/report.out" 2>"$tmp/report.err"; then
+        fail "парсер профилей упал на $base: $(cat "$tmp/report.err")"
+        continue
+    fi
+    diff -u "$dk/harness/testdata/$base.expected" "$tmp/report.out" > "$tmp/report.diff" ||
+        fail "отчёт по $base разошёлся с ожидаемым: $(cat "$tmp/report.diff")"
+done
+[ "$seen" -ge 10 ] || fail "фикстур парсера найдено $seen, набор потерялся"
+
+# Профиль сегодняшнего харнеса валиден, и доктор это проверяет на каждом
+# прогоне: битый профиль молча выключил бы ось, а находится он тут.
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'профиль харнеса' && fail "находка по исправным профилям: $out"
+cp "$dk/harness/claude-code.toml" "$tmp/claude-code.toml.bak"
+printf '[detect]\n\n[rules]\nmode = "import"\n\n[delegate]\nmode = "none"\n\n[hooks]\n\n[quota]\n' \
+    > "$dk/harness/claude-code.toml"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'профиль харнеса битый: claude-code.toml: \[rules\] нет ключа file' ||
+    fail "нет находки про битый профиль харнеса: $out"
+cp "$tmp/claude-code.toml.bak" "$dk/harness/claude-code.toml"
 
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"

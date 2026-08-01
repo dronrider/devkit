@@ -343,6 +343,29 @@ class TestThrottle(unittest.TestCase):
         # Окно ожидания шире минуты, иначе idle_prompt проскакивал бы следом.
         self.assertGreater(notify.WAIT_WINDOW, 60)
 
+    def test_user_input_lets_the_next_turn_ring(self):
+        # Пользователь вернулся к сессии, и конец следующего хода это новый
+        # повод позвать, а не повтор прошлого: общее с idle_prompt окно иначе
+        # съедало бы второй длинный ход подряд.
+        now = 1000.0
+        self.assertTrue(notify.allow("sess1", notify.TURN_DONE, now, self.dir))
+        notify.clear_wait("sess1", self.dir)
+        self.assertTrue(notify.allow("sess1", notify.TURN_DONE, now + 1, self.dir))
+        # Ввода не было, значит idle_prompt следом за концом хода по-прежнему
+        # молчит: ради этого ключ и общий.
+        self.assertFalse(notify.allow("sess1", "idle_prompt", now + 2, self.dir))
+
+    def test_user_input_touches_only_waiting(self):
+        now = 1000.0
+        self.assertTrue(notify.allow("sess1", "subagent_stop", now, self.dir))
+        self.assertTrue(notify.allow("sess2", notify.TURN_DONE, now, self.dir))
+        notify.clear_wait("sess1", self.dir)
+        self.assertFalse(notify.allow("sess1", "subagent_stop", now + 1, self.dir))
+        self.assertFalse(notify.allow("sess2", "idle_prompt", now + 1, self.dir))
+        # Состояния ещё нет (ввод пришёл первым событием сессии), и это не
+        # повод падать.
+        notify.clear_wait("sess3", self.dir)
+
     def test_reasons_do_not_mute_each_other(self):
         now = 1000.0
         self.assertTrue(notify.allow("sess1", "idle_prompt", now, self.dir))

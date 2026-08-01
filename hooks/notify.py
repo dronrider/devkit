@@ -355,14 +355,29 @@ def read_stamp(mark):
         return None
 
 
+def throttle_mark(session, key, path=None):
+    path = state_dir() if path is None else path
+    return os.path.join(path, hashlib.sha1(
+        ("%s|%s" % (session, key)).encode("utf-8")).hexdigest()[:16])
+
+
+def clear_wait(session, path=None):
+    """Забыть, что этой сессии уже говорили «ждёт тебя». Зовётся на вводе
+    пользователя: он к сессии вернулся, и следующий конец хода это новый повод
+    позвать, а не повтор прошлого."""
+    try:
+        os.remove(throttle_mark(session, WAIT_KEY, path))
+    except OSError:
+        pass
+
+
 def allow(session, key, now=None, path=None):
     """Можно ли слать этот повод этой сессии: прошлая отправка старше окна.
     Разрешив, отметку сдвигает."""
     now = time.time() if now is None else now
     path = state_dir() if path is None else path
     key, window = throttle(key)
-    mark = os.path.join(path, hashlib.sha1(
-        ("%s|%s" % (session, key)).encode("utf-8")).hexdigest()[:16])
+    mark = throttle_mark(session, key, path)
     last = read_stamp(mark)
     if last is not None and 0 <= now - last < window:
         return False
@@ -461,9 +476,12 @@ def run_hook(harness):
         return 0
     session = str(event.get("session_id") or "-")[:8]
     if event.get("hook_event_name") == "UserPromptSubmit":
-        # Ввод пользователя ничего не шлёт, он только отмечает начало хода: от
-        # этой метки конец хода считает свою длительность.
+        # Ввод пользователя ничего не шлёт, он отмечает начало хода: от этой
+        # метки конец хода считает свою длительность. Заодно снимается отметка
+        # ожидания, иначе общее окно с idle_prompt глушило бы и следующий
+        # длинный ход той же сессии, а это уже новый повод позвать.
         mark_turn(session)
+        clear_wait(session)
         return 0
     try:
         root = session_tree(event)

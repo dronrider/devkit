@@ -302,6 +302,19 @@ event Stop "" sess-wait | notify_hook || fail "хук вернул не 0 на �
 event Notification idle_prompt sess-wait | notify_hook || fail "хук вернул не 0 на idle_prompt следом"
 [ "$(wc -l < "$nmark")" -eq 1 ] || fail "idle_prompt повторил баннер конца хода: $(cat "$nmark")"
 
+# Ввод пользователя снимает отметку ожидания: второй длинный ход подряд снова
+# звучит, хотя окно повода «сессия ждёт тебя» ещё не вышло.
+: > "$nmark"
+turn() { # конец хода без порога длительности: тут проверяется окно, а не порог
+    event Stop "" "$1" | HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" \
+        DEVKIT_NOTIFY_TURN_MIN=0 python3 "$here/notify.py" --hook claude-code
+}
+turn sess-again || fail "хук вернул не 0 на первом конце хода"
+event UserPromptSubmit "" sess-again | notify_hook || fail "хук вернул не 0 на вводе пользователя"
+turn sess-again || fail "хук вернул не 0 на втором конце хода"
+[ "$(wc -l < "$nmark")" -eq 2 ] ||
+    fail "второй ход после ввода пользователя промолчал: $(cat "$nmark")"
+
 # Повтор того же повода той же сессии в окне молчит, а соседняя сессия нет.
 : > "$nmark"
 event Notification idle_prompt sess-window | notify_hook

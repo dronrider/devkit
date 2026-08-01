@@ -26,16 +26,15 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
 | DK-048 | LLD: диспетчер пачки задач, параллельное исполнение независимых задач бэклога | LLD | P3 | 15 (0+7+4+0+4) | M | [tasks/DK-048.md](tasks/DK-048.md) |
-| DK-036 | профиль харнеса и слои конфигурации: claude-code.toml описывает сегодняшнее поведение | task | P3 | 14 (0+8+1+0+5) | M | [tasks/DK-036.md](tasks/DK-036.md) |
 
 ## Backlog
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-037 | ярусы mini/base/pro/max в agentctl, третья строка вердикта tier [после DK-036] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-037 | ярусы mini/base/pro/max в agentctl, третья строка вердикта tier | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-038 | снимок остатка по харнесам: директория quota/, бакеты ярусами, сменный съёмщик [после DK-037] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами [после DK-036] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit [после DK-036] | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-038, DK-039, DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 13 (0+7+1+0+5) | M | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-051 | agentctl budget: размер пачки из остатка лимитов | task | P3 | 13 (0+7+1+0+5) | S | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |

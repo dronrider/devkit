@@ -22,6 +22,10 @@ const usageText = `agentctl: выбор исполнителя под задач
                           одноразовую tmux-сессию и переписывает файл;
                           --if-stale снимает только протухший снимок, на этом
                           режиме стоит хук старта сессии (hooks/README.md)
+  harness [--harness      окно в резолв харнеса: активный инструмент и чем он
+           <имя>]         определён, включённый список после слияния слоёв,
+                          маппинг ярусов, режим делегирования, снимок квоты;
+                          --harness перебивает детект, как и DEVKIT_HARNESS
 
 Вердикт pick корректируется остатком лимитов по снимку: дефицит бакета сдвигает
 модель на ярус вниз, профицит свежего снимка на ярус вверх. Нет снимка или он
@@ -123,6 +127,12 @@ func main() {
 			fail(fmt.Errorf("жду: quota [refresh]"))
 		}
 		msg, err = cmdQuota(quotaPath(), timeNow())
+	case "harness":
+		fs := flag.NewFlagSet("harness", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		name := fs.String("harness", "", "имя харнеса, перебивает детект")
+		fs.Parse(args[1:])
+		msg, err = cmdHarness(*dir, *name)
 	case "help":
 		fmt.Print(usageText)
 		return

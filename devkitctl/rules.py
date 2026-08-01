@@ -50,6 +50,26 @@ def read_text(path):
     return Path(path).read_text(encoding="utf-8", errors="replace")
 
 
+def narrow_warns(d, path, machine_names):
+    # Что проектный слой понимает, а что нет. Тексты те же, что у Go-стороны
+    # (agentctl/harness.go, narrowByProject): один и тот же конфиг обе
+    # реализации обязаны разбирать одинаково, включая то, о чём говорят вслух.
+    warns = []
+    for k in d.tables[""]:
+        if k != "enabled":
+            warns.append("%s: ключ %s проектному слою не положен, понимается только enabled"
+                         % (path, k))
+    for sect in d.order:
+        if sect:
+            warns.append("%s: секция [%s] проектному слою не положена, маппинг ярусов машинный"
+                         % (path, sect))
+    for name in d.arr_of("", "enabled"):
+        if name not in machine_names:
+            warns.append("%s: %s сужением не включить, в машинном слое его нет, пропущен"
+                         % (path, name))
+    return warns
+
+
 def enabled_harnesses(root, profiles_dir, machine_path=None):
     # Включённые харнесы с их профилями и находки по дороге. Слои те же, что у
     # agentctl: машинный конфиг включает, проектный только сужает.
@@ -68,8 +88,11 @@ def enabled_harnesses(root, profiles_dir, machine_path=None):
             d = harness.parse(str(proj), read_text(proj))
         except harness.TomlError as e:
             return [], ["проектный конфиг харнесов не разобран: %s" % e]
+        findings += narrow_warns(d, proj, names)
         if d.get("", "enabled") is not None:
-            names = [n for n in d.arr_of("", "enabled") if n in names]
+            kept = [n for n in d.arr_of("", "enabled") if n in names]
+            findings += ["%s сужен проектным слоем %s" % (n, proj) for n in names if n not in kept]
+            names = kept
     out = []
     for name in names:
         path = Path(profiles_dir) / ("%s.toml" % name)

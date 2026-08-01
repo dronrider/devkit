@@ -393,9 +393,20 @@ rm -f "$home/.devkit/harness.local"
 # в машинном слое его нет, и сужением его не включить. Остаться совсем без
 # харнесов это находка, а не тишина: правила иначе молча перестали бы доезжать.
 mkdir -p "$rproj/.devkit"
-printf 'enabled = ["embed-tool"]\n' > "$rproj/.devkit/harness.local"
+printf 'enabled = ["embed-tool"]\ndefault = "embed-tool"\n\n[embed-tool]\npro = "x"\n' \
+    > "$rproj/.devkit/harness.local"
 out=$(docr)
 echo "$out" | grep -q 'включённых харнесов нет' || fail "сужение до невключённого харнеса прошло молча: $out"
+# Тексты те же, что у Go-стороны (agentctl/harness.go, narrowByProject): один и
+# тот же проектный конфиг обе реализации разбирают одинаково и говорят о нём
+# одно и то же, иначе сужение чинилось бы по разным подсказкам.
+echo "$out" | grep -q 'embed-tool сужением не включить, в машинном слое его нет, пропущен' ||
+    fail "имя вне машинного слоя отброшено молча: $out"
+echo "$out" | grep -q 'claude-code сужен проектным слоем' || fail "про суженный харнес доктор молчит: $out"
+echo "$out" | grep -q 'ключ default проектному слою не положен, понимается только enabled' ||
+    fail "лишний ключ проектного слоя прошёл молча: $out"
+echo "$out" | grep -q 'секция \[embed-tool\] проектному слою не положена, маппинг ярусов машинный' ||
+    fail "секция проектного слоя прошла молча: $out"
 rm -f "$rproj/.devkit/harness.local"
 rm -f "$dk/harness/embed-tool.toml"
 

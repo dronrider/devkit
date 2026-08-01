@@ -16,12 +16,15 @@ const usageText = `agentctl: выбор исполнителя под задач
                           --record дописывает строку исполнения в раздел «Ход
                           работы» файла задачи, --role review отдаёт вердикт
                           для агента-ревьювера (ярус ниже исполнителя, пол base)
-  quota [refresh]         снимок остатка лимитов: без аргумента печатает
-       [--if-stale]       разобранный ~/.devkit/quota.local (бакеты, возраст,
-                          pace, статус), refresh снимает панель /usage через
-                          одноразовую tmux-сессию и переписывает файл;
-                          --if-stale снимает только протухший снимок, на этом
-                          режиме стоит хук старта сессии (hooks/README.md)
+  quota [refresh]         снимок остатка лимитов активного харнеса: без
+       [--if-stale]       аргумента печатает разобранный
+                          ~/.devkit/quota/<харнес>.local (бакеты, возраст, pace,
+                          статус), refresh снимает остаток тем способом, что
+                          объявил профиль (панель /usage в одноразовой
+                          tmux-сессии либо съёмщик из harness/snap), и
+                          переписывает файл; --if-stale снимает только протухший
+                          снимок, на этом режиме стоит хук старта сессии
+                          (hooks/README.md)
   harness [--harness      окно в резолв харнеса: активный инструмент и чем он
            <имя>]         определён, включённый список после слияния слоёв,
                           маппинг ярусов, режим делегирования, снимок квоты;
@@ -119,19 +122,24 @@ func main() {
 		}
 		msg, err = cmdPick(root, args[1], *record, *role)
 	case "quota":
-		// Корень с доской команде не нужен: снимок лежит на уровне машины,
-		// а не проекта.
+		// Корень с доской команде не нужен: снимок лежит на уровне машины, а не
+		// проекта. Профиль харнеса при этом нужен: он говорит, чем снимать,
+		// какие бакеты бывают и в какой файл директории они ложатся.
+		q, qerr := quotaSpecFor(gdir)
+		if qerr != nil {
+			fail(qerr)
+		}
 		if len(args) > 1 && args[1] == "refresh" {
 			fs := flag.NewFlagSet("quota refresh", flag.ExitOnError)
 			ifStale := fs.Bool("if-stale", false, "снимать панель, только если снимок протух")
 			fs.Parse(args[2:])
-			msg, err = cmdQuotaRefresh(quotaPath(), timeNow(), *ifStale)
+			msg, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
 			break
 		}
 		if len(args) > 1 {
 			fail(fmt.Errorf("жду: quota [refresh]"))
 		}
-		msg, err = cmdQuota(quotaPath(), timeNow())
+		msg, err = cmdQuota(q, timeNow())
 	case "harness":
 		fs := flag.NewFlagSet("harness", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

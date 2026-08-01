@@ -366,6 +366,7 @@ func TestCmdHarness(t *testing.T) {
 		"маппинг ярусов: mini = haiku, base = sonnet, pro = opus, max = fable (предложение профиля",
 		"делегирование: native",
 		"снимка нет",
+		filepath.Join(".devkit", "quota", "claude-code.local"),
 	} {
 		if !strings.Contains(out, part) {
 			t.Fatalf("в выводе нет %q:\n%s", part, out)

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,7 +66,7 @@ var months = map[string]time.Month{
 // панели не контракт, она может измениться при редизайне, поэтому парсер ищет
 // метки по ключевым словам и отказывает, не найдя ожидаемого: лучше отказ, чем
 // записанный мусор.
-func parseUsagePanel(text string, now time.Time) (snapshot, error) {
+func parseUsagePanel(q *quotaSpec, text string, now time.Time) (snapshot, error) {
 	s := snapshot{Taken: now}
 	found := map[string]*bucket{}
 	// Признак «процент уже снят» держится отдельно: у нетронутого бакета
@@ -102,7 +104,7 @@ func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 	// Обязателен только общий бакет: дорогой показывают не все панели, у
 	// клиента 2.1.220 вместо Opus идёт Fable, а на другом тарифе может не
 	// оказаться и его.
-	for _, name := range knownBuckets {
+	for _, name := range q.Buckets {
 		b, ok := found[name]
 		if !ok {
 			continue
@@ -117,8 +119,8 @@ func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 		}
 		s.Buckets = append(s.Buckets, *b)
 	}
-	if _, ok := s.bucket(requiredBucket); !ok {
-		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s: панель могла измениться, снимок не тронут", requiredBucket)
+	if _, ok := s.bucket(q.Required); !ok {
+		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s: панель могла измениться, снимок не тронут", q.Required)
 	}
 	return s, nil
 }
@@ -128,7 +130,8 @@ func parseUsagePanel(text string, now time.Time) (snapshot, error) {
 // «week» тоже встречается (промо «+50% weekly limits promo», подсказка
 // «w to week»), и процент промо уехал бы в бакет вместо настоящего.
 // Пятичасовая сессия узнаётся тоже, но сбрасывает разбор в пустой ключ: в
-// снимок она не пишется.
+// снимок она не пишется. Имена бакетов тут уже каноничные, ярусные: панель
+// называет добавочный бакет моделью, а снимок пишется именами профиля.
 func panelSection(low string) (string, bool) {
 	if !strings.Contains(low, "current") {
 		return "", false
@@ -137,7 +140,7 @@ func panelSection(low string) (string, bool) {
 	case strings.Contains(low, "week") && strings.Contains(low, "opus"):
 		return "week_opus", true
 	case strings.Contains(low, "week") && strings.Contains(low, "fable"):
-		return "week_fable", true
+		return "week_max", true
 	case strings.Contains(low, "week"):
 		return "week_all", true
 	case strings.Contains(low, "session"):
@@ -263,28 +266,97 @@ func tmuxRun(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// cmdQuotaRefresh снимает панель /usage и пишет снимок. Отказ честный: нет
-// tmux, нет claude, панель не узналась, значит файл не тронут и pick живёт по
-// прежнему снимку либо без корректора. Флаг ifStale это режим для хука старта
-// сессии: снимать панель на каждой сессии незачем, а порог свежести остаётся
-// здесь же, второй копии в хуке нет.
-func cmdQuotaRefresh(path string, now time.Time, ifStale bool) (string, error) {
+// cmdQuotaRefresh снимает остаток и пишет снимок. Чем снимать, говорит [quota]
+// snap профиля: usage-pane это встроенный цикл над панелью /usage, script это
+// съёмщик рядом с профилем. Отказ честный в обоих случаях: файл не тронут, и
+// pick живёт по прежнему снимку либо без корректора. Флаг ifStale это режим для
+// хука старта сессии: снимать на каждой сессии незачем, а порог свежести
+// остаётся здесь же, второй копии в хуке нет.
+func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) {
 	if ifStale {
-		s, err := readSnapshot(path)
+		s, err := q.read()
 		if err == nil && !s.empty() && s.fresh(now) {
-			return fmt.Sprintf("снимок свежий (возраст %s при пороге %s), панель не снимаем",
+			return fmt.Sprintf("снимок свежий (возраст %s при пороге %s), не снимаем",
 				humanAge(now.Sub(s.Taken)), humanAge(snapshotMaxAge)), nil
 		}
 	}
+	var snap snapshot
+	var err error
+	switch q.Snap {
+	case snapUsagePane:
+		snap, err = snapUsagePanel(q, now)
+	case snapScript:
+		snap, err = snapByScript(q, now)
+	default:
+		err = fmt.Errorf("харнес %s объявил snap = %q, снимать таким способом devkit не умеет", q.Harness, q.Snap)
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := q.write(snap); err != nil {
+		return "", err
+	}
+	return cmdQuota(q, now)
+}
+
+// snapByScript зовёт сменный съёмщик из harness/snap/. Контракт разобран в
+// docs/lld/DK-033-universal-kit.md, раздел «Контракт съёмщика»: stdin не даётся,
+// в окружении имя харнеса и бюджет, stdout это готовый текст снимка, а отказ это
+// ненулевой код с человеческой причиной в stderr. Файл пишет не скрипт: вывод
+// разбирается тем же парсером, которым читается снимок, и негодный отказывает
+// громко, оставляя прежний снимок на месте.
+func snapByScript(q *quotaSpec, now time.Time) (snapshot, error) {
+	path := filepath.Join(q.Dir, q.Script)
+	if _, err := os.Stat(path); err != nil {
+		return snapshot{}, fmt.Errorf("съёмщика %s нет (%v), снимок не тронут", path, err)
+	}
+	if q.BudgetBased && q.Budget <= 0 {
+		return snapshot{}, fmt.Errorf("расход харнеса %s считается в деньгах, а бюджета в машинном конфиге нет; вписать budget в секцию [%s] файла %s",
+			q.Harness, q.Harness, machineConfigPath())
+	}
+	cmd := exec.Command(path)
+	cmd.Env = append(os.Environ(), "DEVKIT_HARNESS="+q.Harness)
+	if q.BudgetBased {
+		cmd.Env = append(cmd.Env, "DEVKIT_QUOTA_BUDGET="+strconv.Itoa(q.Budget))
+	}
+	var out, errs bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errs
+	if err := cmd.Run(); err != nil {
+		why := strings.TrimSpace(errs.String())
+		if why == "" {
+			why = "причины в stderr нет"
+		}
+		return snapshot{}, fmt.Errorf("съёмщик %s отказал (%v): %s; снимок не тронут", path, err, why)
+	}
+	s := q.parse(out.String())
+	// Разбор снимка прощает битую строку, а вывод съёмщика нет: файл на диске
+	// пишется руками и переживает смену панели, а тут говорит машина, и её
+	// «почти снимок» лучше отбросить целиком, чем записать наполовину.
+	if len(s.Warns) > 0 {
+		return snapshot{}, fmt.Errorf("вывод съёмщика %s не разобран (%s), снимок не тронут", path, strings.Join(s.Warns, "; "))
+	}
+	if s.Taken.IsZero() {
+		return snapshot{}, fmt.Errorf("в выводе съёмщика %s нет момента снятия (строка taken =), снимок не тронут", path)
+	}
+	if _, ok := s.bucket(q.Required); !ok {
+		return snapshot{}, fmt.Errorf("в выводе съёмщика %s нет обязательного бакета %s, снимок не тронут", path, q.Required)
+	}
+	return s, nil
+}
+
+// snapUsagePanel это встроенный съёмщик Claude Code: одноразовая tmux-сессия с
+// клиентом, панель /usage, capture-pane.
+func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
+	path := q.Path
 	if _, err := exec.LookPath("tmux"); err != nil {
-		return "", fmt.Errorf("tmux в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
+		return snapshot{}, fmt.Errorf("tmux в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
-		return "", fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
+		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
 	if out, err := tmuxRun("new-session", "-d", "-s", session, "-x", "200", "-y", "60", "claude"); err != nil {
-		return "", fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
+		return snapshot{}, fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
 	}
 	defer tmuxRun("kill-session", "-t", session)
 
@@ -293,13 +365,13 @@ func cmdQuotaRefresh(path string, now time.Time, ifStale bool) (string, error) {
 		pane = text
 		return paneReady(text) || paneBlocker(text) != ""
 	}); err != nil {
-		return "", fmt.Errorf("claude не отрисовал строку ввода за %s, снимок не тронут", usageReadyTimeout)
+		return snapshot{}, fmt.Errorf("claude не отрисовал строку ввода за %s, снимок не тронут", usageReadyTimeout)
 	}
 	if why := paneBlocker(pane); why != "" {
-		return "", errors.New(why)
+		return snapshot{}, errors.New(why)
 	}
 	if _, err := tmuxRun("send-keys", "-t", session, "-l", usageCommand); err != nil {
-		return "", fmt.Errorf("не удалось набрать команду: %v", err)
+		return snapshot{}, fmt.Errorf("не удалось набрать команду: %v", err)
 	}
 	// Enter уходит только после того, как набранное видно в панели. Слэш
 	// открывает список команд, и в пустой список Enter попал бы мимо; а на
@@ -308,27 +380,23 @@ func cmdQuotaRefresh(path string, now time.Time, ifStale bool) (string, error) {
 	if err := waitPane(session, usageEchoTimeout, func(text string) bool {
 		return strings.Contains(text, usageCommand)
 	}); err != nil {
-		return "", fmt.Errorf("клиент не принял набранное %s за %s: Enter не отправлен, снимок не тронут", usageCommand, usageEchoTimeout)
+		return snapshot{}, fmt.Errorf("клиент не принял набранное %s за %s: Enter не отправлен, снимок не тронут", usageCommand, usageEchoTimeout)
 	}
 	if _, err := tmuxRun("send-keys", "-t", session, "Enter"); err != nil {
-		return "", fmt.Errorf("не удалось отправить команду: %v", err)
+		return snapshot{}, fmt.Errorf("не удалось отправить команду: %v", err)
 	}
 
 	w := panelWaiter{}
 	if err := waitPane(session, usagePanelTimeout, func(text string) bool {
-		s, err := parseUsagePanel(text, now)
+		s, err := parseUsagePanel(q, text, now)
 		if err != nil {
 			return false
 		}
 		return w.accept(s, time.Now())
 	}); err != nil {
-		return "", fmt.Errorf("панель /usage не узналась за %s: разметка могла измениться, снимок не тронут (образцы панели лежат в agentctl/testdata)", usagePanelTimeout)
+		return snapshot{}, fmt.Errorf("панель /usage не узналась за %s: разметка могла измениться, снимок не тронут (образцы панели лежат в agentctl/testdata)", usagePanelTimeout)
 	}
-	snap := w.snap
-	if err := writeSnapshot(path, snap); err != nil {
-		return "", err
-	}
-	return cmdQuota(path, now)
+	return w.snap, nil
 }
 
 // panelWaiter решает, когда разобранной панели можно верить. Панель приезжает

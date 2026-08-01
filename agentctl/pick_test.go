@@ -197,7 +197,7 @@ func isolateQuota(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("DEVKIT_HARNESS", "")
 	t.Setenv("DEVKIT_HOME", repoRoot(t))
-	return filepath.Join(home, ".devkit", quotaFileName)
+	return quotaPath("claude-code")
 }
 
 // repoRoot это корень devkit: тесты гоняются в agentctl, профили лежат этажом
@@ -463,7 +463,7 @@ func writeQuota(t *testing.T, path string, allPct, fablePct int, left time.Durat
 	}
 	content := "taken = " + at(testNow.Add(-freshAge)) + "\n" +
 		"week_all = " + strconv.Itoa(allPct) + "% сброс " + at(testNow.Add(left)) + "\n" +
-		"week_fable = " + strconv.Itoa(fablePct) + "% сброс " + at(testNow.Add(left)) + "\n"
+		"week_max = " + strconv.Itoa(fablePct) + "% сброс " + at(testNow.Add(left)) + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -862,7 +862,7 @@ func TestCmdPickReview(t *testing.T) {
 	// Снимок квоты кладётся последним: он меняет вердикт для всех вызовов
 	// ниже по тесту.
 	t.Run("корректор не уводит ревьювера ниже пола", func(t *testing.T) {
-		writeQuota(t, filepath.Join(os.Getenv("HOME"), ".devkit", quotaFileName), 95, 50, halfWindow)
+		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-002", false, roleReview)
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
@@ -877,7 +877,7 @@ func TestCmdPickReview(t *testing.T) {
 	// Совет отложить работу разбирается отдельно от модели: он живёт в тексте
 	// причины, и сверка одной первой строки его пропускала.
 	t.Run("ревьюверу не советуют отложить сделанную работу", func(t *testing.T) {
-		writeQuota(t, filepath.Join(os.Getenv("HOME"), ".devkit", quotaFileName), 95, 50, halfWindow)
+		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
 		for _, id := range []string{"T-002", "T-006", "T-003"} {
 			out, err := cmdPick(root, id, false, roleReview)
 			if err != nil {
@@ -1088,4 +1088,78 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("override записан как грумминг:\n%s", data)
 		}
 	})
+}
+
+// dropWarn выбрасывает из вердикта хвост с заданными словами: хвосты идут через
+// «; », и вырезать один целиком проще, чем сверять вердикты по кускам.
+func dropWarn(verdict, part string) string {
+	var kept []string
+	for _, seg := range strings.Split(verdict, "; ") {
+		if !strings.Contains(seg, part) {
+			kept = append(kept, seg)
+		}
+	}
+	return strings.Join(kept, "; ")
+}
+
+// TestCmdPickSnapshotMigration это проверка шага 3 миграции DK-033: снимок стал
+// директорией по файлу на харнес, и до переезда читается старый одиночный файл.
+// Сдвиги корректора обязаны совпасть по обе стороны переезда, иначе он молча
+// поменял бы вердикты; отличается только хвост про старый путь, и молчать про
+// него нельзя, ведь после переезда читаться будет другой файл.
+func TestCmdPickSnapshotMigration(t *testing.T) {
+	moved := isolateQuota(t)
+	fixNow(t, testNow)
+	root := writeBoard(t)
+
+	legacy := legacyQuotaPath()
+	writeQuota(t, legacy, 95, 50, halfWindow)
+	before, err := cmdPick(root, "T-002", false, roleExec)
+	if err != nil {
+		t.Fatalf("pick по старому снимку: %v", err)
+	}
+	if !strings.HasPrefix(before, "model: sonnet\neffort: high\ntier: base\n") {
+		t.Fatalf("старый снимок перестал двигать вердикт: %q", before)
+	}
+	if !strings.Contains(before, "корректор: дефицит week_all, pro -> base") {
+		t.Fatalf("сдвига корректора по старому снимку нет: %q", before)
+	}
+	if !strings.Contains(before, legacy) || !strings.Contains(before, "по старому пути") {
+		t.Fatalf("чтение старого пути прошло молча: %q", before)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(legacy, moved); err != nil {
+		t.Fatal(err)
+	}
+	after, err := cmdPick(root, "T-002", false, roleExec)
+	if err != nil {
+		t.Fatalf("pick после переезда: %v", err)
+	}
+	if got := dropWarn(before, "по старому пути"); got != after {
+		t.Fatalf("переезд снимка сдвинул вердикт\nбыло:\n%s\nстало:\n%s", got, after)
+	}
+	if strings.Contains(after, "по старому пути") {
+		t.Fatalf("после переезда хвост про старый путь остался: %q", after)
+	}
+}
+
+// TestCmdPickNewSnapshotWins: рядом лежат оба файла, читается новый. Иначе
+// переезд, сделанный доктором, ничего бы не менял, а старый файл тихо решал бы
+// вердикт.
+func TestCmdPickNewSnapshotWins(t *testing.T) {
+	quota := isolateQuota(t)
+	fixNow(t, testNow)
+	root := writeBoard(t)
+	writeQuota(t, legacyQuotaPath(), 95, 50, halfWindow)
+	writeQuota(t, quota, 5, 5, 24*time.Hour)
+	out, err := cmdPick(root, "T-005", false, roleExec)
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if !strings.HasPrefix(out, "model: opus") || !strings.Contains(out, "профицит week_all") {
+		t.Fatalf("вердикт посчитан по старому файлу: %q", out)
+	}
 }

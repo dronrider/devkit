@@ -146,7 +146,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 		// Развернуть нечем оба конца сдвига, и хвост про холостой ход был бы
 		// обещанием модели, которой в вердикте нет.
 		setupHarness(t, "default = \"claude-code\"\nenabled = [\"claude-code\"]\n")
-		writeQuota(t, filepath.Join(os.Getenv("HOME"), ".devkit", quotaFileName), 95, 50, halfWindow)
+		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
 		out, err := cmdPick(root, "T-006", false, roleExec)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -157,7 +157,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 		if strings.Contains(out, "модель та же") {
 			t.Fatalf("хвост обещает модель, которой в вердикте нет: %q", out)
 		}
-		if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".devkit", quotaFileName)); err != nil {
+		if err := os.Remove(quotaPath("claude-code")); err != nil {
 			t.Fatal(err)
 		}
 	})

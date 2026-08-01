@@ -12,15 +12,56 @@ import (
 )
 
 // Снимок остатка лимитов лежит на уровне машины, а не проекта: лимиты общие на
-// подписку, и per-project копии протухали бы вразнобой.
-const quotaFileName = "quota.local"
+// подписку, и per-project копии протухали бы вразнобой. Файл на харнес: лимиты
+// у инструментов свои, и одним файлом их не описать.
+const (
+	quotaDirName    = "quota"
+	quotaFileSuffix = ".local"
+	// Одиночный снимок, каким он был до директории. Читается, пока переезд не
+	// сделал devkitctl doctor --fix.
+	legacyQuotaFileName = "quota.local"
+)
 
 // Момент снятия и даты сброса пишутся местным временем без секунд: столько же
 // точности показывает панель /usage.
 const quotaTimeLayout = "2006-01-02T15:04"
 
-// Окно недельных бакетов, от него считается равномерный темп расхода.
-const quotaWindow = 7 * 24 * time.Hour
+// Окно бакета, от него считается равномерный темп расхода. Берётся из префикса
+// имени: недельные лимиты подписки это week_*, потокенный бюджет чаще месячный,
+// и с недельным окном pace по нему врал бы всемеро. Префикс проверяет валидатор
+// профиля, поэтому чужого тут не бывает.
+const (
+	weekWindow  = 7 * 24 * time.Hour
+	monthWindow = 30 * 24 * time.Hour
+)
+
+var bucketWindows = []struct {
+	Prefix string
+	Window time.Duration
+}{
+	{"week_", weekWindow},
+	{"month_", monthWindow},
+}
+
+// bucketPrefix отвечает, известен ли префикс имени; пустая строка значит, что
+// окно по имени не выводится, и такое имя валидатор профиля не пропускает.
+func bucketPrefix(name string) string {
+	for _, w := range bucketWindows {
+		if strings.HasPrefix(name, w.Prefix) {
+			return w.Prefix
+		}
+	}
+	return ""
+}
+
+func bucketWindow(name string) time.Duration {
+	for _, w := range bucketWindows {
+		if strings.HasPrefix(name, w.Prefix) {
+			return w.Window
+		}
+	}
+	return weekWindow
+}
 
 // Снимок старше этого протух: pick говорит про возраст вслух, и профицит по
 // такому снимку не применяется. Порог тут один на оба случая не случайно.
@@ -40,30 +81,77 @@ const (
 	statusExpired = "протух"
 )
 
-// Известные бакеты панели /usage в порядке вывода. Пятичасовой сессионный сюда
-// не попадает: он протухает быстрее, чем живёт задача, снимок его не догонит.
-// week_opus остаётся ради снимков и панелей старых клиентов: с 2.1.220 панель
-// показывает вместо него бакет Fable, но снимок пишется и руками, а панель у
-// разных версий клиента и тарифов своя.
-var knownBuckets = []string{"week_all", "week_fable", "week_opus"}
+// Старые имена бакетов. Панель Claude Code до 2.1.220 добирала самой дорогой
+// моделью Opus, потом Fable, а бакеты devkit зовутся ярусами лестницы, и
+// снимок с прежним именем ломать об незнакомый ключ нельзя: снимки пишутся и
+// руками, и лежат на машинах со старым клиентом. week_opus псевдонимом не
+// стал, он остаётся отдельным известным бакетом вне лестницы трат: тот снимок
+// описывает другой бакет, а не week_max под другим именем.
+var bucketAliases = map[string]string{"week_fable": "week_max"}
 
-// Бакет, без которого снимка нет: общий показывает любая панель с недельными
-// лимитами, и тратят из него все ярусы.
-const requiredBucket = "week_all"
+func canonBucket(name string) string {
+	if v, ok := bucketAliases[name]; ok {
+		return v
+	}
+	return name
+}
 
-// Из каких бакетов тратит ярус. Ключи это ступени лестницы, имена бакетов
-// остаются от панели Claude Code: их переезд в профиль харнеса это DK-038.
-// week_all по смыслу панели учитывает все модели, а отдельным бакетом панель
-// добирает самую дорогую: раньше это был Opus, с 2.1.220 это Fable. Своего
-// бакета у pro больше нет, и от base он отличается только взвешенной ценой
-// расхода общего бакета; week_fable держит один верхний ярус. Старый week_opus
-// в таблицу не входит: снимок с ним читается и показывается в quota, но
-// лестницу трат он больше не задаёт.
-var tierBuckets = map[string][]string{
-	tierMini: {"week_all"},
-	tierBase: {"week_all"},
-	tierPro:  {"week_all"},
-	tierMax:  {"week_all", "week_fable"},
+// quotaSpec это объявление квоты из [quota] профиля активного харнеса плюс
+// путь снимка. Формула корректора работает по именам бакетов и про инструмент
+// не знает ничего: какие бакеты бывают, какой обязателен и из каких тратит
+// ярус, говорит профиль.
+type quotaSpec struct {
+	Harness  string
+	Dir      string // директория профилей, от неё считается путь съёмщика
+	Snap     string
+	Script   string
+	Buckets  []string
+	Required string
+	Spend    map[string][]string
+	// Расход в деньгах: съёмщику передаётся бюджет из машинного конфига.
+	BudgetBased bool
+	Budget      int
+	// Path это куда refresh пишет снимок, From это откуда он читается. Пока
+	// переезд не сделан, читается старый одиночный файл, а пишется всё равно
+	// новый путь.
+	Path string
+	From string
+}
+
+const (
+	snapUsagePane = "usage-pane"
+	snapScript    = "script"
+)
+
+func (q *quotaSpec) legacy() bool { return q != nil && q.From != q.Path }
+
+// legacyWarn говорит, что снимок читается по старому пути. Молчать нельзя:
+// после переезда файл сменится, а вердикт выглядел бы прежним.
+func (q *quotaSpec) legacyWarn() string {
+	if !q.legacy() {
+		return ""
+	}
+	return fmt.Sprintf("снимок квоты читается по старому пути %s, переезд в %s делает devkitctl doctor --fix",
+		q.From, q.Path)
+}
+
+// known отвечает, знает ли профиль такой бакет. Имя приводится к каноничному:
+// старый снимок читается наравне с сегодняшним.
+func (q *quotaSpec) known(name string) bool {
+	return inList(q.Buckets, canonBucket(name))
+}
+
+// spentByTier отвечает, тратит ли из бакета хоть один ярус. Известный бакет вне
+// лестницы трат бывает штатно (week_opus со старой панели), и молча печатать его
+// наравне с рабочими нельзя: пользователь видит «week_opus: дефицит», ждёт
+// сдвига вниз и не получает его, а причины в выводе нет.
+func (q *quotaSpec) spentByTier(name string) bool {
+	for _, tier := range tierNames {
+		if contains(q.Spend[tier], name) {
+			return true
+		}
+	}
+	return false
 }
 
 // bucket это строка снимка: сколько процентов бакета потрачено на момент
@@ -133,7 +221,7 @@ func (b bucket) pace(now time.Time) float64 {
 	if left <= 0 {
 		return 0
 	}
-	return (1 - b.Used) / (float64(left) / float64(quotaWindow))
+	return (1 - b.Used) / (float64(left) / float64(bucketWindow(b.Name)))
 }
 
 // status у бакета. Зазор между порогами широкий сознательно: корректор должен
@@ -152,30 +240,59 @@ func (b bucket) status(now time.Time) string {
 	}
 }
 
-// quotaPath это путь снимка. HOME берётся на каждый вызов, чтобы тесты
-// подкладывали свой файл, не трогая настоящий.
-func quotaPath() string {
+// devkitDir это ~/.devkit. HOME берётся на каждый вызов, чтобы тесты
+// подкладывали свои файлы, не трогая настоящие.
+func devkitDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".devkit", quotaFileName)
+	return filepath.Join(home, ".devkit")
 }
 
-// readSnapshot разбирает файл снимка. Формат плоский, как в
-// .devkit/deploy.local: строки key = value, # это комментарий. Нет файла,
-// значит пустой снимок без ошибки: корректор тогда молчит.
-func readSnapshot(path string) (snapshot, error) {
+func quotaPath(harness string) string {
+	return filepath.Join(devkitDir(), quotaDirName, harness+quotaFileSuffix)
+}
+
+func legacyQuotaPath() string {
+	return filepath.Join(devkitDir(), legacyQuotaFileName)
+}
+
+// snapshotSource выбирает, откуда читать снимок: путь по имени харнеса, а пока
+// переезда не было, старый одиночный файл. Нет ни того ни другого, значит
+// читается новый путь, и вся речь про отсутствие снимка идёт про него.
+func snapshotSource(harness string) (path, from string) {
+	path = quotaPath(harness)
+	if _, err := os.Stat(path); err == nil {
+		return path, path
+	}
+	legacy := legacyQuotaPath()
+	if _, err := os.Stat(legacy); err == nil {
+		return path, legacy
+	}
+	return path, path
+}
+
+// read разбирает файл снимка. Формат плоский, как в .devkit/deploy.local:
+// строки key = value, # это комментарий. Нет файла, значит пустой снимок без
+// ошибки: корректор тогда молчит.
+func (q *quotaSpec) read() (snapshot, error) {
 	var s snapshot
-	f, err := os.Open(path)
+	data, err := os.ReadFile(q.From)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil
 		}
 		return s, err
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	return q.parse(string(data)), nil
+}
+
+// parse разбирает текст снимка. Им же разбирается вывод сменного съёмщика:
+// второго формата у снимка нет, и что попадёт в файл, решает не скрипт.
+func (q *quotaSpec) parse(text string) snapshot {
+	var s snapshot
+	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -196,27 +313,18 @@ func readSnapshot(path string) (snapshot, error) {
 			s.Taken = t
 			continue
 		}
-		if !known(key) {
+		if !q.known(key) {
 			s.Warns = append(s.Warns, fmt.Sprintf("неизвестный ключ снимка %q, пропущен", key))
 			continue
 		}
-		b, err := parseBucket(key, val)
+		b, err := parseBucket(canonBucket(key), val)
 		if err != nil {
 			s.Warns = append(s.Warns, fmt.Sprintf("бакет %s не разобран: %v", key, err))
 			continue
 		}
 		s.Buckets = append(s.Buckets, b)
 	}
-	return s, sc.Err()
-}
-
-func known(key string) bool {
-	for _, k := range knownBuckets {
-		if k == key {
-			return true
-		}
-	}
-	return false
+	return s
 }
 
 // parseBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
@@ -248,18 +356,40 @@ func parseQuotaTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("не время: %q", s)
 }
 
-// writeSnapshot кладёт снимок тем же форматом, каким его пишут руками: refresh
-// это автоматизация заполнения, а не второй формат.
-func writeSnapshot(path string, s snapshot) error {
+// write кладёт снимок тем же форматом, каким его пишут руками: refresh это
+// автоматизация заполнения, а не второй формат. Пишется всегда новый путь, даже
+// когда читался старый: переезд идёт в одну сторону. Запись атомарная, файл
+// читают параллельные сессии, и половина снимка читалась бы как битые строки.
+func (q *quotaSpec) write(s snapshot) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "taken = %s\n", s.Taken.Format(quotaTimeLayout))
 	for _, bk := range s.Buckets {
 		fmt.Fprintf(&b, "%s = %d%% сброс %s\n", bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout))
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(q.Path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	tmp, err := os.CreateTemp(dir, filepath.Base(q.Path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), q.Path); err != nil {
+		return err
+	}
+	q.From = q.Path
+	return nil
 }
 
 // correction это решение корректора: с какого яруса на какой съехал вердикт и
@@ -297,7 +427,7 @@ func (c correction) tail() string {
 // Порядок правил значим: дефицит проверяется раньше профицита, потому что бакет
 // тратится взвешенной ценой модели и сдвиг вверх при дефиците прожёг бы его
 // быстрее. Шаг максимум один, каскадов нет.
-func correctTier(tier string, groom bool, s snapshot, now time.Time) correction {
+func correctTier(q *quotaSpec, tier string, groom bool, s snapshot, now time.Time) correction {
 	c := correction{Tier: tier, From: tier}
 	// Грумминговый вердикт это про порядок работы, а не про расход: сначала
 	// снять неопределённость либо разрезать задачу, и остаток тут ни при чём.
@@ -308,7 +438,7 @@ func correctTier(tier string, groom bool, s snapshot, now time.Time) correction 
 	if i < 0 {
 		return c
 	}
-	if name := firstWithStatus(s, tierBuckets[tier], statusDeficit, now); name != "" {
+	if name := firstWithStatus(s, q.Spend[tier], statusDeficit, now); name != "" {
 		c.Note = statusDeficit + " " + name
 		if i == 0 {
 			c.Warn = "ниже mini ярусов нет"
@@ -325,7 +455,7 @@ func correctTier(tier string, groom bool, s snapshot, now time.Time) correction 
 	// week_fable и случался при общем бакете у самой границы дефицита, то есть
 	// на самой дорогой ступени решение принималось бы, ничего не зная про запас
 	// общего бакета.
-	need := tierBuckets[tierNames[i+1]]
+	need := q.Spend[tierNames[i+1]]
 	if len(need) == 0 || !allWithStatus(s, need, statusSurplus, now) {
 		return c
 	}
@@ -341,20 +471,6 @@ func tierIndex(tier string) int {
 		}
 	}
 	return -1
-}
-
-// spentByTier отвечает, тратит ли из бакета хоть один ярус. Снимок переживает
-// смену панели: week_opus остаётся и в старых файлах, и на машинах со старым
-// клиентом. Молча печатать его наравне с рабочими нельзя, иначе пользователь
-// видит «week_opus: дефицит», ждёт сдвига вниз и не получает его, а причины в
-// выводе нет.
-func spentByTier(name string) bool {
-	for _, tier := range tierNames {
-		if contains(tierBuckets[tier], name) {
-			return true
-		}
-	}
-	return false
 }
 
 func contains(list []string, s string) bool {
@@ -387,17 +503,17 @@ func allWithStatus(s snapshot, names []string, status string, now time.Time) boo
 
 // cmdQuota печатает разобранный снимок: это окно в решения корректора, сдвиг в
 // вердикте всегда можно объяснить, не читая файл руками.
-func cmdQuota(path string, now time.Time) (string, error) {
-	s, err := readSnapshot(path)
+func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
+	s, err := q.read()
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
 	if s.empty() {
-		fmt.Fprintf(&b, "снимка нет: %s\nвердикты pick идут без корректора, снимок пишется руками с панели /usage либо командой agentctl quota refresh", path)
+		fmt.Fprintf(&b, "снимка нет: %s\nвердикты pick идут без корректора, снимок пишется руками с панели /usage либо командой agentctl quota refresh", q.From)
 		return b.String(), nil
 	}
-	fmt.Fprintf(&b, "снимок %s\n", path)
+	fmt.Fprintf(&b, "снимок %s (харнес %s)\n", q.From, q.Harness)
 	switch age := now.Sub(s.Taken); {
 	case s.Taken.IsZero():
 		b.WriteString("снят: момента снятия в файле нет, вверх корректор не двинет\n")
@@ -413,13 +529,16 @@ func cmdQuota(path string, now time.Time) (string, error) {
 		status := bk.status(now)
 		note := ""
 		switch {
-		case !spentByTier(bk.Name):
+		case !q.spentByTier(bk.Name):
 			note = " (лестницу трат не задаёт, панель его больше не показывает)"
 		case status == statusSurplus && !s.fresh(now):
 			note = " (снимок протух, вверх не двигает)"
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",
 			bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout), bk.pace(now), status, note)
+	}
+	if w := q.legacyWarn(); w != "" {
+		fmt.Fprintf(&b, "предупреждение: %s\n", w)
 	}
 	for _, w := range s.Warns {
 		fmt.Fprintf(&b, "предупреждение: %s\n", w)

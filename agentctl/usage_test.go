@@ -21,7 +21,7 @@ func TestParseUsagePanel(t *testing.T) {
 	// Панели старых клиентов с бакетом Opus разбираются по-прежнему: у разных
 	// версий клиента и тарифов панель своя, и новая не отменяет старую.
 	t.Run("обратный отсчёт до сброса", func(t *testing.T) {
-		s, err := parseUsagePanel(readFixture(t, "usage-panel-countdown.txt"), testNow)
+		s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-countdown.txt"), testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -45,7 +45,7 @@ func TestParseUsagePanel(t *testing.T) {
 	})
 
 	t.Run("календарная дата сброса", func(t *testing.T) {
-		s, err := parseUsagePanel(readFixture(t, "usage-panel-dates.txt"), testNow)
+		s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-dates.txt"), testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestParseUsagePanel(t *testing.T) {
 	})
 
 	t.Run("панель клиента 2.1.220: вместо opus бакет fable", func(t *testing.T) {
-		s, err := parseUsagePanel(readFixture(t, "usage-panel-fable.txt"), testNow)
+		s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-fable.txt"), testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestParseUsagePanel(t *testing.T) {
 			t.Fatalf("бакеты: %+v", s.Buckets)
 		}
 		all, _ := s.bucket("week_all")
-		fable, _ := s.bucket("week_fable")
+		fable, _ := s.bucket("week_max")
 		// Промо-строка «+50% weekly limits promo» стоит внутри секции всех
 		// моделей, и её процент не должен подменить настоящий.
 		if all.Used != 0.41 || fable.Used != 0.70 {
@@ -91,7 +91,7 @@ func TestParseUsagePanel(t *testing.T) {
 		// за заголовок, в бакет уехал бы процент промо.
 		panel := "Current week (all models)\n +50% weekly limits promo through Aug 19\n 41% used\n Resets in 2d\n" +
 			" d to day   w to week\n"
-		s, err := parseUsagePanel(panel, testNow)
+		s, err := parseUsagePanel(specAt(t, ""), panel, testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -103,7 +103,7 @@ func TestParseUsagePanel(t *testing.T) {
 	t.Run("дорогого бакета в панели может не быть", func(t *testing.T) {
 		panel := "Current session\n 48% used\n Resets in 1h 43m\n" +
 			"Current week (all models)\n 34% used\n Resets in 2d\n"
-		s, err := parseUsagePanel(panel, testNow)
+		s, err := parseUsagePanel(specAt(t, ""), panel, testNow)
 		if err != nil {
 			t.Fatalf("панель с одним недельным бакетом это не отказ: %v", err)
 		}
@@ -114,7 +114,7 @@ func TestParseUsagePanel(t *testing.T) {
 
 	t.Run("без общего бакета снимок не пишется", func(t *testing.T) {
 		panel := "Current week (Fable)\n 70% used\n Resets in 2d\n"
-		_, err := parseUsagePanel(panel, testNow)
+		_, err := parseUsagePanel(specAt(t, ""), panel, testNow)
 		if err == nil {
 			t.Fatal("жду отказ: общий бакет обязателен")
 		}
@@ -126,14 +126,14 @@ func TestParseUsagePanel(t *testing.T) {
 	t.Run("бакет без даты сброса это отказ", func(t *testing.T) {
 		panel := "Current week (all models)\n 34% used\n Resets in 2d\n" +
 			"Current week (Fable)\n 70% used\n"
-		if _, err := parseUsagePanel(panel, testNow); err == nil {
+		if _, err := parseUsagePanel(specAt(t, ""), panel, testNow); err == nil {
 			t.Fatal("жду отказ: бакет без сброса разобрать нечем")
 		}
 	})
 
 	t.Run("бакет без процента это отказ, а не нетронутый бакет", func(t *testing.T) {
 		panel := "Current week (all models)\n [полоска без цифр]\n Resets in 2d\n"
-		if _, err := parseUsagePanel(panel, testNow); err == nil {
+		if _, err := parseUsagePanel(specAt(t, ""), panel, testNow); err == nil {
 			t.Fatal("непрочитанный процент записался нулём, то есть профицитом")
 		}
 	})
@@ -143,7 +143,7 @@ func TestParseUsagePanel(t *testing.T) {
 		// признаком само значение: следующий процент секции затирал бы ноль.
 		panel := "Current week (all models)\n 0% used\n Resets in 2d\n Extra usage: 15% of monthly cap\n" +
 			"Current week (Opus)\n 0% used\n Resets in 2d\n"
-		s, err := parseUsagePanel(panel, testNow)
+		s, err := parseUsagePanel(specAt(t, ""), panel, testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestParseUsagePanel(t *testing.T) {
 	})
 
 	t.Run("панель без недельных лимитов это отказ", func(t *testing.T) {
-		_, err := parseUsagePanel(readFixture(t, "usage-panel-nolimits.txt"), testNow)
+		_, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-nolimits.txt"), testNow)
 		if err == nil {
 			t.Fatal("жду отказ: записывать в снимок нечего")
 		}
@@ -165,7 +165,7 @@ func TestParseUsagePanel(t *testing.T) {
 	t.Run("цвета панели разбору не мешают", func(t *testing.T) {
 		raw := readFixture(t, "usage-panel-countdown.txt")
 		colored := strings.ReplaceAll(raw, "%", "\x1b[0m%\x1b[38;5;208m")
-		s, err := parseUsagePanel(colored, testNow)
+		s, err := parseUsagePanel(specAt(t, ""), colored, testNow)
 		if err != nil {
 			t.Fatalf("панель с управляющими последовательностями не разобрана: %v", err)
 		}
@@ -177,7 +177,7 @@ func TestParseUsagePanel(t *testing.T) {
 	t.Run("остаток вместо потраченного переворачивается", func(t *testing.T) {
 		panel := "Current week (all models)\n 66% left\n Resets in 2d\n" +
 			"Current week (Opus)\n 10% left\n Resets in 2d\n"
-		s, err := parseUsagePanel(panel, testNow)
+		s, err := parseUsagePanel(specAt(t, ""), panel, testNow)
 		if err != nil {
 			t.Fatalf("панель не разобрана: %v", err)
 		}
@@ -245,14 +245,14 @@ func TestPaneBlocker(t *testing.T) {
 // TestPanelWaiter: панель приезжает не одним кадром, и первый успешный разбор
 // это ещё не повод писать снимок.
 func TestPanelWaiter(t *testing.T) {
-	partial, err := parseUsagePanel(readFixture(t, "usage-panel-partial.txt"), testNow)
+	partial, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-partial.txt"), testNow)
 	if err != nil {
 		t.Fatalf("недорисованный кадр панели не разобран: %v", err)
 	}
 	if len(partial.Buckets) != 1 {
 		t.Fatalf("в кадре ждали один общий бакет, вижу %+v", partial.Buckets)
 	}
-	full, err := parseUsagePanel(readFixture(t, "usage-panel-fable.txt"), testNow)
+	full, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-fable.txt"), testNow)
 	if err != nil {
 		t.Fatalf("дорисованная панель не разобрана: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestPanelWaiter(t *testing.T) {
 		if !w.accept(full, testNow.Add(usagePartialGrace/2)) {
 			t.Fatal("дорисованная панель не принята")
 		}
-		if _, ok := w.snap.bucket("week_fable"); !ok {
+		if _, ok := w.snap.bucket("week_max"); !ok {
 			t.Fatalf("в снимок ушёл кадр без дорогого бакета: %+v", w.snap.Buckets)
 		}
 	})
@@ -374,26 +374,193 @@ func TestParseResetYearRollover(t *testing.T) {
 // зовётся на каждой сессии. Свежий снимок он трогать не должен, иначе клиент в
 // tmux поднимался бы по десятку раз в день впустую.
 func TestCmdQuotaRefreshIfStale(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".devkit", "quota.local")
+	q := specAt(t, filepath.Join(t.TempDir(), ".devkit", "quota", "claude-code.local"))
 	fresh := snapOf(freshAge, bucketAt("week_all", 40, halfWindow))
-	if err := writeSnapshot(path, fresh); err != nil {
+	if err := q.write(fresh); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdQuotaRefresh(path, testNow, true)
+	out, err := cmdQuotaRefresh(q, testNow, true)
 	if err != nil {
 		t.Fatalf("свежий снимок не должен ронять refresh: %v", err)
 	}
-	if !strings.Contains(out, "панель не снимаем") {
+	if !strings.Contains(out, "не снимаем") {
 		t.Fatalf("на свежем снимке refresh полез за панелью: %q", out)
 	}
 	// Порог живёт в agentctl, а не в хуке: за порогом тот же вызов уходит
 	// снимать панель и упирается уже в окружение (tmux, claude), а не в возраст.
 	stale := snapOf(snapshotMaxAge+time.Minute, bucketAt("week_all", 40, halfWindow))
-	if err := writeSnapshot(path, stale); err != nil {
+	if err := q.write(stale); err != nil {
 		t.Fatal(err)
 	}
-	out, err = cmdQuotaRefresh(path, testNow, true)
-	if err == nil && strings.Contains(out, "панель не снимаем") {
+	out, err = cmdQuotaRefresh(q, testNow, true)
+	if err == nil && strings.Contains(out, "не снимаем") {
 		t.Fatalf("протухший снимок не пошёл на съём панели: %q", out)
+	}
+}
+
+// Съёмщик проверяется подложными скриптами: живого инструмента с [quota] snap =
+// "script" на машине нет, а контракт (stdin не даётся, окружение с именем
+// харнеса и бюджетом, stdout это текст снимка, отказ это ненулевой код с
+// причиной в stderr) от инструмента не зависит.
+func scriptSpec(t *testing.T, body string) *quotaSpec {
+	t.Helper()
+	home := t.TempDir()
+	q := specAt(t, filepath.Join(home, ".devkit", "quota", "sometool.local"))
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "snap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join("snap", "sometool.sh")
+	if err := os.WriteFile(filepath.Join(dir, script), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	q.Harness, q.Dir, q.Snap, q.Script = "sometool", dir, snapScript, script
+	return q
+}
+
+func TestQuotaRefreshScript(t *testing.T) {
+	snapText := "taken = " + at(testNow) + "\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+
+	t.Run("валидный вывод ложится в файл", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+snapText+"\"\n")
+		out, err := cmdQuotaRefresh(q, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if !strings.Contains(out, "week_all: потрачено 40%") {
+			t.Fatalf("снятое не показано: %q", out)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, ok := s.bucket("week_all"); !ok || b.Used != 0.4 {
+			t.Fatalf("в файле не то, что напечатал съёмщик: %+v", s.Buckets)
+		}
+	})
+
+	t.Run("окружение съёмщика", func(t *testing.T) {
+		// Имя харнеса и бюджет съёмщик получает переменными: свой конфиг он не
+		// читает, иначе машинный конфиг пришлось бы разбирать каждому скрипту.
+		q := scriptSpec(t, "#!/bin/sh\n[ \"$DEVKIT_HARNESS\" = sometool ] || { echo \"чужое имя харнеса: $DEVKIT_HARNESS\" >&2; exit 1; }\n"+
+			"printf 'taken = %s\\n' \""+at(testNow)+"\"\n"+
+			"printf 'week_all = %s%% сброс %s\\n' \"$DEVKIT_QUOTA_BUDGET\" \""+at(testNow.Add(halfWindow))+"\"\n")
+		q.BudgetBased, q.Budget = true, 20
+		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		data, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "week_all = 20%") {
+			t.Fatalf("бюджет до съёмщика не доехал:\n%s", data)
+		}
+	})
+
+	t.Run("бюджет не задан", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+snapText+"\"\n")
+		q.BudgetBased = true
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "бюджета в машинном конфиге нет") {
+			t.Fatalf("расход в деньгах без бюджета прошёл молча: %v", err)
+		}
+	})
+
+	t.Run("мусор на stdout файл не трогает", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\necho 'Traceback (most recent call last):'\n")
+		before := seedSnapshot(t, q, snapText)
+		_, err := cmdQuotaRefresh(q, testNow, false)
+		if err == nil || !strings.Contains(err.Error(), "не разобран") {
+			t.Fatalf("мусор принят за снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("вывод без обязательного бакета файл не трогает", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\nprintf 'taken = %s\\n' \""+at(testNow)+"\"\n")
+		before := seedSnapshot(t, q, snapText)
+		_, err := cmdQuotaRefresh(q, testNow, false)
+		if err == nil || !strings.Contains(err.Error(), "нет обязательного бакета week_all") {
+			t.Fatalf("снимок без общего бакета принят: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("вывод без момента снятия файл не трогает", func(t *testing.T) {
+		// Снимок без taken читается, но вверх по нему корректор не двигает:
+		// принять такой от съёмщика значит молча потерять половину его работы.
+		q := scriptSpec(t, "#!/bin/sh\nprintf 'week_all = 40%% сброс %s\\n' \""+at(testNow.Add(halfWindow))+"\"\n")
+		before := seedSnapshot(t, q, snapText)
+		_, err := cmdQuotaRefresh(q, testNow, false)
+		if err == nil || !strings.Contains(err.Error(), "нет момента снятия") {
+			t.Fatalf("снимок без момента снятия принят: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("ненулевой выход: причина видна, файл не тронут", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\necho 'токен протух, обновить: sometool login' >&2\n"+
+			"printf '%s'\nexit 3\n")
+		before := seedSnapshot(t, q, snapText)
+		_, err := cmdQuotaRefresh(q, testNow, false)
+		if err == nil {
+			t.Fatal("отказ съёмщика прошёл как успех")
+		}
+		if !strings.Contains(err.Error(), "токен протух") {
+			t.Fatalf("причина из stderr потерялась: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("stdin съёмщику не даётся", func(t *testing.T) {
+		// Съёмщик ничего не спрашивает: сессия зовёт refresh хуком старта, и
+		// скрипт, ждущий ввода, повесил бы её.
+		q := scriptSpec(t, "#!/bin/sh\nif [ -n \"$(cat)\" ]; then echo 'мне дали stdin' >&2; exit 1; fi\n"+
+			"printf '%s' \""+snapText+"\"\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+	})
+
+	t.Run("съёмщика нет на месте", func(t *testing.T) {
+		q := scriptSpec(t, "#!/bin/sh\nexit 0\n")
+		q.Script = filepath.Join("snap", "нет-такого.sh")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "снимок не тронут") {
+			t.Fatalf("пропавший съёмщик прошёл молча: %v", err)
+		}
+	})
+}
+
+// seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика
+// обязан оставить файл ровно таким, каким он был.
+func seedSnapshot(t *testing.T, q *quotaSpec, text string) []byte {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(q.Path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(q.Path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(text)
+}
+
+func sameFile(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("прежний снимок пропал: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("снимок тронут отказавшим съёмщиком:\n%s", got)
+	}
+	dir := filepath.Dir(path)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 {
+		t.Fatalf("в %s остался мусор от записи: %v", dir, ents)
 	}
 }

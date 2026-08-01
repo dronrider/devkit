@@ -284,6 +284,18 @@ func validateQuota(d *tomlDoc) error {
 		}
 	}
 	buckets := t.arr("buckets")
+	// Окно бакета берётся из префикса имени, и имя без известного префикса
+	// молча считалось бы недельным: у месячного бюджета pace тогда врёт всемеро.
+	for _, b := range buckets {
+		if bucketPrefix(b) == "" {
+			var prefixes []string
+			for _, w := range bucketWindows {
+				prefixes = append(prefixes, w.Prefix)
+			}
+			return fmt.Errorf("%s: [quota] buckets: имя бакета %s без известного префикса, из него берётся окно расчёта; годятся %s",
+				d.Name, quoteTOML(b), strings.Join(prefixes, ", "))
+		}
+	}
 	if req := t.str("required"); !inList(buckets, req) {
 		return fmt.Errorf("%s: [quota] required = %s, такого бакета нет в buckets", d.Name, quoteTOML(req))
 	}
@@ -673,27 +685,100 @@ func (m tierModels) model(tier string) string {
 	return unmappedModel
 }
 
-func resolveTierModels(start string) tierModels {
+// quotaSpecOf собирает объявление квоты активного харнеса: бакеты, лестницу
+// трат и путь снимка. Пустая секция [quota] это штатно выключенный корректор, а
+// не поломка: у инструмента, которым остаток снять нечем, снимку взяться
+// неоткуда.
+func quotaSpecOf(l *layers, name string) *quotaSpec {
+	p := l.Profiles[name]
+	if p == nil {
+		return nil
+	}
+	t := p.section("quota")
+	if t.empty() {
+		return nil
+	}
+	q := &quotaSpec{
+		Harness:  name,
+		Dir:      l.Dir,
+		Snap:     t.str("snap"),
+		Script:   t.str("script"),
+		Buckets:  t.arr("buckets"),
+		Required: t.str("required"),
+		Spend:    map[string][]string{},
+	}
+	for _, tier := range tierNames {
+		q.Spend[tier] = t.arr("spend_" + tier)
+	}
+	if v, ok := t.get("budget_based"); ok {
+		q.BudgetBased = v.Bool
+	}
+	if s := l.Setup[name]; s != nil {
+		q.Budget = s.Budget
+	}
+	q.Path, q.From = snapshotSource(name)
+	return q
+}
+
+// harnessContext это всё, что вердикту нужно от активного харнеса: маппинг
+// ярусов в модели и объявление квоты. Резолв тут один на вызов, иначе pick
+// читал бы три конфига дважды, а сказать про поломку контура мог бы дважды
+// разными словами.
+type harnessContext struct {
+	Name   string
+	Models tierModels
+	Quota  *quotaSpec
+	// Почему квоты нет, когда с остальным контуром всё в порядке. Поломка
+	// контура объясняется один раз, причиной в Models.Note: следствий у неё два,
+	// и повторять их порознь значило бы удваивать хвост вердикта.
+	QuotaNote string
+}
+
+func resolveHarnessContext(start string) harnessContext {
+	off := func(note string) harnessContext { return harnessContext{Models: tierModels{Note: note}} }
 	dir, err := harnessDir(start)
 	if err != nil {
-		return tierModels{Note: fmt.Sprintf("ярус разворачивать нечем: %v", err)}
+		return off(fmt.Sprintf("ярус разворачивать нечем и остаток лимитов брать неоткуда: %v", err))
 	}
 	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
 	if err != nil {
-		return tierModels{Note: fmt.Sprintf("слои харнесов не прочитаны (%v), ярус разворачивать нечем; разобраться: agentctl harness", err)}
+		return off(fmt.Sprintf("слои харнесов не прочитаны (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
 	r, err := resolveHarness(l, "", os.Getenv)
 	if err != nil {
-		return tierModels{Note: fmt.Sprintf("харнес не определился (%v), ярус разворачивать нечем; разобраться: agentctl harness", err)}
+		return off(fmt.Sprintf("харнес не определился (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
 	if r.Name == "" {
-		return tierModels{Note: fmt.Sprintf("харнес не определён, ярус разворачивать нечем; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath())}
+		return off(fmt.Sprintf("харнес не определён, ярус разворачивать нечем и корректор без профиля выключен; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath()))
 	}
-	s := l.Setup[r.Name]
-	if !s.mapped() {
-		return tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; вписать секцию [%s] в %s", r.Name, r.Name, machineConfigPath())}
+	hc := harnessContext{Name: r.Name, Quota: quotaSpecOf(l, r.Name)}
+	if hc.Quota == nil {
+		hc.QuotaNote = fmt.Sprintf("у харнеса %s секция [quota] пуста, снимать остаток нечем, вердикт идёт без корректора", r.Name)
 	}
-	return tierModels{Map: s.Map}
+	if s := l.Setup[r.Name]; s.mapped() {
+		hc.Models = tierModels{Map: s.Map}
+	} else {
+		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; вписать секцию [%s] в %s", r.Name, r.Name, machineConfigPath())}
+	}
+	return hc
+}
+
+// quotaWhy это причина, по которой квоты нет: либо своя, либо поломка контура.
+func (hc harnessContext) quotaWhy() string {
+	if hc.QuotaNote != "" {
+		return hc.QuotaNote
+	}
+	return hc.Models.Note
+}
+
+// quotaSpecFor это точка входа команд quota: они читают и пишут снимок, и без
+// объявления харнеса им работать не с чем, поэтому тут отказ, а не прочерк.
+func quotaSpecFor(start string) (*quotaSpec, error) {
+	hc := resolveHarnessContext(start)
+	if hc.Quota == nil {
+		return nil, fmt.Errorf("%s", hc.quotaWhy())
+	}
+	return hc.Quota, nil
 }
 
 // cmdHarness это окно в резолв: любой сдвиг поведения между машинами
@@ -742,17 +827,27 @@ func cmdHarness(start, want string) (string, error) {
 			fmt.Fprintf(&b, "делегирование: %s (профиль %s)\n", mode, p.Path)
 		}
 	}
-	path := quotaPath()
-	s, err := readSnapshot(path)
+	q := quotaSpecOf(l, r.Name)
 	switch {
-	case err != nil:
-		fmt.Fprintf(&b, "снимок квоты: %s не прочитан (%v)\n", path, err)
-	case s.empty():
-		fmt.Fprintf(&b, "снимок квоты: %s, снимка нет; снять: agentctl quota refresh\n", path)
-	case s.Taken.IsZero():
-		fmt.Fprintf(&b, "снимок квоты: %s, момента снятия в нём нет\n", path)
+	case q == nil && r.Name == "":
+		b.WriteString("снимок квоты: харнес не определён, чем снимать остаток, объявляет его профиль\n")
+	case q == nil:
+		fmt.Fprintf(&b, "снимок квоты: у %s секция [quota] пуста, корректор для него выключен\n", r.Name)
 	default:
-		fmt.Fprintf(&b, "снимок квоты: %s, возраст %s\n", path, humanAge(timeNow().Sub(s.Taken)))
+		s, err := q.read()
+		switch {
+		case err != nil:
+			fmt.Fprintf(&b, "снимок квоты: %s не прочитан (%v)\n", q.From, err)
+		case s.empty():
+			fmt.Fprintf(&b, "снимок квоты: %s, снимка нет; снять: agentctl quota refresh\n", q.From)
+		case s.Taken.IsZero():
+			fmt.Fprintf(&b, "снимок квоты: %s, момента снятия в нём нет\n", q.From)
+		default:
+			fmt.Fprintf(&b, "снимок квоты: %s, возраст %s\n", q.From, humanAge(timeNow().Sub(s.Taken)))
+		}
+		if w := q.legacyWarn(); w != "" {
+			fmt.Fprintf(&b, "заметка: %s\n", w)
+		}
 	}
 	for _, n := range r.Notes {
 		fmt.Fprintf(&b, "заметка: %s\n", n)

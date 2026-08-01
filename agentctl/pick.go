@@ -223,6 +223,10 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	now := timeNow()
 	v := pickTier(*r)
 	v.Effort = pickEffort(*r)
+	// Контур харнеса резолвится один раз: из него берётся и объявление квоты
+	// (какие бакеты бывают, из каких тратит ярус, где лежит снимок), и маппинг
+	// ярусов в модели последним шагом.
+	hc := resolveHarnessContext(root)
 	var c correction
 	var warns []string
 	if ov.Tier != "" {
@@ -230,17 +234,25 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 		// иначе указанный руками ярус пришлось бы отстаивать повторно на
 		// каждый снимок квоты.
 		v = verdict{Tier: ov.Tier, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
+	} else if hc.Quota == nil {
+		// Снимать остаток нечем: причина уходит хвостом, потому что вердикт без
+		// корректора выглядит совершенно штатным.
+		if hc.QuotaNote != "" {
+			warns = append(warns, hc.QuotaNote)
+		}
 	} else {
 		var s snapshot
-		path := quotaPath()
-		s, err = readSnapshot(path)
+		s, err = hc.Quota.read()
 		if err != nil {
 			warns = append(warns, fmt.Sprintf("снимок квоты не прочитан (%v), вердикт без корректора", err))
-		} else if w := s.ageWarn(path, now); w != "" {
+		} else if w := s.ageWarn(hc.Quota.From, now); w != "" {
+			warns = append(warns, w)
+		}
+		if w := hc.Quota.legacyWarn(); w != "" {
 			warns = append(warns, w)
 		}
 		warns = append(warns, s.Warns...)
-		c = correctTier(v.Tier, v.Groom, s, now)
+		c = correctTier(hc.Quota, v.Tier, v.Groom, s, now)
 		v.Tier = c.Tier
 	}
 	// Спуск на роль ревью идёт последним по ярусной оси: сдвигается то, что
@@ -261,7 +273,7 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	}
 	// Разворачивание яруса в модель идёт последним шагом: до него весь расчёт
 	// про ступени лестницы и ни от какого инструмента не зависит.
-	tm := resolveTierModels(root)
+	tm := hc.Models
 	v.Model = tm.model(v.Tier)
 	if tm.Note != "" {
 		warns = append(warns, tm.Note)

@@ -39,6 +39,13 @@ func pickVerdicts(t *testing.T) string {
 
 var tierWord = regexp.MustCompile(`\b(mini|base|pro|max)\b`)
 
+// Снимок стал директорией по файлу на харнес, и путь в хвосте причины сменился.
+// Перевод такой же механический, как у ярусов: сверять после него можно всё
+// остальное.
+var quotaPathWas = strings.NewReplacer(
+	filepath.Join(".devkit", quotaDirName, "claude-code"+quotaFileSuffix),
+	filepath.Join(".devkit", legacyQuotaFileName))
+
 var modelOfTier = map[string]string{
 	tierMini: "haiku", tierBase: "sonnet", tierPro: "opus", tierMax: "fable",
 }
@@ -56,6 +63,7 @@ func asModelVerdicts(s string) string {
 		if strings.HasPrefix(ln, "tier: ") {
 			continue
 		}
+		ln = quotaPathWas.Replace(ln)
 		out = append(out, tierWord.ReplaceAllStringFunc(ln, func(w string) string { return modelOfTier[w] }))
 	}
 	return strings.Join(out, "\n")

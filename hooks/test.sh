@@ -294,6 +294,19 @@ grep -q '\-open vscode://file/p/devkit-dk-034?windowId=_blank$' "$nmark" ||
 grep -q 'цель vscode://file/p/devkit-dk-034?windowId=_blank код возврата: 0' "$nlog" ||
     fail "цель перехода не попала в журнал: $(cat "$nlog")"
 
+# Субагент работает в дереве задачи, а окно сессии стоит на своём: клик ведёт
+# в окно, а не в дерево задачи, и заголовок показывает оба.
+: > "$nmark"
+ntr="$tmp/transcript.jsonl"
+printf '{"type":"queue-operation","sessionId":"s1"}\n{"type":"user","cwd":"/p/devkit"}\n' > "$ntr"
+printf '{"hook_event_name":"SubagentStop","session_id":"sess-wt","cwd":"/p/devkit-dk-059",' > "$tmp/wt.json"
+printf '"transcript_path":"%s","agent_type":"exec-low","last_assistant_message":"готово"}' "$ntr" >> "$tmp/wt.json"
+notify_click < "$tmp/wt.json" || fail "хук с деревом задачи вернул не 0"
+grep -q '^-title devkit (dk-059): субагент отработал' "$nmark" ||
+    fail "заголовок не показал окно и задачу разом: $(cat "$nmark")"
+grep -q -- '-open vscode://file/p/devkit?windowId=_blank$' "$nmark" ||
+    fail "клик ведёт не в окно сессии: $(cat "$nmark")"
+
 # Отправитель без клика цель не получает, и журнал говорит об этом прямо.
 : > "$nmark"
 event Notification idle_prompt sess-noclick | notify_hook || fail "хук без клика вернул не 0"

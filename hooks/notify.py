@@ -35,6 +35,7 @@ import time
 import urllib.parse
 
 WINDOW = 30          # окно троттлинга: один повод одной сессии не чаще, секунды
+TRANSCRIPT_SCAN = 20 # сколько записей транскрипта смотрим ради cwd сессии
 STALE = 24 * 3600    # брошенное состояние троттлинга старше суток убирается
 BODY_LIMIT = 200
 LOG_LIMIT = 100 * 1024
@@ -87,14 +88,62 @@ def short(text, limit=BODY_LIMIT):
     return line
 
 
-def session_label(cwd):
+def tree_name(path):
+    return os.path.basename((path if isinstance(path, str) else "").rstrip("/"))
+
+
+def session_label(cwd, root=None):
     # Какая из сессий позвала, видно по имени рабочего дерева: у worktree задачи
     # в имени лежит её ID. Без этого при пяти агентах баннер бесполезен.
-    name = os.path.basename((cwd if isinstance(cwd, str) else "").rstrip("/"))
-    return name or "сессия"
+    # Работал субагент в дереве задачи, значит в заголовке стоит и окно, где его
+    # искать, и сама задача: «it-road-course (irc-75)».
+    name, home = tree_name(cwd), tree_name(root)
+    if not home or home == name:
+        return name or "сессия"
+    if not name:
+        return home
+    task = name[len(home) + 1:] if name.startswith(home + "-") else name
+    return "%s (%s)" % (home, task)
 
 
-def parse_event(event):
+def session_tree(event, read=None):
+    """Дерево, на котором стоит окно позвавшей сессии.
+
+    У субагента в worktree задачи свой `cwd`, и цель, собранная из него, ведёт
+    мимо: своего окна у такого дерева нет, и клик открывает лишнее окно вместо
+    того, где идёт работа. Само дерево сессии лежит в её транскрипте: первые
+    записи там служебные, а дальше идёт `cwd` самой сессии."""
+    read = transcript_cwd if read is None else read
+    root = read(event.get("transcript_path"))
+    if root:
+        return root
+    cwd = event.get("cwd")
+    return cwd if isinstance(cwd, str) else ""
+
+
+def transcript_cwd(path):
+    """`cwd` из первых записей транскрипта, пустая строка если не нашёлся."""
+    if not isinstance(path, str) or not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for _ in range(TRANSCRIPT_SCAN):
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = record.get("cwd") if isinstance(record, dict) else None
+                if isinstance(cwd, str) and cwd:
+                    return cwd
+    except OSError:
+        pass
+    return ""
+
+
+def parse_event(event, root=None):
     """Событие харнеса в (ключ повода, заголовок, тело). None значит не шлём."""
     name = event.get("hook_event_name")
     if name == "Notification":
@@ -116,7 +165,7 @@ def parse_event(event):
             body = short("%s: %s" % (agent, body) if body else agent)
     else:
         return None
-    return key, "%s: %s" % (session_label(event.get("cwd")), label), body
+    return key, "%s: %s" % (session_label(event.get("cwd"), root), label), body
 
 
 def in_vscode(env):
@@ -313,7 +362,8 @@ def run_hook(harness):
         return 0
     session = str(event.get("session_id") or "-")[:8]
     try:
-        parsed = parse_event(event)
+        root = session_tree(event)
+        parsed = parse_event(event, root)
     except (AttributeError, TypeError, ValueError):
         log(session, "-", None, "событие не разобрано: поля не той формы")
         return 0
@@ -323,8 +373,7 @@ def run_hook(harness):
     if not allow(session, key):
         log(session, key, None, "пропуск: повтор в окне %dс" % WINDOW)
         return 0
-    backend, _ = deliver(title, body, session, key,
-                         click_target(cwd=event.get("cwd")))
+    backend, _ = deliver(title, body, session, key, click_target(cwd=root))
     if not backend:
         # Системного бэкенда нет, остаётся сам терминал: харнес выдаст
         # последовательность за нас.

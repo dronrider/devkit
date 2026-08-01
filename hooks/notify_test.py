@@ -84,6 +84,76 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(title, "сессия: ждёт ввода")
 
 
+class TestSessionTree(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def write(self, *lines):
+        path = os.path.join(self.dir, "transcript.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("".join(line + "\n" for line in lines))
+        return path
+
+    def test_worktree_of_subagent_gives_way_to_session(self):
+        # Субагент ушёл в дерево задачи, окно сессии осталось на своём: цель
+        # клика берётся из транскрипта, иначе клик открывает лишнее окно.
+        path = self.write('{"type":"queue-operation","sessionId":"s1"}',
+                          '{"type":"user","cwd":"/Users/x/projects/it-road-course"}')
+        self.assertEqual(
+            notify.session_tree({"transcript_path": path,
+                                 "cwd": "/Users/x/projects/it-road-course-irc-75"}),
+            "/Users/x/projects/it-road-course")
+
+    def test_broken_transcript_falls_back_to_cwd(self):
+        # Транскрипта нет, он битый или cwd в нём не попался: цель собирается
+        # из cwd события, как до появления разбора транскрипта.
+        cases = (self.write("не json", '{"type":"user"}'),
+                 self.write(*['{"type":"queue-operation"}'] * 40),
+                 os.path.join(self.dir, "нет-такого.jsonl"), "", None, 7)
+        for path in cases:
+            self.assertEqual(notify.session_tree({"transcript_path": path,
+                                                  "cwd": "/p/dk"}), "/p/dk", path)
+        self.assertEqual(notify.session_tree({"transcript_path": "", "cwd": 7}), "")
+
+    def test_scan_stops_before_the_whole_file(self):
+        # Транскрипт вырастает на десятки мегабайт, и читать его целиком ради
+        # cwd хук не должен: cwd лежит в первых записях или не лежит вовсе.
+        # Сорок служебных записей это заведомо дальше предела, и такой cwd уже
+        # не берётся; число тут своё, из предела оно не считается, иначе тест
+        # подстроился бы под любой предел.
+        path = self.write(*(['{"type":"queue-operation"}'] * 40
+                            + ['{"type":"user","cwd":"/p/поздно"}']))
+        self.assertEqual(notify.session_tree({"transcript_path": path, "cwd": "/p/dk"}),
+                         "/p/dk")
+
+
+class TestSessionLabel(unittest.TestCase):
+    def test_worktree_shows_window_and_task(self):
+        self.assertEqual(
+            notify.session_label("/Users/x/projects/it-road-course-irc-75",
+                                 "/Users/x/projects/it-road-course"),
+            "it-road-course (irc-75)")
+
+    def test_session_at_home_stays_short(self):
+        self.assertEqual(notify.session_label("/p/devkit", "/p/devkit"), "devkit")
+        self.assertEqual(notify.session_label("/p/devkit", ""), "devkit")
+        self.assertEqual(notify.session_label("/p/devkit"), "devkit")
+
+    def test_tree_beside_the_session(self):
+        # Субагент ушёл не в worktree проекта, а куда-то ещё: имя показывается
+        # целиком, отрезать от него нечего.
+        self.assertEqual(notify.session_label("/tmp/проба", "/p/devkit"),
+                         "devkit (проба)")
+        self.assertEqual(notify.session_label("", "/p/devkit"), "devkit")
+        self.assertEqual(notify.session_label("", ""), "сессия")
+
+    def test_title_carries_both(self):
+        _, title, _ = notify.parse_event(
+            event(cwd="/p/it-road-course-irc-75", notification_type="permission_prompt"),
+            "/p/it-road-course")
+        self.assertEqual(title, "it-road-course (irc-75): нужно разрешение")
+
+
 class TestClickTarget(unittest.TestCase):
     VSCODE = {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"}
 

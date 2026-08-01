@@ -103,3 +103,53 @@ func TestOldSixColumnBoard(t *testing.T) {
 		t.Fatalf("жду opus с пометкой про цену, получил %q", out)
 	}
 }
+
+// TestQuotaWithoutSpec: команды quota читают и пишут снимок, и без объявления
+// квоты им работать не с чем, поэтому тут честный отказ, а не прочерк с хвостом,
+// как у pick. Гоняется процессом: развилка живёт в main, и из библиотечного
+// вызова её не видно, а без неё в q.read() уходил бы nil, то есть паника вместо
+// причины.
+func TestQuotaWithoutSpec(t *testing.T) {
+	home := t.TempDir()
+	// Профиль сегодняшнего харнеса с пустой секцией [quota]: резолв прежний,
+	// снимать остаток нечем.
+	dk := t.TempDir()
+	writeFile(t, dk, "harness/claude-code.toml", "[detect]\nenv = \"CLAUDECODE\"\nvalue = \"1\"\nbin = \"claude\"\n\n"+
+		"[rules]\nmode = \"embed\"\n\n[delegate]\nmode = \"native\"\n\n[hooks]\n\n[quota]\n")
+
+	cases := []struct {
+		name    string
+		machine string
+		want    string
+	}{
+		{"пустая секция quota", "", "секция [quota] пуста"},
+		{"харнес не определён", "enabled = []\n", "харнес не определён"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			machine := filepath.Join(home, ".devkit", "harness.local")
+			if c.machine == "" {
+				os.Remove(machine)
+			} else {
+				writeFile(t, home, ".devkit/harness.local", c.machine)
+			}
+			for _, args := range [][]string{{"quota"}, {"quota", "refresh"}} {
+				cmd := exec.Command("go", append([]string{"run", "."}, args...)...)
+				cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+dk, "DEVKIT_HARNESS=")
+				out, err := cmd.CombinedOutput()
+				if err == nil {
+					t.Fatalf("%v: команда без объявления квоты завершилась успехом:\n%s", args, out)
+				}
+				if code := cmd.ProcessState.ExitCode(); code != 1 {
+					t.Fatalf("%v: код возврата %d при выводе:\n%s", args, code, out)
+				}
+				if strings.Contains(string(out), "panic") {
+					t.Fatalf("%v: вместо причины паника:\n%s", args, out)
+				}
+				if !strings.HasPrefix(string(out), "ошибка: ") || !strings.Contains(string(out), c.want) {
+					t.Fatalf("%v: причина отказа не человеческая:\n%s", args, out)
+				}
+			}
+		})
+	}
+}

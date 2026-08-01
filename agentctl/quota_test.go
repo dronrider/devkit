@@ -149,7 +149,7 @@ func TestBucketStatus(t *testing.T) {
 // TestTierBuckets: лестница трат это данные, из которых корректор считает
 // сдвиг, поэтому её набор проверяется отдельно от самих сдвигов.
 func TestTierBuckets(t *testing.T) {
-	for _, tier := range tiers {
+	for _, tier := range tierNames {
 		names := tierBuckets[tier]
 		if len(names) == 0 {
 			t.Fatalf("ярус %s не тратит ни из чего", tier)
@@ -165,17 +165,17 @@ func TestTierBuckets(t *testing.T) {
 	}
 	// Отдельный бакет панель держит один и на самой дорогой модели: у нижних
 	// ярусов наборы совпадают, и различает их только взвешенная цена расхода.
-	if got := tierBuckets["fable"]; len(got) != 2 || !contains(got, "week_fable") {
-		t.Fatalf("fable тратит из %v, жду пару с week_fable", got)
+	if got := tierBuckets["max"]; len(got) != 2 || !contains(got, "week_fable") {
+		t.Fatalf("ярус max тратит из %v, жду пару с week_fable", got)
 	}
-	for _, tier := range []string{"haiku", "sonnet", "opus"} {
+	for _, tier := range []string{tierMini, tierBase, tierPro} {
 		if got := tierBuckets[tier]; len(got) != 1 || got[0] != requiredBucket {
 			t.Fatalf("ярус %s тратит из %v, а панель у него своего бакета не показывает", tier, got)
 		}
 	}
 }
 
-func TestCorrectModel(t *testing.T) {
+func TestCorrectTier(t *testing.T) {
 	deficitAll := bucketAt("week_all", 90, halfWindow)
 	deficitFable := bucketAt("week_fable", 90, halfWindow)
 	// Профицит это выраженный перекос: почти нетронутый бакет за сутки до
@@ -189,60 +189,60 @@ func TestCorrectModel(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		model string
+		tier  string
 		groom bool
 		snap  snapshot
 		want  string
 		note  string
 	}{
-		{"дефицит общего бакета снимает opus на ярус вниз", "opus", false,
-			snapOf(freshAge, deficitAll, normalFable), "sonnet", "дефицит week_all"},
-		{"своего бакета у opus больше нет, дефицит fable его не трогает", "opus", false,
-			snapOf(freshAge, normalAll, deficitFable), "opus", ""},
-		{"sonnet при дефиците уходит на haiku", "sonnet", false,
-			snapOf(freshAge, deficitAll), "haiku", "дефицит week_all"},
-		{"ниже haiku двигать некуда", "haiku", false,
-			snapOf(freshAge, deficitAll), "haiku", "дефицит week_all"},
-		{"fable при дефиците своего бакета уходит на opus", "fable", false,
-			snapOf(freshAge, normalAll, deficitFable), "opus", "дефицит week_fable"},
-		{"fable снимает вниз и дефицит общего бакета", "fable", false,
-			snapOf(freshAge, deficitAll, normalFable), "opus", "дефицит week_all"},
-		{"профицит обоих бакетов поднимает opus", "opus", false,
-			snapOf(freshAge, surplusAll, surplusFable), "fable", "профицит week_all, week_fable"},
-		{"одного профицита week_fable для подъёма мало", "opus", false,
-			snapOf(freshAge, normalAll, surplusFable), "opus", ""},
-		{"общий бакет у границы дефицита подъём не пускает", "opus", false,
-			snapOf(freshAge, bucketAt("week_all", 74, halfWindow), surplusFable), "opus", ""},
-		{"haiku поднимает профицит общего бакета", "haiku", false,
-			snapOf(freshAge, surplusAll), "sonnet", "профицит week_all"},
-		{"sonnet поднимает тот же общий бакет", "sonnet", false,
-			snapOf(freshAge, surplusAll, normalFable), "opus", "профицит week_all"},
-		{"профицита общего бакета для opus мало", "opus", false,
-			snapOf(freshAge, surplusAll, normalFable), "opus", ""},
-		{"выше fable ярусов нет", "fable", false,
-			snapOf(freshAge, surplusAll, surplusFable), "fable", ""},
-		{"дефицит валиден и по старому снимку", "opus", false,
-			snapOf(staleAge, deficitAll, normalFable), "sonnet", "дефицит week_all"},
-		{"профицит по старому снимку не поднимает", "sonnet", false,
-			snapOf(staleAge, surplusAll, normalFable), "sonnet", ""},
-		{"снимок без момента снятия вверх не двигает", "sonnet", false,
-			snapshot{Buckets: []bucket{surplusAll, normalFable}}, "sonnet", ""},
-		{"дефицит сильнее профицита", "fable", false,
-			snapOf(freshAge, deficitAll, surplusFable), "opus", "дефицит week_all"},
-		{"грумминговый вердикт не корректируется", "opus", true,
-			snapOf(freshAge, deficitAll, deficitFable), "opus", ""},
-		{"протухший бакет не двигает", "opus", false,
-			snapOf(freshAge, normalAll, expiredFable), "opus", ""},
-		{"старый бакет opus лестницу трат больше не задаёт", "opus", false,
-			snapOf(freshAge, normalAll, deficitOpus), "opus", ""},
-		{"пустой снимок оставляет вердикт как есть", "opus", false,
-			snapshot{}, "opus", ""},
+		{"дефицит общего бакета снимает pro на ярус вниз", "pro", false,
+			snapOf(freshAge, deficitAll, normalFable), "base", "дефицит week_all"},
+		{"своего бакета у pro больше нет, дефицит week_fable его не трогает", "pro", false,
+			snapOf(freshAge, normalAll, deficitFable), "pro", ""},
+		{"base при дефиците уходит на mini", "base", false,
+			snapOf(freshAge, deficitAll), "mini", "дефицит week_all"},
+		{"ниже mini двигать некуда", "mini", false,
+			snapOf(freshAge, deficitAll), "mini", "дефицит week_all"},
+		{"max при дефиците своего бакета уходит на pro", "max", false,
+			snapOf(freshAge, normalAll, deficitFable), "pro", "дефицит week_fable"},
+		{"max снимает вниз и дефицит общего бакета", "max", false,
+			snapOf(freshAge, deficitAll, normalFable), "pro", "дефицит week_all"},
+		{"профицит обоих бакетов поднимает pro", "pro", false,
+			snapOf(freshAge, surplusAll, surplusFable), "max", "профицит week_all, week_fable"},
+		{"одного профицита week_fable для подъёма мало", "pro", false,
+			snapOf(freshAge, normalAll, surplusFable), "pro", ""},
+		{"общий бакет у границы дефицита подъём не пускает", "pro", false,
+			snapOf(freshAge, bucketAt("week_all", 74, halfWindow), surplusFable), "pro", ""},
+		{"mini поднимает профицит общего бакета", "mini", false,
+			snapOf(freshAge, surplusAll), "base", "профицит week_all"},
+		{"base поднимает тот же общий бакет", "base", false,
+			snapOf(freshAge, surplusAll, normalFable), "pro", "профицит week_all"},
+		{"профицита общего бакета для pro мало", "pro", false,
+			snapOf(freshAge, surplusAll, normalFable), "pro", ""},
+		{"выше max ярусов нет", "max", false,
+			snapOf(freshAge, surplusAll, surplusFable), "max", ""},
+		{"дефицит валиден и по старому снимку", "pro", false,
+			snapOf(staleAge, deficitAll, normalFable), "base", "дефицит week_all"},
+		{"профицит по старому снимку не поднимает", "base", false,
+			snapOf(staleAge, surplusAll, normalFable), "base", ""},
+		{"снимок без момента снятия вверх не двигает", "base", false,
+			snapshot{Buckets: []bucket{surplusAll, normalFable}}, "base", ""},
+		{"дефицит сильнее профицита", "max", false,
+			snapOf(freshAge, deficitAll, surplusFable), "pro", "дефицит week_all"},
+		{"грумминговый вердикт не корректируется", "pro", true,
+			snapOf(freshAge, deficitAll, deficitFable), "pro", ""},
+		{"протухший бакет не двигает", "pro", false,
+			snapOf(freshAge, normalAll, expiredFable), "pro", ""},
+		{"старый бакет week_opus лестницу трат больше не задаёт", "pro", false,
+			snapOf(freshAge, normalAll, deficitOpus), "pro", ""},
+		{"пустой снимок оставляет вердикт как есть", "pro", false,
+			snapshot{}, "pro", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := correctModel(c.model, c.groom, c.snap, testNow)
-			if got.Model != c.want {
-				t.Fatalf("модель %q, жду %q (причина %q)", got.Model, c.want, got.Note)
+			got := correctTier(c.tier, c.groom, c.snap, testNow)
+			if got.Tier != c.want {
+				t.Fatalf("ярус %q, жду %q (причина %q)", got.Tier, c.want, got.Note)
 			}
 			if got.Note != c.note {
 				t.Fatalf("причина %q, жду %q", got.Note, c.note)
@@ -251,25 +251,25 @@ func TestCorrectModel(t *testing.T) {
 	}
 }
 
-func TestCorrectModelBottomWarning(t *testing.T) {
+func TestCorrectTierBottomWarning(t *testing.T) {
 	// На дне лестницы причина остаётся, а сдвига нет: предупреждение честнее
-	// молчания, дешевле haiku исполнителя всё равно нет.
-	c := correctModel("haiku", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow)), testNow)
+	// молчания, дешевле нижней ступени исполнителя всё равно нет.
+	c := correctTier("mini", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow)), testNow)
 	if c.shifted() {
-		t.Fatalf("сдвиг ниже haiku: %+v", c)
+		t.Fatalf("сдвиг ниже mini: %+v", c)
 	}
-	if !strings.Contains(c.tail(), "ниже haiku ярусов нет") {
+	if !strings.Contains(c.tail(), "ниже mini ярусов нет") {
 		t.Fatalf("нет предупреждения в хвосте: %q", c.tail())
 	}
 }
 
 func TestCorrectionTail(t *testing.T) {
-	c := correctModel("opus", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow),
+	c := correctTier("pro", false, snapOf(freshAge, bucketAt("week_all", 95, halfWindow),
 		bucketAt("week_fable", 50, halfWindow)), testNow)
-	if got := c.tail(); got != "корректор: дефицит week_all, opus -> sonnet" {
+	if got := c.tail(); got != "корректор: дефицит week_all, pro -> base" {
 		t.Fatalf("хвост %q", got)
 	}
-	if tail := (correction{Model: "opus", From: "opus"}).tail(); tail != "" {
+	if tail := (correction{Tier: "pro", From: "pro"}).tail(); tail != "" {
 		t.Fatalf("молчащий корректор занял место в выводе: %q", tail)
 	}
 }

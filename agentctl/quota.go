@@ -51,21 +51,19 @@ var knownBuckets = []string{"week_all", "week_fable", "week_opus"}
 // лимитами, и тратят из него все ярусы.
 const requiredBucket = "week_all"
 
-// Лестница ярусов остаётся данными, корректор двигает индекс: новая модель
-// вставляется строкой сюда и строкой в таблицу трат, формула не меняется.
-var tiers = []string{"haiku", "sonnet", "opus", "fable"}
-
-// Из каких бакетов тратит ярус. week_all по смыслу панели учитывает все модели,
-// а отдельным бакетом панель добирает самую дорогую: раньше это был Opus, с
-// 2.1.220 это Fable. Отдельного бакета у opus больше нет, и от sonnet он
-// отличается только взвешенной ценой расхода общего бакета; week_fable держит
-// один верхний ярус. Старый week_opus в таблицу не входит: снимок с ним
-// читается и показывается в quota, но лестницу трат он больше не задаёт.
+// Из каких бакетов тратит ярус. Ключи это ступени лестницы, имена бакетов
+// остаются от панели Claude Code: их переезд в профиль харнеса это DK-038.
+// week_all по смыслу панели учитывает все модели, а отдельным бакетом панель
+// добирает самую дорогую: раньше это был Opus, с 2.1.220 это Fable. Своего
+// бакета у pro больше нет, и от base он отличается только взвешенной ценой
+// расхода общего бакета; week_fable держит один верхний ярус. Старый week_opus
+// в таблицу не входит: снимок с ним читается и показывается в quota, но
+// лестницу трат он больше не задаёт.
 var tierBuckets = map[string][]string{
-	"haiku":  {"week_all"},
-	"sonnet": {"week_all"},
-	"opus":   {"week_all"},
-	"fable":  {"week_all", "week_fable"},
+	tierMini: {"week_all"},
+	tierBase: {"week_all"},
+	tierPro:  {"week_all"},
+	tierMax:  {"week_all", "week_fable"},
 }
 
 // bucket это строка снимка: сколько процентов бакета потрачено на момент
@@ -265,16 +263,20 @@ func writeSnapshot(path string, s snapshot) error {
 }
 
 // correction это решение корректора: с какого яруса на какой съехал вердикт и
-// почему. From равен Model, когда сдвига не было.
+// почему. From равен Tier, когда сдвига не было.
 type correction struct {
-	Model string
-	From  string
-	Note  string // «дефицит week_all», причина в человеческом виде
-	Warn  string // почему причина есть, а сдвига нет
-	Down  bool
+	Tier string
+	From string
+	Note string // «дефицит week_all», причина в человеческом виде
+	Warn string // почему причина есть, а сдвига нет
+	Down bool
+	// Сдвиг есть, а модель после разворачивания та же: маппинг харнеса сложил
+	// соседние ярусы в одну модель. Ставит это cmdPick, корректор про модели
+	// ничего не знает.
+	SameModel bool
 }
 
-func (c correction) shifted() bool { return c.From != "" && c.From != c.Model }
+func (c correction) shifted() bool { return c.From != "" && c.From != c.Tier }
 
 // tail это хвост человеческой строки вердикта. Без причины хвоста нет: молчание
 // корректора не должно занимать место в выводе.
@@ -284,55 +286,57 @@ func (c correction) tail() string {
 		return ""
 	case !c.shifted():
 		return "корректор: " + c.Note + ", " + c.Warn
+	case c.SameModel:
+		return fmt.Sprintf("корректор: %s, сдвиг %s -> %s, модель та же", c.Note, c.From, c.Tier)
 	default:
-		return fmt.Sprintf("корректор: %s, %s -> %s", c.Note, c.From, c.Model)
+		return fmt.Sprintf("корректор: %s, %s -> %s", c.Note, c.From, c.Tier)
 	}
 }
 
-// correctModel двигает модель вердикта по лестнице ярусов, опираясь на остаток
-// лимитов. Порядок правил значим: дефицит проверяется раньше профицита, потому
-// что бакет тратится взвешенной ценой модели и сдвиг вверх при дефиците прожёг
-// бы его быстрее. Шаг максимум один, каскадов нет.
-func correctModel(model string, groom bool, s snapshot, now time.Time) correction {
-	c := correction{Model: model, From: model}
+// correctTier двигает ярус вердикта по лестнице, опираясь на остаток лимитов.
+// Порядок правил значим: дефицит проверяется раньше профицита, потому что бакет
+// тратится взвешенной ценой модели и сдвиг вверх при дефиците прожёг бы его
+// быстрее. Шаг максимум один, каскадов нет.
+func correctTier(tier string, groom bool, s snapshot, now time.Time) correction {
+	c := correction{Tier: tier, From: tier}
 	// Грумминговый вердикт это про порядок работы, а не про расход: сначала
 	// снять неопределённость либо разрезать задачу, и остаток тут ни при чём.
 	if groom {
 		return c
 	}
-	i := tierIndex(model)
+	i := tierIndex(tier)
 	if i < 0 {
 		return c
 	}
-	if name := firstWithStatus(s, tierBuckets[model], statusDeficit, now); name != "" {
+	if name := firstWithStatus(s, tierBuckets[tier], statusDeficit, now); name != "" {
 		c.Note = statusDeficit + " " + name
 		if i == 0 {
-			c.Warn = "ниже haiku ярусов нет"
+			c.Warn = "ниже mini ярусов нет"
 			return c
 		}
-		c.Model, c.Down = tiers[i-1], true
+		c.Tier, c.Down = tierNames[i-1], true
 		return c
 	}
-	if i+1 >= len(tiers) || !s.fresh(now) {
+	if i+1 >= len(tierNames) || !s.fresh(now) {
 		return c
 	}
 	// Вверх двигает профицит всего, из чего будет тратить ярус выше, а не
-	// одного добавочного бакета. Иначе подъём opus -> fable упирался бы в один
+	// одного добавочного бакета. Иначе подъём pro -> max упирался бы в один
 	// week_fable и случался при общем бакете у самой границы дефицита, то есть
-	// на самой дорогой модели решение принималось бы, ничего не зная про запас
+	// на самой дорогой ступени решение принималось бы, ничего не зная про запас
 	// общего бакета.
-	need := tierBuckets[tiers[i+1]]
+	need := tierBuckets[tierNames[i+1]]
 	if len(need) == 0 || !allWithStatus(s, need, statusSurplus, now) {
 		return c
 	}
 	c.Note = statusSurplus + " " + strings.Join(need, ", ")
-	c.Model = tiers[i+1]
+	c.Tier = tierNames[i+1]
 	return c
 }
 
-func tierIndex(model string) int {
-	for i, t := range tiers {
-		if t == model {
+func tierIndex(tier string) int {
+	for i, t := range tierNames {
+		if t == tier {
 			return i
 		}
 	}
@@ -345,7 +349,7 @@ func tierIndex(model string) int {
 // видит «week_opus: дефицит», ждёт сдвига вниз и не получает его, а причины в
 // выводе нет.
 func spentByTier(name string) bool {
-	for _, tier := range tiers {
+	for _, tier := range tierNames {
 		if contains(tierBuckets[tier], name) {
 			return true
 		}

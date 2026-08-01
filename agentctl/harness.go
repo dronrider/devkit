@@ -20,9 +20,22 @@ const (
 	profileDirName    = "harness"
 )
 
-// Ярусы лестницы моделей. Тут они только имена ключей маппинга: разворачивать
-// вердикт в модель по ним будет DK-037.
-var tierNames = []string{"mini", "base", "pro", "max"}
+// Лестница ярусов. Порядок значим: корректор и спуск на роль ревьювера двигают
+// индекс по этому списку, а маппинг активного харнеса разворачивает ярус в
+// модель. Ступень добавляется строкой сюда и строкой в таблицу трат, формулы не
+// меняются.
+const (
+	tierMini = "mini"
+	tierBase = "base"
+	tierPro  = "pro"
+	tierMax  = "max"
+)
+
+var tierNames = []string{tierMini, tierBase, tierPro, tierMax}
+
+// Что стоит в строке model, когда разворачивать ярус нечем. Прочерк, а не
+// пустое место: молчание тут неотличимо от штатной работы.
+const unmappedModel = "-"
 
 type keySpec struct{ Key, Kind string }
 
@@ -642,6 +655,45 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 		r.Notes = append(r.Notes, fmt.Sprintf("default %s не в списке включённых, пропущен", l.Default))
 	}
 	return r, nil
+}
+
+// tierModels разворачивает ярус в модель активного харнеса. Ярусная половина
+// вердикта от инструмента не зависит по построению, поэтому неопределённый,
+// ненастроенный или битый контур это не отказ pick, а прочерк в строке model и
+// причина хвостом: молчащая ось хуже честного прочерка.
+type tierModels struct {
+	Map  map[string]string
+	Note string
+}
+
+func (m tierModels) model(tier string) string {
+	if v := m.Map[tier]; v != "" {
+		return v
+	}
+	return unmappedModel
+}
+
+func resolveTierModels(start string) tierModels {
+	dir, err := harnessDir(start)
+	if err != nil {
+		return tierModels{Note: fmt.Sprintf("ярус разворачивать нечем: %v", err)}
+	}
+	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
+	if err != nil {
+		return tierModels{Note: fmt.Sprintf("слои харнесов не прочитаны (%v), ярус разворачивать нечем; разобраться: agentctl harness", err)}
+	}
+	r, err := resolveHarness(l, "", os.Getenv)
+	if err != nil {
+		return tierModels{Note: fmt.Sprintf("харнес не определился (%v), ярус разворачивать нечем; разобраться: agentctl harness", err)}
+	}
+	if r.Name == "" {
+		return tierModels{Note: fmt.Sprintf("харнес не определён, ярус разворачивать нечем; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath())}
+	}
+	s := l.Setup[r.Name]
+	if !s.mapped() {
+		return tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; вписать секцию [%s] в %s", r.Name, r.Name, machineConfigPath())}
+	}
+	return tierModels{Map: s.Map}
 }
 
 // cmdHarness это окно в резолв: любой сдвиг поведения между машинами

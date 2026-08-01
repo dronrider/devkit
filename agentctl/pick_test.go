@@ -10,53 +10,56 @@ import (
 )
 
 func TestPick(t *testing.T) {
-	// Пары вердикта целиком. Таблица гоняет тройку pickModel, pickEffort и
-	// floorSonnetEffort напрямую: pickModel и pickEffort считаются порознь,
-	// floorSonnetEffort подтягивает effort для sonnet. Рабочий путь (cmdPick)
+	// Пары вердикта целиком. Таблица гоняет тройку pickTier, pickEffort и
+	// floorBaseEffort напрямую: pickTier и pickEffort считаются порознь,
+	// floorBaseEffort подтягивает effort яруса base. Рабочий путь (cmdPick)
 	// собирает вердикт той же тройкой, но с поправкой на override и корректор.
-	// Оси независимые, но не совсем: у sonnet есть пол effort, поэтому в
-	// таблице видно, как low и medium из маппинга подтягиваются до high, а
-	// остальные модели идут ровно по расчёту.
+	// Оси независимые, но не совсем: у base есть пол effort, поэтому в таблице
+	// видно, как low и medium из маппинга подтягиваются до high, а остальные
+	// ярусы идут ровно по расчёту.
 	cases := []struct {
 		name   string
 		r      row
-		model  string
+		tier   string
 		effort string
 		part   string
 	}{
-		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, "haiku", "low", "атомарная"},
-		{"S с неопределённостью 1 это sonnet, effort подтянут полом", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, "sonnet", "high", "экономить глубину смысла нет"},
-		{"S с неопределённостью 3 верхняя граница диапазона", row{Type: "task", Rank: "10 (0+3+3+0+4)", Cost: "S"}, "opus", "high", "сильной"},
-		{"M с неопределённостью 0 уходит в дефолт", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, "opus", "low", "сильной"},
-		{"M с неопределённостью 1 уходит в дефолт", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, "opus", "medium", "сильной"},
-		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+2+0+2)", Cost: "S"}, "opus", "medium", "сильной"},
-		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, "opus", "medium", "сильной"},
-		{"M с неопределённостью 3 уходит в дефолт", row{Type: "task", Rank: "36 (25+4+3+0+4)", Cost: "M"}, "opus", "high", "сильной"},
-		{"баг L с неопределённостью 1 это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, "opus", "medium", "сильной"},
-		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, "opus", "xhigh", "дизайн"},
-		{"LLD ценой L уходит в fable", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, "fable", "xhigh", "сложное проектирование"},
-		{"LLD ценой XL уходит в fable", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "fable", "xhigh", "сложное проектирование"},
-		{"LLD без оценки цены остаётся на opus", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, "opus", "xhigh", "дизайн"},
-		{"LLD без неопределённости всё равно xhigh", row{Type: "LLD", Rank: "10 (0+5+0+0+5)", Cost: "S"}, "opus", "xhigh", "дизайн"},
-		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, "opus", "xhigh", "грумминг"},
-		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, "opus", "xhigh", "разбить"},
-		{"XL без неопределённости всё равно разбить", row{Type: "task", Rank: "20 (0+10+0+0+5)", Cost: "XL"}, "opus", "xhigh", "разбить"},
-		{"L и неопределённость 3 уходит в дефолт", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, "opus", "high", "сильной"},
-		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, "opus", "medium", "сильной"},
-		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, "opus", "low", "сильной"},
-		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, "opus", "high", "не оценена"},
-		{"цена не оценена при нулевой неопределённости", row{Type: "task", Rank: "7 (0+3+0+0+4)", Cost: "-"}, "opus", "high", "не оценена"},
-		{"нечитаемый ранг с ценой S уходит в дефолт", row{Type: "task", Rank: "-", Cost: "S"}, "opus", "high", "сильной"},
-		{"нечитаемый ранг с ценой M уходит в дефолт", row{Type: "task", Rank: "-", Cost: "M"}, "opus", "high", "сильной"},
-		{"L с нечитаемым рангом уходит в дефолт", row{Type: "task", Rank: "-", Cost: "L"}, "opus", "high", "сильной"},
+		{"S с неопределённостью 0 совсем атомарная", row{Type: "task", Rank: "3 (0+3+0+0+0)", Cost: "S"}, tierMini, "low", "атомарная"},
+		{"S с неопределённостью 1 это base, effort подтянут полом", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, tierBase, "high", "экономить глубину смысла нет"},
+		{"S с неопределённостью 3 верхняя граница диапазона", row{Type: "task", Rank: "10 (0+3+3+0+4)", Cost: "S"}, tierPro, "high", "сильной"},
+		{"M с неопределённостью 0 уходит в дефолт", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, tierPro, "low", "сильной"},
+		{"M с неопределённостью 1 уходит в дефолт", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, tierPro, "medium", "сильной"},
+		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+2+0+2)", Cost: "S"}, tierPro, "medium", "сильной"},
+		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, tierPro, "medium", "сильной"},
+		{"M с неопределённостью 3 уходит в дефолт", row{Type: "task", Rank: "36 (25+4+3+0+4)", Cost: "M"}, tierPro, "high", "сильной"},
+		{"баг L с неопределённостью 1 это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, tierPro, "medium", "сильной"},
+		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, tierPro, "xhigh", "дизайн"},
+		{"LLD ценой L уходит в max", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "L"}, tierMax, "xhigh", "сложное проектирование"},
+		{"LLD ценой XL уходит в max", row{Type: "LLD", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, tierMax, "xhigh", "сложное проектирование"},
+		{"LLD без оценки цены остаётся на pro", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "-"}, tierPro, "xhigh", "дизайн"},
+		{"LLD без неопределённости всё равно xhigh", row{Type: "LLD", Rank: "10 (0+5+0+0+5)", Cost: "S"}, tierPro, "xhigh", "дизайн"},
+		// Порог готовности из RANKING.md это 4, и нижняя граница проверяется
+		// отдельно: на ней вердикт обязан стать грумминговым.
+		{"неопределённость 4 это уже грумминг", row{Type: "task", Rank: "63 (50+6+4+0+3)", Cost: "M"}, tierPro, "xhigh", "неопределённость 4: сначала грумминг"},
+		{"неопределённость 5 это грумминг", row{Type: "task", Rank: "64 (50+6+5+0+3)", Cost: "M"}, tierPro, "xhigh", "грумминг"},
+		{"XL сначала разбить", row{Type: "task", Rank: "20 (0+10+3+0+5)", Cost: "XL"}, tierPro, "xhigh", "разбить"},
+		{"XL без неопределённости всё равно разбить", row{Type: "task", Rank: "20 (0+10+0+0+5)", Cost: "XL"}, tierPro, "xhigh", "разбить"},
+		{"L и неопределённость 3 уходит в дефолт", row{Type: "task", Rank: "9 (0+5+3+0+1)", Cost: "L"}, tierPro, "high", "сильной"},
+		{"L и неопределённость 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+5+2+0+1)", Cost: "L"}, tierPro, "medium", "сильной"},
+		{"L и неопределённость 0 уходит в дефолт", row{Type: "task", Rank: "7 (0+5+0+0+1)", Cost: "L"}, tierPro, "low", "сильной"},
+		{"цена не оценена", row{Type: "task", Rank: "8 (0+3+1+0+4)", Cost: "-"}, tierPro, "high", "не оценена"},
+		{"цена не оценена при нулевой неопределённости", row{Type: "task", Rank: "7 (0+3+0+0+4)", Cost: "-"}, tierPro, "high", "не оценена"},
+		{"нечитаемый ранг с ценой S уходит в дефолт", row{Type: "task", Rank: "-", Cost: "S"}, tierPro, "high", "сильной"},
+		{"нечитаемый ранг с ценой M уходит в дефолт", row{Type: "task", Rank: "-", Cost: "M"}, tierPro, "high", "сильной"},
+		{"L с нечитаемым рангом уходит в дефолт", row{Type: "task", Rank: "-", Cost: "L"}, tierPro, "high", "сильной"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := pickModel(c.r)
+			v := pickTier(c.r)
 			v.Effort = pickEffort(c.r)
-			floorSonnetEffort(&v)
-			if v.Model != c.model {
-				t.Fatalf("модель %q, жду %q", v.Model, c.model)
+			floorBaseEffort(&v)
+			if v.Tier != c.tier {
+				t.Fatalf("ярус %q, жду %q", v.Tier, c.tier)
 			}
 			if v.Effort != c.effort {
 				t.Fatalf("effort %q, жду %q", v.Effort, c.effort)
@@ -182,13 +185,30 @@ func writeBoard(t *testing.T) string {
 	return root
 }
 
-// isolateQuota уводит снимок квоты во временный HOME и возвращает путь к нему.
-// Без этого вердикт зависел бы от того, что лежит в снимке на машине.
+// isolateQuota уводит снимок квоты и контур харнесов во временный HOME и
+// возвращает путь к снимку. Без этого вердикт зависел бы и от того, что лежит в
+// снимке на машине, и от машинного маппинга ярусов: ярус разворачивается в
+// модель последним шагом, и живой ~/.devkit/harness.local сдвинул бы строку
+// model у всех тестов сразу. Профили при этом берутся свои, из репозитория,
+// то есть маппинг выходит предложением claude-code.
 func isolateQuota(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("DEVKIT_HARNESS", "")
+	t.Setenv("DEVKIT_HOME", repoRoot(t))
 	return filepath.Join(home, ".devkit", quotaFileName)
+}
+
+// repoRoot это корень devkit: тесты гоняются в agentctl, профили лежат этажом
+// выше.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 // fixNow останавливает часы утилиты: и формула корректора, и дата в строке
@@ -357,8 +377,8 @@ func TestCmdPickOverride(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := cmdPick(root, "T-001", false, roleExec)
-		if err == nil || !strings.Contains(err.Error(), "неизвестную модель") {
-			t.Fatalf("жду ошибку про неизвестную модель, получил %v", err)
+		if err == nil || !strings.Contains(err.Error(), "неизвестный ярус") {
+			t.Fatalf("жду ошибку про неизвестный ярус, получил %v", err)
 		}
 	})
 
@@ -472,7 +492,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if !strings.HasPrefix(out, "model: sonnet\neffort: high\n") {
 			t.Fatalf("жду сдвинутый вердикт, получил %q", out)
 		}
-		if !strings.Contains(out, "корректор: дефицит week_all, opus -> sonnet") {
+		if !strings.Contains(out, "корректор: дефицит week_all, pro -> base") {
 			t.Fatalf("в человеческой строке нет хвоста корректора: %q", out)
 		}
 		data, _ := os.ReadFile(taskFile)
@@ -494,7 +514,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if !strings.HasPrefix(out, "model: opus") {
 			t.Fatalf("жду подъём до opus, получил %q", out)
 		}
-		if !strings.Contains(out, "корректор: профицит week_all, sonnet -> opus") {
+		if !strings.Contains(out, "корректор: профицит week_all, base -> pro") {
 			t.Fatalf("нет хвоста корректора: %q", out)
 		}
 	})
@@ -715,29 +735,29 @@ func TestCmdPickQuota(t *testing.T) {
 }
 
 func TestReviewShift(t *testing.T) {
-	// Модельная ось для роли ревью: ярус вниз, пол sonnet, и два случая без
+	// Ярусная ось для роли ревью: ступень вниз, пол base, и два случая без
 	// спуска (дизайн и грумминг). Effort роль не считает, он приходит готовым.
 	cases := []struct {
-		name  string
-		v     verdict
-		r     row
-		model string
-		part  string
+		name string
+		v    verdict
+		r    row
+		tier string
+		part string
 	}{
-		{"дефолтный opus опускается до sonnet", verdict{Model: "opus"}, row{Type: "task", Cost: "M"}, "sonnet", "внимательность на диффе"},
-		{"fable опускается до opus", verdict{Model: "fable"}, row{Type: "task", Cost: "L"}, "opus", "внимательность на диффе"},
-		{"sonnet это пол, ниже не идём", verdict{Model: "sonnet"}, row{Type: "task", Cost: "S"}, "sonnet", "пол ревьювера"},
-		{"haiku подтягивается до пола", verdict{Model: "haiku"}, row{Type: "task", Cost: "S"}, "sonnet", "ниже sonnet ревью не опускаем"},
-		{"дизайн читается тем же калибром", verdict{Model: "opus"}, row{Type: "LLD", Cost: "S"}, "opus", "спуска нет"},
-		{"дизайн ценой L остаётся на fable", verdict{Model: "fable"}, row{Type: "LLD", Cost: "L"}, "fable", "спуска нет"},
-		{"по грумминговому вердикту ревьюить нечего", verdict{Model: "opus", Groom: true}, row{Type: "task", Cost: "XL"}, "opus", "ревьюить пока нечего"},
+		{"дефолтный pro опускается до base", verdict{Tier: tierPro}, row{Type: "task", Cost: "M"}, tierBase, "внимательность на диффе"},
+		{"max опускается до pro", verdict{Tier: tierMax}, row{Type: "task", Cost: "L"}, tierPro, "внимательность на диффе"},
+		{"base это пол, ниже не идём", verdict{Tier: tierBase}, row{Type: "task", Cost: "S"}, tierBase, "пол ревьювера"},
+		{"mini подтягивается до пола", verdict{Tier: tierMini}, row{Type: "task", Cost: "S"}, tierBase, "ниже base ревью не опускаем"},
+		{"дизайн читается тем же калибром", verdict{Tier: tierPro}, row{Type: "LLD", Cost: "S"}, tierPro, "спуска нет"},
+		{"дизайн ценой L остаётся на max", verdict{Tier: tierMax}, row{Type: "LLD", Cost: "L"}, tierMax, "спуска нет"},
+		{"по грумминговому вердикту ревьюить нечего", verdict{Tier: tierPro, Groom: true}, row{Type: "task", Cost: "XL"}, tierPro, "ревьюить пока нечего"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			v := c.v
 			reviewShift(&v, c.r)
-			if v.Model != c.model {
-				t.Fatalf("модель %q, жду %q", v.Model, c.model)
+			if v.Tier != c.tier {
+				t.Fatalf("ярус %q, жду %q", v.Tier, c.tier)
 			}
 			if !strings.Contains(v.Reason, c.part) {
 				t.Fatalf("причина %q без %q", v.Reason, c.part)
@@ -764,7 +784,7 @@ func TestCmdPickReview(t *testing.T) {
 		if !strings.HasPrefix(out, "model: sonnet\neffort: high\n") {
 			t.Fatalf("жду вердикт ревьювера sonnet/high, получил %q", out)
 		}
-		if !strings.Contains(out, "роль ревью: opus -> sonnet") {
+		if !strings.Contains(out, "роль ревью: pro -> base") {
 			t.Fatalf("в причине не видно спуска на роль: %q", out)
 		}
 	})

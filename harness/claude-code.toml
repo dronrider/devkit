@@ -30,7 +30,10 @@ memory_index = "/memory/MEMORY.md"
 
 [quota]
 snap = "usage-pane"
-buckets = ["week_all", "week_max"]
+# week_opus известен, но ни один ярус из него не тратит: панель показывала его
+# до 2.1.220, и снимок со старого клиента должен читаться, а не отбрасываться.
+# Добавочный бакет сегодняшней панели зовётся week_fable, его читает псевдоним.
+buckets = ["week_all", "week_max", "week_opus"]
 required = "week_all"
 spend_mini = ["week_all"]
 spend_base = ["week_all"]

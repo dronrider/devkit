@@ -1,0 +1,1 @@
+error: profile-quota-bucket-prefix.toml: [quota] buckets: имя бакета "day_all" без известного префикса, из него берётся окно расчёта; годятся week_, month_

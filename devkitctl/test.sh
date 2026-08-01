@@ -68,10 +68,10 @@ for t in git python3 dirname mkdir chmod rm; do
     ln -sf "$p" "$sys/$t"
 done
 cleanpath="$bin:$sys"
-mkdir -p "$home/.claude/agents" "$home/.devkit"
+mkdir -p "$home/.claude/agents" "$home/.devkit/quota"
 cp "$dk/agents/"*.md "$home/.claude/agents/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
-    > "$home/.devkit/quota.local"
+    > "$home/.devkit/quota/claude-code.local"
 
 proj="$tmp/proj"
 mkdir -p "$proj"
@@ -324,7 +324,7 @@ out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'agentctl не в PATH' || fail "нет находки про бинарь agentctl: $out"
 echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про определения исполнителей: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
-echo "$out" | grep -q 'нет снимка квоты' || fail "нет находки про снимок квоты: $out"
+echo "$out" | grep -q 'нет снимка квоты в' || fail "нет находки про снимок квоты: $out"
 echo "$out" | grep -q 'SessionStart-хук' || fail "нет находки про хук освежения квоты на пустой машине: $out"
 [ -f "$mhome/go/bin/agentctl" ] && fail "doctor без --fix собрал бинарь"
 # Помета «машина» отделяет машинные находки от проектных, на неё опирается и
@@ -371,8 +371,8 @@ echo "$out" | grep -q 'починено' && fail "повторный --fix по�
 # Снимок квоты. Возраст берётся из строки taken, порог 45 минут (тот же, что у
 # корректора pick), поэтому проверка идёт по обе стороны границы, а не «2020 год
 # против сейчас».
-mkdir -p "$mhome/.devkit"
-snap() { printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$1" > "$mhome/.devkit/quota.local"; }
+mkdir -p "$mhome/.devkit/quota"
+snap() { printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$1" > "$mhome/.devkit/quota/claude-code.local"; }
 taken_at() {
     python3 -c 'import datetime,sys;print((datetime.datetime.now()-datetime.timedelta(hours=float(sys.argv[1]))).strftime(sys.argv[2]))' "$1" "$2"
 }
@@ -380,26 +380,53 @@ docm() { HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1; }
 
 snap "$(taken_at 1 '%Y-%m-%dT%H:%M')"
 out=$(docm)
-echo "$out" | grep -q 'снимок квоты .* протух' || fail "снимок возрастом час не признан протухшим: $out"
+# Ищется именно строка про этот снимок: слово «протух» есть и в находке про
+# неподключённый хук освежения, и по нему проверка проходила бы всегда.
+echo "$out" | grep -q 'claude-code.local протух (возраст' || fail "снимок возрастом час не признан протухшим: $out"
 snap "$(taken_at 0.5 '%Y-%m-%dT%H:%M')"
 out=$(docm)
-echo "$out" | grep -q 'quota.local' && fail "снимок возрастом полчаса попал в находки: $out"
+echo "$out" | grep -q 'claude-code.local' && fail "снимок возрастом полчаса попал в находки: $out"
 # Остальные форматы момента снятия разбираются наравне с основным.
 snap "$(taken_at 0.5 '%Y-%m-%dT%H:%M:%S')"
 out=$(docm)
-echo "$out" | grep -q 'quota.local' && fail "момент снятия с секундами не разобран: $out"
+echo "$out" | grep -q 'claude-code.local' && fail "момент снятия с секундами не разобран: $out"
 snap "$(taken_at 0.5 '%Y-%m-%d %H:%M')"
 out=$(docm)
-echo "$out" | grep -q 'quota.local' && fail "момент снятия через пробел не разобран: $out"
+echo "$out" | grep -q 'claude-code.local' && fail "момент снятия через пробел не разобран: $out"
 # Строка taken есть, но не разобрана (снимок заполняют и руками): возрасту
 # верить нельзя, это находка.
 snap вчера
 out=$(docm)
 echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про неразобранный taken: $out"
 # Строки taken нет вовсе: та же находка.
-printf 'week_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota.local"
+printf 'week_all = 40%% сброс 2030-01-01T00:00\n' > "$mhome/.devkit/quota/claude-code.local"
 out=$(docm)
 echo "$out" | grep -q 'не разобран момент снятия' || fail "нет находки про снимок без taken: $out"
+
+# Переезд снимка в директорию. Одиночный quota.local это как было до DK-038, и
+# читатель его ещё понимает, но чинит расхождение --fix, а не пользователь.
+rm -f "$mhome/.devkit/quota/claude-code.local"
+printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(taken_at 0.5 '%Y-%m-%dT%H:%M')" \
+    > "$mhome/.devkit/quota.local"
+out=$(docm)
+echo "$out" | grep -q 'снимок квоты лежит по старому пути' || fail "нет находки про старый путь снимка: $out"
+echo "$out" | grep -q 'нет снимка квоты' && fail "старый снимок посчитан отсутствующим: $out"
+[ -f "$mhome/.devkit/quota.local" ] || fail "doctor без --fix тронул старый снимок"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено: снимок квоты переехал' || fail "--fix не переложил снимок: $out"
+[ -f "$mhome/.devkit/quota/claude-code.local" ] || fail "--fix не положил снимок в директорию"
+[ -f "$mhome/.devkit/quota.local" ] && fail "--fix оставил снимок и по старому пути"
+out=$(docm)
+echo "$out" | grep -q '\.devkit/quota' && fail "после переезда по снимку остались находки: $out"
+
+# Оба файла сразу: читается новый, а про старый доктор говорит, но не удаляет
+# его сам (правки --fix строго additive).
+printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(taken_at 0.5 '%Y-%m-%dT%H:%M')" \
+    > "$mhome/.devkit/quota.local"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'лежит рядом с новым' || fail "нет находки про два снимка сразу: $out"
+[ -f "$mhome/.devkit/quota.local" ] || fail "--fix удалил старый снимок, хотя правки additive"
+rm -f "$mhome/.devkit/quota.local"
 
 # Бинарь старее исходников devkit (так выходит после git pull): находка, а
 # --fix пересобирает.

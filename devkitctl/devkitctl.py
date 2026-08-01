@@ -13,12 +13,13 @@
       markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, бинари утилит devkit в PATH и не старее
-      исходников, определения агентов в ~/.claude/agents, tmux и сам снимок
-      квоты ~/.devkit/quota.local; профили харнесов devkit/harness прогоняются
+      исходников, определения агентов в ~/.claude/agents, tmux и снимки
+      квоты в ~/.devkit/quota; профили харнесов devkit/harness прогоняются
       через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
-      сборка бинарей, копия определений агентов), заполненное не трогает,
-      неоднозначное оставляет находкой
+      сборка бинарей, копия определений агентов, переезд одиночного снимка
+      квоты в директорию), заполненное не трогает, неоднозначное оставляет
+      находкой
 
   devkitctl stats [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
@@ -46,7 +47,14 @@ NOTIFY_HOOK = "notify.py"
 NOTIFY_EVENTS = ("Notification", "SubagentStop")
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
-QUOTA_FILE = "~/.devkit/quota.local"
+# Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
+# как было до директории: его переезд делает --fix, читатель до тех пор смотрит
+# старый путь (agentctl/quota.go).
+QUOTA_DIR = "~/.devkit/quota"
+QUOTA_LEGACY = "~/.devkit/quota.local"
+# В какой файл директории переезжает старый снимок: снять его было нечем, кроме
+# панели Claude Code.
+QUOTA_LEGACY_HARNESS = "claude-code"
 # Порог свежести снимка держит agentctl (snapshotMaxAge в agentctl/quota.go), тут
 # его копия: доктор про снимок говорит то же самое, что pick, иначе одна утилита
 # звала бы переснимать, а вторая молчала.
@@ -463,21 +471,48 @@ def check_machine(fix):
     if not shutil.which("tmux"):
         findings.append("tmux не в PATH: agentctl quota refresh не снимет панель /usage, "
                         "корректор останется без снимка; ставится пакетным менеджером (brew install tmux)")
-    quota = Path(os.path.expanduser(QUOTA_FILE))
-    if not quota.exists():
-        findings.append("нет снимка квоты %s: корректор pick двигать вердикт не будет; "
-                        "снять: agentctl quota refresh" % quota)
-    else:
+    f, d = check_quota(fix)
+    findings += f
+    fixed += d
+    return findings, fixed
+
+
+def check_quota(fix):
+    # Снимки квоты: переезд одиночного файла в директорию и возраст каждого
+    # снимка. Директория заведена по харнесу, потому что лимиты у инструментов
+    # свои, и одним файлом их не описать.
+    findings, fixed = [], []
+    quota_dir = Path(os.path.expanduser(QUOTA_DIR))
+    legacy = Path(os.path.expanduser(QUOTA_LEGACY))
+    moved = quota_dir / ("%s.local" % QUOTA_LEGACY_HARNESS)
+    if legacy.exists():
+        if moved.exists():
+            # Переезд уже сделан, а старый файл остался: удалять его --fix не
+            # вправе (правки строго additive), но молчать про два снимка нельзя.
+            findings.append("старый снимок квоты %s лежит рядом с новым %s: читается новый, "
+                            "старый убрать руками (rm %s)" % (legacy, moved, legacy))
+        elif fix:
+            quota_dir.mkdir(parents=True, exist_ok=True)
+            legacy.replace(moved)
+            fixed.append("снимок квоты переехал: %s -> %s" % (legacy, moved))
+        else:
+            findings.append("снимок квоты лежит по старому пути %s: снимок стал директорией по файлу "
+                            "на харнес; переложить: devkitctl doctor --fix (в %s)" % (legacy, moved))
+    snaps = sorted(quota_dir.glob("*.local")) if quota_dir.is_dir() else []
+    if not snaps and not legacy.exists():
+        findings.append("нет снимка квоты в %s: корректор pick двигать вердикт не будет; "
+                        "снять: agentctl quota refresh" % quota_dir)
+    for quota in snaps:
         taken = quota_taken(quota)
         if taken is None:
             findings.append("в снимке квоты %s не разобран момент снятия (строка taken =), "
                             "возраст не проверить; переснять: agentctl quota refresh" % quota)
-        else:
-            age = (datetime.now() - taken).total_seconds()
-            if age > QUOTA_MAX_AGE:
-                findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
-                                "сдвиг вверх потерян; переснять: agentctl quota refresh"
-                                % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))
+            continue
+        age = (datetime.now() - taken).total_seconds()
+        if age > QUOTA_MAX_AGE:
+            findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
+                            "сдвиг вверх потерян; переснять: agentctl quota refresh"
+                            % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))
     return findings, fixed
 
 

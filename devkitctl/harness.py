@@ -40,6 +40,9 @@ PROFILE_SCHEMA = (
 )
 
 TIERS = ("mini", "base", "pro", "max")
+# Префиксы имён бакетов, из которых берётся окно расчёта: week_ это 7 суток,
+# month_ это 30. Длины окон живут в agentctl (quota.go), тут только перечень.
+BUCKET_PREFIXES = ("week_", "month_")
 KNOWN_EVENTS = ("write", "session-start", "notify", "subagent-done")
 
 
@@ -360,6 +363,13 @@ def validate_quota(d):
     for key in spend:
         require_key(d.name, "quota", t, key, "секция непуста, ярусы объявляются все четыре")
     buckets = d.arr_of("quota", "buckets")
+    # Окно бакета берётся из префикса имени, и имя без известного префикса молча
+    # считалось бы недельным: у месячного бюджета pace тогда врёт всемеро.
+    for b in buckets:
+        if not b.startswith(BUCKET_PREFIXES):
+            raise ProfileError("%s: [quota] buckets: имя бакета %s без известного префикса, "
+                               "из него берётся окно расчёта; годятся %s"
+                               % (d.name, quote(b), ", ".join(BUCKET_PREFIXES)))
     req = d.str_of("quota", "required")
     if req not in buckets:
         raise ProfileError("%s: [quota] required = %s, такого бакета нет в buckets"

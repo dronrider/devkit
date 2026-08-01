@@ -20,6 +20,20 @@ case $out in "$tmp/dirty.txt:1:"*) ;; *) fail "находка без файл:с
 printf 'строка с тире %s\n' "$dash" | python3 "$here/check-symbols.py" --stdin >/dev/null
 [ $? -eq 1 ] || fail "тире в stdin не поймано"
 
+# check-symbols.py: снимки в testdata пропускаются и по путям, и в режиме
+# --hook, а похожее имя директории пропуска не даёт.
+mkdir -p "$tmp/testdata" "$tmp/mytestdata"
+printf 'текст с тире %s в снимке\n' "$dash" > "$tmp/testdata/file.txt"
+cp "$tmp/testdata/file.txt" "$tmp/mytestdata/file.txt"
+python3 "$here/check-symbols.py" "$tmp/testdata/file.txt" >/dev/null || fail "снимок в testdata не пропущен"
+python3 "$here/check-symbols.py" "$tmp/mytestdata/file.txt" >/dev/null
+[ $? -eq 1 ] || fail "тире в mytestdata сошло за testdata"
+printf '{"tool_input":{"file_path":"mylib/testdata/snapshot.txt","new_string":"тире %s в хуке"}}' "$dash" |
+    python3 "$here/check-symbols.py" --hook 2>/dev/null || fail "режим --hook не пропустил testdata"
+printf '{"tool_input":{"file_path":"mylib/mytestdata/snapshot.txt","new_string":"тире %s в хуке"}}' "$dash" |
+    python3 "$here/check-symbols.py" --hook 2>/dev/null
+[ $? -eq 2 ] || fail "режим --hook принял mytestdata за testdata"
+
 # pre-commit: ловит тире в добавленных строках и молчит про уже закоммиченные.
 repo="$tmp/repo"
 git init -q "$repo"

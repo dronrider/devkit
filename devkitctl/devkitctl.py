@@ -412,10 +412,17 @@ def check_notify_hook(text, settings):
         spec.loader.exec_module(mod)
     except (OSError, SyntaxError):
         return findings
-    if mod.pick_backend():
+    backend = mod.pick_backend()
+    if backend:
+        # Слать есть чем, но клик по баннеру уводит в Finder: это не поломка, а
+        # предложение доставить недостающее, поэтому и находка мягкая.
+        if sys.platform == "darwin" and os.path.basename(backend) == "osascript":
+            findings.append("уведомления идут, но клик по баннеру ведёт не в окно сессии: "
+                            "osascript постит от имени Script Editor, и клик открывает Finder; "
+                            "переход даёт terminal-notifier (brew install terminal-notifier)")
         return findings
     if sys.platform == "darwin":
-        how = "на macOS шлём osascript, а его нет в PATH"
+        how = "на macOS шлём terminal-notifier или osascript, а их нет в PATH"
     elif sys.platform.startswith("linux"):
         how = "notify-send не в PATH, ставится пакетным менеджером (apt install libnotify-bin)"
     else:

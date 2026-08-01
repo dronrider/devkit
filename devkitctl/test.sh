@@ -152,6 +152,26 @@ out=$( (unset DEVKIT_NOTIFY_BACKEND; HOME="$home" PATH="$cleanpath" python3 "$dk
 echo "$out" | grep -q 'уведомлять нечем' || fail "нет находки про отсутствие бэкенда уведомлений: $out"
 echo "$out" | grep -q 'notify.py --self-test' || fail "в находке про бэкенд нет команды проверки: $out"
 
+# Слать есть чем, но клик по баннеру уводит в Finder: доктор предлагает
+# отправителя с переходом. Случай ровно macOS-ный, на другой платформе клик не
+# поддержан ни одним бэкендом, и предлагать там нечего.
+if [ "$(uname)" = Darwin ]; then
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/osascript"
+    chmod +x "$tmp/osascript"
+    out=$(DEVKIT_NOTIFY_BACKEND="$tmp/osascript" HOME="$home" PATH="$cleanpath" \
+        python3 "$dkctl" doctor -C "$proj" 2>&1)
+    echo "$out" | grep -q 'клик по баннеру ведёт не в окно сессии' ||
+        fail "нет находки про клик мимо окна сессии: $out"
+    echo "$out" | grep -q 'brew install terminal-notifier' ||
+        fail "в находке про клик нет команды установки: $out"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/terminal-notifier"
+    chmod +x "$tmp/terminal-notifier"
+    out=$(DEVKIT_NOTIFY_BACKEND="$tmp/terminal-notifier" HOME="$home" PATH="$cleanpath" \
+        python3 "$dkctl" doctor -C "$proj" 2>&1)
+    echo "$out" | grep -q 'клик по баннеру' &&
+        fail "находка про клик осталась при отправителе, который клик умеет: $out"
+fi
+
 # doctor: доска без taskctl в PATH это находка (PATH обрезан до системного).
 printf '# Задачи\n' > "$proj/docs/TASKS.md"
 out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$proj" 2>&1)

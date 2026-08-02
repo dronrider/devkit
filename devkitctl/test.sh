@@ -141,7 +141,7 @@ echo "$out" | grep -q 'SessionStart-хук quota-refresh.sh' || fail "нет н�
 
 # Уведомитель висит на четырёх событиях сразу, и пропажа любого это находка:
 # без SubagentStop сессия молчит про отработавшего субагента, а без
-# UserPromptSubmit конец хода теряет порог длительности.
+# UserPromptSubmit не снимается отметка ожидания.
 nset="$home/.claude/settings.json"
 cp "$nset" "$tmp/settings.full"
 python3 - "$nset" <<'EOF'

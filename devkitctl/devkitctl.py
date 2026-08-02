@@ -518,10 +518,15 @@ def check_notify_hook(text, settings):
     if not src.exists() or spec is None:
         return findings
     mod = importlib.util.module_from_spec(spec)
+    # Уведомитель берёт разбор входа из соседнего hookio, а загрузка по пути его
+    # директорию в sys.path не кладёт.
+    sys.path.insert(0, str(src.parent))
     try:
         spec.loader.exec_module(mod)
-    except (OSError, SyntaxError):
+    except (OSError, SyntaxError, ImportError):
         return findings
+    finally:
+        sys.path.pop(0)
     backend = mod.pick_backend()
     if backend:
         # Слать есть чем, но клик по баннеру уводит в Finder: это не поломка, а

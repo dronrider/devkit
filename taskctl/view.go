@@ -18,11 +18,39 @@ var sectTitles = map[string]string{
 	SectBlocked:    "Blocked",
 }
 
+// ensureTaskFile создаёт файл задачи docs/tasks/<ID>.md со строкой-заголовком,
+// если его ещё нет, и отвечает, был ли он создан. Общая часть между cmdFile и
+// cmdReviewAdd: там файл заводится сам, не будь у задачи файла, но ссылку в
+// строке доски эти две команды чинят по-разному (см. cmdReviewAdd).
+func ensureTaskFile(root, id string, row *Row) (bool, error) {
+	abs := filepath.Join(root, "docs", "tasks", id+".md")
+	if _, err := os.Stat(abs); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	base, deps, _, _ := splitTitle(row.Title)
+	title := joinTitle(base, deps, "", "")
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(abs, []byte(fmt.Sprintf("# %s: %s\n", id, title)), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // cmdFile создаёт файл задачи docs/tasks/<ID>.md со строкой-заголовком и
-// ставит ссылку на него в строку доски. Существующий файл не трогается,
-// команда тогда только чинит ссылку.
+// ставит ссылку на него в строку доски. Обе части идемпотентны: существующий
+// файл не трогается, совпавшая ссылка не переписывается, а если на входе уже
+// есть и то и другое, команда об этом сообщает и выходит с нулём, не пытаясь
+// закоммитить пустое изменение (при -m/--push второй подряд вызов не создаёт
+// нового коммита).
 func cmdFile(root, id string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "file"); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -34,17 +62,12 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 		return "", fmt.Errorf("%s нет на доске", id)
 	}
 	rel := fmt.Sprintf("tasks/%s.md", id)
-	abs := filepath.Join(root, "docs", rel)
 	var done []string
-	if _, err := os.Stat(abs); os.IsNotExist(err) {
-		base, deps, _, _ := splitTitle(row.Title)
-		title := joinTitle(base, deps, "", "")
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(abs, []byte(fmt.Sprintf("# %s: %s\n", id, title)), 0o644); err != nil {
-			return "", err
-		}
+	created, err := ensureTaskFile(root, id, row)
+	if err != nil {
+		return "", err
+	}
+	if created {
 		done = append(done, fmt.Sprintf("docs/%s создан", rel))
 	}
 	if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
@@ -56,7 +79,7 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 		done = append(done, "ссылка в строке обновлена")
 	}
 	if len(done) == 0 {
-		return "", fmt.Errorf("у %s уже есть и файл, и ссылка на него", id)
+		return fmt.Sprintf("у %s уже есть и файл, и ссылка на него", id), nil
 	}
 	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md"), filepath.Join("docs", rel)})
 	if err != nil {

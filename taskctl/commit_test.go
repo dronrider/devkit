@@ -71,6 +71,33 @@ func TestCloseCommitIncludesRename(t *testing.T) {
 	}
 }
 
+// TestFileIdempotentSkipsEmptyCommit: холостой второй вызов file возвращается
+// раньше c.apply, поэтому с -m и --push он не плодит пустой коммит и не падает
+// на «git commit» без изменений (тот отдаёт код 1 сам по себе).
+func TestFileIdempotentSkipsEmptyCommit(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdFile(root, "XR-001", CommitOpts{Msg: "docs(tasks): XR-001 файл"}); err != nil {
+		t.Fatal(err)
+	}
+	head1 := gitOut(t, root, "rev-parse", "HEAD")
+
+	msg, err := cmdFile(root, "XR-001", CommitOpts{Msg: "docs(tasks): XR-001 файл", Push: true})
+	if err != nil {
+		t.Fatalf("холостой file с -m/--push не должен падать: %v", err)
+	}
+	if !strings.Contains(msg, "уже есть и файл, и ссылка") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	if strings.Contains(msg, ", коммит ") {
+		t.Fatalf("холостой вызов не должен коммитить: %q", msg)
+	}
+	head2 := gitOut(t, root, "rev-parse", "HEAD")
+	if head1 != head2 {
+		t.Fatalf("холостой вызов создал новый коммит: %s -> %s", head1, head2)
+	}
+}
+
 func TestPush(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

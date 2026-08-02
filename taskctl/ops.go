@@ -177,6 +177,9 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
+	if err := boardGuard(root, "add"); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -280,6 +283,9 @@ var blockSufRe = regexp.MustCompile(`\s*\[блок: [^|\[]*\]\s*$`)
 
 func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "move"); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -387,6 +393,9 @@ func cmdSet(root string, p SetParams) (string, error) {
 	}
 	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" {
 		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost и/или --link")
+	}
+	if err := boardGuard(root, "set"); err != nil {
+		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
@@ -502,6 +511,9 @@ type CloseParams struct {
 
 func cmdClose(root string, p CloseParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "close"); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -812,6 +824,9 @@ func findAndRewriteReferencesToFile(root, oldPath, newPath string) ([]string, er
 
 func cmdSort(root string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "sort"); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))

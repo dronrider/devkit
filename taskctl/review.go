@@ -107,17 +107,34 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if b.find(id) == nil {
+	row := b.find(id)
+	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", id)
 	}
 	paths := []string{filepath.Join("docs", "tasks", id+".md")}
-	created := false
-	if _, err := os.Stat(taskFileAbs(root, id)); os.IsNotExist(err) {
-		if _, err := cmdFile(root, id, CommitOpts{}); err != nil {
-			return "", err
+	created, err := ensureTaskFile(root, id, row)
+	if err != nil {
+		return "", err
+	}
+	// review add остаётся разрешён из worktree (в отличие от file), а вот
+	// ссылку в строке доски там не чинит: доску правит только диспетчер в
+	// основном чекауте (RULES.board.md, «Доска в руках диспетчера»).
+	linkHint := ""
+	if created {
+		rel := fmt.Sprintf("tasks/%s.md", id)
+		switch {
+		case linkedWorktree(root):
+			linkHint = fmt.Sprintf(", ссылку на docs/%s поправь в основном чекауте: taskctl file %s", rel, id)
+		default:
+			if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
+				row.Link = want
+				b.Lines[row.LineIdx] = formatRow(row)
+				if err := b.Save(); err != nil {
+					return "", err
+				}
+				paths = append(paths, filepath.Join("docs", "TASKS.md"))
+			}
 		}
-		created = true
-		paths = append(paths, filepath.Join("docs", "TASKS.md"))
 	}
 	rf, err := loadReview(taskFileAbs(root, id))
 	if err != nil {
@@ -136,7 +153,7 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	if created {
 		msg += ", файл задачи создан"
 	}
-	return msg + tail, nil
+	return msg + linkHint + tail, nil
 }
 
 var outcomeNames = map[string]string{"fixed": "исправлено", "rejected": "отклонено"}

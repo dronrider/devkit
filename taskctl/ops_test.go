@@ -344,8 +344,14 @@ func TestFileCreatesAndRelinks(t *testing.T) {
 	if !strings.Contains(string(board), "| XR-001 | Средняя | task/LLD | P2 | 30 (25+2+1+0+2) | - | [tasks/XR-001.md](tasks/XR-001.md) |") {
 		t.Fatalf("ссылка не обновилась:\n%s", board)
 	}
-	if _, err := cmdFile(root, "XR-001", CommitOpts{}); err == nil {
-		t.Fatal("повторный file должен падать: и файл, и ссылка уже есть")
+	// Второй вызов подряд идемпотентен: и файл, и ссылка уже на месте, команда
+	// это подтверждает и выходит с нулём, а не падает.
+	msg2, err := cmdFile(root, "XR-001", CommitOpts{})
+	if err != nil {
+		t.Fatalf("повторный file не должен падать: %v", err)
+	}
+	if !strings.Contains(msg2, "уже есть и файл, и ссылка") {
+		t.Fatalf("сообщение повторного вызова: %q", msg2)
 	}
 }
 

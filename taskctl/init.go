@@ -81,6 +81,9 @@ func cmdInit(dir string, p InitParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := boardGuard(root, "init"); err != nil {
+		return "", err
+	}
 	name := p.Name
 	if name == "" {
 		name = filepath.Base(root)

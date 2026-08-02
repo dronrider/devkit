@@ -97,6 +97,9 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
+	if err := boardGuard(root, "dep add"); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -146,6 +149,9 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 // закрывается; rm нужен, если зависимость поставили по ошибке).
 func cmdDepRm(root string, p DepParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "dep rm"); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))

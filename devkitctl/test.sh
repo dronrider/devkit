@@ -578,6 +578,22 @@ echo "$depfile" | grep -q '^autonomous = true$' ||
     fail "дописывание в файл без \\n на конце склеило последнюю строку с комментарием: $depfile"
 echo "$depfile" | grep -q '^test =$' || fail "test не дописан отдельной строкой: $depfile"
 
+# Действительно пустой (0 байт) deploy.local: дописываются сразу все три
+# ключа, а результат начинается прямо с комментария, без лишнего переноса
+# строки перед ним (в пустом файле text.endswith("\n") тоже ложно, разделитель
+# должен ставиться по text, а не по одному этому условию).
+: > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан недостающий ключ deploy' || fail "doctor --fix не дописал deploy в пустой файл: $out"
+echo "$out" | grep -q 'дописан недостающий ключ test' || fail "doctor --fix не дописал test в пустой файл: $out"
+echo "$out" | grep -q 'дописан недостающий ключ autonomous' || fail "doctor --fix не дописал autonomous в пустой файл: $out"
+first_bytes=$(head -c1 "$fproj/.devkit/deploy.local" | od -An -c | tr -d ' ')
+[ "$first_bytes" = "#" ] || fail "дописывание в пустой файл начинается не с комментария, а с [$first_bytes]"
+# Дописанный файл читается read_deploy как обычная пустая болванка.
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$fproj" 2>&1)
+echo "$out" | grep -q 'пустой deploy=' || fail "после дописывания в пустой файл нет находки про пустой deploy=: $out"
+echo "$out" | grep -q 'пустой test=' || fail "после дописывания в пустой файл нет находки про пустой test=: $out"
+
 # Машинный контур гоняется на отдельном проекте, чтобы правки --fix не мешали
 # прежним шагам.
 mproj="$tmp/mproj"

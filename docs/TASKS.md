@@ -30,7 +30,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-063 | громкие уведомления из taskctl и shipctl: Check, блокер, провал выката | task | P2 | 34 (25+6+1+0+2) | S | - |
+| DK-063 | громкие уведомления из taskctl и shipctl: Check, блокер, провал выката | task | P2 | 34 (25+6+1+0+2) | S | [tasks/DK-063.md](tasks/DK-063.md) |
 | DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 13 (0+7+1+0+5) | M | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |

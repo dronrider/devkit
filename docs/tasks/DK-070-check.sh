@@ -28,6 +28,7 @@ cat > docs/TASKS.md <<'EOF'
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
+| XR-004 | Четвёртая | task | P3 | 10 (5+5+0+0+0) | S | - |
 
 ## Blocked
 
@@ -101,20 +102,25 @@ echo "--- 1. процитированная чужая запись выката
 shipctl status
 shipctl status | grep -q "очередь занята" && { echo "ПРОВАЛ: очередь держит цитата чужой записи"; exit 1; }
 
-echo "--- 2. оборванный ограждённый блок в файле задачи виден вслух"
+echo "--- 2. оборванный ограждённый блок виден вслух и в дереве задачи"
+# Типовой путь по RULES.board.md: задача берётся в работу в своём worktree,
+# файл задачи живёт там же на ветке, основной чекаут стоит на main.
+shipctl start XR-004 --slug fix | tail -1
+WT="$(dirname "$W")/$(basename "$W")-xr-004"
+printf '# XR-004: четвёртая\n\n## Ход работы\n\nВывод merge:\n\n```\nдоска: XR-004 в Check\n' > "$WT/docs/tasks/XR-004.md"
+git -C "$WT" add docs/tasks/XR-004.md
+git -C "$WT" commit -qm "docs(tasks): XR-004 вывод с оборванным ограждением"
+shipctl status | grep "не закрыт ограждённый блок"
+shipctl merge XR-004 --test true 2>&1 | grep "не закрыт ограждённый блок"
+printf '```\n' >> "$WT/docs/tasks/XR-004.md"
+git -C "$WT" commit -qam "docs(tasks): XR-004 ограждение закрыто"
+shipctl status | grep -q "не закрыт ограждённый блок" && { echo "ПРОВАЛ: закрытое ограждение всё ещё считается обрывом"; exit 1; }
+
+echo "--- 3. настоящее замечание без исхода слияние по-прежнему отбивает"
 git checkout -qb xr-003-fix
 printf 'ещё\n' > b.txt
 git add b.txt
 git commit -qm "feat: XR-003 правка"
-# Ограждение забыли закрыть: всё после него читается как цитата, и настоящее
-# замечание ниже по файлу пропадает из виду.
-printf '\n```\nвывод merge\n' >> docs/tasks/XR-003.md
-git commit -qam "docs(tasks): XR-003 вывод с оборванным ограждением"
-shipctl status | grep "не закрыт ограждённый блок"
-shipctl merge XR-003 --train --test true 2>&1 | grep "не закрыт ограждённый блок"
-git revert --no-edit HEAD > /dev/null
-
-echo "--- 3. настоящее замечание без исхода слияние по-прежнему отбивает"
 shipctl merge XR-003 --train --test true 2>&1 | grep "замечания без исхода"
 
 echo "--- 4. процитированный заголовок за раздел «Сценарий проверки» не сходит"

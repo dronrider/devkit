@@ -16,6 +16,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   show <ID>                                   строка задачи, секция, файл задачи
                                               (закрытые ищутся в архиве)
   id                                          следующий свободный ID
+  batch [--limit N]                           кандидаты в поезд выката и причина
+                                              отказа по каждой остальной строке
 
 Менять доску:
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
@@ -328,6 +330,12 @@ func main() {
 				os.Exit(1)
 			}
 		}
+	case "batch":
+		fs := flag.NewFlagSet("batch", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		limit := fs.Int("limit", batchDefaultLimit, "сколько задач берём в пачку")
+		fs.Parse(args[1:])
+		msg, err = cmdBatch(root(*dir), *limit)
 	case "id":
 		fs := flag.NewFlagSet("id", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

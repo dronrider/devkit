@@ -41,7 +41,7 @@ func isLLD(t string) bool {
 // openDeps возвращает ID из «[после ...]», которых нет в архиве, то есть
 // незакрытые зависимости задачи.
 func openDeps(r *Row, arch *Archive) []string {
-	_, deps, _ := splitTitle(r.Title)
+	_, deps, _, _ := splitTitle(r.Title)
 	var open []string
 	for _, d := range deps {
 		if !arch.has(d) {

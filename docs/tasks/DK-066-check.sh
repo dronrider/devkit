@@ -78,11 +78,16 @@ shipctl merge XR-002 --test true >"$TMP/out" 2>&1 || die 7 "$(cat "$TMP/out")"
 grep -q "XR-002 слита в main" "$TMP/out" || die 7 "$(cat "$TMP/out")"
 ok 7
 
-# 8. Откат тоже гасит признак: прод вернулся к прежнему состоянию.
+# 8. Откат тоже гасит признак: прод вернулся к прежнему состоянию. Строка при
+#    этом лежит на блокере (между провалом и откатом ждали хостера), и секция
+#    на гашение влиять не должна.
 taskctl fail XR-001 --reason "снова 500" -m "docs(tasks): XR-001 снова провал" >/dev/null
+taskctl move XR-001 blocked --reason "ждём ответ хостера" -m "docs(tasks): XR-001 на блокере" >/dev/null
 shipctl revert XR-001 --test true >"$TMP/out" 2>&1 || die 8 "$(cat "$TMP/out")"
-grep -q "признак провала XR-001 снят откатом" "$TMP/out" || die 8 "$(cat "$TMP/out")"
+grep -q "признак провала снят откатом" "$TMP/out" || die 8 "$(cat "$TMP/out")"
 ! taskctl show XR-001 | grep -q "провал:" || die 8 "$(taskctl show XR-001)"
+taskctl show XR-001 | grep -q "XR-001 в in-progress" || die 8 "$(taskctl show XR-001)"
+! shipctl status | grep -q "провал проверки" || die 8 "$(shipctl status)"
 ok 8
 
 # 9. Доска после всех переходов остаётся здоровой.

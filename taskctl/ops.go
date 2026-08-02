@@ -338,11 +338,22 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err := b2.Save(); err != nil {
 		return "", err
 	}
+	// Задача доехала до Check или встала на блокере: повод громкий, и звучит
+	// он тут же, где меняется статус, а не в shipctl или где-то ещё, кто бы
+	// move ни позвал (RULES.board.md, «Ветки, ревью и деплой» п. 8).
+	var note string
+	base, _, _ := splitTitle(row.Title)
+	switch target {
+	case SectCheck:
+		note = notify(root, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
+	case SectBlocked:
+		note = notify(root, fmt.Sprintf("%s: %s на блокере", filepath.Base(root), id), reason)
+	}
 	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s%s", id, row.Sect, target, tail), nil
+	return fmt.Sprintf("%s: %s -> %s%s%s", id, row.Sect, target, tail, note), nil
 }
 
 type SetParams struct {

@@ -21,6 +21,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
 | DK-066 | Два исхода проверки: провал выката и приёмка с замечаниями, непроверенный выкат виден после возврата в работу | task | P2 | 36 (25+6+3+0+2) | M | [tasks/DK-066.md](tasks/DK-066.md) |
+| DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 13 (0+7+1+0+5) | M | [tasks/DK-050.md](tasks/DK-050.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -35,7 +36,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
 | DK-041 | хуки: разбор входа по имени протокола, следы ходовых ассистентов в check-commit | task | P3 | 14 (0+8+1+0+5) | S | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 13 (0+7+1+0+5) | M | [tasks/DK-050.md](tasks/DK-050.md) |
 | DK-051 | agentctl budget: размер пачки из остатка лимитов | task | P3 | 13 (0+7+1+0+5) | S | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

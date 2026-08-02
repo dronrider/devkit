@@ -82,6 +82,58 @@ func TestScenarioWarningSkipsFenced(t *testing.T) {
 	}
 }
 
+// TestScenarioWarningHeadingLevel: уровень заголовка признаком не является,
+// раздел пишут и подразделом внутри хода работы, и первым уровнем в старых
+// файлах. Признаком остаётся текст заголовка вне ограждённых блоков.
+func TestScenarioWarningHeadingLevel(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001: заголовок\n\n## Ход работы\n\n"+
+		"### Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	if warns := scenarioWarning(root, "XR-001", false); warns != nil {
+		t.Fatalf("заголовок третьего уровня не признан разделом: %v", warns)
+	}
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003: заголовок\n\n# Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	if warns := scenarioWarning(root, "XR-003", false); warns != nil {
+		t.Fatalf("заголовок первого уровня не признан разделом: %v", warns)
+	}
+}
+
+// TestUnterminatedFenceSpeaksUp: незакрытое ограждение (обычный обрыв при
+// вставке вывода) уводит в цитату весь остаток файла вместе с настоящими
+// разделами. Молча это терять нельзя: запись «Выкат» после такого блока не
+// прочитается, очередь посчитается без неё, а merge допишет свою строку туда,
+// откуда её потом никто не увидит.
+func TestUnterminatedFenceSpeaksUp(t *testing.T) {
+	doc := "# XR-001: задача\n\n## Ход работы\n\nВывод merge:\n\n```\nдоска: XR-001 в Check\n\n" +
+		"## Выкат\n\n- 2026-08-01 слито: 1111111\n"
+	if at := openFenceLine(doc); at != 7 {
+		t.Fatalf("незакрытое ограждение не найдено: строка %d", at)
+	}
+	if at := openFenceLine("# XR-001\n\n```\nвывод\n```\n\n## Выкат\n"); at != 0 {
+		t.Fatalf("закрытый блок принят за оборванный: строка %d", at)
+	}
+
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md", doc)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 оборванный вывод")
+	branchWithFix(t, root)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "не закрыт ограждённый блок") {
+		t.Fatalf("слияние по оборванному файлу задачи прошло молча: %v", err)
+	}
+	if !strings.Contains(err.Error(), "строка 7") {
+		t.Fatalf("отказ не называет строку ограждения: %v", err)
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "docs/tasks/XR-001.md") || !strings.Contains(st, "не закрыт ограждённый блок") {
+		t.Fatalf("status молчит про оборванный файл задачи:\n%s", st)
+	}
+}
+
 func writeLog(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "log")

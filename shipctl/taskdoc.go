@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -17,25 +19,54 @@ var fenceRe = regexp.MustCompile("^(`{3,}|~{3,})")
 // самими строками ограждения. Блок закрывается ограждением того же знака не
 // короче открывающего и без хвоста, поэтому ``` внутри блока на ~~~ его не
 // закроет. Незакрытое ограждение уводит в блок весь остаток файла, как это
-// делает и разметка при отрисовке.
-func fenceMask(lines []string) []bool {
+// делает и разметка при отрисовке, и вторым значением возвращается номер его
+// строки (нумерация с единицы, ноль значит «файл цел»): дальше по этому
+// признаку читатели говорят вслух, что разделы после обрыва не прочитаны.
+func fenceMask(lines []string) ([]bool, int) {
 	mask := make([]bool, len(lines))
-	open := ""
+	open, at := "", 0
 	for i, ln := range lines {
 		t := strings.TrimLeft(ln, " \t")
 		m := fenceRe.FindString(t)
 		if open == "" {
 			if m != "" {
-				open, mask[i] = m, true
+				open, at, mask[i] = m, i+1, true
 			}
 			continue
 		}
 		mask[i] = true
 		if m != "" && m[0] == open[0] && len(m) >= len(open) && strings.TrimSpace(t[len(m):]) == "" {
-			open = ""
+			open, at = "", 0
 		}
 	}
-	return mask
+	return mask, at
+}
+
+// openFenceLine возвращает строку незакрытого ограждения, ноль у целого файла.
+func openFenceLine(doc string) int {
+	_, at := fenceMask(strings.Split(doc, "\n"))
+	return at
+}
+
+// cutTaskFile проверяет файл задачи на оборванное ограждение. Разбор угадывать
+// намерение автора не берётся (сочти незакрытый блок закрытым, и цитата с
+// одним ограждением опять станет записью), но и молчать тут нельзя: за
+// обрывом пропадают разом «Выкат», «Ревью» и «Сценарий проверки», а RULES.md
+// («Фича доезжает до пользователя») требует, чтобы бездействие из-за кривых
+// данных было видно снаружи. Файла нет значит и обрыва нет.
+func cutTaskFile(root, id string) int {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		return 0
+	}
+	return openFenceLine(string(data))
+}
+
+// cutTaskFileNote это та же находка словами, одинаково в status и в отказе
+// merge: где оборвано и что из-за этого не прочитано.
+func cutTaskFileNote(id string, at int) string {
+	return fmt.Sprintf("в docs/tasks/%s.md не закрыт ограждённый блок (строка %d), всё после него читается как цитата: разделы «Выкат», «Ревью» и «Сценарий проверки» оттуда не видны",
+		id, at)
 }
 
 // hasHeading говорит, есть ли в файле заголовок любого уровня с заданным
@@ -43,7 +74,7 @@ func fenceMask(lines []string) []bool {
 // а не раздел нашего файла.
 func hasHeading(doc, name string) bool {
 	lines := strings.Split(doc, "\n")
-	mask := fenceMask(lines)
+	mask, _ := fenceMask(lines)
 	for i, ln := range lines {
 		if !mask[i] && strings.HasPrefix(ln, "#") && strings.Contains(ln, name) {
 			return true
@@ -57,7 +88,7 @@ func hasHeading(doc, name string) bool {
 // задач встречается хвост вроде «## Ревью (второй круг)».
 func sectionLines(doc, heading string) []string {
 	lines := strings.Split(doc, "\n")
-	mask := fenceMask(lines)
+	mask, _ := fenceMask(lines)
 	var out []string
 	in := false
 	for i, ln := range lines {

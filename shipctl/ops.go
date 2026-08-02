@@ -126,6 +126,17 @@ func cmdStatus(root string) (string, error) {
 		}
 	}
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
+	// Оборванный файл задачи виден до слияния, а не только в отказе merge:
+	// очередь и состав поезда считаются по записи «Выкат», и за обрывом она
+	// не читается.
+	for _, key := range []string{"in-progress", "check", "blocked", "backlog"} {
+		for _, r := range b.sects[key] {
+			if at := cutTaskFile(root, r.ID); at > 0 {
+				out = append(out, "предупреждение: "+cutTaskFileNote(r.ID, at)+
+					"; очередь и состав поезда считаются без записи этой задачи, merge по ней откажет")
+			}
+		}
+	}
 	var train []string
 	var strays []stray
 	var back []string
@@ -518,6 +529,13 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	reviewRoot := root
 	if wt != "" {
 		reviewRoot = wt
+	}
+	// Оборванный файл задачи проверяется до ревью: за незакрытым ограждением
+	// не видно ни замечаний, ни записи «Выкат», и слияние прошло бы «чисто»
+	// ровно потому, что читать было нечего. Отказ тут ничего не успел
+	// поменять, а чинится он одной строкой в файле задачи.
+	if at := cutTaskFile(reviewRoot, p.ID); at > 0 {
+		return "", fmt.Errorf("%s; закрыть ограждение и повторить, иначе запись слияния уйдёт туда же и очередь её не увидит", cutTaskFileNote(p.ID, at))
 	}
 	open, err := openReviewNotes(reviewRoot, p.ID)
 	if err != nil {

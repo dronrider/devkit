@@ -115,7 +115,7 @@ func recordMerge(root, id string, shas []string) (string, error) {
 // затирают прежние.
 func appendToSection(doc, line string) string {
 	lines := strings.Split(strings.TrimRight(doc, "\n"), "\n")
-	mask := fenceMask(lines)
+	mask, _ := fenceMask(lines)
 	start := -1
 	for i, ln := range lines {
 		if !mask[i] && strings.HasPrefix(ln, mergedSection) {

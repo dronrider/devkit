@@ -43,7 +43,8 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 		"## Blocked\n\nНет.\n"
 	write(t, root, "docs/TASKS.md", board)
 	write(t, root, "docs/tasks/XR-001.md",
-		"# XR-001: починка бага\n\n## Ревью\n\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
+		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
+			"\n## Ревью\n\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
 	write(t, root, "code.txt", "old\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed")

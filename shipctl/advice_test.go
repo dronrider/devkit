@@ -111,7 +111,8 @@ func TestTrainCriteriaWarnings(t *testing.T) {
 	if !strings.Contains(msg, "файлы задач поезда") || !strings.Contains(msg, "XR-001: a.txt") {
 		t.Fatalf("нет предупреждения про пересечение файлов: %q", msg)
 	}
-	if strings.Contains(msg, "цена") {
+	// Слово ищется вместе с ID: голое «цена» ловится и в «Сценарий».
+	if strings.Contains(msg, "цена XR-003") {
 		t.Fatalf("цена S не должна давать предупреждения: %q", msg)
 	}
 
@@ -120,7 +121,7 @@ func TestTrainCriteriaWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := trainWarnings(root, "main", "HEAD", b, "XR-003", []string{"A-1", "A-2", "A-3", "A-4", "A-5"})
+	ws := trainWarnings(root, root, "main", "HEAD", b, "XR-003", []string{"A-1", "A-2", "A-3", "A-4", "A-5"})
 	joined := strings.Join(ws, "\n")
 	if !strings.Contains(joined, "больше 3-5 не копят") {
 		t.Fatalf("нет предупреждения о размере поезда: %v", ws)

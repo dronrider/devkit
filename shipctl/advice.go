@@ -75,8 +75,9 @@ func regcheckLogged(path string, since time.Time) bool {
 // («Ветки, ревью и деплой» п. 9): цена S или M, не больше 3-5 задач, задачи
 // не трогают одни файлы. Нарушение не валит merge, критерии на суждении
 // (связность «по смыслу» git не видит), но в отчёте оно обязано прозвучать.
-func trainWarnings(root, main, branch string, b *board, id string, train []string) []string {
+func trainWarnings(root, reviewRoot, main, branch string, b *board, id string, train []string) []string {
 	var warns []string
+	warns = append(warns, scenarioWarning(reviewRoot, id)...)
 	if r := b.rowOf(id); r != nil {
 		switch r.Cost {
 		case "", "S", "M":
@@ -93,6 +94,23 @@ func trainWarnings(root, main, branch string, b *board, id string, train []strin
 		warns = append(warns, "предупреждение: ветка трогает файлы задач поезда ("+strings.Join(overlaps, "; ")+"), в поезд берут независимые задачи")
 	}
 	return warns
+}
+
+// scenarioWarning подсказывает при поездном слиянии, что у задачи нет сценария
+// проверки. Одиночный выкат везёт одну задачу, и её проверяют по горячим
+// следам, а поезд переводит в Check всю пачку разом и уже после деплоя:
+// задача без сценария всплывёт там, где проверять её нечем, а прод уже
+// поменялся. Признак это заголовок «Сценарий проверки» в файле задачи, файл
+// читается в дереве ветки: исполнитель и ревьювер пишут его туда.
+func scenarioWarning(reviewRoot, id string) []string {
+	if data, err := os.ReadFile(taskFilePath(reviewRoot, id)); err == nil {
+		for _, ln := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(ln, "#") && strings.Contains(ln, "Сценарий проверки") {
+				return nil
+			}
+		}
+	}
+	return []string{"предупреждение: в docs/tasks/" + id + ".md нет раздела «Сценарий проверки», а ship переведёт задачу в Check разом со всем поездом: проверять выкат будет нечем (RULES.board.md, «Трекинг задач» п. 6)"}
 }
 
 // trainOverlap находит пересечение файлов ветки с файлами коммитов задач

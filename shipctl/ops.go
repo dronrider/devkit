@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -388,9 +389,6 @@ type MergeParams struct {
 }
 
 func cmdMerge(root string, p MergeParams) (string, error) {
-	if p.Test == "" {
-		return "", fmt.Errorf("нужен --test с командой тестов проекта: ветка сливается только зелёной")
-	}
 	if p.Train && p.Deploy != "" {
 		return "", fmt.Errorf("--train откладывает выкат до shipctl ship, вместе с --deploy он не имеет смысла")
 	}
@@ -399,6 +397,18 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	root = primary
+	unlock, err := acquireLock(root)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	test, testFromConfig, err := resolveTest(root, p.Test)
+	if err != nil {
+		return "", err
+	}
+	if test == "" {
+		return "", fmt.Errorf("нужен --test с командой тестов проекта либо ключ test в %s: ветка сливается только зелёной", deployConfigPath)
+	}
 	main, err := preflight(root)
 	if err != nil {
 		return "", err
@@ -535,7 +545,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	warns = append(warns, regcheckWarning(root, reviewRoot, main, branch, b.rowOf(p.ID).Type)...)
 	if p.Train {
-		warns = append(warns, trainWarnings(root, main, branch, b, p.ID, train)...)
+		warns = append(warns, trainWarnings(root, reviewRoot, main, branch, b, p.ID, train)...)
 	}
 	warn := ""
 	if len(warns) > 0 {
@@ -556,7 +566,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		git(workDir, "rebase", "--abort")
 		return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, tail(out))
 	}
-	if out, err := runShell(workDir, p.Test); err != nil {
+	if out, err := runShell(workDir, test); err != nil {
 		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", tail(out))
 	}
 	if wt == "" {
@@ -570,6 +580,15 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	if out, err := git(root, "merge", "--ff-only", branch); err != nil {
 		return "", fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
+	}
+	// Слитый диапазон известен ровно здесь, до записи в файл задачи: её коммит
+	// лежит под docs/ и признак не смазывает, но считать признак по чистому
+	// диапазону ветки честнее.
+	docsRange := false
+	if p.Train {
+		if docsRange, err = rangeDocsOnly(root, preSha, "HEAD"); err != nil {
+			return "", err
+		}
 	}
 	var wtNote string
 	if wt != "" {
@@ -592,7 +611,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	// Первое поездное слияние заводит тег на main до себя: что было на main к
 	// этому моменту, считается выкаченным, и окно поезда начинается с этой ветки.
-	if p.Train {
+	// Бескодовая ветка точкой выката не становится: везти на прод ей нечего, и
+	// окно поезда она бы открыла на пустом месте.
+	if p.Train && !docsRange {
 		if _, err := git(root, "rev-parse", "--verify", deployTag); err != nil {
 			if _, err := git(root, "tag", deployTag, preSha); err != nil {
 				return "", err
@@ -600,6 +621,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		}
 	}
 	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward", p.ID, main)}
+	if testFromConfig {
+		msg = append(msg, "тесты гнались командой из "+deployConfigPath+": "+test)
+	}
 	if wtNote != "" {
 		msg = append(msg, wtNote)
 	} else {
@@ -635,8 +659,37 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// Пересчёт состава здесь чисто информационный, слияние уже необратимо, и
 	// его ошибка не должна хоронить отчёт о том, что реально сделано.
 	if p.Train {
+		// Ветка не тронула ничего вне docs/: везти на прод нечего, очередь такая
+		// задача не держит, и ship её не подберёт. Молчащая задача застряла бы в
+		// In progress до тех пор, пока кто-нибудь не заметит, поэтому в Check её
+		// переводит сам merge, как переводит бескодовую задачу одиночный merge.
+		if docsRange {
+			if _, err := taskMove(root, p.ID, "check"); err != nil {
+				return "", fmt.Errorf("слито, но доска не переведена: %v", err)
+			}
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check", p.ID))
+			if err != nil {
+				return "", err
+			}
+			msg = append(msg, "поезд задачу не везёт: ветка не трогает ничего вне docs/, выката ей не нужно",
+				fmt.Sprintf("доска: %s в Check, коммит %s", p.ID, hash))
+			if err := push("доска запушена",
+				"перевод в Check прошёл, но пуш доски не прошёл, повторить git push руками"); err != nil {
+				return "", err
+			}
+			msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
+			return strings.Join(msg, "\n"), nil
+		}
 		if now, _, err := trainTasks(root, main, b); err == nil {
 			msg = append(msg, fmt.Sprintf("в поезде: %s; выкат поезда: shipctl ship", strings.Join(now, ", ")))
+			// Код в main уехал, а состав задачу не видит: её коммиты не нашлись
+			// ни по ID в subject, ни по записи в файле задачи (так бывает, когда
+			// верхний коммит ветки распознан как откат). Поезд её не повезёт и
+			// ship в Check не переведёт, а правка на main уже лежит и уедет на
+			// прод с чужим выкатом.
+			if !slices.Contains(now, p.ID) {
+				msg = append(msg, fmt.Sprintf("предупреждение: код слит, но %s не попала в поезд (её коммиты не нашлись ни по ID в subject, ни по записи в файле задачи): shipctl ship её не повезёт и в Check не переведёт, разобрать до выката", p.ID))
+			}
 		} else {
 			msg = append(msg, fmt.Sprintf("в поезде (состав не пересчитался: %v); выкат поезда: shipctl ship", err))
 		}
@@ -699,6 +752,11 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	unlock, err := acquireLock(root)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	main, err := preflight(root)
 	if err != nil {
 		return "", err
@@ -917,12 +975,42 @@ func docsOnly(files string) bool {
 	return true
 }
 
+// rangeDocsOnly отвечает, лежит ли весь диапазон коммитов под docs/. От
+// codeCommits он отличается множеством, а не признаком: там окно выката и
+// коммиты, отобранные по ID задачи, здесь весь слитый диапазон ветки, где
+// чужих коммитов быть не может. Пустой диапазон бескодовым не считается:
+// сливать было нечего, и молча переводить такую задачу в Check нельзя.
+func rangeDocsOnly(root, from, to string) (bool, error) {
+	log, err := git(root, "log", from+".."+to, "--format=%H")
+	if err != nil {
+		return false, err
+	}
+	if log == "" {
+		return false, nil
+	}
+	for _, sha := range strings.Split(log, "\n") {
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return false, err
+		}
+		if !docsOnly(files) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func cmdRevert(root string, p RevertParams) (string, error) {
 	// Как в ship: откат делается в основном дереве, откуда бы ни запустили.
 	root, _, err := primaryRoot(root)
 	if err != nil {
 		return "", err
 	}
+	unlock, err := acquireLock(root)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	main, err := preflight(root)
 	if err != nil {
 		return "", err

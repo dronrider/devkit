@@ -15,9 +15,12 @@ const deployConfigPath = ".devkit/deploy.local"
 // локальном, а не коммитимом (RULES.board.md, «Трекинг задач» п. 8). shipctl
 // читает отсюда команду, чтобы не передавать --deploy на каждый merge, и флаг
 // автономии: разрешает ли проект агенту катить на прод сам, без отдельного
-// слова пользователя.
+// слова пользователя. Команда тестов лежит там же и по той же причине: она
+// такая же принадлежность проекта, как команда выката, и без неё процедуре
+// пачки пришлось бы сочинять --test под каждый репозиторий.
 type deployConfig struct {
 	Deploy     string
+	Test       string
 	Autonomous bool
 }
 
@@ -49,6 +52,8 @@ func loadDeployConfig(root string) (deployConfig, error) {
 		switch key {
 		case "deploy":
 			c.Deploy = val
+		case "test":
+			c.Test = val
 		case "autonomous":
 			c.Autonomous, _ = strconv.ParseBool(val)
 		}
@@ -95,6 +100,26 @@ func resolveDeploy(root, flag string) (deployPlan, error) {
 		plan.manual = "команда в " + deployConfigPath + ", autonomous=false"
 	}
 	return plan, nil
+}
+
+// resolveTest решает, чем гонять тесты при слиянии. Явный --test это указание
+// пользователя прямо сейчас и сильнее конфига; без флага команда берётся из
+// ключа test, как берётся оттуда команда выката. Нет ни флага, ни ключа значит
+// прежний отказ: ветка сливается только зелёной. Второе значение говорит, что
+// команда пришла из конфига, и уходит в отчёт: прогон незнакомой командой
+// иначе был бы неотличим от прогона своей.
+// Ключ читает только merge. ship тестов не гоняет и так (код проверен при
+// слиянии), а у revert пустой --test значит «без прогона»: откат чинит прод и
+// должен быть быстрым, прогон на нём остаётся решением того, кто откатывает.
+func resolveTest(root, flag string) (string, bool, error) {
+	if flag != "" {
+		return flag, false, nil
+	}
+	cfg, err := loadDeployConfig(root)
+	if err != nil {
+		return "", false, err
+	}
+	return cfg.Test, cfg.Test != "", nil
 }
 
 // unquote снимает одну окружающую пару кавычек, если значение целиком в них

@@ -1,0 +1,213 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const rowInProg4 = "| XR-004 | Третья мелочь | task | P3 | 8 (0+3+0+5+0) |  |\n"
+
+// TestTrainDocsOnlyGoesToCheck: у задачи пачки бывает нет кода (правка одной
+// доки). Поезд её не везёт, состав считается по коммитам вне docs/, и до этой
+// правки она молча оставалась бы в In progress навсегда: ship переводит в
+// Check только поезд. Теперь её переводит сам merge, коммитом доски и без
+// выката, а отчёт говорит, что поезд её не везёт.
+func TestTrainDocsOnlyGoesToCheck(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	gitT(t, root, "checkout", "-qb", "xr-001-docs", "main")
+	write(t, root, "docs/lld/train.md", "# LLD\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs: XR-001 правка LLD")
+
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "поезд задачу не везёт") || !strings.Contains(msg, "в Check, коммит") {
+		t.Fatalf("бескодовая задача должна уехать в Check: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); !strings.Contains(string(calls), "move XR-001 check") {
+		t.Fatalf("taskctl move в Check не вызван: %q", calls)
+	}
+	if log := gitT(t, root, "log", "-1", "--format=%s", "main"); !strings.Contains(log, "XR-001 в Check") {
+		t.Fatalf("коммита доски нет: %s", log)
+	}
+	// Точку выката бескодовое слияние не заводит: везти на прод нечего.
+	if _, err := git(root, "rev-parse", "--verify", deployTag); err == nil {
+		t.Fatal("бескодовое поездное слияние не должно заводить тег deployed")
+	}
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "поезд пуст") {
+		t.Fatalf("после бескодового слияния поезд должен остаться пустым: %v", err)
+	}
+}
+
+// TestTrainCodeMissingFromTrainWarns: код слит, а состав поезда задачу не
+// видит. Так бывает, когда верхний коммит ветки распознан как откат: поиск
+// коммитов задачи упирается в него и отвечает «кода нет». Задача остаётся в In
+// progress, ship её не повезёт и в Check не переведёт, поэтому merge говорит
+// про это отдельной строкой, а не молчит.
+func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
+	write(t, root, "a.txt", "новое\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	write(t, root, "code.txt", "вернули как было\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "revert: XR-001 откат прошлой правки")
+
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "не попала в поезд") {
+		t.Fatalf("пропажу задачи из поезда надо называть вслух: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move XR-001") {
+		t.Fatalf("такая задача остаётся в In progress: %q", calls)
+	}
+	// Правка на main лежит, и это ровно то, о чём предупреждение.
+	if got, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(got) != "новое\n" {
+		t.Fatalf("код не доехал до main: %q", got)
+	}
+}
+
+// TestTrainEmptyBranchIsNotDocsOnly: у ветки без коммитов слитого диапазона
+// нет вовсе, и бескодовой такая задача не считается. Иначе забытая ветка
+// уезжала бы в Check как сделанная правка доки.
+func TestTrainEmptyBranchIsNotDocsOnly(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	if _, err := cmdStart(root, StartParams{ID: "XR-001", Slug: "fix"}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "поезд задачу не везёт") {
+		t.Fatalf("пустая ветка это не бескодовая задача: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move XR-001 check") {
+		t.Fatalf("пустая ветка не должна уезжать в Check: %q", calls)
+	}
+}
+
+// TestTrainScenarioWarning: поезд переводит в Check всю пачку разом и уже
+// после выката, поэтому merge --train подсказывает, что у задачи нет сценария
+// проверки. Признак это заголовок «Сценарий проверки» в файле задачи.
+func TestTrainScenarioWarning(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+
+	// У XR-003 файла задачи нет вовсе: сценария нет, подсказка обязана быть.
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "нет раздела «Сценарий проверки»") {
+		t.Fatalf("нет подсказки про сценарий: %q", msg)
+	}
+
+	// У XR-001 сценарий в файле задачи есть, и подсказка молчит.
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "Сценарий проверки") {
+		t.Fatalf("при готовом сценарии подсказка лишняя: %q", msg)
+	}
+}
+
+// TestTrainScenarioProseIsNotScenario: упоминание сценария в прозе («сценарий
+// проверки напишу после выката») сценарием не считается, признак это заголовок
+// раздела.
+func TestTrainScenarioProseIsNotScenario(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\nСценарий проверки напишу после выката.\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 ход работы")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "нет раздела «Сценарий проверки»") {
+		t.Fatalf("проза сценарием не считается: %q", msg)
+	}
+}
+
+// TestTrainScenarioWarningReadsBranch: сценарий пишется в дереве задачи, и
+// читать его merge обязан там: в основном чекауте на main файла ещё нет.
+func TestTrainScenarioWarningReadsBranch(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	wt := startTask(t, root, "XR-003", "b.txt")
+	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n")
+	gitT(t, wt, "add", ".")
+	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-003 сценарий проверки")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "нет раздела «Сценарий проверки»") {
+		t.Fatalf("сценарий лежит на ветке, подсказка лишняя: %q", msg)
+	}
+}
+
+// TestTrainPipelineThreeTasks: боевой прогон пачки на временном репозитории.
+// Три задачи стартуют в своих деревьях, сливаются в порядке, отличном от
+// порядка старта (готовыми они приезжают вперемешку), и уезжают одним
+// выкатом. Проверяется, что предусловия не сработали ложно, состав поезда
+// полный и все три ушли в Check.
+func TestTrainPipelineThreeTasks(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3+rowInProg4, "")
+	ids := []string{"XR-001", "XR-003", "XR-004"}
+	wts := map[string]string{}
+	for i, id := range ids {
+		wts[id] = startTask(t, root, id, string(rune('a'+i))+".txt")
+	}
+	for _, id := range ids {
+		if br := gitT(t, wts[id], "rev-parse", "--abbrev-ref", "HEAD"); br != strings.ToLower(id)+"-fix" {
+			t.Fatalf("%s: в дереве стоит %q", id, br)
+		}
+	}
+	// Порядок слияния свой: XR-004 приехала раньше остальных.
+	for _, id := range []string{"XR-004", "XR-001", "XR-003"} {
+		msg, err := cmdMerge(root, MergeParams{ID: id, Test: "true", Train: true})
+		if err != nil {
+			t.Fatalf("поездное слияние %s не прошло: %v", id, err)
+		}
+		if !strings.Contains(msg, "в поезде: ") {
+			t.Fatalf("%s: в отчёте нет состава поезда: %q", id, msg)
+		}
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "поезд: XR-001, XR-003, XR-004 слиты") || strings.Contains(st, "аномалия") {
+		t.Fatalf("состав поезда перед выкатом:\n%s", st)
+	}
+	msg, err := cmdShip(root, ShipParams{Deploy: "touch shipped.marker"})
+	if err != nil {
+		t.Fatalf("выкат поезда не прошёл: %v", err)
+	}
+	if !strings.Contains(msg, "поезд выкачен (XR-001, XR-003, XR-004)") {
+		t.Fatalf("выкат поезда: %q", msg)
+	}
+	calls, _ := os.ReadFile(callLog)
+	for _, id := range ids {
+		if !strings.Contains(string(calls), "move "+id+" check") {
+			t.Fatalf("%s не переведена в Check: %q", id, calls)
+		}
+		if _, err := os.Stat(wts[id]); err == nil {
+			t.Fatalf("дерево задачи %s не убрано", id)
+		}
+	}
+	if gitT(t, root, "rev-parse", deployTag) != gitT(t, root, "rev-parse", "main^") {
+		t.Fatal("тег deployed не сдвинут на выкаченный main")
+	}
+}

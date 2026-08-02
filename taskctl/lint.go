@@ -83,6 +83,7 @@ func cmdLint(root string) ([]string, error) {
 				bp, r.LineIdx+1, r.ID))
 		}
 	}
+	finds = append(finds, lintOrphanTaskFiles(root, b, arch, bp)...)
 
 	for _, r := range arch.Rows {
 		where := fmt.Sprintf("%s:%d: %s", ap, r.LineIdx+1, r.ID)
@@ -190,6 +191,34 @@ func lintDepCycles(rows []*Row, bp string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("%s:%d: цикл зависимостей: %s", bp, line[cycle[0]]+1, strings.Join(cycle, " -> "))}
+}
+
+// lintOrphanTaskFiles ищет файлы задач, которых нет ни на доске, ни в архиве.
+// Так выглядит правка ID задним числом (лишний ноль в номере, переезд между
+// префиксами): строка уезжает под новым ID, а файл остаётся под прежним
+// именем. В файле живут замечания ревью и запись слитых коммитов, по которой
+// shipctl держит очередь выката и собирает откат, поэтому расхождение стоит
+// дороже, чем битая ссылка: обе утилиты продолжают работать, но с чужой
+// задачей. Закрытые задачи сюда не попадают, их файлы уезжают в
+// tasks/archive/<год>.
+func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, "docs", "tasks"))
+	if err != nil {
+		return nil
+	}
+	var finds []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".md")
+		if b.find(id) != nil || arch.has(id) {
+			continue
+		}
+		finds = append(finds, fmt.Sprintf("%s: файл задачи docs/tasks/%s ни на доске, ни в архиве (ID строки правили задним числом?)",
+			bp, e.Name()))
+	}
+	return finds
 }
 
 // checkLinks проверяет, что локальные markdown-ссылки строки ведут на

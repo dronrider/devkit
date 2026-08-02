@@ -122,6 +122,33 @@ func TestTrainScenarioWarning(t *testing.T) {
 	}
 }
 
+// TestTrainDocsOnlyScenarioWarning: у бескодовой задачи без сценария рядом
+// вставали две взаимоисключающие строки, «ship переведёт в Check» и «доска:
+// XR-003 в Check» от этого же merge. Подсказка обязана называть того, кто
+// задачу переводит на самом деле.
+func TestTrainDocsOnlyScenarioWarning(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3, "")
+	gitT(t, root, "checkout", "-qb", "xr-003-docs", "main")
+	write(t, root, "docs/lld/train.md", "# LLD\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs: XR-003 правка LLD")
+
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "merge переведёт бескодовую задачу в Check прямо сейчас") {
+		t.Fatalf("подсказка должна называть перевод этим же merge: %q", msg)
+	}
+	if strings.Contains(msg, "ship переведёт") {
+		t.Fatalf("ship бескодовую задачу не везёт, обещать его нельзя: %q", msg)
+	}
+	// Задача и правда уехала в Check тем же прогоном: обещание сходится с делом.
+	if calls, _ := os.ReadFile(callLog); !strings.Contains(string(calls), "move XR-003 check") {
+		t.Fatalf("бескодовая задача должна уехать в Check: %q", calls)
+	}
+}
+
 // TestTrainScenarioProseIsNotScenario: упоминание сценария в прозе («сценарий
 // проверки напишу после выката») сценарием не считается, признак это заголовок
 // раздела.

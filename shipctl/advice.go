@@ -77,7 +77,15 @@ func regcheckLogged(path string, since time.Time) bool {
 // (связность «по смыслу» git не видит), но в отчёте оно обязано прозвучать.
 func trainWarnings(root, reviewRoot, main, branch string, b *board, id string, train []string) []string {
 	var warns []string
-	warns = append(warns, scenarioWarning(reviewRoot, id)...)
+	// Бескодовая ветка считается до ребейза по тому же предикату, что и после
+	// слияния: множество коммитов у main..branch и у слитого диапазона одно,
+	// ребейз его не меняет. Ошибку git тут глотаем, подсказке хватит общего
+	// случая, а слияние из-за неё падать не должно.
+	docsBranch, err := rangeDocsOnly(root, main, branch)
+	if err != nil {
+		docsBranch = false
+	}
+	warns = append(warns, scenarioWarning(reviewRoot, id, docsBranch)...)
 	if r := b.rowOf(id); r != nil {
 		switch r.Cost {
 		case "", "S", "M":
@@ -102,7 +110,9 @@ func trainWarnings(root, reviewRoot, main, branch string, b *board, id string, t
 // задача без сценария всплывёт там, где проверять её нечем, а прод уже
 // поменялся. Признак это заголовок «Сценарий проверки» в файле задачи, файл
 // читается в дереве ветки: исполнитель и ревьювер пишут его туда.
-func scenarioWarning(reviewRoot, id string) []string {
+// Кто переведёт задачу в Check, зависит от ветки, и подсказка обязана называть
+// того же: бескодовую задачу переводит этот самый merge, ещё до всякого ship.
+func scenarioWarning(reviewRoot, id string, docsBranch bool) []string {
 	if data, err := os.ReadFile(taskFilePath(reviewRoot, id)); err == nil {
 		for _, ln := range strings.Split(string(data), "\n") {
 			if strings.HasPrefix(ln, "#") && strings.Contains(ln, "Сценарий проверки") {
@@ -110,7 +120,11 @@ func scenarioWarning(reviewRoot, id string) []string {
 			}
 		}
 	}
-	return []string{"предупреждение: в docs/tasks/" + id + ".md нет раздела «Сценарий проверки», а ship переведёт задачу в Check разом со всем поездом: проверять выкат будет нечем (RULES.board.md, «Трекинг задач» п. 6)"}
+	who := "ship переведёт задачу в Check разом со всем поездом: проверять выкат будет нечем"
+	if docsBranch {
+		who = "merge переведёт бескодовую задачу в Check прямо сейчас, без выката: подтверждать её будет нечем"
+	}
+	return []string{"предупреждение: в docs/tasks/" + id + ".md нет раздела «Сценарий проверки», а " + who + " (RULES.board.md, «Трекинг задач» п. 6)"}
 }
 
 // trainOverlap находит пересечение файлов ветки с файлами коммитов задач

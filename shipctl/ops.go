@@ -228,15 +228,16 @@ func strayList(ss []stray) string {
 }
 
 // codeCommits проверяет по строкам лога (формат %H\t%s, новые первыми), есть
-// ли у задачи коммиты кода: с ID в subject, трогающие что-то кроме docs/.
+// ли у задачи коммиты кода: записанные разделом «Выкат» либо с ID в subject,
+// трогающие что-то кроме docs/.
 // Правки только под docs/ (доска, файлы задач, LLD) едут с выкатом, но прод
 // не меняют, поэтому кодом не считаются. Прошлый откат это граница, как в
 // taskCommits: всё, что старше него, уже откачено или относится к прошлым
 // заходам на задачу.
-func codeCommits(root string, lines []string, id string) (bool, error) {
+func codeCommits(root string, lines []string, id string, rec []string) (bool, error) {
 	for _, ln := range lines {
 		sha, subj, ok := strings.Cut(ln, "\t")
-		if !ok || !containsWord(subj, id) {
+		if !ok || (!containsWord(subj, id) && !inRecord(rec, sha)) {
 			continue
 		}
 		if isRevertSubject(subj) {
@@ -268,7 +269,11 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 	lines := strings.Split(log, "\n") // новые первыми
 	for _, sect := range []string{"in-progress", "check", "blocked", "backlog"} {
 		for _, r := range b.sects[sect] {
-			ok, err := codeCommits(root, lines, r.ID)
+			rec, err := mergedShas(root, r.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			ok, err := codeCommits(root, lines, r.ID, rec)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -289,9 +294,9 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 // есть выкаченный код (коммиты под точкой последнего выката; пока тега нет,
 // весь main). LLD, дока и прочие задачи без кода на проде ждут в Check
 // подтверждения пользователя, но следующему выкату не мешают: инвариант
-// «непроверенный выкат один» про прод, а не про секцию доски. Предел тот же,
-// что у revert: задачу без ID в subject коммитов поиск не увидит, merge о
-// таких предупреждает при слиянии.
+// «непроверенный выкат один» про прод, а не про секцию доски. Задачу, слитую
+// через shipctl, поиск находит по записи в файле задачи, а по ID в subject
+// ищутся только слитые руками мимо него и до появления записи.
 func checkQueue(root, main string, b *board) ([]string, error) {
 	rows := b.sects["check"]
 	if len(rows) == 0 {
@@ -308,7 +313,11 @@ func checkQueue(root, main string, b *board) ([]string, error) {
 	lines := strings.Split(log, "\n")
 	var busy []string
 	for _, r := range rows {
-		ok, err := codeCommits(root, lines, r.ID)
+		rec, err := mergedShas(root, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := codeCommits(root, lines, r.ID, rec)
 		if err != nil {
 			return nil, err
 		}
@@ -458,7 +467,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// предусловия.
 	var warns []string
 	if subjects, err := git(root, "log", main+".."+branch, "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
-		warns = append(warns, fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject, revert по ID их не найдёт", p.ID))
+		warns = append(warns, fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject; очередь, поезд и revert найдут их по записи в файле задачи, но по истории задачу так не собрать", p.ID))
 	}
 	warns = append(warns, regcheckWarning(root, reviewRoot, main, branch, b.rowOf(p.ID).Type)...)
 	if p.Train {
@@ -504,6 +513,19 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	} else {
 		git(root, "branch", "-d", branch)
 	}
+	// Слитый диапазон известен ровно здесь и ровно этой задаче: дальше он
+	// смешается с чужими коммитами, а связь по ID в subject держится на
+	// договорённости и рвётся молча. Запись идёт до пуша, чтобы уехать вместе
+	// с кодом, и своим коммитом: сам он под docs/, поэтому ни в поезд, ни в
+	// откат не попадает.
+	var recNote string
+	if shas, err := git(root, "log", preSha+"..HEAD", "--format=%h"); err == nil && shas != "" {
+		hash, err := recordMerge(root, p.ID, strings.Split(shas, "\n"))
+		if err != nil {
+			return "", fmt.Errorf("%s слита в %s, но коммиты не записаны в файл задачи: %v", p.ID, main, err)
+		}
+		recNote = fmt.Sprintf("коммиты задачи записаны в docs/tasks/%s.md, коммит %s", p.ID, hash)
+	}
 	// Первое поездное слияние заводит тег на main до себя: что было на main к
 	// этому моменту, считается выкаченным, и окно поезда начинается с этой ветки.
 	if p.Train {
@@ -518,6 +540,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		msg = append(msg, wtNote)
 	} else {
 		msg[0] += ", ветка " + branch + " удалена"
+	}
+	if recNote != "" {
+		msg = append(msg, recNote)
 	}
 	// При autonomous=true пуш это часть автономного конвейера, иначе origin
 	// отстал бы от задеплоенного прода, а revert по ID не нашёл бы коммитов.
@@ -735,7 +760,8 @@ type RevertParams struct {
 	Push bool
 }
 
-// taskCommits собирает коммиты задачи по ID в subject, новые первыми.
+// taskCommits собирает коммиты задачи, новые первыми: записанные разделом
+// «Выкат» и найденные по ID в subject.
 // Коммиты, трогающие только доску и файлы задач, не откатываются: состояние
 // доски двигает taskctl, а не git revert.
 func taskCommits(root, main, id string) ([]string, error) {
@@ -743,10 +769,14 @@ func taskCommits(root, main, id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	rec, err := mergedShas(root, id)
+	if err != nil {
+		return nil, err
+	}
 	var shas []string
 	for _, ln := range strings.Split(log, "\n") {
 		sha, subj, ok := strings.Cut(ln, "\t")
-		if !ok || !containsWord(subj, id) {
+		if !ok || (!containsWord(subj, id) && !inRecord(rec, sha)) {
 			continue
 		}
 		// Прошлый откат задачи это граница: всё старше него либо уже
@@ -835,7 +865,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		return "", err
 	}
 	if len(shas) == 0 {
-		return "", fmt.Errorf("на %s нет коммитов кода с %s в subject, откатывать нечего (форвард-фикс?)", main, p.ID)
+		return "", fmt.Errorf("на %s нет коммитов кода %s ни в записи файла задачи, ни по ID в subject, откатывать нечего (форвард-фикс?)", main, p.ID)
 	}
 	// Откат правок только под docs/ (LLD, дока) прода не касается: повторный
 	// выкат не нужен, а при копящемся поезде он увёз бы туда чужой код.

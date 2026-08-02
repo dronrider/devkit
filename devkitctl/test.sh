@@ -504,6 +504,68 @@ printf 'deploy = make deploy\ntest = go test ./...\nautonomous = false\n' > "$fp
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
+# doctor --fix дописывает недостающий ключ в уже готовый deploy.local (DK-075):
+# файл проекта, подключённого до появления test= (DK-053), содержит только
+# deploy и autonomous. --fix дописывает test= в конец, своя шапка, значения
+# deploy и autonomous и их порядок не тронуты.
+printf '# моя шапка, не трогать\ndeploy = ssh prod deploy.sh\nautonomous = true\n' \
+    > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан недостающий ключ test' || fail "doctor --fix не отчитался о дописанном test: $out"
+depfile=$(cat "$fproj/.devkit/deploy.local")
+echo "$depfile" | grep -q '^# моя шапка, не трогать$' || fail "doctor --fix стёр шапку файла: $depfile"
+echo "$depfile" | grep -q '^deploy = ssh prod deploy.sh$' || fail "doctor --fix затронул значение deploy: $depfile"
+echo "$depfile" | grep -q '^autonomous = true$' || fail "doctor --fix затронул значение autonomous: $depfile"
+echo "$depfile" | grep -q '^test =$' || fail "дописанный test не пустой: $depfile"
+echo "$depfile" | grep -q '# test это команда тестов' || fail "дописанный test без своего комментария: $depfile"
+# test дописан в хвост, после deploy и autonomous, не между ними.
+last_key=$(echo "$depfile" | grep -E '^[a-z]+ ?=' | tail -1 | cut -d= -f1 | tr -d ' ')
+[ "$last_key" = test ] || fail "test дописан не в конец файла: $depfile"
+# Находка про пустой test= остаётся: --fix дописывает место под ключ, а не
+# выдумывает команду.
+echo "$out" | grep -q 'пустой test=' || fail "находка про пустой test после дописывания пропала: $out"
+
+# Повторный --fix ключ, который уже дописан, второй раз не трогает.
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан' && fail "повторный doctor --fix переписал уже дописанный ключ: $out"
+
+# Отсутствующий ключ и присутствующий пустой это разные случаи: пустой test=
+# --fix не трогает, дописывать там уже нечего.
+printf '# шапка\ndeploy = ssh prod deploy.sh\ntest = \nautonomous = true\n' > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан' && fail "doctor --fix дописал ключ, который уже есть пустым: $out"
+echo "$out" | grep -q 'пустой test=' || fail "находка про пустой test пропала при уже существующем пустом ключе: $out"
+
+# Несколько недостающих ключей сразу: дописываются оба (deploy и test),
+# найденный autonomous не трогается, а связанная с ним находка остаётся.
+printf 'autonomous = true\n' > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+depfile=$(cat "$fproj/.devkit/deploy.local")
+echo "$depfile" | grep -q '^deploy =$' || fail "doctor --fix не дописал ключ deploy: $depfile"
+echo "$depfile" | grep -q '^test =$' || fail "doctor --fix не дописал ключ test: $depfile"
+echo "$depfile" | grep -q '^autonomous = true$' || fail "doctor --fix затронул autonomous: $depfile"
+echo "$out" | grep -q 'autonomous = true при пустом deploy=' ||
+    fail "находка про autonomous=true при пустом deploy пропала после дописывания: $out"
+
+# Закомментированный ключ это не имеющийся ключ: "# test = ..." выключен
+# руками и для --fix значит то же, что полное отсутствие test.
+printf 'deploy = x\n# test = отключено руками, до времени\nautonomous = true\n' \
+    > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан недостающий ключ test' ||
+    fail "doctor --fix не считает закомментированный test отсутствующим: $out"
+grep -q '^test =$' "$fproj/.devkit/deploy.local" ||
+    fail "doctor --fix не дописал настоящий test поверх закомментированного: $(cat "$fproj/.devkit/deploy.local")"
+
+# Уже полный файл без завершающего перевода строки --fix не трогает: нечего
+# дописывать значит нечего и писать, даже перевод строки в хвост.
+printf 'deploy = x\ntest = y\nautonomous = true' > "$fproj/.devkit/deploy.local"
+before=$(od -c "$fproj/.devkit/deploy.local")
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан' && fail "doctor --fix дописал в уже полный файл: $out"
+after=$(od -c "$fproj/.devkit/deploy.local")
+[ "$before" = "$after" ] || fail "doctor --fix изменил байты уже полного файла: было [$before] стало [$after]"
+
 # Машинный контур гоняется на отдельном проекте, чтобы правки --fix не мешали
 # прежним шагам.
 mproj="$tmp/mproj"

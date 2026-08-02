@@ -18,10 +18,11 @@
       ~/.claude/skills, tmux и снимки
       квоты в ~/.devkit/quota; профили харнесов devkit/harness прогоняются
       через тот же валидатор, каким их читает agentctl;
-      --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
-      сборка бинарей, копия определений агентов и скиллов, переезд одиночного снимка
-      квоты в директорию, генерация файлов правил), заполненное не трогает,
-      неоднозначное оставляет находкой
+      --fix additive доводит обвязку (хуки, болванка deploy.local либо
+      недостающие в ней ключи, .gitignore, сборка бинарей, копия определений
+      агентов и скиллов, переезд одиночного снимка квоты в директорию,
+      генерация файлов правил), заполненное не трогает, неоднозначное
+      оставляет находкой
 
   devkitctl stats [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
@@ -67,21 +68,30 @@ QUOTA_TIME_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M")
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
 RUN_LOG = ".devkit/log"
-DEPLOY_TEMPLATE = (
-    "# Обвязка выката для shipctl (гитигнорнут: в команде выката обычно адрес\n"
-    "# или роль машины, её место в локальном, а не в коммитимом). shipctl merge\n"
-    "# берёт команду отсюда, --deploy на каждый вызов передавать не нужно.\n"
-    "# Объект выката бывает не только серверным: для приложения сюда идёт\n"
-    "# сборка, подпись и заливка в канал обновлений, а не серверный рестарт.\n"
-    "# autonomous=true отдаёт агенту весь конвейер: готовую задачу (тесты\n"
-    "# зелёные, ревью чистое) он сам сливает, пушит в origin и катит на прод.\n"
-    "# false оставляет слияние, пуш и выкат за пользователем.\n"
-    "# test это команда тестов проекта, её берёт shipctl merge, когда не передан\n"
-    "# --test: сочинять её под каждый репозиторий процедуре пачки нечем.\n"
-    "deploy =\n"
-    "test =\n"
-    "autonomous = false\n"
+# Ключи болванки выката: имя, комментарий (со своим завершающим \n) и значение
+# для файла, заводимого с нуля. Один источник для DEPLOY_TEMPLATE (новый файл)
+# и для дописывания недостающего в уже существующий: комментарий у ключа один,
+# держать его в двух местах значило бы дать им разойтись.
+DEPLOY_FIELDS = (
+    ("deploy",
+     "# Обвязка выката для shipctl (гитигнорнут: в команде выката обычно адрес\n"
+     "# или роль машины, её место в локальном, а не в коммитимом). shipctl merge\n"
+     "# берёт команду отсюда, --deploy на каждый вызов передавать не нужно.\n"
+     "# Объект выката бывает не только серверным: для приложения сюда идёт\n"
+     "# сборка, подпись и заливка в канал обновлений, а не серверный рестарт.\n",
+     ""),
+    ("test",
+     "# test это команда тестов проекта, её берёт shipctl merge, когда не передан\n"
+     "# --test: сочинять её под каждый репозиторий процедуре пачки нечем.\n",
+     ""),
+    ("autonomous",
+     "# autonomous=true отдаёт агенту весь конвейер: готовую задачу (тесты\n"
+     "# зелёные, ревью чистое) он сам сливает, пушит в origin и катит на прод.\n"
+     "# false оставляет слияние, пуш и выкат за пользователем.\n",
+     "false"),
 )
+DEPLOY_TEMPLATE = "".join("%s%s =%s\n" % (comment, key, " %s" % default if default else "")
+                          for key, comment, default in DEPLOY_FIELDS)
 SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
              ".venv", "venv", "__pycache__", ".idea", ".vscode"}
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
@@ -140,7 +150,10 @@ def check_links(root):
 
 def read_deploy(root):
     # Тройка (deploy, test, autonomous). None вместо deploy это «файла нет»,
-    # иначе значения ключей (могут быть пустыми) и флаг autonomous.
+    # иначе значения ключей (могут быть пустыми) и флаг autonomous. Пустая
+    # строка тут значит и «ключа нет», и «ключ есть, но пустой» одинаково: за
+    # различением этих двух случаев (нужно для дописывания недостающего) идти
+    # в deploy_present_keys, не сюда.
     f = root / DEPLOY_CONFIG
     if not f.exists():
         return None, None, None
@@ -161,6 +174,20 @@ def read_deploy(root):
         elif key_stripped == "autonomous":
             autonomous = val_stripped.lower() in ("1", "true", "t", "yes", "y", "on")
     return deploy, test, autonomous
+
+
+def deploy_present_keys(text):
+    # Ключи, реально написанные в файле, вне зависимости от значения (в том
+    # числе пустого). read_deploy для отсутствующего и пустого ключа отдаёт
+    # одно и то же "", а дописыванию нужно отличать одно от другого.
+    keys = set()
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        key, _, _ = ln.partition("=")
+        keys.add(key.strip())
+    return keys
 
 
 def ensure_gitignore(root, pattern, comment="# Локальная обвязка выката, живёт только на машине."):
@@ -191,6 +218,26 @@ def scaffold_deploy(root):
     if ensure_gitignore(root, RUN_LOG, LOG_IGNORE_COMMENT):
         done.append(".gitignore: добавлен %s" % RUN_LOG)
     return done
+
+
+def patch_deploy(root):
+    # Дописывает в конец уже существующего deploy.local ключи болванки,
+    # которых в файле нет, каждый со своим комментарием. Чужой текст (значения
+    # имеющихся ключей, шапка, их порядок) не трогается, только добавление в
+    # хвост. Дописанный ключ остаётся пустым (не берётся значение по
+    # умолчанию из DEPLOY_FIELDS): находка про пустой test= после починки
+    # обязана остаться, а пустой autonomous и так штатно читается как false.
+    dep = root / DEPLOY_CONFIG
+    text = dep.read_text(encoding="utf-8", errors="replace")
+    present = deploy_present_keys(text)
+    missing = [(key, comment) for key, comment, _ in DEPLOY_FIELDS if key not in present]
+    if not missing:
+        return []
+    sep = "\n" if text and not text.endswith("\n") else ""
+    addition = "".join("%s%s =\n" % (comment, key) for key, comment in missing)
+    with dep.open("a", encoding="utf-8") as f:
+        f.write(sep + addition)
+    return ["%s: дописан недостающий ключ %s" % (DEPLOY_CONFIG, key) for key, _ in missing]
 
 
 def log_run(root, cmd, code):
@@ -592,6 +639,11 @@ def doctor(start, fix=False):
         if deploy is None and fix:
             fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
             deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
+        elif deploy is not None and fix:
+            patched = patch_deploy(root)  # дописывает недостающие ключи болванки
+            if patched:
+                fixed += patched
+                deploy, test, autonomous = read_deploy(root)
         if deploy is None:
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                             "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)

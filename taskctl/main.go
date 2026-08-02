@@ -16,10 +16,18 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   show <ID>                                   строка задачи, секция, файл задачи
                                               (закрытые ищутся в архиве)
   id                                          следующий свободный ID
+  draft list                                  накопитель черновиков: ID,
+                                              первая строка, возраст
   batch [--limit N]                           кандидаты в поезд выката и причина
                                               отказа по каждой остальной строке
 
 Менять доску:
+  draft ["текст"]                             записать сырую идею мимо доски:
+                                              файл docs/tasks/drafts/<ID>.md,
+                                              ID берётся сам, без текста читается
+                                              stdin; оформляет её потом
+                                              add --id <ID> (черновик переезжает
+                                              в docs/tasks/<ID>.md сам)
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
       [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
                                               завести задачу (по умолчанию в Backlog;
@@ -133,6 +141,9 @@ func main() {
 		return
 	}
 	logStart, logCmd = gdir, args[0]
+	if args[0] == "draft" && len(args) > 1 && args[1] == "list" {
+		logCmd += " list"
+	}
 	if (args[0] == "review" || args[0] == "dep") && len(args) > 1 {
 		logCmd += " " + args[1]
 	}
@@ -162,6 +173,29 @@ func main() {
 		commitFlags(fs, &p.Commit)
 		fs.Parse(args[1:])
 		msg, err = cmdAdd(root(*dir), p)
+	case "draft":
+		text := ""
+		rest := args[1:]
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			text = args[1]
+			rest = args[2:]
+		}
+		fs := flag.NewFlagSet("draft", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var c CommitOpts
+		commitFlags(fs, &c)
+		fs.Parse(rest)
+		if text == "list" {
+			msg, err = cmdDraftList(root(*dir))
+			break
+		}
+		if text == "" {
+			text, err = readStdin()
+			if err != nil {
+				fail(err)
+			}
+		}
+		msg, err = cmdDraft(root(*dir), text, c)
 	case "move":
 		if len(args) < 3 {
 			fail(fmt.Errorf("жду: move <ID> <статус> [--reason ...]"))

@@ -1,0 +1,211 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func draftFile(root, id string) string {
+	return filepath.Join(root, "docs", "tasks", "drafts", id+".md")
+}
+
+// TestDraftWritesFileNotBoard: черновик это файл мимо доски, TASKS.md он не
+// трогает вовсе, иначе Backlog перестанет быть разобранной работой.
+func TestDraftWritesFileNotBoard(t *testing.T) {
+	root := setup(t)
+	before, err := os.ReadFile(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdDraft(root, "уведомитель шумит из песочницы\nвторой строкой подробности", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(msg, "XR-008: черновик") {
+		t.Fatalf("сообщение команды: %q", msg)
+	}
+	data, err := os.ReadFile(draftFile(root, "XR-008"))
+	if err != nil {
+		t.Fatalf("файл черновика не создан: %v", err)
+	}
+	want := "# XR-008: уведомитель шумит из песочницы\n\n## Черновик\n\nуведомитель шумит из песочницы\nвторой строкой подробности\n"
+	if string(data) != want {
+		t.Fatalf("содержимое черновика:\n%s\nожидал:\n%s", data, want)
+	}
+	after, err := os.ReadFile(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("draft тронул docs/TASKS.md")
+	}
+	if _, err := cmdDraft(root, "   \n  ", CommitOpts{}); err == nil {
+		t.Fatal("пустой текст должен отбиваться")
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finds) != 0 {
+		t.Fatalf("черновик не должен давать находок lint: %v", finds)
+	}
+}
+
+// TestNextIDCountsDrafts: ID выдаётся черновику сразу, при заведении, чтобы на
+// него можно было сослаться. Не считай nextID черновики, второй задаче достался
+// бы занятый номер, и строка доски разошлась бы с файлом.
+func TestNextIDCountsDrafts(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "первая идея", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := cmdID(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "XR-009" {
+		t.Fatalf("следующий свободный ID %s, ожидал XR-009 (XR-008 занял черновик)", id)
+	}
+	msg, err := cmdAdd(root, AddParams{Title: "Вторая", Type: "task", Rank: "0+1+1+0+1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(msg, "XR-009 заведена") {
+		t.Fatalf("add после черновика выдал: %q", msg)
+	}
+	if _, err := os.Stat(draftFile(root, "XR-008")); err != nil {
+		t.Fatalf("add без --id не должен трогать черновик: %v", err)
+	}
+}
+
+// TestDraftPromotedByAdd: оформление доводит add --id, черновик переезжает в
+// docs/tasks/<ID>.md, и ссылка в строке ведёт уже туда.
+func TestDraftPromotedByAdd(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "черновик перенесён в docs/tasks/XR-008.md") {
+		t.Fatalf("add молчит про перенос черновика: %q", msg)
+	}
+	if _, err := os.Stat(draftFile(root, "XR-008")); !os.IsNotExist(err) {
+		t.Fatalf("черновик остался в drafts/: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не появился: %v", err)
+	}
+	if !strings.Contains(string(data), "уведомитель шумит из песочницы") {
+		t.Fatalf("текст черновика потерян: %s", data)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := b.find("XR-008")
+	if row == nil {
+		t.Fatal("строки XR-008 нет на доске")
+	}
+	if row.Link != "[tasks/XR-008.md](tasks/XR-008.md)" {
+		t.Fatalf("ссылка в строке %q", row.Link)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finds) != 0 {
+		t.Fatalf("после оформления lint должен быть зелёным: %v", finds)
+	}
+}
+
+// TestAddValidationKeepsDraft: упавшая на разборе add не должна уносить
+// черновик с прежнего места, иначе после ошибки его не найти ни там, ни там.
+func TestAddValidationKeepsDraft(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "идея", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Кривой ранг", Type: "task", Rank: "3+1+1+0+1"}); err == nil {
+		t.Fatal("серьёзность 3 не из шкалы, add обязан упасть")
+	}
+	if _, err := os.Stat(draftFile(root, "XR-008")); err != nil {
+		t.Fatalf("черновик уехал при неудачном add: %v", err)
+	}
+}
+
+// TestDraftListAndShow: строки на доске у черновика нет, поэтому видно его
+// должно быть в list, draft list и show.
+func TestDraftListAndShow(t *testing.T) {
+	root := setup(t)
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "черновиков нет" {
+		t.Fatalf("пустой накопитель: %q", out)
+	}
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraft(root, "вторая идея", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-3 * 24 * time.Hour)
+	if err := os.Chtimes(draftFile(root, "XR-008"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "XR-008 (3 дня): уведомитель шумит из песочницы") ||
+		!strings.Contains(out, "XR-009 (сегодня): вторая идея") {
+		t.Fatalf("draft list:\n%s", out)
+	}
+	list, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, "Черновики (2, целиком: taskctl draft list): XR-008 (3 дня), XR-009 (сегодня)") {
+		t.Fatalf("list не называет черновики:\n%s", list)
+	}
+	if section, err := cmdList(root, "backlog"); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(section, "Черновики") {
+		t.Fatalf("срез по секции черновики не печатает:\n%s", section)
+	}
+	shown, err := cmdShow(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shown, "XR-008 черновик (записан 3 дня)") ||
+		!strings.Contains(shown, "уведомитель шумит из песочницы") {
+		t.Fatalf("show черновика:\n%s", shown)
+	}
+	if _, err := cmdShow(root, "XR-404"); err == nil {
+		t.Fatal("несуществующий ID должен падать")
+	}
+}
+
+func TestAgeWords(t *testing.T) {
+	cases := []struct {
+		days int
+		want string
+	}{
+		{0, "сегодня"}, {1, "вчера"}, {2, "2 дня"}, {5, "5 дней"},
+		{11, "11 дней"}, {14, "14 дней"}, {21, "21 день"}, {104, "104 дня"},
+	}
+	for _, c := range cases {
+		got := ageWords(time.Duration(c.days) * 24 * time.Hour)
+		if got != c.want {
+			t.Errorf("%d дней: получил %q, ожидал %q", c.days, got, c.want)
+		}
+	}
+}

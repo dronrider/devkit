@@ -54,8 +54,11 @@ func checkReason(reason string) error {
 }
 
 // nextID берёт префикс из существующих строк, а на пустой доске из шапки
-// «(префикс XX)», чтобы первая задача заводилась без --id.
-func nextID(b *Board, a *Archive) (string, error) {
+// «(префикс XX)», чтобы первая задача заводилась без --id. Черновики считаются
+// наравне с доской и архивом: ID выдаётся им при заведении, чтобы на черновик
+// можно было сослаться («оформи DK-073»), и занятый номер второй раз выдавать
+// нельзя.
+func nextID(b *Board, a *Archive, drafts []Draft) (string, error) {
 	prefix := b.Prefix
 	max := 0
 	scan := func(id string, num int) error {
@@ -77,6 +80,11 @@ func nextID(b *Board, a *Archive) (string, error) {
 	}
 	for _, r := range a.Rows {
 		if err := scan(r.ID, r.Num); err != nil {
+			return "", err
+		}
+	}
+	for _, d := range drafts {
+		if err := scan(d.ID, d.Num); err != nil {
 			return "", err
 		}
 	}
@@ -188,9 +196,13 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		return "", err
+	}
 	id := p.ID
 	if id == "" {
-		if id, err = nextID(b, arch); err != nil {
+		if id, err = nextID(b, arch, drafts); err != nil {
 			return "", err
 		}
 	} else if !idRe.MatchString(id) {
@@ -219,6 +231,27 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := checkCost(cost); err != nil {
 		return "", err
 	}
+	status := normalizeStatus(p.Status)
+	if status == "" {
+		status = SectBacklog
+	}
+	sec, ok := b.Sects[status]
+	if !ok {
+		return "", fmt.Errorf("неизвестный статус %q, жду backlog / in-progress / check / blocked", status)
+	}
+	title := p.Title
+	if status == SectBlocked && strings.TrimSpace(p.Reason) != "" {
+		if err := checkReason(p.Reason); err != nil {
+			return "", err
+		}
+		title += " [блок: " + p.Reason + "]"
+	}
+	// Перенос черновика идёт после всех проверок: упавшая на кривом ранге
+	// команда не должна оставлять файл на новом месте без строки на доске.
+	promoted, err := promoteDraft(root, id)
+	if err != nil {
+		return "", err
+	}
 	link := wrapLink(p.Link)
 	taskFile := ""
 	if link == "" {
@@ -235,21 +268,6 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := checkCell("ссылка", link); err != nil {
 		return "", err
 	}
-	status := normalizeStatus(p.Status)
-	if status == "" {
-		status = SectBacklog
-	}
-	sec, ok := b.Sects[status]
-	if !ok {
-		return "", fmt.Errorf("неизвестный статус %q, жду backlog / in-progress / check / blocked", status)
-	}
-	title := p.Title
-	if status == SectBlocked && strings.TrimSpace(p.Reason) != "" {
-		if err := checkReason(p.Reason); err != nil {
-			return "", err
-		}
-		title += " [блок: " + p.Reason + "]"
-	}
 	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost, Link: link}
 	if err := insertRowLine(b, sec, row, formatRow(row)); err != nil {
 		return "", err
@@ -258,6 +276,14 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		return "", err
 	}
 	paths := []string{filepath.Join("docs", "TASKS.md")}
+	if promoted {
+		// Обе стороны переноса: исчезнувший исходный путь apply в git add не
+		// потащит, но в pathspec коммита он нужен, иначе удаление не уедет.
+		paths = append(paths, filepath.Join("docs", "tasks", "drafts", id+".md"))
+		if taskFile == "" {
+			taskFile = filepath.Join("docs", "tasks", id+".md")
+		}
+	}
 	if taskFile != "" {
 		paths = append(paths, taskFile)
 	}
@@ -265,7 +291,11 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s заведена в %s: %s, R=%d%s", id, status, row.P, total, tail), nil
+	msg := fmt.Sprintf("%s заведена в %s: %s, R=%d", id, status, row.P, total)
+	if promoted {
+		msg += ", черновик перенесён в docs/tasks/" + id + ".md"
+	}
+	return msg + tail, nil
 }
 
 func mustNum(id string) int {
@@ -883,5 +913,9 @@ func cmdID(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return nextID(b, arch)
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		return "", err
+	}
+	return nextID(b, arch, drafts)
 }

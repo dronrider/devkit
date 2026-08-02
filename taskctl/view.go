@@ -127,6 +127,13 @@ func cmdList(root, sect string) (string, error) {
 			}
 			section(key, limit)
 		}
+		drafts, err := loadDrafts(root)
+		if err != nil {
+			return "", err
+		}
+		if line := draftsLine(drafts); line != "" {
+			out = append(out, line)
+		}
 	}
 	return strings.Join(out, "\n"), nil
 }
@@ -163,5 +170,18 @@ func cmdShow(root, id string) (string, error) {
 			return fmt.Sprintf("%s в архиве (закрыта %s)\n%s", id, r.Cells[4], arch.Lines[r.LineIdx]), nil
 		}
 	}
-	return "", fmt.Errorf("%s нет ни на доске, ни в архиве", id)
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		return "", err
+	}
+	if d := findDraft(drafts, id); d != nil {
+		text, err := os.ReadFile(d.Path)
+		if err != nil {
+			return "", err
+		}
+		head := fmt.Sprintf("%s черновик (записан %s), docs/tasks/drafts/%s.md, оформить: taskctl add --id %s ...",
+			id, ageWords(d.Age), id, id)
+		return head + "\n" + strings.TrimRight(string(text), "\n"), nil
+	}
+	return "", fmt.Errorf("%s нет ни на доске, ни в архиве, ни в черновиках", id)
 }

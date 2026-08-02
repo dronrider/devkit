@@ -156,6 +156,36 @@ printf '| XR-1 | сервер уехал на роль VPS RU | task |\n' > "$re
 git -C "$repo2" add docs/TASKS.md
 (cd "$repo2" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на чистую доску"
 
+# check-exec-bit.py: test.sh без бита x в индексе ловится (в корне и во
+# вложенной директории), исполняемый и посторонний .sh рядом молчат.
+repo3="$tmp/repo3"
+git init -q "$repo3"
+git -C "$repo3" config user.name t
+git -C "$repo3" config user.email t@t
+mkdir -p "$repo3/pkg"
+printf '#!/bin/sh\necho ok\n' > "$repo3/pkg/test.sh"
+git -C "$repo3" add pkg/test.sh
+git -C "$repo3" commit -qm seed >/dev/null
+out=$(python3 "$here/check-exec-bit.py" -C "$repo3")
+[ $? -eq 1 ] || fail "test.sh без бита x не поймано"
+case $out in "pkg/test.sh: режим 100644"*) ;; *) fail "находка без пути и режима: $out" ;; esac
+
+chmod +x "$repo3/pkg/test.sh"
+git -C "$repo3" add pkg/test.sh
+git -C "$repo3" commit -qm chmod >/dev/null
+python3 "$here/check-exec-bit.py" -C "$repo3" >/dev/null || fail "исполняемый test.sh ложно поймался"
+
+printf 'echo other\n' > "$repo3/pkg/other.sh"
+git -C "$repo3" add pkg/other.sh
+git -C "$repo3" commit -qm other >/dev/null
+python3 "$here/check-exec-bit.py" -C "$repo3" >/dev/null || fail "посторонний .sh без бита x ложно поймался"
+
+printf '#!/bin/sh\necho ok\n' > "$repo3/test.sh"
+git -C "$repo3" add test.sh
+git -C "$repo3" commit -qm 'root test.sh' >/dev/null
+python3 "$here/check-exec-bit.py" -C "$repo3" >/dev/null
+[ $? -eq 1 ] || fail "test.sh в корне без бита x не поймано"
+
 # quota-refresh.sh: отцепленный съём снимка квоты на старте сессии. Настоящие
 # tmux и claude тут не поднимаются, вместо них заглушки: проверяется обвязка
 # хука (условия запуска, замок, журнал), а не съём панели, у него свои тесты.

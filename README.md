@@ -112,4 +112,6 @@ regcheck на багфиксах (последнее подсказывает `s
 Задачи по развитию самого devkit ведутся на его же доске `docs/TASKS.md`
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
 гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
-в директории каждой Go-утилиты, `hooks/test.sh`, `devkitctl/test.sh`.
+в директории каждой Go-утилиты, `hooks/test.sh`, `devkitctl/test.sh`,
+`python3 hooks/check-exec-bit.py` (бит исполнения у каждого `test.sh`
+репозитория).

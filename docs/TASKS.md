@@ -41,6 +41,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |
+| DK-073 | taskctl draft и скилл board-groom: черновик задачи мимо доски, оформление отдельным шагом | task | P3 | 10 (0+6+1+0+3) | M | [tasks/DK-073.md](tasks/DK-073.md) |
 | DK-018 | agentctl: строка --record всегда несёт состояние квоты, а не только сдвиг | task | P3 | 9 (0+5+1+0+3) | S | [tasks/DK-018.md](tasks/DK-018.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |
 | DK-056 | Неопределённость в RANKING.md растёт от пересекаемых границ: правка через процессы и языки (сервер плюс клиент, JNI, UI) это минимум 3 | task | P3 | 9 (0+4+1+0+4) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |

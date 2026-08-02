@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Юниты уведомителя: разбор события, выбор бэкенда, окно троттлинга.
-Прогон целиком (стаб бэкенда, временный HOME, все поводы) живёт в test.sh.
+"""Юниты уведомителя: разбор события, выбор бэкенда, окно троттлинга, фокус
+окна. Прогон целиком (стаб бэкенда, временный HOME, все поводы) живёт в test.sh.
 """
 import importlib.util
+import io
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "notify", os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify.py"))
@@ -46,7 +51,8 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(level, notify.LOUD)
 
     def test_other_events(self):
-        # UserPromptSubmit разбором не проходит: он только метит начало хода.
+        # UserPromptSubmit разбором не проходит: он только снимает отметку
+        # ожидания.
         for name in ("UserPromptSubmit", "PreToolUse", "SessionStart"):
             self.assertIsNone(notify.parse_event(event(hook_event_name=name)))
 
@@ -387,54 +393,206 @@ class TestThrottle(unittest.TestCase):
         self.assertNotIn(stale[0], os.listdir(self.dir))
 
 
-class TestTurnLength(unittest.TestCase):
+class Proc:
+    """Ответ subprocess.run: живой osascript за границей опроса."""
+
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+class TestFrontWindow(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp()
+        self.calls = []
 
-    def test_short_turn_stays_quiet(self):
-        # Пользователь эти секунды смотрит в то же окно, звать его некуда.
-        now = 1000.0
-        notify.mark_turn("sess1", now, self.dir)
-        self.assertTrue(notify.short_turn("sess1", now + 1, self.dir, {}))
-        self.assertTrue(notify.short_turn("sess1", now + notify.TURN_MIN - 0.5,
-                                          self.dir, {}))
+    def ran(self, proc):
+        def run(argv, **kw):
+            self.calls.append((argv, kw))
+            if isinstance(proc, BaseException):
+                raise proc
+            return proc
+        return run
 
-    def test_long_turn_notifies(self):
-        now = 1000.0
-        notify.mark_turn("sess1", now, self.dir)
-        self.assertFalse(notify.short_turn("sess1", now + notify.TURN_MIN, self.dir, {}))
-        self.assertFalse(notify.short_turn("sess1", now + 3600, self.dir, {}))
+    def test_title_comes_from_system_events(self):
+        title = notify.front_window(lambda n: "/usr/bin/" + n,
+                                    self.ran(Proc(0, "Разбор задачи - devkit\n")))
+        self.assertEqual(title, "Разбор задачи - devkit")
+        argv, kw = self.calls[0]
+        self.assertEqual(argv[:2], ["/usr/bin/osascript", "-e"])
+        self.assertIn("System Events", argv[2])
+        self.assertIn("front window", argv[2])
+        # Опрос упирается и в диалог разрешения на управление компьютером: без
+        # срока хук висел бы на нём весь ход.
+        self.assertTrue(0 < kw.get("timeout", 0) <= 10, kw)
 
-    def test_turn_without_mark_notifies(self):
-        # Сессия поднялась до правки настроек, метку класть было некому: порог
-        # не срабатывает, и уведомление уходит.
-        self.assertFalse(notify.short_turn("sess1", 1000.0, self.dir, {}))
-        notify.mark_turn("sess1", 1000.0, self.dir)
-        self.assertFalse(notify.short_turn("sess2", 1000.5, self.dir, {}))
+    def test_bytes_are_decoded(self):
+        # Без text=True subprocess отдаёт байты, и заголовок с кириллицей
+        # сравнивать с именем дерева было бы нечем.
+        self.assertEqual(
+            notify.front_window(lambda n: "/usr/bin/" + n,
+                                self.ran(Proc(0, "Правка - дерево\n".encode("utf-8")))),
+            "Правка - дерево")
 
-    def test_broken_mark_notifies(self):
-        with open(notify.turn_mark("sess1", self.dir), "w", encoding="utf-8") as f:
-            f.write("не число")
-        self.assertFalse(notify.short_turn("sess1", 1000.0, self.dir, {}))
+    def test_platform_without_osascript_asks_nobody(self):
+        # Не macOS: опрос не заводится вовсе, и конец хода зовёт как обычно.
+        self.assertEqual(notify.front_window(lambda n: None, self.ran(Proc(0, "окно"))), "")
+        self.assertEqual(self.calls, [])
 
-    def test_own_threshold(self):
-        now = 1000.0
-        notify.mark_turn("sess1", now, self.dir)
-        self.assertFalse(notify.short_turn("sess1", now + 90, self.dir, {}))
-        self.assertTrue(notify.short_turn("sess1", now + 90, self.dir,
-                                          {"DEVKIT_NOTIFY_TURN_MIN": "300"}))
-        # Порог нулём выключает проверку, мусор в переменной оставляет свой.
-        self.assertFalse(notify.short_turn("sess1", now + 1, self.dir,
-                                           {"DEVKIT_NOTIFY_TURN_MIN": "0"}))
-        self.assertTrue(notify.short_turn("sess1", now + 1, self.dir,
-                                          {"DEVKIT_NOTIFY_TURN_MIN": "минута"}))
-        self.assertEqual(notify.turn_min({}), float(notify.TURN_MIN))
+    def test_refusal_gives_no_title(self):
+        # Разрешения на управление компьютером нет, переднего окна нет,
+        # osascript не запустился или не ответил в срок: всё это одно и то же.
+        cases = (Proc(1, "ошибка"), Proc(0, ""), Proc(0, "  \n"),
+                 OSError("нет такого файла"),
+                 subprocess.TimeoutExpired("osascript", 5))
+        for proc in cases:
+            self.assertEqual(
+                notify.front_window(lambda n: "/usr/bin/" + n, self.ran(proc)), "", proc)
 
-    def test_mark_is_swept_with_the_rest(self):
-        now = time.time()
-        notify.mark_turn("sess1", now - notify.STALE - 60, self.dir)
-        notify.allow("sess2", "idle_prompt", now, self.dir)
-        self.assertFalse(os.path.exists(notify.turn_mark("sess1", self.dir)))
+
+class TestFocusState(unittest.TestCase):
+    def state(self, title, tree="/p/devkit-dk-064", env=None):
+        self.asked = 0
+
+        def ask():
+            self.asked += 1
+            return title
+        return notify.focus_state(tree, {} if env is None else env, ask)
+
+    def test_session_window_in_front(self):
+        # Имя рабочего дерева стоит хвостом заголовка после разделителя.
+        # Второй разделитель снят с живого VS Code: он ставит длинное тире, и
+        # тут оно собирается из кода, чтобы файл остался на клавиатурных
+        # символах.
+        for title in ("Правка notify.py - devkit-dk-064", "devkit-dk-064",
+                      "notify.py %s devkit-dk-064" % chr(0x2014),
+                      "  Правка notify.py - devkit-dk-064  "):
+            self.assertEqual(self.state(title), notify.FOCUS_SESSION, title)
+
+    def test_worktree_is_not_the_main_tree(self):
+        # Дерево задачи и дерево проекта это разные окна: смотреть в одно из
+        # них не значит смотреть в другое.
+        self.assertEqual(self.state("Разбор задачи - devkit"), notify.FOCUS_OTHER)
+        self.assertEqual(self.state("Правка - devkit-dk-064", "/p/devkit"),
+                         notify.FOCUS_OTHER)
+        # Хвост берётся целым словом, а не просто концом строки.
+        self.assertEqual(self.state("Заметки - mydevkit", "/p/devkit"),
+                         notify.FOCUS_OTHER)
+        self.assertEqual(self.state("Правка - devkit-dk-064", "/p/dk-064"),
+                         notify.FOCUS_OTHER)
+
+    def test_someone_elses_window(self):
+        self.assertEqual(self.state("Входящие - Почта"), notify.FOCUS_OTHER)
+
+    def test_refusal_rings(self):
+        # Спросить не удалось, значит зовём: тишина неотличима от штатной работы.
+        self.assertEqual(self.state(""), notify.FOCUS_UNKNOWN)
+
+    def test_session_without_tree_asks_nobody(self):
+        # Дерева сессии нет, сравнивать заголовок не с чем: тратить на опрос
+        # его 180 мс незачем.
+        self.assertEqual(self.state("Правка - devkit-dk-064", ""), notify.FOCUS_UNKNOWN)
+        self.assertEqual(self.asked, 0)
+
+    def test_switch_turns_the_check_off(self):
+        self.assertEqual(self.state("Правка - devkit-dk-064",
+                                    env={"DEVKIT_NOTIFY_FOCUS": "off"}),
+                         notify.FOCUS_OTHER)
+        self.assertEqual(self.asked, 0)
+        # Значение другое, значит проверка на месте: выключатель тут один.
+        self.assertEqual(self.state("Правка - devkit-dk-064",
+                                    env={"DEVKIT_NOTIFY_FOCUS": "on"}),
+                         notify.FOCUS_SESSION)
+
+
+class TestHookFocus(unittest.TestCase):
+    """Хук целиком: событие на stdin, HOME во временной директории, опрос
+    фокуса и отправка заглушены."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+
+    def hook(self, event, title="Входящие - Почта", env=None):
+        """Прогнать хук на событии. Возврат (заголовки уехавших уведомлений,
+        сколько раз спрашивали фокус)."""
+        sent, asked = [], []
+
+        def ask():
+            asked.append(title)
+            return title
+
+        def send(backend, title_, body, target=None, level=notify.LOUD, session=None):
+            sent.append(title_)
+            return 0
+
+        environ = dict(os.environ, HOME=self.home, DEVKIT_NOTIFY_BACKEND="/bin/стаб")
+        environ.update(env or {})
+        with mock.patch.dict(os.environ, environ, clear=True), \
+                mock.patch.object(notify, "front_window", ask, create=True), \
+                mock.patch.object(notify, "send", send), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(event))):
+            self.assertEqual(notify.run_hook("claude-code"), 0)
+        return sent, len(asked)
+
+    def journal(self):
+        with open(os.path.join(self.home, ".devkit", "notify.log"),
+                  encoding="utf-8") as f:
+            return f.read()
+
+    def test_short_turn_rings_from_someone_elses_window(self):
+        # Короткий вопрос перед тем, как отойти: машина отработала за секунды,
+        # но человек смотрит уже не сюда, и позвать его надо. Порог
+        # длительности хода (DK-062) ровно тут и промахивался, поэтому ввод
+        # пользователя идёт прямо перед концом хода.
+        self.hook(event(hook_event_name="UserPromptSubmit", session_id="sess-short"))
+        sent, asked = self.hook(event(hook_event_name="Stop", session_id="sess-short"))
+        self.assertEqual(sent, ["devkit-dk-034: ход закончен"])
+        self.assertEqual(asked, 1)
+
+    def test_session_window_stays_quiet(self):
+        sent, asked = self.hook(event(hook_event_name="Stop", session_id="sess-here"),
+                                title="Правка notify.py - devkit-dk-034")
+        self.assertEqual(sent, [])
+        self.assertEqual(asked, 1)
+        self.assertIn("повод turn_done уровень громкий бэкенд - цель - "
+                      "пропуск: окно сессии в фокусе", self.journal())
+
+    def test_main_tree_window_is_not_the_worktree(self):
+        # Сессия сидит в worktree задачи, а впереди окно самого проекта: это
+        # разные окна, и молчать тут не о чем.
+        sent, _ = self.hook(event(hook_event_name="Stop", session_id="sess-tree"),
+                            title="Разбор задачи - devkit")
+        self.assertEqual(sent, ["devkit-dk-034: ход закончен"])
+
+    def test_refusal_rings_and_leaves_a_line(self):
+        sent, _ = self.hook(event(hook_event_name="Stop", session_id="sess-blind"),
+                            title="")
+        self.assertEqual(sent, ["devkit-dk-034: ход закончен"])
+        # «Звонит всегда» разбирается по строке журнала, а не на глаз.
+        self.assertIn("фокус не определился, зовём", self.journal())
+
+    def test_switch_rings_without_asking(self):
+        sent, asked = self.hook(event(hook_event_name="Stop", session_id="sess-off"),
+                                title="Правка notify.py - devkit-dk-034",
+                                env={"DEVKIT_NOTIFY_FOCUS": "off"})
+        self.assertEqual(sent, ["devkit-dk-034: ход закончен"])
+        self.assertEqual(asked, 0)
+
+    def test_other_reasons_never_ask(self):
+        # Лишний опрос на каждого субагента это те же 180 мс на пустом месте, а
+        # запрос разрешения зовёт в любом случае: сессия на нём стоит намертво.
+        for ev in (event(notification_type="permission_prompt", session_id="sess-perm"),
+                   event(notification_type="agent_needs_input", session_id="sess-ask"),
+                   event(notification_type="idle_prompt", session_id="sess-idle"),
+                   event(hook_event_name="SubagentStop", session_id="sess-sub",
+                         last_assistant_message="готово")):
+            sent, asked = self.hook(ev, title="Правка notify.py - devkit-dk-034")
+            self.assertEqual(len(sent), 1, ev)
+            self.assertEqual(asked, 0, ev)
+
+    def test_user_input_sends_nothing(self):
+        sent, asked = self.hook(event(hook_event_name="UserPromptSubmit",
+                                      session_id="sess-in"))
+        self.assertEqual((sent, asked), ([], 0))
 
 
 class TestTerminalSequence(unittest.TestCase):

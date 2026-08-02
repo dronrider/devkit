@@ -239,7 +239,11 @@ EOF
 chmod +x "$ntn/terminal-notifier"
 nlog="$nhome/.devkit/notify.log"
 notify_hook() { # событие на stdin, стаб вместо бэкенда
-    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --hook claude-code
+    # Фокус окна тут выключен: живой System Events отвечал бы тем, что в этот
+    # момент открыто на машине, и конец хода стал бы гадательным. Своя проверка
+    # фокуса идёт ниже, со стабом опроса.
+    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" DEVKIT_NOTIFY_FOCUS=off \
+        python3 "$here/notify.py" --hook claude-code
 }
 notify_click() { # то же, но отправителем стаб terminal-notifier
     HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$ntn/terminal-notifier" \
@@ -274,27 +278,80 @@ grep -q -- '-sound' "$nmark" && fail "фоновый повод ушёл со з
 grep -q 'повод subagent_stop уровень фоновый' "$nlog" ||
     fail "уровень не попал в журнал: $(cat "$nlog")"
 
-# Конец хода: метки начала нет, значит порог не срабатывает и уведомление
-# уходит громким.
+# Конец хода уходит громким, а ввод пользователя не шлёт ничего.
 : > "$nmark"
 event Stop "" sess-turn | notify_hook || fail "хук вернул не 0 на конце хода"
 grep -q '^devkit-dk-034: ход закончен|$' "$nmark" || fail "конец хода не дошёл до бэкенда: $(cat "$nmark")"
 grep -q 'повод turn_done уровень громкий' "$nlog" || fail "конец хода в журнале без уровня: $(cat "$nlog")"
-
-# Короткий ход молчит: пользователь эти секунды смотрит в то же окно. Ход
-# считается от метки, которую кладёт ввод пользователя.
 : > "$nmark"
-event UserPromptSubmit "" sess-short | notify_hook || fail "хук вернул не 0 на вводе пользователя"
+event UserPromptSubmit "" sess-in | notify_hook || fail "хук вернул не 0 на вводе пользователя"
 [ -s "$nmark" ] && fail "ввод пользователя послал уведомление: $(cat "$nmark")"
-event Stop "" sess-short | notify_hook || fail "хук вернул не 0 на коротком ходе"
-[ -s "$nmark" ] && fail "короткий ход послал уведомление: $(cat "$nmark")"
-grep -q 'пропуск: ход короче' "$nlog" || fail "пропуск по длине хода не попал в журнал: $(cat "$nlog")"
-# Тот же ход с нулевым порогом уведомление даёт: молчание держит именно порог.
-event Stop "" sess-short |
-    HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" DEVKIT_NOTIFY_TURN_MIN=0 \
-    python3 "$here/notify.py" --hook claude-code || fail "хук вернул не 0 на нулевом пороге"
+
+# Звать о конце хода или молчать, решает фокус окна. Живой System Events тут не
+# спрашивается: стаб osascript в PATH отвечает тем заголовком, который лежит в
+# файле, и он же показывает, спрашивали ли фокус вообще.
+nfoc="$tmp/nfoc"
+mkdir -p "$nfoc"
+ftitle="$tmp/focus.title"
+fmark="$tmp/focus.mark"
+cat > "$nfoc/osascript" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$fmark"
+[ -s "$ftitle" ] || exit 1
+read -r title < "$ftitle" && printf '%s\n' "\$title"
+EOF
+chmod +x "$nfoc/osascript"
+notify_focus() { # то же, что notify_hook, но фокус спрашивается через стаб
+    HOME="$nhome" PATH="$nfoc:$nsys" DEVKIT_NOTIFY_BACKEND="$nstub" \
+        python3 "$here/notify.py" --hook claude-code
+}
+
+# Смотришь в окно этой сессии, значит звать некуда.
+: > "$nmark"
+: > "$fmark"
+printf 'Правка notify.py - devkit-dk-034\n' > "$ftitle"
+event Stop "" sess-focus | notify_focus || fail "хук вернул не 0 на конце хода в фокусе"
+[ -s "$nmark" ] && fail "конец хода при взгляде в окно сессии послал уведомление: $(cat "$nmark")"
+[ -s "$fmark" ] || fail "фокус на конце хода не спрашивался вовсе"
+grep -q 'повод turn_done уровень громкий бэкенд - цель - пропуск: окно сессии в фокусе' "$nlog" ||
+    fail "пропуск по фокусу не попал в журнал: $(cat "$nlog")"
+
+# Впереди чужое окно, значит зовём. Дерево проекта и дерево задачи при этом
+# разные окна: сессия сидит в devkit-dk-034, а заголовок кончается на devkit.
+: > "$nmark"
+printf 'Разбор задачи - devkit\n' > "$ftitle"
+event Stop "" sess-away | notify_focus || fail "хук вернул не 0 на конце хода из чужого окна"
 grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
-    fail "нулевой порог не пропустил конец хода: $(cat "$nmark")"
+    fail "конец хода из чужого окна промолчал: $(cat "$nmark")"
+
+# Опрос не ответил (нет разрешения на управление компьютером, не macOS): зовём,
+# и отказ виден в журнале, иначе «звонит всегда» разбирать нечем.
+: > "$nmark"
+: > "$ftitle"
+event Stop "" sess-blind | notify_focus || fail "хук вернул не 0 на молчащем опросе"
+grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+    fail "конец хода с неотвеченным опросом промолчал: $(cat "$nmark")"
+grep -q 'фокус не определился, зовём' "$nlog" || fail "отказ опроса не попал в журнал: $(cat "$nlog")"
+
+# Выключатель гасит проверку целиком: зовём, не спрашивая никого.
+: > "$nmark"
+: > "$fmark"
+printf 'Правка notify.py - devkit-dk-034\n' > "$ftitle"
+event Stop "" sess-nofocus | HOME="$nhome" PATH="$nfoc:$nsys" \
+    DEVKIT_NOTIFY_BACKEND="$nstub" DEVKIT_NOTIFY_FOCUS=off \
+    python3 "$here/notify.py" --hook claude-code || fail "хук с выключенным фокусом вернул не 0"
+grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+    fail "выключенная проверка не пропустила конец хода: $(cat "$nmark")"
+[ -s "$fmark" ] && fail "выключенная проверка всё равно спросила фокус: $(cat "$fmark")"
+
+# Мимо конца хода фокус не спрашивается: лишний опрос на каждого субагента это
+# его 180 мс на пустом месте, а запрос разрешения зовёт в любом случае.
+: > "$nmark"
+: > "$fmark"
+event Notification permission_prompt sess-fp | notify_focus || fail "хук вернул не 0 на запросе разрешения"
+event SubagentStop "" sess-fs | notify_focus || fail "хук вернул не 0 на субагенте с фокусом"
+[ "$(wc -l < "$nmark")" -eq 2 ] || fail "поводы мимо конца хода не дошли до бэкенда: $(cat "$nmark")"
+[ -s "$fmark" ] && fail "фокус спрашивался мимо конца хода: $(cat "$fmark")"
 
 # Конец хода и idle_prompt это один повод, и второй не повторяет баннер первого.
 : > "$nmark"
@@ -302,16 +359,12 @@ event Stop "" sess-wait | notify_hook || fail "хук вернул не 0 на �
 event Notification idle_prompt sess-wait | notify_hook || fail "хук вернул не 0 на idle_prompt следом"
 [ "$(wc -l < "$nmark")" -eq 1 ] || fail "idle_prompt повторил баннер конца хода: $(cat "$nmark")"
 
-# Ввод пользователя снимает отметку ожидания: второй длинный ход подряд снова
-# звучит, хотя окно повода «сессия ждёт тебя» ещё не вышло.
+# Ввод пользователя снимает отметку ожидания: второй ход подряд снова звучит,
+# хотя окно повода «сессия ждёт тебя» ещё не вышло.
 : > "$nmark"
-turn() { # конец хода без порога длительности: тут проверяется окно, а не порог
-    event Stop "" "$1" | HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" \
-        DEVKIT_NOTIFY_TURN_MIN=0 python3 "$here/notify.py" --hook claude-code
-}
-turn sess-again || fail "хук вернул не 0 на первом конце хода"
+event Stop "" sess-again | notify_hook || fail "хук вернул не 0 на первом конце хода"
 event UserPromptSubmit "" sess-again | notify_hook || fail "хук вернул не 0 на вводе пользователя"
-turn sess-again || fail "хук вернул не 0 на втором конце хода"
+event Stop "" sess-again | notify_hook || fail "хук вернул не 0 на втором конце хода"
 [ "$(wc -l < "$nmark")" -eq 2 ] ||
     fail "второй ход после ввода пользователя промолчал: $(cat "$nmark")"
 

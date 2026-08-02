@@ -17,7 +17,7 @@
                                     заголовок и тело собираются из него;
                                     события Notification (по поводу), Stop,
                                     SubagentStop и UserPromptSubmit (та только
-                                    отмечает начало хода), остальное молча
+                                    снимает отметку ожидания), остальное молча
                                     пропускается
   notify.py --self-test             послать пробное уведомление и напечатать,
                                     чем именно послано
@@ -29,8 +29,8 @@
                              как «команда заголовок тело»
   DEVKIT_NOTIFY_OPEN=...     своя цель перехода по клику, `{cwd}` подставляется
                              рабочим деревом сессии; пустое значение гасит клик
-  DEVKIT_NOTIFY_TURN_MIN=... порог длительности хода в секундах, короче него
-                             конец хода уведомления не даёт (по умолчанию 60)
+  DEVKIT_NOTIFY_FOCUS=off    не смотреть, какое окно впереди: конец хода тогда
+                             зовёт всегда
 
 Журнал последних отправок лежит в ~/.devkit/notify.log: время, сессия, повод,
 уровень, бэкенд, цель перехода и код возврата. Жалоба «уведомления не приходят»
@@ -70,9 +70,19 @@ NOTIFICATION_REASONS = {
 SUBAGENT_REASON = "субагент отработал"
 TURN_DONE = "turn_done"
 TURN_REASON = "ход закончен"
-# Ход короче этого уведомления не даёт: пользователь эти секунды смотрит в то
-# же окно, и звать его некуда. Порог перебивается DEVKIT_NOTIFY_TURN_MIN.
-TURN_MIN = 60
+# Звать ли о конце хода, решает фокус: смотришь на окно этой сессии значит
+# молчим, всё остальное значит зовём. Куда смотрит человек, System Events
+# отвечает заголовком переднего окна, а имя рабочего дерева стоит там хвостом.
+FOCUS_TOOL = "osascript"
+FOCUS_SCRIPT = ('tell application "System Events" to tell '
+                '(first application process whose frontmost is true) '
+                'to get name of front window')
+# Опрос стоит около 180 мс, но упереться он может и в диалог разрешения на
+# управление компьютером: висеть на нём хук не должен.
+FOCUS_TIMEOUT = 5
+FOCUS_SESSION = "окно сессии"
+FOCUS_OTHER = "чужое окно"
+FOCUS_UNKNOWN = "не определился"
 # Конец хода и idle_prompt это один и тот же повод «сессия ждёт тебя», поэтому
 # троттлится он общим ключом. Окно шире минуты: idle_prompt харнес присылает
 # примерно через минуту после конца хода, и своим окном он продублировал бы
@@ -386,32 +396,60 @@ def allow(session, key, now=None, path=None):
     return True
 
 
-def turn_mark(session, path=None):
-    path = state_dir() if path is None else path
-    return os.path.join(path, "turn-" + hashlib.sha1(
-        str(session).encode("utf-8")).hexdigest()[:16])
+def front_window(which=None, run=None):
+    """Заголовок переднего окна системы, пустая строка значит не спросили.
 
-
-def mark_turn(session, now=None, path=None):
-    """Отметить начало хода: с этой метки считается его длительность."""
-    stamp(turn_mark(session, path), time.time() if now is None else now)
-
-
-def turn_min(env=None):
-    env = os.environ if env is None else env
+    Живой опрос держится за этой границей: тестам не нужны ни macOS, ни
+    выданное разрешение на управление компьютером. Пусто отвечают все отказы
+    сразу (не macOS и `osascript` не нашёлся, разрешения нет, окна у переднего
+    приложения нет вовсе), и разбирать их порознь незачем: зовём мы в каждом."""
+    which = shutil.which if which is None else which
+    run = subprocess.run if run is None else run
+    tool = which(FOCUS_TOOL)
+    if not tool:
+        return ""
     try:
-        return max(0.0, float((env.get("DEVKIT_NOTIFY_TURN_MIN") or "").strip()))
-    except ValueError:
-        return float(TURN_MIN)
+        p = run([tool, "-e", FOCUS_SCRIPT], stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=FOCUS_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if p.returncode != 0:
+        return ""
+    out = p.stdout
+    if isinstance(out, bytes):
+        out = out.decode("utf-8", "replace")
+    return (out or "").strip()
 
 
-def short_turn(session, now=None, path=None, env=None):
-    """Ход короче порога, звать некуда: пользователь эти секунды смотрит в то
-    же окно. Метки нет (сессия поднялась до правки настроек, ход первый),
-    значит порог не срабатывает и уведомление уходит."""
-    now = time.time() if now is None else now
-    started = read_stamp(turn_mark(session, path))
-    return started is not None and 0 <= now - started < turn_min(env)
+def window_is_session(title, tree):
+    """Переднее окно стоит на рабочем дереве сессии: у VS Code имя дерева идёт
+    хвостом заголовка после разделителя. Хвост берётся целым словом, иначе
+    `devkit` сошёл бы за `devkit-dk-064`, а это разные деревья и разные окна."""
+    name = tree_name(tree)
+    title = title.strip() if isinstance(title, str) else ""
+    if not name or not title or not title.endswith(name):
+        return False
+    head = title[:-len(name)]
+    return not head or not (head[-1].isalnum() or head[-1] in "-_.")
+
+
+def focus_state(tree, env=None, ask=None):
+    """Куда смотрит человек: FOCUS_SESSION значит на окно этой сессии, и звать
+    его некуда; FOCUS_OTHER значит куда-то ещё; FOCUS_UNKNOWN значит спросить
+    не удалось, и тогда зовём тоже. Выключенная проверка это то же самое, что
+    чужое окно."""
+    env = os.environ if env is None else env
+    if (env.get("DEVKIT_NOTIFY_FOCUS") or "").strip().lower() == "off":
+        return FOCUS_OTHER
+    # Дерева сессии нет, сравнивать заголовок не с чем: опрос тут только тратил
+    # бы свои 180 мс.
+    if not tree_name(tree):
+        return FOCUS_UNKNOWN
+    ask = front_window if ask is None else ask
+    title = ask()
+    if not title:
+        return FOCUS_UNKNOWN
+    return FOCUS_SESSION if window_is_session(title, tree) else FOCUS_OTHER
 
 
 def log(session, key, backend, result, target=None, level=None):
@@ -476,11 +514,9 @@ def run_hook(harness):
         return 0
     session = str(event.get("session_id") or "-")[:8]
     if event.get("hook_event_name") == "UserPromptSubmit":
-        # Ввод пользователя ничего не шлёт, он отмечает начало хода: от этой
-        # метки конец хода считает свою длительность. Заодно снимается отметка
-        # ожидания, иначе общее окно с idle_prompt глушило бы и следующий
-        # длинный ход той же сессии, а это уже новый повод позвать.
-        mark_turn(session)
+        # Ввод пользователя ничего не шлёт, он снимает отметку ожидания: иначе
+        # общее окно с idle_prompt глушило бы и следующий конец хода той же
+        # сессии, а это уже новый повод позвать.
         clear_wait(session)
         return 0
     try:
@@ -492,9 +528,18 @@ def run_hook(harness):
     if not parsed:
         return 0
     key, title, body, level = parsed
-    if key == TURN_DONE and short_turn(session):
-        log(session, key, None, "пропуск: ход короче %gс" % turn_min(), level=level)
-        return 0
+    if key == TURN_DONE:
+        # Фокус спрашивается только тут. Запрос разрешения и вопрос агента зовут
+        # всегда (сессия на них стоит намертво), а фоновым поводам лишний опрос
+        # на каждого субагента ни к чему.
+        state = focus_state(root)
+        if state == FOCUS_SESSION:
+            log(session, key, None, "пропуск: окно сессии в фокусе", level=level)
+            return 0
+        if state == FOCUS_UNKNOWN:
+            # Тишина тут хуже лишнего баннера: она неотличима от штатной работы,
+            # а разрешение на управление компьютером выдают не на всякой машине.
+            log(session, key, None, "фокус %s, зовём" % FOCUS_UNKNOWN, level=level)
     if not allow(session, key):
         log(session, key, None,
             "пропуск: повтор в окне %dс" % throttle(key)[1], level=level)

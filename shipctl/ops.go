@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -558,7 +559,8 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	switch {
 	case deploy.run != "":
 		if out, err := runShell(root, deploy.run); err != nil {
-			return "", fmt.Errorf("слито, но выкат упал, задача остаётся в In progress:\n%s", tail(out))
+			note := notify(root, fmt.Sprintf("%s: выкат %s упал", filepath.Base(root), p.ID), out)
+			return "", fmt.Errorf("слито, но выкат упал, задача остаётся в In progress:\n%s%s", tail(out), note)
 		}
 		msg = append(msg, "выкат прошёл")
 	case deploy.manual != "":
@@ -665,7 +667,8 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	switch {
 	case deploy.run != "":
 		if out, err := runShell(root, deploy.run); err != nil {
-			return "", fmt.Errorf("выкат поезда упал, задачи остаются в In progress:\n%s", tail(out))
+			note := notify(root, fmt.Sprintf("%s: выкат поезда упал (%s)", filepath.Base(root), list), out)
+			return "", fmt.Errorf("выкат поезда упал, задачи остаются в In progress:\n%s%s", tail(out), note)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
 	case deploy.manual != "":
@@ -932,7 +935,8 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		out = append(out, "задача была в поезде и до прода не доехала, повторный выкат не нужен")
 	case plan.run != "":
 		if o, err := runShell(root, plan.run); err != nil {
-			return "", fmt.Errorf("откат закоммичен, но повторный выкат упал:\n%s", tail(o))
+			note := notify(root, fmt.Sprintf("%s: повторный выкат %s упал", filepath.Base(root), p.ID), o)
+			return "", fmt.Errorf("откат закоммичен, но повторный выкат упал:\n%s%s", tail(o), note)
 		}
 		out = append(out, "повторный выкат прошёл")
 	case plan.manual != "":

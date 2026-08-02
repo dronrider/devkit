@@ -557,6 +557,20 @@ echo "$out" | grep -q 'дописан недостающий ключ test' ||
 grep -q '^test =$' "$fproj/.devkit/deploy.local" ||
     fail "doctor --fix не дописал настоящий test поверх закомментированного: $(cat "$fproj/.devkit/deploy.local")"
 
+# Обрубленная строка ключа (без "=" вообще) это тоже не имеющийся ключ, как и
+# закомментированная: без "=" partition отдал бы всю строку в ключ, и мусор
+# засчитался бы present'ом. Мусорная строка не удаляется (--fix только
+# дописывает, чужой текст не трогает), а рабочая строка появляется рядом.
+printf 'deploy = x\ntest\nautonomous = true\n' > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан недостающий ключ test' ||
+    fail "doctor --fix не считает обрубленную строку test отсутствующим ключом: $out"
+depfile=$(cat "$fproj/.devkit/deploy.local")
+echo "$depfile" | grep -qx 'test' ||
+    fail "doctor --fix стёр обрубленную строку test, хотя обязан только дописывать: $depfile"
+echo "$depfile" | grep -q '^test =$' ||
+    fail "doctor --fix не дописал настоящий test рядом с обрубленной строкой: $depfile"
+
 # Уже полный файл без завершающего перевода строки --fix не трогает: нечего
 # дописывать значит нечего и писать, даже перевод строки в хвост.
 printf 'deploy = x\ntest = y\nautonomous = true' > "$fproj/.devkit/deploy.local"

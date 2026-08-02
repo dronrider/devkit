@@ -11,21 +11,25 @@ func TestSplitJoinTitle(t *testing.T) {
 		title    string
 		base     string
 		deps     []string
+		failSuf  string
 		blockSuf string
 	}{
-		{"Простой заголовок", "Простой заголовок", nil, ""},
-		{"С зависимостью [после XR-001]", "С зависимостью", []string{"XR-001"}, ""},
-		{"С двумя [после XR-001, XR-002]", "С двумя", []string{"XR-001", "XR-002"}, ""},
-		{"С блоком [блок: ждём]", "С блоком", nil, " [блок: ждём]"},
-		{"Оба [после XR-001] [блок: ждём]", "Оба", []string{"XR-001"}, " [блок: ждём]"},
+		{"Простой заголовок", "Простой заголовок", nil, "", ""},
+		{"С зависимостью [после XR-001]", "С зависимостью", []string{"XR-001"}, "", ""},
+		{"С двумя [после XR-001, XR-002]", "С двумя", []string{"XR-001", "XR-002"}, "", ""},
+		{"С блоком [блок: ждём]", "С блоком", nil, "", " [блок: ждём]"},
+		{"Оба [после XR-001] [блок: ждём]", "Оба", []string{"XR-001"}, "", " [блок: ждём]"},
+		{"С провалом [провал: 500 на входе]", "С провалом", nil, " [провал: 500 на входе]", ""},
+		{"Все три [после XR-001] [провал: 500 на входе] [блок: ждём]", "Все три",
+			[]string{"XR-001"}, " [провал: 500 на входе]", " [блок: ждём]"},
 	}
 	for _, c := range cases {
-		base, deps, blockSuf := splitTitle(c.title)
-		if base != c.base || strings.Join(deps, ",") != strings.Join(c.deps, ",") || blockSuf != c.blockSuf {
-			t.Fatalf("splitTitle(%q) = %q, %v, %q; ожидал %q, %v, %q",
-				c.title, base, deps, blockSuf, c.base, c.deps, c.blockSuf)
+		base, deps, failSuf, blockSuf := splitTitle(c.title)
+		if base != c.base || strings.Join(deps, ",") != strings.Join(c.deps, ",") || failSuf != c.failSuf || blockSuf != c.blockSuf {
+			t.Fatalf("splitTitle(%q) = %q, %v, %q, %q; ожидал %q, %v, %q, %q",
+				c.title, base, deps, failSuf, blockSuf, c.base, c.deps, c.failSuf, c.blockSuf)
 		}
-		if got := joinTitle(base, deps, blockSuf); got != c.title {
+		if got := joinTitle(base, deps, failSuf, blockSuf); got != c.title {
 			t.Fatalf("joinTitle не восстановил заголовок: %q, ожидал %q", got, c.title)
 		}
 	}
@@ -38,7 +42,7 @@ func TestSplitJoinTitle(t *testing.T) {
 // и close. Порядок остаётся неверным (это отдельная опечатка), но сама
 // зависимость обязана быть видна.
 func TestSplitTitleWrongOrderStillExposesDep(t *testing.T) {
-	_, deps, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
+	_, deps, _, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
 	if len(deps) != 1 || deps[0] != "XR-001" {
 		t.Fatalf("зависимость не видна при перепутанном порядке суффиксов: deps=%v", deps)
 	}

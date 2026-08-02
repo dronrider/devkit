@@ -302,7 +302,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		_, deps, _ := splitTitle(row.Title)
+		_, deps, _, _ := splitTitle(row.Title)
 		for _, d := range deps {
 			if !arch.has(d) {
 				return "", fmt.Errorf("%s зависит от незакрытой %s, нельзя перевести в in-progress", id, d)
@@ -311,7 +311,8 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	}
 	line := b.Lines[row.LineIdx]
 	moved := *row
-	if target == SectBlocked {
+	switch {
+	case target == SectBlocked:
 		if strings.TrimSpace(reason) == "" {
 			return "", fmt.Errorf("для blocked обязателен --reason, одна строка почему")
 		}
@@ -319,20 +320,24 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			return "", err
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"
-		line = formatRow(&moved)
-	} else if row.Sect == SectBlocked {
+	case row.Sect == SectBlocked:
 		// На выходе из Blocked причина в заголовке больше не нужна.
-		if cleaned := blockSufRe.ReplaceAllString(row.Title, ""); cleaned != row.Title {
-			moved.Title = cleaned
-			line = formatRow(&moved)
-		}
+		moved.Title = blockSufRe.ReplaceAllString(row.Title, "")
 	}
-	b.remove(row.LineIdx)
-	b2, err := parseLines(b.Path, b.Lines)
+	// Перевод в Check гасит признак провала проверки сам: задача снова ждёт
+	// проверки на живом проде, значит прод починен. Именно этот move зовут
+	// shipctl merge и ship после удачного выката, поэтому дочищать признак
+	// руками после починки не приходится.
+	quenched := ""
+	if base, deps, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
+		moved.Title = joinTitle(base, deps, "", blockSuf)
+		quenched = ", признак провала снят"
+	}
+	if moved.Title != row.Title {
+		line = formatRow(&moved)
+	}
+	b2, err := relocate(b, row, target, &moved, line)
 	if err != nil {
-		return "", err
-	}
-	if err := insertRowLine(b2, b2.Sects[target], &moved, line); err != nil {
 		return "", err
 	}
 	if err := b2.Save(); err != nil {
@@ -342,7 +347,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// он тут же, где меняется статус, а не в shipctl или где-то ещё, кто бы
 	// move ни позвал (RULES.board.md, «Ветки, ревью и деплой» п. 8).
 	var note string
-	base, _, _ := splitTitle(row.Title)
+	base, _, _, _ := splitTitle(row.Title)
 	switch target {
 	case SectCheck:
 		note = notify(root, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
@@ -353,7 +358,22 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s%s%s", id, row.Sect, target, tail, note), nil
+	return fmt.Sprintf("%s: %s -> %s%s%s%s", id, row.Sect, target, quenched, tail, note), nil
+}
+
+// relocate вырезает строку из её секции и вставляет line в секцию target,
+// отдавая перечитанную доску: после выреза индексы строк уезжают, поэтому
+// разбор идёт заново.
+func relocate(b *Board, row *Row, target string, moved *Row, line string) (*Board, error) {
+	b.remove(row.LineIdx)
+	b2, err := parseLines(b.Path, b.Lines)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertRowLine(b2, b2.Sects[target], moved, line); err != nil {
+		return nil, err
+	}
+	return b2, nil
 }
 
 type SetParams struct {
@@ -382,12 +402,15 @@ func cmdSet(root string, p SetParams) (string, error) {
 			return "", err
 		}
 		title := p.Title
-		// У строки с зависимостью и/или причиной блокировки эти хвосты живут
-		// в заголовке, при замене текста они переносятся в новый (в исходном
-		// порядке: сначала «после», потом «блок»).
-		_, deps, blockSuf := splitTitle(row.Title)
+		// У строки с зависимостью, провалом проверки и/или причиной блокировки
+		// эти хвосты живут в заголовке, при замене текста они переносятся в
+		// новый (в исходном порядке: «после», «провал», «блок»).
+		_, deps, failSuf, blockSuf := splitTitle(row.Title)
 		if len(deps) > 0 && !strings.Contains(title, "[после") {
-			title = joinTitle(title, deps, "")
+			title = joinTitle(title, deps, "", "")
+		}
+		if failSuf != "" && !strings.Contains(title, "[провал:") {
+			title += failSuf
 		}
 		if blockSuf != "" && !strings.Contains(title, "[блок:") {
 			title += blockSuf
@@ -496,6 +519,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if arch.has(p.ID) {
 		return "", fmt.Errorf("%s уже есть в архиве", p.ID)
 	}
+	// Закрыть задачу с непогашенным провалом значит увезти в архив сломанный
+	// прод: строка с доски уйдёт, и очередь выката отпустит его молча.
+	if _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
+		return "", fmt.Errorf("у %s непогашенный провал проверки%s: сначала починить прод (shipctl revert %s либо форвард-фикс и shipctl merge %s), а если он уже починен мимо shipctl, снять признак: taskctl fail %s --clear",
+			p.ID, failSuf, p.ID, p.ID, p.ID)
+	}
 	date := p.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
@@ -559,8 +588,8 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	}
 	// В архивную строку маркер зависимости не попадает: закрытая задача
 	// саму себя ждать больше не заставит.
-	archBase, _, archBlockSuf := splitTitle(row.Title)
-	cells := []string{p.ID, joinTitle(archBase, nil, archBlockSuf), row.Type, row.P, date, linkCell}
+	archBase, _, _, archBlockSuf := splitTitle(row.Title)
+	cells := []string{p.ID, joinTitle(archBase, nil, "", archBlockSuf), row.Type, row.P, date, linkCell}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
 	}
@@ -571,7 +600,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if r.ID == p.ID {
 			continue
 		}
-		base, deps, blockSuf := splitTitle(r.Title)
+		base, deps, failSuf, blockSuf := splitTitle(r.Title)
 		idx := -1
 		for i, d := range deps {
 			if d == p.ID {
@@ -583,7 +612,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			continue
 		}
 		deps = append(deps[:idx], deps[idx+1:]...)
-		r.Title = joinTitle(base, deps, blockSuf)
+		r.Title = joinTitle(base, deps, failSuf, blockSuf)
 		b.Lines[r.LineIdx] = formatRow(r)
 		depTouched = append(depTouched, r.ID)
 	}

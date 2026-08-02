@@ -37,7 +37,8 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 	abs := filepath.Join(root, "docs", rel)
 	var done []string
 	if _, err := os.Stat(abs); os.IsNotExist(err) {
-		title := blockSufRe.ReplaceAllString(row.Title, "")
+		base, deps, _, _ := splitTitle(row.Title)
+		title := joinTitle(base, deps, "", "")
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			return "", err
 		}

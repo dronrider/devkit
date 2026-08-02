@@ -25,6 +25,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
+  fail <ID> --reason "..."                    провал проверки: прод сломан,
+                                              задача обратно в In progress,
+                                              очередь выката встаёт
+  fail <ID> --clear                           прод починен, признак снят (сами
+                                              его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
@@ -168,6 +173,18 @@ func main() {
 		commitFlags(fs, &c)
 		fs.Parse(args[3:])
 		msg, err = cmdMove(root(*dir), args[1], args[2], *reason, c)
+	case "fail":
+		if len(args) < 2 {
+			fail(fmt.Errorf("жду: fail <ID> --reason \"...\" либо fail <ID> --clear"))
+		}
+		fs := flag.NewFlagSet("fail", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := FailParams{ID: args[1]}
+		fs.StringVar(&p.Reason, "reason", "", "чем сломан прод, одна строка")
+		fs.BoolVar(&p.Clear, "clear", false, "снять признак провала: прод починен")
+		commitFlags(fs, &p.Commit)
+		fs.Parse(args[2:])
+		msg, err = cmdFail(root(*dir), p)
 	case "set":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...]"))

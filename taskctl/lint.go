@@ -93,7 +93,25 @@ func cmdLint(root string) ([]string, error) {
 		finds = append(finds, checkLinks(root, ap, r.LineIdx, arch.Lines[r.LineIdx])...)
 	}
 	finds = append(finds, lintDeps(b, arch, bp)...)
+	finds = append(finds, lintFailed(b, bp)...)
 	return finds, nil
+}
+
+// lintFailed ловит признак провала проверки там, где его быть не может.
+// Провал это сломанный прод у задачи, вернувшейся в работу: в Check его гасит
+// сам move, а строка в Backlog с такой пометкой значит, что задачу отложили
+// вместе со сломанным продом, и очередь выката стоит непонятно из-за чего.
+func lintFailed(b *Board, bp string) []string {
+	var finds []string
+	for _, key := range []string{SectBacklog, SectCheck} {
+		for _, r := range b.Sects[key].Rows {
+			if _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+				finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с признаком провала проверки%s: он ставится задаче в работе, снять: taskctl fail %s --clear",
+					bp, r.LineIdx+1, r.ID, sectTitles[key], failSuf, r.ID))
+			}
+		}
+	}
+	return finds
 }
 
 // lintDeps проверяет инварианты маркера «[после ...]»: ID существует (на
@@ -104,7 +122,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
-		_, deps, _ := splitTitle(r.Title)
+		_, deps, _, _ := splitTitle(r.Title)
 		seen := map[string]bool{}
 		for _, d := range deps {
 			switch {
@@ -120,7 +138,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 	}
 	for _, key := range []string{SectInProgress, SectCheck} {
 		for _, r := range b.Sects[key].Rows {
-			_, deps, _ := splitTitle(r.Title)
+			_, deps, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if !arch.has(d) {
 					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s",
@@ -141,7 +159,7 @@ func lintDepCycles(rows []*Row, bp string) []string {
 	line := map[string]int{}
 	for _, r := range rows {
 		line[r.ID] = r.LineIdx
-		_, deps, _ := splitTitle(r.Title)
+		_, deps, _, _ := splitTitle(r.Title)
 		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
 		// циклом в две строки её дублировать незачем.
 		for _, d := range deps {

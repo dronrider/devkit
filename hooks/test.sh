@@ -186,6 +186,25 @@ git -C "$repo3" commit -qm 'root test.sh' >/dev/null
 python3 "$here/check-exec-bit.py" -C "$repo3" >/dev/null
 [ $? -eq 1 ] || fail "test.sh в корне без бита x не поймано"
 
+# check-exec-bit.py: не git-репозиторий и несуществующий -C дают чистую
+# диагностику одной строкой, а не traceback (DK-072, замечание ревью).
+notrepo="$tmp/notrepo"
+mkdir -p "$notrepo"
+out=$(python3 "$here/check-exec-bit.py" -C "$notrepo" 2>&1)
+[ $? -eq 2 ] || fail "не git-репозиторий должен вернуть код 2"
+case $out in
+    *raceback*) fail "не git-репозиторий уронил traceback: $out" ;;
+    "check-exec-bit: "*) ;;
+    *) fail "не git-репозиторий без внятной диагностики: $out" ;;
+esac
+out=$(python3 "$here/check-exec-bit.py" -C "$notrepo/nope" 2>&1)
+[ $? -eq 2 ] || fail "несуществующий -C DIR должен вернуть код 2"
+case $out in
+    *raceback*) fail "несуществующий -C DIR уронил traceback: $out" ;;
+    "check-exec-bit: "*) ;;
+    *) fail "несуществующий -C DIR без внятной диагностики: $out" ;;
+esac
+
 # quota-refresh.sh: отцепленный съём снимка квоты на старте сессии. Настоящие
 # tmux и claude тут не поднимаются, вместо них заглушки: проверяется обвязка
 # хука (условия запуска, замок, журнал), а не съём панели, у него свои тесты.

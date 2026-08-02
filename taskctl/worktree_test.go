@@ -66,6 +66,10 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 			return cmdDepRm(wt, DepParams{ID: "XR-004", DepID: "XR-002"})
 		}},
 		{"file", func() (string, error) { return cmdFile(wt, "XR-001", CommitOpts{}) }},
+		// draft строку доски не пишет, но номер берёт из той же сквозной
+		// нумерации: заведённый на фичеветке черновик основному чекауту не
+		// виден, и тот же ID уйдёт следующей задаче.
+		{"draft", func() (string, error) { return cmdDraft(wt, "идея из worktree", CommitOpts{}) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -85,6 +89,9 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("файл доски в worktree тронут отказавшей командой")
+	}
+	if _, err := os.Stat(draftsDir(wt)); !os.IsNotExist(err) {
+		t.Fatalf("отказавший draft завёл накопитель в worktree: %v", err)
 	}
 }
 

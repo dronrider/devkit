@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -84,6 +85,46 @@ func loadBoard(root string) (*board, error) {
 		b.sects[sect] = append(b.sects[sect], r)
 	}
 	return b, nil
+}
+
+// failSufRe вытаскивает причину из пометки провала проверки в заголовке
+// строки. Ставит пометку taskctl fail, и по ней видно, что за задачей остался
+// сломанный прод: очередь тогда стоит, даже когда строка ушла из Check.
+var failSufRe = regexp.MustCompile(`\[провал: ([^|\[\]]*)\]`)
+
+type failure struct{ ID, Reason string }
+
+// failedChecks собирает задачи с непогашенным провалом проверки. Секции
+// перебираются фиксированным порядком, чтобы отказ merge и строка status не
+// плясали от прогона к прогону.
+func failedChecks(b *board) []failure {
+	var out []failure
+	for _, key := range []string{"in-progress", "blocked", "check", "backlog"} {
+		for _, r := range b.sects[key] {
+			if m := failSufRe.FindStringSubmatch(r.Title); m != nil {
+				out = append(out, failure{r.ID, strings.TrimSpace(m[1])})
+			}
+		}
+	}
+	return out
+}
+
+// failedOf возвращает причину провала за задачей, пустую строку если провала
+// за ней не числится.
+func failedOf(b *board, id string) string {
+	for _, f := range failedChecks(b) {
+		if f.ID == id {
+			return f.Reason
+		}
+	}
+	return ""
+}
+
+// brokenProd описывает сломанный прод одинаково в отказах merge, ship и в
+// строке status: чья это задача, чем сломано и чем чинится.
+func brokenProd(f failure) string {
+	return fmt.Sprintf("провал проверки за %s (%s): прод считается сломанным, чинить shipctl revert %s либо форвард-фиксом и shipctl merge %s",
+		f.ID, f.Reason, f.ID, f.ID)
 }
 
 // sectOf возвращает секцию задачи, пустую строку если её нет на доске.

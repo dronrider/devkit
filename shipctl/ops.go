@@ -70,6 +70,16 @@ func taskMove(root, id, target string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// taskFailClear гасит признак провала проверки. Доску правит taskctl, как и
+// статус: shipctl только зовёт его и коммитит результат.
+func taskFailClear(root, id string) (string, error) {
+	out, err := exec.Command("taskctl", "-C", root, "fail", id, "--clear").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("taskctl fail --clear: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func commitBoard(root, msg string) (string, error) {
 	if _, err := git(root, "add", "--", "docs/TASKS.md"); err != nil {
 		return "", err
@@ -117,6 +127,7 @@ func cmdStatus(root string) (string, error) {
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
 	var train []string
 	var strays []stray
+	var back []string
 	// Без main очередь по коммитам не посчитать, тогда держит вся секция.
 	busy := make([]string, 0, len(b.sects["check"]))
 	for _, r := range b.sects["check"] {
@@ -129,6 +140,9 @@ func cmdStatus(root string) (string, error) {
 		if busy, err = checkQueue(root, main, b); err != nil {
 			return "", err
 		}
+		if back, err = returned(root, main, b); err != nil {
+			return "", err
+		}
 	}
 	if len(train) > 0 {
 		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
@@ -136,7 +150,27 @@ func cmdStatus(root string) (string, error) {
 	if len(strays) > 0 {
 		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strayList(strays)+"); merge и ship будут отказывать, пока не разобрано")
 	}
+	// Задача ушла из Check, а её выкат остался на проде: строка про него
+	// печатается всегда, и провал от приёмки с замечаниями отличается тут же.
+	fails := failedChecks(b)
+	failed := map[string]bool{}
+	for _, f := range fails {
+		failed[f.ID] = true
+		out = append(out, brokenProd(f)+"; merge и ship отказывают, пока признак не погашен")
+	}
+	var soft []string
+	for _, id := range back {
+		if !failed[id] {
+			soft = append(soft, id)
+		}
+	}
+	if len(soft) > 0 {
+		out = append(out, "выкат на проде за ушедшими из Check: "+strings.Join(soft, ", ")+
+			" (проверка принята с замечаниями, доработка идёт кругом; очередь не держат)")
+	}
 	switch {
+	case len(fails) > 0:
+		// вердикта нет: прод сломан, и «очередь свободна» рядом с этим врало бы.
 	case len(busy) > 0:
 		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", strings.Join(busy, ", ")))
 	case len(strays) > 0:
@@ -298,7 +332,24 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 // через shipctl, поиск находит по записи в файле задачи, а по ID в subject
 // ищутся только слитые руками мимо него и до появления записи.
 func checkQueue(root, main string, b *board) ([]string, error) {
-	rows := b.sects["check"]
+	return deployedIn(root, main, b, "check")
+}
+
+// returned возвращает задачи, ушедшие из Check с уже выкаченным кодом: строка
+// вернулась в работу, а правка осталась на проде. Штатно это приёмка с
+// замечаниями, очередь такая задача не держит, но молчать про висящий на
+// проде выкат нельзя: по строке видно, чей код там стоит и с кого спрашивать,
+// если после следующего выката что-то поедет.
+func returned(root, main string, b *board) ([]string, error) {
+	return deployedIn(root, main, b, "in-progress", "blocked")
+}
+
+// deployedIn отбирает из перечисленных секций задачи с выкаченным кодом.
+func deployedIn(root, main string, b *board, sects ...string) ([]string, error) {
+	var rows []row
+	for _, s := range sects {
+		rows = append(rows, b.sects[s]...)
+	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -419,6 +470,19 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		// Та же защита, что у worktree: с чужой фичеветки merge слил бы её под
 		// ID переданной задачи. Ветка задачи называется по ID (RULES.board.md).
 		return "", fmt.Errorf("стоишь на %s, а сливается %s: перейти на ветку задачи и повторить", branch, p.ID)
+	}
+	// Провал проверки это сломанный прод, и до починки очередь стоит целиком.
+	// Единственный заход, который она пропускает, это починка самой
+	// проваленной задачи форвард-фиксом: он и снимет признак переводом в Check.
+	// Поезд при сломанном проде не копится, чинят выкатом.
+	failReason := failedOf(b, p.ID)
+	for _, f := range failedChecks(b) {
+		switch {
+		case f.ID != p.ID:
+			return "", fmt.Errorf("%s; своя задача сольётся, когда прод починен", brokenProd(f))
+		case p.Train:
+			return "", fmt.Errorf("%s; поезд при сломанном проде не копится, чинить одиночным merge или откатом", brokenProd(f))
+		}
 	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
@@ -609,6 +673,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", p.ID, hash))
+	if failReason != "" {
+		msg = append(msg, fmt.Sprintf("признак провала (%s) снят переводом в Check, очередь выката свободна", failReason))
+	}
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
@@ -642,6 +709,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	b, err := loadBoard(root)
 	if err != nil {
 		return "", err
+	}
+	if fs := failedChecks(b); len(fs) > 0 {
+		return "", fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0]))
 	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
@@ -982,15 +1052,31 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 			return "", err
 		}
 	}
-	if b, err := loadBoard(root); err == nil && b.sectOf(p.ID) != "" && b.sectOf(p.ID) != "in-progress" {
-		if _, err := taskMove(root, p.ID, "in-progress"); err != nil {
-			return "", err
+	// Откат вернул прод к прежнему состоянию, значит провал проверки погашен.
+	// Задача к этому моменту уже в In progress (туда её увёл taskctl fail),
+	// поэтому move не зовётся и признак снимается отдельной командой; из
+	// Check его снимет сам move.
+	if b, err := loadBoard(root); err == nil && b.sectOf(p.ID) != "" {
+		switch {
+		case b.sectOf(p.ID) != "in-progress":
+			if _, err := taskMove(root, p.ID, "in-progress"); err != nil {
+				return "", err
+			}
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s обратно в In progress", p.ID))
+			if err != nil {
+				return "", err
+			}
+			out = append(out, fmt.Sprintf("доска: %s обратно в In progress, коммит %s", p.ID, hash))
+		case failedOf(b, p.ID) != "":
+			if _, err := taskFailClear(root, p.ID); err != nil {
+				return "", err
+			}
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s провал проверки погашен откатом", p.ID))
+			if err != nil {
+				return "", err
+			}
+			out = append(out, fmt.Sprintf("доска: признак провала %s снят откатом, очередь выката свободна, коммит %s", p.ID, hash))
 		}
-		hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s обратно в In progress", p.ID))
-		if err != nil {
-			return "", err
-		}
-		out = append(out, fmt.Sprintf("доска: %s обратно в In progress, коммит %s", p.ID, hash))
 	}
 	if err := push("доска запушена", "откат и повторный выкат прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err

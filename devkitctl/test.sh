@@ -17,7 +17,7 @@ unset GOBIN GOPATH
 # и есть основной чекаут.
 dk="$tmp/devkit"
 mkdir -p "$dk"
-for d in devkitctl agents harness hooks templates taskctl shipctl agentctl regcheck; do
+for d in devkitctl agents skills harness hooks templates taskctl shipctl agentctl regcheck; do
     cp -R "$here/../$d" "$dk/"
 done
 cp "$here/../RULES.md" "$here/../RULES.board.md" "$dk/"
@@ -72,8 +72,9 @@ for t in git python3 dirname mkdir chmod rm; do
     ln -sf "$p" "$sys/$t"
 done
 cleanpath="$bin:$sys"
-mkdir -p "$home/.claude/agents" "$home/.devkit/quota"
+mkdir -p "$home/.claude/agents" "$home/.claude/skills" "$home/.devkit/quota"
 cp "$dk/agents/"*.md "$home/.claude/agents/"
+cp -R "$dk/skills/"* "$home/.claude/skills/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
     > "$home/.devkit/quota/claude-code.local"
 
@@ -430,6 +431,7 @@ git -C "$bproj" config user.email t@t
 HOME="$home" python3 "$dkctl" new --prefix BP -C "$bproj" >/dev/null 2>&1
 [ -f "$bproj/.devkit/deploy.local" ] || fail "new не завёл .devkit/deploy.local"
 grep -q '^autonomous = false' "$bproj/.devkit/deploy.local" || fail "в болванке нет autonomous"
+grep -q '^test =$' "$bproj/.devkit/deploy.local" || fail "в болванке нет пустого ключа test"
 git -C "$bproj" check-ignore -q .devkit/deploy.local || fail ".devkit/deploy.local не гитигнорнут"
 
 # Журнал запусков: new записал свою строку в .devkit/log, файл гитигнорнут.
@@ -438,10 +440,16 @@ tab=$(printf '\t')
 grep -q "devkitctl${tab}new${tab}0" "$bproj/.devkit/log" || fail "в журнале нет строки про new"
 git -C "$bproj" check-ignore -q .devkit/log || fail ".devkit/log не гитигнорнут"
 
-# doctor: пустой deploy= это находка, заполненный и гитигнорнутый чист.
+# doctor: пустые deploy= и test= это находки, заполненный и гитигнорнутый файл чист.
 out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'пустой deploy=' || fail "нет находки про пустую команду выката: $out"
+echo "$out" | grep -q 'пустой test=' || fail "нет находки про пустую команду тестов: $out"
+# Команда выката вписана, а тестов нет: находка про test остаётся одна.
 printf 'deploy = make deploy\nautonomous = false\n' > "$bproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
+echo "$out" | grep -q 'пустой deploy=' && fail "находка про пустой deploy осталась при вписанной команде: $out"
+echo "$out" | grep -q 'пустой test=' || fail "находка про пустой test пропала вместе с deploy: $out"
+printf 'deploy = make deploy\ntest = go test ./...\nautonomous = false\n' > "$bproj/.devkit/deploy.local"
 out=$(HOME="$home" PATH="$sys" python3 "$dkctl" doctor -C "$bproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
@@ -491,8 +499,8 @@ echo "$out" | grep -q 'пустой deploy=' || fail "doctor --fix должен 
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный doctor --fix не должен ничего менять: $out"
 
-# Заполненная команда: находки по выкату уходят.
-printf 'deploy = make deploy\nautonomous = false\n' > "$fproj/.devkit/deploy.local"
+# Заполненные команды: находки по выкату уходят.
+printf 'deploy = make deploy\ntest = go test ./...\nautonomous = false\n' > "$fproj/.devkit/deploy.local"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$fproj" 2>&1)
 echo "$out" | grep -q 'deploy' && fail "заполненная обвязка выката всё ещё в находках: $out"
 
@@ -510,6 +518,9 @@ git -C "$mproj" config user.email t@t
 # README: раскладка берёт директорию целиком и обязана отличать определение от
 # постороннего файла, иначе тот уедет на машину как агент.
 printf '# agents\n\nПроза, не определение.\n' > "$dk/agents/README.md"
+# То же со скиллами: скилл это директория с SKILL.md, соседняя проза в skills/
+# на машину уезжать не должна.
+printf '# skills\n\nПроза, не скилл.\n' > "$dk/skills/README.md"
 mhome="$tmp/mhome"
 mkdir -p "$mhome/go/bin"
 gostub="$tmp/gostub"
@@ -538,6 +549,7 @@ mpath="$gostub:$mhome/go/bin:$sys"
 out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
 echo "$out" | grep -q 'agentctl не в PATH' || fail "нет находки про бинарь agentctl: $out"
 echo "$out" | grep -q 'exec-medium.md' || fail "нет находки про определения исполнителей: $out"
+echo "$out" | grep -q 'нет скилла .*board-batch/SKILL.md' || fail "нет находки про скилл: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "нет находки про tmux: $out"
 echo "$out" | grep -q 'нет снимка квоты в' || fail "нет находки про снимок квоты: $out"
 echo "$out" | grep -q 'SessionStart-хук' || fail "нет находки про хук освежения квоты на пустой машине: $out"
@@ -559,6 +571,10 @@ done
 [ -f "$mhome/.claude/agents/review-high.md" ] || fail "doctor --fix не разложил определения ревьюверов: $out"
 [ -f "$mhome/.claude/agents/README.md" ] && fail "--fix положил на машину markdown без frontmatter: $out"
 echo "$out" | grep -q 'README.md положено' && fail "--fix отчитался о README как об определении агента: $out"
+# Скиллы едут тем же каналом: директория с SKILL.md раскладывается, соседняя
+# проза остаётся в devkit.
+[ -f "$mhome/.claude/skills/board-batch/SKILL.md" ] || fail "doctor --fix не разложил скилл: $out"
+[ -f "$mhome/.claude/skills/README.md" ] && fail "--fix положил на машину markdown из skills/ как скилл: $out"
 echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux, находка должна остаться: $out"
 echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
 
@@ -582,6 +598,18 @@ grep -q 'своя строка' "$mhome/.claude/agents/exec-low.md" && fail "--f
 # Повторный --fix уже не находит расхождения: переложенное совпало с devkit.
 out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'починено' && fail "повторный --fix после перекладки не должен ничего менять: $out"
+
+# Скилл, разошедшийся на машине: без --fix находка и файл не тронут, с --fix
+# перекладка из devkit с отчётом, дальше опять тихо.
+printf '\nсвоя строка\n' >> "$mhome/.claude/skills/board-batch/SKILL.md"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor -C "$mproj" 2>&1)
+echo "$out" | grep -q 'скилл .*board-batch/SKILL.md разошёлся' || fail "нет находки про разошедшийся скилл: $out"
+grep -q 'своя строка' "$mhome/.claude/skills/board-batch/SKILL.md" || fail "doctor без --fix тронул скилл"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено:.*board-batch/SKILL.md разошёлся' || fail "--fix не отчитался о перекладке скилла: $out"
+grep -q 'своя строка' "$mhome/.claude/skills/board-batch/SKILL.md" && fail "--fix не переложил разошедшийся скилл: $out"
+out=$(HOME="$mhome" PATH="$mpath" python3 "$dkctl" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q 'починено' && fail "повторный --fix после перекладки скилла не должен ничего менять: $out"
 
 # Снимок квоты. Возраст берётся из строки taken, порог 45 минут (тот же, что у
 # корректора pick), поэтому проверка идёт по обе стороны границы, а не «2020 год
@@ -727,6 +755,9 @@ echo "$out" | grep -q "$dkreal/agentctl" || fail "находка не отпра
 # зовёт копировать из основного чекаута.
 [ -f "$wthome/.claude/agents/exec-medium.md" ] && fail "--fix разложил определения агентов с фичеветки"
 echo "$out" | grep -q "cp $dkreal/agents/review-high.md" || fail "находка про определения зовёт не в основной чекаут: $out"
+# Скиллы держатся того же рубежа.
+[ -f "$wthome/.claude/skills/board-batch/SKILL.md" ] && fail "--fix разложил скилл с фичеветки"
+echo "$out" | grep -q "cp $dkreal/skills/board-batch/SKILL.md" || fail "находка про скилл зовёт не в основной чекаут: $out"
 # Разошедшееся определение из worktree сверяется с основным чекаутом.
 mkdir -p "$wthome/.claude/agents"
 cp "$dk/agents/"*.md "$wthome/.claude/agents/"

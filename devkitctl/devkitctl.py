@@ -14,11 +14,12 @@
       markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, бинари утилит devkit в PATH и не старее
-      исходников, определения агентов в ~/.claude/agents, tmux и снимки
+      исходников, определения агентов в ~/.claude/agents, скиллы devkit в
+      ~/.claude/skills, tmux и снимки
       квоты в ~/.devkit/quota; профили харнесов devkit/harness прогоняются
       через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local, .gitignore,
-      сборка бинарей, копия определений агентов, переезд одиночного снимка
+      сборка бинарей, копия определений агентов и скиллов, переезд одиночного снимка
       квоты в директорию, генерация файлов правил), заполненное не трогает,
       неоднозначное оставляет находкой
 
@@ -49,6 +50,7 @@ NOTIFY_HOOK = "notify.py"
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
+SKILLS_DIR = "~/.claude/skills"
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
 # как было до директории: его переезд делает --fix, читатель до тех пор смотрит
 # старый путь (agentctl/quota.go).
@@ -74,7 +76,10 @@ DEPLOY_TEMPLATE = (
     "# autonomous=true отдаёт агенту весь конвейер: готовую задачу (тесты\n"
     "# зелёные, ревью чистое) он сам сливает, пушит в origin и катит на прод.\n"
     "# false оставляет слияние, пуш и выкат за пользователем.\n"
+    "# test это команда тестов проекта, её берёт shipctl merge, когда не передан\n"
+    "# --test: сочинять её под каждый репозиторий процедуре пачки нечем.\n"
     "deploy =\n"
+    "test =\n"
     "autonomous = false\n"
 )
 SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
@@ -134,12 +139,13 @@ def check_links(root):
 
 
 def read_deploy(root):
-    # Пара (deploy, autonomous). None вместо deploy это «файла нет», иначе
-    # значение deploy= (может быть пустым) и флаг autonomous.
+    # Тройка (deploy, test, autonomous). None вместо deploy это «файла нет»,
+    # иначе значения ключей (могут быть пустыми) и флаг autonomous.
     f = root / DEPLOY_CONFIG
     if not f.exists():
-        return None, None
+        return None, None, None
     deploy = ""
+    test = ""
     autonomous = False
     for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
         ln = ln.strip()
@@ -150,9 +156,11 @@ def read_deploy(root):
         val_stripped = val.strip().strip("\"'")
         if key_stripped == "deploy":
             deploy = val_stripped
+        elif key_stripped == "test":
+            test = val_stripped
         elif key_stripped == "autonomous":
             autonomous = val_stripped.lower() in ("1", "true", "t", "yes", "y", "on")
-    return deploy, autonomous
+    return deploy, test, autonomous
 
 
 def ensure_gitignore(root, pattern, comment="# Локальная обвязка выката, живёт только на машине."):
@@ -396,6 +404,39 @@ def check_agent_defs(fix):
     return findings, fixed
 
 
+def check_skills(fix):
+    # Скиллы едут на машину тем же каналом, что определения субагентов: эталон
+    # это основной чекаут, из worktree ветки задачи идёт только сверка. Скилл
+    # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
+    # skills/ на машину не уезжает.
+    findings, fixed = [], []
+    main, from_main = devkit_checkout()
+    src_dir = main / "skills" if (main / "skills").is_dir() else DEVKIT / "skills"
+    dst_dir = Path(os.path.expanduser(SKILLS_DIR))
+    for src in sorted(src_dir.glob("*/SKILL.md")):
+        name = src.parent.name
+        dst = dst_dir / name / "SKILL.md"
+        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
+                                       "скилл с непроверенной ветки нельзя; из основного чекаута: ")
+        how = "%smkdir -p %s && cp %s %s" % (whence, dst.parent, src, dst)
+        if dst.exists():
+            if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
+                if fix and from_main:
+                    shutil.copyfile(src, dst)
+                    fixed.append("скилл %s разошёлся с devkit, переложен из %s" % (dst, src))
+                else:
+                    findings.append("скилл %s разошёлся с devkit; обновить: %s" % (dst, how))
+            continue
+        if fix and from_main:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            fixed.append("скилл %s положен в %s" % (name, dst.parent))
+            continue
+        findings.append("нет скилла %s: процедуру сессия по нему не подхватит и соберёт "
+                        "на глаз; %s" % (dst, how))
+    return findings, fixed
+
+
 def hook_events(text, script):
     # События, на которые в настройках повешен скрипт. None значит настройки не
     # разобрались, и судить остаётся по подстроке.
@@ -455,7 +496,7 @@ def check_notify_hook(text, settings):
 
 def check_machine(fix):
     # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
-    # определения агентов, tmux и снимок квоты.
+    # определения агентов, скиллы, tmux и снимок квоты.
     findings, fixed = [], []
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""
@@ -467,7 +508,7 @@ def check_machine(fix):
                         "и корректор pick рано или поздно останется с протухшим (hooks/README.md)"
                         % (SESSION_HOOK, settings))
     findings += check_notify_hook(text, settings)
-    for check in (check_binaries, check_agent_defs):
+    for check in (check_binaries, check_agent_defs, check_skills):
         f, d = check(fix)
         findings += f
         fixed += d
@@ -547,10 +588,10 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
-        deploy, autonomous = read_deploy(root)
+        deploy, test, autonomous = read_deploy(root)
         if deploy is None and fix:
             fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
-            deploy, autonomous = read_deploy(root)  # теперь файл есть, команда пустая
+            deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
         if deploy is None:
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                             "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
@@ -561,6 +602,10 @@ def doctor(start, fix=False):
             elif deploy == "" and autonomous:
                 findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
                                 "а катить нечего); вписать команду выката либо снять autonomous" % DEPLOY_CONFIG)
+            if test == "":
+                findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
+                                "вызов, а процедура пачки сочинять его не умеет; вписать команду "
+                                "тестов проекта" % DEPLOY_CONFIG)
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
             if rc != 0:
                 if fix and ensure_gitignore(root, DEPLOY_IGNORE):

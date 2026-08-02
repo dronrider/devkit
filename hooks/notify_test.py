@@ -13,6 +13,9 @@ import time
 import unittest
 from unittest import mock
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hookio  # noqa: E402  таблица разборщиков лежит рядом с уведомителем
+
 spec = importlib.util.spec_from_file_location(
     "notify", os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify.py"))
 notify = importlib.util.module_from_spec(spec)
@@ -26,6 +29,12 @@ def event(**kw):
     return base
 
 
+def sess(**kw):
+    """Событие claude-code разобранным, как его видит уведомитель: своего
+    разбора у него больше нет, форма приходит из hookio."""
+    return hookio.parse_session(hookio.DEFAULT, event(**kw))
+
+
 class TestParseEvent(unittest.TestCase):
     def test_action_reasons(self):
         for kind, label in (("permission_prompt", "нужно разрешение"),
@@ -33,7 +42,7 @@ class TestParseEvent(unittest.TestCase):
                             ("elicitation_dialog", "диалог MCP"),
                             ("idle_prompt", "ждёт ввода")):
             key, title, body, level = notify.parse_event(
-                event(notification_type=kind, message="Claude ждёт"))
+                sess(notification_type=kind, message="Claude ждёт"))
             self.assertEqual(key, kind)
             self.assertEqual(title, "devkit-dk-034: %s" % label)
             self.assertEqual(body, "Claude ждёт")
@@ -42,10 +51,10 @@ class TestParseEvent(unittest.TestCase):
 
     def test_silent_reasons(self):
         for kind in ("auth_success", "elicitation_complete", "elicitation_response", ""):
-            self.assertIsNone(notify.parse_event(event(notification_type=kind)))
+            self.assertIsNone(notify.parse_event(sess(notification_type=kind)))
 
     def test_turn_done_is_loud(self):
-        key, title, body, level = notify.parse_event(event(hook_event_name="Stop"))
+        key, title, body, level = notify.parse_event(sess(hook_event_name="Stop"))
         self.assertEqual((key, title, body), (notify.TURN_DONE,
                                               "devkit-dk-034: ход закончен", ""))
         self.assertEqual(level, notify.LOUD)
@@ -54,10 +63,10 @@ class TestParseEvent(unittest.TestCase):
         # UserPromptSubmit разбором не проходит: он только снимает отметку
         # ожидания.
         for name in ("UserPromptSubmit", "PreToolUse", "SessionStart"):
-            self.assertIsNone(notify.parse_event(event(hook_event_name=name)))
+            self.assertIsNone(notify.parse_event(sess(hook_event_name=name)))
 
     def test_subagent_takes_first_line(self):
-        key, title, body, level = notify.parse_event(event(
+        key, title, body, level = notify.parse_event(sess(
             hook_event_name="SubagentStop", agent_type="review-high",
             last_assistant_message="\n\nЗамечаний нет\nдалее детали\nи ещё"))
         self.assertEqual(key, "subagent_stop")
@@ -67,36 +76,36 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(level, notify.QUIET)
 
     def test_empty_body(self):
-        body = notify.parse_event(event(notification_type="idle_prompt", message=""))[2]
+        body = notify.parse_event(sess(notification_type="idle_prompt", message=""))[2]
         self.assertEqual(body, "")
-        body = notify.parse_event(event(hook_event_name="SubagentStop",
-                                        agent_type="exec-low"))[2]
+        body = notify.parse_event(sess(hook_event_name="SubagentStop",
+                                       agent_type="exec-low"))[2]
         self.assertEqual(body, "exec-low")
 
     def test_body_is_cut(self):
-        body = notify.parse_event(event(notification_type="idle_prompt",
-                                        message="ы" * 500))[2]
+        body = notify.parse_event(sess(notification_type="idle_prompt",
+                                       message="ы" * 500))[2]
         self.assertEqual(len(body), notify.BODY_LIMIT)
         self.assertTrue(body.endswith("..."))
 
     def test_fields_of_wrong_type(self):
         # Поля события приходят от харнеса, и их форма это его дело, а не наше:
         # число вместо строки не должно ни ронять хук, ни съедать повод.
-        key, title, body, _ = notify.parse_event(event(
+        key, title, body, _ = notify.parse_event(sess(
             notification_type="permission_prompt", message=42, cwd=7))
         self.assertEqual((key, title, body), ("permission_prompt", "сессия: нужно разрешение", "42"))
-        body = notify.parse_event(event(hook_event_name="SubagentStop",
-                                        agent_type=1, last_assistant_message=None))[2]
+        body = notify.parse_event(sess(hook_event_name="SubagentStop",
+                                       agent_type=1, last_assistant_message=None))[2]
         self.assertEqual(body, "1")
 
     def test_unhashable_reason(self):
         # Повод объектом по словарю поводов не ищется: разбор роняет TypeError,
         # и ловит его хук, а не разбор.
         with self.assertRaises(TypeError):
-            notify.parse_event(event(notification_type={"a": 1}))
+            notify.parse_event(sess(notification_type={"a": 1}))
 
     def test_title_without_cwd(self):
-        title = notify.parse_event(event(cwd="", notification_type="idle_prompt"))[1]
+        title = notify.parse_event(sess(cwd="", notification_type="idle_prompt"))[1]
         self.assertEqual(title, "сессия: ждёт ввода")
 
 
@@ -116,8 +125,8 @@ class TestSessionTree(unittest.TestCase):
         path = self.write('{"type":"queue-operation","sessionId":"s1"}',
                           '{"type":"user","cwd":"/Users/x/projects/it-road-course"}')
         self.assertEqual(
-            notify.session_tree({"transcript_path": path,
-                                 "cwd": "/Users/x/projects/it-road-course-irc-75"}),
+            notify.session_tree(sess(transcript_path=path,
+                                     cwd="/Users/x/projects/it-road-course-irc-75")),
             "/Users/x/projects/it-road-course")
 
     def test_broken_transcript_falls_back_to_cwd(self):
@@ -127,9 +136,10 @@ class TestSessionTree(unittest.TestCase):
                  self.write(*['{"type":"queue-operation"}'] * 40),
                  os.path.join(self.dir, "нет-такого.jsonl"), "", None, 7)
         for path in cases:
-            self.assertEqual(notify.session_tree({"transcript_path": path,
-                                                  "cwd": "/p/dk"}), "/p/dk", path)
-        self.assertEqual(notify.session_tree({"transcript_path": "", "cwd": 7}), "")
+            self.assertEqual(
+                notify.session_tree(sess(transcript_path=path, cwd="/p/dk")),
+                "/p/dk", path)
+        self.assertEqual(notify.session_tree(sess(transcript_path="", cwd=7)), "")
 
     def test_scan_stops_before_the_whole_file(self):
         # Транскрипт вырастает на десятки мегабайт, и читать его целиком ради
@@ -139,7 +149,7 @@ class TestSessionTree(unittest.TestCase):
         # подстроился бы под любой предел.
         path = self.write(*(['{"type":"queue-operation"}'] * 40
                             + ['{"type":"user","cwd":"/p/поздно"}']))
-        self.assertEqual(notify.session_tree({"transcript_path": path, "cwd": "/p/dk"}),
+        self.assertEqual(notify.session_tree(sess(transcript_path=path, cwd="/p/dk")),
                          "/p/dk")
 
 
@@ -165,7 +175,7 @@ class TestSessionLabel(unittest.TestCase):
 
     def test_title_carries_both(self):
         title = notify.parse_event(
-            event(cwd="/p/it-road-course-irc-75", notification_type="permission_prompt"),
+            sess(cwd="/p/it-road-course-irc-75", notification_type="permission_prompt"),
             "/p/it-road-course")[1]
         self.assertEqual(title, "it-road-course (irc-75): нужно разрешение")
 

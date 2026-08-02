@@ -73,6 +73,21 @@ echo "$out" | grep -q 'одной строкой' || fail "нет находки
 printf 'fix: чисто\n# Co-authored-by в комментарии\n' > "$tmp/msg"
 printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "check-commit смотрит в комментарии git"
 
+# check-commit.py: след не одного ассистента. Подписи стоят прямо в subject,
+# без родовых «co-authored-by» и «generated with»: те ловятся и без перечня, а
+# перечень тут и проверяется.
+for trace in noreply@anthropic.com codex@openai.com noreply@openai.com \
+    cursoragent@cursor.com aider@aider.chat openhands@all-hands.dev \
+    devin-ai-integration copilot-swe-agent google-labs-jules; do
+    printf 'fix: правка от %s\n' "$trace" > "$tmp/msg"
+    out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+    [ $? -eq 1 ] || fail "след ассистента $trace не пойман"
+    echo "$out" | grep -q 'след ассистента' || fail "нет находки про след $trace: $out"
+done
+printf 'fix: правка от noreply@example.com про генерацию отчёта\n' > "$tmp/msg"
+printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null ||
+    fail "check-commit принял чужой адрес за след ассистента"
+
 # check-commit.py: тип не из истории ловится, revert и свежий репозиторий проходят.
 printf 'perf: чужой тип\n' > "$tmp/msg"
 out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
@@ -104,6 +119,24 @@ printf '{"tool_input":{"file_path":"x.md","new_string":"плохо %s"}}' "$dash
 printf '{"tool_input":{"file_path":"x.md","new_string":"чисто, «ёлочки», № 5"}}' |
     python3 "$here/check-symbols.py" --hook 2>/dev/null || fail "режим --hook ругается на чистое"
 
+# Голый --hook это claude-code: команды в settings.json на машинах прописаны без
+# имени протокола, и обновление devkit их ломать не должно.
+printf '{"tool_input":{"file_path":"x.md","new_string":"плохо %s"}}' "$dash" |
+    python3 "$here/check-symbols.py" --hook claude-code 2>/dev/null
+[ $? -eq 2 ] || fail "--hook claude-code пропустил тире"
+printf '{"tool_input":{"file_path":"x.md","new_string":"чисто"}}' |
+    python3 "$here/check-symbols.py" --hook claude-code 2>/dev/null ||
+    fail "--hook claude-code ругается на чистое"
+
+# Незнакомый протокол это отказ с внятной строкой, а не молчаливый пропуск:
+# иначе опечатка в settings.json выключила бы проверку насовсем.
+for tool in check-symbols check-memory check-sensitive; do
+    err=$(printf '{"tool_input":{"file_path":"x.md","new_string":"текст"}}' |
+        python3 "$here/$tool.py" --hook кодекс 2>&1 >/dev/null)
+    [ $? -eq 2 ] || fail "$tool промолчал про незнакомый протокол"
+    echo "$err" | grep -q 'не заведён' || fail "$tool не назвал причину отказа: $err"
+done
+
 # check-memory.py: короткие строки-указатели проходят, жир и прозу ловит.
 long=$(printf 'x%.0s' $(seq 1 170))
 printf -- '- [Запись](file.md) - крючок\n\n- [Вторая](f2.md) - тоже коротко\n' > "$tmp/mem_ok.md"
@@ -118,6 +151,24 @@ printf '{"tool_input":{"file_path":"/a/memory/MEMORY.md","new_string":"- [Жур
 [ $? -eq 2 ] || fail "хук памяти пропустил жирную строку"
 printf '{"tool_input":{"file_path":"/a/b/notes.md","new_string":"%s"}}' "$long" |
     python3 "$here/check-memory.py" --hook 2>/dev/null || fail "хук памяти лезет в чужие файлы"
+
+# Где лежит индекс, знает профиль харнеса, а не сам хук: свой хвост пути ловится
+# по профилю, а без ключа memory_index проверка молчит вовсе (у инструмента без
+# памяти находки про индекс это шум).
+hown="$tmp/harness-own"
+hnone="$tmp/harness-none"
+mkdir -p "$hown" "$hnone"
+printf '[hooks]\nprotocol = "claude-code"\nmemory_index = "/заметки/ИНДЕКС.md"\n' > "$hown/claude-code.toml"
+printf '[hooks]\nprotocol = "claude-code"\n' > "$hnone/claude-code.toml"
+printf '{"tool_input":{"file_path":"/a/заметки/ИНДЕКС.md","new_string":"проза без указателя"}}' |
+    DEVKIT_HARNESS_DIR="$hown" python3 "$here/check-memory.py" --hook 2>/dev/null
+[ $? -eq 2 ] || fail "хук памяти не взял хвост пути из профиля"
+printf '{"tool_input":{"file_path":"/a/memory/MEMORY.md","new_string":"проза без указателя"}}' |
+    DEVKIT_HARNESS_DIR="$hown" python3 "$here/check-memory.py" --hook 2>/dev/null ||
+    fail "хук памяти смотрит мимо профиля, по зашитому пути"
+printf '{"tool_input":{"file_path":"/a/memory/MEMORY.md","new_string":"проза без указателя"}}' |
+    DEVKIT_HARNESS_DIR="$hnone" python3 "$here/check-memory.py" --hook 2>/dev/null ||
+    fail "хук памяти сработал у инструмента без индекса памяти"
 
 # check-sensitive.py: IP и токены в файлах доски ловятся, роли машин и
 # loopback проходят, чужие пути не смотрятся.
@@ -255,6 +306,11 @@ nohome="$tmp/qnohome"
 mkdir -p "$nohome"
 HOME="$nohome" PATH="$qsys" sh "$here/quota-refresh.sh" || fail "хук без инструментов вернул не 0"
 [ -d "$nohome/.devkit" ] && fail "хук без инструментов насорил в HOME"
+
+# hookio.py: таблица разборщиков. Что снимается с живых образцов и откуда
+# берётся путь индекса памяти, держат юниты; прогон образцов через сами
+# проверки идёт ниже, когда готовы стабы уведомителя.
+python3 "$here/hookio_test.py" >/dev/null 2>&1 || fail "юниты разбора входа не прошли"
 
 # notify.py: уведомитель сессии. Разбор события, выбор бэкенда и окно
 # троттлинга держат юниты, тут прогон целиком: временный HOME, стаб вместо
@@ -557,6 +613,39 @@ echo "$out" | grep -q "послано через $nstub" || fail "самопро
 out=$(HOME="$nhome" PATH="$nsys" python3 "$here/notify.py" --self-test)
 [ $? -eq 1 ] || fail "самопроверка без бэкенда вернула 0"
 echo "$out" | grep -q 'бэкенда уведомлений нет' || fail "самопроверка молчит про отсутствие бэкенда: $out"
+
+# Живой запрос разрешения доходит до бэкенда, а живая запись файла уведомлением
+# не считается: обе формы сняты с работающего Claude Code, а не сочинены.
+: > "$nmark"
+notify_hook < "$here/testdata/claude-code/notify-permission.json" ||
+    fail "уведомитель вернул не 0 на живом запросе разрешения"
+grep -q '^work: нужно разрешение|Claude needs your permission$' "$nmark" ||
+    fail "живой запрос разрешения не дошёл до бэкенда: $(cat "$nmark")"
+: > "$nmark"
+notify_hook < "$here/testdata/claude-code/write-memory-index.json" ||
+    fail "уведомитель вернул не 0 на записи файла"
+[ -s "$nmark" ] && fail "запись файла ушла уведомлением: $(cat "$nmark")"
+
+# Незнакомый протокол уведомитель называет, а не пропускает молча.
+err=$(HOME="$nhome" python3 "$here/notify.py" --hook кодекс < "$here/testdata/claude-code/turn-done.json" 2>&1)
+[ $? -eq 2 ] || fail "уведомитель промолчал про незнакомый протокол"
+echo "$err" | grep -q 'не заведён' || fail "уведомитель не назвал причину отказа: $err"
+
+# Образцы событий, снятые живьём: каждый прогоняется через каждую проверку и
+# через уведомитель. Разбор у них общий, поэтому непонятая форма события должна
+# всплыть тут целиком, а не в одной проверке из четырёх.
+for sample in "$here"/testdata/claude-code/*.json; do
+    name=$(basename "$sample")
+    for tool in check-symbols check-memory check-sensitive; do
+        err=$(python3 "$here/$tool.py" --hook claude-code < "$sample" 2>&1 >/dev/null)
+        status=$?
+        case $status in 0|2) ;; *) fail "$tool на образце $name вернул $status: $err" ;; esac
+        echo "$err" | grep -q Traceback && fail "$tool упал на образце $name: $err"
+    done
+    err=$(notify_hook < "$sample" 2>&1 >/dev/null)
+    [ $? -eq 0 ] || fail "уведомитель на образце $name вернул не 0: $err"
+    [ -n "$err" ] && fail "уведомитель ругался на образце $name: $err"
+done
 
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"

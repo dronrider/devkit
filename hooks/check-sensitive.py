@@ -9,13 +9,17 @@ local-docs.
                                     что передали, то и смотрим)
   ... | check-sensitive.py --diff   строки вида файл:строка:текст (staged-дифф
                                     из pre-commit), смотрятся только файлы доски
-  check-sensitive.py --hook         PostToolUse-хук Claude Code: JSON на stdin,
-                                    записанный фрагмент, только файлы доски;
-                                    находки уходят агенту в stderr с выходом 2
+  check-sensitive.py --hook [протокол]
+                                    хук на запись файла: JSON события на stdin,
+                                    записанный фрагмент, только файлы доски.
+                                    Разбор входа и канал ответа по имени
+                                    протокола из hookio.py, голый --hook это
+                                    claude-code
 """
-import json
 import re
 import sys
+
+import hookio
 
 BOARD_PARTS = ("docs/TASKS.md", "docs/TASKS-archive.md", "docs/tasks/", "docs/lld/")
 
@@ -76,36 +80,30 @@ def run_diff():
     return 1 if findings else 0
 
 
-def run_hook():
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+def run_hook(protocol):
+    write = hookio.write_event(protocol)
+    if write is None or not board_path(write.path):
         return 0
-    ti = data.get("tool_input") or {}
-    path = ti.get("file_path") or ti.get("notebook_path") or ""
-    if not board_path(path):
-        return 0
-    chunks = [ti.get(k) for k in ("new_string", "content", "new_source") if ti.get(k)]
-    for e in ti.get("edits") or []:
-        if isinstance(e, dict) and e.get("new_string"):
-            chunks.append(e["new_string"])
     findings = []
-    for chunk in chunks:
+    for chunk in write.chunks:
         findings += scan(chunk.splitlines())
     if not findings:
         return 0
-    sys.stderr.write(
+    return hookio.reply(protocol).found(
         "чувствительное в файлах доски (RULES.board.md, «Трекинг задач» п. 8) в %s:\n%s\n"
         "вместо адресов и доступов писать роль машины («роутер DE», «VPS RU»), "
         "конкретику держать в гитигнорнутом local-docs\n"
-        % (path, "\n".join(findings[:20]))
+        % (write.path, "\n".join(findings[:20]))
     )
-    return 2
 
 
 def main(argv):
     if argv[:1] == ["--hook"]:
-        return run_hook()
+        try:
+            return run_hook(hookio.protocol(argv[1:]))
+        except hookio.Unknown as e:
+            sys.stderr.write("check-sensitive: %s\n" % e)
+            return 2
     if argv[:1] == ["--diff"]:
         return run_diff()
     if not argv:

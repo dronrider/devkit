@@ -7,12 +7,16 @@
 
 Режимы:
   check-memory.py <MEMORY.md>...   проверка файлов, выход 1 если есть находки
-  check-memory.py --hook           PostToolUse-хук Claude Code: JSON на stdin,
-                                   проверяется записанный фрагмент; на находки
-                                   выход 2 (фидбек агенту)
+  check-memory.py --hook [протокол]
+                                   хук на запись файла: JSON события на stdin,
+                                   проверяется записанный фрагмент. Где лежит
+                                   индекс, знает профиль харнеса (`[hooks]
+                                   memory_index`); без ключа памяти у
+                                   инструмента нет, и хук молчит
 """
-import json
 import sys
+
+import hookio
 
 MAX_LINE = 160
 
@@ -31,32 +35,32 @@ def scan(lines, where=None):
     return findings
 
 
-def run_hook():
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+def run_hook(protocol):
+    write = hookio.write_event(protocol)
+    # Где лежит индекс, знает профиль харнеса. Ключа нет, значит памяти у
+    # инструмента нет, и находки про её индекс были бы шумом.
+    index = hookio.memory_index(protocol)
+    if write is None or not index or not write.path.endswith(index):
         return 0
-    ti = data.get("tool_input") or {}
-    path = ti.get("file_path") or ""
-    if not path.endswith("/memory/MEMORY.md"):
-        return 0
-    chunks = [ti.get(k) for k in ("new_string", "content") if ti.get(k)]
     findings = []
-    for chunk in chunks:
+    for chunk in write.chunks:
         findings += scan(chunk.splitlines())
     if not findings:
         return 0
-    sys.stderr.write(
+    return hookio.reply(protocol).found(
         "индекс памяти пухнет (%s):\n%s\n"
         "в MEMORY.md держи короткие строки-указатели, содержимое и статусы пиши в файл памяти\n"
-        % (path, "\n".join(findings[:10]))
+        % (write.path, "\n".join(findings[:10]))
     )
-    return 2
 
 
 def main(argv):
     if argv[:1] == ["--hook"]:
-        return run_hook()
+        try:
+            return run_hook(hookio.protocol(argv[1:]))
+        except hookio.Unknown as e:
+            sys.stderr.write("check-memory: %s\n" % e)
+            return 2
     if not argv:
         sys.stderr.write(__doc__)
         return 2

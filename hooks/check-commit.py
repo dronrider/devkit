@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Проверка текста коммита по разделу «Git» RULES.md: без следов ассистента
 (п. 4), одной строкой без body (п. 2), тип префикса из истории проекта (п. 1).
+След ищется не одного ассистента: рядом с родовыми «co-authored-by» и
+«generated with» стоят подписи ходовых остальных (см. ASSISTANTS).
 
   git log -n 100 --format=%s | check-commit.py <файл сообщения>
 
@@ -13,7 +15,24 @@ conventional commits. Тип revert разрешён всегда, его пиш
 import re
 import sys
 
-TRACES = re.compile(r"co-authored-by|generated with|noreply@anthropic", re.I)
+# Подписи ходовых ассистентов. Родовые «co-authored-by» и «generated with»
+# ловят почти всех, но подпись доезжает и без них (автор коммита, строка
+# «paired with»), поэтому рядом стоят адреса и боты, снятые с их реальных
+# коммитов на github.
+ASSISTANTS = (
+    "noreply@anthropic",        # Claude Code
+    "codex@openai.com",         # Codex
+    "noreply@openai.com",       # он же, вторым адресом
+    "cursoragent@cursor.com",   # Cursor
+    "aider@aider.chat",         # aider
+    "openhands@all-hands.dev",  # OpenHands
+    "devin-ai-integration",     # Devin
+    "copilot-swe-agent",        # GitHub Copilot
+    "google-labs-jules",        # Jules
+)
+
+TRACES = re.compile("|".join(("co-authored-by", "generated with")
+                             + tuple(re.escape(a) for a in ASSISTANTS)), re.I)
 PREFIX = re.compile(r"^([a-z]+)(\([^)]+\))?!?: ")
 SCISSORS = re.compile(r"^# -+ >8 -+$")
 

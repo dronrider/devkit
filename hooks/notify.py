@@ -13,10 +13,12 @@
                                     позвать уведомитель из чего угодно: скрипт
                                     выката, другой харнес, проверка расписания;
                                     --quiet понижает повод до фонового
-  notify.py --hook claude-code      хук Claude Code: событие читается со stdin,
-                                    заголовок и тело собираются из него;
-                                    события Notification (по поводу), Stop,
-                                    SubagentStop и UserPromptSubmit (та только
+  notify.py --hook [протокол]       хук харнеса: событие читается со stdin,
+                                    разбирается по имени протокола таблицей
+                                    hookio.py (голый --hook это claude-code), а
+                                    заголовок и тело собираются из разобранного.
+                                    Оси notify (по поводу), turn-done,
+                                    subagent-done и prompt-submit (та только
                                     снимает отметку ожидания), остальное молча
                                     пропускается
   notify.py --self-test             послать пробное уведомление и напечатать,
@@ -44,6 +46,8 @@ import subprocess
 import sys
 import time
 import urllib.parse
+
+import hookio
 
 WINDOW = 30          # окно троттлинга: один повод одной сессии не чаще, секунды
 TRANSCRIPT_SCAN = 20 # сколько записей транскрипта смотрим ради cwd сессии
@@ -144,7 +148,7 @@ def session_label(cwd, root=None):
     return "%s (%s)" % (home, task)
 
 
-def session_tree(event, read=None):
+def session_tree(sess, read=None):
     """Дерево, на котором стоит окно позвавшей сессии.
 
     У субагента в worktree задачи свой `cwd`, и цель, собранная из него, ведёт
@@ -152,11 +156,7 @@ def session_tree(event, read=None):
     того, где идёт работа. Само дерево сессии лежит в её транскрипте: первые
     записи там служебные, а дальше идёт `cwd` самой сессии."""
     read = transcript_cwd if read is None else read
-    root = read(event.get("transcript_path"))
-    if root:
-        return root
-    cwd = event.get("cwd")
-    return cwd if isinstance(cwd, str) else ""
+    return read(sess.transcript) or sess.cwd
 
 
 def transcript_cwd(path):
@@ -181,22 +181,23 @@ def transcript_cwd(path):
     return ""
 
 
-def parse_event(event, root=None):
-    """Событие харнеса в (ключ повода, заголовок, тело, уровень). None значит
-    не шлём."""
-    name = event.get("hook_event_name")
+def parse_event(sess, root=None):
+    """Разобранное событие сессии в (ключ повода, заголовок, тело, уровень).
+    None значит не шлём."""
+    if sess is None:
+        return None
     level = LOUD
-    if name == "Notification":
-        key = event.get("notification_type") or ""
+    if sess.kind == hookio.NOTIFY:
+        key = sess.reason
         label = NOTIFICATION_REASONS.get(key)
         if not label:
             return None
-        body = short(event.get("message"))
-    elif name == "Stop":
+        body = short(sess.message)
+    elif sess.kind == hookio.TURN_DONE:
         # Конец хода главной сессии. Своего текста у события нет, тело собирать
         # не из чего, и баннеру хватает заголовка.
         key, label, body = TURN_DONE, TURN_REASON, ""
-    elif name == "SubagentStop":
+    elif sess.kind == hookio.SUBAGENT_DONE:
         level = QUIET
         # Обычный субагент приходит сюда, а не поводом agent_completed события
         # Notification: тот повод про фоновые сессии, не про субагентов.
@@ -204,13 +205,12 @@ def parse_event(event, root=None):
         label = SUBAGENT_REASON
         # Роль субагента идёт в тело уже после того, как от ответа осталась
         # первая строка, иначе первой строкой стала бы сама роль.
-        body = short(event.get("last_assistant_message"))
-        agent = event.get("agent_type")
-        if agent:
-            body = short("%s: %s" % (agent, body) if body else agent)
+        body = short(sess.message)
+        if sess.agent:
+            body = short("%s: %s" % (sess.agent, body) if body else sess.agent)
     else:
         return None
-    return key, "%s: %s" % (session_label(event.get("cwd"), root), label), body, level
+    return key, "%s: %s" % (session_label(sess.cwd, root), label), body, level
 
 
 def in_vscode(env):
@@ -496,32 +496,28 @@ def deliver(title, body, session="-", key="-", target=None, level=LOUD):
     return backend, code
 
 
-def run_hook(harness):
-    if harness != "claude-code":
-        sys.stderr.write("notify: разбор события %s не заведён\n" % harness)
-        return 2
+def run_hook(protocol):
     # Вход кривой во всех видах (не json, json не объектом, объект с полями не
     # той формы) заканчивается одинаково: код 0 и строка в журнале. Хук стоит в
     # каждой сессии, и падать traceback'ом ему нельзя, а молчать про непонятое
     # значит держать эту дыру незаметной.
     try:
-        event = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        log("-", "-", None, "событие не разобрано: не json")
+        sess = hookio.session_event(protocol)
+    except hookio.BadEvent as e:
+        log("-", "-", None, "событие не разобрано: %s" % e)
         return 0
-    if not isinstance(event, dict):
-        log("-", "-", None, "событие не разобрано: json не объектом")
+    if sess is None:
         return 0
-    session = str(event.get("session_id") or "-")[:8]
-    if event.get("hook_event_name") == "UserPromptSubmit":
+    session = sess.session
+    if sess.kind == hookio.PROMPT_SUBMIT:
         # Ввод пользователя ничего не шлёт, он снимает отметку ожидания: иначе
         # общее окно с idle_prompt глушило бы и следующий конец хода той же
         # сессии, а это уже новый повод позвать.
         clear_wait(session)
         return 0
     try:
-        root = session_tree(event)
-        parsed = parse_event(event, root)
+        root = session_tree(sess)
+        parsed = parse_event(sess, root)
     except (AttributeError, TypeError, ValueError):
         log(session, "-", None, "событие не разобрано: поля не той формы")
         return 0
@@ -585,7 +581,11 @@ def main(argv):
     if argv[0] == "--hook":
         if os.environ.get("DEVKIT_NOTIFY_OFF"):
             return 0
-        return run_hook(argv[1] if len(argv) > 1 else "claude-code")
+        try:
+            return run_hook(hookio.protocol(argv[1:]))
+        except hookio.Unknown as e:
+            sys.stderr.write("notify: %s\n" % e)
+            return 2
     if argv[0] == "--self-test":
         return self_test()
     # Без флага зовущий скрипт считается громким: он зовёт человека к делу, а

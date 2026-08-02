@@ -8,15 +8,18 @@
 Режимы:
   check-symbols.py <файл>...    находки вида файл:строка:текст, выход 1 если есть
   ... | check-symbols.py --stdin
-  check-symbols.py --hook       PostToolUse-хук Claude Code: JSON на stdin,
-                                проверяется записанный фрагмент (new_string /
-                                content), а не файл целиком, поэтому совпадения
-                                в чужом существующем тексте не всплывают;
-                                находки уходят агенту в stderr с выходом 2
+  check-symbols.py --hook [протокол]
+                                хук на запись файла: JSON события на stdin,
+                                проверяется записанный фрагмент, а не файл
+                                целиком, поэтому совпадения в чужом
+                                существующем тексте не всплывают. Разбор входа
+                                и канал ответа берутся по имени протокола из
+                                hookio.py, голый --hook это claude-code
 """
-import json
 import re
 import sys
+
+import hookio
 
 BAD = re.compile(r"[^\x00-\x7Fа-яА-ЯёЁ«»№]")
 
@@ -36,35 +39,29 @@ def scan(lines, where=None):
     return findings
 
 
-def run_hook():
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+def run_hook(protocol):
+    write = hookio.write_event(protocol)
+    if write is None or is_testdata(write.path):
         return 0
-    ti = data.get("tool_input") or {}
-    path = ti.get("file_path") or ti.get("notebook_path") or "?"
-    if is_testdata(path):
-        return 0
-    chunks = [ti.get(k) for k in ("new_string", "content", "new_source") if ti.get(k)]
-    for e in ti.get("edits") or []:
-        if isinstance(e, dict) and e.get("new_string"):
-            chunks.append(e["new_string"])
     findings = []
-    for chunk in chunks:
+    for chunk in write.chunks:
         findings += scan(chunk.splitlines())
     if not findings:
         return 0
-    sys.stderr.write(
+    return hookio.reply(protocol).found(
         "запрещённые символы (RULES.md, «Код и тексты» п. 1) в %s:\n%s\n"
         "перепиши клавиатурными символами; чужой код и тестовые данные можно оставить как есть\n"
-        % (path, "\n".join(findings[:20]))
+        % (write.path or "?", "\n".join(findings[:20]))
     )
-    return 2
 
 
 def main(argv):
     if argv[:1] == ["--hook"]:
-        return run_hook()
+        try:
+            return run_hook(hookio.protocol(argv[1:]))
+        except hookio.Unknown as e:
+            sys.stderr.write("check-symbols: %s\n" % e)
+            return 2
     findings = []
     if argv[:1] == ["--stdin"]:
         findings = scan(sys.stdin)

@@ -163,14 +163,9 @@ func openReviewNotes(root, id string) ([]string, error) {
 		return nil, err
 	}
 	var open []string
-	in := false
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(ln, "## ") {
-			in = strings.HasPrefix(ln, "## Ревью")
-			continue
-		}
+	for _, ln := range sectionLines(string(data), "## Ревью") {
 		t := strings.TrimSpace(ln)
-		if !in || (!strings.HasPrefix(t, "- ") && !strings.HasPrefix(t, "* ")) {
+		if !strings.HasPrefix(t, "- ") && !strings.HasPrefix(t, "* ") {
 			continue
 		}
 		low := strings.ToLower(t)

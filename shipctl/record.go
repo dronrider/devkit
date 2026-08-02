@@ -33,14 +33,9 @@ func mergedShas(root, id string) ([]string, error) {
 		return nil, err
 	}
 	var shas []string
-	in := false
-	for _, ln := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(ln, "## ") {
-			in = strings.HasPrefix(ln, mergedSection)
-			continue
-		}
+	for _, ln := range sectionLines(string(data), mergedSection) {
 		t := strings.TrimSpace(ln)
-		if !in || !strings.HasPrefix(t, "- ") {
+		if !strings.HasPrefix(t, "- ") {
 			continue
 		}
 		_, list, ok := strings.Cut(t, ":")
@@ -120,9 +115,10 @@ func recordMerge(root, id string, shas []string) (string, error) {
 // затирают прежние.
 func appendToSection(doc, line string) string {
 	lines := strings.Split(strings.TrimRight(doc, "\n"), "\n")
+	mask := fenceMask(lines)
 	start := -1
 	for i, ln := range lines {
-		if strings.HasPrefix(ln, mergedSection) {
+		if !mask[i] && strings.HasPrefix(ln, mergedSection) {
 			start = i
 			break
 		}
@@ -132,7 +128,7 @@ func appendToSection(doc, line string) string {
 	}
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "## ") {
+		if !mask[i] && strings.HasPrefix(lines[i], "## ") {
 			end = i
 			break
 		}

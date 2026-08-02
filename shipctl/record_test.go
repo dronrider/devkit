@@ -160,6 +160,60 @@ func TestMergedShasParse(t *testing.T) {
 	}
 }
 
+// TestMergedShasSkipsFenced: вывод, вложенный в файл задачи по сценарию
+// проверки, цитирует чужую запись выката. Читая её как свою, очередь считает
+// выкаченной не ту задачу: sha из цитаты в логе есть.
+func TestMergedShasSkipsFenced(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001: заголовок\n\n"+
+		"## Сценарий проверки\n\nВывод shipctl merge на синтетической доске:\n\n"+
+		"```\n## Выкат\n\n- 2026-08-01 слито: 9999999, 8888888\n```\n\n"+
+		"## Выкат\n\n- 2026-08-02 слито: 1a2b3c4\n")
+	got, err := mergedShas(root, "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "1a2b3c4" {
+		t.Fatalf("цитата из ограждённого блока попала в запись: %v", got)
+	}
+}
+
+// TestAppendToSectionSkipsFenced: запись нового круга ищет свой раздел мимо
+// цитаты, иначе строка уедет внутрь ограждённого блока и запись потеряется.
+func TestAppendToSectionSkipsFenced(t *testing.T) {
+	doc := "# XR-001: задача\n\n## Ход работы\n\n~~~\n## Выкат\n\n- 2026-08-01 слито: 9999999\n~~~\n\n" +
+		"## Выкат\n\n- 2026-08-02 слито: 1111111\n"
+	got := appendToSection(doc, "- 2026-08-03 слито: 2222222")
+	want := "# XR-001: задача\n\n## Ход работы\n\n~~~\n## Выкат\n\n- 2026-08-01 слито: 9999999\n~~~\n\n" +
+		"## Выкат\n\n- 2026-08-02 слито: 1111111\n- 2026-08-03 слито: 2222222\n"
+	if got != want {
+		t.Fatalf("строка встала не в свой раздел:\n%s", got)
+	}
+	// Раздела нет вовсе, есть только цитата: заводится настоящий раздел в
+	// конце файла, а не дописывается строка в чужой вывод.
+	only := "# XR-001: задача\n\n```\n## Выкат\n\n- 2026-08-01 слито: 9999999\n```\n"
+	if got := appendToSection(only, "- 2026-08-03 слито: 2222222"); !strings.HasSuffix(got,
+		"```\n\n## Выкат\n\n- 2026-08-03 слито: 2222222\n") {
+		t.Fatalf("раздел не заведён рядом с цитатой:\n%s", got)
+	}
+}
+
+// TestMergeIgnoresFencedReviewNote: замечание, процитированное в выводе
+// внутри файла задачи, отбивало слияние, хотя своё ревью закрыто.
+func TestMergeIgnoresFencedReviewNote(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n"+
+		"## Сценарий проверки\n\nВывод taskctl review show соседней задачи:\n\n"+
+		"```\n## Ревью\n\n- гонка в close без исхода\n```\n\n"+
+		"## Ревью\n\n- нейминг: отклонено, стиль проекта\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 сценарий проверки")
+	branchWithFix(t, root)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatalf("слияние отбито цитатой замечания: %v", err)
+	}
+}
+
 // TestTrainOverlapFromRecord: подсказка про пересечение файлов поезда должна
 // видеть коммиты задачи по записи. Иначе она молчит ровно там, где нужнее
 // всего: на ветке, чьи коммиты ID не несут, а файл правят оба.

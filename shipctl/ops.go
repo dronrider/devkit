@@ -107,10 +107,12 @@ func cmdStatus(root string) (string, error) {
 	}
 	var out []string
 	out = append(out, "ветка: "+branch)
-	if _, linked, err := worktrees(root); err == nil {
-		for _, l := range linked {
-			out = append(out, "worktree: "+l.Branch+" в "+l.Path)
-		}
+	_, linked, err := worktrees(root)
+	if err != nil {
+		linked = nil
+	}
+	for _, l := range linked {
+		out = append(out, "worktree: "+l.Branch+" в "+l.Path)
 	}
 	for _, s := range []struct{ key, name string }{
 		{"in-progress", "In progress"}, {"check", "Check"}, {"blocked", "Blocked"},
@@ -128,11 +130,20 @@ func cmdStatus(root string) (string, error) {
 	out = append(out, fmt.Sprintf("Backlog: %d задач(и)", len(b.sects["backlog"])))
 	// Оборванный файл задачи виден до слияния, а не только в отказе merge:
 	// очередь и состав поезда считаются по записи «Выкат», и за обрывом она
-	// не читается.
+	// не читается. У задачи в работе файл живёт на её ветке, в дереве задачи,
+	// и читать его надо там же, где потом прочитает merge: основной чекаут
+	// стоит на main и этих правок не видит.
 	for _, key := range []string{"in-progress", "check", "blocked", "backlog"} {
 		for _, r := range b.sects[key] {
-			if at := cutTaskFile(root, r.ID); at > 0 {
-				out = append(out, "предупреждение: "+cutTaskFileNote(r.ID, at)+
+			docRoot, where := root, ""
+			for _, l := range linked {
+				if branchOfTask(l.Branch, r.ID) {
+					docRoot, where = l.Path, " (дерево задачи "+l.Path+")"
+					break
+				}
+			}
+			if at := cutTaskFile(docRoot, r.ID); at > 0 {
+				out = append(out, "предупреждение: "+cutTaskFileNote(r.ID, at)+where+
 					"; очередь и состав поезда считаются без записи этой задачи, merge по ней откажет")
 			}
 		}

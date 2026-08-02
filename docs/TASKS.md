@@ -37,7 +37,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 [после DK-041] | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-052 | taskctl: рубеж доски из worktree и идемпотентный file | task | P3 | 12 (0+6+1+0+5) | S | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
+| DK-052 | taskctl: рубеж доски из worktree и идемпотентный file | task | P3 | 12 (0+6+1+0+5) | S | [tasks/DK-052.md](tasks/DK-052.md) |
 | DK-053 | shipctl: замок конвейера, тесты из конфига, бескодовая задача поезда | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-054 | скилл board-batch, раскладка скиллов и ключ test в devkitctl [после DK-052, DK-053] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-048-batch-dispatcher.md](lld/DK-048-batch-dispatcher.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

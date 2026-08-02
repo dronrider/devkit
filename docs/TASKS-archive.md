@@ -50,3 +50,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-051 | agentctl budget: размер пачки из остатка лимитов | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-051.md](tasks/archive/2026/DK-051.md), `f3b2ed9`, `1206bde`, `c3dbadf`, `bf2d51f` |
 | DK-052 | taskctl: рубеж доски из worktree и идемпотентный file | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-052.md](tasks/archive/2026/DK-052.md) |
 | DK-053 | shipctl: замок конвейера, тесты из конфига, бескодовая задача поезда | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-053.md](tasks/archive/2026/DK-053.md), `fd8fbb5`, `a28072f`, `3c1f620`, `4df298c`, `74407f0`, `9a6347b`, `baf5880` |
+| DK-054 | скилл board-batch, раскладка скиллов и ключ test в devkitctl | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-054.md](tasks/archive/2026/DK-054.md), `cb0e0e6`, `0a5d36d`, `e3e3b67`, `49f61aa`, `ab08c3e` |

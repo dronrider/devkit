@@ -51,3 +51,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-052 | taskctl: рубеж доски из worktree и идемпотентный file | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-052.md](tasks/archive/2026/DK-052.md) |
 | DK-053 | shipctl: замок конвейера, тесты из конфига, бескодовая задача поезда | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-053.md](tasks/archive/2026/DK-053.md), `fd8fbb5`, `a28072f`, `3c1f620`, `4df298c`, `74407f0`, `9a6347b`, `baf5880` |
 | DK-054 | скилл board-batch, раскладка скиллов и ключ test в devkitctl | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-054.md](tasks/archive/2026/DK-054.md), `cb0e0e6`, `0a5d36d`, `e3e3b67`, `49f61aa`, `ab08c3e` |
+| DK-073 | taskctl draft и скилл board-groom: черновик задачи мимо доски, оформление отдельным шагом | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-073.md](tasks/archive/2026/DK-073.md), `ca93d9f`, `9116c77`, `055963e`, `fbb4186`, `c900741`, `aa12aac`, `6e7a806`, `d8122ba` |

@@ -48,3 +48,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-050 | taskctl batch: отбор кандидатов пачки | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-050.md](tasks/archive/2026/DK-050.md) |
 | DK-066 | Два исхода проверки: провал выката и приёмка с замечаниями, непроверенный выкат виден после возврата в работу | task | P2 | 2026-08-02 | [tasks/archive/2026/DK-066.md](tasks/archive/2026/DK-066.md), `2687f6a`, `7b14f71`, `2c63074`, `8c50d27`, `f7f8b9b`, `9b710f3`, `6340051`, `a5e3d01`, `9b098f2` |
 | DK-051 | agentctl budget: размер пачки из остатка лимитов | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-051.md](tasks/archive/2026/DK-051.md), `f3b2ed9`, `1206bde`, `c3dbadf`, `bf2d51f` |
+| DK-052 | taskctl: рубеж доски из worktree и идемпотентный file | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-052.md](tasks/archive/2026/DK-052.md) |

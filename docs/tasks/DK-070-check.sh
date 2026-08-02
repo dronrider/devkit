@@ -75,7 +75,25 @@ cat > docs/tasks/XR-001.md <<'EOF'
 
 - нейминг: отклонено, стиль проекта
 EOF
-printf '# XR-003: третья\n\n## Ревью\n\n- настоящее замечание без исхода\n' > docs/tasks/XR-003.md
+# У XR-003 настоящего раздела «Сценарий проверки» нет, есть только цитата
+# чужого, плюс настоящее замечание без исхода.
+cat > docs/tasks/XR-003.md <<'EOF'
+# XR-003: третья
+
+## Ход работы
+
+Вывод merge на синтетической доске:
+
+```
+## Сценарий проверки
+
+Агентский: `shipctl status`, ждём свободную очередь.
+```
+
+## Ревью
+
+- настоящее замечание без исхода
+EOF
 git add docs
 git commit -qm "docs(tasks): файлы задач"
 
@@ -88,15 +106,21 @@ git checkout -qb xr-003-fix
 printf 'ещё\n' > b.txt
 git add b.txt
 git commit -qm "feat: XR-003 правка"
-shipctl merge XR-003 --test true 2>&1 | grep "замечания без исхода"
-git checkout -q main
+shipctl merge XR-003 --train --test true 2>&1 | grep "замечания без исхода"
 
-echo "--- 3. процитированное замечание слияние пропускает, запись встаёт в свой раздел"
-git checkout -qb xr-001-fix
+echo "--- 3. процитированный заголовок за раздел «Сценарий проверки» не сходит"
+taskctl -C "$W" review resolve XR-003 1 fixed --reason "стиль проекта" -m "docs(tasks): XR-003 исход замечания"
+shipctl merge XR-003 --train --test true | grep "нет раздела «Сценарий проверки»"
+
+echo "--- 4. процитированное замечание слияние пропускает, запись встаёт в свой раздел"
+git checkout -qb xr-001-fix main
 printf 'правка\n' > a.txt
 git add a.txt
 git commit -qm "feat: XR-001 правка"
-shipctl merge XR-001 --test true | grep -E "слито|Check"
+OUT=$(shipctl merge XR-001 --train --test true)
+echo "$OUT"
+echo "$OUT" | grep -q "нет раздела «Сценарий проверки»" && { echo "ПРОВАЛ: подсказка при настоящем разделе"; exit 1; }
 sed -n '/^## Выкат/,$p' docs/tasks/XR-001.md
+shipctl ship | tail -2
 shipctl status | grep "очередь занята"
 echo "--- готово, дерево: $W"

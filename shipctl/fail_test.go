@@ -86,11 +86,48 @@ func TestRevertClearsFailMark(t *testing.T) {
 	if strings.Contains(string(calls), "move XR-001") {
 		t.Fatalf("откат двигал задачу, которая и так в In progress: %q", calls)
 	}
-	if !strings.Contains(msg, "признак провала") {
+	if !strings.Contains(msg, "признак провала снят откатом") {
 		t.Fatalf("откат молчит про снятый признак: %q", msg)
 	}
-	if log := gitT(t, root, "log", "--format=%s"); !strings.Contains(log, "провал проверки погашен откатом") {
+	if log := gitT(t, root, "log", "--format=%s"); !strings.Contains(log, "признак провала снят откатом") {
 		t.Fatalf("коммита доски о погашении нет:\n%s", log)
+	}
+}
+
+// Та же строка задачи, но на блокере: провал и блокировка уживаются в
+// заголовке, между ними задачу могли отложить до ответа хостера.
+const rowBlockedFailed = "| XR-001 | Починка бага [провал: прод отдаёт 500] [блок: ждём хостера] | bug | P1 | 55 (50+0+0+5+0) | [tasks/XR-001.md](tasks/XR-001.md) |\n"
+
+// TestRevertClearsFailMarkFromBlocked: откат чинит прод независимо от того, в
+// какой секции лежит строка, поэтому и признак он гасит независимо от неё.
+// Раньше задачу с блокера revert только возвращал в In progress, пометка
+// оставалась, и очередь выката стояла с починенным продом.
+func TestRevertClearsFailMarkFromBlocked(t *testing.T) {
+	root, callLog := setup(t, "", "")
+	data, _ := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
+	write(t, root, "docs/TASKS.md", strings.Replace(string(data),
+		"## Blocked\n\nНет.\n", "## Blocked\n\n"+section(rowBlockedFailed), 1))
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 на блокере")
+	codeCommit(t, root, "XR-001", "one.txt")
+
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := os.ReadFile(callLog)
+	if !strings.Contains(string(calls), "fail XR-001 --clear") {
+		t.Fatalf("признак провала не снят у задачи с блокера: %q", calls)
+	}
+	if !strings.Contains(string(calls), "move XR-001 in-progress") {
+		t.Fatalf("задача с блокера не вернулась в работу: %q", calls)
+	}
+	if !strings.Contains(msg, "признак провала снят откатом") {
+		t.Fatalf("откат молчит про снятый признак: %q", msg)
+	}
+	log := gitT(t, root, "log", "-1", "--format=%s")
+	if !strings.Contains(log, "обратно в In progress") || !strings.Contains(log, "признак провала снят откатом") {
+		t.Fatalf("обе правки доски должны уехать одним коммитом: %q", log)
 	}
 }
 

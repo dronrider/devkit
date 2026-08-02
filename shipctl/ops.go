@@ -1053,29 +1053,38 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		}
 	}
 	// Откат вернул прод к прежнему состоянию, значит провал проверки погашен.
-	// Задача к этому моменту уже в In progress (туда её увёл taskctl fail),
-	// поэтому move не зовётся и признак снимается отдельной командой; из
-	// Check его снимет сам move.
+	// Признак снимается отдельной командой и независимо от секции: перевод в
+	// In progress его не трогает (гасит только перевод в Check), а между
+	// провалом и откатом задачу могли поставить на блокер. Обе правки доски
+	// идут одним коммитом.
 	if b, err := loadBoard(root); err == nil && b.sectOf(p.ID) != "" {
-		switch {
-		case b.sectOf(p.ID) != "in-progress":
-			if _, err := taskMove(root, p.ID, "in-progress"); err != nil {
-				return "", err
-			}
-			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s обратно в In progress", p.ID))
-			if err != nil {
-				return "", err
-			}
-			out = append(out, fmt.Sprintf("доска: %s обратно в In progress, коммит %s", p.ID, hash))
-		case failedOf(b, p.ID) != "":
+		var done []string
+		cleared := failedOf(b, p.ID) != ""
+		if cleared {
 			if _, err := taskFailClear(root, p.ID); err != nil {
 				return "", err
 			}
-			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s провал проверки погашен откатом", p.ID))
+		}
+		if b.sectOf(p.ID) != "in-progress" {
+			if _, err := taskMove(root, p.ID, "in-progress"); err != nil {
+				return "", err
+			}
+			done = append(done, "обратно в In progress")
+		}
+		if cleared {
+			done = append(done, "признак провала снят откатом")
+		}
+		if len(done) > 0 {
+			joined := strings.Join(done, ", ")
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s %s", p.ID, joined))
 			if err != nil {
 				return "", err
 			}
-			out = append(out, fmt.Sprintf("доска: признак провала %s снят откатом, очередь выката свободна, коммит %s", p.ID, hash))
+			note := ""
+			if cleared {
+				note = ", очередь выката свободна"
+			}
+			out = append(out, fmt.Sprintf("доска: %s %s%s, коммит %s", p.ID, joined, note, hash))
 		}
 	}
 	if err := push("доска запушена", "откат и повторный выкат прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {

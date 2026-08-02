@@ -31,3 +31,5 @@ jobs:
         run: sh devkitctl/test.sh
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
+      - name: бит исполнения test.sh по всему репозиторию
+        run: python3 hooks/check-exec-bit.py

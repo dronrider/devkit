@@ -96,8 +96,10 @@ func trainWarnings(root, main, branch string, b *board, id string, train []strin
 }
 
 // trainOverlap находит пересечение файлов ветки с файлами коммитов задач
-// поезда. Правки под docs/ (доска, файлы задач, LLD) пересечением не
-// считаются: файл задачи и доску трогает почти каждая ветка.
+// поезда. Коммиты задачи берутся так же, как в составе поезда: из записи
+// «Выкат» и по ID в subject, иначе подсказка молчала бы ровно на той ветке,
+// где ID в сообщения не попал. Правки под docs/ (доска, файлы задач, LLD)
+// пересечением не считаются: файл задачи и доску трогает почти каждая ветка.
 func trainOverlap(root, main, branch string, train []string) ([]string, error) {
 	if len(train) == 0 {
 		return nil, nil
@@ -121,10 +123,14 @@ func trainOverlap(root, main, branch string, train []string) ([]string, error) {
 	}
 	var out []string
 	for _, id := range train {
+		rec, err := mergedShas(root, id)
+		if err != nil {
+			return nil, err
+		}
 		var hit []string
 		for _, ln := range strings.Split(log, "\n") {
 			sha, subj, ok := strings.Cut(ln, "\t")
-			if !ok || !containsWord(subj, id) || isRevertSubject(subj) {
+			if !ok || isRevertSubject(subj) || (!containsWord(subj, id) && !inRecord(rec, sha)) {
 				continue
 			}
 			files, err := git(root, "show", "--name-only", "--pretty=", sha)

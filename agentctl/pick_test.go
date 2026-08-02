@@ -496,8 +496,8 @@ func TestCmdPickQuota(t *testing.T) {
 			t.Fatalf("в человеческой строке нет хвоста корректора: %q", out)
 		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all), " +
-			testNow.Format("2006-01-02") + "."
+		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
+			"квота: week_all 95% дефицит, снимок 23м назад), " + testNow.Format("2006-01-02") + "."
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("строка записи разошлась с ожидаемой:\n%s", data)
 		}
@@ -581,8 +581,14 @@ func TestCmdPickQuota(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
-		if !strings.HasPrefix(out, "model: opus") || strings.Contains(out, "корректор") {
+		if !strings.HasPrefix(out, "model: opus") || strings.Contains(out, "корректор:") {
 			t.Fatalf("грумминговый вердикт скорректирован: %q", out)
+		}
+		// Состояние квоты при этом видно: корректор к груммингу не применяется, и
+		// сказать об этом надо, иначе дефицит в снимке выглядит незамеченным.
+		if !strings.Contains(out, "квота: week_all 95% дефицит") ||
+			!strings.Contains(out, "корректор его не двигает") {
+			t.Fatalf("грумминговый вердикт молчит про квоту: %q", out)
 		}
 	})
 
@@ -683,7 +689,7 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 	})
 
-	t.Run("свежий снимок предупреждения не печатает", func(t *testing.T) {
+	t.Run("свежий снимок виден состоянием, а не предупреждением", func(t *testing.T) {
 		content := "taken = " + at(testNow.Add(-time.Minute)) + "\n" +
 			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n"
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
@@ -694,7 +700,12 @@ func TestCmdPickQuota(t *testing.T) {
 			t.Fatalf("pick: %v", err)
 		}
 		if strings.Contains(out, "снимок квоты") || strings.Contains(out, "снимка квоты") {
-			t.Fatalf("рабочий снимок занял место в выводе: %q", out)
+			t.Fatalf("рабочий снимок занял место в выводе предупреждением: %q", out)
+		}
+		// Сдвига нет, и без этой строки вердикт по снимку в норме читался бы так
+		// же, как вердикт, для которого снимка не нашлось вовсе.
+		if !strings.Contains(out, "квота: week_all 50%, снимок 1м назад, сдвига нет") {
+			t.Fatalf("состояние квоты в вердикте не названо: %q", out)
 		}
 	})
 
@@ -853,7 +864,7 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatalf("pick --role review --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Ревью: субагент sonnet/high по вердикту pick, " + testNow.Format("2006-01-02") + "."
+		want := "- Ревью: субагент sonnet/high по вердикту pick" + noQuotaNote + ", " + testNow.Format("2006-01-02") + "."
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("строка ревью разошлась с ожидаемой:\n%s", data)
 		}
@@ -922,6 +933,122 @@ func TestPickOnRealBoardFormat(t *testing.T) {
 	if _, err := cmdPick(root, "T-001", false, roleExec); err == nil {
 		t.Fatal("жду ошибку на пустой доске")
 	}
+}
+
+// noQuotaNote это хвост строки записи там, где снимка нет: временный HOME
+// тестов пуст, и такой хвост получает всякая запись без своего снимка.
+const noQuotaNote = " (квота: снимка нет, корректор выключен)"
+
+// TestRecordQuotaState проверяет главное требование DK-018: по строке в файле
+// задачи видно, на каких данных выбрана модель. Без состояния квоты три разных
+// случая (корректора нет, снимок в норме, снимок протух) дают одну и ту же
+// запись, и разобрать по ней закрытую задачу нельзя.
+func TestRecordQuotaState(t *testing.T) {
+	quota := isolateQuota(t)
+	fixNow(t, testNow)
+	root := writeBoard(t)
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(quota), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		snap string
+		id   string
+		want string
+	}{
+		{
+			name: "снимка нет",
+			id:   "T-002",
+			want: "- Исполнение: субагент opus/medium по вердикту pick (квота: снимка нет, корректор выключен), ",
+		},
+		{
+			name: "снимок в норме, сдвига нет",
+			snap: "taken = " + at(testNow.Add(-freshAge)) + "\n" +
+				"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n",
+			id:   "T-002",
+			want: "- Исполнение: субагент opus/medium по вердикту pick (квота: week_all 50%, снимок 23м назад, сдвига нет), ",
+		},
+		{
+			name: "дефицит сдвинул вердикт вниз",
+			snap: "taken = " + at(testNow.Add(-time.Minute)) + "\n" +
+				"week_all = 95% сброс " + at(testNow.Add(halfWindow)) + "\n",
+			id: "T-002",
+			want: "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
+				"квота: week_all 95% дефицит, снимок 1м назад), ",
+		},
+		{
+			// Профицит по протухшему снимку вверх не двигает, и запись обязана
+			// отличаться от записи по свежему снимку в норме: решение тут принято
+			// вслепую, а не по остатку.
+			name: "протухший снимок назван протухшим",
+			snap: "taken = " + at(testNow.Add(-3*time.Hour)) + "\n" +
+				"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n",
+			id:   "T-005",
+			want: "- Исполнение: субагент sonnet/high по вердикту pick (квота: week_all 5% профицит, снимок 3ч 0м назад, протух, сдвига нет), ",
+		},
+		{
+			// Подъём на max платит уже из двух бакетов, и в записи обязаны быть оба:
+			// по одному week_all не восстановить, чем вердикт будет платить.
+			name: "подъём на max несёт оба бакета",
+			snap: "taken = " + at(testNow.Add(-time.Minute)) + "\n" +
+				"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n" +
+				"week_max = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n",
+			id: "T-003",
+			want: "- Исполнение: субагент fable/xhigh по вердикту pick (маппинг opus, корректор: профицит week_all, week_max; " +
+				"квота: week_all 5% профицит, week_max 5% профицит, снимок 1м назад), ",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.snap == "" {
+				if err := os.RemoveAll(quota); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(quota, []byte(c.snap), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			taskFile := filepath.Join(root, "docs", "tasks", c.id+".md")
+			if err := os.WriteFile(taskFile, []byte("# "+c.id+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cmdPick(root, c.id, true, roleExec); err != nil {
+				t.Fatalf("pick --record: %v", err)
+			}
+			data, _ := os.ReadFile(taskFile)
+			want := c.want + testNow.Format("2006-01-02") + "."
+			if !strings.Contains(string(data), want) {
+				t.Fatalf("строка записи разошлась с ожидаемой\nжду: %s\nвижу:\n%s", want, data)
+			}
+		})
+	}
+
+	t.Run("повторный record не задваивает состояние", func(t *testing.T) {
+		if err := os.WriteFile(quota, []byte("taken = "+at(testNow.Add(-time.Minute))+"\n"+
+			"week_all = 50% сброс "+at(testNow.Add(halfWindow))+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
+		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := cmdPick(root, "T-002", true, roleExec); err != nil {
+				t.Fatalf("pick --record, вызов %d: %v", i+1, err)
+			}
+		}
+		data, _ := os.ReadFile(taskFile)
+		for _, line := range strings.Split(string(data), "\n") {
+			if n := strings.Count(line, "квота:"); n > 1 {
+				t.Fatalf("состояние квоты в строке названо %d раза: %q", n, line)
+			}
+		}
+		if n := strings.Count(string(data), "квота: week_all 50%, снимок 1м назад, сдвига нет"); n != 2 {
+			t.Fatalf("жду по одному состоянию на каждую из двух записей, вижу %d:\n%s", n, data)
+		}
+	})
 }
 
 func TestRecordExecution(t *testing.T) {
@@ -1001,7 +1128,7 @@ func TestRecordExecution(t *testing.T) {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Начало.\n- Исполнение: субагент haiku/low по вердикту pick, " +
+		want := "- Начало.\n- Исполнение: субагент haiku/low по вердикту pick" + noQuotaNote + ", " +
 			time.Now().Format("2006-01-02") + ".\n\n## Ревью"
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("строка не в конце раздела:\n%s", data)

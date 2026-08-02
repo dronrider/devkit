@@ -423,6 +423,92 @@ func (c correction) tail() string {
 	}
 }
 
+// quotaFacts это состояние квоты на момент решения: проценты бакетов, из
+// которых тратят исходный и итоговый ярусы, возраст снимка и был ли сдвиг. Со
+// сдвигом эти данные и так видны хвостом корректора, а без сдвига до них
+// добраться неоткуда, и три разных случая (корректора нет, снимка нет, снимок
+// в норме) выглядят одинаково.
+type quotaFacts struct {
+	Off     string // почему остаток не смотрели; пусто, когда снимок читался
+	Age     string // «снимок 1ч 5м назад», «снимок 3ч 0м назад, протух»
+	Buckets []string
+	Shifted bool
+	Groom   bool
+	// Про то же самое уже сказано предупреждением вердикта. В файл задачи строка
+	// идёт всё равно: предупреждений там нет, а состояние нужно и там.
+	Warned bool
+}
+
+func (f quotaFacts) note() string {
+	if f.Off != "" {
+		return "квота: " + f.Off
+	}
+	if f.Age == "" && len(f.Buckets) == 0 {
+		return ""
+	}
+	parts := append([]string{}, f.Buckets...)
+	parts = append(parts, f.Age)
+	switch {
+	case f.Groom:
+		parts = append(parts, "вердикт грумминговый, корректор его не двигает")
+	case f.Shifted:
+		// Куда и почему съехал ярус, сказано хвостом корректора рядом, второй раз
+		// это же не повторяем.
+	default:
+		parts = append(parts, "сдвига нет")
+	}
+	return "квота: " + strings.Join(parts, ", ")
+}
+
+// quotaFactsOf снимает состояние квоты для вердикта. Бакеты берутся те, из
+// которых тратят исходный и итоговый ярусы: при сдвиге вниз причина лежит в
+// бакете исходного, а знать надо и то, чем будет платить итоговый.
+func quotaFactsOf(q *quotaSpec, s snapshot, c correction, groom bool, now time.Time) quotaFacts {
+	if s.empty() {
+		return quotaFacts{Off: "снимка нет, корректор выключен"}
+	}
+	f := quotaFacts{Age: snapshotAge(s, now), Shifted: c.shifted(), Groom: groom}
+	for _, name := range union(q.Spend[c.From], q.Spend[c.Tier]) {
+		b, ok := s.bucket(name)
+		if !ok {
+			f.Buckets = append(f.Buckets, name+" в снимке нет")
+			continue
+		}
+		part := fmt.Sprintf("%s %d%%", name, int(math.Round(b.Used*100)))
+		if st := b.status(now); st != statusNormal {
+			part += " " + st
+		}
+		f.Buckets = append(f.Buckets, part)
+	}
+	return f
+}
+
+// snapshotAge это возраст снимка человеческими словами. Отдельно называются
+// случаи, где возрасту верить нельзя: без них «сдвига нет» читалось бы как
+// «остаток посмотрели и решили не двигать».
+func snapshotAge(s snapshot, now time.Time) string {
+	switch age := now.Sub(s.Taken); {
+	case s.Taken.IsZero():
+		return "момент снятия неизвестен"
+	case age < 0:
+		return "снимок из будущего, часы разошлись"
+	case age > snapshotMaxAge:
+		return "снимок " + humanAge(age) + " назад, протух"
+	default:
+		return "снимок " + humanAge(age) + " назад"
+	}
+}
+
+func union(a, b []string) []string {
+	out := append([]string{}, a...)
+	for _, v := range b {
+		if !contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // correctTier двигает ярус вердикта по лестнице, опираясь на остаток лимитов.
 // Порядок правил значим: дефицит проверяется раньше профицита, потому что бакет
 // тратится взвешенной ценой модели и сдвиг вверх при дефиците прожёг бы его

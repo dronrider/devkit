@@ -356,6 +356,59 @@ func TestCorrectionTail(t *testing.T) {
 	}
 }
 
+// TestQuotaFacts проверяет форму состояния квоты там, куда сквозной pick не
+// достаёт: сдвиг сверху вниз (бакет платившего яруса обязан остаться в строке),
+// бакет, которого в снимке нет, и снимок, чьему возрасту верить нельзя.
+func TestQuotaFacts(t *testing.T) {
+	q := specAt(t, "")
+	cases := []struct {
+		name string
+		snap snapshot
+		c    correction
+		want string
+	}{
+		{
+			// max платил из двух бакетов, pro платит из одного: пропади бакет
+			// исходного яруса, и причина сдвига в строке не сошлась бы с данными.
+			name: "сдвиг вниз несёт бакеты обоих ярусов",
+			snap: snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 90, halfWindow)),
+			c:    correction{From: "max", Tier: "pro"},
+			want: "квота: week_all 50%, week_max 90% дефицит, снимок 22м назад",
+		},
+		{
+			name: "бакета нет в снимке",
+			snap: snapOf(freshAge, bucketAt("week_all", 50, halfWindow)),
+			c:    correction{From: "max", Tier: "max"},
+			want: "квота: week_all 50%, week_max в снимке нет, снимок 22м назад, сдвига нет",
+		},
+		{
+			name: "снимок без момента снятия",
+			snap: snapshot{Buckets: []bucket{bucketAt("week_all", 50, halfWindow)}},
+			c:    correction{From: "pro", Tier: "pro"},
+			want: "квота: week_all 50%, момент снятия неизвестен, сдвига нет",
+		},
+		{
+			name: "снимок из будущего",
+			snap: snapOf(-time.Hour, bucketAt("week_all", 50, halfWindow)),
+			c:    correction{From: "pro", Tier: "pro"},
+			want: "квота: week_all 50%, снимок из будущего, часы разошлись, сдвига нет",
+		},
+		{
+			name: "снимка нет вовсе",
+			snap: snapshot{},
+			c:    correction{From: "pro", Tier: "pro"},
+			want: "квота: снимка нет, корректор выключен",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := quotaFactsOf(q, c.snap, c.c, false, testNow).note(); got != c.want {
+				t.Fatalf("состояние квоты %q, жду %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestCmdQuota(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "quota.local")

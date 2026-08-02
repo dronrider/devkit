@@ -223,30 +223,39 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	now := timeNow()
 	v := pickTier(*r)
 	v.Effort = pickEffort(*r)
+	var qf quotaFacts
 	// Контур харнеса резолвится один раз: из него берётся и объявление квоты
 	// (какие бакеты бывают, из каких тратит ярус, где лежит снимок), и маппинг
 	// ярусов в модели последним шагом.
 	hc := resolveHarnessContext(root)
 	var c correction
 	var warns []string
+	// Про снимок уже сказано предупреждением: в человеческой строке состояние
+	// квоты тогда не повторяется, предупреждение говорит то же самое и вдобавок
+	// несёт команду починки.
+	warned := false
 	if ov.Tier != "" {
 		// Ручное решение сильнее автоматики: override корректор не двигает,
 		// иначе указанный руками ярус пришлось бы отстаивать повторно на
 		// каждый снимок квоты.
 		v = verdict{Tier: ov.Tier, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
+		qf = quotaFacts{Off: "не смотрели, ярус задан override-строкой"}
 	} else if hc.Quota == nil {
 		// Снимать остаток нечем: причина уходит хвостом, потому что вердикт без
 		// корректора выглядит совершенно штатным.
 		if hc.QuotaNote != "" {
 			warns = append(warns, hc.QuotaNote)
 		}
+		qf = quotaFacts{Off: "объявления нет, корректор выключен", Warned: true}
 	} else {
 		var s snapshot
 		s, err = hc.Quota.read()
 		if err != nil {
 			warns = append(warns, fmt.Sprintf("снимок квоты не прочитан (%v), вердикт без корректора", err))
+			qf = quotaFacts{Off: "снимок не прочитан, корректор выключен", Warned: true}
 		} else if w := s.ageWarn(hc.Quota.From, now); w != "" {
 			warns = append(warns, w)
+			warned = true
 		}
 		if w := hc.Quota.legacyWarn(); w != "" {
 			warns = append(warns, w)
@@ -254,6 +263,10 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 		warns = append(warns, s.Warns...)
 		c = correctTier(hc.Quota, v.Tier, v.Groom, s, now)
 		v.Tier = c.Tier
+		if qf.Off == "" {
+			qf = quotaFactsOf(hc.Quota, s, c, v.Groom, now)
+			qf.Warned = warned
+		}
 	}
 	// Спуск на роль ревью идёт последним по ярусной оси: сдвигается то, что
 	// осталось после override и корректора, иначе корректор увёл бы вердикт
@@ -287,6 +300,13 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	if tail := c.tail(); tail != "" {
 		v.Reason += "; " + tail
 	}
+	// Состояние квоты идёт в вердикт не только на сдвиге: молчание корректора
+	// одинаково выглядит и при снимке в норме, и при выключенном корректоре, а
+	// решение про модель в этих случаях принимается на разных данных. Там, где
+	// про снимок уже сказано предупреждением, второй раз не повторяем.
+	if n := qf.note(); n != "" && !qf.Warned {
+		v.Reason += "; " + n
+	}
 	// Совет отложить адресован тому, кто решает, браться ли за работу сейчас,
 	// поэтому в вердикте ревьювера его нет: дифф к этому моменту уже написан,
 	// откладывать нечего, а исполнительский вердикт по той же задаче совет и
@@ -306,7 +326,7 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v, c, tm, now, role); err != nil {
+		if err := recordExecution(root, id, v, c, qf, tm, now, role); err != nil {
 			return "", err
 		}
 	}
@@ -321,8 +341,11 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 // строка не должна обещать то, чего не было. Сдвинутый вердикт несёт и
 // маппинг, и причину сдвига: иначе по файлу задачи не понять, почему модель
 // разошлась с таблицей. Роль ревью пишется словом «Ревью»: по «Ходу работы»
-// тогда видно не только кто исполнял, но и кто читал дифф.
-func recordExecution(root, id string, v verdict, c correction, tm tierModels, now time.Time, role string) error {
+// тогда видно не только кто исполнял, но и кто читал дифф. Состояние квоты
+// идёт в строку всегда: без него запись про несдвинутый вердикт не отличает
+// выключенный корректор от снимка в норме, а по закрытой задаче потом не
+// восстановить, на каких данных модель выбиралась.
+func recordExecution(root, id string, v verdict, c correction, qf quotaFacts, tm tierModels, now time.Time, role string) error {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -339,9 +362,16 @@ func recordExecution(root, id string, v verdict, c correction, tm tierModels, no
 	case v.Groom:
 		label = "Грумминг"
 	}
-	shift := ""
+	var parts []string
 	if c.shifted() {
-		shift = fmt.Sprintf(" (маппинг %s, корректор: %s)", tm.model(c.From), c.Note)
+		parts = append(parts, fmt.Sprintf("маппинг %s, корректор: %s", tm.model(c.From), c.Note))
+	}
+	if n := qf.note(); n != "" {
+		parts = append(parts, n)
+	}
+	tail := ""
+	if len(parts) > 0 {
+		tail = " (" + strings.Join(parts, "; ") + ")"
 	}
 	// Строка несёт модель, а не ярус: по ней восстанавливают, чем задача
 	// делалась. Развернуть ярус нечем, значит в строку идёт он сам, иначе
@@ -351,7 +381,7 @@ func recordExecution(root, id string, v verdict, c correction, tm tierModels, no
 		name = v.Tier
 	}
 	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick%s, %s.",
-		label, name, v.Effort, shift, now.Format("2006-01-02"))
+		label, name, v.Effort, tail, now.Format("2006-01-02"))
 
 	lines := strings.Split(content, "\n")
 	head := -1

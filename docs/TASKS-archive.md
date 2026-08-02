@@ -41,3 +41,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-060 | CI-шаг проверки символов всегда красный: он ловит чужой вывод панели в agentctl/testdata | bug | P2 | 2026-08-02 | [tasks/archive/2026/DK-060.md](tasks/archive/2026/DK-060.md), `ca754bc` |
 | DK-061 | клик по уведомлению открывает лишнее окно worktree вместо окна сессии | bug | P2 | 2026-08-01 | [tasks/archive/2026/DK-061.md](tasks/archive/2026/DK-061.md), `9d5f21c`, `2e81b3f`, `20fea02` |
 | DK-039 | генерация файлов правил: AGENTS.md источник, тонкий CLAUDE.md, вклейка с маркерами | task | P3 | 2026-08-02 | [tasks/archive/2026/DK-039.md](tasks/archive/2026/DK-039.md), `2348855`, `969ddd0`, `e761d82`, `095d28d`, `efc6778`, `a90f96b`, `3e4ee90`, `11da9e7` |
+| DK-062 | уведомления по важности: громкий повод против фонового, событие Stop | task | P2 | 2026-08-02 | [tasks/archive/2026/DK-062.md](tasks/archive/2026/DK-062.md), `b45b082`, `7b5baa2`, `a1cc8b8`, `4211c2f`, `0ed5d9c`, `59f2af0` |

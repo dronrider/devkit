@@ -62,6 +62,26 @@ func TestMergeRegcheckWarning(t *testing.T) {
 	}
 }
 
+// TestScenarioWarningSkipsFenced: заголовок «Сценарий проверки», вложенный в
+// ограждённый блок, это чужой вывод, а не свой раздел. Считая его своим,
+// подсказка молчит ровно там, где задача уезжает в поезд без сценария.
+func TestScenarioWarningSkipsFenced(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001: заголовок\n\n## Ход работы\n\n"+
+		"Вывод merge на синтетической доске:\n\n"+
+		"```\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n```\n")
+	warns := scenarioWarning(root, "XR-001", false)
+	if len(warns) != 1 || !strings.Contains(warns[0], "нет раздела «Сценарий проверки»") {
+		t.Fatalf("цитата сошла за раздел, подсказка потерялась: %v", warns)
+	}
+	// Настоящий раздел подсказку снимает, даже когда цитата рядом.
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003: заголовок\n\n"+
+		"```\n## Сценарий проверки\n\nчужой вывод\n```\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	if warns := scenarioWarning(root, "XR-003", false); warns != nil {
+		t.Fatalf("подсказка при настоящем разделе: %v", warns)
+	}
+}
+
 func writeLog(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "log")

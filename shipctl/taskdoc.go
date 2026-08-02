@@ -38,6 +38,20 @@ func fenceMask(lines []string) []bool {
 	return mask
 }
 
+// hasHeading говорит, есть ли в файле заголовок любого уровня с заданным
+// текстом. Заголовок внутри ограждённого блока не считается: это чужой вывод,
+// а не раздел нашего файла.
+func hasHeading(doc, name string) bool {
+	lines := strings.Split(doc, "\n")
+	mask := fenceMask(lines)
+	for i, ln := range lines {
+		if !mask[i] && strings.HasPrefix(ln, "#") && strings.Contains(ln, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // sectionLines возвращает строки раздела с заданным заголовком, пропуская
 // ограждённые блоки. Заголовок сравнивается по префиксу: у разделов в файлах
 // задач встречается хвост вроде «## Ревью (второй круг)».

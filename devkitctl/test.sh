@@ -566,6 +566,18 @@ echo "$out" | grep -q 'дописан' && fail "doctor --fix дописал в �
 after=$(od -c "$fproj/.devkit/deploy.local")
 [ "$before" = "$after" ] || fail "doctor --fix изменил байты уже полного файла: было [$before] стало [$after]"
 
+# Файл без завершающего перевода строки, в котором ключа не хватает: перед
+# дописанным комментарием обязан появиться перенос строки, а не склейка с
+# последней имеющейся строкой.
+printf 'deploy = x\nautonomous = true' > "$fproj/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$fproj" 2>&1)
+echo "$out" | grep -q 'дописан недостающий ключ test' ||
+    fail "doctor --fix не дописал test в файл без завершающего перевода строки: $out"
+depfile=$(cat "$fproj/.devkit/deploy.local")
+echo "$depfile" | grep -q '^autonomous = true$' ||
+    fail "дописывание в файл без \\n на конце склеило последнюю строку с комментарием: $depfile"
+echo "$depfile" | grep -q '^test =$' || fail "test не дописан отдельной строкой: $depfile"
+
 # Машинный контур гоняется на отдельном проекте, чтобы правки --fix не мешали
 # прежним шагам.
 mproj="$tmp/mproj"

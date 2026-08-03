@@ -39,7 +39,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-081 | Редирект корня в боковую директорию и признак корп-контура | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов [после DK-081] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
-| DK-084 | План раскладки оценок и ворклогов, trackctl sync в двух режимах [после DK-082] | task | P3 | 14 (0+8+2+0+4) | L | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация [после DK-082] | task | P3 | 13 (0+8+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов [после DK-081] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
@@ -50,7 +50,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |
 | DK-087 | shipctl: ветка по ключу тикета, отказ слияния в корп-контуре [после DK-082] | task | P3 | 10 (0+5+1+0+4) | S | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
-| DK-088 | trackctl dates: отметки времени коммитов ветки по легенде подпольного режима [после DK-084] | task | P3 | 10 (0+6+2+0+2) | S | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-088 | LLD имитации человеческого темпа в трекере: строить ли вообще | LLD | P3 | 10 (0+3+5+0+2) | - | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |
 | DK-076 | taskctl и agentctl читают разделы файла задачи мимо ограждённых блоков: review resolve перепишет строку внутри цитаты | bug | P3 | 9 (0+3+1+5+0) | S | - |
 | DK-077 | shipctl: trainTasks без тега deployed возвращает пустой поезд, ship переводит в Check не все слитые задачи | bug | P3 | 9 (0+3+1+5+0) | S | - |

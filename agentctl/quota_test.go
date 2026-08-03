@@ -612,7 +612,7 @@ func TestCmdPickWithoutQuotaSection(t *testing.T) {
 	// Снимок на месте и с дефицитом: сдвига всё равно нет, тратить из бакетов
 	// объявляет профиль, а он молчит.
 	writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
-	out, err := cmdPick(root, "T-002", false, roleExec)
+	out, err := cmdPick(root, "T-002", false, roleExec, "")
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}

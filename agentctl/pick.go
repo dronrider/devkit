@@ -200,11 +200,60 @@ func overrideValue(line, prefix string) string {
 	return v
 }
 
+// goalCap это решение потолка цели: с какого яруса срезали и почему. From
+// равен итоговому ярусу, когда потолок ничего не тронул.
+type goalCap struct {
+	From string
+	Note string
+}
+
+// goalTierCap читает потолок яруса из раздела «Бюджет» файла цели. Строки
+// «ярус» может не быть, тогда потолка нет и вердикт работает как обычно.
+func goalTierCap(root, goal string) (string, error) {
+	path, err := goalPathOf(root, goal)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	b, err := parseGoalBudget(goalSection(string(data), goalBudgetSection), nil)
+	if err != nil {
+		return "", err
+	}
+	return b.Tier, nil
+}
+
+// capTier режет вердикт потолком цели. Потолок только опускает: пользователь
+// задал рамку трат, а не назначил ярус, и подтягивать им дешёвый вердикт вверх
+// значило бы тратить бюджет там, где его никто не просил. Грумминговый вердикт
+// ниже pro не режется: нарезку цели дешёвая модель сделает плохо, и весь бюджет
+// уедет на переделку. Возвращается причина для человеческой строки и записи в
+// файл задачи, молчаливой подмены нет.
+func capTier(v *verdict, cap string) string {
+	ci, i := tierIndex(cap), tierIndex(v.Tier)
+	if ci < 0 || i < 0 {
+		return ""
+	}
+	note := "потолок цели: " + cap
+	if v.Groom && ci < tierIndex(tierPro) {
+		ci = tierIndex(tierPro)
+		note += ", грумминговый вердикт ниже pro не режется"
+	}
+	if i <= ci {
+		return note + ", вердикт и так не выше"
+	}
+	from := v.Tier
+	v.Tier = tierNames[ci]
+	return fmt.Sprintf("%s, %s -> %s", note, from, v.Tier)
+}
+
 // timeNow это часы утилиты, отдельной переменной ради тестов: формула
 // корректора и дата записи считаются от одного момента.
 var timeNow = time.Now
 
-func cmdPick(root, id string, record bool, role string) (string, error) {
+func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 	if !validRoles[role] {
 		return "", fmt.Errorf("неизвестная роль %q, допустимы exec и review", role)
 	}
@@ -274,6 +323,19 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	if role == roleReview {
 		reviewShift(&v, *r)
 	}
+	// Потолок цели режет вердикт последним шагом ярусной оси, после override и
+	// корректора: бюджетную рамку пользователь задал на всю цель, и ни ручная
+	// строка в файле задачи, ни остаток лимитов её не переопределяют.
+	cp := goalCap{From: v.Tier}
+	if goal != "" {
+		cap, gerr := goalTierCap(root, goal)
+		if gerr != nil {
+			return "", gerr
+		}
+		if cap != "" {
+			cp.Note = capTier(&v, cap)
+		}
+	}
 	// Пол base применяется здесь, а не сразу после pickEffort, потому что от
 	// override и от сдвига корректора зависит, к какому ярусу его применять; а
 	// явный override effort должен пол перебить целиком, поэтому если он есть,
@@ -299,6 +361,9 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 	c.SameModel = c.shifted() && tm.model(c.Tier) != unmappedModel && tm.model(c.From) == tm.model(c.Tier)
 	if tail := c.tail(); tail != "" {
 		v.Reason += "; " + tail
+	}
+	if cp.Note != "" {
+		v.Reason += "; " + cp.Note
 	}
 	// Состояние квоты идёт в вердикт не только на сдвиге: молчание корректора
 	// одинаково выглядит и при снимке в норме, и при выключенном корректоре, а
@@ -326,7 +391,7 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v, c, qf, tm, now, role); err != nil {
+		if err := recordExecution(root, id, v, c, cp, qf, tm, now, role); err != nil {
 			return "", err
 		}
 	}
@@ -345,7 +410,7 @@ func cmdPick(root, id string, record bool, role string) (string, error) {
 // идёт в строку всегда: без него запись про несдвинутый вердикт не отличает
 // выключенный корректор от снимка в норме, а по закрытой задаче потом не
 // восстановить, на каких данных модель выбиралась.
-func recordExecution(root, id string, v verdict, c correction, qf quotaFacts, tm tierModels, now time.Time, role string) error {
+func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) error {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -366,6 +431,15 @@ func recordExecution(root, id string, v verdict, c correction, qf quotaFacts, tm
 	if c.shifted() {
 		parts = append(parts, fmt.Sprintf("маппинг %s, корректор: %s", tm.model(c.From), c.Note))
 	}
+	switch {
+	case cp.Note == "":
+	case c.shifted() || cp.From == v.Tier:
+		// Исходный маппинг уже назван корректором либо потолок ничего не срезал:
+		// хватает самой причины.
+		parts = append(parts, cp.Note)
+	default:
+		parts = append(parts, fmt.Sprintf("маппинг %s, %s", tm.model(cp.From), cp.Note))
+	}
 	if n := qf.note(); n != "" {
 		parts = append(parts, n)
 	}
@@ -382,18 +456,26 @@ func recordExecution(root, id string, v verdict, c correction, qf quotaFacts, tm
 	}
 	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick%s, %s.",
 		label, name, v.Effort, tail, now.Format("2006-01-02"))
+	return os.WriteFile(path, []byte(insertIntoSection(content, "## Ход работы", line)), 0o644)
+}
 
+// insertIntoSection дописывает строку в конец названного раздела: перед
+// хвостовыми пустыми строками, чтобы запись не оторвалась от остальных, и не
+// задевая следующий раздел. Раздела нет, значит он добавляется в конец файла.
+// Тем же способом пишут строку исполнения в «Ход работы» и снимок витка в
+// «Журнал» файла цели: разделы разные, а место записи ищется одинаково.
+func insertIntoSection(content, heading, line string) string {
+	content = strings.TrimRight(content, "\n") + "\n"
 	lines := strings.Split(content, "\n")
 	head := -1
 	for i, l := range lines {
-		if strings.HasPrefix(l, "## Ход работы") {
+		if strings.HasPrefix(l, heading) {
 			head = i
 			break
 		}
 	}
 	if head < 0 {
-		content += "\n## Ход работы\n\n" + line + "\n"
-		return os.WriteFile(path, []byte(content), 0o644)
+		return content + "\n" + heading + "\n\n" + line + "\n"
 	}
 	end := len(lines)
 	for i := head + 1; i < len(lines); i++ {
@@ -410,5 +492,5 @@ func recordExecution(root, id string, v verdict, c correction, qf quotaFacts, tm
 		ins = []string{"", line}
 	}
 	lines = append(lines[:end], append(ins, lines[end:]...)...)
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+	return strings.Join(lines, "\n")
 }

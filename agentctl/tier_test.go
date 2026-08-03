@@ -51,7 +51,7 @@ func TestOverrideTierAliases(t *testing.T) {
 			if err := os.WriteFile(taskFile, []byte("# T-002\n\nМодель: "+c.value+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			out, err := cmdPick(root, "T-002", false, roleExec)
+			out, err := cmdPick(root, "T-002", false, roleExec, "")
 			if err != nil {
 				t.Fatalf("pick: %v", err)
 			}
@@ -71,7 +71,7 @@ func TestOverrideTierAliases(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n\nМодель: claude-opus-4-6\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := cmdPick(root, "T-002", false, roleExec)
+		_, err := cmdPick(root, "T-002", false, roleExec, "")
 		if err == nil || !strings.Contains(err.Error(), "неизвестный ярус") {
 			t.Fatalf("жду отказ на имя модели инструмента, получил %v", err)
 		}
@@ -83,7 +83,7 @@ func TestCmdPickTierLine(t *testing.T) {
 	// потребители первой строки вердикта переучиваться не должны.
 	isolateQuota(t)
 	root := writeBoard(t)
-	out, err := cmdPick(root, "T-002", false, roleExec)
+	out, err := cmdPick(root, "T-002", false, roleExec, "")
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 
 	t.Run("харнес включён, а маппинга нет", func(t *testing.T) {
 		machine := setupHarness(t, "default = \"claude-code\"\nenabled = [\"claude-code\"]\n")
-		out, err := cmdPick(root, "T-002", false, roleExec)
+		out, err := cmdPick(root, "T-002", false, roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -133,7 +133,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := cmdPick(root, "T-002", true, roleExec); err != nil {
+		if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
 		data, _ := os.ReadFile(taskFile)
@@ -147,7 +147,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 		// обещанием модели, которой в вердикте нет.
 		setupHarness(t, "default = \"claude-code\"\nenabled = [\"claude-code\"]\n")
 		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-006", false, roleExec)
+		out, err := cmdPick(root, "T-006", false, roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 
 	t.Run("харнес не определён вовсе", func(t *testing.T) {
 		machine := setupHarness(t, "enabled = []\n")
-		out, err := cmdPick(root, "T-001", false, roleExec)
+		out, err := cmdPick(root, "T-001", false, roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -194,7 +194,7 @@ pro = "workhorse"
 max = "big"
 `)
 	writeQuota(t, quota, 95, 50, halfWindow)
-	out, err := cmdPick(root, "T-002", false, roleExec)
+	out, err := cmdPick(root, "T-002", false, roleExec, "")
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}

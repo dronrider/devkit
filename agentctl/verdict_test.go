@@ -27,7 +27,7 @@ func pickVerdicts(t *testing.T) string {
 	var b strings.Builder
 	for _, id := range []string{"T-001", "T-002", "T-003", "T-004", "T-005", "T-006"} {
 		for _, role := range []string{roleExec, roleReview} {
-			out, err := cmdPick(root, id, false, role)
+			out, err := cmdPick(root, id, false, role, "")
 			if err != nil {
 				t.Fatalf("pick %s --role %s: %v", id, role, err)
 			}

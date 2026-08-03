@@ -12,10 +12,18 @@ const usageText = `agentctl: выбор исполнителя под задач
   pick <ID> [--record]    вердикт, каким исполнителем закрывать задачу: три
        [--role exec|      машинные строки model (модель активного харнеса),
         review]           effort: low|medium|high|xhigh|max и tier:
-                          mini|base|pro|max, четвёртая строка задачи и причина;
+       [--goal <файл>]    mini|base|pro|max, четвёртая строка задачи и причина;
                           --record дописывает строку исполнения в раздел «Ход
                           работы» файла задачи, --role review отдаёт вердикт
-                          для агента-ревьювера (ярус ниже исполнителя, пол base)
+                          для агента-ревьювера (ярус ниже исполнителя, пол base),
+                          --goal режет вердикт потолком яруса из раздела
+                          «Бюджет» файла цели
+  spend --goal <файл>     гейт бюджета цели: первая строка машинная (gate: ok
+       [--record]         либо gate: over), вторая называет потраченное по
+                          каждому бакету против потолка из раздела «Бюджет»
+                          файла цели. Расход считается суммой пошаговых дельт
+                          между снимками квоты из раздела «Журнал» и текущим
+                          снимком; --record дописывает текущий снимок в «Журнал»
   quota [refresh]         снимок остатка лимитов активного харнеса: без
        [--if-stale]       аргумента печатает разобранный
                           ~/.devkit/quota/<харнес>.local (бакеты, возраст, pace,
@@ -123,12 +131,27 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		role := fs.String("role", roleExec, "роль субагента: exec или review")
+		goal := fs.String("goal", "", "файл цели, из него берётся потолок яруса")
 		fs.Parse(args[2:])
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
 		}
-		msg, err = cmdPick(root, args[1], *record, *role)
+		msg, err = cmdPick(root, args[1], *record, *role, *goal)
+	case "spend":
+		fs := flag.NewFlagSet("spend", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		goal := fs.String("goal", "", "файл цели с разделами «Бюджет» и «Журнал»")
+		record := fs.Bool("record", false, "дописать текущий снимок квоты в «Журнал» файла цели")
+		fs.Parse(args[1:])
+		if *goal == "" {
+			fail(fmt.Errorf("жду: spend --goal <файл цели>"))
+		}
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		msg, err = cmdSpend(root, *goal, *record, timeNow())
 	case "quota":
 		// Корень с доской команде не нужен: снимок лежит на уровне машины, а не
 		// проекта. Профиль харнеса при этом нужен: он говорит, чем снимать,

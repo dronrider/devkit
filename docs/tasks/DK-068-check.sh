@@ -27,11 +27,11 @@ taskctl dep add XR-002 XR-001 >/dev/null
 taskctl list backlog | grep "после XR-001"
 
 echo "--- 4. обходные пути закрыты тем же правилом"
-if taskctl add --title "Сразу на блокере" --type task --rank "0+1+0+0+0" --status blocked --reason "ждём смежника" 2>/dev/null; then
+if taskctl add --title "Сразу на блокере" --type task --rank "0+1+0+0+0" --status blocked 2>/dev/null; then
 	echo "ПРОВАЛ: новая строка заведена сразу в Blocked"
 	exit 1
 fi
-taskctl add --title "Сразу на блокере" --type task --rank "0+1+0+0+0" --status blocked --reason "ждём смежника" 2>&1 | grep "не заводят"
+taskctl add --title "Сразу на блокере" --type task --rank "0+1+0+0+0" --status blocked 2>&1 | grep "не заводят"
 if taskctl dep add XR-001 XR-002 2>/dev/null; then
 	echo "ПРОВАЛ: задаче на блокере дописана незакрытая зависимость"
 	exit 1

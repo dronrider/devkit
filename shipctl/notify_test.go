@@ -91,6 +91,35 @@ func TestShipDeployFailureNotifies(t *testing.T) {
 	}
 }
 
+// TestMergeDeployFailureFromSandboxRelaysSkip: репозиторий во временной
+// директории это песочница, живой notify.py оттуда молчит сам (DK-069), а
+// причина пропуска доезжает до сообщения об упавшем выкате.
+func TestMergeDeployFailureFromSandboxRelaysSkip(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	t.Setenv("DEVKIT_NOTIFY_OFF", "")
+	t.Setenv("HOME", t.TempDir())
+	wd, werr := os.Getwd()
+	if werr != nil {
+		t.Fatal(werr)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(wd))
+	// Бэкенд подставной: сработай отправка вопреки рубежу, на машине
+	// разработчика не появится живой баннер.
+	stub := filepath.Join(t.TempDir(), "backend")
+	if werr := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); werr != nil {
+		t.Fatal(werr)
+	}
+	t.Setenv("DEVKIT_NOTIFY_BACKEND", stub)
+	branchWithFix(t, root)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Deploy: "false"})
+	if err == nil || !strings.Contains(err.Error(), "выкат упал") {
+		t.Fatalf("ждал отказ по выкату, получил: %v", err)
+	}
+	if !strings.Contains(err.Error(), "уведомление пропущено") {
+		t.Fatalf("пропуск песочницы не дошёл до сообщения об ошибке: %v", err)
+	}
+}
+
 // TestRevertRedeployFailureNotifies: откат закоммичен, но повторный выкат
 // (revert -> catch) сам упал, прод остаётся в сломанном состоянии.
 func TestRevertRedeployFailureNotifies(t *testing.T) {

@@ -64,6 +64,9 @@ func TestMoveToBlockedNotifiesLoud(t *testing.T) {
 	root := setup(t)
 	t.Setenv("DEVKIT_NOTIFY_OFF", "")
 	calls := writeNotifyStub(t, root, 0)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}

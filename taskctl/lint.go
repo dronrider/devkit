@@ -117,7 +117,9 @@ func lintFailed(b *Board, bp string) []string {
 // lintDeps проверяет инварианты маркера «[после ...]»: ID существует (на
 // доске или в архиве), не сам на себя, без дублей внутри маркера, без
 // циклов; задача в работе или на проверке с незакрытой зависимостью это
-// отдельная находка (её место в Backlog или Blocked).
+// отдельная находка, и место у такой строки одно, Backlog: ждать своей же
+// задачи это маркер «после», а Blocked отдан обстоятельствам снаружи доски
+// (RULES.board.md, «Трекинг задач» п. 4).
 func lintDeps(b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
@@ -141,7 +143,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 			_, deps, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if !arch.has(d) {
-					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s",
+					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s, вернуть в Backlog",
 						bp, r.LineIdx+1, r.ID, sectTitles[key], d))
 				}
 			}

@@ -264,7 +264,12 @@ func TestShowPrintsDeps(t *testing.T) {
 // суффиксов (после -> блок), как уже устроено для «[блок: ...]».
 func TestSetTitleKeepsDepSuffix(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-001"}); err != nil {
+	// Зависимость закрытая: с незакрытой строку не берут в работу, а
+	// заблокировать можно только начатую (RULES.board.md, «Трекинг задач» п. 4).
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-007"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
@@ -273,7 +278,7 @@ func TestSetTitleKeepsDepSuffix(t *testing.T) {
 	if _, err := cmdSet(root, SetParams{ID: "XR-004", Title: "Хвост, уточнённый"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := backlogTitle(t, root, "XR-004"); got != "Хвост, уточнённый [после XR-001] [блок: ждём железо]" {
+	if got := backlogTitle(t, root, "XR-004"); got != "Хвост, уточнённый [после XR-007] [блок: ждём железо]" {
 		t.Fatalf("заголовок после set: %q", got)
 	}
 }
@@ -323,7 +328,7 @@ func TestLintDeps(t *testing.T) {
 		"маркер «после» дублирует XR-021",
 		"маркер «после» ссылается на несуществующую задачу XR-999",
 		"цикл зависимостей",
-		"XR-020 в In progress с незакрытой зависимостью XR-021",
+		"XR-020 в In progress с незакрытой зависимостью XR-021, вернуть в Backlog",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("нет находки %q среди:\n%s", want, joined)

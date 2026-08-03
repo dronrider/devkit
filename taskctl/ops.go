@@ -345,6 +345,13 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			}
 		}
 	}
+	// Заблокированной бывает только начатая задача (RULES.board.md, «Трекинг
+	// задач» п. 4): нетронутую строку разблокировать некому, и Blocked у неё
+	// значил бы просто «не начали», как весь Backlog. Ожидание своей же задачи
+	// это маркер «после», для него статус не меняют.
+	if target == SectBlocked && row.Sect == SectBacklog {
+		return "", fmt.Errorf("%s ещё не в работе, блокировать нечего: задача ждёт в Backlog, а зависимость от своей задачи ставится через taskctl dep add %s <ID>", id, id)
+	}
 	line := b.Lines[row.LineIdx]
 	moved := *row
 	switch {

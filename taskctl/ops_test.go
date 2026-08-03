@@ -141,6 +141,9 @@ func TestStatusAliases(t *testing.T) {
 // выхода из Blocked.
 func TestMoveUnblockStripsReason(t *testing.T) {
 	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +161,9 @@ func TestMoveUnblockStripsReason(t *testing.T) {
 
 func TestMoveToBlockedAndBack(t *testing.T) {
 	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "", CommitOpts{}); err == nil {
 		t.Fatal("blocked без --reason должен падать")
 	}
@@ -312,6 +318,9 @@ func TestSetCost(t *testing.T) {
 
 func TestSetTitleKeepsBlockSuffix(t *testing.T) {
 	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -996,5 +1005,32 @@ func TestRewriteLinksSkipsCodeBlocks(t *testing.T) {
 	// Ссылка после блока кода должна быть переписана
 	if !strings.Contains(resultStr, "[Ещё ссылка](../../../lld/XR-001.md)") {
 		t.Errorf("Ссылка после блока кода не переписана:\n%s", resultStr)
+	}
+}
+
+// TestMoveBlockedOnlyFromWork: заблокированной бывает только начатая задача
+// (RULES.board.md, «Трекинг задач» п. 4). Строку из Backlog разблокировать
+// некому, а Blocked у неё значил бы просто «не начали», как весь Backlog.
+func TestMoveBlockedOnlyFromWork(t *testing.T) {
+	root := setup(t)
+	_, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{})
+	if err == nil {
+		t.Fatal("блокировка задачи из Backlog должна отбиваться")
+	}
+	if !strings.Contains(err.Error(), "ещё не в работе") || !strings.Contains(err.Error(), "dep add") {
+		t.Fatalf("отказ должен называть причину и путь для своей же зависимости: %v", err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := b.find("XR-004"); r.Sect != SectBacklog {
+		t.Fatalf("строка уехала из Backlog: %s", r.Sect)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
+		t.Fatalf("начатую задачу блокировать можно: %v", err)
 	}
 }

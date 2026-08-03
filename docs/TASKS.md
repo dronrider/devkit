@@ -33,6 +33,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-089 | Лестница трат claude-code: ярус pro тратит из week_max, а корректор поднимает по нему же | bug | P2 | 42 (25+5+3+5+4) | M | [tasks/DK-089.md](tasks/DK-089.md) |
 | DK-090 | Вторая подписка ступенью лестницы: ярус разворачивается в чужой харнес | LLD | P2 | 41 (25+8+4+0+4) | M | [tasks/DK-090.md](tasks/DK-090.md) |
 | DK-102 | obeycheck: стенд послушания, сценарии, две раскладки, прогон на временном HOME | task | P2 | 40 (25+7+3+0+5) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-109 | Цель: тонкий резидент по DK-100, минус 65% контекста правил | task | P2 | 40 (25+9+1+0+5) | XL | [tasks/DK-109.md](tasks/DK-109.md) |
 | DK-103 | Ось скиллов в профиле харнеса, глубина правил в генераторе | task | P2 | 39 (25+8+1+0+5) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-104 | RULES.core.md и RULES.board.core.md: разрез ядра под стенд [после DK-102, DK-103] | task | P2 | 39 (25+8+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-105 | Правила скиллами: board-task, board-ship, test-standard [после DK-104] | task | P2 | 39 (25+8+2+0+4) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |

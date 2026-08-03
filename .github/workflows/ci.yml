@@ -29,6 +29,8 @@ jobs:
         run: sh hooks/test.sh
       - name: тесты devkitctl
         run: sh devkitctl/test.sh
+      - name: тесты оболочки цели
+        run: sh skills/goal-loop/test.sh
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
       - name: бит исполнения test.sh по всему репозиторию

@@ -169,7 +169,6 @@ func main() {
 		fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
-		fs.StringVar(&p.Reason, "reason", "", "причина блокировки (для blocked)")
 		commitFlags(fs, &p.Commit)
 		fs.Parse(args[1:])
 		msg, err = cmdAdd(root(*dir), p)

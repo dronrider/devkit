@@ -206,22 +206,6 @@ func TestMoveToBlockedRejectsBracketInReason(t *testing.T) {
 	}
 }
 
-// TestAddBlockedRejectsBracketInReason: тот же запрет для add --status
-// blocked --reason, второго места, где причина попадает в заголовок.
-func TestAddBlockedRejectsBracketInReason(t *testing.T) {
-	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{
-		Title: "Со скобкой", Type: "task", Rank: "0+1+1+0+1", Link: "x",
-		Status: "blocked", Reason: "ждём [DK-5]",
-	}); err == nil {
-		t.Fatal("причина со скобкой должна падать")
-	}
-	board, _ := os.ReadFile(boardPath(root))
-	if string(board) != fixtureBoard {
-		t.Fatalf("доска изменилась после отбитого add:\n%s", board)
-	}
-}
-
 func TestSetTypeInPlace(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})
@@ -1042,7 +1026,7 @@ func TestAddBlockedRejected(t *testing.T) {
 	root := setup(t)
 	_, err := cmdAdd(root, AddParams{
 		Title: "Сразу на блокере", Type: "task", Rank: "0+1+1+0+1", Link: "x",
-		Status: "blocked", Reason: "ждём смежника",
+		Status: "blocked",
 	})
 	if err == nil {
 		t.Fatal("add --status blocked должен отбиваться")

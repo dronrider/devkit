@@ -177,7 +177,7 @@ func wrapLink(link string) string {
 }
 
 type AddParams struct {
-	ID, Title, Type, Rank, Cost, Link, Status, Reason string
+	ID, Title, Type, Rank, Cost, Link, Status string
 	Commit                                            CommitOpts
 }
 
@@ -244,13 +244,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		// Новая строка в Blocked обходила бы тот же инвариант, что и move из
 		// Backlog (RULES.board.md, «Трекинг задач» п. 4): заблокированной
 		// бывает только начатая задача, а новую блокировать нечему. Причина
-		// всё равно проверяется, чтобы кривой ввод не прятался за отказом по
-		// статусу.
-		if strings.TrimSpace(p.Reason) != "" {
-			if err := checkReason(p.Reason); err != nil {
-				return "", err
-			}
-		}
+		// отсюда ушла вместе со статусом, скобки в ней проверяет move.
 		return "", fmt.Errorf("новую задачу в blocked не заводят: блокировать нечего, пока её не взяли в работу; строка ждёт в Backlog, а зависимость от своей задачи ставится через taskctl dep add")
 	}
 	// Перенос черновика идёт после всех проверок: упавшая на кривом ранге

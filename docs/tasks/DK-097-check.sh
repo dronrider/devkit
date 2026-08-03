@@ -6,6 +6,7 @@
 set -e
 SRC=${1:-$(git rev-parse --show-toplevel)}
 W=$(mktemp -d)
+REAL_HOME=$HOME
 HOME="$W/home"
 export HOME
 mkdir -p "$HOME" "$W/gobin"
@@ -34,14 +35,26 @@ ls "$W/devkit/docs/tasks/drafts"
 test ! -d "$W/proj/docs/tasks/drafts"
 
 echo "--- 5. пересборка бинаря в PATH (шаг 5 процедуры)"
-cd "$W/devkit/taskctl" && go build -o "$W/gobin/taskctl" .
-PATH="$W/gobin:$PATH" command -v taskctl
-PATH="$W/gobin:$PATH" taskctl -C "$W/proj" list | head -2
+cd "$W/devkit/taskctl"
+go build -o "$W/gobin/taskctl" .
+PATH="$W/gobin:$PATH"
+export PATH
+command -v taskctl
+taskctl -C "$W/proj" list | head -2
 
 echo "--- 6. полный прогон тестов devkit (шаг 4 процедуры)"
-cd "$W/devkit"
+# Гонится прогон в самом чекауте и с настоящим HOME, как в живой сессии, где
+# скилл этот шаг и делает: тесты хуков смотрят на настройки харнеса, а
+# уведомитель нарочно молчит из временной директории, и во временном клоне они
+# упали бы не по делу.
+HOME=$REAL_HOME
+export HOME
+cd "$SRC"
 for d in taskctl shipctl agentctl regcheck; do (cd $d && go test ./... | tail -1); done
-sh hooks/test.sh > /dev/null && echo "hooks ok"
-sh devkitctl/test.sh > /dev/null && echo "devkitctl ok"
-python3 hooks/check-exec-bit.py && echo "exec-bit ok"
+sh hooks/test.sh > /dev/null
+echo "hooks ok"
+sh devkitctl/test.sh > /dev/null
+echo "devkitctl ok"
+python3 hooks/check-exec-bit.py
+echo "exec-bit ok"
 echo "--- готово, дерево: $W"

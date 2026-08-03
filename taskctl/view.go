@@ -95,6 +95,7 @@ func cmdList(root, sect string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	clean := boardClean(root)
 	var out []string
 	section := func(key string, limit int) {
 		sec := b.Sects[key]
@@ -111,6 +112,7 @@ func cmdList(root, sect string) (string, error) {
 		}
 		for _, r := range rows {
 			out = append(out, b.Lines[r.LineIdx])
+			out = append(out, rowNotes(root, key, r, clean)...)
 		}
 	}
 	if sect != "" {
@@ -138,6 +140,27 @@ func cmdList(root, sect string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
+// rowNotes собирает пометки строки, которые list и show печатают отдельной
+// строкой под самой строкой таблицы: они выводятся на лету и в саму доску
+// не пишутся (RULES.board.md запрещает заводить под них колонку). Метки
+// Check печатаются только в её секции, возраст, когда его удалось посчитать,
+// в любой; нет ни того, ни другого, значит nil, и вывод не меняется вовсе.
+func rowNotes(root, sect string, r *Row, clean bool) []string {
+	var notes []string
+	if sect == SectCheck {
+		if m := checkMarkLabel(root, r.ID); m != "" {
+			notes = append(notes, m)
+		}
+	}
+	if a := ageLabel(root, r.LineIdx, clean); a != "" {
+		notes = append(notes, a)
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	return []string{"  " + strings.Join(notes, ", ")}
+}
+
 // cmdShow печатает строку задачи, её секцию и путь файла задачи; закрытые
 // задачи ищутся в архиве.
 func cmdShow(root, id string) (string, error) {
@@ -147,6 +170,7 @@ func cmdShow(root, id string) (string, error) {
 	}
 	if row := b.find(id); row != nil {
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
+		out = append(out, rowNotes(root, row.Sect, row, boardClean(root))...)
 		sides := depSides(b)
 		s := sides[id]
 		if s == nil {

@@ -138,7 +138,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 			seen[d] = true
 		}
 	}
-	for _, key := range []string{SectInProgress, SectCheck} {
+	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
 			_, deps, _, _ := splitTitle(r.Title)
 			for _, d := range deps {

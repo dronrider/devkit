@@ -338,3 +338,56 @@ func TestLintDeps(t *testing.T) {
 		t.Errorf("зависимость на закрытую (архивную) задачу не должна считаться незакрытой:\n%s", joined)
 	}
 }
+
+// TestDepAddOnBlocked: заблокированной задаче незакрытую зависимость не
+// дописывают. Иначе строка снова совмещает внешний блокер и ожидание своей же
+// задачи, ради развода которых задача и делалась.
+func TestDepAddOnBlocked(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём смежника", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-001"}); err == nil {
+		t.Fatal("незакрытая зависимость у задачи на блокере должна отбиваться")
+	}
+	// Закрытая зависимость по-прежнему проходит: она ничего не ждёт.
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-007"}); err != nil {
+		t.Fatalf("закрытую зависимость дописать можно: %v", err)
+	}
+}
+
+// TestLintDepsFindsBlocked: строка на блокере с незакрытой зависимостью
+// (правка руками мимо dep add) это находка, как в работе и на проверке.
+func TestLintDepsFindsBlocked(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-001"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := b.find("XR-004")
+	lines := append([]string{}, b.Lines...)
+	moved := lines[row.LineIdx]
+	lines = append(lines[:row.LineIdx], lines[row.LineIdx+1:]...)
+	for i, l := range lines {
+		if strings.HasPrefix(l, "## Blocked") {
+			lines = append(lines[:i+1], append([]string{"", tableHeader, tableSep, moved}, lines[i+1:]...)...)
+			break
+		}
+	}
+	if err := os.WriteFile(boardPath(root), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(finds, "\n"), "XR-004 в Blocked с незакрытой зависимостью XR-001, вернуть в Backlog") {
+		t.Fatalf("нет находки про блокер с зависимостью: %v", finds)
+	}
+}

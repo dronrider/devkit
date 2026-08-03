@@ -1034,3 +1034,24 @@ func TestMoveBlockedOnlyFromWork(t *testing.T) {
 		t.Fatalf("начатую задачу блокировать можно: %v", err)
 	}
 }
+
+// TestAddBlockedRejected: новую строку в Blocked не заводят, иначе add обходит
+// инвариант «заблокированной бывает только начатая задача» тем же путём,
+// каким его обходил move из Backlog.
+func TestAddBlockedRejected(t *testing.T) {
+	root := setup(t)
+	_, err := cmdAdd(root, AddParams{
+		Title: "Сразу на блокере", Type: "task", Rank: "0+1+1+0+1", Link: "x",
+		Status: "blocked", Reason: "ждём смежника",
+	})
+	if err == nil {
+		t.Fatal("add --status blocked должен отбиваться")
+	}
+	if !strings.Contains(err.Error(), "не заводят") || !strings.Contains(err.Error(), "dep add") {
+		t.Fatalf("отказ должен называть причину и путь для своей же зависимости: %v", err)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if string(board) != fixtureBoard {
+		t.Fatalf("доска изменилась после отбитого add:\n%s", board)
+	}
+}

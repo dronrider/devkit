@@ -118,9 +118,12 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if b.find(p.DepID) == nil && !arch.has(p.DepID) {
 		return "", fmt.Errorf("%s нет ни на доске, ни в архиве", p.DepID)
 	}
-	// Симметрично страховке move: если задача уже в работе или на проверке,
-	// свежая незакрытая зависимость молча делает доску красной по lint.
-	if (row.Sect == SectInProgress || row.Sect == SectCheck) && !arch.has(p.DepID) {
+	// Симметрично страховке move: если задача уже в работе, на проверке или на
+	// внешнем блокере, свежая незакрытая зависимость молча делает доску красной
+	// по lint. Blocked тут наравне с остальными: ждать своей же задачи и
+	// обстоятельства снаружи разом это ровно та путаница, которую развели в
+	// RULES.board.md, «Трекинг задач» п. 4.
+	if (row.Sect == SectInProgress || row.Sect == SectCheck || row.Sect == SectBlocked) && !arch.has(p.DepID) {
 		return "", fmt.Errorf("%s уже в %s, нельзя добавить незакрытую зависимость %s", p.ID, sectTitles[row.Sect], p.DepID)
 	}
 	base, deps, failSuf, blockSuf := splitTitle(row.Title)

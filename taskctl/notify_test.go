@@ -125,6 +125,39 @@ func TestMoveSurvivesFailingNotifier(t *testing.T) {
 	}
 }
 
+// TestMoveFromSandboxSkipsBanner: корень доски лежит во временной директории,
+// это песочница (синтетическая доска из обкатки сценария), и живой notify.py
+// молчит сам, без заглушек на стороне зовущего; пропуск при этом не проходит
+// тихо, причина доезжает припиской до вывода move (DK-069).
+func TestMoveFromSandboxSkipsBanner(t *testing.T) {
+	root := setup(t)
+	t.Setenv("DEVKIT_NOTIFY_OFF", "")
+	t.Setenv("HOME", t.TempDir())
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(wd))
+	// Бэкенд подставной: сработай отправка вопреки рубежу, тест увидит след,
+	// а не покажет живой баннер на машине разработчика.
+	sent := filepath.Join(t.TempDir(), "sent")
+	stub := filepath.Join(t.TempDir(), "backend")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n: > "+sent+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_NOTIFY_BACKEND", stub)
+	msg, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "уведомление пропущено") {
+		t.Fatalf("пропуск песочницы не дошёл до вывода move: %q", msg)
+	}
+	if _, err := os.Stat(sent); err == nil {
+		t.Fatal("баннер ушёл из песочницы")
+	}
+}
+
 func TestNotifyScriptResolution(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("DEVKIT_HOME", "")

@@ -45,8 +45,14 @@ func notify(root, title, body string) string {
 	}
 	cmd := exec.Command("python3", script, title, body)
 	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		return fmt.Sprintf("\nуведомление не отправлено: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	// Уведомитель отрабатывает и без баннера (корень в песочнице): причину
+	// пропуска он печатает сам, приписка доносит её до вывода команды.
+	if note := strings.TrimSpace(string(out)); note != "" {
+		return "\n" + note
 	}
 	return ""
 }

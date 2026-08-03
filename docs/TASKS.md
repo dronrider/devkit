@@ -32,7 +32,13 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 |--------|--------|-----|---|---|------|--------|
 | DK-089 | Лестница трат claude-code: ярус pro тратит из week_max, а корректор поднимает по нему же | bug | P2 | 42 (25+5+3+5+4) | M | [tasks/DK-089.md](tasks/DK-089.md) |
 | DK-090 | Вторая подписка ступенью лестницы: ярус разворачивается в чужой харнес | LLD | P2 | 41 (25+8+4+0+4) | M | [tasks/DK-090.md](tasks/DK-090.md) |
+| DK-102 | obeycheck: стенд послушания, сценарии, две раскладки, прогон на временном HOME | task | P2 | 40 (25+7+3+0+5) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-103 | Ось скиллов в профиле харнеса, глубина правил в генераторе | task | P2 | 39 (25+8+1+0+5) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-104 | RULES.core.md и RULES.board.core.md: разрез ядра под стенд [после DK-102, DK-103] | task | P2 | 39 (25+8+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-105 | Правила скиллами: board-task, board-ship, test-standard [после DK-104] | task | P2 | 39 (25+8+2+0+4) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
+| DK-106 | Хуки вместо прозы: разбор в текстах находок, тесты в pre-commit, pre-push на запрет пуша [после DK-102] | task | P2 | 37 (25+6+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-107 | Тонкая глобальная точка правил в doctor/setup [после DK-104] | task | P2 | 34 (25+5+1+0+3) | S | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-081 | Редирект корня в боковую директорию и признак корп-контура | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов [после DK-081] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
@@ -40,6 +46,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов [после DK-081] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-108 | devkitctl stats --context: куда ушёл объём сессии и перезаписи префикса | task | P3 | 12 (0+6+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-083 | Адаптер jira: REST-операции и образцы ответов API [после DK-082] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-086 | Хуки корп-контура: обёртка чужих хуков и рубеж следов devkit [после DK-081] | task | P3 | 11 (0+6+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |

@@ -28,7 +28,7 @@ draft ["текст"]                             записать идею ми�
                                             он читается со stdin
 draft list                                  накопитель: ID, первая строка, возраст
 add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
-    [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
+    [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN]
 move <ID> <backlog|in-progress|check|blocked> [--reason "..."]
 fail <ID> --reason "..."                    провал проверки: прод сломан
 fail <ID> --clear                           прод починен, признак снят

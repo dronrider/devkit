@@ -65,7 +65,7 @@ description: Правка самого devkit по ходу работы над 
 7. Не мелочь: черновик и обход по месту.
 
    ```bash
-   taskctl -C ~/projects/devkit draft "shipctl merge не печатает, какие файлы задел поезд"
+   taskctl -C ~/projects/devkit draft "merge не печатает состав поезда"
    ```
 
    Флаг `-C` ставится до подкоманды. Доску он берёт верную и после неё, но

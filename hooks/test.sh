@@ -606,6 +606,17 @@ grep -q '^-title поезд собран -message три задачи -group dev
 HOME="$nhome" python3 "$here/notify.py" --quiet >/dev/null 2>&1
 [ $? -eq 2 ] || fail "--quiet без заголовка не показал справку"
 
+# Аргументный вызов из временной директории молчит: это песочница вроде
+# синтетической доски из обкатки сценария, живой баннер про неё ложный
+# (DK-069). Пропуск при этом виден и в stdout, и в журнале.
+: > "$nmark"
+out=$(cd "$tmp" && HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" \
+    python3 "$here/notify.py" "tmp-доска" "XR-001 в Check") ||
+    fail "вызов из песочницы вернул не 0"
+[ -s "$nmark" ] && fail "баннер ушёл из песочницы: $(cat "$nmark")"
+echo "$out" | grep -q 'уведомление пропущено' || fail "пропуск песочницы молчит в stdout: $out"
+grep -q 'пропуск: песочница' "$nlog" || fail "пропуск песочницы не попал в журнал: $(cat "$nlog")"
+
 # Самопроверка говорит, чем именно послано, и краснеет, когда слать нечем.
 out=$(HOME="$nhome" DEVKIT_NOTIFY_BACKEND="$nstub" python3 "$here/notify.py" --self-test) ||
     fail "самопроверка со стабом вернула не 0"

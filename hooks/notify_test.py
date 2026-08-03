@@ -605,6 +605,41 @@ class TestHookFocus(unittest.TestCase):
         self.assertEqual((sent, asked), ([], 0))
 
 
+class TestSandboxReason(unittest.TestCase):
+    def test_tmpdir_root_is_a_sandbox(self):
+        d = tempfile.mkdtemp()
+        reason = notify.sandbox_reason(os.path.join(d, "repo"), {"TMPDIR": d})
+        self.assertIsNotNone(reason)
+        self.assertIn("лежит под", reason)
+
+    def test_usual_places_work_without_tmpdir(self):
+        # Переменную перебивают, а песочницы mktemp -d всё равно лежат тут.
+        for cwd in ("/tmp/board", "/private/tmp/board",
+                    "/var/folders/ab/xy/T/tmp.X", "/private/var/folders/ab/xy/T/tmp.X"):
+            self.assertIsNotNone(notify.sandbox_reason(cwd, {}), cwd)
+
+    def test_real_root_is_kept(self):
+        self.assertIsNone(notify.sandbox_reason("/Users/dev/projects/devkit", {}))
+
+    def test_prefix_ends_at_the_separator(self):
+        # Сосед с общим началом имени это другая директория: /tmpfoo не /tmp,
+        # scratchpad не scratch.
+        self.assertIsNone(notify.sandbox_reason("/tmpfoo/board", {}))
+        self.assertIsNone(notify.sandbox_reason(
+            "/Users/dev/scratchpad", {"TMPDIR": "/Users/dev/scratch"}))
+
+    def test_degenerate_inputs_stay_silent(self):
+        # TMPDIR корнем файловой системы накрыл бы всё, пустой cwd сравнивать
+        # не с чем: молчать в обе стороны, но не флажить настоящие корни.
+        self.assertIsNone(notify.sandbox_reason("/Users/dev/p", {"TMPDIR": "/"}))
+        self.assertIsNone(notify.sandbox_reason("", {}))
+        self.assertIsNone(notify.sandbox_reason(None, {}))
+
+    def test_tmp_root_itself_counts(self):
+        d = tempfile.mkdtemp()
+        self.assertIsNotNone(notify.sandbox_reason(d, {"TMPDIR": d}))
+
+
 class TestTerminalSequence(unittest.TestCase):
     def test_leading_digit_is_pushed(self):
         # Тело OSC 9 с цифры харнес отбрасывает по своему белому списку.

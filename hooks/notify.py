@@ -34,6 +34,12 @@
   DEVKIT_NOTIFY_FOCUS=off    не смотреть, какое окно впереди: конец хода тогда
                              зовёт всегда
 
+Аргументный вызов из проекта во временной директории (TMPDIR, /tmp,
+/var/folders) ничего не шлёт: такой корень это песочница вроде синтетической
+доски из обкатки сценария, и живой баннер про неё ложный. Пропуск виден
+строкой в журнале и в stdout, откуда её доносит до пользователя зовущая
+утилита.
+
 Журнал последних отправок лежит в ~/.devkit/notify.log: время, сессия, повод,
 уровень, бэкенд, цель перехода и код возврата. Жалоба «уведомления не приходят»
 разбирается по нему, как и «важное не отличается от фонового».
@@ -94,6 +100,14 @@ FOCUS_UNKNOWN = "не определился"
 WAIT_KEY = "session_waiting"
 WAIT_REASONS = ("idle_prompt", TURN_DONE)
 WAIT_WINDOW = 180
+
+# Аргументный вызов из песочницы (mktemp -d, синтетическая доска обкатки
+# сценария) молчит: баннер собрался бы про репозиторий, которого через минуту
+# нет, а ложный сигнал дороже пропущенного. Признак песочницы это корень
+# проекта под временной директорией: TMPDIR плюс её обычные места на случай,
+# когда переменная перебита; варианты с /private стоят своими строками, чтобы
+# не зависеть от того, разрешит ли realpath симлинки macOS на этой машине.
+TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
 # Куда переключает клик по баннеру. Умеет это только terminal-notifier: она шлёт
 # от своего имени, а display notification постит от имени Script Editor, и клик
@@ -452,6 +466,23 @@ def focus_state(tree, env=None, ask=None):
     return FOCUS_SESSION if window_is_session(title, tree) else FOCUS_OTHER
 
 
+def sandbox_reason(cwd, env=None):
+    """Причина молчать про этот корень, None если корень настоящий и слать
+    можно. Сравнение идёт по realpath с обеих сторон: на macOS /tmp и
+    /var/folders это симлинки в /private, а TMPDIR приходит то так, то так."""
+    env = os.environ if env is None else env
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    real = os.path.realpath(cwd)
+    for root in ((env.get("TMPDIR") or "").strip(),) + TMP_ROOTS:
+        root = os.path.realpath(root).rstrip("/") if root else ""
+        if not root:
+            continue
+        if real == root or real.startswith(root + os.sep):
+            return "корень %s лежит под %s" % (cwd, root)
+    return None
+
+
 def log(session, key, backend, result, target=None, level=None):
     d = os.path.join(os.path.expanduser("~"), ".devkit")
     path = os.path.join(d, "notify.log")
@@ -597,6 +628,13 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     if os.environ.get("DEVKIT_NOTIFY_OFF"):
+        return 0
+    reason = sandbox_reason(os.getcwd())
+    if reason:
+        # Молчать про пропуск нельзя: строка уходит и в журнал, и в stdout,
+        # откуда зовущая утилита доносит её до своего вывода.
+        log("-", "-", None, "пропуск: песочница, %s" % reason, level=level)
+        print("уведомление пропущено: %s, звать некого" % reason)
         return 0
     title = short(argv[0])
     body = short(argv[1]) if len(argv) > 1 else ""

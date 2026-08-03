@@ -621,6 +621,34 @@ class TestSandboxReason(unittest.TestCase):
     def test_real_root_is_kept(self):
         self.assertIsNone(notify.sandbox_reason("/Users/dev/projects/devkit", {}))
 
+    def test_tmpdir_away_from_usual_places(self):
+        # Ветка TMPDIR сама по себе: перебор одних TMP_ROOTS такой корень не
+        # нашёл бы, а обычный mktemp -d лежит под /var/folders и ветку не
+        # отличает.
+        env = {"TMPDIR": "/opt/build/tmp"}
+        reason = notify.sandbox_reason("/opt/build/tmp/repo", env)
+        self.assertIsNotNone(reason)
+        self.assertIn("/opt/build/tmp", reason)
+        self.assertIsNone(notify.sandbox_reason("/opt/build/elsewhere", env))
+
+    def test_symlinked_tmpdir_resolves_on_both_sides(self):
+        # macOS отдаёт TMPDIR то симлинком (/var/...), то развёрнутым путём
+        # (/private/var/...), и корень проекта приходит так же: совпадение
+        # обязано находиться в обе стороны. Найденным корнем при этом должен
+        # быть сам TMPDIR, а не задетый попутно /var/folders, на котором
+        # лежит база теста.
+        base = tempfile.mkdtemp()
+        real = os.path.join(base, "real")
+        link = os.path.join(base, "link")
+        os.mkdir(real)
+        os.symlink(real, link)
+        resolved = os.path.realpath(real)
+        for tmpdir, cwd in ((link, os.path.join(real, "repo")),
+                            (real, os.path.join(link, "repo"))):
+            reason = notify.sandbox_reason(cwd, {"TMPDIR": tmpdir})
+            self.assertIsNotNone(reason, tmpdir)
+            self.assertTrue(reason.endswith("лежит под %s" % resolved), reason)
+
     def test_prefix_ends_at_the_separator(self):
         # Сосед с общим началом имени это другая директория: /tmpfoo не /tmp,
         # scratchpad не scratch.

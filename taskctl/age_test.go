@@ -111,14 +111,14 @@ func TestLineAge(t *testing.T) {
 	// 10 дней после последней правки строки 2, с запасом в час против
 	// плавающей точки на границе суток.
 	timeNow = func() time.Time { return t1.Add(10*24*time.Hour + time.Hour) }
-	days, ok := lineAge(root, 1) // 0-based индекс строки "B"
+	days, ok := lineAge(boardTimes(root), 1) // 0-based индекс строки "B"
 	if !ok || days != 10 {
 		t.Fatalf("lineAge(строка 2) = %d,%v; ожидал 10,true", days, ok)
 	}
 
 	// Строку 1 в последний раз трогал самый первый коммит (t0), а не правка t1.
 	timeNow = func() time.Time { return t0.Add(30*24*time.Hour + time.Hour) }
-	days, ok = lineAge(root, 0)
+	days, ok = lineAge(boardTimes(root), 0)
 	if !ok || days != 30 {
 		t.Fatalf("lineAge(строка 1) = %d,%v; ожидал 30,true", days, ok)
 	}
@@ -132,7 +132,7 @@ func TestLineAgeSkipsDirtyBoard(t *testing.T) {
 	if boardClean(root) != true {
 		t.Fatal("свежий коммит должен считаться чистым деревом")
 	}
-	if ageLabel(root, 0, true) == "" {
+	if ageLabel(boardTimes(root), 0, true) == "" {
 		t.Fatal("на чистом дереве возраст обязан считаться")
 	}
 
@@ -144,7 +144,7 @@ func TestLineAgeSkipsDirtyBoard(t *testing.T) {
 	if boardClean(root) {
 		t.Fatal("грязное дерево не должно считаться чистым")
 	}
-	if got := ageLabel(root, 0, boardClean(root)); got != "" {
+	if got := ageLabel(boardTimes(root), 0, boardClean(root)); got != "" {
 		t.Fatalf("на грязном дереве ageLabel должен молчать, получил %q", got)
 	}
 }
@@ -160,7 +160,36 @@ func TestLineAgeNoGitRepo(t *testing.T) {
 	if boardClean(root) {
 		t.Fatal("вне git-репозитория дерево не может считаться чистым")
 	}
-	if got := ageLabel(root, 0, boardClean(root)); got != "" {
+	if got := ageLabel(boardTimes(root), 0, boardClean(root)); got != "" {
 		t.Fatalf("вне git-репозитория ageLabel должен молчать, получил %q", got)
+	}
+}
+
+// TestCheckMarksIgnoresFenced: заголовок внутри ограждённого блока это чужой
+// вывод, вложенный в файл задачи по RULES.board.md, а не раздел этого файла.
+// Построчный разбор печатал бы «код слит» задаче, которая ничего не выкатывала.
+func TestCheckMarksIgnoresFenced(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc := "# XR-001: задача\n\n## Сценарий проверки\n\nшаги\n\n" +
+		"## Прогон после выката\n\n```\n## Выкат\n\n- 2026-08-03 слито: 1a2b3c4\n" +
+		"## Сценарий проверки (агентский)\n```\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-001.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	queue, agent, ok := checkMarks(root, "XR-001")
+	if !ok {
+		t.Fatal("файл задачи есть, признаки обязаны читаться")
+	}
+	if queue {
+		t.Error("процитированный «## Выкат» принят за свой раздел")
+	}
+	if agent {
+		t.Error("процитированный заголовок агентского сценария принят за свой")
+	}
+	if got := checkMarkLabel(root, "XR-001"); got != "без выката, сценарий пользовательский" {
+		t.Fatalf("пометка по цитате: %q", got)
 	}
 }

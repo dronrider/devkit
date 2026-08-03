@@ -96,6 +96,10 @@ func cmdList(root, sect string) (string, error) {
 		return "", err
 	}
 	clean := boardClean(root)
+	var times map[int]int64
+	if clean {
+		times = boardTimes(root)
+	}
 	var out []string
 	section := func(key string, limit int) {
 		sec := b.Sects[key]
@@ -112,7 +116,7 @@ func cmdList(root, sect string) (string, error) {
 		}
 		for _, r := range rows {
 			out = append(out, b.Lines[r.LineIdx])
-			out = append(out, rowNotes(root, key, r, clean)...)
+			out = append(out, rowNotes(root, key, r, times, clean)...)
 		}
 	}
 	if sect != "" {
@@ -145,14 +149,14 @@ func cmdList(root, sect string) (string, error) {
 // не пишутся (RULES.board.md запрещает заводить под них колонку). Метки
 // Check печатаются только в её секции, возраст, когда его удалось посчитать,
 // в любой; нет ни того, ни другого, значит nil, и вывод не меняется вовсе.
-func rowNotes(root, sect string, r *Row, clean bool) []string {
+func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []string {
 	var notes []string
 	if sect == SectCheck {
 		if m := checkMarkLabel(root, r.ID); m != "" {
 			notes = append(notes, m)
 		}
 	}
-	if a := ageLabel(root, r.LineIdx, clean); a != "" {
+	if a := ageLabel(times, r.LineIdx, clean); a != "" {
 		notes = append(notes, a)
 	}
 	if len(notes) == 0 {
@@ -170,7 +174,7 @@ func cmdShow(root, id string) (string, error) {
 	}
 	if row := b.find(id); row != nil {
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
-		out = append(out, rowNotes(root, row.Sect, row, boardClean(root))...)
+		out = append(out, rowNotes(root, row.Sect, row, showTimes(root), true)...)
 		sides := depSides(b)
 		s := sides[id]
 		if s == nil {
@@ -208,4 +212,14 @@ func cmdShow(root, id string) (string, error) {
 		return head + "\n" + strings.TrimRight(string(text), "\n"), nil
 	}
 	return "", fmt.Errorf("%s нет ни на доске, ни в архиве, ни в черновиках", id)
+}
+
+// showTimes считает даты строк для одной задачи тем же путём, что и list:
+// blame один на файл, поэтому отдельной дешёвой ветки под show не нужно.
+// Грязная доска гасит возраст там же, где и в list, через пустую карту.
+func showTimes(root string) map[int]int64 {
+	if !boardClean(root) {
+		return nil
+	}
+	return boardTimes(root)
 }

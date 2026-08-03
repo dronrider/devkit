@@ -36,7 +36,26 @@ func checkMarks(root, id string) (queue, agent, ok bool) {
 	if err != nil {
 		return false, false, false
 	}
+	// Заголовок внутри ограждённого блока это чужой вывод, а не раздел этого
+	// файла: агентский сценарий по RULES.board.md вкладывает в файл реальный
+	// вывод, а в нём сплошь и рядом попадается и «## Выкат», и заголовок
+	// сценария соседней задачи. Построчный разбор принял бы цитату за свою
+	// разметку и напечатал бы «код слит» задаче без выката. Тем же лечится
+	// разбор в shipctl (shipctl/taskdoc.go), общего пакета у утилит нет.
+	fence := ""
 	for _, ln := range strings.Split(string(data), "\n") {
+		if m := fenceRe.FindStringSubmatch(ln); m != nil {
+			switch {
+			case fence == "":
+				fence = m[1]
+			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(ln[len(m[0]):]) == "":
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
 		if strings.HasPrefix(ln, mergedSection) {
 			queue = true
 		}
@@ -80,20 +99,76 @@ func boardClean(root string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == ""
 }
 
-// lineAge возвращает, сколько дней назад в последний раз менялась строка
-// lineIdx (0-based) файла docs/TASKS.md: дата берётся из последнего коммита,
-// тронувшего именно эту строку (`git log -L`), а не даты перевода в текущий
-// статус, для которой в доске нет отдельного поля.
-func lineAge(root string, lineIdx int) (days int, ok bool) {
-	ln := lineIdx + 1
-	out, err := exec.Command("git", "-C", root, "log", "-1", "--format=%ct",
-		"-L", fmt.Sprintf("%d,%d:docs/TASKS.md", ln, ln)).Output()
+// boardTimes возвращает время последней правки каждой строки docs/TASKS.md
+// (ключ это номер строки с нуля, значение unix-секунды). Один `git blame` на
+// всю доску, а не `git log -L` на строку: обход доски это самая частая
+// команда, а запуск git на каждую строку стоил на живой доске секунды против
+// сотых. Режим --incremental вчетверо дешевле построчного порцелана (0.13с
+// против 0.53с на доске devkit), потому что не тащит с собой содержимое строк.
+// Дата тут не про перевод в статус, а про последнюю правку строки:
+// отдельного поля под дату перевода в доске нет.
+func boardTimes(root string) map[int]int64 {
+	out, err := exec.Command("git", "-C", root, "blame", "--incremental",
+		"--", "docs/TASKS.md").Output()
 	if err != nil {
-		return 0, false
+		return nil
 	}
-	first, _, _ := strings.Cut(string(out), "\n")
-	sec, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
-	if err != nil {
+	type span struct {
+		sha   string
+		start int // номер первой строки порции, с единицы
+		count int
+	}
+	var spans []span
+	times := map[string]int64{}
+	cur := ""
+	for _, ln := range strings.Split(string(out), "\n") {
+		// Заголовок порции: <sha> <строка в исходном файле> <строка в
+		// текущем> <сколько строк>. Метаданные коммита идут следом и только
+		// у первой его порции, поэтому время держим по sha.
+		if f := strings.Fields(ln); len(f) == 4 && len(f[0]) >= 7 && isHex(f[0]) {
+			start, err1 := strconv.Atoi(f[2])
+			count, err2 := strconv.Atoi(f[3])
+			if err1 == nil && err2 == nil {
+				cur = f[0]
+				spans = append(spans, span{cur, start, count})
+			}
+			continue
+		}
+		if !strings.HasPrefix(ln, "author-time ") || cur == "" {
+			continue
+		}
+		if sec, err := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(ln, "author-time ")), 10, 64); err == nil {
+			times[cur] = sec
+		}
+	}
+	byLine := map[int]int64{}
+	for _, sp := range spans {
+		sec, ok := times[sp.sha]
+		if !ok {
+			continue
+		}
+		for i := 0; i < sp.count; i++ {
+			byLine[sp.start-1+i] = sec
+		}
+	}
+	return byLine
+}
+
+// isHex отличает заголовок порции blame от полей: у заголовка первым идёт sha.
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// lineAge переводит время правки строки в дни.
+func lineAge(times map[int]int64, lineIdx int) (days int, ok bool) {
+	sec, ok := times[lineIdx]
+	if !ok {
 		return 0, false
 	}
 	d := int(timeNow().Sub(time.Unix(sec, 0)) / (24 * time.Hour))
@@ -106,11 +181,11 @@ func lineAge(root string, lineIdx int) (days int, ok bool) {
 // ageLabel собирает возраст строки в человеческую подпись, либо пустую
 // строку, когда возраст не посчитать (грязное дерево, нет git, строка ещё
 // не попадала в коммит).
-func ageLabel(root string, lineIdx int, clean bool) string {
+func ageLabel(times map[int]int64, lineIdx int, clean bool) string {
 	if !clean {
 		return ""
 	}
-	days, ok := lineAge(root, lineIdx)
+	days, ok := lineAge(times, lineIdx)
 	if !ok {
 		return ""
 	}

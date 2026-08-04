@@ -59,6 +59,22 @@ class TestParseEvent(unittest.TestCase):
                                               "devkit-dk-034: ход закончен", ""))
         self.assertEqual(level, notify.LOUD)
 
+    def test_turn_done_body_from_last_message(self):
+        # hookio уже кладёт last_assistant_message в message, тело собираем так
+        # же, как у субагента: первая строка ответа.
+        body = notify.parse_event(sess(
+            hook_event_name="Stop",
+            last_assistant_message="Готово, тесты зелёные\nдальше детали"))[2]
+        self.assertEqual(body, "Готово, тесты зелёные")
+
+    def test_turn_done_empty_message_keeps_bare_title(self):
+        # Пустая реплика оставляет прежний вид баннера: тело пустое, ломать
+        # тут нечего.
+        title, body = notify.parse_event(sess(
+            hook_event_name="Stop", last_assistant_message=""))[1:3]
+        self.assertEqual(title, "devkit-dk-034: ход закончен")
+        self.assertEqual(body, "")
+
     def test_other_events(self):
         # UserPromptSubmit разбором не проходит: он только снимает отметку
         # ожидания.
@@ -178,6 +194,69 @@ class TestSessionLabel(unittest.TestCase):
             sess(cwd="/p/it-road-course-irc-75", notification_type="permission_prompt"),
             "/p/it-road-course")[1]
         self.assertEqual(title, "it-road-course (irc-75): нужно разрешение")
+
+
+class TestSessionLabelBranch(unittest.TestCase):
+    """Метка задачи с ветки, когда имя дерева её не дало (сессия в основном
+    чекауте, а не в linked worktree с ID в имени)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def repo(self, branch, name="checkout"):
+        path = os.path.join(self.dir, name)
+        os.makedirs(os.path.join(path, ".git"))
+        with open(os.path.join(path, ".git", "HEAD"), "w", encoding="utf-8") as f:
+            f.write("ref: refs/heads/%s\n" % branch)
+        return path
+
+    def test_main_checkout_shows_branch(self):
+        path = self.repo("dk-121")
+        self.assertEqual(notify.session_label(path, path), "checkout (dk-121)")
+
+    def test_root_omitted_still_reads_branch(self):
+        # session_label(cwd) без root это self-test: дерево тогда единственное
+        # известное, и ветку читаем прямо из него.
+        path = self.repo("dk-121", "solo")
+        self.assertEqual(notify.session_label(path), "solo (dk-121)")
+
+    def test_main_and_master_are_not_a_task_label(self):
+        for branch in ("main", "master"):
+            path = self.repo(branch, branch)
+            self.assertEqual(notify.session_label(path, path), branch)
+
+    def test_no_repo_leaves_title_bare(self):
+        path = os.path.join(self.dir, "plain")
+        os.makedirs(path)
+        self.assertEqual(notify.session_label(path, path), "plain")
+
+    def test_detached_head_leaves_title_bare(self):
+        path = os.path.join(self.dir, "detached")
+        os.makedirs(os.path.join(path, ".git"))
+        with open(os.path.join(path, ".git", "HEAD"), "w", encoding="utf-8") as f:
+            f.write("abcdef0123456789\n")
+        self.assertEqual(notify.session_label(path, path), "detached")
+
+    def test_linked_worktree_gitdir_indirection_is_read(self):
+        # У linked worktree .git это файл с gitdir на каталог с собственным
+        # HEAD, а не каталог самим по себе.
+        gitdir = os.path.join(self.dir, "common", "worktrees", "task")
+        os.makedirs(gitdir)
+        with open(os.path.join(gitdir, "HEAD"), "w", encoding="utf-8") as f:
+            f.write("ref: refs/heads/dk-121\n")
+        path = os.path.join(self.dir, "checkout")
+        os.makedirs(path)
+        with open(os.path.join(path, ".git"), "w", encoding="utf-8") as f:
+            f.write("gitdir: %s\n" % gitdir)
+        self.assertEqual(notify.session_label(path, path), "checkout (dk-121)")
+
+    def test_worktree_name_still_wins_over_branch(self):
+        # Имя дерева с ID задачи уже даёт метку, и до ветки дело не доходит:
+        # обычный worktree задачи не должен зависеть от того, что лежит в HEAD.
+        home = self.repo("main", "it-road-course")
+        self.assertEqual(notify.session_label(
+            os.path.join(self.dir, "it-road-course-irc-75"), home),
+            "it-road-course (irc-75)")
 
 
 class TestClickTarget(unittest.TestCase):

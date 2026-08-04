@@ -386,7 +386,7 @@ grep -q 'повод subagent_stop уровень фоновый' "$nlog" ||
 # Конец хода уходит громким, а ввод пользователя не шлёт ничего.
 : > "$nmark"
 event Stop "" sess-turn | notify_hook || fail "хук вернул не 0 на конце хода"
-grep -q '^devkit-dk-034: ход закончен|$' "$nmark" || fail "конец хода не дошёл до бэкенда: $(cat "$nmark")"
+grep -q '^devkit-dk-034: ход закончен|первая строка$' "$nmark" || fail "конец хода не дошёл до бэкенда: $(cat "$nmark")"
 grep -q 'повод turn_done уровень громкий' "$nlog" || fail "конец хода в журнале без уровня: $(cat "$nlog")"
 : > "$nmark"
 event UserPromptSubmit "" sess-in | notify_hook || fail "хук вернул не 0 на вводе пользователя"
@@ -426,7 +426,7 @@ grep -q 'повод turn_done уровень громкий бэкенд - це�
 : > "$nmark"
 printf 'Разбор задачи - devkit\n' > "$ftitle"
 event Stop "" sess-away | notify_focus || fail "хук вернул не 0 на конце хода из чужого окна"
-grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+grep -q '^devkit-dk-034: ход закончен|первая строка$' "$nmark" ||
     fail "конец хода из чужого окна промолчал: $(cat "$nmark")"
 
 # Опрос не ответил (нет разрешения на управление компьютером, не macOS): зовём,
@@ -434,7 +434,7 @@ grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
 : > "$nmark"
 : > "$ftitle"
 event Stop "" sess-blind | notify_focus || fail "хук вернул не 0 на молчащем опросе"
-grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+grep -q '^devkit-dk-034: ход закончен|первая строка$' "$nmark" ||
     fail "конец хода с неотвеченным опросом промолчал: $(cat "$nmark")"
 grep -q 'фокус не определился, зовём' "$nlog" || fail "отказ опроса не попал в журнал: $(cat "$nlog")"
 
@@ -445,7 +445,7 @@ printf 'Правка notify.py - devkit-dk-034\n' > "$ftitle"
 event Stop "" sess-nofocus | HOME="$nhome" PATH="$nfoc:$nsys" \
     DEVKIT_NOTIFY_BACKEND="$nstub" DEVKIT_NOTIFY_FOCUS=off \
     python3 "$here/notify.py" --hook claude-code || fail "хук с выключенным фокусом вернул не 0"
-grep -q '^devkit-dk-034: ход закончен|$' "$nmark" ||
+grep -q '^devkit-dk-034: ход закончен|первая строка$' "$nmark" ||
     fail "выключенная проверка не пропустила конец хода: $(cat "$nmark")"
 [ -s "$fmark" ] && fail "выключенная проверка всё равно спросила фокус: $(cat "$fmark")"
 

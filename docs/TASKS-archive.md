@@ -82,3 +82,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-108 | devkitctl stats --context: куда ушёл объём сессии и перезаписи префикса | task | P3 | 2026-08-04 | [tasks/archive/2026/DK-108.md](tasks/archive/2026/DK-108.md) |
 | DK-109 | Цель: тонкий резидент по DK-100, минус 65% контекста правил | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-109.md](tasks/archive/2026/DK-109.md) |
 | DK-081 | Редирект корня в боковую директорию и признак корп-контура | task | P3 | 2026-08-04 | [tasks/archive/2026/DK-081.md](tasks/archive/2026/DK-081.md) |
+| DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-082.md](tasks/archive/2026/DK-082.md) |

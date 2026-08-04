@@ -27,7 +27,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов | task | P3 | 14 (0+8+1+0+5) | M | [tasks/DK-082.md](tasks/DK-082.md) |
 
 ## Backlog
 
@@ -40,16 +39,16 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-117 | Наблюдаемость витков из чата: первый виток в чате, проверочный прогон не рабочий виток, ход фона виден | task | P2 | 37 (25+5+3+0+4) | M | [tasks/DK-117.md](tasks/DK-117.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация [после DK-082] | task | P3 | 13 (0+8+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 13 (0+8+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-083 | Адаптер jira: REST-операции и образцы ответов API [после DK-082] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-083 | Адаптер jira: REST-операции и образцы ответов API | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |
-| DK-087 | shipctl: ветка по ключу тикета, отказ слияния в корп-контуре [после DK-082] | task | P3 | 10 (0+5+1+0+4) | S | [tasks/DK-087.md](tasks/DK-087.md) |
+| DK-087 | shipctl: ветка по ключу тикета, отказ слияния в корп-контуре | task | P3 | 10 (0+5+1+0+4) | S | [tasks/DK-087.md](tasks/DK-087.md) |
 | DK-088 | LLD имитации человеческого темпа в трекере: строить ли вообще | LLD | P3 | 10 (0+3+5+0+2) | - | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |
 | DK-076 | taskctl и agentctl читают разделы файла задачи мимо ограждённых блоков: review resolve перепишет строку внутри цитаты | bug | P3 | 9 (0+3+1+5+0) | S | - |

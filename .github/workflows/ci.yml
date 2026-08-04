@@ -22,6 +22,9 @@ jobs:
       - name: тесты agentctl
         run: go test ./...
         working-directory: agentctl
+      - name: тесты trackctl
+        run: go test ./...
+        working-directory: trackctl
       - name: тесты regcheck
         run: go test ./...
         working-directory: regcheck

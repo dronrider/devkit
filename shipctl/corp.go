@@ -103,9 +103,14 @@ func corpLostLocal(start string) string {
 }
 
 // trackerBinding это поля привязки .devkit/tracker.local, нужные shipctl:
-// ключ тикета и шаблон ветки для start, путь клона для status и для
-// восстановления обвязки. Остальное (контур компании, статусы, оценки) знает
-// только trackctl, у него свой конфиг и свой разбор того же плоского формата.
+// шаблон ветки для start, путь клона для start, status и восстановления
+// обвязки. Key это общепроектный префикс тикетов (trackctl/README.md,
+// «Ключ пишется целиком... либо одним номером, префикс тогда берётся из
+// привязки») для команд самого trackctl, shipctl его не читает: ключ тикета
+// в шаблоне ветки это ID зеркальной строки доски (DK-074, «Граница доски и
+// тикета»), а не это поле. Остальное (контур компании, статусы, оценки)
+// знает только trackctl, у него свой конфиг и свой разбор того же плоского
+// формата.
 type trackerBinding struct {
 	Key    string
 	Branch string
@@ -180,24 +185,37 @@ func corpBranchName(tpl, key, slug string) string {
 	return strings.TrimRight(strings.ReplaceAll(out, "{slug}", slug), "-")
 }
 
+// corpCloneDir разворачивает ключ repo привязки, найденной в dir, в
+// абсолютный путь до корп-клона. Пустой repo (привязки нет или ключа в ней
+// нет) отдаёт пустую строку: вызывающий код тогда остаётся на домашнем пути.
+func corpCloneDir(dir, repo string) string {
+	if repo == "" {
+		return ""
+	}
+	if !filepath.IsAbs(repo) {
+		repo = filepath.Join(dir, repo)
+	}
+	return repo
+}
+
 // corpWorkBranch отдаёт рабочую ветку. В корп-контуре git-корень это боковая
 // директория со своей историей (доска, файлы задач), а ветка задачи стоит в
 // клоне, на который привязка указывает ключом repo: спрашивать её у root
 // значит называть веткой ветку доски, а без единого коммита в боковой
 // директории (обычное дело: она только для docs/) там и вовсе падать на
-// rev-parse. Без привязки или без ключа repo (домашний проект) ветку
-// спрашивают у самого root, как и раньше: смена поведения не должна задевать
-// дом.
+// rev-parse. Без привязки или без ключа repo (домашний проект или неполная
+// привязка) ветку спрашивают у самого root, как и раньше: смена поведения не
+// должна задевать дом.
 func corpWorkBranch(root string) (string, error) {
 	b, ok := loadTrackerBinding(root)
-	if !ok || b.Repo == "" {
+	clone := ""
+	if ok {
+		clone = corpCloneDir(root, b.Repo)
+	}
+	if clone == "" {
 		return git(root, "rev-parse", "--abbrev-ref", "HEAD")
 	}
-	repo := b.Repo
-	if !filepath.IsAbs(repo) {
-		repo = filepath.Join(root, repo)
-	}
-	return git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+	return git(clone, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
 // corpRefused формулирует единый отказ merge, ship и revert в корп-контуре:

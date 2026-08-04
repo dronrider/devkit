@@ -85,3 +85,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-082.md](tasks/archive/2026/DK-082.md) |
 | DK-086 | Хуки корп-контура: обёртка чужих хуков и рубеж следов devkit | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-086.md](tasks/archive/2026/DK-086.md) |
 | DK-121 | Уведомление конца хода: в баннере видно задачу и завершённый шаг | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-121.md](tasks/archive/2026/DK-121.md), `c9ac2d5`, `a7dc1a9` |
+| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-084.md](tasks/archive/2026/DK-084.md) |

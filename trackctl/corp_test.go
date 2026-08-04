@@ -125,6 +125,33 @@ func TestFindRootRedirectAbsolute(t *testing.T) {
 	corpSame(t, root, local)
 }
 
+// TestFindRootRedirectBeatsBoardAbove ловит мутацию «подъём раньше редиректа».
+// Остальные сценарии её не различают: доски выше клона в них нет вовсе, подъём
+// проваливается, и до corpLocal код доходит в любом порядке. Здесь доска лежит
+// и в дереве клона, и над ним (так выходит, когда корп-клон завели внутри
+// рабочей директории с домашним проектом), так что подъём нашёл бы её сразу.
+// Побеждать обязан редирект: он свойство самого клона, а найденная подъёмом
+// доска чужая.
+func TestFindRootRedirectBeatsBoardAbove(t *testing.T) {
+	for _, where := range []string{"над клоном", "в дереве клона"} {
+		t.Run(where, func(t *testing.T) {
+			base, clone, local := corpClone(t)
+			if where == "над клоном" {
+				corpBoard(t, base)
+			} else {
+				corpBoard(t, clone)
+			}
+			corpGitT(t, clone, "config", "devkit.local", "../proj-local")
+
+			root, err := findRoot(clone)
+			if err != nil {
+				t.Fatalf("findRoot: %v", err)
+			}
+			corpSame(t, root, local)
+		})
+	}
+}
+
 // TestFindRootNoRedirect: ключа нет, значит прежний подъём по docs/TASKS.md.
 // Домашние проекты редиректа не замечают.
 func TestFindRootNoRedirect(t *testing.T) {

@@ -71,3 +71,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-100 | Дерево контекста: тонкий резидентный корень, правила скиллами и хуками | LLD | P2 | 2026-08-04 | [tasks/archive/2026/DK-100.md](tasks/archive/2026/DK-100.md) |
 | DK-103 | Ось скиллов в профиле харнеса, глубина правил в генераторе | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-103.md](tasks/archive/2026/DK-103.md) |
 | DK-102 | obeycheck: стенд послушания, сценарии, две раскладки, прогон на временном HOME | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-102.md](tasks/archive/2026/DK-102.md) |
+| DK-110 | devkitctl weigh: живой замер резидента headless-прогоном и сверка с расчётом doctor | task | P3 | 2026-08-04 | [tasks/archive/2026/DK-110.md](tasks/archive/2026/DK-110.md) |

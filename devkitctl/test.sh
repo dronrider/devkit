@@ -1103,6 +1103,15 @@ out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C
 [ $? -eq 1 ] || fail "замер выше потолка не дал кода 1: $out"
 echo "$out" | grep -q 'потолок резидента 14 359 токенов превышен на 1' || fail "нет строки про превышение потолка: $out"
 
+# Потолок по умолчанию: без --limit берётся тот, что в бюджете дизайна, и
+# сегодняшний резидент выше него. Дефолт тут не украшение, этим же порогом
+# доктор будет красить находку.
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" 2>&1)
+[ $? -eq 1 ] || fail "замер выше потолка по умолчанию не дал кода 1: $out"
+echo "$out" | grep -q 'потолок резидента 6 500 токенов превышен на 7 860' ||
+    fail "потолок по умолчанию не 6 500 токенов из бюджета дизайна: $out"
+
 # Повторов один: разброса нет, а прогонов ровно два.
 : > "$calls"
 out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --runs 1 --limit 20000 2>&1)
@@ -1209,6 +1218,21 @@ echo "$out" | grep -q '^  RULES.md (импорт' && fail "в карманах �
 rm -f "$dk/RULES.core.md"
 HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
 grep -q 'RULES.core.md' "$wproj/CLAUDE.md" && fail "тонкий файл не вернулся на полный текст правил"
+
+# Оба прогона пары стоят одинаково: разница нулевая, мерить было нечего (прогоны
+# ушли по одной раскладке либо усилия харнеса разъехались). Печатать по такой
+# разнице карманы и коэффициент значило бы выдать шум за замер.
+cat > "$wbin/claude" <<'EOF'
+#!/bin/sh
+echo "$PWD" >> "$WEIGH_CALLS"
+printf '{"type":"result","usage":{"input_tokens":4,"cache_creation_input_tokens":20000,"cache_read_input_tokens":9996}}\n'
+EOF
+chmod +x "$wbin/claude"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+[ $? -eq 2 ] || fail "нулевая разница принята за замер: $out"
+echo "$out" | grep -q 'разница вышла неположительной' || fail "нулевая разница не объяснена: $out"
+echo "$out" | grep -q 'коэффициент этого прогона' && fail "по нулевой разнице всё же посчитан коэффициент: $out"
 
 # Битый ответ клиента: замер падает вслух, а не выдаёт разницу из нулей.
 cat > "$wbin/claude" <<'EOF'

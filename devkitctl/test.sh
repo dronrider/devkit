@@ -1047,6 +1047,7 @@ if [ -f "$PWD/CLAUDE.md" ]; then
             AGENTS.md) t=$((t + 1400)) ;;
             RULES.core.md) t=$((t + 300)) ;;
             RULES.md) t=$((t + 10900)) ;;
+            RULES.board.md) t=$((t + 7000)) ;;
         esac
     done < "$PWD/CLAUDE.md"
 fi
@@ -1262,6 +1263,31 @@ os.makedirs(os.path.join(bare, ".claude"))
 dst = weigh.build_home(bare, os.path.join(work, "nokeys"), dkroot, profile, True)
 assert not os.path.lexists(os.path.join(dst, "Library")), os.listdir(dst)
 EOF
+
+# Проект с доской: в замер едут оба файла правил, и второй это тот самый
+# RULES.board.md, из-за которого замер занижался. Пропусти его копию в
+# директорию замера, и правила доски снова не доедут до целевого прогона.
+bproj="$wtmp/bproj"
+mkdir -p "$bproj/docs"
+git init -q "$bproj"
+git -C "$bproj" config user.name t
+git -C "$bproj" config user.email t@t
+HOME="$whome" python3 "$dkctl" new --no-board -C "$bproj" >/dev/null || fail "weigh: проект с доской не подключился"
+printf '# Задачи\n\nПрефикс: WG\n' > "$bproj/docs/TASKS.md"
+HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$bproj" >/dev/null 2>&1
+grep -q '^@.*RULES.board.md$' "$bproj/CLAUDE.md" ||
+    fail "тонкий файл проекта с доской не зовёт правила доски: $(cat "$bproj/CLAUDE.md")"
+: > "$calls"
+: > "$imports"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" WEIGH_IMPORTS="$imports" \
+    python3 "$dkctl" weigh -C "$bproj" --runs 1 --limit 30000 2>&1)
+[ $? -eq 0 ] || fail "weigh не прошёл на проекте с доской: $out"
+grep -q '^RULES.board.md$' "$imports" ||
+    fail "правила доски не доехали до директории замера: $(cat "$imports")"
+grep -q '/' "$imports" && fail "проект с доской импортирует наружу: $(cat "$imports")"
+echo "$out" | grep -q 'замер: 21 320 токенов' || fail "правила доски не попали в замер: $out"
+echo "$out" | grep -q 'RULES.board.md (импорт тонкого файла)' ||
+    fail "правила доски не посчитаны карманом: $out"
 
 # Ядро правил нарезано: резидентно то, что импортирует тонкий файл, а не полный
 # текст. Глубину claude-code объявляет ядром, и как только RULES.core.md

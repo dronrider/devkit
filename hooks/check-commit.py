@@ -54,15 +54,22 @@ def check(lines, history):
     findings = []
     for i, ln in enumerate(lines, 1):
         if TRACES.search(ln):
-            findings.append("%d: след ассистента в тексте коммита, строгий запрет (RULES.md, «Git» п. 4): %s"
+            findings.append("%d: след ассистента в тексте коммита, строгий запрет (RULES.md, «Git» п. 4): %s\n"
+                            "  как переписать: строку убрать целиком, соавторства и упоминания модели\n"
+                            "  в истории не бывает; уже закоммиченное правится git commit --amend"
                             % (i, ln.strip()))
     if body := [ln for ln in lines[1:] if ln.strip()]:
-        findings.append("коммит пишется одной строкой, body не добавляется (RULES.md, «Git» п. 2), лишних строк: %d"
+        findings.append("коммит пишется одной строкой, body не добавляется (RULES.md, «Git» п. 2), лишних строк: %d\n"
+                        "  как переписать: главное из body внести в subject, остальное выбросить;\n"
+                        "  что не влезло в строку, обычно просится в отдельный коммит"
                         % len(body))
     types = {m.group(1) for s in history if (m := PREFIX.match(s))}
     if lines and types and (m := PREFIX.match(lines[0])):
         if m.group(1) not in types and m.group(1) != "revert":
-            findings.append("тип %r не встречается в истории проекта (RULES.md, «Git» п. 1), там: %s"
+            findings.append("тип %r не встречается в истории проекта (RULES.md, «Git» п. 1), там: %s\n"
+                            "  как переписать: взять префикс из этого перечня, он снят с последней\n"
+                            "  сотни коммитов (git log -n 100 --pretty=format:%%s); новый тип заводится\n"
+                            "  осознанно, через git commit --no-verify"
                             % (m.group(1), ", ".join(sorted(types))))
     return findings
 

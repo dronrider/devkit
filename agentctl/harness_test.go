@@ -67,6 +67,8 @@ func TestProfileClaudeCode(t *testing.T) {
 		{"hooks", "memory_index", "/memory/MEMORY.md"},
 		{"quota", "snap", "usage-pane"},
 		{"quota", "required", "week_all"},
+		{"skills", "dir", "~/.claude/skills"},
+		{"skills", "discovery", "auto"},
 	}
 	for _, c := range cases {
 		if got := p.section(c.section).str(c.key); got != c.want {

@@ -1,0 +1,1 @@
+error: profile-skills-nodir.toml: [skills] нет ключа dir (при discovery = "auto" скиллы надо куда-то раскладывать)

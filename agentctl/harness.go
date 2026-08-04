@@ -44,8 +44,9 @@ type sectionSpec struct {
 	Keys []keySpec
 }
 
-// Свод профиля: пять секций и известные ключи каждой. Порядок фиксирован, по
-// нему идут и проверки типов, и сообщения, а они входят в контракт фикстур.
+// Свод профиля: пять обязательных секций и известные ключи каждой. Порядок
+// фиксирован, по нему идут и проверки типов, и сообщения, а они входят в
+// контракт фикстур.
 var profileSchema = []sectionSpec{
 	{"detect", []keySpec{{"env", tomlStr}, {"value", tomlStr}, {"bin", tomlStr}}},
 	{"rules", []keySpec{{"mode", tomlStr}, {"file", tomlStr}, {"import_line", tomlStr},
@@ -59,6 +60,16 @@ var profileSchema = []sectionSpec{
 		{"required", tomlStr}, {"spend_mini", tomlArr}, {"spend_base", tomlArr},
 		{"spend_pro", tomlArr}, {"spend_max", tomlArr}, {"budget_based", tomlBool}}},
 }
+
+// Шестая секция, ось скиллов (docs/lld/DK-100-context-tree.md, раздел «Харнесы
+// без скиллов»). Обязательной её сделать нельзя: профиль, написанный до этой
+// оси, обязан читаться и дальше, а отсутствие секции значит сегодняшнюю полную
+// вклейку правил.
+var optionalSchema = []sectionSpec{
+	{"skills", []keySpec{{"dir", tomlStr}, {"format", tomlStr}, {"discovery", tomlStr}}},
+}
+
+var discoveryValues = []string{"auto", "manual"}
 
 var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"}
 
@@ -151,7 +162,7 @@ func requireOneOf(name string, t *tomlTable, key string, allowed []string) error
 // потому что молча выключил бы ось.
 func validateProfile(d *tomlDoc) ([]string, error) {
 	known := map[string][]keySpec{}
-	for _, s := range profileSchema {
+	for _, s := range append(append([]sectionSpec{}, profileSchema...), optionalSchema...) {
 		known[s.Name] = s.Keys
 	}
 	for _, s := range profileSchema {
@@ -159,7 +170,10 @@ func validateProfile(d *tomlDoc) ([]string, error) {
 			return nil, fmt.Errorf("%s: нет секции [%s], в профиле обязаны быть все пять (detect, rules, delegate, hooks, quota)", d.Name, s.Name)
 		}
 	}
-	for _, s := range profileSchema {
+	for _, s := range append(append([]sectionSpec{}, profileSchema...), optionalSchema...) {
+		if !d.has(s.Name) {
+			continue
+		}
 		if err := checkTypes(d.Name, d.table(s.Name), s.Keys); err != nil {
 			return nil, err
 		}
@@ -177,6 +191,9 @@ func validateProfile(d *tomlDoc) ([]string, error) {
 		return nil, err
 	}
 	if err := validateQuota(d); err != nil {
+		return nil, err
+	}
+	if err := validateSkills(d); err != nil {
 		return nil, err
 	}
 	warns := unknownWarns(d, known)
@@ -305,6 +322,27 @@ func validateQuota(d *tomlDoc) error {
 				return fmt.Errorf("%s: [quota] %s ссылается на бакет %s, которого нет в buckets", d.Name, key, quoteTOML(b))
 			}
 		}
+	}
+	return nil
+}
+
+// validateSkills проверяет ось скиллов. Секции нет вовсе, значит про ось ещё не
+// разбирались, и правила поедут полным текстом; пустая секция это разобранное
+// «скиллов у инструмента нет». Исход у обоих случаев один, а смысл разный, и
+// различает их генератор правил.
+func validateSkills(d *tomlDoc) error {
+	t := d.table("skills")
+	if t.empty() {
+		return nil
+	}
+	if err := requireKey(d.Name, t, "discovery", "секция непуста, иначе непонятно, доезжают скиллы сами или по указателю"); err != nil {
+		return err
+	}
+	if err := requireOneOf(d.Name, t, "discovery", discoveryValues); err != nil {
+		return err
+	}
+	if t.str("discovery") == "auto" {
+		return requireKey(d.Name, t, "dir", `при discovery = "auto" скиллы надо куда-то раскладывать`)
 	}
 	return nil
 }

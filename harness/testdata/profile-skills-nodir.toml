@@ -1,0 +1,17 @@
+# discovery = "auto" без dir: инструмент подхватывает скиллы сам, а откуда, не
+# сказано, и раскладывать их доктору некуда.
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+
+[skills]
+discovery = "auto"
+format = "sometool"

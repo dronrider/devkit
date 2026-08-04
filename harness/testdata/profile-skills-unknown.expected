@@ -1,0 +1,11 @@
+[detect]
+[rules]
+mode = "embed"
+[delegate]
+mode = "none"
+[hooks]
+[quota]
+[skills]
+discovery = "manual"
+protocol = "sometool-skills"
+warn: profile-skills-unknown.toml: [skills] незнакомый ключ protocol, пропущен

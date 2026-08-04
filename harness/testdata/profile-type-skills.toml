@@ -1,0 +1,15 @@
+# Не тот тип у ключа оси скиллов: ловится тем же сводом, что и остальные секции.
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+
+[skills]
+discovery = 1

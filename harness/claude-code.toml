@@ -28,6 +28,11 @@ config = "~/.claude/settings.json"
 events = ["write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"]
 memory_index = "/memory/MEMORY.md"
 
+[skills]
+dir = "~/.claude/skills"
+format = "claude-code"
+discovery = "auto"
+
 [quota]
 snap = "usage-pane"
 # week_opus известен, но ни один ярус из него не тратит: панель показывала его

@@ -1,0 +1,16 @@
+# Непустая секция без discovery: непонятно, доезжают скиллы сами или по
+# указателю, а от этого зависит глубина правил.
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+
+[skills]
+dir = "~/.sometool/skills"

@@ -1,0 +1,17 @@
+# Незнакомый ключ оси скиллов из более свежего devkit: предупреждение, а не
+# отказ, как и в остальных секциях.
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+
+[skills]
+discovery = "manual"
+protocol = "sometool-skills"

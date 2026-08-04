@@ -23,8 +23,8 @@ STR, INT, BOOL, ARR = "str", "int", "bool", "arr"
 
 KIND_NAMES = {STR: "строку", INT: "целое", BOOL: "true/false", ARR: "массив строк"}
 
-# Пять секций профиля и известные ключи каждой; порядок фиксирован, по нему
-# идут проверки и сообщения.
+# Пять обязательных секций профиля и известные ключи каждой; порядок фиксирован,
+# по нему идут проверки и сообщения.
 PROFILE_SCHEMA = (
     ("detect", (("env", STR), ("value", STR), ("bin", STR))),
     ("rules", (("mode", STR), ("file", STR), ("import_line", STR), ("config", STR),
@@ -38,6 +38,16 @@ PROFILE_SCHEMA = (
                ("spend_mini", ARR), ("spend_base", ARR), ("spend_pro", ARR),
                ("spend_max", ARR), ("budget_based", BOOL))),
 )
+
+# Шестая секция, ось скиллов (docs/lld/DK-100-context-tree.md, раздел «Харнесы
+# без скиллов»). Обязательной её сделать нельзя: профиль, написанный до этой
+# оси, обязан читаться и дальше, а отсутствие секции значит сегодняшнюю полную
+# вклейку правил.
+OPTIONAL_SCHEMA = (
+    ("skills", (("dir", STR), ("format", STR), ("discovery", STR))),
+)
+
+DISCOVERY_VALUES = ("auto", "manual")
 
 TIERS = ("mini", "base", "pro", "max")
 # Префиксы имён бакетов, из которых берётся окно расчёта: week_ это 7 суток,
@@ -294,18 +304,20 @@ def validate_profile(d):
     # выбранных режимах, значения режимов из перечня, spend_* и required
     # ссылаются только на бакеты из buckets. Нарушение это жёсткая ошибка:
     # битый профиль хуже отсутствующего, он молча выключил бы ось.
-    known = dict(PROFILE_SCHEMA)
+    known = dict(PROFILE_SCHEMA + OPTIONAL_SCHEMA)
     for section, _ in PROFILE_SCHEMA:
         if section not in d.tables:
             raise ProfileError("%s: нет секции [%s], в профиле обязаны быть все пять "
                                "(detect, rules, delegate, hooks, quota)" % (d.name, section))
-    for section, keys in PROFILE_SCHEMA:
-        check_types(d.name, section, d.tables[section], keys)
+    for section, keys in PROFILE_SCHEMA + OPTIONAL_SCHEMA:
+        if section in d.tables:
+            check_types(d.name, section, d.tables[section], keys)
     validate_detect(d)
     validate_rules(d)
     validate_delegate(d)
     validate_hooks(d)
     validate_quota(d)
+    validate_skills(d)
     warns = unknown_warns(d, known)
     for e in d.arr_of("hooks", "events"):
         if e not in KNOWN_EVENTS:
@@ -380,6 +392,20 @@ def validate_quota(d):
             if b not in buckets:
                 raise ProfileError("%s: [quota] %s ссылается на бакет %s, которого нет в buckets"
                                    % (d.name, key, quote(b)))
+
+
+def validate_skills(d):
+    # Секции нет вовсе, значит про ось ещё не разбирались, и правила поедут
+    # полным текстом; пустая секция это разобранное «скиллов у инструмента нет».
+    # Исход у обоих случаев один, а смысл разный, и различает их генератор.
+    t = d.tables.get("skills")
+    if not t:
+        return
+    require_key(d.name, "skills", t, "discovery",
+                "секция непуста, иначе непонятно, доезжают скиллы сами или по указателю")
+    require_one_of(d, "skills", "discovery", DISCOVERY_VALUES)
+    if d.str_of("skills", "discovery") == "auto":
+        require_key(d.name, "skills", t, "dir", 'при discovery = "auto" скиллы надо куда-то раскладывать')
 
 
 def report(name, text, validate=True):

@@ -1,0 +1,1 @@
+error: profile-skills-nodiscovery.toml: [skills] нет ключа discovery (секция непуста, иначе непонятно, доезжают скиллы сами или по указателю)

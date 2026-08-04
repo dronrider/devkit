@@ -1,0 +1,13 @@
+[detect]
+[rules]
+mode = "import"
+file = "SOMETOOL.md"
+import_line = "@{path}"
+[delegate]
+mode = "none"
+[hooks]
+[quota]
+[skills]
+dir = "~/.sometool/skills"
+format = "sometool"
+discovery = "auto"

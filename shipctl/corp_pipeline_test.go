@@ -8,19 +8,27 @@ import (
 )
 
 // Тесты конвейера корп-контура (DK-087, DK-074 «Конвейер: что остаётся от
-// shipctl»): ветка по ключу тикета и вызов trackctl take в start, отказ
-// merge/ship/revert честной строкой, отказ от подсчёта очереди в status и
-// починка бага DK-081 (status спрашивал ветку у боковой директории, а не у
-// клона). Фикстура и помощники редиректа (corpWrite, corpGitT, corpBoard)
-// общие с corp_test.go, помощники доски (gitT, boardTable) общие с
-// ops_test.go: все три файла делят один пакет.
+// shipctl»): дерево задачи заводится в клоне и несёт код проекта, ветка по
+// ключу тикета (им служит ID зеркальной строки), вызов trackctl take в
+// start, отказ merge/ship/revert честной строкой, отказ от подсчёта очереди
+// в status и починка бага DK-081 (status спрашивал ветку у боковой
+// директории, а не у клона). Фикстура и помощники редиректа (corpWrite,
+// corpGitT, corpBoard) общие с corp_test.go, помощники доски (gitT,
+// boardTable) общие с ops_test.go: все три файла делят один пакет.
+//
+// Фикстура повторяет ровно то, что кладёт devkitctl corp (devkitctl/corp.go,
+// ensure_binding и corp_connect), а не удобное для теста: привязка несёт
+// только ключ repo (key и branch заводит человек руками, trackctl/README.md,
+// и ни одна задача серии их не пишет), а боковая директория остаётся без
+// единого коммита, потому что подключение заводит её git-репозиторием, но
+// ничего в него не коммитит. Первый заход DK-087 фикстуру этой правды не
+// повторял (боковая директория несла коммиты и ключ key), поэтому зелёные
+// тесты разошлись с находками на настоящем подключении («Прогон сценария
+// после выката: не сошёлся»).
 
-// corpTrack описывает содержимое привязки .devkit/tracker.local для
-// фикстуры: пустые поля берут разумные умолчания, NoKey пишет привязку без
-// ключа key (проверка честной находки вместо тихого отказа).
 type corpTrack struct {
-	Key, Branch, Repo string
-	NoKey             bool
+	Branch, Repo string
+	NoRepo       bool // без ключа repo: неполная привязка, которую devkitctl corp не заводит, но которую руками испортить можно
 }
 
 type trackMode int
@@ -32,12 +40,11 @@ const (
 )
 
 // corpPipeline строит связку клон + боковая директория: клон с закоммиченным
-// README на main и заведённым редиректом devkit.local, боковая директория
-// рядом со своей git-историей (нужна mainBranch и primaryRoot), доска с
-// одной задачей id в Backlog, привязка .devkit/tracker.local. Стабы taskctl
-// и trackctl лежат в общем PATH, каждый пишет свои вызовы в собственный лог;
-// trackctl по mode либо отвечает успехом, либо падает, либо не кладётся
-// вовсе.
+// README на main и заведённым редиректом devkit.local (код проекта живёт
+// здесь), боковая директория рядом с доской (одна задача id в Backlog) и
+// привязкой, без единого коммита. Стабы taskctl и trackctl лежат в общем
+// PATH, каждый пишет свои вызовы в собственный лог; trackctl по mode либо
+// отвечает успехом, либо падает, либо не кладётся вовсе.
 func corpPipeline(t *testing.T, id string, tr corpTrack, mode trackMode) (clone, local, taskLog, trackLog string) {
 	t.Helper()
 	base := t.TempDir()
@@ -58,6 +65,7 @@ func corpPipeline(t *testing.T, id string, tr corpTrack, mode trackMode) (clone,
 	corpGitT(t, local, "init", "-q", "-b", "main")
 	corpGitT(t, local, "config", "user.email", "test@test")
 	corpGitT(t, local, "config", "user.name", "test")
+
 	prefix := strings.Split(id, "-")[0]
 	board := "# Тест: доска (префикс " + prefix + ")\n\n" +
 		"## In progress\n\nНет.\n\n" +
@@ -67,26 +75,29 @@ func corpPipeline(t *testing.T, id string, tr corpTrack, mode trackMode) (clone,
 		"## Blocked\n\nНет.\n"
 	corpWrite(t, filepath.Join(local, "docs", "TASKS.md"), board)
 
+	// Ровно то, что пишет devkitctl corp: ensure_binding кладёт только repo с
+	// комментарием заголовка, branch и key в привязке нет вовсе.
 	var tb strings.Builder
-	tb.WriteString("contour = corp\n")
-	if !tr.NoKey {
-		key := tr.Key
-		if key == "" {
-			key = prefix
-		}
-		tb.WriteString("key = " + key + "\n")
-	}
+	tb.WriteString("# Привязка проекта к трекеру (trackctl/README.md). Ключ repo кладёт\n")
+	tb.WriteString("# подключение: по нему обвязка клона находится после переклонирования.\n")
 	if tr.Branch != "" {
 		tb.WriteString("branch = \"" + tr.Branch + "\"\n")
 	}
-	repo := tr.Repo
-	if repo == "" {
-		repo = "../proj"
+	if !tr.NoRepo {
+		repo := tr.Repo
+		if repo == "" {
+			repo = "../proj"
+		}
+		tb.WriteString("repo = " + repo + "\n")
 	}
-	tb.WriteString("repo = " + repo + "\n")
 	corpWrite(t, filepath.Join(local, corpTrackerPath), tb.String())
-	corpGitT(t, local, "add", ".")
-	corpGitT(t, local, "commit", "-q", "-m", "seed")
+	if tr.NoRepo {
+		// Без repo дерево задачи заводится в самой боковой директории
+		// (домашний путь), которому, как и дома, нужен хотя бы один коммит:
+		// это отдельный от находки 4 случай, привязка тут заведомо неполная.
+		corpGitT(t, local, "add", ".")
+		corpGitT(t, local, "commit", "-q", "-m", "seed")
+	}
 
 	bin := t.TempDir()
 	taskLog = filepath.Join(bin, "calls.log")
@@ -144,19 +155,24 @@ func pathWithout(path, exe string) string {
 // не по домашнему «строчный ID плюс слаг». Шаблон с префиксом «feature/» и
 // сохранением регистра ключа отличает это от старого поведения на глаз: то,
 // что раньше могло сложиться в тот же результат случайно, здесь не сложится.
+// Ловит и находку 1: дерево задачи заводится в клоне и несёт код проекта, а
+// не одну доску боковой директории.
 func TestCorpStartBranchTemplate(t *testing.T) {
-	_, local, taskLog, trackLog := corpPipeline(t, "ABC-42", corpTrack{Branch: "feature/{key}-{slug}"}, trackOK)
+	clone, local, taskLog, trackLog := corpPipeline(t, "ABC-42", corpTrack{Branch: "feature/{key}-{slug}"}, trackOK)
 	msg, err := cmdStart(local, StartParams{ID: "ABC-42", Slug: "add-x"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "feature/ABC-42-add-x"
-	wt := filepath.Join(filepath.Dir(local), filepath.Base(local)+"-abc-42")
+	wt := filepath.Join(filepath.Dir(clone), filepath.Base(clone)+"-abc-42")
 	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != want {
 		t.Fatalf("ветка построена как %q, ожидалась %q по шаблону привязки", br, want)
 	}
 	if !strings.Contains(msg, want) {
 		t.Fatalf("в отчёте нет имени ветки по шаблону: %q", msg)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "README.md")); err != nil {
+		t.Fatalf("дерево задачи %s не несёт код проекта (заведено не в клоне): %v", wt, err)
 	}
 	calls, _ := os.ReadFile(taskLog)
 	if !strings.Contains(string(calls), "move ABC-42 in-progress") {
@@ -206,25 +222,43 @@ func TestCorpStartTrackctlFails(t *testing.T) {
 	}
 }
 
-// TestCorpStartBindingWithoutKey: привязка есть, но без ключа key (обвязка
-// неполная), и start тогда проходит домашним путём (ветка по локальному ID),
-// но говорит об этом вслух и trackctl take не зовёт.
-func TestCorpStartBindingWithoutKey(t *testing.T) {
-	_, local, _, trackLog := corpPipeline(t, "ABC-1", corpTrack{NoKey: true}, trackOK)
+// TestCorpStartNoCommitsInLocal воспроизводит ровно состояние сразу после
+// devkitctl corp (находка 4): боковая директория без единого коммита. Раньше
+// start спрашивал main или master у неё и падал на «не нашёл ветку main или
+// master», хотя код и история лежат в клоне.
+func TestCorpStartNoCommitsInLocal(t *testing.T) {
+	_, local, _, _ := corpPipeline(t, "ABC-1", corpTrack{}, trackOK)
+	if out, err := corpGit(local, "log"); err == nil {
+		t.Fatalf("фикстура должна быть без коммитов в боковой директории, а нашёлся лог: %q", out)
+	}
+	if _, err := cmdStart(local, StartParams{ID: "ABC-1"}); err != nil {
+		t.Fatalf("start не должен падать на боковой директории без коммитов: %v", err)
+	}
+}
+
+// TestCorpStartBindingWithoutRepo: привязка есть, но без ключа repo (обвязка
+// неполная и руками испорченная, devkitctl corp так не оставляет). Ветку
+// всё равно строит шаблон (ключ тикета несёт сам ID зеркальной строки, он от
+// repo не зависит), trackctl take всё равно зовётся, а дерево задачи без
+// клона заводится в боковой директории и честно об этом говорит: кода
+// проекта там не будет.
+func TestCorpStartBindingWithoutRepo(t *testing.T) {
+	_, local, _, trackLog := corpPipeline(t, "ABC-1", corpTrack{NoRepo: true}, trackOK)
 	msg, err := cmdStart(local, StartParams{ID: "ABC-1", Slug: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "abc-1-x"
+	want := "ABC-1-x"
 	wt := filepath.Join(filepath.Dir(local), filepath.Base(local)+"-abc-1")
 	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != want {
-		t.Fatalf("без ключа key ветка должна остаться домашней: %q", br)
+		t.Fatalf("ветка построена как %q, ожидалась %q по шаблону (ключ тикета это ID)", br, want)
 	}
-	if !strings.Contains(msg, "без ключа key") {
+	if !strings.Contains(msg, "без ключа repo") {
 		t.Fatalf("неполная привязка не названа вслух: %q", msg)
 	}
-	if tcalls, _ := os.ReadFile(trackLog); len(tcalls) != 0 {
-		t.Fatalf("trackctl take не должен зваться без ключа: %q", tcalls)
+	tcalls, _ := os.ReadFile(trackLog)
+	if !strings.Contains(string(tcalls), "take ABC-1") {
+		t.Fatalf("trackctl take обязан зваться и без ключа repo, он не завязан на местоположение клона: %q", tcalls)
 	}
 }
 
@@ -277,9 +311,9 @@ func TestCorpStatusBranchFromClone(t *testing.T) {
 
 // TestCorpStatusNoCommitsInLocal воспроизводит находку из «Найденного по
 // ходу серии» дословно: боковая директория без единого коммита (доска ещё не
-// коммитилась) роняла status на git rev-parse. Фикстура собрана руками, а не
-// через corpPipeline: тому нужен коммит доски для mainBranch у start,
-// здесь же нужен ровно пустой git-репозиторий.
+// коммитилась) роняла status на git rev-parse. Фикстура собрана руками, как
+// и раскладывает её devkitctl corp: только repo в привязке, ни одного
+// коммита в боковой директории.
 func TestCorpStatusNoCommitsInLocal(t *testing.T) {
 	base := t.TempDir()
 	clone := filepath.Join(base, "proj")
@@ -298,8 +332,9 @@ func TestCorpStatusNoCommitsInLocal(t *testing.T) {
 	}
 	corpGitT(t, local, "init", "-q", "-b", "main")
 	corpBoard(t, local)
-	corpWrite(t, filepath.Join(local, corpTrackerPath), "contour = corp\nkey = ABC\nrepo = ../proj\n")
-	// Ни одного коммита в local: воспроизводит ровно репро DK-081.
+	corpWrite(t, filepath.Join(local, corpTrackerPath), "repo = ../proj\n")
+	// Ни одного коммита в local: воспроизводит ровно репро DK-081, и ровно то
+	// состояние, в котором подключение оставляет боковую директорию.
 
 	msg, err := cmdStatus(local)
 	if err != nil {

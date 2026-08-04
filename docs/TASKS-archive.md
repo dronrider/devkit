@@ -76,3 +76,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-107 | Тонкая глобальная точка правил в doctor/setup | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-107.md](tasks/archive/2026/DK-107.md) |
 | DK-113 | Права headless-витков цели: allowlist машинного контура через doctor и предполётная проверка goal-run | task | P1 | 2026-08-04 | [tasks/archive/2026/DK-113.md](tasks/archive/2026/DK-113.md) |
 | DK-106 | Хуки вместо прозы: разбор в текстах находок, тесты в pre-commit, pre-push на запрет пуша | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-106.md](tasks/archive/2026/DK-106.md) |
+| DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-105.md](tasks/archive/2026/DK-105.md) |

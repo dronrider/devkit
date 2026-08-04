@@ -79,3 +79,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-105.md](tasks/archive/2026/DK-105.md) |
 | DK-029 | бюджет на резидентную часть правил, порог в devkitctl doctor | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-029.md](tasks/archive/2026/DK-029.md) |
 | DK-118 | Тело скилла goal-loop вдвое выше порога DK-029: резать надвое или пересматривать порог | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-118.md](tasks/archive/2026/DK-118.md) |
+| DK-108 | devkitctl stats --context: куда ушёл объём сессии и перезаписи префикса | task | P3 | 2026-08-04 | [tasks/archive/2026/DK-108.md](tasks/archive/2026/DK-108.md) |

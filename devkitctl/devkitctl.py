@@ -37,14 +37,19 @@
       стоит денег и требует сети, поэтому команда отдельная, а не проверка
       доктора; несвежая раскладка на машине это отказ мерить
 
-  devkitctl stats [-C dir]
+  devkitctl stats [--context] [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
       доля ошибок, отсортировано по частоте убыванием, в конце итоговая строка
-      по всему журналу; битые строки молча пропускаются
+      по всему журналу; битые строки молча пропускаются.
+      --context берёт второй источник, журналы сессий харнеса
+      (~/.claude/projects/<слепок пути проекта>/*.jsonl), и печатает, куда ушёл
+      объём: старт против истории, перезаписи префикса с их ценой, топ тулов по
+      объёму результатов; правило подписи перезаписи в context.py
 
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import context
 import harness
 import importlib.util
 import json
@@ -742,7 +747,24 @@ def weigh_resident(start, runs, limit, model, prompt):
     return weigh.measure(root, DEVKIT, findings, runs, limit, prompt, model)
 
 
-def stats(start):
+def stats_context(start):
+    root, _ = project_root(start)
+    directory = context.logs_dir(root)
+    if not directory.is_dir():
+        sys.stderr.write("журналы сессий не найдены: %s\n"
+                         "харнес пишет их по слепку пути проекта, и для %s такой директории нет: "
+                         "сессий отсюда не было либо проект открывали из другой директории\n"
+                         % (directory, root))
+        return 2
+    if not context.report(directory, sys.stdout):
+        sys.stderr.write("в журналах сессий нет запросов с расходом: %s\n" % directory)
+        return 2
+    return 0
+
+
+def stats(start, ctx=False):
+    if ctx:
+        return stats_context(start)
     root, _ = project_root(start)
     log_file = root / RUN_LOG
     if not log_file.exists() or log_file.stat().st_size == 0:
@@ -852,6 +874,8 @@ def main(argv):
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    s.add_argument("--context", action="store_true",
+                   help="разбивка объёма по журналам сессий вместо журнала запусков")
     w = sub.add_parser("weigh", help="живой замер веса резидента")
     w.add_argument("-C", dest="dir", default=".", help="директория проекта")
     w.add_argument("--runs", type=int, default=weigh.RUNS,
@@ -868,7 +892,7 @@ def main(argv):
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     else:
-        rc = stats(a.dir)
+        rc = stats(a.dir, a.context)
     log_run(project_root(a.dir)[0], a.cmd, rc)
     return rc
 

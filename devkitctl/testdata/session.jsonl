@@ -1,0 +1,13 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"запрос"}]}}
+{"type":"assistant","requestId":"req_1","message":{"model":"claude-test-5","usage":{"input_tokens":3,"cache_creation_input_tokens":20000,"cache_read_input_tokens":0,"output_tokens":100}},"uuid":"u1"}
+{"type":"assistant","requestId":"req_2","message":{"model":"claude-test-5","content":[{"type":"tool_use","id":"t1","name":"Bash"}],"usage":{"input_tokens":0,"cache_creation_input_tokens":1000,"cache_read_input_tokens":20000,"output_tokens":50}},"uuid":"u2"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"0123456789012345678901234567890123456789"}]}}
+{"type":"assistant","requestId":"req_3","message":{"model":"claude-test-5","content":[{"type":"tool_use","id":"t2","name":"Read"}],"usage":{"input_tokens":0,"cache_creation_input_tokens":2000,"cache_read_input_tokens":21000,"output_tokens":50}},"uuid":"u3"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"0123456789"}]}}
+{"type":"assistant","requestId":"req_4","message":{"model":"claude-test-5","usage":{"input_tokens":0,"cache_creation_input_tokens":30000,"cache_read_input_tokens":5000,"output_tokens":70}},"uuid":"u4"}
+{"type":"assistant","requestId":"req_4","message":{"model":"claude-test-5","usage":{"input_tokens":0,"cache_creation_input_tokens":30000,"cache_read_input_tokens":5000,"output_tokens":70}},"uuid":"u5"}
+{"type":"assistant","requestId":"req_5","message":{"model":"claude-test-5","usage":{"input_tokens":0,"cache_creation_input_tokens":500,"cache_read_input_tokens":35000,"output_tokens":40}},"uuid":"u6"}
+{"type":"assistant","requestId":"req_6","message":{"model":"claude-test-5","usage":{"input_tokens":0,"cache_creation_input_tokens":40000,"cache_read_input_tokens":35500,"output_tokens":40}},"uuid":"u7"}
+{"type":"assistant","requestId":"req_7","message":{"model":"claude-test-5","usage":{"input_tokens":0,"cache_creation_input_tokens":300,"cache_read_input_tokens":30000,"output_tokens":40}},"uuid":"u8"}
+битая строка, её пропускают
+{"type":"summary","summary":"без usage"}

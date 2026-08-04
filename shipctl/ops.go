@@ -115,7 +115,7 @@ func cmdStatus(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := corpWorkBranch(root)
 	if err != nil {
 		return "", err
 	}
@@ -161,6 +161,15 @@ func cmdStatus(root string) (string, error) {
 					"; очередь и состав поезда считаются без записи этой задачи, merge по ней откажет")
 			}
 		}
+	}
+	// Корп-контур: слияние и выкат ведёт MR-флоу компании, у shipctl нет ни
+	// main, который он двигает, ни прода, который он катит, поэтому очередь,
+	// поезд и решение по деплою здесь не считаются вовсе, а не молчат.
+	// Check в этом контуре значит «мяч на чужой стороне», и строку двигает
+	// pull-синхронизация трекера (trackctl sync, DK-084), а не shipctl ship.
+	if corpActive(root) {
+		out = append(out, "корп-контур: слияние и выкат ведёт MR-флоу компании, shipctl очередь и поезд не считает; Check означает «мяч на чужой стороне» (MR открыт, тикет в ревью или тестировании), строку двигает trackctl sync")
+		return strings.Join(out, "\n"), nil
 	}
 	var train []string
 	var strays []stray
@@ -433,6 +442,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	root = primary
+	if corpActive(root) {
+		return "", corpRefused("merge")
+	}
 	unlock, err := acquireLock(root)
 	if err != nil {
 		return "", err
@@ -795,6 +807,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if corpActive(root) {
+		return "", corpRefused("ship")
+	}
 	unlock, err := acquireLock(root)
 	if err != nil {
 		return "", err
@@ -1048,6 +1063,9 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	root, _, err := primaryRoot(root)
 	if err != nil {
 		return "", err
+	}
+	if corpActive(root) {
+		return "", corpRefused("revert")
 	}
 	unlock, err := acquireLock(root)
 	if err != nil {

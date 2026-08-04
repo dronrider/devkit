@@ -186,6 +186,23 @@ func cmdStart(root string, p StartParams) (string, error) {
 	if p.Slug != "" {
 		branch = low + "-" + p.Slug
 	}
+	// Корп-контур строит ветку по шаблону привязки с ключом тикета вместо
+	// локального ID: ветка уходит в корп-origin при MR и обязана нести
+	// конвенцию компании (DK-074, «Конвейер: что остаётся от shipctl»), не
+	// локальную нумерацию доски. Зеркальная строка несёт ключ тикета своим
+	// ID, поэтому подстановка берёт p.ID, а не поле key привязки: оно
+	// общепроектное (префикс), а не тикета. Неполная привязка (файл есть, а
+	// key пуст) отказом start не считается, домашняя ветка остаётся как
+	// есть, но об этом сказано вслух в отчёте, а не молчком.
+	corpNote, corpBound := "", false
+	if tb, ok := loadTrackerBinding(root); ok {
+		if tb.Key == "" {
+			corpNote = "привязка " + corpTrackerPath + " без ключа key, ветка по локальному ID, trackctl take не зовём"
+		} else {
+			branch = corpBranchName(tb.Branch, p.ID, p.Slug)
+			corpBound = true
+		}
+	}
 	// Второй заход на задачу: ветка осталась с прошлого раза, worktree
 	// заводится на неё, а не на новую от main. Уцелевшая ветка сильнее
 	// --slug, иначе у задачи молча появлялась бы вторая ветка.
@@ -237,5 +254,22 @@ func cmdStart(root string, p StartParams) (string, error) {
 	// не пишется журнал запусков (по нему merge подсказывает про regcheck).
 	os.Mkdir(filepath.Join(wtPath, ".devkit"), 0o755)
 	msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
+	// trackctl take зовётся тем же порядком, каким taskMove выше зовёт
+	// taskctl: shell out, вывод в отчёт. Ни отсутствие trackctl в PATH, ни
+	// его отказ start не валят: доска не должна вставать из-за трекера,
+	// но остаться незамеченным это тоже не дело, поэтому строка в отчёт
+	// уходит всегда.
+	switch {
+	case corpNote != "":
+		msg = append(msg, corpNote)
+	case corpBound:
+		if _, err := exec.LookPath("trackctl"); err != nil {
+			msg = append(msg, "trackctl не найден в PATH, тикет не переведён и не назначен: доска не встаёт из-за трекера, довести руками")
+		} else if out, err := exec.Command("trackctl", "-C", root, "take", p.ID).CombinedOutput(); err != nil {
+			msg = append(msg, fmt.Sprintf("trackctl take не прошёл: %v (%s); доска не встаёт из-за трекера, довести руками", err, strings.TrimSpace(string(out))))
+		} else {
+			msg = append(msg, "трекер: "+strings.TrimSpace(string(out)))
+		}
+	}
 	return strings.Join(msg, "\n"), nil
 }

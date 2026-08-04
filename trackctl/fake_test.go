@@ -16,6 +16,7 @@ import (
 type fake struct {
 	calls     []string
 	ticket    ticket
+	byKey     map[string]ticket
 	fetchErr  error
 	available []string
 	failStep  string
@@ -34,7 +35,10 @@ func (f *fake) fetch(key string) (ticket, error) {
 	if f.fetchErr != nil {
 		return ticket{}, f.fetchErr
 	}
-	t := f.ticket
+	t, ok := f.byKey[key]
+	if !ok {
+		t = f.ticket
+	}
 	t.Key = key
 	return t, nil
 }

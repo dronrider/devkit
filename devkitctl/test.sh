@@ -335,6 +335,34 @@ out=$(pcli --fix)
 echo "$out" | grep -q 'permissions.ask' || fail "находка не назвала, где право отобрано: $out"
 grep -q '"ask"' "$phome/.claude/settings.json" || fail "--fix вычистил переспрос пользователя"
 
+# Рукописный запрет и порядок правил. Запрет остаётся как записан, запрещённое
+# право в allow не уезжает (иначе allow и deny спорили бы друг с другом), а
+# дописанное ложится в конец, не двигая рукописного. Проверка позиционная:
+# членства в списке мало, порядок в настройках значащий.
+python3 - "$phome/.claude/settings.json" <<'EOF' || fail "фикстуру запрета не подготовить"
+import json, sys
+json.dump({"permissions": {
+    "allow": ["Bash(своё первое:*)", "Bash(taskctl:*)", "Bash(своё второе:*)"],
+    "deny": ["Bash(rm:*)", "Bash(git:*)"],
+}}, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+EOF
+out=$(pcli --fix)
+[ $? -eq 1 ] || fail "запрет на праве машинного контура прошёл мимо проверки: $out"
+echo "$out" | grep -q 'permissions.deny' || fail "находка не назвала запрет пользователя: $out"
+python3 - "$dk/devkitctl" "$phome/.claude/settings.json" <<'EOF' || fail "--fix переставил рукописное или обошёл запрет"
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import perms
+d = json.load(open(sys.argv[2], encoding="utf-8"))
+allow = d["permissions"]["allow"]
+head = ["Bash(своё первое:*)", "Bash(taskctl:*)", "Bash(своё второе:*)"]
+assert allow[:3] == head, "рукописные правила уехали с места: %s" % allow[:3]
+assert d["permissions"]["deny"] == ["Bash(rm:*)", "Bash(git:*)"], \
+    "запрет пользователя изменён: %s" % d["permissions"]["deny"]
+added = [r for r in perms.MACHINE_ALLOW if r not in head and r != "Bash(git:*)"]
+assert allow[3:] == added, "дописанное легло не в конец или не в порядке перечня: %s" % allow[3:]
+EOF
+
 # Машина, на которой прав ещё не раскладывали: находка с командой починки,
 # --fix её закрывает, повторный --fix настроек уже не трогает.
 rm -f "$phome/.claude/settings.json"

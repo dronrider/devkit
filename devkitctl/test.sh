@@ -1033,13 +1033,21 @@ t=30000
 [ -f "$HOME/.claude/CLAUDE.md" ] && t=$((t + 620))
 [ -f "$HOME/.claude/agents/exec-high.md" ] && t=$((t + 830))
 [ -d "$HOME/.claude/skills/board-batch" ] && t=$((t + 540))
-# Цепочка правил проекта стоит по тому, что тонкий файл импортирует, а не по
-# тому, что он есть: нарезанное ядро дешевле полного текста на 12 000, как
-# дешевле оно и в жизни.
+# Цепочка правил проекта стоит по каждому файлу, который тонкий импортирует, и
+# только пока файл лежит в рабочей директории: импорт наружу настоящий клиент не
+# разворачивает, и платить за него не за что. Нарезанное ядро дешевле полного
+# текста, как дешевле оно и в жизни.
 if [ -f "$PWD/CLAUDE.md" ]; then
-    t=$((t + 12300))
     while IFS= read -r ln; do
-        case "$ln" in *RULES.core.md) t=$((t - 12000)) ;; esac
+        case "$ln" in @*) name=${ln#@} ;; *) continue ;; esac
+        [ -n "$WEIGH_IMPORTS" ] && printf '%s\n' "$name" >> "$WEIGH_IMPORTS"
+        case "$name" in */*) continue ;; esac
+        [ -f "$PWD/$name" ] || continue
+        case "$name" in
+            AGENTS.md) t=$((t + 1400)) ;;
+            RULES.core.md) t=$((t + 300)) ;;
+            RULES.md) t=$((t + 10900)) ;;
+        esac
     done < "$PWD/CLAUDE.md"
 fi
 # Вход гуляет от прогона к прогону, и разброс в выводе должен браться из
@@ -1076,8 +1084,17 @@ wskills=$(listing "$dk/skills/"*/SKILL.md)
 wtotal=$(( $(plen "$whome/.claude/CLAUDE.md") + $(plen "$dk/RULES.md") \
     + $(plen "$wproj/AGENTS.md") + $(plen "$wproj/CLAUDE.md") + wagents + wskills ))
 
-out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+imports="$wtmp/imports"
+: > "$imports"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" WEIGH_IMPORTS="$imports" \
+    python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
 [ $? -eq 0 ] || fail "weigh не прошёл при потолке выше замера: $out"
+# Файлы правил лежат в самой директории замера, и тонкий файл зовёт их голым
+# именем: импорт наружу клиент не разворачивает, и правила до целевого прогона
+# не доезжают вовсе.
+grep -q '^RULES.md$' "$imports" || fail "тонкий файл замера зовёт правила не голым именем: $(cat "$imports")"
+grep -q '^AGENTS.md$' "$imports" || fail "тонкий файл замера не зовёт AGENTS.md: $(cat "$imports")"
+grep -q '/' "$imports" && fail "тонкий файл замера импортирует наружу: $(cat "$imports")"
 # Базовый прогон идёт под слепком без раскладки devkit: пол и ничего сверх него.
 # Пропусти сборщик слепка любую из трёх частей раскладки, и число вырастет.
 echo "$out" | grep -q 'прогон 1: без раскладки 30 010, с раскладкой 44 330, разница 14 320' ||
@@ -1263,7 +1280,7 @@ echo "$out" | grep -q '^  RULES.md (импорт' && fail "в карманах �
 # прогон платил бы за полный текст, а расчёт считал бы ядро. Видно это по
 # замеру: подложный клиент берёт цену цепочки из того, что тонкий файл
 # импортирует, и на ядре целевой прогон дешевле.
-echo "$out" | grep -q 'замер: 2 320 токенов' ||
+echo "$out" | grep -q 'замер: 3 720 токенов' ||
     fail "директория замера собрана не под глубину проекта, целевой прогон платит за полный текст: $out"
 rm -f "$dk/RULES.core.md"
 HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1

@@ -367,13 +367,24 @@ def fill_probe(probe, root, devkit, profile):
         # У embed-харнеса правила вклеены в сам AGENTS.md, тонкого файла нет.
         return
     board = (root / "docs" / "TASKS.md").exists()
-    # Источники и глубина считаются для настоящего корня проекта, а пути до
-    # файлов от директории замера: devkit себе RULES.md не импортирует, и замер
-    # в чужой директории не должен это правило переигрывать.
+    # Источники и глубина считаются для настоящего корня проекта: devkit себе
+    # RULES.md не импортирует, и замер в чужой директории не должен это правило
+    # переигрывать. А вот лежать файлы правил обязаны в самой директории замера,
+    # и импорт на них идёт голым именем. Импорт наружу клиент не разворачивает
+    # молча: правила до целевого прогона не доезжают, и замер выходит занижен
+    # ровно на них.
     depth = fact_depth(root, devkit, profile, board)
-    sources = rules.rule_sources(devkit, root, board, depth)
+    local = []
+    for src in rules.rule_sources(devkit, root, board, depth):
+        if src.is_file():
+            shutil.copyfile(src, probe / src.name)
+            local.append(probe / src.name)
+    # Отличие от боевого тонкого файла остаётся, но только в длине строки
+    # импорта: в devkit она и так локальная (@RULES.board.md), а у проекта с
+    # соседним devkit вместо @../devkit/RULES.md выходит @RULES.md, дешевле на
+    # десяток символов. Против семи тысяч токенов недоехавших правил это шум.
     text = rules.thin_text(profile, probe, devkit, board, embed=False, depth=depth,
-                           sources=sources)
+                           sources=local)
     (probe / profile.str_of("rules", "file")).write_text(text, encoding="utf-8")
 
 

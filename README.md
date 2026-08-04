@@ -101,7 +101,8 @@ cd taskctl && go build -o ~/go/bin/taskctl .
 ```
 
 Раскладку машинного контура (бинари утилит, определения субагентов в
-`~/.claude/agents/`, скиллы в `~/.claude/skills/`, tmux и снимок квоты)
+`~/.claude/agents/`, скиллы в `~/.claude/skills/`, права сессии без человека в
+`permissions.allow`, tmux и снимок квоты)
 проверяет `devkitctl doctor`, а
 однозначное из этого он же и доводит с `--fix`.
 

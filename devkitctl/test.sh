@@ -25,8 +25,21 @@ dkctl="$dk/devkitctl/devkitctl.py"
 
 home="$tmp/home"
 mkdir -p "$home/.claude"
-cat > "$home/.claude/settings.json" <<'EOF'
-{"hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
+# Права машинного контура в фикстуре берутся из самого перечня, а не списком
+# руками: разойдись они, чистый проект краснел бы находкой на исправном коде.
+# Одной строкой они и вписываются, потому что проверки хуков ниже режут этот
+# файл построчно.
+allow=$(python3 - "$dk/devkitctl" <<'EOF'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import perms
+print(json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False))
+EOF
+)
+[ -n "$allow" ] || fail "перечень прав машинного контура не прочитался"
+cat > "$home/.claude/settings.json" <<EOF
+{"permissions": {"allow": $allow},
+ "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
@@ -274,6 +287,90 @@ if [ "$(uname)" = Darwin ]; then
     echo "$out" | grep -q 'клик по баннеру' &&
         fail "находка про клик осталась при отправителе, который клик умеет: $out"
 fi
+
+# Права машинного контура: без них сессия, поднятая без человека, встаёт на
+# первом же отказе харнеса и молча не делает ничего. Раскладываются они тем же
+# порядком, что определения агентов, а рукописное в permissions --fix не
+# трогает.
+pset="$home/.claude/settings.json"
+python3 - "$pset" <<'EOF' || fail "фикстуру прав не подготовить"
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["permissions"]["allow"] = ["Bash(taskctl:*)", "Bash(своё правило пользователя:*)"]
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+EOF
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'не хватает прав машинного контура' ||
+    fail "нет находки про нехватку прав машинного контура: $out"
+echo "$out" | grep -q 'Bash(taskctl:\*)' && fail "уже выданное право попало в находку: $out"
+echo "$out" | grep -q 'doctor --fix' || fail "находка про права не назвала команду починки: $out"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q 'починено: права машинного контура дописаны' ||
+    fail "--fix не разложил права машинного контура: $out"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'прав машинного контура' && fail "находка про права осталась после --fix: $out"
+python3 - "$pset" <<'EOF' || fail "--fix испортил рукописные настройки"
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+allow = d["permissions"]["allow"]
+assert "Bash(своё правило пользователя:*)" in allow, "рукописное правило потерялось"
+assert allow.count("Bash(taskctl:*)") == 1, "выданное правило дописано вторым разом"
+assert d["hooks"]["PostToolUse"], "хуки пользователя потерялись"
+EOF
+
+# Инструмент, разрешённый целиком, покрывает перечень: звать чинить исправное
+# доктор не должен. Запрет и переспрос, наоборот, находка, и снимать их --fix
+# не берётся, записанное руками важнее перечня.
+phome="$tmp/phome"
+mkdir -p "$phome/.claude"
+pcli() { HOME="$phome" python3 "$dk/devkitctl/perms.py" "$@" 2>&1; }
+printf '%s\n' '{"permissions": {"allow": ["Bash", "Read", "Edit", "Write"]}}' > "$phome/.claude/settings.json"
+out=$(pcli)
+[ $? -eq 0 ] || fail "разрешённый целиком Bash не покрыл перечень: $out"
+printf '%s\n' '{"permissions": {"allow": ["Bash", "Read", "Edit", "Write"], "ask": ["Bash(git:*)"]}}' \
+    > "$phome/.claude/settings.json"
+out=$(pcli --fix)
+[ $? -eq 1 ] || fail "переспрос на праве машинного контура прошёл мимо проверки: $out"
+echo "$out" | grep -q 'permissions.ask' || fail "находка не назвала, где право отобрано: $out"
+grep -q '"ask"' "$phome/.claude/settings.json" || fail "--fix вычистил переспрос пользователя"
+
+# Машина, на которой прав ещё не раскладывали: находка с командой починки,
+# --fix её закрывает, повторный --fix настроек уже не трогает.
+rm -f "$phome/.claude/settings.json"
+out=$(pcli)
+[ $? -eq 1 ] || fail "машина без настроек харнеса прошла проверку прав: $out"
+out=$(pcli --fix)
+[ $? -eq 0 ] || fail "--fix не разложил права на машине без настроек: $out"
+out=$(pcli)
+[ $? -eq 0 ] || fail "после --fix проверка прав всё ещё находит нехватку: $out"
+cp "$phome/.claude/settings.json" "$tmp/perms.once"
+pcli --fix >/dev/null
+diff -q "$tmp/perms.once" "$phome/.claude/settings.json" >/dev/null ||
+    fail "повторный --fix переписал настройки"
+
+# Рубеж основного чекаута, тот же, что у определений агентов: из worktree ветки
+# задачи права только сверяются. Видны они каждой сессии на машине сразу, и
+# выписывать их себе непроверенной веткой цикл не должен даже случайно.
+rm -f "$phome/.claude/settings.json"
+python3 - "$dk/devkitctl" "$phome/.claude/settings.json" <<'EOF' || fail "рубеж основного чекаута у прав не держится"
+import os
+import sys
+sys.path.insert(0, sys.argv[1])
+import perms
+findings, fixed = perms.check(sys.argv[2], True, "/nowhere/main-devkit")
+assert not fixed, "права дописаны с непроверенной ветки: %s" % fixed
+assert findings and "из основного чекаута" in findings[0], findings
+assert "/nowhere/main-devkit/devkitctl/devkitctl.py doctor --fix" in findings[0], findings
+assert not os.path.exists(sys.argv[2]), "настройки заведены с непроверенной ветки"
+EOF
+
+# Битые настройки: чинить их автоматике нечем, и трогать файл она не берётся.
+printf '%s' '{"permissions": ' > "$phome/.claude/settings.json"
+out=$(pcli --fix)
+[ $? -eq 1 ] || fail "битые настройки прошли проверку прав: $out"
+echo "$out" | grep -q 'не разбираются' || fail "находка не назвала беду настроек: $out"
+[ "$(cat "$phome/.claude/settings.json")" = '{"permissions": ' ] || fail "--fix переписал битые настройки"
 
 # Профили харнесов: общие с agentctl фикстуры. На каждый вход отчёт парсера
 # сверяется побайтно с .expected, тот же файл сверяет Go-реализация
@@ -1610,6 +1707,16 @@ echo "$out" | grep -q "cp $dkreal/skills/board-batch/SKILL.md" || fail "нахо
 echo "$out" | grep -q "$wthome/.claude/CLAUDE.md.*worktree ветки задачи" ||
     fail "находка про глобальную точку не называет worktree devkit: $out"
 echo "$out" | grep -q "из основного чекаута $dkreal:" || fail "находка про глобальную точку зовёт не в основной чекаут: $out"
+# Права машинного контура держатся того же рубежа, и он тут строже прочих:
+# выданное право видно каждой сессии на машине сразу, так что выписать их себе
+# правкой перечня на своей же ветке цикл не должен даже случайно.
+[ -f "$wthome/.claude/settings.json" ] && fail "--fix выписал права машинного контура с фичеветки"
+echo "$out" | grep -q 'не хватает прав машинного контура' ||
+    fail "с worktree потерялась находка про права машинного контура: $out"
+echo "$out" | grep -q 'права с непроверенной ветки на машину не едут' ||
+    fail "находка про права не называет worktree devkit: $out"
+echo "$out" | grep -q "$dkreal/devkitctl/devkitctl.py doctor --fix" ||
+    fail "находка про права зовёт чинить не из основного чекаута: $out"
 # Разошедшееся определение из worktree сверяется с основным чекаутом.
 mkdir -p "$wthome/.claude/agents"
 cp "$dk/agents/"*.md "$wthome/.claude/agents/"

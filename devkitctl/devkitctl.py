@@ -13,7 +13,8 @@
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
       markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
-      которым их слать, бинари утилит devkit в PATH и не старее
+      которым их слать, права машинного контура в permissions.allow (без них
+      сессия без человека встаёт на первом отказе), бинари утилит devkit в PATH и не старее
       исходников, определения агентов в ~/.claude/agents, скиллы devkit в
       ~/.claude/skills, глобальная точка правил ([rules] global_file, обычно
       ~/.claude/CLAUDE.md) свежа и не правлена руками, tmux и снимки
@@ -21,9 +22,9 @@
       через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local либо
       недостающие в ней ключи, .gitignore, сборка бинарей, копия определений
-      агентов и скиллов, глобальная точка правил, переезд одиночного снимка
-      квоты в директорию, генерация файлов правил), заполненное не трогает,
-      неоднозначное оставляет находкой
+      агентов и скиллов, права машинного контура, глобальная точка правил,
+      переезд одиночного снимка квоты в директорию, генерация файлов правил),
+      заполненное не трогает, неоднозначное оставляет находкой
 
   devkitctl weigh [-C dir] [--runs N] [--limit T] [--model M] [--prompt "..."]
       живой замер веса резидента: два headless-прогона claude -p с одинаковым
@@ -45,6 +46,7 @@ import harness
 import importlib.util
 import json
 import os
+import perms
 import re
 import rules
 import shutil
@@ -557,8 +559,9 @@ def check_notify_hook(text, settings):
 
 
 def check_machine(fix):
-    # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
-    # определения агентов, скиллы, глобальная точка правил, tmux и снимок квоты.
+    # Машинный контур, общий для всех проектов: хуки Claude Code, права сессии
+    # без человека, бинари devkit, определения агентов, скиллы, глобальная точка
+    # правил, tmux и снимок квоты.
     findings, fixed = [], []
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""
@@ -570,11 +573,14 @@ def check_machine(fix):
                         "и корректор pick рано или поздно останется с протухшим (hooks/README.md)"
                         % (SESSION_HOOK, settings))
     findings += check_notify_hook(text, settings)
+    main, from_main = devkit_checkout()
+    pf, pd = perms.check(settings, fix, None if from_main else main)
+    findings += pf
+    fixed += pd
     for check in (check_binaries, check_agent_defs, check_skills):
         f, d = check(fix)
         findings += f
         fixed += d
-    main, from_main = devkit_checkout()
     devkit_src = main if (main / "harness").is_dir() else DEVKIT
     whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                    "правила с непроверенной ветки нельзя; из основного чекаута %s: "

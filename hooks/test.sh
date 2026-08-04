@@ -759,6 +759,153 @@ printf 'local-docs/\n' > "$repol/.gitignore"
 (cd "$repol" && python3 "$here/check-sensitive.py" --hook < "$tmp/ev.json" 2>/dev/null) ||
     fail "запись в заигноренный local-docs дала находку"
 
+# --- корп-контур: рубеж следов devkit и обёртка-цепочка ---
+
+# Боковая директория с доской и корп-клон с редиректом на неё. Путь редиректа
+# относительный, как его кладёт подключение: заодно проверяется, что он
+# считается от чекаута. Пометка про префикс стоит и ниже секции, в строке
+# задачи: шапка кончается на первой секции, и такая пометка за префикс доски
+# сойти не должна.
+side="$tmp/proj-local"
+mkdir -p "$side/docs" "$side/.devkit"
+printf '# проба: задачи (префикс XR)\n\n## In progress\n\n| XR-1 | задача (префикс QQ) |\n' \
+    > "$side/docs/TASKS.md"
+corp="$tmp/corp"
+git init -q "$corp"
+git -C "$corp" config user.name t
+git -C "$corp" config user.email t@t
+
+stage() { printf '%s\n' "$1" > "$corp/note.txt"; git -C "$corp" add note.txt; }
+
+# Без редиректа проверка молчит: домашние проекты рубежа не замечают.
+stage 'правка по XR-007'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null) ||
+    fail "рубеж следов сработал без редиректа devkit.local"
+git -C "$corp" config devkit.local ../proj-local
+out=$(cd "$corp" && python3 "$here/check-traces.py" --staged 2>&1)
+[ $? -eq 1 ] || fail "локальный ID в диффе не пойман"
+case $out in *"локальный ID"*) ;; *) fail "находка без разбора вида: $out" ;; esac
+
+# Префикс берётся из шапки боковой доски, а не из головы: чужой ID проходит,
+# пометка ниже секции за префикс не считается, а смена шапки меняет улов.
+stage 'правка по DK-007 и QQ-1'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null) ||
+    fail "чужой префикс сошёл за префикс боковой доски"
+printf '# проба: задачи (префикс ZZ)\n\n## In progress\n' > "$side/docs/TASKS.md"
+stage 'правка по ZZ-9'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "префикс из шапки не перечитан"
+printf '# проба: задачи (префикс XR)\n\n## In progress\n' > "$side/docs/TASKS.md"
+
+# Путь боковой директории и её имя это такой же след, как ID.
+stage "смотри $side/docs/TASKS.md"
+out=$(cd "$corp" && python3 "$here/check-traces.py" --staged 2>&1)
+[ $? -eq 1 ] || fail "путь боковой директории в диффе не пойман"
+case $out in *"путь боковой"*) ;; *) fail "находка про путь без разбора вида: $out" ;; esac
+stage 'лежит в proj-local рядом'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "имя боковой директории в диффе не поймано"
+
+# Перечень расширяется словами контура из привязки.
+printf 'repo = %s\ntraces = ковчег\n' "$corp" > "$side/.devkit/tracker.local"
+stage 'внутренний Ковчег проекта'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "слово контура из привязки не поймано"
+
+# Имя добавленного файла смотрится наравне с его строками.
+printf 'обычная строка\n' > "$corp/XR-012.md"
+git -C "$corp" add XR-012.md
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "локальный ID в имени файла не пойман"
+rm "$corp/XR-012.md"
+git -C "$corp" rm -q --cached XR-012.md
+
+# Сообщение коммита смотрится отдельно от диффа: чистый дифф от следа в тексте
+# не спасает. Комментарии git и хвост после scissors не в счёт.
+stage 'обычная правка'
+printf 'feat: правка по XR-007\n' > "$tmp/cmsg"
+(cd "$corp" && python3 "$here/check-traces.py" --msg "$tmp/cmsg" 2>/dev/null)
+[ $? -eq 1 ] || fail "локальный ID в сообщении коммита не пойман"
+printf 'feat: обычная правка\n' > "$tmp/cmsg"
+(cd "$corp" && python3 "$here/check-traces.py" --msg "$tmp/cmsg" 2>/dev/null) ||
+    fail "чистое сообщение не прошло рубеж следов"
+printf 'feat: чисто\n# ветка dk-086 в XR-007\n' > "$tmp/cmsg"
+(cd "$corp" && python3 "$here/check-traces.py" --msg "$tmp/cmsg" 2>/dev/null) ||
+    fail "рубеж следов смотрит в комментарии git"
+printf 'feat: чисто\n# ------------------------ >8 ------------------------\ndiff по XR-007\n' > "$tmp/cmsg"
+(cd "$corp" && python3 "$here/check-traces.py" --msg "$tmp/cmsg" 2>/dev/null) ||
+    fail "рубеж следов смотрит за scissors-строку"
+
+# Обёртка-цепочка: чужой хук переезжает в <хук>.chained, на его место встаёт
+# файл devkit с маркером в шапке.
+chain() {
+    python3 -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import corp
+print(corp.install_chain(sys.argv[2], sys.argv[3], sys.argv[1])[0])' "$here" "$1" "$2"
+}
+hooksdir="$corp/.git/hooks"
+mkdir -p "$hooksdir"
+alien="$tmp/alien.log"
+: > "$alien"
+printf '#!/bin/sh\necho %s >> "%s"\nexit ${ALIEN_CODE:-0}\n' 'чужой' "$alien" > "$hooksdir/pre-commit"
+chmod +x "$hooksdir/pre-commit"
+[ "$(chain "$hooksdir" pre-commit)" = "установлена" ] || fail "первая раскладка обёртки не установлена"
+[ -x "$hooksdir/pre-commit.chained" ] || fail "чужой хук не переехал в .chained"
+head -3 "$hooksdir/pre-commit" | grep -q 'devkit-corp-chain' || fail "в обёртке нет маркера"
+[ "$(chain "$hooksdir" commit-msg)" = "установлена" ] || fail "обёртка commit-msg не установлена"
+
+# Повторный прогон ничего не меняет и чужой хук вторым переездом не теряет.
+[ "$(chain "$hooksdir" pre-commit)" = "на месте" ] || fail "повторная раскладка переписала обёртку"
+[ -e "$hooksdir/pre-commit.chained.chained" ] && fail "повторный прогон переехал собственной обёрткой"
+grep -q "$alien" "$hooksdir/pre-commit.chained" || fail "чужой хук потерян повторным прогоном"
+
+# Чистый коммит проходит, и чужой хук в нём отрабатывает.
+stage 'первая строка проекта'
+git -C "$corp" commit -qm 'feat: чистая правка' >/dev/null 2>&1 ||
+    fail "чистый коммит не прошёл через цепочку"
+[ "$(wc -l < "$alien")" -eq 1 ] || fail "чужой pre-commit не позван цепочкой"
+
+# След в сообщении валит коммит, чужой хук при этом всё равно отработал.
+stage 'вторая строка проекта'
+git -C "$corp" commit -qm 'feat: правка по XR-007' >/dev/null 2>&1 &&
+    fail "коммит со следом devkit в сообщении прошёл"
+[ "$(wc -l < "$alien")" -eq 2 ] || fail "чужой pre-commit не позван на падающем коммите"
+
+# Ненулевой код чужой стороны валит коммит.
+ALIEN_CODE=1 git -C "$corp" commit -qm 'feat: чистая правка' >/dev/null 2>&1 &&
+    fail "отказ чужого хука проглочен цепочкой"
+
+# Ненулевой код проверок devkit тоже валит коммит.
+stage "строка с тире $dash тут"
+git -C "$corp" commit -qm 'feat: правка с тире' >/dev/null 2>&1 &&
+    fail "отказ проверок devkit проглочен цепочкой"
+
+# Перезаписанная чужим инсталлером обёртка теряет маркер, и повторная раскладка
+# разворачивает цепочку заново.
+printf '#!/bin/sh\nexit 0\n' > "$hooksdir/pre-commit"
+python3 -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import corp
+sys.exit(0 if corp.is_chain(sys.argv[2]) else 1)' "$here" "$hooksdir/pre-commit" &&
+    fail "перезаписанный чужим инсталлером файл сошёл за обёртку"
+[ "$(chain "$hooksdir" pre-commit)" = "установлена" ] || fail "цепочка не развёрнута заново"
+head -3 "$hooksdir/pre-commit" | grep -q 'devkit-corp-chain' || fail "после починки нет маркера"
+
+# Домашний проект с той же обёрткой корп-проверок не замечает: без редиректа
+# рубеж следов молчит.
+home="$tmp/homerepo"
+git init -q "$home"
+git -C "$home" config user.name t
+git -C "$home" config user.email t@t
+mkdir -p "$home/.git/hooks"
+chain "$home/.git/hooks" pre-commit >/dev/null
+chain "$home/.git/hooks" commit-msg >/dev/null
+printf 'правка по XR-007 в %s\n' "$side" > "$home/note.txt"
+git -C "$home" add note.txt
+git -C "$home" commit -qm 'feat: правка по XR-007' >/dev/null 2>&1 ||
+    fail "рубеж следов сработал в домашнем проекте"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

@@ -39,6 +39,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-106 | Хуки вместо прозы: разбор в текстах находок, тесты в pre-commit, pre-push на запрет пуша | task | P2 | 37 (25+6+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-107 | Тонкая глобальная точка правил в doctor/setup [после DK-104] | task | P2 | 34 (25+5+1+0+3) | S | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-029 | бюджет на резидентную часть правил, порог в devkitctl doctor [после DK-105, DK-107] | task | P2 | 33 (25+3+1+0+4) | S | [tasks/DK-029.md](tasks/DK-029.md) |
+| DK-111 | Цель: корп-контур по DK-074, конвейер поверх внешнего трекера | task | P3 | 15 (0+9+1+0+5) | XL | [tasks/DK-111.md](tasks/DK-111.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-081 | Редирект корня в боковую директорию и признак корп-контура | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов [после DK-081] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |

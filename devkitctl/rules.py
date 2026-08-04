@@ -29,8 +29,24 @@ PROJECT_CONFIG = ".devkit/harness.local"
 # сегодняшнее поведение до первого прогона мастера настройки.
 DEFAULT_ENABLED = ("claude-code",)
 
-GEN_RE = re.compile(r"^<!-- devkit:generated body=([0-9a-f]{12}) -->$")
-BEGIN_RE = re.compile(r"^<!-- devkit:rules begin src=([0-9a-f]{12}) body=([0-9a-f]{12}) -->$")
+# Глубина правил: сколько их текста доезжает до харнеса. Выводится из оси
+# скиллов его профиля (docs/lld/DK-100-context-tree.md, раздел «Харнесы без
+# скиллов»): скиллы инструмент подхватывает сам, значит ему хватает ядра;
+# читает по указателю, значит к ядру прикладывается таблица указателей; оси нет
+# вовсе, значит едет полный текст, как ехал всегда.
+DEPTH_CORE = "core"
+DEPTH_POINTERS = "pointers"
+DEPTH_FULL = "full"
+DEPTH_TITLES = {
+    DEPTH_CORE: "ядро",
+    DEPTH_POINTERS: "ядро с указателями на скиллы",
+    DEPTH_FULL: "полный текст",
+}
+# Ядро текста правил лежит рядом с самим текстом: RULES.md -> RULES.core.md.
+CORE_SUFFIX = ".core.md"
+
+GEN_RE = re.compile(r"^<!-- devkit:generated (?:depth=(?P<depth>[a-z]+) )?body=(?P<body>[0-9a-f]{12}) -->$")
+BEGIN_RE = re.compile(r"^<!-- devkit:rules begin (?:depth=[a-z]+ )?src=([0-9a-f]{12}) body=([0-9a-f]{12}) -->$")
 END_LINE = "<!-- devkit:rules end -->"
 IMPORT_RE = re.compile(r"^@\S+$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -117,7 +133,29 @@ def mode_of(profile):
     return profile.str_of("rules", "mode")
 
 
-def rule_sources(devkit, root, board):
+def declared_depth(profile):
+    # Глубина, которую харнес объявил, и чем именно. Секции нет вовсе, значит про
+    # ось скиллов у этого инструмента ещё не разбирались; пустая секция это
+    # разобранное «скиллов у него нет». Глубина у обоих случаев полная, а сказать
+    # о них надо разное, иначе неразобранное не отличить от разобранного.
+    t = profile.tables.get("skills")
+    if t is None:
+        return DEPTH_FULL, "оси скиллов профиль не объявил"
+    if not t:
+        return DEPTH_FULL, "секция [skills] пуста, скиллов у инструмента нет"
+    how = profile.str_of("skills", "discovery")
+    if how == "auto":
+        return DEPTH_CORE, 'discovery = "auto", скиллы инструмент подхватывает сам'
+    if how == "manual":
+        return DEPTH_POINTERS, 'discovery = "manual", скиллы читаются по указателю'
+    return DEPTH_FULL, "значение discovery незнакомо, глубину по нему не вывести"
+
+
+def core_of(path):
+    return Path(str(path)[:-len(".md")] + CORE_SUFFIX)
+
+
+def rule_sources(devkit, root, board, depth=DEPTH_FULL):
     # Файлы правил, которые проект тянет из devkit. Своё ядро devkit себе не
     # импортирует: RULES.md и есть содержимое этого репозитория, а в сессию оно
     # приезжает глобальным подключением (об этом сказано в его AGENTS.md).
@@ -126,19 +164,85 @@ def rule_sources(devkit, root, board):
         src.append(Path(devkit) / "RULES.md")
     if board:
         src.append(Path(devkit) / "RULES.board.md")
-    return src
+    if depth == DEPTH_FULL:
+        return src
+    return [core_of(p) if core_of(p).exists() else p for p in src]
 
 
-def thin_text(profile, root, devkit, board, embed):
-    # Тонкий файл харнеса: строка-маркер с хешем тела и импорты. При вклейке
-    # остаётся один импорт AGENTS.md, в нём правила уже лежат целиком.
+def actual_depth(devkit, root, board, depth):
+    # Глубина, которая доехала на самом деле. Ядро режется отдельной задачей, и
+    # пока текст не нарезан, объявленная глубина остаётся обещанием: доезжает
+    # всё тот же полный текст, и признак в файле показывает его, а не обещание.
+    # Указатели от ядра не зависят, скиллы в devkit уже лежат.
+    if depth != DEPTH_CORE:
+        return depth
+    src = rule_sources(devkit, root, board, DEPTH_FULL)
+    if src and all(core_of(p).exists() for p in src):
+        return DEPTH_CORE
+    return DEPTH_FULL
+
+
+def skill_meta(path):
+    # Имя и описание скилла из frontmatter. Описание тут не украшение: по нему
+    # читатель понимает, когда скилл нужен, и в указателе оно и есть повод.
+    lines = read_text(path).split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None
+    name, desc = "", ""
+    for ln in lines[1:]:
+        if ln.strip() == "---":
+            break
+        key, _, val = ln.partition(":")
+        if key.strip() == "name":
+            name = val.strip()
+        elif key.strip() == "description":
+            desc = val.strip()
+    return (name, desc) if name else None
+
+
+def pointers_text(devkit, root):
+    # Таблица указателей для инструмента, который скиллы сам не подхватывает.
+    # Автоматики тут нет, но и пустого места тоже: указатель говорит, что
+    # процедура есть, где она лежит и когда её читать.
+    rows = []
+    sdir = Path(devkit) / "skills"
+    for d in sorted(sdir.iterdir()) if sdir.is_dir() else []:
+        f = d / "SKILL.md"
+        meta = skill_meta(f) if f.exists() else None
+        if meta:
+            rows.append((meta[0], meta[1], Path(os.path.relpath(f, root)).as_posix()))
+    if not rows:
+        return ""
+    out = ["## Процедуры devkit отдельными файлами", "",
+           "Скиллы этот инструмент сам не подхватывает, поэтому процедура доезжает",
+           "указателем: описание говорит, когда она нужна, а файл читается целиком",
+           "в тот момент, когда дошло до дела.", ""]
+    out += ["- %s: %s Файл: `%s`" % row for row in rows]
+    return "".join(s + "\n" for s in out)
+
+
+def gen_marker(depth, body):
+    # Признак глубины стоит в маркере только тогда, когда глубина не полная:
+    # полная это то, как было всегда, и приписка к ней перегенерила бы каждый
+    # тонкий файл на машине, ничего не сказав нового.
+    tag = "" if depth == DEPTH_FULL else "depth=%s " % depth
+    return "<!-- devkit:generated %sbody=%s -->" % (tag, digest(body))
+
+
+def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL):
+    # Тонкий файл харнеса: строка-маркер с глубиной и хешем тела, дальше импорты.
+    # При вклейке остаётся один импорт AGENTS.md, в нём правила уже лежат.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
     paths = [AGENTS_FILE]
     if not embed:
         paths += [Path(os.path.relpath(p, root)).as_posix()
-                  for p in rule_sources(devkit, root, board)]
+                  for p in rule_sources(devkit, root, board, depth)]
     body = "".join(tpl.replace("{path}", p) + "\n" for p in paths)
-    return "<!-- devkit:generated body=%s -->\n%s" % (digest(body), body)
+    if not embed and depth == DEPTH_POINTERS:
+        ptr = pointers_text(devkit, root)
+        if ptr:
+            body += "\n" + ptr
+    return "%s\n%s" % (gen_marker(depth, body), body)
 
 
 def generated_parts(text):
@@ -148,22 +252,34 @@ def generated_parts(text):
     m = GEN_RE.match(lines[0].strip()) if lines else None
     if not m:
         return None, None
-    return m.group(1), "\n".join(lines[1:])
+    return m.group("body"), "\n".join(lines[1:])
 
 
 def rules_body(sources):
     return "\n".join(read_text(p).strip("\n") + "\n" for p in sources)
 
 
-def sources_hash(sources):
+def sources_hash(sources, extra=""):
     # Протухание вклейки против devkit меряется по конкатенации источников в
-    # порядке вклейки, а не по тому, что лежит между маркерами.
-    return digest("".join(read_text(p) for p in sources))
+    # порядке вклейки, а не по тому, что лежит между маркерами. Таблица
+    # указателей идёт туда же: скилл добавили, а вклейка про него молчит, и
+    # заметить это по хешам источников иначе нечем.
+    return digest("".join(read_text(p) for p in sources) + extra)
 
 
-def block_text(src_hash, body):
-    return "<!-- devkit:rules begin src=%s body=%s -->\n%s%s\n" % (
-        src_hash, digest(body), body, END_LINE)
+def block_text(src_hash, body, depth=DEPTH_FULL):
+    tag = "" if depth == DEPTH_FULL else "depth=%s " % depth
+    return "<!-- devkit:rules begin %ssrc=%s body=%s -->\n%s%s\n" % (
+        tag, src_hash, digest(body), body, END_LINE)
+
+
+DEPTH_ORDER = (DEPTH_CORE, DEPTH_POINTERS, DEPTH_FULL)
+
+
+def embed_depth(depths):
+    # Вклейка в AGENTS.md одна на всех, поэтому глубина у неё самая полная из
+    # запрошенных: инструменту, которому нужен весь текст, урезанного не хватит.
+    return max(depths, key=DEPTH_ORDER.index) if depths else DEPTH_FULL
 
 
 def fenced(text):
@@ -289,11 +405,11 @@ def check_imports(path, root):
     return findings
 
 
-def check_thin(name, profile, root, devkit, board, embed, fix):
+def check_thin(name, profile, root, devkit, board, embed, depth, fix):
     findings, fixed = [], []
     fname = profile.str_of("rules", "file")
     path = Path(root) / fname
-    want = thin_text(profile, root, devkit, board, embed)
+    want = thin_text(profile, root, devkit, board, embed, depth)
     if not path.exists():
         if fix:
             path.write_text(want, encoding="utf-8")
@@ -324,7 +440,7 @@ def check_thin(name, profile, root, devkit, board, embed, fix):
     return findings, fixed
 
 
-def check_embed(root, devkit, board, embeds, fix):
+def check_embed(root, devkit, board, embeds, depth, fix):
     # Вклейка в AGENTS.md: единственная копия текста правил в дереве. src
     # разошёлся, значит devkit обновился и вклейка перегенерируется молча; body
     # разошёлся, значит внутри маркеров правили руками, и такое не перетирается.
@@ -353,20 +469,22 @@ def check_embed(root, devkit, board, embeds, fix):
             findings.append("в %s лежит вклейка правил, а embed-инструментов среди включённых нет: "
                             "убрать её devkitctl doctor --fix" % AGENTS_FILE)
         return findings, fixed
-    sources = rule_sources(devkit, root, board)
-    src_hash = sources_hash(sources)
+    sources = rule_sources(devkit, root, board, depth)
+    ptr = pointers_text(devkit, root) if depth == DEPTH_POINTERS else ""
+    body = rules_body(sources) + ("\n" + ptr if ptr else "")
+    src_hash = sources_hash(sources, ptr)
     who = ", ".join(embeds)
     if found is None:
         if fix:
-            agents.write_text(put_block(text, block_text(src_hash, rules_body(sources))),
+            agents.write_text(put_block(text, block_text(src_hash, body, depth)),
                               encoding="utf-8")
             fixed.append("вклейка правил добавлена в %s: импортов не понимает %s" % (AGENTS_FILE, who))
         else:
             findings.append("в %s нет вклейки правил, а %s импортов не понимает: "
                             "вклеить devkitctl doctor --fix" % (AGENTS_FILE, who))
         return findings, fixed
-    _, have_src, body_hash, body, _ = found
-    if digest(body) != body_hash:
+    _, have_src, body_hash, have_body, _ = found
+    if digest(have_body) != body_hash:
         findings.append("вклейку правил в %s правили руками: локальным исключениям в общих "
                         "правилах не место, правку перенести в рукописную часть %s либо в сам "
                         "devkit; генератор вклейку не перетирает" % (AGENTS_FILE, AGENTS_FILE))
@@ -374,8 +492,7 @@ def check_embed(root, devkit, board, embeds, fix):
     if have_src == src_hash:
         return findings, fixed
     if fix:
-        agents.write_text(put_block(text, block_text(src_hash, rules_body(sources))),
-                          encoding="utf-8")
+        agents.write_text(put_block(text, block_text(src_hash, body, depth)), encoding="utf-8")
         fixed.append("вклейка правил в %s обновлена под devkit" % AGENTS_FILE)
     else:
         findings.append("вклейка правил в %s протухла против devkit: "
@@ -400,6 +517,7 @@ def check(root, devkit, fix=False, skip_dirs=()):
         return findings, fixed
     imports = [(n, p) for n, p in profiles if mode_of(p) == "import"]
     embeds = [n for n, p in profiles if mode_of(p) == "embed"]
+    depths = {n: actual_depth(devkit, root, board, declared_depth(p)[0]) for n, p in profiles}
     for name in [n for n, p in profiles if mode_of(p) == "render"]:
         findings.append("харнес %s просит режим render, а рендерера правил ещё нет "
                         "(он едет задачей профиля этого инструмента): файлы ему не генерятся" % name)
@@ -422,7 +540,8 @@ def check(root, devkit, fix=False, skip_dirs=()):
         findings.append("%s:%d: строка импорта %s, а %s читают и инструменты без импортов: "
                         "правила доезжают генерёнными файлами харнесов, строку убрать"
                         % (AGENTS_FILE, i, ln, AGENTS_FILE))
-    ef, ed = check_embed(root, devkit, board, embeds, fix)
+    ef, ed = check_embed(root, devkit, board, embeds,
+                         embed_depth([depths[n] for n in embeds]), fix)
     findings += ef
     fixed += ed
     # Вклейку могли только что убрать или добавить, и тонкие файлы считаются по
@@ -432,7 +551,7 @@ def check(root, devkit, fix=False, skip_dirs=()):
     except BrokenMarkers:
         embedded = False
     for name, profile in imports:
-        tf, td = check_thin(name, profile, root, devkit, board, embedded, fix)
+        tf, td = check_thin(name, profile, root, devkit, board, embedded, depths[name], fix)
         findings += tf
         fixed += td
     blocks = block_files(root, skip_dirs)
@@ -452,13 +571,22 @@ def plan(root, devkit):
            "доска: %s" % ("есть" if board else "нет"),
            "вклейка правил: %s" % (("нужна, импортов не понимает " + ", ".join(embeds))
                                    if embeds else "не нужна, все включённые понимают импорты")]
+    depths = {}
+    for name, profile in profiles:
+        declared, why = declared_depth(profile)
+        depths[name] = fact = actual_depth(devkit, root, board, declared)
+        line = "глубина правил, %s: %s (%s)" % (name, DEPTH_TITLES[fact], why)
+        if fact != declared:
+            line += ", хотя объявлено %s: ядро в devkit ещё не нарезано" % DEPTH_TITLES[declared]
+        out.append(line)
     for name, profile in profiles:
         if mode_of(profile) != "import":
             continue
         fname = profile.str_of("rules", "file")
         out.append("%s (харнес %s):" % (fname, name))
         out += ["  " + ln for ln in
-                thin_text(profile, root, devkit, board, bool(embeds)).rstrip("\n").split("\n")]
+                thin_text(profile, root, devkit, board, bool(embeds), depths[name])
+                .rstrip("\n").split("\n")]
     return "\n".join(out + findings) + "\n"
 
 

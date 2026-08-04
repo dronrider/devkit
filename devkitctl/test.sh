@@ -261,6 +261,98 @@ assert rules.handwritten_imports(sample) == [], rules.handwritten_imports(sample
 assert rules.handwritten_imports("# проект\n@../devkit/RULES.md\n") == [(2, "@../devkit/RULES.md")]
 EOF
 
+# Глубина правил: три ветки оси скиллов, признак глубины в тонком файле и
+# побайтная сверка сегодняшней раскладки с эталоном. Гоняется на выдуманном
+# devkit во временной директории, чтобы нарезанное ядро можно было изобразить
+# файлами, которых в настоящем devkit пока нет.
+python3 - "$dk/devkitctl" "$tmp/depth" "$dk" <<'EOF' || fail "юниты глубины правил не прошли"
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+work, dkroot = sys.argv[2], sys.argv[3]
+import harness
+import rules
+
+
+def prof(skills):
+    return harness.parse("p.toml", '[rules]\nmode = "import"\nfile = "T.md"\n'
+                         'import_line = "@{path}"\n' + skills)
+
+
+def put(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w", encoding="utf-8").write(text)
+
+
+none = prof("")
+empty = prof("\n[skills]\n")
+auto = prof('\n[skills]\ndir = "~/.t/skills"\ndiscovery = "auto"\n')
+manual = prof('\n[skills]\ndiscovery = "manual"\n')
+assert rules.declared_depth(none)[0] == rules.DEPTH_FULL, rules.declared_depth(none)
+assert rules.declared_depth(empty)[0] == rules.DEPTH_FULL, rules.declared_depth(empty)
+# Пустая секция и её отсутствие дают одну глубину, а значат разное: у первого
+# ось разобрана, у второго до неё не дошли, и сказать об этом надо по-разному.
+assert rules.declared_depth(none)[1] != rules.declared_depth(empty)[1]
+assert rules.declared_depth(auto)[0] == rules.DEPTH_CORE, rules.declared_depth(auto)
+assert rules.declared_depth(manual)[0] == rules.DEPTH_POINTERS, rules.declared_depth(manual)
+
+dk, proj = os.path.join(work, "devkit"), os.path.join(work, "proj")
+os.makedirs(proj)
+put(os.path.join(dk, "RULES.md"), "# правила\n")
+put(os.path.join(dk, "RULES.board.md"), "# правила доски\n")
+put(os.path.join(dk, "skills", "board-test", "SKILL.md"),
+    "---\nname: board-test\ndescription: Процедура доски. Звать, когда трогают задачу.\n---\n\n# Доска\n")
+
+# Ядра ещё нет: объявленная глубина остаётся обещанием, доезжает полный текст,
+# и признака в маркере нет.
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_FULL
+put(os.path.join(dk, "RULES.core.md"), "# ядро\n")
+# Ядро нарезано наполовину: пока полон хоть один текст, глубина ещё не ядро.
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_FULL
+put(os.path.join(dk, "RULES.board.core.md"), "# ядро доски\n")
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_CORE
+
+thin = rules.thin_text(auto, proj, dk, True, False, rules.DEPTH_CORE)
+assert thin.startswith("<!-- devkit:generated depth=core body="), thin
+assert "@../devkit/RULES.core.md\n" in thin, thin
+assert "@../devkit/RULES.board.core.md\n" in thin, thin
+assert "@../devkit/RULES.md\n" not in thin, thin
+
+# Указатели: строка на скилл с описанием и путём, по которому его читать.
+ptr = rules.pointers_text(dk, proj)
+assert "board-test" in ptr, ptr
+assert "`../devkit/skills/board-test/SKILL.md`" in ptr, ptr
+assert "Звать, когда трогают задачу." in ptr, ptr
+thin = rules.thin_text(manual, proj, dk, True, False, rules.DEPTH_POINTERS)
+assert thin.startswith("<!-- devkit:generated depth=pointers body="), thin
+assert "board-test" in thin, thin
+stamp, body = rules.generated_parts(thin)
+assert stamp == rules.digest(body), thin
+# Хеш маркера с глубиной сходится с телом, а тронутый руками файл расходится:
+# без этого правку молча перетёрли бы при первой же перегенерации.
+stamp, body = rules.generated_parts(thin + "своя строка\n")
+assert stamp is not None and stamp != rules.digest(body)
+
+# Вклейка одна на всех, и глубина у неё самая полная из запрошенных.
+assert rules.embed_depth([rules.DEPTH_CORE, rules.DEPTH_FULL]) == rules.DEPTH_FULL
+assert rules.embed_depth([rules.DEPTH_CORE, rules.DEPTH_POINTERS]) == rules.DEPTH_POINTERS
+assert rules.embed_depth([]) == rules.DEPTH_FULL
+
+# Эталон сегодняшней раскладки, снятый с генератора до этой задачи: пока ядро
+# не названо, активный профиль обязан давать те же байты.
+cc = harness.parse("claude-code.toml",
+                   open(os.path.join(dkroot, "harness", "claude-code.toml"), encoding="utf-8").read())
+declared = rules.declared_depth(cc)[0]
+assert declared == rules.DEPTH_CORE, declared
+fact = rules.actual_depth(dkroot, os.path.join(work, "nowhere"), True, declared)
+assert fact == rules.DEPTH_FULL, fact
+for name, board in (("thin-board.expected", True), ("thin-noboard.expected", False)):
+    want = open(os.path.join(dkroot, "devkitctl", "testdata", name), encoding="utf-8").read()
+    got = rules.thin_text(cc, "/nowhere/proj", "/nowhere/devkit", board, False, fact)
+    assert got == want, "%s: жду %r, вижу %r" % (name, want, got)
+EOF
+
 # Файлы правил: рукописный AGENTS.md источник, тонкие файлы харнесов генерятся.
 # Гоняется на своём проекте, чтобы правки --fix не мешали прежним шагам.
 rproj="$tmp/rproj"
@@ -373,6 +465,41 @@ out=$(docr --fix)
 echo "$out" | grep -q 'починено: вклейка правил в AGENTS.md обновлена под devkit' ||
     fail "--fix не обновил протухшую вклейку: $out"
 grep -q 'новая строка правил доски' "$rproj/AGENTS.md" || fail "обновлённая вклейка без новой строки правил"
+
+# Ось скиллов у embed-инструмента: discovery = "manual" значит, что к тексту
+# правил прикладывается таблица указателей на скиллы devkit, а глубина стоит
+# признаком в маркере вклейки. Смена профиля при этом видна как протухание.
+sed -e '$a\
+\
+[skills]\
+discovery = "manual"' "$dk/harness/embed-tool.toml" > "$tmp/embed-tool.manual" &&
+    cp "$tmp/embed-tool.manual" "$dk/harness/embed-tool.toml"
+out=$(docr)
+echo "$out" | grep -q 'вклейка правил в AGENTS.md протухла против devkit' ||
+    fail "появление указателей не сделало вклейку протухшей: $out"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: вклейка правил в AGENTS.md обновлена под devkit' ||
+    fail "--fix не переложил вклейку под указатели: $out"
+grep -q '^<!-- devkit:rules begin depth=pointers src=[0-9a-f]\{12\} body=[0-9a-f]\{12\} -->$' "$rproj/AGENTS.md" ||
+    fail "в маркере вклейки нет признака глубины: $(head -1 "$rproj/AGENTS.md")"
+grep -q '^## Процедуры devkit отдельными файлами$' "$rproj/AGENTS.md" ||
+    fail "во вклейке нет таблицы указателей на скиллы"
+grep -q '`../devkit/skills/board-batch/SKILL.md`' "$rproj/AGENTS.md" ||
+    fail "в таблице указателей нет пути до скилла: $(grep -n 'board-batch' "$rproj/AGENTS.md")"
+grep -q 'Правила работы с ассистентом' "$rproj/AGENTS.md" ||
+    fail "указатели приехали вместо текста правил, а не вместе с ним"
+out=$(docr)
+echo "$out" | grep -qE 'вклейка|CLAUDE.md' && fail "после перекладки под указатели остались находки: $out"
+# Ось убрана обратно: указатели уходят, вклейка возвращается к полному тексту.
+grep -v 'discovery = "manual"' "$tmp/embed-tool.manual" | grep -v '^\[skills\]$' \
+    > "$dk/harness/embed-tool.toml"
+out=$(docr --fix)
+echo "$out" | grep -q 'починено: вклейка правил в AGENTS.md обновлена под devkit' ||
+    fail "--fix не вернул вклейку к полному тексту: $out"
+grep -q 'Процедуры devkit отдельными файлами' "$rproj/AGENTS.md" &&
+    fail "таблица указателей осталась после снятия оси скиллов"
+grep -q '^<!-- devkit:rules begin src=[0-9a-f]\{12\} body=[0-9a-f]\{12\} -->$' "$rproj/AGENTS.md" ||
+    fail "признак глубины остался в маркере при полной вклейке: $(head -1 "$rproj/AGENTS.md")"
 
 # Копия текста правил в дереве должна быть одна.
 cp "$rproj/AGENTS.md" "$rproj/docs/copy.md"

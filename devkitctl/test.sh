@@ -885,6 +885,13 @@ grep -q '^## Процедуры devkit отдельными файлами$' "$r
     fail "во вклейке нет таблицы указателей на скиллы"
 grep -q '`../devkit/skills/board-batch/SKILL.md`' "$rproj/AGENTS.md" ||
     fail "в таблице указателей нет пути до скилла: $(grep -n 'board-batch' "$rproj/AGENTS.md")"
+# Указатель это единственный вход к процедуре у инструмента без скиллов, поэтому
+# в таблице обязаны быть все, а не те, о ком генератор знал на момент правки.
+for s in "$dk"/skills/*/SKILL.md; do
+    sname=$(basename "$(dirname "$s")")
+    grep -q "\`../devkit/skills/$sname/SKILL.md\`" "$rproj/AGENTS.md" ||
+        fail "в таблице указателей нет скилла $sname"
+done
 grep -q 'строка ядра доски' "$rproj/AGENTS.md" ||
     fail "указатели приехали вместо текста ядра, а не вместе с ним"
 grep -q 'Правила работы с ассистентом' "$rproj/AGENTS.md" &&
@@ -1209,6 +1216,13 @@ echo "$out" | grep -q 'README.md положено' && fail "--fix отчитал
 # проза остаётся в devkit.
 [ -f "$mhome/.claude/skills/board-batch/SKILL.md" ] || fail "doctor --fix не разложил скилл: $out"
 [ -f "$mhome/.claude/skills/README.md" ] && fail "--fix положил на машину markdown из skills/ как скилл: $out"
+# Раскладка берёт skills/ целиком, а не знакомый ей список: добавленный скилл
+# иначе не доехал бы до машины молча, и процедура правил осталась бы в devkit.
+for s in "$dk"/skills/*/SKILL.md; do
+    sname=$(basename "$(dirname "$s")")
+    [ -f "$mhome/.claude/skills/$sname/SKILL.md" ] ||
+        fail "doctor --fix не разложил скилл $sname: $out"
+done
 echo "$out" | grep -q 'tmux не в PATH' || fail "--fix не ставит tmux, находка должна остаться: $out"
 echo "$out" | grep -q 'agentctl quota refresh' || fail "--fix не снимает квоту, находка должна остаться: $out"
 

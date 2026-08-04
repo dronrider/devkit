@@ -32,6 +32,8 @@ jobs:
         run: sh hooks/test.sh
       - name: тесты devkitctl
         run: sh devkitctl/test.sh
+      - name: тесты скиллов
+        run: sh skills/test.sh
       - name: тесты оболочки цели
         run: sh skills/goal-loop/test.sh
       - name: запрещённые символы по всем файлам

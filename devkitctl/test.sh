@@ -148,6 +148,10 @@ printf '# моя редакция\n\n@~/.claude/CLAUDE_RULES.md\n' > "$gclaude"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
 echo "$out" | grep -q "$gclaude без маркера devkit:generated, генератор его не трогает" ||
     fail "нет находки про правленную руками глобальную точку: $out"
+echo "$out" | grep -qF "mv $gclaude $gclaude.bak" ||
+    fail "находка про правленную руками глобальную точку не называет точную команду перекладки файла: $out"
+echo "$out" | grep -q "и повторить devkitctl doctor --fix" ||
+    fail "находка про правленную руками глобальную точку не зовёт повторить doctor --fix: $out"
 grep -q 'моя редакция' "$gclaude" || fail "--fix затёр глобальную точку без маркера: $(cat "$gclaude")"
 # Маркер на месте, а тело под ним поправили руками: находка другая (тело
 # разошлось с хешем, а не «маркера нет»), и защита та же, --fix не перетирает.
@@ -156,6 +160,10 @@ printf '\nсвоя строка\n' >> "$gclaude"
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
 echo "$out" | grep -q "$gclaude правлен руками, содержимое разошлось с хешем маркера" ||
     fail "нет находки про разошедшийся с хешем маркер глобальной точки: $out"
+echo "$out" | grep -qF "mv $gclaude $gclaude.bak" ||
+    fail "находка про разошедшийся с хешем маркер глобальной точки не называет точную команду перекладки файла: $out"
+echo "$out" | grep -q "и повторить devkitctl doctor --fix" ||
+    fail "находка про разошедшийся с хешем маркер глобальной точки не зовёт повторить doctor --fix: $out"
 grep -q 'своя строка' "$gclaude" || fail "--fix затёр глобальную точку с разошедшимся хешем маркера: $(cat "$gclaude")"
 cp "$tmp/gclaude.clean" "$gclaude"
 # Маркер есть и сходится со своим телом, а тело устарело (девкит будто

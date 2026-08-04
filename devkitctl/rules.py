@@ -528,13 +528,15 @@ def check_global(devkit, fix, machine_path=None, whence=""):
         stamp, body = generated_parts(have)
         if stamp is None:
             findings.append("%s без маркера devkit:generated, генератор его не трогает: "
-                            "локальные добавления перенести в RULES.local.md, файл заменить "
-                            "сгенерированным devkitctl doctor --fix" % path)
+                            "локальные добавления перенести в RULES.local.md, файл убрать "
+                            "с дороги руками (mv %s %s.bak) и повторить devkitctl doctor --fix"
+                            % (path, path, path))
             continue
         if digest(body) != stamp:
             findings.append("%s правлен руками, содержимое разошлось с хешем маркера: "
-                            "локальные добавления перенести в RULES.local.md, файл заменить "
-                            "devkitctl doctor --fix" % path)
+                            "локальные добавления перенести в RULES.local.md, файл убрать "
+                            "с дороги руками (mv %s %s.bak) и повторить devkitctl doctor --fix"
+                            % (path, path, path))
             continue
         if have != want:
             if fix:

@@ -77,6 +77,16 @@ cp "$dk/agents/"*.md "$home/.claude/agents/"
 cp -R "$dk/skills/"* "$home/.claude/skills/"
 printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
     > "$home/.devkit/quota/claude-code.local"
+# Глобальная точка правил: как определения агентов и скиллы выше, машина уже
+# несёт актуальную раскладку, и на чистом проекте до находки доктора не
+# доходит.
+HOME="$home" python3 - "$dk" "$home/.claude/CLAUDE.md" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+import harness, rules
+prof = harness.parse("p.toml", open(sys.argv[1] + "/harness/claude-code.toml", encoding="utf-8").read())
+open(sys.argv[2], "w", encoding="utf-8").write(rules.global_thin_text(prof, sys.argv[1]))
+EOF
 
 proj="$tmp/proj"
 mkdir -p "$proj"
@@ -106,6 +116,74 @@ HOME="$home" python3 "$dkctl" new --no-board -C "$proj" >/dev/null 2>&1
 # doctor: свежеподключённый проект чист.
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
 [ $? -eq 0 ] || fail "doctor нашёл находки на чистом проекте: $out"
+
+# doctor: глобальная точка правил. Она значит для любой сессии на машине, а не
+# только для $proj, поэтому проверяется отдельным блоком, не внутри цепочки
+# находок конкретного проекта; после блока фикстура возвращается в чистое
+# состояние, чтобы не красить более поздние проверки посторонней находкой.
+gclaude="$home/.claude/CLAUDE.md"
+cp "$gclaude" "$tmp/gclaude.clean"
+# Пропала: находка с командой, --fix кладёт её на место той же генерацией.
+rm "$gclaude"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q "нет $gclaude: правила харнеса claude-code до сессий вне проектов devkit не доезжают" ||
+    fail "нет находки про пропавшую глобальную точку правил: $out"
+[ -f "$gclaude" ] && fail "doctor без --fix сам сгенерил глобальную точку правил"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q "починено: $gclaude сгенерирован: глобальная точка правил харнеса claude-code" ||
+    fail "--fix не сгенерил пропавшую глобальную точку правил: $out"
+diff -q "$gclaude" "$tmp/gclaude.clean" >/dev/null || fail "сгенерированная глобальная точка разошлась с эталоном: $(cat "$gclaude")"
+head -1 "$gclaude" | grep -q '^<!-- devkit:generated body=[0-9a-f]\{12\} -->$' ||
+    fail "у глобальной точки нет маркера с хешем: $(head -1 "$gclaude")"
+# $dk тут без нарезанного ядра (как и в остальных тестах этого блока), и
+# глобальная точка тянет то же, что тянула бы и обычная нарезка без ядра:
+# полный текст. Путь в находках доктор печатает разрешённым, а mktemp на macOS
+# отдаёт /var, который на деле симлинк на /private/var.
+dk_resolved=$(cd "$dk" && pwd -P)
+grep -qF "@$dk_resolved/RULES.md" "$gclaude" || fail "глобальная точка не импортирует правила devkit: $(cat "$gclaude")"
+grep -q 'AGENTS.md' "$gclaude" && fail "глобальная точка тянет AGENTS.md, а он не её, а проектный: $(cat "$gclaude")"
+# Правлена руками, маркера нет: генератор не трогает, локальное предлагается
+# перенести в RULES.local.md.
+printf '# моя редакция\n\n@~/.claude/CLAUDE_RULES.md\n' > "$gclaude"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q "$gclaude без маркера devkit:generated, генератор его не трогает" ||
+    fail "нет находки про правленную руками глобальную точку: $out"
+grep -q 'моя редакция' "$gclaude" || fail "--fix затёр глобальную точку без маркера: $(cat "$gclaude")"
+# Маркер на месте, а тело под ним поправили руками: находка другая (тело
+# разошлось с хешем, а не «маркера нет»), и защита та же, --fix не перетирает.
+cp "$tmp/gclaude.clean" "$gclaude"
+printf '\nсвоя строка\n' >> "$gclaude"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q "$gclaude правлен руками, содержимое разошлось с хешем маркера" ||
+    fail "нет находки про разошедшийся с хешем маркер глобальной точки: $out"
+grep -q 'своя строка' "$gclaude" || fail "--fix затёр глобальную точку с разошедшимся хешем маркера: $(cat "$gclaude")"
+cp "$tmp/gclaude.clean" "$gclaude"
+# Маркер есть и сходится со своим телом, а тело устарело (девкит будто
+# переехал): находка другая, «устарел», и --fix перегенерирует под текущий
+# путь, а не оставляет старый.
+python3 - "$dk" "$gclaude" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+import harness, rules
+prof = harness.parse("p.toml", open(sys.argv[1] + "/harness/claude-code.toml", encoding="utf-8").read())
+open(sys.argv[2], "w", encoding="utf-8").write(rules.global_thin_text(prof, "/nowhere/stale-devkit"))
+EOF
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q "$gclaude устарел: путь devkit или состав ядра изменились" ||
+    fail "нет находки про устаревшую глобальную точку: $out"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q "починено: $gclaude перегенерирован" || fail "--fix не перегенерил устаревшую глобальную точку: $out"
+diff -q "$gclaude" "$tmp/gclaude.clean" >/dev/null || fail "перегенерированная глобальная точка разошлась с эталоном: $(cat "$gclaude")"
+# Импорт не разворачивается: девкит из-под глобальной точки убрали (переехал
+# или не склонирован), находка про это, а не тишина.
+grules="$dk/RULES.md"
+mv "$grules" "$tmp/RULES.md.bak"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -qF "$gclaude:7: импорт @$dk_resolved/RULES.md не разворачивается" ||
+    fail "нет находки про неразворачивающийся импорт глобальной точки: $out"
+mv "$tmp/RULES.md.bak" "$grules"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+[ $? -eq 0 ] || fail "doctor нашёл находки после восстановления devkit: $out"
 
 # doctor: битый импорт, битая ссылка и пропавший PostToolUse-хук ловятся.
 printf '@../devkit/NOPE.md\n' >> "$proj/CLAUDE.md"
@@ -367,6 +445,33 @@ for name, board in (("thin-board.expected", True), ("thin-noboard.expected", Fal
     assert got == want, "%s: жду %r, вижу %r" % (name, want, got)
 EOF
 
+# Юниты глобальной точки правил: tilde_path (представление от ~ там, где
+# devkit лежит внутри home, иначе абсолютный путь) и global_target (тянет
+# ядро, если оно нарезано, иначе полный текст, тем же условием, что и
+# rule_sources). Своя фикстура HOME, чтобы не зависеть от home настоящей
+# машины, где devkit скорее всего и лежит внутри него.
+ghome="$tmp/ghome"
+mkdir -p "$ghome/nested/devkit-in-home"
+HOME="$ghome" python3 - "$dk/devkitctl" "$ghome" "$tmp" <<'EOF' || fail "юниты глобальной точки правил не прошли"
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+ghome, outside = sys.argv[2], sys.argv[3]
+import rules
+
+inhome = os.path.join(ghome, "nested", "devkit-in-home")
+assert rules.tilde_path(inhome) == "~/nested/devkit-in-home", rules.tilde_path(inhome)
+assert rules.tilde_path(outside) == os.path.realpath(outside), rules.tilde_path(outside)
+
+gd = os.path.join(outside, "gdevkit")
+os.makedirs(gd, exist_ok=True)
+open(os.path.join(gd, "RULES.md"), "w", encoding="utf-8").write("# правила\n")
+assert rules.global_target(gd) == rules.Path(gd) / "RULES.md", rules.global_target(gd)
+open(os.path.join(gd, "RULES.core.md"), "w", encoding="utf-8").write("# ядро\n")
+assert rules.global_target(gd) == rules.Path(gd) / "RULES.core.md", rules.global_target(gd)
+EOF
+
 # Разрез ядра: за резидентную часть правил платит каждый запрос каждой сессии,
 # поэтому бюджет тут не пожелание, а проверка. Гоняется на настоящих файлах
 # devkit, а не на копии: мерить надо тот текст, который реально доедет.
@@ -473,6 +578,28 @@ if bad:
     print("\n".join(bad))
     sys.exit(1)
 EOF
+
+# Та же пара, но с глобальной точкой, которая называет ядро прямо (сегодняшний
+# сгенерированный вид, а не вчерашний симлинк на полный текст). Разница видна
+# именно на «full»: там в раскладке уже лежит RULES.md (без ядра), а глобальная
+# точка тянет RULES.core.md отдельным именем, которого таблица подстановки до
+# этой задачи не знала вовсе, и дедуп для неё не срабатывал (файл лёг бы вторым
+# экземпляром под своим путём внутри home/). Своя копия ядра под glhome, а не
+# devkit-dk-107 напрямую: импорт обязан быть путём от ~ (raskladka копирует
+# только такие), а сам devkit почти наверняка снаружи любого синтетического
+# home этого теста.
+glhome="$tmp/glhome"
+mkdir -p "$glhome/.claude" "$glhome/nested-devkit"
+cp "$dkreal/RULES.core.md" "$glhome/nested-devkit/RULES.core.md"
+printf '<!-- devkit:generated body=stub -->\nэталон не нужен, только импорт\n\n@~/nested-devkit/RULES.core.md\n' \
+    > "$glhome/.claude/CLAUDE.md"
+for d in full core; do
+    HOME="$glhome" python3 "$dkreal/devkitctl/rules.py" --layout "$d" "$tmp/gllay/$d" "$dkreal/obeycheck/project" \
+        >/dev/null || fail "раскладка глубины $d с прямым импортом ядра не собралась"
+    stray=$(find "$tmp/gllay/$d/home" -name 'RULES.core.md')
+    [ -z "$stray" ] ||
+        fail "прямой импорт ядра глобальной точкой лёг в раскладку $d вторым экземпляром: $stray"
+done
 
 # Файлы правил: рукописный AGENTS.md источник, тонкие файлы харнесов генерятся.
 # Гоняется на своём проекте, чтобы правки --fix не мешали прежним шагам.
@@ -1468,6 +1595,13 @@ echo "$out" | grep -q "cp $dkreal/agents/review-high.md" || fail "находка
 # Скиллы держатся того же рубежа.
 [ -f "$wthome/.claude/skills/board-batch/SKILL.md" ] && fail "--fix разложил скилл с фичеветки"
 echo "$out" | grep -q "cp $dkreal/skills/board-batch/SKILL.md" || fail "находка про скилл зовёт не в основной чекаут: $out"
+# Глобальная точка правил держится того же рубежа: она значит для каждой
+# сессии на машине сразу, и класть её с непроверенной ветки нельзя так же, как
+# определения агентов и скиллы.
+[ -f "$wthome/.claude/CLAUDE.md" ] && fail "--fix сгенерил глобальную точку правил с фичеветки"
+echo "$out" | grep -q "$wthome/.claude/CLAUDE.md.*worktree ветки задачи" ||
+    fail "находка про глобальную точку не называет worktree devkit: $out"
+echo "$out" | grep -q "из основного чекаута $dkreal:" || fail "находка про глобальную точку зовёт не в основной чекаут: $out"
 # Разошедшееся определение из worktree сверяется с основным чекаутом.
 mkdir -p "$wthome/.claude/agents"
 cp "$dk/agents/"*.md "$wthome/.claude/agents/"
@@ -1479,6 +1613,23 @@ echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "сверка о�
 out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q "cp $dkreal/agents/exec-high.md" || fail "с worktree --fix потерял находку про разошедшееся определение: $out"
 grep -q 'своя строка' "$wthome/.claude/agents/exec-high.md" || fail "с worktree --fix переложил определение с непроверенной ветки: $out"
+# Устаревшая глобальная точка (маркер сходится со своим телом, а путь devkit в
+# нём чужой) с worktree тоже не трогается: находка остаётся, --fix её не
+# перегенерирует до основного чекаута.
+mkdir -p "$wthome/.claude"
+python3 - "$dkreal" "$wthome/.claude/CLAUDE.md" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+import harness, rules
+prof = harness.parse("p.toml", open(sys.argv[1] + "/harness/claude-code.toml", encoding="utf-8").read())
+open(sys.argv[2], "w", encoding="utf-8").write(rules.global_thin_text(prof, "/nowhere/stale-devkit"))
+EOF
+cp "$wthome/.claude/CLAUDE.md" "$tmp/wt-gclaude.stale"
+out=$(HOME="$wthome" PATH="$gostub:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
+echo "$out" | grep -q "$wthome/.claude/CLAUDE.md устарел.*из основного чекаута $dkreal:" ||
+    fail "с worktree находка про устаревшую глобальную точку не зовёт в основной чекаут: $out"
+diff -q "$wthome/.claude/CLAUDE.md" "$tmp/wt-gclaude.stale" >/dev/null ||
+    fail "с worktree --fix перегенерировал глобальную точку с непроверенной ветки"
 # Бинари на месте, но старее выложенного worktree: свежесть по mtime там ничего
 # не значит, и доктор про них молчит, а не печатает четыре ложные находки.
 wtbin="$tmp/wtbin"

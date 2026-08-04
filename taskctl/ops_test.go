@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -1037,5 +1038,24 @@ func TestAddBlockedRejected(t *testing.T) {
 	board, _ := os.ReadFile(boardPath(root))
 	if string(board) != fixtureBoard {
 		t.Fatalf("доска изменилась после отбитого add:\n%s", board)
+	}
+}
+
+// Разрешение на пуш едет хуку pre-push только с самим пушем: обычные команды
+// git остаются на наследованном окружении, иначе рубеж пропускал бы всё, что
+// taskctl запускает попутно.
+func TestPushEnv(t *testing.T) {
+	if env := pushEnv([]string{"commit", "-m", "x"}); env != nil {
+		t.Fatalf("окружение подменено не на пуше: %v", env)
+	}
+	if env := pushEnv(nil); env != nil {
+		t.Fatalf("окружение подменено на пустых аргументах: %v", env)
+	}
+	env := pushEnv([]string{"push"})
+	if !slices.Contains(env, "DEVKIT_PUSH_OK=1") {
+		t.Fatalf("пуш без разрешения для pre-push: %v", env)
+	}
+	if !slices.Contains(env, "PATH="+os.Getenv("PATH")) {
+		t.Fatalf("родительское окружение потерялось: %v", env)
 	}
 }

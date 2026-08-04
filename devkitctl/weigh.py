@@ -40,6 +40,8 @@ USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_t
 SNAP_SKIP = ("projects", "file-history", "shell-snapshots", "sessions",
              "session-env", "todos", "debug", "telemetry", "backups", "cache",
              "statsig", "ide", "history.jsonl")
+# Связка ключей macOS: там лежит авторизация клиента, и от HOME он ищет её тут.
+KEYCHAIN_DIR = "Library/Keychains"
 
 
 class WeighError(Exception):
@@ -236,6 +238,21 @@ def trust_dirs(config, dirs):
     config.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+def link_keychain(src, dst):
+    # Авторизация Claude Code на macOS лежит в связке ключей, а ищет её клиент
+    # от HOME. Под слепком без этого каталога прогон отвечает «Not logged in» и
+    # замер не начинается вовсе. Каталог кладётся симлинком: связка живая и
+    # большая, копировать её незачем, замеру нужно только прочитать вход. На
+    # других платформах каталога нет, и слепок остаётся прежним.
+    keys = Path(src) / KEYCHAIN_DIR
+    if not keys.is_dir():
+        return
+    link = Path(dst) / KEYCHAIN_DIR
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if not os.path.lexists(str(link)):
+        link.symlink_to(keys)
+
+
 def build_home(src, dst, devkit, profile, layout):
     """Слепок ~/.claude во временном HOME, с раскладкой devkit или без неё.
 
@@ -265,6 +282,7 @@ def build_home(src, dst, devkit, profile, layout):
     config = src / ".claude.json"
     if config.is_file():
         shutil.copyfile(config, dst / ".claude.json")
+    link_keychain(src, dst)
     strip_hooks(claude_dst / "settings.json")
     if layout:
         return dst

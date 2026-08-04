@@ -1210,6 +1210,42 @@ rm -f "$dk/harness/embed-tool.toml" "$whome/.devkit/harness.local"
 cp "$wtmp/agents.plain" "$wproj/AGENTS.md"
 cp "$wtmp/thin.gen" "$wproj/CLAUDE.md"
 
+# Связка ключей в слепке: без неё клиент под подменённым HOME отвечает «Not
+# logged in», и замер не начинается вовсе. Гоняется на выдуманных HOME, чтобы
+# обе ветки проверялись на любой платформе, а не только там, где связка есть.
+python3 - "$dk" "$wtmp/keys" <<'EOF' || fail "юниты связки ключей в слепке не прошли"
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+work, dkroot = sys.argv[2], sys.argv[1]
+import harness
+import weigh
+
+profile = harness.parse("cc.toml", open(os.path.join(dkroot, "harness", "claude-code.toml"),
+                                        encoding="utf-8").read())
+src = os.path.join(work, "src")
+keys = os.path.join(src, weigh.KEYCHAIN_DIR)
+os.makedirs(os.path.join(src, ".claude"))
+os.makedirs(keys)
+open(os.path.join(keys, "login.keychain-db"), "w").write("не связка, а её место")
+
+# Связка на месте: в слепке симлинк на неё, и авторизация читается с машины.
+# Копия тут была бы и лишней, и опасной: связка живая.
+link = os.path.join(weigh.build_home(src, os.path.join(work, "full"), dkroot, profile, True),
+                    weigh.KEYCHAIN_DIR)
+assert os.path.islink(link), link
+assert os.path.realpath(link) == os.path.realpath(keys), os.path.realpath(link)
+assert os.path.isfile(os.path.join(link, "login.keychain-db")), os.listdir(link)
+
+# Связки нет (не macOS): слепок остаётся прежним, пустого Library в нём не
+# заводится.
+bare = os.path.join(work, "bare")
+os.makedirs(os.path.join(bare, ".claude"))
+dst = weigh.build_home(bare, os.path.join(work, "nokeys"), dkroot, profile, True)
+assert not os.path.lexists(os.path.join(dst, "Library")), os.listdir(dst)
+EOF
+
 # Ядро правил нарезано: резидентно то, что импортирует тонкий файл, а не полный
 # текст. Глубину claude-code объявляет ядром, и как только RULES.core.md
 # появляется, за импортом переезжает и карман. Считай карман по-старому, и порог

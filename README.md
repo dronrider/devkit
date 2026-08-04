@@ -12,7 +12,7 @@ git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 Claude Code это тонкий `CLAUDE.md` с импортами:
 
 ```markdown
-<!-- devkit:generated depth=core body=1fb804c4198d -->
+<!-- devkit:generated depth=core body=91b52d79f446 -->
 @AGENTS.md
 @../devkit/RULES.core.md
 ```

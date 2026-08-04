@@ -658,6 +658,107 @@ for sample in "$here"/testdata/claude-code/*.json; do
     [ -n "$err" ] && fail "уведомитель ругался на образце $name: $err"
 done
 
+# Разбор в тексте находки: находка не только запрещает символ, но и говорит,
+# чем его переписать, и этот разбор виден и в CLI, и в режиме --hook.
+arrow=$(printf '\342\206\222')   # стрелка U+2192
+printf 'тире %s и стрелка %s\n' "$dash" "$arrow" > "$tmp/advice.txt"
+out=$(python3 "$here/check-symbols.py" "$tmp/advice.txt")
+echo "$out" | grep -q 'как переписать' || fail "находка без разбора: $out"
+echo "$out" | grep -q 'перестроить предложение' || fail "нет разбора про тире: $out"
+echo "$out" | grep -q 'ASCII' || fail "нет разбора про стрелку: $out"
+out=$(printf 'кавычки %s\n' "$(printf '\342\200\234')" | python3 "$here/check-symbols.py" --stdin)
+echo "$out" | grep -q 'ёлочки' || fail "нет разбора про кавычки: $out"
+out=$(printf '{"tool_input":{"file_path":"x.md","new_string":"тире %s"}}' "$dash" |
+    python3 "$here/check-symbols.py" --hook 2>&1 >/dev/null)
+echo "$out" | grep -q 'перестроить предложение' || fail "режим --hook отдал находку без разбора: $out"
+
+# Символ, для которого отдельного разбора нет, разбор всё равно получает.
+out=$(printf 'буква %s\n' "$(printf '\303\251')" | python3 "$here/check-symbols.py" --stdin)
+echo "$out" | grep -q 'клавиатурный аналог' || fail "нет разбора для прочего символа: $out"
+
+# check-commit: у каждой находки свой разбор, а не только запрет.
+printf 'fix: правка\n\nCo-authored-by: X <noreply@anthropic.com>\n' > "$tmp/msg"
+out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+echo "$out" | grep -q 'как переписать' || fail "check-commit без разбора: $out"
+echo "$out" | grep -q 'amend' || fail "нет разбора про след ассистента: $out"
+printf 'perf: чужой тип\n' > "$tmp/msg"
+out=$(printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg")
+echo "$out" | grep -q 'git log -n 100' || fail "нет разбора про префикс из истории: $out"
+
+# check-tests.py: код без теста это находка, код с тестом нет, дока сама по
+# себе тоже нет. Тестом считается и фикстура в testdata.
+out=$(python3 "$here/check-tests.py" pkg/ops.go)
+[ $? -eq 1 ] || fail "код без теста прошёл"
+echo "$out" | grep -q 'regcheck' || fail "находка про тесты без разбора: $out"
+python3 "$here/check-tests.py" pkg/ops.go pkg/ops_test.go >/dev/null || fail "код с тестом не прошёл"
+python3 "$here/check-tests.py" pkg/ops.py tests/test_ops.py >/dev/null || fail "тест в tests/ не засчитан"
+python3 "$here/check-tests.py" hooks/check-x.py hooks/testdata/sample.json >/dev/null ||
+    fail "фикстура в testdata не засчитана"
+python3 "$here/check-tests.py" docs/README.md docs/TASKS.md >/dev/null || fail "дока без кода не прошла"
+python3 "$here/check-tests.py" --stdin < /dev/null >/dev/null || fail "пустой список не прошёл"
+printf 'pkg/ops.go\n' | python3 "$here/check-tests.py" --stdin >/dev/null
+[ $? -eq 1 ] || fail "режим --stdin пропустил код без теста"
+
+# Файл без расширения читается по шебангу: утилиты devkit и сами хуки живут
+# так, и без этого правка хука за код не считалась бы.
+mkdir -p "$tmp/wt"
+printf '#!/bin/sh\necho x\n' > "$tmp/wt/tool"
+printf 'просто заметка\n' > "$tmp/wt/NOTES"
+(cd "$tmp" && python3 "$here/check-tests.py" wt/tool >/dev/null)
+[ $? -eq 1 ] || fail "скрипт с шебангом не сошёл за код"
+(cd "$tmp" && python3 "$here/check-tests.py" wt/NOTES >/dev/null) || fail "текстовый файл сошёл за код"
+
+# pre-commit: правка кода без теста краснеет, с тестом зеленеет, обход через
+# DEVKIT_NO_TESTS пропускает только эту проверку.
+repot="$tmp/repot"
+git init -q "$repot"
+git -C "$repot" config user.name t
+git -C "$repot" config user.email t@t
+printf 'def f():\n    return 1\n' > "$repot/lib.py"
+git -C "$repot" add lib.py
+(cd "$repot" && "$here/pre-commit" >/dev/null 2>&1)
+[ $? -eq 1 ] || fail "pre-commit пропустил правку кода без теста"
+(cd "$repot" && DEVKIT_NO_TESTS=1 "$here/pre-commit" >/dev/null 2>&1) ||
+    fail "DEVKIT_NO_TESTS не обошёл проверку тестов"
+printf 'def test_f():\n    assert True\n' > "$repot/test_lib.py"
+git -C "$repot" add test_lib.py
+(cd "$repot" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на код с тестом"
+printf 'текст доки\n' > "$repot/README.md"
+git -C "$repot" rm -q --cached lib.py test_lib.py
+git -C "$repot" add README.md
+(cd "$repot" && "$here/pre-commit" >/dev/null 2>&1) || fail "pre-commit ругается на коммит одной доки"
+# Обход тестов не выключает остальные рубежи.
+printf 'текст с тире %s\n' "$dash" > "$repot/README.md"
+git -C "$repot" add README.md
+(cd "$repot" && DEVKIT_NO_TESTS=1 "$here/pre-commit" >/dev/null 2>&1)
+[ $? -eq 1 ] || fail "DEVKIT_NO_TESTS выключил проверку символов"
+
+# pre-push: пуш пользователя рубеж не видит, пуш из сессии агента отбивается,
+# а разрешение от утилит devkit пропускает.
+(CLAUDECODE= CLAUDE_CODE_ENTRYPOINT= CURSOR_AGENT= "$here/pre-push" origin git@example.com:x.git </dev/null >/dev/null 2>&1) ||
+    fail "pre-push отбил ручной пуш пользователя"
+out=$(CLAUDECODE=1 "$here/pre-push" origin git@example.com:x.git </dev/null 2>&1 >/dev/null)
+[ $? -eq 1 ] || fail "pre-push пропустил пуш из сессии агента"
+echo "$out" | grep -q 'taskctl' || fail "отказ pre-push без разбора про доску: $out"
+echo "$out" | grep -q 'DEVKIT_PUSH_OK' || fail "отказ pre-push без обхода: $out"
+(CLAUDECODE=1 DEVKIT_PUSH_OK=1 "$here/pre-push" origin git@example.com:x.git </dev/null >/dev/null 2>&1) ||
+    fail "pre-push отбил пуш с разрешением утилиты devkit"
+
+# check-sensitive: local-docs в коммите это находка сама по себе, а на записи
+# находка ровно тогда, когда он не заигнорен.
+out=$(printf 'local-docs/hosts.md:1:строка\n' | python3 "$here/check-sensitive.py" --diff)
+[ $? -eq 1 ] || fail "local-docs проехал в коммит"
+echo "$out" | grep -q 'gitignore' || fail "находка про local-docs без разбора: $out"
+repol="$tmp/repol"
+git init -q "$repol"
+mkdir -p "$repol/local-docs"
+printf '{"tool_input":{"file_path":"local-docs/hosts.md","new_string":"роутер"}}' > "$tmp/ev.json"
+(cd "$repol" && python3 "$here/check-sensitive.py" --hook < "$tmp/ev.json" 2>/dev/null)
+[ $? -eq 2 ] || fail "запись в незаигноренный local-docs прошла"
+printf 'local-docs/\n' > "$repol/.gitignore"
+(cd "$repol" && python3 "$here/check-sensitive.py" --hook < "$tmp/ev.json" 2>/dev/null) ||
+    fail "запись в заигноренный local-docs дала находку"
+
 if [ $fails -eq 0 ]; then
     echo "хуки в порядке"
 else

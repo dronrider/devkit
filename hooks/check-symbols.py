@@ -23,6 +23,38 @@ import hookio
 
 BAD = re.compile(r"[^\x00-\x7Fа-яА-ЯёЁ«»№]")
 
+# Разбор по видам находок: что запрещено, сказано в правилах, а чем это
+# переписывать, приходится решать заново каждый раз, и подсказка нужна ровно
+# в момент ошибки. Порядок перечня и есть порядок разбора в выводе.
+ADVICE = (
+    (re.compile("[\u2012-\u2015]"),
+     "длинное тире: перестроить предложение живой прозой, а не подменять "
+     "двоеточием, запятой или дефисом"),
+    (re.compile("[\u2190-\u21ff\u2794-\u27bf\u2b00-\u2b11]"),
+     "стрелка: писать её знаками ASCII, -> <- =>"),
+    (re.compile("\u2026"),
+     "многоточие: три точки подряд"),
+    (re.compile("[\u2018\u2019\u201a\u201c\u201d\u201e]"),
+     "кавычки-лапки: наши ёлочки"),
+    (re.compile("[\u00a0\u2007\u2009\u202f]"),
+     "неразрывный пробел: обычный пробел"),
+    (re.compile("[\u2600-\u27bf\ufe0f\U0001f000-\U0001faff]"),
+     "эмодзи: убрать, замены им нет"),
+)
+
+OTHER = ("символ вне раскладок en/ru: подобрать клавиатурный аналог; "
+         "чужой код и тестовые данные можно оставить как есть")
+
+
+def advice(findings):
+    """Строки разбора по видам символов, которые встретились в находках."""
+    seen = {c for f in findings for c in BAD.findall(f)}
+    lines = [hint for rx, hint in ADVICE if any(rx.match(c) for c in seen)]
+    rest = [c for c in seen if not any(rx.match(c) for rx, _ in ADVICE)]
+    if rest or not lines:
+        lines.append(OTHER)
+    return lines
+
 
 def is_testdata(path):
     # Снимки чужого вывода в testdata переписывать нельзя, значит и проверять
@@ -50,8 +82,9 @@ def run_hook(protocol):
         return 0
     return hookio.reply(protocol).found(
         "запрещённые символы (RULES.md, «Код и тексты» п. 1) в %s:\n%s\n"
-        "перепиши клавиатурными символами; чужой код и тестовые данные можно оставить как есть\n"
-        % (write.path or "?", "\n".join(findings[:20]))
+        "как переписать:\n%s\n"
+        % (write.path or "?", "\n".join(findings[:20]),
+           "\n".join("- " + a for a in advice(findings)))
     )
 
 
@@ -80,6 +113,10 @@ def main(argv):
                 return 2
     for f in findings:
         print(f)
+    if findings:
+        print("как переписать:")
+        for a in advice(findings):
+            print("- " + a)
     return 1 if findings else 0
 
 

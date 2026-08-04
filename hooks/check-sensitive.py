@@ -2,13 +2,16 @@
 """Проверка п. 8 раздела «Трекинг задач» RULES.board.md: в доску, файлы задач
 и LLD не попадают IP, доступы и другие приметы инфраструктуры. Вместо адреса
 пишется роль машины («роутер DE», «VPS RU»), конкретика живёт в гитигнорнутом
-local-docs.
+local-docs. Заодно проверяется сам local-docs: заигнорен ли он на записи и не
+уехал ли в коммит, иначе правило держится на том, что агент вспомнил про
+.gitignore.
 
 Режимы:
   check-sensitive.py <файл>...      проверить файлы целиком (фильтра путей нет,
                                     что передали, то и смотрим)
   ... | check-sensitive.py --diff   строки вида файл:строка:текст (staged-дифф
-                                    из pre-commit), смотрятся только файлы доски
+                                    из pre-commit), смотрятся файлы доски и
+                                    попавший в коммит local-docs
   check-sensitive.py --hook [протокол]
                                     хук на запись файла: JSON события на stdin,
                                     записанный фрагмент, только файлы доски.
@@ -17,6 +20,7 @@ local-docs.
                                     claude-code
 """
 import re
+import subprocess
 import sys
 
 import hookio
@@ -38,6 +42,30 @@ PATTERNS = [
         r"(?i)\b(?:password|passwd|пароль|secret|token|api[_-]?key|access[_-]?key)\b"
         r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-./+=]{6,}")),
 ]
+
+
+LOCAL_DOCS = "local-docs"
+
+LOCAL_DOCS_ADVICE = (
+    "local-docs едет в гит (RULES.board.md, «Трекинг задач» п. 8): конкретика "
+    "доступов и адресов живёт там и остаётся на машине.\n"
+    "что делать: добавить строку local-docs/ в .gitignore, а уже попавшее "
+    "убрать из индекса (git rm --cached -r local-docs)")
+
+
+def local_docs_path(path):
+    return LOCAL_DOCS in (path or "").replace("\\", "/").split("/")
+
+
+def ignored(path):
+    """Заигнорен ли путь по мнению самого git. Вне репозитория и без git ответа
+    нет, и тогда путь считается заигноренным: рубеж тут не сторож."""
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--", path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return True
+    return r.returncode != 1
 
 
 def board_path(path):
@@ -68,13 +96,19 @@ def scan(lines, where=None):
 
 
 def run_diff():
-    findings = []
+    findings, staged_local = [], []
     for raw in sys.stdin:
         parts = raw.rstrip("\n").split(":", 2)
-        if len(parts) < 3 or not board_path(parts[0]):
+        if len(parts) < 3:
+            continue
+        if local_docs_path(parts[0]) and parts[0] not in staged_local:
+            staged_local.append(parts[0])
+        if not board_path(parts[0]):
             continue
         for kind in line_kinds(parts[2]):
             findings.append("%s:%s:[%s] %s" % (parts[0], parts[1], kind, parts[2]))
+    if staged_local:
+        findings.append("\n".join(staged_local) + "\n" + LOCAL_DOCS_ADVICE)
     for f in findings:
         print(f)
     return 1 if findings else 0
@@ -82,7 +116,11 @@ def run_diff():
 
 def run_hook(protocol):
     write = hookio.write_event(protocol)
-    if write is None or not board_path(write.path):
+    if write is None:
+        return 0
+    if local_docs_path(write.path) and not ignored(write.path):
+        return hookio.reply(protocol).found(LOCAL_DOCS_ADVICE + "\n")
+    if not board_path(write.path):
         return 0
     findings = []
     for chunk in write.chunks:

@@ -1383,6 +1383,69 @@ out=$(HOME="$pphome" PATH="$gostub:$sys" python3 "$dkctl" doctor --fix -C "$mpro
 [ -x "$pphome/go/bin/agentctl" ] || fail "--fix не собрал бинарь: $out"
 echo "$out" | grep -q 'не в PATH: добавить директорию' || fail "нет находки про каталог сборки вне PATH: $out"
 
+# DK-029: пороги веса резидента (карман ядра, карман ядра доски, общий
+# потолок) и тела скилла. Логика на пороги (evaluate_residency,
+# evaluate_skill_body) отделена от сбора карманов с диска, поэтому юниты
+# гоняются прямо на списке карманов, без раскладки на диске.
+python3 - "$dk/devkitctl" <<'EOF' || fail "юниты порогов резидента не прошли"
+import sys
+sys.path.insert(0, sys.argv[1])
+import weigh
+
+clean = [("глобальная точка ~/.claude/CLAUDE.md", 300),
+         ("RULES.core.md (импорт глобальной точки)", 5500),
+         ("AGENTS.md проекта", 400),
+         ("тонкий CLAUDE.md", 80),
+         ("RULES.board.core.md (импорт тонкого файла)", 1500),
+         ("листинг определений agents/", 800),
+         ("листинг скиллов", 900)]
+kw = dict(limit=6500, core_limit=5500, board_limit=1500)
+
+
+def bump(weights, label, delta):
+    return [(l, c + delta if l == label else c) for l, c in weights]
+
+
+# На границе бюджета символ в символ находки нет: порог строгий "больше", не
+# "больше либо равно". Без карманов (харнес выключен) проверять нечего.
+assert weigh.evaluate_residency(clean, **kw) == [], weigh.evaluate_residency(clean, **kw)
+assert weigh.evaluate_residency([], **kw) == []
+
+# Ядро на символ выше порога: находка называет карман, вес в символах и
+# токенах, порог и разбивку (DK-029, сценарий проверки, шаг 2).
+found = weigh.evaluate_residency(bump(clean, "RULES.core.md (импорт глобальной точки)", 1), **kw)
+assert len(found) == 1, found
+f = found[0]
+assert "ядро" in f and "RULES.core.md (импорт глобальной точки)" in f, f
+assert "5 501 символ" in f and "порог 5 500 символов" in f, f
+assert "разбивка:" in f and "RULES.board.core.md" in f, f
+
+# Ядро доски на символ выше порога: своя находка, не путается с ядром.
+found = weigh.evaluate_residency(bump(clean, "RULES.board.core.md (импорт тонкого файла)", 1), **kw)
+assert len(found) == 1, found
+f = found[0]
+assert "ядро доски" in f and "RULES.board.core.md (импорт тонкого файла)" in f, f
+assert "1 501 символ" in f and "порог 1 500 символов" in f, f
+
+# Оба кармана в норме, а сумма выше общего потолка: находка про итог, карманов
+# по отдельности не касается.
+found = weigh.evaluate_residency(bump(clean, "листинг скиллов", 100000), **kw)
+assert len(found) == 1, found
+assert "вес резидента devkit:" in found[0] and "потолок 6 500 токенов" in found[0], found
+
+# Три причины разом дают три находки, каждая про свою.
+messy = bump(clean, "RULES.core.md (импорт глобальной точки)", 1)
+messy = bump(messy, "RULES.board.core.md (импорт тонкого файла)", 1)
+messy = bump(messy, "листинг скиллов", 100000)
+assert len(weigh.evaluate_residency(messy, **kw)) == 3, weigh.evaluate_residency(messy, **kw)
+
+# Тело скилла: на пороге молчит, на символ выше предлагает резать надвое.
+assert weigh.evaluate_skill_body("test-skill", 9000, limit=9000) is None
+f = weigh.evaluate_skill_body("test-skill", 9001, limit=9000)
+assert f is not None and "test-skill" in f and "9 001 символ" in f, f
+assert "порог 9 000 символов" in f and "резать скилл надвое" in f, f
+EOF
+
 # weigh: живой замер резидента. Настоящих сессий самопроверка не поднимает,
 # вместо claude в PATH лежит скрипт, который отдаёт usage по той раскладке,
 # какую видит в HOME и в рабочей директории: ровно за неё платит и настоящий
@@ -1688,6 +1751,53 @@ echo "$out" | grep -q '^  RULES.md (импорт' && fail "в карманах �
 # импортирует, и на ядре целевой прогон дешевле.
 echo "$out" | grep -q 'замер: 3 720 токенов' ||
     fail "директория замера собрана не под глубину проекта, целевой прогон платит за полный текст: $out"
+# residency_findings/skill_findings читают карманы с диска и применяют ту же
+# пороговую логику, юниты которой прогнаны выше: интеграция на уже собранной
+# раскладке ядра, без похода к doctor (его расчёт scope root==DEVKIT свой
+# отдельный тест).
+out=$(python3 - "$dk/devkitctl" "$wproj" "$dk" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import weigh
+found = weigh.residency_findings(sys.argv[2], sys.argv[3])
+print("RESID:%d" % len(found))
+for f in found:
+    print(f)
+EOF
+)
+echo "$out" | grep -q '^RESID:0$' || fail "нарезанное ядро проекта без доски дало находку веса: $out"
+printf 'ядро правил, %s\n' "$(python3 -c 'print("я" * 5600)')" > "$dk/RULES.core.md"
+out=$(python3 - "$dk/devkitctl" "$wproj" "$dk" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import weigh
+for f in weigh.residency_findings(sys.argv[2], sys.argv[3]):
+    print(f)
+EOF
+)
+echo "$out" | grep -q 'вес резидента, ядро (RULES.core.md' || fail "разбухшее ядро на диске не дало находки: $out"
+printf 'ядро правил, короткий текст\n' > "$dk/RULES.core.md"
+
+# skill_findings: тело скилла выше порога называет скилл и предлагает резать
+# надвое (DK-029, сценарий проверки, шаг 4), тело в норме молчит про него.
+mkdir -p "$dk/skills/oversized-probe"
+python3 -c "
+open('$dk/skills/oversized-probe/SKILL.md', 'w', encoding='utf-8').write(
+    '---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+"
+out=$(python3 - "$dk/devkitctl" "$dk" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import weigh
+for f in weigh.skill_findings(sys.argv[2]):
+    print(f)
+EOF
+)
+echo "$out" | grep -q 'тело скилла oversized-probe: 9 500 символов, порог 9 000 символов; резать скилл надвое' ||
+    fail "разбухший скилл на диске не дал находки: $out"
+echo "$out" | grep -q 'тело скилла board-groom' && fail "тело скилла в пределах порога дало находку: $out"
+rm -rf "$dk/skills/oversized-probe"
+
 rm -f "$dk/RULES.core.md"
 HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
 grep -q 'RULES.core.md' "$wproj/CLAUDE.md" && fail "тонкий файл не вернулся на полный текст правил"
@@ -1799,6 +1909,153 @@ done
 out=$(HOME="$wthome" PATH="$gostub:$wtbin:$sys" python3 "$tmp/devkit-wt/devkitctl/devkitctl.py" doctor --fix -C "$mproj" 2>&1)
 echo "$out" | grep -q 'старее исходников devkit' && fail "из worktree бинари объявлены устаревшими: $out"
 echo "$out" | grep -q 'починено' && fail "из worktree --fix что-то пересобрал: $out"
+
+# doctor: порог веса резидента и тела скилла (DK-029). Карманы общие для всех
+# проектов devkit, находка не проектная, и doctor() отдаёт её только для
+# самого чекаута devkit (root совпадает с DEVKIT), не для каждого
+# подключённого проекта. Фикстура это отдельная копия devkit, которая сама
+# себе и DEVKIT команды, и проверяемый ею проект; своя, а не общий $dk, чтобы
+# мутации карманов (ядро, ядро доски, тело скилла) не задевали остальные
+# сотни проверок файла.
+rdtmp="$tmp/resid"
+rdk="$rdtmp/devkit"
+mkdir -p "$rdk"
+for d in devkitctl agents skills harness hooks templates taskctl shipctl agentctl regcheck; do
+    cp -R "$here/../$d" "$rdk/"
+done
+# Дока других утилит доктору тут не нужна, а её битые ссылки на docs/lld были
+# бы шумом поверх карманов резидента, которые и проверяются.
+find "$rdk" -name '*.md' -not -path "$rdk/skills/*" -not -path "$rdk/agents/*" -delete
+rm -rf "$rdk/skills"/*
+mkdir -p "$rdk/skills/tiny-skill"
+printf -- '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n%s' "$(python3 -c 'print("т" * 200, end="")')" \
+    > "$rdk/skills/tiny-skill/SKILL.md"
+printf '# ядро\n\nтекст ядра.\n' > "$rdk/RULES.core.md"
+printf '# ядро доски\n\nтекст ядра доски.\n' > "$rdk/RULES.board.core.md"
+printf '# правила\n' > "$rdk/RULES.md"
+printf '# правила доски\n' > "$rdk/RULES.board.md"
+printf '# devkit\n\nтестовый проект.\n' > "$rdk/AGENTS.md"
+git init -q "$rdk"
+git -C "$rdk" config user.name t
+git -C "$rdk" config user.email t@t
+mkdir -p "$rdk/docs"
+printf '# Задачи\n\nПрефикс: RD\n' > "$rdk/docs/TASKS.md"
+rdkctl="$rdk/devkitctl/devkitctl.py"
+# Бинари в $bin старше свежескопированных исходников rdk: без этого доктор
+# считал бы их устаревшими, а это шум, никак не связанный с весом резидента.
+touch "$bin/taskctl" "$bin/shipctl" "$bin/agentctl" "$bin/regcheck"
+
+rdhome="$rdtmp/home"
+mkdir -p "$rdhome/.claude/agents" "$rdhome/.claude/skills" "$rdhome/.devkit/quota"
+cp "$rdk/agents/"*.md "$rdhome/.claude/agents/"
+cp -R "$rdk/skills/"* "$rdhome/.claude/skills/"
+rdallow=$(python3 - "$rdk/devkitctl" <<'EOF'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import perms
+print(json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False))
+EOF
+)
+cat > "$rdhome/.claude/settings.json" <<EOF
+{"permissions": {"allow": $rdallow},
+ "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
+]}], "SessionStart": [{"hooks": [
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
+]}], "Notification": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "SubagentStop": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}], "UserPromptSubmit": [{"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
+]}]}}
+EOF
+printf 'taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n' "$(date '+%Y-%m-%dT%H:%M')" \
+    > "$rdhome/.devkit/quota/claude-code.local"
+HOME="$rdhome" python3 - "$rdk" "$rdhome/.claude/CLAUDE.md" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+import harness, rules
+prof = harness.parse("p.toml", open(sys.argv[1] + "/harness/claude-code.toml", encoding="utf-8").read())
+open(sys.argv[2], "w", encoding="utf-8").write(rules.global_thin_text(prof, sys.argv[1]))
+EOF
+rdnotify="$tmp/resid-notify-stub"
+rddoc() { HOME="$rdhome" PATH="$cleanpath" DEVKIT_NOTIFY_BACKEND="$rdnotify" python3 "$rdkctl" doctor "$@" -C "$rdk" 2>&1; }
+rddoc --fix >/dev/null 2>&1
+printf 'deploy = echo ok\ntest = echo ok\n' > "$rdk/.devkit/deploy.local"
+
+# Чекаут devkit в порядке: doctor печатает вес по карманам и находок по весу
+# не даёт, код возврата 0 (DK-029, сценарий проверки, шаг 1).
+out=$(rddoc); rc=$?
+[ $rc -eq 0 ] || fail "чистый самопроверочный чекаут devkit дал находки: $out"
+echo "$out" | grep -q '^вес резидента devkit по карманам' || fail "doctor не печатает вес резидента: $out"
+echo "$out" | grep -q 'RULES.core.md' || fail "в таблице карманов нет ядра: $out"
+echo "$out" | grep -q '^  итого' || fail "в таблице карманов нет итоговой строки: $out"
+
+# Тело скилла выше порога: находка предлагает резать его надвое (сценарий,
+# шаг 4), возврат к норме находку снимает.
+python3 -c "
+open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+"
+cp "$rdk/skills/tiny-skill/SKILL.md" "$rdhome/.claude/skills/tiny-skill/SKILL.md"
+out=$(rddoc); rc=$?
+[ $rc -eq 1 ] || fail "разбухший скилл не поднял код возврата: $out"
+echo "$out" | grep -q 'тело скилла tiny-skill: 9 500 символов, порог 9 000 символов; резать скилл надвое' ||
+    fail "нет находки про разбухшее тело скилла: $out"
+python3 -c "
+open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 200)
+"
+cp "$rdk/skills/tiny-skill/SKILL.md" "$rdhome/.claude/skills/tiny-skill/SKILL.md"
+out=$(rddoc); [ $? -eq 0 ] || fail "возврат тела скилла к норме не очистил находку: $out"
+
+# Ядро выше порога: своя находка, называет карман, вес и порог.
+python3 -c "open('$rdk/RULES.core.md', 'w', encoding='utf-8').write('# ядро\n\n' + 'я' * 5600)"
+out=$(rddoc)
+echo "$out" | grep -q 'вес резидента, ядро (RULES.core.md' || fail "разбухшее ядро не дало находки: $out"
+printf '# ядро\n\nтекст ядра.\n' > "$rdk/RULES.core.md"
+
+# Ядро доски выше порога: находка не путает его с ядром.
+python3 -c "open('$rdk/RULES.board.core.md', 'w', encoding='utf-8').write('# ядро доски\n\n' + 'д' * 1600)"
+out=$(rddoc)
+echo "$out" | grep -q 'вес резидента, ядро доски (RULES.board.core.md' || fail "разбухшее ядро доски не дало находки: $out"
+printf '# ядро доски\n\nтекст ядра доски.\n' > "$rdk/RULES.board.core.md"
+
+# Оба кармана в бюджете, а сумма выше общего потолка (разбухла листингом
+# определений agents/): находка про итог, ядра она не касается.
+probe_desc=$(python3 -c 'print("о" * 15000)')
+printf -- '---\nname: probe-agent\ndescription: %s\neffort: low\n---\n\nтело\n' "$probe_desc" \
+    > "$rdk/agents/probe-agent.md"
+cp "$rdk/agents/probe-agent.md" "$rdhome/.claude/agents/"
+out=$(rddoc)
+echo "$out" | grep -q '^вес резидента devkit: .* токенов' || fail "разбухший общий вес не дал находки: $out"
+echo "$out" | grep -q 'вес резидента, ядро ' && fail "общий потолок задел карман ядра, хотя тот в бюджете: $out"
+rm -f "$rdk/agents/probe-agent.md" "$rdhome/.claude/agents/probe-agent.md"
+out=$(rddoc); [ $? -eq 0 ] || fail "возврат листинга агентов к норме не очистил находку: $out"
+
+# Находка не проектная: доктор другого проекта, для которого devkit тот же
+# rdk, веса не печатает и не находит, даже пока тело скилла разбухшее.
+python3 -c "
+open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+"
+otherproj="$rdtmp/otherproj"
+mkdir -p "$otherproj"
+git init -q "$otherproj"
+git -C "$otherproj" config user.name t
+git -C "$otherproj" config user.email t@t
+out=$(HOME="$rdhome" PATH="$cleanpath" DEVKIT_NOTIFY_BACKEND="$rdnotify" python3 "$rdkctl" doctor -C "$otherproj" 2>&1)
+echo "$out" | grep -q 'вес резидента' && fail "доктор чужого проекта напечатал вес резидента devkit: $out"
+echo "$out" | grep -q 'тело скилла' && fail "доктор чужого проекта нашёл разбухший скилл devkit: $out"
+python3 -c "
+open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 200)
+"
 
 # stats: вывод сводки по журналу запусков, сортировка по частоте.
 sproj="$tmp/sproj"

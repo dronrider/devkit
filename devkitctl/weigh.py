@@ -29,6 +29,15 @@ CHARS_PER_TOKEN = 2.45
 # Потолок резидента devkit в токенах: из бюджета дизайна DK-100, а не из
 # сегодняшнего веса. Тот же порог берёт DK-029 для находки доктора.
 LIMIT = 6500
+# Бюджет двух карманов резидента, тоже из DK-100: ядро и ядро доски меряются
+# отдельно от общего потолка, чтобы находка называла разбухший карман, а не
+# только итог.
+CORE_LIMIT = 5500
+BOARD_LIMIT = 1500
+# Второй порог DK-029, на тело скилла: оно не резидентно, но платится записью
+# в момент вызова. Мягче сегодняшних тел (3,4-6,8 тысячи символов) на тот же
+# запас в треть, каким DK-100 считает потолок резидента над целевой раскладкой.
+SKILL_BODY_LIMIT = 9000
 RUNS = 3
 PROMPT = "ответь одним словом: готов"
 RUN_TIMEOUT = 600
@@ -197,6 +206,118 @@ def pockets(root, devkit, profile):
         out.append(("листинг определений agents/", listing_chars(agent_defs(devkit))))
     out.append(("листинг скиллов", listing_chars(skill_defs(devkit))))
     return out
+
+
+def pockets_breakdown(weights):
+    return "; ".join("%s: %s символов (%s токенов)" % (label, num(c), num(c / CHARS_PER_TOKEN))
+                      for label, c in weights)
+
+
+def pocket_cap(label, core_limit, board_limit):
+    # Карман опознаётся по имени файла в начале ярлыка: pockets() кладёт его
+    # первым словом что при импорте глобальной точкой, что при импорте тонким
+    # файлом, а расходиться с DK-100 названию файла было бы странно и без нужды.
+    if label.startswith("RULES.core.md "):
+        return "ядро", core_limit
+    if label.startswith("RULES.board.core.md "):
+        return "ядро доски", board_limit
+    return None, None
+
+
+def evaluate_residency(weights, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT):
+    """Находки по готовому списку карманов (label, символов): карман ядра, карман
+    ядра доски, итог по всем карманам. Порог доктора (DK-029), расчёт
+    статический: сумма символов по карманам DK-100, переведённая в токены тем
+    же коэффициентом, каким её сверяет живой замер `weigh`. Логика отделена от
+    сбора карманов (`pockets`), чтобы пороги проверялись без файловой системы.
+    """
+    if not weights:
+        return []
+    breakdown = pockets_breakdown(weights)
+    findings = []
+    for label, chars in weights:
+        title, cap = pocket_cap(label, core_limit, board_limit)
+        if title and chars > cap:
+            findings.append(
+                "вес резидента, %s (%s): %s символов (%s токенов), порог %s символов; разбивка: %s"
+                % (title, label, num(chars), num(chars / CHARS_PER_TOKEN), num(cap), breakdown))
+    total_chars = sum(c for _, c in weights)
+    total_tokens = total_chars / CHARS_PER_TOKEN
+    if total_tokens > limit:
+        findings.append(
+            "вес резидента devkit: %s токенов (%s символов), потолок %s токенов; разбивка: %s"
+            % (num(total_tokens), num(total_chars), num(limit), breakdown))
+    return findings
+
+
+def residency_findings(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT):
+    """Находки веса резидента активного харнеса. Находка не проектная (карманы
+    общие для всех проектов devkit), поэтому doctor() зовёт её только для
+    самого чекаута devkit, сравнением root с DEVKIT, а не для каждого
+    подключённого проекта.
+    """
+    root, devkit = Path(root), Path(devkit)
+    try:
+        _, profile = active_profile(root, devkit)
+    except WeighError as e:
+        return [str(e)]
+    return evaluate_residency(pockets(root, devkit, profile), limit, core_limit, board_limit)
+
+
+def pockets_report(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT):
+    """(строки таблицы карманов, находки) для печати в doctor.
+
+    Вес печатается всегда, не только когда есть находка (DK-029, сценарий
+    проверки, шаг 1): иначе распухание было бы видно единственный день, тот, в
+    который карман переполз через порог.
+    """
+    root, devkit = Path(root), Path(devkit)
+    try:
+        name, profile = active_profile(root, devkit)
+    except WeighError as e:
+        return [], [str(e)]
+    weights = pockets(root, devkit, profile)
+    if not weights:
+        return [], []
+    width = max(len(label) for label, _ in weights)
+    lines = ["вес резидента devkit по карманам (харнес %s):" % name]
+    for label, c in weights:
+        lines.append("  %-*s  %9s симв  %8s ток" % (width, label, num(c), num(c / CHARS_PER_TOKEN)))
+    total_chars = sum(c for _, c in weights)
+    lines.append("  %-*s  %9s симв  %8s ток"
+                 % (width, "итого", num(total_chars), num(total_chars / CHARS_PER_TOKEN)))
+    return lines, evaluate_residency(weights, limit, core_limit, board_limit)
+
+
+def skill_body_chars(path):
+    # Резидентны только имя и описание (listing_chars), тело скилла платится
+    # записью в момент вызова, и его вес это текст без шапки frontmatter.
+    text = read_text(path)
+    lines = text.split("\n")
+    if lines and lines[0].strip() == "---":
+        for i, ln in enumerate(lines[1:], start=1):
+            if ln.strip() == "---":
+                return len("\n".join(lines[i + 1:]))
+    return len(text)
+
+
+def evaluate_skill_body(name, chars, limit=SKILL_BODY_LIMIT):
+    # Логика отделена от чтения файла, как и у карманов резидента: порог
+    # проверяется без файловой системы.
+    if chars > limit:
+        return "тело скилла %s: %s символов, порог %s символов; резать скилл надвое" % (
+            name, num(chars), num(limit))
+    return None
+
+
+def skill_findings(devkit, limit=SKILL_BODY_LIMIT):
+    """Находки по телу скилла: та же болезнь роста, что и у резидента, в другом месте."""
+    findings = []
+    for p in skill_defs(devkit):
+        f = evaluate_skill_body(p.parent.name, skill_body_chars(p), limit)
+        if f:
+            findings.append(f)
+    return findings
 
 
 def strip_hooks(settings):

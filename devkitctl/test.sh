@@ -1444,6 +1444,16 @@ assert weigh.evaluate_skill_body("test-skill", 9000, limit=9000) is None
 f = weigh.evaluate_skill_body("test-skill", 9001, limit=9000)
 assert f is not None and "test-skill" in f and "9 001 символ" in f, f
 assert "порог 9 000 символов" in f and "резать скилл надвое" in f, f
+
+# Порог по умолчанию (DK-118): тот же потолок, что у резидента, только в
+# символах и округлённый вверх до сотен. Считается он от LIMIT, а не от
+# сегодняшних тел, поэтому и проверяется через LIMIT: разъехавшиеся числа иначе
+# заметит только читатель README.
+want = -(-round(weigh.LIMIT * weigh.CHARS_PER_TOKEN) // 100) * 100
+assert weigh.SKILL_BODY_LIMIT == want == 16000, (weigh.SKILL_BODY_LIMIT, want)
+assert weigh.evaluate_skill_body("test-skill", weigh.SKILL_BODY_LIMIT) is None
+f = weigh.evaluate_skill_body("test-skill", weigh.SKILL_BODY_LIMIT + 1)
+assert f is not None and "порог 16 000 символов" in f, f
 EOF
 
 # weigh: живой замер резидента. Настоящих сессий самопроверка не поднимает,
@@ -1783,7 +1793,7 @@ printf 'ядро правил, короткий текст\n' > "$dk/RULES.core.
 mkdir -p "$dk/skills/oversized-probe"
 python3 -c "
 open('$dk/skills/oversized-probe/SKILL.md', 'w', encoding='utf-8').write(
-    '---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+    '---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n' + 'т' * 16500)
 "
 out=$(python3 - "$dk/devkitctl" "$dk" <<'EOF'
 import sys
@@ -1793,10 +1803,25 @@ for f in weigh.skill_findings(sys.argv[2]):
     print(f)
 EOF
 )
-echo "$out" | grep -q 'тело скилла oversized-probe: 9 500 символов, порог 9 000 символов; резать скилл надвое' ||
+echo "$out" | grep -q 'тело скилла oversized-probe: 16 500 символов, порог 16 000 символов; резать скилл надвое' ||
     fail "разбухший скилл на диске не дал находки: $out"
 echo "$out" | grep -q 'тело скилла board-groom' && fail "тело скилла в пределах порога дало находку: $out"
 rm -rf "$dk/skills/oversized-probe"
+
+# Живые скиллы репозитория под своим порогом (DK-118). Проверка синтетики выше
+# говорит, что находка работает, а эта что чинить по ней нечего: иначе доктор в
+# чекауте devkit красный всегда, и его находки перестают что-либо значить.
+# Копия $dk свежая, скиллы в неё скопированы целиком, так что меряются те же
+# тела, что уедут на машину.
+out=$(python3 - "$dk/devkitctl" "$dk" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import weigh
+for f in weigh.skill_findings(sys.argv[2]):
+    print(f)
+EOF
+)
+[ -z "$out" ] || fail "скиллы репозитория выше порога тела: $out"
 
 rm -f "$dk/RULES.core.md"
 HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
@@ -2000,12 +2025,12 @@ echo "$out" | grep -q '^  итого' || fail "в таблице кармано�
 # шаг 4), возврат к норме находку снимает.
 python3 -c "
 open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
-    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 16500)
 "
 cp "$rdk/skills/tiny-skill/SKILL.md" "$rdhome/.claude/skills/tiny-skill/SKILL.md"
 out=$(rddoc); rc=$?
 [ $rc -eq 1 ] || fail "разбухший скилл не поднял код возврата: $out"
-echo "$out" | grep -q 'тело скилла tiny-skill: 9 500 символов, порог 9 000 символов; резать скилл надвое' ||
+echo "$out" | grep -q 'тело скилла tiny-skill: 16 500 символов, порог 16 000 символов; резать скилл надвое' ||
     fail "нет находки про разбухшее тело скилла: $out"
 python3 -c "
 open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
@@ -2042,7 +2067,7 @@ out=$(rddoc); [ $? -eq 0 ] || fail "возврат листинга агенто
 # rdk, веса не печатает и не находит, даже пока тело скилла разбухшее.
 python3 -c "
 open('$rdk/skills/tiny-skill/SKILL.md', 'w', encoding='utf-8').write(
-    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 9500)
+    '---\nname: tiny-skill\ndescription: тестовый скилл.\n---\n' + 'т' * 16500)
 "
 otherproj="$rdtmp/otherproj"
 mkdir -p "$otherproj"

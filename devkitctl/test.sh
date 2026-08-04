@@ -431,6 +431,49 @@ for board in (True, False):
     assert "RULES.board.md\n" not in thin, "в тонкий файл уехал полный текст правил доски: %s" % thin
 EOF
 
+# Боевая пара раскладок для стенда послушания: их собирает генератор, а не рука,
+# иначе стенд сравнивал бы не то, что доезжает до сессии.
+for d in full core; do
+    python3 "$dkreal/devkitctl/rules.py" --layout "$d" "$tmp/lay/$d" "$dkreal/obeycheck/project" \
+        >/dev/null || fail "раскладка глубины $d не собралась"
+done
+[ -f "$tmp/lay/core/RULES.core.md" ] || fail "в раскладке ядра нет RULES.core.md"
+[ -f "$tmp/lay/core/RULES.board.core.md" ] || fail "в раскладке ядра нет RULES.board.core.md"
+[ -f "$tmp/lay/core/RULES.md" ] && fail "в раскладку ядра уехал полный текст правил"
+[ -f "$tmp/lay/full/RULES.md" ] || fail "в раскладке полного текста нет RULES.md"
+[ -f "$tmp/lay/full/home/.claude/CLAUDE.md" ] || fail "в раскладке нет глобальной точки правил"
+# Правила, доехавшие дважды, стенд считал бы за одну раскладку: глобальная точка
+# тянет тот же текст, что и тонкий файл, и в раскладке он лежит одной копией.
+[ -f "$tmp/lay/core/home/.claude/CLAUDE_RULES.md" ] &&
+    fail "текст правил лёг в раскладку вторым экземпляром через глобальную точку"
+python3 - "$tmp/lay" <<'EOF' || fail "импорты раскладки не разворачиваются внутри неё"
+import os
+import sys
+from pathlib import Path
+
+# Раскладка едет в чужой проект целиком, и путь наружу из неё не развернётся:
+# правила молча не доедут, а стенд этого не заметит.
+bad = []
+for lay in sorted(Path(sys.argv[1]).iterdir()):
+    for f in sorted(lay.rglob("*.md")):
+        for ln in f.read_text(encoding="utf-8").split("\n"):
+            ln = ln.strip()
+            if not ln.startswith("@") or " " in ln or len(ln) < 2:
+                continue
+            spec = ln[1:]
+            if spec.startswith("~/"):
+                target = lay / "home" / spec[2:]
+            elif os.path.isabs(spec):
+                target = Path(spec)
+            else:
+                target = f.parent / spec
+            if not target.is_file():
+                bad.append("%s: %s" % (f, ln))
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+EOF
+
 # Файлы правил: рукописный AGENTS.md источник, тонкие файлы харнесов генерятся.
 # Гоняется на своём проекте, чтобы правки --fix не мешали прежним шагам.
 rproj="$tmp/rproj"

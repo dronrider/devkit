@@ -305,13 +305,27 @@ put(os.path.join(dk, "skills", "board-test", "SKILL.md"),
     "---\nname: board-test\ndescription: Процедура доски. Звать, когда трогают задачу.\n---\n\n# Доска\n")
 
 # Ядра ещё нет: объявленная глубина остаётся обещанием, доезжает полный текст,
-# и признака в маркере нет.
+# и признака в маркере нет. Указателям ядро нужно не меньше, чем ядерной ветке:
+# рядом с полным текстом таблица указателей стала бы второй копией тех же
+# процедур, а признак назвал бы полный текст ядром с указателями.
 assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_FULL
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_POINTERS) == rules.DEPTH_FULL
+early = rules.thin_text(manual, proj, dk, True, False,
+                        rules.actual_depth(dk, proj, True, rules.DEPTH_POINTERS))
+assert early.startswith("<!-- devkit:generated body="), early
+assert "Процедуры devkit" not in early, early
+assert "@../devkit/RULES.md\n" in early, early
 put(os.path.join(dk, "RULES.core.md"), "# ядро\n")
-# Ядро нарезано наполовину: пока полон хоть один текст, глубина ещё не ядро.
+# Ядро нарезано наполовину: пока полон хоть один текст, глубины нет ни у одной
+# из двух неполных веток.
 assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_FULL
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_POINTERS) == rules.DEPTH_FULL
 put(os.path.join(dk, "RULES.board.core.md"), "# ядро доски\n")
 assert rules.actual_depth(dk, proj, True, rules.DEPTH_CORE) == rules.DEPTH_CORE
+assert rules.actual_depth(dk, proj, True, rules.DEPTH_POINTERS) == rules.DEPTH_POINTERS
+# При вклейке тонкий файл правил не везёт вовсе, и глубина не про него.
+assert rules.thin_text(auto, proj, dk, True, True, rules.DEPTH_CORE).startswith(
+    "<!-- devkit:generated body="), rules.thin_text(auto, proj, dk, True, True, rules.DEPTH_CORE)
 
 thin = rules.thin_text(auto, proj, dk, True, False, rules.DEPTH_CORE)
 assert thin.startswith("<!-- devkit:generated depth=core body="), thin
@@ -466,17 +480,35 @@ echo "$out" | grep -q 'починено: вклейка правил в AGENTS.m
     fail "--fix не обновил протухшую вклейку: $out"
 grep -q 'новая строка правил доски' "$rproj/AGENTS.md" || fail "обновлённая вклейка без новой строки правил"
 
-# Ось скиллов у embed-инструмента: discovery = "manual" значит, что к тексту
+# Ось скиллов у embed-инструмента: discovery = "manual" значит, что к ядру
 # правил прикладывается таблица указателей на скиллы devkit, а глубина стоит
-# признаком в маркере вклейки. Смена профиля при этом видна как протухание.
+# признаком в маркере вклейки.
 sed -e '$a\
 \
 [skills]\
 discovery = "manual"' "$dk/harness/embed-tool.toml" > "$tmp/embed-tool.manual" &&
     cp "$tmp/embed-tool.manual" "$dk/harness/embed-tool.toml"
+# Ядра ещё нет: указателям заменять нечего, рядом с полным текстом они были бы
+# второй копией тех же процедур. Вклейка остаётся сегодняшней, до байта, и
+# доктору чинить нечего.
+cp "$rproj/AGENTS.md" "$tmp/agents.beforecore"
+out=$(docr)
+echo "$out" | grep -qE 'вклейка|CLAUDE.md' &&
+    fail "manual без нарезанного ядра сделал вклейку устаревшей: $out"
+diff -q "$tmp/agents.beforecore" "$rproj/AGENTS.md" >/dev/null ||
+    fail "manual без нарезанного ядра тронул вклейку"
+grep -q 'Процедуры devkit отдельными файлами' "$rproj/AGENTS.md" &&
+    fail "указатели приехали раньше ядра, рядом с полным текстом правил"
+grep -q 'devkit:rules begin depth=' "$rproj/AGENTS.md" &&
+    fail "признак глубины уехал в маркер, хотя доехал полный текст: $(head -1 "$rproj/AGENTS.md")"
+
+# Ядро нарезано: та же объявленная глубина теперь доезжает целиком, и смена
+# источников видна как протухание.
+printf '# Ядро правил\n\nстрока ядра\n' > "$dk/RULES.core.md"
+printf '# Ядро правил доски\n\nстрока ядра доски\n' > "$dk/RULES.board.core.md"
 out=$(docr)
 echo "$out" | grep -q 'вклейка правил в AGENTS.md протухла против devkit' ||
-    fail "появление указателей не сделало вклейку протухшей: $out"
+    fail "нарезанное ядро не сделало вклейку протухшей: $out"
 out=$(docr --fix)
 echo "$out" | grep -q 'починено: вклейка правил в AGENTS.md обновлена под devkit' ||
     fail "--fix не переложил вклейку под указатели: $out"
@@ -486,11 +518,15 @@ grep -q '^## Процедуры devkit отдельными файлами$' "$r
     fail "во вклейке нет таблицы указателей на скиллы"
 grep -q '`../devkit/skills/board-batch/SKILL.md`' "$rproj/AGENTS.md" ||
     fail "в таблице указателей нет пути до скилла: $(grep -n 'board-batch' "$rproj/AGENTS.md")"
-grep -q 'Правила работы с ассистентом' "$rproj/AGENTS.md" ||
-    fail "указатели приехали вместо текста правил, а не вместе с ним"
+grep -q 'строка ядра доски' "$rproj/AGENTS.md" ||
+    fail "указатели приехали вместо текста ядра, а не вместе с ним"
+grep -q 'Правила работы с ассистентом' "$rproj/AGENTS.md" &&
+    fail "под указателями остался полный текст правил вместо ядра"
 out=$(docr)
 echo "$out" | grep -qE 'вклейка|CLAUDE.md' && fail "после перекладки под указатели остались находки: $out"
-# Ось убрана обратно: указатели уходят, вклейка возвращается к полному тексту.
+# Ось убрана обратно, ядро тоже: указатели уходят, вклейка возвращается к
+# полному тексту.
+rm -f "$dk/RULES.core.md" "$dk/RULES.board.core.md"
 grep -v 'discovery = "manual"' "$tmp/embed-tool.manual" | grep -v '^\[skills\]$' \
     > "$dk/harness/embed-tool.toml"
 out=$(docr --fix)

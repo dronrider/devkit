@@ -173,12 +173,13 @@ def actual_depth(devkit, root, board, depth):
     # Глубина, которая доехала на самом деле. Ядро режется отдельной задачей, и
     # пока текст не нарезан, объявленная глубина остаётся обещанием: доезжает
     # всё тот же полный текст, и признак в файле показывает его, а не обещание.
-    # Указатели от ядра не зависят, скиллы в devkit уже лежат.
-    if depth != DEPTH_CORE:
-        return depth
+    # Указателям ядро нужно не меньше: они заменяют процедуры, уехавшие в
+    # скиллы, а рядом с полным текстом стали бы второй копией того же самого.
+    if depth == DEPTH_FULL:
+        return DEPTH_FULL
     src = rule_sources(devkit, root, board, DEPTH_FULL)
     if src and all(core_of(p).exists() for p in src):
-        return DEPTH_CORE
+        return depth
     return DEPTH_FULL
 
 
@@ -233,6 +234,10 @@ def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL):
     # Тонкий файл харнеса: строка-маркер с глубиной и хешем тела, дальше импорты.
     # При вклейке остаётся один импорт AGENTS.md, в нём правила уже лежат.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
+    if embed:
+        # Правил тонкий файл тогда не везёт вовсе, они лежат во вклейке, и
+        # глубина это про неё: признак тут только гонял бы перегенерацию.
+        depth = DEPTH_FULL
     paths = [AGENTS_FILE]
     if not embed:
         paths += [Path(os.path.relpath(p, root)).as_posix()

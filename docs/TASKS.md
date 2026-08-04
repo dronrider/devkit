@@ -23,6 +23,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-111 | Цель: корп-контур по DK-074, конвейер поверх внешнего трекера | task | P3 | 15 (0+9+1+0+5) | XL | [tasks/DK-111.md](tasks/DK-111.md) |
 | DK-121 | Уведомление конца хода: в баннере видно задачу и завершённый шаг | task | P2 | 33 (25+5+1+0+2) | S | [tasks/DK-121.md](tasks/DK-121.md) |
 | DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 13 (0+8+1+0+4) | M | [tasks/DK-084.md](tasks/DK-084.md) |
+| DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 12 (0+6+1+0+5) | M | [tasks/DK-085.md](tasks/DK-085.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -42,7 +43,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 12 (0+6+1+0+5) | M | [tasks/DK-085.md](tasks/DK-085.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-083 | Адаптер jira: REST-операции и образцы ответов API | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

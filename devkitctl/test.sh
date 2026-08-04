@@ -2127,6 +2127,72 @@ printf 'broken\tline\tno\tcode\nthis\tis\tbroken\ttoo\n' > "$bad_proj/.devkit/lo
 out=$(python3 "$dkctl" stats -C "$bad_proj" 2>&1)
 [ $? -eq 2 ] || fail "stats с одними битыми строками должен вернуть код 2"
 
+# stats --context: разбор журналов сессий на фикстуре с известной подписью
+# перезаписи. Журналы харнес кладёт по слепку пути проекта, поэтому фикстура
+# раскладывается под подставным HOME в директорию слепка временного проекта.
+cproj="$tmp/cproj"
+mkdir -p "$cproj"
+cslug=$(python3 - "$dk/devkitctl" "$cproj" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import context
+from pathlib import Path
+print(context.slug(Path(sys.argv[2]).resolve()))
+EOF
+)
+[ -n "$cslug" ] || fail "слепок пути проекта не посчитался"
+clogs="$home/.claude/projects/$cslug"
+mkdir -p "$clogs/aaaabbbb/subagents"
+cp "$here/testdata/session.jsonl" "$clogs/aaaabbbb.jsonl"
+cp "$here/testdata/session-subagent.jsonl" "$clogs/aaaabbbb/subagents/agent-cccc1111.jsonl"
+out=$(HOME="$home" python3 "$dkctl" stats --context -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "stats --context упал с ошибкой: $out"
+# Число перезаписей: одна, вторая запись того же requestId склеена, а запрос с
+# большой записью при выросшем чтении перезаписью не считается.
+echo "$out" | grep -q "перезаписи префикса после старта: 1 из 9 запросов" \
+    || fail "stats --context должен насчитать одну перезапись из 9 запросов: $out"
+echo "$out" | grep -q "записано 30 000 токенов" \
+    || fail "цена перезаписи должна быть 30 000 токенов: $out"
+echo "$out" | grep -q "запрос 4 из 7: записано 30 000, чтение просело 21 000 -> 5 000" \
+    || fail "строка перезаписи не сошлась: $out"
+# Разбивка старта: префиксы первых запросов обоих потоков, 20 003 и 8 002.
+echo "$out" | grep -q "старт *28 005 *(27%)" || fail "старт должен быть 28 005 (27%): $out"
+echo "$out" | grep -q "история *75 300 *(73%)" || fail "история должна быть 75 300 (73%): $out"
+echo "$out" | grep -q "чтение *154 500" || fail "чтение должно быть 154 500: $out"
+echo "$out" | grep -q "потоков 2 (из них субагентских 1), запросов 9" \
+    || fail "потоки и запросы не сошлись: $out"
+echo "$out" | grep -q "Bash *60" || fail "объём результатов Bash должен быть 60 символов: $out"
+echo "$out" | grep -q "Read *10" || fail "объём результатов Read должен быть 10 символов: $out"
+
+# stats --context там, где журналов сессий нет: внятное сообщение и код 2, а не трейсбек.
+out=$(HOME="$home" python3 "$dkctl" stats --context -C "$empty_proj" 2>&1)
+[ $? -eq 2 ] || fail "stats --context без журналов сессий должен вернуть код 2"
+echo "$out" | grep -q "журналы сессий не найдены" \
+    || fail "stats --context без журналов должен сказать это словами: $out"
+echo "$out" | grep -q "Traceback" && fail "stats --context без журналов упал трейсбеком: $out"
+
+# stats --context на пустой директории журналов: тоже сообщение, а не деление на ноль.
+eproj="$tmp/eproj"
+mkdir -p "$eproj"
+eslug=$(python3 - "$dk/devkitctl" "$eproj" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import context
+from pathlib import Path
+print(context.slug(Path(sys.argv[2]).resolve()))
+EOF
+)
+mkdir -p "$home/.claude/projects/$eslug"
+out=$(HOME="$home" python3 "$dkctl" stats --context -C "$eproj" 2>&1)
+[ $? -eq 2 ] || fail "stats --context на пустой директории журналов должен вернуть код 2"
+echo "$out" | grep -q "нет запросов с расходом" \
+    || fail "stats --context на пустой директории должен сказать это словами: $out"
+
+# Голый stats при этом печатает прежнюю таблицу запусков, а не разбивку сессий.
+out=$(HOME="$home" python3 "$dkctl" stats -C "$sproj" 2>&1)
+echo "$out" | grep -q "итого" || fail "голый stats должен печатать таблицу запусков: $out"
+echo "$out" | grep -q "перезаписи" && fail "голый stats не должен печатать разбивку сессий: $out"
+
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"
 else

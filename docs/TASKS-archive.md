@@ -74,3 +74,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-110 | devkitctl weigh: живой замер резидента headless-прогоном и сверка с расчётом doctor | task | P3 | 2026-08-04 | [tasks/archive/2026/DK-110.md](tasks/archive/2026/DK-110.md) |
 | DK-104 | RULES.core.md и RULES.board.core.md: разрез ядра под стенд | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-104.md](tasks/archive/2026/DK-104.md) |
 | DK-107 | Тонкая глобальная точка правил в doctor/setup | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-107.md](tasks/archive/2026/DK-107.md) |
+| DK-113 | Права headless-витков цели: allowlist машинного контура через doctor и предполётная проверка goal-run | task | P1 | 2026-08-04 | [tasks/archive/2026/DK-113.md](tasks/archive/2026/DK-113.md) |

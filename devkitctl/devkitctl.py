@@ -19,7 +19,10 @@
       скиллы devkit в ~/.claude/skills, глобальная точка правил ([rules]
       global_file, обычно ~/.claude/CLAUDE.md) свежа и не правлена руками,
       tmux и снимки квоты в ~/.devkit/quota; профили харнесов devkit/harness
-      прогоняются через тот же валидатор, каким их читает agentctl;
+      прогоняются через тот же валидатор, каким их читает agentctl; в чекауте
+      devkit печатается вес резидента по карманам и находка при превышении
+      порога (ядро, ядро доски, общий потолок токенов) плюс находка на тело
+      скилла тяжелее своего порога, с предложением резать его надвое (DK-029);
       --fix additive доводит обвязку (хуки, болванка deploy.local либо
       недостающие в ней ключи, .gitignore, сборка бинарей, копия определений
       агентов и скиллов, права машинного контура, глобальная точка правил,
@@ -654,6 +657,15 @@ def doctor(start, fix=False):
     # находится до того, как кто-то на него переключится, а починить его
     # автоматике нечем, это правка в devkit.
     findings += harness.check_profiles(str(DEVKIT / "harness"))
+    # Вес резидента и тело скилла (DK-029): карманы общие для всех проектов
+    # devkit, находка не проектная, поэтому считается только для самого
+    # чекаута devkit, а не для каждого подключённого проекта.
+    if Path(root).resolve() == DEVKIT.resolve():
+        wlines, wfindings = weigh.pockets_report(root, DEVKIT)
+        for ln in wlines:
+            print(ln)
+        findings += wfindings
+        findings += weigh.skill_findings(DEVKIT)
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed

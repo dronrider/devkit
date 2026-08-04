@@ -21,6 +21,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
 | DK-109 | Цель: тонкий резидент по DK-100, минус 65% контекста правил | task | P2 | 40 (25+9+1+0+5) | XL | [tasks/DK-109.md](tasks/DK-109.md) |
+| DK-110 | devkitctl weigh: живой замер резидента headless-прогоном и сверка с расчётом doctor | task | P3 | 13 (0+6+3+0+4) | M | [tasks/DK-110.md](tasks/DK-110.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -45,7 +46,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-081 | Редирект корня в боковую директорию и признак корп-контура | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-082 | trackctl: адаптер трекера, конфиг контура, маппинг статусов [после DK-081] | task | P3 | 14 (0+8+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация [после DK-082] | task | P3 | 13 (0+8+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
-| DK-110 | devkitctl weigh: живой замер резидента headless-прогоном и сверка с расчётом doctor | task | P3 | 13 (0+6+3+0+4) | M | [tasks/DK-110.md](tasks/DK-110.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов [после DK-081] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |

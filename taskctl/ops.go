@@ -26,7 +26,12 @@ func boardPath(root string) string   { return filepath.Join(root, "docs", "TASKS
 func archivePath(root string) string { return filepath.Join(root, "docs", "TASKS-archive.md") }
 
 // findRoot ищет корень репозитория (директорию с docs/TASKS.md) вверх от start.
+// Перед подъёмом смотрит редирект корп-контура: в корп-клоне рабочие файлы
+// лежат в боковой директории, и её называет ключ devkit.local (corp.go).
 func findRoot(start string) (string, error) {
+	if local := corpLocal(start); local != "" {
+		return local, nil
+	}
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return "", err
@@ -37,7 +42,7 @@ func findRoot(start string) (string, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("не нашёл docs/TASKS.md вверх от %s", start)
+			return "", corpRootErr(start)
 		}
 		dir = parent
 	}

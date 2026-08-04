@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+// pushEnv выдаёт разрешение на пуш хуку pre-push. Коммит доски пушится сразу и
+// без просьбы, и путь у него один, через taskctl: рубеж отличает этот пуш от
+// самовольного пуша агента только по переменной. Нулевое окружение это
+// наследование родительского, поэтому обычным командам git оно и остаётся.
+func pushEnv(args []string) []string {
+	if len(args) == 0 || args[0] != "push" {
+		return nil
+	}
+	return append(os.Environ(), "DEVKIT_PUSH_OK=1")
+}
+
 func boardPath(root string) string   { return filepath.Join(root, "docs", "TASKS.md") }
 func archivePath(root string) string { return filepath.Join(root, "docs", "TASKS-archive.md") }
 
@@ -120,7 +131,9 @@ func (c CommitOpts) apply(root string, paths []string) (string, error) {
 		return "", nil
 	}
 	git := func(args ...string) (string, error) {
-		out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = pushEnv(args)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
 		}

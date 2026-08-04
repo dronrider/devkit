@@ -217,6 +217,33 @@ func TestStatusSaysWhereContoursAre(t *testing.T) {
 	}
 }
 
+// Привязку команды берут от корня, который нашёл findRoot, а в корп-контуре
+// корень это боковая директория. Здесь проверяется вся цепочка целиком:
+// редирект клона, корень из root.go и привязка, прочитанная рядом с клоном, а
+// не в его дереве.
+func TestCommandsReadBindingFromCorpLocal(t *testing.T) {
+	setupEnv(t, contourFile, bindingFile)
+	_, clone, local := corpClone(t)
+	corpWrite(t, filepath.Join(local, bindingPath), bindingFile)
+	corpGitT(t, clone, "config", "devkit.local", "../proj-local")
+
+	root, err := findRoot(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corpSame(t, root, local)
+	msg, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, filepath.Join(local, bindingPath)) {
+		t.Fatalf("привязка взята не из боковой директории:\n%s", msg)
+	}
+	if !strings.Contains(msg, "контур:\tcorp") {
+		t.Fatalf("контур не прочитан:\n%s", msg)
+	}
+}
+
 // Журнал .devkit/log ведут все утилиты devkit: по нему видно, какие команды
 // гоняются и как часто падают.
 func TestLogRunWritesLine(t *testing.T) {

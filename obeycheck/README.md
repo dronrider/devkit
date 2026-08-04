@@ -73,8 +73,15 @@ rules-core/
 ```
 
 Свои тесты стенд гоняет на фикстурных раскладках из `testdata/layouts`, а боевую
-пару собирает генератор в задаче разреза. Фикстурные раскладки подаются на вход
-как боевые, и от генератора стенд не зависит вовсе.
+пару собирает генератор devkit:
+
+```sh
+python3 devkitctl/rules.py --layout full ../rules-full obeycheck/project
+python3 devkitctl/rules.py --layout core ../rules-core obeycheck/project
+```
+
+Фикстурные раскладки подаются на вход как боевые, и от генератора стенд не
+зависит вовсе.
 
 ## Сценарий
 

@@ -6,6 +6,13 @@
       файлов и решение по вклейке. Полезно глазом, когда doctor говорит, что
       файл устарел, а чем именно, из находки не видно.
 
+  python3 rules.py --layout <глубина> <куда> [директория проекта]
+      собрать раскладку правил заданной глубины (full, core, pointers) для
+      стенда послушания obeycheck: файлы правил, тонкий файл харнеса и
+      глобальная точка в home/. Стенду раскладка это вход, и собирает её
+      генератор, чтобы стенд сравнивал то, что реально доезжает до сессии, а
+      не собранное руками.
+
 Инвариант из docs/lld/DK-033-universal-kit.md, раздел «Правила: инвариант одной
 копии»: рукописный файл в проекте один, AGENTS.md. Инструменту, который умеет
 импорты, генерится тонкий файл со ссылкой на AGENTS.md и на правила devkit;
@@ -598,11 +605,113 @@ def plan(root, devkit):
     return "\n".join(out + findings) + "\n"
 
 
+def import_targets(path):
+    # Куда ведут строки импорта файла. Путь от ~ возвращается таким, как записан:
+    # в раскладке он ляжет под её home по тому же относительному пути.
+    out = []
+    for ln in read_text(path).split("\n"):
+        ln = ln.strip()
+        if IMPORT_RE.match(ln):
+            out.append(ln[1:])
+    return out
+
+
+def layout(root, devkit, dst, depth):
+    """Раскладка правил заданной глубины: то, что доезжает до сессии.
+
+    Директория с файлами правил, тонким файлом харнеса и глобальной точкой в
+    `home/`, ровно в том виде, в каком её ждёт obeycheck. Файлы правил ложатся в
+    корень раскладки голыми именами, и импорты тонкого файла зовут их так же:
+    раскладка едет в чужой проект, и путь наружу из неё не развернётся.
+    """
+    root, devkit, dst = Path(root), Path(devkit), Path(dst)
+    profiles, findings = enabled_harnesses(root, devkit / "harness")
+    imports = [(n, p) for n, p in profiles if mode_of(p) == "import"]
+    if not imports:
+        raise BrokenMarkers("раскладку собирать не для кого: харнеса с импортами "
+                            "среди включённых нет (%s)" % ("; ".join(findings) or "проверить enabled"))
+    name, profile = imports[0]
+    board = (root / "docs" / "TASKS.md").exists()
+    dst.mkdir(parents=True, exist_ok=True)
+    out = ["раскладка %s: харнес %s, доска %s, глубина %s"
+           % (dst, name, "есть" if board else "нет", DEPTH_TITLES[depth])]
+    agents = root / AGENTS_FILE
+    if agents.is_file():
+        (dst / AGENTS_FILE).write_text(read_text(agents), encoding="utf-8")
+    else:
+        # Проект без рукописного файла правил бывает только синтетический, и
+        # тонкий файл всё равно на него сошлётся: пустая ссылка сломала бы импорт.
+        (dst / AGENTS_FILE).write_text("# %s: правила проекта\n\nПроектных особенностей нет.\n"
+                                       % root.name, encoding="utf-8")
+    out.append("  %s" % AGENTS_FILE)
+    local, copied = [], []
+    for src in rule_sources(devkit, root, board, depth):
+        if src.is_file():
+            (dst / src.name).write_text(read_text(src), encoding="utf-8")
+            local.append(dst / src.name)
+            copied.append(src)
+            out.append("  %s" % src.name)
+    thin = profile.str_of("rules", "file")
+    (dst / thin).write_text(thin_text(profile, dst, devkit, board, False, depth, sources=local),
+                            encoding="utf-8")
+    out.append("  %s" % thin)
+    global_file = profile.str_of("rules", "global_file")
+    point = Path(os.path.expanduser(global_file)) if global_file else None
+    if point is not None and point.is_file():
+        home = dst / "home"
+
+        def put_home(spec, src):
+            rel = spec[2:] if spec.startswith("~/") else spec.lstrip("/")
+            (home / rel).parent.mkdir(parents=True, exist_ok=True)
+            (home / rel).write_text(read_text(src), encoding="utf-8")
+            out.append("  home/%s%s" % (rel, "" if src == point else " (из %s)" % src.name))
+
+        # Глобальная точка тянет текст правил своим импортом, и в раскладке он
+        # обязан быть той же глубины: иначе рядом с ядром приезжает полный текст,
+        # и сравнивать стенду нечего. Имена сверяются после разворота симлинков:
+        # у пользователя точка ходит на правила через симлинк в ~/.claude.
+        deep = {p.name: core_of(p) if core_of(p).is_file() and depth != DEPTH_FULL else p
+                for p in rule_sources(devkit, root, board, DEPTH_FULL)}
+        drop = []
+        for spec in import_targets(point):
+            target = Path(os.path.expanduser(spec))
+            if not spec.startswith("~/") or not target.is_file():
+                continue
+            src = deep.get(target.resolve().name, target)
+            if src in copied:
+                # Тот же текст уже приезжает импортом тонкого файла. На машине
+                # это один файл под двумя путями, и харнес кладёт его в контекст
+                # одной копией; тут копии вышло бы две, поэтому строка импорта из
+                # глобальной точки снимается вместе с файлом.
+                drop.append("@" + spec)
+                out.append("  home/%s снят, текст уже в раскладке" % spec[2:])
+                continue
+            put_home(spec, src)
+        text = "".join(ln + "\n" for ln in read_text(point).split("\n")[:-1]
+                       if ln.strip() not in drop)
+        rel = global_file[2:] if global_file.startswith("~/") else global_file.lstrip("/")
+        (home / rel).parent.mkdir(parents=True, exist_ok=True)
+        (home / rel).write_text(text, encoding="utf-8")
+        out.append("  home/%s" % rel)
+    return "\n".join(out) + "\n"
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(__doc__)
         return 2
     devkit = Path(__file__).resolve().parent.parent
+    if argv[0] == "--layout":
+        if len(argv) < 3 or argv[1] not in DEPTH_TITLES:
+            sys.stderr.write(__doc__)
+            return 2
+        root = argv[3] if len(argv) > 3 else devkit
+        try:
+            sys.stdout.write(layout(root, devkit, argv[2], argv[1]))
+        except BrokenMarkers as e:
+            sys.stderr.write("%s\n" % e)
+            return 2
+        return 0
     sys.stdout.write(plan(argv[0], devkit))
     return 0
 

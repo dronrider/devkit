@@ -34,7 +34,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-089 | Лестница трат claude-code: ярус pro тратит из week_max, а корректор поднимает по нему же | bug | P2 | 42 (25+5+3+5+4) | M | [tasks/DK-089.md](tasks/DK-089.md) |
 | DK-112 | Цель: дашборд управления агентской разработкой с любого устройства | task | P2 | 42 (25+9+4+0+4) | XL | [tasks/DK-112.md](tasks/DK-112.md) |
 | DK-090 | Вторая подписка ступенью лестницы: ярус разворачивается в чужой харнес | LLD | P2 | 41 (25+8+4+0+4) | M | [tasks/DK-090.md](tasks/DK-090.md) |
-| DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 39 (25+8+2+0+4) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 39 (25+8+2+0+4) | L | [tasks/DK-105.md](tasks/DK-105.md) |
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-029 | бюджет на резидентную часть правил, порог в devkitctl doctor [после DK-105] | task | P2 | 33 (25+3+1+0+4) | S | [tasks/DK-029.md](tasks/DK-029.md) |

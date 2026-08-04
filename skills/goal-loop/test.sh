@@ -210,7 +210,13 @@ goal_run "$root" --foreground > "$root/out" 2>&1
 [ $? -eq 2 ] || fail "оболочка пошла без ID цели"
 goal_run "$root" DK-101 --foreground > "$root/out" 2>&1
 [ $? -eq 2 ] || fail "оболочка пошла по цели, файла которой нет"
-grep -q 'файла цели' "$root/out" || fail "отказ не назвал причину: $(cat "$root/out")"
+# Причина сверяется целиком, а не подстрокой: отказ называет скилл, которым
+# цель ставится, и на разрезе режима цели (DK-118) он уехал в goal-start, а
+# подстрока «файла цели» такую порчу пропускала. Человек по этому тексту идёт
+# заводить цель, так что неверное имя скилла это не косметика.
+want="файла цели $root/proj/docs/tasks/DK-101.md нет: цель ставит скилл goal-start, оболочка её не заводит"
+[ "$(cat "$root/out")" = "$want" ] ||
+    fail "отказ без файла цели разошёлся с ожидаемым текстом: $(cat "$root/out")"
 printf 'deploy = true\nautonomous = false\n' > "$root/proj/.devkit/deploy.local"
 goal_run "$root" DK-100 --foreground > "$root/out" 2>&1
 [ $? -eq 2 ] || fail "оболочка пошла при autonomous = false"

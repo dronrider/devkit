@@ -78,3 +78,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-106 | Хуки вместо прозы: разбор в текстах находок, тесты в pre-commit, pre-push на запрет пуша | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-106.md](tasks/archive/2026/DK-106.md) |
 | DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-105.md](tasks/archive/2026/DK-105.md) |
 | DK-029 | бюджет на резидентную часть правил, порог в devkitctl doctor | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-029.md](tasks/archive/2026/DK-029.md) |
+| DK-118 | Тело скилла goal-loop вдвое выше порога DK-029: резать надвое или пересматривать порог | task | P2 | 2026-08-04 | [tasks/archive/2026/DK-118.md](tasks/archive/2026/DK-118.md) |

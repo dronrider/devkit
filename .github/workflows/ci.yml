@@ -25,6 +25,9 @@ jobs:
       - name: тесты regcheck
         run: go test ./...
         working-directory: regcheck
+      - name: тесты obeycheck
+        run: go test ./...
+        working-directory: obeycheck
       - name: тесты хуков
         run: sh hooks/test.sh
       - name: тесты devkitctl

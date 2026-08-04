@@ -203,6 +203,25 @@ func TestFindRootFailurePlain(t *testing.T) {
 	}
 }
 
+// TestCorpLocalGlobalKeyIgnored: ключ из глобального конфига машины контур не
+// включает. Читается он с --local нарочно, редирект это свойство клона, а
+// глобальный ключ увёл бы корень разом во всех домашних проектах на машине,
+// где корп-контур когда-то настраивали.
+func TestCorpLocalGlobalKeyIgnored(t *testing.T) {
+	_, clone, local := corpClone(t)
+	gc := filepath.Join(t.TempDir(), "gitconfig")
+	corpWrite(t, gc, "[devkit]\n\tlocal = "+local+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", gc)
+
+	// Ключ виден без --local, иначе тест зеленел бы по недосмотру, а не по делу.
+	if got, err := corpGit(clone, "config", "--get", "devkit.local"); err != nil || got != local {
+		t.Fatalf("глобальный ключ не подложился: %q, %v", got, err)
+	}
+	if got := corpLocal(clone); got != "" {
+		t.Fatalf("контур включён глобальным ключом: %s", got)
+	}
+}
+
 // TestCorpLocalSignal: редирект это признак корп-контура, и он одинаков для
 // основного чекаута и для дерева ветки, а без ключа пуст.
 func TestCorpLocalSignal(t *testing.T) {

@@ -90,6 +90,11 @@ DoD: стенд отработал.
 Пишет последний виток.
 EOF
     printf 'deploy = true\nautonomous = true\n' > "$root/proj/.devkit/deploy.local"
+    # Права машинного контура стенду раскладывает тот же код, что и на машине:
+    # без них оболочка отказывает предполётной проверкой, и до витков дело не
+    # доходит вовсе.
+    HOME="$root/home" python3 "$here/../../devkitctl/perms.py" --fix > "$root/perms.out" 2>&1 ||
+        fail "стенду не разложились права машинного контура: $(cat "$root/perms.out")"
     : > "$root/turns"
     for spec in "$@"; do printf '%s\n' "$spec" >> "$root/turns"; done
     claude_stub "$root"
@@ -215,6 +220,31 @@ mv "$root/proj/docs/TASKS.md" "$root/proj/docs/BOARD.md"
 goal_run "$root" DK-100 --foreground > "$root/out" 2>&1
 [ $? -eq 2 ] || fail "оболочка пошла в проекте без доски"
 [ -f "$root/calls" ] && fail "отказавшая оболочка успела поднять виток"
+
+# Предполётная проверка прав: на машине без разложенного контура оболочка
+# отказывает до первого витка и называет команду починки, а не жжёт бюджет
+# витками, которым харнес отвечает отказом на каждый вызов.
+stand "done запись"
+rm -f "$root/home/.claude/settings.json"
+goal_run "$root" DK-100 --foreground > "$root/out" 2>&1
+[ $? -eq 2 ] || fail "оболочка пошла на машине без прав машинного контура"
+grep -q 'не хватает прав машинного контура' "$root/out" || fail "отказ не назвал нехватку прав: $(cat "$root/out")"
+grep -q 'doctor --fix' "$root/out" || fail "отказ по правам не назвал команду починки: $(cat "$root/out")"
+[ -f "$root/calls" ] && fail "оболочка без прав успела поднять виток"
+
+# Права выданы наполовину: отказ тот же, и в нём названо ровно недостающее.
+stand "done запись"
+python3 - "$root/home/.claude/settings.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["permissions"]["allow"] = [r for r in d["permissions"]["allow"] if r != "Bash(agentctl:*)"]
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+EOF
+goal_run "$root" DK-100 --foreground > "$root/out" 2>&1
+[ $? -eq 2 ] || fail "оболочка пошла с наполовину выданными правами"
+grep -q 'Bash(agentctl:\*)' "$root/out" || fail "отказ не назвал недостающее право: $(cat "$root/out")"
+[ -f "$root/calls" ] && fail "оболочка с неполными правами успела поднять виток"
 
 # Без --foreground цикл уходит в свою tmux-сессию, а поднятую сессию той же
 # цели оболочка второй раз не заводит.

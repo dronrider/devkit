@@ -142,6 +142,21 @@ func loadContour(name string) (*contour, error) {
 	return c, nil
 }
 
+// estimateFor переводит цену задачи в оценку трекера. Шкала цен это S, M и L,
+// XL на доске означает работу, которую сперва режут, и своего коэффициента у
+// неё нет: незнакомая цена оценки не даёт, и команда об этом говорит.
+func (c *contour) estimateFor(cost string) string {
+	switch strings.ToUpper(strings.TrimSpace(cost)) {
+	case "S":
+		return c.CostS
+	case "M":
+		return c.CostM
+	case "L":
+		return c.CostL
+	}
+	return ""
+}
+
 func knownSection(name string) bool {
 	for _, s := range statusSections {
 		if s == name {

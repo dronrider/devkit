@@ -127,8 +127,73 @@ func cmdTake(root, arg string) (string, error) {
 		return "", err
 	}
 	lines = append(lines, fmt.Sprintf("исполнитель: %s", tr.contour.User))
+	row := mirrorRow(root, tr.bind, t.Key)
+	est, err := pushEstimate(tr, t, row)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, est)
+	if rk, err := pushRank(tr, t, row); err != nil {
+		return "", err
+	} else if rk != "" {
+		lines = append(lines, rk)
+	}
 	lines = append(lines, fmt.Sprintf("ветка по шаблону привязки: %s, хвост даёт «shipctl start --slug»", tr.bind.branchName(t.Key, "<хвост>")))
 	return strings.Join(lines, "\n"), nil
+}
+
+// mirrorRow ищет зеркальную строку тикета на доске. Доски может не быть вовсе
+// (нечитаемая доска это не повод валить переход тикета), поэтому отказ чтения
+// здесь тихий: команда скажет про него строкой вывода.
+func mirrorRow(root string, b *binding, key string) *boardRow {
+	rows, err := loadBoardRows(root, b.Key)
+	if err != nil {
+		return nil
+	}
+	return rowForTicket(rows, key)
+}
+
+// pushEstimate ставит оценку из цены зеркальной строки: цена переводится в
+// часы таблицей контура (cost_s, cost_m, cost_l). Это затраты полного цикла,
+// работа агента вместе с сопровождением инженером. Оценку, уже стоящую в
+// тикете, команда не трогает: её мог поправить человек, и затирать чужую цифру
+// автоматика права не имеет.
+func pushEstimate(tr *tracker, t ticket, row *boardRow) (string, error) {
+	if row == nil {
+		return fmt.Sprintf("оценка: зеркальной строки с ключом %s на доске нет, считать эстимейт не из чего", t.Key), nil
+	}
+	value := tr.contour.estimateFor(row.Cost)
+	if value == "" {
+		return fmt.Sprintf("оценка: цена строки %s это «%s», контур %s её в оценку не переводит", row.ID, orDash(row.Cost), tr.contour.Name), nil
+	}
+	if t.Estimate != "" {
+		return fmt.Sprintf("оценка: в тикете уже стоит «%s», не трогаю (цена %s даёт %s)", t.Estimate, row.Cost, value), nil
+	}
+	if err := tr.adapter.estimate(t.Key, value); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("оценка: цена %s строки %s -> %s", row.Cost, row.ID, value), nil
+}
+
+// pushRank отправляет сумму ранга в числовое поле приоритета, если контур его
+// назвал. Ось необязательная: контур поля не назвал, значит и говорить не о
+// чем, а названное поле при адаптере без операции rank это молчаливое
+// бездействие, и о нём команда говорит вслух.
+func pushRank(tr *tracker, t ticket, row *boardRow) (string, error) {
+	if tr.contour.RankField == "" {
+		return "", nil
+	}
+	r, ok := tr.adapter.(ranker)
+	if !ok {
+		return fmt.Sprintf("приоритет: контур назвал поле %s, а адаптер %s операции rank не умеет", tr.contour.RankField, tr.contour.Adapter), nil
+	}
+	if row == nil || row.Rank == 0 {
+		return fmt.Sprintf("приоритет: разбивки ранга на доске нет, поле %s не трогаю", tr.contour.RankField), nil
+	}
+	if err := r.rank(t.Key, tr.contour.RankField, row.Rank); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("приоритет: R=%d строки %s -> %s", row.Rank, row.ID, tr.contour.RankField), nil
 }
 
 // cmdStatus показывает контур, адаптер и свежесть последнего pull. Отсутствие

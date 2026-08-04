@@ -192,8 +192,9 @@ func TestStatusFullAdapterAndSyncAge(t *testing.T) {
 	}
 }
 
-// Наличие необязательной операции не повод по ней ходить: команды этой задачи
-// шагов по rank и comment не делают ни при каком адаптере.
+// Шаг делается по факту, а не по наличию операции: доски с зеркальной строкой
+// тут нет, и ни оценка, ни ворклоги, ни приоритет никуда не уезжают, каким бы
+// полным ни был адаптер.
 func TestCommandsDoNotTouchOptional(t *testing.T) {
 	root := setupEnv(t, strings.Replace(contourFile, `adapter = "fake"`, `adapter = "fake-full"`, 1), bindingFile)
 	if _, err := cmdTake(root, "ABC-12"); err != nil {

@@ -15,8 +15,15 @@ const usageText = `trackctl: разговор с трекером задач к�
   issue <KEY>                     тикет глазами адаптера: статус и секция
                                   доски, тип, заголовок, оценка
   take <KEY>                      взять тикет в работу: переход в целевой
-                                  статус секции In progress и assign на
-                                  пользователя контура
+                                  статус секции In progress, assign на
+                                  пользователя контура и оценка из цены
+                                  зеркальной строки доски
+  submit <KEY> [--log-only]       сдать тикет: ворклоги по фактам работы и
+                                  переход в целевой статус секции Check;
+                                  --log-only пишет время и статус не трогает
+  sync [--if-stale]               pull статусов: доска догоняет тикеты,
+                                  в трекер прогон не пишет; --if-stale
+                                  гоняет только по протухшей отметке
 
 Ключ пишется целиком (ABC-12) либо одним номером, префикс тогда берётся из
 привязки. Всё, что ходит в трекер, живёт здесь: taskctl остаётся чистой
@@ -122,6 +129,23 @@ func main() {
 		fs.Parse(args[2:])
 		logStart = *dir
 		msg, err = cmdTake(root(*dir), args[1])
+	case "submit":
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			fail(fmt.Errorf("жду: submit <KEY> [--log-only]"))
+		}
+		fs := flag.NewFlagSet("submit", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		logOnly := fs.Bool("log-only", false, "написать ворклоги и не трогать статус")
+		fs.Parse(args[2:])
+		logStart = *dir
+		msg, err = cmdSubmit(root(*dir), args[1], *logOnly)
+	case "sync":
+		fs := flag.NewFlagSet("sync", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		ifStale := fs.Bool("if-stale", false, "гонять, только если отметка прогона протухла")
+		fs.Parse(args[1:])
+		logStart = *dir
+		msg, err = cmdSync(root(*dir), *ifStale)
 	case "help":
 		fmt.Print(usageText)
 		return

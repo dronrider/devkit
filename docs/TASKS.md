@@ -45,7 +45,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов [после DK-081] | task | P3 | 12 (0+6+1+0+5) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
-| DK-108 | devkitctl stats --context: куда ушёл объём сессии и перезаписи префикса | task | P3 | 12 (0+6+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-108 | devkitctl stats --context: куда ушёл объём сессии и перезаписи префикса | task | P3 | 12 (0+6+2+0+4) | M | [tasks/DK-108.md](tasks/DK-108.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-083 | Адаптер jira: REST-операции и образцы ответов API [после DK-082] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-086 | Хуки корп-контура: обёртка чужих хуков и рубеж следов devkit [после DK-081] | task | P3 | 11 (0+6+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |

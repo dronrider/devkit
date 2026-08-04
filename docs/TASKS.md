@@ -39,7 +39,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-117 | Наблюдаемость витков из чата: первый виток в чате, проверочный прогон не рабочий виток, ход фона виден | task | P2 | 37 (25+5+3+0+4) | M | [tasks/DK-117.md](tasks/DK-117.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 13 (0+8+1+0+4) | M | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 13 (0+8+1+0+4) | M | [tasks/DK-084.md](tasks/DK-084.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 12 (0+6+1+0+5) | M | [tasks/DK-085.md](tasks/DK-085.md) |

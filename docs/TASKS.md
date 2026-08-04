@@ -38,6 +38,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-105 | Правила скиллами: board-task, board-ship, test-standard | task | P2 | 39 (25+8+2+0+4) | L | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
 | DK-106 | Хуки вместо прозы: разбор в текстах находок, тесты в pre-commit, pre-push на запрет пуша | task | P2 | 37 (25+6+2+0+4) | M | [lld/DK-100-context-tree.md](lld/DK-100-context-tree.md) |
+| DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-029 | бюджет на резидентную часть правил, порог в devkitctl doctor [после DK-105] | task | P2 | 33 (25+3+1+0+4) | S | [tasks/DK-029.md](tasks/DK-029.md) |
 | DK-111 | Цель: корп-контур по DK-074, конвейер поверх внешнего трекера | task | P3 | 15 (0+9+1+0+5) | XL | [tasks/DK-111.md](tasks/DK-111.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

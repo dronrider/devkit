@@ -148,6 +148,42 @@ def tree_name(path):
     return os.path.basename((path if isinstance(path, str) else "").rstrip("/"))
 
 
+BRANCH_HEAD_PREFIX = "ref: refs/heads/"
+BRANCH_NOT_A_TASK = ("main", "master")
+
+
+def tree_branch(tree):
+    """Ветка репозитория в `tree` по файлу HEAD, пустая строка если ветки нет,
+    HEAD не смотрит на ветку (detached) или дерево не репозиторий. Живой `git`
+    тут не зовётся: хук стоит на каждом конце хода, и лишний подпроцесс ни к
+    чему. `.git` обычно каталог, а у linked worktree это файл со строкой
+    `gitdir: <путь>`, ведущей на каталог с собственным HEAD."""
+    if not isinstance(tree, str) or not tree:
+        return ""
+    git = os.path.join(tree, ".git")
+    try:
+        if os.path.isfile(git):
+            with open(git, encoding="utf-8") as f:
+                line = f.readline().strip()
+            if not line.startswith("gitdir:"):
+                return ""
+            git = line[len("gitdir:"):].strip()
+            if not os.path.isabs(git):
+                git = os.path.join(tree, git)
+        with open(os.path.join(git, "HEAD"), encoding="utf-8") as f:
+            ref = f.readline().strip()
+    except OSError:
+        return ""
+    return ref[len(BRANCH_HEAD_PREFIX):] if ref.startswith(BRANCH_HEAD_PREFIX) else ""
+
+
+def task_label(tree):
+    """Метка задачи с ветки `tree`, пустая строка если ветки нет или это
+    `main`/`master`: их веткой задачи не считаем."""
+    branch = tree_branch(tree)
+    return branch if branch and branch not in BRANCH_NOT_A_TASK else ""
+
+
 def session_label(cwd, root=None):
     # Какая из сессий позвала, видно по имени рабочего дерева: у worktree задачи
     # в имени лежит её ID. Без этого при пяти агентах баннер бесполезен.
@@ -155,7 +191,12 @@ def session_label(cwd, root=None):
     # искать, и сама задача: «it-road-course (irc-75)».
     name, home = tree_name(cwd), tree_name(root)
     if not home or home == name:
-        return name or "сессия"
+        # Имя дерева задачу не назвало (это либо основной чекаут, либо дерево
+        # без пары root/cwd вовсе): вместо неё пробуем ветку того же дерева,
+        # сессия в основном чекауте обычно на ней и работает.
+        label = name or "сессия"
+        task = task_label(root or cwd)
+        return "%s (%s)" % (label, task) if task else label
     if not name:
         return home
     task = name[len(home) + 1:] if name.startswith(home + "-") else name
@@ -208,9 +249,10 @@ def parse_event(sess, root=None):
             return None
         body = short(sess.message)
     elif sess.kind == hookio.TURN_DONE:
-        # Конец хода главной сессии. Своего текста у события нет, тело собирать
-        # не из чего, и баннеру хватает заголовка.
-        key, label, body = TURN_DONE, TURN_REASON, ""
+        # Конец хода главной сессии. Текст события это последняя реплика
+        # (hookio кладёт её в message из last_assistant_message), тело собираем
+        # так же, как у субагента; пустая реплика оставляет прежний вид баннера.
+        key, label, body = TURN_DONE, TURN_REASON, short(sess.message)
     elif sess.kind == hookio.SUBAGENT_DONE:
         level = QUIET
         # Обычный субагент приходит сюда, а не поводом agent_completed события

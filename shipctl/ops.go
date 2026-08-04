@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -9,8 +10,21 @@ import (
 	"unicode"
 )
 
+// pushEnv выдаёт разрешение на пуш хуку pre-push. Правила разрешают пуш доске
+// и автономному режиму, оба пути идут через shipctl, а рубеж отличает их от
+// самовольного пуша агента только по этой переменной. Нулевое окружение это
+// наследование родительского, поэтому обычным командам git оно и остаётся.
+func pushEnv(args []string) []string {
+	if len(args) == 0 || args[0] != "push" {
+		return nil
+	}
+	return append(os.Environ(), "DEVKIT_PUSH_OK=1")
+}
+
 func git(root string, args ...string) (string, error) {
-	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	cmd.Env = pushEnv(args)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return strings.TrimSpace(string(out)), fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
 	}

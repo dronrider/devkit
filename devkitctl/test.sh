@@ -367,6 +367,70 @@ for name, board in (("thin-board.expected", True), ("thin-noboard.expected", Fal
     assert got == want, "%s: жду %r, вижу %r" % (name, want, got)
 EOF
 
+# Разрез ядра: за резидентную часть правил платит каждый запрос каждой сессии,
+# поэтому бюджет тут не пожелание, а проверка. Гоняется на настоящих файлах
+# devkit, а не на копии: мерить надо тот текст, который реально доедет.
+dkreal=$(CDPATH= cd -- "$here/.." && pwd)
+plen() { python3 -c 'import sys;print(len(open(sys.argv[1],encoding="utf-8").read()))' "$1"; }
+for f in RULES.core.md RULES.board.core.md; do
+    [ -f "$dkreal/$f" ] || fail "нет $f: резидентного ядра правил не нарезано"
+done
+[ "$(plen "$dkreal/RULES.core.md")" -le 5500 ] ||
+    fail "ядро правил длиннее бюджета 5500 символов: $(plen "$dkreal/RULES.core.md")"
+[ "$(plen "$dkreal/RULES.board.core.md")" -le 1500 ] ||
+    fail "ядро правил доски длиннее бюджета 1500 символов: $(plen "$dkreal/RULES.board.core.md")"
+
+python3 - "$dkreal" <<'EOF' || fail "ядро дублирует полный текст правил"
+import sys
+from pathlib import Path
+
+# Ядро и полный текст никогда не лежат в контексте вместе, но переписанный под
+# одну строку пункт легко подменить копипастой из полного текста, и тогда ядро
+# растёт молча. Сравниваются предложения, а не строки: перенос строки у этих
+# файлов разный, и построчное сравнение пропустило бы копию.
+dk = Path(sys.argv[1])
+bad = []
+for core, full in (("RULES.core.md", "RULES.md"),
+                   ("RULES.board.core.md", "RULES.board.md")):
+    whole = " ".join((dk / full).read_text(encoding="utf-8").split())
+    for sent in " ".join((dk / core).read_text(encoding="utf-8").split()).split(". "):
+        if len(sent) >= 60 and sent in whole:
+            bad.append("%s -> %s: %s" % (core, full, sent[:80]))
+    if "`%s`" % full not in (dk / core).read_text(encoding="utf-8"):
+        bad.append("%s не называет %s: разбор пункта искать негде" % (core, full))
+if bad:
+    print("\n".join(bad))
+    sys.exit(1)
+EOF
+
+python3 - "$dkreal/devkitctl" "$tmp/cut" "$dkreal" <<'EOF' || fail "тонкий файл собран не под нарезанное ядро"
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+work, dkroot = sys.argv[2], sys.argv[3]
+import harness
+import rules
+
+cc = harness.parse("claude-code.toml",
+                   open(os.path.join(dkroot, "harness", "claude-code.toml"), encoding="utf-8").read())
+proj = os.path.join(work, "proj")
+os.makedirs(os.path.join(proj, "docs"))
+for board in (True, False):
+    tasks = os.path.join(proj, "docs", "TASKS.md")
+    if board:
+        open(tasks, "w").close()
+    elif os.path.exists(tasks):
+        os.remove(tasks)
+    fact = rules.actual_depth(dkroot, proj, board, rules.declared_depth(cc)[0])
+    assert fact == rules.DEPTH_CORE, "ядро нарезано, а доехала глубина %s" % fact
+    thin = rules.thin_text(cc, proj, dkroot, board, False, fact)
+    assert "RULES.core.md\n" in thin, thin
+    assert "RULES.md\n" not in thin, "в тонкий файл уехал полный текст правил: %s" % thin
+    assert ("RULES.board.core.md\n" in thin) == board, thin
+    assert "RULES.board.md\n" not in thin, "в тонкий файл уехал полный текст правил доски: %s" % thin
+EOF
+
 # Файлы правил: рукописный AGENTS.md источник, тонкие файлы харнесов генерятся.
 # Гоняется на своём проекте, чтобы правки --fix не мешали прежним шагам.
 rproj="$tmp/rproj"
@@ -1065,7 +1129,6 @@ wpath="$wbin:$sys"
 
 # Ожидаемые числа считаются в самой самопроверке: длина каждого кармана и сумма
 # по ним. Разъедься список карманов с дизайном, и сумма разойдётся тоже.
-plen() { python3 -c 'import sys; print(len(open(sys.argv[1], encoding="utf-8").read()))' "$1"; }
 listing() {
     python3 - "$@" <<'EOF'
 import re, sys

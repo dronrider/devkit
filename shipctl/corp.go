@@ -102,12 +102,28 @@ func corpLostLocal(start string) string {
 	return ""
 }
 
-// corpTrackerRepo достаёт ключ repo из привязки боковой директории. Формат
-// плоский, «key = value» с решёткой на комментарий, как у deploy.local.
-func corpTrackerRepo(dir string) string {
+// trackerBinding это поля привязки .devkit/tracker.local, нужные shipctl:
+// ключ тикета и шаблон ветки для start, путь клона для status и для
+// восстановления обвязки. Остальное (контур компании, статусы, оценки) знает
+// только trackctl, у него свой конфиг и свой разбор того же плоского формата.
+type trackerBinding struct {
+	Key    string
+	Branch string
+	Repo   string
+}
+
+// loadTrackerBinding читает привязку в dir. Формат плоский, «key = value» с
+// решёткой на комментарий, как у deploy.local, парсера TOML нет и не будет:
+// привязку читает и trackctl (там же формат описан подробно), и shipctl, и
+// каждый своим разбором. Второе значение говорит, найден ли сам файл: его
+// наличие и есть местный признак корп-контура (root уже указывает туда же,
+// куда его кладёт devkitctl corp), а поля внутри бывают неполными по
+// отдельности, это не повод считать проект домашним.
+func loadTrackerBinding(dir string) (trackerBinding, bool) {
+	var b trackerBinding
 	f, err := os.Open(filepath.Join(dir, corpTrackerPath))
 	if err != nil {
-		return ""
+		return b, false
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -117,18 +133,79 @@ func corpTrackerRepo(dir string) string {
 			continue
 		}
 		key, val, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "repo" {
+		if !ok {
 			continue
 		}
-		val = strings.TrimSpace(val)
-		if len(val) >= 2 {
-			if q := val[0]; (q == '"' || q == '\'') && val[len(val)-1] == q {
-				val = val[1 : len(val)-1]
-			}
+		key, val = strings.TrimSpace(key), unquote(strings.TrimSpace(val))
+		switch key {
+		case "key":
+			b.Key = val
+		case "branch":
+			b.Branch = val
+		case "repo":
+			b.Repo = val
 		}
-		return val
 	}
-	return ""
+	return b, true
+}
+
+// corpTrackerRepo достаёт ключ repo из привязки боковой директории.
+func corpTrackerRepo(dir string) string {
+	b, ok := loadTrackerBinding(dir)
+	if !ok {
+		return ""
+	}
+	return b.Repo
+}
+
+// corpActive это местный признак корп-контура для команд конвейера: файл
+// привязки лежит ровно там, куда findRoot уже привёл (боковая директория), и
+// его наличие эквивалентно «мы внутри неё». Валидность полей внутри corpActive
+// не проверяет: неполная привязка это всё ещё корп-контур, просто с честной
+// находкой вместо тихого домашнего поведения.
+func corpActive(root string) bool {
+	_, err := os.Stat(filepath.Join(root, corpTrackerPath))
+	return err == nil
+}
+
+// corpBranchName разворачивает шаблон ветки привязки: {key} это ключ тикета,
+// {slug} хвост, как у --slug дома. Формат общий с trackctl (README рядом),
+// пустой шаблон берёт вид «{key}-{slug}» по умолчанию, а без хвоста висящий
+// дефис срезается.
+func corpBranchName(tpl, key, slug string) string {
+	if tpl == "" {
+		tpl = "{key}-{slug}"
+	}
+	out := strings.ReplaceAll(tpl, "{key}", key)
+	return strings.TrimRight(strings.ReplaceAll(out, "{slug}", slug), "-")
+}
+
+// corpWorkBranch отдаёт рабочую ветку. В корп-контуре git-корень это боковая
+// директория со своей историей (доска, файлы задач), а ветка задачи стоит в
+// клоне, на который привязка указывает ключом repo: спрашивать её у root
+// значит называть веткой ветку доски, а без единого коммита в боковой
+// директории (обычное дело: она только для docs/) там и вовсе падать на
+// rev-parse. Без привязки или без ключа repo (домашний проект) ветку
+// спрашивают у самого root, как и раньше: смена поведения не должна задевать
+// дом.
+func corpWorkBranch(root string) (string, error) {
+	b, ok := loadTrackerBinding(root)
+	if !ok || b.Repo == "" {
+		return git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	}
+	repo := b.Repo
+	if !filepath.IsAbs(repo) {
+		repo = filepath.Join(root, repo)
+	}
+	return git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
+// corpRefused формулирует единый отказ merge, ship и revert в корп-контуре:
+// слияние и выкат там ведёт MR-флоу компании, эта граница по RULES.md
+// («Git», п. 3) не агентская, и подсказка называет ручные шаги вместо того,
+// чтобы изображать слияние, которого нет.
+func corpRefused(cmd string) error {
+	return fmt.Errorf("корп-контур: %s здесь не работает, слияние и выкат ведёт MR-флоу компании; дальше руками: trackctl submit, пуш ветки, MR, дальше по процессу контура", cmd)
 }
 
 // corpSamePath сравнивает два пути с оглядкой на симлинки: временные

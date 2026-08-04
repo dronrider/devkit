@@ -6,12 +6,25 @@
       включённые харнесы, git-хуки, доска через taskctl init, болванка
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
+  devkitctl corp [--prefix XX] [--name "..."] [-C dir]
+      подключить корп-проект: боковая директория ../<проект>-local со скелетом
+      доски и своим git-репозиторием, редирект git config devkit.local в клоне,
+      тонкий файл контекста харнеса с импортом на AGENTS.md боковой директории и
+      строкой в .git/info/exclude, обёртки хуков на pre-commit и commit-msg.
+      Прогон повторяемый: боковая директория не трогается, доводится обвязка
+      клона, поэтому он же восстанавливает обвязку после переклонирования
+
   devkitctl doctor [--fix] [-C dir]
       проверить обвязку проекта: AGENTS.md на месте, генерённые файлы правил
       свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
-      markdown-ссылки не битые; и машинный контур: PostToolUse-хуки,
+      markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
+      файлы берутся из боковой директории, а сверх обычных проверок идут
+      корп-: чистота корп-индекса, exclude-строка, цепочки на обоих хуках,
+      remote боковой директории и свежесть sync, и прогнанный в боковой
+      директории доктор идёт по ключу repo привязки и проверяет обвязку
+      названного клона; и машинный контур: PostToolUse-хуки,
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, права машинного контура в permissions.allow (без них
       сессия без человека встаёт на первом отказе), бинари утилит devkit в
@@ -50,6 +63,7 @@
 """
 import argparse
 import context
+import corp
 import harness
 import importlib.util
 import json
@@ -644,11 +658,53 @@ def check_quota(fix):
     return findings, fixed
 
 
+def corp_profiles(local):
+    # Тонкие файлы харнесов корп-клона считаются по конфигу боковой директории:
+    # там лежит .devkit и там же решается, какие харнесы включены.
+    profiles, findings = rules.enabled_harnesses(local, DEVKIT / "harness")
+    imports = [(n, p) for n, p in profiles if rules.mode_of(p) == "import"]
+    return imports, findings
+
+
+def corp_thin_names(imports):
+    return [p.str_of("rules", "file") for _, p in imports]
+
+
+def corp_thin(clone, local, imports, fix):
+    # Тонкий файл харнеса обязан лежать в корне клона, иначе харнес его не
+    # прочитает, а весь текст живёт в боковой директории: проверка та же, что у
+    # домашнего проекта, только AGENTS.md берётся оттуда.
+    findings, fixed = [], []
+    board = (Path(local) / "docs" / "TASKS.md").exists()
+    for name, profile in imports:
+        depth = rules.actual_depth(DEVKIT, local, board, rules.declared_depth(profile)[0])
+        tf, td = rules.check_thin(name, profile, Path(clone), DEVKIT, board, False, depth, fix,
+                                  agents_root=Path(local))
+        findings += tf
+        fixed += td
+    return findings, fixed
+
+
 def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
     if not in_git:
         findings.append("не git-репозиторий: %s" % root)
+    clone, local = corp.pair(root, DEVKIT)
+    if local:
+        # Рабочие файлы devkit в корп-контуре лежат не в дереве проекта, а
+        # рядом, и обычные проверки идут по ним: в самом клоне ни доски, ни
+        # AGENTS.md нет и быть не должно.
+        root = Path(local)
+        imports, hf = corp_profiles(local)
+        findings += hf
+        cf, cd = corp.check(clone, local, DEVKIT, corp_thin_names(imports), fix)
+        findings += cf
+        fixed += cd
+        if corp.local_dir(clone, DEVKIT):
+            tf, td = corp_thin(clone, local, imports, fix)
+            findings += tf
+            fixed += td
     rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
     findings += rfindings
     fixed += rfixed
@@ -764,8 +820,11 @@ def stats_context(start):
 
 def stats(start, ctx=False):
     if ctx:
+        # Журналы сессий харнес кладёт по слепку пути проекта, а сессия живёт в
+        # клоне, поэтому тут корень остаётся клоном и в корп-контуре.
         return stats_context(start)
     root, _ = project_root(start)
+    root = Path(corp.pair(root, DEVKIT)[1] or root)
     log_file = root / RUN_LOG
     if not log_file.exists() or log_file.stat().st_size == 0:
         sys.stderr.write("журнал запусков не найден: %s\n" % RUN_LOG)
@@ -859,6 +918,77 @@ def new(start, prefix, name, no_board):
     return 0
 
 
+def corp_connect(start, prefix, name):
+    # Подключение корп-проекта и оно же восстановление обвязки: заведённое не
+    # переписывается, доводится только недостающее, поэтому повторный прогон
+    # после переклонирования возвращает клон в рабочее состояние, а доску в
+    # боковой директории не трогает.
+    root, in_git = project_root(start)
+    if not in_git:
+        sys.stderr.write("%s не git-репозиторий: corp подключает клон корп-репозитория, "
+                         "обычный проект подключает devkitctl new\n" % root)
+        return 2
+    clone = Path(corp.checkout(root) or root)
+    local = Path(corp.local_dir(clone, DEVKIT) or (clone.parent / (clone.name + "-local")))
+    board = local / "docs" / "TASKS.md"
+    if not board.exists() and not prefix:
+        sys.stderr.write("нужен --prefix для доски боковой директории (%s)\n" % local)
+        return 2
+    done = []
+    if not local.is_dir():
+        local.mkdir(parents=True)
+        done.append("боковая директория %s заведена" % local)
+    if not (local / ".git").exists():
+        rc, out = run(["git", "init", "-q", str(local)])
+        if rc != 0:
+            sys.stderr.write("git init %s: %s\n" % (local, out))
+            return 1
+        done.append("git-репозиторий боковой директории заведён: доска пушится в личный "
+                    "приватный remote, а не в корп-origin, и remote добавляется руками")
+    (local / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
+    (local / ".devkit").mkdir(exist_ok=True)
+    if not (local / rules.AGENTS_FILE).exists():
+        text = (DEVKIT / "templates" / "AGENTS.project.md").read_text(encoding="utf-8")
+        if text.startswith("<!--"):
+            text = text[text.index("-->") + 3:].lstrip("\n")
+        text = text.replace("<название проекта>", name or clone.name).replace("<XX>", prefix or "XX")
+        (local / rules.AGENTS_FILE).write_text(text, encoding="utf-8")
+        done.append("%s создан из шаблона в боковой директории" % rules.AGENTS_FILE)
+    if not board.exists():
+        tc = shutil.which("taskctl")
+        if not tc:
+            sys.stderr.write("taskctl не в PATH, доску заводить нечем: собрать его "
+                             "(cd %s/taskctl && go build -o ~/go/bin/taskctl .) и повторить\n" % DEVKIT)
+            return 1
+        rc, out = run([tc, "-C", str(local), "init", "--prefix", prefix, "--name", name or clone.name])
+        if rc != 0:
+            sys.stderr.write("taskctl init: %s\n" % out)
+            return 1
+        done.append(out)
+    done += scaffold_deploy(local)
+    applied, residual = connect_git_hooks(local)
+    if applied or residual:
+        done.append(applied or residual)
+    _, generated = rules.check(local, DEVKIT, fix=True, skip_dirs=SKIP_DIRS)
+    done += ["боковая директория: %s" % g for g in generated]
+    rel = corp.ensure_redirect(clone, local)
+    done.append("редирект корня: git config devkit.local %s" % rel)
+    bound = corp.ensure_binding(local, clone)
+    if bound:
+        done.append("%s: вписан repo = %s (по нему обвязка клона находится после "
+                    "переклонирования)" % (corp.TRACKER, bound))
+    imports, hfindings = corp_profiles(local)
+    _, thin_fixed = corp_thin(clone, local, imports, fix=True)
+    done += thin_fixed
+    for n in corp.ensure_exclude(clone, corp_thin_names(imports)):
+        done.append(".git/info/exclude: спрятан %s" % n)
+    for hook, state, chained in corp.ensure_hooks(clone, DEVKIT):
+        done.append("хук %s: цепочка %s%s"
+                    % (hook, state, " (чужой хук переехал в %s.chained)" % hook if chained else ""))
+    print("\n".join(done + hfindings))
+    return 0
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="devkitctl", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -872,6 +1002,10 @@ def main(argv):
     n.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
     n.add_argument("--name", default="", help="название проекта, по умолчанию имя директории")
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
+    c = sub.add_parser("corp", help="подключить корп-проект (боковая директория и обвязка клона)")
+    c.add_argument("-C", dest="dir", default=".", help="директория корп-клона")
+    c.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
+    c.add_argument("--name", default="", help="название проекта, по умолчанию имя директории клона")
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
@@ -889,11 +1023,16 @@ def main(argv):
         rc = doctor(a.dir, a.fix)
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
+    elif a.cmd == "corp":
+        rc = corp_connect(a.dir, a.prefix.upper(), a.name)
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     else:
         rc = stats(a.dir, a.context)
-    log_run(project_root(a.dir)[0], a.cmd, rc)
+    # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,
+    # то есть в боковой директории: в дереве клона .devkit нет.
+    root = project_root(a.dir)[0]
+    log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
     return rc
 
 

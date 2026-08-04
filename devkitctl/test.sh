@@ -55,6 +55,9 @@ cat > "$home/.claude/settings.json" <<EOF
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"}
 ]}]}}
 EOF
+# Копия чистой фикстуры машинного контура: проверки ниже режут этот файл, а
+# блокам, которым нужен доктор без находок, состояние надо вернуть.
+cp "$home/.claude/settings.json" "$tmp/settings.clean"
 
 # Чем слать уведомления, доктор спрашивает у самого уведомителя, а тот смотрит
 # платформу и PATH. Без подставного бэкенда проверка краснела бы на любой машине
@@ -2192,6 +2195,199 @@ echo "$out" | grep -q "нет запросов с расходом" \
 out=$(HOME="$home" python3 "$dkctl" stats -C "$sproj" 2>&1)
 echo "$out" | grep -q "итого" || fail "голый stats должен печатать таблицу запусков: $out"
 echo "$out" | grep -q "перезаписи" && fail "голый stats не должен печатать разбивку сессий: $out"
+
+# corp: подключение корп-проекта и корп-проверки доктора (DK-085). Доску заводит
+# taskctl, а в PATH он заглушка на «exit 0», поэтому на этот блок кладётся своя,
+# которая скелет доски всё-таки пишет: без доски проверять было бы нечего.
+corpbin="$tmp/corpbin"
+mkdir -p "$corpbin"
+cat > "$corpbin/taskctl" <<'EOF'
+#!/bin/sh
+dir=.
+[ "$1" = "-C" ] && { dir=$2; shift 2; }
+if [ "$1" = "init" ]; then
+    mkdir -p "$dir/docs/tasks"
+    printf '# Задачи проекта (префикс CP)\n' > "$dir/docs/TASKS.md"
+    echo "доска создана"
+fi
+exit 0
+EOF
+chmod +x "$corpbin/taskctl"
+corppath="$corpbin:$cleanpath"
+# Машинный контур проверки выше резали, и его находки шли бы поверх корп-: тут
+# доктор должен молчать целиком, поэтому фикстура возвращается в чистую.
+cp "$tmp/settings.clean" "$home/.claude/settings.json"
+
+cproj="$tmp/corp-proj"
+clocal="$tmp/corp-proj-local"
+mkdir -p "$cproj"
+git init -q "$cproj"
+git -C "$cproj" config user.name t
+git -C "$cproj" config user.email t@t
+# Чужой хук проекта: он должен пережить подключение и остаться в цепочке.
+printf '#!/bin/sh\necho чужой pre-commit\nexit 0\n' > "$cproj/.git/hooks/pre-commit"
+chmod +x "$cproj/.git/hooks/pre-commit"
+echo readme > "$cproj/readme.md"
+git -C "$cproj" add -A
+git -C "$cproj" commit -qm init
+
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp --prefix CP -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "corp не прошёл: $out"
+[ -f "$clocal/docs/TASKS.md" ] || fail "corp не завёл доску в боковой директории: $out"
+[ -d "$clocal/docs/tasks" ] || fail "corp не завёл docs/tasks в боковой директории"
+[ -d "$clocal/.devkit" ] || fail "corp не завёл .devkit в боковой директории"
+[ -d "$clocal/.git" ] || fail "боковая директория без своего git: доску некуда пушить"
+[ -f "$clocal/AGENTS.md" ] || fail "corp не положил AGENTS.md в боковую директорию"
+[ "$(git -C "$cproj" config --local devkit.local)" = "../corp-proj-local" ] ||
+    fail "corp не выставил редирект: $(git -C "$cproj" config --local devkit.local)"
+grep -q '^repo = ../corp-proj$' "$clocal/.devkit/tracker.local" ||
+    fail "corp не вписал repo в привязку: $(cat "$clocal/.devkit/tracker.local" 2>&1)"
+grep -qx 'CLAUDE.md' "$cproj/.git/info/exclude" || fail "corp не спрятал тонкий файл строкой exclude"
+[ -f "$cproj/CLAUDE.md" ] || fail "corp не положил тонкий файл контекста в корень клона"
+grep -qx '@../corp-proj-local/AGENTS.md' "$cproj/CLAUDE.md" ||
+    fail "тонкий файл клона не импортирует AGENTS.md боковой директории: $(cat "$cproj/CLAUDE.md")"
+[ -f "$cproj/AGENTS.md" ] && fail "corp положил AGENTS.md в дерево корп-клона"
+[ -n "$(git -C "$cproj" status --short)" ] &&
+    fail "обвязка торчит в git status корп-клона: $(git -C "$cproj" status --short)"
+# Цепочка на обоих хуках: рубеж по сообщению держит только commit-msg, и клон с
+# одной обёрткой пропускал бы локальный ID молча (найдено живым прогоном DK-086).
+for h in pre-commit commit-msg; do
+    grep -q 'devkit-corp-chain' "$cproj/.git/hooks/$h" || fail "цепочка не развёрнута на $h"
+done
+grep -q 'чужой pre-commit' "$cproj/.git/hooks/pre-commit.chained" ||
+    fail "чужой хук проекта не переехал в pre-commit.chained"
+# Пути в находках доктор печатает разрешёнными, а mktemp на macOS отдаёт /var,
+# который на деле симлинк на /private/var.
+cprojr=$(cd "$cproj" && pwd -P)
+clocalr=$(cd "$clocal" && pwd -P)
+
+# Доктор чистого корп-проекта: обвязка выката заполнена, remote у боковой
+# директории есть, находок нет.
+printf 'deploy = echo выкат\ntest = echo тесты\nautonomous = false\n' > "$clocal/.devkit/deploy.local"
+git init -q --bare "$tmp/corp-board.git"
+git -C "$clocal" remote add origin "$tmp/corp-board.git"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "doctor нашёл находки на чистом корп-проекте: $out"
+# И тот же доктор, прогнанный в боковой директории, тоже чист.
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$clocal" 2>&1)
+[ $? -eq 0 ] || fail "doctor из боковой директории нашёл находки на чистом корп-проекте: $out"
+
+# Корп-проверки включает только контур: в домашнем проекте их нет.
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'боковой директории' && fail "корп-проверки включились в домашнем проекте: $out"
+
+# Мутация: пропала exclude-строка, тонкий файл торчит в чужом git status.
+grep -vx 'CLAUDE.md' "$cproj/.git/info/exclude" > "$tmp/excl" && mv "$tmp/excl" "$cproj/.git/info/exclude"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'exclude не прячет CLAUDE.md' || fail "нет находки на пропавшую exclude-строку: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor --fix -C "$cproj" 2>&1)
+echo "$out" | grep -q 'починено: .git/info/exclude: спрятан CLAUDE.md' ||
+    fail "--fix не вернул exclude-строку: $out"
+grep -qx 'CLAUDE.md' "$cproj/.git/info/exclude" || fail "--fix сказал про exclude, а строки нет"
+
+# Мутация: цепочка осталась на одном хуке.
+rm "$cproj/.git/hooks/commit-msg"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'цепочка хуков потеряна на commit-msg' ||
+    fail "нет находки на потерянную цепочку commit-msg: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor --fix -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "--fix не вернул цепочку на commit-msg: $out"
+grep -q 'devkit-corp-chain' "$cproj/.git/hooks/commit-msg" || fail "--fix сказал про цепочку, а обёртки нет"
+
+# Мутация: обёртку перезаписал чужой инсталлер, маркер пропал.
+printf '#!/bin/sh\nexit 0\n' > "$cproj/.git/hooks/pre-commit"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'обёртка pre-commit перезаписана' || fail "нет находки на перезаписанную обёртку: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor --fix -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "--fix не вернул перезаписанную обёртку: $out"
+grep -q 'devkit-corp-chain' "$cproj/.git/hooks/pre-commit" || fail "--fix не восстановил обёртку pre-commit"
+# Чужой хук проекта раскладка тут затёрла им же перезаписанной обёрткой: своим
+# файлом она считает только помеченный маркером, а всё остальное чужим хуком.
+# Фикстура возвращается к настоящему чужому хуку, дальше он ещё проверяется.
+printf '#!/bin/sh\necho чужой pre-commit\nexit 0\n' > "$cproj/.git/hooks/pre-commit.chained"
+chmod +x "$cproj/.git/hooks/pre-commit.chained"
+
+# Мутация: файл обвязки попал в корп-индекс.
+git -C "$cproj" add -f CLAUDE.md
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'в корп-индексе лежит обвязка devkit (CLAUDE.md)' ||
+    fail "нет находки на обвязку в корп-индексе: $out"
+git -C "$cproj" rm -q --cached CLAUDE.md
+
+# Мутация: у боковой директории пропал remote, доску пушить некуда.
+git -C "$clocal" remote remove origin
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q "у боковой директории $clocalr нет remote" ||
+    fail "нет находки на боковую директорию без remote: $out"
+git -C "$clocal" remote add origin "$tmp/corp-board.git"
+
+# Мутация: из привязки пропал ключ repo, и обвязку клона стало нечем найти.
+cp "$clocal/.devkit/tracker.local" "$tmp/tracker.keep"
+grep -v '^repo = ' "$tmp/tracker.keep" > "$clocal/.devkit/tracker.local"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'нет ключа repo' || fail "нет находки на привязку без ключа repo: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor --fix -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "--fix не вписал repo в привязку: $out"
+grep -q '^repo = ../corp-proj$' "$clocal/.devkit/tracker.local" || fail "--fix сказал про repo, а ключа нет"
+
+# Свежесть sync спрашивается только у привязанного к трекеру проекта: до ключа
+# contour гонять sync нечем, и молчание тут штатно.
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'sync' && fail "доктор спросил про sync у проекта без привязки к трекеру: $out"
+printf 'contour = corp\nkey = CP\n' >> "$clocal/.devkit/tracker.local"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'sync с трекером не гонялся ни разу' ||
+    fail "нет находки на ни разу не гонявшийся sync: $out"
+touch -t 202001010000 "$clocal/.devkit/tracker.sync"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'последний sync с трекером .* дн назад' ||
+    fail "нет находки на протухшую отметку sync: $out"
+touch "$clocal/.devkit/tracker.sync"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "доктор нашёл находки при свежей отметке sync: $out"
+
+# Идемпотентность: повторный прогон боковую директорию не трогает (доска с
+# правкой цела), чужой хук не теряет и тонкий файл не переписывает.
+printf 'CP-001 своя строка доски\n' >> "$clocal/docs/TASKS.md"
+cp "$clocal/docs/TASKS.md" "$tmp/board.keep"
+cp "$cproj/CLAUDE.md" "$tmp/thin.keep"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "повторный corp не прошёл: $out"
+diff -q "$clocal/docs/TASKS.md" "$tmp/board.keep" >/dev/null || fail "повторный corp переписал доску"
+diff -q "$cproj/CLAUDE.md" "$tmp/thin.keep" >/dev/null || fail "повторный corp переписал тонкий файл"
+grep -q 'чужой pre-commit' "$cproj/.git/hooks/pre-commit.chained" ||
+    fail "повторный corp потерял чужой хук проекта"
+echo "$out" | grep -q 'хук pre-commit: цепочка на месте' ||
+    fail "повторный corp не сказал, что цепочка уже на месте: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "doctor после повторного corp нашёл находки: $out"
+
+# Переклонирование: обвязка живёт в .git и в негитигнорнутом дереве, поэтому
+# свежий клон её теряет молча. Находит потерю доктор из боковой директории, по
+# ключу repo привязки, а восстанавливает повторное подключение.
+git init -q --bare "$tmp/corp-origin.git"
+git -C "$cproj" push -q "$tmp/corp-origin.git" HEAD:master
+rm -rf "$cproj"
+git clone -q "$tmp/corp-origin.git" "$cproj"
+git -C "$cproj" config user.name t
+git -C "$cproj" config user.email t@t
+[ -n "$(git -C "$cproj" config --local devkit.local)" ] && fail "редирект пережил переклонирование, фикстура не та"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$clocal" 2>&1)
+echo "$out" | grep -q "обвязка корп-клона $cprojr потеряна" ||
+    fail "доктор из боковой директории не нашёл потерянную обвязку клона: $out"
+echo "$out" | grep -q "devkitctl corp -C $cprojr" ||
+    fail "находка про потерянную обвязку не зовёт команду восстановления: $out"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj" 2>&1)
+[ $? -eq 0 ] || fail "corp не восстановил обвязку после переклонирования: $out"
+[ "$(git -C "$cproj" config --local devkit.local)" = "../corp-proj-local" ] ||
+    fail "восстановление не вернуло редирект"
+grep -q 'devkit-corp-chain' "$cproj/.git/hooks/commit-msg" || fail "восстановление не вернуло цепочку commit-msg"
+grep -qx 'CLAUDE.md' "$cproj/.git/info/exclude" || fail "восстановление не вернуло exclude-строку"
+diff -q "$clocal/docs/TASKS.md" "$tmp/board.keep" >/dev/null || fail "восстановление тронуло доску"
+diff -q "$cproj/CLAUDE.md" "$tmp/thin.keep" >/dev/null || fail "восстановленный тонкий файл разошёлся с прежним"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj" 2>&1)
+echo "$out" | grep -q 'хук commit-msg: цепочка на месте' ||
+    fail "прогон после восстановления опять раскладывал цепочку: $out"
 
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"

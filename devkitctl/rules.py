@@ -240,17 +240,22 @@ def gen_marker(depth, body):
     return "<!-- devkit:generated %sbody=%s -->" % (tag, digest(body))
 
 
-def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=None):
+def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=None,
+              agents_root=None):
     # Тонкий файл харнеса: строка-маркер с глубиной и хешем тела, дальше импорты.
     # При вклейке остаётся один импорт AGENTS.md, в нём правила уже лежат.
     # Готовые источники передаёт замер резидента: он собирает раскладку проекта
     # в своей директории, а список файлов и их глубина остаются проектными.
+    # agents_root это корп-контур: файл харнеса обязан лежать в корне клона, а
+    # AGENTS.md со всем текстом живёт в боковой директории, и первым импортом
+    # выписывается путь туда.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
     if embed:
         # Правил тонкий файл тогда не везёт вовсе, они лежат во вклейке, и
         # глубина это про неё: признак тут только гонял бы перегенерацию.
         depth = DEPTH_FULL
-    paths = [AGENTS_FILE]
+    paths = [AGENTS_FILE if agents_root is None
+             else Path(os.path.relpath(Path(agents_root) / AGENTS_FILE, root)).as_posix()]
     if not embed:
         paths += [Path(os.path.relpath(p, root)).as_posix()
                   for p in (rule_sources(devkit, root, board, depth)
@@ -423,11 +428,11 @@ def check_imports(path, root):
     return findings
 
 
-def check_thin(name, profile, root, devkit, board, embed, depth, fix):
+def check_thin(name, profile, root, devkit, board, embed, depth, fix, agents_root=None):
     findings, fixed = [], []
     fname = profile.str_of("rules", "file")
     path = Path(root) / fname
-    want = thin_text(profile, root, devkit, board, embed, depth)
+    want = thin_text(profile, root, devkit, board, embed, depth, agents_root=agents_root)
     if not path.exists():
         if fix:
             path.write_text(want, encoding="utf-8")

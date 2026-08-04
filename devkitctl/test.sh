@@ -1002,6 +1002,226 @@ out=$(HOME="$pphome" PATH="$gostub:$sys" python3 "$dkctl" doctor --fix -C "$mpro
 [ -x "$pphome/go/bin/agentctl" ] || fail "--fix не собрал бинарь: $out"
 echo "$out" | grep -q 'не в PATH: добавить директорию' || fail "нет находки про каталог сборки вне PATH: $out"
 
+# weigh: живой замер резидента. Настоящих сессий самопроверка не поднимает,
+# вместо claude в PATH лежит скрипт, который отдаёт usage по той раскладке,
+# какую видит в HOME и в рабочей директории: ровно за неё платит и настоящий
+# клиент. Пол 30 000, глобальная точка 620, определения агентов 830, скиллы 540,
+# цепочка правил проекта 12 300, вместе целевой прогон это 44 290 из сценария.
+wtmp="$tmp/weigh"
+whome="$wtmp/home"
+mkdir -p "$whome/.claude/agents" "$whome/.claude/skills"
+cp "$dk/agents/"*.md "$whome/.claude/agents/"
+cp -R "$dk/skills/"* "$whome/.claude/skills/"
+printf '# Глобальные правила\n\n@~/.claude/CLAUDE_RULES.md\n' > "$whome/.claude/CLAUDE.md"
+ln -sf "$dk/RULES.md" "$whome/.claude/CLAUDE_RULES.md"
+printf '{"hooks": {"Stop": []}}\n' > "$whome/.claude/settings.json"
+wproj="$wtmp/proj"
+mkdir -p "$wproj"
+git init -q "$wproj"
+git -C "$wproj" config user.name t
+git -C "$wproj" config user.email t@t
+HOME="$whome" python3 "$dkctl" new --no-board -C "$wproj" >/dev/null || fail "weigh: проект не подключился"
+cp "$wproj/CLAUDE.md" "$wtmp/thin.gen"
+calls="$wtmp/calls"
+: > "$calls"
+wbin="$wtmp/bin"
+mkdir -p "$wbin"
+cat > "$wbin/claude" <<'EOF'
+#!/bin/sh
+echo "$PWD" >> "$WEIGH_CALLS"
+t=30000
+[ -f "$HOME/.claude/CLAUDE.md" ] && t=$((t + 620))
+[ -f "$HOME/.claude/agents/exec-high.md" ] && t=$((t + 830))
+[ -d "$HOME/.claude/skills/board-batch" ] && t=$((t + 540))
+[ -f "$PWD/CLAUDE.md" ] && t=$((t + 12300))
+# Вход гуляет от прогона к прогону, и разброс в выводе должен браться из
+# настоящих чисел: каждый следующий вызов дороже предыдущего на свой квадрат.
+# Считается вызов встроенным read: в PATH замера лежит только то, без чего не
+# обойтись, и wc там нет.
+n=0
+while read -r _; do n=$((n + 1)); done < "$WEIGH_CALLS"
+t=$((t + n * n * 10))
+printf '{"type":"result","usage":{"input_tokens":4,"cache_creation_input_tokens":20000,"cache_read_input_tokens":%d}}\n' $((t - 20004))
+EOF
+chmod +x "$wbin/claude"
+wpath="$wbin:$sys"
+
+# Ожидаемые числа считаются в самой самопроверке: длина каждого кармана и сумма
+# по ним. Разъедься список карманов с дизайном, и сумма разойдётся тоже.
+plen() { python3 -c 'import sys; print(len(open(sys.argv[1], encoding="utf-8").read()))' "$1"; }
+listing() {
+    python3 - "$@" <<'EOF'
+import re, sys
+n = 0
+for p in sys.argv[1:]:
+    parts = open(p, encoding="utf-8").read().split("---\n")
+    head = parts[1] if len(parts) > 1 else ""
+    for key in ("name", "description"):
+        m = re.search(r"^%s: ?(.*)$" % key, head, re.M)
+        n += len(m.group(1)) if m else 0
+print(n)
+EOF
+}
+fmt() { printf '%d' "$1" | sed -e :a -e 's/\(.*[0-9]\)\([0-9]\{3\}\)/\1 \2/;ta'; }
+wagents=$(listing "$dk/agents/"*.md)
+wskills=$(listing "$dk/skills/"*/SKILL.md)
+wtotal=$(( $(plen "$whome/.claude/CLAUDE.md") + $(plen "$dk/RULES.md") \
+    + $(plen "$wproj/AGENTS.md") + $(plen "$wproj/CLAUDE.md") + wagents + wskills ))
+
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+[ $? -eq 0 ] || fail "weigh не прошёл при потолке выше замера: $out"
+# Базовый прогон идёт под слепком без раскладки devkit: пол и ничего сверх него.
+# Пропусти сборщик слепка любую из трёх частей раскладки, и число вырастет.
+echo "$out" | grep -q 'прогон 1: без раскладки 30 010, с раскладкой 44 330, разница 14 320' ||
+    fail "первая пара прогонов посчитана не так: $out"
+echo "$out" | grep -q 'прогон 3: .*разница 14 400' || fail "третья пара прогонов посчитана не так: $out"
+echo "$out" | grep -q 'замер: 14 360 токенов, разброс 80 (0,56%)' || fail "замер или разброс не те: $out"
+[ "$(wc -l < "$calls" | tr -d ' ')" -eq 6 ] || fail "три повтора это шесть прогонов, а вышло $(wc -l < "$calls")"
+grep -qF "$wproj" "$calls" && fail "замер гонял прогон прямо в чекауте проекта: $(cat "$calls")"
+# Карманы: файл считается один раз, даже когда приезжает двумя дорогами
+# (глобальной точкой и импортом тонкого файла).
+[ "$(echo "$out" | grep -c 'RULES.md')" -eq 1 ] || fail "RULES.md посчитан не одним карманом: $out"
+echo "$out" | grep -q "глобальная точка ~/.claude/CLAUDE.md .*$(fmt "$(plen "$whome/.claude/CLAUDE.md")")" ||
+    fail "карман глобальной точки посчитан не так: $out"
+echo "$out" | grep -q "итого .*$(fmt "$wtotal")" || fail "итог по карманам не сошёлся ($wtotal): $out"
+echo "$out" | grep -q "листинг определений agents/ .*$(fmt "$wagents")" || fail "листинг агентов не сошёлся: $out"
+echo "$out" | grep -q "листинг скиллов .*$(fmt "$wskills")" || fail "листинг скиллов не сошёлся: $out"
+# Коэффициент этого прогона и расхождение расчёта с замером считаются от тех же
+# чисел: символы карманов делятся на замер, расчёт идёт по коэффициенту дизайна.
+wcoef=$(python3 -c "print(('%.2f' % ($wtotal / 14360.0)).replace('.', ','))")
+echo "$out" | grep -q "коэффициент этого прогона: $wcoef символа на токен" || fail "коэффициент не сошёлся: $out"
+wcalc=$(python3 -c "print(int(round($wtotal / 2.45 - 14360)))")
+echo "$out" | grep -q "расчёт против замера: .*$(fmt "$wcalc") токенов" || fail "расхождение расчёта с замером не сошлось: $out"
+
+# Потолок: равный замеру не превышен, на токен ниже уже превышен, и это код 1.
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 14360 2>&1)
+[ $? -eq 0 ] || fail "потолок вровень с замером принят за превышение: $out"
+echo "$out" | grep -q 'потолок резидента 14 360 токенов, запас 0' || fail "нет строки про запас до потолка: $out"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 14359 2>&1)
+[ $? -eq 1 ] || fail "замер выше потолка не дал кода 1: $out"
+echo "$out" | grep -q 'потолок резидента 14 359 токенов превышен на 1' || fail "нет строки про превышение потолка: $out"
+
+# Повторов один: разброса нет, а прогонов ровно два.
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --runs 1 --limit 20000 2>&1)
+[ $? -eq 0 ] || fail "weigh с одним повтором не прошёл: $out"
+echo "$out" | grep -q 'замер: 14 320 токенов, разброс 0' || fail "одиночный повтор посчитан не так: $out"
+[ "$(wc -l < "$calls" | tr -d ' ')" -eq 2 ] || fail "один повтор это два прогона, а вышло $(wc -l < "$calls")"
+
+# Девятое определение агента: листинг растёт ровно на имя и описание, и вместе с
+# ним растёт итог. Иначе экономия перетекала бы в карман, который никто не мерит.
+probe_desc=$(python3 -c 'print("описание" * 25)')
+printf -- '---\nname: probe-agent\ndescription: %s\neffort: low\n---\n\nтело определения\n' "$probe_desc" \
+    > "$dk/agents/probe-agent.md"
+cp "$dk/agents/probe-agent.md" "$whome/.claude/agents/"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+grown=$((wagents + 11 + ${#probe_desc}))
+echo "$out" | grep -q "листинг определений agents/ .*$(fmt "$grown")" ||
+    fail "листинг агентов не вырос на новое определение ($grown): $out"
+echo "$out" | grep -q "итого .*$(fmt "$((wtotal + 11 + ${#probe_desc}))")" ||
+    fail "итог по карманам не вырос на новое определение: $out"
+rm -f "$dk/agents/probe-agent.md" "$whome/.claude/agents/probe-agent.md"
+
+# Несвежая раскладка на машине: замер отказан, находка названа, ни одного
+# прогона не заказано. Мерить по вчерашней раскладке значит соврать молча.
+mv "$whome/.claude/skills/board-groom" "$wtmp/board-groom"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+[ $? -eq 2 ] || fail "weigh мерил по несвежей раскладке: $out"
+echo "$out" | grep -q 'нет скилла .*board-groom' || fail "отказ не называет находку раскладки: $out"
+echo "$out" | grep -q 'замер отменён' || fail "отказ не объяснён: $out"
+[ -s "$calls" ] && fail "при отказе всё же гонялись прогоны: $(cat "$calls")"
+mv "$wtmp/board-groom" "$whome/.claude/skills/board-groom"
+# Тот же отказ по файлам правил проекта: тронутый руками тонкий файл это чужая
+# раскладка, и замер по ней тоже не о чем.
+printf '@../nope.md\n' >> "$wproj/CLAUDE.md"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+[ $? -eq 2 ] || fail "weigh мерил по правленому руками тонкому файлу: $out"
+[ -s "$calls" ] && fail "при отказе по файлам правил всё же гонялись прогоны: $(cat "$calls")"
+cp "$wtmp/thin.gen" "$wproj/CLAUDE.md"
+
+# Нет claude в PATH: гнать замер нечем, и это не находка веса, а отказ.
+: > "$calls"
+out=$(HOME="$whome" PATH="$sys" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" 2>&1)
+[ $? -eq 2 ] || fail "weigh без claude в PATH не отказался: $out"
+echo "$out" | grep -q 'claude не в PATH' || fail "отказ без claude не объяснён: $out"
+
+# Повторов ноль: мерить нечего, и это отказ, а не деление на ноль.
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --runs 0 2>&1)
+[ $? -eq 2 ] || fail "weigh с нулём повторов не отказался: $out"
+
+# Карманы embed-харнеса: правила вклеены в сам AGENTS.md, и он посчитан целиком,
+# а тонкого файла и отдельных файлов правил у такого харнеса нет. Сложи их
+# сверху вклейки, и вес правил уехал бы в сумму дважды.
+cat > "$dk/harness/embed-tool.toml" <<'EOF'
+[detect]
+
+[rules]
+mode = "embed"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+EOF
+mkdir -p "$whome/.devkit"
+printf 'enabled = ["embed-tool"]\n' > "$whome/.devkit/harness.local"
+cp "$wproj/AGENTS.md" "$wtmp/agents.plain"
+HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
+grep -q '^<!-- devkit:rules begin' "$wproj/AGENTS.md" || fail "правила не вклеились в AGENTS.md embed-харнеса"
+out=$(HOME="$whome" python3 - "$dk" "$wproj" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1] + "/devkitctl")
+import weigh
+name, profile = weigh.active_profile(sys.argv[2], sys.argv[1])
+for label, chars in weigh.pockets(sys.argv[2], sys.argv[1], profile):
+    print("%s\t%d" % (label, chars))
+EOF
+)
+echo "$out" | grep -q "^AGENTS.md проекта	$(plen "$wproj/AGENTS.md")$" || fail "AGENTS.md с вклейкой посчитан не целиком: $out"
+echo "$out" | grep -q 'RULES' && fail "файлы правил посчитаны сверх вклейки: $out"
+echo "$out" | grep -q 'тонкий' && fail "у embed-харнеса нашёлся тонкий файл: $out"
+echo "$out" | grep -q 'листинг определений' && fail "харнесу без своих субагентов посчитаны определения агентов: $out"
+echo "$out" | grep -q "^листинг скиллов	$wskills$" || fail "листинг скиллов у embed-харнеса не сошёлся: $out"
+rm -f "$dk/harness/embed-tool.toml" "$whome/.devkit/harness.local"
+cp "$wtmp/agents.plain" "$wproj/AGENTS.md"
+cp "$wtmp/thin.gen" "$wproj/CLAUDE.md"
+
+# Ядро правил нарезано: резидентно то, что импортирует тонкий файл, а не полный
+# текст. Глубину claude-code объявляет ядром, и как только RULES.core.md
+# появляется, за импортом переезжает и карман. Считай карман по-старому, и порог
+# резидента мерил бы файл, которого в контексте уже нет.
+printf 'ядро правил, короткий текст\n' > "$dk/RULES.core.md"
+HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
+grep -q 'RULES.core.md' "$wproj/CLAUDE.md" || fail "тонкий файл не переехал на нарезанное ядро"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --runs 1 --limit 20000 2>&1)
+[ $? -eq 0 ] || fail "weigh не прошёл на нарезанном ядре: $out"
+echo "$out" | grep -q "RULES.core.md (импорт тонкого файла) .*$(fmt "$(plen "$dk/RULES.core.md")")" ||
+    fail "карман считает не нарезанное ядро: $out"
+echo "$out" | grep -q '^  RULES.md (импорт' && fail "в карманах остался полный текст правил: $out"
+rm -f "$dk/RULES.core.md"
+HOME="$whome" PATH="$wpath" python3 "$dkctl" doctor --fix -C "$wproj" >/dev/null 2>&1
+grep -q 'RULES.core.md' "$wproj/CLAUDE.md" && fail "тонкий файл не вернулся на полный текст правил"
+
+# Битый ответ клиента: замер падает вслух, а не выдаёт разницу из нулей.
+cat > "$wbin/claude" <<'EOF'
+#!/bin/sh
+echo "$PWD" >> "$WEIGH_CALLS"
+echo 'ничего похожего на json'
+EOF
+chmod +x "$wbin/claude"
+: > "$calls"
+out=$(HOME="$whome" PATH="$wpath" WEIGH_CALLS="$calls" python3 "$dkctl" weigh -C "$wproj" --limit 20000 2>&1)
+[ $? -eq 2 ] || fail "weigh проглотил ответ клиента без usage: $out"
+echo "$out" | grep -q 'не JSON' || fail "поломка прогона не названа: $out"
+
 # devkit, выложенный worktree ветки задачи: mtime исходников там ничего не
 # значит, сборка не запускается, находка отправляет в основной чекаут.
 git -C "$dk" init -q .

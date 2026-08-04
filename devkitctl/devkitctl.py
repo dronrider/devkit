@@ -24,6 +24,14 @@
       генерация файлов правил), заполненное не трогает, неоднозначное
       оставляет находкой
 
+  devkitctl weigh [-C dir] [--runs N] [--limit T] [--model M] [--prompt "..."]
+      живой замер веса резидента: два headless-прогона claude -p с одинаковым
+      запросом (базовый без раскладки devkit, целевой с ней), разница это цена
+      текста devkit в токенах. Рядом расчёт по карманам в символах и токенах и
+      расхождение расчёта с замером; код 1, когда замер выше потолка. Прогон
+      стоит денег и требует сети, поэтому команда отдельная, а не проверка
+      доктора; несвежая раскладка на машине это отказ мерить
+
   devkitctl stats [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
       доля ошибок, отсортировано по частоте убыванием, в конце итоговая строка
@@ -41,6 +49,7 @@ import rules
 import shutil
 import subprocess
 import sys
+import weigh
 from datetime import datetime
 from pathlib import Path
 
@@ -690,6 +699,22 @@ def doctor(start, fix=False):
     return 0
 
 
+def weigh_resident(start, runs, limit, model, prompt):
+    # Гейт свежести: замер меряет раскладку devkit на машине, а кладёт её
+    # doctor --fix. По вчерашней раскладке замер соврал бы молча, поэтому сперва
+    # прогоняются те же проверки доктора, что за раскладку и отвечают. Остальной
+    # машинный контур (снимок квоты, tmux) на вес резидента не влияет и мерить
+    # не мешает.
+    root, _ = project_root(start)
+    findings = []
+    for check in (check_agent_defs, check_skills):
+        f, _ = check(False)
+        findings += ["машина: %s" % m for m in f]
+    rfindings, _ = rules.check(root, DEVKIT, False, SKIP_DIRS)
+    findings += rfindings
+    return weigh.measure(root, DEVKIT, findings, runs, limit, prompt, model)
+
+
 def stats(start):
     root, _ = project_root(start)
     log_file = root / RUN_LOG
@@ -800,11 +825,21 @@ def main(argv):
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    w = sub.add_parser("weigh", help="живой замер веса резидента")
+    w.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    w.add_argument("--runs", type=int, default=weigh.RUNS,
+                   help="сколько пар прогонов, по ним считается разброс (по умолчанию %d)" % weigh.RUNS)
+    w.add_argument("--limit", type=int, default=weigh.LIMIT,
+                   help="потолок резидента в токенах, выше него код 1 (по умолчанию %d)" % weigh.LIMIT)
+    w.add_argument("--model", default="", help="модель прогона, по умолчанию модель клиента")
+    w.add_argument("--prompt", default=weigh.PROMPT, help="запрос прогона, у обоих он один")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         rc = doctor(a.dir, a.fix)
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
+    elif a.cmd == "weigh":
+        rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     else:
         rc = stats(a.dir)
     log_run(project_root(a.dir)[0], a.cmd, rc)

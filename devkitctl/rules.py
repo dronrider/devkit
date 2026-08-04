@@ -230,9 +230,11 @@ def gen_marker(depth, body):
     return "<!-- devkit:generated %sbody=%s -->" % (tag, digest(body))
 
 
-def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL):
+def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=None):
     # Тонкий файл харнеса: строка-маркер с глубиной и хешем тела, дальше импорты.
     # При вклейке остаётся один импорт AGENTS.md, в нём правила уже лежат.
+    # Готовые источники передаёт замер резидента: он собирает раскладку проекта
+    # в своей директории, а список файлов и их глубина остаются проектными.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
     if embed:
         # Правил тонкий файл тогда не везёт вовсе, они лежат во вклейке, и
@@ -241,7 +243,8 @@ def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL):
     paths = [AGENTS_FILE]
     if not embed:
         paths += [Path(os.path.relpath(p, root)).as_posix()
-                  for p in rule_sources(devkit, root, board, depth)]
+                  for p in (rule_sources(devkit, root, board, depth)
+                            if sources is None else sources)]
     body = "".join(tpl.replace("{path}", p) + "\n" for p in paths)
     if not embed and depth == DEPTH_POINTERS:
         ptr = pointers_text(devkit, root)

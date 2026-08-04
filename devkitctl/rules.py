@@ -95,7 +95,9 @@ def narrow_warns(d, path, machine_names):
 
 def enabled_harnesses(root, profiles_dir, machine_path=None):
     # Включённые харнесы с их профилями и находки по дороге. Слои те же, что у
-    # agentctl: машинный конфиг включает, проектный только сужает.
+    # agentctl: машинный конфиг включает, проектный только сужает. root=None
+    # значит «проектного слоя тут нет вовсе»: так читает глобальную точку
+    # check_global, ей проект, из которого запущен doctor, не указ.
     findings = []
     machine = Path(os.path.expanduser(machine_path or MACHINE_CONFIG))
     names = list(DEFAULT_ENABLED)
@@ -105,17 +107,18 @@ def enabled_harnesses(root, profiles_dir, machine_path=None):
         except harness.TomlError as e:
             return [], ["машинный конфиг харнесов не разобран: %s" % e]
         names = list(d.arr_of("", "enabled"))
-    proj = Path(root) / PROJECT_CONFIG
-    if proj.exists():
-        try:
-            d = harness.parse(str(proj), read_text(proj))
-        except harness.TomlError as e:
-            return [], ["проектный конфиг харнесов не разобран: %s" % e]
-        findings += narrow_warns(d, proj, names)
-        if d.get("", "enabled") is not None:
-            kept = [n for n in d.arr_of("", "enabled") if n in names]
-            findings += ["%s сужен проектным слоем %s" % (n, proj) for n in names if n not in kept]
-            names = kept
+    if root is not None:
+        proj = Path(root) / PROJECT_CONFIG
+        if proj.exists():
+            try:
+                d = harness.parse(str(proj), read_text(proj))
+            except harness.TomlError as e:
+                return [], ["проектный конфиг харнесов не разобран: %s" % e]
+            findings += narrow_warns(d, proj, names)
+            if d.get("", "enabled") is not None:
+                kept = [n for n in d.arr_of("", "enabled") if n in names]
+                findings += ["%s сужен проектным слоем %s" % (n, proj) for n in names if n not in kept]
+                names = kept
     out = []
     for name in names:
         path = Path(profiles_dir) / ("%s.toml" % name)
@@ -455,6 +458,107 @@ def check_thin(name, profile, root, devkit, board, embed, depth, fix):
     return findings, fixed
 
 
+def tilde_path(path):
+    # Путь от ~ там, где файл лежит внутри home, иначе абсолютный: то же
+    # представление, в каком сегодняшняя глобальная точка называет devkit
+    # руками, и оно переживает переезд devkit на другую машину лучше жёсткого
+    # абсолютного пути.
+    path = Path(path).resolve()
+    home = Path.home().resolve()
+    try:
+        return "~/%s" % path.relative_to(home).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def global_target(devkit):
+    # Что именно тянет глобальная точка: ядро, если оно уже нарезано, иначе
+    # полный текст, как и rule_sources для проектных тонких файлов.
+    core = core_of(Path(devkit) / "RULES.md")
+    return core if core.exists() else Path(devkit) / "RULES.md"
+
+
+def global_thin_text(profile, devkit):
+    # Глобальная точка ловит любую сессию на машине, а не только проект
+    # devkit: AGENTS.md и правила доски ей взять неоткуда, поэтому тело не
+    # тонкий файл проекта, а короткая шапка плюс один импорт. Прозы ровно на
+    # случай, когда импорт почему-то не развернулся (devkit не склонирован
+    # либо переехал): куда смотреть и что делать до тех пор.
+    tpl = profile.str_of("rules", "import_line") or "@{path}"
+    body = (
+        "Ядро правил работы живёт в devkit (`%s`), подключено импортом ниже.\n"
+        "Если импорт не развернулся в контекст, прочитать файл явно перед тем,\n"
+        "как писать любую прозу: комментарии, докстринги, README, LLD, описания\n"
+        "задач, тексты коммитов и сообщения в чат.\n"
+        "\n"
+        "%s\n"
+    ) % (tilde_path(devkit), tpl.replace("{path}", tilde_path(global_target(devkit))))
+    return "%s\n%s" % (gen_marker(DEPTH_FULL, body), body)
+
+
+def check_global(devkit, fix, machine_path=None, whence=""):
+    # Глобальная точка правил (`[rules] global_file`): применяется к любой
+    # сессии на машине, а не к проекту, из которого запущен doctor, поэтому
+    # харнесы читаются машинным слоем без проектного сужения (root=None).
+    # devkit тут не то же самое, что DEVKIT вызывающей стороны: правку машины,
+    # видной каждой сессии сразу, кладёт только основной чекаут, а worktree
+    # ветки задачи передаёт непустой whence и fix=False, как это уже устроено
+    # для определений агентов и скиллов.
+    findings, fixed = [], []
+    profiles, f = enabled_harnesses(None, Path(devkit) / "harness", machine_path)
+    findings += f
+    for name, profile in profiles:
+        if mode_of(profile) != "import":
+            continue
+        gf = profile.str_of("rules", "global_file")
+        if not gf:
+            continue
+        path = Path(os.path.expanduser(gf))
+        want = global_thin_text(profile, devkit)
+        if not path.exists():
+            if fix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(want, encoding="utf-8")
+                fixed.append("%s сгенерирован: глобальная точка правил харнеса %s" % (path, name))
+            else:
+                findings.append("нет %s: правила харнеса %s до сессий вне проектов devkit не "
+                                "доезжают; %sсгенерировать: devkitctl doctor --fix" % (path, name, whence))
+            continue
+        have = read_text(path)
+        stamp, body = generated_parts(have)
+        if stamp is None:
+            findings.append("%s без маркера devkit:generated, генератор его не трогает: "
+                            "локальные добавления перенести в RULES.local.md, файл заменить "
+                            "сгенерированным devkitctl doctor --fix" % path)
+            continue
+        if digest(body) != stamp:
+            findings.append("%s правлен руками, содержимое разошлось с хешем маркера: "
+                            "локальные добавления перенести в RULES.local.md, файл заменить "
+                            "devkitctl doctor --fix" % path)
+            continue
+        if have != want:
+            if fix:
+                path.write_text(want, encoding="utf-8")
+                fixed.append("%s перегенерирован: путь devkit или состав ядра изменились" % path)
+            else:
+                findings.append("%s устарел: путь devkit или состав ядра изменились; "
+                                "%sперегенерировать: devkitctl doctor --fix" % (path, whence))
+        # Свой мини-check_imports: тот печатает путь относительно проекта, а у
+        # глобальной точки проекта нет, и голое имя файла в находке было бы
+        # неотличимо от чужого CLAUDE.md.
+        for i, ln in enumerate(read_text(path).split("\n"), 1):
+            ln = ln.strip()
+            if not IMPORT_RE.match(ln):
+                continue
+            target = Path(os.path.expanduser(ln[1:]))
+            if not target.is_absolute():
+                target = path.parent / target
+            if not target.exists():
+                findings.append("%s:%d: импорт %s не разворачивается (devkit склонирован рядом?)"
+                                % (path, i, ln))
+    return findings, fixed
+
+
 def check_embed(root, devkit, board, embeds, depth, fix):
     # Вклейка в AGENTS.md: единственная копия текста правил в дереве. src
     # разошёлся, значит devkit обновился и вклейка перегенерируется молча; body
@@ -667,11 +771,19 @@ def layout(root, devkit, dst, depth):
             out.append("  home/%s%s" % (rel, "" if src == point else " (из %s)" % src.name))
 
         # Глобальная точка тянет текст правил своим импортом, и в раскладке он
-        # обязан быть той же глубины: иначе рядом с ядром приезжает полный текст,
-        # и сравнивать стенду нечего. Имена сверяются после разворота симлинков:
-        # у пользователя точка ходит на правила через симлинк в ~/.claude.
-        deep = {p.name: core_of(p) if core_of(p).is_file() and depth != DEPTH_FULL else p
-                for p in rule_sources(devkit, root, board, DEPTH_FULL)}
+        # обязан быть той же глубины: иначе рядом с ядром приезжает полный
+        # текст, и сравнивать стенду нечего. Ключ строится и по полному имени,
+        # и по имени его ядра: глобальную точку генерит devkitctl и называет в
+        # ней ядро напрямую, а до его нарезки (или на чужой машине с ручной
+        # правкой) она называла полный текст, обычно через симлинк в
+        # ~/.claude, и оба случая обязаны сойтись с тем, что уже тянет тонкий
+        # файл.
+        deep = {}
+        for p in rule_sources(devkit, root, board, DEPTH_FULL):
+            target_file = core_of(p) if core_of(p).is_file() and depth != DEPTH_FULL else p
+            deep[p.name] = target_file
+            if core_of(p).is_file():
+                deep[core_of(p).name] = target_file
         drop = []
         for spec in import_targets(point):
             target = Path(os.path.expanduser(spec))

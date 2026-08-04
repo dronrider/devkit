@@ -15,14 +15,15 @@
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, бинари утилит devkit в PATH и не старее
       исходников, определения агентов в ~/.claude/agents, скиллы devkit в
-      ~/.claude/skills, tmux и снимки
+      ~/.claude/skills, глобальная точка правил ([rules] global_file, обычно
+      ~/.claude/CLAUDE.md) свежа и не правлена руками, tmux и снимки
       квоты в ~/.devkit/quota; профили харнесов devkit/harness прогоняются
       через тот же валидатор, каким их читает agentctl;
       --fix additive доводит обвязку (хуки, болванка deploy.local либо
       недостающие в ней ключи, .gitignore, сборка бинарей, копия определений
-      агентов и скиллов, переезд одиночного снимка квоты в директорию,
-      генерация файлов правил), заполненное не трогает, неоднозначное
-      оставляет находкой
+      агентов и скиллов, глобальная точка правил, переезд одиночного снимка
+      квоты в директорию, генерация файлов правил), заполненное не трогает,
+      неоднозначное оставляет находкой
 
   devkitctl weigh [-C dir] [--runs N] [--limit T] [--model M] [--prompt "..."]
       живой замер веса резидента: два headless-прогона claude -p с одинаковым
@@ -557,7 +558,7 @@ def check_notify_hook(text, settings):
 
 def check_machine(fix):
     # Машинный контур, общий для всех проектов: хуки Claude Code, бинари devkit,
-    # определения агентов, скиллы, tmux и снимок квоты.
+    # определения агентов, скиллы, глобальная точка правил, tmux и снимок квоты.
     findings, fixed = [], []
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""
@@ -573,6 +574,14 @@ def check_machine(fix):
         f, d = check(fix)
         findings += f
         fixed += d
+    main, from_main = devkit_checkout()
+    devkit_src = main if (main / "harness").is_dir() else DEVKIT
+    whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
+                                   "правила с непроверенной ветки нельзя; из основного чекаута %s: "
+                                   % main)
+    gf, gd = rules.check_global(devkit_src, fix and from_main, whence=whence)
+    findings += gf
+    fixed += gd
     if not shutil.which("tmux"):
         findings.append("tmux не в PATH: agentctl quota refresh не снимет панель /usage, "
                         "корректор останется без снимка; ставится пакетным менеджером (brew install tmux)")

@@ -24,7 +24,12 @@ type board struct {
 	sects map[string][]row
 }
 
+// findRoot перед подъёмом смотрит редирект корп-контура: в корп-клоне доска
+// лежит в боковой директории, и её называет ключ devkit.local (corp.go).
 func findRoot(start string) (string, error) {
+	if local := corpLocal(start); local != "" {
+		return local, nil
+	}
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return "", err
@@ -35,7 +40,7 @@ func findRoot(start string) (string, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("не нашёл docs/TASKS.md вверх от %s", start)
+			return "", corpRootErr(start)
 		}
 		dir = parent
 	}

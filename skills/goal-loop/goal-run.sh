@@ -92,6 +92,16 @@ prompt="продолжай цель $id по скиллу goal-loop"
 grep -Eq '^[[:space:]]*autonomous[[:space:]]*=[[:space:]]*true' "$deploy" 2>/dev/null ||
     die "в $deploy нет autonomous = true, цикл без выката проверял бы сценарии против старого прода"
 command -v claude >/dev/null 2>&1 || die "claude в PATH нет, поднимать витки нечем"
+# Предполётная проверка прав: одобрять запросы харнеса в headless-сессии
+# некому, и виток без прав отвечает continue, не сделав ничего. Без проверки
+# такой цикл жёг бы бюджет до самой воронки, а стоп был бы неотличим от
+# молчания.
+perms=$(python3 "$here/../../devkitctl/perms.py" 2>&1)
+case $? in
+    0) ;;
+    1) die "$perms" ;;
+    *) die "прав машинного контура не проверить: $perms" ;;
+esac
 
 lock_busy() { # замок держит живой владелец
     pid=$(cat "$lock/pid" 2>/dev/null) || return 1

@@ -38,6 +38,7 @@ def fake_devkit(root):
     write(root / "tools" / "obeycheck" / "testdata" / "test_tool.py", "print(1)\n")
     write(root / "tools" / "obeycheck" / "testdata" / "fake-agent.sh", SH_FUNC)
     write(root / "kit" / "skills" / "check-skills.py", "print(1)\n")
+    write(root / "kit" / "skills" / "check_skills_test.py", "print(1)\n")
     write(root / "kit" / "skills" / "goal-loop" / "SKILL.md", "---\nname: goal-loop\n---\n")
     write(root / "kit" / "skills" / "goal-loop" / "goal-run.py", "print(1)\n")
     write(root / "kit" / "harness" / "claude-code.toml", "[detect]\n")
@@ -137,7 +138,43 @@ class LayoutTest(SandboxCase):
             self.drop(rel)
         self.assertIn("kit/runner: %s" % layout.SH_ONLY, found)
 
+    def test_skill_shell_lives_next_to_its_skill_md(self):
+        # Оболочка скилла лежит ровно в kit/skills/<имя>/, рядом со своим
+        # SKILL.md. Пока проверка смотрела на префикс kit/skills/, все четыре
+        # подлога проходили молча: и файл прямо в каталоге скиллов, и файл
+        # подкаталогом глубже оболочки.
+        py_flat = self.plant("kit/skills/random-helper.py", "print(1)\n")
+        sh_flat = self.plant("kit/skills/random.sh", SH_OK)
+        py_deep = self.plant("kit/skills/goal-loop/sub/deep.py", "print(1)\n")
+        sh_deep = self.plant("kit/skills/goal-loop/sub/deep.sh", SH_OK)
+        try:
+            found = layout.check(self.dk)
+        finally:
+            for rel in (py_flat, sh_flat, py_deep, sh_deep):
+                self.drop(rel)
+        self.assertEqual(len(found), 4, "находок %d, а подлогов четыре: %s" % (len(found), found))
+        for rel in (py_flat, py_deep):
+            self.assertIn("%s: %s" % (rel, layout.TOOL_CODE), found)
+        for rel in (sh_flat, sh_deep):
+            self.assertIn("%s: %s" % (rel, layout.SH_ONLY), found)
+
+    def test_selfcheck_exception_is_closed(self):
+        # Самопроверка скиллов и её тест названы поимённо: соседний python в том
+        # же каталоге исключением не становится. Молчание по самой самопроверке
+        # проверяет чистое дерево, тут проверяется, что список закрытый.
+        self.assertEqual(layout.lang_rule("kit/skills/check-skills.py"), "",
+                         "точечное исключение под самопроверку скиллов не работает")
+        self.assertEqual(layout.lang_rule("kit/skills/check_helper.py"), layout.TOOL_CODE,
+                         "исключение под самопроверку накрыло соседний файл")
+
     def test_material_directories(self):
+        go_in_skill = self.plant("kit/skills/goal-loop/gen.go", "package main\n")
+        try:
+            found = layout.check(self.dk)
+        finally:
+            self.drop(go_in_skill)
+        self.assertIn("%s: %s" % (go_in_skill, layout.MATERIAL), found,
+                      "место оболочки скилла пустило в kit/ ещё и go")
         go_in_kit = self.plant("kit/agents/gen.go", "package main\n")
         py_in_docs = self.plant("docs/lld/plot.py", "print(1)\n")
         try:
@@ -217,6 +254,18 @@ class LayoutCommandTest(SandboxCase):
         rc, out = self.box.dkctl_run("doctor", "--layout", "-C", str(alien))
         self.assertEqual(rc, 0, "чужой проект дал находку раскладки: %s" % out)
         self.assertIn_("на самом devkit", out, "не сказано, почему проверять нечего")
+
+
+class SelfcheckFilesTest(unittest.TestCase):
+    """Поимённое исключение стоит на живых файлах: уехавший в tools/ или
+    переименованный инструмент оставил бы в проверке дыру, о которой никто не
+    узнает.
+    """
+
+    def test_named_files_exist(self):
+        for rel in layout.SKILLS_SELFCHECK:
+            self.assertTrue((DEVKIT_SRC / rel).is_file(),
+                            "исключение раскладки названо на %s, а файла нет" % rel)
 
 
 class ReadmeGuardTest(unittest.TestCase):

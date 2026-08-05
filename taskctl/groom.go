@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -15,6 +16,9 @@ import (
 // Кодом они стали потому, что результат разбора обязан пережить сессию на
 // диске, а ручная правка docs/tasks/ упирается в pre-push и учит обходу
 // DEVKIT_PUSH_OK=1.
+
+// draftHeadingRe находит заголовок черновика любого уровня ниже первого.
+var draftHeadingRe = regexp.MustCompile(`^#{2,} `)
 
 // draftText это файл черновика построчно: правки точечные, чужие разделы
 // сохраняются как есть.
@@ -197,11 +201,13 @@ func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, e
 
 // draftSection собирает раздел для файла задачи: текст черновика целиком, без
 // своего заголовка первого уровня и с разделами уровнем ниже, чтобы они не
-// разрывали раздел приписки.
+// разрывали раздел приписки. Дата записи уезжает в заголовок раздела: в теле
+// она повисла бы голой строкой без всякого контекста, а знать, когда мысль
+// записана, по ней потом и нужно.
 func draftSection(id, text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	var body []string
-	head := true
+	head, written, top, fence := true, "", true, ""
 	for _, ln := range lines {
 		if head {
 			if strings.TrimSpace(ln) == "" {
@@ -212,15 +218,37 @@ func draftSection(id, text string) string {
 				continue
 			}
 		}
-		if strings.HasPrefix(ln, "## ") {
-			ln = "#" + ln
+		// Забор блока кода считается тем же порядком, что в
+		// rewriteLinksSkippingCodeBlocks: решётка внутри примера команды это
+		// текст, а не заголовок, и опускать её незачем.
+		if m := fenceRe.FindStringSubmatch(ln); m != nil {
+			switch {
+			case fence == "":
+				fence = m[1]
+			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(ln[len(m[0]):]) == "":
+				fence = ""
+			}
+		}
+		// Опускается любой заголовок черновика, а не только второго уровня:
+		// иначе его «### » встал бы вровень с опущенным «## » и разделы
+		// перепутались бы местами.
+		if fence == "" && draftHeadingRe.MatchString(ln) {
+			ln, top = "#"+ln, false
+		}
+		if top && written == "" && strings.HasPrefix(strings.TrimSpace(ln), draftWrittenPrefix) {
+			written = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), draftWrittenPrefix))
+			continue
 		}
 		body = append(body, ln)
 	}
 	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
 		body = body[1:]
 	}
-	out := append([]string{fmt.Sprintf("## Из черновика %s", id), ""}, body...)
+	title := fmt.Sprintf("## Из черновика %s", id)
+	if written != "" {
+		title += fmt.Sprintf(" (%s%s)", draftWrittenPrefix, written)
+	}
+	out := append([]string{title, ""}, body...)
 	return strings.Join(out, "\n") + "\n"
 }
 

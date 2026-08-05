@@ -264,9 +264,18 @@ func TestDraftAttachToTaskWithFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"## Из черновика " + id, "своя репродукция через -m", "### Черновик", "отложен: ждём разбора"} {
+	head := fmt.Sprintf("## Из черновика %s (%s%s)", id, draftWrittenPrefix, today())
+	for _, want := range []string{head, "своя репродукция через -m", "### Черновик", "отложен: ждём разбора"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("в файле задачи нет %q:\n%s", want, data)
+		}
+	}
+	// Дата записи живёт в заголовке раздела, а голой строкой в теле она
+	// повисла бы без контекста: черновик её несёт всегда, значит это штатный
+	// вид приписки, а не краевой случай.
+	for _, ln := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(ln) == draftWrittenPrefix+today() {
+			t.Fatalf("строка даты записи уехала в тело раздела:\n%s", data)
 		}
 	}
 	if strings.Contains(string(data), "\n# "+id) {
@@ -390,6 +399,67 @@ func TestDraftDrop(t *testing.T) {
 	}
 	if st := gitOut(t, root, "diff", "--cached", "--name-status"); !strings.Contains(st, "D\t"+draftRel(id)) {
 		t.Fatalf("удаление не в индексе: %q", st)
+	}
+}
+
+// TestDraftSectionDemotesAllHeadings: у приписки опускаются заголовки любого
+// уровня, иначе «### » черновика встало бы вровень с опущенным «## », а решётка
+// внутри блока кода это текст примера, и её трогать нечем.
+func TestDraftSectionDemotesAllHeadings(t *testing.T) {
+	text := "# XR-008: заголовок\n\nзаписан 2026-08-05\n\n## Черновик\n\nтело\n\n### Подробности\n\n```\n## это пример, а не заголовок\n```\n"
+	got := draftSection("XR-008", text)
+	for _, want := range []string{
+		"## Из черновика XR-008 (записан 2026-08-05)",
+		"\n### Черновик\n",
+		"\n#### Подробности\n",
+		"\n## это пример, а не заголовок\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("в разделе нет %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestDraftUncommittedRemoved: черновик, заведённый и ещё не закоммиченный
+// (штатный ход, когда разбор идёт следом за записью), гиту неизвестен, git rm
+// по нему падает. Такой файл удаляется обычным rm и в pathspec коммита не едет,
+// иначе git commit валился бы на нём целиком, унося и правку файла задачи.
+func TestDraftUncommittedRemoved(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+
+	dropped := newDraft(t, root, "записал и сразу выбросил")
+	msg, err := cmdDraftDrop(root, dropped, "предмета нет", CommitOpts{Msg: "docs(tasks): " + dropped + " удалён"})
+	if err != nil {
+		t.Fatalf("drop незакоммиченного черновика: %v", err)
+	}
+	if strings.Contains(msg, ", коммит ") {
+		t.Fatalf("коммитить нечего, черновика гит не знал: %q", msg)
+	}
+	if _, err := os.Stat(draftFile(root, dropped)); !os.IsNotExist(err) {
+		t.Fatalf("файл черновика на месте: %v", err)
+	}
+
+	attached := newDraft(t, root, "записал и сразу приписал")
+	head := gitOut(t, root, "rev-parse", "HEAD")
+	if _, err := cmdDraftAttach(root, attached, "XR-002", CommitOpts{Msg: "docs(tasks): " + attached + " уехал в XR-002"}); err != nil {
+		t.Fatalf("attach незакоммиченного черновика: %v", err)
+	}
+	if _, err := os.Stat(draftFile(root, attached)); !os.IsNotExist(err) {
+		t.Fatalf("файл черновика на месте: %v", err)
+	}
+	if gitOut(t, root, "rev-parse", "HEAD") == head {
+		t.Fatal("attach не создал коммита с файлом задачи")
+	}
+	if files := gitOut(t, root, "show", "--name-only", "--pretty="); files != "docs/tasks/XR-002.md" {
+		t.Fatalf("в коммите не только файл задачи: %q", files)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-002"))
+	if err != nil || !strings.Contains(string(data), "записал и сразу приписал") {
+		t.Fatalf("текст черновика не доехал: %q, %v", data, err)
+	}
+	if st := gitOut(t, root, "status", "--porcelain", "docs"); st != "" {
+		t.Fatalf("после разбора в docs/ осталось незакоммиченное: %q", st)
 	}
 }
 

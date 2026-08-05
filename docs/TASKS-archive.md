@@ -96,3 +96,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-132 | taskctl: исходы разбора черновика, команды defer, attach и drop | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-132.md](tasks/archive/2026/DK-132.md), `865f505`, `e2d9db7`, `5128c1d`, `b81f802`, `5825ef3`, `3efc9d5`, `b6b8fdd` |
 | DK-130 | board-groom: исследование черновика до оформления, режимы захода и тест скилла | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-130.md](tasks/archive/2026/DK-130.md), `baf71e4`, `5ba26dd`, `f266d5b` |
 | DK-131 | Разбор накопителя черновиков devkit доработанным board-groom | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-131.md](tasks/archive/2026/DK-131.md) |
+| DK-139 | LLD: раскладка каталогов devkit и правило выбора языка инструмента | LLD | P2 | 2026-08-05 | [tasks/archive/2026/DK-139.md](tasks/archive/2026/DK-139.md) |

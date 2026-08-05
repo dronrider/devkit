@@ -15,30 +15,30 @@ jobs:
           go-version: stable
       - name: тесты taskctl
         run: go test ./...
-        working-directory: taskctl
+        working-directory: tools/taskctl
       - name: тесты shipctl
         run: go test ./...
-        working-directory: shipctl
+        working-directory: tools/shipctl
       - name: тесты agentctl
         run: go test ./...
-        working-directory: agentctl
+        working-directory: tools/agentctl
       - name: тесты trackctl
         run: go test ./...
-        working-directory: trackctl
+        working-directory: tools/trackctl
       - name: тесты regcheck
         run: go test ./...
-        working-directory: regcheck
+        working-directory: tools/regcheck
       - name: тесты obeycheck
         run: go test ./...
-        working-directory: obeycheck
+        working-directory: tools/obeycheck
       - name: тесты хуков
         run: sh hooks/test.sh
       - name: тесты devkitctl
-        run: sh devkitctl/test.sh
+        run: sh tools/devkitctl/test.sh
       - name: тесты скиллов
-        run: sh skills/test.sh
+        run: sh kit/skills/test.sh
       - name: тесты оболочки цели
-        run: sh skills/goal-loop/test.sh
+        run: sh kit/skills/goal-loop/test.sh
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
       - name: бит исполнения test.sh по всему репозиторию

@@ -3,8 +3,8 @@
 Порядок команд для двух сценариев: обычный проект (код и доска в одном
 репозитории) и проект корп-контура (чужой репозиторий, куда ничего нашего не
 уезжает). Здесь только последовательность, разбор каждой команды в README
-утилит: [devkitctl](devkitctl/README.md), [taskctl](taskctl/README.md),
-[shipctl](shipctl/README.md), [trackctl](trackctl/README.md).
+утилит: [devkitctl](tools/devkitctl/README.md), [taskctl](tools/taskctl/README.md),
+[shipctl](tools/shipctl/README.md), [trackctl](tools/trackctl/README.md).
 
 Каждое подключение заканчивается списком «осталось сделать»: команда сама
 называет файлы и ключи, которые за человека не заполнить. Если список пуст, она
@@ -15,7 +15,7 @@
 ```bash
 git clone https://github.com/dronrider/devkit.git ~/projects/devkit
 cd ~/projects/devkit && for u in taskctl shipctl agentctl trackctl regcheck obeycheck; do (cd $u && go build -o ~/go/bin/$u .); done
-python3 ~/projects/devkit/devkitctl/devkitctl.py doctor --fix
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py doctor --fix
 ```
 
 Клон рядом с проектами, бинари утилит в `~/go/bin` (он должен лежать в PATH),
@@ -29,7 +29,7 @@ devkit, поэтому в отчёте идут и находки по само�
 ## Обычный проект
 
 ```bash
-python3 ~/projects/devkit/devkitctl/devkitctl.py new -C ~/projects/myproj --prefix MP
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py new -C ~/projects/myproj --prefix MP
 ```
 
 Кладёт `AGENTS.md`, заводит доску `docs/TASKS.md` с префиксом ID `MP`,
@@ -46,7 +46,7 @@ $EDITOR ~/projects/myproj/.devkit/deploy.local
 Файл гитигнорнут и живёт только на машине.
 
 ```bash
-python3 ~/projects/devkit/devkitctl/devkitctl.py doctor -C ~/projects/myproj
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py doctor -C ~/projects/myproj
 ```
 
 Проверка обвязки: по проекту находок нет значит он подключён.
@@ -63,7 +63,7 @@ shipctl -C ~/projects/myproj start MP-001
 
 ```bash
 git clone <корп-репозиторий> ~/projects/corp-proj
-python3 ~/projects/devkit/devkitctl/devkitctl.py corp -C ~/projects/corp-proj \
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py corp -C ~/projects/corp-proj \
     --prefix CB --contour corp --key ABC --remote <личный приватный remote доски>
 ```
 
@@ -95,7 +95,7 @@ $EDITOR ~/projects/corp-proj-local/.devkit/deploy.local
 
 ```bash
 trackctl -C ~/projects/corp-proj sync
-python3 ~/projects/devkit/devkitctl/devkitctl.py doctor -C ~/projects/corp-proj
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py doctor -C ~/projects/corp-proj
 trackctl -C ~/projects/corp-proj status
 ```
 

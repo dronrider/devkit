@@ -166,14 +166,14 @@ def session_event(name, stream=None):
 
 def harness_dir():
     # Своя директория профилей нужна тестам и нестандартной раскладке devkit.
-    return os.environ.get("DEVKIT_HARNESS_DIR") or os.path.join(ROOT, "harness")
+    return os.environ.get("DEVKIT_HARNESS_DIR") or os.path.join(ROOT, "kit", "harness")
 
 
 def profile(name, directory=None):
     """Профиль харнеса разобранным Doc, None если файла нет или он битый.
     Парсер один на весь devkit, второй копии формата тут не заводится."""
     path = os.path.join(directory or harness_dir(), "%s.toml" % name)
-    sys.path.insert(0, os.path.join(ROOT, "devkitctl"))
+    sys.path.insert(0, os.path.join(ROOT, "tools", "devkitctl"))
     try:
         import harness
     except ImportError:

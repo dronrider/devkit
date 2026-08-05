@@ -13,7 +13,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from testenv import (PY, SandboxCase, executable, git_init, harness, read, weigh, write)
+from testenv import (PY, SandboxCase, executable, fake_home, git_init, harness, read, weigh,
+                     write)
 
 CLIENT = '''#!%s
 import json
@@ -195,8 +196,9 @@ class KeychainTest(SandboxCase):
         write(keys / "login.keychain-db", "не связка, а её место")
         # Связка на месте: в слепке симлинк на неё, и авторизация читается с
         # машины. Копия тут была бы и лишней, и опасной: связка живая.
-        link = Path(weigh.build_home(str(src), str(work / "full"), str(self.box.dk),
-                                     profile, True)) / weigh.KEYCHAIN_DIR
+        with fake_home(src):
+            link = Path(weigh.build_home(str(src), str(work / "full"), str(self.box.dk),
+                                         profile, True)) / weigh.KEYCHAIN_DIR
         self.assertTrue(link.is_symlink(), str(link))
         self.assertEqual(os.path.realpath(str(link)), os.path.realpath(str(keys)))
         self.assertTrue((link / "login.keychain-db").is_file())
@@ -204,15 +206,17 @@ class KeychainTest(SandboxCase):
         # не заводится.
         bare = work / "bare"
         (bare / ".claude").mkdir(parents=True)
-        dst = Path(weigh.build_home(str(bare), str(work / "nokeys"), str(self.box.dk),
-                                    profile, True))
+        with fake_home(bare):
+            dst = Path(weigh.build_home(str(bare), str(work / "nokeys"), str(self.box.dk),
+                                        profile, True))
         self.assertFalse((dst / "Library").exists())
 
 
 class MeasureTest(SandboxCase):
-    """Живой замер резидента подложным клиентом. Проверки идут цепочкой по одной
-    раскладке, как их гонял sh-раннер: раскладка дорогая, а часть шагов её же и
-    меняет, поэтому в именах порядковый номер.
+    """Живой замер резидента подложным клиентом. Проверки идут по одной
+    раскладке, как их гонял sh-раннер: собирать её на каждый шаг дорого, поэтому
+    в именах порядковый номер. Копию devkit шаги трогают только на время своей
+    проверки и возвращают как было, и сверка слепка это подтверждает.
     """
 
     @classmethod
@@ -406,13 +410,9 @@ class MeasureTest(SandboxCase):
                                home=self.whome, path=self.wpath)
             self.assertRegex(read(self.proj / "AGENTS.md"), r"(?m)^<!-- devkit:rules begin",
                              "правила не вклеились в AGENTS.md embed-харнеса")
-            old = os.environ.get("HOME")
-            os.environ["HOME"] = str(self.whome)
-            try:
+            with fake_home(self.whome):
                 _, profile_obj = weigh.active_profile(str(self.proj), str(self.box.dk))
                 pockets = weigh.pockets(str(self.proj), str(self.box.dk), profile_obj)
-            finally:
-                os.environ["HOME"] = old
             labels = dict(pockets)
             self.assertEqual(labels.get("AGENTS.md проекта"), len(read(self.proj / "AGENTS.md")),
                              "AGENTS.md с вклейкой посчитан не целиком: %s" % (pockets,))
@@ -473,11 +473,17 @@ class MeasureTest(SandboxCase):
             self.assertIn_("замер: 3 720 токенов", out,
                            "директория замера собрана не под глубину проекта")
             # residency_findings читает карманы с диска и применяет ту же
-            # пороговую логику, юниты которой прогнаны выше.
-            self.assertEqual(weigh.residency_findings(str(self.proj), str(self.box.dk)), [],
-                             "нарезанное ядро проекта без доски дало находку веса")
+            # пороговую логику, юниты которой прогнаны выше. Машина под этот
+            # шаг своя, разложенная под уже нарезанное ядро: HOME замера нарочно
+            # тяжёлый (полный текст правил симлинком), и мерить порог по нему
+            # значило бы мерить фикстуру, а не раскладку.
+            rhome = self.box.make_home(self.wtmp / "resid-home")
+            with fake_home(rhome):
+                found = weigh.residency_findings(str(self.proj), str(self.box.dk))
+            self.assertEqual(found, [], "нарезанное ядро проекта без доски дало находку веса")
             write(core, "ядро правил, %s\n" % ("я" * 5600))
-            found = weigh.residency_findings(str(self.proj), str(self.box.dk))
+            with fake_home(rhome):
+                found = weigh.residency_findings(str(self.proj), str(self.box.dk))
             self.assertTrue([f for f in found if "вес резидента, ядро (RULES.core.md" in f],
                             "разбухшее ядро на диске не дало находки: %s" % (found,))
         finally:
@@ -494,7 +500,8 @@ class MeasureTest(SandboxCase):
         write(probe / "SKILL.md",
               "---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n" + "т" * 16500)
         try:
-            found = weigh.skill_findings(str(self.box.dk))
+            with fake_home(self.whome):
+                found = weigh.skill_findings(str(self.box.dk))
             self.assertTrue([f for f in found if "тело скилла oversized-probe: 16 500 символов, "
                                                  "порог 16 000 символов; резать скилл надвое" in f],
                             "разбухший скилл на диске не дал находки: %s" % (found,))
@@ -508,8 +515,9 @@ class MeasureTest(SandboxCase):
         # выше говорит, что находка работает, а эта что чинить по ней нечего:
         # иначе доктор в чекауте devkit красный всегда, и его находки перестают
         # что-либо значить.
-        self.assertEqual(weigh.skill_findings(str(self.box.dk)), [],
-                         "скиллы репозитория выше порога тела")
+        with fake_home(self.whome):
+            found = weigh.skill_findings(str(self.box.dk))
+        self.assertEqual(found, [], "скиллы репозитория выше порога тела")
 
     def test_15_zero_difference(self):
         # Оба прогона пары стоят одинаково: разница нулевая, мерить было нечего.

@@ -6,6 +6,9 @@
 правка в ~/projects/devkit красила бы самопроверку на исправном коде. Копия не
 под git, поэтому для доктора она и есть основной чекаут.
 """
+import atexit
+import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -19,6 +22,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DEVKIT_SRC = HERE.parent.parent
 PY = sys.executable
+
+# Настоящий HOME из-под тестов не виден вовсе: и модули devkitctl, и сам доктор
+# ходят в него через expanduser, и тест, забывший подставить свой, читал бы
+# раскладку машины, на которой запущен. Такой тест зелен у того, у кого devkit
+# уже разложен, и красен на голой машине, а увидеть это можно только там.
+# Поэтому HOME процесса подменяется на пустую директорию: забытая подстановка
+# краснеет сразу и у всех, а не в чужом CI.
+REAL_HOME = os.environ["HOME"]
+GUARD_HOME = Path(tempfile.mkdtemp(prefix="devkitctl-guard-home-"))
+os.environ["HOME"] = str(GUARD_HOME)
+atexit.register(shutil.rmtree, str(GUARD_HOME), True)
+_GO_ENV = {}
 
 # Системная часть PATH подставная: в ней только то, без чего не обойтись.
 # Проверки вида «tmux не в PATH» иначе держались бы на том, чего нет в /usr/bin
@@ -90,6 +105,33 @@ def run(args, cwd=None, env=None, path=None, home=None):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
+def go_cache_env():
+    """Кеш сборки go с машины: без него сборка под подставным HOME гоняла бы
+    компиляцию стандартной библиотеки заново на каждый прогон. Это единственное,
+    за чем тесты ходят в настоящий HOME, и берётся оно одними путями кеша.
+    """
+    if not _GO_ENV:
+        for key in ("GOCACHE", "GOMODCACHE"):
+            rc, out = run(["go", "env", key], home=REAL_HOME)
+            _GO_ENV[key] = out.strip() if rc == 0 else None
+    return dict(_GO_ENV)
+
+
+@contextlib.contextmanager
+def fake_home(home):
+    """Подставной HOME для вызовов модулей прямо в процессе теста.
+
+    Модули devkitctl читают раскладку машины через expanduser, и юнит без такой
+    подстановки судил бы по HOME того, кто запустил прогон.
+    """
+    old = os.environ["HOME"]
+    os.environ["HOME"] = str(home)
+    try:
+        yield Path(home)
+    finally:
+        os.environ["HOME"] = old
+
+
 def git(root, *args):
     return run(["git", "-C", str(root)] + list(args))
 
@@ -126,7 +168,6 @@ def taken_at(hours_ago, fmt="%Y-%m-%dT%H:%M"):
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import context  # noqa: E402
-import corp  # noqa: E402
 import harness  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
@@ -194,15 +235,8 @@ class Sandbox:
         """Глобальная точка правил в подставном HOME, той же генерацией, что и --fix."""
         dk = Path(dk or self.dk)
         prof = harness.parse("p.toml", read(self.dk / "kit" / "harness" / "claude-code.toml"))
-        old = os.environ.get("HOME")
-        os.environ["HOME"] = str(home)
-        try:
+        with fake_home(home):
             text = rules.global_thin_text(prof, str(dk))
-        finally:
-            if old is None:
-                os.environ.pop("HOME", None)
-            else:
-                os.environ["HOME"] = old
         return write(Path(home) / ".claude" / "CLAUDE.md", text)
 
     def dkctl_run(self, *args, **kw):
@@ -221,12 +255,41 @@ class Sandbox:
             write(root / "docs" / "TASKS.md", "# Задачи\n")
         return root
 
+    def fingerprint(self):
+        """Слепок копии devkit по содержимому: чем стенд был до теста.
+
+        Считается по содержимому, а не по mtime: тест, вернувший файл на место
+        перезаписью, стенд не менял. `.git` пропускается, его трогает не тест, а
+        сам git (индекс, логи ссылок).
+        """
+        h = hashlib.sha1()
+        for p in sorted(self.dk.rglob("*")):
+            if ".git" in p.relative_to(self.dk).parts:
+                continue
+            h.update(str(p.relative_to(self.dk)).encode("utf-8"))
+            if p.is_symlink():
+                h.update(b"->" + os.readlink(str(p)).encode("utf-8"))
+            elif p.is_file():
+                h.update(p.read_bytes())
+        return h.hexdigest()
+
     def close(self):
         shutil.rmtree(str(self.root), ignore_errors=True)
 
 
 class SandboxCase(unittest.TestCase):
-    """Общий стенд на класс: копия devkit заводится один раз, а не на тест."""
+    """Общий стенд на класс: копия devkit заводится один раз, а не на тест.
+
+    Стенд дорогой, поэтому общий, и цена этому утечка состояния между тестами:
+    один тест правит копию devkit, следующий видит чужую раскладку и краснеет
+    через раз. Поэтому слепок копии сверяется до и после каждого теста, и
+    невосстановленная правка называется сразу, а не всплывает в соседнем тесте.
+
+    Класс, где шаги нарочно стоят друг на друге (цепочка вклейки правил), это
+    объявляет полем CHAIN и за состояние отвечает сам.
+    """
+
+    CHAIN = False
 
     @classmethod
     def setUpClass(cls):
@@ -235,6 +298,15 @@ class SandboxCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.box.close()
+
+    def setUp(self):
+        if not self.CHAIN:
+            self._devkit_before = self.box.fingerprint()
+
+    def tearDown(self):
+        if not self.CHAIN:
+            self.assertEqual(self.box.fingerprint(), self._devkit_before,
+                             "тест оставил копию devkit изменённой, стенд течёт в соседние тесты")
 
     def assertIn_(self, needle, out, why):
         self.assertIn(needle, out, "%s: %s" % (why, out))

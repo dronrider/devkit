@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from testenv import (PY, DEVKIT_SRC, SandboxCase, git_init, harness, read, rules, run,
-                     write)
+from testenv import (PY, DEVKIT_SRC, SandboxCase, fake_home, git_init, harness, read, rules,
+                     run, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 EMBED_MARKER = re.compile(r"^<!-- devkit:rules begin src=[0-9a-f]{12} body=[0-9a-f]{12} -->$", re.M)
@@ -198,9 +198,9 @@ class GlobalPointUnitsTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, str(self.work), True)
         self.home = self.work / "home"
         (self.home / "nested" / "devkit-in-home").mkdir(parents=True)
-        old = os.environ.get("HOME")
-        os.environ["HOME"] = str(self.home)
-        self.addCleanup(os.environ.__setitem__, "HOME", old)
+        home = fake_home(self.home)
+        home.__enter__()
+        self.addCleanup(home.__exit__, None, None, None)
 
     def test_tilde_path(self):
         inhome = str(self.home / "nested" / "devkit-in-home")
@@ -286,11 +286,22 @@ class LayoutTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, str(self.work), True)
         self.rules_cli = DEVKIT_SRC / "tools" / "devkitctl" / "rules.py"
         self.project = DEVKIT_SRC / "tools" / "obeycheck" / "testdata" / "project"
+        # Раскладка забирает в стенд и глобальную точку правил, а ищет её в
+        # HOME. Свой HOME с точкой, сгенерированной тем же генератором: без него
+        # тест мерил бы раскладку машины, на которой запущен, и на голой машине
+        # («в раскладке нет глобальной точки правил») краснел бы.
+        self.home = self.work / "home"
+        (self.home / ".claude").mkdir(parents=True)
+        prof = harness.parse("p.toml", read(DEVKIT_SRC / "kit" / "harness" / "claude-code.toml"))
+        with fake_home(self.home):
+            write(self.home / ".claude" / "CLAUDE.md",
+                  rules.global_thin_text(prof, str(DEVKIT_SRC)))
 
     def test_pair_of_layouts(self):
         lay = self.work / "lay"
         for d in ("full", "core"):
-            rc, out = run([PY, str(self.rules_cli), "--layout", d, str(lay / d), str(self.project)])
+            rc, out = run([PY, str(self.rules_cli), "--layout", d, str(lay / d), str(self.project)],
+                          home=self.home)
             self.assertEqual(rc, 0, "раскладка глубины %s не собралась: %s" % (d, out))
         self.assertTrue((lay / "core" / "RULES.core.md").is_file(),
                         "в раскладке ядра нет RULES.core.md")
@@ -377,6 +388,7 @@ class GlobalPointDoctorTest(SandboxCase):
         cls.dk_resolved = os.path.realpath(str(cls.box.dk))
 
     def setUp(self):
+        super().setUp()
         write(self.gclaude, self.clean)
 
     def stale(self):
@@ -538,8 +550,11 @@ class EmbedTest(SandboxCase):
     """Вклейка правил у инструмента, который импортов не понимает. Проверки идут
     цепочкой по одному проекту, как их гонял sh-раннер: каждый следующий шаг
     стоит на раскладке, которую оставил предыдущий, поэтому в именах порядковый
-    номер.
+    номер, а стенд объявлен цепочкой. Дальше класса это не течёт: копия devkit у
+    каждого класса своя.
     """
+
+    CHAIN = True
 
     @classmethod
     def setUpClass(cls):

@@ -812,6 +812,31 @@ stage 'внутренний Ковчег проекта'
 (cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
 [ $? -eq 1 ] || fail "слово контура из привязки не поймано"
 
+# Префикс доски, совпавший с ключом проекта в привязке: локальный ID и ключ
+# тикета там одна и та же строка, отличить их нечем, и правило про ID снимается
+# целиком, иначе рубеж валил бы каждый коммит по конвенции компании (DK-124).
+# Путь боковой директории и слова контура при этом стерегутся по-прежнему.
+printf 'repo = %s\ntraces = ковчег\nkey = XR\n' "$corp" > "$side/.devkit/tracker.local"
+stage 'правка по XR-007'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null) ||
+    fail "рубеж бьёт по ключу тикета, неотличимому от локального ID"
+stage "смотри $side/docs/TASKS.md"
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "на совпавших префиксах потерян рубеж по пути боковой директории"
+stage 'внутренний Ковчег проекта'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "на совпавших префиксах потеряно слово контура"
+# Ключ проекта, разведённый с префиксом доски: правило про ID работает как
+# работало, а ключ тикета проходит.
+printf 'repo = %s\ntraces = ковчег\nkey = TR\n' "$corp" > "$side/.devkit/tracker.local"
+stage 'правка по XR-007'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null)
+[ $? -eq 1 ] || fail "разведённый ключ проекта снял правило про локальный ID"
+stage 'правка по TR-007'
+(cd "$corp" && python3 "$here/check-traces.py" --staged 2>/dev/null) ||
+    fail "ключ тикета чужого префикса принят за локальный ID"
+printf 'repo = %s\ntraces = ковчег\n' "$corp" > "$side/.devkit/tracker.local"
+
 # Имя добавленного файла смотрится наравне с его строками.
 printf 'обычная строка\n' > "$corp/XR-012.md"
 git -C "$corp" add XR-012.md

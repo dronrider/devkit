@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Юниты уведомителя: разбор события, выбор бэкенда, окно троттлинга, фокус
-окна. Прогон целиком (стаб бэкенда, временный HOME, все поводы) живёт в test.sh.
+"""Уведомитель сессии: разбор события, выбор бэкенда, окно троттлинга и фокус
+окна юнитами, а следом прогон целиком, где хук зовётся процессом со своим HOME,
+стабом отправителя и стабом опроса фокуса.
 """
 import importlib.util
 import io
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -755,6 +758,456 @@ class TestTerminalSequence(unittest.TestCase):
         self.assertTrue(seq.endswith("\007"))
         self.assertTrue(notify.terminal_sequence("devkit: ждёт ввода", "текст")
                         .startswith("\033]9;devkit: ждёт ввода. текст"))
+
+
+# --- Уведомитель целиком: хук как процесс, стаб вместо бэкенда, временный HOME.
+
+NOTIFY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify.py")
+DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                    "testdata", "claude-code")
+REASONS = ("permission_prompt", "agent_needs_input", "elicitation_dialog",
+           "idle_prompt")
+
+
+class HookCase(unittest.TestCase):
+    """Обвязка прогона хука целиком: свой HOME, стаб отправителя, стаб опроса
+    фокуса и своя системная часть PATH. Живой osascript тут не спрашивается:
+    он отвечал бы тем, что открыто на машине в эту минуту."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+        self.mark = os.path.join(self.tmp, "notify.mark")
+        self.logfile = os.path.join(self.home, ".devkit", "notify.log")
+        self.title = os.path.join(self.tmp, "focus.title")
+        self.asked = os.path.join(self.tmp, "focus.mark")
+        self.stub = self.script("notify-stub", "printf '%%s|%%s\\n' \"$1\" \"$2\" >> %s\n"
+                                % shlex.quote(self.mark))
+        # Стаб отправителя с кликом зовётся именно terminal-notifier: по имени
+        # бэкенда уведомитель и решает, брать ли цель перехода.
+        self.tn = self.script("terminal-notifier", "printf '%%s\\n' \"$*\" >> %s\n"
+                              % shlex.quote(self.mark))
+        self.osascript = self.script(
+            "osascript",
+            "printf '%%s\\n' \"$*\" >> %s\n[ -s %s ] || exit 1\n"
+            "read -r title < %s && printf '%%s\\n' \"$title\"\n"
+            % (shlex.quote(self.asked), shlex.quote(self.title),
+               shlex.quote(self.title)))
+        # Своя системная часть PATH: проверка «слать нечем» иначе держалась бы
+        # на том, есть ли на этой машине osascript или notify-send.
+        self.sysdir = os.path.join(self.tmp, "sys")
+        os.makedirs(self.sysdir)
+        for tool in ("sh", "python3"):
+            found = shutil.which(tool)
+            if found:
+                os.symlink(found, os.path.join(self.sysdir, tool))
+
+    def script(self, name, body):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+        return path
+
+    def hook(self, text, backend=None, focus=False, **env):
+        """Событие на stdin, стаб вместо бэкенда. Фокус окна по умолчанию
+        выключен: своя проверка фокуса идёт со стабом опроса."""
+        env.setdefault("HOME", self.home)
+        env.setdefault("DEVKIT_NOTIFY_BACKEND", backend or self.stub)
+        if focus:
+            env.setdefault("PATH", os.path.dirname(self.osascript)
+                           + os.pathsep + self.sysdir)
+        else:
+            env.setdefault("DEVKIT_NOTIFY_FOCUS", "off")
+        return subprocess.run([sys.executable, NOTIFY, "--hook", "claude-code"],
+                              input=text, env=env, capture_output=True, text=True)
+
+    def click(self, text, **env):
+        """То же, но отправителем стаб terminal-notifier."""
+        env.setdefault("CLAUDE_CODE_ENTRYPOINT", "claude-vscode")
+        return self.hook(text, backend=self.tn, **env)
+
+    def cli(self, *args, **env):
+        env.setdefault("HOME", self.home)
+        env.setdefault("DEVKIT_NOTIFY_BACKEND", self.stub)
+        cwd = env.pop("cwd", None)
+        return subprocess.run([sys.executable, NOTIFY] + list(args), env=env,
+                              cwd=cwd, capture_output=True, text=True)
+
+    def event(self, kind, reason="", session="sess", **extra):
+        d = {"hook_event_name": kind, "notification_type": reason,
+             "session_id": session, "cwd": "/p/devkit-dk-034",
+             "message": "текст повода", "agent_type": "exec-low",
+             "last_assistant_message": "первая строка\nвторая"}
+        d.update(extra)
+        return json.dumps(d)
+
+    def sent(self):
+        if not os.path.exists(self.mark):
+            return []
+        with open(self.mark, encoding="utf-8") as f:
+            return [ln for ln in f.read().split("\n") if ln]
+
+    def journal(self):
+        if not os.path.exists(self.logfile):
+            return ""
+        with open(self.logfile, encoding="utf-8") as f:
+            return f.read()
+
+    def asked_size(self):
+        """Сколько раз спрашивали фокус: файла нет, значит не спрашивали."""
+        return os.path.getsize(self.asked) if os.path.exists(self.asked) else 0
+
+    def clear(self):
+        open(self.mark, "w").close()
+        open(self.asked, "w").close()
+
+    def look_at(self, window):
+        with open(self.title, "w", encoding="utf-8") as f:
+            f.write(window + "\n")
+
+
+class TestHookReasons(HookCase):
+    def test_every_reason_reaches_the_backend(self):
+        # В заголовке видно, какая сессия зовёт.
+        for reason in REASONS:
+            self.clear()
+            r = self.hook(self.event("Notification", reason, "sess-" + reason))
+            self.assertEqual(r.returncode, 0, reason)
+            self.assertTrue(self.sent()[0].startswith("devkit-dk-034: "),
+                            (reason, self.sent()))
+
+    def test_subagent_reaches_the_backend(self):
+        r = self.hook(self.event("SubagentStop", session="sess-sub"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("субагент отработал|exec-low: первая строка", self.sent()[0])
+
+    def test_turn_done_is_loud(self):
+        r = self.hook(self.event("Stop", session="sess-turn"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertIn("повод turn_done уровень громкий", self.journal())
+
+    def test_user_prompt_sends_nothing(self):
+        r = self.hook(self.event("UserPromptSubmit", session="sess-in"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+
+    def test_quiet_reasons_and_alien_events(self):
+        for text in (self.event("Notification", "auth_success", "sess-quiet"),
+                     self.event("PreToolUse", session="sess-quiet"),
+                     "не json"):
+            self.assertEqual(self.hook(text).returncode, 0, text)
+        self.assertEqual(self.sent(), [])
+
+
+class TestBannerLevel(HookCase):
+    """Уровень доезжает до баннера: громкий со звуком, фоновый молча и с
+    группой по сессии, чтобы новый баннер вытеснял её же предыдущий."""
+
+    def test_loud_goes_with_sound_and_without_group(self):
+        r = self.click(self.event("Notification", "permission_prompt", "sess-loud"))
+        self.assertEqual(r.returncode, 0)
+        line = self.sent()[0]
+        self.assertIn("-sound default", line)
+        self.assertNotIn("-group", line)
+
+    def test_background_goes_muted_and_grouped(self):
+        r = self.click(self.event("SubagentStop", session="sess-bg"))
+        self.assertEqual(r.returncode, 0)
+        line = self.sent()[0]
+        self.assertIn("-group devkit-sess-bg", line)
+        self.assertNotIn("-sound", line)
+        self.assertIn("повод subagent_stop уровень фоновый", self.journal())
+
+
+class TestHookFocusProcess(HookCase):
+    """Звать о конце хода или молчать, решает фокус окна."""
+
+    def test_session_window_in_focus_keeps_quiet(self):
+        self.look_at("Правка notify.py - devkit-dk-034")
+        r = self.hook(self.event("Stop", session="sess-focus"), focus=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+        self.assertTrue(self.asked_size(), "фокус не спрашивался вовсе")
+        self.assertIn("повод turn_done уровень громкий бэкенд - цель - "
+                      "пропуск: окно сессии в фокусе", self.journal())
+
+    def test_alien_window_gets_the_call(self):
+        # Дерево проекта и дерево задачи это разные окна: сессия сидит в
+        # devkit-dk-034, а заголовок кончается на devkit.
+        self.look_at("Разбор задачи - devkit")
+        r = self.hook(self.event("Stop", session="sess-away"), focus=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+
+    def test_silent_poll_gets_the_call(self):
+        # Нет разрешения на управление компьютером или не macOS: зовём, и отказ
+        # виден в журнале, иначе «звонит всегда» разбирать нечем.
+        r = self.hook(self.event("Stop", session="sess-blind"), focus=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertIn("фокус не определился, зовём", self.journal())
+
+    def test_switch_off_skips_the_poll(self):
+        self.look_at("Правка notify.py - devkit-dk-034")
+        r = self.hook(self.event("Stop", session="sess-nofocus"), focus=True,
+                      DEVKIT_NOTIFY_FOCUS="off")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.asked_size(), 0)
+
+    def test_poll_is_only_about_the_turn(self):
+        # Лишний опрос на каждого субагента это его 180 мс на пустом месте, а
+        # запрос разрешения зовёт в любом случае.
+        self.look_at("Правка notify.py - devkit-dk-034")
+        self.clear()
+        for text in (self.event("Notification", "permission_prompt", "sess-fp"),
+                     self.event("SubagentStop", session="sess-fs")):
+            self.assertEqual(self.hook(text, focus=True).returncode, 0)
+        self.assertEqual(len(self.sent()), 2, self.sent())
+        self.assertEqual(self.asked_size(), 0)
+
+
+class TestThrottleWindowProcess(HookCase):
+    def test_idle_prompt_does_not_repeat_the_turn(self):
+        # Конец хода и idle_prompt это один повод.
+        for text in (self.event("Stop", session="sess-wait"),
+                     self.event("Notification", "idle_prompt", "sess-wait")):
+            self.assertEqual(self.hook(text).returncode, 0)
+        self.assertEqual(len(self.sent()), 1, self.sent())
+
+    def test_user_prompt_clears_the_mark(self):
+        # Второй ход подряд снова звучит, хотя окно повода «сессия ждёт тебя»
+        # ещё не вышло.
+        for text in (self.event("Stop", session="sess-again"),
+                     self.event("UserPromptSubmit", session="sess-again"),
+                     self.event("Stop", session="sess-again")):
+            self.assertEqual(self.hook(text).returncode, 0)
+        self.assertEqual(len(self.sent()), 2, self.sent())
+
+    def test_repeat_in_window_is_quiet_and_neighbour_is_not(self):
+        text = self.event("Notification", "idle_prompt", "sess-window")
+        self.hook(text)
+        self.hook(text)
+        self.assertEqual(len(self.sent()), 1, self.sent())
+        self.assertIn("пропуск: повтор в окне", self.journal())
+        self.hook(self.event("Notification", "idle_prompt", "sess-other"))
+        self.assertEqual(len(self.sent()), 2, self.sent())
+        # Журнал пишет сессию, повод, уровень и код возврата: жалоба «не
+        # приходят» разбирается по нему, а «важное не отличается от фонового»
+        # по уровню.
+        # Сессия в журнале обрезана, отсюда и sess-win в ожидании.
+        self.assertRegex(self.journal(), "сессия sess-win повод idle_prompt "
+                                         "уровень громкий бэкенд .*код возврата: 0")
+
+
+class TestBadEvent(HookCase):
+    """Кривой вход любого вида это код 0 и строка в журнале, а не traceback:
+    хук стоит в каждой сессии, и форма события целиком на стороне харнеса."""
+
+    def test_json_not_an_object(self):
+        for bad in ("42", "null", "[1,2]", '"строка"'):
+            r = self.hook(bad)
+            self.assertEqual(r.returncode, 0, bad)
+            self.assertEqual(r.stderr, "", bad)
+        self.assertIn("событие не разобрано: json не объектом", self.journal())
+
+    def test_field_of_the_wrong_shape(self):
+        r = self.hook(json.dumps({"hook_event_name": "Notification",
+                                  "notification_type": {"a": 1},
+                                  "session_id": "sess-bad"}))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+        self.assertIn("сессия sess-bad повод - уровень - бэкенд - цель - "
+                      "событие не разобрано: поля не той формы", self.journal())
+        self.assertEqual(self.sent(), [])
+
+    def test_numeric_body_keeps_the_reason(self):
+        # Повод не съедается: тело собирается из того, что дали.
+        r = self.hook(json.dumps({"hook_event_name": "Notification",
+                                  "notification_type": "permission_prompt",
+                                  "session_id": "sess-num", "cwd": "/p/devkit-dk-034",
+                                  "message": 42}))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: нужно разрешение|42"])
+
+
+class TestClickTargetProcess(HookCase):
+    def test_click_leads_to_the_calling_tree(self):
+        # Без windowId=_blank редактор подменил бы деревом задачи то окно, в
+        # котором сейчас работают.
+        r = self.click(self.event("Notification", "idle_prompt", "sess-click"))
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent()[0].endswith(
+            "-open vscode://file/p/devkit-dk-034?windowId=_blank"), self.sent())
+        self.assertIn("цель vscode://file/p/devkit-dk-034?windowId=_blank "
+                      "код возврата: 0", self.journal())
+
+    def test_worktree_subagent_leads_to_the_session_window(self):
+        # Субагент работает в дереве задачи, а окно сессии стоит на своём:
+        # заголовок показывает оба.
+        transcript = os.path.join(self.tmp, "transcript.jsonl")
+        with open(transcript, "w", encoding="utf-8") as f:
+            f.write('{"type":"queue-operation","sessionId":"s1"}\n'
+                    '{"type":"user","cwd":"/p/devkit"}\n')
+        r = self.click(json.dumps({"hook_event_name": "SubagentStop",
+                                   "session_id": "sess-wt",
+                                   "cwd": "/p/devkit-dk-059",
+                                   "transcript_path": transcript,
+                                   "agent_type": "exec-low",
+                                   "last_assistant_message": "готово"}))
+        self.assertEqual(r.returncode, 0)
+        line = self.sent()[0]
+        self.assertTrue(line.startswith("-title devkit (dk-059): субагент отработал"),
+                        line)
+        self.assertTrue(line.endswith("-open vscode://file/p/devkit?windowId=_blank"),
+                        line)
+
+    def test_backend_without_click_gets_no_target(self):
+        r = self.hook(self.event("Notification", "idle_prompt", "sess-noclick"))
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("open", self.sent()[0])
+        self.assertRegex(self.journal(), "сессия sess-noc.* повод idle_prompt "
+                                         "уровень громкий бэкенд .* цель - "
+                                         "код возврата: 0")
+
+    def test_cwd_not_a_string_falls_back(self):
+        r = self.click(json.dumps({"hook_event_name": "Notification",
+                                   "notification_type": "idle_prompt",
+                                   "session_id": "sess-cwd", "cwd": 7,
+                                   "message": "проба"}))
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent()[0].endswith("-activate com.microsoft.VSCode"),
+                        self.sent())
+
+    def test_own_target_wins(self):
+        r = self.click(self.event("Notification", "idle_prompt", "sess-own"),
+                       DEVKIT_NOTIFY_OPEN="x-devkit://{cwd}")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent()[0].endswith("-open x-devkit:///p/devkit-dk-034"),
+                        self.sent())
+
+    def test_empty_target_kills_the_click(self):
+        r = self.click(self.event("Notification", "idle_prompt", "sess-nogo"),
+                       DEVKIT_NOTIFY_OPEN="")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent(), "уведомление с погашенным кликом не ушло вовсе")
+        self.assertNotIn("open", self.sent()[0])
+
+
+class TestNoBackend(HookCase):
+    """Слать нечем: код 0, отказ в журнале и запасной путь через сам терминал."""
+
+    def test_terminal_sequence_is_the_fallback(self):
+        r = subprocess.run(
+            [sys.executable, NOTIFY, "--hook", "claude-code"],
+            input=self.event("Notification", "idle_prompt", "sess-none"),
+            env={"HOME": self.home, "PATH": self.sysdir},
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("бэкенда нет", self.journal())
+        self.assertIn("terminalSequence", r.stdout)
+
+
+class TestSwitchOff(HookCase):
+    """Выключатель гасит уведомитель целиком, в том числе аргументный режим."""
+
+    def test_hook_and_arguments_are_both_off(self):
+        r = self.hook(self.event("Notification", "idle_prompt", "sess-off"),
+                      DEVKIT_NOTIFY_OFF="1")
+        self.assertEqual(r.returncode, 0)
+        r = self.cli("заголовок", "тело", DEVKIT_NOTIFY_OFF="1")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+
+
+class TestArgumentMode(HookCase):
+    """Зовётся не только хуком, поэтому заголовок и тело идут прямо."""
+
+    def test_title_and_body_reach_the_backend(self):
+        r = self.cli("выкат", "прод обновлён")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["выкат|прод обновлён"])
+        self.assertIn("уровень громкий", self.journal())
+
+    def test_loud_by_default(self):
+        r = self.cli("выкат", "прод обновлён", DEVKIT_NOTIFY_BACKEND=self.tn)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("-sound default", self.sent()[0])
+
+    def test_quiet_lowers_the_level(self):
+        r = self.cli("--quiet", "поезд собран", "три задачи",
+                     DEVKIT_NOTIFY_BACKEND=self.tn)
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent()[0].startswith(
+            "-title поезд собран -message три задачи -group devkit"), self.sent())
+
+    def test_quiet_without_title_shows_help(self):
+        self.assertEqual(self.cli("--quiet").returncode, 2)
+
+    def test_call_from_a_sandbox_keeps_quiet(self):
+        # Песочница вроде синтетической доски из обкатки сценария: живой баннер
+        # про неё ложный (DK-069), и пропуск виден и в stdout, и в журнале.
+        r = self.cli("tmp-доска", "XR-001 в Check", cwd=self.tmp)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+        self.assertIn("уведомление пропущено", r.stdout)
+        self.assertIn("пропуск: песочница", self.journal())
+
+
+class TestSelfTest(HookCase):
+    """Самопроверка говорит, чем именно послано, и краснеет, когда слать
+    нечем."""
+
+    def test_backend_is_named(self):
+        r = self.cli("--self-test")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("послано через %s" % self.stub, r.stdout)
+
+    def test_no_backend_is_red(self):
+        r = subprocess.run([sys.executable, NOTIFY, "--self-test"],
+                           env={"HOME": self.home, "PATH": self.sysdir},
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("бэкенда уведомлений нет", r.stdout)
+
+
+class TestLiveSamples(HookCase):
+    """Образцы, снятые с работающего Claude Code, а не сочинённые."""
+
+    def sample(self, name):
+        with open(os.path.join(DATA, name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_live_permission_prompt_reaches_the_backend(self):
+        r = self.hook(self.sample("notify-permission.json"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(),
+                         ["work: нужно разрешение|Claude needs your permission"])
+
+    def test_live_file_write_is_not_a_notification(self):
+        r = self.hook(self.sample("write-memory-index.json"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+
+    def test_every_sample_goes_through_quietly(self):
+        # Разбор у образцов общий, поэтому непонятая форма события должна
+        # всплыть тут целиком, а не в одной проверке из четырёх.
+        for name in sorted(os.listdir(DATA)):
+            if not name.endswith(".json"):
+                continue
+            r = self.hook(self.sample(name))
+            self.assertEqual(r.returncode, 0, (name, r.stderr))
+            self.assertEqual(r.stderr, "", name)
+
+    def test_unknown_protocol_is_named(self):
+        r = subprocess.run([sys.executable, NOTIFY, "--hook", "кодекс"],
+                           input=self.sample("turn-done.json"),
+                           env={"HOME": self.home}, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("не заведён", r.stderr)
 
 
 if __name__ == "__main__":

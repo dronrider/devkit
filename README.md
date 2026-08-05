@@ -84,7 +84,7 @@ devkit должен лежать в соседней с проектом дир�
   это процедурная часть правил: резидентно только ядро, а шаги приезжают по
   вызову скилла. Копий в проектах нет, на машину их кладёт тот же
   `devkitctl doctor --fix`, только в `~/.claude/skills/`. Витки цели без
-  человека поднимает оболочка `kit/skills/goal-loop/goal-run.sh`: на машину она не
+  человека поднимает оболочка `kit/skills/goal-loop/goal-run.py`: на машину она не
   уезжает и зовётся путём из чекаута, как `hooks/notify.py`.
 - `tools/regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
   старом коде, см. [tools/regcheck/README.md](tools/regcheck/README.md).
@@ -201,7 +201,10 @@ CI и `.devkit/` с рабочей обвязкой выката: правила
   (`devkitctl`), оболочки, тесты python-части. Тест лежит рядом с модулем и
   зовётся `<модуль>_test.py`, а дефис в имени модуля становится в имени теста
   подчёркиванием (`check-symbols.py` и `check_symbols_test.py`): файл, чьё имя
-  не годится в имя модуля python, `discover` пропускает молча.
+  не годится в имя модуля python, `discover` пропускает молча. Точку входа,
+  которую зовут путём из чекаута и её имя названо в тексте скилла
+  (`goal-run.py`), дефис не отпускает и там, но раз до неё `discover` всё
+  равно не доходит, тест гонит её отдельным процессом, а не импортом.
 - sh - тонкая обёртка вокруг одной команды и одноразовый сценарий проверки
   задачи в `docs/tasks/`.
 
@@ -241,6 +244,6 @@ regcheck на багфиксах (последнее подсказывает `s
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
 гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
 в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
-из `hooks/`, `tools/devkitctl/test.sh`, `kit/skills/test.sh`,
-`kit/skills/goal-loop/test.sh`, `python3 hooks/check-exec-bit.py` (бит
+из `hooks/`, `kit/skills/` и `kit/skills/goal-loop/`, `tools/devkitctl/test.sh`,
+`python3 kit/skills/check-skills.py`, `python3 hooks/check-exec-bit.py` (бит
 исполнения у каждого `test.sh` репозитория).

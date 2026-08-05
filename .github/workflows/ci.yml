@@ -37,9 +37,11 @@ jobs:
       - name: тесты devkitctl
         run: sh tools/devkitctl/test.sh
       - name: тесты скиллов
-        run: sh kit/skills/test.sh
+        run: python3 kit/skills/check-skills.py
+      - name: юниты самопроверки скиллов
+        run: python3 kit/skills/check-skills_test.py
       - name: тесты оболочки цели
-        run: sh kit/skills/goal-loop/test.sh
+        run: python3 kit/skills/goal-loop/goal-run_test.py
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
       - name: бит исполнения test.sh по всему репозиторию

@@ -218,12 +218,12 @@ python3 ~/projects/devkit/hooks/notify.py "цель DK-100: wait-human" "DK-101 
 
 ## Оболочка goal-run
 
-Витки без человека поднимает оболочка `goal-run.sh` рядом с этим скиллом. На
+Витки без человека поднимает оболочка `goal-run.py` рядом с этим скиллом. На
 машину она не уезжает (`devkitctl doctor --fix` кладёт в `~/.claude/skills/`
 один `SKILL.md`), поэтому зовётся путём из чекаута, как `hooks/notify.py`:
 
 ```bash
-~/projects/devkit/kit/skills/goal-loop/goal-run.sh DK-100 -C ~/projects/myproj
+~/projects/devkit/kit/skills/goal-loop/goal-run.py DK-100 -C ~/projects/myproj
 ```
 
 Цикл уходит в свою tmux-сессию `goal-DK-100`, и команда возвращается сразу;

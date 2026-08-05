@@ -42,8 +42,10 @@ description: Правка самого devkit по ходу работы над 
    ```bash
    cd ~/projects/devkit
    for d in taskctl shipctl agentctl regcheck; do (cd tools/$d && go test ./...); done
-   for d in hooks tools/devkitctl; do (cd $d && python3 -m unittest discover -p '*_test.py'); done
-   python3 hooks/check-exec-bit.py
+   for d in hooks tools/devkitctl kit/skills kit/skills/goal-loop; do
+       (cd $d && python3 -m unittest discover -p '*_test.py')
+   done
+   python3 kit/skills/check-skills.py && python3 hooks/check-exec-bit.py
    ```
 
 5. Довести правку до места, где она действует. Хуки и файлы правил работают из

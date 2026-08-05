@@ -35,6 +35,34 @@ HOOKS = ("pre-commit", "commit-msg")
 # Что в корп-индексе значит утечку обвязки. Тонкие файлы харнесов приезжают
 # отдельно, они зависят от включённых профилей.
 INDEX_WATCH = ("AGENTS.md", "docs/TASKS.md", "docs/tasks", ".devkit", "local-docs")
+# Ключи привязки, которые подключение спрашивает флагами: сам он их не выдумает,
+# а молчаливое пустое место в файле человек находит уже на упавшей команде.
+BINDING_ASK = ("contour", "key", "branch")
+CONTOUR_TEMPLATE = """\
+# Контур компании для trackctl (trackctl/README.md): свойство компании, один на
+# все её репозитории. Токен в файле не лежит, token_env называет переменную
+# окружения с ним. Таблица [status] укладывает статусы трекера в секции доски,
+# ниже обычные имена Jira: сверить их со своим трекером.
+adapter = "jira"
+# Адрес трекера, https://tracker.example
+base_url = ""
+# Имя пользователя в трекере, от него идут assign и ворклоги
+user = ""
+token_env = "TRACKER_TOKEN"
+cost_s = "4h"
+cost_m = "1d"
+cost_l = "3d"
+
+[status]
+backlog = ["Open", "Backlog"]
+in_progress = ["In Progress"]
+check = ["Review", "Testing"]
+blocked = ["Blocked", "On Hold"]
+done = ["Done", "Closed", "Rejected"]
+
+[fields_in_progress]
+assignee = "{user}"
+"""
 
 _hooks_mod = None
 
@@ -187,28 +215,119 @@ def ensure_exclude(clone, names):
     return missing
 
 
-def ensure_binding(local, clone):
-    """Ключ repo в привязке боковой директории: им обвязка клона находится и
-    тогда, когда сам клон про devkit уже ничего не знает. Остальные ключи
-    привязки заводит человек (trackctl/README.md), и написанное не трогается."""
+def binding_keys(local):
+    """Ключи, реально написанные в привязке, вне зависимости от значения."""
+    path = os.path.join(local, TRACKER)
+    keys = set()
+    if not os.path.exists(path):
+        return keys
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            key, sep, _ = raw.strip().partition("=")
+            if sep:
+                keys.add(key.strip())
+    return keys
+
+
+def ensure_binding(local, clone, values=None):
+    """Ключи привязки боковой директории. Ключ repo подключение пишет само (им
+    обвязка клона находится и тогда, когда клон про devkit уже ничего не знает),
+    остальное берётся из values, то есть из флагов подключения. Написанное не
+    трогается: повторный прогон только дописывает недостающее. Отдаёт список
+    пар (ключ, значение) в том виде, в каком они легли в файл."""
     path = os.path.join(local, TRACKER)
     text = ""
     if os.path.exists(path):
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
-        for raw in text.split("\n"):
-            key, sep, _ = raw.strip().partition("=")
-            if sep and key.strip() == "repo":
-                return ""
+    have = binding_keys(local)
+    want = [("repo", os.path.relpath(clone, local))]
+    for key in BINDING_ASK:
+        val = (values or {}).get(key, "")
+        if val:
+            want.append((key, val))
+    add = [(k, v) for k, v in want if k not in have]
+    if not add:
+        return []
     os.makedirs(os.path.dirname(path), exist_ok=True)
     head = "" if not text or text.endswith("\n") else "\n"
     if not text:
         head = ("# Привязка проекта к трекеру (trackctl/README.md). Ключ repo кладёт\n"
                 "# подключение: по нему обвязка клона находится после переклонирования.\n")
-    rel = os.path.relpath(clone, local)
     with open(path, "a", encoding="utf-8") as f:
-        f.write("%srepo = %s\n" % (head, rel))
-    return rel
+        f.write(head + "".join("%s = %s\n" % (k, v) for k, v in add))
+    return add
+
+
+def contour_path(name):
+    return os.path.join(os.path.expanduser("~"), ".devkit", "tracker", name + ".local")
+
+
+def contour_value(name, key):
+    """Значение верхнего ключа контура компании. Формат там подмножество TOML,
+    и читаются отсюда только плоские строки шапки, до первой секции."""
+    path = contour_path(name)
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.strip()
+            if line.startswith("["):
+                break
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, _, val = line.partition("=")
+            if k.strip() == key:
+                return val.strip().strip("\"'")
+    return ""
+
+
+def ensure_contour(name):
+    """Болванка контура компании ~/.devkit/tracker/<имя>.local. Таблица
+    статусов кладётся заполненной обычными именами Jira: сверить её с трекером
+    компании дешевле, чем писать с нуля. Заполненный файл не трогается, отдаётся
+    путь заведённого либо пусто."""
+    path = contour_path(name)
+    if os.path.exists(path):
+        return ""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(CONTOUR_TEMPLATE)
+    return path
+
+
+def remaining(clone, local, devkit):
+    """Что после подключения осталось сделать человеку, с путями файлов и
+    именами ключей. Молчание тут неотличимо от готового проекта, поэтому
+    подключение печатает этот список, а не оставляет его в README."""
+    steps = []
+    binding = os.path.join(local, TRACKER)
+    contour = tracker_value(local, "contour", devkit)
+    if not contour:
+        steps.append("привязка %s: вписать contour (имя контура компании) и key (ключ проекта "
+                     "в трекере) либо повторить corp с --contour и --key" % binding)
+    else:
+        cpath = contour_path(contour)
+        if not os.path.exists(cpath):
+            steps.append("контур компании %s: файла нет, завести его по trackctl/README.md" % cpath)
+        else:
+            miss = [k for k in ("base_url", "user") if not contour_value(contour, k)]
+            if miss:
+                steps.append("контур компании %s: заполнить %s" % (cpath, ", ".join(miss)))
+            env = contour_value(contour, "token_env")
+            if not env and not contour_value(contour, "token_file"):
+                steps.append("контур компании %s: назвать token_env либо token_file, "
+                             "откуда брать токен трекера" % cpath)
+            elif env and not os.environ.get(env):
+                steps.append("токен трекера: export %s=<токен>, имя переменной названо в %s"
+                             % (env, cpath))
+        if not tracker_value(local, "key", devkit):
+            steps.append("привязка %s: вписать key, ключ проекта в трекере" % binding)
+    if not git(local, "remote"):
+        steps.append("личный приватный remote доски: git -C %s remote add origin <адрес>; "
+                     "доска не едет в корп-origin, и без своего remote обрыв машины её теряет"
+                     % local)
+    return steps
 
 
 def ensure_redirect(clone, local):
@@ -338,9 +457,8 @@ def check(clone, local, devkit, thin_names, fix):
     repo = tracker_value(local, "repo", devkit)
     if not repo:
         if fix:
-            rel = ensure_binding(local, clone)
-            if rel:
-                fixed.append("%s: вписан repo = %s" % (TRACKER, rel))
+            for key, val in ensure_binding(local, clone):
+                fixed.append("%s: вписан %s = %s" % (TRACKER, key, val))
         else:
             findings.append("в привязке %s нет ключа repo: по нему потерянная обвязка клона "
                             "находится из боковой директории, вписать путь до %s"

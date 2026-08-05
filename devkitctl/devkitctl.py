@@ -83,6 +83,21 @@ HOOK_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
+NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
+POST_MATCHER = "Edit|Write|NotebookEdit"
+# Раскладка хуков харнеса: событие, матчер, команда с местом под чекаут devkit.
+# Тот же перечень нарисован в hooks/README.md, но раскладывает его отсюда
+# доктор: список ручных шагов в README это перекладывание раскладки на человека.
+HOOK_LAYOUT = (
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-symbols.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-memory.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
+    ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
+    ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
+    ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
+    ("UserPromptSubmit", "", "python3 %s/hooks/notify.py --hook claude-code"),
+)
 BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
 SKILLS_DIR = "~/.claude/skills"
@@ -534,18 +549,77 @@ def hook_events(text, script):
     return found
 
 
-def check_notify_hook(text, settings):
-    findings = []
-    events = hook_events(text, NOTIFY_HOOK)
-    if events is None:
-        missing = [] if NOTIFY_HOOK in text else list(NOTIFY_EVENTS)
-    else:
-        missing = [e for e in NOTIFY_EVENTS if e not in events]
-    if missing:
+def hook_gaps(text, settings):
+    """Чего не хватает в хуках харнеса. Возврат (пробелы, находки): пробел это
+    строка HOOK_LAYOUT, которую кладёт --fix, находка это тот же пробел словами
+    для человека."""
+    gaps, findings = [], []
+    notify_events = hook_events(text, NOTIFY_HOOK)
+    if notify_events is None:
+        # Настройки не разобрались, судить остаётся по подстроке: тогда либо
+        # уведомитель там есть на всех событиях, либо нет ни на одном.
+        notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
+    missing_notify = []
+    for event, matcher, cmd in HOOK_LAYOUT:
+        script = os.path.basename(cmd.split()[1])
+        if script == NOTIFY_HOOK:
+            if event in notify_events:
+                continue
+            missing_notify.append(event)
+        elif script in text:
+            continue
+        gaps.append((event, matcher, cmd))
+        if script in HOOK_SCRIPTS:
+            findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)"
+                            % (script, settings))
+        elif script == SESSION_HOOK:
+            findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
+                            "и корректор pick рано или поздно останется с протухшим "
+                            "(hooks/README.md)" % (SESSION_HOOK, settings))
+    if missing_notify:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
                         "разрешения, и не говорит, что закончила ход или что субагент "
                         "отработал (hooks/README.md)"
-                        % (NOTIFY_HOOK, ", ".join(missing), settings))
+                        % (NOTIFY_HOOK, ", ".join(missing_notify), settings))
+    return gaps, findings
+
+
+def install_hooks(settings, gaps, devkit):
+    """Дописать недостающие хуки в настройки харнеса. Правка additive, как у
+    прав: чужие группы и порядок остаются, команда встаёт в группу со своим
+    матчером либо заводит её. Отдаёт строки о сделанном."""
+    data, bad = perms.load(settings)
+    if bad is not None:
+        return []
+    home = os.path.expanduser("~")
+    path = str(devkit)
+    if path.startswith(home + os.sep):
+        path = "~" + path[len(home):]
+    hooks = data.setdefault("hooks", {})
+    done = []
+    for event, matcher, tpl in gaps:
+        cmd = tpl % path
+        groups = hooks.setdefault(event, [])
+        group = None
+        for g in groups:
+            if isinstance(g, dict) and (g.get("matcher") or "") == matcher:
+                group = g
+                break
+        if group is None:
+            group = {"matcher": matcher} if matcher else {}
+            group["hooks"] = []
+            groups.append(group)
+        group.setdefault("hooks", []).append({"type": "command", "command": cmd})
+        done.append("хук харнеса на %s: %s" % (event, cmd))
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(settings.name + ".devkit-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(settings))
+    return done
+
+
+def check_notify_hook(text, settings):
+    findings = []
     # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
     src = DEVKIT / "hooks" / NOTIFY_HOOK
     spec = importlib.util.spec_from_file_location("devkit_notify", src)
@@ -587,15 +661,16 @@ def check_machine(fix):
     findings, fixed = [], []
     settings = Path(os.path.expanduser("~/.claude/settings.json"))
     text = settings.read_text(encoding="utf-8") if settings.exists() else ""
-    for script in HOOK_SCRIPTS:
-        if script not in text:
-            findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)" % (script, settings))
-    if SESSION_HOOK not in text:
-        findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
-                        "и корректор pick рано или поздно останется с протухшим (hooks/README.md)"
-                        % (SESSION_HOOK, settings))
-    findings += check_notify_hook(text, settings)
     main, from_main = devkit_checkout()
+    # Хуки харнеса раскладываются тем же рубежом, что права и скиллы: с ветки
+    # задачи на машину они не едут, там их сверяют и чинят из основного чекаута.
+    gaps, gap_findings = hook_gaps(text, settings)
+    if gaps and fix and from_main:
+        fixed += install_hooks(settings, gaps, main)
+        text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+    else:
+        findings += gap_findings
+    findings += check_notify_hook(text, settings)
     pf, pd = perms.check(settings, fix, None if from_main else main)
     findings += pf
     fixed += pd
@@ -750,7 +825,12 @@ def doctor(start, fix=False):
             findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                             "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
         else:
-            if deploy == "" and not autonomous:
+            # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
+            # отказывает честной строкой, и пустой deploy= это норма, а не
+            # находка: требовать команду выката значило бы звать чинить исправное.
+            if deploy == "" and local:
+                pass
+            elif deploy == "" and not autonomous:
                 findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
                                 "вписать команду выката" % DEPLOY_CONFIG)
             elif deploy == "" and autonomous:
@@ -915,10 +995,44 @@ def new(start, prefix, name, no_board):
     _, generated = rules.check(root, DEVKIT, fix=True, skip_dirs=SKIP_DIRS)
     done += generated
     print("\n".join(done))
+    steps = deploy_steps(root)
+    if no_board:
+        steps.append("%s: вписать, какой это трекер и как в нём ведутся задачи"
+                     % (root / rules.AGENTS_FILE))
+    print_remaining(steps, "devkitctl doctor -C %s" % root)
     return 0
 
 
-def corp_connect(start, prefix, name):
+def deploy_steps(root, corp_contour=False):
+    """Незаполненное в обвязке выката словами шага, а не находкой доктора:
+    подключение печатает это в одном списке с остальным недоделанным. В
+    корп-контуре команду выката не спрашивают: выкат там ведёт процесс
+    компании."""
+    deploy, test, _ = read_deploy(root)
+    if deploy is None:
+        return []
+    keys = (("test", test),) if corp_contour else (("test", test), ("deploy", deploy))
+    miss = [k for k, v in keys if not v]
+    if not miss:
+        return []
+    return ["обвязка выката %s: вписать %s"
+            % (root / DEPLOY_CONFIG, ", ".join("%s =" % k for k in miss))]
+
+
+def print_remaining(steps, check):
+    """Хвост подключения: что осталось человеку и чем это проверяется. Пустой
+    список тоже печатается: «шагов не осталось» и молчание команды снаружи
+    выглядят одинаково, а значат разное."""
+    if steps:
+        print("\nосталось сделать:")
+        for i, s in enumerate(steps, 1):
+            print("%d. %s" % (i, s))
+    else:
+        print("\nручных шагов не осталось.")
+    print("проверка: %s" % check)
+
+
+def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     # Подключение корп-проекта и оно же восстановление обвязки: заведённое не
     # переписывается, доводится только недостающее, поэтому повторный прогон
     # после переклонирования возвращает клон в рабочее состояние, а доску в
@@ -934,6 +1048,19 @@ def corp_connect(start, prefix, name):
     if not board.exists() and not prefix:
         sys.stderr.write("нужен --prefix для доски боковой директории (%s)\n" % local)
         return 2
+    # Префикс доски, совпавший с ключом проекта в трекере, снимает правило про
+    # локальный ID: рубеж следов не отличает ID строки доски от ключа тикета
+    # (DK-124). На заведённой доске это уже находка доктора, а на незаведённой
+    # префикс ещё выбирается, и дешевле остановиться здесь.
+    bound_key = key or corp.tracker_value(local, "key", DEVKIT)
+    if prefix and bound_key and prefix == bound_key.upper():
+        if not board.exists():
+            sys.stderr.write("префикс доски %s совпадает с ключом проекта в трекере: рубеж следов "
+                             "не отличит локальный ID доски от ключа тикета и правило про ID на "
+                             "этом проекте работать не будет, взять другой --prefix\n" % prefix)
+            return 2
+        sys.stderr.write("предупреждение: префикс доски %s совпадает с ключом проекта в трекере, "
+                         "рубеж следов на этой паре правило про локальный ID снимает\n" % prefix)
     done = []
     if not local.is_dir():
         local.mkdir(parents=True)
@@ -944,7 +1071,7 @@ def corp_connect(start, prefix, name):
             sys.stderr.write("git init %s: %s\n" % (local, out))
             return 1
         done.append("git-репозиторий боковой директории заведён: доска пушится в личный "
-                    "приватный remote, а не в корп-origin, и remote добавляется руками")
+                    "приватный remote, а не в корп-origin")
     (local / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
     (local / ".devkit").mkdir(exist_ok=True)
     if not (local / rules.AGENTS_FILE).exists():
@@ -973,10 +1100,22 @@ def corp_connect(start, prefix, name):
     done += ["боковая директория: %s" % g for g in generated]
     rel = corp.ensure_redirect(clone, local)
     done.append("редирект корня: git config devkit.local %s" % rel)
-    bound = corp.ensure_binding(local, clone)
-    if bound:
-        done.append("%s: вписан repo = %s (по нему обвязка клона находится после "
-                    "переклонирования)" % (corp.TRACKER, bound))
+    for bkey, bval in corp.ensure_binding(local, clone,
+                                          {"contour": contour, "key": key, "branch": branch}):
+        why = (" (по нему обвязка клона находится после переклонирования)"
+               if bkey == "repo" else "")
+        done.append("%s: вписан %s = %s%s" % (corp.TRACKER, bkey, bval, why))
+    if contour:
+        cpath = corp.ensure_contour(contour)
+        if cpath:
+            done.append("контур компании %s заведён болванкой: адрес и пользователь вписать, "
+                        "таблицу [status] сверить с трекером" % cpath)
+    if remote and not corp.git(local, "remote"):
+        rc, out = run(["git", "-C", str(local), "remote", "add", "origin", remote])
+        if rc != 0:
+            sys.stderr.write("git remote add: %s\n" % out)
+            return 1
+        done.append("remote доски: origin %s" % remote)
     imports, hfindings = corp_profiles(local)
     _, thin_fixed = corp_thin(clone, local, imports, fix=True)
     done += thin_fixed
@@ -986,6 +1125,8 @@ def corp_connect(start, prefix, name):
         done.append("хук %s: цепочка %s%s"
                     % (hook, state, " (чужой хук переехал в %s.chained)" % hook if chained else ""))
     print("\n".join(done + hfindings))
+    print_remaining(corp.remaining(clone, local, DEVKIT) + deploy_steps(local, corp_contour=True),
+                    "devkitctl doctor -C %s, дальше trackctl status -C %s" % (clone, local))
     return 0
 
 
@@ -1006,6 +1147,10 @@ def main(argv):
     c.add_argument("-C", dest="dir", default=".", help="директория корп-клона")
     c.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
     c.add_argument("--name", default="", help="название проекта, по умолчанию имя директории клона")
+    c.add_argument("--contour", default="", help="имя контура компании ~/.devkit/tracker/<имя>.local")
+    c.add_argument("--key", default="", help="ключ проекта в трекере (ABC), отличный от --prefix")
+    c.add_argument("--branch", default="", help="шаблон ветки, по умолчанию решает shipctl")
+    c.add_argument("--remote", default="", help="личный приватный remote доски боковой директории")
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
@@ -1024,7 +1169,8 @@ def main(argv):
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
     elif a.cmd == "corp":
-        rc = corp_connect(a.dir, a.prefix.upper(), a.name)
+        rc = corp_connect(a.dir, a.prefix.upper(), a.name, a.contour, a.key.upper(),
+                          a.branch, a.remote)
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     else:

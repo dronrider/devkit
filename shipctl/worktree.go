@@ -170,8 +170,11 @@ func cmdStart(root string, p StartParams) (string, error) {
 	// берёт p.ID, а не поле key привязки, оно общепроектный префикс для
 	// команд trackctl (trackctl/README.md), а не ключ конкретного тикета, и
 	// devkitctl corp его не заводит вовсе (находка 2: гейт на пустой key
-	// раньше глушил шаблон целиком). Домашний проект (привязки нет) не
-	// затронут: codeRoot остаётся root, ветка домашней «id-slug».
+	// раньше глушил шаблон целиком). Шаблон и codeRoot переключаются одним
+	// условием (найден ли клон), а не порознь: ветка по конвенции компании в
+	// дереве без кода компании была бы половинчатым и обманчивым состоянием
+	// (ревью DK-087, «расходится с кодом»). Домашний проект (привязки нет)
+	// не затронут: codeRoot остаётся root, ветка домашней «id-slug».
 	codeRoot := root
 	corpBound := false
 	corpNote := ""
@@ -182,11 +185,11 @@ func cmdStart(root string, p StartParams) (string, error) {
 	}
 	if tb, ok := loadTrackerBinding(root); ok {
 		corpBound = true
-		branch = corpBranchName(tb.Branch, p.ID, p.Slug)
 		if clone := corpCloneDir(root, tb.Repo); clone != "" {
 			codeRoot = clone
+			branch = corpBranchName(tb.Branch, p.ID, p.Slug)
 		} else {
-			corpNote = "привязка " + corpTrackerPath + " без ключа repo, дерево задачи заведётся в боковой директории и не понесёт код проекта, дописать repo и повторить"
+			corpNote = "привязка " + corpTrackerPath + " без ключа repo, ветка и дерево задачи остаются домашними: кода клона нет, дописать repo и повторить"
 		}
 	}
 	main, err := mainBranch(codeRoot)

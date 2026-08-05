@@ -237,21 +237,22 @@ func TestCorpStartNoCommitsInLocal(t *testing.T) {
 }
 
 // TestCorpStartBindingWithoutRepo: привязка есть, но без ключа repo (обвязка
-// неполная и руками испорченная, devkitctl corp так не оставляет). Ветку
-// всё равно строит шаблон (ключ тикета несёт сам ID зеркальной строки, он от
-// repo не зависит), trackctl take всё равно зовётся, а дерево задачи без
-// клона заводится в боковой директории и честно об этом говорит: кода
-// проекта там не будет.
+// неполная и руками испорченная, devkitctl corp так не оставляет). Ветка по
+// шаблону компании в дереве без кода компании была бы половинчатым и
+// обманчивым состоянием (замечание ревью DK-087), поэтому без клона ветка
+// остаётся домашней тем же порядком, что и дерево задачи: оба переключаются
+// одним условием. trackctl take при этом всё равно зовётся: он работает от
+// ключа тикета (самого ID), а не от местоположения клона.
 func TestCorpStartBindingWithoutRepo(t *testing.T) {
 	_, local, _, trackLog := corpPipeline(t, "ABC-1", corpTrack{NoRepo: true}, trackOK)
 	msg, err := cmdStart(local, StartParams{ID: "ABC-1", Slug: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ABC-1-x"
+	want := "abc-1-x"
 	wt := filepath.Join(filepath.Dir(local), filepath.Base(local)+"-abc-1")
 	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != want {
-		t.Fatalf("ветка построена как %q, ожидалась %q по шаблону (ключ тикета это ID)", br, want)
+		t.Fatalf("без ключа repo ветка должна остаться домашней: %q, ожидалась %q", br, want)
 	}
 	if !strings.Contains(msg, "без ключа repo") {
 		t.Fatalf("неполная привязка не названа вслух: %q", msg)

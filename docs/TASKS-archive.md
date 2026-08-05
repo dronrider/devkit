@@ -99,3 +99,6 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-139 | LLD: раскладка каталогов devkit и правило выбора языка инструмента | LLD | P2 | 2026-08-05 | [tasks/archive/2026/DK-139.md](tasks/archive/2026/DK-139.md) |
 | DK-128 | Цель: груминг черновиков доски с критерием готовности и разбором пачкой | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-128.md](tasks/archive/2026/DK-128.md) |
 | DK-140 | переезд файлов devkit по новой раскладке с починкой путей на машинах | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-140.md](tasks/archive/2026/DK-140.md) |
+| DK-141 | раннер тестов devkitctl на python вместо devkitctl/test.sh | task | P3 | 2026-08-06 | [tasks/archive/2026/DK-141.md](tasks/archive/2026/DK-141.md) |
+| DK-142 | раннер тестов хуков на python вместо hooks/test.sh | task | P3 | 2026-08-06 | [tasks/archive/2026/DK-142.md](tasks/archive/2026/DK-142.md) |
+| DK-143 | остаток sh по правилу выбора языка: раннеры скиллов и мелочь | task | P3 | 2026-08-06 | [tasks/archive/2026/DK-143.md](tasks/archive/2026/DK-143.md) |

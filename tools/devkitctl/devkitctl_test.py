@@ -112,7 +112,9 @@ class ProjectFindingsTest(SandboxCase):
         cls.proj = cls.box.project("proj")
         cls.box.dkctl_run("new", "--no-board", "-C", str(cls.proj))
         cls.thin_gen = read(cls.proj / "CLAUDE.md")
-        cls.note = cls.proj / "docs" / "note.md"
+        # Заметка живой доки: ссылки проверяются в ней, а не в docs/, где текст
+        # стареет по правилу (граница в check_links).
+        cls.note = cls.proj / "note.md"
         cls.settings = cls.box.home / ".claude" / "settings.json"
 
     def test_1_broken_import_and_link(self):
@@ -196,6 +198,18 @@ class ProjectFindingsTest(SandboxCase):
         _, out = self.box.doctor(self.proj, env={"DEVKIT_NOTIFY_BACKEND": notifier})
         self.assertNotIn_("клик по баннеру", out,
                           "находка про клик осталась при отправителе, который клик умеет")
+
+    def test_8_docs_are_not_checked(self):
+        # Файл задачи описывает состояние на момент решения и после закрытия не
+        # правится, поэтому ссылка на уехавший путь там законна. Проверка ссылок
+        # знает эту границу: живая дока проверяется, docs/ стареет (DK-144).
+        write(self.note, "живая дока без ссылок\n")
+        write(self.proj / "docs" / "tasks" / "XX-1.md", "смотри [код](../../nope/gone.go)\n")
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("битая ссылка", out, "проверка ссылок полезла в docs/")
+        write(self.note, "смотри [детали](nope.md)\n")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("битая ссылка", out, "живая дока перестала проверяться вовсе")
 
 
 class DeployTest(SandboxCase):

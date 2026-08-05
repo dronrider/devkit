@@ -37,6 +37,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
 | DK-117 | Наблюдаемость витков из чата: первый виток в чате, проверочный прогон не рабочий виток, ход фона виден | task | P2 | 37 (25+5+3+0+4) | M | [tasks/DK-117.md](tasks/DK-117.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
+| DK-126 | hook_events падает traceback на структурно необычном hooks-JSON | bug | P2 | 35 (25+2+1+5+2) | S | [tasks/DK-126.md](tasks/DK-126.md) |
 | DK-123 | shipctl start в корп-контуре зовёт merge, которого там нет | bug | P2 | 31 (25+3+0+0+3) | S | [tasks/DK-123.md](tasks/DK-123.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P3 | 12 (0+6+2+0+4) | L | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

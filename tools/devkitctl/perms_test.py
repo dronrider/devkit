@@ -53,6 +53,7 @@ class PermsCliTest(SandboxCase):
     """Проверка прав прямо модулем: свой HOME, доктор для неё не нужен."""
 
     def setUp(self):
+        super().setUp()
         self.phome = self.box.root / ("phome-" + self._testMethodName)
         (self.phome / ".claude").mkdir(parents=True)
         self.settings = self.phome / ".claude" / "settings.json"

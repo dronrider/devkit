@@ -10,8 +10,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from testenv import (BOARD_TASKCTL, PY, SandboxCase, executable, git, git_init, read, run,
-                     taken_at, write)
+from testenv import (BOARD_TASKCTL, PY, SandboxCase, executable, fake_home, git, git_init,
+                     go_cache_env, harness, read, rules, run, taken_at, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 # go build -o <путь> . кладёт по пути пустой исполняемый файл. За пределы
@@ -780,11 +780,13 @@ class WorktreeTest(SandboxCase):
     def test_7_stale_global_point_is_not_regenerated(self):
         # Маркер сходится со своим телом, а путь devkit в нём чужой: с worktree
         # находка остаётся, --fix её не перегенерирует до основного чекаута.
-        from testenv import harness, rules
         (self.wthome / ".claude").mkdir(parents=True, exist_ok=True)
         prof = harness.parse("p.toml", read(self.box.dk / "kit" / "harness" / "claude-code.toml"))
         gclaude = self.wthome / ".claude" / "CLAUDE.md"
-        write(gclaude, rules.global_thin_text(prof, "/nowhere/stale-devkit"))
+        # Текст точки зависит от HOME (путь до devkit пишется от ~), и снимать
+        # его надо под тем же HOME, под которым доктор потом её и прочтёт.
+        with fake_home(self.wthome):
+            write(gclaude, rules.global_thin_text(prof, "/nowhere/stale-devkit"))
         stale = read(gclaude)
         _, out = self.wtdoc("--fix")
         self.assertRegex(out, r"%s устарел.*из основного чекаута %s:" % (gclaude, self.dkreal),
@@ -887,8 +889,10 @@ class FreshConnectTest(SandboxCase):
         realbin = self.box.root / "realbin"
         realbin.mkdir()
         for tool in ("taskctl", "shipctl"):
+            env = go_cache_env()
+            env["GOWORK"] = "off"
             rc, out = run(["go", "build", "-o", str(realbin / tool), "."],
-                          cwd=str(self.box.dk / "tools" / tool), env={"GOWORK": "off"})
+                          cwd=str(self.box.dk / "tools" / tool), env=env)
             self.assertEqual(rc, 0, "%s для прогона start не собрался: %s" % (tool, out))
         realpath = "%s:%s" % (realbin, self.box.sys)
         for root, prefix, case in ((self.box.root / "start-fresh", "SF", "директории не было"),

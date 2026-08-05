@@ -391,10 +391,21 @@ DK-033, и по нему съёмщик это чужой сменный кус�
 | `taskctl/`, `shipctl/`, `agentctl/`, `trackctl/`, `regcheck/`, `obeycheck/`, `devkitctl/` | `tools/` с тем же именем |
 | `agents/`, `skills/`, `harness/`, `templates/` | `kit/` с тем же именем |
 | `hooks/`, `docs/`, `.github/`, `.devkit/`, все корневые файлы | остаются на месте |
+| `obeycheck/project/` (фикстура синтетического проекта) | `tools/obeycheck/testdata/project/` |
 
-Правки путей, которые едут тем же коммитом. Список собран грепом по дереву, а
-не по памяти, и его стоит перепроверить перед началом: за время между
-задачами дерево могло уехать.
+Правки путей, которые едут тем же коммитом. Список ниже это то, где путь
+несёт работу, а не текст, и собран он грепом, а не по памяти. Полный перечень
+мест DK-140 снимает заново, командой, а не глазами:
+
+```sh
+git ls-files | grep -v '^docs/' |
+  xargs grep -nE '(taskctl|shipctl|agentctl|trackctl|regcheck|obeycheck|devkitctl|agents|skills|harness|templates)/'
+```
+
+Сегодня это 49 файлов, из них полтора десятка с работающими путями, а
+остальное комментарии, help-тексты и перекрёстные ссылки README, которые от
+переезда протухают, но ничего не ломают. Перечислять их поимённо в дизайне
+бессмысленно, к началу DK-140 список уедет.
 
 1. `tools/devkitctl/devkitctl.py`: корень репозитория считается от файла
    (`Path(__file__).resolve().parent.parent`, строка 81) и уезжает на уровень
@@ -402,10 +413,15 @@ DK-033, и по нему съёмщик это чужой сменный кус�
    строка 101 и подсказка на 1123), раскладка `agents` и `skills`, заготовка
    `templates` (987, 1113), профили `harness` (681, 739, 795).
 2. `tools/devkitctl/rules.py`: относительные указатели, которые генератор
-   пишет в тонкий файл проекта (`../devkit/skills/<имя>/SKILL.md`), и источник
-   профилей харнесов. Имена `RULES.md` и `RULES.core.md` не трогаются.
+   пишет в тонкий файл проекта (`../devkit/skills/<имя>/SKILL.md`), источник
+   профилей харнесов и свой счёт корня в точке входа модуля
+   (`Path(__file__).resolve().parent.parent`, строка 822, тот же счёт, что и в
+   `devkitctl.py:81`). Имена `RULES.md` и `RULES.core.md` не трогаются.
 3. `tools/devkitctl/weigh.py`: `agents`, `skills`, `harness` при подсчёте веса
-   резидента.
+   резидента. Рядом `tools/devkitctl/perms.py:154`, где путь до генератора
+   собирается строкой (`<основной чекаут>/devkitctl/devkitctl.py`) для
+   подсказки из worktree ветки: подсказка с мёртвым путём это худший сорт
+   поломки, её выполняют не глядя.
 4. `hooks/hookio.py`: `ROOT/harness` -> `ROOT/kit/harness` (169) и
    `sys.path.insert(ROOT/devkitctl)` -> `ROOT/tools/devkitctl` (176). Сам
    `ROOT` остаётся верным, `hooks/` не двигается.
@@ -414,8 +430,10 @@ DK-033, и по нему съёмщик это чужой сменный кус�
    `~/projects/devkit`. Вместе с ним правятся тесты, которые собирают
    временный devkit с профилем (`harness_test.go:16,50`, `budget_test.go`,
    `main_test.go`, `quota_test.go`).
-6. `tools/obeycheck/env.go`: фикстура проекта `devkit/obeycheck/project` и
-   копия `devkit/agents` в синтетический `~/.claude`. Маркер, по которому
+6. `tools/obeycheck/env.go`: фикстура проекта переезжает не только вместе с
+   утилитой, но и внутрь `testdata/` (решение 3), путь на строке 135
+   становится `devkit/tools/obeycheck/testdata/project`; там же копия
+   `devkit/agents` в синтетический `~/.claude` (203). Маркер, по которому
    стенд находит devkit (`RULES.md` рядом с `hooks/`, строки 24 и 43), после
    переезда остаётся верным, и это отдельный довод в пользу решения 4.
 7. `tools/obeycheck/main.go`: путь сценариев по умолчанию (96).
@@ -435,12 +453,31 @@ DK-033, и по нему съёмщик это чужой сменный кус�
 12. `.gitignore`: `taskctl/taskctl` и `shipctl/shipctl` уезжают под `tools/`.
 13. `.github/workflows/ci.yml`: шесть `working-directory` и четыре прогона
     по путям.
-14. Тексты: `README.md` (раздел «Состав», команды сборки, перечень локальных
-    прогонов), `CONNECT.md`, ссылки на `skills/test-standard/SKILL.md`,
-    `taskctl/README.md`, `regcheck/README.md`, `devkitctl/README.md` в
-    `RULES.md` и `RULES.board.md`, перекрёстные ссылки в README утилит.
-    `RULES.core.md` не трогается вовсе: единственный путь в нём это
-    `hooks/check-symbols.py`.
+14. Команды внутри скиллов. Это не текст, а инструкция, которую сессия
+    выполняет, и копии скиллов лежат на машине в `~/.claude/skills/`, поэтому
+    мёртвый путь тут исполняется, а не читается. Сегодня таких мест два:
+    `skills/live-core/SKILL.md` (прогон `sh devkitctl/test.sh`, сборка
+    `cd ~/projects/devkit/<утилита> && go build`, вызов
+    `python3 ~/projects/devkit/devkitctl/devkitctl.py doctor --fix`) и
+    `skills/goal-loop/SKILL.md` (запуск
+    `~/projects/devkit/skills/goal-loop/goal-run.sh`). После правки скиллов
+    нужен `doctor --fix`, иначе на машине останутся старые копии.
+15. Тексты правил: `RULES.md` (ссылки на `skills/test-standard/SKILL.md`,
+    `regcheck/README.md`, `taskctl/README.md`, `devkitctl/README.md`) и
+    `RULES.board.md` (`skills/board-ship/SKILL.md`,
+    `skills/board-task/SKILL.md`, `shipctl/README.md`, `agentctl/README.md`,
+    `devkit/agents`). `RULES.core.md` не трогается вовсе: единственный путь в
+    нём это `hooks/check-symbols.py`, а он остаётся на месте.
+16. Остальные тексты: `README.md` (раздел «Состав», команды сборки, перечень
+    локальных прогонов), `CONNECT.md`, перекрёстные ссылки в README утилит и
+    комментарии, которые называют соседний файл по пути.
+17. Обход подключённых проектов и машины: `devkitctl doctor --fix` в каждом
+    проекте, где devkit подключён, и на самой машине. Без него в тонких файлах
+    остаются мёртвые указатели на скиллы, а в `~/.claude/skills/` старые копии
+    команд (решение 4). Своего обхода у `devkitctl` нет, поэтому список
+    собирается руками, например грепом по соседям чекаута:
+    `grep -l '@\.\./devkit/' ~/projects/*/CLAUDE.md`. Шаг ручной и попадает в
+    сценарий проверки DK-140, а не в её тесты.
 
 Что не правится: `docs/tasks/**` и `docs/lld/**`. Файл задачи и LLD описывают
 состояние на момент решения, переписывать историю под новую раскладку значит
@@ -455,9 +492,10 @@ DK-033, и по нему съёмщик это чужой сменный кус�
 Проверяется переезд теми же прогонами, что стоят в CI: шесть `go test ./...`,
 `hooks/test.sh`, `devkitctl/test.sh`, `skills/test.sh`,
 `skills/goal-loop/test.sh`, `check-exec-bit.py` и `check-symbols.py` по всем
-файлам. Сверх них DK-140 обязан позвать `devkitctl doctor --fix` на живом
-подключённом проекте и убедиться, что указатели в тонком файле перевыпустились
-на новые пути: тесты этого не покажут, они гоняют генератор на синтетике.
+файлам. Сверх них DK-140 обязан пройти пункт 17, обход подключённых проектов
+и машины, и показать в сценарии проверки, что указатели в тонком файле
+перевыпустились на новые пути, а копии скиллов в `~/.claude/skills/` несут
+новые команды. Тесты этого не покажут, они гоняют генератор на синтетике.
 
 ## Пути наружу: что ломается и чем чинится
 

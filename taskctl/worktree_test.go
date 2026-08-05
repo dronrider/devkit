@@ -70,6 +70,14 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 		// нумерации: заведённый на фичеветке черновик основному чекауту не
 		// виден, и тот же ID уйдёт следующей задаче.
 		{"draft", func() (string, error) { return cmdDraft(wt, "идея из worktree", CommitOpts{}) }},
+		// Исходы разбора стоят под рубежом вместе с draft и по той же причине:
+		// накопитель общий и живёт в основном чекауте, а пометка, поставленная
+		// на фичеветке, основному чекауту не видна до слияния.
+		{"draft defer", func() (string, error) {
+			return cmdDraftDefer(wt, "XR-008", "причина из worktree", false, CommitOpts{})
+		}},
+		{"draft attach", func() (string, error) { return cmdDraftAttach(wt, "XR-008", "XR-002", CommitOpts{}) }},
+		{"draft drop", func() (string, error) { return cmdDraftDrop(wt, "XR-008", "причина", CommitOpts{}) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

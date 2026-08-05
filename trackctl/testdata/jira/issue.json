@@ -1,0 +1,40 @@
+{
+  "id": "10002",
+  "key": "ED-1",
+  "self": "https://your-domain.atlassian.net/rest/api/3/issue/10002",
+  "fields": {
+    "summary": "My first example issue",
+    "status": {
+      "description": "The issue is currently being worked on.",
+      "iconUrl": "https://your-domain.atlassian.net/images/icons/progress.gif",
+      "id": "10000",
+      "name": "In Progress",
+      "self": "https://your-domain.atlassian.net/rest/api/3/status/10000",
+      "statusCategory": {
+        "colorName": "yellow",
+        "id": 1,
+        "key": "in-flight",
+        "name": "In Progress",
+        "self": "https://your-domain.atlassian.net/rest/api/3/statuscategory/1"
+      }
+    },
+    "issuetype": {
+      "avatarId": 10002,
+      "description": "A problem with the software.",
+      "hierarchyLevel": 0,
+      "iconUrl": "https://your-domain.atlassian.net/rest/api/3/universal_avatar/view/type/issuetype/avatar/10002",
+      "id": "1",
+      "name": "Bug",
+      "self": "https://your-domain.atlassian.net/rest/api/3/issueType/1",
+      "subtask": false
+    },
+    "timetracking": {
+      "originalEstimate": "10m",
+      "originalEstimateSeconds": 600,
+      "remainingEstimate": "3m",
+      "remainingEstimateSeconds": 200,
+      "timeSpent": "6m",
+      "timeSpentSeconds": 400
+    }
+  }
+}

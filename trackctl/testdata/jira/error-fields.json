@@ -1,0 +1,8 @@
+{
+  "errorMessages": [],
+  "errors": {
+    "issuetype": "The issue type selected is invalid.",
+    "project": "Sub-tasks must be created in the same project as the parent."
+  },
+  "status": 400
+}

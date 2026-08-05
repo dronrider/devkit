@@ -21,7 +21,7 @@ description: Стандарт тестов devkit и доводка правки
 
    ```
    regcheck -- go test ./... -run TestBoardMove       # правка и тест не закоммичены
-   regcheck --base main -- sh tools/devkitctl/test.sh # правка на ветке задачи
+   regcheck --base main -- python3 -m unittest discover -p '*_test.py'  # ветка задачи
    regcheck --inline src/lib.rs -- cargo test         # тест лежит в файле правки
    ```
 

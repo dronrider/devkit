@@ -27,22 +27,45 @@ SYS_TOOLS = ("git", "python3", "dirname", "mkdir", "chmod", "rm")
 STUB_TOOLS = ("taskctl", "shipctl", "agentctl", "regcheck", "tmux")
 STUB = "#!/bin/sh\nexit 0\n"
 
-# Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист, а
-# проверки ниже режут этот файл построчно.
-HOOKS = {
-    "PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
-        {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
-        {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
-        {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"},
-    ]}],
-    "SessionStart": [{"hooks": [
-        {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
-    ]}],
-}
-for _event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):
-    HOOKS[_event] = [{"hooks": [
-        {"type": "command", "command": "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"},
-    ]}]
+# Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист.
+# Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
+# и после реза он обязан оставаться разбираемым.
+NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
+SETTINGS = """{"permissions": {"allow": %s},
+ "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
+]}], "SessionStart": [{"hooks": [
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
+]}], "Notification": [{"hooks": [
+  {"type": "command", "command": "%s"}
+]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "%s"}
+]}], "SubagentStop": [{"hooks": [
+  {"type": "command", "command": "%s"}
+]}], "UserPromptSubmit": [{"hooks": [
+  {"type": "command", "command": "%s"}
+]}]}}
+"""
+
+# Заглушка taskctl, которая доску всё-таки заводит: настоящий бинарь в PATH
+# самопроверки заменён на «exit 0», а без доски проверять нечего.
+BOARD_TASKCTL = '''#!%s
+import os
+import sys
+
+argv, root, prefix = sys.argv[1:], ".", "TP"
+if argv[:1] == ["-C"]:
+    root, argv = argv[1], argv[2:]
+if "--prefix" in argv:
+    prefix = argv[argv.index("--prefix") + 1]
+if argv[:1] == ["init"]:
+    os.makedirs(os.path.join(root, "docs", "tasks"), exist_ok=True)
+    with open(os.path.join(root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+        f.write("# Задачи проекта (префикс %%s)\\n" %% prefix)
+    print("доска создана")
+''' % sys.executable
 
 
 def run(args, cwd=None, env=None, path=None, home=None):
@@ -154,9 +177,9 @@ class Sandbox:
         (home / ".claude" / "agents").mkdir(parents=True)
         (home / ".claude" / "skills").mkdir(parents=True)
         (home / ".devkit" / "quota").mkdir(parents=True)
-        settings = {"permissions": {"allow": list(perms.MACHINE_ALLOW)}, "hooks": HOOKS}
+        allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         write(home / ".claude" / "settings.json",
-              json.dumps(settings, ensure_ascii=False, indent=1))
+              SETTINGS % (allow, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

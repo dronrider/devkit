@@ -3,7 +3,7 @@
 Подмножество TOML читают две реализации: `tools/agentctl/toml.go` с
 `tools/agentctl/harness.go` и `tools/devkitctl/harness.py`. Один и тот же набор входов обе
 обязаны читать одинаково, поэтому вход тут один, а сверяются с ним обе стороны:
-Go в `tools/agentctl/harness_test.go`, Python в `tools/devkitctl/test.sh`.
+Go в `tools/agentctl/harness_test.go`, Python в `tools/devkitctl/harness_test.py`.
 
 На каждый вход `<имя>.toml` лежит ожидаемый отчёт `<имя>.expected`, побайтно
 совпадающий с тем, что печатает реализация:

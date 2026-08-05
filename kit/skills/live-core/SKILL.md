@@ -46,6 +46,7 @@ description: Правка самого devkit по ходу работы над 
        (cd $d && python3 -m unittest discover -p '*_test.py')
    done
    python3 kit/skills/check-skills.py && python3 hooks/check-exec-bit.py
+   python3 tools/devkitctl/devkitctl.py doctor --layout
    ```
 
 5. Довести правку до места, где она действует. Хуки и файлы правил работают из

@@ -226,10 +226,19 @@ python. По этой границе на sh остаются точки вхо�
 не рядом с кодом: по ней сверяются оба разбора, go-шный и python-овый, и
 растащить её по утилитам значит потерять сверку.
 
+Нарушение ловит `devkitctl doctor`, он же отдельно и без машинной обвязки:
+
+```sh
+python3 tools/devkitctl/devkitctl.py doctor --layout
+```
+
+Находка называет файл и правило, тем же шагом она стоит в CI. Ходит проверка по
+`git ls-files`, судит только про сам devkit и оставляет ревью смысловое:
+оправдан ли go новому инструменту, остался ли короткий sh списком команд, верна
+ли группа внутри `kit/`.
+
 Решение с перечнем переездов и разбором отвергнутых вариантов в
-[docs/lld/DK-139-repo-layout.md](docs/lld/DK-139-repo-layout.md). Дерево
-разложено по нему задачей DK-140, а машинную проверку раскладки ставит DK-144,
-и до неё правило держится на глазах ревью.
+[docs/lld/DK-139-repo-layout.md](docs/lld/DK-139-repo-layout.md).
 
 ## Журнал запусков
 
@@ -246,4 +255,5 @@ regcheck на багфиксах (последнее подсказывает `s
 в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
 из `hooks/`, `tools/devkitctl/`, `kit/skills/` и `kit/skills/goal-loop/`,
 `python3 kit/skills/check-skills.py`, `python3 hooks/check-exec-bit.py` (бит
-исполнения у каждого `test.sh` репозитория).
+исполнения у каждого `test.sh` репозитория) и
+`python3 tools/devkitctl/devkitctl.py doctor --layout` (раскладка).

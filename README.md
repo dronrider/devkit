@@ -199,7 +199,9 @@ CI и `.devkit/` с рабочей обвязкой выката: правила
 - python - то, что зовут путём из чекаута и что обязано работать на голой
   машине, где ещё ничего не собрано: хуки, подключение и диагностика
   (`devkitctl`), оболочки, тесты python-части. Тест лежит рядом с модулем и
-  зовётся `<модуль>_test.py`.
+  зовётся `<модуль>_test.py`, а дефис в имени модуля становится в имени теста
+  подчёркиванием (`check-symbols.py` и `check_symbols_test.py`): файл, чьё имя
+  не годится в имя модуля python, `discover` пропускает молча.
 - sh - тонкая обёртка вокруг одной команды и одноразовый сценарий проверки
   задачи в `docs/tasks/`.
 
@@ -238,6 +240,7 @@ regcheck на багфиксах (последнее подсказывает `s
 Задачи по развитию самого devkit ведутся на его же доске `docs/TASKS.md`
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
 гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
-в директории каждой Go-утилиты, `hooks/test.sh`, `tools/devkitctl/test.sh`,
-`kit/skills/test.sh`, `kit/skills/goal-loop/test.sh`, `python3 hooks/check-exec-bit.py` (бит исполнения
-у каждого `test.sh` репозитория).
+в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
+из `hooks/`, `tools/devkitctl/test.sh`, `kit/skills/test.sh`,
+`kit/skills/goal-loop/test.sh`, `python3 hooks/check-exec-bit.py` (бит
+исполнения у каждого `test.sh` репозитория).

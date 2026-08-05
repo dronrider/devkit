@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Юниты таблицы разборщиков: что разбор снимает с живых событий, как зовётся
-протокол и откуда берётся путь индекса памяти. Прогон проверок целиком (каждый
-образец через каждую проверку) живёт в test.sh.
+"""Таблица разборщиков: что разбор снимает с живых событий, как зовётся
+протокол и откуда берётся путь индекса памяти. Тут же то, что общее у всех
+проверок разом: отказ на незнакомом протоколе, прогон каждого живого образца
+через каждую проверку и раскладка самого прогона тестов.
 """
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -148,6 +150,87 @@ class TestMemoryIndex(unittest.TestCase):
     def test_broken_profile_is_not_a_crash(self):
         # Битый профиль это дело doctor, а не хука в каждой сессии.
         self.assertEqual(self.profile("[hooks\n"), "")
+
+
+# Проверки, зовущие разбор: у них общая таблица протоколов, и спрашивать её
+# каждую по отдельности значит трижды написать одно и то же.
+CHECKS = ("check-symbols", "check-memory", "check-sensitive")
+
+# Точка входа git своего модуля не имеет и проверяется оттуда, откуда её зовут
+# по существу. Здесь только карта, чтобы потерянный хук был виден.
+COVERED_ELSEWHERE = {
+    "pre-commit": "check_symbols_test.py, check_sensitive_test.py, check_tests_test.py",
+    "commit-msg": "check_commit_test.py",
+}
+
+
+def modules(suite):
+    """Модули, которые discover действительно взял в прогон."""
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            for name in modules(item):
+                yield name
+        else:
+            yield type(item).__module__
+
+
+def run_check(tool, *args, **kw):
+    return subprocess.run([sys.executable, os.path.join(HERE, tool + ".py")]
+                          + list(args), capture_output=True, text=True, **kw)
+
+
+class TestProtocolRefusal(unittest.TestCase):
+    """Незнакомый протокол это отказ с внятной строкой, а не молчаливый
+    пропуск: иначе опечатка в settings.json выключила бы проверку насовсем."""
+
+    def test_every_check_names_the_reason(self):
+        event = json.dumps({"tool_input": {"file_path": "x.md",
+                                           "new_string": "текст"}})
+        for tool in CHECKS:
+            r = run_check(tool, "--hook", "кодекс", input=event)
+            self.assertEqual(r.returncode, 2, tool)
+            self.assertIn("не заведён", r.stderr, tool)
+
+
+class TestSamplesThroughChecks(unittest.TestCase):
+    """Каждый живой образец через каждую проверку. Разбор у них общий, поэтому
+    непонятая форма события должна всплыть тут целиком, а не в одной проверке
+    из трёх."""
+
+    def test_every_sample_through_every_check(self):
+        for name in sorted(os.listdir(DATA)):
+            if not name.endswith(".json"):
+                continue
+            with open(os.path.join(DATA, name), encoding="utf-8") as f:
+                text = f.read()
+            for tool in CHECKS:
+                r = run_check(tool, "--hook", "claude-code", input=text)
+                self.assertIn(r.returncode, (0, 2), (tool, name, r.stderr))
+                self.assertNotIn("Traceback", r.stderr, (tool, name))
+
+
+class TestRunnerLayout(unittest.TestCase):
+    """Раннер тестов хуков это сам unittest, и терять проверки он умеет молча:
+    файл, чьё имя не годится в имя модуля (дефис), discover пропускает без
+    единого слова, а прогон остаётся зелёным. Отсюда и обе проверки ниже."""
+
+    def test_discover_takes_every_test_file(self):
+        files = {n for n in os.listdir(HERE) if n.endswith("_test.py")}
+        self.assertEqual(files, {m + ".py" for m in modules(
+            unittest.TestLoader().discover(HERE, pattern="*_test.py"))})
+
+    def test_every_hook_has_its_test(self):
+        for name in sorted(os.listdir(HERE)):
+            path = os.path.join(HERE, name)
+            base, ext = os.path.splitext(name)
+            if not os.path.isfile(path) or base.endswith("_test"):
+                continue
+            if ext not in (".py", ".sh", ""):
+                continue
+            if name in COVERED_ELSEWHERE:
+                continue
+            self.assertTrue(os.path.exists(
+                os.path.join(HERE, base.replace("-", "_") + "_test.py")), name)
 
 
 if __name__ == "__main__":

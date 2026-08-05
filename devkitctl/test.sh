@@ -2519,6 +2519,43 @@ echo "$out" | grep -q 'git-репозиторий заведён' || fail "new �
 echo "$out" | grep -q 'не git-репозиторий' && fail "new всё ещё считает свежий проект не репозиторием: $out"
 [ "$(git -C "$nproj2" config core.hooksPath)" = "../devkit/hooks" ] ||
     fail "git-хуки не подключены на заведённом с нуля проекте: $(git -C "$nproj2" config core.hooksPath)"
+# Цель правки была не в том, чтобы завести .git, а в том, чтобы следующий шаг
+# инструкции работал, поэтому проверяется он сам: настоящий shipctl start после
+# настоящего new. Заглушки тут не годятся, бинари собираются из той же копии
+# devkit. Входа два: директории нет вовсе и директория уже git-репозиторий без
+# единого коммита (кто-то сделал git init заранее) - в обоих HEAD неродившийся,
+# и без первого коммита start падает на «не нашёл ветку main или master».
+realbin="$tmp/realbin"
+mkdir -p "$realbin"
+(cd "$dk/taskctl" && go build -o "$realbin/taskctl" .) || fail "taskctl для прогона start не собрался"
+(cd "$dk/shipctl" && go build -o "$realbin/shipctl" .) || fail "shipctl для прогона start не собрался"
+realpath="$realbin:$sys"
+# Автор коммитов: в чистом CI git его не угадывает, а первый коммит делает new.
+printf '[user]\n\tname = t\n\temail = t@t\n' > "$home/.gitconfig"
+start_after_new() {
+    sdir=$1; sprefix=$2; scase=$3
+    out=$(HOME="$home" PATH="$realpath" python3 "$dkctl" new --prefix "$sprefix" -C "$sdir" 2>&1)
+    [ $? -eq 0 ] || { fail "new не прошёл ($scase): $out"; return; }
+    out=$(HOME="$home" PATH="$realpath" git -C "$sdir" rev-parse --verify HEAD 2>&1)
+    [ $? -eq 0 ] || { fail "после new у проекта нет ни одного коммита ($scase): $out"; return; }
+    out=$(HOME="$home" PATH="$realpath" taskctl -C "$sdir" add --title "первая задача" \
+        --type task --rank "25+5+1+0+0" --cost S 2>&1)
+    [ $? -eq 0 ] || { fail "taskctl add после new не прошёл ($scase): $out"; return; }
+    out=$(HOME="$home" PATH="$realpath" shipctl -C "$sdir" start "$sprefix-001" 2>&1)
+    [ $? -eq 0 ] || { fail "shipctl start после new не прошёл ($scase): $out"; return; }
+    swt="$sdir-$(echo "$sprefix" | tr 'A-Z' 'a-z')-001"
+    [ -d "$swt" ] || fail "start не завёл дерево задачи ($scase): $out"
+    HOME="$home" PATH="$realpath" git -C "$sdir" rev-parse --verify \
+        "$(echo "$sprefix" | tr 'A-Z' 'a-z')-001" >/dev/null 2>&1 ||
+        fail "start не завёл ветку задачи ($scase): $out"
+}
+start_after_new "$tmp/start-fresh" SF "директории не было"
+preinit="$tmp/start-preinit"
+mkdir -p "$preinit"
+git init -q "$preinit"
+[ -n "$(git -C "$preinit" log --oneline 2>/dev/null)" ] && fail "фикстура не та: в репозитории уже есть коммиты"
+start_after_new "$preinit" SP "репозиторий заведён заранее и пуст"
+
 # Отказ по аргументам идёт до раскладки: полупустой директории после него не
 # остаётся.
 out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" new -C "$tmp/never-proj" 2>&1)

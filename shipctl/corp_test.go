@@ -263,3 +263,49 @@ func TestCorpLocalSignal(t *testing.T) {
 	corpGitT(t, clone, "worktree", "add", "-q", "-b", "dk-081-signal", far)
 	corpSame(t, corpLocal(far), local)
 }
+
+// TestCorpTicketKey: ключ тикета вылавливается из ячейки ссылки, а границы
+// держат обе стороны. Мутации в таблице: ключ без правой границы нашёлся бы в
+// более длинном номере, без левой в чужом префиксе, а ячейка со ссылкой на
+// файл задачи ключом тикета не притворяется.
+func TestCorpTicketKey(t *testing.T) {
+	cases := []struct{ key, cell, want string }{
+		{"ABC", "[ABC-42](https://tracker/browse/ABC-42)", "ABC-42"},
+		{"ABC", "[тикет](https://tracker/browse/abc-42)", "ABC-42"},
+		{"ABC", "[ABC-4](https://tracker/browse/ABC-420)", "ABC-4"},
+		{"ABC", "https://tracker/browse/ABC-420", "ABC-420"},
+		{"ABC", "[XABC-42](https://tracker/browse/XABC-42)", ""},
+		{"ABC", "[LOC-3](../tasks/LOC-3.md)", ""},
+		{"ABC", "-", ""},
+		{"", "[ABC-42](https://tracker/browse/ABC-42)", ""},
+	}
+	for _, c := range cases {
+		if got := corpTicketKey(c.key, c.cell); got != c.want {
+			t.Errorf("corpTicketKey(%q, %q) = %q, ожидалось %q", c.key, c.cell, got, c.want)
+		}
+	}
+}
+
+// TestCorpBranchOfTicket: ветку тикета узнаёт ключ отдельным куском имени.
+// Шаблон привязки волен нести префикс, поэтому домашнее правило «имя
+// начинается с ключа» тут не годится, а границы всё равно нужны обе.
+func TestCorpBranchOfTicket(t *testing.T) {
+	cases := []struct {
+		branch, key string
+		want        bool
+	}{
+		{"ABC-42", "ABC-42", true},
+		{"ABC-42-add-x", "ABC-42", true},
+		{"feature/ABC-42-add-x", "ABC-42", true},
+		{"feature/abc-42", "ABC-42", true},
+		{"ABC-420-add-x", "ABC-42", false},
+		{"xABC-42", "ABC-42", false},
+		{"main", "ABC-42", false},
+		{"ABC-42", "", false},
+	}
+	for _, c := range cases {
+		if got := corpBranchOfTicket(c.branch, c.key); got != c.want {
+			t.Errorf("corpBranchOfTicket(%q, %q) = %v, ожидалось %v", c.branch, c.key, got, c.want)
+		}
+	}
+}

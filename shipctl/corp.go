@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -103,14 +104,14 @@ func corpLostLocal(start string) string {
 }
 
 // trackerBinding это поля привязки .devkit/tracker.local, нужные shipctl:
-// шаблон ветки для start, путь клона для start, status и восстановления
-// обвязки. Key это общепроектный префикс тикетов (trackctl/README.md,
-// «Ключ пишется целиком... либо одним номером, префикс тогда берётся из
-// привязки») для команд самого trackctl, shipctl его не читает: ключ тикета
-// в шаблоне ветки это ID зеркальной строки доски (DK-074, «Граница доски и
-// тикета»), а не это поле. Остальное (контур компании, статусы, оценки)
-// знает только trackctl, у него свой конфиг и свой разбор того же плоского
-// формата.
+// шаблон ветки для start, ключ проекта, которым в строке доски опознаётся
+// ключ тикета, путь клона для start, status и восстановления обвязки.
+// Key это общепроектный префикс тикетов (trackctl/README.md, «Ключ пишется
+// целиком... либо одним номером, префикс тогда берётся из привязки»): им
+// shipctl вылавливает ключ конкретного тикета из ссылки зеркальной строки,
+// как это делает trackctl (trackctl/board.go). Остальное (контур компании,
+// статусы, оценки) знает только trackctl, у него свой конфиг и свой разбор
+// того же плоского формата.
 type trackerBinding struct {
 	Key    string
 	Branch string
@@ -183,6 +184,38 @@ func corpBranchName(tpl, key, slug string) string {
 	}
 	out := strings.ReplaceAll(tpl, "{key}", key)
 	return strings.TrimRight(strings.ReplaceAll(out, "{slug}", slug), "-")
+}
+
+// corpTicketKey вылавливает ключ тикета из ячейки ссылки строки доски. Ключ
+// тикета зеркальной строки живёт в её ссылке, а не в её ID: ID это локальный
+// номер доски, и обратное соответствие держит именно ссылка (DK-074, «Граница
+// доски и тикета»). Читается ссылка тем же способом, что у trackctl
+// (trackctl/board.go, ticketRe): границы нужны обе, без правой ABC-12 нашёлся
+// бы в ABC-120, без левой в XABC-12. Пустой ответ значит, что строка на тикет
+// проекта не ведёт.
+func corpTicketKey(projKey, cell string) string {
+	if projKey == "" || cell == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?i)(^|[^0-9A-Za-z])(` + regexp.QuoteMeta(projKey) + `-[0-9]+)($|[^0-9])`)
+	m := re.FindStringSubmatch(cell)
+	if m == nil {
+		return ""
+	}
+	return strings.ToUpper(m[2])
+}
+
+// corpBranchOfTicket опознаёт ветку тикета в корп-клоне: ключ стоит в имени
+// отдельным куском («ABC-42», «feature/ABC-42-add-x»). Домашнее правило
+// branchOfTask («имя начинается с ID») тут не годится, шаблон привязки волен
+// нести префикс, и второй заход на задачу заводил бы ей вторую ветку молча.
+// Границы обе: без правой ABC-4 нашёлся бы в ABC-42, без левой в XABC-42.
+func corpBranchOfTicket(branch, key string) bool {
+	if key == "" {
+		return false
+	}
+	re := regexp.MustCompile(`(?i)(^|[^0-9A-Za-z])` + regexp.QuoteMeta(key) + `($|[^0-9])`)
+	return re.MatchString(branch)
 }
 
 // corpCloneDir разворачивает ключ repo привязки, найденной в dir, в

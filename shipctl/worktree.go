@@ -88,10 +88,16 @@ func branchOfTask(branch, id string) bool {
 }
 
 // taskWorktree находит worktree с веткой задачи, nil если такого нет.
-// Осиротелую регистрацию (директорию снесли мимо git, запись в списке
-// осталась) чинит git worktree prune, иначе start и merge упирались бы в
-// несуществующий путь.
 func taskWorktree(root, id string) (*worktreeInfo, error) {
+	return taskWorktreeBy(root, func(branch string) bool { return branchOfTask(branch, id) })
+}
+
+// taskWorktreeBy это тот же поиск с чужим правилом опознания ветки: дома
+// ветку узнаёт branchOfTask, в корп-клоне ключ тикета внутри шаблонного имени
+// (corpBranchOfTicket). Осиротелую регистрацию (директорию снесли мимо git,
+// запись в списке осталась) чинит git worktree prune, иначе start и merge
+// упирались бы в несуществующий путь.
+func taskWorktreeBy(root string, match func(string) bool) (*worktreeInfo, error) {
 	for attempt := 0; ; attempt++ {
 		_, linked, err := worktrees(root)
 		if err != nil {
@@ -99,7 +105,7 @@ func taskWorktree(root, id string) (*worktreeInfo, error) {
 		}
 		var stale *worktreeInfo
 		for i := range linked {
-			if !branchOfTask(linked[i].Branch, id) {
+			if !match(linked[i].Branch) {
 				continue
 			}
 			if _, err := os.Stat(linked[i].Path); err == nil {
@@ -160,42 +166,6 @@ func cmdStart(root string, p StartParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
-	// Корп-контур держит доску в боковой директории (root), а код проекта в
-	// клоне, на который привязка указывает ключом repo: там и заводится
-	// дерево задачи (DK-087, находка 1), там же спрашивается main или master,
-	// потому что боковая директория без единого коммита сразу после
-	// devkitctl corp иначе валит именно этот вызов (находка 4). Ветку задачи
-	// строит шаблон branch привязки: зеркальная строка несёт ключ тикета
-	// своим ID (DK-074, «Граница доски и тикета»), поэтому подстановка {key}
-	// берёт p.ID, а не поле key привязки, оно общепроектный префикс для
-	// команд trackctl (trackctl/README.md), а не ключ конкретного тикета, и
-	// devkitctl corp его не заводит вовсе (находка 2: гейт на пустой key
-	// раньше глушил шаблон целиком). Шаблон и codeRoot переключаются одним
-	// условием (найден ли клон), а не порознь: ветка по конвенции компании в
-	// дереве без кода компании была бы половинчатым и обманчивым состоянием
-	// (ревью DK-087, «расходится с кодом»). Домашний проект (привязки нет)
-	// не затронут: codeRoot остаётся root, ветка домашней «id-slug».
-	codeRoot := root
-	corpBound := false
-	corpNote := ""
-	low := strings.ToLower(p.ID)
-	branch := low
-	if p.Slug != "" {
-		branch = low + "-" + p.Slug
-	}
-	if tb, ok := loadTrackerBinding(root); ok {
-		corpBound = true
-		if clone := corpCloneDir(root, tb.Repo); clone != "" {
-			codeRoot = clone
-			branch = corpBranchName(tb.Branch, p.ID, p.Slug)
-		} else {
-			corpNote = "привязка " + corpTrackerPath + " без ключа repo, ветка и дерево задачи остаются домашними: кода клона нет, дописать repo и повторить"
-		}
-	}
-	main, err := mainBranch(codeRoot)
-	if err != nil {
-		return "", err
-	}
 	b, err := loadBoard(root)
 	if err != nil {
 		return "", err
@@ -208,7 +178,74 @@ func cmdStart(root string, p StartParams) (string, error) {
 	default:
 		return "", fmt.Errorf("%s в %s, в работу берут из Backlog или In progress", p.ID, sect)
 	}
-	if l, err := taskWorktree(codeRoot, p.ID); err != nil {
+	// Корп-контур держит доску в боковой директории (root), а код проекта в
+	// клоне, на который привязка указывает ключом repo: там и заводится
+	// дерево задачи (DK-087, находка 1), там же спрашивается main или master,
+	// потому что боковая директория без единого коммита сразу после
+	// devkitctl corp иначе валит именно этот вызов (находка 4).
+	//
+	// В репозитории кода задача названа ключом тикета, а не локальным ID
+	// доски: по ключу тикета идут и ветка, и коммиты, и MR, а локальный ID в
+	// корп-артефакты не едет вовсе (DK-074, «Граница доски и тикета»), это же
+	// стережёт рубеж следов. Ключ тикета берётся из ссылки зеркальной строки,
+	// как его берёт trackctl (trackctl/board.go): ID строки для этого не
+	// годится, и первый заход DK-087 подставлял в шаблон именно его (DK-124).
+	// Опознаётся ключ полем key привязки, поэтому без него ключ тикета не
+	// вылавливается ничем, и ветка остаётся домашней с находкой в отчёте:
+	// доска не должна вставать из-за ненастроенного трекера. Зато строка,
+	// которая при настроенном key на тикет не ведёт, это отказ: имя ветки
+	// корп-репозитория придумывать не из чего, а локальный ID туда не едет.
+	// Шаблон и codeRoot переключаются одним условием (найден ли клон), а не
+	// порознь: ветка по конвенции компании в дереве без кода компании была бы
+	// половинчатым и обманчивым состоянием (ревью DK-087, «расходится с
+	// кодом»). Домашний проект (привязки нет) не затронут: codeRoot остаётся
+	// root, ветка домашней «id-slug».
+	codeRoot := root
+	corpNote := ""
+	// ref это имя задачи в репозитории кода: дома локальный ID, в корп-клоне
+	// ключ тикета. По нему опознаётся ветка прошлого захода и называется
+	// директория дерева задачи, которую git записывает в .git корп-клона.
+	ref, ticket := p.ID, ""
+	tb, corpBound := loadTrackerBinding(root)
+	if corpBound && tb.Key != "" {
+		if r := b.rowOf(p.ID); r != nil {
+			ticket = corpTicketKey(tb.Key, r.Link)
+		}
+		if ticket == "" {
+			return "", fmt.Errorf("строка %s не ведёт на тикет %s-N: в корп-контуре ветку и коммиты именует ключ тикета (DK-074, «Граница доски и тикета»), а локальный ID доски в корп-репозиторий не едет; вписать ссылку на тикет в ячейку ссылки строки", p.ID, tb.Key)
+		}
+	}
+	if corpBound {
+		if clone := corpCloneDir(root, tb.Repo); clone != "" {
+			codeRoot = clone
+			if ticket != "" {
+				ref = ticket
+			} else {
+				corpNote = "привязка " + corpTrackerPath + " без ключа key, ветка и дерево задачи названы локальным ID доски: ключ тикета вылавливается из ссылки строки этим ключом, и без него имя ветки расходится с конвенцией компании; дописать key и повторить"
+			}
+		} else {
+			corpNote = "привязка " + corpTrackerPath + " без ключа repo, ветка и дерево задачи остаются домашними: кода клона нет, дописать repo и повторить"
+		}
+	}
+	low := strings.ToLower(ref)
+	branch := low
+	if p.Slug != "" {
+		branch = low + "-" + p.Slug
+	}
+	if ticket != "" && codeRoot != root {
+		branch = corpBranchName(tb.Branch, ticket, p.Slug)
+	}
+	main, err := mainBranch(codeRoot)
+	if err != nil {
+		return "", err
+	}
+	// Ветку прошлого захода дома узнаёт домашнее правило, а в корп-клоне ключ
+	// тикета внутри шаблонного имени: шаблон привязки волен нести префикс.
+	isTaskBranch := func(name string) bool { return branchOfTask(name, ref) }
+	if ticket != "" && codeRoot != root {
+		isTaskBranch = func(name string) bool { return corpBranchOfTicket(name, ticket) }
+	}
+	if l, err := taskWorktreeBy(codeRoot, isTaskBranch); err != nil {
 		return "", err
 	} else if l != nil {
 		return "", fmt.Errorf("%s уже в работе: ветка %s в worktree %s", p.ID, l.Branch, l.Path)
@@ -219,7 +256,7 @@ func cmdStart(root string, p StartParams) (string, error) {
 	exists := false
 	if names, err := git(codeRoot, "branch", "--list", "--format=%(refname:short)"); err == nil {
 		for _, n := range strings.Split(names, "\n") {
-			if branchOfTask(n, p.ID) {
+			if isTaskBranch(n) {
 				branch, exists = n, true
 				break
 			}
@@ -278,10 +315,18 @@ func cmdStart(root string, p StartParams) (string, error) {
 	// но остаться незамеченным это тоже не дело, поэтому строка в отчёт
 	// уходит всегда. Зовётся при любой привязке, даже неполной (без repo):
 	// трекер про свой клон ничего не знает, take работает от ключа тикета.
+	// Ключ берётся тот же, что ушёл в имя ветки: локальный ID доски трекеру
+	// назвать нечем, там такого тикета нет (DK-124). Без ключа key в привязке
+	// вылавливать ключ нечем, и в take уходит ID, как уходил раньше: контур
+	// тогда всё равно не настроен, и отказ трекера скажет об этом сам.
+	take := ticket
+	if take == "" {
+		take = p.ID
+	}
 	if corpBound {
 		if _, err := exec.LookPath("trackctl"); err != nil {
 			msg = append(msg, "trackctl не найден в PATH, тикет не переведён и не назначен: доска не встаёт из-за трекера, довести руками")
-		} else if out, err := exec.Command("trackctl", "-C", root, "take", p.ID).CombinedOutput(); err != nil {
+		} else if out, err := exec.Command("trackctl", "-C", root, "take", take).CombinedOutput(); err != nil {
 			msg = append(msg, fmt.Sprintf("trackctl take не прошёл: %v (%s); доска не встаёт из-за трекера, довести руками", err, strings.TrimSpace(string(out))))
 		} else {
 			msg = append(msg, "трекер: "+strings.TrimSpace(string(out)))

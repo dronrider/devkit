@@ -7,29 +7,43 @@ import (
 	"testing"
 )
 
-// Тесты конвейера корп-контура (DK-087, DK-074 «Конвейер: что остаётся от
-// shipctl»): дерево задачи заводится в клоне и несёт код проекта, ветка по
-// ключу тикета (им служит ID зеркальной строки), вызов trackctl take в
+// Тесты конвейера корп-контура (DK-087, DK-124, DK-074 «Конвейер: что
+// остаётся от shipctl»): дерево задачи заводится в клоне и несёт код проекта,
+// ветка по ключу тикета из ссылки зеркальной строки, вызов trackctl take в
 // start, отказ merge/ship/revert честной строкой, отказ от подсчёта очереди
 // в status и починка бага DK-081 (status спрашивал ветку у боковой
 // директории, а не у клона). Фикстура и помощники редиректа (corpWrite,
 // corpGitT, corpBoard) общие с corp_test.go, помощники доски (gitT,
 // boardTable) общие с ops_test.go: все три файла делят один пакет.
 //
-// Фикстура повторяет ровно то, что кладёт devkitctl corp (devkitctl/corp.go,
-// ensure_binding и corp_connect), а не удобное для теста: привязка несёт
-// только ключ repo (key и branch заводит человек руками, trackctl/README.md,
-// и ни одна задача серии их не пишет), а боковая директория остаётся без
-// единого коммита, потому что подключение заводит её git-репозиторием, но
+// Фикстура повторяет ровно то, что кладёт настоящее подключение, а не удобное
+// для теста. Таблица доски снята с доски, которую заводит taskctl init в
+// боковой директории (семь колонок, ссылка последняя), строка задачи с той,
+// что пишет taskctl add --link, привязка с той, что оставляет devkitctl corp
+// (ensure_binding кладёт один repo) и дописывает человек по
+// trackctl/README.md (contour, key, branch), а боковая директория остаётся
+// без единого коммита, потому что подключение заводит её git-репозиторием, но
 // ничего в него не коммитит. Первый заход DK-087 фикстуру этой правды не
 // повторял (боковая директория несла коммиты и ключ key), поэтому зелёные
-// тесты разошлись с находками на настоящем подключении («Прогон сценария
-// после выката: не сошёлся»).
+// тесты разошлись с находками на настоящем подключении, а DK-124 нашёлся уже
+// на проде: фикстура не знала ни ключа key, ни ссылки на тикет, и подстановка
+// локального ID в шаблон ветки выглядела в ней верной.
 
+// corpTrack это привязка боковой директории для фикстуры. Key и Ticket врозь
+// нарочно: ключ проекта живёт в привязке, ключ конкретного тикета в ссылке
+// строки доски, и подмена одного другим это ровно баг DK-124.
 type corpTrack struct {
 	Branch, Repo string
-	NoRepo       bool // без ключа repo: неполная привязка, которую devkitctl corp не заводит, но которую руками испортить можно
+	Key          string // ключ проекта в привязке; пусто значит «контур ещё не настроен»
+	Ticket       string // ключ тикета в ссылке зеркальной строки; пусто значит ссылку «-», как её пишет taskctl без --link
+	NoRepo       bool   // без ключа repo: неполная привязка, которую devkitctl corp не заводит, но которую руками испортить можно
 }
+
+// corpBoardTable это шапка таблицы доски, которую кладёт taskctl init:
+// семь колонок, ссылка последняя. Старый шестиколоночный boardTable из
+// ops_test.go остаётся под домашние тесты.
+const corpBoardTable = "| ID | Задача | Тип | P | R | Цена | Ссылка |\n" +
+	"|--------|--------|-----|---|---|------|--------|\n"
 
 type trackMode int
 
@@ -67,19 +81,30 @@ func corpPipeline(t *testing.T, id string, tr corpTrack, mode trackMode) (clone,
 	corpGitT(t, local, "config", "user.name", "test")
 
 	prefix := strings.Split(id, "-")[0]
+	// Ссылка строки: у зеркальной строки она ведёт на тикет (так её пишет
+	// taskctl add --link), у обычной стоит прочерк.
+	link := "-"
+	if tr.Ticket != "" {
+		link = "[" + tr.Ticket + "](https://tracker.example.com/browse/" + tr.Ticket + ")"
+	}
 	board := "# Тест: доска (префикс " + prefix + ")\n\n" +
 		"## In progress\n\nНет.\n\n" +
 		"## Check\n\nНет.\n\n" +
-		"## Backlog\n\n" + boardTable +
-		"| " + id + " | Тикет | task | P3 | 10 (0+5+0+0+5) |  |\n\n" +
+		"## Backlog\n\n" + corpBoardTable +
+		"| " + id + " | Тикет | task | P3 | 10 (0+5+0+0+5) | S | " + link + " |\n\n" +
 		"## Blocked\n\nНет.\n"
 	corpWrite(t, filepath.Join(local, "docs", "TASKS.md"), board)
 
-	// Ровно то, что пишет devkitctl corp: ensure_binding кладёт только repo с
-	// комментарием заголовка, branch и key в привязке нет вовсе.
+	// Ровно то, что лежит в привязке подключённого проекта: комментарий и repo
+	// от devkitctl corp (ensure_binding), contour, key и branch от человека по
+	// trackctl/README.md.
 	var tb strings.Builder
 	tb.WriteString("# Привязка проекта к трекеру (trackctl/README.md). Ключ repo кладёт\n")
 	tb.WriteString("# подключение: по нему обвязка клона находится после переклонирования.\n")
+	if tr.Key != "" {
+		tb.WriteString("contour = corp\n")
+		tb.WriteString("key = " + tr.Key + "\n")
+	}
 	if tr.Branch != "" {
 		tb.WriteString("branch = \"" + tr.Branch + "\"\n")
 	}
@@ -151,22 +176,25 @@ func pathWithout(path, exe string) string {
 }
 
 // TestCorpStartBranchTemplate: ветка строится по шаблону привязки с ключом
-// тикета (в зеркальной строке это сам ID, DK-074 «Граница доски и тикета»),
-// не по домашнему «строчный ID плюс слаг». Шаблон с префиксом «feature/» и
-// сохранением регистра ключа отличает это от старого поведения на глаз: то,
-// что раньше могло сложиться в тот же результат случайно, здесь не сложится.
-// Ловит и находку 1: дерево задачи заводится в клоне и несёт код проекта, а
-// не одну доску боковой директории.
+// тикета из ссылки зеркальной строки (DK-074 «Граница доски и тикета»), а не
+// по локальному ID доски и не по домашнему «строчный ID плюс слаг». Префикс
+// доски (LOC) и ключ проекта (ABC) здесь разные, а номера расходятся, поэтому
+// подмена ключа тикета локальным ID видна по значению, а не только по
+// падению: это и есть баг DK-124, ловится он тут ровно так. Шаблон с
+// префиксом «feature/» и сохранением регистра отличает результат и от
+// домашней ветки. Ловит и находку 1 DK-087: дерево задачи заводится в клоне и
+// несёт код проекта, а не одну доску боковой директории.
 func TestCorpStartBranchTemplate(t *testing.T) {
-	clone, local, taskLog, trackLog := corpPipeline(t, "ABC-42", corpTrack{Branch: "feature/{key}-{slug}"}, trackOK)
-	msg, err := cmdStart(local, StartParams{ID: "ABC-42", Slug: "add-x"})
+	clone, local, taskLog, trackLog := corpPipeline(t, "LOC-3",
+		corpTrack{Branch: "feature/{key}-{slug}", Key: "ABC", Ticket: "ABC-42"}, trackOK)
+	msg, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-x"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "feature/ABC-42-add-x"
 	wt := filepath.Join(filepath.Dir(clone), filepath.Base(clone)+"-abc-42")
 	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != want {
-		t.Fatalf("ветка построена как %q, ожидалась %q по шаблону привязки", br, want)
+		t.Fatalf("ветка построена как %q, ожидалась %q по ключу тикета из ссылки строки", br, want)
 	}
 	if !strings.Contains(msg, want) {
 		t.Fatalf("в отчёте нет имени ветки по шаблону: %q", msg)
@@ -174,16 +202,104 @@ func TestCorpStartBranchTemplate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wt, "README.md")); err != nil {
 		t.Fatalf("дерево задачи %s не несёт код проекта (заведено не в клоне): %v", wt, err)
 	}
+	// Директория дерева задачи это запись в .git корп-клона, то есть такой же
+	// корп-артефакт, как ветка: локальному ID доски там не место.
+	if strings.Contains(wt, "loc-3") {
+		t.Fatalf("дерево задачи названо локальным ID доски: %q", wt)
+	}
 	calls, _ := os.ReadFile(taskLog)
-	if !strings.Contains(string(calls), "move ABC-42 in-progress") {
+	if !strings.Contains(string(calls), "move LOC-3 in-progress") {
 		t.Fatalf("задача не переведена в In progress: %q", calls)
 	}
 	tcalls, _ := os.ReadFile(trackLog)
 	if !strings.Contains(string(tcalls), "take ABC-42") {
-		t.Fatalf("trackctl take не позван с ключом тикета: %q", tcalls)
+		t.Fatalf("trackctl take позван не с ключом тикета: %q", tcalls)
+	}
+	if strings.Contains(string(tcalls), "LOC-3") {
+		t.Fatalf("в трекер ушёл локальный ID доски, такого тикета там нет: %q", tcalls)
 	}
 	if !strings.Contains(msg, "взят в работу") {
 		t.Fatalf("в отчёте нет ответа трекера: %q", msg)
+	}
+}
+
+// TestCorpStartPrefixEqualsKey: префикс доски совпадает с ключом проекта, то
+// есть ровно та связка, на которой нашёлся DK-124. Ключ тикета всё равно
+// берётся из ссылки, а не из ID строки, и номера тут расходятся нарочно:
+// строка AC-001 зеркалит тикет AC-777. Совпадение префиксов не должно ни
+// ронять start, ни возвращать подстановку ID.
+func TestCorpStartPrefixEqualsKey(t *testing.T) {
+	clone, local, _, trackLog := corpPipeline(t, "AC-001",
+		corpTrack{Key: "AC", Ticket: "AC-777"}, trackOK)
+	msg, err := cmdStart(local, StartParams{ID: "AC-001", Slug: "login"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "AC-777-login"
+	wt := filepath.Join(filepath.Dir(clone), filepath.Base(clone)+"-ac-777")
+	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != want {
+		t.Fatalf("ветка построена как %q, ожидалась %q по ключу тикета", br, want)
+	}
+	if !strings.Contains(msg, want) {
+		t.Fatalf("в отчёте нет имени ветки: %q", msg)
+	}
+	tcalls, _ := os.ReadFile(trackLog)
+	if !strings.Contains(string(tcalls), "take AC-777") {
+		t.Fatalf("trackctl take позван не с ключом тикета: %q", tcalls)
+	}
+}
+
+// TestCorpStartRowWithoutTicket: контур настроен (в привязке есть key), а
+// строка доски на тикет не ведёт. Имя ветки корп-репозитория брать неоткуда,
+// локальный ID туда не едет, поэтому start отказывает и называет, чем
+// чинится. Ловит мутацию «молча подставил локальный ID»: именно так вёл себя
+// код до DK-124.
+func TestCorpStartRowWithoutTicket(t *testing.T) {
+	_, local, taskLog, _ := corpPipeline(t, "LOC-3", corpTrack{Key: "ABC"}, trackOK)
+	_, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-x"})
+	if err == nil {
+		t.Fatal("строка без ссылки на тикет обязана валить start в корп-контуре")
+	}
+	if !strings.Contains(err.Error(), "не ведёт на тикет ABC-N") {
+		t.Fatalf("отказ не называет, чего не хватает: %v", err)
+	}
+	if calls, _ := os.ReadFile(taskLog); strings.Contains(string(calls), "move") {
+		t.Fatalf("отказ обязан быть до перевода доски: %q", calls)
+	}
+}
+
+// TestCorpStartNoTrackerKey: привязка сразу после devkitctl corp, в ней один
+// repo. Ключ тикета вылавливать нечем, но доска не встаёт из-за ненастроенного
+// трекера: дерево задачи заводится, ветка остаётся домашней, а находка идёт
+// строкой в отчёт, а не молчком. Ловит обе мутации: отказ на ненастроенном
+// контуре и молчание про домашнее имя ветки.
+func TestCorpStartNoTrackerKey(t *testing.T) {
+	clone, local, _, _ := corpPipeline(t, "LOC-3", corpTrack{Ticket: "ABC-42"}, trackOK)
+	msg, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-x"})
+	if err != nil {
+		t.Fatalf("ненастроенный трекер не должен ронять start: %v", err)
+	}
+	wt := filepath.Join(filepath.Dir(clone), filepath.Base(clone)+"-loc-3")
+	if br := gitT(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); br != "loc-3-add-x" {
+		t.Fatalf("без ключа key ветка должна остаться домашней, а вышла %q", br)
+	}
+	if !strings.Contains(msg, "без ключа key") {
+		t.Fatalf("домашнее имя ветки не объяснено в отчёте: %q", msg)
+	}
+}
+
+// TestCorpStartTwice: второй заход на ту же задачу упирается в дерево прошлого
+// захода. Ветка и дерево названы ключом тикета, и искать их по локальному ID
+// значило бы завести задаче вторую ветку молча.
+func TestCorpStartTwice(t *testing.T) {
+	_, local, _, _ := corpPipeline(t, "LOC-3",
+		corpTrack{Branch: "feature/{key}-{slug}", Key: "ABC", Ticket: "ABC-42"}, trackOK)
+	if _, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-y"})
+	if err == nil || !strings.Contains(err.Error(), "уже в работе") {
+		t.Fatalf("второй заход обязан найти дерево прошлого: %v", err)
 	}
 }
 

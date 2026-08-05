@@ -954,14 +954,35 @@ def stats(start, ctx=False):
 
 
 def new(start, prefix, name, no_board):
+    if not no_board and not prefix:
+        # Аргументы разбираются до раскладки: отказ не должен оставлять за собой
+        # заведённую наполовину директорию.
+        sys.stderr.write("нужен --prefix для доски либо --no-board, когда задачи во внешнем трекере\n")
+        return 2
     root, in_git = project_root(start)
+    # Подключение доводит проект до рабочего состояния само, как corp заводит
+    # боковую директорию: пустого места и не-репозитория оно не боится. Иначе
+    # первый же шаг инструкции падал бы на записи AGENTS.md, а до shipctl дело
+    # доходило бы без git.
+    started = []
+    if not root.is_dir():
+        try:
+            root.mkdir(parents=True)
+        except OSError as e:
+            sys.stderr.write("не завёл директорию %s: %s\n" % (root, e))
+            return 1
+        started.append("директория %s заведена" % root)
+    if not in_git:
+        rc, out = run(["git", "init", "-q", str(root)])
+        if rc != 0:
+            sys.stderr.write("git init %s: %s\n" % (root, out))
+            return 1
+        in_git = True
+        started.append("git-репозиторий заведён: ветку и дерево задачи shipctl берёт отсюда")
     agents = root / rules.AGENTS_FILE
     if agents.exists():
         sys.stderr.write("%s уже есть, проект подключён; проверка: devkitctl doctor\n"
                          % rules.AGENTS_FILE)
-        return 2
-    if not no_board and not prefix:
-        sys.stderr.write("нужен --prefix для доски либо --no-board, когда задачи во внешнем трекере\n")
         return 2
     text = (DEVKIT / "templates" / "AGENTS.project.md").read_text(encoding="utf-8")
     if text.startswith("<!--"):
@@ -969,12 +990,9 @@ def new(start, prefix, name, no_board):
     name = name or root.name
     text = text.replace("<название проекта>", name).replace("<XX>", prefix or "XX")
     agents.write_text(text, encoding="utf-8")
-    done = ["%s создан из шаблона" % rules.AGENTS_FILE]
-    if in_git:
-        applied, residual = connect_git_hooks(root)
-        done.append(applied or residual or "git-хуки уже подключены")
-    else:
-        done.append("не git-репозиторий, git-хуки не подключались")
+    done = started + ["%s создан из шаблона" % rules.AGENTS_FILE]
+    applied, residual = connect_git_hooks(root)
+    done.append(applied or residual or "git-хуки уже подключены")
     if no_board:
         done.append("доска не заводилась: вписать в %s, какой это трекер" % rules.AGENTS_FILE)
     else:
@@ -994,8 +1012,24 @@ def new(start, prefix, name, no_board):
     # импорты попадает RULES.board.md.
     _, generated = rules.check(root, DEVKIT, fix=True, skip_dirs=SKIP_DIRS)
     done += generated
+    steps = []
+    # Свежий репозиторий стоит на неродившейся ветке, и ветку задачи от неё
+    # shipctl не заводит («не нашёл ветку main или master»). Первый коммит
+    # поэтому делает подключение, и делает пустым: чужие файлы проекта в него не
+    # едут, а ветка рождается.
+    if started and run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"])[0] != 0:
+        rc, out = run(["git", "-C", str(root), "commit", "--allow-empty", "-q",
+                       "-m", "chore: подключение devkit"])
+        if rc == 0:
+            done.append("первый коммит проекта сделан: без него shipctl start ветку задачи "
+                        "не заведёт")
+        else:
+            steps.append("первый коммит проекта: git -C %s commit --allow-empty "
+                         "-m \"chore: подключение devkit\"; сейчас он не прошёл (%s), а без "
+                         "коммита ветка не рождается и shipctl start её не найдёт"
+                         % (root, out.replace("\n", " ")[:120]))
     print("\n".join(done))
-    steps = deploy_steps(root)
+    steps += deploy_steps(root)
     if no_board:
         steps.append("%s: вписать, какой это трекер и как в нём ведутся задачи"
                      % (root / rules.AGENTS_FILE))

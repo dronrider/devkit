@@ -266,6 +266,22 @@ def index_findings(clone, thin_names):
             "убрать из индекса (git rm --cached) и держать в .git/info/exclude" % files]
 
 
+def prefix_findings(local, devkit):
+    """Совпадение префикса доски с ключом проекта. Рубеж следов на такой паре
+    снимает правило про локальный ID (hooks/corp.py, prefix_collision): ID
+    строки и ключ тикета там неотличимы, и рубеж валил бы каждый коммит по
+    конвенции компании. Молчать об этом нельзя: снаружи ослабленный рубеж
+    выглядит ровно как работающий."""
+    mod = hooks_corp(devkit)
+    if not mod.prefix_collision(str(local)):
+        return []
+    prefix = mod.board_prefix(str(local))
+    return ["префикс доски %s совпадает с ключом проекта в трекере: рубеж следов не отличает "
+            "локальный ID доски от ключа тикета и правило про ID на этом проекте не работает "
+            "(путь боковой директории и слова контура рубеж стережёт по-прежнему); "
+            "развести префикс доски с ключом проекта" % prefix]
+
+
 def sync_findings(local, devkit):
     """Свежесть последнего pull статусов. Спрашивается только у проекта,
     привязанного к трекеру (ключ contour): без него sync гонять нечем, и
@@ -329,5 +345,6 @@ def check(clone, local, devkit, thin_names, fix):
             findings.append("в привязке %s нет ключа repo: по нему потерянная обвязка клона "
                             "находится из боковой директории, вписать путь до %s"
                             % (os.path.join(local, TRACKER), clone))
+    findings += prefix_findings(local, devkit)
     findings += sync_findings(local, devkit)
     return findings, fixed

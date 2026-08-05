@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Самопроверка оболочки цели goal-run.py. Витки играет стаб вместо claude, как
+парсер панели /usage гоняется по образцам: настоящих сессий тут не
+поднимается ни одной. Каждый стенд это свой синтетический проект с доской,
+файлом цели и временным HOME, чтобы уведомитель писал свой журнал в него.
+Стаб клиента и стаб tmux сами написаны на python и живут только во временной
+директории теста: файлами репозитория они не становятся, как и любая другая
+фикстура, изображающая чужую программу.
+"""
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+RUN = os.path.join(HERE, "goal-run.py")
+
+GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
+
+## Цель
+
+DoD: стенд отработал.
+
+## Бюджет
+
+бюджет: week_all <= 10
+
+## Задачи цели
+
+Заводит нарезка первым витком.
+
+## Журнал
+
+## Итог
+
+Пишет последний виток.
+"""
+
+# Стаб клиента стенда: играет очередную строку сценария. Строка сценария это
+# «маркер что-делает-с-журналом»: «запись» дописывает содержательную строку в
+# «Журнал» цели, «снимок» строку снимка квоты, всё остальное молчит. Особые
+# маркеры: none (ответ без маркера), fenced (маркер в ограде), crash (ненулевой
+# код возврата). Слово «замок» в строке поднимает вторую оболочку той же цели.
+# Сценарий кончился, значит повторяется последняя строка: цикл, который не
+# остановился, так и крутится. Корень стенда и путь до goal-run.py читаются из
+# окружения, чтобы один и тот же файл стаба годился для любого стенда.
+CLAUDE_STUB = r'''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+root = os.environ["STAND_ROOT"]
+goal = os.path.join(root, "proj", "docs", "tasks", "DK-100.md")
+
+with open(os.path.join(root, "calls"), "a", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
+with open(os.path.join(root, "calls"), encoding="utf-8") as f:
+    turn = sum(1 for _ in f)
+with open(os.path.join(root, "turns"), encoding="utf-8") as f:
+    turns = [l.rstrip("\n") for l in f]
+
+# Потолок витков: сломанная оболочка, которая не умеет останавливаться, иначе
+# крутила бы стенд вечно, и провал выглядел бы зависшим прогоном.
+if turn > 10:
+    print("стаб: витков больше десяти, оболочка не остановилась")
+    print("marker: done")
+    sys.exit(0)
+
+spec = turns[turn - 1] if turn - 1 < len(turns) else (turns[-1] if turns else "")
+parts = spec.split()
+marker = parts[0] if parts else ""
+
+entry = ""
+if "запись" in parts:
+    entry = "- виток %d, задача цели закрыта; %s" % (turn, marker)
+elif "снимок" in parts:
+    entry = "- снимок 2026-08-0%d: week_all %d%%" % (turn, turn)
+if entry:
+    with open(goal, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    out = []
+    for line in lines:
+        out.append(line)
+        if line.startswith("## Журнал"):
+            out.append("")
+            out.append(entry)
+    with open(goal, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+
+if "замок" in parts:
+    lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
+    if os.path.isdir(lock):
+        with open(os.path.join(root, "lock-probe"), "a", encoding="utf-8") as f:
+            f.write("замок на месте\n")
+    p = subprocess.run([os.environ["GOAL_RUN"], "DK-100", "-C",
+                        os.path.join(root, "proj"), "--foreground"],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    with open(os.path.join(root, "second.out"), "w", encoding="utf-8") as f:
+        f.write(p.stdout)
+        f.write("код %d\n" % p.returncode)
+
+print("виток стаба %d" % turn)
+if marker == "none":
+    print("работа осталась, но маркер сказать забыли")
+    sys.exit(0)
+if marker == "fenced":
+    print("marker: `continue`")
+    sys.exit(0)
+if marker == "crash":
+    print("клиент упал")
+    sys.exit(7)
+print("marker: %s" % marker)
+'''
+
+# Стаб tmux: только логирует вызов и отвечает на has-session по файлу-флагу.
+TMUX_STUB = r'''#!/usr/bin/env python3
+import os
+import sys
+
+root = os.environ["STAND_ROOT"]
+with open(os.path.join(root, "tmux-calls"), "a", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
+if len(sys.argv) > 1 and sys.argv[1] == "has-session":
+    sys.exit(0 if os.path.isfile(os.path.join(root, "tmux-has")) else 1)
+sys.exit(0)
+'''
+
+
+def write_exec(path, content):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.chmod(path, 0o755)
+
+
+class GoalRunTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.n = 0
+
+    def stand(self, *specs):  # новый стенд, аргументы это строки сценария стаба
+        self.n += 1
+        root = os.path.join(self.tmp, "s%d" % self.n)
+        os.makedirs(os.path.join(root, "proj", ".devkit"))
+        os.makedirs(os.path.join(root, "proj", "docs", "tasks"))
+        os.makedirs(os.path.join(root, "bin"))
+        os.makedirs(os.path.join(root, "home"))
+        with open(os.path.join(root, "proj", "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write("# Доска\n\nПрефикс: DK\n\n## In progress\n")
+        with open(os.path.join(root, "proj", "docs", "tasks", "DK-100.md"), "w", encoding="utf-8") as f:
+            f.write(GOAL_MD)
+        with open(os.path.join(root, "proj", ".devkit", "deploy.local"), "w", encoding="utf-8") as f:
+            f.write("deploy = true\nautonomous = true\n")
+        # Права машинного контура стенду раскладывает тот же код, что и на
+        # машине: без них оболочка отказывает предполётной проверкой, и до
+        # витков дело не доходит вовсе.
+        perms = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl", "perms.py"))
+        env = dict(os.environ, HOME=os.path.join(root, "home"))
+        p = subprocess.run(["python3", perms, "--fix"], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(p.returncode, 0, "стенду не разложились права машинного контура: %s" % p.stdout)
+        with open(os.path.join(root, "turns"), "w", encoding="utf-8") as f:
+            for spec in specs:
+                f.write(spec + "\n")
+        write_exec(os.path.join(root, "bin", "claude"), CLAUDE_STUB)
+        return root
+
+    def goal_run(self, root, *args):
+        # -C всегда назван явно, как в реальном вызове из SKILL.md: без него
+        # оболочка берёт корень из pwd процесса, а голый os.getcwd() в python
+        # разворачивает симлинк /var -> /private/var на macOS там, где
+        # логический pwd шелла этого не делает, и путь в сообщении разошёлся
+        # бы с тем, что ушло в -C у стенда.
+        env = dict(os.environ)
+        env["PATH"] = os.path.join(root, "bin") + os.pathsep + env.get("PATH", "")
+        env["HOME"] = os.path.join(root, "home")
+        env["STAND_ROOT"] = root
+        env["GOAL_RUN"] = RUN
+        proj = os.path.join(root, "proj")
+        return subprocess.run([RUN, "-C", proj] + list(args), cwd=proj, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def turns_done(self, root):
+        try:
+            with open(os.path.join(root, "calls"), encoding="utf-8") as f:
+                return sum(1 for _ in f)
+        except OSError:
+            return 0
+
+    def shell_log(self, root):
+        try:
+            with open(os.path.join(root, "proj", ".devkit", "goal-DK-100.log"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def notify_log(self, root):
+        try:
+            with open(os.path.join(root, "home", ".devkit", "notify.log"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    # -- цикл до маркера done -------------------------------------------------
+
+    def test_continue_advances_turns_until_done(self):
+        # continue поднимает следующий виток, done завершает. Заодно тут
+        # проверяются промпт витка, журнал оболочки, громкое уведомление на
+        # стопе и снятый замок.
+        root = self.stand("continue запись", "continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 3)
+        with open(os.path.join(root, "calls"), encoding="utf-8") as f:
+            first_call = f.readline()
+        self.assertIn("-p продолжай цель DK-100 по скиллу goal-loop", first_call)
+        log = self.shell_log(root)
+        self.assertIn("виток 1 маркер continue код 0", log)
+        self.assertIn("виток 3 маркер done код 0", log)
+        self.assertIn("остановлен: done", log)
+        self.assertIn("уровень громкий", self.notify_log(root))
+        self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
+                         "замок остался после цикла")
+
+    def test_each_terminal_marker_stops_on_first_turn(self):
+        # Каждый маркер, кроме continue, завершает цикл первым же витком.
+        for marker in ("done", "over", "wait-human", "stuck"):
+            root = self.stand("%s запись" % marker)
+            p = self.goal_run(root, "DK-100", "--foreground")
+            self.assertEqual(p.returncode, 0, "маркер %s вернул не 0: %s" % (marker, p.stdout))
+            self.assertEqual(self.turns_done(root), 1, "маркер %s не завершил цикл" % marker)
+            log = self.shell_log(root)
+            self.assertIn("остановлен: %s" % marker, log)
+            self.assertIn("уровень громкий", self.notify_log(root))
+
+    # -- воронка --------------------------------------------------------------
+
+    def test_funnel_stops_on_third_silent_turn(self):
+        # Воронка: витки говорят continue и в «Журнал» ничего не пишут. Стоп
+        # ровно на третьем, а не на втором и не на четвёртом.
+        root = self.stand("continue молчок")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertEqual(self.turns_done(root), 3)
+        log = self.shell_log(root)
+        self.assertIn("остановлен: воронка", log)
+        self.assertIn("уровень громкий", self.notify_log(root))
+
+    def test_funnel_counter_resets_on_progress(self):
+        # Счётчик воронки сбрасывается витком, который в «Журнал» записал.
+        root = self.stand("continue молчок", "continue молчок", "continue запись",
+                          "continue молчок", "continue молчок", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 6)
+
+    def test_quota_snapshot_does_not_count_as_progress(self):
+        # Строка снимка квоты продвижением не считается: её дописывает гейт
+        # бюджета и у витка, который не сделал ничего.
+        root = self.stand("continue снимок")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(self.turns_done(root), 3)
+
+    # -- замок ------------------------------------------------------------
+
+    def test_second_shell_refuses_while_first_holds_the_lock(self):
+        # Замок на цель: пока цикл идёт, вторая оболочка той же цели отказывает.
+        root = self.stand("continue запись замок", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        with open(os.path.join(root, "lock-probe"), encoding="utf-8") as f:
+            self.assertIn("замок на месте", f.read())
+        with open(os.path.join(root, "second.out"), encoding="utf-8") as f:
+            second = f.read()
+        self.assertIn("уже идёт", second)
+        self.assertIn("код 3", second)
+        self.assertEqual(self.turns_done(root), 2, "вторая оболочка успела поднять свои витки")
+
+    def test_stale_lock_is_reclaimed_but_live_owner_is_respected(self):
+        # Чужой замок с живым владельцем уважается, а брошенный снимается:
+        # оболочка, убитая вместе с окном tmux, не должна запирать цель до
+        # ручной уборки.
+        root = self.stand("done запись")
+        lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
+        os.makedirs(lock)
+        alive = subprocess.Popen(["sleep", "30"])
+        with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
+            f.write("%d\n" % alive.pid)
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 3, "оболочка полезла в цель, которую ведёт живой владелец замка")
+        alive.kill()
+        alive.wait()
+        with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
+            f.write("%d\n" % alive.pid)
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, "брошенный замок не снялся: %s" % p.stdout)
+        self.assertEqual(self.turns_done(root), 1, "цикл после брошенного замка не пошёл")
+
+    # -- авария витка -----------------------------------------------------
+
+    def test_answer_without_marker_is_a_crash(self):
+        root = self.stand("none запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+
+    def test_fenced_marker_is_not_a_marker(self):
+        root = self.stand("fenced запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(self.turns_done(root), 1, "маркер в ограде поднял следующий виток")
+
+    def test_client_crash_stops_the_loop(self):
+        root = self.stand("crash запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("остановлен: авария витка", self.shell_log(root))
+
+    # -- отказы на старте ---------------------------------------------------
+
+    def test_startup_refusals(self):
+        # Без ID, без доски, без файла цели и при autonomous = false цикл не
+        # поднимается вовсе.
+        root = self.stand("done запись")
+        p = self.goal_run(root, "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла без ID цели")
+
+        p = self.goal_run(root, "DK-101", "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла по цели, файла которой нет")
+        # Причина сверяется целиком, а не подстрокой: отказ называет скилл,
+        # которым цель ставится, и на разрезе режима цели (DK-118) он уехал в
+        # goal-start, а подстрока «файла цели» такую порчу пропускала. Человек
+        # по этому тексту идёт заводить цель, так что неверное имя скилла это
+        # не косметика.
+        want = ("файла цели %s нет: цель ставит скилл goal-start, оболочка её не заводит"
+                % os.path.join(root, "proj", "docs", "tasks", "DK-101.md"))
+        self.assertEqual(p.stdout.rstrip("\n"), want)
+
+        with open(os.path.join(root, "proj", ".devkit", "deploy.local"), "w", encoding="utf-8") as f:
+            f.write("deploy = true\nautonomous = false\n")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла при autonomous = false")
+        self.assertIn("autonomous = true", p.stdout)
+
+        with open(os.path.join(root, "proj", ".devkit", "deploy.local"), "w", encoding="utf-8") as f:
+            f.write("deploy = true\nautonomous = true\n")
+        os.rename(os.path.join(root, "proj", "docs", "TASKS.md"),
+                  os.path.join(root, "proj", "docs", "BOARD.md"))
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла в проекте без доски")
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")), "отказавшая оболочка успела поднять виток")
+
+    # -- предполётная проверка прав ------------------------------------------
+
+    def test_missing_machine_permissions_refuse_before_first_turn(self):
+        # На машине без разложенного контура оболочка отказывает до первого
+        # витка и называет команду починки, а не жжёт бюджет витками, которым
+        # харнес отвечает отказом на каждый вызов.
+        root = self.stand("done запись")
+        os.remove(os.path.join(root, "home", ".claude", "settings.json"))
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла на машине без прав машинного контура")
+        self.assertIn("не хватает прав машинного контура", p.stdout)
+        self.assertIn("doctor --fix", p.stdout)
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")), "оболочка без прав успела поднять виток")
+
+    def test_partial_permissions_name_exactly_what_is_missing(self):
+        # Права выданы наполовину: отказ тот же, и в нём названо ровно
+        # недостающее.
+        root = self.stand("done запись")
+        settings = os.path.join(root, "home", ".claude", "settings.json")
+        import json
+        with open(settings, encoding="utf-8") as f:
+            d = json.load(f)
+        d["permissions"]["allow"] = [r for r in d["permissions"]["allow"] if r != "Bash(agentctl:*)"]
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 2, "оболочка пошла с наполовину выданными правами")
+        self.assertIn("Bash(agentctl:*)", p.stdout)
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")),
+                         "оболочка с неполными правами успела поднять виток")
+
+    # -- tmux ------------------------------------------------------------
+
+    def test_without_foreground_goes_into_its_own_tmux_session(self):
+        # Без --foreground цикл уходит в свою tmux-сессию, а поднятую сессию
+        # той же цели оболочка второй раз не заводит.
+        root = self.stand("done запись")
+        write_exec(os.path.join(root, "bin", "tmux"), TMUX_STUB)
+        p = self.goal_run(root, "DK-100")
+        self.assertEqual(p.returncode, 0, "запуск в tmux вернул не 0")
+        with open(os.path.join(root, "tmux-calls"), encoding="utf-8") as f:
+            calls = f.read()
+        self.assertIn("new-session -d -s goal-DK-100", calls)
+        self.assertIn("--foreground", calls)
+        self.assertIn("goal-DK-100", p.stdout)
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")), "оболочка подняла виток мимо tmux")
+
+        with open(os.path.join(root, "tmux-has"), "w", encoding="utf-8"):
+            pass
+        p = self.goal_run(root, "DK-100")
+        self.assertEqual(p.returncode, 3, "оболочка полезла в цель с уже поднятой tmux-сессией")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=0)

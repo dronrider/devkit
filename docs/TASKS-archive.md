@@ -89,3 +89,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-085.md](tasks/archive/2026/DK-085.md) |
 | DK-087 | shipctl: ветка по ключу тикета, отказ слияния в корп-контуре | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-087.md](tasks/archive/2026/DK-087.md) |
 | DK-083 | Адаптер jira: REST-операции и образцы ответов API | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-083.md](tasks/archive/2026/DK-083.md) |
+| DK-124 | Рубеж следов бьёт по ключу тикета: коммит по конвенции компании не проходит | bug | P1 | 2026-08-05 | [tasks/archive/2026/DK-124.md](tasks/archive/2026/DK-124.md) |
+| DK-111 | Цель: корп-контур по DK-074, конвейер поверх внешнего трекера | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-111.md](tasks/archive/2026/DK-111.md) |

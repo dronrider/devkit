@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,30 @@ import (
 
 func draftFile(root, id string) string {
 	return filepath.Join(root, "docs", "tasks", "drafts", id+".md")
+}
+
+// ageDraft состаривает черновик на n дней: правит его строку «записан», по
+// которой и считается возраст, а заодно время правки файла.
+func ageDraft(t *testing.T, root, id string, days int) {
+	t.Helper()
+	path := draftFile(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().AddDate(0, 0, -days)
+	body := strings.Replace(string(data),
+		draftWrittenPrefix+time.Now().Format(draftDateLayout),
+		draftWrittenPrefix+when.Format(draftDateLayout), 1)
+	if body == string(data) {
+		t.Fatalf("в черновике %s нет строки «записан»:\n%s", id, data)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestDraftWritesFileNotBoard: черновик это файл мимо доски, TASKS.md он не
@@ -31,7 +56,8 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл черновика не создан: %v", err)
 	}
-	want := "# XR-008: уведомитель шумит из песочницы\n\n## Черновик\n\nуведомитель шумит из песочницы\nвторой строкой подробности\n"
+	want := fmt.Sprintf("# XR-008: уведомитель шумит из песочницы\n\nзаписан %s\n\n## Черновик\n\nуведомитель шумит из песочницы\nвторой строкой подробности\n",
+		time.Now().Format(draftDateLayout))
 	if string(data) != want {
 		t.Fatalf("содержимое черновика:\n%s\nожидал:\n%s", data, want)
 	}
@@ -157,10 +183,7 @@ func TestDraftListAndShow(t *testing.T) {
 	if _, err := cmdDraft(root, "вторая идея", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-3 * 24 * time.Hour)
-	if err := os.Chtimes(draftFile(root, "XR-008"), old, old); err != nil {
-		t.Fatal(err)
-	}
+	ageDraft(t, root, "XR-008", 3)
 	out, err = cmdDraftList(root)
 	if err != nil {
 		t.Fatal(err)

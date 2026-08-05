@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,10 +24,32 @@ type Draft struct {
 	Title string
 	Path  string
 	Age   time.Duration
+	// Written это дата из строки «записан» самого файла, Mod время его правки.
+	// Возраст считается по первой, а вторая остаётся фолбэком для черновиков,
+	// записанных до появления строки.
+	Written  time.Time
+	Mod      time.Time
+	Deferred string // дата пометки «отложен», пусто у неотложенного
 }
+
+const (
+	draftGroomHeading  = "## Грумминг"
+	draftWrittenPrefix = "записан "
+	draftDateLayout    = "2006-01-02"
+)
+
+// draftSubs это слова, которые case "draft" узнаёт за подкоманду, а не за
+// текст черновика. Черновика из одного такого слова не записать, но ограничение
+// это давно действует для list и стоит того: без узнавания «draft defer DK-116
+// причина» молча завёл бы черновик с текстом «defer».
+var draftSubs = map[string]bool{"list": true, "defer": true, "attach": true, "drop": true}
+
+// deferRe находит строку пометки в разделе «Грумминг»: «- 2026-08-05, отложен: ...»
+var deferRe = regexp.MustCompile(`^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен`)
 
 func draftsDir(root string) string     { return filepath.Join(root, "docs", "tasks", "drafts") }
 func draftPath(root, id string) string { return filepath.Join(draftsDir(root), id+".md") }
+func draftRel(id string) string        { return filepath.Join("docs", "tasks", "drafts", id+".md") }
 
 // loadDrafts читает накопитель. Каталога нет, значит черновиков нет: заводится
 // он первой командой draft, и на проекте без черновиков его быть не должно.
@@ -52,9 +75,19 @@ func loadDrafts(root string) ([]Draft, error) {
 		num, _ := strconv.Atoi(m[2])
 		d := Draft{ID: id, Num: num, Path: filepath.Join(draftsDir(root), e.Name())}
 		if info, err := e.Info(); err == nil {
-			d.Age = now.Sub(info.ModTime())
+			d.Mod = info.ModTime()
 		}
-		d.Title = draftTitle(d.Path)
+		meta := parseDraftFile(d.Path)
+		d.Title, d.Written, d.Deferred = meta.Title, meta.Written, meta.Deferred
+		// Возраст от времени правки сбивает любая запись в файл, начиная с
+		// первой же пометки, а заодно свежий клон и shipctl start со своим
+		// worktree. Строка «записан» этого не боится, и фолбэк остаётся только
+		// для черновиков, у которых её нет.
+		if !d.Written.IsZero() {
+			d.Age = now.Sub(d.Written)
+		} else if !d.Mod.IsZero() {
+			d.Age = now.Sub(d.Mod)
+		}
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Num < out[j].Num })
@@ -70,24 +103,61 @@ func findDraft(drafts []Draft, id string) *Draft {
 	return nil
 }
 
-// draftTitle достаёт из файла первую строку заголовка без решётки и без ID.
-func draftTitle(path string) string {
+// draftMeta это то, что читается из самого файла черновика: заголовок, дата
+// записи и дата пометки об отложенном.
+type draftMeta struct {
+	Title    string
+	Written  time.Time
+	Deferred string
+}
+
+// parseDraftFile читает файл черновика одним заходом: три поля из одного и того
+// же файла, и второй его читатель платил бы за то же самое дважды на каждую
+// строку накопителя.
+func parseDraftFile(path string) draftMeta {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return draftMeta{}
 	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		ln = strings.TrimSpace(ln)
+	var m draftMeta
+	head, groom := true, false
+	for _, raw := range strings.Split(string(data), "\n") {
+		ln := strings.TrimSpace(raw)
 		if ln == "" {
 			continue
 		}
-		ln = strings.TrimPrefix(ln, "# ")
-		if i := strings.Index(ln, ": "); i > 0 && idRe.MatchString(ln[:i]) {
-			ln = ln[i+2:]
+		if head {
+			m.Title = draftTitleLine(ln)
+			head = false
+			continue
 		}
-		return ln
+		if strings.HasPrefix(ln, "## ") {
+			groom = ln == draftGroomHeading
+			continue
+		}
+		switch {
+		case groom && m.Deferred == "":
+			if g := deferRe.FindStringSubmatch(ln); g != nil {
+				m.Deferred = g[1]
+			}
+		case m.Written.IsZero() && strings.HasPrefix(ln, draftWrittenPrefix):
+			date := strings.TrimSpace(strings.TrimPrefix(ln, draftWrittenPrefix))
+			if t, err := time.ParseInLocation(draftDateLayout, date, time.Local); err == nil {
+				m.Written = t
+			}
+		}
 	}
-	return ""
+	return m
+}
+
+// draftTitleLine чистит первую строку файла: решётка заголовка и свой же ID
+// в заголовке накопителю не нужны, их и так видно в колонке ID.
+func draftTitleLine(ln string) string {
+	ln = strings.TrimPrefix(ln, "# ")
+	if i := strings.Index(ln, ": "); i > 0 && idRe.MatchString(ln[:i]) {
+		ln = ln[i+2:]
+	}
+	return ln
 }
 
 // ageWords печатает возраст черновика словами: накопитель показывается людям,
@@ -174,7 +244,8 @@ func cmdDraft(root, text string, c CommitOpts) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf("# %s: %s\n\n## Черновик\n\n%s\n", id, title, text)
+	body := fmt.Sprintf("# %s: %s\n\n%s%s\n\n## Черновик\n\n%s\n",
+		id, title, draftWrittenPrefix, time.Now().Format(draftDateLayout), text)
 	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return "", err
 	}
@@ -197,7 +268,11 @@ func cmdDraftList(root string) (string, error) {
 	}
 	out := make([]string, 0, len(drafts))
 	for _, d := range drafts {
-		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, ageWords(d.Age), d.Title))
+		age := ageWords(d.Age)
+		if d.Deferred != "" {
+			age += ", отложен " + d.Deferred
+		}
+		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, d.Title))
 	}
 	return strings.Join(out, "\n"), nil
 }
@@ -210,7 +285,11 @@ func draftsLine(drafts []Draft) string {
 	}
 	parts := make([]string, 0, len(drafts))
 	for _, d := range drafts {
-		parts = append(parts, fmt.Sprintf("%s (%s)", d.ID, ageWords(d.Age)))
+		age := ageWords(d.Age)
+		if d.Deferred != "" {
+			age += ", отложен"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", d.ID, age))
 	}
 	return fmt.Sprintf("Черновики (%d, целиком: taskctl draft list): %s", len(drafts), strings.Join(parts, ", "))
 }

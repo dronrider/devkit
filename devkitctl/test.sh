@@ -2504,6 +2504,27 @@ out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj2" 2>&1)
 echo "$out" | grep -q 'пустой test=' ||
     fail "доктор промолчал про пустой test= у корп-проекта: $out"
 
+# Подключение обычного проекта с нуля, как его гоняет CONNECT.md (DK-125):
+# директории нет вовсе, и заводит её вместе с git-репозиторием сама команда.
+# Раньше первый же шаг инструкции падал traceback на записи AGENTS.md, а после
+# ручного mkdir проект оставался без git, и shipctl start падал следом.
+nproj2="$tmp/fresh-proj"
+[ -e "$nproj2" ] && fail "фикстура не та: директория подключаемого проекта уже есть"
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" new --prefix FR -C "$nproj2" 2>&1)
+[ $? -eq 0 ] || fail "new на несуществующей директории не прошёл: $out"
+[ -f "$nproj2/AGENTS.md" ] || fail "new не завёл проект на пустом месте: $out"
+[ -d "$nproj2/.git" ] || fail "new оставил проект без git-репозитория: $out"
+echo "$out" | grep -q 'директория .* заведена' || fail "new промолчал про заведённую директорию: $out"
+echo "$out" | grep -q 'git-репозиторий заведён' || fail "new промолчал про git init: $out"
+echo "$out" | grep -q 'не git-репозиторий' && fail "new всё ещё считает свежий проект не репозиторием: $out"
+[ "$(git -C "$nproj2" config core.hooksPath)" = "../devkit/hooks" ] ||
+    fail "git-хуки не подключены на заведённом с нуля проекте: $(git -C "$nproj2" config core.hooksPath)"
+# Отказ по аргументам идёт до раскладки: полупустой директории после него не
+# остаётся.
+out=$(HOME="$home" PATH="$cleanpath" python3 "$dkctl" new -C "$tmp/never-proj" 2>&1)
+[ $? -eq 2 ] || fail "new без --prefix и --no-board не отказал: $out"
+[ -e "$tmp/never-proj" ] && fail "отказавший new оставил за собой директорию"
+
 # Префикс доски, совпавший с ключом проекта: на незаведённой доске это отказ, а
 # не находка потом. Рубеж следов на такой паре правило про локальный ID снимает.
 cproj3="$tmp/corp-three"

@@ -6,9 +6,10 @@
 
   git log -n 100 --format=%s | check-commit.py <файл сообщения>
 
-История приходит на stdin. Пустая история (свежий репозиторий) и subject без
-conventional-префикса проверку префикса выключают: не всякий проект живёт по
-conventional commits. Тип revert разрешён всегда, его пишет shipctl revert на
+История приходит на stdin. Короткая история (свежий проект, меньше HISTORY_MIN
+коммитов) и subject без conventional-префикса проверку префикса выключают: не
+всякий проект живёт по conventional commits, а перечень префиксов первых
+коммитов нормой проекта ещё не стал. Тип revert разрешён всегда, его пишет shipctl revert на
 аварийном пути. Комментарии git и хвост после scissors-строки не смотрятся.
 Выход 0 чисто, 1 находки, осознанный обход: git commit --no-verify.
 """
@@ -35,6 +36,10 @@ TRACES = re.compile("|".join(("co-authored-by", "generated with")
                              + tuple(re.escape(a) for a in ASSISTANTS)), re.I)
 PREFIX = re.compile(r"^([a-z]+)(\([^)]+\))?!?: ")
 SCISSORS = re.compile(r"^# -+ >8 -+$")
+# Ниже этого числа коммитов перечень префиксов истории ещё не норма проекта:
+# у свежего проекта там один-два коммита подключения, и любой другой тип
+# выглядел бы чужим.
+HISTORY_MIN = 10
 
 
 def message_lines(raw):
@@ -63,7 +68,12 @@ def check(lines, history):
                         "  как переписать: главное из body внести в subject, остальное выбросить;\n"
                         "  что не влезло в строку, обычно просится в отдельный коммит"
                         % len(body))
-    types = {m.group(1) for s in history if (m := PREFIX.match(s))}
+    # Короткая история это не норма проекта, а случайность первых коммитов: у
+    # свежего проекта в ней стоит один «chore» подключения, и первый же
+    # «docs(tasks)» доски валился бы с предложением сменить префикс.
+    types = set()
+    if len(history) >= HISTORY_MIN:
+        types = {m.group(1) for s in history if (m := PREFIX.match(s))}
     if lines and types and (m := PREFIX.match(lines[0])):
         if m.group(1) not in types and m.group(1) != "revert":
             findings.append("тип %r не встречается в истории проекта (RULES.md, «Git» п. 1), там: %s\n"

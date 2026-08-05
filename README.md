@@ -20,7 +20,7 @@ Claude Code это тонкий `CLAUDE.md` с импортами:
 Импортируется ядро правил, а не весь их текст: резидентно только то, что нужно
 в любой сессии, остальное читается по надобности и по указателю. Сколько текста
 доедет до инструмента, решает его профиль, разбор в
-[devkitctl/README.md](devkitctl/README.md).
+[tools/devkitctl/README.md](tools/devkitctl/README.md).
 
 Генерит их `devkitctl doctor --fix`, он же следит, чтобы они не протухли и
 чтобы правленое руками не пропало молча. Импорт это локальный путь, поэтому
@@ -45,32 +45,32 @@ devkit должен лежать в соседней с проектом дир�
   ведётся, и не ест контекст остальных проектов.
 - `RANKING.md` - система приоритизации: Ranking 1..100 из пяти слагаемых,
   раскладка в приоритеты P0..P3.
-- `taskctl/` - Go-утилита канбан-доски `docs/TASKS.md`
-  (init/add/move/close/sort/lint/id), см. [taskctl/README.md](taskctl/README.md).
-- `shipctl/` - Go-утилита слияния и отката задач по правилам доски
+- `tools/taskctl/` - Go-утилита канбан-доски `docs/TASKS.md`
+  (init/add/move/close/sort/lint/id), см. [tools/taskctl/README.md](tools/taskctl/README.md).
+- `tools/shipctl/` - Go-утилита слияния и отката задач по правилам доски
   (status/start/merge/ship/revert); заводит worktree на задачу, чтобы
   параллельные сессии не толкались в одном рабочем дереве, команду выката
   берёт из гитигнорнутого `.devkit/deploy.local`,
-  см. [shipctl/README.md](shipctl/README.md).
-- `agentctl/` - Go-утилита выбора исполнителя под задачу (pick): модель и
+  см. [tools/shipctl/README.md](tools/shipctl/README.md).
+- `tools/agentctl/` - Go-утилита выбора исполнителя под задачу (pick): модель и
   reasoning effort по типу, цене и неопределённости с доски, применяется
-  делегированием субагенту, см. [agentctl/README.md](agentctl/README.md).
-- `trackctl/` - Go-утилита корп-контура: всё, что говорит с трекером компании
+  делегированием субагенту, см. [tools/agentctl/README.md](tools/agentctl/README.md).
+- `tools/trackctl/` - Go-утилита корп-контура: всё, что говорит с трекером компании
   (status/issue/take/submit/sync), собрано в ней, а taskctl остаётся механикой
   доски и в сеть не ходит. Оценка и ворклоги уезжают командами границ: эстимейт
   считается из цены задачи, время из фактов работы, а sync тянет чужие переходы
   тикетов на доску. Трекер прибит контрактом адаптера (в сборке живёт `jira`,
   REST API v3), статусы компании
   укладываются в секции доски таблицей машинного контура
-  `~/.devkit/tracker/<имя>.local`, см. [trackctl/README.md](trackctl/README.md).
-- `harness/` - профили инструментов, в которых живёт сессия агента
+  `~/.devkit/tracker/<имя>.local`, см. [tools/trackctl/README.md](tools/trackctl/README.md).
+- `kit/harness/` - профили инструментов, в которых живёт сессия агента
   (`claude-code.toml` и дальше по одному на инструмент): что инструмент умеет
   по пяти осям (детект, правила, делегирование, хуки, квота). Читают профили
-  agentctl и devkitctl, разбор в [agentctl/README.md](agentctl/README.md).
-- `agents/` - определения субагентов, по одному на уровень effort из маппинга
+  agentctl и devkitctl, разбор в [tools/agentctl/README.md](tools/agentctl/README.md).
+- `kit/agents/` - определения субагентов, по одному на уровень effort из маппинга
   agentctl и на роль (`exec-*` исполняют задачу, `review-*` ревьюят дифф);
   раскладывает их `devkitctl doctor --fix` в `~/.claude/agents/`.
-- `skills/` - процедуры, общие всем проектам, по директории с `SKILL.md` на
+- `kit/skills/` - процедуры, общие всем проектам, по директории с `SKILL.md` на
   каждую: `board-task` ведёт задачу доски от строки до закрытия, `board-ship`
   двигает её код (ветка, ревью, слияние, выкат, откат), `test-standard` держит
   стандарт тестов и доводку правки до пользователя, `board-batch` ведёт пачку
@@ -84,15 +84,15 @@ devkit должен лежать в соседней с проектом дир�
   это процедурная часть правил: резидентно только ядро, а шаги приезжают по
   вызову скилла. Копий в проектах нет, на машину их кладёт тот же
   `devkitctl doctor --fix`, только в `~/.claude/skills/`. Витки цели без
-  человека поднимает оболочка `skills/goal-loop/goal-run.sh`: на машину она не
+  человека поднимает оболочка `kit/skills/goal-loop/goal-run.sh`: на машину она не
   уезжает и зовётся путём из чекаута, как `hooks/notify.py`.
-- `regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
-  старом коде, см. [regcheck/README.md](regcheck/README.md).
-- `obeycheck/` - Go-утилита рядом с regcheck: стенд послушания, который гоняет
+- `tools/regcheck/` - Go-утилита, проверяющая, что регрессионный тест краснеет на
+  старом коде, см. [tools/regcheck/README.md](tools/regcheck/README.md).
+- `tools/obeycheck/` - Go-утилита рядом с regcheck: стенд послушания, который гоняет
   сценарии на двух раскладках правил и показывает таблицей, где послушание
   просело без текста правила в контексте. Каждый прогон живёт во временном HOME
   и синтетическом проекте, живая машина в нём не участвует,
-  см. [obeycheck/README.md](obeycheck/README.md).
+  см. [tools/obeycheck/README.md](tools/obeycheck/README.md).
 - `hooks/` - хуки харнеса и git. Проверки текстов (запрещённые символы, индекс
   памяти, чувствительное в доске) стоят двумя рубежами: `pre-commit` и
   `commit-msg` в git, PostToolUse в Claude Code. Рядом работа, привязанная к
@@ -100,12 +100,12 @@ devkit должен лежать в соседней с проектом дир�
   действия или закончила ход, и фоново о том, что субагент отработал,
   `quota-refresh.sh` освежает снимок квоты на старте
   сессии, см. [hooks/README.md](hooks/README.md).
-- `devkitctl/` - подключение проекта и диагностика обвязки (new/corp/doctor), а
+- `tools/devkitctl/` - подключение проекта и диагностика обвязки (new/corp/doctor), а
   вместе с ними вес резидента: сколько текста devkit едет в каждый запрос
   сессии, считает и меряет живым прогоном `weigh`. Куда уходит объём целой
   сессии и не переписывался ли префикс по ходу, разбирает `stats --context` по
-  журналам сессий харнеса, см. [devkitctl/README.md](devkitctl/README.md).
-- `templates/AGENTS.project.md` - заготовка проектного `AGENTS.md`: подсказка
+  журналам сессий харнеса, см. [tools/devkitctl/README.md](tools/devkitctl/README.md).
+- `kit/templates/AGENTS.project.md` - заготовка проектного `AGENTS.md`: подсказка
   клонирования devkit, объявление доски или трекера, место под описание
   проекта.
 
@@ -113,7 +113,7 @@ devkit должен лежать в соседней с проектом дир�
 меняется только имя):
 
 ```bash
-cd taskctl && go build -o ~/go/bin/taskctl .
+cd tools/taskctl && go build -o ~/go/bin/taskctl .
 ```
 
 Раскладку машинного контура (бинари утилит, определения субагентов в
@@ -129,13 +129,13 @@ cd taskctl && go build -o ~/go/bin/taskctl .
 Новый проект подключается одной командой (шаблон, доска, git-хуки):
 
 ```bash
-python3 ~/projects/devkit/devkitctl/devkitctl.py new --prefix XX
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py new --prefix XX
 ```
 
 Проект корп-контура подключается своей командой:
 
 ```bash
-python3 ~/projects/devkit/devkitctl/devkitctl.py corp --prefix XX --contour <контур> --key ABC
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py corp --prefix XX --contour <контур> --key ABC
 ```
 
 Она заводит боковую директорию `../<проект>-local` с доской и своим
@@ -143,7 +143,7 @@ git-репозиторием, а в клоне оставляет обвязку
 файл контекста харнеса под строкой `.git/info/exclude` и обёртки хуков поверх
 чужих хуков проекта. В чужой репозиторий тогда не уезжает ничего нашего.
 Прогон повторяемый, и он же восстанавливает обвязку после переклонирования,
-разбор в [devkitctl/README.md](devkitctl/README.md).
+разбор в [tools/devkitctl/README.md](tools/devkitctl/README.md).
 
 Обвязка существующего проекта проверяется `devkitctl.py doctor`. Ручной путь тот
 же, что делает утилита: копия шаблона в корень как `AGENTS.md`, доска через
@@ -164,9 +164,9 @@ git-репозиторием, а в клоне оставляет обвязку
 - `tools/` - инструменты, по директории на каждый, имя директории это имя
   команды: внутри исходники одного инструмента, его тесты, `testdata/` и
   `README.md`, и язык у него один.
-- `kit/` - материал агентской сессии: определения субагентов (`agents/`),
-  скиллы (`skills/`), профили харнесов (`harness/`), заготовка проектного
-  `AGENTS.md` (`templates/`). Это то, что devkit раскладывает на машину и в
+- `kit/` - материал агентской сессии: определения субагентов (`kit/agents/`),
+  скиллы (`kit/skills/`), профили харнесов (`kit/harness/`), заготовка проектного
+  `AGENTS.md` (`kit/templates/`). Это то, что devkit раскладывает на машину и в
   проект или читает как данные; кода тут нет, кроме двух мест по контракту:
   оболочка скилла лежит рядом со своим `SKILL.md`, а сменный съёмщик остатка
   квоты в `kit/harness/snap/<харнес>.sh`, откуда его зовёт `agentctl`.
@@ -222,9 +222,9 @@ python. По этой границе на sh остаются точки вхо�
 растащить её по утилитам значит потерять сверку.
 
 Решение с перечнем переездов и разбором отвергнутых вариантов в
-[docs/lld/DK-139-repo-layout.md](docs/lld/DK-139-repo-layout.md). Переезд по
-нему едет задачей DK-140, машинная проверка раскладки задачей DK-144, и до них
-раздел описывает правило, а не сегодняшнее дерево.
+[docs/lld/DK-139-repo-layout.md](docs/lld/DK-139-repo-layout.md). Дерево
+разложено по нему задачей DK-140, а машинную проверку раскладки ставит DK-144,
+и до неё правило держится на глазах ревью.
 
 ## Журнал запусков
 
@@ -238,6 +238,6 @@ regcheck на багфиксах (последнее подсказывает `s
 Задачи по развитию самого devkit ведутся на его же доске `docs/TASKS.md`
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
 гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
-в директории каждой Go-утилиты, `hooks/test.sh`, `devkitctl/test.sh`,
-`skills/test.sh`, `skills/goal-loop/test.sh`, `python3 hooks/check-exec-bit.py` (бит исполнения
+в директории каждой Go-утилиты, `hooks/test.sh`, `tools/devkitctl/test.sh`,
+`kit/skills/test.sh`, `kit/skills/goal-loop/test.sh`, `python3 hooks/check-exec-bit.py` (бит исполнения
 у каждого `test.sh` репозитория).

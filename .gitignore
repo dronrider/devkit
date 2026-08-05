@@ -2,8 +2,8 @@
 # Локальные дополнения к правилам, живут только на машине пользователя.
 *.local.md
 # Бинари утилит, собираются по месту.
-taskctl/taskctl
-shipctl/shipctl
+tools/taskctl/taskctl
+tools/shipctl/shipctl
 
 # Локальная обвязка выката, живёт только на машине.
 .devkit/*.local

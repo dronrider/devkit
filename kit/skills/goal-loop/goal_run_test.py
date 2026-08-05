@@ -42,10 +42,15 @@ DoD: стенд отработал.
 # «маркер что-делает-с-журналом»: «запись» дописывает содержательную строку в
 # «Журнал» цели, «снимок» строку снимка квоты, всё остальное молчит. Особые
 # маркеры: none (ответ без маркера), fenced (маркер в ограде), crash (ненулевой
-# код возврата). Слово «замок» в строке поднимает вторую оболочку той же цели.
-# Сценарий кончился, значит повторяется последняя строка: цикл, который не
-# остановился, так и крутится. Корень стенда и путь до goal-run.py читаются из
-# окружения, чтобы один и тот же файл стаба годился для любого стенда.
+# код возврата), trailing (текст после маркера на той же строке), leading
+# (текст перед маркером на той же строке), dotted (точка после маркера),
+# blankreal (маркер, пустая строка, а за ней ещё строка ответа) - все пять
+# последних это формы, которые постановка называет прямо: маркер идёт голой
+# строкой и сравнивается целиком, а не префиксом. Слово «замок» в строке
+# поднимает вторую оболочку той же цели. Сценарий кончился, значит
+# повторяется последняя строка: цикл, который не остановился, так и крутится.
+# Корень стенда и путь до goal-run.py читаются из окружения, чтобы один и тот
+# же файл стаба годился для любого стенда.
 CLAUDE_STUB = r'''#!/usr/bin/env python3
 import os
 import subprocess
@@ -111,6 +116,20 @@ if marker == "fenced":
 if marker == "crash":
     print("клиент упал")
     sys.exit(7)
+if marker == "trailing":
+    print("marker: continue выполнено")
+    sys.exit(0)
+if marker == "leading":
+    print("готово, marker: continue")
+    sys.exit(0)
+if marker == "dotted":
+    print("marker: continue.")
+    sys.exit(0)
+if marker == "blankreal":
+    print("marker: continue")
+    print("")
+    print("ещё текст после маркера")
+    sys.exit(0)
 print("marker: %s" % marker)
 '''
 
@@ -312,6 +331,50 @@ class GoalRunTests(unittest.TestCase):
         p = self.goal_run(root, "DK-100", "--foreground")
         self.assertEqual(p.returncode, 1)
         self.assertEqual(self.turns_done(root), 1, "маркер в ограде поднял следующий виток")
+
+    def test_marker_with_trailing_text_is_not_a_marker(self):
+        # Постановка требует сравнение целиком: строка «marker: continue
+        # выполнено» маркером не считается, хотя и начинается с него. Именно
+        # эта форма ловит мутацию «== заменили на startswith» в сравнении
+        # маркера (ревью DK-143): под ней такая строка проходит как continue,
+        # а тест обязан на этом упасть.
+        root = self.stand("trailing запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, "текст после маркера на той же строке сошёл за continue")
+        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+        self.assertEqual(self.turns_done(root), 1, "текст после маркера поднял следующий виток")
+
+    def test_marker_with_leading_text_is_not_a_marker(self):
+        # Симметричная форма: текст перед маркером на той же строке. Startswith
+        # её и так не пропустит (строка не начинается с «marker:»), но
+        # постановка называет обе формы прямо, и разбор целиком обязан
+        # отклонять и эту.
+        root = self.stand("leading запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, "текст перед маркером на той же строке сошёл за continue")
+        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+        self.assertEqual(self.turns_done(root), 1, "текст перед маркером поднял следующий виток")
+
+    def test_marker_with_trailing_dot_is_not_a_marker(self):
+        # Точка в конце строки: тоже префикс «marker: continue», и тоже
+        # ловит ту же мутацию сравнения, что и текст после маркера.
+        root = self.stand("dotted запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, "точка после маркера сошла за continue")
+        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+        self.assertEqual(self.turns_done(root), 1, "маркер с точкой поднял следующий виток")
+
+    def test_marker_followed_by_more_text_after_blank_line_is_not_a_marker(self):
+        # «После маркера не остаётся ничего, даже пустой строки»: пустая
+        # строка сама по себе маркер не портит (её оставляет обычный print),
+        # но настоящая строка ответа после неё означает, что маркер был не
+        # последним, а где-то в середине, и разбор обязан взять истинную
+        # последнюю строку, а не остановиться на маркере раньше срока.
+        root = self.stand("blankreal запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, "маркер с текстом после пустой строки сошёл за continue")
+        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+        self.assertEqual(self.turns_done(root), 1, "маркер с текстом после пустой строки поднял виток")
 
     def test_client_crash_stops_the_loop(self):
         root = self.stand("crash запись")

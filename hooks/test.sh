@@ -59,7 +59,9 @@ printf 'fix: чисто\n# комментарий с тире %s\n' "$dash" > "$
 (cd "$repo" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1) || fail "commit-msg смотрит в комментарии git"
 
 # check-commit.py: следы ассистента и body ловятся, чистое проходит.
-hist='feat(core): раз\nfix: два\ndocs: три'
+# История длиннее порога check-commit (HISTORY_MIN): перечень префиксов
+# становится нормой проекта только на ней, короткую проверка не судит.
+hist='feat(core): раз\nfix: два\ndocs: три\nfix: четыре\nfeat: пять\ndocs: шесть\nfix: семь\nfeat: восемь\ndocs: девять\nfix: десять'
 printf 'fix: чистая строка\n' > "$tmp/msg"
 printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "чистый коммит не прошёл check-commit"
 printf 'fix: правка\n\nCo-authored-by: Claude <noreply@anthropic.com>\n' > "$tmp/msg"
@@ -97,15 +99,30 @@ printf 'revert: XR-1 откат правки\n' > "$tmp/msg"
 printf "$hist\n" | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "revert должен проходить всегда"
 printf 'perf: первый типизированный\n' > "$tmp/msg"
 printf '\n' | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null || fail "пустая история не должна включать проверку префикса"
+# Свежий проект (DK-125): в истории один-два коммита подключения, и нормой
+# проекта их префиксы ещё не стали. Иначе первый же «docs(tasks)» доски вставал
+# бы находкой на проекте, который только что завела devkitctl new.
+printf 'docs(tasks): MP-001 в работу\n' > "$tmp/msg"
+printf 'chore: подключение devkit\n' | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null ||
+    fail "история из одного коммита включила проверку префикса"
+printf 'perf: чужой тип\n' > "$tmp/msg"
+printf 'feat: раз\nfix: два\ndocs: три\n' | python3 "$here/check-commit.py" "$tmp/msg" >/dev/null ||
+    fail "короткая история включила проверку префикса"
 
 # commit-msg целиком: типизированная история включает проверку префикса.
 repoc="$tmp/repoc"
 git init -q "$repoc"
 git -C "$repoc" config user.name t
 git -C "$repoc" config user.email t@t
-printf 'x\n' > "$repoc/f.txt"
-git -C "$repoc" add f.txt
-git -C "$repoc" commit -qm 'feat: сид истории'
+# Историю сеют глубже порога HISTORY_MIN: на паре коммитов проверка префикса
+# молчит намеренно, и «чужой тип» тут не поймался бы.
+i=1
+while [ $i -le 12 ]; do
+    printf 'x%s\n' "$i" > "$repoc/f.txt"
+    git -C "$repoc" add f.txt
+    git -C "$repoc" commit -qm "feat: сид истории $i"
+    i=$((i + 1))
+done
 printf 'perf: чужой тип\n' > "$tmp/msg"
 (cd "$repoc" && "$here/commit-msg" "$tmp/msg" >/dev/null 2>&1)
 [ $? -eq 1 ] || fail "commit-msg пропустил чужой тип"

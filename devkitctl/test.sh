@@ -2334,7 +2334,9 @@ grep -q '^repo = ../corp-proj$' "$clocal/.devkit/tracker.local" || fail "--fix �
 # contour гонять sync нечем, и молчание тут штатно.
 out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
 echo "$out" | grep -q 'sync' && fail "доктор спросил про sync у проекта без привязки к трекеру: $out"
-printf 'contour = corp\nkey = CP\n' >> "$clocal/.devkit/tracker.local"
+# Ключ проекта в трекере разведён с префиксом доски (CP): так его и держат,
+# иначе рубеж следов не отличает локальный ID доски от ключа тикета (DK-124).
+printf 'contour = corp\nkey = TR\n' >> "$clocal/.devkit/tracker.local"
 out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
 echo "$out" | grep -q 'sync с трекером не гонялся ни разу' ||
     fail "нет находки на ни разу не гонявшийся sync: $out"
@@ -2345,6 +2347,43 @@ echo "$out" | grep -q 'последний sync с трекером .* дн на�
 touch "$clocal/.devkit/tracker.sync"
 out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
 [ $? -eq 0 ] || fail "доктор нашёл находки при свежей отметке sync: $out"
+
+# Рубеж следов на настоящей раскладке подключения (DK-124): проверяется он не
+# на самодельной фикстуре, а на том, что выше положил сам «devkitctl corp»,
+# то есть цепочкой хуков в корп-клоне. Разведённые префикс доски (CP) и ключ
+# проекта (TR): коммит по конвенции компании проходит, локальный ID доски в
+# сообщении валит коммит.
+printf 'заметка проекта\n' > "$cproj/note.md"
+git -C "$cproj" add note.md
+git -C "$cproj" commit -qm 'chore: TR-7 правка по тикету' >/dev/null 2>&1 ||
+    fail "коммит с ключом тикета не прошёл цепочку хуков"
+printf 'вторая заметка\n' > "$cproj/note2.md"
+git -C "$cproj" add note2.md
+out=$(git -C "$cproj" commit -m 'chore: TR-7 правка по строке CP-7' 2>&1)
+[ $? -eq 0 ] && fail "локальный ID доски в сообщении прошёл рубеж следов: $out"
+echo "$out" | grep -q 'локальный ID доски' || fail "находка рубежа без разбора вида: $out"
+
+# Тот же клон с префиксом доски, совпавшим с ключом проекта: локальный ID и
+# ключ тикета там одна и та же строка, правило про ID снимается целиком (иначе
+# рубеж валил бы каждый коммит по конвенции компании), а доктор про ослабленный
+# рубеж говорит вслух: снаружи снятое правило выглядит как работающее.
+cp "$clocal/.devkit/tracker.local" "$tmp/tracker.tr"
+sed 's/^key = TR$/key = CP/' "$tmp/tracker.tr" > "$clocal/.devkit/tracker.local"
+out=$(git -C "$cproj" commit -m 'chore: CP-7 правка по тикету' 2>&1)
+[ $? -eq 0 ] || fail "коммит по конвенции компании завернул рубеж следов: $out"
+printf 'третья заметка\n' > "$cproj/note3.md"
+git -C "$cproj" add note3.md
+out=$(git -C "$cproj" commit -m "chore: CP-8 смотри $clocal/docs/TASKS.md" 2>&1)
+[ $? -eq 0 ] && fail "путь боковой директории прошёл ослабленный рубеж: $out"
+echo "$out" | grep -q 'путь боковой директории' || fail "ослабленный рубеж потерял путь боковой директории: $out"
+git -C "$cproj" reset -q
+rm -f "$cproj/note3.md"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'префикс доски CP совпадает с ключом проекта' ||
+    fail "доктор промолчал про ослабленный совпадением префиксов рубеж: $out"
+cp "$tmp/tracker.tr" "$clocal/.devkit/tracker.local"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj" 2>&1)
+echo "$out" | grep -q 'префикс доски' && fail "доктор ругается на разведённые префикс и ключ: $out"
 
 # Идемпотентность: повторный прогон боковую директорию не трогает (доска с
 # правкой цела), чужой хук не теряет и тонкий файл не переписывает.

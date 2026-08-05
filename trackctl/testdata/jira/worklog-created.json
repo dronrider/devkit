@@ -1,0 +1,21 @@
+{
+  "id": "100028",
+  "issueId": "10002",
+  "self": "https://your-domain.atlassian.net/rest/api/3/issue/10010/worklog/10000",
+  "author": {
+    "accountId": "5b10a2844c20165700ede21g",
+    "active": false,
+    "displayName": "Mia Krystof",
+    "self": "https://your-domain.atlassian.net/rest/api/3/user?accountId=5b10a2844c20165700ede21g"
+  },
+  "updateAuthor": {
+    "accountId": "5b10a2844c20165700ede21g",
+    "active": false,
+    "displayName": "Mia Krystof",
+    "self": "https://your-domain.atlassian.net/rest/api/3/user?accountId=5b10a2844c20165700ede21g"
+  },
+  "started": "2021-01-17T12:34:00.000+0000",
+  "timeSpent": "3h 20m",
+  "timeSpentSeconds": 12000,
+  "updated": "2021-01-18T23:45:00.000+0000"
+}

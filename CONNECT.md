@@ -1,0 +1,112 @@
+# Подключение проекта к devkit
+
+Порядок команд для двух сценариев: обычный проект (код и доска в одном
+репозитории) и проект корп-контура (чужой репозиторий, куда ничего нашего не
+уезжает). Здесь только последовательность, разбор каждой команды в README
+утилит: [devkitctl](devkitctl/README.md), [taskctl](taskctl/README.md),
+[shipctl](shipctl/README.md), [trackctl](trackctl/README.md).
+
+Каждое подключение заканчивается списком «осталось сделать»: команда сама
+называет файлы и ключи, которые за человека не заполнить. Если список пуст, она
+это тоже говорит.
+
+## Один раз на машину
+
+```bash
+git clone https://github.com/dronrider/devkit.git ~/projects/devkit
+cd ~/projects/devkit && for u in taskctl shipctl agentctl trackctl regcheck obeycheck; do (cd $u && go build -o ~/go/bin/$u .); done
+python3 ~/projects/devkit/devkitctl/devkitctl.py doctor --fix
+```
+
+Клон рядом с проектами, бинари утилит в `~/go/bin` (он должен лежать в PATH),
+`doctor --fix` раскладывает машинный контур: хуки харнеса и права сессии в
+`~/.claude/settings.json`, определения субагентов, скиллы, глобальную точку
+правил. Снимок квоты остаётся: его снимает `agentctl quota refresh` из живой
+сессии, и до первого снимка доктор про него говорит. Гоняется доктор из чекаута
+devkit, поэтому в отчёте идут и находки по самому devkit; машинные помечены
+словом «машина», остальные тут ни при чём.
+
+## Обычный проект
+
+```bash
+python3 ~/projects/devkit/devkitctl/devkitctl.py new -C ~/projects/myproj --prefix MP
+```
+
+Кладёт `AGENTS.md`, заводит доску `docs/TASKS.md` с префиксом ID `MP`,
+подключает git-хуки и болванку выката. Префикс выбирается коротким и своим,
+чужих ID на доске нет.
+
+```bash
+$EDITOR ~/projects/myproj/.devkit/deploy.local
+```
+
+Вписать `test =` (команда общего тест-набора) и `deploy =` (команда выката).
+Файл гитигнорнут и живёт только на машине.
+
+```bash
+python3 ~/projects/devkit/devkitctl/devkitctl.py doctor -C ~/projects/myproj
+```
+
+Проверка обвязки: по проекту находок нет значит он подключён.
+
+```bash
+taskctl -C ~/projects/myproj add --title "первая задача" --type task --rank "25+5+1+0+0" --cost S
+shipctl -C ~/projects/myproj start MP-001
+```
+
+Задача заводится на доске и берётся в работу: `start` делает ветку и отдельное
+рабочее дерево рядом с проектом.
+
+## Проект корп-контура
+
+```bash
+git clone <корп-репозиторий> ~/projects/corp-proj
+python3 ~/projects/devkit/devkitctl/devkitctl.py corp -C ~/projects/corp-proj \
+    --prefix CB --contour corp --key ABC --remote <личный приватный remote доски>
+```
+
+Заводит боковую директорию `~/projects/corp-proj-local` со своим
+git-репозиторием, доской и привязкой к трекеру, а в клоне оставляет обвязку
+(редирект, тонкий файл контекста под `.git/info/exclude`, обёртки хуков). В
+корп-репозиторий не уезжает ничего нашего.
+
+Префикс доски `--prefix` берётся отличным от ключа проекта в трекере `--key`:
+на совпавшей паре рубеж следов не отличает локальный ID доски от ключа тикета и
+правило про ID снимает. Совпадение команда не пропустит.
+
+```bash
+$EDITOR ~/.devkit/tracker/corp.local
+```
+
+Контур компании команда завела болванкой: вписать `base_url` и `user`, сверить
+таблицу `[status]` со статусами трекера. Контур один на все репозитории
+компании, второй раз этот шаг не нужен.
+
+```bash
+export TRACKER_TOKEN=<токен трекера>
+$EDITOR ~/projects/corp-proj-local/.devkit/deploy.local
+```
+
+Имя переменной с токеном названо ключом `token_env` контура, сам токен в файлы
+не пишется. В `deploy.local` вписать `test =`; выкат в корп-контуре ведёт
+процесс компании, и `deploy =` там обычно пустой.
+
+```bash
+trackctl -C ~/projects/corp-proj sync
+python3 ~/projects/devkit/devkitctl/devkitctl.py doctor -C ~/projects/corp-proj
+trackctl -C ~/projects/corp-proj status
+```
+
+`sync` подтягивает статусы тикетов на доску, и он же ставит отметку свежести,
+без которой доктор говорит про разошедшуюся доску. Дальше доктор проверяет
+обвязку клона и боковой директории, а `status` говорит про трекер: контур,
+адрес, токен на месте, статусы расписаны.
+
+```bash
+taskctl -C ~/projects/corp-proj add --title "первая задача" --type task --rank "25+5+1+0+0" --cost S --link "ABC-123"
+shipctl -C ~/projects/corp-proj start CB-001
+```
+
+Строка доски зеркалит тикет: ключ стоит в ссылке, и по нему `start` заводит
+ветку в корп-клоне. Локальный ID доски в ветки и коммиты чужого репозитория не
+едет никогда.

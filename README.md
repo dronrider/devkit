@@ -120,6 +120,10 @@ cd taskctl && go build -o ~/go/bin/taskctl .
 проверяет `devkitctl doctor`, а
 однозначное из этого он же и доводит с `--fix`.
 
+Порядок подключения на оба сценария, обычный проект и корп-контур, собран в
+[CONNECT.md](CONNECT.md): команды подряд, по строке пояснения на шаг. Здесь
+только чем они отличаются.
+
 Новый проект подключается одной командой (шаблон, доска, git-хуки):
 
 ```bash
@@ -129,7 +133,7 @@ python3 ~/projects/devkit/devkitctl/devkitctl.py new --prefix XX
 Проект корп-контура подключается своей командой:
 
 ```bash
-python3 ~/projects/devkit/devkitctl/devkitctl.py corp --prefix XX
+python3 ~/projects/devkit/devkitctl/devkitctl.py corp --prefix XX --contour <контур> --key ABC
 ```
 
 Она заводит боковую директорию `../<проект>-local` с доской и своим

@@ -25,12 +25,21 @@ TOP_LEVEL = ("tools", "kit", "hooks", "docs",
              ".github", ".devkit",
              "README.md", "CONNECT.md", "AGENTS.md", "CLAUDE.md", "RANKING.md",
              "RULES*.md", ".gitignore")
-# Места, где sh допустим: обёртка хука, оболочка скилла, съёмщик остатка квоты и
-# одноразовый сценарий проверки задачи.
-SH_PLACES = ("hooks/", "kit/skills/", "kit/harness/snap/", "docs/tasks/")
-# Места, где живёт python: инструмент, хуки и оболочка скилла рядом со своим
-# SKILL.md (там же лежит самопроверка скиллов и её тест).
-PY_PLACES = ("tools/", "hooks/", "kit/skills/")
+# Места, где sh допустим сверх оболочки скилла: обёртка хука, съёмщик остатка
+# квоты и одноразовый сценарий проверки задачи.
+SH_PLACES = ("hooks/", "kit/harness/snap/", "docs/tasks/")
+# Места, где python живёт сверх оболочки скилла: инструмент и хуки.
+PY_PLACES = ("tools/", "hooks/")
+# Оболочка скилла лежит рядом со своим SKILL.md, то есть ровно в
+# kit/skills/<имя>/. Не «под kit/skills/ где-нибудь»: широкий префикс пропускал
+# бы и файл прямо в kit/skills/, и файл в kit/skills/<имя>/sub/, а таких мест
+# правило не заводило.
+SKILL_DEPTH = 4
+# Самопроверка скиллов и её тест это точечное исключение, а не место для кода:
+# инструмент проверяет каталог рядом с собой, зовётся путём из чекаута и в
+# tools/ его не унести, не разведя с проверяемым. Список закрытый, третий файл
+# сюда без правки правила не ляжет.
+SKILLS_SELFCHECK = ("kit/skills/check-skills.py", "kit/skills/check_skills_test.py")
 # Форму sh не меряют там, где он пишется под чужой контракт или под один прогон.
 SHAPE_FREE = ("docs/tasks/", "kit/harness/snap/")
 SH_LIMIT = 100
@@ -100,6 +109,12 @@ def read_lines(path):
         return []
 
 
+def in_skill(rel):
+    """Файл лежит оболочкой скилла, рядом со своим SKILL.md."""
+    parts = rel.split("/")
+    return parts[:2] == ["kit", "skills"] and len(parts) == SKILL_DEPTH
+
+
 def lang_rule(rel):
     """Правило, нарушенное файлом кода, либо пустая строка."""
     top = rel.split("/")[0]
@@ -111,6 +126,8 @@ def lang_rule(rel):
     if rel.endswith(".py"):
         if top == "docs":
             return MATERIAL
+        if in_skill(rel) or rel in SKILLS_SELFCHECK:
+            return ""
         if not rel.startswith(PY_PLACES):
             return TOOL_CODE
     return ""
@@ -118,7 +135,7 @@ def lang_rule(rel):
 
 def sh_findings(root, rel):
     findings = []
-    if not rel.startswith(SH_PLACES):
+    if not rel.startswith(SH_PLACES) and not in_skill(rel):
         return ["%s: %s" % (rel, SH_ONLY)]
     if rel.startswith(SHAPE_FREE):
         return findings

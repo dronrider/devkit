@@ -968,8 +968,16 @@ mkdir -p "$bproj"
 git init -q "$bproj"
 git -C "$bproj" config user.name t
 git -C "$bproj" config user.email t@t
-HOME="$home" python3 "$dkctl" new --prefix BP -C "$bproj" >/dev/null 2>&1
+out=$(HOME="$home" python3 "$dkctl" new --prefix BP -C "$bproj" 2>&1)
 [ -f "$bproj/.devkit/deploy.local" ] || fail "new не завёл .devkit/deploy.local"
+# Хвост подключения (DK-125): чего команда не сделала за человека, она называет
+# сама, с путём файла и ключами.
+echo "$out" | grep -q "осталось сделать" || fail "new не напечатал, что осталось сделать: $out"
+bprojr=$(cd "$bproj" && pwd -P)
+echo "$out" | grep -q "$bprojr/.devkit/deploy.local: вписать test =, deploy =" ||
+    fail "хвост new не назвал незаполненную обвязку выката: $out"
+echo "$out" | grep -q "проверка: devkitctl doctor -C $bprojr" ||
+    fail "хвост new не назвал команду проверки: $out"
 grep -q '^autonomous = false' "$bproj/.devkit/deploy.local" || fail "в болванке нет autonomous"
 grep -q '^test =$' "$bproj/.devkit/deploy.local" || fail "в болванке нет пустого ключа test"
 git -C "$bproj" check-ignore -q .devkit/deploy.local || fail ".devkit/deploy.local не гитигнорнут"
@@ -2427,6 +2435,119 @@ diff -q "$cproj/CLAUDE.md" "$tmp/thin.keep" >/dev/null || fail "восстано
 out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj" 2>&1)
 echo "$out" | grep -q 'хук commit-msg: цепочка на месте' ||
     fail "прогон после восстановления опять раскладывал цепочку: $out"
+
+# Подключение корп-проекта целиком, как его гоняет CONNECT.md (DK-125): привязка
+# и контур заводятся флагами, remote доски выставляется, а недоделанное
+# перечисляет сама команда. Проверяется всё на настоящем прогоне corp, а не на
+# фикстуре: расхождение фикстуры с раскладкой уже дважды пропускало баги серии.
+cproj2="$tmp/corp-two"
+clocal2="$tmp/corp-two-local"
+git init -q "$cproj2"
+git -C "$cproj2" config user.name t
+git -C "$cproj2" config user.email t@t
+echo readme > "$cproj2/readme.md"
+git -C "$cproj2" add -A
+git -C "$cproj2" commit -qm init
+git init -q --bare "$tmp/board-two.git"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj2" --prefix CT \
+    --contour corp2 --key ABC --branch '{key}-x-{slug}' --remote "$tmp/board-two.git" 2>&1)
+[ $? -eq 0 ] || fail "corp с привязкой не прошёл: $out"
+grep -q '^contour = corp2$' "$clocal2/.devkit/tracker.local" ||
+    fail "corp не вписал contour в привязку: $(cat "$clocal2/.devkit/tracker.local")"
+grep -q '^key = ABC$' "$clocal2/.devkit/tracker.local" || fail "corp не вписал key в привязку"
+grep -q '^branch = {key}-x-{slug}$' "$clocal2/.devkit/tracker.local" ||
+    fail "corp не вписал branch в привязку"
+[ "$(git -C "$clocal2" remote get-url origin)" = "$tmp/board-two.git" ] ||
+    fail "corp не выставил remote доски: $(git -C "$clocal2" remote -v)"
+contour2="$home/.devkit/tracker/corp2.local"
+[ -f "$contour2" ] || fail "corp не завёл болванку контура компании: $out"
+grep -q '^adapter = "jira"$' "$contour2" || fail "в болванке контура нет адаптера: $(cat "$contour2")"
+grep -q '^in_progress = ' "$contour2" || fail "в болванке контура не расписана таблица статусов"
+# Хвост подключения: недоделанное названо путями и ключами, а не оставлено
+# человеку на догадку.
+echo "$out" | grep -q 'осталось сделать' || fail "corp не напечатал, что осталось сделать: $out"
+echo "$out" | grep -q "контур компании $contour2: заполнить base_url, user" ||
+    fail "хвост corp не назвал незаполненный контур: $out"
+echo "$out" | grep -q 'токен трекера: export TRACKER_TOKEN' ||
+    fail "хвост corp не назвал переменную с токеном: $out"
+echo "$out" | grep -q 'вписать test =' || fail "хвост corp не спросил команду тестов: $out"
+echo "$out" | grep -q 'deploy =' &&
+    fail "хвост corp спросил команду выката, а выкат там ведёт процесс компании: $out"
+echo "$out" | grep -q 'remote' && echo "$out" | grep -q 'remote add origin' &&
+    fail "хвост corp зовёт добавить remote, хотя выставил его сам: $out"
+# Повторный прогон с теми же флагами ключи не дублирует и заполненный контур не
+# переписывает: подключение это и восстановление тоже.
+sed -e 's|^base_url = ""|base_url = "https://tracker.example"|' -e 's|^user = ""|user = "ivanov"|' \
+    "$contour2" > "$tmp/contour2.filled"
+cp "$tmp/contour2.filled" "$contour2"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj2" --prefix CT \
+    --contour corp2 --key ABC --branch '{key}-x-{slug}' --remote "$tmp/board-two.git" 2>&1)
+[ $? -eq 0 ] || fail "повторный corp с привязкой не прошёл: $out"
+[ "$(grep -c '^key = ABC$' "$clocal2/.devkit/tracker.local")" = "1" ] ||
+    fail "повторный corp продублировал ключ привязки: $(cat "$clocal2/.devkit/tracker.local")"
+diff -q "$contour2" "$tmp/contour2.filled" >/dev/null || fail "повторный corp переписал заполненный контур"
+echo "$out" | grep -q 'контур компании' && fail "повторный corp снова зовёт заполнять контур: $out"
+# Заполнено всё: хвост говорит об этом вслух, молчание тут неотличимо от
+# недоделанной раскладки.
+printf 'deploy =\ntest = echo тесты\nautonomous = false\n' > "$clocal2/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$corppath" TRACKER_TOKEN=t python3 "$dkctl" corp -C "$cproj2" 2>&1)
+echo "$out" | grep -q 'ручных шагов не осталось' ||
+    fail "corp промолчал о том, что раскладка доведена: $out"
+# Пустой deploy= в корп-контуре это норма, а не находка: слияние и выкат там
+# ведёт процесс компании.
+touch "$clocal2/.devkit/tracker.sync"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj2" 2>&1)
+echo "$out" | grep -q 'пустой deploy=' &&
+    fail "доктор требует команду выката у корп-проекта: $out"
+printf 'deploy =\ntest =\nautonomous = false\n' > "$clocal2/.devkit/deploy.local"
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" doctor -C "$cproj2" 2>&1)
+echo "$out" | grep -q 'пустой test=' ||
+    fail "доктор промолчал про пустой test= у корп-проекта: $out"
+
+# Префикс доски, совпавший с ключом проекта: на незаведённой доске это отказ, а
+# не находка потом. Рубеж следов на такой паре правило про локальный ID снимает.
+cproj3="$tmp/corp-three"
+git init -q "$cproj3"
+git -C "$cproj3" config user.name t
+git -C "$cproj3" config user.email t@t
+echo readme > "$cproj3/readme.md"
+git -C "$cproj3" add -A
+git -C "$cproj3" commit -qm init
+out=$(HOME="$home" PATH="$corppath" python3 "$dkctl" corp -C "$cproj3" --prefix ABC --key ABC 2>&1)
+[ $? -eq 2 ] || fail "corp взял префикс доски, совпавший с ключом проекта: $out"
+echo "$out" | grep -q 'рубеж следов' || fail "отказ corp не назвал последствие совпадения: $out"
+[ -f "$tmp/corp-three-local/docs/TASKS.md" ] && fail "отказавший corp всё-таки завёл доску"
+
+# Хуки харнеса раскладывает doctor --fix, а не человек по README (DK-125).
+home2="$tmp/home2"
+mkdir -p "$home2/.claude"
+printf '{\n  "model": "opus"\n}\n' > "$home2/.claude/settings.json"
+out=$(HOME="$home2" PATH="$cleanpath" python3 "$dkctl" doctor -C "$proj" 2>&1)
+echo "$out" | grep -q 'PostToolUse-хук check-symbols.py не подключён' ||
+    fail "доктор не заметил неподключённые хуки харнеса: $out"
+out=$(HOME="$home2" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q 'хук харнеса на PostToolUse' || fail "--fix не разложил хуки харнеса: $out"
+python3 - "$home2/.claude/settings.json" <<'EOF' || fail "хуки харнеса легли в настройки не так, как ждёт харнес"
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data.get("model") == "opus", "рукописное в настройках потерялось"
+hooks = data["hooks"]
+post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
+assert len([c for c in post if "check-symbols.py" in c]) == 1, post
+assert [g.get("matcher") for g in hooks["PostToolUse"]] == ["Edit|Write|NotebookEdit"], hooks["PostToolUse"]
+for event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):
+    cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
+    assert len([c for c in cmds if "notify.py" in c]) == 1, (event, cmds)
+assert "quota-refresh.sh" in str(hooks["SessionStart"])
+EOF
+out=$(HOME="$home2" PATH="$cleanpath" python3 "$dkctl" doctor --fix -C "$proj" 2>&1)
+echo "$out" | grep -q 'хук харнеса на' && fail "повторный --fix разложил хуки второй раз: $out"
+python3 - "$home2/.claude/settings.json" <<'EOF' || fail "повторный --fix продублировал хуки харнеса"
+import json, sys
+hooks = json.load(open(sys.argv[1]))["hooks"]
+post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
+assert len(post) == 3, post
+EOF
 
 if [ $fails -eq 0 ]; then
     echo "devkitctl в порядке"

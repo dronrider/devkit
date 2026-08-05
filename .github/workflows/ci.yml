@@ -32,7 +32,8 @@ jobs:
         run: go test ./...
         working-directory: tools/obeycheck
       - name: тесты хуков
-        run: sh hooks/test.sh
+        run: python3 -m unittest discover -p '*_test.py'
+        working-directory: hooks
       - name: тесты devkitctl
         run: sh tools/devkitctl/test.sh
       - name: тесты скиллов

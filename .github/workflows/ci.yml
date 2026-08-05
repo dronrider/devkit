@@ -39,9 +39,11 @@ jobs:
       - name: тесты скиллов
         run: python3 kit/skills/check-skills.py
       - name: юниты самопроверки скиллов
-        run: python3 kit/skills/check-skills_test.py
+        run: python3 -m unittest discover -p '*_test.py'
+        working-directory: kit/skills
       - name: тесты оболочки цели
-        run: python3 kit/skills/goal-loop/goal-run_test.py
+        run: python3 -m unittest discover -p '*_test.py'
+        working-directory: kit/skills/goal-loop
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
       - name: бит исполнения test.sh по всему репозиторию

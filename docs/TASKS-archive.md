@@ -87,3 +87,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-121 | Уведомление конца хода: в баннере видно задачу и завершённый шаг | task | P2 | 2026-08-05 | [tasks/archive/2026/DK-121.md](tasks/archive/2026/DK-121.md), `c9ac2d5`, `a7dc1a9` |
 | DK-084 | trackctl submit: ворклоги по фактам, эстимейт, pull-синхронизация | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-084.md](tasks/archive/2026/DK-084.md) |
 | DK-085 | devkitctl: подключение корп-проекта и диагностика следов | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-085.md](tasks/archive/2026/DK-085.md) |
+| DK-087 | shipctl: ветка по ключу тикета, отказ слияния в корп-контуре | task | P3 | 2026-08-05 | [tasks/archive/2026/DK-087.md](tasks/archive/2026/DK-087.md) |

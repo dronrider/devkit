@@ -10,22 +10,8 @@ import os
 import shutil
 import unittest
 
-from testenv import PY, SandboxCase, executable, git, git_init, read, run, write
-
-TASKCTL = '''#!%s
-import os
-import sys
-
-argv = sys.argv[1:]
-root = "."
-if argv[:1] == ["-C"]:
-    root, argv = argv[1], argv[2:]
-if argv[:1] == ["init"]:
-    os.makedirs(os.path.join(root, "docs", "tasks"), exist_ok=True)
-    with open(os.path.join(root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
-        f.write("# Задачи проекта (префикс CP)\\n")
-    print("доска создана")
-''' % PY
+from testenv import (BOARD_TASKCTL, SandboxCase, executable, git, git_init, read, run,
+                     write)
 
 FOREIGN_HOOK = "#!/bin/sh\necho чужой pre-commit\nexit 0\n"
 
@@ -42,7 +28,7 @@ class CorpTest(SandboxCase):
         box = cls.box
         corpbin = box.root / "corpbin"
         corpbin.mkdir()
-        executable(corpbin / "taskctl", TASKCTL)
+        executable(corpbin / "taskctl", BOARD_TASKCTL)
         cls.corppath = "%s:%s" % (corpbin, box.cleanpath)
         cls.clone = box.root / "corp-proj"
         cls.local = box.root / "corp-proj-local"
@@ -315,7 +301,7 @@ class CorpConnectTest(SandboxCase):
         super().setUpClass()
         corpbin = cls.box.root / "corpbin"
         corpbin.mkdir()
-        executable(corpbin / "taskctl", TASKCTL)
+        executable(corpbin / "taskctl", BOARD_TASKCTL)
         cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
         cls.clone = cls.box.root / "corp-two"
         cls.local = cls.box.root / "corp-two-local"

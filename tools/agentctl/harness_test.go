@@ -10,7 +10,7 @@ import (
 
 // TestHarnessFixtures: общие с devkitctl фикстуры. Отчёт по каждому входу
 // сверяется побайтно с .expected, тот же файл сверяет питоновская реализация
-// (tools/devkitctl/test.sh). Разъедься парсеры, и профиль читался бы двумя утилитами
+// (tools/devkitctl/harness_test.py). Разъедься парсеры, и профиль читался бы двумя утилитами
 // по-разному, а заметили бы это по расхождению поведения, а не по тесту.
 func TestHarnessFixtures(t *testing.T) {
 	dir := filepath.Join("..", "..", "kit", "harness", "testdata")

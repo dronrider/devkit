@@ -529,10 +529,14 @@ frontmatter; превышение это находка с предложени�
 `weigh.evaluate_skill_body`) отделена от чтения дисков (`weigh.pockets`,
 `weigh.skill_body_chars`), поэтому пороги проверяются юнитами без файловой
 системы, а стык с диском и с `doctor` отдельными интеграционными тестами
-(`tools/devkitctl/test.sh`).
+(`tools/devkitctl/weigh_test.py`).
 
 ## Самопроверка
 
+Тесты лежат рядом с кодом, каждый модуль своим `<модуль>_test.py`; общий
+стенд (копия devkit во временной директории, подставные HOME и PATH) в
+`testenv.py`.
+
 ```sh
-tools/devkitctl/test.sh
+cd tools/devkitctl && python3 -m unittest discover -p '*_test.py'
 ```

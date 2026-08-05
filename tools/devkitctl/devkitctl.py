@@ -67,6 +67,7 @@ import corp
 import harness
 import importlib.util
 import json
+import layout
 import os
 import perms
 import re
@@ -161,8 +162,15 @@ def project_root(start):
 
 
 def check_links(root):
+    # Проверяется живая дока: корневые тексты, README инструментов, kit/ и
+    # hooks/. docs/ стареет по правилу и не проверяется: файл задачи описывает
+    # состояние на момент решения и после закрытия не правится, так что ссылка
+    # на уехавший путь там законна, а находка по ней зовёт чинить то, что чинить
+    # запрещено (DK-140, DK-144).
     findings = []
     for dirpath, dirnames, filenames in os.walk(root):
+        if Path(dirpath) == Path(root):
+            dirnames[:] = [d for d in dirnames if d != "docs"]
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
             if not fn.endswith(".md"):
@@ -802,6 +810,8 @@ def doctor(start, fix=False):
             print(ln)
         findings += wfindings
         findings += weigh.skill_findings(DEVKIT)
+    # Раскладка проверяется только на самом devkit: в чужом проекте она своя.
+    findings += ["раскладка: %s" % m for m in layout.check(root)]
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed
@@ -864,6 +874,30 @@ def doctor(start, fix=False):
         sys.stderr.write("находок: %d\n" % len(findings))
         return 1
     print("обвязка в порядке")
+    return 0
+
+
+def layout_only(start):
+    """Одна проверка раскладки, без машинной обвязки.
+
+    Полный doctor смотрит на ~/.claude, собранные бинари, tmux и снимок квоты, и
+    в CI такой прогон дал бы десяток находок про ненастроенную машину. Тут
+    печатаются только находки раскладки, и код выхода стоит по ним.
+    """
+    root, in_git = project_root(start)
+    if not in_git:
+        sys.stderr.write("не git-репозиторий: %s\n" % root)
+        return 2
+    if not layout.is_devkit(root):
+        print("раскладка: правило действует на самом devkit, тут проверять нечего")
+        return 0
+    findings = layout.check(root)
+    for f in findings:
+        print(f)
+    if findings:
+        sys.stderr.write("находок: %d\n" % len(findings))
+        return 1
+    print("раскладка в порядке")
     return 0
 
 
@@ -1173,6 +1207,8 @@ def main(argv):
     d.add_argument("-C", dest="dir", default=".", help="директория проекта")
     d.add_argument("--fix", action="store_true",
                    help="доводить обвязку до актуальной (additive, заполненное не трогает)")
+    d.add_argument("--layout", action="store_true",
+                   help="только раскладка devkit, без машинной обвязки (шаг CI)")
     n = sub.add_parser("new", help="подключить новый проект")
     n.add_argument("-C", dest="dir", default=".", help="директория проекта")
     n.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
@@ -1200,7 +1236,7 @@ def main(argv):
     w.add_argument("--prompt", default=weigh.PROMPT, help="запрос прогона, у обоих он один")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
-        rc = doctor(a.dir, a.fix)
+        rc = layout_only(a.dir) if a.layout else doctor(a.dir, a.fix)
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
     elif a.cmd == "corp":

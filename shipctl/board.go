@@ -18,7 +18,10 @@ var sectByPrefix = []struct{ prefix, key string }{
 	{"## Blocked", "blocked"},
 }
 
-type row struct{ ID, Title, Type, Cost string }
+// Link это ячейка ссылки строки. В корп-контуре она несёт ключ тикета
+// зеркальной строки, и по ней start именует ветку (DK-124); дома ссылка ведёт
+// на файл задачи, и никто её не читает.
+type row struct{ ID, Title, Type, Cost, Link string }
 
 type board struct {
 	sects map[string][]row
@@ -86,6 +89,9 @@ func loadBoard(root string) (*board, error) {
 		// формате шестая ячейка это ссылка.
 		if len(cells) >= 7 {
 			r.Cost = strings.TrimSpace(cells[5])
+			r.Link = strings.TrimSpace(cells[6])
+		} else if len(cells) == 6 {
+			r.Link = strings.TrimSpace(cells[5])
 		}
 		b.sects[sect] = append(b.sects[sect], r)
 	}

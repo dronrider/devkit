@@ -102,6 +102,11 @@ if not out.startswith(sandbox + os.sep):
     sys.stderr.write("заглушка go пишет только в %%s: %%s\\n" %% (sandbox, out))
     sys.exit(1)
 name = os.path.basename(out)
+# Своё имя настоящая утилита несёт в коде, а не берёт из пути сборки, поэтому
+# суффикс промежуточного файла (сборка идёт рядом и переезжает переименованием)
+# в строку версии не попадает.
+if name.endswith(".new"):
+    name = name[:-4]
 stamp = dict(p.split("=", 1) for p in ld.split() if "=" in p)
 pair = "%%s/%%s" %% (os.environ.get("GOOS", ""), os.environ.get("GOARCH", ""))
 if os.environ.get("GO_STUB_NO_STAMP") == pair:

@@ -96,14 +96,25 @@ def go_env(goos="", goarch=""):
 
 
 def compile_one(devkit, name, target, version, commit, goos="", goarch=""):
-    """Собрать одну утилиту с зашитой версией. Отдаёт текст находки либо None."""
+    """Собрать одну утилиту с зашитой версией. Отдаёт текст находки либо None.
+
+    Собирается рядом и переезжает на место переименованием, а не пишется поверх.
+    Причин две, и обе живые: go build отказывается писать поверх файла, который
+    не его («already exists and is not an object file»), а такой файл в каталоге
+    назначения бывает, доктор как раз и чинит расхождение с чужой копией; на
+    linux же запись в работающий бинарь даёт ETXTBSY.
+    """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
+    staged = target.with_name(target.name + ".new")
     ldflags = "-X main.version=%s -X main.commit=%s" % (version, commit)
-    rc, out = run(["go", "build", "-ldflags", ldflags, "-o", str(target), "."],
+    rc, out = run(["go", "build", "-ldflags", ldflags, "-o", str(staged), "."],
                   cwd=Path(devkit) / "tools" / name, env=go_env(goos, goarch))
     if rc != 0:
+        if staged.exists():
+            staged.unlink()
         return "%s: сборка не прошла: %s" % (name, out)
+    os.replace(str(staged), str(target))
     return None
 
 

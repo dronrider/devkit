@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 import build
-from testenv import GO_STUB, executable, git, git_init, run, write
+from testenv import GO_STUB, executable, git, git_init, read, run, write
 
 TOOLS = ("alfactl", "betactl")
 GO_MOD = "module github.com/dronrider/devkit/tools/%s\n\ngo 1.26\n"
@@ -126,6 +126,21 @@ class LocalBuildTest(BuildCase):
             self.assertEqual(rc, 0, said)
             self.assertEqual(said.strip(), build.version_line(name, version, commit),
                              "собранный %s печатает не то, что в него зашивали" % name)
+
+    def test_binary_is_replaced_not_written_over(self):
+        # Сборка идёт в соседний файл и переезжает переименованием: писать поверх
+        # нельзя, go отказывается делать это на чужом файле («already exists and
+        # is not an object file»), а на linux запись в работающий бинарь даёт
+        # ETXTBSY. Жёсткая ссылка на прежний файл это и проверяет.
+        out = self.root / "gobin"
+        old = executable(out / TOOLS[0], "#!/bin/sh\necho чужая копия\n")
+        keep = self.root / "keep"
+        os.link(str(old), str(keep))
+        self.assertEqual(build.local(self.dk, out, log=lambda *a: None), [])
+        self.assertEqual(read(keep), "#!/bin/sh\necho чужая копия\n",
+                         "прежний бинарь переписан на месте, а не подменён переименованием")
+        self.assertFalse((out / (TOOLS[0] + ".new")).exists(),
+                         "промежуточный файл сборки остался в каталоге назначения")
 
     def test_run_check_catches_missing_flag(self):
         # Утилита, забывшая version.go, роняет сборку: проверяется это запуском,

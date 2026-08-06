@@ -129,7 +129,8 @@ python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 `~/.claude/agents/`, скиллы в `~/.claude/skills/`, права сессии без человека в
 `permissions.allow`, tmux и снимок квоты)
 проверяет `devkitctl doctor`, а
-однозначное из этого он же и доводит с `--fix`.
+однозначное из этого он же и доводит с `--fix`, включая пакеты, которые ставит
+пакетный менеджер машины (`tmux`, `terminal-notifier`).
 
 Порядок подключения на оба сценария, обычный проект и корп-контур, собран в
 [CONNECT.md](CONNECT.md): команды подряд, по строке пояснения на шаг. Здесь

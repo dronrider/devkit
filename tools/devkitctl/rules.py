@@ -524,7 +524,7 @@ def check_global(devkit, fix, machine_path=None, whence=""):
             if fix:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(want, encoding="utf-8")
-                fixed.append("%s сгенерирован: глобальная точка правил харнеса %s" % (path, name))
+                fixed.append("написана глобальная точка правил харнеса %s: %s" % (name, path))
             else:
                 findings.append("нет %s: правила харнеса %s до сессий вне проектов devkit не "
                                 "доезжают; %sсгенерировать: devkitctl doctor --fix" % (path, name, whence))
@@ -546,7 +546,8 @@ def check_global(devkit, fix, machine_path=None, whence=""):
         if have != want:
             if fix:
                 path.write_text(want, encoding="utf-8")
-                fixed.append("%s перегенерирован: путь devkit или состав ядра изменились" % path)
+                fixed.append("глобальная точка правил %s переписана: путь devkit или состав "
+                             "ядра изменились" % path)
             else:
                 findings.append("%s устарел: путь devkit или состав ядра изменились; "
                                 "%sперегенерировать: devkitctl doctor --fix" % (path, whence))

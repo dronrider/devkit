@@ -289,7 +289,20 @@ taskctl v0.2.0 (a1b2c3d4e5f6)
 (`git pull` и `doctor --fix`), а первая установка разрешает переход явным
 ключом `--pin`. Клон репозитория установщик не делает, его делает человек
 первой командой: путь клона это то, на что смотрит импорт правил в каждом
-проекте. Порядок команд в [CONNECT.md](CONNECT.md).
+проекте.
+
+На голой машине обе половины пишутся одной строкой, и это весь список команд
+установки:
+
+```bash
+git clone https://github.com/dronrider/devkit.git ~/projects/devkit && python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update --pin
+```
+
+Бутстрапа `curl | sh` за ней не стоит и не появится: он был бы второй точкой
+входа с той же работой и выбирал бы путь клона молча, разбор в
+[docs/lld/DK-149-binary-delivery.md](docs/lld/DK-149-binary-delivery.md).
+Дальше обновление идёт голым `devkitctl update`. Порядок команд подключения
+проекта в [CONNECT.md](CONNECT.md).
 
 Каталог назначения выбирается так: `DEVKIT_BIN`, если задан, иначе первый из
 `~/go/bin` и `~/.local/bin`, который уже стоит в PATH, иначе `~/.local/bin`.

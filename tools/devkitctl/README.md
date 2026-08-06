@@ -177,9 +177,11 @@ CI: полный `doctor` смотрит на `~/.claude`, собранные б
 порядок установки с нуля в [CONNECT.md](../../CONNECT.md).
 
 ```sh
-python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update --pin  # первая установка
-devkitctl update                                                     # дальше
-devkitctl update --check                                             # только рассказать
+# установка с нуля, одной строкой: клон и первая установка
+git clone https://github.com/dronrider/devkit.git ~/projects/devkit && python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update --pin
+
+devkitctl update          # дальше обновление голой командой
+devkitctl update --check  # только рассказать, ничего не двигая
 ```
 
 Шаги такие: отказ, если позвали не из основного чекаута; разбор режима чекаута;

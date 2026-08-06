@@ -616,7 +616,9 @@ class MachineContourTest(SandboxCase):
         _, out = self.docm()
         self.assertIn_("agentctl собран из коммита 0123456789ab", out,
                        "нет находки про разошедшийся коммит бинаря")
-        self.assertIn_("а чекаут devkit на ветке", out,
+        self.assertIn_("этого коммита в клоне devkit нет", out,
+                       "находка не говорит, что коммит бинаря клону неизвестен")
+        self.assertIn_("; чекаут devkit на ветке", out,
                        "находка про расхождение не называет режим чекаута")
         _, out = self.docm("--fix")
         self.assertIn_("починено: agentctl в", out, "--fix не пересобрал разошедшийся бинарь")
@@ -670,6 +672,60 @@ class MachineContourTest(SandboxCase):
                            "утилита, добавленная в дерево, под проверку не попала")
         finally:
             shutil.rmtree(str(newctl))
+
+    def commit_devkit(self, message):
+        git(self.box.dk, "add", "-A")
+        rc, out = git(self.box.dk, "commit", "-qm", message)
+        self.assertEqual(rc, 0, "коммит в копии devkit не прошёл: %s" % out)
+
+    def test_09d_commit_beside_the_code(self):
+        # День на доске devkit выглядит так: собрали бинари, потом легли коммиты
+        # доски, HEAD уехал вперёд, а go-исходники утилит никто не трогал.
+        # Находок тут быть не должно: ожидание считается по коду. Сверка с HEAD
+        # краснела бы после каждого такого коммита, а их за день десятки.
+        # Бинари собираются тут же, а не берутся от соседнего теста: без них
+        # находки были бы «не в PATH», и коммит доски проверять стало бы нечем.
+        self.docm("--fix")
+        # Файл кладётся в корень копии: сторож утечки стенда сверяет и пустые
+        # директории, а docs/ в копии devkit нет.
+        board = self.box.dk / "board.md"
+        write(board, "# доска\n")
+        self.commit_devkit("DK-000 в Check")
+        try:
+            _, out = self.docm()
+            self.assertNotIn_("собран из коммита", out,
+                              "коммит мимо go-исходников объявил бинари разошедшимися")
+            self.assertIn_("чекаут devkit: на ветке", out,
+                           "доктор перестал называть режим чекаута")
+        finally:
+            board.unlink()
+            self.commit_devkit("убрать доску")
+
+    def test_09e_commit_into_the_code(self):
+        # Обратная сторона того же правила: правка go-кода утилиты коммитом
+        # находку зажигает, и ровно по той утилите, чей код тронут.
+        self.docm("--fix")
+        probe = self.box.dk / "tools" / "agentctl" / "probe.go"
+        write(probe, "package main\n")
+        self.commit_devkit("agentctl: правка кода")
+        try:
+            _, out = self.docm()
+            self.assertRegex(out, r"agentctl собран из коммита \w+ \(версия [^)]+\), "
+                                  r"а код утилиты правился позже, в \w{12}",
+                             "правка go-кода не дала находки про отставший бинарь")
+            self.assertNotIn_("taskctl собран из коммита", out,
+                              "правка кода agentctl объявила отставшим и taskctl")
+            _, out = self.docm("--fix")
+            self.assertIn_("починено: agentctl в", out, "--fix не пересобрал отставший бинарь")
+            _, out = self.docm()
+            self.assertNotIn_("собран из коммита", out,
+                              "после пересборки находка про отставший бинарь осталась")
+        finally:
+            probe.unlink()
+            # Снятие правки это тоже коммит в go-код, и бинарь после него снова
+            # отстал: стенд возвращается пересборкой, иначе течёт в соседний тест.
+            self.commit_devkit("убрать правку кода")
+            self.docm("--fix")
 
     def test_10_shadowed_binary(self):
         # Годная сборка на месте, а в PATH выигрывает чужая копия. Это находка, и

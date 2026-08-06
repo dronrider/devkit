@@ -29,7 +29,8 @@
       которым их слать, права машинного контура в permissions.allow (без них
       сессия без человека встаёт на первом отказе), бинари утилит devkit в
       PATH и на одной версии с чекаутом (список из дерева tools/*/go.mod,
-      сверяется коммит со слов --version, рядом называется режим чекаута),
+      коммит со слов --version против последней правки кода утилиты, а не
+      против HEAD, рядом называется режим чекаута),
       вышедший релиз двумя находками (тег чекаута против новейшего в клоне и
       давность похода за тегами, обе по локальному клону, без сети), обёртка
       devkitctl рядом с ними и сам каталог назначения в PATH,
@@ -449,12 +450,46 @@ def unsaved_go(main):
                       default=0) for name in dirty}
 
 
-def binary_trouble(path, head, mode, stale_after):
+def code_commit(main, name):
+    """Последний коммит, тронувший go-код утилиты.
+
+    Ожидание считается по коду, а не по HEAD. Доска devkit живёт в том же
+    репозитории, и коммит «DK-000 в Check» уводит HEAD вперёд, не меняя в бинаре
+    ни байта: сверка с HEAD краснела бы после каждого такого коммита, а их за
+    день десятки. Проверка, красная всегда, читаться перестаёт, и --fix на ней
+    гоняет сборку впустую. Берутся только файлы, из которых собирается бинарь:
+    рядом в каталоге утилиты лежит ещё и README, и по нему сверяться нельзя.
+    """
+    where = "tools/%s/" % name
+    rc, out = run(["git", "-C", str(main), "log", "-1", "--format=%H", "--",
+                   where + "*.go", where + "go.mod", where + "go.sum"])
+    return out.strip().splitlines()[0] if rc == 0 and out.strip() else ""
+
+
+def version_gap(main, code, commit):
+    """Отстал ли бинарь от кода: текст причины либо None.
+
+    Свежим считается бинарь, собранный из коммита, в котором последняя правка
+    кода утилиты уже есть, то есть из неё самой либо из любого более позднего:
+    сборка с HEAD годится, как и сборка сразу после правки.
+    """
+    if not code:
+        return None
+    rc, _ = run(["git", "-C", str(main), "rev-parse", "--verify", "--quiet",
+                 "%s^{commit}" % commit])
+    if rc != 0:
+        return "этого коммита в клоне devkit нет"
+    rc, _ = run(["git", "-C", str(main), "merge-base", "--is-ancestor", code, commit])
+    if rc != 0:
+        return "а код утилиты правился позже, в %s" % code[:12]
+    return None
+
+
+def binary_trouble(path, main, code, mode, stale_after):
     """Что не так с бинарём: текст причины либо None, если всё сходится.
 
-    Судится по коммиту, зашитому в бинарь: правило сходимости одно, коммит
-    бинаря равен коммиту HEAD основного чекаута devkit, и «немного разошлись»
-    тут не бывает.
+    Судится по коммиту, зашитому в бинарь: правило сходимости из DK-149 держится
+    на коммитах, а не на времени файла, и «немного разошлись» тут не бывает.
     """
     if not path or not os.path.exists(str(path)):
         return "не в PATH"
@@ -462,8 +497,9 @@ def binary_trouble(path, head, mode, stale_after):
     if stamp is None:
         return "не отвечает на --version: собран до релизной схемы версий"
     version, commit = stamp
-    if head and commit != head:
-        return "собран из коммита %s (версия %s), а чекаут devkit %s" % (commit, version, mode)
+    gap = version_gap(main, code, commit)
+    if gap:
+        return "собран из коммита %s (версия %s), %s; чекаут devkit %s" % (commit, version, gap, mode)
     if stale_after and os.path.getmtime(str(path)) < stale_after:
         return "старее несохранённых правок go-кода в devkit"
     return None
@@ -484,17 +520,18 @@ def check_binaries(fix):
     # (версия зашивается линковкой) в первый же раз.
     cmd = "python3 %s/tools/devkitctl/devkitctl.py build" % main
     src = main if (main / "tools").is_dir() else DEVKIT
-    head, mode = update.head_commit(main), update.checkout_mode(main)
+    mode = update.checkout_mode(main)
     stale = unsaved_go(main)
     broken = []
     for name in build.tools(src):
         target = gobin / name
+        code = code_commit(main, name)
         # Судится то, что выигрывает в PATH: пользоваться человек будет им, а не
         # тем, что лежит в каталоге назначения.
-        why = binary_trouble(shutil.which(name), head, mode, stale.get(name, 0))
+        why = binary_trouble(shutil.which(name), main, code, mode, stale.get(name, 0))
         if why is None:
             continue
-        if binary_trouble(target, head, mode, stale.get(name, 0)) is None:
+        if binary_trouble(target, main, code, mode, stale.get(name, 0)) is None:
             # Годная сборка уже лежит на месте, дело за PATH.
             conflict = path_winner(name, target, gobin)
             if conflict:
@@ -538,7 +575,8 @@ def check_binaries(fix):
             if err:
                 findings.append(err)
     for name, why in broken:
-        if binary_trouble(gobin / name, head, mode, stale.get(name, 0)) is not None:
+        if binary_trouble(gobin / name, main, code_commit(main, name), mode,
+                          stale.get(name, 0)) is not None:
             findings.append("%s %s; %s" % (name, why, how))
             continue
         fixed.append("%s в %s: %s (%s)" % ((name, gobin) + update.binary_stamp(gobin / name)))

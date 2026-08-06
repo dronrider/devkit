@@ -41,7 +41,9 @@ description: Правка самого devkit по ходу работы над 
 
    ```bash
    cd ~/projects/devkit
-   for d in taskctl shipctl agentctl regcheck; do (cd tools/$d && go test ./...); done
+   # GOWORK=off: чужой ~/go.work на машине перехватывает сборку, и утилиты
+   # devkit падают отказом «directory prefix . does not contain modules»
+   for d in tools/*/; do [ -f "$d/go.mod" ] && (cd $d && GOWORK=off go test ./...); done
    for d in hooks tools/devkitctl kit/skills kit/skills/goal-loop; do
        (cd $d && python3 -m unittest discover -p '*_test.py')
    done

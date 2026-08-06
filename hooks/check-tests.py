@@ -3,9 +3,16 @@
 едет вместе с тестами, поэтому коммит, где код есть, а тестового файла нет, это
 находка.
 
-Смотрятся имена файлов коммита, а не их содержимое: тест, дописанный к правке,
-это либо новый тестовый файл, либо изменённый старый, и то и другое видно по
-имени. Что считается кодом, а что тестом, задано перечнями ниже.
+Смотрятся имена файлов коммита: тест, дописанный к правке, это либо новый
+тестовый файл, либо изменённый старый, и то и другое видно по имени. Что
+считается кодом, а что тестом, задано перечнями ниже.
+
+Имени хватает не всем языкам. В Rust тест живёт в `#[cfg(test)] mod tests`
+того же файла, отдельного тестового файла у крейта может не быть вовсе, и по
+именам такая правка выглядела правкой без тестов: хук краснел на каждом
+коммите, а гасили его DEVKIT_NO_TESTS, то есть проверку целиком. Для таких
+файлов спрашивается staged-дифф, и тест считается дописанным, когда в
+добавленных строках появился атрибут теста.
 
   git diff --cached --name-only --diff-filter=ACMR | check-tests.py --stdin
   check-tests.py <путь>...
@@ -13,6 +20,7 @@
 Выход 0 чисто, 1 находка. Обход осознанный: DEVKIT_NO_TESTS=1 в окружении
 коммита (пропускает только эту проверку) либо git commit --no-verify.
 """
+import subprocess
 import sys
 
 CODE_EXT = (
@@ -27,6 +35,12 @@ CODE_EXT = (
 # закрыта.
 TEST_DIRS = ("test", "tests", "spec", "specs", "testdata", "fixtures", "__tests__")
 TEST_MARKS = ("_test.", ".test.", "test_", "_spec.", ".spec.", "spec_")
+
+# Файлы, где тест лежит рядом с кодом, и атрибуты, по которым он опознаётся в
+# добавленных строках.
+INLINE_TEST_EXT = (".rs",)
+INLINE_TEST_MARKS = ("#[test]", "#[tokio::test]", "#[rstest", "#[test_case",
+                     "#[proptest", "#[quickcheck")
 
 
 def is_test(path):
@@ -53,9 +67,29 @@ def is_code(path):
         return False
 
 
+def has_inline_test(path):
+    """Появился ли атрибут теста в добавленных строках staged-диффа файла. Без
+    репозитория под рукой ответ отрицательный: проверка от этого строже, а не
+    слабее."""
+    if not path.endswith(INLINE_TEST_EXT):
+        return False
+    try:
+        out = subprocess.run(["git", "diff", "--cached", "-U0", "--", path],
+                             capture_output=True, text=True)
+    except OSError:
+        return False
+    if out.returncode != 0:
+        return False
+    added = [ln for ln in out.stdout.splitlines()
+             if ln.startswith("+") and not ln.startswith("+++")]
+    return any(m in ln for ln in added for m in INLINE_TEST_MARKS)
+
+
 def check(paths):
     code = [p for p in paths if not is_test(p) and is_code(p)]
     if not code or any(is_test(p) for p in paths):
+        return []
+    if any(has_inline_test(p) for p in paths):
         return []
     return ["правка кода без единого теста в коммите (RULES.md, «Тесты обязательны»):\n"
             + "\n".join("  " + p for p in code[:20]) + "\n"

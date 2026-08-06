@@ -104,3 +104,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-143 | остаток sh по правилу выбора языка: раннеры скиллов и мелочь | task | P3 | 2026-08-06 | [tasks/archive/2026/DK-143.md](tasks/archive/2026/DK-143.md) |
 | DK-144 | devkitctl doctor ловит файл не по правилу раскладки | task | P3 | 2026-08-06 | [tasks/archive/2026/DK-144.md](tasks/archive/2026/DK-144.md) |
 | DK-135 | Цель: раскладка devkit по местам и правило выбора языка инструмента | task | P2 | 2026-08-06 | [tasks/archive/2026/DK-135.md](tasks/archive/2026/DK-135.md) |
+| DK-149 | LLD: чем доставляются готовые бинари devkit и откуда бинарь знает свою версию | LLD | P2 | 2026-08-06 | [tasks/archive/2026/DK-149.md](tasks/archive/2026/DK-149.md) |

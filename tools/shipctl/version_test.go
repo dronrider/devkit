@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"testing"
 )
@@ -21,6 +24,18 @@ func TestPrintVersionLine(t *testing.T) {
 	}
 }
 
+// Флаг ищется по всей строке аргументов, а не в первой позиции: -C ставится и
+// до команды, и после, и версию он перебивать не должен.
+func TestPrintVersionAfterGlobalFlag(t *testing.T) {
+	var b bytes.Buffer
+	if !printVersion([]string{"-C", "/tmp", "--version"}, &b) {
+		t.Fatal("--version после глобального флага не разобран")
+	}
+	if !versionLineRe.MatchString(b.String()) {
+		t.Fatalf("строка версии не по формату: %q", b.String())
+	}
+}
+
 func TestPrintVersionLeavesOtherArgs(t *testing.T) {
 	var b bytes.Buffer
 	if printVersion([]string{"--help"}, &b) || b.Len() > 0 {
@@ -28,5 +43,28 @@ func TestPrintVersionLeavesOtherArgs(t *testing.T) {
 	}
 	if printVersion(nil, &b) || b.Len() > 0 {
 		t.Fatalf("запуск без аргументов принят за --version: %q", b.String())
+	}
+}
+
+// Тот же разбор на собранном бинаре. Юнит на printVersion живёт рядом с main и
+// сам по себе не доказывает, что main зовёт его до разбора аргументов: до
+// правки по замечанию ревью «-C dir --version» отвечало неизвестной командой
+// либо неизвестным флагом, а не версией.
+func TestVersionFlagOnTheBinary(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), toolName)
+	// GOWORK=off: чужой go.work на машине увёл бы сборку из модуля утилиты.
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("сборка не прошла: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"--version"}, {"-C", t.TempDir(), "--version"}} {
+		out, err := exec.Command(bin, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if !versionLineRe.MatchString(string(out)) {
+			t.Fatalf("%v: строка версии не по формату: %q", args, out)
+		}
 	}
 }

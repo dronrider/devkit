@@ -18,15 +18,19 @@ var (
 const toolName = "shipctl"
 
 // printVersion разбирает --version до всех прочих аргументов: флагу не нужны ни
-// проект, ни доска, ни -C, и в сеть он не ходит. Формат строки один на все
-// утилиты devkit, потому что читает её не только человек: doctor берёт отсюда
-// коммит бинаря. Печатается она первой и единственной строкой.
+// проект, ни доска, ни -C, и в сеть он не ходит. Ищется он по всей строке
+// аргументов, как -h у соседней helpRequested: -C ставится и до команды, и
+// после, и версия не должна зависеть от того, что написано рядом. Формат строки
+// один на все утилиты devkit, потому что читает её не только человек: doctor
+// берёт отсюда коммит бинаря. Печатается она первой и единственной строкой.
 func printVersion(args []string, w io.Writer) bool {
-	if len(args) == 0 || (args[0] != "--version" && args[0] != "-version") {
-		return false
+	for _, a := range args {
+		if a == "--version" || a == "-version" {
+			fmt.Fprintf(w, "%s %s (%s)\n", toolName, version, commit)
+			return true
+		}
 	}
-	fmt.Fprintf(w, "%s %s (%s)\n", toolName, version, commit)
-	return true
+	return false
 }
 
 // versionRequested зовётся первой строкой main, до разбора чего бы то ни было.

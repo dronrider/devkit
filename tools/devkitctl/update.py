@@ -48,8 +48,12 @@ TMP_PREFIX = ".devkit-update-"
 # содержимым refs/tags/*. В devkit живёт служебный тег deployed, который
 # shipctl двигает на каждом выкате, и голый --tags после первого же расхождения
 # отвечает «would clobber existing tag» на чужой тег, который команде не нужен
-# вовсе. Рефспек огорожен и от --prune: он снимает локально только те теги,
-# что сам принёс, и deployed не тронет ни при каком расхождении с origin.
+# вовсе. Один рефспек тут не огораживает: у git есть автослежение за тегами, и
+# посторонний тег на уже известном клону коммите приезжает даже при явном
+# v*-рефспеке, рефспек его не называет, а автослежение об этом не спрашивает.
+# Огораживает связка с --no-tags на вызове fetch: она глушит автослежение, а
+# сами v*-теги рефспек продолжает тянуть и пруннить именем, deployed не трогая
+# ни при каком расхождении с origin.
 TAG_REFSPEC = "refs/tags/v*:refs/tags/v*"
 HOW = "python3 %s/tools/devkitctl/devkitctl.py"
 # Порог давности похода за тегами. Мера косвенная, потому что прямой нет, и
@@ -531,7 +535,7 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
             if risky:
                 err(risky)
                 return 2
-        rc, out = git(devkit, "fetch", "--prune", "origin", TAG_REFSPEC)
+        rc, out = git(devkit, "fetch", "--no-tags", "--prune", "origin", TAG_REFSPEC)
         if rc != 0:
             err("git fetch тегов не прошёл (%s): за новыми тегами нужна сеть, и ничего не "
                 "тронуто" % (out.splitlines()[0].strip() if out else "git промолчал"))

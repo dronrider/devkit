@@ -605,6 +605,16 @@ class InstallTest(UpdateCase):
         self.assertNotIn("нужна сеть", self.out())
         self.assertEqual(sorted(self.installed()), sorted(TOOLS + (update.WRAPPER,)))
 
+    def test_does_not_auto_follow_a_foreign_tag_on_a_known_commit(self):
+        # То же автослежение и на полном update: посторонний тег на коммите,
+        # уже известном клону (v0.10.0), не должен приезжать без --no-tags.
+        git(self.dk, "tag", "other-tag", self.tag_commit)
+        git(self.dk, "push", "-q", "origin", "other-tag")
+        git(self.dk, "tag", "-d", "other-tag")
+        self.assertEqual(self.install(), 0, self.out())
+        self.assertNotIn("other-tag", git(self.dk, "tag", "--list")[1].splitlines(),
+                         "чужой тег на известном коммите приехал в клон")
+
 
 class TagOnTheBranchTipTest(UpdateCase):
     """Новейший тег стоит на вершине ветки: обычное состояние свежего клона.
@@ -721,6 +731,18 @@ class CheckTest(UpdateCase):
         self.assertEqual(self.update(check=True), 0, self.out())
         self.assertNotIn("нужна сеть", self.out())
         self.assertIn("новейший тег: v0.10.0", self.out())
+
+    def test_does_not_auto_follow_a_foreign_tag_on_a_known_commit(self):
+        # У git есть автослежение за тегами: посторонний тег на коммите, уже
+        # известном клону, приезжает при fetch даже с явным v*-рефспеком, если
+        # не глушить автослежение --no-tags. Коммит v0.10.0 клону известен
+        # заранее, и deployed на нём это обычный случай в devkit.
+        git(self.dk, "tag", "other-tag", self.tag_commit)
+        git(self.dk, "push", "-q", "origin", "other-tag")
+        git(self.dk, "tag", "-d", "other-tag")
+        self.assertEqual(self.update(check=True), 0, self.out())
+        self.assertNotIn("other-tag", git(self.dk, "tag", "--list")[1].splitlines(),
+                         "чужой тег на известном коммите приехал в клон")
 
 
 class WrapperTest(UpdateCase):

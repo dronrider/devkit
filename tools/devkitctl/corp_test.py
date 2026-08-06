@@ -10,7 +10,7 @@ import os
 import shutil
 import unittest
 
-from testenv import (BOARD_TASKCTL, SandboxCase, executable, git, git_init, read, run,
+from testenv import (SandboxCase, executable, git, git_init, read, run,
                      write)
 
 FOREIGN_HOOK = "#!/bin/sh\necho чужой pre-commit\nexit 0\n"
@@ -28,7 +28,7 @@ class CorpTest(SandboxCase):
         box = cls.box
         corpbin = box.root / "corpbin"
         corpbin.mkdir()
-        executable(corpbin / "taskctl", BOARD_TASKCTL)
+        executable(corpbin / "taskctl", box.board_taskctl())
         cls.corppath = "%s:%s" % (corpbin, box.cleanpath)
         cls.clone = box.root / "corp-proj"
         cls.local = box.root / "corp-proj-local"
@@ -301,7 +301,7 @@ class CorpConnectTest(SandboxCase):
         super().setUpClass()
         corpbin = cls.box.root / "corpbin"
         corpbin.mkdir()
-        executable(corpbin / "taskctl", BOARD_TASKCTL)
+        executable(corpbin / "taskctl", cls.box.board_taskctl())
         cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
         cls.clone = cls.box.root / "corp-two"
         cls.local = cls.box.root / "corp-two-local"

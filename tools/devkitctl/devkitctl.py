@@ -124,7 +124,6 @@ HOOK_LAYOUT = (
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/notify.py --hook claude-code"),
 )
-BINARIES = ("taskctl", "shipctl", "agentctl", "regcheck")
 AGENTS_DIR = "~/.claude/agents"
 SKILLS_DIR = "~/.claude/skills"
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
@@ -400,10 +399,10 @@ def quota_taken(path):
 
 
 def devkit_checkout():
-    # Основной чекаут devkit и признак, что скрипт запущен из него. В worktree
-    # ветки задачи mtime исходников это момент выкладки, а не правки, поэтому
-    # свежесть бинарей там не меряется и сборка не запускается: машинный бинарь
-    # с непроверенной ветки уехал бы во все проекты сразу.
+    # Основной чекаут devkit и признак, что скрипт запущен из него. Версия
+    # бинарей сверяется с HEAD основного чекаута, а сборка из worktree ветки
+    # задачи не запускается вовсе: машинный бинарь с непроверенной ветки уехал
+    # бы во все проекты сразу.
     rc, out = run(["git", "-C", str(DEVKIT), "rev-parse", "--git-common-dir"])
     if rc != 0:
         return DEVKIT, True
@@ -426,7 +425,52 @@ def path_winner(name, target, gobin):
     return None
 
 
+def unsaved_go(main):
+    """Утилиты с несохранёнными правками go-кода: имя -> mtime самого свежего файла.
+
+    Это единственный хвост, где сверка версий остаётся без опоры: коммит бинаря
+    равен HEAD, а исходники уже другие, и сравнивать нечего. Только тут доктор
+    досравнивает mtime, как делал до сверки по коммиту.
+    """
+    rc, out = run(["git", "-C", str(main), "status", "--porcelain", "--", "*.go"])
+    dirty = set()
+    if rc != 0:
+        return {}
+    for line in out.splitlines():
+        parts = Path(line[3:].strip().strip('"')).parts
+        if len(parts) > 2 and parts[0] == "tools":
+            dirty.add(parts[1])
+    return {name: max((p.stat().st_mtime for p in (Path(main) / "tools" / name).glob("*.go")),
+                      default=0) for name in dirty}
+
+
+def binary_trouble(path, head, mode, stale_after):
+    """Что не так с бинарём: текст причины либо None, если всё сходится.
+
+    Судится по коммиту, зашитому в бинарь: правило сходимости одно, коммит
+    бинаря равен коммиту HEAD основного чекаута devkit, и «немного разошлись»
+    тут не бывает.
+    """
+    if not path or not os.path.exists(str(path)):
+        return "не в PATH"
+    stamp = update.binary_stamp(path)
+    if stamp is None:
+        return "не отвечает на --version: собран до релизной схемы версий"
+    version, commit = stamp
+    if head and commit != head:
+        return "собран из коммита %s (версия %s), а чекаут devkit %s" % (commit, version, mode)
+    if stale_after and os.path.getmtime(str(path)) < stale_after:
+        return "старее несохранённых правок go-кода в devkit"
+    return None
+
+
 def check_binaries(fix):
+    """Бинари devkit в PATH и на одной версии с чекаутом.
+
+    Список проверяемых выводится из дерева (tools/*/go.mod), а не из перечня в
+    коде: по правилу языка это ровно то, что ставится на машину, и новая утилита
+    попадает под проверку тем, что она есть.
+    """
     findings, fixed = [], []
     gobin = update.bin_dir()
     main, from_main = devkit_checkout()
@@ -434,40 +478,66 @@ def check_binaries(fix):
     # тем же devkitctl build: своя копия go build разошлась бы с ним ключами
     # (версия зашивается линковкой) в первый же раз.
     cmd = "python3 %s/tools/devkitctl/devkitctl.py build" % main
-    version, commit = build.stamp(main) if fix else ("", "")
-    for name in BINARIES:
-        src = max((p.stat().st_mtime for p in (DEVKIT / "tools" / name).glob("*.go")), default=0)
-        path = shutil.which(name)
-        if path and (os.path.getmtime(path) >= src or not from_main):
-            continue
-        why = "не в PATH" if not path else "старее исходников devkit"
+    src = main if (main / "tools").is_dir() else DEVKIT
+    head, mode = update.head_commit(main), update.checkout_mode(main)
+    stale = unsaved_go(main)
+    broken = []
+    for name in build.tools(src):
         target = gobin / name
-        if target.exists() and os.path.getmtime(target) >= src:
-            # Свежая сборка уже лежит на месте, дело за PATH.
+        # Судится то, что выигрывает в PATH: пользоваться человек будет им, а не
+        # тем, что лежит в каталоге назначения.
+        why = binary_trouble(shutil.which(name), head, mode, stale.get(name, 0))
+        if why is None:
+            continue
+        if binary_trouble(target, head, mode, stale.get(name, 0)) is None:
+            # Годная сборка уже лежит на месте, дело за PATH.
             conflict = path_winner(name, target, gobin)
             if conflict:
                 findings.append(conflict)
             continue
-        if not from_main:
-            findings.append("%s %s, а devkit тут выложен worktree ветки задачи: mtime исходников "
-                            "это момент выкладки, и машинный бинарь с непроверенной ветки собирать "
-                            "нельзя; пересобрать из основного чекаута: %s" % (name, why, cmd))
-            continue
-        if not shutil.which("go"):
-            findings.append("%s %s, а go в PATH нет: собирать нечем, Go ставится пакетным менеджером "
-                            "(brew install go), потом %s" % (name, why, cmd))
-            continue
-        if not fix:
-            findings.append("%s %s: %s" % (name, why, cmd))
-            continue
+        broken.append((name, why))
+    if not broken:
+        return findings, fixed
+    if not from_main:
+        # Машинный бинарь с непроверенной ветки уехал бы во все проекты сразу,
+        # поэтому чинится расхождение только из основного чекаута.
+        findings += ["%s %s, а devkit тут выложен worktree ветки задачи: собирать машинный "
+                     "бинарь с непроверенной ветки нельзя; из основного чекаута: %s"
+                     % (name, why, cmd) for name, why in broken]
+        return findings, fixed
+    tag = update.head_tag(main)
+    go = shutil.which("go")
+    if tag:
+        # Чекаут стоит на релизе: бинари этого тега выложены готовыми, и тулчейна
+        # на машине потребителя может не быть вовсе.
+        how = "поставить бинари релиза %s: devkitctl update" % tag
+    elif go:
+        how = cmd
+    else:
+        how = ("собирать нечем, go в PATH нет: Go ставится пакетным менеджером "
+               "(brew install go), потом %s" % cmd)
+    if not fix or not (tag or go):
+        findings += ["%s %s; %s" % (name, why, how) for name, why in broken]
+        return findings, fixed
+    if tag:
+        # Отчёт установки идёт в свой список: доктор говорит про машинный контур
+        # одной строкой на находку, а «сумма сошлась» это подробность команды.
+        said = []
+        update.install(main, tag, said.append, lambda m: findings.append(str(m)))
+    else:
+        version, commit = build.stamp(main)
         gobin.mkdir(parents=True, exist_ok=True)
-        err = (build.compile_one(main, name, target, version, commit)
-               or build.check_run(name, target, version, commit))
-        if err:
-            findings.append("%s %s, %s" % (name, why, err))
+        for name, _ in broken:
+            err = (build.compile_one(main, name, gobin / name, version, commit)
+                   or build.check_run(name, gobin / name, version, commit))
+            if err:
+                findings.append(err)
+    for name, why in broken:
+        if binary_trouble(gobin / name, head, mode, stale.get(name, 0)) is not None:
+            findings.append("%s %s; %s" % (name, why, how))
             continue
-        fixed.append("%s собран в %s, версия %s" % (name, target, version))
-        conflict = path_winner(name, target, gobin)
+        fixed.append("%s в %s: %s (%s)" % ((name, gobin) + update.binary_stamp(gobin / name)))
+        conflict = path_winner(name, gobin / name, gobin)
         if conflict:
             findings.append(conflict)
     return findings, fixed
@@ -712,6 +782,9 @@ def check_machine(fix):
     wf, wd = update.check_wrapper(main, fix, from_main)
     findings += wf
     fixed += wd
+    # Про вышедший релиз машине потребителя говорит только доктор: git pull в
+    # отвязанном чекауте не работает, и другого канала у неё нет.
+    findings += update.check_release(main)
     devkit_src = main if (main / "kit" / "harness").is_dir() else DEVKIT
     whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                    "правила с непроверенной ветки нельзя; из основного чекаута %s: "
@@ -838,6 +911,10 @@ def doctor(start, fix=False):
         findings += weigh.skill_findings(DEVKIT)
     # Раскладка проверяется только на самом devkit: в чужом проекте она своя.
     findings += ["раскладка: %s" % m for m in layout.check(root)]
+    # Режим чекаута называется всегда, а не только рядом с находкой: на машине
+    # разработчика бинарь впереди последнего релиза это норма, на машине
+    # потребителя поломка, и по одному номеру версии одно от другого не отличить.
+    print("чекаут devkit: %s" % update.checkout_mode(devkit_checkout()[0]))
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed

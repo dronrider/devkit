@@ -897,8 +897,12 @@ cp ~/projects/devkit/kit/agents/*.md ~/.claude/agents/
 трогает: коммит и пуш строки остаются за диспетчером, как у любой правки
 файла задачи.
 
-## Сборка
+## Установка
 
 ```bash
-cd agentctl && go build -o ~/go/bin/agentctl .
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
+
+Утилита едет готовым бинарём в релизе devkit вместе с остальными, тулчейна для
+установки не нужно. Собрать из исходников (машина разработчика devkit):
+`python3 ~/projects/devkit/tools/devkitctl/devkitctl.py build`.

@@ -13,10 +13,10 @@
    из рабочего дерева переносятся только тестовые файлы;
 3. команда гоняется там и обязана упасть; worktree убирается в любом исходе.
 
-Сборка в PATH, как у taskctl:
+Ставится в PATH релизом devkit, как taskctl:
 
 ```
-cd ~/projects/devkit/regcheck && go build -o ~/go/bin/regcheck .
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
 
 ## Запуск

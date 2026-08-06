@@ -10,10 +10,10 @@
 соблюдается без своего текста в контексте». Оба доказывают отрицание, и оба
 гоняют одно и то же дважды.
 
-Сборка в PATH, как у остальных утилит:
+Ставится в PATH релизом devkit, как остальные утилиты:
 
 ```sh
-cd ~/projects/devkit/obeycheck && go build -o ~/go/bin/obeycheck .
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
 
 ## Как устроен прогон

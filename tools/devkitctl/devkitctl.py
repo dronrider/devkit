@@ -28,7 +28,8 @@
       SessionStart-хук освежения квоты, хуки уведомлений вместе с бэкендом,
       которым их слать, права машинного контура в permissions.allow (без них
       сессия без человека встаёт на первом отказе), бинари утилит devkit в
-      PATH и не старее исходников, определения агентов в ~/.claude/agents,
+      PATH и не старее исходников, обёртка devkitctl рядом с ними и сам
+      каталог назначения в PATH, определения агентов в ~/.claude/agents,
       скиллы devkit в ~/.claude/skills, глобальная точка правил ([rules]
       global_file, обычно ~/.claude/CLAUDE.md) свежа и не правлена руками,
       tmux и снимки квоты в ~/.devkit/quota; профили харнесов devkit/kit/harness
@@ -42,11 +43,22 @@
       переезд одиночного снимка квоты в директорию, генерация файлов правил),
       заполненное не трогает, неоднозначное оставляет находкой
 
+  devkitctl update [--pin] [--check]
+      поставить или обновить devkit готовыми бинарями релиза, без тулчейна:
+      перевести чекаут на новейший тег, скачать тарболл своей платформы,
+      сверить SHA256, подменить бинари в каталоге назначения, положить рядом
+      обёртку devkitctl и разложить машинный контур. Зовётся из основного
+      чекаута; на ветке отказывает и называет обычный путь (git pull и
+      doctor --fix), а первая установка разрешает перевод свежего клона на тег
+      ключом --pin. --check делает git fetch --tags и только рассказывает: на
+      каком теге машина, какой вышел, что поставит обычный update
+
   devkitctl build [--release] [--out dir]
       собрать бинари devkit с зашитой версией: что собирать, выводится из
       дерева (каталоги tools/*/ с go.mod), версия и коммит из git этого
-      чекаута. Без ключей сборка под текущую машину в GOBIN (иначе
-      GOPATH/bin, иначе ~/go/bin) и самопроверка запуском: каждый свежий
+      чекаута. Без ключей сборка под текущую машину в каталог назначения
+      (DEVKIT_BIN, иначе первый из ~/go/bin и ~/.local/bin, который уже стоит
+      в PATH, иначе ~/.local/bin) и самопроверка запуском: каждый свежий
       бинарь обязан напечатать по --version ту строку, которую в него
       зашивали. --release собирает четыре пары GOOS/GOARCH, пакует тарболл на
       пару (devkit-<версия>-<os>-<arch>.tar.gz) и кладёт рядом SHA256SUMS;
@@ -87,6 +99,7 @@ import rules
 import shutil
 import subprocess
 import sys
+import update
 import weigh
 from datetime import datetime
 from pathlib import Path
@@ -359,15 +372,6 @@ def connect_git_hooks(root):
     return "git-хуки: core.hooksPath = %s" % hooks_rel, None
 
 
-def go_bin_dir():
-    gobin = os.environ.get("GOBIN")
-    if gobin:
-        return Path(gobin)
-    gopath = os.environ.get("GOPATH")
-    root = Path(gopath) if gopath else Path(os.path.expanduser("~/go"))
-    return root / "bin"
-
-
 def human_age(seconds):
     minutes = int(seconds // 60)
     if minutes < 60:
@@ -424,7 +428,7 @@ def path_winner(name, target, gobin):
 
 def check_binaries(fix):
     findings, fixed = [], []
-    gobin = go_bin_dir()
+    gobin = update.bin_dir()
     main, from_main = devkit_checkout()
     # Точка сборки одна на машину и на CI, поэтому доктор и советует, и собирает
     # тем же devkitctl build: своя копия go build разошлась бы с ним ключами
@@ -703,6 +707,11 @@ def check_machine(fix):
         f, d = check(fix)
         findings += f
         fixed += d
+    # Обёртка devkitctl рядом с бинарями: без неё python-часть зовётся длинным
+    # путём, а кладут её одинаково update и доктор.
+    wf, wd = update.check_wrapper(main, fix, from_main)
+    findings += wf
+    fixed += wd
     devkit_src = main if (main / "kit" / "harness").is_dir() else DEVKIT
     whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                    "правила с непроверенной ветки нельзя; из основного чекаута %s: "
@@ -931,7 +940,7 @@ def build_binaries(release, out):
     if release:
         findings = build.release(DEVKIT, out or "dist")
     else:
-        target = Path(out) if out else go_bin_dir()
+        target = Path(out) if out else update.bin_dir()
         findings = build.local(DEVKIT, target)
     for f in findings:
         print(f)
@@ -940,6 +949,18 @@ def build_binaries(release, out):
         return 1
     print("сборка в порядке")
     return 0
+
+
+def update_devkit(pin, check, restarted):
+    """Установка и обновление devkit готовыми бинарями релиза.
+
+    Раскладку машинного контура делает тот же код, что зовёт doctor --fix:
+    второй копии этой работы у установки нет, иначе она разошлась бы с
+    доктором в первый же раз.
+    """
+    main, from_main = devkit_checkout()
+    return update.run(main, from_main, pin=pin, check=check, restarted=restarted,
+                      machine=lambda: check_machine(True))
 
 
 def weigh_resident(start, runs, limit, model, prompt):
@@ -1267,7 +1288,15 @@ def main(argv):
     b.add_argument("--release", action="store_true",
                    help="четыре пары GOOS/GOARCH, тарболлы и SHA256SUMS")
     b.add_argument("--out", default="",
-                   help="каталог назначения: по умолчанию GOBIN, а под --release dist")
+                   help="каталог назначения: по умолчанию тот же, куда ставит update, "
+                        "а под --release dist")
+    u = sub.add_parser("update", help="поставить или обновить devkit бинарями релиза")
+    u.add_argument("--pin", action="store_true",
+                   help="перевести чекаут с ветки на новейший тег (первая установка)")
+    u.add_argument("--check", action="store_true",
+                   help="только рассказать про версии, ничего не двигая")
+    u.add_argument(update.RESTART_FLAG, dest="restarted", action="store_true",
+                   help=argparse.SUPPRESS)
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
@@ -1292,6 +1321,8 @@ def main(argv):
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     elif a.cmd == "build":
         rc = build_binaries(a.release, a.out)
+    elif a.cmd == "update":
+        rc = update_devkit(a.pin, a.check, a.restarted)
     else:
         rc = stats(a.dir, a.context)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,

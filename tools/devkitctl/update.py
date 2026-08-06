@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -44,6 +45,9 @@ WRAPPER_TEXT = '#!/bin/sh\n%s\nexec python3 "%s" "$@"\n'
 RESTART_FLAG = "--restarted"
 TMP_PREFIX = ".devkit-update-"
 HOW = "python3 %s/tools/devkitctl/devkitctl.py"
+# Порог давности похода за тегами. Мера косвенная, потому что прямой нет, и
+# порог редкий: теги ставит человек и нечасто.
+FETCH_MAX_AGE = 14 * 24 * 3600
 
 
 def git(devkit, *args):
@@ -124,6 +128,71 @@ def current_branch(devkit):
 def head_commit(devkit):
     rc, out = git(devkit, "rev-parse", "--short=12", "HEAD")
     return out.strip() if rc == 0 else ""
+
+
+def checkout_mode(devkit):
+    """Режим чекаута одной строкой: на релизе, на ветке впереди релиза, отвязан.
+
+    Доктор называет его вслух рядом со сверкой версий: расхождение бинаря с
+    чекаутом на машине разработчика это норма до пересборки, а на машине
+    потребителя поломка, и без режима одно читается как другое.
+    """
+    if not head_commit(devkit):
+        return "не git-чекаут: сверять версию бинарей не с чем"
+    tag, branch, latest = head_tag(devkit), current_branch(devkit), latest_tag(devkit)
+    if branch and tag:
+        return "на ветке %s, и на её вершине стоит релиз %s" % (branch, tag)
+    if branch and latest:
+        return "на ветке %s, впереди релиза %s" % (branch, latest)
+    if branch:
+        return "на ветке %s, релизных тегов в клоне нет" % branch
+    if tag:
+        return "на релизе %s" % tag
+    return "отвязан на коммите %s, ни на одном релизном теге" % head_commit(devkit)
+
+
+def fetch_head(devkit):
+    """Файл FETCH_HEAD основного чекаута: по нему меряется давность похода за тегами."""
+    rc, out = git(devkit, "rev-parse", "--git-dir")
+    if rc != 0:
+        return None
+    path = Path(out.strip())
+    if not path.is_absolute():
+        path = Path(devkit) / path
+    return path / "FETCH_HEAD"
+
+
+def check_release(devkit):
+    """Две находки про вышедший релиз: точная и косвенная.
+
+    Точная сравнивает тег чекаута с новейшим тегом, известным клону, и порога у
+    неё нет. Косвенная отвечает на второй вопрос, давно ли вообще спрашивали, и
+    меряется давностью FETCH_HEAD. В сеть тут не ходит ни та, ни другая: обе
+    считаются по локальному клону, и диагностика остаётся рабочей без сети.
+    """
+    findings = []
+    if not head_commit(devkit):
+        # Не чекаут вовсе (распакованный архив, свежий git init без коммитов):
+        # про релизы тут сказать нечего, и звать за тегами тоже некуда.
+        return findings
+    tag, latest = head_tag(devkit), latest_tag(devkit)
+    if tag and latest and tag != latest:
+        findings.append("на машине стоит devkit %s, а вышел %s: обновиться одной командой, "
+                        "devkitctl update" % (tag, latest))
+    path = fetch_head(devkit)
+    if path is None:
+        return findings
+    how = "спросить: devkitctl update --check"
+    if not path.exists():
+        findings.append("за тегами devkit не ходили ни разу (нет %s): про вышедший релиз "
+                        "узнать тут неоткуда, %s" % (path, how))
+    else:
+        age = time.time() - os.path.getmtime(str(path))
+        if age > FETCH_MAX_AGE:
+            findings.append("за тегами devkit не ходили %d дней (порог %d): вышедший релиз "
+                            "клону неизвестен, %s"
+                            % (age // (24 * 3600), FETCH_MAX_AGE // (24 * 3600), how))
+    return findings
 
 
 def work_at_risk(devkit):

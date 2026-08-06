@@ -10,8 +10,9 @@ import shutil
 import unittest
 from pathlib import Path
 
-from testenv import (BOARD_TASKCTL, GO_STUB, SandboxCase, executable, fake_home, git,
-                     git_init, go_cache_env, harness, read, rules, run, taken_at, write)
+from testenv import (BINARY_STUB, GO_STUB, SandboxCase, build, executable,
+                     fake_home, git, git_init, go_cache_env, harness, read, rules, run,
+                     stub_release, taken_at, update, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 
@@ -203,7 +204,7 @@ class DeployTest(SandboxCase):
         # кладём рядом ту, что скелет доски всё-таки пишет.
         boardbin = cls.box.root / "boardbin"
         boardbin.mkdir()
-        executable(boardbin / "taskctl", BOARD_TASKCTL)
+        executable(boardbin / "taskctl", cls.box.board_taskctl())
         cls.boardpath = "%s:%s" % (boardbin, cls.box.cleanpath)
         cls.bproj = cls.box.project("bproj")
         cls.brc, cls.bout = cls.box.dkctl_run("new", "--prefix", "BP", "-C", str(cls.bproj),
@@ -455,6 +456,11 @@ class MachineContourTest(SandboxCase):
     def test_01_bare_machine(self):
         _, out = self.docm()
         self.assertIn_("agentctl не в PATH", out, "нет находки про бинарь agentctl")
+        # Список проверяемых выводится из дерева, поэтому утилиты, до которых
+        # прежний перечень в коде не дотягивался, под проверкой наравне.
+        for t in ("trackctl", "obeycheck"):
+            self.assertIn_("%s не в PATH" % t, out, "%s не попал под проверку" % t)
+        self.assertIn_("чекаут devkit: на ветке", out, "доктор не назвал режим чекаута")
         self.assertIn_("exec-medium.md", out, "нет находки про определения исполнителей")
         self.assertRegex(out, r"нет скилла .*board-batch/SKILL\.md", "нет находки про скилл")
         self.assertIn_("tmux не в PATH", out, "нет находки про tmux")
@@ -471,7 +477,7 @@ class MachineContourTest(SandboxCase):
         # --fix собирает бинари и раскладывает определения, а неоднозначное
         # (tmux, снимок квоты) оставляет находкой с командой.
         _, out = self.docm("--fix")
-        for t in ("taskctl", "shipctl", "agentctl", "regcheck"):
+        for t in build.tools(self.box.dk):
             self.assertTrue(os.access(str(self.mhome / "go" / "bin" / t), os.X_OK),
                             "doctor --fix не собрал %s: %s" % (t, out))
         agents = self.mhome / ".claude" / "agents"
@@ -595,29 +601,85 @@ class MachineContourTest(SandboxCase):
         self.assertTrue(old.is_file(), "--fix удалил старый снимок, хотя правки additive")
         old.unlink()
 
-    def test_09_binary_older_than_sources(self):
-        # Так выходит после git pull: находка, а --fix пересобирает.
+    def stray(self, name="agentctl", version="v0.0.1", commit="0123456789ab"):
+        """Бинарь с чужим коммитом в каталоге назначения: так выглядит машина
+        после git pull, где пересобрать забыли.
+        """
+        return executable(self.mhome / "go" / "bin" / name,
+                          BINARY_STUB % build.version_line(name, version, commit))
+
+    def test_09_binary_from_another_commit(self):
+        # Правило сходимости одно: коммит бинаря равен коммиту HEAD чекаута.
+        # Порога тут нет, любое расхождение это находка, а --fix пересобирает.
+        self.stray()
+        _, out = self.docm()
+        self.assertIn_("agentctl собран из коммита 0123456789ab", out,
+                       "нет находки про разошедшийся коммит бинаря")
+        self.assertIn_("а чекаут devkit на ветке", out,
+                       "находка про расхождение не называет режим чекаута")
+        _, out = self.docm("--fix")
+        self.assertIn_("починено: agentctl в", out, "--fix не пересобрал разошедшийся бинарь")
+        _, out = self.docm()
+        self.assertNotIn_("собран из коммита", out,
+                          "после пересборки находка про расхождение осталась")
+
+    def test_09a_binary_without_the_flag(self):
+        # Третий случай сверки: бинарь собран до релизной схемы и про --version
+        # не знает вовсе. Починка та же, что у разошедшегося.
+        executable(self.mhome / "go" / "bin" / "agentctl")
+        _, out = self.docm()
+        self.assertIn_("agentctl не отвечает на --version", out,
+                       "бинарь без --version не признан находкой")
+        _, out = self.docm("--fix")
+        self.assertIn_("починено: agentctl в", out, "--fix не пересобрал бинарь без --version")
+        _, out = self.docm()
+        self.assertNotIn_("не отвечает на --version", out,
+                          "после пересборки находка про бинарь без --version осталась")
+
+    def test_09b_unsaved_go_changes(self):
+        # Единственный хвост, где остаётся mtime: коммит бинаря равен HEAD, а
+        # исходники уже другие, и сравнивать коммиты не с чем.
         agentctl = self.mhome / "go" / "bin" / "agentctl"
         os.utime(str(agentctl), (946684800, 946684800))
         _, out = self.docm()
-        self.assertIn_("agentctl старее исходников devkit", out, "нет находки про устаревший бинарь")
-        _, out = self.docm("--fix")
-        self.assertIn_("починено: agentctl собран", out, "--fix не пересобрал устаревший бинарь")
-        _, out = self.docm()
-        self.assertNotIn_("старее исходников devkit", out,
-                          "после пересборки находка про устаревший бинарь осталась")
+        self.assertNotIn_("несохранённых правок", out,
+                          "старый бинарь при чистом дереве объявлен несобранным")
+        edit = self.box.dk / "tools" / "agentctl" / "unsaved.go"
+        write(edit, "package main\n")
+        try:
+            _, out = self.docm()
+            self.assertIn_("agentctl старее несохранённых правок go-кода", out,
+                           "нет находки про несобранные правки")
+            _, out = self.docm("--fix")
+            self.assertIn_("починено: agentctl в", out, "--fix не пересобрал несобранные правки")
+            _, out = self.docm()
+            self.assertNotIn_("несохранённых правок", out,
+                              "после пересборки находка про несобранные правки осталась")
+        finally:
+            edit.unlink()
+
+    def test_09c_whole_tree_is_checked(self):
+        # Список выводится из tools/*/go.mod, поэтому под проверку попадает и то,
+        # что появилось после написания доктора.
+        newctl = self.box.dk / "tools" / "newctl"
+        write(newctl / "go.mod", "module github.com/dronrider/devkit/tools/newctl\n\ngo 1.26\n")
+        try:
+            _, out = self.docm()
+            self.assertIn_("newctl не в PATH", out,
+                           "утилита, добавленная в дерево, под проверку не попала")
+        finally:
+            shutil.rmtree(str(newctl))
 
     def test_10_shadowed_binary(self):
-        # Свежая сборка на месте, а в PATH выигрывает чужая копия. Это находка, и
+        # Годная сборка на месте, а в PATH выигрывает чужая копия. Это находка, и
         # пересобирать на каждом прогоне нечего.
         shadow = self.box.root / "shadow"
         shadow.mkdir(exist_ok=True)
         executable(shadow / "agentctl")
-        os.utime(str(shadow / "agentctl"), (946684800, 946684800))
         spath = "%s:%s:%s:%s" % (self.gostub, shadow, self.mhome / "go" / "bin", self.box.sys)
         _, out = self.docm("--fix", path=spath)
         self.assertIn_("в PATH выигрывает", out, "нет находки про затенённый бинарь")
-        self.assertNotIn_("починено: agentctl собран", out,
+        self.assertNotIn_("починено: agentctl в", out,
                           "затенённый бинарь пересобирается впустую")
         _, out = self.docm("--fix", path=spath)
         self.assertNotIn_("починено", out, "повторный --fix при затенённом бинаре не должен менять")
@@ -626,19 +688,19 @@ class MachineContourTest(SandboxCase):
     def test_11_symlink_is_not_a_shadow(self):
         # Симлинк на тот же бинарь впереди в PATH (~/.local/bin поверх ~/go/bin)
         # это не затенение: сверяется realpath, а не строка пути. Бинарь в GOBIN
-        # нарочно устаревший, иначе до сверки дело не дойдёт: свежий отсекается
-        # раньше, и строковое сравнение прошло бы незамеченным.
+        # нарочно с чужим коммитом, иначе до сверки дело не дойдёт: сошедшийся
+        # отсекается раньше, и строковое сравнение прошло бы незамеченным.
         localbin = self.box.root / "localbin"
         localbin.mkdir(exist_ok=True)
         link = localbin / "agentctl"
         if link.exists() or link.is_symlink():
             link.unlink()
         os.symlink(str(self.mhome / "go" / "bin" / "agentctl"), str(link))
-        os.utime(str(self.mhome / "go" / "bin" / "agentctl"), (946684800, 946684800))
+        self.stray()
         path = "%s:%s:%s:%s" % (self.gostub, localbin, self.mhome / "go" / "bin", self.box.sys)
         _, out = self.docm("--fix", path=path)
-        self.assertIn_("починено: agentctl собран", out,
-                       "устаревший бинарь за симлинком не пересобран")
+        self.assertIn_("починено: agentctl в", out,
+                       "разошедшийся бинарь за симлинком не пересобран")
         self.assertNotIn_("в PATH выигрывает", out,
                           "симлинк на тот же бинарь принят за чужую копию")
 
@@ -683,6 +745,52 @@ class MachineContourTest(SandboxCase):
                        "нет находки про каталог сборки вне PATH")
         self.assertIn_("export PATH=", out,
                        "находка про каталог мимо PATH не даёт готовой строки для профиля")
+
+
+class ReleaseFixTest(SandboxCase):
+    """Машина потребителя: чекаут стоит на релизном теге, go в PATH нет вовсе, и
+    расхождение доктор чинит скачиванием ассетов, а не сборкой. Гитхаб тут не
+    участвует, релиз лежит рядом и отдаётся по file://.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        box = cls.box
+        cls.proj = box.project("rproj")
+        cls.tag = "v9.9.0"
+        git(box.dk, "tag", cls.tag)
+        # Чекаут потребителя стоит на теге отвязанным, а не на ветке: только так
+        # коммит бинаря и коммит правил сходятся на всём, что вышло релизом.
+        git(box.dk, "checkout", "--detach", "--quiet", cls.tag)
+        cls.releases = box.root / "releases"
+        stub_release(cls.releases, cls.tag, box.commit, build.tools(box.dk))
+        cls.rhome = box.root / "rhome"
+        cls.dest = cls.rhome / ".local" / "bin"
+        cls.rpath = "%s:%s" % (cls.dest, box.sys)
+        cls.env = {"SANDBOX": str(box.root), "DEVKIT_BIN": str(cls.dest),
+                   update.RELEASE_ENV: "file://%s" % cls.releases}
+
+    def docr(self, *args):
+        return self.box.doctor(self.proj, *args, home=self.rhome, path=self.rpath, env=self.env)
+
+    def test_1_advice_is_the_release_not_the_build(self):
+        _, out = self.docr()
+        self.assertIn_("чекаут devkit: на релизе v9.9.0", out, "доктор не назвал режим чекаута")
+        self.assertIn_("taskctl не в PATH; поставить бинари релиза v9.9.0: devkitctl update", out,
+                       "на теге доктор советует не релиз")
+        self.assertNotIn_("go в PATH нет", out,
+                          "на машине потребителя доктор зовёт ставить тулчейн")
+
+    def test_2_fix_downloads_the_release(self):
+        _, out = self.docr("--fix")
+        for t in build.tools(self.box.dk):
+            self.assertEqual(update.binary_stamp(self.dest / t), (self.tag, self.box.commit),
+                             "--fix не поставил %s из релиза: %s" % (t, out))
+        self.assertIn_("починено: taskctl в", out, "--fix не отчитался о поставленном бинаре")
+        _, out = self.docr()
+        self.assertNotIn_("поставить бинари релиза", out,
+                          "после установки находка про бинари осталась")
 
 
 class WorktreeTest(SandboxCase):
@@ -793,17 +901,21 @@ class WorktreeTest(SandboxCase):
         self.assertEqual(read(gclaude), stale,
                          "с worktree --fix перегенерировал глобальную точку с непроверенной ветки")
 
-    def test_8_binaries_older_than_the_worktree(self):
-        # Свежесть по mtime там ничего не значит, и доктор про них молчит, а не
-        # печатает четыре ложные находки.
+    def test_8_binaries_are_compared_with_the_main_checkout(self):
+        # Сравнение идёт с HEAD основного чекаута, а не worktree, поэтому
+        # параллельная сессия на ветке задачи находок не сыплет. Бинари тут
+        # нарочно старее выкладки worktree: раньше mtime дал бы четыре ложные
+        # находки, теперь он ничего не решает.
         wtbin = self.box.root / "wtbin"
         wtbin.mkdir(exist_ok=True)
-        for t in ("taskctl", "shipctl", "agentctl", "regcheck"):
-            executable(wtbin / t)
+        for t in build.tools(self.box.dk):
+            executable(wtbin / t, BINARY_STUB % build.version_line(t, self.box.version,
+                                                                   self.box.commit))
             os.utime(str(wtbin / t), (946684800, 946684800))
         _, out = self.wtdoc("--fix", path="%s:%s:%s" % (self.gostub, wtbin, self.box.sys))
-        self.assertNotIn_("старее исходников devkit", out,
-                          "из worktree бинари объявлены устаревшими")
+        self.assertNotIn_("собран из коммита", out, "из worktree бинари объявлены разошедшимися")
+        for t in build.tools(self.box.dk):
+            self.assertNotIn_("%s не в PATH" % t, out, "из worktree %s объявлен ненайденным" % t)
         self.assertNotIn_("починено", out, "из worktree --fix что-то пересобрал")
 
 

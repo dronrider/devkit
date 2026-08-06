@@ -1,10 +1,11 @@
 """Стенд самопроверки devkitctl: копия devkit во временной директории и
 подставной машинный контур вокруг неё.
 
-На живом чекауте гонять нельзя: доктор судит по mtime исходников, сверяет
-определения агентов с основным чекаутом и лезет в HOME, так что незакоммиченная
-правка в ~/projects/devkit красила бы самопроверку на исправном коде. Копия не
-под git, поэтому для доктора она и есть основной чекаут.
+На живом чекауте гонять нельзя: доктор сверяет коммит бинарей с HEAD основного
+чекаута, сверяет определения агентов с ним же и лезет в HOME, так что
+незакоммиченная правка в ~/projects/devkit красила бы самопроверку на исправном
+коде. Копия заводится своим git-репозиторием и для доктора она и есть основной
+чекаут.
 """
 import atexit
 import contextlib
@@ -14,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -39,8 +41,12 @@ _GO_ENV = {}
 # Проверки вида «tmux не в PATH» иначе держались бы на том, чего нет в /usr/bin
 # на этой машине, и на другой краснели бы при исправном коде.
 SYS_TOOLS = ("git", "python3", "dirname", "mkdir", "chmod", "rm")
-STUB_TOOLS = ("taskctl", "shipctl", "agentctl", "regcheck", "tmux")
 STUB = "#!/bin/sh\nexit 0\n"
+# Заглушка бинаря devkit: доктор судит о нём по строке --version, и заглушка,
+# отвечающая «exit 0», числилась бы у него собранной до релизной схемы.
+BINARY_STUB = '#!/bin/sh\n[ "$1" = "--version" ] && echo "%s"\nexit 0\n'
+# Момент сборки релиза в тарболле: 2001 год.
+RELEASE_MTIME = 1000000000
 
 # Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист.
 # Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
@@ -115,12 +121,17 @@ os.chmod(out, os.stat(out).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 ''' % PY
 
 # Заглушка taskctl, которая доску всё-таки заводит: настоящий бинарь в PATH
-# самопроверки заменён на «exit 0», а без доски проверять нечего.
+# самопроверки заменён на печать версии, а без доски проверять нечего. Строку
+# версии она печатает наравне с остальными заглушками: заглушка, промолчавшая на
+# --version, для доктора собрана до релизной схемы.
 BOARD_TASKCTL = '''#!%s
 import os
 import sys
 
 argv, root, prefix = sys.argv[1:], ".", "TP"
+if argv[:1] == ["--version"]:
+    print("%s")
+    sys.exit(0)
 if argv[:1] == ["-C"]:
     root, argv = argv[1], argv[2:]
 if "--prefix" in argv:
@@ -130,7 +141,7 @@ if argv[:1] == ["init"]:
     with open(os.path.join(root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
         f.write("# Задачи проекта (префикс %%s)\\n" %% prefix)
     print("доска создана")
-''' % sys.executable
+'''
 
 
 def run(args, cwd=None, env=None, path=None, home=None):
@@ -215,8 +226,36 @@ def taken_at(hours_ago, fmt="%Y-%m-%dT%H:%M"):
     return (datetime.now() - timedelta(hours=hours_ago)).strftime(fmt)
 
 
+def stub_release(where, tag, commit, names):
+    """Ассеты релиза: тарболл на пару этой машины и SHA256SUMS рядом.
+
+    Отдают их тестам либо локальный сервер, либо file://: гитхаб в самопроверке
+    не участвует, а бинари в тарболле это скрипты со своей строкой версии,
+    проверяется тут не компилятор, а то, что вокруг него.
+    """
+    where = Path(where) / tag
+    where.mkdir(parents=True, exist_ok=True)
+    stage = where / "stage"
+    stage.mkdir(exist_ok=True)
+    for name in names:
+        executable(stage / name, BINARY_STUB % build.version_line(name, tag, commit))
+        # Время правки в тарболле это момент сборки релиза, и оно нарочно
+        # старое: установка обязана поставить своё, иначе доктор посчитает
+        # свежепоставленный бинарь несобранной правкой.
+        os.utime(str(stage / name), (RELEASE_MTIME, RELEASE_MTIME))
+    asset, bad = update.asset_name(tag)
+    assert bad is None, bad
+    with tarfile.open(str(where / asset), "w:gz") as tf:
+        for name in names:
+            tf.add(str(stage / name), arcname=name)
+    shutil.rmtree(str(stage))
+    write(where / build.SUMS, "%s  %s\n" % (build.sha256(where / asset), asset))
+    return where / asset
+
+
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import build  # noqa: E402
 import context  # noqa: E402
 import harness  # noqa: E402
 import perms  # noqa: E402
@@ -237,13 +276,25 @@ class Sandbox:
         for f in ("RULES.md", "RULES.board.md"):
             shutil.copy(str(DEVKIT_SRC / f), str(self.dk / f))
         self.dkctl = self.dk / "tools" / "devkitctl" / "devkitctl.py"
+        # Копия под git, и это не украшение: доктор сверяет коммит, зашитый в
+        # бинарь, с HEAD основного чекаута, а стенд без git оставил бы сверку
+        # без обеих сторон. Ходить за тегами копии некуда, поэтому FETCH_HEAD ей
+        # проставляется руками: иначе на каждом прогоне горела бы находка про
+        # давний поход за релизами.
+        git_init(self.dk)
+        git(self.dk, "add", "-A")
+        git(self.dk, "commit", "-qm", "стенд")
+        write(self.dk / ".git" / "FETCH_HEAD", "")
+        self.version, self.commit = build.stamp(self.dk)
 
         # Машинный контур подставной: бинари devkit и tmux заглушками в своём
-        # PATH. Иначе проверки цеплялись бы за настоящую машину.
+        # PATH. Иначе проверки цеплялись бы за настоящую машину. Заглушки
+        # называют версию копии devkit: без неё доктор считает их разошедшимися.
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for t in STUB_TOOLS:
-            executable(self.bin / t)
+        for t in build.tools(self.dk):
+            executable(self.bin / t, BINARY_STUB % self.version_line(t))
+        executable(self.bin / "tmux")
         self.sys = self.root / "sys"
         self.sys.mkdir()
         self.missing_tools = []
@@ -271,6 +322,14 @@ class Sandbox:
         self.home = self.root / "home"
         if home:
             self.make_home(self.home)
+
+    def version_line(self, name):
+        """Строка --version, которую доктор ждёт от бинаря этой копии devkit."""
+        return build.version_line(name, self.version, self.commit)
+
+    def board_taskctl(self):
+        """Заглушка taskctl, заводящая доску, со своей строкой версии."""
+        return BOARD_TASKCTL % (PY, self.version_line("taskctl"))
 
     def make_home(self, home):
         """Машина с актуальной раскладкой devkit: на чистом проекте доктор молчит."""

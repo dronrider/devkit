@@ -579,11 +579,6 @@ class DoctorResidencyTest(SandboxCase):
         git_init(cls.rdk)
         write(cls.rdk / "docs" / "TASKS.md", "# Задачи\n\nПрефикс: RD\n")
         cls.rdkctl = cls.rdk / "tools" / "devkitctl" / "devkitctl.py"
-        # Бинари в подставном PATH старше свежескопированных исходников rdk: без
-        # этого доктор считал бы их устаревшими, а это шум, никак не связанный с
-        # весом резидента.
-        for t in ("taskctl", "shipctl", "agentctl", "regcheck"):
-            os.utime(str(box.bin / t), None)
         cls.rdhome = box.root / "resid" / "home"
         box.make_home(cls.rdhome)
         for name in list((cls.rdhome / ".claude" / "skills").iterdir()):

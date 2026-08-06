@@ -11,24 +11,20 @@
 import hashlib
 import os
 import shutil
-import tarfile
 import tempfile
 import threading
+import time
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import build
 import update
-from testenv import PY, executable, git, run, write
+from testenv import (BINARY_STUB, PY, RELEASE_MTIME, executable, git, run, stub_release,
+                     write)
 
 TOOLS = ("alfactl", "betactl")
-# Момент сборки релиза в тарболле: 2001 год.
-RELEASE_MTIME = 1000000000
 GO_MOD = "module github.com/dronrider/devkit/tools/%s\n\ngo 1.26\n"
-BINARY = ('#!/bin/sh\n'
-          '[ "$1" = "--version" ] && echo "%s %s (%s)"\n'
-          'exit 0\n')
 
 
 def driver_text(mark):
@@ -47,28 +43,6 @@ def driver_text(mark):
             "sys.exit(update.run(os.path.dirname(os.path.dirname(here)), True,\n"
             "                    pin='--pin' in sys.argv,\n"
             "                    restarted='--restarted' in sys.argv))\n" % (PY, mark))
-
-
-def stub_release(where, tag, commit, names=TOOLS):
-    """Ассеты релиза: тарболл на пару этой машины и SHA256SUMS рядом."""
-    where = Path(where) / tag
-    where.mkdir(parents=True, exist_ok=True)
-    stage = where / "stage"
-    stage.mkdir(exist_ok=True)
-    for name in names:
-        executable(stage / name, BINARY % (name, tag, commit))
-        # Время правки в тарболле это момент сборки релиза, и оно нарочно
-        # старое: установка обязана поставить своё, иначе доктор посчитает
-        # свежепоставленный бинарь устаревшим.
-        os.utime(str(stage / name), (RELEASE_MTIME, RELEASE_MTIME))
-    asset, bad = update.asset_name(tag)
-    assert bad is None, bad
-    with tarfile.open(str(where / asset), "w:gz") as tf:
-        for name in names:
-            tf.add(str(stage / name), arcname=name)
-    shutil.rmtree(str(stage))
-    write(where / build.SUMS, "%s  %s\n" % (build.sha256(where / asset), asset))
-    return where / asset
 
 
 class Requests(SimpleHTTPRequestHandler):
@@ -328,6 +302,82 @@ class CheckoutModeTest(UpdateCase):
         self.assertIn(": 1", risky, "отказ не называет, сколько коммитов на кону")
 
 
+class ReleaseFindingsTest(UpdateCase):
+    """Две находки доктора про релизы: точная (тег чекаута против новейшего в
+    клоне) и косвенная (давно ли ходили за тегами). Обе считаются по локальному
+    клону, сеть тут не участвует вовсе.
+    """
+
+    def touch_fetch(self, days=None):
+        path = update.fetch_head(self.dk)
+        if days is None:
+            if path.exists():
+                path.unlink()
+            return path
+        write(path, "")
+        when = time.time() - days * 24 * 3600
+        os.utime(str(path), (when, when))
+        return path
+
+    def test_mode_names_the_checkout(self):
+        self.assertEqual(update.checkout_mode(self.dk), "на ветке main, впереди релиза v0.10.0")
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.9.0")
+        self.assertEqual(update.checkout_mode(self.dk), "на релизе v0.9.0")
+        git(self.dk, "checkout", "--quiet", "-b", "rel", "v0.10.0")
+        self.assertEqual(update.checkout_mode(self.dk),
+                         "на ветке rel, и на её вершине стоит релиз v0.10.0")
+        git(self.dk, "checkout", "--detach", "--quiet", "main")
+        self.assertIn("отвязан на коммите", update.checkout_mode(self.dk))
+
+    def test_older_tag_is_named_exactly(self):
+        self.touch_fetch(days=0)
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.9.0")
+        said = "\n".join(update.check_release(self.dk))
+        self.assertIn("стоит devkit v0.9.0, а вышел v0.10.0", said)
+        self.assertIn("devkitctl update", said, "находка не называет команду обновления")
+
+    def test_newest_tag_is_silent(self):
+        self.touch_fetch(days=0)
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.10.0")
+        self.assertEqual(update.check_release(self.dk), [],
+                         "на новейшем теге доктору говорить не о чем")
+
+    def test_branch_has_no_exact_finding(self):
+        # На машине разработчика чекаут стоит на ветке впереди тега, и «стоит X,
+        # вышел Y» там неправда: тега на машине не стоит вовсе.
+        self.touch_fetch(days=0)
+        self.assertEqual(update.check_release(self.dk), [])
+
+    def test_fetch_age_by_both_sides_of_the_threshold(self):
+        self.touch_fetch(days=20)
+        self.assertIn("не ходили 20 дней", "\n".join(update.check_release(self.dk)))
+        self.touch_fetch(days=13)
+        self.assertEqual(update.check_release(self.dk), [])
+
+    def test_clone_that_never_fetched(self):
+        # Свежий клон: FETCH_HEAD нет вовсе, и знание о релизах взять неоткуда.
+        self.touch_fetch(days=None)
+        self.assertIn("не ходили ни разу", "\n".join(update.check_release(self.dk)))
+
+    def test_fetch_closes_the_loop(self):
+        # Клон знает только v0.9.0 и стоит на нём: точной находки нет, а
+        # косвенная зажглась. После похода за тегами они меняются местами, и
+        # человек, спросивший подсказанной командой, узнаёт про вышедший релиз.
+        clone = self.root / "clone"
+        run(["git", "clone", "--quiet", "--no-tags", str(self.origin), str(clone)])
+        git(clone, "fetch", "--quiet", "origin", "tag", "v0.9.0")
+        git(clone, "checkout", "--detach", "--quiet", "v0.9.0")
+        old = time.time() - 30 * 24 * 3600
+        os.utime(str(update.fetch_head(clone)), (old, old))
+        said = "\n".join(update.check_release(clone))
+        self.assertIn("не ходили 30 дней", said)
+        self.assertNotIn("а вышел", said, "клон не знает про v0.10.0, а точная находка зажглась")
+        git(clone, "fetch", "--quiet", "--tags", "origin")
+        said = "\n".join(update.check_release(clone))
+        self.assertIn("стоит devkit v0.9.0, а вышел v0.10.0", said)
+        self.assertNotIn("не ходили", said, "после похода за тегами косвенная находка осталась")
+
+
 class RefusalTest(UpdateCase):
     """Отказы: чужое дерево, ветка без ключа, своя работа на кону."""
 
@@ -475,7 +525,8 @@ class InstallTest(UpdateCase):
         # Подмена именно переименованием: на linux запись в работающий файл даёт
         # ETXTBSY. Жёсткая ссылка на старый бинарь это и проверяет: после
         # переименования она держит старое содержимое.
-        old = executable(self.dest / TOOLS[0], BINARY % (TOOLS[0], "v0.1.0", "старьё"))
+        old = executable(self.dest / TOOLS[0],
+                         BINARY_STUB % build.version_line(TOOLS[0], "v0.1.0", "старьё"))
         keep = self.dest.parent / "keep"
         os.link(str(old), str(keep))
         self.assertEqual(self.install(), 0, self.out())
@@ -505,7 +556,8 @@ class InstallTest(UpdateCase):
         # Чекаут на новейшем теге, а бинарь отвечает чужим коммитом: это не
         # холостой ход, ставить надо.
         self.assertEqual(self.install(), 0, self.out())
-        executable(self.dest / TOOLS[0], BINARY % (TOOLS[0], "v0.1.0", "старьё"))
+        executable(self.dest / TOOLS[0],
+                   BINARY_STUB % build.version_line(TOOLS[0], "v0.1.0", "старьё"))
         self.said = []
         self.assertEqual(self.update(), 0, self.out())
         self.assertEqual(update.binary_stamp(self.dest / TOOLS[0]), ("v0.10.0", self.tag_commit))
@@ -583,7 +635,8 @@ class TagOnTheBranchTipTest(UpdateCase):
         # Бинари уже отвечают нужным коммитом, а чекаут на ветке: холостым ходом
         # это не считается, отвязать всё равно надо.
         for name in TOOLS:
-            executable(self.dest / name, BINARY % (name, self.tip, self.tip_commit))
+            executable(self.dest / name,
+                       BINARY_STUB % build.version_line(name, self.tip, self.tip_commit))
         self.assertEqual(self.update(pin=True), 0, self.out())
         self.assertNotIn("обновлять нечего", self.out())
         self.assertEqual(update.current_branch(self.dk), "",

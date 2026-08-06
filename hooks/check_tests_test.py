@@ -67,6 +67,58 @@ class TestShebang(unittest.TestCase):
         self.assertEqual(run("wt/NOTES", cwd=self.tmp).returncode, 0)
 
 
+class TestInlineRustTests(unittest.TestCase):
+    """Rust держит тесты в том же файле, что и код. Отдельного тестового файла
+    у такой правки нет, и находка тут считается по добавленным строкам
+    staged-диффа, а не по имени."""
+
+    def setUp(self):
+        self.repo = os.path.join(tempfile.mkdtemp(), "repo")
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        for key, value in (("user.name", "t"), ("user.email", "t@t")):
+            subprocess.run(["git", "-C", self.repo, "config", key, value], check=True)
+
+    def stage(self, name, text):
+        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as f:
+            f.write(text)
+        subprocess.run(["git", "-C", self.repo, "add", name], check=True)
+
+    def test_code_with_inline_test_passes(self):
+        self.stage("lib.rs", "pub fn f() -> u8 { 1 }\n\n"
+                             "#[cfg(test)]\nmod tests {\n"
+                             "    #[test]\n    fn f_returns_one() { assert_eq!(super::f(), 1); }\n}\n")
+        self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 0)
+
+    def test_async_inline_test_counts(self):
+        self.stage("lib.rs", "pub async fn f() {}\n\n"
+                             "#[cfg(test)]\nmod tests {\n"
+                             "    #[tokio::test]\n    async fn f_runs() { super::f().await; }\n}\n")
+        self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 0)
+
+    def test_code_without_inline_test_is_still_caught(self):
+        self.stage("lib.rs", "pub fn f() -> u8 { 1 }\n")
+        self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 1)
+
+    def test_old_test_module_untouched_is_caught(self):
+        """Тесты в файле были и раньше, а правка их не тронула: правило требует
+        теста на саму правку, поэтому это находка."""
+        self.stage("lib.rs", "pub fn f() -> u8 { 1 }\n\n"
+                             "#[cfg(test)]\nmod tests {\n"
+                             "    #[test]\n    fn f_returns_one() { assert_eq!(super::f(), 1); }\n}\n")
+        subprocess.run(["git", "-C", self.repo, "commit", "-q", "--no-verify",
+                        "-m", "init"], check=True)
+        self.stage("lib.rs", "pub fn f() -> u8 { 2 }\n\n"
+                             "#[cfg(test)]\nmod tests {\n"
+                             "    #[test]\n    fn f_returns_one() { assert_eq!(super::f(), 1); }\n}\n")
+        self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 1)
+
+    def test_other_language_ignores_inline_marks(self):
+        """Признак инлайнового теста читается только у тех расширений, где так
+        пишут: питон с комментарием про #[test] остаётся находкой."""
+        self.stage("lib.py", "# было бы #[test], да не тут\ndef f():\n    return 1\n")
+        self.assertEqual(run("--stdin", input="lib.py\n", cwd=self.repo).returncode, 1)
+
+
 class TestPreCommit(unittest.TestCase):
     """Третий рубеж коммита: правка кода без теста краснеет, с тестом
     зеленеет, а обход через DEVKIT_NO_TESTS пропускает только эту проверку."""

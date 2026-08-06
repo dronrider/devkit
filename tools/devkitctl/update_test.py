@@ -420,6 +420,7 @@ class RestartTest(UpdateCase):
         # него уронил бы обновление разбором аргументов уже после перевода
         # чекаута.
         write(self.driver, "# старый код без флага\n")
+        (self.driver.parent / "update.py").unlink()
         self.commit("тег без update")
         git(self.dk, "tag", "-f", "v0.10.0")
         stub_release(self.releases, "v0.10.0", self.short("v0.10.0"), self.NAMES)
@@ -645,6 +646,16 @@ class CommandWiringTest(unittest.TestCase):
     """
 
     CTL = Path(__file__).resolve().parent / "devkitctl.py"
+    DEVKIT = Path(__file__).resolve().parent.parent.parent
+
+    def test_this_code_understands_its_own_restart(self):
+        # Признак смотрят на чужом дереве (тег, на который перешли), и соврать
+        # он может только в одну сторону: сказать «не понимает» про код, который
+        # понимает. Тогда вторая половина остаётся старому коду молча, и ловится
+        # это только на живом дереве, а не на фикстуре.
+        self.assertTrue(update.understands_restart(self.DEVKIT),
+                        "живой devkit не опознаёт собственный флаг перезапуска: "
+                        "установка не будет перезапускаться в код тега")
 
     def test_flags_are_registered(self):
         rc, out = run([PY, str(self.CTL), "update", "--pin", "--check",

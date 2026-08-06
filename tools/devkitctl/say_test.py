@@ -43,6 +43,11 @@ class FoldedTest(unittest.TestCase):
                          "установлено 3 скилла в ~/.claude/skills: board-task, goal-loop, "
                          "live-core")
 
+    def test_nothing_done_says_nothing(self):
+        # Пустой список это пустая строка, а не «установлено 0 скиллов в ...: »:
+        # такую строку зовущий не напечатает, а бессмысленной ей быть незачем.
+        self.assertEqual(say.folded(self.VERBS, SKILL, [], "~/.claude/skills"), "")
+
     def test_the_reason_goes_after_the_place(self):
         self.assertEqual(say.folded(("обновлён", "обновлено"), SKILL, ["goal-loop"],
                                     "~/.claude/skills", ", devkit ушёл вперёд"),

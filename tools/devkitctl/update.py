@@ -269,7 +269,13 @@ def place(staged, names, dest):
     for name in names:
         src = Path(staged) / name
         os.chmod(str(src), 0o755)
-        os.replace(str(src), str(Path(dest) / name))
+        target = Path(dest) / name
+        os.replace(str(src), str(target))
+        # Время правки берётся не из тарболла, а моментом установки: в архиве
+        # лежит момент сборки релиза, а исходники в чекауте появились сейчас,
+        # переходом на тег, и доктор посчитал бы свежепоставленный бинарь
+        # устаревшим.
+        os.utime(str(target), None)
     return list(names)
 
 
@@ -481,16 +487,18 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
     rc, placed = install(devkit, tag, log, err)
     if rc != 0:
         return rc
-    steps = []
-    findings, fixed = check_wrapper(devkit, True)
+    # Обёртку кладёт раскладка машинного контура, и второй раз тут её не зовут:
+    # иначе установка сказала бы про каталог мимо PATH дважды. Без раскладки
+    # (её зовут не все, кто зовёт установку) обёртка всё равно обязана лечь,
+    # без неё python-часть не зовётся по имени.
+    if machine:
+        findings, fixed = machine()
+        findings = ["машина: %s" % m for m in findings]
+    else:
+        findings, fixed = check_wrapper(devkit, True)
     for m in fixed:
         log("положено: %s" % m)
-    steps += findings
-    if machine:
-        mfindings, mfixed = machine()
-        for m in mfixed:
-            log("положено: %s" % m)
-        steps += ["машина: %s" % m for m in mfindings]
+    steps = list(findings)
     log("\ndevkit %s: утилит %d в %s" % (tag, len(placed), bin_dir()))
     if steps:
         log("\nосталось сделать:")

@@ -23,6 +23,8 @@ import update
 from testenv import PY, executable, git, run, write
 
 TOOLS = ("alfactl", "betactl")
+# Момент сборки релиза в тарболле: 2001 год.
+RELEASE_MTIME = 1000000000
 GO_MOD = "module github.com/dronrider/devkit/tools/%s\n\ngo 1.26\n"
 BINARY = ('#!/bin/sh\n'
           '[ "$1" = "--version" ] && echo "%s %s (%s)"\n'
@@ -55,6 +57,10 @@ def stub_release(where, tag, commit, names=TOOLS):
     stage.mkdir(exist_ok=True)
     for name in names:
         executable(stage / name, BINARY % (name, tag, commit))
+        # Время правки в тарболле это момент сборки релиза, и оно нарочно
+        # старое: установка обязана поставить своё, иначе доктор посчитает
+        # свежепоставленный бинарь устаревшим.
+        os.utime(str(stage / name), (RELEASE_MTIME, RELEASE_MTIME))
     asset, bad = update.asset_name(tag)
     assert bad is None, bad
     with tarfile.open(str(where / asset), "w:gz") as tf:
@@ -460,6 +466,9 @@ class InstallTest(UpdateCase):
                       "нет строки «было -> стало»")
         self.assertEqual([p.name for p in self.dest.glob(update.TMP_PREFIX + "*")], [],
                          "временный каталог остался в каталоге назначения")
+        self.assertGreater(os.path.getmtime(str(self.dest / TOOLS[0])), RELEASE_MTIME + 1,
+                           "у поставленного бинаря время правки из тарболла, а не момент "
+                           "установки: доктор посчитает его старее исходников")
 
     def test_replace_does_not_write_over_the_old_file(self):
         # Подмена именно переименованием: на linux запись в работающий файл даёт

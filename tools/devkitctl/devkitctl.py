@@ -15,10 +15,11 @@
       клона, поэтому он же восстанавливает обвязку после переклонирования
 
   devkitctl doctor [--fix] [-C dir]
-      проверить обвязку проекта; корень не под git это одна находка и
-      немедленный выход, без обхода дерева вниз (DK-160). AGENTS.md на
-      месте, генерённые файлы правил свежи и не правлены руками, их
-      импорты разворачиваются, git-хуки
+      проверить обвязку проекта; корень не под git это находка, а не отказ:
+      проектная половина (файлы правил, git-хуки, доска, обвязка выката,
+      markdown-ссылки) по дереву вниз не идёт, машинный контур ниже
+      печатается как обычно (DK-160). AGENTS.md на месте, генерённые файлы
+      правил свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
       markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
@@ -250,8 +251,10 @@ def check_links(root):
         # Исключение считается от корня репозитория, которому принадлежит
         # файл, а не от каталога запуска: при обходе, зашедшем во вложенный
         # репозиторий (свой .git прямо тут), его docs/ исключается по тому же
-        # правилу, что и docs/ каталога запуска (DK-160).
-        if dp == Path(root) or (dp / ".git").is_dir():
+        # правилу, что и docs/ каталога запуска (DK-160). .exists(), а не
+        # .is_dir(): у worktree и submodule .git это файл со строкой
+        # "gitdir: ...", не каталог, и is_dir() такой репозиторий бы пропустил.
+        if dp == Path(root) or (dp / ".git").exists():
             dirnames[:] = [d for d in dirnames if d != "docs"]
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
@@ -1098,41 +1101,42 @@ def corp_thin(clone, local, imports, fix):
 def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
+    local = None
     if not in_git:
-        # Без репозитория нет ни проекта, ни обвязки: дальше вниз по дереву
-        # лежат чужие репозитории (каталог проектов), и обход их доктором это
-        # не диагностика, а шум чужими находками (DK-160). Останавливаемся тут
-        # же, а не после находки, иначе дерево всё равно обходится.
+        # Без репозитория нет ни проекта, ни обвязки: проектная половина
+        # (правила, git-хуки, доска, обвязка выката, ссылки) по дереву не
+        # ходит, а не то дальше вниз лежат чужие репозитории (каталог
+        # проектов), и обход их доктором был бы шумом их находками, а не
+        # диагностикой (DK-160). Машинный контур ниже от root не зависит и
+        # печатается как обычно: человек, позвавший доктора из каталога
+        # проектов, часто спрашивает ровно про машину.
         findings.append("не git-репозиторий: %s; звать из подключённого проекта "
                         "либо из чекаута devkit" % root)
-        for f in findings:
-            print(f)
-        sys.stderr.write("находок: %d\n" % len(findings))
-        return 1
-    clone, local = corp.pair(root, DEVKIT)
-    if local:
-        # Рабочие файлы devkit в корп-контуре лежат не в дереве проекта, а
-        # рядом, и обычные проверки идут по ним: в самом клоне ни доски, ни
-        # AGENTS.md нет и быть не должно.
-        root = Path(local)
-        imports, hf = corp_profiles(local)
-        findings += hf
-        cf, cd = corp.check(clone, local, DEVKIT, corp_thin_names(imports), fix)
-        findings += cf
-        fixed += cd
-        if corp.local_dir(clone, DEVKIT):
-            tf, td = corp_thin(clone, local, imports, fix)
-            findings += tf
-            fixed += td
-    rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
-    findings += rfindings
-    fixed += rfixed
-    if in_git and check_git_hooks(root):
-        if fix:
-            done, residual = connect_git_hooks(root)
-            (fixed if done else findings).append(done or residual)
-        else:
-            findings.append(check_git_hooks(root))
+    else:
+        clone, local = corp.pair(root, DEVKIT)
+        if local:
+            # Рабочие файлы devkit в корп-контуре лежат не в дереве проекта, а
+            # рядом, и обычные проверки идут по ним: в самом клоне ни доски, ни
+            # AGENTS.md нет и быть не должно.
+            root = Path(local)
+            imports, hf = corp_profiles(local)
+            findings += hf
+            cf, cd = corp.check(clone, local, DEVKIT, corp_thin_names(imports), fix)
+            findings += cf
+            fixed += cd
+            if corp.local_dir(clone, DEVKIT):
+                tf, td = corp_thin(clone, local, imports, fix)
+                findings += tf
+                fixed += td
+        rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
+        findings += rfindings
+        fixed += rfixed
+        if check_git_hooks(root):
+            if fix:
+                done, residual = connect_git_hooks(root)
+                (fixed if done else findings).append(done or residual)
+            else:
+                findings.append(check_git_hooks(root))
     # Профили харнесов проверяются все, а не только активный: битый профиль
     # находится до того, как кто-то на него переключится, а починить его
     # автоматике нечем, это правка в devkit.
@@ -1155,7 +1159,7 @@ def doctor(start, fix=False):
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed
-    if (root / "docs" / "TASKS.md").exists():
+    if in_git and (root / "docs" / "TASKS.md").exists():
         tc = shutil.which("taskctl")
         if tc:
             # Про отсутствие бинаря уже сказал машинный раздел, тут только lint.
@@ -1197,7 +1201,7 @@ def doctor(start, fix=False):
                 else:
                     findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
                                     "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
-        if (root / ".devkit").is_dir() and in_git:
+        if (root / ".devkit").is_dir():
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", RUN_LOG])
             if rc != 0:
                 if fix and ensure_gitignore(root, RUN_LOG, LOG_IGNORE_COMMENT):
@@ -1205,7 +1209,8 @@ def doctor(start, fix=False):
                 else:
                     findings.append("%s не гитигнорнут: журнал запусков замусорит status, "
                                     "добавить %s в .gitignore" % (RUN_LOG, RUN_LOG))
-    findings += check_links(root)
+    if in_git:
+        findings += check_links(root)
     for m in fixed:
         print("починено: %s" % m)
     for f in findings:

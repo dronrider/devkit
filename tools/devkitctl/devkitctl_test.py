@@ -192,8 +192,11 @@ class ProjectFindingsTest(SandboxCase):
 
 
 class DoctorRootTest(SandboxCase):
-    """Корень вне git отбит без обхода дерева, а исключение docs/ у check_links
-    считается от корня репозитория файла, а не от каталога запуска (DK-160).
+    """Корень вне git: проектная половина (правила, git-хуки, доска, обвязка
+    выката, ссылки) по дереву вниз не идёт, а машинный контур и строка про
+    чекаут печатаются как обычно. Исключение docs/ у check_links считается от
+    корня репозитория файла, а не от каталога запуска, и распознаёт репозиторий
+    и по каталогу .git, и по файлу gitdir: (worktree, submodule) (DK-160).
     """
 
     def test_outside_git_refuses_without_walking_the_tree(self):
@@ -211,6 +214,17 @@ class DoctorRootTest(SandboxCase):
         self.assertIn_("подключённого проекта", out, "находка не говорит, куда звать доктора")
         self.assertNotIn_("битая ссылка", out, "доктор пошёл вниз по чужому репозиторию")
 
+    def test_outside_git_still_runs_the_machine_half(self):
+        # Машинный контур и строка про режим чекаута от root не зависят, и
+        # каталог без git это не повод их гасить: их печатал доктор и раньше,
+        # и человек, позвавший его из каталога проектов, часто спрашивает ровно
+        # про машину (замечание ревью).
+        outside = self.box.root / "workspace2"
+        outside.mkdir()
+        _, out = self.box.doctor(outside)
+        self.assertIn_("чекаут devkit:", out, "вне git пропала строка про режим чекаута")
+        self.assertNotIn_("битая ссылка", out, "вне git проверка ссылок всё равно отработала")
+
     def test_nested_repo_docs_excluded_by_its_own_root(self):
         # Вложенный репозиторий внутри проверяемого дерева, а не сам каталог
         # запуска: его docs/ исключается тем же правилом, что и docs/ корня,
@@ -224,6 +238,39 @@ class DoctorRootTest(SandboxCase):
         _, out = self.box.doctor(proj)
         self.assertIn_("nested/README.md", out, "живая дока вложенного репозитория не проверена")
         self.assertNotIn_("nested/docs", out, "docs/ вложенного репозитория не исключён")
+
+    def test_nested_worktree_docs_excluded_too(self):
+        # git-worktree: .git это файл со строкой "gitdir: ...", не каталог, и
+        # is_dir() такой репозиторий бы не признал своим, а walk продолжил бы
+        # вниз без исключения docs/ (замечание ревью).
+        proj = self.box.project("proj")
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        main = git_init(proj / "wt-main")
+        write(main / "seed.txt", "x\n")
+        git(main, "add", "-A")
+        git(main, "commit", "-qm", "seed")
+        rc, out = git(main, "worktree", "add", str(proj / "wt"))
+        self.assertEqual(rc, 0, "git worktree add не прошёл: %s" % out)
+        self.assertTrue((proj / "wt" / ".git").is_file(), "у worktree .git не файл")
+        write(proj / "wt" / "README.md", "смотри [код](nope.md)\n")
+        write(proj / "wt" / "docs" / "tasks" / "XX-1.md", "смотри [код](../../nope/gone.go)\n")
+        _, out = self.box.doctor(proj)
+        self.assertIn_("wt/README.md", out, "живая дока worktree не проверена")
+        self.assertNotIn_("wt/docs", out, "docs/ worktree не исключён")
+
+    def test_nested_submodule_style_docs_excluded_too(self):
+        # git-submodule: .git это тоже файл со строкой "gitdir: ...", а не
+        # каталог, как у worktree; собирается руками, без сети, чтобы не тянуть
+        # настоящий git submodule add в стенд (замечание ревью).
+        proj = self.box.project("proj")
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        sub = proj / "submod"
+        write(sub / ".git", "gitdir: ../.git/modules/submod\n")
+        write(sub / "README.md", "смотри [код](nope.md)\n")
+        write(sub / "docs" / "tasks" / "XX-1.md", "смотри [код](../../nope/gone.go)\n")
+        _, out = self.box.doctor(proj)
+        self.assertIn_("submod/README.md", out, "живая дока submodule-стиля не проверена")
+        self.assertNotIn_("submod/docs", out, "docs/ submodule-стиля не исключён")
 
 
 class DeployTest(SandboxCase):

@@ -260,11 +260,14 @@ class Sandbox:
 
         Считается по содержимому, а не по mtime: тест, вернувший файл на место
         перезаписью, стенд не менял. `.git` пропускается, его трогает не тест, а
-        сам git (индекс, логи ссылок).
+        сам git (индекс, логи ссылок). `__pycache__` пропускается по той же
+        причине: байткод пишет python при первом же импорте из подпроцесса, и на
+        чекауте, где кеша ещё нет, сторож утечки краснел бы на исправном коде.
         """
         h = hashlib.sha1()
+        skip = (".git", "__pycache__")
         for p in sorted(self.dk.rglob("*")):
-            if ".git" in p.relative_to(self.dk).parts:
+            if set(p.relative_to(self.dk).parts) & set(skip):
                 continue
             h.update(str(p.relative_to(self.dk)).encode("utf-8"))
             if p.is_symlink():

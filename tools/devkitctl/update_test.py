@@ -589,9 +589,21 @@ class InstallTest(UpdateCase):
         git(self.dk, "remote", "set-url", "origin", str(self.root / "нет-такого.git"))
         head = self.head()
         self.assertEqual(self.update(pin=True), 1)
-        self.assertIn("git fetch --tags не прошёл", self.out())
+        self.assertIn("git fetch тегов не прошёл", self.out())
         self.assertEqual(self.head(), head, "после отказа fetch чекаут всё-таки сдвинулся")
         self.assertEqual(self.installed(), [])
+
+    def test_diverged_deployed_tag_does_not_block_the_install(self):
+        # deployed это служебный тег, shipctl двигает его на каждом выкате, и
+        # на машине потребителя он расходится с origin уже после первого же
+        # выката. Голый --tags такое расхождение принимал за отказ сети
+        # («would clobber existing tag»), хотя релизные теги приехали.
+        git(self.dk, "tag", "deployed")
+        git(self.dk, "push", "-q", "origin", "deployed")
+        git(self.dk, "tag", "-f", "deployed", "v0.9.0")
+        self.assertEqual(self.install(), 0, self.out())
+        self.assertNotIn("нужна сеть", self.out())
+        self.assertEqual(sorted(self.installed()), sorted(TOOLS + (update.WRAPPER,)))
 
 
 class TagOnTheBranchTipTest(UpdateCase):
@@ -698,6 +710,17 @@ class CheckTest(UpdateCase):
         self.assertEqual(self.update(check=True), 0)
         self.assertEqual(update.latest_tag(self.dk), "v0.10.0",
                          "--check не принёс теги в клон")
+
+    def test_survives_a_deployed_tag_that_diverged_from_origin(self):
+        # deployed это служебный тег, shipctl двигает его на каждом выкате, и
+        # на машине потребителя он расходится с origin уже после первого же
+        # выката. Голый --tags такое расхождение принимал за отказ сети.
+        git(self.dk, "tag", "deployed")
+        git(self.dk, "push", "-q", "origin", "deployed")
+        git(self.dk, "tag", "-f", "deployed", "v0.9.0")
+        self.assertEqual(self.update(check=True), 0, self.out())
+        self.assertNotIn("нужна сеть", self.out())
+        self.assertIn("новейший тег: v0.10.0", self.out())
 
 
 class WrapperTest(UpdateCase):

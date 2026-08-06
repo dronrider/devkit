@@ -369,7 +369,7 @@ class CorpConnectTest(SandboxCase):
         write(self.local / ".devkit" / "deploy.local",
               "deploy =\ntest = echo тесты\nautonomous = false\n")
         _, out = self.corp(env={"TRACKER_TOKEN": "t"})
-        self.assertIn_("ручных шагов не осталось", out,
+        self.assertIn_("подключение завершено", out,
                        "corp промолчал о том, что раскладка доведена")
 
     def test_4_empty_deploy_is_normal_in_the_corp_contour(self):

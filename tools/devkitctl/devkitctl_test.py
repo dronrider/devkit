@@ -231,7 +231,7 @@ class DeployTest(SandboxCase):
         root = os.path.realpath(str(self.bproj))
         self.assertIn_("%s/.devkit/deploy.local: вписать test =, deploy =" % root, self.bout,
                        "хвост new не назвал незаполненную обвязку выката")
-        self.assertIn_("проверка: devkitctl doctor -C %s" % root, self.bout,
+        self.assertIn_("проверить обвязку можно командой devkitctl doctor -C %s" % root, self.bout,
                        "хвост new не назвал команду проверки")
         text = read(self.deploy)
         self.assertRegex(text, r"(?m)^autonomous = false$", "в болванке нет autonomous")

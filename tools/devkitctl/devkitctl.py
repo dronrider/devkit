@@ -1080,7 +1080,7 @@ def new(start, prefix, name, no_board):
             done.append(out)
         else:
             done.append("taskctl не в PATH; доска заводится после сборки: "
-                        "cd %s/tools/taskctl && go build -o ~/go/bin/taskctl . && taskctl -C %s init --prefix %s"
+                        "python3 %s/tools/devkitctl/devkitctl.py build && taskctl -C %s init --prefix %s"
                         % (DEVKIT, root, prefix))
         done += scaffold_deploy(root)
     # Тонкие файлы генерятся последними: доска к этому моменту уже заведена, и в
@@ -1194,8 +1194,8 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     if not board.exists():
         tc = shutil.which("taskctl")
         if not tc:
-            sys.stderr.write("taskctl не в PATH, доску заводить нечем: собрать его "
-                             "(cd %s/tools/taskctl && go build -o ~/go/bin/taskctl .) и повторить\n" % DEVKIT)
+            sys.stderr.write("taskctl не в PATH, доску заводить нечем: собрать утилиты "
+                             "(python3 %s/tools/devkitctl/devkitctl.py build) и повторить\n" % DEVKIT)
             return 1
         rc, out = run([tc, "-C", str(local), "init", "--prefix", prefix, "--name", name or clone.name])
         if rc != 0:

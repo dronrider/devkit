@@ -960,5 +960,28 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len(post), 3, post)
 
 
+class SinglePointOfBuildTest(unittest.TestCase):
+    """Точка сборки одна, и советует доктор её же.
+
+    Копии старого цикла `go build -o ~/go/bin/<утилита>` пережили перевод
+    доктора на `devkitctl build` в двух подсказках (DK-150, замечание ревью):
+    подсказку никто не звал, и разойтись со сборкой ей ничего не мешало.
+    """
+
+    SRC = Path(__file__).resolve().parent / "devkitctl.py"
+
+    def test_no_own_go_build_left(self):
+        stale = [ln for ln in read(self.SRC).split("\n")
+                 if "go build" in ln and not ln.lstrip().startswith("#")]
+        self.assertEqual(stale, [], "в devkitctl.py осталась своя сборка мимо build.py")
+
+    def test_advice_calls_the_one_command(self):
+        src = read(self.SRC)
+        self.assertNotIn("~/go/bin/taskctl", src,
+                         "подсказка зовёт собирать утилиту руками, мимо devkitctl build")
+        self.assertIn("devkitctl.py build", src,
+                      "подсказки перестали называть точку сборки")
+
+
 if __name__ == "__main__":
     unittest.main()

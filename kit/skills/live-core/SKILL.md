@@ -56,7 +56,8 @@ description: Правка самого devkit по ходу работы над 
    devkit), а вот два случая требуют шага руками:
 
    - Go-утилита действует только пересобранным бинарём в PATH:
-     `cd ~/projects/devkit/tools/<утилита> && go build -o ~/go/bin/<утилита> .`;
+     `python3 ~/projects/devkit/tools/devkitctl/devkitctl.py build` собирает все
+     шесть с зашитой версией и проверяет каждый запуском;
    - скилл и определение субагента уезжают на машину копией в
      `~/.claude/skills` и `~/.claude/agents`, кладёт её
      `python3 ~/projects/devkit/tools/devkitctl/devkitctl.py doctor --fix` из

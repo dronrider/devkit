@@ -86,6 +86,9 @@ func root(dir string) string {
 }
 
 func main() {
+	if versionRequested() {
+		return
+	}
 	gdir, args, gerr := globalDir(os.Args[1:])
 	if gerr != nil {
 		fail(gerr)

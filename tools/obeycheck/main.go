@@ -64,6 +64,9 @@ func splitList(s string) []string {
 }
 
 func main() {
+	if versionRequested() {
+		return
+	}
 	fs := flag.NewFlagSet("obeycheck", flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usageText) }
 	scenarios := fs.String("scenarios", "", "директория сценариев")

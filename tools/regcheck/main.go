@@ -32,6 +32,9 @@ const usageText = `regcheck: регрессионный тест обязан к
 `
 
 func main() {
+	if versionRequested() {
+		return
+	}
 	args := os.Args[1:]
 	var cmd []string
 	for i, a := range args {

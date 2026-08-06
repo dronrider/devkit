@@ -108,3 +108,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-150 | Бинари называют свой коммит, а собирает их релизная автоматика на macos и linux | task | P2 | 2026-08-06 | [tasks/archive/2026/DK-150.md](tasks/archive/2026/DK-150.md) |
 | DK-151 | Установка и обновление devkit на чистой машине без сборки из исходников | task | P2 | 2026-08-06 | [tasks/archive/2026/DK-151.md](tasks/archive/2026/DK-151.md) |
 | DK-152 | doctor сверяет версии всех устанавливаемых бинарей, а не mtime четырёх | task | P2 | 2026-08-06 | [tasks/archive/2026/DK-152.md](tasks/archive/2026/DK-152.md) |
+| DK-155 | update не обновляется, пока в origin двигается служебный тег deployed | bug | P1 | 2026-08-06 | [tasks/archive/2026/DK-155.md](tasks/archive/2026/DK-155.md) |

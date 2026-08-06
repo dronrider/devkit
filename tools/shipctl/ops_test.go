@@ -851,3 +851,29 @@ func TestPushEnv(t *testing.T) {
 		t.Fatalf("родительское окружение потерялось: %v", env)
 	}
 }
+
+// Без taskctl не начинается ни start, ни merge, и отказ обязан называть
+// работающую команду установки: старая подсказка звала собирать утилиту из
+// devkit/taskctl, каталога, которого после переезда (DK-139, DK-140) нет.
+func TestMissingTaskctlNamesTheInstallCommand(t *testing.T) {
+	t.Setenv("PATH", "")
+	root := t.TempDir()
+	for _, c := range []struct {
+		name string
+		err  error
+	}{
+		{"start", func() error { _, err := cmdStart(root, StartParams{ID: "XR-001"}); return err }()},
+		{"preflight", func() error { _, err := preflight(root); return err }()},
+	} {
+		if c.err == nil {
+			t.Fatalf("%s: без taskctl в PATH команда не отказала", c.name)
+		}
+		msg := c.err.Error()
+		if !strings.Contains(msg, "devkitctl.py update") {
+			t.Fatalf("%s: отказ не называет команду установки: %s", c.name, msg)
+		}
+		if strings.Contains(msg, "devkit/taskctl") {
+			t.Fatalf("%s: отказ зовёт в каталог, которого нет после переезда: %s", c.name, msg)
+		}
+	}
+}

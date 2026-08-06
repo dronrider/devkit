@@ -148,7 +148,7 @@ type StartParams struct {
 // чекаут не трогается и остаётся на main.
 func cmdStart(root string, p StartParams) (string, error) {
 	if _, err := exec.LookPath("taskctl"); err != nil {
-		return "", fmt.Errorf("taskctl не найден в PATH, собери его из devkit/taskctl")
+		return "", fmt.Errorf("taskctl не найден в PATH, доску двигает он: поставить набор утилит devkit (python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update)")
 	}
 	primary, wt, err := primaryRoot(root)
 	if err != nil {

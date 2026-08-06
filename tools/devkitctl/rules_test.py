@@ -403,7 +403,7 @@ class GlobalPointDoctorTest(SandboxCase):
                        "нет находки про пропавшую глобальную точку правил")
         self.assertFalse(self.gclaude.exists(), "doctor без --fix сам сгенерил глобальную точку")
         _, out = self.box.doctor(self.proj, "--fix")
-        self.assertIn_("починено: %s сгенерирован: глобальная точка правил харнеса claude-code"
+        self.assertIn_("починено: написана глобальная точка правил харнеса claude-code: %s"
                        % self.gclaude, out, "--fix не сгенерил пропавшую глобальную точку")
         self.assertEqual(read(self.gclaude), self.clean,
                          "сгенерированная глобальная точка разошлась с эталоном")
@@ -455,7 +455,7 @@ class GlobalPointDoctorTest(SandboxCase):
         self.assertIn_("%s устарел: путь devkit или состав ядра изменились" % self.gclaude, out,
                        "нет находки про устаревшую глобальную точку")
         _, out = self.box.doctor(self.proj, "--fix")
-        self.assertIn_("починено: %s перегенерирован" % self.gclaude, out,
+        self.assertIn_("починено: глобальная точка правил %s переписана" % self.gclaude, out,
                        "--fix не перегенерил устаревшую глобальную точку")
         self.assertEqual(read(self.gclaude), self.clean,
                          "перегенерированная глобальная точка разошлась с эталоном")

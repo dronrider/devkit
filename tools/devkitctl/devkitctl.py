@@ -106,6 +106,7 @@ import os
 import perms
 import re
 import rules
+import say
 import shutil
 import subprocess
 import sys
@@ -138,6 +139,10 @@ HOOK_LAYOUT = (
 # Он один: brew стоит и на macOS, и на linux у тех, кто его туда поставил, а
 # системные менеджеры просят sudo, и молча звать их из доводки нельзя.
 PACKAGER = "brew"
+# Три формы слова для счёта в отчёте о сделанном: один, два, пять.
+AGENT_WORD = ("определение агента", "определения агентов", "определений агентов")
+SKILL_WORD = ("скилл", "скилла", "скиллов")
+HOOK_WORD = ("хук харнеса", "хука харнеса", "хуков харнеса")
 AGENTS_DIR = "~/.claude/agents"
 SKILLS_DIR = "~/.claude/skills"
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
@@ -192,16 +197,6 @@ def run(args, cwd=None):
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
-def folded(what, names, where, tail=""):
-    """Однотипное одной строкой: чего и сколько, куда легло и что именно.
-
-    Установка кладёт на машину десятки однотипных файлов, и строка на каждый
-    это один факт, разбитый на десяток строк: читать такой отчёт сверху вниз
-    нельзя, а сказать он должен ровно «столько-то, вот эти».
-    """
-    return "%s %d в %s%s: %s" % (what, len(names), where, tail, ", ".join(names))
-
-
 def ensure_package(name, why, fix):
     """Недостающий пакет: доводка ставит его сама, раз человек позвал установку.
 
@@ -222,7 +217,7 @@ def ensure_package(name, why, fix):
     if rc != 0 or not shutil.which(name):
         tail = (out.splitlines() or [""])[-1].strip()
         return ["%s; %s install %s не прошёл (%s), поставить руками" % (why, PACKAGER, name, tail)], []
-    return [], ["поставлен пакет %s: %s install %s" % (name, PACKAGER, name)]
+    return [], ["установлен %s (%s install %s)" % (name, PACKAGER, name)]
 
 
 def project_root(start):
@@ -631,9 +626,10 @@ def check_binaries(fix):
         # каждой: разнобой версий в PATH это то, что как раз надо увидеть.
         versions = sorted({v for _, (v, _) in done})
         names = [n if len(versions) == 1 else "%s (%s)" % (n, s[0]) for n, s in done]
-        word = "поставлены утилиты релиза" if tag else "собраны утилиты"
-        tailv = " (%s)" % versions[0] if len(versions) == 1 else ""
-        fixed.append(folded(word, names, gobin, tailv))
+        whence = (" релиза %s" % tag if tag else
+                  " версии %s" % versions[0] if len(versions) == 1 else "")
+        verbs = ("установлена", "установлено") if tag else ("собрана", "собрано")
+        fixed.append(say.folded(verbs, tuple(w + whence for w in update.UTILS), names, gobin))
     return findings, fixed
 
 
@@ -691,10 +687,10 @@ def check_agent_defs(fix):
                         "спавн уйдёт на дефолтного агента; %scp %s %s"
                         % (dst, whence, src, dst))
     if laid:
-        fixed.append(folded("положены определения агентов", laid, dst_dir))
+        fixed.append(say.folded(("установлено", "установлено"), AGENT_WORD, laid, dst_dir))
     if again:
-        fixed.append(folded("обновлены определения агентов", again, dst_dir,
-                            ", на машине они отстали от devkit"))
+        fixed.append(say.folded(("обновлено", "обновлено"), AGENT_WORD, again, dst_dir,
+                                ", devkit ушёл вперёд"))
     return findings, fixed
 
 
@@ -730,10 +726,10 @@ def check_skills(fix):
         findings.append("нет скилла %s: процедуру сессия по нему не подхватит и соберёт "
                         "на глаз; %s" % (dst, how))
     if laid:
-        fixed.append(folded("положены скиллы", laid, dst_dir))
+        fixed.append(say.folded(("установлен", "установлено"), SKILL_WORD, laid, dst_dir))
     if again:
-        fixed.append(folded("обновлены скиллы", again, dst_dir,
-                            ", на машине они отстали от devkit"))
+        fixed.append(say.folded(("обновлён", "обновлено"), SKILL_WORD, again, dst_dir,
+                                ", devkit ушёл вперёд"))
     return findings, fixed
 
 
@@ -828,7 +824,10 @@ def install_hooks(settings, gaps, devkit):
     for script, event in done:
         events.setdefault(script, []).append(event)
     what = "; ".join("%s на %s" % (s, ", ".join(e)) for s, e in events.items())
-    return ["включены хуки харнеса %d в %s: %s" % (len(done), settings, what)]
+    n = len(done)
+    return ["%s %s в %s: %s" % ("включён" if n == 1 else "включено",
+                                HOOK_WORD[0] if n == 1 else say.counted(n, HOOK_WORD),
+                                settings, what)]
 
 
 def check_notify_hook(text, settings, fix=False):
@@ -949,7 +948,7 @@ def check_quota(fix, blocked=""):
         elif fix:
             quota_dir.mkdir(parents=True, exist_ok=True)
             legacy.replace(moved)
-            fixed.append("снимок квоты переехал: %s -> %s" % (legacy, moved))
+            fixed.append("снимок квоты переехал из %s в %s" % (legacy, moved))
         else:
             findings.append("снимок квоты лежит по старому пути %s: снимок стал директорией по файлу "
                             "на харнес; переложить: devkitctl doctor --fix (в %s)" % (legacy, moved))

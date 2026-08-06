@@ -428,7 +428,7 @@ class MachineContourTest(SandboxCase):
 
     # Про собранные утилиты доктор отчитывается одной строкой на всю пачку
     # (DK-157), и ищется в ней имя нужной утилиты, а не строка на утилиту.
-    BUILT = r"починено: собраны утилиты \d+ в"
+    BUILT = r"починено: собран[ао] (?:\d+ )?утилит\S* версии"
 
     @classmethod
     def setUpClass(cls):
@@ -495,7 +495,7 @@ class MachineContourTest(SandboxCase):
                         "doctor --fix не разложил определения ревьюверов")
         self.assertFalse((agents / "README.md").exists(),
                          "--fix положил на машину markdown без frontmatter")
-        self.assertNotRegex(out, r"положены определения агентов[^\n]*README",
+        self.assertNotRegex(out, r"установлено \d+ определений агентов[^\n]*README",
                             "--fix отчитался о README как об определении агента")
         skills = self.mhome / ".claude" / "skills"
         self.assertTrue((skills / "board-batch" / "SKILL.md").is_file(),
@@ -509,15 +509,15 @@ class MachineContourTest(SandboxCase):
                             "doctor --fix не разложил скилл %s" % s.parent.name)
         # Однотипное свёрнуто в строку с числом и именами (DK-157): строка на
         # каждый скилл, агента и хук делала вывод установки нечитаемым.
-        self.assertRegex(out, r"починено: положены скиллы \d+ в[^\n]*board-batch",
+        self.assertRegex(out, r"починено: установлено \d+ скиллов в[^\n]*board-batch",
                          "скиллы разложены строкой на скилл, а не одной строкой")
-        self.assertRegex(out, r"починено: положены определения агентов \d+ в[^\n]*exec-medium",
+        self.assertRegex(out, r"починено: установлено \d+ определений агентов в[^\n]*exec-medium",
                          "определения агентов разложены строкой на файл")
-        self.assertRegex(out, r"починено: включены хуки харнеса \d+ в[^\n]*quota-refresh\.sh",
+        self.assertRegex(out, r"починено: включено \d+ хуков харнеса в[^\n]*quota-refresh\.sh",
                          "хуки харнеса подключены строкой на хук")
         # Права дописываются десятками, и перечислять их человеку незачем:
         # в строке остаётся счёт, а сам перечень лежит в настройках.
-        self.assertRegex(out, r"починено: дописаны права машинного контура \d+ в",
+        self.assertRegex(out, r"починено: дописано \d+ прав\S* машинного контура в",
                          "нет строки про дописанные права")
         self.assertNotRegex(out, r"права машинного контура[^\n]*Bash\(",
                             "строка про права снова перечисляет сами правила")
@@ -541,7 +541,7 @@ class MachineContourTest(SandboxCase):
         # devkit источник правды для промптов: --fix перекладывает разошедшееся
         # определение и называет в отчёте, что переложил, а не затирает молча.
         _, out = self.docm("--fix")
-        self.assertRegex(out, r"починено: обновлены определения агентов \d+ в[^\n]*exec-low",
+        self.assertRegex(out, r"починено: обновлено определение агента в[^\n]*exec-low",
                          "--fix не отчитался о перекладке разошедшегося определения")
         self.assertNotIn("своя строка", read(agent), "--fix не переложил разошедшееся определение")
         _, out = self.docm("--fix")
@@ -555,7 +555,7 @@ class MachineContourTest(SandboxCase):
                          "нет находки про разошедшийся скилл")
         self.assertIn("своя строка", read(skill), "doctor без --fix тронул скилл")
         _, out = self.docm("--fix")
-        self.assertRegex(out, r"починено: обновлены скиллы \d+ в[^\n]*board-batch",
+        self.assertRegex(out, r"починено: обновлён скилл в[^\n]*board-batch",
                          "--fix не отчитался о перекладке скилла")
         self.assertNotIn("своя строка", read(skill), "--fix не переложил разошедшийся скилл")
         _, out = self.docm("--fix")
@@ -867,7 +867,7 @@ class PackagesTest(SandboxCase):
         # Человек позвал доводку, и tmux ставится ею: список «осталось сделать»
         # после установки не должен звать за пакетом, который машина ставит сама.
         _, out = self.docp("--fix")
-        self.assertIn_("поставлен пакет tmux: brew install tmux", out,
+        self.assertIn_("установлен tmux (brew install tmux)", out,
                        "--fix не поставил tmux пакетным менеджером")
         self.assertIn("install tmux", self.called(), "пакетный менеджер позван не с тем пакетом")
         self.assertTrue(os.access(str(self.pkgbin / "tmux"), os.X_OK), "tmux не появился в PATH")
@@ -905,7 +905,7 @@ class PackagesTest(SandboxCase):
         # переходом ставит доводка, а не человек руками.
         osascript = executable(self.box.root / "osascript")
         _, out = self.docp("--fix", env={"DEVKIT_NOTIFY_BACKEND": str(osascript)})
-        self.assertIn_("поставлен пакет terminal-notifier", out,
+        self.assertIn_("установлен terminal-notifier (brew install terminal-notifier)", out,
                        "--fix не поставил отправителя с переходом по клику")
         self.assertIn("install terminal-notifier", self.called(),
                       "пакетный менеджер позван не с terminal-notifier")
@@ -920,7 +920,7 @@ class PackagesTest(SandboxCase):
         # вовсе: звать человека за тем, что случится само, это ложный хвост.
         self.snapless()
         _, out = self.docp("--fix")
-        self.assertIn_("поставлен пакет tmux", out, "снимать панель нечем, и проверять нечего")
+        self.assertIn_("установлен tmux", out, "снимать панель нечем, и проверять нечего")
         self.assertFalse((self.home / ".devkit" / "quota" / "claude-code.local").exists(),
                          "снимок на месте, и находке про него неоткуда взяться")
         self.assertNotIn_("нет снимка квоты", out,
@@ -985,7 +985,7 @@ class ReleaseFixTest(SandboxCase):
         for t in build.tools(self.box.dk):
             self.assertEqual(update.binary_stamp(self.dest / t), (self.tag, self.box.commit),
                              "--fix не поставил %s из релиза: %s" % (t, out))
-        self.assertRegex(out, r"починено: поставлены утилиты релиза \d+ в[^\n]*taskctl",
+        self.assertRegex(out, r"починено: установлено \d+ утилит релиза v9\.9\.0 в[^\n]*taskctl",
                          "--fix не отчитался о поставленных бинарях одной строкой")
         _, out = self.docr()
         self.assertNotIn_("поставить бинари релиза", out,
@@ -1293,7 +1293,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertIn_("PostToolUse-хук check-symbols.py не подключён", out,
                        "доктор не заметил неподключённые хуки харнеса")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
-        self.assertRegex(out, r"включены хуки харнеса \d+ в[^\n]*check-symbols\.py на PostToolUse",
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")

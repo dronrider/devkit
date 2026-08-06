@@ -28,6 +28,7 @@ import urllib.request
 from pathlib import Path
 
 import build
+import say
 
 RELEASE_BASE = "https://github.com/dronrider/devkit/releases/download"
 RELEASE_ENV = "DEVKIT_RELEASE_BASE"
@@ -56,6 +57,8 @@ TMP_PREFIX = ".devkit-update-"
 # ни при каком расхождении с origin.
 TAG_REFSPEC = "refs/tags/v*:refs/tags/v*"
 HOW = "python3 %s/tools/devkitctl/devkitctl.py"
+# Три формы слова для счёта в отчёте: одна утилита, две утилиты, шесть утилит.
+UTILS = ("утилита", "утилиты", "утилит")
 # Порог давности похода за тегами. Мера косвенная, потому что прямой нет, и
 # порог редкий: теги ставит человек и нечасто.
 FETCH_MAX_AGE = 14 * 24 * 3600
@@ -395,7 +398,8 @@ def check_wrapper(devkit, fix, from_main=True):
             dest.mkdir(parents=True, exist_ok=True)
             path.write_text(want, encoding="utf-8")
             os.chmod(str(path), 0o755)
-            fixed.append("положена обёртка %s: зовёт python-часть devkit из %s" % (path, devkit))
+            fixed.append("установлена обёртка %s, она зовёт python-часть devkit из %s"
+                         % (path, devkit))
         else:
             findings.append("%s; положить: %sdevkitctl doctor --fix" % (why, whence))
     if not in_path(dest):
@@ -444,20 +448,27 @@ def tell(devkit, tag, latest, branch):
     return lines
 
 
-def moved(before, after):
-    """Что случилось с утилитами: их поставили впервые, обновили или переложили.
+def placed_line(before, after, names, dest):
+    """Строка отчёта про пачку утилит: что с ними стало, сколько их и куда легли.
 
     Слова тут те же, какими про установку скажет человек: он читает про то, что
     у него на машине теперь стоит, а не про раскладку файлов.
     """
+    n = len(names)
+    how_many = UTILS[0] if n == 1 else say.counted(n, UTILS)
+    who = ", ".join(names)
     if after is None:
-        return "поставлено, но версии не назвали"
-    version = "%s (%s)" % after
+        verb = "установлена" if n == 1 else "установлено"
+        return "%s %s devkit в %s, а версию назвать не смогли: %s" % (verb, how_many, dest, who)
+    version = "devkit %s (%s)" % after
     if before is None:
-        return "установлен devkit %s" % version
-    if before == after:
-        return "переложен devkit %s" % version
-    return "обновлён devkit с %s (%s) до %s" % (before + (version,))
+        verb, what = ("установлена" if n == 1 else "установлено"), version
+    elif before == after:
+        verb, what = ("переложена" if n == 1 else "переложено"), version
+    else:
+        verb = "обновлена" if n == 1 else "обновлено"
+        what = "devkit с %s (%s) до %s (%s)" % (before + after)
+    return "%s %s %s в %s: %s" % (verb, how_many, what, dest, who)
 
 
 def install(devkit, tag, log, err):
@@ -498,7 +509,7 @@ def install(devkit, tag, log, err):
         if bad:
             err(bad)
             return 1, []
-        log("%s: сумма сошлась" % asset)
+        log("скачан %s, сумма сошлась" % asset)
         placed, bad = unpack(archive, staged)
         if bad:
             err(bad)
@@ -514,8 +525,7 @@ def install(devkit, tag, log, err):
     for name in placed:
         groups.setdefault((was.get(name), now.get(name)), []).append(name)
     for names in sorted(groups.values()):
-        before, after = was.get(names[0]), now.get(names[0])
-        log("%s в %s, утилит %d: %s" % (moved(before, after), dest, len(names), ", ".join(names)))
+        log(placed_line(was.get(names[0]), now.get(names[0]), names, dest))
     silent = [n for n in placed if n not in now]
     if silent:
         err("поставленное не отвечает на --version: %s; тарболл релиза %s собран не тем кодом "
@@ -586,7 +596,9 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
             if rc != 0:
                 err("не перевёл чекаут на %s (%s): чекаут остался где был" % (latest, out))
                 return 1
-            log("чекаут: %s -> %s" % (branch or tag or "без тега", latest))
+            whence = ("с ветки %s" % branch if branch else
+                      "с релиза %s" % tag if tag else "с коммита без тега")
+            log("чекаут devkit переведён %s на релиз %s" % (whence, latest))
             if code_stamp(devkit) != before:
                 if understands_restart(devkit):
                     restart(devkit / "tools" / "devkitctl" / "devkitctl.py",
@@ -614,7 +626,7 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
     # с машиной случилось, и общая помета перед ней только мешала бы читать.
     for m in fixed:
         log(m)
-    log("\ndevkit %s: утилит %d в %s" % (tag, len(placed), bin_dir()))
+    log("\ndevkit %s на месте: %s в %s" % (tag, say.counted(len(placed), UTILS), bin_dir()))
     if findings:
         log("\nосталось сделать:")
         for i, s in enumerate(findings, 1):

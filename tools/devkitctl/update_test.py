@@ -80,7 +80,7 @@ class UpdateCase(unittest.TestCase):
         here = Path(__file__).resolve().parent
         self.driver = self.dk / "tools" / "devkitctl" / "devkitctl.py"
         self.driver.parent.mkdir(parents=True, exist_ok=True)
-        for module in ("update.py", "build.py"):
+        for module in ("update.py", "build.py", "say.py"):
             shutil.copy(str(here / module), str(self.driver.parent / module))
         self.mark(self.driver, "код первого тега")
         self.commit("init")
@@ -515,11 +515,15 @@ class InstallTest(UpdateCase):
         self.assertIn("сумма сошлась", self.out())
         # Однотипное свёрнуто (DK-157): про две утилиты сказано одной строкой, с
         # числом и именами, а не строкой на каждую.
-        self.assertIn("установлен devkit v0.10.0 (%s) в %s, утилит 2: %s"
+        self.assertIn("установлено 2 утилиты devkit v0.10.0 (%s) в %s: %s"
                       % (self.tag_commit, self.dest, ", ".join(TOOLS)), self.out(),
                       "строка про поставленные утилиты не свёрнута в одну")
-        self.assertNotIn("не стояло", self.out(),
-                         "в выводе установки осталась раскладочная речь про бинари")
+        # Слова раскладки в выводе установки под запретом, и запрет держит их
+        # оба сразу: убрать одно, а второе оставить, значит вернуть прежнюю речь
+        # следующей же правкой (DK-157).
+        for word in ("не стояло", "положено"):
+            self.assertNotIn(word, self.out(),
+                             "в выводе установки осталась раскладочная речь: %s" % word)
         self.assertEqual([p.name for p in self.dest.glob(update.TMP_PREFIX + "*")], [],
                          "временный каталог остался в каталоге назначения")
         self.assertGreater(os.path.getmtime(str(self.dest / TOOLS[0])), RELEASE_MTIME + 1,
@@ -540,12 +544,13 @@ class InstallTest(UpdateCase):
                          "старый бинарь переписан на месте, а не подменён переименованием")
         # Утилиты пришли с разных версий, и свёртка идёт по переходу: обновлённая
         # своей строкой, поставленная впервые своей.
-        self.assertIn("обновлён devkit с v0.1.0 (старьё) до v0.10.0 (%s) в %s, утилит 1: %s"
+        # Одна утилита числа не называет: «обновлена утилита», а не «обновлено 1».
+        self.assertIn("обновлена утилита devkit с v0.1.0 (старьё) до v0.10.0 (%s) в %s: %s"
                       % (self.tag_commit, self.dest, TOOLS[0]), self.out(),
                       "нет строки про обновление с прежней версии")
-        self.assertIn("установлен devkit v0.10.0 (%s) в %s, утилит 1: %s"
+        self.assertIn("установлена утилита devkit v0.10.0 (%s) в %s: %s"
                       % (self.tag_commit, self.dest, TOOLS[1]), self.out(),
-                      "утилита, которой не стояло, попала в ту же строку, что обновлённая")
+                      "утилита, которой раньше не было, попала в строку про обновлённую")
 
     def test_wrapper_is_laid_next_to_the_binaries(self):
         self.assertEqual(self.install(), 0, self.out())
@@ -652,7 +657,7 @@ class TagOnTheBranchTipTest(UpdateCase):
         self.assertEqual(update.current_branch(self.dk), "",
                          "после --pin чекаут остался на ветке: %s" % self.out())
         self.assertEqual(update.head_tag(self.dk), self.tip)
-        self.assertIn("чекаут: main -> %s" % self.tip, self.out())
+        self.assertIn("чекаут devkit переведён с ветки main на релиз %s" % self.tip, self.out())
         self.assertEqual(sorted(self.installed()), sorted(TOOLS + (update.WRAPPER,)))
 
     def test_next_call_updates_instead_of_refusing(self):

@@ -17,9 +17,12 @@
 """
 import json
 import os
+import say
 import sys
 from pathlib import Path
 
+# Три формы слова для счёта в отчёте: одно право, два права, тридцать пять прав.
+RIGHT = ("право машинного контура", "права машинного контура", "прав машинного контура")
 SETTINGS = "~/.claude/settings.json"
 DOCTOR = Path(__file__).resolve().parent / "devkitctl.py"
 
@@ -177,7 +180,7 @@ def check(settings, fix=False, worktree_main=None):
         write(settings, data, missing)
         # Сами правила тут не перечисляются: их три десятка, читать этот список
         # человеку незачем, а посмотреть его есть где, в самих настройках.
-        fixed.append("дописаны права машинного контура %d в %s" % (len(missing), settings))
+        fixed.append("дописано %s в %s" % (say.counted(len(missing), RIGHT), settings))
         return findings, fixed
     findings.append("в %s не хватает прав машинного контура, %d из %d (%s): одобрять запросы "
                     "харнеса в сессии без человека некому, и виток цели молча не сделает "

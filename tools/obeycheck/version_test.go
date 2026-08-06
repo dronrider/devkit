@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +47,23 @@ func TestPrintVersionLeavesOtherArgs(t *testing.T) {
 	}
 }
 
+// Голое «--» разбор останавливает: после него идёт чужая полезная нагрузка. У
+// regcheck это команда теста, и версия вместо её прогона с кодом 0 читается
+// обвязкой как «тест прошёл». Утилиты, которые «--» не режут, ведут себя тут
+// так же: правило одно на шесть.
+func TestPrintVersionStopsAtSeparator(t *testing.T) {
+	var b bytes.Buffer
+	if printVersion([]string{"--tests", "foo.go", "--", "echo", "--version"}, &b) || b.Len() > 0 {
+		t.Fatalf("--version из чужой команды после «--» принят за свой флаг: %q", b.String())
+	}
+	if !printVersion([]string{"--version", "--", "echo", "hi"}, &b) {
+		t.Fatal("свой --version до «--» не разобран")
+	}
+	if !versionLineRe.MatchString(b.String()) {
+		t.Fatalf("строка версии не по формату: %q", b.String())
+	}
+}
+
 // Тот же разбор на собранном бинаре. Юнит на printVersion живёт рядом с main и
 // сам по себе не доказывает, что main зовёт его до разбора аргументов: до
 // правки по замечанию ревью «-C dir --version» отвечало неизвестной командой
@@ -66,5 +84,15 @@ func TestVersionFlagOnTheBinary(t *testing.T) {
 		if !versionLineRe.MatchString(string(out)) {
 			t.Fatalf("%v: строка версии не по формату: %q", args, out)
 		}
+	}
+	// Хвост после «--» это чужое дело: утилита обязана дойти до своей логики и
+	// сказать, что там не так, а не напечатать версию и выйти нулём.
+	args := []string{"-C", t.TempDir(), "--", "echo", "--version"}
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err == nil {
+		t.Fatalf("%v: молчаливый ноль вместо разбора аргументов: %q", args, out)
+	}
+	if strings.Contains(string(out), toolName+" "+version+" ("+commit+")") {
+		t.Fatalf("%v: напечатана версия вместо работы: %q", args, out)
 	}
 }

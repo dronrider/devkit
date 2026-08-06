@@ -7,6 +7,7 @@ import os
 import platform
 import re
 import shutil
+import time
 import unittest
 from pathlib import Path
 
@@ -791,6 +792,39 @@ class ReleaseFixTest(SandboxCase):
         _, out = self.docr()
         self.assertNotIn_("поставить бинари релиза", out,
                           "после установки находка про бинари осталась")
+
+    def fetch_head(self, days):
+        # Возраст похода за тегами: сам поход тут делать некуда, origin у копии
+        # нет, а меряется он одним mtime.
+        path = self.box.dk / ".git" / "FETCH_HEAD"
+        when = time.time() - days * 24 * 3600
+        os.utime(str(path), (when, when))
+
+    def test_3_release_findings_reach_the_doctor(self):
+        # Стык check_machine с находками про релизы: юниты проверяют счёт, а тут
+        # проверяется, что доктор их правда печатает. Это шаг 4 сценария
+        # проверки задачи, и без него проводка держалась бы на честном слове.
+        _, out = self.docr()
+        self.assertNotIn_("а вышел", out, "новее тега чекаута ничего нет, а находка зажглась")
+        self.assertNotIn_("за тегами devkit", out, "поход за тегами свежий, а находка зажглась")
+        # Новейший тег ставится на коммит поверх HEAD, а сам HEAD остаётся на
+        # своём релизе: так выглядит машина, до которой релиз ещё не доехал.
+        rc, ahead = git(self.box.dk, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "релиз выше")
+        self.assertEqual(rc, 0, ahead)
+        git(self.box.dk, "tag", "v9.9.1", ahead.strip())
+        self.fetch_head(days=30)
+        _, out = self.docr()
+        self.assertIn_("машина: на машине стоит devkit v9.9.0, а вышел v9.9.1", out,
+                       "доктор не печатает точную находку про вышедший релиз")
+        self.assertIn_("devkitctl update", out, "находка не называет команду обновления")
+        self.assertIn_("за тегами devkit не ходили 30 дней", out,
+                       "доктор не печатает косвенную находку про давний поход за тегами")
+        # Смыкание цикла на уровне доктора: поход за тегами гасит косвенную
+        # находку, а точная не гаснет ни от чего, кроме обновления.
+        self.fetch_head(days=0)
+        _, out = self.docr()
+        self.assertNotIn_("за тегами devkit", out, "свежий поход за тегами не погасил находку")
+        self.assertIn_("а вышел v9.9.1", out, "точная находка погасла от похода за тегами")
 
 
 class WorktreeTest(SandboxCase):

@@ -162,12 +162,17 @@ def understands_restart(devkit):
 
     Тег, собранный до появления update, такого флага не понимает, и перезапуск в
     него уронил бы обновление разбором аргументов уже после перевода чекаута.
+    Смотрится вся python-часть, а не один devkitctl.py: флаг он объявляет
+    константой соседнего модуля, и по одному файлу его не видно.
     """
-    script = Path(devkit) / "tools" / "devkitctl" / "devkitctl.py"
-    try:
-        return RESTART_FLAG in script.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
+    here = Path(devkit) / "tools" / "devkitctl"
+    for p in sorted(here.glob("*.py")):
+        try:
+            if RESTART_FLAG in p.read_text(encoding="utf-8", errors="replace"):
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def restart_now(script, args):
@@ -498,11 +503,10 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
         findings, fixed = check_wrapper(devkit, True)
     for m in fixed:
         log("положено: %s" % m)
-    steps = list(findings)
     log("\ndevkit %s: утилит %d в %s" % (tag, len(placed), bin_dir()))
-    if steps:
+    if findings:
         log("\nосталось сделать:")
-        for i, s in enumerate(steps, 1):
+        for i, s in enumerate(findings, 1):
             log("%d. %s" % (i, s))
     else:
         log("\nручных шагов не осталось.")

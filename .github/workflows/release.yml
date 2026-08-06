@@ -1,0 +1,41 @@
+# Готовые бинари devkit едут релизами гитхаба: тег vX.Y.Z запускает сборку, к
+# релизу прикладываются четыре тарболла (darwin/linux на amd64/arm64) и
+# SHA256SUMS. Сама сборка живёт в devkitctl build, а не здесь: та же команда
+# гоняется с машины разработчика, и разъехаться им нельзя (решение в
+# docs/lld/DK-149-binary-delivery.md).
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Без полной истории и тегов git describe версии не даст, а собранное
+          # с версией «dev» уехало бы в релиз молча.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/taskctl/go.mod
+      - name: сборка четырёх пар
+        run: python3 tools/devkitctl/devkitctl.py build --release --out dist
+      - name: что собралось
+        run: ls -l dist && cat dist/SHA256SUMS
+      # Прогон по workflow_dispatch с ветки это репетиция: собралось ли на всех
+      # четырёх парах и печатает ли версию пара раннера. Выкладывать там нечего,
+      # релиза с именем ветки не бывает, а красный прогон на пустом месте отучает
+      # смотреть на цвет.
+      - name: выкладка ассетов
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          dist/devkit-*.tar.gz dist/SHA256SUMS
+          --title "$GITHUB_REF_NAME" --generate-notes

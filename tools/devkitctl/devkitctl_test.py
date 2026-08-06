@@ -191,6 +191,41 @@ class ProjectFindingsTest(SandboxCase):
         self.assertIn_("битая ссылка", out, "живая дока перестала проверяться вовсе")
 
 
+class DoctorRootTest(SandboxCase):
+    """Корень вне git отбит без обхода дерева, а исключение docs/ у check_links
+    считается от корня репозитория файла, а не от каталога запуска (DK-160).
+    """
+
+    def test_outside_git_refuses_without_walking_the_tree(self):
+        # Каталог без git, а ниже по дереву чужой репозиторий с битой ссылкой и
+        # в docs/, и в живой доке: находка хоть по одной значила бы, что доктор
+        # всё равно пошёл вниз, хотя корень уже не проект.
+        outside = self.box.root / "workspace"
+        outside.mkdir()
+        neighbour = git_init(outside / "neighbour")
+        write(neighbour / "README.md", "смотри [детали](nope.md)\n")
+        write(neighbour / "docs" / "tasks" / "XX-1.md", "смотри [код](../../nope/gone.go)\n")
+        rc, out = self.box.doctor(outside)
+        self.assertEqual(rc, 1, "doctor не отбит кодом на каталоге без git: %s" % out)
+        self.assertIn_("не git-репозиторий", out, "нет находки про отсутствие репозитория")
+        self.assertIn_("подключённого проекта", out, "находка не говорит, куда звать доктора")
+        self.assertNotIn_("битая ссылка", out, "доктор пошёл вниз по чужому репозиторию")
+
+    def test_nested_repo_docs_excluded_by_its_own_root(self):
+        # Вложенный репозиторий внутри проверяемого дерева, а не сам каталог
+        # запуска: его docs/ исключается тем же правилом, что и docs/ корня,
+        # иначе путь до него от корня запуска на "docs/" не начинается и
+        # исключение мимо (DK-160).
+        proj = self.box.project("proj")
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        nested = git_init(proj / "nested")
+        write(nested / "README.md", "смотри [код](nope.md)\n")
+        write(nested / "docs" / "tasks" / "XX-1.md", "смотри [код](../../nope/gone.go)\n")
+        _, out = self.box.doctor(proj)
+        self.assertIn_("nested/README.md", out, "живая дока вложенного репозитория не проверена")
+        self.assertNotIn_("nested/docs", out, "docs/ вложенного репозитория не исключён")
+
+
 class DeployTest(SandboxCase):
     """Обвязка выката: болванка deploy.local, находки по пустым ключам и
     дописывание недостающих (DK-053, DK-075). Проверки идут цепочкой по одному

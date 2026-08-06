@@ -15,8 +15,10 @@
       клона, поэтому он же восстанавливает обвязку после переклонирования
 
   devkitctl doctor [--fix] [-C dir]
-      проверить обвязку проекта: AGENTS.md на месте, генерённые файлы правил
-      свежи и не правлены руками, их импорты разворачиваются, git-хуки
+      проверить обвязку проекта; корень не под git это одна находка и
+      немедленный выход, без обхода дерева вниз (DK-160). AGENTS.md на
+      месте, генерённые файлы правил свежи и не правлены руками, их
+      импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
       markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
@@ -244,13 +246,18 @@ def check_links(root):
     # запрещено (DK-140, DK-144).
     findings = []
     for dirpath, dirnames, filenames in os.walk(root):
-        if Path(dirpath) == Path(root):
+        dp = Path(dirpath)
+        # Исключение считается от корня репозитория, которому принадлежит
+        # файл, а не от каталога запуска: при обходе, зашедшем во вложенный
+        # репозиторий (свой .git прямо тут), его docs/ исключается по тому же
+        # правилу, что и docs/ каталога запуска (DK-160).
+        if dp == Path(root) or (dp / ".git").is_dir():
             dirnames[:] = [d for d in dirnames if d != "docs"]
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
             if not fn.endswith(".md"):
                 continue
-            md = Path(dirpath) / fn
+            md = dp / fn
             rel = os.path.relpath(md, root)
             try:
                 lines = md.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -1092,7 +1099,16 @@ def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
     if not in_git:
-        findings.append("не git-репозиторий: %s" % root)
+        # Без репозитория нет ни проекта, ни обвязки: дальше вниз по дереву
+        # лежат чужие репозитории (каталог проектов), и обход их доктором это
+        # не диагностика, а шум чужими находками (DK-160). Останавливаемся тут
+        # же, а не после находки, иначе дерево всё равно обходится.
+        findings.append("не git-репозиторий: %s; звать из подключённого проекта "
+                        "либо из чекаута devkit" % root)
+        for f in findings:
+            print(f)
+        sys.stderr.write("находок: %d\n" % len(findings))
+        return 1
     clone, local = corp.pair(root, DEVKIT)
     if local:
         # Рабочие файлы devkit в корп-контуре лежат не в дереве проекта, а

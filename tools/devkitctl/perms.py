@@ -175,8 +175,9 @@ def check(settings, fix=False, worktree_main=None):
         return findings, fixed
     if fix and from_main:
         write(settings, data, missing)
-        fixed.append("права машинного контура дописаны в %s, правил %d: %s"
-                     % (settings, len(missing), rule_list(missing)))
+        # Сами правила тут не перечисляются: их три десятка, читать этот список
+        # человеку незачем, а посмотреть его есть где, в самих настройках.
+        fixed.append("дописаны права машинного контура %d в %s" % (len(missing), settings))
         return findings, fixed
     findings.append("в %s не хватает прав машинного контура, %d из %d (%s): одобрять запросы "
                     "харнеса в сессии без человека некому, и виток цели молча не сделает "

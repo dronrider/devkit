@@ -395,8 +395,7 @@ def check_wrapper(devkit, fix, from_main=True):
             dest.mkdir(parents=True, exist_ok=True)
             path.write_text(want, encoding="utf-8")
             os.chmod(str(path), 0o755)
-            fixed.append("обёртка %s: exec python3 %s/tools/devkitctl/devkitctl.py"
-                         % (path, devkit))
+            fixed.append("положена обёртка %s: зовёт python-часть devkit из %s" % (path, devkit))
         else:
             findings.append("%s; положить: %sdevkitctl doctor --fix" % (why, whence))
     if not in_path(dest):
@@ -443,6 +442,22 @@ def tell(devkit, tag, latest, branch):
     else:
         lines.append("поставит devkitctl update: чекаут и бинари тега %s" % latest)
     return lines
+
+
+def moved(before, after):
+    """Что случилось с утилитами: их поставили впервые, обновили или переложили.
+
+    Слова тут те же, какими про установку скажет человек: он читает про то, что
+    у него на машине теперь стоит, а не про раскладку файлов.
+    """
+    if after is None:
+        return "поставлено, но версии не назвали"
+    version = "%s (%s)" % after
+    if before is None:
+        return "установлен devkit %s" % version
+    if before == after:
+        return "переложен devkit %s" % version
+    return "обновлён devkit с %s (%s) до %s" % (before + (version,))
 
 
 def install(devkit, tag, log, err):
@@ -492,12 +507,15 @@ def install(devkit, tag, log, err):
     finally:
         shutil.rmtree(str(staged), ignore_errors=True)
     now = installed(dest, placed)
+    # Утилиты ставятся одним движением, и строка на каждую это один и тот же
+    # факт, разбитый на шесть строк. Свёртка идёт по переходу: обычно он общий,
+    # а если часть утилит пришла с другой версии, таких групп будет две.
+    groups = {}
     for name in placed:
-        before = was.get(name)
-        after = now.get(name)
-        log("%s: %s -> %s" % (name,
-                              "%s (%s)" % before if before else "не стояло",
-                              "%s (%s)" % after if after else "версии не назвал"))
+        groups.setdefault((was.get(name), now.get(name)), []).append(name)
+    for names in sorted(groups.values()):
+        before, after = was.get(names[0]), now.get(names[0])
+        log("%s в %s, утилит %d: %s" % (moved(before, after), dest, len(names), ", ".join(names)))
     silent = [n for n in placed if n not in now]
     if silent:
         err("поставленное не отвечает на --version: %s; тарболл релиза %s собран не тем кодом "
@@ -592,8 +610,10 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
         findings = ["машина: %s" % m for m in findings]
     else:
         findings, fixed = check_wrapper(devkit, True)
+    # Сделанное печатается как есть: каждая строка сама начинается с того, что
+    # с машиной случилось, и общая помета перед ней только мешала бы читать.
     for m in fixed:
-        log("положено: %s" % m)
+        log(m)
     log("\ndevkit %s: утилит %d в %s" % (tag, len(placed), bin_dir()))
     if findings:
         log("\nосталось сделать:")

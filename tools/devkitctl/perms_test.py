@@ -36,7 +36,8 @@ class MachinePermsTest(SandboxCase):
             self.assertNotIn_("Bash(taskctl:*)", out, "уже выданное право попало в находку")
             self.assertIn_("doctor --fix", out, "находка про права не назвала команду починки")
             _, out = self.box.doctor(self.proj, "--fix")
-            self.assertIn_("починено: права машинного контура дописаны", out, "--fix не разложил права")
+            self.assertRegex(out, r"починено: дописаны права машинного контура \d+ в",
+                         "--fix не разложил права")
             _, out = self.box.doctor(self.proj)
             self.assertNotIn_("прав машинного контура", out, "находка про права осталась после --fix")
             # Рукописное в настройках --fix не трогает и выданного не задваивает.

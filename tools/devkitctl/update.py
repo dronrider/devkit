@@ -44,6 +44,13 @@ WRAPPER_TEXT = '#!/bin/sh\n%s\nexec python3 "%s" "$@"\n'
 # признак того, что код тега вообще знает про такую передачу работы.
 RESTART_FLAG = "--restarted"
 TMP_PREFIX = ".devkit-update-"
+# Рефспек фетча тегов: только релизные v*, поимённо, а не --tags со всем
+# содержимым refs/tags/*. В devkit живёт служебный тег deployed, который
+# shipctl двигает на каждом выкате, и голый --tags после первого же расхождения
+# отвечает «would clobber existing tag» на чужой тег, который команде не нужен
+# вовсе. Рефспек огорожен и от --prune: он снимает локально только те теги,
+# что сам принёс, и deployed не тронет ни при каком расхождении с origin.
+TAG_REFSPEC = "refs/tags/v*:refs/tags/v*"
 HOW = "python3 %s/tools/devkitctl/devkitctl.py"
 # Порог давности похода за тегами. Мера косвенная, потому что прямой нет, и
 # порог редкий: теги ставит человек и нечасто.
@@ -524,9 +531,9 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
             if risky:
                 err(risky)
                 return 2
-        rc, out = git(devkit, "fetch", "--tags", "--prune")
+        rc, out = git(devkit, "fetch", "--prune", "origin", TAG_REFSPEC)
         if rc != 0:
-            err("git fetch --tags не прошёл (%s): за новыми тегами нужна сеть, и ничего не "
+            err("git fetch тегов не прошёл (%s): за новыми тегами нужна сеть, и ничего не "
                 "тронуто" % (out.splitlines()[0].strip() if out else "git промолчал"))
             return 1
         latest = latest_tag(devkit)

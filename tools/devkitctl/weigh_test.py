@@ -367,7 +367,8 @@ class MeasureTest(SandboxCase):
         try:
             rc, out = self.weigh_run("--limit", "20000")
             self.assertEqual(rc, 2, "weigh мерил по несвежей раскладке: %s" % out)
-            self.assertRegex(out, r"нет скилла .*board-groom", "отказ не называет находку раскладки")
+            self.assertRegex(out, r"не разложен скилл в[^\n]*board-groom",
+                             "отказ не называет находку раскладки")
             self.assertIn_("замер отменён", out, "отказ не объяснён")
             self.assertEqual(self.calls_made(), [], "при отказе всё же гонялись прогоны")
         finally:

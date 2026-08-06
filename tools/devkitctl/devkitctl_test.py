@@ -221,7 +221,7 @@ class DeployTest(SandboxCase):
         # Доска без taskctl в PATH это находка (PATH обрезан до системного).
         write(self.proj / "docs" / "TASKS.md", "# Задачи\n")
         _, out = self.sysdoctor(self.proj)
-        self.assertIn_("taskctl не в PATH", out, "нет находки про taskctl")
+        self.assertRegex(out, r"утилит devkit не в PATH:[^\n]*taskctl", "нет находки про taskctl")
 
     def test_02_new_with_board_lays_out_the_deploy_stub(self):
         self.assertTrue(self.deploy.is_file(), "new не завёл .devkit/deploy.local")
@@ -461,14 +461,22 @@ class MachineContourTest(SandboxCase):
 
     def test_01_bare_machine(self):
         _, out = self.docm()
-        self.assertIn_("agentctl не в PATH", out, "нет находки про бинарь agentctl")
-        # Список проверяемых выводится из дерева, поэтому утилиты, до которых
-        # прежний перечень в коде не дотягивался, под проверкой наравне.
-        for t in ("trackctl", "obeycheck"):
-            self.assertIn_("%s не в PATH" % t, out, "%s не попал под проверку" % t)
+        # Повод у всех шести один, и находка про них одна: строка на утилиту
+        # превращала бы список «осталось сделать» в простыню (DK-157). Список
+        # проверяемых выводится из дерева, поэтому утилиты, до которых прежний
+        # перечень в коде не дотягивался, под проверкой наравне.
+        missing = [ln for ln in out.splitlines() if "не в PATH" in ln and "утилит devkit" in ln]
+        self.assertEqual(len(missing), 1, "находка про бинари не свёрнута в одну: %s" % out)
+        for name in build.tools(self.box.dk):
+            self.assertIn_(name, missing[0], "%s не попал под проверку" % name)
         self.assertIn_("чекаут devkit: на ветке", out, "доктор не назвал режим чекаута")
-        self.assertIn_("exec-medium.md", out, "нет находки про определения исполнителей")
-        self.assertRegex(out, r"нет скилла .*board-batch/SKILL\.md", "нет находки про скилл")
+        self.assertRegex(out, r"не разложено \d+ скиллов в[^\n]*board-batch", "нет находки про скилл")
+        self.assertRegex(out, r"не разложено \d+ определений агентов в[^\n]*exec-medium",
+                         "нет находки про определения исполнителей")
+        # Обе находки одной строкой на пачку, а не строкой на файл.
+        for word in ("скилл", "определени"):
+            lines = [ln for ln in out.splitlines() if "не разложен" in ln and word in ln]
+            self.assertEqual(len(lines), 1, "находка про %s не свёрнута: %s" % (word, out))
         self.assertIn_("tmux не в PATH", out, "нет находки про tmux")
         self.assertIn_("нет снимка квоты в", out, "нет находки про снимок квоты")
         self.assertIn_("SessionStart-хук", out, "нет находки про хук освежения квоты")
@@ -536,7 +544,8 @@ class MachineContourTest(SandboxCase):
         agent = self.mhome / ".claude" / "agents" / "exec-low.md"
         write(agent, read(agent) + "\nсвоя строка\n")
         _, out = self.docm()
-        self.assertIn_("exec-low.md разошлось", out, "нет находки про разошедшееся определение")
+        self.assertRegex(out, r"разошлось определение агента в[^\n]*exec-low",
+                         "нет находки про разошедшееся определение")
         self.assertIn("своя строка", read(agent), "doctor без --fix тронул определение")
         # devkit источник правды для промптов: --fix перекладывает разошедшееся
         # определение и называет в отчёте, что переложил, а не затирает молча.
@@ -551,7 +560,7 @@ class MachineContourTest(SandboxCase):
         skill = self.mhome / ".claude" / "skills" / "board-batch" / "SKILL.md"
         write(skill, read(skill) + "\nсвоя строка\n")
         _, out = self.docm()
-        self.assertRegex(out, r"скилл .*board-batch/SKILL\.md разошёлся",
+        self.assertRegex(out, r"разошёлся скилл в[^\n]*board-batch",
                          "нет находки про разошедшийся скилл")
         self.assertIn("своя строка", read(skill), "doctor без --fix тронул скилл")
         _, out = self.docm("--fix")
@@ -760,12 +769,13 @@ class MachineContourTest(SandboxCase):
         executable(shadow / "agentctl")
         spath = "%s:%s:%s:%s" % (self.gostub, shadow, self.mhome / "go" / "bin", self.box.sys)
         _, out = self.docm("--fix", path=spath)
-        self.assertIn_("в PATH выигрывает", out, "нет находки про затенённый бинарь")
+        self.assertIn_("в PATH выигрывает чужая копия", out, "нет находки про затенённый бинарь")
         self.assertNotRegex(out, self.BUILT + r"[^\n]*agentctl",
                             "затенённый бинарь пересобирается впустую")
         _, out = self.docm("--fix", path=spath)
         self.assertNotIn_("починено", out, "повторный --fix при затенённом бинаре не должен менять")
-        self.assertIn_("в PATH выигрывает", out, "находка про затенённый бинарь должна остаться")
+        self.assertIn_("в PATH выигрывает чужая копия", out,
+                       "находка про затенённый бинарь должна остаться")
 
     def test_11_symlink_is_not_a_shadow(self):
         # Симлинк на тот же бинарь впереди в PATH (~/.local/bin поверх ~/go/bin)
@@ -783,7 +793,7 @@ class MachineContourTest(SandboxCase):
         _, out = self.docm("--fix", path=path)
         self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
                          "разошедшийся бинарь за симлинком не пересобран")
-        self.assertNotIn_("в PATH выигрывает", out,
+        self.assertNotIn_("в PATH выигрывает чужая копия", out,
                           "симлинк на тот же бинарь принят за чужую копию")
 
     def test_12_build_directory(self):
@@ -823,8 +833,12 @@ class MachineContourTest(SandboxCase):
                            path="%s:%s" % (self.gostub, self.box.sys))
         self.assertTrue(os.access(str(pphome / ".local" / "bin" / "agentctl"), os.X_OK),
                         "--fix не собрал бинарь: %s" % out)
-        self.assertIn_("не в PATH: добавить директорию", out,
-                       "нет находки про каталог сборки вне PATH")
+        # Одна находка на все шесть утилит и одна общая с командой для профиля,
+        # а не строка на утилиту плюс общая седьмая (DK-157).
+        lying = [ln for ln in out.splitlines() if "самого каталога нет в PATH" in ln]
+        self.assertEqual(len(lying), 1, "находка про утилиты мимо PATH не свёрнута: %s" % out)
+        for name in build.tools(self.box.dk):
+            self.assertIn_(name, lying[0], "утилита %s не названа в свёрнутой находке" % name)
         self.assertIn_("export PATH=", out,
                        "находка про каталог мимо PATH не даёт готовой строки для профиля")
 
@@ -896,8 +910,19 @@ class PackagesTest(SandboxCase):
         # Менеджер есть, а установка не прошла: молчать об этом нельзя, иначе
         # находка исчезнет, а пакета не будет.
         _, out = self.docp("--fix", env={"BREW_STUB_FAIL": "1"})
-        self.assertIn_("brew install tmux не прошёл", out, "провал установки не стал находкой")
-        self.assertIn_("No available formula", out, "находка не называет, чем ответил менеджер")
+        self.assertIn_("brew install tmux ответил ошибкой: Error: No available formula", out,
+                       "провал установки не стал находкой с ответом менеджера")
+        self.assertNotIn_("()", out, "в находке пустые скобки вместо ответа менеджера")
+
+    def test_4a_silent_manager_is_told_apart(self):
+        # Менеджер отработал нулём, а пакета в PATH нет: так выглядит сломанный
+        # менеджер, и говорить «не прошёл» тут враньё, команда как раз прошла.
+        _, out = self.docp("--fix", env={"BREW_STUB_SILENT": "1"})
+        self.assertIn_("brew install tmux отработал, а tmux в PATH так и не появился", out,
+                       "молчаливый менеджер описан не тем, что случилось")
+        self.assertNotIn_("ответил ошибкой", out, "нулевой код возврата назван ошибкой")
+        self.assertNotIn_("()", out, "в находке пустые скобки")
+        self.assertIn("install tmux", self.called(), "менеджер не позван вовсе")
 
     @unittest.skipUnless(platform.system() == "Darwin", "переход по клику поддержан только на macOS")
     def test_5_notifier_is_installed_too(self):
@@ -975,8 +1000,9 @@ class ReleaseFixTest(SandboxCase):
     def test_1_advice_is_the_release_not_the_build(self):
         _, out = self.docr()
         self.assertIn_("чекаут devkit: на релизе v9.9.0", out, "доктор не назвал режим чекаута")
-        self.assertIn_("taskctl не в PATH; поставить бинари релиза v9.9.0: devkitctl update", out,
-                       "на теге доктор советует не релиз")
+        self.assertRegex(out, r"утилит devkit не в PATH: [^\n]*taskctl[^\n]*; поставить бинари "
+                              r"релиза v9\.9\.0: devkitctl update",
+                         "на теге доктор советует не релиз")
         self.assertNotIn_("go в PATH нет", out,
                           "на машине потребителя доктор зовёт ставить тулчейн")
 
@@ -1067,14 +1093,15 @@ class WorktreeTest(SandboxCase):
     def test_2_agent_definitions_are_not_laid_out(self):
         self.assertFalse((self.wthome / ".claude" / "agents" / "exec-medium.md").exists(),
                          "--fix разложил определения агентов с фичеветки")
-        self.assertIn_("cp %s/kit/agents/review-high.md" % self.dkreal, self.out,
-                       "находка про определения зовёт не в основной чекаут")
+        self.assertIn_("из основного чекаута: python3 %s/tools/devkitctl/devkitctl.py doctor --fix"
+                       % self.dkreal, self.out, "находка про определения зовёт не в основной чекаут")
 
     def test_3_skills_keep_the_same_boundary(self):
         self.assertFalse((self.wthome / ".claude" / "skills" / "board-batch" / "SKILL.md").exists(),
                          "--fix разложил скилл с фичеветки")
-        self.assertIn_("cp %s/kit/skills/board-batch/SKILL.md" % self.dkreal, self.out,
-                       "находка про скилл зовёт не в основной чекаут")
+        self.assertRegex(self.out, r"не разложено \d+ скиллов в[^\n]*board-batch[^\n]*%s"
+                         % re.escape("%s/tools/devkitctl/devkitctl.py doctor --fix" % self.dkreal),
+                         "находка про скилл зовёт не в основной чекаут")
 
     def test_4_global_rules_point_keeps_the_boundary(self):
         # Она значит для каждой сессии на машине сразу, и класть её с
@@ -1106,13 +1133,13 @@ class WorktreeTest(SandboxCase):
             shutil.copy(str(f), str(agents / f.name))
         write(agents / "exec-high.md", read(agents / "exec-high.md") + "\nсвоя строка\n")
         _, out = self.wtdoc()
-        self.assertIn_("cp %s/kit/agents/exec-high.md" % self.dkreal, out,
-                       "сверка определения идёт не с основным чекаутом")
+        self.assertRegex(out, r"разошлось определение агента в[^\n]*exec-high",
+                         "сверка определения идёт не с основным чекаутом")
         # Защита from_main действует и для перезаписи: --fix с worktree ветки
         # задачи разошедшееся определение не перекладывает, находка остаётся.
         _, out = self.wtdoc("--fix")
-        self.assertIn_("cp %s/kit/agents/exec-high.md" % self.dkreal, out,
-                       "с worktree --fix потерял находку про разошедшееся определение")
+        self.assertRegex(out, r"разошлось определение агента в[^\n]*exec-high",
+                         "с worktree --fix потерял находку про разошедшееся определение")
         self.assertIn("своя строка", read(agents / "exec-high.md"),
                       "с worktree --fix переложил определение с непроверенной ветки")
 
@@ -1290,8 +1317,8 @@ class HarnessHooksTest(SandboxCase):
 
     def test_hooks_are_laid_out_once(self):
         _, out = self.box.doctor(self.proj, home=self.home2)
-        self.assertIn_("PostToolUse-хук check-symbols.py не подключён", out,
-                       "доктор не заметил неподключённые хуки харнеса")
+        self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",
+                         "доктор не заметил неподключённые хуки харнеса")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")

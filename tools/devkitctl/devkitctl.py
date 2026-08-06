@@ -214,9 +214,18 @@ def ensure_package(name, why, fix):
         return ["%s; поставит devkitctl doctor --fix, руками %s install %s"
                 % (why, PACKAGER, name)], []
     rc, out = run([manager, "install", name])
-    if rc != 0 or not shutil.which(name):
-        tail = (out.splitlines() or [""])[-1].strip()
-        return ["%s; %s install %s не прошёл (%s), поставить руками" % (why, PACKAGER, name, tail)], []
+    if rc != 0:
+        # Ответ менеджера идёт в находку целиком последней строкой, а когда он
+        # промолчал, так и говорим: пустые скобки в тексте это не ответ.
+        tail = (out.strip().splitlines() or [""])[-1].strip()
+        return ["%s; %s install %s ответил ошибкой%s, ставить руками"
+                % (why, PACKAGER, name, (": %s" % tail) if tail else " и ничего не сказал")], []
+    if not shutil.which(name):
+        # Второй исход, и он не то же самое: команда отработала нулём, а пакета
+        # в PATH нет. Так выглядит сломанный менеджер, и сказать про это надо
+        # ровно то, что случилось, а не «не прошёл».
+        return ["%s; %s install %s отработал, а %s в PATH так и не появился: ставить руками"
+                % (why, PACKAGER, name, name)], []
     return [], ["установлен %s (%s install %s)" % (name, PACKAGER, name)]
 
 
@@ -455,16 +464,63 @@ def devkit_checkout():
     return main, main == DEVKIT.resolve()
 
 
-def path_winner(name, target, gobin):
-    # Собранный бинарь может проиграть в PATH чужой копии, и тогда doctor
-    # молча чинил бы то, чем никто не пользуется.
+def path_winner(name, target):
+    """Чем плох свежий бинарь с точки зрения PATH: его там не видно вовсе либо
+    выигрывает чужая копия. Отдаёт каталог победителя, пустую строку, когда в
+    PATH утилиты нет совсем, и None, когда всё в порядке.
+
+    Судится тут одна утилита, а говорит про них доктор пачкой (path_findings):
+    каталог назначения мимо PATH это один факт на все шесть, и строка на утилиту
+    превращала бы его в простыню.
+    """
     found = shutil.which(name)
     if not found:
-        return "свежий %s лежит в %s, но %s не в PATH: добавить директорию в PATH" % (name, target, gobin)
+        return ""
     if os.path.realpath(found) != os.path.realpath(str(target)):
-        return ("свежий %s лежит в %s, а в PATH выигрывает %s: убрать старую копию либо "
-                "поднять %s выше в PATH" % (name, target, found, gobin))
+        return os.path.dirname(found) or found
     return None
+
+
+def grouped_binaries(broken, how, join="; "):
+    """Находки про бинари: одна строка на общую беду, а не на утилиту.
+
+    На голой машине повод у всех шести один и тот же («не в PATH»), и шесть
+    одинаковых строк подряд человек читает как одну. Беды, у которых текст
+    разный (свой коммит, своя версия), остаются каждая своей строкой: их и надо
+    прочитать порознь.
+    """
+    groups = {}
+    for name, why in broken:
+        groups.setdefault(why, []).append(name)
+    findings = []
+    for why, names in groups.items():
+        if len(names) == 1:
+            findings.append("%s %s%s%s" % (names[0], why, join, how))
+            continue
+        findings.append("%s devkit %s: %s%s%s" % (say.counted(len(names), update.UTILS), why,
+                                                  ", ".join(names), join, how))
+    return findings
+
+
+def path_findings(unseen, shadow, gobin):
+    """Находки про PATH одной строкой на повод, а не на утилиту.
+
+    unseen это утилиты, которых в PATH не видно вовсе, shadow это каталог
+    чужой копии -> имена, которые она перебивает.
+    """
+    findings = []
+    if unseen:
+        # Команду для профиля тут не повторяем: её называет общая находка про
+        # каталог мимо PATH, а эта говорит, что именно осталось незваным.
+        findings.append("в %s лежит %s devkit, а самого каталога нет в PATH: %s"
+                        % (gobin, say.how_many(unseen, update.UTILS), ", ".join(unseen)))
+    for where in sorted(shadow):
+        names = shadow[where]
+        findings.append("в %s лежит %s devkit, а в PATH выигрывает чужая копия из %s: %s; убрать "
+                        "старое либо поднять %s выше в PATH"
+                        % (gobin, say.how_many(names, update.UTILS), where,
+                           ", ".join(names), gobin))
+    return findings
 
 
 def unsaved_go(main):
@@ -558,7 +614,7 @@ def check_binaries(fix):
     src = main if (main / "tools").is_dir() else DEVKIT
     mode = update.checkout_mode(main)
     stale = unsaved_go(main)
-    broken = []
+    broken, unseen, shadow = [], [], {}
     for name in build.tools(src):
         target = gobin / name
         code = code_commit(main, name)
@@ -569,20 +625,22 @@ def check_binaries(fix):
             continue
         if binary_trouble(target, main, code, mode, stale.get(name, 0)) is None:
             # Годная сборка уже лежит на месте, дело за PATH.
-            conflict = path_winner(name, target, gobin)
-            if conflict:
-                findings.append(conflict)
+            where = path_winner(name, target)
+            if where == "":
+                unseen.append(name)
+            elif where:
+                shadow.setdefault(where, []).append(name)
             continue
         broken.append((name, why))
     if not broken:
-        return findings, fixed
+        return findings + path_findings(unseen, shadow, gobin), fixed
     if not from_main:
         # Машинный бинарь с непроверенной ветки уехал бы во все проекты сразу,
         # поэтому чинится расхождение только из основного чекаута.
-        findings += ["%s %s, а devkit тут выложен worktree ветки задачи: собирать машинный "
-                     "бинарь с непроверенной ветки нельзя; из основного чекаута: %s"
-                     % (name, why, cmd) for name, why in broken]
-        return findings, fixed
+        findings += grouped_binaries(broken, "а devkit тут выложен worktree ветки задачи: "
+                                             "собирать машинный бинарь с непроверенной ветки "
+                                             "нельзя; из основного чекаута: %s" % cmd, ", ")
+        return findings + path_findings(unseen, shadow, gobin), fixed
     tag = update.head_tag(main)
     go = shutil.which("go")
     if tag:
@@ -595,8 +653,8 @@ def check_binaries(fix):
         how = ("собирать нечем, go в PATH нет: Go ставится пакетным менеджером "
                "(brew install go), потом %s" % cmd)
     if not fix or not (tag or go):
-        findings += ["%s %s; %s" % (name, why, how) for name, why in broken]
-        return findings, fixed
+        findings += grouped_binaries(broken, how)
+        return findings + path_findings(unseen, shadow, gobin), fixed
     if tag:
         # Отчёт установки идёт в свой список: доктор говорит про машинный контур
         # одной строкой на находку, а «сумма сошлась» это подробность команды.
@@ -610,16 +668,20 @@ def check_binaries(fix):
                    or build.check_run(name, gobin / name, version, commit))
             if err:
                 findings.append(err)
-    done = []
+    done, left = [], []
     for name, why in broken:
         if binary_trouble(gobin / name, main, code_commit(main, name), mode,
                           stale.get(name, 0)) is not None:
-            findings.append("%s %s; %s" % (name, why, how))
+            left.append((name, why))
             continue
         done.append((name, update.binary_stamp(gobin / name)))
-        conflict = path_winner(name, gobin / name, gobin)
-        if conflict:
-            findings.append(conflict)
+        where = path_winner(name, gobin / name)
+        if where == "":
+            unseen.append(name)
+        elif where:
+            shadow.setdefault(where, []).append(name)
+    findings += grouped_binaries(left, how)
+    findings += path_findings(unseen, shadow, gobin)
     if done:
         # Утилиты приезжают пачкой, и строка на каждую это одно и то же слово
         # шесть раз подряд. Версия у них общая, а если нет, она называется у
@@ -631,6 +693,21 @@ def check_binaries(fix):
         verbs = ("установлена", "установлено") if tag else ("собрана", "собрано")
         fixed.append(say.folded(verbs, tuple(w + whence for w in update.UTILS), names, gobin))
     return findings, fixed
+
+
+def fix_hint(main, from_main, what):
+    """Чем чинится раскладка машинного контура, одной командой на всю пачку.
+
+    Копировать файлы руками человеку незачем, это работа доводки, поэтому в
+    находке стоит она, а не строка cp на каждый файл. Из worktree ветки задачи
+    команда зовётся в основном чекауте: на машину, видную каждой сессии, с
+    непроверенной ветки не едет ничего.
+    """
+    if from_main:
+        return "разложить: devkitctl doctor --fix"
+    return ("devkit тут выложен worktree ветки задачи, класть на машину %s с непроверенной "
+            "ветки нельзя; из основного чекаута: python3 %s/tools/devkitctl/devkitctl.py "
+            "doctor --fix" % (what, main))
 
 
 def is_agent_def(path):
@@ -651,10 +728,11 @@ def check_agent_defs(fix):
     # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
     # определение с ветки задачи уехало бы на машину во все проекты сразу.
     findings, fixed = [], []
-    laid, again = [], []
+    laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "agents" if (main / "kit" / "agents").is_dir() else DEVKIT / "kit" / "agents"
     dst_dir = Path(os.path.expanduser(AGENTS_DIR))
+    how = fix_hint(main, from_main, "определения агентов")
     # Директория перебирается целиком, а не по префиксу: набор растёт ролями
     # (exec-* для исполнения, review-* для ревью), и новая роль должна
     # раскладываться сама, без правки доктора. Отбор идёт по frontmatter, иначе
@@ -663,8 +741,6 @@ def check_agent_defs(fix):
         if not is_agent_def(src):
             continue
         dst = dst_dir / src.name
-        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
-                                       "определение с непроверенной ветки нельзя; из основного чекаута: ")
         if dst.exists():
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
                 # devkit источник правды для промптов агентов: правка, сделанная в
@@ -675,17 +751,22 @@ def check_agent_defs(fix):
                     shutil.copyfile(src, dst)
                     again.append(src.stem)
                 else:
-                    findings.append("определение агента %s разошлось с devkit; обновить: %scp %s %s"
-                                    % (dst, whence, src, dst))
+                    stale.append(src.stem)
             continue
         if fix and from_main:
             dst_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             laid.append(src.stem)
             continue
-        findings.append("нет определения агента %s: effort из вердикта pick применять нечем, "
-                        "спавн уйдёт на дефолтного агента; %scp %s %s"
-                        % (dst, whence, src, dst))
+        none.append(src.stem)
+    if none:
+        findings.append("%s; effort из вердикта pick применять нечем, спавн уйдёт на дефолтного "
+                        "агента; %s"
+                        % (say.folded(("не разложено", "не разложено"), AGENT_WORD, none, dst_dir),
+                           how))
+    if stale:
+        findings.append("%s; на машине лежит старое, а devkit ушёл вперёд; %s"
+                        % (say.folded(("разошлось", "разошлось"), AGENT_WORD, stale, dst_dir), how))
     if laid:
         fixed.append(say.folded(("установлено", "установлено"), AGENT_WORD, laid, dst_dir))
     if again:
@@ -700,31 +781,35 @@ def check_skills(fix):
     # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
     # kit/skills/ на машину не уезжает.
     findings, fixed = [], []
-    laid, again = [], []
+    laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "skills" if (main / "kit" / "skills").is_dir() else DEVKIT / "kit" / "skills"
     dst_dir = Path(os.path.expanduser(SKILLS_DIR))
+    how = fix_hint(main, from_main, "скиллы")
     for src in sorted(src_dir.glob("*/SKILL.md")):
         name = src.parent.name
         dst = dst_dir / name / "SKILL.md"
-        whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
-                                       "скилл с непроверенной ветки нельзя; из основного чекаута: ")
-        how = "%smkdir -p %s && cp %s %s" % (whence, dst.parent, src, dst)
         if dst.exists():
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
                 if fix and from_main:
                     shutil.copyfile(src, dst)
                     again.append(name)
                 else:
-                    findings.append("скилл %s разошёлся с devkit; обновить: %s" % (dst, how))
+                    stale.append(name)
             continue
         if fix and from_main:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
             laid.append(name)
             continue
-        findings.append("нет скилла %s: процедуру сессия по нему не подхватит и соберёт "
-                        "на глаз; %s" % (dst, how))
+        none.append(name)
+    if none:
+        findings.append("%s; сессия соберёт процедуру на глаз, а не по скиллу devkit; %s"
+                        % (say.folded(("не разложен", "не разложено"), SKILL_WORD, none, dst_dir),
+                           how))
+    if stale:
+        findings.append("%s; на машине лежит старое, а devkit ушёл вперёд; %s"
+                        % (say.folded(("разошёлся", "разошлось"), SKILL_WORD, stale, dst_dir), how))
     if laid:
         fixed.append(say.folded(("установлен", "установлено"), SKILL_WORD, laid, dst_dir))
     if again:
@@ -759,7 +844,7 @@ def hook_gaps(text, settings):
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
         # уведомитель там есть на всех событиях, либо нет ни на одном.
         notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
-    missing_notify = []
+    missing_notify, missing_post = [], []
     for event, matcher, cmd in HOOK_LAYOUT:
         script = os.path.basename(cmd.split()[1])
         if script == NOTIFY_HOOK:
@@ -770,12 +855,17 @@ def hook_gaps(text, settings):
             continue
         gaps.append((event, matcher, cmd))
         if script in HOOK_SCRIPTS:
-            findings.append("PostToolUse-хук %s не подключён в %s (hooks/README.md)"
-                            % (script, settings))
+            # Проверки текстов висят на одном событии втроём, и три одинаковые
+            # строки про них это один пробел: хуки харнеса не подключены.
+            missing_post.append(script)
         elif script == SESSION_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
                             "(hooks/README.md)" % (SESSION_HOOK, settings))
+    if missing_post:
+        findings.append("%s; правки текстов идут мимо проверок (hooks/README.md)"
+                        % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_post,
+                                     settings, " на событии PostToolUse"))
     if missing_notify:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
                         "разрешения, и не говорит, что закончила ход или что субагент "

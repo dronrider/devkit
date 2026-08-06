@@ -29,6 +29,16 @@ def counted(n, forms):
     return "%d %s" % (n, word)
 
 
+def how_many(names, forms):
+    """Сколько их словами: «6 утилит», а на одном предмете просто «утилита».
+
+    Число при одном предмете не называют вслух («установлен скилл», а не
+    «установлен 1 скилл»), и находки собираются из этого куска так же, как
+    отчёт о сделанном: правило счёта в выводе одно на всех.
+    """
+    return forms[0] if len(names) == 1 else counted(len(names), forms)
+
+
 def folded(verbs, forms, names, where, why=""):
     """Однотипное одной строкой: что сделано, сколько, куда легло и что именно.
 
@@ -41,9 +51,7 @@ def folded(verbs, forms, names, where, why=""):
     печатает, и проверка непустоты у него своя, но держаться контракт обязан и
     без неё: помощник общий, а следующий зовущий про уговор может не знать.
     """
-    n = len(names)
-    if not n:
+    if not names:
         return ""
-    return "%s %s в %s%s: %s" % (verbs[0] if n == 1 else verbs[1],
-                                 forms[0] if n == 1 else counted(n, forms),
-                                 where, why, ", ".join(names))
+    return "%s %s в %s%s: %s" % (verbs[0] if len(names) == 1 else verbs[1],
+                                 how_many(names, forms), where, why, ", ".join(names))

@@ -128,8 +128,11 @@ os.chmod(out, os.stat(out).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 # Заглушка пакетного менеджера: настоящий brew в самопроверке не участвует, а
 # проверяется то, что доводка зовёт именно его и именно с тем пакетом. Пакет она
 # кладёт исполняемым файлом в BREW_STUB_BIN (это каталог в подставном PATH),
-# позванное пишет в BREW_STUB_LOG, а BREW_STUB_FAIL просит отказать: без отказа
-# не проверить находку про непоставленный пакет.
+# позванное пишет в BREW_STUB_LOG. Две порчи нарочные, и они разные:
+#   BREW_STUB_FAIL     менеджер отвечает ошибкой и говорит, чем недоволен
+#   BREW_STUB_SILENT   менеджер отрабатывает нулём, а пакета не появляется
+# Второе это сломанный менеджер, и на живом прогоне DK-157 доктор описал его
+# враньём («не прошёл ()»), хотя команда как раз прошла.
 BREW_STUB = '''#!%s
 import os
 import stat
@@ -146,6 +149,8 @@ if argv[:1] != ["install"] or len(argv) != 2:
 if os.environ.get("BREW_STUB_FAIL"):
     sys.stderr.write("Error: No available formula with the name %%s\\n" %% argv[1])
     sys.exit(1)
+if os.environ.get("BREW_STUB_SILENT"):
+    sys.exit(0)
 path = os.path.join(os.environ["BREW_STUB_BIN"], argv[1])
 with open(path, "w", encoding="utf-8") as f:
     f.write("#!/bin/sh\\nexit 0\\n")

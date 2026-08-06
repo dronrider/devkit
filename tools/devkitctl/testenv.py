@@ -64,6 +64,56 @@ SETTINGS = """{"permissions": {"allow": %s},
 ]}]}}
 """
 
+# Заглушка go: настоящая сборка шести модулей на четырёх парах стоила бы минуты
+# на каждый прогон самопроверки. Разбирает она то же, что передаёт сборка (-o и
+# -ldflags -X), и кладёт по пути скрипт, печатающий строку версии по --version:
+# без подстановки не проверить ни самопроверку запуском, ни байтовую. За пределы
+# временной директории заглушка не пишет: промах настройки иначе затёр бы
+# настоящие бинари в ~/go/bin.
+#
+# Две порчи нарочные, ими и проверяются обе самопроверки сборки:
+#   GO_STUB_NO_FLAG=<утилита>          собранный бинарь не знает --version,
+#                                      хотя версия в нём лежит
+#   GO_STUB_NO_STAMP=<goos>/<goarch>   на эту пару сборка идёт без подстановки
+# Запуск собранного пишется в файл GO_STUB_RUNLOG: по нему видно, какие пары
+# релизная сборка исполняла живьём, а какие проверяла байтами.
+GO_STUB = '''#!%s
+import os
+import stat
+import sys
+
+argv, out, ld = sys.argv[1:], None, ""
+while argv:
+    if argv[0] == "-o" and len(argv) > 1:
+        out = argv[1]
+    if argv[0] == "-ldflags" and len(argv) > 1:
+        ld = argv[1]
+    argv = argv[1:]
+if not out:
+    sys.exit(1)
+sandbox = os.environ["SANDBOX"]
+if not out.startswith(sandbox + os.sep):
+    sys.stderr.write("заглушка go пишет только в %%s: %%s\\n" %% (sandbox, out))
+    sys.exit(1)
+name = os.path.basename(out)
+stamp = dict(p.split("=", 1) for p in ld.split() if "=" in p)
+pair = "%%s/%%s" %% (os.environ.get("GOOS", ""), os.environ.get("GOARCH", ""))
+if os.environ.get("GO_STUB_NO_STAMP") == pair:
+    stamp = {}
+line = "%%s %%s (%%s)" %% (name, stamp.get("main.version", "dev"),
+                       stamp.get("main.commit", "unknown"))
+body = 'echo "%%s"' %% line
+if os.environ.get("GO_STUB_NO_FLAG") == name:
+    body = 'echo "%%s: справка"' %% name
+os.makedirs(os.path.dirname(out), exist_ok=True)
+with open(out, "w", encoding="utf-8") as f:
+    f.write("#!/bin/sh\\n# %%s\\n"
+            '[ -n "$GO_STUB_RUNLOG" ] && echo "$0" >> "$GO_STUB_RUNLOG"\\n'
+            '[ "$1" = "--version" ] && %%s\\n'
+            "exit 0\\n" %% (line, body))
+os.chmod(out, os.stat(out).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+''' % PY
+
 # Заглушка taskctl, которая доску всё-таки заводит: настоящий бинарь в PATH
 # самопроверки заменён на «exit 0», а без доски проверять нечего.
 BOARD_TASKCTL = '''#!%s

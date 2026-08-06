@@ -42,6 +42,17 @@
       переезд одиночного снимка квоты в директорию, генерация файлов правил),
       заполненное не трогает, неоднозначное оставляет находкой
 
+  devkitctl build [--release] [--out dir]
+      собрать бинари devkit с зашитой версией: что собирать, выводится из
+      дерева (каталоги tools/*/ с go.mod), версия и коммит из git этого
+      чекаута. Без ключей сборка под текущую машину в GOBIN (иначе
+      GOPATH/bin, иначе ~/go/bin) и самопроверка запуском: каждый свежий
+      бинарь обязан напечатать по --version ту строку, которую в него
+      зашивали. --release собирает четыре пары GOOS/GOARCH, пакует тарболл на
+      пару (devkit-<версия>-<os>-<arch>.tar.gz) и кладёт рядом SHA256SUMS;
+      живьём там проверяется пара своей машины, остальные три байтовым
+      поиском зашитой строки. Каталог назначения по умолчанию dist
+
   devkitctl weigh [-C dir] [--runs N] [--limit T] [--model M] [--prompt "..."]
       живой замер веса резидента: два headless-прогона claude -p с одинаковым
       запросом (базовый без раскладки devkit, целевой с ней), разница это цена
@@ -62,6 +73,7 @@
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import build
 import context
 import corp
 import harness
@@ -414,13 +426,17 @@ def check_binaries(fix):
     findings, fixed = [], []
     gobin = go_bin_dir()
     main, from_main = devkit_checkout()
+    # Точка сборки одна на машину и на CI, поэтому доктор и советует, и собирает
+    # тем же devkitctl build: своя копия go build разошлась бы с ним ключами
+    # (версия зашивается линковкой) в первый же раз.
+    cmd = "python3 %s/tools/devkitctl/devkitctl.py build" % main
+    version, commit = build.stamp(main) if fix else ("", "")
     for name in BINARIES:
         src = max((p.stat().st_mtime for p in (DEVKIT / "tools" / name).glob("*.go")), default=0)
         path = shutil.which(name)
         if path and (os.path.getmtime(path) >= src or not from_main):
             continue
         why = "не в PATH" if not path else "старее исходников devkit"
-        build = "cd %s/tools/%s && go build -o %s/%s ." % (main, name, gobin, name)
         target = gobin / name
         if target.exists() and os.path.getmtime(target) >= src:
             # Свежая сборка уже лежит на месте, дело за PATH.
@@ -431,21 +447,22 @@ def check_binaries(fix):
         if not from_main:
             findings.append("%s %s, а devkit тут выложен worktree ветки задачи: mtime исходников "
                             "это момент выкладки, и машинный бинарь с непроверенной ветки собирать "
-                            "нельзя; пересобрать из основного чекаута: %s" % (name, why, build))
+                            "нельзя; пересобрать из основного чекаута: %s" % (name, why, cmd))
             continue
         if not shutil.which("go"):
             findings.append("%s %s, а go в PATH нет: собирать нечем, Go ставится пакетным менеджером "
-                            "(brew install go), потом %s" % (name, why, build))
+                            "(brew install go), потом %s" % (name, why, cmd))
             continue
         if not fix:
-            findings.append("%s %s: %s" % (name, why, build))
+            findings.append("%s %s: %s" % (name, why, cmd))
             continue
         gobin.mkdir(parents=True, exist_ok=True)
-        rc, out = run(["go", "build", "-o", str(target), "."], cwd=str(DEVKIT / "tools" / name))
-        if rc != 0:
-            findings.append("%s %s, сборка не прошла: %s" % (name, why, out))
+        err = (build.compile_one(main, name, target, version, commit)
+               or build.check_run(name, target, version, commit))
+        if err:
+            findings.append("%s %s, %s" % (name, why, err))
             continue
-        fixed.append("%s собран в %s" % (name, target))
+        fixed.append("%s собран в %s, версия %s" % (name, target, version))
         conflict = path_winner(name, target, gobin)
         if conflict:
             findings.append(conflict)
@@ -901,6 +918,30 @@ def layout_only(start):
     return 0
 
 
+def build_binaries(release, out):
+    """Сборка бинарей devkit, та же командой с машины и с раннера.
+
+    Собирается тот чекаут devkit, из которого запущен сам devkitctl: версия
+    зашивается из его git, и собирать чужое дерево этой команде незачем.
+    """
+    if not shutil.which("go"):
+        sys.stderr.write("go в PATH нет: собирать нечем, Go ставится пакетным менеджером "
+                         "(brew install go)\n")
+        return 2
+    if release:
+        findings = build.release(DEVKIT, out or "dist")
+    else:
+        target = Path(out) if out else go_bin_dir()
+        findings = build.local(DEVKIT, target)
+    for f in findings:
+        print(f)
+    if findings:
+        sys.stderr.write("находок: %d\n" % len(findings))
+        return 1
+    print("сборка в порядке")
+    return 0
+
+
 def weigh_resident(start, runs, limit, model, prompt):
     # Гейт свежести: замер меряет раскладку devkit на машине, а кладёт её
     # doctor --fix. По вчерашней раскладке замер соврал бы молча, поэтому сперва
@@ -1222,6 +1263,11 @@ def main(argv):
     c.add_argument("--key", default="", help="ключ проекта в трекере (ABC), отличный от --prefix")
     c.add_argument("--branch", default="", help="шаблон ветки, по умолчанию решает shipctl")
     c.add_argument("--remote", default="", help="личный приватный remote доски боковой директории")
+    b = sub.add_parser("build", help="собрать бинари devkit с зашитой версией")
+    b.add_argument("--release", action="store_true",
+                   help="четыре пары GOOS/GOARCH, тарболлы и SHA256SUMS")
+    b.add_argument("--out", default="",
+                   help="каталог назначения: по умолчанию GOBIN, а под --release dist")
     s = sub.add_parser("stats", help="сводка по журналу запусков")
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
@@ -1244,11 +1290,14 @@ def main(argv):
                           a.branch, a.remote)
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
+    elif a.cmd == "build":
+        rc = build_binaries(a.release, a.out)
     else:
         rc = stats(a.dir, a.context)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,
-    # то есть в боковой директории: в дереве клона .devkit нет.
-    root = project_root(a.dir)[0]
+    # то есть в боковой директории: в дереве клона .devkit нет. У build своего
+    # -C нет, он собирает чекаут devkit, и запуск ложится в его же журнал.
+    root = project_root(getattr(a, "dir", str(DEVKIT)))[0]
     log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
     return rc
 

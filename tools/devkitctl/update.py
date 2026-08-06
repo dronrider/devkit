@@ -339,8 +339,14 @@ def no_tags_text(devkit):
 def tell(devkit, tag, latest, branch):
     """Рассказ --check: что стоит, что вышло и что сделает обычный update."""
     lines = []
-    if branch:
-        lines.append("чекаут: ветка %s, релиза под такой HEAD нет и быть не может" % branch)
+    if branch and tag:
+        # Тег ставится на голову main, и сразу после релиза он стоит на том же
+        # коммите, что и вершина ветки. Сказать тут «релиза под такой HEAD нет»
+        # значило бы соврать: релиз ровно этот, а вот чекаут не отвязан.
+        lines.append("чекаут: ветка %s, и на её вершине стоит тег %s; отвязанным он не считается"
+                     % (branch, tag))
+    elif branch:
+        lines.append("чекаут: ветка %s, релиза под такой HEAD нет" % branch)
     elif tag:
         lines.append("чекаут: тег %s (%s)" % (tag, head_commit(devkit)))
     else:
@@ -349,11 +355,11 @@ def tell(devkit, tag, latest, branch):
     dest = bin_dir()
     for name, (version, commit) in sorted(installed(dest, build.tools(devkit)).items()):
         lines.append("%s: %s (%s)" % (name, version, commit))
-    if tag == latest:
-        lines.append("новее ничего нет: обновляться не от чего")
-    elif branch:
+    if branch:
         lines.append("обновление тут это git pull и devkitctl doctor --fix; перевести клон на "
                      "тег %s: devkitctl update --pin" % latest)
+    elif tag == latest:
+        lines.append("новее ничего нет: обновляться не от чего")
     else:
         lines.append("поставит devkitctl update: чекаут и бинари тега %s" % latest)
     return lines
@@ -466,12 +472,17 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
         names = build.tools(devkit)
         commit = head_commit(devkit)
         have = installed(bin_dir(), names)
-        if tag == latest and len(have) == len(names) \
+        if not branch and tag == latest and len(have) == len(names) \
                 and all(s[1] == commit for s in have.values()):
             log("обновлять нечего: чекаут стоит на новейшем теге %s, и все бинари отвечают его "
                 "коммитом (%s). За ассетами в сеть не ходил" % (latest, commit))
             return 0
-        if tag != latest:
+        # Отвязывает чекаут режим, а не расхождение коммитов: тег ставится на
+        # голову main, и на свежем клоне вершина ветки и новейший тег это
+        # обычно один коммит. Судить по коммиту значило бы оставить машину
+        # потребителя на ветке, где следующий update откажет как дереву
+        # разработчика.
+        if branch or tag != latest:
             before = code_stamp(devkit)
             rc, out = git(devkit, "checkout", "--detach", "--quiet", latest)
             if rc != 0:

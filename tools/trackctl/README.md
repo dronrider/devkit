@@ -6,11 +6,11 @@
 недетерминированными. Дизайн контура разобран в
 [LLD DK-074](../../docs/lld/DK-074-corp-contour.md).
 
-Утилита общая для всех корп-проектов, живёт в devkit. Один раз собрать бинарь в
-PATH:
+Утилита общая для всех корп-проектов, живёт в devkit и едет готовым бинарём в
+его релизе. Один раз поставить набор в PATH:
 
 ```
-cd ~/projects/devkit/trackctl && go build -o ~/go/bin/trackctl .
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
 
 и дальше звать `trackctl <команда>` из любого места внутри корп-клона: рабочий

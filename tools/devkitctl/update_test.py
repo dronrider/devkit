@@ -542,6 +542,63 @@ class InstallTest(UpdateCase):
         self.assertEqual(self.installed(), [])
 
 
+class TagOnTheBranchTipTest(UpdateCase):
+    """Новейший тег стоит на вершине ветки: обычное состояние свежего клона.
+
+    Тег ставится на голову main, и сразу после релиза переходить по коммиту
+    некуда, а отвязывать чекаут всё равно надо: иначе машина потребителя
+    остаётся на ветке, и следующий update отказывает ей как дереву
+    разработчика.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.tip = "v0.11.0"
+        git(self.dk, "tag", self.tip)
+        git(self.dk, "push", "-q", "--tags", "origin", "main")
+        self.tip_commit = self.short("HEAD")
+        stub_release(self.releases, self.tip, self.tip_commit, self.NAMES)
+
+    def test_pin_detaches_when_there_is_nowhere_to_move(self):
+        self.assertEqual(update.head_tag(self.dk), self.tip,
+                         "стенд не воспроизводит случай: тег не на вершине ветки")
+        self.assertEqual(self.update(pin=True), 0, self.out())
+        self.assertEqual(update.current_branch(self.dk), "",
+                         "после --pin чекаут остался на ветке: %s" % self.out())
+        self.assertEqual(update.head_tag(self.dk), self.tip)
+        self.assertIn("чекаут: main -> %s" % self.tip, self.out())
+        self.assertEqual(sorted(self.installed()), sorted(TOOLS + (update.WRAPPER,)))
+
+    def test_next_call_updates_instead_of_refusing(self):
+        # Ради этого отвязывание и нужно: обещано, что дальше обновление идёт
+        # голым update, а на ветке оно упёрлось бы в отказ для дерева
+        # разработчика.
+        self.update(pin=True)
+        self.said = []
+        self.assertEqual(self.update(), 0, self.out())
+        self.assertIn("обновлять нечего", self.out())
+        self.assertNotIn("дерево разработчика", self.out())
+
+    def test_matching_binaries_do_not_cancel_the_pin(self):
+        # Бинари уже отвечают нужным коммитом, а чекаут на ветке: холостым ходом
+        # это не считается, отвязать всё равно надо.
+        for name in TOOLS:
+            executable(self.dest / name, BINARY % (name, self.tip, self.tip_commit))
+        self.assertEqual(self.update(pin=True), 0, self.out())
+        self.assertNotIn("обновлять нечего", self.out())
+        self.assertEqual(update.current_branch(self.dk), "",
+                         "совпавшие бинари отменили перевод чекаута на тег")
+
+    def test_check_advises_the_pin(self):
+        self.assertEqual(self.update(check=True), 0)
+        out = self.out()
+        self.assertIn("на её вершине стоит тег %s" % self.tip, out)
+        self.assertIn("--pin", out, "рассказ не зовёт отвязать клон")
+        self.assertNotIn("новее ничего нет", out,
+                         "чекаут на ветке назван обновлённым, хотя он не отвязан")
+        self.assertEqual(update.current_branch(self.dk), "main", "--check сдвинул чекаут")
+
+
 class CheckTest(UpdateCase):
     """--check: рассказ без правки чекаута, бинарей и раскладки."""
 

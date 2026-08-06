@@ -488,7 +488,8 @@ ubuntu дадут `exec format error`, а не строку версии.
   `var commit`, разбор `--version` до всех прочих аргументов и печать строки
   `<имя> <версия> (<коммит>)`.
 - `devkitctl build`: список утилит из `tools/*/go.mod`, версия из
-  `git describe --tags --always --dirty` и `git rev-parse --short=12 HEAD`,
+  `git describe --tags --match 'v*' --always --dirty` и
+  `git rev-parse --short=12 HEAD`,
   сборка с `-ldflags` в каталог назначения, самопроверка запуском `--version` у
   каждого собранного бинаря.
 - `devkitctl build --release --out dist`: четыре пары GOOS/GOARCH,

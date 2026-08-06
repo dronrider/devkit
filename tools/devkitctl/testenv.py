@@ -221,6 +221,7 @@ import context  # noqa: E402
 import harness  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
+import update  # noqa: E402
 import weigh  # noqa: E402
 
 
@@ -252,7 +253,16 @@ class Sandbox:
                 self.missing_tools.append(t)
                 continue
             os.symlink(found, str(self.sys / t))
-        self.cleanpath = "%s:%s" % (self.bin, self.sys)
+        # Каталог назначения devkit: туда ставит бинари update и туда же доктор
+        # кладёт обёртку devkitctl. В подставном PATH он стоит своей записью,
+        # иначе на чистом проекте горела бы находка про каталог мимо PATH.
+        self.dkbin = self.root / "dkbin"
+        self.dkbin.mkdir()
+        # Путь в обёртке разрешённый: доктор берёт чекаут через resolve(), а
+        # mktemp на macOS отдаёт /var, который на деле симлинк на /private/var.
+        executable(self.dkbin / update.WRAPPER,
+                   update.wrapper_text(os.path.realpath(str(self.dk))))
+        self.cleanpath = "%s:%s:%s" % (self.bin, self.dkbin, self.sys)
         # Чем слать уведомления, доктор спрашивает у самого уведомителя, а тот
         # смотрит платформу и PATH. Без подставного бэкенда проверка краснела бы
         # на машине без osascript или notify-send.
@@ -294,6 +304,7 @@ class Sandbox:
         kw.setdefault("path", self.cleanpath)
         env = dict(kw.pop("env", None) or {})
         env.setdefault("DEVKIT_NOTIFY_BACKEND", str(self.notify_stub))
+        env.setdefault(update.BIN_ENV, str(self.dkbin))
         return run([PY, str(kw.pop("dkctl", self.dkctl))] + list(args), env=env, **kw)
 
     def doctor(self, root, *args, **kw):

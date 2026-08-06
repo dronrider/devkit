@@ -440,7 +440,10 @@ class MachineContourTest(SandboxCase):
         cls.gostub.mkdir()
         executable(cls.gostub / "go", GO_STUB)
         cls.mpath = "%s:%s:%s" % (cls.gostub, cls.mhome / "go" / "bin", box.sys)
-        cls.env = {"SANDBOX": str(box.root)}
+        # Каталог назначения называется прямо: правило выбора (переменная, потом
+        # PATH) проверяется отдельными тестами, остальным тут нужен один
+        # известный каталог, и он же стоит в подставном PATH.
+        cls.env = {"SANDBOX": str(box.root), "DEVKIT_BIN": str(cls.mhome / "go" / "bin")}
 
     def docm(self, *args, **kw):
         kw.setdefault("home", self.mhome)
@@ -640,40 +643,46 @@ class MachineContourTest(SandboxCase):
                           "симлинк на тот же бинарь принят за чужую копию")
 
     def test_12_build_directory(self):
-        # GOBIN сильнее умолчания, GOPATH задаёт свой bin.
-        gbhome, gb = self.box.root / "gbhome", self.box.root / "gobin2"
-        _, out = self.docm("--fix", home=gbhome, path="%s:%s:%s" % (self.gostub, gb, self.box.sys),
-                           env={"GOBIN": str(gb)})
-        self.assertTrue(os.access(str(gb / "agentctl"), os.X_OK), "--fix собрал не в GOBIN: %s" % out)
-        self.assertFalse((gbhome / "go" / "bin" / "agentctl").exists(),
-                         "--fix при заданном GOBIN лезет в ~/go/bin")
-        gphome, gp = self.box.root / "gphome", self.box.root / "gopath2"
-        _, out = self.docm("--fix", home=gphome,
-                           path="%s:%s:%s" % (self.gostub, gp / "bin", self.box.sys),
-                           env={"GOPATH": str(gp)})
-        self.assertTrue(os.access(str(gp / "bin" / "agentctl"), os.X_OK),
-                        "--fix собрал не в GOPATH/bin: %s" % out)
-        self.assertFalse((gphome / "go" / "bin" / "agentctl").exists(),
-                         "--fix при заданном GOPATH лезет в ~/go/bin")
+        # Каталог назначения по решению 7 (DK-149): DEVKIT_BIN сильнее всего, а
+        # без него выигрывает тот из двух каталогов, что уже стоит в PATH.
+        dbhome, db = self.box.root / "dbhome", self.box.root / "devkitbin"
+        _, out = self.docm("--fix", home=dbhome, path="%s:%s:%s" % (self.gostub, db, self.box.sys),
+                           env={"DEVKIT_BIN": str(db)})
+        self.assertTrue(os.access(str(db / "agentctl"), os.X_OK),
+                        "--fix собрал не в DEVKIT_BIN: %s" % out)
+        self.assertFalse((dbhome / "go" / "bin" / "agentctl").exists(),
+                         "--fix при заданном DEVKIT_BIN лезет в ~/go/bin")
+        lbhome = self.box.root / "lbhome"
+        _, out = self.docm("--fix", home=lbhome, env={"DEVKIT_BIN": None},
+                           path="%s:%s:%s" % (self.gostub, lbhome / ".local" / "bin", self.box.sys))
+        self.assertTrue(os.access(str(lbhome / ".local" / "bin" / "agentctl"), os.X_OK),
+                        "--fix собрал не в тот каталог, что стоит в PATH: %s" % out)
+        self.assertFalse((lbhome / "go" / "bin" / "agentctl").exists(),
+                         "--fix полез в ~/go/bin, которого в PATH нет")
 
     def test_13_no_go_in_path(self):
         # Находка с командой установки идёт в обоих режимах, а не только под
         # --fix, иначе doctor советовал бы сборку командой, которой нет.
         nghome = self.box.root / "nghome"
         for args in (("--fix",), ()):
-            _, out = self.docm(*args, home=nghome, path=str(self.box.sys))
+            _, out = self.docm(*args, home=nghome, path=str(self.box.sys),
+                               env={"DEVKIT_BIN": None})
             self.assertIn_("go в PATH нет", out, "нет находки про отсутствующий go")
 
     def test_14_build_directory_not_in_path(self):
         # --fix соберёт, а пользоваться собранным нечем, и эта находка
-        # единственный сигнал. Ради такого случая задача и затевалась.
+        # единственный сигнал. Ради такого случая задача и затевалась. Каталог
+        # тут ~/.local/bin: ни его, ни ~/go/bin в PATH нет, и на машине без
+        # тулчейна имя ~/go/bin выглядело бы враньём.
         pphome = self.box.root / "pphome"
-        _, out = self.docm("--fix", home=pphome,
+        _, out = self.docm("--fix", home=pphome, env={"DEVKIT_BIN": None},
                            path="%s:%s" % (self.gostub, self.box.sys))
-        self.assertTrue(os.access(str(pphome / "go" / "bin" / "agentctl"), os.X_OK),
+        self.assertTrue(os.access(str(pphome / ".local" / "bin" / "agentctl"), os.X_OK),
                         "--fix не собрал бинарь: %s" % out)
         self.assertIn_("не в PATH: добавить директорию", out,
                        "нет находки про каталог сборки вне PATH")
+        self.assertIn_("export PATH=", out,
+                       "находка про каталог мимо PATH не даёт готовой строки для профиля")
 
 
 class WorktreeTest(SandboxCase):

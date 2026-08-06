@@ -61,7 +61,7 @@ func mainBranch(root string) (string, error) {
 // доску двигает taskctl, дерево должно быть чистым (untracked не мешают).
 func preflight(root string) (string, error) {
 	if _, err := exec.LookPath("taskctl"); err != nil {
-		return "", fmt.Errorf("taskctl не найден в PATH, собери его из devkit/taskctl")
+		return "", fmt.Errorf("taskctl не найден в PATH, доску двигает он: поставить набор утилит devkit (python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update)")
 	}
 	main, err := mainBranch(root)
 	if err != nil {

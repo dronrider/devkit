@@ -5,10 +5,11 @@
 предусловия, думающая часть (само ревью, команда тестов и выката проекта)
 остаётся за исполнителем и передаётся флагами.
 
-Сборка в PATH, как у taskctl (который тоже нужен в PATH: доску двигает он):
+Ставится в PATH релизом devkit, вместе с taskctl (который тоже нужен в PATH:
+доску двигает он):
 
 ```
-cd ~/projects/devkit/shipctl && go build -o ~/go/bin/shipctl .
+python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
 
 Корень находится как у taskctl: сначала редирект `devkit.local` из конфига git

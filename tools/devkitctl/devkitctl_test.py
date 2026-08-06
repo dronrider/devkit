@@ -10,34 +10,10 @@ import shutil
 import unittest
 from pathlib import Path
 
-from testenv import (BOARD_TASKCTL, PY, SandboxCase, executable, fake_home, git, git_init,
-                     go_cache_env, harness, read, rules, run, taken_at, write)
+from testenv import (BOARD_TASKCTL, GO_STUB, SandboxCase, executable, fake_home, git,
+                     git_init, go_cache_env, harness, read, rules, run, taken_at, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
-# go build -o <путь> . кладёт по пути пустой исполняемый файл. За пределы
-# временной директории заглушка не пишет: промах настройки в самопроверке иначе
-# затёр бы настоящие бинари в ~/go/bin.
-GO_STUB = '''#!%s
-import os
-import stat
-import sys
-
-argv, out = sys.argv[1:], None
-while argv:
-    if argv[0] == "-o" and len(argv) > 1:
-        out = argv[1]
-    argv = argv[1:]
-if not out:
-    sys.exit(1)
-sandbox = os.environ["SANDBOX"]
-if not out.startswith(sandbox + os.sep):
-    sys.stderr.write("заглушка go пишет только в %%s: %%s\\n" %% (sandbox, out))
-    sys.exit(1)
-os.makedirs(os.path.dirname(out), exist_ok=True)
-with open(out, "w", encoding="utf-8") as f:
-    f.write("#!/bin/sh\\nexit 0\\n")
-os.chmod(out, os.stat(out).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-''' % PY
 
 LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
        "2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
@@ -734,8 +710,8 @@ class WorktreeTest(SandboxCase):
 
     def test_1_binaries_are_not_built(self):
         self.assertIn_("worktree ветки задачи", self.out, "нет находки про worktree devkit")
-        self.assertIn_("%s/tools/agentctl" % self.dkreal, self.out,
-                       "находка не отправляет в основной чекаут")
+        self.assertIn_("%s/tools/devkitctl/devkitctl.py build" % self.dkreal, self.out,
+                       "находка не отправляет собирать в основной чекаут")
         self.assertFalse((self.wthome / "go" / "bin" / "agentctl").exists(),
                          "--fix собрал машинный бинарь с фичеветки")
 

@@ -104,6 +104,9 @@ func fail(err error) {
 }
 
 func main() {
+	if versionRequested() {
+		return
+	}
 	gdir, args, gerr := globalDir(os.Args[1:])
 	if gerr != nil {
 		fail(gerr)

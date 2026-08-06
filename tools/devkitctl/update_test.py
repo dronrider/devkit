@@ -589,6 +589,19 @@ class TagOnTheBranchTipTest(UpdateCase):
         self.assertEqual(update.current_branch(self.dk), "",
                          "совпавшие бинари отменили перевод чекаута на тег")
 
+    def test_without_pin_it_still_refuses(self):
+        # Замок на то, что правкой нельзя было сломать: тег на вершине ветки
+        # разрешения не заменяет, и без ключа команда отказывает так же, как
+        # любому дереву разработчика.
+        head = self.head()
+        self.assertEqual(self.update(), 2, self.out())
+        self.assertIn("дерево разработчика devkit", self.out())
+        self.assertIn("--pin", self.out(), "отказ не называет ключ первой установки")
+        self.assertEqual(self.head(), head, "отказавшая команда сдвинула чекаут")
+        self.assertEqual(update.current_branch(self.dk), "main",
+                         "чекаут отвязан без разрешения")
+        self.assertEqual(self.installed(), [], "отказавшая команда поставила бинари")
+
     def test_check_advises_the_pin(self):
         self.assertEqual(self.update(check=True), 0)
         out = self.out()

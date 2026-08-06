@@ -398,7 +398,7 @@ def check_wrapper(devkit, fix, from_main=True):
             dest.mkdir(parents=True, exist_ok=True)
             path.write_text(want, encoding="utf-8")
             os.chmod(str(path), 0o755)
-            fixed.append("установлена обёртка %s, она зовёт python-часть devkit из %s"
+            fixed.append("установлена обёртка %s, она вызывает python-часть devkit из %s"
                          % (path, devkit))
         else:
             findings.append("%s; положить: %sdevkitctl doctor --fix" % (why, whence))
@@ -632,6 +632,6 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
         for i, s in enumerate(findings, 1):
             log("%d. %s" % (i, s))
     else:
-        log("\nручных шагов не осталось.")
-    log("проверка: devkitctl doctor")
+        log("\nустановка завершена, дописывать руками нечего.")
+    log("проверить devkit можно командой devkitctl doctor")
     return 0

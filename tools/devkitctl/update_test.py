@@ -513,8 +513,13 @@ class InstallTest(UpdateCase):
             self.assertEqual(update.binary_stamp(path), ("v0.10.0", self.tag_commit),
                              "%s назвал не ту версию" % name)
         self.assertIn("сумма сошлась", self.out())
-        self.assertIn("%s: не стояло -> v0.10.0 (%s)" % (TOOLS[0], self.tag_commit), self.out(),
-                      "нет строки «было -> стало»")
+        # Однотипное свёрнуто (DK-157): про две утилиты сказано одной строкой, с
+        # числом и именами, а не строкой на каждую.
+        self.assertIn("установлен devkit v0.10.0 (%s) в %s, утилит 2: %s"
+                      % (self.tag_commit, self.dest, ", ".join(TOOLS)), self.out(),
+                      "строка про поставленные утилиты не свёрнута в одну")
+        self.assertNotIn("не стояло", self.out(),
+                         "в выводе установки осталась раскладочная речь про бинари")
         self.assertEqual([p.name for p in self.dest.glob(update.TMP_PREFIX + "*")], [],
                          "временный каталог остался в каталоге назначения")
         self.assertGreater(os.path.getmtime(str(self.dest / TOOLS[0])), RELEASE_MTIME + 1,
@@ -533,7 +538,14 @@ class InstallTest(UpdateCase):
         self.assertEqual(update.binary_stamp(self.dest / TOOLS[0]), ("v0.10.0", self.tag_commit))
         self.assertEqual(update.binary_stamp(keep), ("v0.1.0", "старьё"),
                          "старый бинарь переписан на месте, а не подменён переименованием")
-        self.assertIn("v0.1.0 (старьё) -> v0.10.0", self.out(), "нет строки «было -> стало»")
+        # Утилиты пришли с разных версий, и свёртка идёт по переходу: обновлённая
+        # своей строкой, поставленная впервые своей.
+        self.assertIn("обновлён devkit с v0.1.0 (старьё) до v0.10.0 (%s) в %s, утилит 1: %s"
+                      % (self.tag_commit, self.dest, TOOLS[0]), self.out(),
+                      "нет строки про обновление с прежней версии")
+        self.assertIn("установлен devkit v0.10.0 (%s) в %s, утилит 1: %s"
+                      % (self.tag_commit, self.dest, TOOLS[1]), self.out(),
+                      "утилита, которой не стояло, попала в ту же строку, что обновлённая")
 
     def test_wrapper_is_laid_next_to_the_binaries(self):
         self.assertEqual(self.install(), 0, self.out())

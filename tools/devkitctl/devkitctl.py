@@ -37,7 +37,9 @@
       определения агентов в ~/.claude/agents,
       скиллы devkit в ~/.claude/skills, глобальная точка правил ([rules]
       global_file, обычно ~/.claude/CLAUDE.md) свежа и не правлена руками,
-      tmux и снимки квоты в ~/.devkit/quota; профили харнесов devkit/kit/harness
+      tmux и снимки квоты в ~/.devkit/quota (снимка нет, а хук SessionStart и
+      tmux на месте, значит находки нет: снимок появится сам первой сессией);
+      профили харнесов devkit/kit/harness
       прогоняются через тот же валидатор, каким их читает agentctl; в чекауте
       devkit печатается вес резидента по карманам и находка при превышении
       порога (ядро, ядро доски, общий потолок токенов) плюс находка на тело
@@ -46,7 +48,9 @@
       недостающие в ней ключи, .gitignore, бинари версии чекаута: на теге
       ставятся бинари релиза, иначе собираются на месте, копия определений
       агентов и скиллов, права машинного контура, глобальная точка правил,
-      переезд одиночного снимка квоты в директорию, генерация файлов правил),
+      переезд одиночного снимка квоты в директорию, генерация файлов правил,
+      недостающие tmux и terminal-notifier тем пакетным менеджером, который на
+      машине уже есть),
       заполненное не трогает, неоднозначное оставляет находкой
 
   devkitctl update [--pin] [--check]
@@ -130,6 +134,10 @@ HOOK_LAYOUT = (
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/notify.py --hook claude-code"),
 )
+# Пакетный менеджер, которым доводка ставит недостающее (tmux, terminal-notifier).
+# Он один: brew стоит и на macOS, и на linux у тех, кто его туда поставил, а
+# системные менеджеры просят sudo, и молча звать их из доводки нельзя.
+PACKAGER = "brew"
 AGENTS_DIR = "~/.claude/agents"
 SKILLS_DIR = "~/.claude/skills"
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
@@ -182,6 +190,39 @@ CODE_SPAN_RE = re.compile(r"`+[^`]*`+")
 def run(args, cwd=None):
     p = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
     return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def folded(what, names, where, tail=""):
+    """Однотипное одной строкой: чего и сколько, куда легло и что именно.
+
+    Установка кладёт на машину десятки однотипных файлов, и строка на каждый
+    это один факт, разбитый на десяток строк: читать такой отчёт сверху вниз
+    нельзя, а сказать он должен ровно «столько-то, вот эти».
+    """
+    return "%s %d в %s%s: %s" % (what, len(names), where, tail, ", ".join(names))
+
+
+def ensure_package(name, why, fix):
+    """Недостающий пакет: доводка ставит его сама, раз человек позвал установку.
+
+    Ставит только тем менеджером, который на машине уже есть: чужого devkit не
+    подставляет, и без менеджера остаётся находка с причиной и командой. Отдаёт
+    (находки, сделанное).
+    """
+    manager = shutil.which(PACKAGER)
+    if not manager:
+        # Чужой менеджер тут не называется: какой на этой машине, devkit не
+        # знает, а придуманная команда хуже её отсутствия.
+        return ["%s; поставить нечем: пакетного менеджера %s на машине нет, ставить %s руками"
+                % (why, PACKAGER, name)], []
+    if not fix:
+        return ["%s; поставит devkitctl doctor --fix, руками %s install %s"
+                % (why, PACKAGER, name)], []
+    rc, out = run([manager, "install", name])
+    if rc != 0 or not shutil.which(name):
+        tail = (out.splitlines() or [""])[-1].strip()
+        return ["%s; %s install %s не прошёл (%s), поставить руками" % (why, PACKAGER, name, tail)], []
+    return [], ["поставлен пакет %s: %s install %s" % (name, PACKAGER, name)]
 
 
 def project_root(start):
@@ -574,15 +615,25 @@ def check_binaries(fix):
                    or build.check_run(name, gobin / name, version, commit))
             if err:
                 findings.append(err)
+    done = []
     for name, why in broken:
         if binary_trouble(gobin / name, main, code_commit(main, name), mode,
                           stale.get(name, 0)) is not None:
             findings.append("%s %s; %s" % (name, why, how))
             continue
-        fixed.append("%s в %s: %s (%s)" % ((name, gobin) + update.binary_stamp(gobin / name)))
+        done.append((name, update.binary_stamp(gobin / name)))
         conflict = path_winner(name, gobin / name, gobin)
         if conflict:
             findings.append(conflict)
+    if done:
+        # Утилиты приезжают пачкой, и строка на каждую это одно и то же слово
+        # шесть раз подряд. Версия у них общая, а если нет, она называется у
+        # каждой: разнобой версий в PATH это то, что как раз надо увидеть.
+        versions = sorted({v for _, (v, _) in done})
+        names = [n if len(versions) == 1 else "%s (%s)" % (n, s[0]) for n, s in done]
+        word = "поставлены утилиты релиза" if tag else "собраны утилиты"
+        tailv = " (%s)" % versions[0] if len(versions) == 1 else ""
+        fixed.append(folded(word, names, gobin, tailv))
     return findings, fixed
 
 
@@ -604,6 +655,7 @@ def check_agent_defs(fix):
     # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
     # определение с ветки задачи уехало бы на машину во все проекты сразу.
     findings, fixed = [], []
+    laid, again = [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "agents" if (main / "kit" / "agents").is_dir() else DEVKIT / "kit" / "agents"
     dst_dir = Path(os.path.expanduser(AGENTS_DIR))
@@ -625,8 +677,7 @@ def check_agent_defs(fix):
                 # молча: отчёт называет, что именно переложил.
                 if fix and from_main:
                     shutil.copyfile(src, dst)
-                    fixed.append("определение агента %s разошлось с devkit, переложено из %s"
-                                % (dst, src))
+                    again.append(src.stem)
                 else:
                     findings.append("определение агента %s разошлось с devkit; обновить: %scp %s %s"
                                     % (dst, whence, src, dst))
@@ -634,11 +685,16 @@ def check_agent_defs(fix):
         if fix and from_main:
             dst_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
-            fixed.append("определение агента %s положено в %s" % (src.name, dst_dir))
+            laid.append(src.stem)
             continue
         findings.append("нет определения агента %s: effort из вердикта pick применять нечем, "
                         "спавн уйдёт на дефолтного агента; %scp %s %s"
                         % (dst, whence, src, dst))
+    if laid:
+        fixed.append(folded("положены определения агентов", laid, dst_dir))
+    if again:
+        fixed.append(folded("обновлены определения агентов", again, dst_dir,
+                            ", на машине они отстали от devkit"))
     return findings, fixed
 
 
@@ -648,6 +704,7 @@ def check_skills(fix):
     # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
     # kit/skills/ на машину не уезжает.
     findings, fixed = [], []
+    laid, again = [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "skills" if (main / "kit" / "skills").is_dir() else DEVKIT / "kit" / "skills"
     dst_dir = Path(os.path.expanduser(SKILLS_DIR))
@@ -661,17 +718,22 @@ def check_skills(fix):
             if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
                 if fix and from_main:
                     shutil.copyfile(src, dst)
-                    fixed.append("скилл %s разошёлся с devkit, переложен из %s" % (dst, src))
+                    again.append(name)
                 else:
                     findings.append("скилл %s разошёлся с devkit; обновить: %s" % (dst, how))
             continue
         if fix and from_main:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src, dst)
-            fixed.append("скилл %s положен в %s" % (name, dst.parent))
+            laid.append(name)
             continue
         findings.append("нет скилла %s: процедуру сессия по нему не подхватит и соберёт "
                         "на глаз; %s" % (dst, how))
+    if laid:
+        fixed.append(folded("положены скиллы", laid, dst_dir))
+    if again:
+        fixed.append(folded("обновлены скиллы", again, dst_dir,
+                            ", на машине они отстали от devkit"))
     return findings, fixed
 
 
@@ -752,21 +814,30 @@ def install_hooks(settings, gaps, devkit):
             group["hooks"] = []
             groups.append(group)
         group.setdefault("hooks", []).append({"type": "command", "command": cmd})
-        done.append("хук харнеса на %s: %s" % (event, cmd))
+        done.append((os.path.basename(tpl.split()[1]), event))
     settings.parent.mkdir(parents=True, exist_ok=True)
     tmp = settings.with_name(settings.name + ".devkit-tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(str(tmp), str(settings))
-    return done
+    if not done:
+        return []
+    # Уведомитель висит на четырёх событиях сразу, и четыре строки про него это
+    # одна и та же новость: хуки подключены. Поэтому события собираются к своему
+    # скрипту, а строка остаётся одна на всю раскладку.
+    events = {}
+    for script, event in done:
+        events.setdefault(script, []).append(event)
+    what = "; ".join("%s на %s" % (s, ", ".join(e)) for s, e in events.items())
+    return ["включены хуки харнеса %d в %s: %s" % (len(done), settings, what)]
 
 
-def check_notify_hook(text, settings):
+def check_notify_hook(text, settings, fix=False):
     findings = []
     # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
     src = DEVKIT / "hooks" / NOTIFY_HOOK
     spec = importlib.util.spec_from_file_location("devkit_notify", src)
     if not src.exists() or spec is None:
-        return findings
+        return findings, []
     mod = importlib.util.module_from_spec(spec)
     # Уведомитель берёт разбор входа из соседнего hookio, а загрузка по пути его
     # директорию в sys.path не кладёт.
@@ -774,18 +845,20 @@ def check_notify_hook(text, settings):
     try:
         spec.loader.exec_module(mod)
     except (OSError, SyntaxError, ImportError):
-        return findings
+        return findings, []
     finally:
         sys.path.pop(0)
     backend = mod.pick_backend()
     if backend:
-        # Слать есть чем, но клик по баннеру уводит в Finder: это не поломка, а
-        # предложение доставить недостающее, поэтому и находка мягкая.
+        # Слать есть чем, но клик по баннеру уводит в Finder. Отправителя с
+        # переходом ставит доводка: человек, позвавший установку, за пакетом на
+        # эту мелочь не пойдёт, а без перехода уведомления наполовину бесполезны.
         if sys.platform == "darwin" and os.path.basename(backend) == "osascript":
-            findings.append("уведомления идут, но клик по баннеру ведёт не в окно сессии: "
-                            "osascript постит от имени Script Editor, и клик открывает Finder; "
-                            "переход даёт terminal-notifier (brew install terminal-notifier)")
-        return findings
+            return ensure_package("terminal-notifier",
+                                  "уведомления идут, но клик по баннеру ведёт не в окно сессии: "
+                                  "osascript постит от имени Script Editor, и клик открывает "
+                                  "Finder; переход даёт terminal-notifier", fix)
+        return findings, []
     if sys.platform == "darwin":
         how = "на macOS шлём terminal-notifier или osascript, а их нет в PATH"
     elif sys.platform.startswith("linux"):
@@ -793,7 +866,7 @@ def check_notify_hook(text, settings):
     else:
         how = "бэкенда под платформу %s в %s пока нет" % (sys.platform, NOTIFY_HOOK)
     findings.append("уведомлять нечем: %s; проверка канала: python3 %s --self-test" % (how, src))
-    return findings
+    return findings, []
 
 
 def check_machine(fix):
@@ -812,7 +885,9 @@ def check_machine(fix):
         text = settings.read_text(encoding="utf-8") if settings.exists() else ""
     else:
         findings += gap_findings
-    findings += check_notify_hook(text, settings)
+    nf, nd = check_notify_hook(text, settings, fix)
+    findings += nf
+    fixed += nd
     pf, pd = perms.check(settings, fix, None if from_main else main)
     findings += pf
     fixed += pd
@@ -836,18 +911,31 @@ def check_machine(fix):
     findings += gf
     fixed += gd
     if not shutil.which("tmux"):
-        findings.append("tmux не в PATH: agentctl quota refresh не снимет панель /usage, "
-                        "корректор останется без снимка; ставится пакетным менеджером (brew install tmux)")
-    f, d = check_quota(fix)
+        tf, td = ensure_package("tmux", "tmux не в PATH: agentctl quota refresh не снимет "
+                                        "панель /usage, и корректор pick останется без снимка", fix)
+        findings += tf
+        fixed += td
+    # Снимок квоты снимает хук SessionStart при первой же сессии, и мешает ему
+    # только нехватка tmux. Пока и хук на месте, и tmux есть, отсутствие снимка
+    # на свежей машине это не пробел, а ещё не наступившее событие.
+    if SESSION_HOOK not in text:
+        blocked = "хук SessionStart, который его снимает, не подключён"
+    elif not shutil.which("tmux"):
+        blocked = "хук SessionStart снимает его панелью /usage, а tmux на машине нет"
+    else:
+        blocked = ""
+    f, d = check_quota(fix, blocked)
     findings += f
     fixed += d
     return findings, fixed
 
 
-def check_quota(fix):
+def check_quota(fix, blocked=""):
     # Снимки квоты: переезд одиночного файла в директорию и возраст каждого
     # снимка. Директория заведена по харнесу, потому что лимиты у инструментов
-    # свои, и одним файлом их не описать.
+    # свои, и одним файлом их не описать. blocked это причина, по которой хук
+    # SessionStart снимок сам не снимет; пустая причина значит снимет, и звать
+    # человека снимать его руками тогда незачем.
     findings, fixed = [], []
     quota_dir = Path(os.path.expanduser(QUOTA_DIR))
     legacy = Path(os.path.expanduser(QUOTA_LEGACY))
@@ -866,9 +954,10 @@ def check_quota(fix):
             findings.append("снимок квоты лежит по старому пути %s: снимок стал директорией по файлу "
                             "на харнес; переложить: devkitctl doctor --fix (в %s)" % (legacy, moved))
     snaps = sorted(quota_dir.glob("*.local")) if quota_dir.is_dir() else []
-    if not snaps and not legacy.exists():
-        findings.append("нет снимка квоты в %s: корректор pick двигать вердикт не будет; "
-                        "снять: agentctl quota refresh" % quota_dir)
+    if not snaps and not legacy.exists() and blocked:
+        findings.append("нет снимка квоты в %s, и сам он не появится: %s; пока его нет, "
+                        "корректор pick вердикт двигать не будет, снять руками: "
+                        "agentctl quota refresh" % (quota_dir, blocked))
     for quota in snaps:
         taken = quota_taken(quota)
         if taken is None:

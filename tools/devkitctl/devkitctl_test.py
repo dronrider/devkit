@@ -11,7 +11,7 @@ import time
 import unittest
 from pathlib import Path
 
-from testenv import (BINARY_STUB, GO_STUB, SandboxCase, build, executable,
+from testenv import (BINARY_STUB, BREW_STUB, GO_STUB, SandboxCase, build, executable,
                      fake_home, git, git_init, go_cache_env, harness, read, rules, run,
                      stub_release, taken_at, update, write)
 
@@ -163,15 +163,16 @@ class ProjectFindingsTest(SandboxCase):
 
     @unittest.skipUnless(platform.system() == "Darwin", "клик по баннеру поддержан только на macOS")
     def test_7_click_goes_to_finder(self):
-        # Слать есть чем, но клик по баннеру уводит в Finder: доктор предлагает
-        # отправителя с переходом. Случай ровно macOS-ный, на другой платформе
-        # клик не поддержан ни одним бэкендом, и предлагать там нечего.
+        # Слать есть чем, но клик по баннеру уводит в Finder: доктор зовёт
+        # поставить отправителя с переходом, а ставит его --fix (DK-157), и в
+        # подставном PATH пакетного менеджера нет. Случай ровно macOS-ный, на
+        # другой платформе клик не поддержан ни одним бэкендом.
         osascript = executable(self.box.root / "osascript")
         _, out = self.box.doctor(self.proj, env={"DEVKIT_NOTIFY_BACKEND": osascript})
         self.assertIn_("клик по баннеру ведёт не в окно сессии", out,
                        "нет находки про клик мимо окна сессии")
-        self.assertIn_("brew install terminal-notifier", out,
-                       "в находке про клик нет команды установки")
+        self.assertIn_("terminal-notifier", out,
+                       "в находке про клик нет отправителя, которым чинится переход")
         notifier = executable(self.box.root / "terminal-notifier")
         _, out = self.box.doctor(self.proj, env={"DEVKIT_NOTIFY_BACKEND": notifier})
         self.assertNotIn_("клик по баннеру", out,
@@ -425,6 +426,10 @@ class MachineContourTest(SandboxCase):
     настоящую в самопроверке незачем.
     """
 
+    # Про собранные утилиты доктор отчитывается одной строкой на всю пачку
+    # (DK-157), и ищется в ней имя нужной утилиты, а не строка на утилиту.
+    BUILT = r"починено: собраны утилиты \d+ в"
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -490,8 +495,8 @@ class MachineContourTest(SandboxCase):
                         "doctor --fix не разложил определения ревьюверов")
         self.assertFalse((agents / "README.md").exists(),
                          "--fix положил на машину markdown без frontmatter")
-        self.assertNotIn_("README.md положено", out,
-                          "--fix отчитался о README как об определении агента")
+        self.assertNotRegex(out, r"положены определения агентов[^\n]*README",
+                            "--fix отчитался о README как об определении агента")
         skills = self.mhome / ".claude" / "skills"
         self.assertTrue((skills / "board-batch" / "SKILL.md").is_file(),
                         "doctor --fix не разложил скилл")
@@ -502,7 +507,23 @@ class MachineContourTest(SandboxCase):
         for s in sorted((self.box.dk / "kit" / "skills").glob("*/SKILL.md")):
             self.assertTrue((skills / s.parent.name / "SKILL.md").is_file(),
                             "doctor --fix не разложил скилл %s" % s.parent.name)
-        self.assertIn_("tmux не в PATH", out, "--fix не ставит tmux, находка должна остаться")
+        # Однотипное свёрнуто в строку с числом и именами (DK-157): строка на
+        # каждый скилл, агента и хук делала вывод установки нечитаемым.
+        self.assertRegex(out, r"починено: положены скиллы \d+ в[^\n]*board-batch",
+                         "скиллы разложены строкой на скилл, а не одной строкой")
+        self.assertRegex(out, r"починено: положены определения агентов \d+ в[^\n]*exec-medium",
+                         "определения агентов разложены строкой на файл")
+        self.assertRegex(out, r"починено: включены хуки харнеса \d+ в[^\n]*quota-refresh\.sh",
+                         "хуки харнеса подключены строкой на хук")
+        # Права дописываются десятками, и перечислять их человеку незачем:
+        # в строке остаётся счёт, а сам перечень лежит в настройках.
+        self.assertRegex(out, r"починено: дописаны права машинного контура \d+ в",
+                         "нет строки про дописанные права")
+        self.assertNotRegex(out, r"права машинного контура[^\n]*Bash\(",
+                            "строка про права снова перечисляет сами правила")
+        self.assertIn_("tmux не в PATH", out, "--fix не ставит tmux, когда ставить нечем")
+        self.assertIn_("пакетного менеджера brew на машине нет", out,
+                       "находка про tmux не называет причину, по которой пакет не поставлен")
         self.assertIn_("agentctl quota refresh", out,
                        "--fix не снимает квоту, находка должна остаться")
         # Повторный --fix по машинному контуру уже ничего не чинит.
@@ -520,7 +541,7 @@ class MachineContourTest(SandboxCase):
         # devkit источник правды для промптов: --fix перекладывает разошедшееся
         # определение и называет в отчёте, что переложил, а не затирает молча.
         _, out = self.docm("--fix")
-        self.assertRegex(out, r"починено:.*exec-low\.md разошлось",
+        self.assertRegex(out, r"починено: обновлены определения агентов \d+ в[^\n]*exec-low",
                          "--fix не отчитался о перекладке разошедшегося определения")
         self.assertNotIn("своя строка", read(agent), "--fix не переложил разошедшееся определение")
         _, out = self.docm("--fix")
@@ -534,7 +555,7 @@ class MachineContourTest(SandboxCase):
                          "нет находки про разошедшийся скилл")
         self.assertIn("своя строка", read(skill), "doctor без --fix тронул скилл")
         _, out = self.docm("--fix")
-        self.assertRegex(out, r"починено:.*board-batch/SKILL\.md разошёлся",
+        self.assertRegex(out, r"починено: обновлены скиллы \d+ в[^\n]*board-batch",
                          "--fix не отчитался о перекладке скилла")
         self.assertNotIn("своя строка", read(skill), "--fix не переложил разошедшийся скилл")
         _, out = self.docm("--fix")
@@ -621,7 +642,8 @@ class MachineContourTest(SandboxCase):
         self.assertIn_("; чекаут devkit на ветке", out,
                        "находка про расхождение не называет режим чекаута")
         _, out = self.docm("--fix")
-        self.assertIn_("починено: agentctl в", out, "--fix не пересобрал разошедшийся бинарь")
+        self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
+                         "--fix не пересобрал разошедшийся бинарь")
         _, out = self.docm()
         self.assertNotIn_("собран из коммита", out,
                           "после пересборки находка про расхождение осталась")
@@ -634,7 +656,8 @@ class MachineContourTest(SandboxCase):
         self.assertIn_("agentctl не отвечает на --version", out,
                        "бинарь без --version не признан находкой")
         _, out = self.docm("--fix")
-        self.assertIn_("починено: agentctl в", out, "--fix не пересобрал бинарь без --version")
+        self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
+                         "--fix не пересобрал бинарь без --version")
         _, out = self.docm()
         self.assertNotIn_("не отвечает на --version", out,
                           "после пересборки находка про бинарь без --version осталась")
@@ -654,7 +677,8 @@ class MachineContourTest(SandboxCase):
             self.assertIn_("agentctl старее несохранённых правок go-кода", out,
                            "нет находки про несобранные правки")
             _, out = self.docm("--fix")
-            self.assertIn_("починено: agentctl в", out, "--fix не пересобрал несобранные правки")
+            self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
+                             "--fix не пересобрал несобранные правки")
             _, out = self.docm()
             self.assertNotIn_("несохранённых правок", out,
                               "после пересборки находка про несобранные правки осталась")
@@ -716,7 +740,8 @@ class MachineContourTest(SandboxCase):
             self.assertNotIn_("taskctl собран из коммита", out,
                               "правка кода agentctl объявила отставшим и taskctl")
             _, out = self.docm("--fix")
-            self.assertIn_("починено: agentctl в", out, "--fix не пересобрал отставший бинарь")
+            self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
+                             "--fix не пересобрал отставший бинарь")
             _, out = self.docm()
             self.assertNotIn_("собран из коммита", out,
                               "после пересборки находка про отставший бинарь осталась")
@@ -736,8 +761,8 @@ class MachineContourTest(SandboxCase):
         spath = "%s:%s:%s:%s" % (self.gostub, shadow, self.mhome / "go" / "bin", self.box.sys)
         _, out = self.docm("--fix", path=spath)
         self.assertIn_("в PATH выигрывает", out, "нет находки про затенённый бинарь")
-        self.assertNotIn_("починено: agentctl в", out,
-                          "затенённый бинарь пересобирается впустую")
+        self.assertNotRegex(out, self.BUILT + r"[^\n]*agentctl",
+                            "затенённый бинарь пересобирается впустую")
         _, out = self.docm("--fix", path=spath)
         self.assertNotIn_("починено", out, "повторный --fix при затенённом бинаре не должен менять")
         self.assertIn_("в PATH выигрывает", out, "находка про затенённый бинарь должна остаться")
@@ -756,8 +781,8 @@ class MachineContourTest(SandboxCase):
         self.stray()
         path = "%s:%s:%s:%s" % (self.gostub, localbin, self.mhome / "go" / "bin", self.box.sys)
         _, out = self.docm("--fix", path=path)
-        self.assertIn_("починено: agentctl в", out,
-                       "разошедшийся бинарь за симлинком не пересобран")
+        self.assertRegex(out, self.BUILT + r"[^\n]*agentctl",
+                         "разошедшийся бинарь за симлинком не пересобран")
         self.assertNotIn_("в PATH выигрывает", out,
                           "симлинк на тот же бинарь принят за чужую копию")
 
@@ -804,6 +829,122 @@ class MachineContourTest(SandboxCase):
                        "находка про каталог мимо PATH не даёт готовой строки для профиля")
 
 
+class PackagesTest(SandboxCase):
+    """Доводка двух пакетов и снимок квоты, который снимается сам (DK-157).
+
+    Пакетный менеджер тут заглушка: настоящий brew на машину самопроверки ничего
+    ставить не должен, а проверяется то, что доводка зовёт именно его, именно с
+    тем пакетом и только когда её позвали ключом.
+    """
+
+    def setUp(self):
+        super().setUp()
+        box = self.box
+        name = self._testMethodName
+        self.home = box.make_home(box.root / ("pkghome-%s" % name))
+        # Каталог, куда заглушка кладёт «поставленное»: он стоит в PATH первым,
+        # поэтому поставленный пакет тут же и находится.
+        self.pkgbin = box.root / ("pkgbin-%s" % name)
+        self.pkgbin.mkdir()
+        self.brewbin = box.root / ("brewbin-%s" % name)
+        self.brewbin.mkdir()
+        executable(self.brewbin / "brew", BREW_STUB)
+        self.brewlog = box.root / ("brewlog-%s" % name)
+        self.proj = box.project("pkgproj-%s" % name)
+        self.withbrew = "%s:%s:%s:%s" % (self.pkgbin, self.brewbin, box.dkbin, box.sys)
+        self.nobrew = "%s:%s:%s" % (self.pkgbin, box.dkbin, box.sys)
+
+    def docp(self, *args, **kw):
+        env = {"BREW_STUB_BIN": str(self.pkgbin), "BREW_STUB_LOG": str(self.brewlog)}
+        env.update(kw.pop("env", None) or {})
+        kw.setdefault("path", self.withbrew)
+        return self.box.doctor(self.proj, *args, home=self.home, env=env, **kw)
+
+    def called(self):
+        return read(self.brewlog) if self.brewlog.exists() else ""
+
+    def test_1_fix_installs_tmux(self):
+        # Человек позвал доводку, и tmux ставится ею: список «осталось сделать»
+        # после установки не должен звать за пакетом, который машина ставит сама.
+        _, out = self.docp("--fix")
+        self.assertIn_("поставлен пакет tmux: brew install tmux", out,
+                       "--fix не поставил tmux пакетным менеджером")
+        self.assertIn("install tmux", self.called(), "пакетный менеджер позван не с тем пакетом")
+        self.assertTrue(os.access(str(self.pkgbin / "tmux"), os.X_OK), "tmux не появился в PATH")
+        self.assertNotIn_("tmux не в PATH", out, "находка про tmux осталась после установки")
+
+    def test_2_plain_doctor_installs_nothing(self):
+        # Голый doctor машину не трогает: он называет находку и команду, а
+        # ставить пакет без ключа не вправе.
+        _, out = self.docp()
+        self.assertIn_("tmux не в PATH", out, "нет находки про tmux")
+        self.assertIn_("поставит devkitctl doctor --fix", out,
+                       "находка не называет команду, которая поставит пакет")
+        self.assertEqual(self.called(), "", "голый doctor позвал пакетный менеджер")
+        self.assertFalse((self.pkgbin / "tmux").exists(), "голый doctor поставил пакет")
+
+    def test_3_no_package_manager(self):
+        # Менеджера нет: находка остаётся, но с причиной, и чужого менеджера
+        # devkit не выдумывает.
+        _, out = self.docp("--fix", path=self.nobrew)
+        self.assertIn_("пакетного менеджера brew на машине нет", out,
+                       "находка не называет причину, по которой пакет не поставлен")
+        self.assertFalse((self.pkgbin / "tmux").exists(), "пакет поставлен без менеджера")
+        self.assertNotIn_("apt install", out, "доводка подставила чужой пакетный менеджер")
+
+    def test_4_failed_install_is_a_finding(self):
+        # Менеджер есть, а установка не прошла: молчать об этом нельзя, иначе
+        # находка исчезнет, а пакета не будет.
+        _, out = self.docp("--fix", env={"BREW_STUB_FAIL": "1"})
+        self.assertIn_("brew install tmux не прошёл", out, "провал установки не стал находкой")
+        self.assertIn_("No available formula", out, "находка не называет, чем ответил менеджер")
+
+    @unittest.skipUnless(platform.system() == "Darwin", "переход по клику поддержан только на macOS")
+    def test_5_notifier_is_installed_too(self):
+        # Клик по баннеру мимо окна сессии чинится тем же порядком: отправителя с
+        # переходом ставит доводка, а не человек руками.
+        osascript = executable(self.box.root / "osascript")
+        _, out = self.docp("--fix", env={"DEVKIT_NOTIFY_BACKEND": str(osascript)})
+        self.assertIn_("поставлен пакет terminal-notifier", out,
+                       "--fix не поставил отправителя с переходом по клику")
+        self.assertIn("install terminal-notifier", self.called(),
+                      "пакетный менеджер позван не с terminal-notifier")
+        self.assertNotIn_("клик по баннеру", out, "находка про клик осталась после установки")
+
+    def snapless(self):
+        (self.home / ".devkit" / "quota" / "claude-code.local").unlink()
+
+    def test_6_snapshot_is_taken_by_the_hook(self):
+        # Снимок квоты человеку снимать незачем: его снимает хук SessionStart при
+        # первой же сессии. Хук на месте, tmux поставлен, значит находки нет
+        # вовсе: звать человека за тем, что случится само, это ложный хвост.
+        self.snapless()
+        _, out = self.docp("--fix")
+        self.assertIn_("поставлен пакет tmux", out, "снимать панель нечем, и проверять нечего")
+        self.assertFalse((self.home / ".devkit" / "quota" / "claude-code.local").exists(),
+                         "снимок на месте, и находке про него неоткуда взяться")
+        self.assertNotIn_("нет снимка квоты", out,
+                          "находка про снимок горит там, где его снимет хук")
+
+    def test_7_snapshot_without_tmux(self):
+        # Единственное, что мешает хуку, это отсутствующий tmux, и поставить его
+        # нечем: тогда находка про снимок законна и называет причину.
+        self.snapless()
+        _, out = self.docp("--fix", path=self.nobrew)
+        self.assertIn_("нет снимка квоты", out, "снимок не снимется, а находки нет")
+        self.assertIn_("tmux на машине нет", out, "находка про снимок не называет причину")
+        self.assertIn_("agentctl quota refresh", out, "находка не называет команду съёма")
+
+    def test_8_snapshot_without_the_hook(self):
+        # Вторая причина: хук не подключён вовсе (машина, где раскладку не
+        # звали). Снимок сам не появится, и находка про него остаётся.
+        self.snapless()
+        drop_lines(self.home / ".claude" / "settings.json", "quota-refresh")
+        _, out = self.docp()
+        self.assertIn_("нет снимка квоты", out, "снимок не снимется, а находки нет")
+        self.assertIn_("не подключён", out, "находка про снимок не называет причину")
+
+
 class ReleaseFixTest(SandboxCase):
     """Машина потребителя: чекаут стоит на релизном теге, go в PATH нет вовсе, и
     расхождение доктор чинит скачиванием ассетов, а не сборкой. Гитхаб тут не
@@ -844,7 +985,8 @@ class ReleaseFixTest(SandboxCase):
         for t in build.tools(self.box.dk):
             self.assertEqual(update.binary_stamp(self.dest / t), (self.tag, self.box.commit),
                              "--fix не поставил %s из релиза: %s" % (t, out))
-        self.assertIn_("починено: taskctl в", out, "--fix не отчитался о поставленном бинаре")
+        self.assertRegex(out, r"починено: поставлены утилиты релиза \d+ в[^\n]*taskctl",
+                         "--fix не отчитался о поставленных бинарях одной строкой")
         _, out = self.docr()
         self.assertNotIn_("поставить бинари релиза", out,
                           "после установки находка про бинари осталась")
@@ -1151,7 +1293,8 @@ class HarnessHooksTest(SandboxCase):
         self.assertIn_("PostToolUse-хук check-symbols.py не подключён", out,
                        "доктор не заметил неподключённые хуки харнеса")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
-        self.assertIn_("хук харнеса на PostToolUse", out, "--fix не разложил хуки харнеса")
+        self.assertRegex(out, r"включены хуки харнеса \d+ в[^\n]*check-symbols\.py на PostToolUse",
+                         "--fix не разложил хуки харнеса")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]

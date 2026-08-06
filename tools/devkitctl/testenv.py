@@ -125,6 +125,33 @@ with open(out, "w", encoding="utf-8") as f:
 os.chmod(out, os.stat(out).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 ''' % PY
 
+# Заглушка пакетного менеджера: настоящий brew в самопроверке не участвует, а
+# проверяется то, что доводка зовёт именно его и именно с тем пакетом. Пакет она
+# кладёт исполняемым файлом в BREW_STUB_BIN (это каталог в подставном PATH),
+# позванное пишет в BREW_STUB_LOG, а BREW_STUB_FAIL просит отказать: без отказа
+# не проверить находку про непоставленный пакет.
+BREW_STUB = '''#!%s
+import os
+import stat
+import sys
+
+argv = sys.argv[1:]
+log = os.environ.get("BREW_STUB_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(" ".join(argv) + "\\n")
+if argv[:1] != ["install"] or len(argv) != 2:
+    sys.stderr.write("заглушка brew ждала install <пакет>: %%s\\n" %% " ".join(argv))
+    sys.exit(2)
+if os.environ.get("BREW_STUB_FAIL"):
+    sys.stderr.write("Error: No available formula with the name %%s\\n" %% argv[1])
+    sys.exit(1)
+path = os.path.join(os.environ["BREW_STUB_BIN"], argv[1])
+with open(path, "w", encoding="utf-8") as f:
+    f.write("#!/bin/sh\\nexit 0\\n")
+os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+''' % PY
+
 # Заглушка taskctl, которая доску всё-таки заводит: настоящий бинарь в PATH
 # самопроверки заменён на печать версии, а без доски проверять нечего. Строку
 # версии она печатает наравне с остальными заглушками: заглушка, промолчавшая на

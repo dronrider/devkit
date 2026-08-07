@@ -393,6 +393,22 @@ class Sandbox:
               "taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n" % taken_at(0))
         self.watch_agent(home)
         self.global_rules(home)
+        self.alt_sub(home)
+        return home
+
+    def alt_sub(self, home):
+        """Конфиг второй подписки в машинном слое: заполненный, как на машине,
+        где подписка заведена. Без него на чистом проекте горела бы находка про
+        неоткрывающееся окно, а проверяется он своими тестами."""
+        home = Path(home)
+        conf = home / ".devkit" / "claude-glm" / "settings.json"
+        write(conf, json.dumps({"env": {
+            "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "токен-стенда",
+            "ANTHROPIC_MODEL": "модель-стенда",
+        }}, ensure_ascii=False, indent=2) + "\n")
+        conf.parent.chmod(0o700)
+        conf.chmod(0o600)
         return home
 
     def watch_agent(self, home):

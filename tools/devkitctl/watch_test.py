@@ -112,6 +112,20 @@ class LookTest(Stand):
         self.assertIn(GOAL, notify[0][2], "в заголовке уведомления нет цели: %s" % notify[0])
         self.assertIn(str(self.proj.name), notify[0][3])
 
+    def test_shout_names_the_whole_resume_command(self):
+        # Сам цикл сторожок не поднимает, поэтому зов обязан нести команду
+        # продолжения целиком: путь до оболочки, цель и корень проекта. Человек
+        # её выполняет, а не собирает по доке, и путь тут абсолютный, потому
+        # что оболочка на машину не уезжает и в PATH её нет.
+        path = self.entry(seen_minutes=200)
+        self.runlog(200)
+        called, line, call = self.look(path)
+        self.assertTrue(called, line)
+        body = call.argv_with("notify.py")[0][3]
+        want = "python3 %s %s -C %s" % (
+            watch.DEVKIT / "kit" / "skills" / "goal-loop" / "goal-run.py", GOAL, self.proj)
+        self.assertIn(want, body, "в зове нет готовой команды продолжения: %s" % body)
+
     def test_stop_marked_in_entry(self):
         # Отметка стопа это и защита от баннера каждые пять минут, и тот самый
         # факт «стоп замечен», на который встаёт перезапуск витка.

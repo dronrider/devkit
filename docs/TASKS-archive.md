@@ -111,3 +111,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-155 | update не обновляется, пока в origin двигается служебный тег deployed | bug | P1 | 2026-08-06 | [tasks/archive/2026/DK-155.md](tasks/archive/2026/DK-155.md) |
 | DK-157 | Лог установки говорит по-человечески, а окружение доезжает без ручных brew | task | P2 | 2026-08-06 | [tasks/archive/2026/DK-157.md](tasks/archive/2026/DK-157.md) |
 | DK-160 | doctor из каталога проектов ползёт по чужим репозиториям и печатает сотни ложных находок | bug | P2 | 2026-08-07 | [tasks/archive/2026/DK-160.md](tasks/archive/2026/DK-160.md) |
+| DK-163 | doctor на машине потребителя требует обвязку разработчика devkit | bug | P2 | 2026-08-07 | [tasks/archive/2026/DK-163.md](tasks/archive/2026/DK-163.md) |

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -186,7 +187,7 @@ class GoalRunTests(unittest.TestCase):
         write_exec(os.path.join(root, "bin", "claude"), CLAUDE_STUB)
         return root
 
-    def goal_run(self, root, *args):
+    def goal_run(self, root, *args, pause="0"):
         # -C всегда назван явно, как в реальном вызове из SKILL.md: без него
         # оболочка берёт корень из pwd процесса, а голый os.getcwd() в python
         # разворачивает симлинк /var -> /private/var на macOS там, где
@@ -197,6 +198,10 @@ class GoalRunTests(unittest.TestCase):
         env["HOME"] = os.path.join(root, "home")
         env["STAND_ROOT"] = root
         env["GOAL_RUN"] = RUN
+        # Пауза между попытками поднять вставший виток: живому циклу она нужна
+        # (обрыв на стороне API немедленный повтор встретит тем же обрывом),
+        # стенду она только добавляет секунд, поэтому по умолчанию ноль.
+        env["DEVKIT_GOAL_RETRY_PAUSE"] = pause
         proj = os.path.join(root, "proj")
         return subprocess.run([RUN, "-C", proj] + list(args), cwd=proj, env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -318,19 +323,94 @@ class GoalRunTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "брошенный замок не снялся: %s" % p.stdout)
         self.assertEqual(self.turns_done(root), 1, "цикл после брошенного замка не пошёл")
 
+    # -- стоп без вердикта и попытки ----------------------------------------
+
+    def assert_no_verdict(self, root, p, what):
+        # Виток без вердикта поднимается заново, и цикл встаёт исчерпанными
+        # попытками, а не первым же таким витком. Сколько было витков, столько
+        # и попыток: строка сценария у стенда повторяется. Проверка «не
+        # continue» тут в том, что цикл не ушёл по сценарию дальше, а
+        # остановился поводом попыток.
+        self.assertEqual(p.returncode, 1, "%s сошло за вердикт: %s" % (what, p.stdout))
+        log = self.shell_log(root)
+        self.assertIn("остановлен: попытки исчерпаны", log, "%s: цикл встал не на попытках" % what)
+        self.assertNotIn("маркер continue", log, "%s разобрано как continue" % what)
+        self.assertEqual(self.turns_done(root), 3, "%s: витков не по пределу попыток" % what)
+
+    def test_stop_without_verdict_restarts_the_turn(self):
+        # Обрыв середины ответа убивает сессию витка, а не цель: состояние на
+        # диске, и виток поднимается заново той же командой. Два обрыва подряд
+        # цикл переживает, третий виток доводит цель до маркера.
+        root = self.stand("crash", "crash", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 3, "оболочка не подняла виток заново")
+        log = self.shell_log(root)
+        self.assertIn("перезапуск после стопа без вердикта", log)
+        self.assertIn("попытка 2 из 3", log)
+        self.assertIn("остановлен: done", log)
+
+    def test_retry_limit_stops_the_loop_loudly(self):
+        # Сломанный виток не долбится вечно: три попытки подряд, и это громкий
+        # стоп с названным поводом, а не тихое зацикливание.
+        root = self.stand("crash")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertEqual(self.turns_done(root), 3, "предел попыток не удержал цикл")
+        log = self.shell_log(root)
+        self.assertIn("остановлен: попытки исчерпаны", log)
+        self.assertIn("уровень громкий", self.notify_log(root))
+
+    def test_retry_counter_resets_on_a_turn_with_a_verdict(self):
+        # Счётчик попыток считает стопы подряд: виток, ответивший маркером,
+        # его сбрасывает, иначе редкие обрывы за длинный прогон складывались бы
+        # в ложный стоп.
+        root = self.stand("crash", "continue запись", "crash", "crash", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 5, "счётчик попыток не сбросился витком с маркером")
+
+    def test_retry_waits_between_attempts(self):
+        # Между попытками цикл ждёт: обрыв на стороне API немедленный повтор
+        # встретит тем же обрывом. Пауза стенда секунда, живая двадцать.
+        root = self.stand("crash")
+        began = time.time()
+        p = self.goal_run(root, "DK-100", "--foreground", pause="1")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertGreaterEqual(time.time() - began, 2, "перезапуск пошёл без паузы")
+        self.assertIn("через 1 с", self.shell_log(root))
+
+    def test_terminal_marker_is_not_retried(self):
+        # Граница перезапуска: вердикт остаётся стопом. Виток сказал
+        # wait-human, и второго витка нет.
+        root = self.stand("wait-human запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 1, "вердикт витка пошёл на перезапуск")
+        self.assertNotIn("перезапуск", self.shell_log(root))
+
+    def test_funnel_is_not_reset_by_retries(self):
+        # Воронка и попытки считаются раздельно, но воронку перезапуск не
+        # обнуляет: молчащие continue доводят цикл до стопа воронкой, даже
+        # если между ними виток обрывался.
+        root = self.stand("continue молчок", "crash", "continue молчок", "continue молчок",
+                          "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("остановлен: воронка", self.shell_log(root))
+        self.assertEqual(self.turns_done(root), 4, "обрыв посреди воронки сбросил её счётчик")
+
     # -- авария витка -----------------------------------------------------
 
     def test_answer_without_marker_is_a_crash(self):
         root = self.stand("none запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
+        self.assert_no_verdict(root, p, "ответ без маркера")
 
     def test_fenced_marker_is_not_a_marker(self):
         root = self.stand("fenced запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1)
-        self.assertEqual(self.turns_done(root), 1, "маркер в ограде поднял следующий виток")
+        self.assert_no_verdict(root, p, "маркер в ограде")
 
     def test_marker_with_trailing_text_is_not_a_marker(self):
         # Постановка требует сравнение целиком: строка «marker: continue
@@ -340,9 +420,7 @@ class GoalRunTests(unittest.TestCase):
         # а тест обязан на этом упасть.
         root = self.stand("trailing запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1, "текст после маркера на той же строке сошёл за continue")
-        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
-        self.assertEqual(self.turns_done(root), 1, "текст после маркера поднял следующий виток")
+        self.assert_no_verdict(root, p, "текст после маркера на той же строке")
 
     def test_marker_with_leading_text_is_not_a_marker(self):
         # Симметричная форма: текст перед маркером на той же строке. Startswith
@@ -351,18 +429,14 @@ class GoalRunTests(unittest.TestCase):
         # отклонять и эту.
         root = self.stand("leading запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1, "текст перед маркером на той же строке сошёл за continue")
-        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
-        self.assertEqual(self.turns_done(root), 1, "текст перед маркером поднял следующий виток")
+        self.assert_no_verdict(root, p, "текст перед маркером на той же строке")
 
     def test_marker_with_trailing_dot_is_not_a_marker(self):
         # Точка в конце строки: тоже префикс «marker: continue», и тоже
         # ловит ту же мутацию сравнения, что и текст после маркера.
         root = self.stand("dotted запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1, "точка после маркера сошла за continue")
-        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
-        self.assertEqual(self.turns_done(root), 1, "маркер с точкой поднял следующий виток")
+        self.assert_no_verdict(root, p, "точка после маркера")
 
     def test_marker_followed_by_more_text_after_blank_line_is_not_a_marker(self):
         # «После маркера не остаётся ничего, даже пустой строки»: пустая
@@ -372,15 +446,13 @@ class GoalRunTests(unittest.TestCase):
         # последнюю строку, а не остановиться на маркере раньше срока.
         root = self.stand("blankreal запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1, "маркер с текстом после пустой строки сошёл за continue")
-        self.assertIn("остановлен: виток без маркера", self.shell_log(root))
-        self.assertEqual(self.turns_done(root), 1, "маркер с текстом после пустой строки поднял виток")
+        self.assert_no_verdict(root, p, "текст после маркера через пустую строку")
 
-    def test_client_crash_stops_the_loop(self):
+    def test_client_crash_is_a_stop_without_verdict(self):
         root = self.stand("crash запись")
         p = self.goal_run(root, "DK-100", "--foreground")
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("остановлен: авария витка", self.shell_log(root))
+        self.assert_no_verdict(root, p, "упавшая сессия витка")
+        self.assertIn("авария витка", self.shell_log(root))
 
     # -- отказы на старте ---------------------------------------------------
 

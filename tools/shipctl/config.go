@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"

@@ -240,6 +240,37 @@ func TestProbeFailures(t *testing.T) {
 	}
 }
 
+// TestProbeBeforeSideEffects: пробник подтверждает подписку раньше побочных
+// действий. Задача без дерева и мёртвый endpoint: отказ обязан оставить
+// репозиторий и доску нетронутыми, иначе --probe защищает только там, где
+// защищать уже нечего (ревью DK-175).
+func TestProbeBeforeSideEffects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"токен протух"}`))
+	}))
+	defer srv.Close()
+
+	root, callLog := setup(t, "", "")
+	altHome(t, altEnv(srv.URL))
+	log := stubEditor(t)
+	if _, err := cmdCode(root, CodeParams{ID: "XR-002", Probe: true}); err == nil {
+		t.Fatal("мёртвая подписка должна кончаться отказом")
+	}
+	if wt := gitT(t, root, "worktree", "list"); strings.Contains(wt, "xr-002") {
+		t.Errorf("отказ пробника оставил после себя дерево задачи:\n%s", wt)
+	}
+	if br := gitT(t, root, "branch", "--list", "xr-002"); br != "" {
+		t.Errorf("отказ пробника оставил после себя ветку задачи: %q", br)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move XR-002 in-progress") {
+		t.Errorf("отказ пробника сдвинул доску в In progress: %q", calls)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Error("окно открылось при мёртвой подписке")
+	}
+}
+
 // TestProbeWithoutToken: без токена пробник отказывается сразу, не ходя в сеть,
 // и говорит, какого ключа не хватает.
 func TestProbeWithoutToken(t *testing.T) {

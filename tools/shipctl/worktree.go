@@ -79,6 +79,13 @@ func primaryRoot(root string) (string, string, error) {
 	return rp, rt, nil
 }
 
+// treePath: дерево задачи лежит рядом с проектом и называется ../<проект>-<id>.
+// Правило одно на start и на code, иначе dry-run обещал бы одно место, а start
+// заводил дерево в другом.
+func treePath(codeRoot, ref string) string {
+	return filepath.Join(filepath.Dir(codeRoot), filepath.Base(codeRoot)+"-"+strings.ToLower(ref))
+}
+
 // branchOfTask: ветка называется по ID строчными, с хвостом-слагом или без
 // (`dk-005`, `dk-005-worktree`). Точного имени merge не знает, поэтому матч
 // по префиксу до дефиса.
@@ -262,7 +269,7 @@ func cmdStart(root string, p StartParams) (string, error) {
 			}
 		}
 	}
-	wtPath := filepath.Join(filepath.Dir(codeRoot), filepath.Base(codeRoot)+"-"+low)
+	wtPath := treePath(codeRoot, low)
 	if _, err := os.Stat(wtPath); err == nil {
 		return "", fmt.Errorf("директория %s уже существует, сначала прибрать её", wtPath)
 	}

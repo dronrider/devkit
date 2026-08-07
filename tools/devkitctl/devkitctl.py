@@ -179,6 +179,18 @@ QUOTA_LEGACY_HARNESS = "claude-code"
 # звала бы переснимать, а вторая молчала.
 QUOTA_MAX_AGE = 45 * 60
 QUOTA_TIME_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M")
+# Каталог конфига второй подписки: клиент claude читает его по CLAUDE_CONFIG_DIR,
+# а окно редактора туда направляет shipctl code (altConfigHome в
+# tools/shipctl/editor.go, путь там же от домашнего каталога). Слой машинный, а
+# не проектный: подписка принадлежит машине, и копия ключа в каждом репозитории
+# разошлась бы сама собой.
+ALT_SUB_DIR = "~/.devkit/claude-glm"
+ALT_SUB_SETTINGS = "settings.json"
+# Ключи секции env, без которых окно второй подписки не работает: endpoint,
+# токен и модель. Болванка кладётся с пустыми значениями, потому что берутся они
+# в кабинете подписки и придумать их автоматике нечем; сам токен в находки не
+# печатается никогда, у него только признак «есть» или «нет».
+ALT_SUB_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL")
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
 RUN_LOG = ".devkit/log"
@@ -1040,6 +1052,9 @@ def check_machine(fix):
     f, d = check_quota(fix, blocked)
     findings += f
     fixed += d
+    f, d = check_alt_sub(fix)
+    findings += f
+    fixed += d
     return findings, fixed
 
 
@@ -1082,6 +1097,72 @@ def check_quota(fix, blocked=""):
             findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
                             "сдвиг вверх потерян; переснять: agentctl quota refresh"
                             % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))
+    return findings, fixed
+
+
+def check_alt_sub(fix):
+    # Конфиг второй подписки в машинном слое: без него shipctl code окна не
+    # откроет, а с недописанным endpoint окно молча уйдёт на первую подписку, и
+    # промах виден только по счёту в конце недели. Раскладку каталога делает
+    # --fix, значения оставляет пользователю: endpoint и токен берутся в
+    # кабинете подписки, и автоматике их взять неоткуда.
+    findings, fixed = [], []
+    d = Path(os.path.expanduser(ALT_SUB_DIR))
+    settings = d / ALT_SUB_SETTINGS
+    doc, env, broken = {}, {}, ""
+    if settings.exists():
+        try:
+            doc = json.loads(settings.read_text(encoding="utf-8"))
+        except ValueError as e:
+            broken = "не читается как json (%s)" % e
+        if not broken and not isinstance(doc, dict):
+            broken = "лежит не объектом json"
+        if not broken:
+            env = doc.get("env") or {}
+            if not isinstance(env, dict):
+                broken = "держит секцию env не объектом json"
+        if broken:
+            # Чинить содержимое --fix не берётся: там мог остаться дописанный
+            # руками токен, и переписать файл значило бы его потерять.
+            return ["конфиг второй подписки %s %s: окно shipctl code не откроется; поправить "
+                    "руками либо снести файл и переразложить болванку (devkitctl doctor --fix)"
+                    % (settings, broken)], []
+    missing = [k for k in ALT_SUB_KEYS if k not in env]
+    if missing and not fix:
+        return ["%s: окно на второй подписке (shipctl code) не откроется, разложить болванку: "
+                "devkitctl doctor --fix, дальше вписать в неё endpoint и токен"
+                % ("нет конфига второй подписки %s" % settings if not settings.exists() else
+                   "в конфиге второй подписки %s нет ключей %s" % (settings, ", ".join(missing)))], []
+    if missing:
+        for key in missing:
+            env[key] = ""
+        doc["env"] = env
+        # Права сужаются сразу при раскладке, а не проверкой ниже: свежая
+        # болванка иначе отчитывалась бы о починке того, что сама и завела.
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        settings.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        settings.chmod(0o600)
+        fixed.append("разложена болванка конфига второй подписки %s (ключи %s), "
+                     "права сужены: там будет лежать токен" % (settings, ", ".join(missing)))
+    # В файле лежит токен, и читать его посторонним ни к чему. Права сужаются
+    # и на каталоге: settings.json в нём не единственный, клиент кладёт рядом
+    # своё.
+    for path, want in ((d, 0o700), (settings, 0o600)):
+        mode = path.stat().st_mode & 0o777
+        if not mode & 0o077:
+            continue
+        if fix:
+            path.chmod(want)
+            fixed.append("сужены права %s до %o: там лежит токен второй подписки" % (path, want))
+        else:
+            findings.append("у %s права %o: там лежит токен второй подписки, сузить: "
+                            "devkitctl doctor --fix (chmod %o %s)" % (path, mode, want, path))
+    empty = [k for k in ALT_SUB_KEYS if not str(env.get(k) or "").strip()]
+    if empty:
+        findings.append("в конфиге второй подписки %s пустые ключи %s: пока они пусты, окно "
+                        "shipctl code либо не откроется, либо уйдёт на первую подписку молча; "
+                        "вписать значения второй подписки (в devkit они не едут, машинный слой "
+                        "лежит вне репозиториев)" % (settings, ", ".join(empty)))
     return findings, fixed
 
 

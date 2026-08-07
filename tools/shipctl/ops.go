@@ -59,8 +59,11 @@ func runShellLimit(root, cmdStr string, limit time.Duration) (string, bool, erro
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	// Буфер читается только после Wait: до него вывод в него льют горутины
+	// exec.Cmd, и чтение вперёд Wait это гонка, а не просто неполный вывод.
 	if limit <= 0 {
-		return buf.String(), false, <-done
+		err := <-done
+		return buf.String(), false, err
 	}
 	timer := time.NewTimer(limit)
 	defer timer.Stop()

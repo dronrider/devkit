@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
+	"time"
 	"unicode"
 )
 
@@ -32,12 +35,57 @@ func git(root string, args ...string) (string, error) {
 }
 
 // runShell выполняет команду теста или выката: они приходят строкой из флага
-// и могут содержать пайпы, поэтому sh -c, а не argv.
+// и могут содержать пайпы, поэтому sh -c, а не argv. Без предела времени.
 func runShell(root, cmdStr string) (string, error) {
+	out, _, err := runShellLimit(root, cmdStr, 0)
+	return out, err
+}
+
+// runShellLimit это тот же запуск, но с пределом времени: за пределом команда
+// убивается, второе значение говорит, что кончилось именно ожидание, а не
+// команда. Убивается вся группа процессов, а не один sh: выкат обычно зовёт
+// сборку или ssh, и смерть оболочки оставила бы потомков висеть дальше
+// (инцидент DK-153: сборка ждала неподнятый демон Docker). Нулевой limit это
+// прежнее поведение без предела, по нему гоняются тесты: их ограничивает
+// собственный таймаут прогона, и предел выката им не указ.
+func runShellLimit(root, cmdStr string, limit time.Duration) (string, bool, error) {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = root
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if err := cmd.Start(); err != nil {
+		return "", false, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	if limit <= 0 {
+		return buf.String(), false, <-done
+	}
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return buf.String(), false, err
+	case <-timer.C:
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		return buf.String(), true, fmt.Errorf("команда не кончилась за %s и убита", limit)
+	}
+}
+
+// deployProblem говорит, что стряслось с выкатом: короткое для заголовка
+// уведомления, развёрнутое для текста ошибки. Вставшая команда называется
+// целиком вместе со временем ожидания и ключом, которым предел двигают: без
+// этого по одному хвосту вывода (а его у вставшей команды обычно нет) понять
+// нечего.
+func deployProblem(cmdStr string, timedOut bool, limit time.Duration) (short, full string) {
+	if !timedOut {
+		return "упал", "упал"
+	}
+	short = fmt.Sprintf("встал и убит по пределу %s", limit)
+	return short, fmt.Sprintf("%s: команда `%s` не кончилась за %s; предел двигается ключом deploy_timeout в %s",
+		short, cmdStr, limit, deployConfigPath)
 }
 
 func tail(s string) string {
@@ -755,9 +803,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	switch {
 	case deploy.run != "":
-		if out, err := runShell(root, deploy.run); err != nil {
-			note := notify(root, fmt.Sprintf("%s: выкат %s упал", filepath.Base(root), p.ID), out)
-			return "", fmt.Errorf("слито, но выкат упал, задача остаётся в In progress:\n%s%s", tail(out), note)
+		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
+			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
+			note := notify(root, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+tail(out))
+			return "", fmt.Errorf("слито, но выкат %s, задача остаётся в In progress:\n%s%s", full, tail(out), note)
 		}
 		msg = append(msg, "выкат прошёл")
 	case deploy.manual != "":
@@ -877,9 +926,10 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	switch {
 	case deploy.run != "":
-		if out, err := runShell(root, deploy.run); err != nil {
-			note := notify(root, fmt.Sprintf("%s: выкат поезда упал (%s)", filepath.Base(root), list), out)
-			return "", fmt.Errorf("выкат поезда упал, задачи остаются в In progress:\n%s%s", tail(out), note)
+		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
+			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
+			note := notify(root, fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+tail(out))
+			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, tail(out), note)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
 	case deploy.manual != "":
@@ -1183,9 +1233,10 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	case inTrain:
 		out = append(out, "задача была в поезде и до прода не доехала, повторный выкат не нужен")
 	case plan.run != "":
-		if o, err := runShell(root, plan.run); err != nil {
-			note := notify(root, fmt.Sprintf("%s: повторный выкат %s упал", filepath.Base(root), p.ID), o)
-			return "", fmt.Errorf("откат закоммичен, но повторный выкат упал:\n%s%s", tail(o), note)
+		if o, timedOut, err := runShellLimit(root, plan.run, plan.timeout); err != nil {
+			short, full := deployProblem(plan.run, timedOut, plan.timeout)
+			note := notify(root, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+tail(o))
+			return "", fmt.Errorf("откат закоммичен, но повторный выкат %s:\n%s%s", full, tail(o), note)
 		}
 		out = append(out, "повторный выкат прошёл")
 	case plan.manual != "":

@@ -193,6 +193,42 @@ def rule_sources(devkit, root, board, depth=DEPTH_FULL):
     return [core_of(p) if core_of(p).exists() else p for p in src]
 
 
+def stabilized_sources(existing_thin, sources):
+    # Источники правил, только у каждого путь тот, которым файл того же
+    # содержимого уже назван в существующем тонком файле, если такой ещё
+    # резолвится, а не путь, которым его назвал текущий вызов. Смена
+    # физического чекаута devkit между прогонами (чужой клон, временная копия
+    # для тестов) при том же содержимом правил не должна менять коммитируемый
+    # файл вовсе: новый путь переживёт только до уборки того, что его
+    # принесло, а старый как был рабочим, так и остаётся (DK-127). Содержимое
+    # действительно изменилось, значит это обычное обновление devkit, и путь
+    # меняется, как менялся всегда: отличить тут добросовестное обновление от
+    # подмены нечем, кроме имени файла и содержимого, а большего сигнала
+    # генератор не видит.
+    # Нормализация тут лексическая (os.path.normpath), не через симлинки
+    # (Path.resolve): относительный импорт лежит в тонком файле, посчитанный
+    # той же лексикой (os.path.relpath), и сравнивать нужно тем же способом,
+    # иначе на macOS честный `/var`, реально симлинк на `/private/var`, дал бы
+    # ложное расхождение и путь удлинился бы вместо того, чтобы остаться.
+    def norm(p):
+        return Path(os.path.normpath(str(p)))
+
+    if not existing_thin.is_file():
+        return sources
+    have = [Path(os.path.expanduser(t)) for t in import_targets(existing_thin)]
+    have = [norm(t if t.is_absolute() else existing_thin.parent / t) for t in have]
+    out = []
+    for src in sources:
+        normalized = norm(src)
+        picked = src
+        for t in have:
+            if t.name == src.name and t.is_file() and t != normalized and read_text(t) == read_text(src):
+                picked = t
+                break
+        out.append(picked)
+    return out
+
+
 def actual_depth(devkit, root, board, depth):
     # Глубина, которая доехала на самом деле. Ядро режется отдельной задачей, и
     # пока текст не нарезан, объявленная глубина остаётся обещанием: доезжает
@@ -446,7 +482,8 @@ def check_thin(name, profile, root, devkit, board, embed, depth, fix, agents_roo
     findings, fixed = [], []
     fname = profile.str_of("rules", "file")
     path = Path(root) / fname
-    want = thin_text(profile, root, devkit, board, embed, depth, agents_root=agents_root)
+    sources = None if embed else stabilized_sources(path, rule_sources(devkit, root, board, depth))
+    want = thin_text(profile, root, devkit, board, embed, depth, sources=sources, agents_root=agents_root)
     if not path.exists():
         if fix:
             path.write_text(want, encoding="utf-8")

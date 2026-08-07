@@ -240,6 +240,89 @@ class SelfHostingGuardTest(unittest.TestCase):
                          sources)
 
 
+class StablePathGuardTest(unittest.TestCase):
+    """DK-127, второй круг: обычный подключённый проект (devkit не
+    self-hosting) не должен переписывать свой тонкий файл на путь к другому
+    физическому чекауту devkit того же содержимого (чужой клон, временная
+    копия для тестов), а он именно так и делал раньше (замечание ревью,
+    воспроизведено `doctor --fix -C <проект>` из одноразового git-clone).
+    """
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="devkit-stable-"))
+        self.addCleanup(shutil.rmtree, str(self.work), True)
+        self.proj = self.work / "workspace" / "proj"
+        write(self.proj / "AGENTS.md", "# проект\n")
+        write(self.proj / "docs" / "TASKS.md", "# Задачи\n")
+        self.canon_dk = self.work / "canon" / "devkit"
+        write(self.canon_dk / "RULES.md", "# правила\n")
+        write(self.canon_dk / "RULES.board.md", "# правила доски\n")
+        shutil.copytree(str(DEVKIT_SRC / "kit" / "harness"), str(self.canon_dk / "kit" / "harness"))
+        self.home = self.work / "home"
+
+    def clone(self, name):
+        # Копия devkit того же содержимого в никак не связанной директории:
+        # так собран и одноразовый git-clone из ревью.
+        c = self.work / name / "devkit"
+        shutil.copytree(str(self.canon_dk), str(c))
+        return c
+
+    def test_stabilized_sources_prefers_the_already_resolvable_target(self):
+        thin = write(self.proj / "CLAUDE.md", "<!-- devkit:generated body=x -->\n@AGENTS.md\n"
+                                              "@../../canon/devkit/RULES.md\n")
+        clone = self.clone("elsewhere")
+        stable = rules.stabilized_sources(thin, [clone / "RULES.md"])
+        self.assertEqual(stable, [self.canon_dk / "RULES.md"], stable)
+
+    def test_stabilized_sources_falls_back_when_content_differs(self):
+        thin = write(self.proj / "CLAUDE.md", "<!-- devkit:generated body=x -->\n@AGENTS.md\n"
+                                              "@../../canon/devkit/RULES.md\n")
+        clone = self.clone("elsewhere")
+        write(clone / "RULES.md", "# другие правила\n")
+        stable = rules.stabilized_sources(thin, [clone / "RULES.md"])
+        self.assertEqual(stable, [clone / "RULES.md"], stable)
+
+    def test_stabilized_sources_without_existing_thin_file_is_a_no_op(self):
+        missing = self.proj / "CLAUDE.md"
+        clone = self.clone("elsewhere")
+        stable = rules.stabilized_sources(missing, [clone / "RULES.md"])
+        self.assertEqual(stable, [clone / "RULES.md"], stable)
+
+    def test_clone_of_the_same_content_does_not_touch_the_thin_file(self):
+        with fake_home(self.home):
+            findings, fixed = rules.check(self.proj, self.canon_dk, fix=True)
+        self.assertIn("CLAUDE.md сгенерирован для харнеса claude-code", fixed, (findings, fixed))
+        before = read(self.proj / "CLAUDE.md")
+        self.assertIn("canon/devkit", before, before)
+
+        clone = self.clone("elsewhere")
+        with fake_home(self.home):
+            findings, fixed = rules.check(self.proj, clone, fix=True)
+        after = read(self.proj / "CLAUDE.md")
+        self.assertEqual(after, before, "тонкий файл переписан на путь клона того же содержимого")
+        self.assertFalse([f for f in fixed if "CLAUDE.md" in f],
+                         "клон того же содержимого дал лишнюю правку: %r" % (fixed,))
+        self.assertFalse([f for f in findings if "CLAUDE.md" in f],
+                         "клон того же содержимого дал находку на исправном файле: %r" % (findings,))
+        self.assertNotIn("elsewhere", after, after)
+
+    def test_clone_with_changed_content_still_updates_normally(self):
+        # Осознанная граница: путь и содержимое изменились разом это обычное
+        # обновление devkit (git pull плюс переезд), генератор его доводит, как
+        # доводил всегда. Отличить такое обновление от подмены источника
+        # нечем, кроме имени файла и содержимого, а большего сигнала у
+        # генератора нет.
+        with fake_home(self.home):
+            rules.check(self.proj, self.canon_dk, fix=True)
+        clone = self.clone("elsewhere")
+        write(clone / "RULES.board.md", "# правила доски\n\nновая строка\n")
+        with fake_home(self.home):
+            findings, fixed = rules.check(self.proj, clone, fix=True)
+        self.assertTrue([f for f in fixed if "CLAUDE.md" in f],
+                        "обновлённое содержимое devkit не довелось до CLAUDE.md: %r/%r" % (findings, fixed))
+        self.assertIn("новая строка", read(clone / "RULES.board.md"))
+
+
 class GlobalPointUnitsTest(unittest.TestCase):
     """Юниты глобальной точки правил: tilde_path (представление от ~ там, где
     devkit лежит внутри home, иначе абсолютный путь) и global_target (тянет

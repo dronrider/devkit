@@ -13,8 +13,8 @@ headless-сессиями, пока виток отвечает маркером
 его гоняют тесты.
 
 Коды возврата: 0 штатный стоп по маркеру витка, 1 цикл остановила сама
-оболочка (виток без маркера, авария, воронка), 2 ошибка вызова или
-окружения, 3 цикл этой цели уже идёт.
+оболочка (исчерпанные попытки поднять вставший виток, воронка), 2 ошибка вызова
+или окружения, 3 цикл этой цели уже идёт.
 """
 import os
 import re
@@ -31,6 +31,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 NOTIFIER = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks", "notify.py"))
 PERMS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl", "perms.py"))
 FUNNEL_LIMIT = 3  # витков подряд без записи в «Журнале», после которых стоп
+# Стоп без вердикта (упавшая сессия, обрыв соединения, ответ без маркера) это
+# не приговор цели: состояние лежит на диске, и продолжение механическое, той
+# же командой. Поэтому такой виток поднимается заново, а предел держит цикл от
+# бесконечного долбления в сломанное, как FUNNEL_LIMIT держит его от воронки.
+RETRY_LIMIT = 3
+RETRY_PAUSE = 20  # секунд между попытками: обрыв на стороне API переживает пауза
+PAUSE_ENV = "DEVKIT_GOAL_RETRY_PAUSE"
 MARKERS = ("continue", "done", "over", "wait-human", "stuck")
 
 USAGE = """\
@@ -41,6 +48,10 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground]
 
   -C <корень>    проект с доской, по умолчанию текущая директория
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
+
+Виток, вставший без вердикта (упал, оборвался, ответил без маркера),
+поднимается заново, попыток подряд не больше трёх. Паузу между ними (20 секунд)
+перебивает DEVKIT_GOAL_RETRY_PAUSE, это для стендов.
 
 Ход цикла пишется в <корень>/.devkit/goal-<ID>.log: время, номер витка,
 маркер, код выхода.
@@ -313,17 +324,27 @@ class Loop:
                 break
         self.say("виток %d маркер %s код %d записей в журнале %d -> %d"
                   % (self.turn, marker or "нет", code, before, after))
+        # Стоп без вердикта возвращается наверх поводом, а не останавливает
+        # цикл прямо тут: решение, поднять виток заново или встать, принимает
+        # run_foreground, у которого есть счётчик попыток.
         if code != 0:
-            self.stop("авария витка", "сессия витка вышла с кодом %d, последняя строка: %s"
-                      % (code, last or "пусто"), 1)
+            return ("авария витка", "сессия витка вышла с кодом %d, последняя строка: %s"
+                    % (code, last or "пусто"), False)
         if not marker:
-            self.stop("виток без маркера",
-                      "последняя строка ответа: %s, а маркер идёт голой строкой marker: <имя>"
-                      % (last or "пусто"), 1)
+            return ("виток без маркера",
+                    "последняя строка ответа: %s, а маркер идёт голой строкой marker: <имя>"
+                    % (last or "пусто"), False)
         if marker != "continue":
             self.stop(marker, "виток кончился маркером %s, разбор в файле цели docs/tasks/%s.md"
                       % (marker, self.id), 0)
-        return after > before
+        return ("", "", after > before)
+
+    def retry_pause(self):
+        try:
+            pause = int(os.environ.get(PAUSE_ENV, ""))
+        except ValueError:
+            pause = RETRY_PAUSE
+        return max(0, pause)
 
     def run_foreground(self):
         if not self.take_lock():
@@ -332,10 +353,24 @@ class Loop:
             signal.signal(signal.SIGINT, lambda *_: sys.exit(1))
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
             idle = 0
+            tries = 0
             self.say("цикл цели %s начат в %s, pid %d" % (self.id, self.proj, os.getpid()))
             while True:
                 self.turn += 1
-                progressed = self.run_turn()
+                reason, text, progressed = self.run_turn()
+                if reason:
+                    tries += 1
+                    if tries >= RETRY_LIMIT:
+                        self.stop("попытки исчерпаны",
+                                  "%d витка подряд встали без вердикта, последний повод: %s (%s); "
+                                  "цикл продолжается той же командой, когда причина понята"
+                                  % (tries, reason, text), 1)
+                    pause = self.retry_pause()
+                    self.say("виток %d встал без вердикта (%s), перезапуск после стопа без вердикта: "
+                              "попытка %d из %d через %d с" % (self.turn, reason, tries + 1, RETRY_LIMIT, pause))
+                    time.sleep(pause)
+                    continue
+                tries = 0
                 if progressed:
                     idle = 0
                 else:

@@ -146,6 +146,30 @@ def check_groom(here):
     return fails
 
 
+def check_team(here):
+    # Командная работа по одной доске (DK-174): у скилла два несущих куска,
+    # захват с немедленным пушем и перечень столкновений. Столкновение, выпавшее
+    # из текста, это ветка разбора, которую сессия молча не пройдёт, а заметить
+    # пропажу можно только на живом столкновении двух рук, то есть поздно.
+    fails = []
+    text = read(os.path.join(here, "board-team", "SKILL.md"))
+    if text is None:
+        fails.append("board-team: скилл командной работы не заведён")
+        return fails
+    body = "\n" + text
+    if "\n## Захват задачи" not in body:
+        fails.append("board-team: нет раздела про захват, брать задачу при живых соседях нечем")
+    if "--push" not in text:
+        fails.append("board-team: захват не объявляется пушем, соседу его не увидеть")
+    n = body.count("\n**")
+    if n < 4:
+        fails.append("board-team: разобрано столкновений %d, а названо их четыре" % n)
+    for skill in ("board-task", "board-ship", "board-batch"):
+        if skill not in text:
+            fails.append("board-team: не называет соседа %s, граница процедур размыта" % skill)
+    return fails
+
+
 def check_rules_backlink(here):
     # Скилл ссылается на правило, из которого выведен: расхождение процедуры
     # с правилом иначе замечается только чтением обоих подряд.
@@ -165,6 +189,7 @@ def run(here, root):
     fails += check_procedural_rules(here, root)
     fails += check_goal_split(here)
     fails += check_groom(here)
+    fails += check_team(here)
     fails += check_rules_backlink(here)
     return fails, n
 

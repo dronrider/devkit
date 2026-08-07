@@ -221,32 +221,61 @@ def check_release(devkit):
     return findings
 
 
-def work_at_risk(devkit):
-    """Своя работа, которую унёс бы переход на тег. Меряется без @{u}: у
-    отвязанного HEAD upstream нет вовсе, и проверка через него отказывала бы на
-    машине потребителя каждый раз. Untracked-файлы в меру не входят, git checkout
-    их не теряет.
-
-    К --remotes добавлен --tags (форвард-фикс DK-164). Ветки origin в клоне
-    обновляет только клонирование: update дальше двигает исключительно теги
-    (--no-tags на своём fetch), и origin/main в клоне застывает на моменте
-    клонирования навсегда, а HEAD уезжает по тегам вперёд с каждым релизом. По
-    одним remotes мера считала бы этот разрыв чужой работой на втором же
-    обновлении подряд, хотя коммиты давно лежат в origin под именем тега.
-    Тег, полученный обычным fetch тегов, для меры так же надёжен, как ветка
-    origin: локальный тег появляется только оттуда.
+def dirty_tracked(devkit):
+    """Правка отслеживаемого: переход на тег унёс бы её. Часть меры «своя работа
+    не потеряется», которая не ходит в сеть и гоняется до fetch тегов, чтобы
+    человек с грязным деревом и без сети узнавал об этом первым сообщением, а
+    не отказом самого fetch.
     """
     rc, out = git(devkit, "status", "--porcelain", "--untracked-files=no")
     if rc == 0 and out:
         return ("в чекауте %s правлено отслеживаемое (%s): переход на тег унёс бы правку. "
                 "Спрятать её (git stash) либо закоммитить, потом повторить"
                 % (devkit, out.splitlines()[0].strip()))
-    rc, out = git(devkit, "rev-list", "--count", "HEAD", "--not", "--remotes", "--tags")
+    return ""
+
+
+def unpushed_commits(devkit):
+    """Коммиты, которых не достаёт ни ветке origin, ни известному релизному тегу.
+    Меряется без @{u}: у отвязанного HEAD upstream нет вовсе, и проверка через
+    него отказывала бы на машине потребителя каждый раз.
+
+    Якорь на тегах сужен до `--tags=v*` (второй круг DK-164, форвард-фикс
+    исходного `--tags`), и вызывать функцию нужно только после свежего
+    `git fetch --no-tags --prune origin refs/tags/v*:refs/tags/v*`, того же
+    самого, каким update и так тянет релизные теги. Причина в двух дырах,
+    которые голый `--tags` не видел:
+
+    - тег с чужим именем (`git tag foo`, `git tag backup`) никогда не приезжает
+      этим fetch и не должен считаться источником из origin, поэтому якорь взят
+      маской `v*`, точно как рефспек;
+    - но и маска сама по себе не спасает: локальный тег вида `v9.9.9-local`
+      совпадает с ней, будучи придуман руками. Спасает то, что `--prune` того же
+      fetch стоит на destination-паттерне `refs/tags/v*` и убирает из клона
+      именно такого самозванца раньше, чем эта функция успеет на него
+      посмотреть. Живой прогон это подтверждает: `git tag v9.9.9-local` в
+      клоне, следом тот самый fetch, и тег пропадает. Тег с именем вне маски
+      `v*` fetch не трогает никогда, и его на всякий случай дополнительно
+      отсекает сам паттерн меры.
+
+    Untracked-файлы и грязное отслеживаемое сюда не входят: это отдельная мера,
+    dirty_tracked, она не про сравнение с origin.
+    """
+    rc, out = git(devkit, "rev-list", "--count", "HEAD", "--not", "--remotes", "--tags=v*")
     if rc == 0 and out.isdigit() and int(out) > 0:
         return ("в чекауте %s коммитов, до которых не достаёт ни одна ветка origin и ни один "
-                "известный тег: %s. Перевод на тег их не удалит, а вот найти их потом будет "
-                "нечем: запушить и повторить" % (devkit, out))
+                "известный релизный тег: %s. Перевод на тег их не удалит, а вот найти их потом "
+                "будет нечем: запушить и повторить" % (devkit, out))
     return ""
+
+
+def work_at_risk(devkit):
+    """Композиция обеих мер «своя работа не потеряется» для прямых вызовов (тесты,
+    доктор), которым фетч тегов вокруг них не нужен: местные фикстуры и так уже
+    держат теги, эквивалентные пришедшим из origin. Внутри run() шаги разнесены
+    порознь вокруг fetch, см. unpushed_commits.
+    """
+    return dirty_tracked(devkit) or unpushed_commits(devkit)
 
 
 def code_stamp(devkit):
@@ -580,9 +609,11 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
                 "свежий клон на тег ключом --pin" % (branch, HOW % devkit))
             return 2
         if not check:
-            risky = work_at_risk(devkit)
-            if risky:
-                err(risky)
+            # Грязное дерево видно без сети, и об этом стоит сказать раньше
+            # отказа fetch, если сети как раз и нет.
+            dirty = dirty_tracked(devkit)
+            if dirty:
+                err(dirty)
                 return 2
         rc, out = git(devkit, "fetch", "--no-tags", "--prune", "origin", TAG_REFSPEC)
         if rc != 0:
@@ -598,6 +629,14 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
             for line in tell(devkit, tag, latest, branch):
                 log(line)
             return 0
+        # После fetch, не до него: якорь unpushed_commits это только что
+        # пришедшие --prune тегом v*, а до fetch среди них мог сидеть тег,
+        # поставленный человеком руками мимо origin (форвард-фикс DK-164,
+        # второй круг).
+        risky = unpushed_commits(devkit)
+        if risky:
+            err(risky)
+            return 2
         names = build.tools(devkit)
         commit = head_commit(devkit)
         have = installed(bin_dir(), names)

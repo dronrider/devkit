@@ -451,6 +451,21 @@ class RefusalTest(UpdateCase):
         self.assertEqual(self.head(), head)
         self.assertEqual(self.installed(), [])
 
+    def test_manual_tag_does_not_launder_unpushed_work(self):
+        # DK-164, второй круг ревью: тег, поставленный человеком руками поверх
+        # невыложенного коммита, не должен подделывать собой источник из
+        # origin. Имя нарочно совпадает с маской v*: голая маска без --prune
+        # свежим fetch тут не спасает.
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.10.0")
+        write(self.dk / "tools" / TOOLS[0] / "go.mod", GO_MOD % TOOLS[0] + "// своё\n")
+        self.commit("своя работа поверх тега")
+        git(self.dk, "tag", "v0.10.1-fake")
+        head = self.head()
+        self.assertEqual(self.update(), 2, self.out())
+        self.assertIn("не достаёт ни одна ветка origin", self.out())
+        self.assertEqual(self.head(), head, "отказавшая команда сдвинула чекаут")
+        self.assertEqual(self.installed(), [], "отказавшая команда поставила бинари")
+
     def test_check_does_not_refuse_on_a_branch(self):
         # --check ничего не двигает, и отказывать ему на ветке не за чем: это
         # единственный способ узнать про вышедший релиз.

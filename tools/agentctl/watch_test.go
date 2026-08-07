@@ -114,6 +114,43 @@ func TestSpendRegistersGoal(t *testing.T) {
 	}
 }
 
+// TestSpendKeepsForeignKeys: чужие ключи записи переживают гейт. В записи живёт
+// не только гейт: сторожок ставит туда отметку стопа, а перезапуск витка
+// (DK-169) положит счётчик попыток, и гейт стоит в начале каждого витка, так
+// что перезапись записи целиком стирала бы счётчик почти сразу.
+func TestSpendKeepsForeignKeys(t *testing.T) {
+	home := t.TempDir()
+	root := writeBoard(t)
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	dir := filepath.Join(home, ".devkit", "goals")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(dir, "T-100-"+watchSlug(root)+".watch")
+	if err := os.WriteFile(entry, []byte("goal = T-100\nseen = 2026-08-07T11:00:00\n"+
+		"stopped = 2026-08-07T11:40:00\nretries = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "run", ".", "-C", root, "spend", "--goal", "docs/tasks/T-100.md")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("spend: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "retries = 2") {
+		t.Errorf("гейт потерял чужой ключ записи:\n%s", body)
+	}
+	if strings.Contains(string(body), "stopped") {
+		t.Errorf("отметка стопа пережила гейт витка:\n%s", body)
+	}
+	if strings.Contains(string(body), "seen = 2026-08-07T11:00:00") {
+		t.Errorf("время витка не обновилось:\n%s", body)
+	}
+}
+
 func TestWatchSlugKeepsProjectsApart(t *testing.T) {
 	// Имя директории у проектов совпадает сплошь и рядом (клон и worktree), а
 	// запись реестра у каждого своя.

@@ -21,8 +21,10 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 надзора вместе со своей записью.
 
 Позвав, сторожок ставит в запись отметку `stopped`: второй раз по тому же стопу
-он молчит, а перезапуск витка встаёт на эту же отметку. Движение свежее отметки
-её снимает, снимает её и гейт следующего витка.
+он молчит. Движение свежее отметки её снимает, снимает её и гейт следующего
+витка. Сам цикл сторожок не поднимает, а называет в зове готовую команду
+продолжения: стоп, доживший до порога, оболочка своими попытками уже не
+пережила, а цикл в чате оболочкой не заменяется.
 
 Порог простоя берётся из `~/.devkit/watch.local` (строка `idle = <минуты>`), а
 без файла считается умолчанием в 45 минут: виток режет работу вызовами утилит
@@ -190,6 +192,16 @@ def shout(title, body, root, call=None):
     return out or "отправлено"
 
 
+def resume_command(goal, root, devkit=None):
+    """Команда продолжения цикла, готовая к запуску: путь до оболочки абсолютный,
+    цель и корень названы. Сам сторожок цикл не поднимает (разбор в
+    tools/devkitctl/README.md), поэтому в зове человеку остаётся ровно эта
+    строка, а не поиск по доке."""
+    devkit = DEVKIT if devkit is None else Path(devkit)
+    return "python3 %s %s -C %s" % (
+        devkit / "kit" / "skills" / "goal-loop" / "goal-run.py", goal, root)
+
+
 def moved_at(entry, root, path):
     """Когда цикл двигался последний раз. Первый источник это журнал запусков
     проекта, второй строка гейта в самой записи: без `.devkit` журнала нет, а
@@ -234,8 +246,9 @@ def look(path, now, idle, call=None):
         return False, "цель %s в %s: простой %s, по этому стопу уже позвали в %s" % (
             goal, root, say.human_age(gap), entry["stopped"])
     title = "цель %s: цикл стоит %s" % (goal, say.human_age(gap))
-    body = "движения в %s нет с %s при пороге %s; поднять цикл: goal-run.py %s -C %s" % (
-        os.path.basename(root.rstrip("/")), moved.strftime(STAMP), say.human_age(idle), goal, root)
+    body = "движения в %s нет с %s при пороге %s; продолжить цикл: %s" % (
+        os.path.basename(root.rstrip("/")), moved.strftime(STAMP), say.human_age(idle),
+        resume_command(goal, root))
     said = shout(title, body, root, call)
     entry["stopped"] = now.strftime(STAMP)
     write_entry(path, entry)

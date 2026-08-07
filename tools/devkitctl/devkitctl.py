@@ -1102,6 +1102,7 @@ def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
     local = None
+    release_self = False
     if not in_git:
         # Без репозитория нет ни проекта, ни обвязки: проектная половина
         # (правила, git-хуки, доска, обвязка выката, ссылки) по дереву не
@@ -1128,10 +1129,20 @@ def doctor(start, fix=False):
                 tf, td = corp_thin(clone, local, imports, fix)
                 findings += tf
                 fixed += td
+        # Вклейка правил сверяется всегда: она разбирает содержимое самого
+        # чекаута (сошлась ли AGENTS.md с RULES-файлами), и на исправном
+        # релизе молчит сама, а на сломанном это дефект самого выпуска, о нём
+        # стоит узнать и потребителю. На релизном чекауте самого devkit
+        # (детач на теге v*, машина потребителя из CONNECT.md) молчат только
+        # находки ниже: git-хуки нужны для коммита, которого потребитель не
+        # делает. Режим чекаута доктор уже различает и печатает строкой ниже
+        # (DK-149, решение 3), а на ветке (машина разработчика) признак ложный
+        # и состав проверок не меняется.
         rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
         findings += rfindings
         fixed += rfixed
-        if check_git_hooks(root):
+        release_self = Path(root).resolve() == DEVKIT.resolve() and update.on_release(DEVKIT)
+        if not release_self and check_git_hooks(root):
             if fix:
                 done, residual = connect_git_hooks(root)
                 (fixed if done else findings).append(done or residual)
@@ -1143,8 +1154,11 @@ def doctor(start, fix=False):
     findings += harness.check_profiles(str(DEVKIT / "kit" / "harness"))
     # Вес резидента и тело скилла (DK-029): карманы общие для всех проектов
     # devkit, находка не проектная, поэтому считается только для самого
-    # чекаута devkit, а не для каждого подключённого проекта.
-    if Path(root).resolve() == DEVKIT.resolve():
+    # чекаута devkit, а не для каждого подключённого проекта. На релизном
+    # чекауте devkit сама таблица читается потребителем как шум: бюджет
+    # контекста сессии считает тот, кто пишет скиллы и правила, не тот, кто
+    # devkit только поставил.
+    if Path(root).resolve() == DEVKIT.resolve() and not release_self:
         wlines, wfindings = weigh.pockets_report(root, DEVKIT)
         for ln in wlines:
             print(ln)
@@ -1159,7 +1173,7 @@ def doctor(start, fix=False):
     mfindings, mfixed = check_machine(fix)
     findings += ["машина: %s" % m for m in mfindings]
     fixed += mfixed
-    if in_git and (root / "docs" / "TASKS.md").exists():
+    if in_git and not release_self and (root / "docs" / "TASKS.md").exists():
         tc = shutil.which("taskctl")
         if tc:
             # Про отсутствие бинаря уже сказал машинный раздел, тут только lint.

@@ -342,6 +342,22 @@ class ReleaseFindingsTest(UpdateCase):
         self.assertEqual(update.check_release(self.dk), [],
                          "на новейшем теге доктору говорить не о чем")
 
+    def test_on_release(self):
+        # DK-163: doctor гасит по этому признаку находки, адресованные тому,
+        # кто devkit правит. Признак взводится только на отвязанном HEAD,
+        # который стоит ровно на релизном теге: тот же случай, который
+        # checkout_mode различает как «на релизе».
+        self.assertFalse(update.on_release(self.dk),
+                         "на ветке впереди релиза признак не должен взводиться")
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.9.0")
+        self.assertTrue(update.on_release(self.dk), "детач на релизном теге не распознан")
+        git(self.dk, "checkout", "--quiet", "-b", "rel", "v0.10.0")
+        self.assertFalse(update.on_release(self.dk),
+                         "именованная ветка на вершине релиза не должна считаться отвязанным чекаутом")
+        git(self.dk, "checkout", "--detach", "--quiet", "main")
+        self.assertFalse(update.on_release(self.dk),
+                         "отвязанный коммит без релизного тега это не релиз")
+
     def test_branch_has_no_exact_finding(self):
         # На машине разработчика чекаут стоит на ветке впереди тега, и «стоит X,
         # вышел Y» там неправда: тега на машине не стоит вовсе.

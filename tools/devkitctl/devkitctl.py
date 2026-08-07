@@ -41,7 +41,10 @@
       скиллы devkit в ~/.claude/skills, глобальная точка правил ([rules]
       global_file, обычно ~/.claude/CLAUDE.md) свежа и не правлена руками,
       tmux и снимки квоты в ~/.devkit/quota (снимка нет, а хук SessionStart и
-      tmux на месте, значит находки нет: снимок появится сам первой сессией);
+      tmux на месте, значит находки нет: снимок появится сам первой сессией),
+      носитель сторожка цикла цели (launchd-агент ru.devkit.goal-watch положен,
+      показывает на основной чекаут, поднят и оставляет свежий след в
+      ~/.devkit/goal-watch.log);
       профили харнесов devkit/kit/harness
       прогоняются через тот же валидатор, каким их читает agentctl; в чекауте
       devkit печатается вес резидента по карманам и находка при превышении
@@ -100,6 +103,14 @@
       объём: старт против истории, перезаписи префикса с их ценой, топ тулов по
       объёму результатов; правило подписи перезаписи в context.py
 
+  devkitctl watch [--idle <минуты>]
+      сторожок цикла цели: обойти реестр целей ~/.devkit/goals и позвать
+      громким уведомлением по тем, где движения нет дольше порога. Обычно его
+      будит launchd-агент, положенный doctor --fix, а руками команда зовётся
+      для проверки; порог по умолчанию в watch.py, перебивается строкой
+      idle = <минуты> в ~/.devkit/watch.local и флагом. Выход 1 значит, что
+      нашёлся вставший цикл
+
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
@@ -119,8 +130,10 @@ import shutil
 import subprocess
 import sys
 import update
+import watch
 import weigh
 from datetime import datetime
+from say import human_age
 from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent.parent
@@ -435,16 +448,6 @@ def connect_git_hooks(root):
     hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), root)
     run(["git", "config", "core.hooksPath", hooks_rel], cwd=root)
     return "git-хуки: core.hooksPath = %s" % hooks_rel, None
-
-
-def human_age(seconds):
-    minutes = int(seconds // 60)
-    if minutes < 60:
-        return "%dм" % minutes
-    hours = minutes // 60
-    if hours < 48:
-        return "%dч" % hours
-    return "%dд" % (hours // 24)
 
 
 def quota_taken(path):
@@ -995,6 +998,12 @@ def check_machine(fix):
     pf, pd = perms.check(settings, fix, None if from_main else main)
     findings += pf
     fixed += pd
+    # Носитель сторожка цикла цели: тем же рубежом, что хуки и права, потому
+    # что launchd-агент показывает на чекаут, и с ветки задачи ему на машину
+    # ехать нельзя.
+    watchf, watchd = watch.check(fix, main, from_main)
+    findings += watchf
+    fixed += watchd
     for check in (check_binaries, check_agent_defs, check_skills):
         f, d = check(fix)
         findings += f
@@ -1640,6 +1649,9 @@ def main(argv):
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
                    help="разбивка объёма по журналам сессий вместо журнала запусков")
+    g = sub.add_parser("watch", help="сторожок цикла цели: позвать по вставшим")
+    g.add_argument("--idle", type=int, default=0,
+                   help="порог простоя в минутах, по умолчанию %d" % (watch.IDLE // 60))
     w = sub.add_parser("weigh", help="живой замер веса резидента")
     w.add_argument("-C", dest="dir", default=".", help="директория проекта")
     w.add_argument("--runs", type=int, default=weigh.RUNS,
@@ -1662,13 +1674,18 @@ def main(argv):
         rc = build_binaries(a.release, a.out)
     elif a.cmd == "update":
         rc = update_devkit(a.pin, a.check, a.restarted)
+    elif a.cmd == "watch":
+        rc = watch.run(idle=a.idle * 60 if a.idle else None)
     else:
         rc = stats(a.dir, a.context)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,
     # то есть в боковой директории: в дереве клона .devkit нет. У build своего
     # -C нет, он собирает чекаут devkit, и запуск ложится в его же журнал.
-    root = project_root(getattr(a, "dir", str(DEVKIT)))[0]
-    log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
+    # Сторожок в журнал не пишет: по нему он и меряет движение цикла, и своя
+    # строка раз в пять минут выглядела бы движением там, где всё стоит.
+    if a.cmd != "watch":
+        root = project_root(getattr(a, "dir", str(DEVKIT)))[0]
+        log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
     return rc
 
 

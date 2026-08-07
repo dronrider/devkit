@@ -41,6 +41,10 @@ _GO_ENV = {}
 # Проверки вида «tmux не в PATH» иначе держались бы на том, чего нет в /usr/bin
 # на этой машине, и на другой краснели бы при исправном коде.
 SYS_TOOLS = ("git", "python3", "dirname", "mkdir", "chmod", "rm")
+# launchctl заглушкой, а не с машины: доктор спрашивает им, поднят ли агент
+# сторожка цикла цели, а доводка сама зовёт bootstrap, и настоящему launchctl
+# в самопроверке делать нечего.
+STUB_TOOLS = ("launchctl",)
 STUB = "#!/bin/sh\nexit 0\n"
 # Заглушка бинаря devkit: доктор судит о нём по строке --version, и заглушка,
 # отвечающая «exit 0», числилась бы у него собранной до релизной схемы.
@@ -298,6 +302,7 @@ import harness  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
 import update  # noqa: E402
+import watch  # noqa: E402
 import weigh  # noqa: E402
 
 
@@ -341,6 +346,8 @@ class Sandbox:
                 self.missing_tools.append(t)
                 continue
             os.symlink(found, str(self.sys / t))
+        for t in STUB_TOOLS:
+            executable(self.sys / t)
         # Каталог назначения devkit: туда ставит бинари update и туда же доктор
         # кладёт обёртку devkitctl. В подставном PATH он стоит своей записью,
         # иначе на чистом проекте горела бы находка про каталог мимо PATH.
@@ -384,7 +391,21 @@ class Sandbox:
                 shutil.copytree(str(d), str(home / ".claude" / "skills" / d.name))
         write(home / ".devkit" / "quota" / "claude-code.local",
               "taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n" % taken_at(0))
+        self.watch_agent(home)
         self.global_rules(home)
+        return home
+
+    def watch_agent(self, home):
+        """Носитель сторожка цикла цели: launchd-агент на копию devkit и свежий
+        след его прогона. Без него на чистом проекте горела бы находка про
+        неподключённый сторожок, а проверяется он своими тестами."""
+        home = Path(home)
+        main = Path(os.path.realpath(str(self.dk)))
+        log = home / ".devkit" / "goal-watch.log"
+        write(home / watch.PLIST[2:],
+              watch.plist_text(PY, main / "tools" / "devkitctl" / "devkitctl.py", log))
+        write(log, "%s целей под надзором 0, вставших 0\n"
+              % datetime.now().strftime(watch.STAMP))
         return home
 
     def global_rules(self, home, dk=None):

@@ -466,6 +466,20 @@ class RefusalTest(UpdateCase):
         self.assertEqual(self.head(), head, "отказавшая команда сдвинула чекаут")
         self.assertEqual(self.installed(), [], "отказавшая команда поставила бинари")
 
+    def test_tag_outside_the_mask_does_not_launder_unpushed_work(self):
+        # Вторая половина той же защиты: имя мимо маски v* фетч не пруннит, он
+        # про refs/tags/v* и только. Держит тут маска --tags=v* у самой меры, и
+        # без неё голый --tags засчитал бы «backup» за источник из origin.
+        git(self.dk, "checkout", "--detach", "--quiet", "v0.10.0")
+        write(self.dk / "tools" / TOOLS[0] / "go.mod", GO_MOD % TOOLS[0] + "// своё\n")
+        self.commit("своя работа поверх тега")
+        git(self.dk, "tag", "backup")
+        head = self.head()
+        self.assertEqual(self.update(), 2, self.out())
+        self.assertIn("не достаёт ни одна ветка origin", self.out())
+        self.assertEqual(self.head(), head, "отказавшая команда сдвинула чекаут")
+        self.assertEqual(self.installed(), [], "отказавшая команда поставила бинари")
+
     def test_check_does_not_refuse_on_a_branch(self):
         # --check ничего не двигает, и отказывать ему на ветке не за чем: это
         # единственный способ узнать про вышедший релиз.

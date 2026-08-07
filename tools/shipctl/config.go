@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const deployConfigPath = ".devkit/deploy.local"
@@ -22,14 +24,22 @@ type deployConfig struct {
 	Deploy     string
 	Test       string
 	Autonomous bool
+	Timeout    time.Duration
 }
+
+// defaultDeployTimeout это предел времени на шаг выката, когда ключа
+// deploy_timeout в конфиге нет. Запас взят к самому долгому штатному выкату,
+// какой встречался: кросс-сборка релизных бинарей с нуля идёт единицы минут,
+// получасовой предел её не режет, зато вставшая команда (сборка ждёт
+// неподнятый демон Docker) кончается провалом, а не вечным молчанием (DK-154).
+const defaultDeployTimeout = 30 * time.Minute
 
 // loadDeployConfig читает .devkit/deploy.local, если он есть. Формат простой:
 // строки вида key = value, # это комментарий, пустые строки пропускаются.
 // Отсутствие файла не ошибка: выкат тогда остаётся за пользователем, как и до
 // появления конфига.
 func loadDeployConfig(root string) (deployConfig, error) {
-	var c deployConfig
+	c := deployConfig{Timeout: defaultDeployTimeout}
 	f, err := os.Open(filepath.Join(root, deployConfigPath))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -56,6 +66,15 @@ func loadDeployConfig(root string) (deployConfig, error) {
 			c.Test = val
 		case "autonomous":
 			c.Autonomous, _ = strconv.ParseBool(val)
+		case "deploy_timeout":
+			// Молча вернуться к умолчанию нельзя: опечатка в пределе оставила бы
+			// выкат с чужим временем ожидания, а заметить это можно только на
+			// вставшей команде.
+			d, err := time.ParseDuration(val)
+			if err != nil || d <= 0 {
+				return c, fmt.Errorf("%s: deploy_timeout = %q не читается как предел времени, ждал длительность вида 90s, 30m, 2h", deployConfigPath, val)
+			}
+			c.Timeout = d
 		}
 	}
 	return c, sc.Err()
@@ -68,11 +87,14 @@ func loadDeployConfig(root string) (deployConfig, error) {
 // пушат результат сами, чтобы origin, доска и прод не разошлись.
 // warn это предупреждение про проблемное конфигурирование (например, autonomous
 // поднят, но команда выката не задана).
+// timeout это предел времени на команду выката: за ним она убивается вместе с
+// потомками, а выкат кончается провалом с внятным текстом.
 type deployPlan struct {
 	run        string
 	manual     string
 	autonomous bool
 	warn       string
+	timeout    time.Duration
 }
 
 // resolveDeploy решает, что делать с выкатом. Явный --deploy это указание
@@ -81,14 +103,17 @@ type deployPlan struct {
 // autonomous=true, иначе оставляем её пользователю, показав, что именно
 // запускать.
 func resolveDeploy(root, flag string) (deployPlan, error) {
-	if flag != "" {
-		return deployPlan{run: flag}, nil
-	}
 	cfg, err := loadDeployConfig(root)
 	if err != nil {
 		return deployPlan{}, err
 	}
-	plan := deployPlan{autonomous: cfg.Autonomous}
+	// Предел времени берётся из конфига и при явном --deploy: команда с флага
+	// виснет так же, как команда из конфига, а второго места, где предел
+	// настраивают, заводить незачем.
+	if flag != "" {
+		return deployPlan{run: flag, timeout: cfg.Timeout}, nil
+	}
+	plan := deployPlan{autonomous: cfg.Autonomous, timeout: cfg.Timeout}
 	switch {
 	case cfg.Deploy == "":
 		if cfg.Autonomous {

@@ -185,6 +185,61 @@ class DepthTest(unittest.TestCase):
             self.assertEqual(got, want, name)
 
 
+class SelfHostingGuardTest(unittest.TestCase):
+    """DK-127: чекаут devkit сам себе описываемый проект (self-hosting) берёт
+    правила из себя, а не из чужого чекаута, которым его назвали снаружи.
+    На диске имитируется сам инцидент: root это настоящий чекаут devkit,
+    devkit-параметр указывает на другую его копию (временную, для тестов).
+    """
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="devkit-guard-"))
+        self.addCleanup(shutil.rmtree, str(self.work), True)
+        self.root = self.work / "checkout"
+        write(self.root / "RULES.md", "# свои правила\n")
+        write(self.root / "RULES.board.md", "# свои правила доски\n")
+        write(self.root / "AGENTS.md", "# devkit\n")
+        write(self.root / "docs" / "TASKS.md", "# Задачи\n")
+        write(self.root / "tools" / "devkitctl" / "devkitctl.py", "# заглушка\n")
+        self.stray_dk = self.work / "elsewhere" / "devkit"
+        write(self.stray_dk / "RULES.md", "# чужие правила\n")
+        write(self.stray_dk / "RULES.board.md", "# чужие правила доски\n")
+        shutil.copytree(str(DEVKIT_SRC / "kit" / "harness"), str(self.stray_dk / "kit" / "harness"))
+        self.home = self.work / "home"
+
+    def test_is_devkit_checkout(self):
+        self.assertTrue(rules.is_devkit_checkout(self.root),
+                        "настоящий чекаут devkit не опознан")
+        self.assertFalse(rules.is_devkit_checkout(self.stray_dk),
+                         "копия без RULES.md ошибочно опознана чекаутом devkit")
+        self.assertFalse(rules.is_devkit_checkout(self.work),
+                         "пустая директория ошибочно опознана чекаутом devkit")
+
+    def test_self_hosting_root_ignores_the_devkit_it_was_named(self):
+        # Своё ядро devkit себе не импортирует, даже когда снаружи назвали
+        # чужой чекаут: единственный законный источник тут сам root.
+        sources = rules.rule_sources(self.stray_dk, self.root, True)
+        self.assertEqual(sources, [self.root / "RULES.board.md"], sources)
+
+    def test_stray_devkit_does_not_leak_into_thin_file(self):
+        with fake_home(self.home):
+            findings, fixed = rules.check(self.root, self.stray_dk, fix=True)
+        self.assertIn("CLAUDE.md сгенерирован для харнеса claude-code", fixed, (findings, fixed))
+        claude = read(self.root / "CLAUDE.md")
+        self.assertNotIn(str(self.stray_dk), claude, claude)
+        self.assertNotIn("elsewhere", claude, claude)
+        self.assertIn("@RULES.board.md", claude, claude)
+
+    def test_sibling_devkit_thin_file_still_generated(self):
+        # Регресс: обычный подключённый проект (devkit не self-hosting)
+        # продолжает брать правила из devkit, которого ему назвали, как раньше.
+        proj = self.work / "proj"
+        write(proj / "AGENTS.md", "# проект\n")
+        sources = rules.rule_sources(self.stray_dk, proj, True)
+        self.assertEqual(sources, [self.stray_dk / "RULES.md", self.stray_dk / "RULES.board.md"],
+                         sources)
+
+
 class GlobalPointUnitsTest(unittest.TestCase):
     """Юниты глобальной точки правил: tilde_path (представление от ~ там, где
     devkit лежит внутри home, иначе абсолютный путь) и global_target (тянет

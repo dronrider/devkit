@@ -204,6 +204,50 @@ class TestGroom(SkillTree):
         self.assertIn("board-groom: скилл грумминга не заведён", fails)
 
 
+class TestTeam(SkillTree):
+    NEIGHBOURS = "рядом board-task, board-ship и board-batch"
+    CLASHES = "\n".join("**столкновение %d.** разбор" % i for i in range(1, 5))
+
+    def write_team(self, body):
+        d = os.path.join(self.here, "board-team")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: board-team\ndescription: Звать, при нескольких руках.\n---\n\n%s\n" % body)
+
+    def test_full_team_passes(self):
+        self.write_team("%s\n\n## Захват задачи\n\ntaskctl move <ID> in-progress --push\n\n"
+                        "## Столкновения\n\n%s\n" % (self.NEIGHBOURS, self.CLASHES))
+        self.assertEqual(check_skills.check_team(self.here), [])
+
+    def test_missing_capture_section(self):
+        self.write_team("%s\n\n## Столкновения\n\n%s\n" % (self.NEIGHBOURS, self.CLASHES))
+        fails = check_skills.check_team(self.here)
+        self.assertTrue(any("нет раздела про захват" in f for f in fails), fails)
+
+    def test_capture_without_push(self):
+        self.write_team("%s\n\n## Захват задачи\n\ntaskctl move <ID> in-progress\n\n"
+                        "## Столкновения\n\n%s\n" % (self.NEIGHBOURS, self.CLASHES))
+        fails = check_skills.check_team(self.here)
+        self.assertTrue(any("захват не объявляется пушем" in f for f in fails), fails)
+
+    def test_lost_clash(self):
+        three = "\n".join("**столкновение %d.** разбор" % i for i in range(1, 4))
+        self.write_team("%s\n\n## Захват задачи\n\n--push\n\n## Столкновения\n\n%s\n"
+                        % (self.NEIGHBOURS, three))
+        fails = check_skills.check_team(self.here)
+        self.assertTrue(any("разобрано столкновений 3" in f for f in fails), fails)
+
+    def test_neighbour_not_named(self):
+        self.write_team("рядом board-task и board-ship\n\n## Захват задачи\n\n--push\n\n"
+                        "## Столкновения\n\n%s\n" % self.CLASHES)
+        fails = check_skills.check_team(self.here)
+        self.assertTrue(any("не называет соседа board-batch" in f for f in fails), fails)
+
+    def test_team_not_set_up(self):
+        fails = check_skills.check_team(self.here)
+        self.assertIn("board-team: скилл командной работы не заведён", fails)
+
+
 class TestRulesBacklink(SkillTree):
     def test_backlink_present(self):
         for name in ("board-task", "board-ship", "test-standard"):
@@ -227,6 +271,7 @@ class TestRunAndMain(SkillTree):
         self.assertTrue(any("board-task" in f for f in fails))
         self.assertTrue(any("goal-start" in f for f in fails))
         self.assertTrue(any("board-groom" in f for f in fails))
+        self.assertTrue(any("board-team" in f for f in fails))
 
 
 if __name__ == "__main__":

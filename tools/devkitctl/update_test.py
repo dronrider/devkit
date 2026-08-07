@@ -301,6 +301,28 @@ class CheckoutModeTest(UpdateCase):
         self.assertIn("не достаёт ни одна ветка origin", risky)
         self.assertIn(": 1", risky, "отказ не называет, сколько коммитов на кону")
 
+    def test_frozen_origin_main_does_not_stop_the_second_release_in_a_row(self):
+        # DK-164: у настоящего клона потребителя origin/main обновляет только
+        # клонирование, дальше update тянет исключительно теги. Второй переход
+        # по тегам подряд не должен принимать разрыв со ставшей веткой origin
+        # за собственную работу.
+        customer = self.root / "клиент"
+        run(["git", "clone", "--quiet", str(self.origin), str(customer)])
+        git(customer, "checkout", "--detach", "--quiet", "v0.10.0")
+        self.assertEqual(update.work_at_risk(customer), "",
+                         "первый переход на релиз уже спотыкается, стенд не готов")
+        # Выходит следующий релиз: коммит и тег на origin, ветку origin в
+        # клоне потребителя это не трогает вовсе.
+        self.mark(self.driver, "код тега 3")
+        self.commit("четвёртый")
+        git(self.dk, "tag", "v0.11.0")
+        git(self.dk, "push", "-q", "--tags", "origin", "main")
+        git(customer, "fetch", "--quiet", "--no-tags", "--prune", "origin", update.TAG_REFSPEC)
+        git(customer, "checkout", "--detach", "--quiet", "v0.11.0")
+        risky = update.work_at_risk(customer)
+        self.assertEqual(risky, "",
+                         "тег, приехавший фетчем тегов, принят за чужую работу: %s" % risky)
+
 
 class ReleaseFindingsTest(UpdateCase):
     """Две находки доктора про релизы: точная (тег чекаута против новейшего в

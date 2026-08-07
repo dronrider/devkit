@@ -17,6 +17,13 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   переводится в In progress; основной чекаут
                                   остаётся на main, и параллельные сессии не
                                   толкаются в одном рабочем дереве
+  code <ID> [--dry-run] [--probe] открыть окно vscode на дереве задачи с
+                                  конфигом второй подписки (CLAUDE_CONFIG_DIR
+                                  на каталог машинного слоя); дерева нет значит
+                                  завести его тем же путём, что start.
+                                  --dry-run печатает окружение и не запускает
+                                  редактор, --probe стучится в endpoint
+                                  подписки и называет модель из ответа
   merge <ID> [--test "cmd"]       предусловия (чистое дерево, задача в
         [--deploy "cmd"] [--push] In progress, прод не сломан, Check пуст,
         [--train]                 ревью без открытых замечаний), ребейз ветки
@@ -46,6 +53,11 @@ const usageText = `shipctl: слияние и откат задач по пра�
 отправляет результат в origin, без него пуш остаётся за пользователем. При
 autonomous=true merge и revert пушат сами и без флага, иначе origin отстал
 бы от прода; revert тогда и повторный выкат катит сам.
+Каталог конфига второй подписки лежит в машинном слое, вне репозиториев
+(~/.devkit/claude-glm/settings.json): болванку раскладывает devkitctl doctor
+--fix, endpoint и токен пользователь вписывает туда один раз, а нехватку ключей
+называет devkitctl doctor. Токен shipctl не печатает никогда, у него только
+признак «есть» или «нет».
 Сообщение коммита-отката по умолчанию «revert: <ID> откат ...», флаг -m
 задаёт своё, если в проекте белый список префиксов.
 Общий флаг -C <dir>: откуда искать корень (директорию с docs/TASKS.md),
@@ -139,6 +151,17 @@ func main() {
 		fs.BoolVar(&p.Push, "push", false, "запушить коммит доски после перевода в In progress")
 		fs.Parse(args[2:])
 		msg, err = cmdStart(root(*dir), p)
+	case "code":
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			fail(fmt.Errorf("жду: code <ID> [--dry-run] [--probe]"))
+		}
+		fs := flag.NewFlagSet("code", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := CodeParams{ID: args[1]}
+		fs.BoolVar(&p.DryRun, "dry-run", false, "напечатать окружение и не запускать редактор")
+		fs.BoolVar(&p.Probe, "probe", false, "сходить в endpoint второй подписки и назвать модель из ответа")
+		fs.Parse(args[2:])
+		msg, err = cmdCode(root(*dir), p)
 	case "merge":
 		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 			fail(fmt.Errorf("жду: merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push]"))

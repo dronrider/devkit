@@ -1133,6 +1133,134 @@ class ReleaseFixTest(SandboxCase):
         self.assertIn_("а вышел v9.9.1", out, "точная находка погасла от похода за тегами")
 
 
+class SelfReleaseDoctorTest(SandboxCase):
+    """DK-163: на релизном чекауте самого devkit (детач на теге v*, машина
+    потребителя, поставившая devkit по CONNECT.md) молчат находки, адресованные
+    тому, кто devkit правит: git-хуки нужны для коммита, обвязка выката и доска
+    трогаются тем же кругом, вес резидента считает тот, кто пишет скиллы и
+    правила. Вклейка правил (rules.check) в этот список не входит: она сверяет
+    содержимое самого чекаута, на исправном релизе молчит сама, а находка по
+    ней это дефект выпуска, который стоит увидеть и потребителю. На ветке
+    (машина разработчика) состав проверок не меняется.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        box = cls.box
+        cls.sdk = box.root / "self" / "devkit"
+        cls.sdk.mkdir(parents=True)
+        for d in ("tools", "kit", "hooks"):
+            shutil.copytree(str(box.dk / d), str(cls.sdk / d))
+        # Дока остальных утилит доктору тут не нужна, а её битые ссылки на
+        # docs/lld были бы шумом поверх находок, которые проверяются (тот же
+        # приём, что у DoctorResidencyTest в weigh_test.py).
+        for md in cls.sdk.rglob("*.md"):
+            rel = md.relative_to(cls.sdk).parts
+            if rel[:2] not in (("kit", "skills"), ("kit", "agents")):
+                md.unlink()
+        write(cls.sdk / "RULES.core.md", "# ядро\n\nтекст ядра.\n")
+        write(cls.sdk / "RULES.board.core.md", "# ядро доски\n\nтекст ядра доски.\n")
+        write(cls.sdk / "RULES.md", "# правила\n")
+        write(cls.sdk / "RULES.board.md", "# правила доски\n")
+        write(cls.sdk / "AGENTS.md", "# devkit\n\nтестовый проект.\n")
+        write(cls.sdk / "docs" / "TASKS.md", "# Задачи\n\nПрефикс: SD\n")
+        git_init(cls.sdk)
+        git(cls.sdk, "add", "-A")
+        git(cls.sdk, "commit", "-qm", "стенд для self-релиза")
+        cls.sdkctl = cls.sdk / "tools" / "devkitctl" / "devkitctl.py"
+        cls.shome = box.root / "self" / "home"
+        box.make_home(cls.shome)
+        box.global_rules(cls.shome, cls.sdk)
+        cls.branch = git(cls.sdk, "symbolic-ref", "--quiet", "--short", "HEAD")[1].strip()
+        # --fix подключает git-хуки и заводит болванку deploy.local: без этого
+        # шага ветка сама по себе была бы засыпана находками, а тест смотрит на
+        # то, гаснут ли они на релизе, а не на то, что они вообще бывают. Тег
+        # ставится на закоммиченный результат --fix, иначе релизный чекаут
+        # унёс бы с собой те же самые находки, которые он должен гасить.
+        cls.sdoc("--fix")
+        write(cls.sdk / ".devkit" / "deploy.local",
+              "deploy = echo ok\ntest = echo ok\nautonomous = false\n")
+        git(cls.sdk, "add", "-A")
+        git(cls.sdk, "commit", "-qm", "починка self-стенда")
+        cls.tag = "v9.5.0"
+        git(cls.sdk, "tag", cls.tag)
+
+    @classmethod
+    def sdoc(cls, *args, **kw):
+        # PATH обрезан до системного (тот же приём, что у DeployTest.sysdoctor):
+        # без бинарей devkit в PATH машинный контур не сверяет их коммит с
+        # историей self-чекаута, а нас интересует только проектная половина.
+        kw.setdefault("path", str(cls.box.sys))
+        return cls.box.dkctl_run("doctor", *(list(args) + ["-C", str(cls.sdk)]),
+                                 dkctl=cls.sdkctl, home=cls.shome, **kw)
+
+    def test_2_release_hides_git_hooks_and_weigh(self):
+        git(self.sdk, "config", "--unset", "core.hooksPath")
+        try:
+            _, out = self.sdoc()
+            self.assertIn_("git-хуки devkit не подключены", out,
+                           "на ветке находка про git-хуки обязана остаться")
+            self.assertRegex(out, r"(?m)^вес резидента devkit по карманам",
+                             "на ветке доктор не печатает вес резидента")
+            git(self.sdk, "checkout", "--detach", "--quiet", self.tag)
+            try:
+                _, out = self.sdoc()
+                self.assertIn_("чекаут devkit: на релизе %s" % self.tag, out,
+                               "доктор не назвал режим чекаута")
+                self.assertNotIn_("git-хуки devkit не подключены", out,
+                                  "git-хуки: находка не должна печататься на релизном чекауте")
+                self.assertNotIn_("вес резидента", out,
+                                  "таблица веса резидента не должна печататься на релизном чекауте")
+            finally:
+                git(self.sdk, "checkout", "--quiet", self.branch)
+        finally:
+            # "hooks" простой строкой, а не relpath от self.sdk: относительно
+            # неразрешённого пути (mktemp на macOS отдаёт /var, симлинк на
+            # /private/var) relpath посчитал бы обход через /private и
+            # обратно, а не то же самое, что положил --fix в setUpClass.
+            run(["git", "-C", str(self.sdk), "config", "core.hooksPath", "hooks"])
+        _, out = self.sdoc()
+        self.assertNotIn_("git-хуки devkit не подключены", out,
+                          "восстановление git-хуков не вернуло self-чекаут в чистое состояние")
+
+    def test_3_release_hides_deploy_local(self):
+        deploy = self.sdk / ".devkit" / "deploy.local"
+        text = read(deploy)
+        deploy.unlink()
+        try:
+            _, out = self.sdoc()
+            self.assertIn_(".devkit/deploy.local", out,
+                           "на ветке находка про deploy.local обязана остаться")
+            git(self.sdk, "checkout", "--detach", "--quiet", self.tag)
+            try:
+                _, out = self.sdoc()
+                self.assertNotIn_(".devkit/deploy.local", out,
+                                  "обвязка выката: находка не должна печататься на релизном "
+                                  "чекауте")
+            finally:
+                git(self.sdk, "checkout", "--quiet", self.branch)
+        finally:
+            write(deploy, text)
+        _, out = self.sdoc()
+        self.assertNotIn_(".devkit/deploy.local", out,
+                          "восстановление deploy.local не вернуло self-чекаут в чистое состояние")
+
+    def test_4_connected_project_unaffected_by_devkit_release(self):
+        # Сценарий 3 постановки: обвязка подключённого проекта проверяется в
+        # прежнем составе, режим чекаута devkit на это не влияет.
+        other = git_init(self.box.root / "self" / "otherproj")
+        git(self.sdk, "checkout", "--detach", "--quiet", self.tag)
+        try:
+            _, out = self.box.dkctl_run("doctor", "-C", str(other), dkctl=self.sdkctl,
+                                        home=self.shome)
+            self.assertIn_("нет AGENTS.md в корне проекта", out,
+                           "подключённый проект без AGENTS.md обязан дать находку "
+                           "независимо от режима чекаута devkit")
+        finally:
+            git(self.sdk, "checkout", "--quiet", self.branch)
+
+
 class WorktreeTest(SandboxCase):
     """devkit, выложенный worktree ветки задачи: mtime исходников там ничего не
     значит, сборка не запускается, а раскладка машинного контура отправляет в

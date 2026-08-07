@@ -138,6 +138,18 @@ func cmdCode(root string, p CodeParams) (string, error) {
 	if _, bound := loadTrackerBinding(primary); bound {
 		return "", fmt.Errorf("%s это корп-контур: вторая подписка личная, и окно на код компании она не открывает; работать обычной сессией", primary)
 	}
+	// Пробник идёт до заведения дерева, а не после: подтверждать подписку он
+	// обязан раньше побочных действий, иначе мёртвый endpoint оставляет после
+	// себя заведённую ветку и сдвинутую в In progress доску, а окна всё равно
+	// не даёт (ревью DK-175).
+	probe := ""
+	if p.Probe {
+		line, err := probeAlt(a)
+		if err != nil {
+			return "", err
+		}
+		probe = line
+	}
 	tree, note, err := codeTree(primary, p)
 	if err != nil {
 		return "", err
@@ -153,12 +165,8 @@ func cmdCode(root string, p CodeParams) (string, error) {
 		"модель: "+altModel(a),
 		"токен: "+a.tokenState(),
 		"редактор: "+strings.Join(editorArgv(tree), " "))
-	if p.Probe {
-		line, err := probeAlt(a)
-		if err != nil {
-			return "", err
-		}
-		msg = append(msg, line)
+	if probe != "" {
+		msg = append(msg, probe)
 	}
 	if p.DryRun {
 		msg = append(msg, "dry-run: редактор не запускался")

@@ -165,15 +165,29 @@ def core_of(path):
     return Path(str(path)[:-len(".md")] + CORE_SUFFIX)
 
 
+def is_devkit_checkout(path):
+    # Признак «это сам чекаут devkit, а не проект, который его подключил»:
+    # RULES.md и код devkitctl лежат только в репозитории devkit, подключённый
+    # проект их к себе не копирует, у него только генерённые файлы и AGENTS.md.
+    p = Path(path)
+    return (p / "RULES.md").is_file() and (p / "tools" / "devkitctl" / "devkitctl.py").is_file()
+
+
 def rule_sources(devkit, root, board, depth=DEPTH_FULL):
     # Файлы правил, которые проект тянет из devkit. Своё ядро devkit себе не
     # импортирует: RULES.md и есть содержимое этого репозитория, а в сессию оно
     # приезжает глобальным подключением (об этом сказано в его AGENTS.md).
+    # root, будь он чекаутом devkit сам по себе (self-hosting), берёт правила
+    # из себя: чекаут, которым его назвали снаружи, тут не указ, иначе доктор,
+    # запущенный из чужой или временной копии devkit, вклеил бы в его же
+    # коммитируемый файл ссылку на неё (DK-127).
+    root = Path(root)
+    devkit = root if is_devkit_checkout(root) else Path(devkit)
     src = []
-    if Path(root).resolve() != Path(devkit).resolve():
-        src.append(Path(devkit) / "RULES.md")
+    if root.resolve() != devkit.resolve():
+        src.append(devkit / "RULES.md")
     if board:
-        src.append(Path(devkit) / "RULES.board.md")
+        src.append(devkit / "RULES.board.md")
     if depth == DEPTH_FULL:
         return src
     return [core_of(p) if core_of(p).exists() else p for p in src]

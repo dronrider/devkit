@@ -561,6 +561,11 @@ class MachineContourTest(SandboxCase):
             self.assertEqual(len(lines), 1, "находка про %s не свёрнута: %s" % (word, out))
         self.assertIn_("tmux не в PATH", out, "нет находки про tmux")
         self.assertIn_("нет снимка квоты в", out, "нет находки про снимок квоты")
+        # Незаведённая вторая подписка молчанием не отличается от заведённой:
+        # окно shipctl code без каталога конфига не откроется вовсе, и сказать
+        # об этом обязан доктор, а не отказ команды в неудачный момент.
+        self.assertIn_("нет конфига второй подписки", out, "нет находки про вторую подписку")
+        self.assertIn_("devkitctl doctor --fix", out, "находка про вторую подписку без команды починки")
         self.assertIn_("SessionStart-хук", out, "нет находки про хук освежения квоты")
         self.assertFalse((self.mhome / "go" / "bin" / "agentctl").exists(),
                          "doctor без --fix собрал бинарь")
@@ -616,6 +621,17 @@ class MachineContourTest(SandboxCase):
                        "находка про tmux не называет причину, по которой пакет не поставлен")
         self.assertIn_("agentctl quota refresh", out,
                        "--fix не снимает квоту, находка должна остаться")
+        # Каталог конфига второй подписки раскладывает --fix, а значения в него
+        # вписывает пользователь: endpoint и токен берутся в кабинете подписки.
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        self.assertIn_("разложена болванка конфига второй подписки", out,
+                       "--fix не разложил каталог конфига второй подписки")
+        self.assertEqual(json.loads(read(conf))["env"],
+                         {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_MODEL": ""},
+                         "болванка второй подписки разложена не теми ключами")
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600,
+                         "болванка с токеном разложена с широкими правами")
+        self.assertIn_("пустые ключи", out, "--fix не назвал незаполненные ключи второй подписки")
         # Повторный --fix по машинному контуру уже ничего не чинит.
         _, out = self.docm("--fix")
         self.assertNotIn_("починено", out, "повторный --fix не должен ничего менять")
@@ -923,6 +939,43 @@ class MachineContourTest(SandboxCase):
             self.assertIn_(name, lying[0], "утилита %s не названа в свёрнутой находке" % name)
         self.assertIn_("export PATH=", out,
                        "находка про каталог мимо PATH не даёт готовой строки для профиля")
+
+    def test_15_alt_subscription_filled_in(self):
+        # Заполненный конфиг второй подписки доктор не трогает и не поминает:
+        # это рабочее состояние, а не пробел. Токен из него в вывод не едет ни
+        # при каком раскладе, у него есть только признак «есть» или «нет».
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        write(conf, json.dumps({"env": {
+            "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "токен-второй-подписки",
+            "ANTHROPIC_MODEL": "модель-подписки",
+        }}, ensure_ascii=False) + "\n")
+        conf.chmod(0o600)
+        _, out = self.docm()
+        self.assertNotIn_("второй подписки", out, "заполненный конфиг подписки попал в находки")
+        self.assertNotIn_("токен-второй-подписки", out, "токен второй подписки напечатан")
+
+    def test_16_alt_subscription_permissions(self):
+        # В файле лежит токен, и широкие права это находка с командой: чинит их
+        # --fix, а не пользователь.
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        conf.chmod(0o644)
+        _, out = self.docm()
+        self.assertIn_("права 644", out, "нет находки про широкие права конфига подписки")
+        _, out = self.docm("--fix")
+        self.assertIn_("сужены права", out, "--fix не сузил права конфига подписки")
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600, "права конфига подписки не сужены")
+
+    def test_17_alt_subscription_broken_json(self):
+        # Битый конфиг --fix не переписывает: там мог остаться вписанный руками
+        # токен, и перезапись потеряла бы его молча.
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        keep = read(conf)
+        write(conf, "{не json\n")
+        _, out = self.docm("--fix")
+        self.assertIn_("не читается как json", out, "нет находки про битый конфиг подписки")
+        self.assertEqual(read(conf), "{не json\n", "--fix переписал битый конфиг подписки")
+        write(conf, keep)
 
 
 class PackagesTest(SandboxCase):

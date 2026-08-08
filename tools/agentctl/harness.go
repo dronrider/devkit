@@ -775,8 +775,8 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 	if want != "" {
 		return explicit(want, "флаг --harness")
 	}
-	if v := strings.TrimSpace(env("DEVKIT_HARNESS")); v != "" {
-		return explicit(v, "переменная DEVKIT_HARNESS")
+	if v := strings.TrimSpace(env(harnessEnv)); v != "" {
+		return explicit(v, "переменная "+harnessEnv)
 	}
 	names, err := listProfiles(l.Dir)
 	if err != nil {
@@ -976,6 +976,10 @@ type harnessContext struct {
 	Name   string
 	Models tierModels
 	Quota  *quotaSpec
+	// Слои целиком: run поднимает подпроцесс в харнесе назначения, а его профиль
+	// и его объявление квоты лежат тут же. Слои не прочитались, значит поле
+	// пустое, и это тот же случай, что прочерк в строке model.
+	L *layers
 	// Почему квоты нет, когда с остальным контуром всё в порядке. Поломка
 	// контура объясняется один раз, причиной в Models.Note: следствий у неё два,
 	// и повторять их порознь значило бы удваивать хвост вердикта.
@@ -999,7 +1003,7 @@ func resolveHarnessContext(start string) harnessContext {
 	if r.Name == "" {
 		return off(fmt.Sprintf("харнес не определён, ярус разворачивать нечем и корректор без профиля выключен; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath()))
 	}
-	hc := harnessContext{Name: r.Name, Quota: quotaSpecOf(l, r.Name)}
+	hc := harnessContext{Name: r.Name, Quota: quotaSpecOf(l, r.Name), L: l}
 	if hc.Quota == nil {
 		hc.QuotaNote = fmt.Sprintf("у харнеса %s секция [quota] пуста, снимать остаток нечем, вердикт идёт без корректора", r.Name)
 	}

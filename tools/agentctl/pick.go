@@ -254,21 +254,40 @@ func capTier(v *verdict, cap string) string {
 // корректора и дата записи считаются от одного момента.
 var timeNow = time.Now
 
+// pickResult это вердикт со всем, что понадобилось его посчитать: run поднимает
+// подпроцесс по тому же вердикту, что печатает pick, и второй раз резолвить
+// харнес ему нельзя, иначе делегирование ушло бы не туда, куда сказала строка
+// via.
+type pickResult struct {
+	V    verdict
+	HC   harnessContext
+	Text string
+}
+
 func cmdPick(root, id string, record bool, role, goal string) (string, error) {
+	p, err := pickVerdict(root, id, record, role, goal)
+	if err != nil {
+		return "", err
+	}
+	return p.Text, nil
+}
+
+func pickVerdict(root, id string, record bool, role, goal string) (pickResult, error) {
+	var res pickResult
 	if !validRoles[role] {
-		return "", fmt.Errorf("неизвестная роль %q, допустимы exec и review", role)
+		return res, fmt.Errorf("неизвестная роль %q, допустимы exec и review", role)
 	}
 	rows, err := loadRows(root)
 	if err != nil {
-		return "", err
+		return res, err
 	}
 	r := rowOf(rows, id)
 	if r == nil {
-		return "", fmt.Errorf("задачи %s нет на доске", id)
+		return res, fmt.Errorf("задачи %s нет на доске", id)
 	}
 	ov, err := readOverrides(root, id)
 	if err != nil {
-		return "", err
+		return res, err
 	}
 	now := timeNow()
 	v := pickTier(*r)
@@ -348,7 +367,7 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 	if goal != "" {
 		cap, gerr := goalTierCap(root, goal)
 		if gerr != nil {
-			return "", gerr
+			return res, gerr
 		}
 		if cap != "" {
 			cp.Note = capTier(&v, cap)
@@ -413,11 +432,13 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 	}
 	if record {
 		if err := recordExecution(root, id, v, c, cp, qf, tm, now, role); err != nil {
-			return "", err
+			return res, err
 		}
 	}
-	return fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
-		v.Model, v.Effort, v.Tier, v.Via, r.ID, r.Type, r.Cost, unc, v.Reason), nil
+	res.V, res.HC = v, hc
+	res.Text = fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
+		v.Model, v.Effort, v.Tier, v.Via, r.ID, r.Type, r.Cost, unc, v.Reason)
+	return res, nil
 }
 
 // recordExecution дописывает строку исполнения в конец раздела «Ход работы»

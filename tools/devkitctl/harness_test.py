@@ -4,7 +4,7 @@
 """
 import unittest
 
-from testenv import PY, SandboxCase, read, run, write
+from testenv import PY, DEVKIT_SRC, SandboxCase, harness, read, rules, run, write
 
 # Подставной профиль для самопроверки: импортов инструмент не понимает, правила
 # доезжают до него только вклейкой, остальных осей у него нет.
@@ -63,6 +63,62 @@ class ProfileValidationTest(SandboxCase):
                            "нет находки про генерацию по битому профилю")
         finally:
             write(self.profile, keep)
+
+
+class AltSubProfileTest(unittest.TestCase):
+    """Профиль второй подписки проходит свод и считает пути от машинного
+    каталога (DK-180).
+
+    Прибитый литералом путь тут был бы не косметикой: вторая подписка получила
+    бы хозяйство в каталоге первой, то есть раскладку в чужой контур, а
+    машинный ключ под подпроцесс всё равно нужен, и два пути разъехались бы.
+    """
+
+    MACHINE_PATHS = (("rules", "global_file"), ("hooks", "config"),
+                     ("skills", "dir"), ("delegate", "agents_dir"))
+
+    @classmethod
+    def setUpClass(cls):
+        path = DEVKIT_SRC / "kit" / "harness" / "glm-code.toml"
+        cls.prof = harness.parse(path.name, read(path))
+        harness.validate_profile(cls.prof)
+
+    def test_machine_paths_count_from_home(self):
+        for section, key in self.MACHINE_PATHS:
+            spec = self.prof.str_of(section, key)
+            self.assertTrue(spec, "профиль второй подписки не объявил [%s] %s" % (section, key))
+            self.assertTrue(spec.startswith(rules.HOME_MARK),
+                            "[%s] %s считается не от %s, а от %s: хозяйство уехало бы в чужой контур"
+                            % (section, key, rules.HOME_MARK, spec))
+            path, bad = rules.harness_path("glm-code", spec, {"glm-code": "/подписка"})
+            self.assertEqual(bad, "", "путь [%s] %s не подставился: %s" % (section, key, bad))
+            self.assertTrue(str(path).startswith("/подписка/"),
+                            "путь [%s] %s ушёл мимо машинного каталога: %s" % (section, key, path))
+
+    def test_subprocess_command_is_declared(self):
+        # Спавна субагента снаружи у клиента нет, и без команды уехавшая ступень
+        # не поднялась бы ничем.
+        self.assertEqual(self.prof.str_of("delegate", "mode"), "cli",
+                         "вторая подписка делегирует не командой")
+        argv = self.prof.arr_of("delegate", "command")
+        self.assertTrue(argv, "команда подпроцесса не объявлена")
+        for mark in ("{prompt}", "{model}"):
+            self.assertTrue([a for a in argv if mark in a],
+                            "в команде подпроцесса нет %s: %s" % (mark, argv))
+
+    def test_quota_is_empty(self):
+        # Остаток второй подписки снимать пока нечем, и пустая секция это
+        # штатно молчащий корректор, а не пробел: объявленный script был бы
+        # обещанием, которого профиль не держит.
+        self.assertEqual(self.prof.table("quota"), {},
+                         "секция [quota] второй подписки непуста, а снимать остаток нечем")
+
+    def test_no_detect(self):
+        # Изнутри сессии вторая подписка от первой переменными неотличима, и
+        # объявленный детект дал бы неоднозначное совпадение сразу у двух
+        # харнесов.
+        self.assertEqual(self.prof.table("detect"), {},
+                         "у второй подписки объявлен детект, а он неоднозначен по построению")
 
 
 class ProjectNarrowingTest(SandboxCase):

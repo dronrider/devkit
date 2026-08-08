@@ -926,6 +926,45 @@ class ImportReachTest(unittest.TestCase):
                         "сосед с общим префиксом имени принят за путь внутрь проекта")
 
 
+class ImportDepthTest(unittest.TestCase):
+    """Глубина, на которую клиент идёт по цепочке импортов: четыре ступени.
+
+    Замером (README devkitctl, раздел «Куда доезжают импорты правил») из цепочки
+    в семь файлов доехали четыре. Число это не украшение: по нему обход считает,
+    что везёт глобальная точка, а от этого зависит третья находка доктора.
+    Возьми глубину меньше, и текст, который до сессии доезжает, доктор объявит
+    недоехавшим; возьми больше, и наоборот.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="devkitctl-hops-"))
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        # Точка, из неё цепочка на пять ступеней вглубь.
+        write(self.tmp / "point.md", "# точка\n\n@h1.md\n")
+        for i in range(1, 5):
+            write(self.tmp / ("h%d.md" % i), "ступень %d\n@h%d.md\n" % (i, i + 1))
+        write(self.tmp / "h5.md", "ступень 5\n")
+
+    def names(self, **kw):
+        return sorted(name for name, _ in rules.reachable_texts(self.tmp / "point.md", **kw))
+
+    def test_1_four_hops_arrive_and_the_fifth_does_not(self):
+        self.assertEqual(self.names(), ["h1.md", "h2.md", "h3.md", "h4.md"],
+                         "обход прошёл цепочку не на замеренную глубину")
+
+    def test_2_the_edge_moves_with_the_measured_depth(self):
+        # Граница считается от точки, а не от корня дерева: на шаге глубины
+        # уезжает ровно один файл с хвоста цепочки.
+        self.assertEqual(self.names(hops=1), ["h1.md"], "шаг глубины считается не по ступеням")
+        self.assertEqual(self.names(hops=5), ["h1.md", "h2.md", "h3.md", "h4.md", "h5.md"],
+                         "лишняя ступень не доехала при увеличенной глубине")
+
+    def test_3_the_point_itself_is_not_a_delivered_text(self):
+        # Сам файл точки это не правила, а способ их позвать: в доехавшее он не
+        # попадает, иначе находка сверялась бы с его собственным текстом.
+        self.assertNotIn("point.md", self.names())
+
+
 class ProjectImportsTest(SandboxCase):
     """Импорты файла правил проекта: полный текст вместо ядра и импорт, который
     лежит на диске, а до контекста не доезжает (DK-190).

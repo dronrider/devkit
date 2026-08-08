@@ -579,6 +579,49 @@ class MeasureTest(SandboxCase):
             executable(self.client, CLIENT)
 
 
+class PocketsDedupTest(SandboxCase):
+    """Один и тот же текст правил, доехавший двумя дорогами, это один карман.
+
+    Глобальная точка зовёт правила своим путём, тонкий файл проекта своим, и
+    физически это бывает разный путь при том же содержимом: доктор, запущенный
+    из worktree задачи или из временной копии devkit, видит правила вторым
+    путём. В контексте сессии текст всё равно лежит одной копией, и расчёт не
+    должен платить за него дважды (DK-190). Мерка та же, что у
+    rules.stabilized_sources: имя файла плюс содержимое (DK-127).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.proj = cls.box.project("dedupproj")
+        cls.copy = cls.box.root / "devkit-copy"
+        cls.copy.mkdir()
+
+    def pockets_of(self):
+        # Правила берутся из копии devkit, а глобальная точка HOME по-прежнему
+        # зовёт правила стенда: ровно расклад «доктор из worktree задачи».
+        with fake_home(self.box.home):
+            _, profile = weigh.active_profile(str(self.proj), str(self.box.dk))
+            return weigh.pockets(str(self.proj), str(self.copy), profile)
+
+    def test_1_same_name_and_text_is_one_pocket(self):
+        shutil.copy(str(self.box.dk / "RULES.md"), str(self.copy / "RULES.md"))
+        found = self.pockets_of()
+        rules_pockets = [(l, c) for l, c in found if l.startswith("RULES.md")]
+        self.assertEqual(len(rules_pockets), 1,
+                         "те же правила по второму пути посчитаны дважды: %s" % (found,))
+        self.assertEqual(rules_pockets[0][1], len(read(self.box.dk / "RULES.md")),
+                         "карман правил посчитан не по их тексту: %s" % (found,))
+
+    def test_2_same_name_but_other_text_is_two_pockets(self):
+        # Обратная сторона: дедуп не по одному имени. Разошлось содержимое,
+        # значит в контексте лежат два разных текста, и платить надо за оба.
+        write(self.copy / "RULES.md", read(self.box.dk / "RULES.md") + "\nчужая строка правил\n")
+        found = self.pockets_of()
+        self.assertEqual(len([l for l, _ in found if l.startswith("RULES.md")]), 2,
+                         "разные правила под одним именем схлопнулись в один карман: %s" % (found,))
+
+
 class DoctorResidencyTest(SandboxCase):
     """Порог веса резидента и тела скилла в докторе (DK-029). Карманы общие для
     всех проектов devkit, находка не проектная, и doctor() отдаёт её только для

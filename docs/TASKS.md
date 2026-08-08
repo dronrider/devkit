@@ -26,7 +26,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-180 | Профиль glm-code и живой прогон конвейера на второй подписке | task | P2 | 39 (25+9+3+0+2) | M | [tasks/DK-180.md](tasks/DK-180.md) |
 
 ## Backlog
 
@@ -61,7 +60,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-186 | Заголовки открытых строк доски и замена «след» на «лог хода» в DK-112, DK-153, DK-156 [после DK-184] | task | P2 | 30 (25+4+0+0+1) | S | [lld/DK-173-agent-prose.md](lld/DK-173-agent-prose.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-181 | Съёмщик остатка второй подписки: quota --harness [после DK-180] | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-171.md](tasks/DK-171.md) |
+| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-171.md](tasks/DK-171.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/DK-171.md](tasks/DK-171.md) |
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

@@ -127,3 +127,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-040.md](tasks/archive/2026/DK-040.md) |
 | DK-173 | Проза агентов в задачах и доке тяжело читается человеком | LLD | P2 | 2026-08-08 | [tasks/archive/2026/DK-173.md](tasks/archive/2026/DK-173.md), `505aefe`, `00f5e8e`, `3d6ee13`, `33ac83b` |
 | DK-178 | agentctl run отдаёт работу харнесу назначения: каталог и окружение подпроцесса | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-178.md](tasks/archive/2026/DK-178.md) |
+| DK-180 | Профиль glm-code и живой прогон конвейера на второй подписке | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-180.md](tasks/archive/2026/DK-180.md) |

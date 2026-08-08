@@ -355,6 +355,60 @@ class GlobalPointUnitsTest(unittest.TestCase):
         self.assertEqual(rules.global_target(str(gd)), rules.Path(str(gd)) / "RULES.core.md")
 
 
+class MachinePathsUnitsTest(unittest.TestCase):
+    """Пути машинного хозяйства харнеса: каталог из машинного слоя, подстановка
+    {home} в пути профиля и отказ там, где подставлять нечего.
+    """
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="devkit-homes-"))
+        self.addCleanup(shutil.rmtree, str(self.work), True)
+        self.home = self.work / "home"
+        self.home.mkdir()
+        home = fake_home(self.home)
+        home.__enter__()
+        self.addCleanup(home.__exit__, None, None, None)
+        self.conf = self.home / ".devkit" / "harness.local"
+
+    def test_home_comes_from_the_machine_layer(self):
+        write(self.conf, 'enabled = ["glm-code"]\n\n[glm-code]\nhome = "~/.claude-glm"\n')
+        homes = rules.machine_homes(str(self.conf))
+        # Ведущий ~/ разворачивается тут же: буквальный завёл бы каталог с
+        # именем ~ в рабочем дереве, причём один раз и навсегда.
+        self.assertEqual(homes, {"glm-code": str(self.home / ".claude-glm")})
+        path, bad = rules.harness_path("glm-code", "{home}/skills", homes)
+        self.assertEqual(bad, "")
+        self.assertEqual(path, self.home / ".claude-glm" / "skills")
+
+    def test_no_machine_key_refuses_by_words(self):
+        homes = rules.machine_homes(str(self.conf))
+        path, bad = rules.harness_path("glm-code", "{home}/skills", homes, str(self.conf))
+        self.assertIsNone(path, "путь с неподставленным {home} ушёл в раскладку")
+        self.assertIn("вписать home в секцию [glm-code]", bad)
+        self.assertIn(str(self.conf), bad, "отказ не назвал файл, куда вписывать")
+
+    def test_literal_path_needs_no_machine_key(self):
+        # Профиль claude-code пишет пути литералами, и миграции у машинных
+        # конфигов от этой оси нет.
+        path, bad = rules.harness_path("claude-code", "~/.claude/skills", {})
+        self.assertEqual((path, bad), (self.home / ".claude" / "skills", ""))
+        self.assertEqual(rules.harness_path("claude-code", "", {}), (None, ""))
+
+    def test_one_file_two_harnesses(self):
+        same = [("claude-code", "CLAUDE.md", "@AGENTS.md\n", "режим import"),
+                ("glm-code", "CLAUDE.md", "@AGENTS.md\n", "режим import")]
+        keep, findings = rules.one_text_per_file(same)
+        # Совпавший текст это штатная раскладка второй подписки: пишет файл
+        # один харнес, второй застаёт его уже совпавшим.
+        self.assertEqual((keep, findings), (["claude-code"], []))
+        other = same[:1] + [("glm-code", "CLAUDE.md", "@СВОЁ.md\n", "своя строка импорта")]
+        keep, findings = rules.one_text_per_file(other)
+        self.assertEqual(keep, [], "файл со спором двух харнесов всё равно пишется")
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("разного текста", findings[0])
+        self.assertIn("своя строка импорта", findings[0], "находка не назвала, чем харнесы разошлись")
+
+
 class CoreBudgetTest(unittest.TestCase):
     """Разрез ядра: за резидентную часть правил платит каждый запрос каждой
     сессии, поэтому бюджет тут не пожелание, а проверка. Гоняется на настоящих

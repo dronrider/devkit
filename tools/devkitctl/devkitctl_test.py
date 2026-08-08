@@ -7,10 +7,12 @@ import os
 import platform
 import re
 import shutil
+import tempfile
 import time
 import unittest
 from pathlib import Path
 
+import devkitctl
 from testenv import (BINARY_STUB, BREW_STUB, GO_STUB, SandboxCase, build, executable,
                      fake_home, git, git_init, go_cache_env, harness, read, rules, run,
                      stub_release, taken_at, update, write)
@@ -529,6 +531,11 @@ class MachineContourTest(SandboxCase):
         cls.gostub.mkdir()
         executable(cls.gostub / "go", GO_STUB)
         cls.mpath = "%s:%s:%s" % (cls.gostub, cls.mhome / "go" / "bin", box.sys)
+        # Вторая подписка объявлена машинным слоем: каталог её конфига девкит
+        # берёт оттуда, а не из своей константы, и без объявления доктор про
+        # подписку молчит (её на машине просто нет).
+        write(cls.mhome / ".devkit" / "harness.local",
+              'enabled = ["claude-code"]\n\n[glm-code]\nhome = "~/.devkit/claude-glm"\n')
         # Каталог назначения называется прямо: правило выбора (переменная, потом
         # PATH) проверяется отдельными тестами, остальным тут нужен один
         # известный каталог, и он же стоит в подставном PATH.
@@ -1651,6 +1658,55 @@ def snapshot(home, skip=()):
             continue
         out[rel] = p.read_bytes()
     return out
+
+
+class AltSubDirTest(unittest.TestCase):
+    """Каталог конфига второй подписки берётся из машинного ключа (DK-180).
+
+    Ключ этот один на трёх читателей: раскладку машинного хозяйства
+    (плейсхолдер {home} в путях профиля), окружение подпроцесса делегирования и
+    окно редактора shipctl code. Была бы у каждого своя константа, они бы
+    разъехались, а разъехавшись, дали бы сессию на дорогой подписке, считающую
+    себя дешёвой.
+    """
+
+    def home(self, machine=""):
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(home), True)
+        if machine:
+            write(home / ".devkit" / "harness.local", machine)
+        return home
+
+    def test_undeclared_subscription_is_silent(self):
+        # Харнеса второй подписки в машинном слое нет, значит подписки на этой
+        # машине нет вовсе, и звать вписывать её endpoint значит выдумать
+        # человеку работу.
+        home = self.home('enabled = ["claude-code"]\n')
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        self.assertEqual((findings, fixed), ([], []),
+                         "доктор говорит про вторую подписку на машине, где её не заведено")
+        self.assertFalse(list(home.rglob("settings.json")),
+                         "болванка второй подписки разложена без объявления в машинном слое")
+
+    def test_blank_goes_to_the_declared_dir(self):
+        # Каталог нарочно не тот, что стоял константой: раскладка обязана идти
+        # по ключу, а не по памяти утилиты.
+        home = self.home('enabled = ["claude-code", "glm-code"]\n\n[glm-code]\n'
+                         'home = "~/своя-вторая-подписка"\n')
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        conf = home / "своя-вторая-подписка" / "settings.json"
+        self.assertTrue(conf.is_file(), "болванка не разложена по машинному ключу: %s" % (findings,))
+        self.assertEqual(json.loads(read(conf))["env"],
+                         {k: "" for k in devkitctl.ALT_SUB_KEYS},
+                         "болванка разложена не теми ключами")
+        self.assertTrue([f for f in fixed if "своя-вторая-подписка" in f],
+                        "отчёт не назвал каталог, в который разложена болванка: %s" % (fixed,))
+        # Пустые ключи остаются находкой: значения берутся в кабинете подписки, и
+        # придумать их автоматике нечем.
+        self.assertTrue([f for f in findings if "пустые ключи" in f],
+                        "пустые ключи болванки не названы находкой: %s" % (findings,))
 
 
 class SecondSubscriptionLayoutTest(SandboxCase):

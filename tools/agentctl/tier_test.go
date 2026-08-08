@@ -79,8 +79,10 @@ func TestOverrideTierAliases(t *testing.T) {
 }
 
 func TestCmdPickTierLine(t *testing.T) {
-	// Третья машинная строка стоит третьей, а первые две не двигаются с мест:
-	// потребители первой строки вердикта переучиваться не должны.
+	// Машинных строк четыре, порядок их закреплён: tier стоит третьей, via
+	// четвёртой, а первые две не двигаются с мест, потребители первой строки
+	// вердикта переучиваться не должны. Строка via печатается и на однородной
+	// лестнице: появляющаяся через раз, она заставляла бы читать вывод условно.
 	isolateQuota(t)
 	root := writeBoard(t)
 	out, err := cmdPick(root, "T-002", false, roleExec, "")
@@ -88,17 +90,17 @@ func TestCmdPickTierLine(t *testing.T) {
 		t.Fatalf("pick: %v", err)
 	}
 	lines := strings.Split(out, "\n")
-	if len(lines) < 4 {
-		t.Fatalf("жду четыре строки вердикта, получил %q", out)
+	if len(lines) < 5 {
+		t.Fatalf("жду пять строк вердикта, получил %q", out)
 	}
-	want := []string{"model: opus", "effort: medium", "tier: pro"}
+	want := []string{"model: opus", "effort: medium", "tier: pro", "via: claude-code"}
 	for i, w := range want {
 		if lines[i] != w {
 			t.Fatalf("строка %d это %q, жду %q", i+1, lines[i], w)
 		}
 	}
-	if !strings.HasPrefix(lines[3], "T-002 (task") {
-		t.Fatalf("человеческая строка съехала: %q", lines[3])
+	if !strings.HasPrefix(lines[4], "T-002 (task") {
+		t.Fatalf("человеческая строка съехала: %q", lines[4])
 	}
 }
 

@@ -135,8 +135,8 @@ func TestMergeWithoutMachineConfig(t *testing.T) {
 		t.Fatalf("маппинг %+v", s)
 	}
 	for tier, want := range map[string]string{"mini": "haiku", "base": "sonnet", "pro": "opus", "max": "fable"} {
-		if s.Map[tier] != want {
-			t.Fatalf("ярус %s развёрнут в %q, жду %q", tier, s.Map[tier], want)
+		if s.Map[tier].Model != want || s.Map[tier].Harness != "claude-code" {
+			t.Fatalf("ярус %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
 		}
 	}
 	if len(l.Warns) != 0 {
@@ -175,7 +175,7 @@ bin = "/opt/codex"
 		t.Fatal("харнес без своей секции не должен считаться настроенным")
 	}
 	s := l.Setup["codex"]
-	if !s.mapped() || s.Suggested || s.Map["pro"] != "gpt-pro" || s.Budget != 200 || s.Bin != "/opt/codex" {
+	if !s.mapped() || s.Suggested || s.Map["pro"].Model != "gpt-pro" || s.Budget != 200 || s.Bin != "/opt/codex" {
 		t.Fatalf("маппинг codex %+v", s)
 	}
 	if len(l.Warns) != 1 || !strings.Contains(l.Warns[0], "opencode включён, а профиля") {

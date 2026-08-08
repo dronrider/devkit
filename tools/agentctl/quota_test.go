@@ -402,11 +402,28 @@ func TestQuotaFacts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := quotaFactsOf(q, c.snap, c.c, false, testNow).note(); got != c.want {
+			if got := quotaFactsOf(q, c.snap, c.c, false, testNow, q.Harness).note(); got != c.want {
 				t.Fatalf("состояние квоты %q, жду %q", got, c.want)
 			}
 		})
 	}
+
+	// Бакет не активного харнеса называется с харнесом: на гетерогенной лестнице
+	// соседние ступени платят из разных подписок, и по голому имени не понять, в
+	// какую из них вердикт упёрся.
+	t.Run("чужие бакеты квалифицированы харнесом", func(t *testing.T) {
+		snap := snapOf(freshAge, bucketAt("week_all", 30, halfWindow))
+		c := correction{From: "base", Tier: "base"}
+		got := quotaFactsOf(q, snap, c, false, testNow, "claude-code").note()
+		if !strings.Contains(got, "week_all 30%") || strings.Contains(got, "/week_all") {
+			t.Fatalf("домашний бакет назван чужим: %q", got)
+		}
+		q.Harness = "glm-code"
+		got = quotaFactsOf(q, snap, c, false, testNow, "claude-code").note()
+		if !strings.Contains(got, "glm-code/week_all 30%") {
+			t.Fatalf("чужой бакет не квалифицирован: %q", got)
+		}
+	})
 }
 
 func TestCmdQuota(t *testing.T) {

@@ -89,6 +89,28 @@ class TestQuotaRefresh(unittest.TestCase):
         time.sleep(1)
         self.assertEqual(read(self.mark), "")
 
+    def test_harness_without_declared_quota_stays_quiet(self):
+        # Вторая подписка едет с пустой секцией [quota], refresh на ней честно
+        # отказывает, и журнал из одних отказов перестал бы отвечать на вопрос,
+        # ради которого заведён.
+        self.stub("agentctl", '#!/bin/sh\necho "$*" >> "%s"\n'
+                              'echo "у харнеса glm-code секция [quota] пуста, '
+                              'снимать остаток нечем" >&2\nexit 1\n' % self.mark)
+        self.assertEqual(self.run_hook(), 0)
+        self.assertTrue(awaited(self.mark), "хук даже не позвал refresh")
+        time.sleep(0.5)
+        self.assertEqual(read(self.log), "", "отказ харнеса без квоты попал в журнал")
+
+    def test_a_real_refusal_still_reaches_the_journal(self):
+        # Молчание узкое: сюда попадает только харнес без объявленной квоты, а
+        # незалогиненный клиент или неузнанная панель остаются в журнале.
+        self.stub("agentctl", '#!/bin/sh\necho "$*" >> "%s"\n'
+                              'echo "панель /usage не узналась" >&2\nexit 1\n' % self.mark)
+        self.assertEqual(self.run_hook(), 0)
+        self.assertTrue(awaited(self.log), "журнала последнего запуска нет")
+        self.assertIn("панель /usage не узналась", read(self.log))
+        self.assertIn("код возврата: 1", read(self.log))
+
     def test_nothing_to_take_a_snapshot_with(self):
         # Уходим молча и следов не оставляем, ругаться на это дело devkitctl
         # doctor, а не каждой сессии.

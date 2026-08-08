@@ -12,14 +12,25 @@ import (
 
 const altToken = "sk-секрет-второй-подписки"
 
-// altHome заводит машинный слой второй подписки на временном HOME: каталог
-// конфига с settings.json из переданных ключей env. Пустая карта значит
-// «каталога нет вовсе». Возвращает сам каталог конфига.
+// altHome заводит машинный слой второй подписки на временном HOME: объявление
+// харнеса в конфиге харнесов плюс каталог конфига с settings.json из переданных
+// ключей env. Пустая карта значит «каталога нет вовсе». Возвращает сам каталог
+// конфига.
 func altHome(t *testing.T, env map[string]string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir := filepath.Join(home, altConfigHome)
+	dir := filepath.Join(home, ".devkit", "claude-glm")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(home, altMachineConfig)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Каталог пишется от ~/, как его пишет пользователь: разворачивание тильды
+	// это часть чтения машинного ключа, и проверяется оно тут же.
+	conf := "enabled = [\"claude-code\", \"" + altHarness + "\"]\n\n[" + altHarness + "]\n" +
+		altHomeKey + " = \"~/.devkit/claude-glm\"\n"
+	if err := os.WriteFile(filepath.Join(home, altMachineConfig), []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if env == nil {
 		return dir
 	}
@@ -44,14 +55,15 @@ func altEnv(base string) map[string]string {
 	}
 }
 
-// stubEditor кладёт в PATH подставной code, который пишет в лог свои аргументы
-// и CLAUDE_CONFIG_DIR. По этому логу видно и то, что редактор звался, и то, с
-// каким каталогом конфига.
+// stubEditor кладёт в PATH подставной code, который пишет в лог свои аргументы,
+// каталог конфига и имя харнеса. По этому логу видно и то, что редактор звался,
+// и то, на какой подписке окно себя считает.
 func stubEditor(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()
 	log := filepath.Join(bin, "code.log")
-	write(t, bin, editorBin, "#!/bin/sh\necho \"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR $*\" >> \""+log+"\"\n")
+	write(t, bin, editorBin, "#!/bin/sh\necho \"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR "+
+		harnessEnv+"=$"+harnessEnv+" $*\" >> \""+log+"\"\n")
 	if err := os.Chmod(filepath.Join(bin, editorBin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +136,7 @@ func TestCodeOpensWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal("редактор не звался:", err)
 	}
-	want := "CLAUDE_CONFIG_DIR=" + dir + " -n " + tree + "\n"
+	want := "CLAUDE_CONFIG_DIR=" + dir + " " + harnessEnv + "=" + altHarness + " -n " + tree + "\n"
 	if string(got) != want {
 		t.Fatalf("редактор позван не так:\n%q\nждали\n%q", got, want)
 	}
@@ -169,6 +181,69 @@ func TestCodeMachineLayerGaps(t *testing.T) {
 				t.Fatal("окно открылось без машинного слоя")
 			}
 		})
+	}
+}
+
+// TestCodeConfigDirFromMachineKey: каталог конфига берётся из машинного ключа, а
+// не из константы утилиты. Ключ этот один на все три читателя (раскладка
+// хозяйства, окружение подпроцесса, окно редактора), и разъехавшиеся пути дали
+// бы окно на дорогой подписке, считающее себя дешёвым.
+func TestCodeConfigDirFromMachineKey(t *testing.T) {
+	root, _ := setup(t, "", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "своя-вторая-подписка")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{"env": altEnv("https://endpoint.example/anthropic")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, altSettingsName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Секция соседа стоит выше, и ключ home есть у обеих: ищется он в своей
+	// секции, а не первым попавшимся в файле.
+	conf := "enabled = [\"claude-code\", \"" + altHarness + "\"]\n\n[сосед]\n" +
+		altHomeKey + " = \"~/чужое\"\n\n[" + altHarness + "]\n" +
+		altHomeKey + " = \"" + dir + "\"\n"
+	if err := os.WriteFile(filepath.Join(home, altMachineConfig), []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdCode(root, CodeParams{ID: "XR-002", DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "CLAUDE_CONFIG_DIR="+dir) {
+		t.Fatalf("каталог взят не из машинного ключа:\n%s", msg)
+	}
+	if !strings.Contains(msg, harnessEnv+"="+altHarness) {
+		t.Fatalf("окну не назван харнес: без имени сессия на второй подписке считает себя домашней:\n%s", msg)
+	}
+}
+
+// TestCodeWithoutMachineKey: харнес второй подписки в машинном слое не объявлен,
+// значит подписки на этой машине нет, и окно не открывается с догаданным
+// каталогом, а отказ несёт готовую строку про то, куда вписать каталог.
+func TestCodeWithoutMachineKey(t *testing.T) {
+	root, _ := setup(t, "", "")
+	t.Setenv("HOME", t.TempDir())
+	log := stubEditor(t)
+	_, err := cmdCode(root, CodeParams{ID: "XR-002"})
+	if err == nil {
+		t.Fatal("окно открылось без объявленной второй подписки")
+	}
+	for _, want := range []string{"вписать " + altHomeKey, "[" + altHarness + "]", altMachineConfig} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Fatal("редактор звался без объявленной второй подписки")
 	}
 }
 

@@ -21,15 +21,72 @@ import (
 // знают. Руками рычаг дёргается плохо: переменную надо экспортировать перед
 // каждым запуском, а забытый экспорт молча тратит дорогую подписку.
 
-// altConfigHome это каталог конфига второй подписки, путь от домашнего
-// каталога. Слой машинный, а не проектный: подписка принадлежит машине, и ключ
-// в .devkit/deploy.local каждого репозитория расходился бы копиями одного и
-// того же. Гитигнорнутым каталог выходит сам, он лежит вне репозиториев;
-// болванку кладёт devkitctl doctor --fix, endpoint и токен вписывает
-// пользователь.
-const altConfigHome = ".devkit/claude-glm"
+// altHarness это имя харнеса второй подписки, altMachineConfig машинный конфиг
+// харнесов, altHomeKey ключ его секции с каталогом конфига. Каталог не прибит
+// константой и не лежит в ключе выката: у него один хозяин, машинный слой, и
+// оттуда же его читают раскладка машинного хозяйства (devkitctl) и окружение
+// подпроцесса делегирования (agentctl). Два места под один каталог разъезжаются,
+// а разъехавшись, дают самую дорогую поломку из возможных, окно на дорогой
+// подписке, считающее себя дешёвым. Болванку конфига кладёт devkitctl doctor
+// --fix, endpoint и токен вписывает пользователь.
+const (
+	altHarness       = "glm-code"
+	altMachineConfig = ".devkit/harness.local"
+	altHomeKey       = "home"
+	// Переменная, которой devkit называет активный харнес; тем же именем её
+	// читает agentctl (harnessEnv в tools/agentctl/harness.go).
+	harnessEnv = "DEVKIT_HARNESS"
+)
 
 const altSettingsName = "settings.json"
+
+// altConfigDir достаёт каталог конфига второй подписки из машинного конфига
+// харнесов. Читается ровно один ключ, а не формат целиком: полный разбор
+// подмножества TOML живёт в agentctl и devkitctl, общего пакета у отдельных
+// go-модулей devkit нет (DK-063), и тащить сюда третий парсер ради одной строки
+// незачем. Ключа нет, значит второй подписки на машине не заведено, и это отказ
+// с готовой строкой, а не догадка про каталог.
+func altConfigDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(home, altMachineConfig)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	inSection := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.Index(line, "#"); i == 0 {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inSection = line == "["+altHarness+"]"
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != altHomeKey {
+			continue
+		}
+		val = strings.Trim(strings.TrimSpace(val), `"`)
+		if val == "" {
+			break
+		}
+		// Ведущий ~/ разворачивается тут же: буквальным он завёл бы клиенту
+		// каталог с именем ~ в рабочем дереве, и промах этот виден не сразу.
+		if strings.HasPrefix(val, "~/") {
+			val = filepath.Join(home, val[2:])
+		}
+		return val, nil
+	}
+	return "", fmt.Errorf("второй подписки на этой машине не объявлено: вписать %s в секцию [%s] файла %s (это каталог конфигурации, которым поднимается её клиент), дальше разложить болванку конфига: devkitctl doctor --fix",
+		altHomeKey, altHarness, path)
+}
 
 // editorBin это команда окна редактора. Имя фиксировано: сменный редактор
 // потребовал бы своего ключа в машинном слое, а второго редактора у конвейера
@@ -77,11 +134,11 @@ func (a altSub) redact(s string) string {
 
 // loadAltSub читает конфиг второй подписки из машинного слоя.
 func loadAltSub() (altSub, error) {
-	home, err := os.UserHomeDir()
+	dir, err := altConfigDir()
 	if err != nil {
 		return altSub{}, err
 	}
-	a := altSub{Dir: filepath.Join(home, altConfigHome)}
+	a := altSub{Dir: dir}
 	a.Settings = filepath.Join(a.Dir, altSettingsName)
 	raw, err := os.ReadFile(a.Settings)
 	if err != nil {
@@ -159,8 +216,9 @@ func cmdCode(root string, p CodeParams) (string, error) {
 		msg = append(msg, note)
 	}
 	msg = append(msg,
-		"дерево задачи: "+tree,
-		"CLAUDE_CONFIG_DIR="+a.Dir,
+		"дерево задачи: "+tree)
+	msg = append(msg, altEnvLines(a)...)
+	msg = append(msg,
 		"base URL: "+a.BaseURL,
 		"модель: "+altModel(a),
 		"токен: "+a.tokenState(),
@@ -211,6 +269,15 @@ func editorArgv(tree string) []string {
 	return []string{editorBin, "-n", tree}
 }
 
+// altEnvLines это окружение окна: каталог конфига и имя харнеса. Имя ставится
+// явно, потому что детект по переменным тут неоднозначен по построению: сессия
+// на второй подписке видит тот же CLAUDECODE=1, что домашняя, и без имени она
+// считала бы себя домашней, то есть разворачивала бы ярусы по чужому маппингу и
+// корректировала вердикты по чужому остатку. Врало бы окно при этом молча.
+func altEnvLines(a altSub) []string {
+	return []string{"CLAUDE_CONFIG_DIR=" + a.Dir, harnessEnv + "=" + altHarness}
+}
+
 // altModel это модель второй подписки для отчёта: ключа в конфиге может и не
 // быть, и молчаливый пропуск строки читался бы как «модель по умолчанию».
 func altModel(a altSub) string {
@@ -230,7 +297,7 @@ func openEditor(a altSub, tree string) error {
 	}
 	cmd := exec.Command(bin, "-n", tree)
 	cmd.Dir = tree
-	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+a.Dir)
+	cmd.Env = append(os.Environ(), altEnvLines(a)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf

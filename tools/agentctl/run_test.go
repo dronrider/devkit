@@ -95,6 +95,17 @@ command = ["/bin/sh", "-c", "echo model={model} effort={effort} depth=$DEVKIT_RU
 [quota]
 `
 
+// signalProfile это подпроцесс, который убивает себя сигналом: кода выхода у
+// такого нет вовсе.
+const signalProfile = `[delegate]
+mode = "cli"
+command = ["/bin/sh", "-c", "kill -TERM $$"]
+
+[hooks]
+
+[quota]
+`
+
 const nativeProfile = `[delegate]
 mode = "native"
 
@@ -167,6 +178,23 @@ func TestRunCLIExitCode(t *testing.T) {
 	code, out := runOut(t, root, "T-001", roleExec, t.TempDir())
 	if code != 7 {
 		t.Fatalf("код возврата %d, жду 7: %s", code, out)
+	}
+}
+
+// TestRunCLISignal: подпроцесс, убитый сигналом, кода выхода не имеет, и наружу
+// идёт единица с названной причиной. Отдать тут минус единицу нельзя: она
+// обернулась бы в 255 и читалась бы как чужой код возврата.
+func TestRunCLISignal(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "signalcli", signalProfile)
+	writeMachine(t, kit, "enabled = [\"signalcli\"]\ndefault = \"signalcli\"\n\n[signalcli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	code, out := runOut(t, root, "T-001", roleExec, t.TempDir())
+	if code != 1 {
+		t.Fatalf("код возврата %d, жду 1: %s", code, out)
+	}
+	if !strings.Contains(out, "подпроцесс кончился сигналом") {
+		t.Fatalf("причина сигнального кода не названа:\n%s", out)
 	}
 }
 

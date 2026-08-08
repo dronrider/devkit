@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from testenv import (PY, DEVKIT_SRC, SandboxCase, fake_home, git_init, harness, read, rules,
-                     run, write)
+                     run, without_hole, without_pockets, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 EMBED_MARKER = re.compile(r"^<!-- devkit:rules begin src=[0-9a-f]{12} body=[0-9a-f]{12} -->$", re.M)
@@ -695,7 +695,7 @@ class ThinFilesTest(SandboxCase):
         self.assertIn("\n@../devkit/RULES.board.md\n", "\n" + read(self.proj / "CLAUDE.md"),
                       "в перегенерённом файле нет правил доски")
         _, out = self.box.doctor(self.proj)
-        self.assertNotRegex(out, r"CLAUDE\.md|AGENTS\.md",
+        self.assertNotRegex(without_pockets(without_hole(0, out)[1]), r"CLAUDE\.md|AGENTS\.md",
                             "после перегенерации остались находки по правилам")
 
     def test_2_handwritten_thin_file(self):
@@ -734,7 +734,7 @@ class ThinFilesTest(SandboxCase):
         write(hproj / "AGENTS.md", "# Старый проект\n")
         _, out = self.box.doctor(hproj)
         self.assertNotIn_("строка импорта", out, "находка про импорт осталась после его удаления")
-        self.assertNotRegex(out, r"CLAUDE\.md|AGENTS\.md",
+        self.assertNotRegex(without_pockets(out), r"CLAUDE\.md|AGENTS\.md",
                             "после переезда остались находки по правилам")
 
 
@@ -776,7 +776,8 @@ class EmbedTest(SandboxCase):
         self.assertEqual(len([ln for ln in read(self.thin).split("\n") if ln.startswith("@")]), 1,
                          "при вклейке тонкий файл всё ещё ходит в devkit")
         _, out = self.box.doctor(self.proj)
-        self.assertNotRegex(out, r"вклейка|CLAUDE\.md", "после вклейки остались находки по правилам")
+        self.assertNotRegex(without_pockets(out), r"вклейка|CLAUDE\.md",
+                            "после вклейки остались находки по правилам")
 
     def test_2_handwritten_embed_is_not_overwritten(self):
         keep = read(self.agents)
@@ -809,7 +810,7 @@ class EmbedTest(SandboxCase):
         write(self.profile, EMBED_TOOL + '\n[skills]\ndiscovery = "manual"\n')
         before = read(self.agents)
         _, out = self.box.doctor(self.proj)
-        self.assertNotRegex(out, r"вклейка|CLAUDE\.md",
+        self.assertNotRegex(without_pockets(out), r"вклейка|CLAUDE\.md",
                             "manual без нарезанного ядра сделал вклейку устаревшей: %s" % out)
         self.assertEqual(read(self.agents), before, "manual без нарезанного ядра тронул вклейку")
         self.assertNotIn("Процедуры devkit отдельными файлами", before,
@@ -849,7 +850,7 @@ class EmbedTest(SandboxCase):
         self.assertNotIn("Правила работы с ассистентом", text,
                          "под указателями остался полный текст правил вместо ядра")
         _, out = self.box.doctor(self.proj)
-        self.assertNotRegex(out, r"вклейка|CLAUDE\.md",
+        self.assertNotRegex(without_pockets(out), r"вклейка|CLAUDE\.md",
                             "после перекладки под указатели остались находки")
 
     def test_7_axis_removed_brings_the_full_text_back(self):
@@ -892,6 +893,124 @@ class EmbedTest(SandboxCase):
         self.assertIn("\n@../devkit/RULES.md\n", "\n" + read(self.thin),
                       "в тонком файле не вернулись правила devkit")
         (self.box.home / ".devkit" / "harness.local").unlink()
+
+
+class ImportReachTest(unittest.TestCase):
+    """Граница, по которой клиент решает, разворачивать импорт или пропустить.
+
+    Замер 2026-08-08 (README devkitctl, раздел «Куда доезжают импорты правил»):
+    разворачивается только путь, ведущий внутрь каталога самого файла, и
+    считается это по записанному пути, а не по тому, куда он ведёт по диску.
+    Логика поэтому лексическая и проверяется без файловой системы.
+    """
+
+    def setUp(self):
+        self.thin = "/tmp/proj/CLAUDE.md"
+
+    def test_1_inside_the_project(self):
+        for spec in ("AGENTS.md", "./AGENTS.md", "docs/rules.md", "link/RULES.core.md",
+                     "sub/../AGENTS.md", "/tmp/proj/docs/rules.md"):
+            self.assertFalse(rules.import_escapes(self.thin, spec),
+                             "импорт внутрь проекта принят за путь наружу: %s" % spec)
+
+    def test_2_outside_the_project(self):
+        for spec in ("../devkit/RULES.md", "../../devkit/RULES.md", "/etc/rules.md",
+                     "~/projects/devkit/RULES.md", "sub/../../devkit/RULES.md"):
+            self.assertTrue(rules.import_escapes(self.thin, spec),
+                            "импорт наружу принят за путь внутрь проекта: %s" % spec)
+
+    def test_3_neighbour_with_a_common_prefix(self):
+        # Каталог-сосед, чьё имя начинается с имени проекта: сравнение идёт по
+        # разделителю пути, а не по префиксу строки.
+        self.assertTrue(rules.import_escapes(self.thin, "../proj-local/RULES.md"),
+                        "сосед с общим префиксом имени принят за путь внутрь проекта")
+
+
+class ProjectImportsTest(SandboxCase):
+    """Импорты файла правил проекта: полный текст вместо ядра и импорт, который
+    лежит на диске, а до контекста не доезжает (DK-190).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.proj = cls.box.project("iproj")
+        cls.thin = cls.proj / "CLAUDE.md"
+
+    def findings(self, text):
+        write(self.thin, text)
+        with fake_home(self.box.home):
+            return rules.check_project_imports(str(self.proj), str(self.box.dk))
+
+    def test_1_full_text_instead_of_the_core(self):
+        core = self.box.dk / "RULES.core.md"
+        write(core, "# ядро\n\nтекст ядра\n")
+        try:
+            found = self.findings("# правила\n\n@../devkit/RULES.md\n")
+            self.assertTrue([f for f in found if "тянет полный текст правил" in f
+                             and "RULES.core.md" in f and "CLAUDE.md:3" in f],
+                            "импорт полного текста рядом с нарезанным ядром не назван: %s" % (found,))
+        finally:
+            core.unlink()
+
+    def test_2_core_import_is_silent_about_the_full_text(self):
+        core = self.box.dk / "RULES.core.md"
+        write(core, "# ядро\n\nтекст ядра\n")
+        try:
+            found = self.findings("# правила\n\n@../devkit/RULES.core.md\n")
+            self.assertFalse([f for f in found if "полный текст" in f],
+                             "импорт ядра принят за полный текст: %s" % (found,))
+        finally:
+            core.unlink()
+
+    def test_3_import_out_of_the_project_does_not_arrive(self):
+        # Правила доски глобальная точка не везёт, и путь наружу их не довозит:
+        # в сессию они не приезжают вовсе, а расчёт карманов считает их
+        # резидентными. Молчать тут нельзя, разница видна только замером.
+        found = self.findings("# правила\n\n@../devkit/RULES.board.md\n")
+        self.assertTrue([f for f in found if "до контекста не доезжает" in f
+                         and "RULES.board.md" in f],
+                        "недоехавший импорт правил доски не назван: %s" % (found,))
+
+    def test_4_what_the_global_point_brings_is_not_a_finding(self):
+        # Тот же текст приезжает глобальной точкой, минуя файл проекта: импорт
+        # наружу дублирует уже доехавшее, и находки тут нет.
+        found = self.findings("# правила\n\n@../devkit/RULES.md\n")
+        self.assertFalse([f for f in found if "до контекста не доезжает" in f],
+                         "находка на импорт, который доезжает глобальной точкой: %s" % (found,))
+
+    def test_5_import_inside_the_project_is_silent(self):
+        write(self.proj / "docs" / "own.md", "своё\n")
+        found = self.findings("# правила\n\n@AGENTS.md\n@docs/own.md\n")
+        self.assertEqual(found, [], "импорт внутрь проекта дал находку")
+
+    def test_6_missing_import_is_left_to_check_imports(self):
+        # Про импорт, которому нечего разворачивать, говорит другая проверка, и
+        # вторая находка на ту же строку была бы шумом.
+        found = self.findings("# правила\n\n@../devkit/RULES.gone.md\n")
+        self.assertEqual(found, [], "несуществующий импорт назван недоехавшим: %s" % (found,))
+
+    def test_7_import_in_a_code_block_is_a_sample(self):
+        found = self.findings("# правила\n\n```\n@../devkit/RULES.board.md\n```\n")
+        self.assertEqual(found, [], "строка импорта в блоке кода принята за импорт: %s" % (found,))
+
+    def test_8_doctor_names_both_defects_of_a_handwritten_file(self):
+        # Стык с доктором: рукописный CLAUDE.md проекта, подключённого до
+        # переезда на AGENTS.md, тянет полный текст правил доски, и не доезжает
+        # ни то ни другое (случай it-road-course из разбора DK-190).
+        core = self.box.dk / "RULES.board.core.md"
+        write(core, "# ядро доски\n\nтекст ядра доски\n")
+        write(self.thin, "# правила проекта\n\n@../devkit/RULES.board.md\n")
+        try:
+            _, out = self.box.doctor(self.proj)
+            self.assertIn_("CLAUDE.md:3: импорт @../devkit/RULES.board.md тянет полный текст", out,
+                           "доктор не назвал импорт полного текста вместо ядра")
+            self.assertIn_("CLAUDE.md:3: импорт @../devkit/RULES.board.md есть на диске, "
+                           "а до контекста не доезжает", out,
+                           "доктор не назвал недоехавший импорт")
+        finally:
+            core.unlink()
+            self.thin.unlink()
 
 
 if __name__ == "__main__":

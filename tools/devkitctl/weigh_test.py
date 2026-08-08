@@ -155,6 +155,32 @@ class ThresholdsTest(unittest.TestCase):
         messy = self.bump(messy, "листинг скиллов", 100000)
         self.assertEqual(len(weigh.evaluate_residency(messy, **self.KW)), 3)
 
+    def test_project_pocket_on_the_border(self):
+        # Проектная часть это AGENTS.md проекта плюс тонкий файл, и считается она
+        # суммой: два кармана порознь укладываются, вместе нет. Порог строгий
+        # «больше», как и у карманов devkit (DK-190).
+        self.assertEqual(weigh.evaluate_project_residency(self.CLEAN, project_limit=480), [])
+        self.assertEqual(weigh.evaluate_project_residency([], project_limit=480), [])
+        found = weigh.evaluate_project_residency(self.CLEAN, project_limit=479)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("проектная часть (AGENTS.md проекта, тонкий CLAUDE.md)", found[0])
+        self.assertIn("480 символов", found[0])
+        self.assertIn("порог 479 символов", found[0])
+        self.assertIn("разбивка:", found[0])
+
+    def test_project_pocket_ignores_devkit_pockets(self):
+        # Разбухли карманы devkit, а не проекта: проекту чинить нечего, и
+        # проектной находки нет.
+        messy = self.bump(self.CLEAN, "RULES.core.md (импорт глобальной точки)", 100000)
+        messy = self.bump(messy, "листинг скиллов", 100000)
+        self.assertEqual(weigh.evaluate_project_residency(messy, project_limit=6000), [])
+
+    def test_embedded_rules_are_not_the_project_pocket(self):
+        # Вклейка правил лежит в AGENTS.md, но текст в ней devkit: карман
+        # отдельный, и в проектный порог он не идёт.
+        with_block = self.CLEAN + [("вклейка правил в AGENTS.md", 40000)]
+        self.assertEqual(weigh.evaluate_project_residency(with_block, project_limit=6000), [])
+
     def test_skill_body(self):
         # На пороге молчит, на символ выше предлагает резать надвое.
         self.assertIsNone(weigh.evaluate_skill_body("test-skill", 9000, limit=9000))
@@ -398,9 +424,11 @@ class MeasureTest(SandboxCase):
         self.assertEqual(rc, 2, "weigh с нулём повторов не отказался: %s" % out)
 
     def test_10_embed_harness_pockets(self):
-        # Правила вклеены в сам AGENTS.md, и он посчитан целиком, а тонкого файла
-        # и отдельных файлов правил у такого харнеса нет. Сложи их сверху
-        # вклейки, и вес правил уехал бы в сумму дважды.
+        # Правила вклеены в сам AGENTS.md, и он посчитан целиком, только двумя
+        # карманами: рукописная часть проекта отдельно, вклейка отдельно (по
+        # проектной части считается порог, а текст вклейки не проектный, DK-190).
+        # Тонкого файла и отдельных файлов правил у такого харнеса нет: сложи их
+        # сверху вклейки, и вес правил уехал бы в сумму дважды.
         profile = self.box.dk / "kit" / "harness" / "embed-tool.toml"
         write(profile, '[detect]\n\n[rules]\nmode = "embed"\n\n[delegate]\nmode = "none"\n'
                        '\n[hooks]\n\n[quota]\n')
@@ -415,8 +443,14 @@ class MeasureTest(SandboxCase):
                 _, profile_obj = weigh.active_profile(str(self.proj), str(self.box.dk))
                 pockets = weigh.pockets(str(self.proj), str(self.box.dk), profile_obj)
             labels = dict(pockets)
-            self.assertEqual(labels.get("AGENTS.md проекта"), len(read(self.proj / "AGENTS.md")),
+            self.assertEqual(labels.get("AGENTS.md проекта", 0)
+                             + labels.get("вклейка правил в AGENTS.md", 0),
+                             len(read(self.proj / "AGENTS.md")),
                              "AGENTS.md с вклейкой посчитан не целиком: %s" % (pockets,))
+            # Рукописная часть это файл до вклейки плюс пустая строка, которую
+            # генератор ставит перед маркером начала.
+            self.assertEqual(labels.get("AGENTS.md проекта"), len(plain.rstrip("\n")) + 2,
+                             "в проектный карман попал текст вклейки: %s" % (pockets,))
             self.assertFalse([l for l in labels if "RULES" in l],
                              "файлы правил посчитаны сверх вклейки: %s" % (pockets,))
             self.assertFalse([l for l in labels if "тонкий" in l],
@@ -656,20 +690,41 @@ class DoctorResidencyTest(SandboxCase):
         rc, out = self.rddoc()
         self.assertEqual(rc, 0, "возврат листинга агентов к норме не очистил находку: %s" % out)
 
-    def test_6_finding_is_not_a_project_one(self):
-        # Доктор другого проекта, для которого devkit тот же rdk, веса не
-        # печатает и не находит, даже пока тело скилла разбухшее.
+    def test_6_devkit_pockets_are_not_a_project_finding(self):
+        # Доктор подключённого проекта печатает вес его резидента (карманы те же,
+        # смотрит на них проект), а находок devkit не выдаёт: ни разбухшего тела
+        # скилла, ни его карманов. Чинить их в проекте нечем (DK-029, DK-190).
         self.machine_skill(self.SKILL + "т" * 16500)
         try:
             other = git_init(self.box.root / "resid" / "otherproj")
             _, out = self.box.dkctl_run("doctor", "-C", str(other),
                                         dkctl=self.rdkctl, home=self.rdhome)
-            self.assertNotIn_("вес резидента", out,
-                              "доктор чужого проекта напечатал вес резидента devkit")
+            self.assertIn_("вес резидента проекта otherproj по карманам", out,
+                           "доктор проекта не напечатал вес его резидента")
             self.assertNotIn_("тело скилла", out,
                               "доктор чужого проекта нашёл разбухший скилл devkit")
+            self.assertNotIn_("вес резидента devkit", out,
+                              "доктор чужого проекта судит карманы devkit")
         finally:
             self.machine_skill(self.SKILL + "т" * 200)
+
+    def test_7_heavy_project_rules(self):
+        # Тяжёлая проектная часть резидента: рукописный тонкий файл проекта,
+        # оставшийся от подключения до переезда на AGENTS.md. Находка называет
+        # карман, его вес и порог, а тонкая раскладка про вес молчит (DK-190).
+        proj = git_init(self.box.root / "resid" / "heavyproj")
+        thin = proj / "CLAUDE.md"
+        write(thin, "# правила проекта\n\nкороткий текст\n")
+        _, out = self.box.dkctl_run("doctor", "-C", str(proj),
+                                    dkctl=self.rdkctl, home=self.rdhome)
+        self.assertNotIn_("вес резидента, проектная часть", out,
+                          "тонкая раскладка проекта дала находку веса")
+        write(thin, "# правила проекта\n\n" + "п" * 6000)
+        _, out = self.box.dkctl_run("doctor", "-C", str(proj),
+                                    dkctl=self.rdkctl, home=self.rdhome)
+        self.assertIn_("вес резидента, проектная часть (тонкий CLAUDE.md): 6 019 символов", out,
+                       "разбухший файл правил проекта не дал находки веса")
+        self.assertIn_("порог 6 000 символов", out, "находка веса проекта не назвала порог")
 
 
 if __name__ == "__main__":

@@ -63,6 +63,11 @@ BEGIN_RE = re.compile(r"^<!-- devkit:rules begin (?:depth=[a-z]+ )?src=([0-9a-f]
 END_LINE = "<!-- devkit:rules end -->"
 IMPORT_RE = re.compile(r"^@\S+$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# Сколько ступеней импорта клиент разворачивает вглубь: замер 2026-08-08 на
+# цепочке из семи файлов, доехали четыре (README devkitctl, раздел «Куда
+# доезжают импорты правил»). Число тут нужно только обходу глобальной точки,
+# чтобы он не гулял по дереву импортов дальше, чем гуляет сам клиент.
+IMPORT_HOPS = 4
 
 
 class BrokenMarkers(Exception):
@@ -558,6 +563,125 @@ def check_imports(path, root):
         if not target.exists():
             findings.append("%s:%d: импорт %s не разворачивается (devkit склонирован рядом?)"
                             % (os.path.relpath(path, root), i, ln))
+    return findings
+
+
+def import_target(path, spec):
+    # Куда ведёт строка импорта файла path. Нормализация лексическая
+    # (os.path.normpath), без разворота симлинков: клиент смотрит на записанный
+    # путь, а не на то, куда тот ведёт по диску.
+    p = os.path.expanduser(spec)
+    if not os.path.isabs(p):
+        p = os.path.join(str(Path(path).parent), p)
+    return Path(os.path.normpath(p))
+
+
+def import_escapes(path, spec):
+    """Уводит ли строка импорта за пределы каталога, в котором лежит сам файл.
+
+    Ровно по этой границе клиент решает, разворачивать импорт или пропустить
+    (замер в README devkitctl, раздел «Куда доезжают импорты правил»). Граница
+    лексическая, поэтому симлинк внутри проекта её проходит, а `../devkit/...`,
+    абсолютный путь и путь от `~` не проходят одинаково.
+    """
+    base = os.path.normpath(str(Path(path).parent))
+    target = str(import_target(path, spec))
+    return target != base and not target.startswith(base + os.sep)
+
+
+def reachable_texts(path, hops=IMPORT_HOPS):
+    """(имя файла, текст) всего, что доезжает до контекста импортами из path.
+
+    Считается для глобальной точки правил: она лежит в хозяйстве самого
+    инструмента, и импорты наружу он ей разворачивает, в отличие от файла
+    правил проекта. Ключ это имя плюс содержимое, а не путь: тот же текст
+    правил приезжает из разных чекаутов devkit по разным путям, а в контексте
+    лежит одной копией.
+    """
+    out, seen, queue = set(), set(), [(Path(path), 0)]
+    while queue:
+        p, depth = queue.pop(0)
+        if depth > hops or not p.is_file():
+            continue
+        key = p.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        text = read_text(p)
+        if depth:
+            out.add((p.name, text))
+        queue += [(import_target(p, spec), depth + 1) for spec in import_targets(p)]
+    return out
+
+
+def global_texts(profiles, machine_path=None):
+    # Что доезжает до сессии глобальной точкой правил, минуя файлы проекта.
+    homes = machine_homes(machine_path)
+    out = set()
+    for name, profile in profiles:
+        if mode_of(profile) != "import":
+            continue
+        gf = profile.str_of("rules", "global_file")
+        if not gf:
+            continue
+        path, bad = harness_path(name, gf, homes, machine_path)
+        if path:
+            out |= reachable_texts(path)
+    return out
+
+
+def check_project_imports(root, devkit, machine_path=None):
+    """Находки по импортам файла правил проекта: полный текст вместо ядра и
+    импорт, который лежит на диске, а до контекста не доезжает.
+
+    Смотрит на строки импорта как они записаны, а не на то, что сгенерировал бы
+    генератор: рукописный `CLAUDE.md` проекта, подключённого до переезда на
+    `AGENTS.md`, генератору не принадлежит вовсе, а в контекст едет наравне с
+    генерённым и весит там больше всего (DK-190).
+    """
+    root, devkit = Path(root), Path(devkit)
+    findings = []
+    profiles, _ = enabled_harnesses(root, devkit / "kit" / "harness", machine_path)
+    delivered = global_texts(profiles, machine_path)
+    files, seen = [], set()
+    for _, profile in profiles:
+        if mode_of(profile) != "import":
+            continue
+        fname = profile.str_of("rules", "file")
+        # Два включённых харнеса просят обычно один и тот же файл, и находки по
+        # нему не должны двоиться.
+        if not fname or fname in seen or not (root / fname).is_file():
+            continue
+        seen.add(fname)
+        files.append((fname, root / fname))
+    for fname, path in files:
+        text = read_text(path)
+        skip = fenced(text)
+        for i, ln in enumerate(text.split("\n")):
+            if i in skip:
+                continue
+            ln = ln.strip()
+            if not IMPORT_RE.match(ln):
+                continue
+            spec, num = ln[1:], i + 1
+            target = import_target(path, spec)
+            if not target.is_file():
+                # Про импорт, которому нечего разворачивать, говорит check_imports.
+                continue
+            core = core_of(target)
+            if core.is_file():
+                findings.append(
+                    "%s:%d: импорт %s тянет полный текст правил, а рядом лежит ядро %s: "
+                    "резидентно ядро, полный текст читается по надобности; заменить импорт "
+                    "на ядро (генерённый тонкий файл выпишет его сам, devkitctl doctor --fix)"
+                    % (fname, num, ln, core.name))
+            if import_escapes(path, spec) and (target.name, read_text(target)) not in delivered:
+                findings.append(
+                    "%s:%d: импорт %s есть на диске, а до контекста не доезжает: путь уводит "
+                    "за пределы проекта, и такие импорты клиент пропускает молча (замер в "
+                    "tools/devkitctl/README.md, раздел «Куда доезжают импорты правил»); %s "
+                    "в сессию не приезжает ни ядром, ни полным текстом"
+                    % (fname, num, ln, target.name))
     return findings
 
 

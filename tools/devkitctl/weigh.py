@@ -34,6 +34,17 @@ LIMIT = 6500
 # только итог.
 CORE_LIMIT = 5500
 BOARD_LIMIT = 1500
+# Порог проектной части резидента (AGENTS.md проекта плюс тонкий файл харнеса),
+# в символах, как и два кармана выше. Проектная часть это указатели на
+# долгоживущую доку, а не сама дока, и тяжелее ядра правил (RULES.core.md,
+# сегодня 4 715 символов) ей быть незачем: 6 000 это ядро с запасом. Сверено с
+# живыми проектами 2026-08-08: goonies 768, authn 2 356, idp-project 3 851
+# укладываются, а рукописные CLAUDE.md xr-proxy (14 357) и it-road-course
+# (48 889) нет, и ровно они съедали шестую часть лимита подписки (DK-190).
+PROJECT_LIMIT = 6000
+# По чему в списке карманов опознаётся проектная часть: pockets() кладёт имя
+# файла первым словом ярлыка.
+PROJECT_MARKS = ("AGENTS.md проекта", "тонкий ")
 # Второй порог DK-029, на тело скилла: оно не резидентно, но платится записью
 # в момент вызова. DK-118 переставила его с сегодняшних тел на ту же меру, что
 # у резидента: один вызов скилла стоит сессии не дороже, чем весь резидент,
@@ -167,19 +178,24 @@ def pockets(root, devkit, profile):
     а не внутри замера.
     """
     root, devkit = Path(root), Path(devkit)
-    out, seen = [], set()
+    out, seen, walked = [], set(), set()
 
     def add(label, path):
         path = Path(path)
         if not path.is_file():
             return
-        key = path.resolve()
-        if key in seen:
-            # Один файл правил приезжает и глобальной точкой, и импортом тонкого
-            # файла, а в контексте лежит одной копией.
+        text = read_text(path)
+        # Один файл правил приезжает и глобальной точкой, и импортом тонкого
+        # файла, а в контексте лежит одной копией. Одним и тем же его делает либо
+        # общий путь на диске (симлинк на тот же файл), либо совпадение имени и
+        # содержимого: доктор, запущенный из worktree или из временной копии
+        # devkit, видит те же правила вторым путём, и платить за них дважды
+        # расчёт не должен (та же мерка у stabilized_sources, DK-127).
+        keys = {path.resolve(), (path.name, text)}
+        if keys & seen:
             return
-        seen.add(key)
-        out.append((label, len(read_text(path))))
+        seen.update(keys)
+        out.append((label, len(text)))
 
     global_file = profile.str_of("rules", "global_file")
     if global_file:
@@ -188,10 +204,26 @@ def pockets(root, devkit, profile):
         queue = imports_of(point) if point.is_file() else []
         while queue:
             p = queue.pop(0)
-            if p.is_file() and p.resolve() not in seen:
+            if p.is_file() and p.resolve() not in walked:
+                walked.add(p.resolve())
                 queue += imports_of(p)
                 add("%s (импорт глобальной точки)" % p.name, p)
-    add("%s проекта" % rules.AGENTS_FILE, root / rules.AGENTS_FILE)
+    agents = root / rules.AGENTS_FILE
+    try:
+        block = rules.find_block(read_text(agents)) if agents.is_file() else None
+    except rules.BrokenMarkers:
+        block = None
+    if block:
+        # Вклейка правил лежит в файле проекта, а текст в ней devkit, и считается
+        # она отдельным карманом: в проектный порог чужой текст не идёт, проекту
+        # его не сокращать (DK-190).
+        text = read_text(agents)
+        own = len(block[0]) + len(block[4])
+        out.append(("%s проекта" % rules.AGENTS_FILE, own))
+        out.append(("вклейка правил в %s" % rules.AGENTS_FILE, len(text) - own))
+        seen.update({agents.resolve(), (agents.name, text)})
+    else:
+        add("%s проекта" % rules.AGENTS_FILE, agents)
     # У embed-харнеса правила лежат вклейкой в самом AGENTS.md, и он их уже
     # посчитал: тонкого файла у такого нет, а сложить сверху ещё и файлы правил
     # значило бы заплатить за них дважды.
@@ -252,6 +284,25 @@ def evaluate_residency(weights, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=
     return findings
 
 
+def evaluate_project_residency(weights, project_limit=PROJECT_LIMIT):
+    """Находки по карманам подключённого проекта: тяжёлая проектная часть.
+
+    Судится тут только то, за что отвечает сам проект: его `AGENTS.md` и тонкий
+    файл харнеса, который у подключённого до переезда проекта бывает рукописным
+    и весит десятки тысяч символов. Карманы самого devkit (ядро, ядро доски,
+    листинги) в проектную находку не входят: чинить их проекту нечем, и про них
+    говорит доктор в чекауте devkit (DK-029, DK-190).
+    """
+    own = [(label, c) for label, c in weights if label.startswith(PROJECT_MARKS)]
+    chars = sum(c for _, c in own)
+    if not own or chars <= project_limit:
+        return []
+    return ["вес резидента, проектная часть (%s): %s символов (%s токенов), порог %s символов; "
+            "разбивка: %s"
+            % (", ".join(label for label, _ in own), num(chars), num(chars / CHARS_PER_TOKEN),
+               num(project_limit), pockets_breakdown(weights))]
+
+
 def residency_findings(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT):
     """Находки веса резидента активного харнеса. Находка не проектная (карманы
     общие для всех проектов devkit), поэтому doctor() зовёт её только для
@@ -266,12 +317,15 @@ def residency_findings(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_l
     return evaluate_residency(pockets(root, devkit, profile), limit, core_limit, board_limit)
 
 
-def pockets_report(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT):
+def pockets_report(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit=BOARD_LIMIT,
+                   project=False):
     """(строки таблицы карманов, находки) для печати в doctor.
 
     Вес печатается всегда, не только когда есть находка (DK-029, сценарий
     проверки, шаг 1): иначе распухание было бы видно единственный день, тот, в
-    который карман переполз через порог.
+    который карман переполз через порог. Карманы считаются одни и те же, а
+    судятся разные: в чекауте devkit пороги на его собственные карманы и на
+    итог, в подключённом проекте порог на его проектную часть (DK-190).
     """
     root, devkit = Path(root), Path(devkit)
     try:
@@ -282,12 +336,15 @@ def pockets_report(root, devkit, limit=LIMIT, core_limit=CORE_LIMIT, board_limit
     if not weights:
         return [], []
     width = max(len(label) for label, _ in weights)
-    lines = ["вес резидента devkit по карманам (харнес %s):" % name]
+    lines = ["вес резидента %s по карманам (харнес %s):"
+             % ("проекта %s" % Path(root).name if project else "devkit", name)]
     for label, c in weights:
         lines.append("  %-*s  %9s симв  %8s ток" % (width, label, num(c), num(c / CHARS_PER_TOKEN)))
     total_chars = sum(c for _, c in weights)
     lines.append("  %-*s  %9s симв  %8s ток"
                  % (width, "итого", num(total_chars), num(total_chars / CHARS_PER_TOKEN)))
+    if project:
+        return lines, evaluate_project_residency(weights)
     return lines, evaluate_residency(weights, limit, core_limit, board_limit)
 
 

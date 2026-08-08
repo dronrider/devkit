@@ -11,7 +11,7 @@ import shutil
 import unittest
 
 from testenv import (SandboxCase, executable, git, git_init, read, run,
-                     write)
+                     without_hole, write)
 
 FOREIGN_HOOK = "#!/bin/sh\necho чужой pre-commit\nexit 0\n"
 
@@ -47,9 +47,12 @@ class CorpTest(SandboxCase):
 
     @classmethod
     def corpdoc(cls, *args, **kw):
+        # Находка про недоехавшие правила доски вычитается: корп-проект с доской
+        # даёт её всегда, а эти проверки про обвязку контура, не про доставку
+        # правил (testenv.BOARD_IMPORT_HOLE).
         root = kw.pop("root", cls.clone)
-        return cls.box.dkctl_run("doctor", *(list(args) + ["-C", str(root)]),
-                                 path=cls.corppath, **kw)
+        return without_hole(*cls.box.dkctl_run("doctor", *(list(args) + ["-C", str(root)]),
+                                               path=cls.corppath, **kw))
 
     def test_01_corp_lays_out_the_pair(self):
         self.assertEqual(self.rc, 0, "corp не прошёл: %s" % self.out)

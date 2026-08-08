@@ -69,11 +69,15 @@ func altConfigDir() (string, error) {
 		if !inSection {
 			continue
 		}
-		key, val, ok := strings.Cut(line, "=")
+		key, rest, ok := strings.Cut(line, "=")
 		if !ok || strings.TrimSpace(key) != altHomeKey {
 			continue
 		}
-		val = strings.Trim(strings.TrimSpace(val), `"`)
+		val, err := altHomeValue(rest)
+		if err != nil {
+			return "", fmt.Errorf("%s: ключ %s секции [%s] не разобран (%v): каталог второй подписки берётся отсюда, и читать его наугад нельзя; значение это путь в двойных кавычках, после него допустим только комментарий",
+				path, altHomeKey, altHarness, err)
+		}
 		if val == "" {
 			break
 		}
@@ -86,6 +90,54 @@ func altConfigDir() (string, error) {
 	}
 	return "", fmt.Errorf("второй подписки на этой машине не объявлено: вписать %s в секцию [%s] файла %s (это каталог конфигурации, которым поднимается её клиент), дальше разложить болванку конфига: devkitctl doctor --fix",
 		altHomeKey, altHarness, path)
+}
+
+// altHomeValue разбирает значение ключа тем же подмножеством TOML, каким его
+// читают остальные: строка в двойных кавычках с экранированием \\, \", \n и \t,
+// после закрывающей кавычки допустим только хвостовой комментарий, а решётка
+// внутри кавычек это часть значения. Своей мерки тут быть не может: файл один на
+// три инструмента, и разойдись они на решётке, один и тот же машинный конфиг
+// читался бы по-разному, а расплатой было бы окно на дорогой подписке с мусором
+// вместо каталога. Близнецы: parseTOMLValue в tools/agentctl/toml.go и
+// parse_value в tools/devkitctl/harness.py, общего пакета у отдельных
+// go-модулей devkit нет (DK-063).
+func altHomeValue(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" || s[0] != '"' {
+		return "", fmt.Errorf("значение %q не строка в двойных кавычках", s)
+	}
+	var b strings.Builder
+	for i := 1; i < len(s); {
+		c := s[i]
+		if c == '\\' {
+			if i+1 >= len(s) {
+				return "", fmt.Errorf("строка не закрыта")
+			}
+			switch s[i+1] {
+			case '\\':
+				b.WriteByte('\\')
+			case '"':
+				b.WriteByte('"')
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			default:
+				return "", fmt.Errorf("неизвестная escape-последовательность \\%c", s[i+1])
+			}
+			i += 2
+			continue
+		}
+		if c == '"' {
+			if tail := strings.TrimSpace(s[i+1:]); tail != "" && !strings.HasPrefix(tail, "#") {
+				return "", fmt.Errorf("после значения лишнее: %q", tail)
+			}
+			return b.String(), nil
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return "", fmt.Errorf("строка не закрыта")
 }
 
 // editorBin это команда окна редактора. Имя фиксировано: сменный редактор

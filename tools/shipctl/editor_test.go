@@ -226,6 +226,85 @@ func TestCodeConfigDirFromMachineKey(t *testing.T) {
 	}
 }
 
+// TestAltConfigDirValues: значение ключа home читается тем же подмножеством
+// TOML, каким машинный конфиг читают agentctl и devkitctl (фикстура подмножества
+// kit/harness/testdata/parse-values.toml). Разойдись три инструмента на решётке в
+// строке, один и тот же файл читался бы по-разному, а расплатой было бы окно на
+// дорогой подписке с мусором вместо каталога.
+func TestAltConfigDirValues(t *testing.T) {
+	cases := []struct {
+		name, value, want, refuse string
+	}{
+		{
+			name:  "хвостовой комментарий",
+			value: `"~/.devkit/claude-glm"  # мой каталог`,
+			want:  ".devkit/claude-glm",
+		},
+		{
+			name:  "решётка внутри кавычек это часть пути",
+			value: `"~/каталог # два"`,
+			want:  "каталог # два",
+		},
+		{
+			name:  "экранированная кавычка внутри пути",
+			value: `"~/кавычка\"внутри"`,
+			want:  `кавычка"внутри`,
+		},
+		{
+			name:   "после значения лишнее",
+			value:  `"~/.devkit/claude-glm" мусор`,
+			refuse: "после значения лишнее",
+		},
+		{
+			name:   "строка не закрыта",
+			value:  `"~/.devkit/claude-glm`,
+			refuse: "строка не закрыта",
+		},
+		{
+			name:   "значение без кавычек",
+			value:  `~/.devkit/claude-glm`,
+			refuse: "не строка в двойных кавычках",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			if err := os.MkdirAll(filepath.Join(home, ".devkit"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			conf := "enabled = [\"claude-code\", \"" + altHarness + "\"]\n\n[" + altHarness + "]\n" +
+				altHomeKey + " = " + c.value + "\n"
+			if err := os.WriteFile(filepath.Join(home, altMachineConfig), []byte(conf), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dir, err := altConfigDir()
+			if c.refuse != "" {
+				if err == nil {
+					t.Fatalf("строка %s разобрана в %q, а разбирать её наугад нельзя", c.value, dir)
+				}
+				if !strings.Contains(err.Error(), c.refuse) {
+					t.Fatalf("в отказе нет %q: %v", c.refuse, err)
+				}
+				// Отказ обязан звать чинить туда, где беда: «подписки не
+				// объявлено» увело бы вписывать уже вписанный ключ.
+				for _, want := range []string{altMachineConfig, altHomeKey, "[" + altHarness + "]"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("отказ не называет %q: %v", want, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("строка %s не разобрана: %v", c.value, err)
+			}
+			if want := filepath.Join(home, c.want); dir != want {
+				t.Fatalf("каталог второй подписки %q, жду %q", dir, want)
+			}
+		})
+	}
+}
+
 // TestCodeWithoutMachineKey: харнес второй подписки в машинном слое не объявлен,
 // значит подписки на этой машине нет, и окно не открывается с догаданным
 // каталогом, а отказ несёт готовую строку про то, куда вписать каталог.

@@ -1709,6 +1709,93 @@ class AltSubDirTest(unittest.TestCase):
                         "пустые ключи болванки не названы находкой: %s" % (findings,))
 
 
+class WindowCopyTest(unittest.TestCase):
+    """Окружение копии окна второй подписки против машинного слоя (DK-192).
+
+    Копия окна это вечное дерево рядом с проектом, в котором живёт окно
+    редактора, а ключи подписки лежат в настройках самой директории: иначе окно,
+    переоткрытое из дока, молча уходило бы на дорогую подписку. Хозяин ключей
+    при этом машинный слой, и разъезд с ним стоит ровно того же, только тише:
+    окно ходит по старым ключам, а видно это по счёту в конце недели.
+    """
+
+    def stand(self, env=None, copy_env=None, name="проект"):
+        # Стенд это машинный слой с объявленной подпиской, проект и копия окна
+        # рядом с ним. Копия узнаётся по редиректу .git, как настоящее
+        # линкованное дерево.
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(home), True)
+        write(home / ".devkit" / "harness.local",
+              'enabled = ["claude-code", "glm-code"]\n\n[glm-code]\nhome = "~/.devkit/claude-glm"\n')
+        write(home / ".devkit" / "claude-glm" / "settings.json",
+              json.dumps({"env": env if env is not None else {
+                  "ANTHROPIC_BASE_URL": "https://новый.example",
+                  "ANTHROPIC_AUTH_TOKEN": "токен-новый",
+                  "ANTHROPIC_MODEL": "glm-4.6",
+              }}))
+        root = home / "projects" / name
+        write(root / "docs" / "TASKS.md", "# доска\n")
+        copy = home / "projects" / (name + "-" + devkitctl.WINDOW_SUFFIX)
+        write(copy / ".git", "gitdir: %s\n" % (root / ".git" / "worktrees" / "копия"))
+        if copy_env is not None:
+            write(copy / devkitctl.WINDOW_ENV_FILE, json.dumps(copy_env))
+            (copy / devkitctl.WINDOW_ENV_FILE).chmod(0o600)
+        return home, root, copy
+
+    def test_drift_is_a_finding_and_fix_rewrites_it(self):
+        home, root, copy = self.stand(copy_env={
+            "env": {"ANTHROPIC_BASE_URL": "https://старый.example",
+                    "ANTHROPIC_AUTH_TOKEN": "токен-старый",
+                    "ANTHROPIC_MODEL": "glm-4.6",
+                    "DEVKIT_HARNESS": "glm-code"},
+            "permissions": {"allow": ["Bash(ls:*)"]},
+        })
+        with fake_home(home):
+            findings, fixed = devkitctl.check_window_copy(root, False)
+        self.assertTrue([f for f in findings if "ANTHROPIC_BASE_URL" in f and "ANTHROPIC_AUTH_TOKEN" in f],
+                        "разъехавшиеся ключи копии не названы находкой: %s" % (findings,))
+        self.assertFalse([f for f in findings if "токен-новый" in f or "токен-старый" in f],
+                         "токен напечатан в находке: %s" % (findings,))
+        with fake_home(home):
+            findings, fixed = devkitctl.check_window_copy(root, True)
+        doc = json.loads(read(copy / devkitctl.WINDOW_ENV_FILE))
+        self.assertEqual(doc["env"]["ANTHROPIC_BASE_URL"], "https://новый.example")
+        self.assertEqual(doc["env"]["ANTHROPIC_AUTH_TOKEN"], "токен-новый")
+        self.assertEqual(doc["permissions"], {"allow": ["Bash(ls:*)"]},
+                         "починка стёрла написанное человеком рядом с ключами подписки")
+        self.assertTrue(fixed, "починка прошла молча")
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_window_copy(root, False), ([], []),
+                             "после починки доктор всё ещё находит расхождение")
+
+    def test_copy_without_env_is_a_finding(self):
+        # Копия есть, а окружения в ней нет: окно в ней уходит на первую
+        # подписку, и молчать про это дороже всего.
+        home, root, copy = self.stand()
+        with fake_home(home):
+            findings, _ = devkitctl.check_window_copy(root, False)
+        self.assertTrue([f for f in findings if str(copy) in f],
+                        "копия без окружения второй подписки прошла молча: %s" % (findings,))
+
+    def test_doctor_from_the_copy_checks_the_copy(self):
+        # Доктора зовут и из самого окна: проверять он обязан ту копию, в
+        # которой стоит, а не искать соседа с ещё одним суффиксом.
+        home, root, copy = self.stand()
+        with fake_home(home):
+            findings, _ = devkitctl.check_window_copy(copy, False)
+        self.assertTrue([f for f in findings if str(copy) in f],
+                        "доктор из копии окна её не проверил: %s" % (findings,))
+
+    def test_project_without_copy_is_silent(self):
+        # Окном второй подписки работают не над каждым проектом, и копии рядом
+        # может не быть вовсе.
+        home, root, copy = self.stand()
+        shutil.rmtree(str(copy))
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_window_copy(root, True), ([], []),
+                             "доктор говорит про копию окна там, где её не заведено")
+
+
 class SecondSubscriptionLayoutTest(SandboxCase):
     """Раскладка машинного контура по профилям включённых харнесов (DK-179).
 

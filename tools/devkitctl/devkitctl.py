@@ -201,6 +201,15 @@ ALT_SUB_SETTINGS = "settings.json"
 # в кабинете подписки и придумать их автоматике нечем; сам токен в находки не
 # печатается никогда, у него только признак «есть» или «нет».
 ALT_SUB_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL")
+# Копия окна второй подписки: вечное рабочее дерево ../<проект>-<поставщик>, в
+# котором живёт окно редактора (shipctl code, DK-192). Окружение подписки лежит
+# там в настройках самой директории, потому окно и работает, как бы его ни
+# открыли. Хозяин ключей при этом машинный слой, и разъехавшись с ним, копия
+# молча ходит в старый endpoint со старым токеном, а видно это по счёту в конце
+# недели. Суффикс тот же, что у shipctl (windowSuffix в tools/shipctl/editor.go).
+WINDOW_SUFFIX = ALT_SUB_HARNESS[:-len("-code")] if ALT_SUB_HARNESS.endswith("-code") else ALT_SUB_HARNESS
+WINDOW_ENV_FILE = ".claude/settings.local.json"
+WINDOW_HARNESS_KEY = "DEVKIT_HARNESS"
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
 RUN_LOG = ".devkit/log"
@@ -1242,6 +1251,81 @@ def check_alt_sub(fix):
     return findings, fixed
 
 
+def window_env(settings):
+    # Секция env из settings.json: и у машинного слоя, и у копии окна она одна
+    # и та же. Возврат это (документ целиком, env, беда). Документ нужен потому,
+    # что рядом с env лежит написанное человеком (разрешения сессии), и правка
+    # ключей подписки его не трогает; битый файл разбирать наугад нельзя, там мог
+    # остаться вписанный руками токен.
+    if not settings.exists():
+        return {}, {}, ""
+    try:
+        doc = json.loads(settings.read_text(encoding="utf-8"))
+    except ValueError as e:
+        return {}, {}, "не читается как json (%s)" % e
+    if not isinstance(doc, dict):
+        return {}, {}, "лежит не объектом json"
+    env = doc.get("env") or {}
+    if not isinstance(env, dict):
+        return {}, {}, "держит секцию env не объектом json"
+    return doc, env, ""
+
+
+def check_window_copy(root, fix):
+    # Окружение копии окна против машинного слоя. Копии у проекта может и не
+    # быть (окном второй подписки работают не везде), и тогда говорить не о чем;
+    # доктор, позванный из самой копии, проверяет её же, а не соседа с тем же
+    # суффиксом.
+    home = rules.machine_homes().get(ALT_SUB_HARNESS)
+    if not home:
+        return [], []
+    root = Path(root)
+    tail = "-" + WINDOW_SUFFIX
+    copy = root if root.name.endswith(tail) else root.parent / (root.name + tail)
+    # .git у линкованного дерева это файл с редиректом: без него рядом лежит
+    # просто одноимённая директория, и писать в неё доктору нечего.
+    if not (copy / ".git").exists():
+        return [], []
+    machine = Path(home) / ALT_SUB_SETTINGS
+    _, machine_env, broken = window_env(machine)
+    if broken or not machine_env:
+        # Про машинный слой говорит check_alt_sub, и повторять его находку
+        # второй строкой незачем.
+        return [], []
+    want = {k: machine_env[k] for k in ALT_SUB_KEYS if str(machine_env.get(k) or "").strip()}
+    want[WINDOW_HARNESS_KEY] = ALT_SUB_HARNESS
+    settings = copy / WINDOW_ENV_FILE
+    doc, env, broken = window_env(settings)
+    if broken:
+        return ["окружение копии окна %s %s: окно уйдёт на первую подписку молча; поправить "
+                "руками либо убрать файл, его переразложит shipctl code" % (settings, broken)], []
+    stale = sorted(k for k, v in want.items() if env.get(k) != v)
+    findings, fixed = [], []
+    if stale and not fix:
+        gap = ("в копии окна %s нет окружения второй подписки" % copy if not settings.exists() else
+               "окружение копии окна %s разошлось с машинным слоем %s по ключам %s"
+               % (settings, machine, ", ".join(stale)))
+        findings.append("%s: окно в этой копии ходит по старым ключам, а то и на первую "
+                        "подписку молча; переписать: devkitctl doctor --fix" % gap)
+    elif stale:
+        env.update(want)
+        doc["env"] = env
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        settings.chmod(0o600)
+        fixed.append("окружение копии окна %s переписано из машинного слоя (ключи %s)"
+                     % (settings, ", ".join(stale)))
+    if settings.exists():
+        mode = settings.stat().st_mode & 0o777
+        if mode & 0o077 and fix:
+            settings.chmod(0o600)
+            fixed.append("сужены права %s до 600: там лежит токен второй подписки" % settings)
+        elif mode & 0o077:
+            findings.append("у %s права %o: там лежит токен второй подписки, сузить: "
+                            "devkitctl doctor --fix (chmod 600 %s)" % (settings, mode, settings))
+    return findings, fixed
+
+
 def corp_profiles(local):
     # Тонкие файлы харнесов корп-клона считаются по конфигу боковой директории:
     # там лежит .devkit и там же решается, какие харнесы включены.
@@ -1312,6 +1396,9 @@ def doctor(start, fix=False):
         rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
         findings += rfindings
         fixed += rfixed
+        wf, wd = check_window_copy(root, fix)
+        findings += wf
+        fixed += wd
         release_self = Path(root).resolve() == DEVKIT.resolve() and update.on_release(DEVKIT)
         if not release_self and check_git_hooks(root):
             if fix:

@@ -283,6 +283,34 @@ func TestCodeSwitchesTask(t *testing.T) {
 	}
 }
 
+// TestStatusNamesWindowCopy: копия окна видна в status своим именем и с
+// состоянием ветки. Стоит она в списке деревьев всегда, в том числе
+// отцепленной между задачами, и молчаливая строка с пустой веткой читалась бы
+// поломкой.
+func TestStatusNamesWindowCopy(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	altHome(t, altEnv("https://endpoint.example/anthropic"))
+	stubEditor(t)
+	if _, err := cmdCode(root, CodeParams{ID: "XR-001"}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "копия окна: xr-001 в ") {
+		t.Fatalf("status не назвал копию окна с веткой задачи:\n%s", msg)
+	}
+	gitT(t, windowTree(root), "checkout", "--detach")
+	msg, err = cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "копия окна: detached") {
+		t.Fatalf("status не сказал, что копия окна свободна:\n%s", msg)
+	}
+}
+
 // TestCodeRefusesBusyBranch: ветка задачи выложена в другом дереве (второе окно
 // или дерево субагента). Дважды одну ветку git не выкладывает, и отказ обязан
 // сказать, чем её берут на чтение, а не просто «занята».

@@ -22,7 +22,7 @@ python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 
 ```
 status                                    очередь выката, поезд, сломанный прод,
-                                          worktree задач
+                                          деревья задач и копия окна
 start <ID> [--slug хвост] [--push]        задачу в работу в отдельном дереве
 code <ID> [--dry-run] [--probe]           окно vscode второй подписки на копии
                                           окна, ветка задачи внутри копии

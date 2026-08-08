@@ -177,7 +177,17 @@ func cmdStatus(root string) (string, error) {
 		linked = nil
 	}
 	for _, l := range linked {
-		out = append(out, "worktree: "+l.Branch+" в "+l.Path)
+		// Копия окна называется своим именем: она стоит в списке всегда, в том
+		// числе отцепленной между задачами, и строка «worktree:  в ...» с
+		// пустой веткой читалась бы поломкой.
+		what, state := "worktree", l.Branch
+		if samePath(l.Path, windowTree(root)) {
+			what = "копия окна"
+		}
+		if state == "" {
+			state = "detached, задачи в работе нет"
+		}
+		out = append(out, what+": "+state+" в "+l.Path)
 	}
 	for _, s := range []struct{ key, name string }{
 		{"in-progress", "In progress"}, {"check", "Check"}, {"blocked", "Blocked"},

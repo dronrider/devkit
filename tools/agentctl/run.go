@@ -257,13 +257,34 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 		"model": v.Model, "effort": v.Effort, "workdir": workdir, "prompt": prompt,
 	})
 	refreshExecutorQuota(hc.L, who, timeNow())
-	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s\n", who, prof.Path, argv[0], workdir)
+	// Пары из env харнеса назначения: ими подпроцесс получает свой каталог
+	// конфигурации (CLAUDE_CONFIG_DIR у второй подписки), а через него base URL и
+	// токен. Имена печатаются, значения нет: в env кладут и токены, а вывод run
+	// уезжает в логи и в контекст диспетчера.
+	var pairs []envPair
+	if hc.L != nil {
+		if s := hc.L.Setup[who]; s != nil {
+			pairs = s.Env
+		}
+	}
+	tail := ""
+	if len(pairs) > 0 {
+		tail = ", окружение: " + strings.Join(envNames(pairs), ", ")
+	}
+	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s%s\n", who, prof.Path, argv[0], workdir, tail)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = workdir
-	// Ограничитель вложенности и имя харнеса ставятся поверх унаследованного
-	// окружения: подпроцесс это тот же клиент, и детект по переменным родителя в
-	// гнезде сессий неоднозначен по построению.
-	cmd.Env = append(os.Environ(), harnessEnv+"="+who, runDepthEnv+"=1")
+	// Окружение складывается поверх унаследованного, последнее значение
+	// побеждает: сначала пары харнеса назначения, потом своё. Ограничитель
+	// вложенности и имя харнеса идут последними не для порядка, а чтобы их нельзя
+	// было перебить (имена с приставкой DEVKIT_ в env запрещены чтением машинного
+	// слоя, и вторым рубежом стоит эта очерёдность). Детект по переменным родителя
+	// в гнезде сессий неоднозначен по построению, поэтому харнес ставится явно.
+	cmd.Env = os.Environ()
+	for _, p := range pairs {
+		cmd.Env = append(cmd.Env, p.Name+"="+p.Value)
+	}
+	cmd.Env = append(cmd.Env, harnessEnv+"="+who, runDepthEnv+"=1")
 	cmd.Stdout, cmd.Stderr = out, errw
 	err = cmd.Run()
 	var ee *exec.ExitError

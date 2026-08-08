@@ -135,7 +135,84 @@ var knownEvents = []string{"write", "session-start", "notify", "subagent-done", 
 var machineRootKeys = []keySpec{{"default", tomlStr}, {"enabled", tomlArr}}
 
 var machineHarnessKeys = []keySpec{{"mini", tomlStr}, {"base", tomlStr}, {"pro", tomlStr},
-	{"max", tomlStr}, {"budget", tomlInt}, {"bin", tomlStr}}
+	{"max", tomlStr}, {"budget", tomlInt}, {"bin", tomlStr}, {"home", tomlStr}, {"env", tomlArr}}
+
+// Плейсхолдер каталога харнеса в значениях env. Тот же, что понимает генератор
+// раскладки в путях профиля (tools/devkitctl/rules.py): каталог на машине один,
+// и записан он один раз ключом home.
+const homeMark = "{home}"
+
+// Приставка, закрытая для имён в env. Своё пространство имён devkit держит за
+// собой целиком, а не перечисляет имена поимённо: острый случай тут
+// DEVKIT_RUN_DEPTH, молча перебитый ограничитель вложенности разворачивается в
+// воронку сессий, то есть в потраченную подписку.
+const devkitEnvPrefix = "DEVKIT_"
+
+// envPair это переменная окружения подпроцесса: имя печатается командами,
+// значение нет. Массив env общий, завтра туда положат токен, а вывод команд
+// уезжает в логи и в контекст агента.
+type envPair struct{ Name, Value string }
+
+// expandTilde разворачивает ведущий ~/ в домашний каталог. Пути в машинных
+// конфигах devkit пишут с тильдой везде, а буквальный ~/.claude-glm завёл бы
+// клиенту каталог с именем ~ в рабочем дереве, причём один раз и навсегда.
+func expandTilde(s string) string {
+	if s != "~" && !strings.HasPrefix(s, "~/") {
+		return s
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return s
+	}
+	return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(s, "~"), "/"))
+}
+
+// parseHarnessEnv разбирает ключ env секции харнеса: массив строк ИМЯ=значение с
+// плейсхолдером {home} в значении. Проверки тут жёсткие все до одной, потому что
+// тихо пропущенная переменная это окно, которое молча ушло на дорогую подписку.
+// Значение элемента в сообщениях не печатается, элемент называется номером и
+// именем: в env кладут и токены, а текст ошибки уезжает в те же логи, что и всё
+// остальное.
+func parseHarnessEnv(file, section string, items []string, home string) ([]envPair, error) {
+	var out []envPair
+	for i, item := range items {
+		bad := func(what, why string) error {
+			return fmt.Errorf("%s: [%s] env, элемент %d%s: %s", file, section, i+1, what, why)
+		}
+		j := strings.Index(item, "=")
+		if j < 0 {
+			return nil, bad("", "нет знака =, а пара пишется как ИМЯ=значение (сам элемент не печатаю, в env попадают и токены)")
+		}
+		name, value := item[:j], item[j+1:]
+		switch {
+		case name == "":
+			return nil, bad("", "слева от = пусто, а там стоит имя переменной")
+		case strings.HasPrefix(name, devkitEnvPrefix):
+			return nil, bad(" ("+name+")", "приставка "+devkitEnvPrefix+" закрыта, это пространство имён devkit: им ставятся ограничитель вложенности "+
+				runDepthEnv+" и харнес сессии, и перебить их снаружи нельзя")
+		}
+		value = expandTilde(value)
+		if strings.Contains(value, homeMark) {
+			if home == "" {
+				return nil, bad(" ("+name+")", "в значении стоит "+homeMark+", а каталога в машинном слое нет: вписать home в секцию ["+
+					section+"] файла "+file+" (это каталог конфигурации, которым поднимается сам инструмент)")
+			}
+			value = strings.ReplaceAll(value, homeMark, home)
+		}
+		out = append(out, envPair{Name: name, Value: value})
+	}
+	return out, nil
+}
+
+// envNames это имена переменных для вывода команд. Значения не отдаёт никто:
+// печатать их некому по решению дизайна.
+func envNames(pairs []envPair) []string {
+	var names []string
+	for _, p := range pairs {
+		names = append(names, p.Name)
+	}
+	return names
+}
 
 func specIndex(list []keySpec) map[string]string {
 	m := map[string]string{}
@@ -521,6 +598,12 @@ type setup struct {
 	Suggested bool
 	Budget    int
 	Bin       string
+	// Каталог конфигурации, которым поднимается сам инструмент, и переменные,
+	// которые получает подпроцесс делегирования. Разбор в
+	// docs/lld/DK-090-heterogeneous-ladder.md, раздел «Каталог конфигурации и
+	// окружение подпроцесса».
+	Home string
+	Env  []envPair
 }
 
 func (s *setup) mapped() bool { return s != nil && len(s.Map) == len(tierNames) }
@@ -603,6 +686,12 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 				s.Budget = v.Int
 			}
 			s.Bin = t.str("bin")
+			s.Home = expandTilde(t.str("home"))
+			env, err := parseHarnessEnv(machinePath, name, t.arr("env"), s.Home)
+			if err != nil {
+				return nil, err
+			}
+			s.Env = env
 			l.Setup[name] = s
 		}
 	}
@@ -1094,6 +1183,28 @@ func cmdHarness(start, want string) (string, error) {
 		if p := l.Profiles[r.Name]; p != nil {
 			mode := p.section("delegate").str("mode")
 			fmt.Fprintf(&b, "делегирование: %s (профиль %s)\n", mode, p.Path)
+		}
+	}
+	// Каталог и окружение называются по всем харнесам машинного слоя, а не по
+	// одному активному: уехавшая ступень поднимается каталогом своего харнеса, и
+	// без этой строки на вопрос «куда смотреть» ответа нет. Имена переменных
+	// печатаются, значения нет: в env кладут и токены.
+	var named []string
+	for name := range l.Setup {
+		named = append(named, name)
+	}
+	sort.Strings(named)
+	for _, name := range named {
+		s := l.Setup[name]
+		var parts []string
+		if s.Home != "" {
+			parts = append(parts, "каталог "+s.Home)
+		}
+		if len(s.Env) > 0 {
+			parts = append(parts, "env: "+strings.Join(envNames(s.Env), ", "))
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(&b, "машинное хозяйство %s: %s\n", name, strings.Join(parts, ", "))
 		}
 	}
 	q := quotaSpecOf(l, r.Name)

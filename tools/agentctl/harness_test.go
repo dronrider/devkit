@@ -183,6 +183,74 @@ bin = "/opt/codex"
 	}
 }
 
+// TestMergeSectionWithoutTiers: DK-189. Секция активного харнеса несёт одну
+// машинную обвязку, ярусов в ней нет, и это законная раскладка по DK-177. До
+// правки такая секция глушила предложение из профиля, вердикт уходил с
+// прочерками в model и via. Теперь лестница разворачивается `map_*` профиля с
+// пометкой предложения, а обвязка секции остаётся машинной.
+func TestMergeSectionWithoutTiers(t *testing.T) {
+	dir := writeProfiles(t, map[string][2]string{
+		"claude-code": {"CLAUDECODE", "native"},
+		"glm-code":    {"", "cli"},
+	})
+	home := t.TempDir()
+	machine := writeFile(t, home, "harness.local", `enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+filepath.Join(home, ".glm")+`"
+`)
+	l, err := mergeLayers(dir, machine, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := l.Setup["glm-code"]
+	if !s.mapped() || !s.Suggested {
+		t.Fatalf("секция без ярусов ждёт предложения из профиля, вышло %+v", s)
+	}
+	for tier, want := range map[string]string{"mini": "m1", "base": "m2", "pro": "m3", "max": "m4"} {
+		if s.Map[tier].Model != want || s.Map[tier].Harness != "glm-code" {
+			t.Fatalf("ярус %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
+		}
+	}
+	if s.Home != filepath.Join(home, ".glm") {
+		t.Fatalf("предложение затёрло машинную обвязку: home = %q", s.Home)
+	}
+	if c := l.Setup["claude-code"]; !c.mapped() || c.Suggested || c.Map["pro"].Model != "opus" {
+		t.Fatalf("смаппленный руками харнес ждёт машинного маппинга, вышло %+v", c)
+	}
+}
+
+// TestUnmapHintNamesTiers: DK-189, вторая половина. Предложить нечего (профиль
+// без `map_*`), и хинт зовёт дописать недостающие ярусы, а не вписать секцию,
+// которая уже стоит.
+func TestUnmapHintNamesTiers(t *testing.T) {
+	dir := writeProfiles(t, map[string][2]string{"claude-code": {"CLAUDECODE", "native"}})
+	writeFile(t, dir, "glm-code.toml", "[detect]\n\n[rules]\nmode = \"embed\"\n\n[delegate]\nmode = \"cli\"\ncommand = [\"glm\", \"{prompt}\"]\n\n[hooks]\n\n[quota]\n")
+	home := t.TempDir()
+	machine := writeFile(t, home, "harness.local", "enabled = [\"claude-code\", \"glm-code\"]\n\n[glm-code]\nbin = \"/opt/glm\"\n")
+	t.Setenv("HOME", home)
+	t.Setenv("DEVKIT_HOME", "")
+	l, err := mergeLayers(dir, machine, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unmapHint(l, "glm-code")
+	for _, part := range []string{"в секции [glm-code]", "нет ярусов: mini, base, pro, max"} {
+		if !strings.Contains(got, part) {
+			t.Fatalf("хинт %q, жду в нём %q", got, part)
+		}
+	}
+	if want := "вписать секцию [codex] в " + machineConfigPath(); unmapHint(l, "codex") != want {
+		t.Fatalf("хинт без секции %q, жду %q", unmapHint(l, "codex"), want)
+	}
+}
+
 // TestMachineConfigPartialTiers: пропуск яруса неотличим от забытого, поэтому
 // это жёсткая ошибка с именем файла и ключа, а не молчаливый недомаппинг.
 func TestMachineConfigPartialTiers(t *testing.T) {

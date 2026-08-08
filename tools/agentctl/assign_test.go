@@ -130,8 +130,10 @@ bin = "/opt/claude"
 		if err != nil {
 			t.Fatalf("слияние: %v", err)
 		}
-		if l.Setup["glm-code"].mapped() {
-			t.Fatal("секция без ярусов не должна считаться настроенной")
+		// DK-189: ярусов на машине нет, и лестница разворачивается предложением
+		// из профиля, а не остаётся пустой.
+		if s := l.Setup["glm-code"]; !s.mapped() || !s.Suggested {
+			t.Fatalf("секция без ярусов ждёт предложения из профиля, вышло %+v", s)
 		}
 		if l.Setup["glm-code"].Bin != "/opt/claude" {
 			t.Fatalf("машинная обвязка потерялась: %+v", l.Setup["glm-code"])
@@ -269,6 +271,50 @@ func TestPickGuardAcrossSubscriptions(t *testing.T) {
 			t.Fatalf("сторож молчит про причину: %q", out)
 		}
 	})
+}
+
+// TestPickActiveSectionWithoutTiers: DK-189 живьём. Активен харнес, чья секция
+// в машинном конфиге несёт одну обвязку, и до правки вердикт уходил с
+// прочерками в model и via, хотя профиль харнеса несёт полный `map_*`.
+func TestPickActiveSectionWithoutTiers(t *testing.T) {
+	fixNow(t, testNow)
+	root := writeBoard(t)
+	home := t.TempDir()
+	setupLadder(t, `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+home+`"
+`)
+	t.Setenv("DEVKIT_HARNESS", "glm-code")
+	out, err := cmdPick(root, "T-005", false, roleExec, "")
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if !strings.HasPrefix(out, "model: glm-5.2\neffort: high\ntier: base\nvia: glm-code\n") {
+		t.Fatalf("секция-обвязка активного харнеса оставила вердикт без модели: %q", out)
+	}
+
+	// Источник маппинга назван: предложение это не то же самое, что настроенная
+	// машина, и по выводу harness это должно быть видно.
+	shown, err := cmdHarness(root, "")
+	if err != nil {
+		t.Fatalf("harness: %v", err)
+	}
+	for _, part := range []string{
+		"маппинг ярусов: mini = glm-4.7, base = glm-5.2, pro = glm-5.2, max = glm-5.2",
+		"предложение профиля, в секции [glm-code] ярусов нет",
+	} {
+		if !strings.Contains(shown, part) {
+			t.Fatalf("в выводе harness нет %q:\n%s", part, shown)
+		}
+	}
 }
 
 // TestRecordAssignment: по закрытой задаче восстанавливается, чьей подпиской она

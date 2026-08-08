@@ -596,8 +596,12 @@ type setup struct {
 	// Маппинг взят из map_* профиля, а не с машины: так выходит, пока мастер
 	// настройки не прогнан, и в выводе это надо различать.
 	Suggested bool
-	Budget    int
-	Bin       string
+	// Секция харнеса в машинном конфиге есть. Без ярусов она законна (харнес
+	// назван обвязкой или назначением соседа), и хинт про ненастроенную
+	// лестницу зовёт дописать ярусы, а не вписать стоящую секцию.
+	Section bool
+	Budget  int
+	Bin     string
 	// Каталог конфигурации, которым поднимается сам инструмент, и переменные,
 	// которые получает подпроцесс делегирования. Разбор в
 	// docs/lld/DK-090-heterogeneous-ladder.md, раздел «Каталог конфигурации и
@@ -661,7 +665,7 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			if err := checkTypes(machinePath, t, machineHarnessKeys); err != nil {
 				return nil, err
 			}
-			s := &setup{Map: map[string]assignment{}}
+			s := &setup{Map: map[string]assignment{}, Section: true}
 			var missing []string
 			for _, tier := range tierNames {
 				if _, ok := t.get(tier); !ok {
@@ -676,8 +680,9 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			}
 			// Ярусов либо все четыре, либо ни одного: секция без ярусов это
 			// харнес, который в этом конфиге присутствует только назначением
-			// соседей и своей машинной обвязкой, а активным бывает ненастроенным.
-			// Пропуск одного яруса из четырёх неотличим от забытого, и это ошибка.
+			// соседей и своей машинной обвязкой, а лестницу такому активному
+			// разворачивает предложение из профиля (ниже, DK-189). Пропуск одного
+			// яруса из четырёх неотличим от забытого, и это ошибка.
 			if len(missing) > 0 && len(missing) < len(tierNames) {
 				return nil, fmt.Errorf("%s: [%s] нет ключа %s (ярусы задаются все четыре либо ни одного, сложенные соседние пишутся повторением модели)",
 					machinePath, name, missing[0])
@@ -712,17 +717,21 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		enabled = append(enabled, name)
 	}
 	l.Enabled = enabled
+	// Маппинг-предложение из профиля: ярусы разворачиваются его же `map_*`, и
+	// вердикт не остаётся без модели. Случаев два. Машинного конфига нет вовсе,
+	// тогда включён один claude-code и мастер настройки не прогнан ни разу.
+	// Либо секция харнеса стоит одной машинной обвязкой, без ярусов, что законно
+	// по DK-177: раскладку машина назвала, лестницу забыла, и предложение тут
+	// уместно ровно так же. Имя, которое только в enabled, предложения не
+	// получает: секции нет, машина про этот харнес не сказала ничего, и прочерк
+	// в вердикте это честный сигнал прогнать мастер.
 	if mdoc == nil {
-		// Маппинг-предложение из профиля: до прогона мастера ярусы всё равно
-		// разворачиваются, и вердикт не остаётся без модели.
-		if p := l.Profiles["claude-code"]; p != nil {
-			s := &setup{Map: map[string]assignment{}, Suggested: true}
-			for _, tier := range tierNames {
-				if v := p.section("delegate").str("map_" + tier); v != "" {
-					s.Map[tier] = assignment{Harness: "claude-code", Model: v}
-				}
+		suggestMap(l, "claude-code")
+	} else {
+		for _, name := range l.Enabled {
+			if s := l.Setup[name]; s != nil && len(s.Map) == 0 {
+				suggestMap(l, name)
 			}
-			l.Setup["claude-code"] = s
 		}
 	}
 	if err := checkAssignments(l, machinePath); err != nil {
@@ -732,6 +741,48 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// suggestMap разворачивает ярусы харнеса его собственным `map_*` из профиля и
+// метит их предложением. Машинную обвязку секции предложение не трогает: путь к
+// бинарю, каталог и окружение остаются машинными, предложением едет только
+// лестница.
+func suggestMap(l *layers, name string) {
+	p := l.Profiles[name]
+	if p == nil {
+		return
+	}
+	m := map[string]assignment{}
+	for _, tier := range tierNames {
+		if v := p.section("delegate").str("map_" + tier); v != "" {
+			m[tier] = assignment{Harness: name, Model: v}
+		}
+	}
+	if len(m) == 0 {
+		return
+	}
+	s := l.Setup[name]
+	if s == nil {
+		s = &setup{}
+		l.Setup[name] = s
+	}
+	s.Map, s.Suggested = m, true
+}
+
+// unmapHint это хвост хинта про ненастроенную лестницу: чинится она по-разному,
+// смотря стоит ли секция харнеса в машинном конфиге.
+func unmapHint(l *layers, name string) string {
+	s := l.Setup[name]
+	if s == nil || !s.Section {
+		return fmt.Sprintf("вписать секцию [%s] в %s", name, machineConfigPath())
+	}
+	var missing []string
+	for _, tier := range tierNames {
+		if _, ok := s.Map[tier]; !ok {
+			missing = append(missing, tier)
+		}
+	}
+	return fmt.Sprintf("в секции [%s] файла %s нет ярусов: %s", name, machineConfigPath(), strings.Join(missing, ", "))
 }
 
 // checkAssignments дочитывает профили, названные секцией машинного слоя или
@@ -1103,7 +1154,7 @@ func resolveHarnessContext(start string) harnessContext {
 		}
 		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes}
 	} else {
-		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; вписать секцию [%s] в %s", r.Name, r.Name, machineConfigPath())}
+		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; %s", r.Name, unmapHint(l, r.Name))}
 	}
 	return hc
 }
@@ -1162,6 +1213,9 @@ func cmdHarness(start, want string) (string, error) {
 			src := "машинный конфиг"
 			if s.Suggested {
 				src = "предложение профиля, машина не настроена"
+				if s.Section {
+					src = fmt.Sprintf("предложение профиля, в секции [%s] ярусов нет", r.Name)
+				}
 			}
 			fmt.Fprintf(&b, "маппинг ярусов: %s (%s)\n", strings.Join(parts, ", "), src)
 			// Уехавшая ступень называется отдельной строкой: подписку перепутать
@@ -1178,7 +1232,7 @@ func cmdHarness(start, want string) (string, error) {
 				fmt.Fprintf(&b, "%s\n", line)
 			}
 		} else {
-			fmt.Fprintf(&b, "маппинг ярусов: не задан, харнес ненастроен; вписать секцию [%s] в %s\n", r.Name, machineConfigPath())
+			fmt.Fprintf(&b, "маппинг ярусов: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
 		}
 		if p := l.Profiles[r.Name]; p != nil {
 			mode := p.section("delegate").str("mode")

@@ -1,0 +1,354 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Тесты назначения яруса: разбор префикса в значении машинного слоя, строка via
+// вердикта, запись про подписку в файле задачи и сторож на уехавшей ступени.
+// Дизайн в docs/lld/DK-090-heterogeneous-ladder.md, разделы «Назначение яруса в
+// машинном слое», «Вердикт: строка via и запись в файл задачи» и «Разбивка на
+// задачи», строка 1.
+
+// ladderProfiles кладёт директорию профилей с двумя харнесами и отдаёт корень,
+// который понимает DEVKIT_HOME. claude-code берётся настоящий, из репозитория:
+// на нём стоят и объявление квоты, и режим делегирования native. Второй харнес
+// изображает вторую подписку: детекта нет, делегирование подпроцессом, остаток
+// снимать нечем.
+func ladderProfiles(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, profileDirGroup, profileDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), profileDirGroup, profileDirName, "claude-code.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude-code.toml"), src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	glm := "[detect]\n\n[rules]\nmode = \"embed\"\n\n[delegate]\nmode = \"cli\"\n" +
+		"command = [\"claude\", \"-p\", \"{prompt}\"]\n\n[hooks]\n\n[quota]\n"
+	if err := os.WriteFile(filepath.Join(dir, "glm-code.toml"), []byte(glm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// setupLadder уводит контур во временный HOME с двумя профилями и кладёт
+// машинный конфиг с заданным маппингом.
+func setupLadder(t *testing.T, machine string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("DEVKIT_HARNESS", "")
+	t.Setenv("DEVKIT_HOME", ladderProfiles(t))
+	setupHarness(t, machine)
+	return quotaPath("claude-code")
+}
+
+const ladderMachine = `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "glm-code:glm-5.2"
+pro = "opus"
+max = "fable"
+`
+
+const homeMachine = `default = "claude-code"
+enabled = ["claude-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+`
+
+func TestParseAssignment(t *testing.T) {
+	// Разделитель это первое двоеточие: слева каноничное имя харнеса, справа всё
+	// остальное как имя модели. Пустая половина это опечатка, а не запись, и
+	// разбирать её значило бы гадать.
+	cases := []struct {
+		value, harness, model string
+		away                  bool
+	}{
+		{value: "haiku", harness: "claude-code", model: "haiku"},
+		{value: "glm-code:glm-5.2", harness: "glm-code", model: "glm-5.2", away: true},
+		{value: "claude-code:sonnet", harness: "claude-code", model: "sonnet"},
+		{value: "claude-code:llama3:8b", harness: "claude-code", model: "llama3:8b"},
+		{value: "llama3:8b", harness: "llama3", model: "8b", away: true},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			a, err := parseAssignment("harness.local", "claude-code", tierBase, c.value)
+			if err != nil {
+				t.Fatalf("разбор %q: %v", c.value, err)
+			}
+			if a.Harness != c.harness || a.Model != c.model {
+				t.Fatalf("разобрано %+v, жду харнес %q и модель %q", a, c.harness, c.model)
+			}
+			if a.away("claude-code") != c.away {
+				t.Fatalf("уехавшесть ступени %v, жду %v", a.away("claude-code"), c.away)
+			}
+		})
+	}
+
+	for _, bad := range []string{":opus", "glm-code:"} {
+		t.Run("отказ на "+bad, func(t *testing.T) {
+			if _, err := parseAssignment("harness.local", "claude-code", tierBase, bad); err == nil {
+				t.Fatalf("жду жёсткую ошибку на %q", bad)
+			}
+		})
+	}
+}
+
+// TestMachineTiersAllOrNone: ярусов либо все четыре, либо ни одного. Секция без
+// ярусов это харнес, который в конфиге присутствует только машинной обвязкой, а
+// пропуск одного яруса из четырёх неотличим от забытого.
+func TestMachineTiersAllOrNone(t *testing.T) {
+	dir := filepath.Join(ladderProfiles(t), profileDirGroup, profileDirName)
+
+	t.Run("секция без ярусов", func(t *testing.T) {
+		machine := writeFile(t, t.TempDir(), "harness.local", `enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "glm-code:glm-5.2"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+bin = "/opt/claude"
+`)
+		l, err := mergeLayers(dir, machine, "")
+		if err != nil {
+			t.Fatalf("слияние: %v", err)
+		}
+		if l.Setup["glm-code"].mapped() {
+			t.Fatal("секция без ярусов не должна считаться настроенной")
+		}
+		if l.Setup["glm-code"].Bin != "/opt/claude" {
+			t.Fatalf("машинная обвязка потерялась: %+v", l.Setup["glm-code"])
+		}
+		if !l.Setup["claude-code"].Map[tierBase].away("claude-code") {
+			t.Fatalf("назначение base не уехало: %+v", l.Setup["claude-code"].Map[tierBase])
+		}
+	})
+
+	t.Run("три яруса из четырёх это отказ", func(t *testing.T) {
+		machine := writeFile(t, t.TempDir(), "harness.local", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"haiku\"\nbase = \"sonnet\"\npro = \"opus\"\n")
+		_, err := mergeLayers(dir, machine, "")
+		if err == nil || !strings.Contains(err.Error(), "нет ключа max") {
+			t.Fatalf("жду отказ с именем ключа, получил %v", err)
+		}
+	})
+
+	t.Run("назначение без профиля это предупреждение", func(t *testing.T) {
+		machine := writeFile(t, t.TempDir(), "harness.local", `enabled = ["claude-code"]
+
+[claude-code]
+mini = "haiku"
+base = "nowhere:m"
+pro = "opus"
+max = "fable"
+`)
+		l, err := mergeLayers(dir, machine, "")
+		if err != nil {
+			t.Fatalf("битое назначение уронило слияние: %v", err)
+		}
+		if !l.Setup["claude-code"].Map[tierBase].Broken {
+			t.Fatal("назначение без профиля не помечено битым")
+		}
+		if len(l.Warns) != 1 || !strings.Contains(l.Warns[0], "назначение битое") {
+			t.Fatalf("предупреждения %v", l.Warns)
+		}
+	})
+}
+
+// TestPickVia: четвёртая машинная строка печатается всегда, а не через раз, и
+// несёт харнес назначения ступени. Модель при этом идёт без префикса:
+// потребитель первой строки её сегодня просто читает.
+func TestPickVia(t *testing.T) {
+	fixNow(t, testNow)
+	root := writeBoard(t)
+
+	t.Run("однородная лестница", func(t *testing.T) {
+		setupLadder(t, homeMachine)
+		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet\neffort: high\ntier: base\nvia: claude-code\n") {
+			t.Fatalf("на однородной лестнице via должен называть свой же харнес: %q", out)
+		}
+	})
+
+	t.Run("гетерогенная лестница", func(t *testing.T) {
+		setupLadder(t, ladderMachine)
+		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: glm-5.2\neffort: high\ntier: base\nvia: glm-code\n") {
+			t.Fatalf("уехавшая ступень не названа: %q", out)
+		}
+		if !strings.Contains(out, "ступень base уезжает в glm-code, остаток чужой подписки мерить нечем, вердикт без корректора") {
+			t.Fatalf("вердикт на уехавшей ступени молчит про корректор: %q", out)
+		}
+	})
+
+	t.Run("битое назначение не роняет pick", func(t *testing.T) {
+		setupLadder(t, strings.Replace(ladderMachine, `base = "glm-code:glm-5.2"`, `base = "nowhere:m"`, 1))
+		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("битое назначение уронило pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: -\neffort: high\ntier: base\nvia: -\n") {
+			t.Fatalf("жду прочерк в обеих машинных строках: %q", out)
+		}
+		if !strings.Contains(out, "профиля такого харнеса нет") {
+			t.Fatalf("поломка прошла молча: %q", out)
+		}
+	})
+}
+
+// TestPickGuardAcrossSubscriptions: пока корректор считает бакеты одного
+// харнеса, сдвиг через границу подписок не идёт. Мерить дефицит чужой ступени
+// домашним снимком значило бы врать, а печатать её бакеты по домашнему профилю
+// врать во второй раз.
+func TestPickGuardAcrossSubscriptions(t *testing.T) {
+	fixNow(t, testNow)
+	root := writeBoard(t)
+
+	t.Run("домашняя ступень ниже: сдвиг идёт", func(t *testing.T) {
+		quota := setupLadder(t, homeMachine)
+		writeQuota(t, quota, 95, 50, halfWindow)
+		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.Contains(out, "корректор: дефицит week_all, pro -> base") {
+			t.Fatalf("сдвиг по дефициту потерялся: %q", out)
+		}
+	})
+
+	t.Run("ступенью ниже чужая подписка: сдвига нет", func(t *testing.T) {
+		quota := setupLadder(t, ladderMachine)
+		writeQuota(t, quota, 95, 50, halfWindow)
+		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\ntier: pro\nvia: claude-code\n") {
+			t.Fatalf("вердикт уехал через границу подписок: %q", out)
+		}
+		if !strings.Contains(out, "корректор: дефицит week_all, ступень base уезжает в glm-code, чужую подписку мерить нечем, сдвига нет") {
+			t.Fatalf("сторож молчит про причину: %q", out)
+		}
+	})
+
+	t.Run("ступенью ниже битое назначение: сдвига нет", func(t *testing.T) {
+		// Сдвиг ради прочерка вместо модели это потерянный вердикт: развернуть
+		// итоговую ступень нечем, а исходная работала.
+		quota := setupLadder(t, strings.Replace(ladderMachine, `base = "glm-code:glm-5.2"`, `base = "nowhere:m"`, 1))
+		writeQuota(t, quota, 95, 50, halfWindow)
+		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		if err != nil {
+			t.Fatalf("pick: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\ntier: pro\nvia: claude-code\n") {
+			t.Fatalf("вердикт съехал на неразворачиваемую ступень: %q", out)
+		}
+		if !strings.Contains(out, "ступень base назначена в nowhere, а профиля такого харнеса нет, сдвига нет") {
+			t.Fatalf("сторож молчит про причину: %q", out)
+		}
+	})
+}
+
+// TestRecordAssignment: по закрытой задаче восстанавливается, чьей подпиской она
+// сделана. Домашняя ступень нативного харнеса пишется как раньше, иначе файлы
+// задач пришлось бы переписывать.
+func TestRecordAssignment(t *testing.T) {
+	fixNow(t, testNow)
+	root := writeBoard(t)
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "docs", "tasks", "T-005.md")
+
+	cases := []struct {
+		name, machine, want string
+	}{
+		{"домашняя ступень", homeMachine, "- Исполнение: субагент sonnet/high по вердикту pick"},
+		{"уехавшая ступень", ladderMachine, "- Исполнение: подпроцесс glm-code:glm-5.2/high по вердикту pick"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setupLadder(t, c.machine)
+			if err := os.WriteFile(path, []byte("# T-005\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cmdPick(root, "T-005", true, roleExec, ""); err != nil {
+				t.Fatalf("pick --record: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), c.want) {
+				t.Fatalf("запись не называет исполнителя как надо:\n%s", data)
+			}
+		})
+	}
+}
+
+// TestCmdHarnessAssignments: подписку перепутать легко, а замечается это по
+// счёту, то есть поздно, поэтому команда называет и назначения, и неполную
+// раскладку, и битое имя.
+func TestCmdHarnessAssignments(t *testing.T) {
+	root := writeBoard(t)
+
+	t.Run("уехавшая ступень названа", func(t *testing.T) {
+		setupLadder(t, ladderMachine)
+		out, err := cmdHarness(root, "")
+		if err != nil {
+			t.Fatalf("harness: %v", err)
+		}
+		if !strings.Contains(out, "маппинг ярусов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
+			t.Fatalf("маппинг без назначений: %q", out)
+		}
+		if !strings.Contains(out, "назначение: ярус base уезжает в glm-code\n") {
+			t.Fatalf("назначение не названо: %q", out)
+		}
+	})
+
+	t.Run("назначение вне списка включённых", func(t *testing.T) {
+		setupLadder(t, strings.Replace(ladderMachine, `enabled = ["claude-code", "glm-code"]`, `enabled = ["claude-code"]`, 1))
+		out, err := cmdHarness(root, "")
+		if err != nil {
+			t.Fatalf("harness: %v", err)
+		}
+		if !strings.Contains(out, "а он не в списке включённых") {
+			t.Fatalf("неполная раскладка прошла молча: %q", out)
+		}
+	})
+
+	t.Run("битое назначение", func(t *testing.T) {
+		setupLadder(t, strings.Replace(ladderMachine, `base = "glm-code:glm-5.2"`, `base = "nowhere:m"`, 1))
+		out, err := cmdHarness(root, "")
+		if err != nil {
+			t.Fatalf("harness: %v", err)
+		}
+		if !strings.Contains(out, "base = -") || !strings.Contains(out, "назначение битое") {
+			t.Fatalf("битое назначение не названо: %q", out)
+		}
+	})
+}

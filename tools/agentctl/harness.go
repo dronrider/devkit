@@ -35,8 +35,63 @@ const (
 var tierNames = []string{tierMini, tierBase, tierPro, tierMax}
 
 // Что стоит в строке model, когда разворачивать ярус нечем. Прочерк, а не
-// пустое место: молчание тут неотличимо от штатной работы.
+// пустое место: молчание тут неотличимо от штатной работы. Строка via идёт тем
+// же прочерком и по той же причине.
 const unmappedModel = "-"
+
+// assignment это назначение яруса: харнес, чьей подпиской платит ступень, и
+// модель этого харнеса. Разбор в docs/lld/DK-090-heterogeneous-ladder.md,
+// раздел «Назначение яруса в машинном слое».
+type assignment struct {
+	Harness string
+	Model   string
+	// Профиля такого харнеса в kit/harness/ нет: ступень не разворачивается, а
+	// поломка сказана предупреждением слияния.
+	Broken bool
+}
+
+// parseAssignment разбирает значение ключа-яруса. Разделитель это первое
+// двоеточие: слева каноничное имя харнеса, справа всё остальное как имя модели.
+// Второй разделитель отнимал бы у пользователя часть пространства имён, а
+// двоеточия в именах моделей чужих инструментов бывают. Значение без двоеточия
+// это домашняя ступень, то есть харнес той секции, в которой оно стоит.
+func parseAssignment(file, section, tier, value string) (assignment, error) {
+	i := strings.Index(value, ":")
+	if i < 0 {
+		return assignment{Harness: section, Model: value}, nil
+	}
+	name, model := value[:i], value[i+1:]
+	bad := func(why string) (assignment, error) {
+		return assignment{}, fmt.Errorf("%s: [%s] %s = %s: %s", file, section, tier, quoteTOML(value), why)
+	}
+	switch {
+	case name == "":
+		return bad("до двоеточия пусто, а там стоит имя харнеса назначения; домашняя ступень пишется без двоеточия вовсе")
+	case model == "":
+		return bad("после двоеточия пусто, а там стоит имя модели")
+	}
+	return assignment{Harness: name, Model: model}, nil
+}
+
+// away отвечает, уехала ли ступень в чужой харнес. Префикс, совпавший с
+// активным харнесом, это домашняя ступень: запись избыточна, но законна, и
+// отдельного случая не требует, сравнение имён даёт ответ само.
+func (a assignment) away(active string) bool {
+	return !a.Broken && a.Harness != "" && a.Harness != active
+}
+
+// shown это значение яруса тем же синтаксисом, каким оно пишется в машинном
+// конфиге: у домашней ступени голая модель, у уехавшей харнес с моделью.
+func (a assignment) shown(active string) string {
+	switch {
+	case a.Broken || a.Model == "":
+		return unmappedModel
+	case a.away(active):
+		return a.Harness + ":" + a.Model
+	default:
+		return a.Model
+	}
+}
 
 type keySpec struct{ Key, Kind string }
 
@@ -460,7 +515,7 @@ func projectConfigPath(start string) string {
 // setup это машинная часть про один харнес: маппинг ярусов в модели плюс
 // необязательные бюджет и путь к бинарю вне PATH.
 type setup struct {
-	Map map[string]string
+	Map map[string]assignment
 	// Маппинг взят из map_* профиля, а не с машины: так выходит, пока мастер
 	// настройки не прогнан, и в выводе это надо различать.
 	Suggested bool
@@ -523,13 +578,26 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			if err := checkTypes(machinePath, t, machineHarnessKeys); err != nil {
 				return nil, err
 			}
-			s := &setup{Map: map[string]string{}}
+			s := &setup{Map: map[string]assignment{}}
+			var missing []string
 			for _, tier := range tierNames {
 				if _, ok := t.get(tier); !ok {
-					return nil, fmt.Errorf("%s: [%s] нет ключа %s (ярусы задаются все четыре, сложенные соседние пишутся повторением модели)",
-						machinePath, name, tier)
+					missing = append(missing, tier)
+					continue
 				}
-				s.Map[tier] = t.str(tier)
+				a, err := parseAssignment(machinePath, name, tier, t.str(tier))
+				if err != nil {
+					return nil, err
+				}
+				s.Map[tier] = a
+			}
+			// Ярусов либо все четыре, либо ни одного: секция без ярусов это
+			// харнес, который в этом конфиге присутствует только назначением
+			// соседей и своей машинной обвязкой, а активным бывает ненастроенным.
+			// Пропуск одного яруса из четырёх неотличим от забытого, и это ошибка.
+			if len(missing) > 0 && len(missing) < len(tierNames) {
+				return nil, fmt.Errorf("%s: [%s] нет ключа %s (ярусы задаются все четыре либо ни одного, сложенные соседние пишутся повторением модели)",
+					machinePath, name, missing[0])
 			}
 			if v, ok := t.get("budget"); ok {
 				s.Budget = v.Int
@@ -559,19 +627,80 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		// Маппинг-предложение из профиля: до прогона мастера ярусы всё равно
 		// разворачиваются, и вердикт не остаётся без модели.
 		if p := l.Profiles["claude-code"]; p != nil {
-			s := &setup{Map: map[string]string{}, Suggested: true}
+			s := &setup{Map: map[string]assignment{}, Suggested: true}
 			for _, tier := range tierNames {
 				if v := p.section("delegate").str("map_" + tier); v != "" {
-					s.Map[tier] = v
+					s.Map[tier] = assignment{Harness: "claude-code", Model: v}
 				}
 			}
 			l.Setup["claude-code"] = s
 		}
 	}
+	if err := checkAssignments(l, machinePath); err != nil {
+		return nil, err
+	}
 	if err := narrowByProject(l, projectPath); err != nil {
 		return nil, err
 	}
 	return l, nil
+}
+
+// checkAssignments дочитывает профили, названные секцией машинного слоя или
+// назначением яруса, и метит битые назначения. Грузить их приходится сверх
+// enabled: у уехавшей ступени иначе неоткуда взять ни [delegate], ни [quota], а
+// про имя без профиля devkit не узнал бы вовсе. Присутствия в enabled формат от
+// назначения не требует, это законная, хотя и неполная раскладка, и говорит о
+// ней команда harness.
+func checkAssignments(l *layers, machinePath string) error {
+	var names []string
+	for name := range l.Setup {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	missing := map[string]bool{}
+	// Отвечает, есть ли у имени профиль, и заодно кладёт его в слои.
+	have := func(name string) (bool, error) {
+		if name == "" || missing[name] {
+			return false, nil
+		}
+		if _, ok := l.Profiles[name]; ok {
+			return true, nil
+		}
+		p, err := loadProfile(l.Dir, name)
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "нет профиля") {
+				missing[name] = true
+				return false, nil
+			}
+			return false, err
+		}
+		l.Profiles[name] = p
+		return true, nil
+	}
+	for _, name := range names {
+		if _, err := have(name); err != nil {
+			return err
+		}
+		s := l.Setup[name]
+		for _, tier := range tierNames {
+			a, ok := s.Map[tier]
+			if !ok {
+				continue
+			}
+			okp, err := have(a.Harness)
+			if err != nil {
+				return err
+			}
+			if okp {
+				continue
+			}
+			a.Broken = true
+			s.Map[tier] = a
+			l.Warns = append(l.Warns, fmt.Sprintf("%s: [%s] %s уезжает в %s, а профиля %s нет: назначение битое, ступень не разворачивается",
+				machinePath, name, tier, a.Harness, filepath.Join(l.Dir, a.Harness+".toml")))
+		}
+	}
+	return nil
 }
 
 // narrowByProject сужает список проектным слоем. Понимает он только enabled:
@@ -713,15 +842,95 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 // ненастроенный или битый контур это не отказ pick, а прочерк в строке model и
 // причина хвостом: молчащая ось хуже честного прочерка.
 type tierModels struct {
-	Map  map[string]string
-	Note string
+	Map map[string]assignment
+	// Активный харнес: относительно него ступень домашняя или уехавшая.
+	Active string
+	// Режим делегирования по харнесам назначения: им выбирается слово записи в
+	// файле задачи, субагент или подпроцесс.
+	Delegate map[string]string
+	Note     string
+}
+
+// assign отдаёт назначение яруса, если разворачивать его есть чем. Битое
+// назначение и пустая модель тут равны отсутствию: и то и другое даёт прочерк.
+func (m tierModels) assign(tier string) (assignment, bool) {
+	a, ok := m.Map[tier]
+	if !ok || a.Broken || a.Model == "" {
+		return assignment{}, false
+	}
+	return a, true
 }
 
 func (m tierModels) model(tier string) string {
-	if v := m.Map[tier]; v != "" {
-		return v
+	if a, ok := m.assign(tier); ok {
+		return a.Model
 	}
 	return unmappedModel
+}
+
+// via это харнес, чьей подпиской платит ступень. Печатается он всегда, в том
+// числе на однородной лестнице: строка, появляющаяся через раз, заставляет
+// потребителя читать вывод условно, а «дома» это такой же ответ на вопрос
+// «чьей подпиской», как и любой другой.
+func (m tierModels) via(tier string) string {
+	a, ok := m.assign(tier)
+	switch {
+	case !ok:
+		return unmappedModel
+	case a.Harness != "":
+		return a.Harness
+	default:
+		return m.Active
+	}
+}
+
+func (m tierModels) away(tier string) bool {
+	a, ok := m.assign(tier)
+	return ok && a.away(m.Active)
+}
+
+// named это исполнитель тем же синтаксисом «харнес:модель», каким назначение
+// пишется в машинном конфиге: у домашней ступени имя харнеса не повторяется, и
+// записи в файлах задач, сделанные до гетерогенной лестницы, читаются одинаково.
+func (m tierModels) named(tier string) string {
+	a, ok := m.assign(tier)
+	if !ok {
+		return unmappedModel
+	}
+	return a.shown(m.Active)
+}
+
+// brokenWarn это причина прочерка, когда ярус назначен в харнес без профиля.
+// Слияние слоёв про это уже сказало, но предупреждений слияния pick не печатает,
+// а молчащий прочерк неотличим от ненастроенной машины.
+func (m tierModels) brokenWarn(tier string) string {
+	if a, ok := m.Map[tier]; ok && a.Broken {
+		return fmt.Sprintf("ярус %s назначен в %s, а профиля такого харнеса нет: ступень не разворачивается; разобраться: agentctl harness", tier, a.Harness)
+	}
+	return ""
+}
+
+// shiftBlock отвечает, почему корректору нельзя двигать вердикт на эту ступень.
+// Уехавшая ступень платит чужой подпиской, и мерить её домашним снимком нечем;
+// битое назначение не разворачивается вовсе, и сдвиг на него это потерянный
+// вердикт, прочерк вместо модели.
+func (m tierModels) shiftBlock(tier string) string {
+	switch a, ok := m.Map[tier]; {
+	case ok && a.Broken:
+		return fmt.Sprintf("ступень %s назначена в %s, а профиля такого харнеса нет, сдвига нет", tier, a.Harness)
+	case m.away(tier):
+		return fmt.Sprintf("ступень %s уезжает в %s, чужую подписку мерить нечем, сдвига нет", tier, m.via(tier))
+	}
+	return ""
+}
+
+// word это слово записи в файле задачи: режим делегирования харнеса-исполнителя
+// говорит, субагентом работа уходит или подпроцессом.
+func (m tierModels) word(tier string) string {
+	if a, ok := m.assign(tier); ok && m.Delegate[a.Harness] == "cli" {
+		return "подпроцесс"
+	}
+	return "субагент"
 }
 
 // quotaSpecOf собирает объявление квоты активного харнеса: бакеты, лестницу
@@ -795,7 +1004,11 @@ func resolveHarnessContext(start string) harnessContext {
 		hc.QuotaNote = fmt.Sprintf("у харнеса %s секция [quota] пуста, снимать остаток нечем, вердикт идёт без корректора", r.Name)
 	}
 	if s := l.Setup[r.Name]; s.mapped() {
-		hc.Models = tierModels{Map: s.Map}
+		modes := map[string]string{}
+		for name, p := range l.Profiles {
+			modes[name] = p.section("delegate").str("mode")
+		}
+		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes}
 	} else {
 		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; вписать секцию [%s] в %s", r.Name, r.Name, machineConfigPath())}
 	}
@@ -851,13 +1064,26 @@ func cmdHarness(start, want string) (string, error) {
 		if s.mapped() {
 			var parts []string
 			for _, tier := range tierNames {
-				parts = append(parts, tier+" = "+s.Map[tier])
+				parts = append(parts, tier+" = "+s.Map[tier].shown(r.Name))
 			}
 			src := "машинный конфиг"
 			if s.Suggested {
 				src = "предложение профиля, машина не настроена"
 			}
 			fmt.Fprintf(&b, "маппинг ярусов: %s (%s)\n", strings.Join(parts, ", "), src)
+			// Уехавшая ступень называется отдельной строкой: подписку перепутать
+			// легко, а замечается это по счёту, то есть поздно.
+			for _, tier := range tierNames {
+				a := s.Map[tier]
+				if !a.away(r.Name) {
+					continue
+				}
+				line := fmt.Sprintf("назначение: ярус %s уезжает в %s", tier, a.Harness)
+				if !inList(l.Enabled, a.Harness) {
+					line += ", а он не в списке включённых: правила, хуки и скиллы devkit ему не раскладываются"
+				}
+				fmt.Fprintf(&b, "%s\n", line)
+			}
 		} else {
 			fmt.Fprintf(&b, "маппинг ярусов: не задан, харнес ненастроен; вписать секцию [%s] в %s\n", r.Name, machineConfigPath())
 		}

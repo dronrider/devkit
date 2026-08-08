@@ -460,21 +460,33 @@ func (f quotaFacts) note() string {
 	return "квота: " + strings.Join(parts, ", ")
 }
 
+// qualifyBucket приписывает бакету харнес, когда бакет не активного харнеса:
+// на гетерогенной лестнице соседние ступени платят из разных подписок, и голое
+// имя не отвечает, в какую из них вердикт упёрся. Домашние бакеты остаются
+// голыми, и однородный вывод не двигается ни на байт.
+func qualifyBucket(harness, active, name string) string {
+	if harness == "" || harness == active {
+		return name
+	}
+	return harness + "/" + name
+}
+
 // quotaFactsOf снимает состояние квоты для вердикта. Бакеты берутся те, из
 // которых тратят исходный и итоговый ярусы: при сдвиге вниз причина лежит в
 // бакете исходного, а знать надо и то, чем будет платить итоговый.
-func quotaFactsOf(q *quotaSpec, s snapshot, c correction, groom bool, now time.Time) quotaFacts {
+func quotaFactsOf(q *quotaSpec, s snapshot, c correction, groom bool, now time.Time, active string) quotaFacts {
 	if s.empty() {
 		return quotaFacts{Off: "снимка нет, корректор выключен"}
 	}
 	f := quotaFacts{Age: snapshotAge(s, now), Shifted: c.shifted(), Groom: groom}
 	for _, name := range union(q.Spend[c.From], q.Spend[c.Tier]) {
+		shown := qualifyBucket(q.Harness, active, name)
 		b, ok := s.bucket(name)
 		if !ok {
-			f.Buckets = append(f.Buckets, name+" в снимке нет")
+			f.Buckets = append(f.Buckets, shown+" в снимке нет")
 			continue
 		}
-		part := fmt.Sprintf("%s %d%%", name, int(math.Round(b.Used*100)))
+		part := fmt.Sprintf("%s %d%%", shown, int(math.Round(b.Used*100)))
 		if st := b.status(now); st != statusNormal {
 			part += " " + st
 		}

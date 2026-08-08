@@ -11,6 +11,7 @@ import (
 type verdict struct {
 	Tier   string // ступень лестницы моделей: mini, base, pro, max
 	Model  string // ярус, развёрнутый маппингом активного харнеса; «-», если разворачивать нечем
+	Via    string // харнес назначения ступени, чьей подпиской платится работа; «-» вместе с моделью
 	Effort string // reasoning effort субагента: low, medium, high, xhigh
 	Reason string
 	Groom  bool // вердикт «исполнять рано»: сначала грумминг или разбивка
@@ -277,6 +278,9 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 	// (какие бакеты бывают, из каких тратит ярус, где лежит снимок), и маппинг
 	// ярусов в модели последним шагом.
 	hc := resolveHarnessContext(root)
+	// Маппинг нужен корректору раньше, чем разворачиванию яруса: пока ступени не
+	// считаются по своей подписке, назначение решает, работает корректор вообще.
+	tm := hc.Models
 	var c correction
 	var warns []string
 	// Про снимок уже сказано предупреждением: в человеческой строке состояние
@@ -289,6 +293,13 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 		// каждый снимок квоты.
 		v = verdict{Tier: ov.Tier, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
 		qf = quotaFacts{Off: "не смотрели, ярус задан override-строкой"}
+	} else if tm.away(v.Tier) {
+		// Корректор пока однохарнесный: бакеты он берёт из профиля активного
+		// харнеса, а снимок из его файла. Мерить этим дефицит уехавшей ступени
+		// значило бы врать, поэтому вердикт на ней идёт без корректора, а причина
+		// уходит хвостом. Снимется сторож тогда, когда корректор научится считать
+		// ступень по её подписке.
+		qf = quotaFacts{Off: fmt.Sprintf("ступень %s уезжает в %s, остаток чужой подписки мерить нечем, вердикт без корректора", v.Tier, tm.via(v.Tier))}
 	} else if hc.Quota == nil {
 		// Снимать остаток нечем: причина уходит хвостом, потому что вердикт без
 		// корректора выглядит совершенно штатным.
@@ -311,9 +322,16 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 		}
 		warns = append(warns, s.Warns...)
 		c = correctTier(hc.Quota, v.Tier, v.Groom, s, now)
+		// Сдвиг через границу подписок сторожится по той же причине: бакеты
+		// итоговой ступени корректор напечатал бы по домашнему профилю, то есть
+		// соврал бы во второй раз. Сюда же сдвиг на битое назначение: он менял бы
+		// вердикт на прочерк вместо модели. Причина остаётся сказанной, сдвига нет.
+		if why := tm.shiftBlock(c.Tier); c.shifted() && why != "" {
+			c = correction{Tier: c.From, From: c.From, Note: c.Note, Warn: why}
+		}
 		v.Tier = c.Tier
 		if qf.Off == "" {
-			qf = quotaFactsOf(hc.Quota, s, c, v.Groom, now)
+			qf = quotaFactsOf(hc.Quota, s, c, v.Groom, now, tm.Active)
 			qf.Warned = warned
 		}
 	}
@@ -348,10 +366,13 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 	}
 	// Разворачивание яруса в модель идёт последним шагом: до него весь расчёт
 	// про ступени лестницы и ни от какого инструмента не зависит.
-	tm := hc.Models
 	v.Model = tm.model(v.Tier)
+	v.Via = tm.via(v.Tier)
 	if tm.Note != "" {
 		warns = append(warns, tm.Note)
+	}
+	if w := tm.brokenWarn(v.Tier); w != "" {
+		warns = append(warns, w)
 	}
 	// Сложенные в одну модель соседние ярусы это законный маппинг, и сдвиг по
 	// такой паре модель не меняет. Молчать про него нельзя: холостой ход
@@ -395,8 +416,8 @@ func cmdPick(root, id string, record bool, role, goal string) (string, error) {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("model: %s\neffort: %s\ntier: %s\n%s (%s, цена %s, неопределённость %s): %s",
-		v.Model, v.Effort, v.Tier, r.ID, r.Type, r.Cost, unc, v.Reason), nil
+	return fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
+		v.Model, v.Effort, v.Tier, v.Via, r.ID, r.Type, r.Cost, unc, v.Reason), nil
 }
 
 // recordExecution дописывает строку исполнения в конец раздела «Ход работы»
@@ -429,7 +450,7 @@ func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf qu
 	}
 	var parts []string
 	if c.shifted() {
-		parts = append(parts, fmt.Sprintf("маппинг %s, корректор: %s", tm.model(c.From), c.Note))
+		parts = append(parts, fmt.Sprintf("маппинг %s, корректор: %s", tm.named(c.From), c.Note))
 	}
 	switch {
 	case cp.Note == "":
@@ -438,7 +459,7 @@ func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf qu
 		// хватает самой причины.
 		parts = append(parts, cp.Note)
 	default:
-		parts = append(parts, fmt.Sprintf("маппинг %s, %s", tm.model(cp.From), cp.Note))
+		parts = append(parts, fmt.Sprintf("маппинг %s, %s", tm.named(cp.From), cp.Note))
 	}
 	if n := qf.note(); n != "" {
 		parts = append(parts, n)
@@ -448,14 +469,16 @@ func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf qu
 		tail = " (" + strings.Join(parts, "; ") + ")"
 	}
 	// Строка несёт модель, а не ярус: по ней восстанавливают, чем задача
-	// делалась. Развернуть ярус нечем, значит в строку идёт он сам, иначе
-	// исполнителя в записи не осталось бы вовсе.
-	name := v.Model
+	// делалась. Уехавшая ступень несёт и харнес тем же «харнес:модель», что в
+	// машинном конфиге, а домашняя пишется как раньше, без имени харнеса.
+	// Развернуть ярус нечем, значит в строку идёт он сам, иначе исполнителя в
+	// записи не осталось бы вовсе.
+	name := tm.named(v.Tier)
 	if name == unmappedModel {
 		name = v.Tier
 	}
-	line := fmt.Sprintf("- %s: субагент %s/%s по вердикту pick%s, %s.",
-		label, name, v.Effort, tail, now.Format("2006-01-02"))
+	line := fmt.Sprintf("- %s: %s %s/%s по вердикту pick%s, %s.",
+		label, tm.word(v.Tier), name, v.Effort, tail, now.Format("2006-01-02"))
 	return os.WriteFile(path, []byte(insertIntoSection(content, "## Ход работы", line)), 0o644)
 }
 

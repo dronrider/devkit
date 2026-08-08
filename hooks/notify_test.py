@@ -1123,6 +1123,26 @@ class TestSwitchOff(HookCase):
         self.assertEqual(self.sent(), [])
 
 
+class TestDelegatedSubprocess(HookCase):
+    """Подпроцесс делегирования: у его сессии никто не стоит, и хуки молчат."""
+
+    def test_hook_is_silent_under_run_depth(self):
+        r = self.hook(self.event("Stop", session="sess-run"),
+                      DEVKIT_RUN_DEPTH="1")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [], "хук подпроцесса делегирования позвал наружу")
+        # Молчание без следа неотличимо от сломанного канала, поэтому пропуск
+        # называется в журнале.
+        self.assertIn("подпроцесс делегирования", self.journal())
+
+    def test_the_same_event_rings_without_it(self):
+        # Красное на старом коде держится на этой паре: молчит от переменной, а
+        # не вообще.
+        r = self.hook(self.event("Stop", session="sess-plain"))
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(self.sent(), "без переменной конец хода перестал звонить")
+
+
 class TestArgumentMode(HookCase):
     """Зовётся не только хуком, поэтому заголовок и тело идут прямо."""
 

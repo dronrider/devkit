@@ -33,12 +33,26 @@ mkdir "$lock" 2>/dev/null || exit 0
 # журнале: иначе про фоновую работу нельзя узнать вообще ничего, а отказ
 # (клиент не залогинен, панель не узналась) выглядел бы как её отсутствие.
 {
-    {
-        date '+%Y-%m-%dT%H:%M:%S'
-        echo "хук $here/quota-refresh.sh"
-        agentctl quota refresh --if-stale 2>&1
-        echo "код возврата: $?"
-    } > "$log" 2>&1
+    out=$(agentctl quota refresh --if-stale 2>&1)
+    code=$?
+    # Харнес без объявленной квоты (пустая секция [quota] профиля): снимать у
+    # него нечего по построению, и refresh честно отказывает. Журнал из одних
+    # таких отказов перестал бы отвечать на вопрос, ради которого заведён,
+    # поэтому тут хук уходит молча и файла не трогает. Про сам харнес без
+    # квоты говорят agentctl harness и хвост вердикта pick.
+    quiet=""
+    case "$code:$out" in
+    0:*) ;;
+    *"[quota] пуста"*) quiet=1 ;;
+    esac
+    if [ -z "$quiet" ]; then
+        {
+            date '+%Y-%m-%dT%H:%M:%S'
+            echo "хук $here/quota-refresh.sh"
+            printf '%s\n' "$out"
+            echo "код возврата: $code"
+        } > "$log" 2>&1
+    fi
     rmdir "$lock" 2>/dev/null
 } </dev/null >/dev/null 2>&1 &
 exit 0

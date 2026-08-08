@@ -832,7 +832,7 @@ agentctl harness
 
 ```text
 харнес: claude-code (детект по переменной CLAUDECODE)
-включены: claude-code (машинного конфига /Users/me/.devkit/harness.local нет, умолчание)
+включены: claude-code, glm-code (/Users/me/.devkit/harness.local)
 маппинг ярусов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable (машинный конфиг)
 назначение: ярус base уезжает в glm-code
 делегирование: native (профиль /Users/me/projects/devkit/kit/harness/claude-code.toml)

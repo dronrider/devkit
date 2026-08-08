@@ -66,7 +66,10 @@ printf 'taken = %s\nweek_all = 95%% сброс %s\nweek_max = 50%% сброс %s
 
 echo "--- 5. запись --record несёт харнес:модель и слово по режиму делегирования"
 "$W/agentctl" pick DK-177 -C "$W/proj" --role review --record
-tail -2 "$W/proj/docs/tasks/DK-177.md"
+# Свежая запись это последняя строка раздела «Ход работы», а не конец файла:
+# ниже в файле задачи лежит этот же прогон, да и записей в разделе к моменту
+# прогона накопится сколько угодно.
+sed -n '/^## Ход работы/,/^## /p' "$W/proj/docs/tasks/DK-177.md" | grep '^- ' | tail -1
 
 echo "--- 6. битое назначение: прочерки в обеих машинных строках, pick не падает"
 sed 's/glm-code:glm-5.2/nowhere:m/' "$HOME/.devkit/harness.local" > "$W/broken"

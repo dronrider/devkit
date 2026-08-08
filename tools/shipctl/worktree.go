@@ -133,6 +133,37 @@ func taskWorktreeBy(root string, match func(string) bool) (*worktreeInfo, error)
 	}
 }
 
+// samePath сравнивает две директории по канону: git отдаёт пути развёрнутыми,
+// а собранный по имени путь может лежать под симлинком (на macOS /tmp и /var),
+// и сравнение строк тогда врёт.
+func samePath(a, b string) bool {
+	ra, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		ra = a
+	}
+	rb, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		rb = b
+	}
+	return ra == rb
+}
+
+// detachWorktree переводит копию окна на слитый коммит и удаляет ветку. Копия
+// живёт дольше задачи: в ней открыто окно редактора, и снос директории из-под
+// живого окна убивает окно вместе с сессией (DK-192). Отцепить ветку всё равно
+// надо, иначе она занята деревом и git branch -d её не отдаёт.
+func detachWorktree(root, wt, branch string) string {
+	if out, err := git(wt, "checkout", "--detach"); err != nil {
+		return fmt.Sprintf("копия окна %s не переведена на слитый коммит (%s): ветка %s осталась занятой, довести руками: git -C %s checkout --detach && git branch -d %s",
+			wt, tail(out), branch, wt, branch)
+	}
+	if out, err := git(root, "branch", "-d", branch); err != nil {
+		return fmt.Sprintf("копия окна %s стоит на слитом коммите, а ветка %s не удалилась (%s), убрать руками: git branch -d %s",
+			wt, branch, tail(out), branch)
+	}
+	return fmt.Sprintf("копия окна %s переведена на слитый коммит, ветка %s удалена: окно в копии живо", wt, branch)
+}
+
 // removeWorktree прибирает дерево слитой задачи и удаляет ветку. Провал не
 // ошибка: слияние к этому моменту прошло, а неубранное дерево (например, с
 // untracked-черновиками) прибирается руками, подсказка уходит в отчёт.
@@ -148,6 +179,37 @@ type StartParams struct {
 	ID   string
 	Slug string // хвост имени ветки: dk-005-<slug>; без него ветка по ID
 	Push bool   // запушить коммит доски после перевода в In progress
+	// Tree это готовое дерево, в которое кладётся ветка задачи: копия окна
+	// (shipctl code). Пустое значит обычный путь, своё одноразовое дерево на
+	// задачу. Ветка при этом заводится одинаково, различается только место: у
+	// задачи не должно появиться второго способа получить ветку.
+	Tree string
+}
+
+// switchable проверяет, можно ли переключать готовое дерево на ветку задачи.
+// Черновики прошлой задачи это отказ с перечнем файлов, а не молчаливый
+// перенос: незакоммиченное уехало бы в чужую ветку, и заметили бы это в лучшем
+// случае на ревью. Своя же ветка под ногами значит, что окно просто открывают
+// заново, и переключать нечего.
+func switchable(tree, branch string) error {
+	cur, err := git(tree, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return err
+	}
+	if cur == branch {
+		return nil
+	}
+	// quotepath выключен: с ним русские имена файлов уезжают в отчёт
+	// восьмеричными кодами, и перечень черновиков нечитаем ровно там, где по
+	// нему надо решать, что с ними делать.
+	st, err := git(tree, "-c", "core.quotepath=false", "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if st != "" {
+		return fmt.Errorf("в %s лежат правки прошлой задачи, на ветку %s дерево так не переключить: закоммитить их в свою ветку либо убрать, и повторить:\n%s", tree, branch, tail(st))
+	}
+	return nil
 }
 
 // cmdStart берёт задачу в работу в отдельном дереве: ветка по ID в worktree
@@ -254,8 +316,15 @@ func cmdStart(root string, p StartParams) (string, error) {
 	}
 	if l, err := taskWorktreeBy(codeRoot, isTaskBranch); err != nil {
 		return "", err
-	} else if l != nil {
-		return "", fmt.Errorf("%s уже в работе: ветка %s в worktree %s", p.ID, l.Branch, l.Path)
+	} else if l != nil && !(p.Tree != "" && samePath(l.Path, p.Tree)) {
+		busy := fmt.Sprintf("%s уже в работе: ветка %s в worktree %s", p.ID, l.Branch, l.Path)
+		if p.Tree != "" {
+			// Второе окно на занятой ветке: выложить её дважды git не даёт, и
+			// звать это надо своим именем. Ревьюверу ветка нужна на чтение, и
+			// берётся она detached, а замечания едут в файл задачи.
+			busy += "; выложить её вторым деревом нельзя, на чтение брать detached (git -C " + p.Tree + " checkout --detach " + l.Branch + "), коммиты в ветку идут только из занявшего дерева"
+		}
+		return "", fmt.Errorf("%s", busy)
 	}
 	// Второй заход на задачу: ветка осталась с прошлого раза, worktree
 	// заводится на неё, а не на новую от main. Уцелевшая ветка сильнее
@@ -270,10 +339,18 @@ func cmdStart(root string, p StartParams) (string, error) {
 		}
 	}
 	wtPath := treePath(codeRoot, low)
-	if _, err := os.Stat(wtPath); err == nil {
+	place := "worktree"
+	if p.Tree != "" {
+		wtPath, place = p.Tree, "копии окна"
+		// Чистота проверяется до перевода доски: отказ тогда ничего не успел
+		// поменять, а перевод в In progress пришлось бы откатывать руками.
+		if err := switchable(wtPath, branch); err != nil {
+			return "", err
+		}
+	} else if _, err := os.Stat(wtPath); err == nil {
 		return "", fmt.Errorf("директория %s уже существует, сначала прибрать её", wtPath)
 	}
-	msg := []string{fmt.Sprintf("ветка %s в worktree %s", branch, wtPath)}
+	msg := []string{fmt.Sprintf("ветка %s в %s %s", branch, place, wtPath)}
 	// Перевод доски коммитится раньше создания worktree: ветка тогда ветвится
 	// от main уже с коммитом перевода, и правки доски в дереве задачи не
 	// конфликтуют при ребейзе на merge.
@@ -292,17 +369,23 @@ func cmdStart(root string, p StartParams) (string, error) {
 		}
 		msg = append(msg, "доска: "+strings.TrimSpace(string(out)))
 	}
-	args := []string{"worktree", "add", wtPath}
-	if exists {
+	// Готовое дерево переключается на ветку, своё заводится вместе с ней.
+	where, args := codeRoot, []string{"worktree", "add", wtPath}
+	if p.Tree != "" {
+		where, args = wtPath, []string{"checkout", branch}
+		if !exists {
+			args = []string{"checkout", "-b", branch, main}
+		}
+	} else if exists {
 		args = append(args, branch)
 	} else {
 		args = append(args, "-b", branch, main)
 	}
-	if out, err := git(codeRoot, args...); err != nil {
+	if out, err := git(where, args...); err != nil {
 		if sect == "backlog" {
-			return "", fmt.Errorf("доска переведена, но worktree не создался:\n%s", tail(out))
+			return "", fmt.Errorf("доска переведена, но ветка не выложена в дерево:\n%s", tail(out))
 		}
-		return "", fmt.Errorf("worktree не создался:\n%s", tail(out))
+		return "", fmt.Errorf("ветка не выложена в дерево:\n%s", tail(out))
 	}
 	if codeRoot == root {
 		// .devkit гитигнорнут и в новое дерево не попадает, а без него в

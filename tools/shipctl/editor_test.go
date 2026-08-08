@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,15 +56,14 @@ func altEnv(base string) map[string]string {
 	}
 }
 
-// stubEditor кладёт в PATH подставной code, который пишет в лог свои аргументы,
-// каталог конфига и имя харнеса. По этому логу видно и то, что редактор звался,
-// и то, на какой подписке окно себя считает.
+// stubEditor кладёт в PATH подставной code, который пишет в лог свои аргументы
+// и каталог конфига из окружения. По этому логу видно и то, что редактор
+// звался, и то, что подписка окну достаётся не запуском, а директорией.
 func stubEditor(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()
 	log := filepath.Join(bin, "code.log")
-	write(t, bin, editorBin, "#!/bin/sh\necho \"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR "+
-		harnessEnv+"=$"+harnessEnv+" $*\" >> \""+log+"\"\n")
+	write(t, bin, editorBin, "#!/bin/sh\necho \"cfg=$CLAUDE_CONFIG_DIR $*\" >> \""+log+"\"\n")
 	if err := os.Chmod(filepath.Join(bin, editorBin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func stubEditor(t *testing.T) string {
 }
 
 // TestCodeDryRun: dry-run печатает окружение второй подписки и ничего не
-// делает. Редактор не зовётся, дерево задачи не заводится, токен в отчёт не
+// делает. Редактор не зовётся, копия окна не заводится, токен в отчёт не
 // попадает.
 func TestCodeDryRun(t *testing.T) {
 	root, callLog := setup(t, "", "")
@@ -84,16 +84,21 @@ func TestCodeDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"CLAUDE_CONFIG_DIR=" + dir,
+		"копия окна: " + windowTree(root) + " (ещё не заведена",
+		"машинный слой: " + filepath.Join(dir, altSettingsName),
 		"base URL: https://endpoint.example/anthropic",
 		"модель: glm-4.6",
 		"токен: есть",
-		editorBin + " -n " + treePath(root, "XR-002"),
+		"заголовок окна: [" + strings.ToUpper(windowSuffix()) + "] ",
+		editorBin + " " + windowTree(root),
 		"dry-run: редактор не запускался",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("в отчёте dry-run нет %q:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, " -n ") {
+		t.Errorf("окно второй подписки одно, нового не просим:\n%s", msg)
 	}
 	if strings.Contains(msg, altToken) {
 		t.Fatal("токен утёк в отчёт dry-run")
@@ -101,19 +106,21 @@ func TestCodeDryRun(t *testing.T) {
 	if _, err := os.Stat(log); err == nil {
 		t.Fatal("dry-run позвал редактор")
 	}
-	if wt := gitT(t, root, "worktree", "list"); strings.Contains(wt, "xr-002") {
-		t.Fatalf("dry-run завёл дерево задачи:\n%s", wt)
+	if _, err := os.Stat(windowTree(root)); err == nil {
+		t.Fatal("dry-run завёл копию окна")
 	}
 	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move") {
 		t.Fatalf("dry-run двинул доску: %q", calls)
 	}
 }
 
-// TestCodeOpensWindow: запуск без dry-run заводит дерево задачи тем же путём,
-// что start, и открывает окно редактора с каталогом конфига второй подписки.
+// TestCodeOpensWindow: запуск без dry-run заводит копию окна, кладёт в неё
+// ветку задачи тем же путём, что start, и открывает окно на копии. Подписка
+// достаётся окну директорией, а не запуском: в окружении процесса редактора
+// каталога конфига нет.
 func TestCodeOpensWindow(t *testing.T) {
 	root, callLog := setup(t, "", "")
-	dir := altHome(t, altEnv("https://endpoint.example/anthropic"))
+	altHome(t, altEnv("https://endpoint.example/anthropic"))
 	log := stubEditor(t)
 
 	msg, err := cmdCode(root, CodeParams{ID: "XR-002"})
@@ -122,12 +129,15 @@ func TestCodeOpensWindow(t *testing.T) {
 	}
 	// Путь берётся из git: на macOS временный каталог лежит под симлинком
 	// /var -> /private/var, и git отдаёт дерево уже развёрнутым.
-	tree, err := filepath.EvalSymlinks(treePath(root, "XR-002"))
+	tree, err := filepath.EvalSymlinks(windowTree(root))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if wt := gitT(t, root, "worktree", "list"); !strings.Contains(wt, tree) {
-		t.Fatalf("дерево задачи не заведено:\n%s", wt)
+		t.Fatalf("копия окна не заведена:\n%s", wt)
+	}
+	if br := gitT(t, tree, "rev-parse", "--abbrev-ref", "HEAD"); br != "xr-002" {
+		t.Fatalf("в копии окна стоит %q, а ветка задачи xr-002", br)
 	}
 	if calls, _ := os.ReadFile(callLog); !strings.Contains(string(calls), "move XR-002 in-progress") {
 		t.Fatalf("задача не переведена в In progress: %q", calls)
@@ -136,7 +146,7 @@ func TestCodeOpensWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal("редактор не звался:", err)
 	}
-	want := "CLAUDE_CONFIG_DIR=" + dir + " " + harnessEnv + "=" + altHarness + " -n " + tree + "\n"
+	want := "cfg= " + tree + "\n"
 	if string(got) != want {
 		t.Fatalf("редактор позван не так:\n%q\nждали\n%q", got, want)
 	}
@@ -147,13 +157,185 @@ func TestCodeOpensWindow(t *testing.T) {
 		t.Fatal("токен утёк в отчёт")
 	}
 
-	// Второй запуск по той же задаче не заводит второго дерева и не спотыкается
-	// о занятую ветку: окно на дереве открывают по многу раз в день.
+	// Второй запуск по той же задаче не заводит второй копии и не спотыкается
+	// о занятую ветку: окно открывают по многу раз в день.
 	if _, err := cmdCode(root, CodeParams{ID: "XR-002"}); err != nil {
 		t.Fatalf("повторный запуск отбился: %v", err)
 	}
 	if got, _ := os.ReadFile(log); strings.Count(string(got), tree) != 2 {
 		t.Fatalf("повторный запуск не открыл окно:\n%s", got)
+	}
+	if _, linked, err := worktrees(root); err != nil {
+		t.Fatal(err)
+	} else if len(linked) != 1 {
+		t.Fatalf("копия окна одна на все задачи, а деревьев %d: %v", len(linked), linked)
+	}
+}
+
+// TestCodeWindowFiles: окружение подписки и заголовок окна лежат в самой
+// копии, поэтому окно, открытое мимо shipctl (док, «Open Recent»), ходит во
+// вторую подписку и называется её ярусом. Файлы эти машинные, в гит они не
+// едут: в первом токен, второй это настройка вида.
+func TestCodeWindowFiles(t *testing.T) {
+	root, _ := setup(t, "", "")
+	altHome(t, altEnv("https://endpoint.example/anthropic"))
+	stubEditor(t)
+	if _, err := cmdCode(root, CodeParams{ID: "XR-002"}); err != nil {
+		t.Fatal(err)
+	}
+	tree := windowTree(root)
+
+	envPath := filepath.Join(tree, windowEnvFile)
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"ANTHROPIC_BASE_URL":   "https://endpoint.example/anthropic",
+		"ANTHROPIC_AUTH_TOKEN": altToken,
+		"ANTHROPIC_MODEL":      "glm-4.6",
+		harnessEnv:             altHarness,
+	}
+	for k, v := range want {
+		if doc.Env[k] != v {
+			t.Errorf("в %s ключ %s это %q, ждали %q", envPath, k, doc.Env[k], v)
+		}
+	}
+	if st, err := os.Stat(envPath); err != nil {
+		t.Fatal(err)
+	} else if mode := st.Mode() & 0o777; mode&0o077 != 0 {
+		t.Errorf("у %s права %o, а там лежит токен второй подписки", envPath, mode)
+	}
+
+	title, err := os.ReadFile(filepath.Join(tree, windowTitleFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(title), windowTitle(root)) {
+		t.Errorf("в настройках копии нет заголовка %q:\n%s", windowTitle(root), title)
+	}
+
+	for _, name := range []string{windowEnvFile, windowTitleFile} {
+		out, err := exec.Command("git", "-C", tree, "check-ignore", "-q", name).CombinedOutput()
+		if err != nil {
+			t.Errorf("%s не спрятан от гита (%v %s): он лёг бы черновиком под ноги переключению задачи", name, err, out)
+		}
+	}
+	if st := gitT(t, tree, "status", "--porcelain"); st != "" {
+		t.Errorf("копия окна сразу после заведения не чиста:\n%s", st)
+	}
+}
+
+// TestCodeSwitchesTask: следующая задача берётся в том же окне, копия одна.
+// Черновики прошлой задачи при этом переносить в чужую ветку нельзя, и молчать
+// про них тоже: это отказ с перечнем файлов.
+func TestCodeSwitchesTask(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	altHome(t, altEnv("https://endpoint.example/anthropic"))
+	stubEditor(t)
+	if _, err := cmdCode(root, CodeParams{ID: "XR-001"}); err != nil {
+		t.Fatal(err)
+	}
+	tree := windowTree(root)
+
+	write(t, tree, "черновик.txt", "недописанное\n")
+	_, err := cmdCode(root, CodeParams{ID: "XR-002"})
+	if err == nil {
+		t.Fatal("копия с черновиками прошлой задачи переключилась молча")
+	}
+	for _, want := range []string{"черновик.txt", "xr-002"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в отказе нет %q: %v", want, err)
+		}
+	}
+	if br := gitT(t, tree, "rev-parse", "--abbrev-ref", "HEAD"); br != "xr-001" {
+		t.Fatalf("отказ всё же переключил ветку на %q", br)
+	}
+
+	// Своя же задача повторным запуском не отбивается: незакоммиченное лежит в
+	// своей ветке, и окно просто открывают заново.
+	if _, err := cmdCode(root, CodeParams{ID: "XR-001"}); err != nil {
+		t.Fatalf("повторный запуск своей задачи отбился: %v", err)
+	}
+	if err := os.Remove(filepath.Join(tree, "черновик.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdCode(root, CodeParams{ID: "XR-002"}); err != nil {
+		t.Fatal(err)
+	}
+	if br := gitT(t, tree, "rev-parse", "--abbrev-ref", "HEAD"); br != "xr-002" {
+		t.Fatalf("копия не переключилась на новую задачу, в ней %q", br)
+	}
+	if _, linked, err := worktrees(root); err != nil {
+		t.Fatal(err)
+	} else if len(linked) != 1 {
+		t.Fatalf("на две задачи заведено деревьев: %d (%v)", len(linked), linked)
+	}
+	// Ветка прошлой задачи цела: её дозреют и сольют, вернув в копию.
+	if gitT(t, root, "branch", "--list", "xr-001") == "" {
+		t.Error("ветка прошлой задачи пропала при переключении")
+	}
+}
+
+// TestCodeRefusesBusyBranch: ветка задачи выложена в другом дереве (второе окно
+// или дерево субагента). Дважды одну ветку git не выкладывает, и отказ обязан
+// сказать, чем её берут на чтение, а не просто «занята».
+func TestCodeRefusesBusyBranch(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	altHome(t, altEnv("https://endpoint.example/anthropic"))
+	stubEditor(t)
+	other := filepath.Join(t.TempDir(), "чужое-дерево")
+	gitT(t, root, "worktree", "add", "-b", "xr-001", other, "main")
+
+	_, err := cmdCode(root, CodeParams{ID: "XR-001"})
+	if err == nil {
+		t.Fatal("ветка занята другим деревом, а команда не отбилась")
+	}
+	for _, want := range []string{"уже в работе", "checkout --detach"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в отказе нет %q: %v", want, err)
+		}
+	}
+}
+
+// TestCodeSyncsEnvFromMachineLayer: машинный слой это хозяин ключей, и копия
+// подтягивает их при каждом открытии окна. Разъехавшись, копия молча ходила бы
+// в старый endpoint со старым токеном, а видно это только по счёту в конце
+// недели.
+func TestCodeSyncsEnvFromMachineLayer(t *testing.T) {
+	root, _ := setup(t, "", "")
+	dir := altHome(t, altEnv("https://старый.example/anthropic"))
+	stubEditor(t)
+	if _, err := cmdCode(root, CodeParams{ID: "XR-002"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{"env": altEnv("https://новый.example/anthropic")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, altSettingsName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdCode(root, CodeParams{ID: "XR-002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(windowTree(root), windowEnvFile)
+	got, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "https://новый.example/anthropic") {
+		t.Fatalf("окружение копии не подтянулось из машинного слоя:\n%s", got)
+	}
+	if !strings.Contains(msg, envPath) {
+		t.Errorf("правка окружения копии прошла молча:\n%s", msg)
 	}
 }
 
@@ -218,7 +400,7 @@ func TestCodeConfigDirFromMachineKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "CLAUDE_CONFIG_DIR="+dir) {
+	if !strings.Contains(msg, "машинный слой: "+filepath.Join(dir, altSettingsName)) {
 		t.Fatalf("каталог взят не из машинного ключа:\n%s", msg)
 	}
 	if !strings.Contains(msg, harnessEnv+"="+altHarness) {

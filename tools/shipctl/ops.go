@@ -539,7 +539,20 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", err
 		}
 		if l == nil {
-			return "", fmt.Errorf("стоишь на %s, и worktree с веткой %s не нашёлся: сливать нечего", main, p.ID)
+			// Ветка задачи бывает и не выложена ни в одно дерево: копию окна
+			// переключили на другую задачу, а эту оставили дозревать. Сказать
+			// про это стоит прямо, иначе «сливать нечего» читается как
+			// «работы не было».
+			hint := ""
+			if names, err := git(root, "branch", "--list", "--format=%(refname:short)"); err == nil {
+				for _, n := range strings.Split(names, "\n") {
+					if branchOfTask(n, p.ID) {
+						hint = fmt.Sprintf("; ветка %s есть, но не выложена ни в одно дерево: вернуть её в копию окна (shipctl code %s) и повторить", n, p.ID)
+						break
+					}
+				}
+			}
+			return "", fmt.Errorf("стоишь на %s, и worktree с веткой %s не нашёлся: сливать нечего%s", main, p.ID, hint)
 		}
 		wt, branch = l.Path, l.Branch
 	}
@@ -698,7 +711,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	var wtNote string
 	if wt != "" {
-		wtNote = removeWorktree(root, wt, branch)
+		// Копия окна не сносится: в ней живёт окно редактора, и удалённая
+		// директория убивает окно вместе с сессией (DK-192). Дерево на задачу
+		// одноразовое, у него хозяин субагент, и уборка там нужное свойство.
+		if samePath(wt, windowTree(root)) {
+			wtNote = detachWorktree(root, wt, branch)
+		} else {
+			wtNote = removeWorktree(root, wt, branch)
+		}
 	} else {
 		git(root, "branch", "-d", branch)
 	}

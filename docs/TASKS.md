@@ -27,7 +27,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
 | DK-173 | Проза агентов в задачах и доке тяжело читается человеком | LLD | P2 | 40 (25+8+3+0+4) | M | [tasks/DK-173.md](tasks/DK-173.md) |
-| DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P2 | 39 (25+8+2+0+4) | L | [tasks/DK-040.md](tasks/DK-040.md) |
 
 ## Backlog
 
@@ -40,7 +39,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-137 | Цель: обёртка, отдающая агенту выжимку вместо всего вывода команды | task | P2 | 40 (25+8+3+0+4) | XL | [tasks/DK-137.md](tasks/DK-137.md) |
 | DK-092 | shipctl: ворота готовности правки как предусловие merge | task | P2 | 39 (25+7+3+0+4) | M | [tasks/DK-092.md](tasks/DK-092.md) |
 | DK-166 | Цель: полный прогон тестов укладывается в две минуты | task | P2 | 39 (25+7+3+0+4) | XL | [tasks/DK-166.md](tasks/DK-166.md) |
-| DK-178 | agentctl run отдаёт работу харнесу назначения: каталог и окружение подпроцесса [после DK-040] | task | P2 | 39 (25+8+2+0+4) | M | [tasks/DK-171.md](tasks/DK-171.md) |
+| DK-178 | agentctl run отдаёт работу харнесу назначения: каталог и окружение подпроцесса | task | P2 | 39 (25+8+2+0+4) | M | [tasks/DK-171.md](tasks/DK-171.md) |
 | DK-180 | Профиль glm-code и живой прогон конвейера на второй подписке [после DK-178] | task | P2 | 39 (25+9+3+0+2) | M | [tasks/DK-171.md](tasks/DK-171.md) |
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-071.md](tasks/DK-071.md) |
 | DK-119 | Коммит доски, собранный руками, отбивает pre-push | task | P2 | 38 (25+6+3+0+4) | S | [tasks/DK-119.md](tasks/DK-119.md) |
@@ -60,12 +59,12 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-122 | Отказ «конвейер занят» не говорит, кто держит замок | task | P2 | 32 (25+4+1+0+2) | S | [tasks/DK-122.md](tasks/DK-122.md) |
 | DK-123 | shipctl start в корп-контуре зовёт merge, которого там нет | bug | P2 | 31 (25+3+0+0+3) | S | [tasks/DK-123.md](tasks/DK-123.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-040, DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-181 | Съёмщик остатка второй подписки: quota --harness [после DK-180] | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-171.md](tasks/DK-171.md) |
-| DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-040, DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/DK-171.md](tasks/DK-171.md) |
-| DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-040, DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
+| DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |
 | DK-088 | LLD имитации человеческого темпа в трекере: строить ли вообще | LLD | P3 | 10 (0+3+5+0+2) | - | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |

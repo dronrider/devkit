@@ -14,10 +14,11 @@ import (
 // задачи», строка 1.
 
 // ladderProfiles кладёт директорию профилей с двумя харнесами и отдаёт корень,
-// который понимает DEVKIT_HOME. claude-code берётся настоящий, из репозитория:
-// на нём стоят и объявление квоты, и режим делегирования native. Второй харнес
-// изображает вторую подписку: детекта нет, делегирование подпроцессом, остаток
-// снимать нечем.
+// который понимает DEVKIT_HOME. Оба профиля настоящие, из репозитория: на
+// claude-code стоят объявление квоты и делегирование субагентом, на glm-code
+// делегирование подпроцессом и пустая [quota]. Подставные тут были бы хуже
+// настоящих: гетерогенная лестница проверялась бы на профиле, которого ни на
+// одной машине нет.
 func ladderProfiles(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -25,17 +26,14 @@ func ladderProfiles(t *testing.T) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	src, err := os.ReadFile(filepath.Join(repoRoot(t), profileDirGroup, profileDirName, "claude-code.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "claude-code.toml"), src, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	glm := "[detect]\n\n[rules]\nmode = \"embed\"\n\n[delegate]\nmode = \"cli\"\n" +
-		"command = [\"claude\", \"-p\", \"{prompt}\"]\n\n[hooks]\n\n[quota]\n"
-	if err := os.WriteFile(filepath.Join(dir, "glm-code.toml"), []byte(glm), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"claude-code.toml", "glm-code.toml"} {
+		src, err := os.ReadFile(filepath.Join(repoRoot(t), profileDirGroup, profileDirName, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return root
 }
@@ -307,6 +305,54 @@ func TestRecordAssignment(t *testing.T) {
 				t.Fatalf("запись не называет исполнителя как надо:\n%s", data)
 			}
 		})
+	}
+}
+
+// TestAltSubProfile: настоящий профиль второй подписки читается сводом
+// agentctl, поднимается командой клиента и остатка не объявляет. Тест смотрит на
+// коммитируемый файл, а не на подставной: профиль это то, чем гетерогенная
+// лестница отличается от однородной, и разъедься он с ожиданиями утилиты, вся
+// уехавшая ступень встала бы на живой машине, а не в прогоне.
+func TestAltSubProfile(t *testing.T) {
+	setupLadder(t, ladderMachine)
+	dir := filepath.Join(os.Getenv("DEVKIT_HOME"), profileDirGroup, profileDirName)
+	l, err := mergeLayers(dir, machineConfigPath(), "")
+	if err != nil {
+		t.Fatalf("слои с профилем второй подписки не сложились: %v", err)
+	}
+	prof := l.Profiles["glm-code"]
+	if prof == nil {
+		t.Fatal("профиль второй подписки не загрузился")
+	}
+	del := prof.section("delegate")
+	if got := del.str("mode"); got != "cli" {
+		t.Fatalf("режим делегирования второй подписки %q, жду cli: спавна субагента снаружи у клиента нет", got)
+	}
+	argv := substituteCommand(del.arr("command"), map[string]string{
+		"model": "glm-5.2", "effort": "high", "prompt": "тело определения", "workdir": "/дерево",
+	})
+	if len(argv) == 0 || argv[0] != "claude" {
+		t.Fatalf("команда подпроцесса поднимает не клиента подписки: %q", argv)
+	}
+	for _, want := range []string{"-p", "тело определения", "glm-5.2", "high"} {
+		if !inList(argv, want) {
+			t.Fatalf("в команде подпроцесса нет %q: %q", want, argv)
+		}
+	}
+	// Пустая [quota] это штатно молчащий корректор, а не пробел: остаток второй
+	// подписки снимать пока нечем, и объявленный снимок был бы обещанием, по
+	// которому корректор двигал бы вердикты неизвестно откуда взявшимися данными.
+	if q := quotaSpecOf(l, "glm-code"); q != nil {
+		t.Fatalf("у второй подписки объявлен остаток (%v), а снимать его нечем", q.Buckets)
+	}
+	// Машинные пути считаются от каталога подписки: литерал тут увёл бы её
+	// хозяйство в контур первой.
+	for _, p := range [][2]string{{"rules", "global_file"}, {"hooks", "config"},
+		{"skills", "dir"}, {"delegate", "agents_dir"}} {
+		got := prof.section(p[0]).str(p[1])
+		if !strings.HasPrefix(got, "{home}") {
+			t.Fatalf("[%s] %s = %q, а считаться он обязан от {home}", p[0], p[1], got)
+		}
 	}
 }
 

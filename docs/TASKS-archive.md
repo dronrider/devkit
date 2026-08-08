@@ -125,3 +125,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-177 | Назначение яруса в машинном слое: строка via и запись про подписку | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-177.md](tasks/archive/2026/DK-177.md) |
 | DK-179 | Раскладка машинного контура по профилям включённых харнесов | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-179.md](tasks/archive/2026/DK-179.md) |
 | DK-040 | agentctl run: делегирование native/cli/none с ограничителем вложенности | task | P2 | 2026-08-08 | [tasks/archive/2026/DK-040.md](tasks/archive/2026/DK-040.md) |
+| DK-173 | Проза агентов в задачах и доке тяжело читается человеком | LLD | P2 | 2026-08-08 | [tasks/archive/2026/DK-173.md](tasks/archive/2026/DK-173.md), `505aefe`, `00f5e8e`, `3d6ee13`, `33ac83b` |

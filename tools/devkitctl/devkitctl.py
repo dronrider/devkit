@@ -37,9 +37,10 @@
       вышедший релиз двумя находками (тег чекаута против новейшего в клоне и
       давность похода за тегами, обе по локальному клону, без сети), обёртка
       devkitctl рядом с ними и сам каталог назначения в PATH,
-      определения агентов в ~/.claude/agents,
-      скиллы devkit в ~/.claude/skills, глобальная точка правил ([rules]
-      global_file, обычно ~/.claude/CLAUDE.md) свежа и не правлена руками,
+      определения агентов ([delegate] agents_dir),
+      скиллы devkit ([skills] dir), глобальная точка правил ([rules]
+      global_file) свежа и не правлена руками, и всё это по разу на каждый
+      включённый харнес, каждому по его профилю,
       tmux и снимки квоты в ~/.devkit/quota (снимка нет, а хук SessionStart и
       tmux на месте, значит находки нет: снимок появится сам первой сессией),
       носитель сторожка цикла цели (launchd-агент ru.devkit.goal-watch положен,
@@ -164,8 +165,13 @@ PACKAGER = "brew"
 AGENT_WORD = ("определение агента", "определения агентов", "определений агентов")
 SKILL_WORD = ("скилл", "скилла", "скиллов")
 HOOK_WORD = ("хук харнеса", "хука харнеса", "хуков харнеса")
-AGENTS_DIR = "~/.claude/agents"
-SKILLS_DIR = "~/.claude/skills"
+# Оси машинного хозяйства харнеса и ключи его профиля, откуда берётся путь:
+# название оси, секция, ключ. Констант ~/.claude тут больше нет, вторая
+# подписка считает те же пути от своего каталога
+# (docs/lld/DK-090-heterogeneous-ladder.md, «Раскладка второй подписки»).
+AXIS_HOOKS = ("хуки", "hooks", "config")
+AXIS_AGENTS = ("определения агентов", "delegate", "agents_dir")
+AXIS_SKILLS = ("скиллы", "skills", "dir")
 # Снимок остатка лимитов лежит по файлу на харнес. Одиночный quota.local это
 # как было до директории: его переезд делает --fix, читатель до тех пор смотрит
 # старый путь (tools/agentctl/quota.go).
@@ -754,14 +760,15 @@ def is_agent_def(path):
     return False
 
 
-def check_agent_defs(fix):
+def check_agent_defs(fix, dst_dir):
     # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
     # определение с ветки задачи уехало бы на машину во все проекты сразу.
+    # Каталог назначения приходит из профиля харнеса ([delegate] agents_dir), а
+    # не из константы: у второй подписки он свой, и раскладка ей нужна такая же.
     findings, fixed = [], []
     laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "agents" if (main / "kit" / "agents").is_dir() else DEVKIT / "kit" / "agents"
-    dst_dir = Path(os.path.expanduser(AGENTS_DIR))
     how = fix_hint(main, from_main, "определения агентов")
     # Директория перебирается целиком, а не по префиксу: набор растёт ролями
     # (exec-* для исполнения, review-* для ревью), и новая роль должна
@@ -805,16 +812,16 @@ def check_agent_defs(fix):
     return findings, fixed
 
 
-def check_skills(fix):
+def check_skills(fix, dst_dir):
     # Скиллы едут на машину тем же каналом, что определения субагентов: эталон
     # это основной чекаут, из worktree ветки задачи идёт только сверка. Скилл
     # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
-    # kit/skills/ на машину не уезжает.
+    # kit/skills/ на машину не уезжает. Каталог назначения из профиля харнеса
+    # ([skills] dir), у каждого включённого он свой.
     findings, fixed = [], []
     laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "skills" if (main / "kit" / "skills").is_dir() else DEVKIT / "kit" / "skills"
-    dst_dir = Path(os.path.expanduser(SKILLS_DIR))
     how = fix_hint(main, from_main, "скиллы")
     for src in sorted(src_dir.glob("*/SKILL.md")):
         name = src.parent.name
@@ -950,7 +957,7 @@ def install_hooks(settings, gaps, devkit):
                                 settings, what)]
 
 
-def check_notify_hook(text, settings, fix=False):
+def check_notify_hook(fix=False):
     findings = []
     # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
     src = DEVKIT / "hooks" / NOTIFY_HOOK
@@ -988,38 +995,94 @@ def check_notify_hook(text, settings, fix=False):
     return findings, []
 
 
-def check_machine(fix):
-    # Машинный контур, общий для всех проектов: хуки Claude Code, права сессии
-    # без человека, бинари devkit, определения агентов, скиллы, глобальная точка
-    # правил, tmux и снимок квоты.
+def contour_paths(name, profile, homes):
+    """Куда раскладывается машинное хозяйство харнеса: (пути по осям, находки).
+
+    Три оси и три ключа профиля, четвёртая (глобальная точка правил) своя у
+    rules.check_global. Пустой ключ значит, что оси у инструмента нет, и это не
+    пробел: раскладывать ему по этой оси просто нечего.
+    """
+    paths, bads = {}, []
+    for axis, section, key in (AXIS_HOOKS, AXIS_AGENTS, AXIS_SKILLS):
+        path, bad = rules.harness_path(name, profile.str_of(section, key), homes)
+        paths[axis] = path
+        if bad and bad not in bads:
+            # Пробел у трёх осей один и тот же (машинного каталога нет), и
+            # сказать про него один раз честнее, чем трижды.
+            bads.append(bad)
+    return paths, bads
+
+
+def check_harness_contour(name, profile, homes, fix, main, from_main):
+    """Машинное хозяйство одного включённого харнеса: хуки, права сессии без
+    человека, определения агентов и скиллы. Пути берутся из профиля ([hooks]
+    config, [delegate] agents_dir, [skills] dir), а не из констант ~/.claude:
+    вторая подписка это та же раскладка того же инструмента, только в своём
+    каталоге, и обслуживать её надо тем же контуром.
+
+    Возврат это (находки, починенное, стоит ли хук SessionStart).
+    """
     findings, fixed = [], []
-    settings = Path(os.path.expanduser("~/.claude/settings.json"))
-    text = settings.read_text(encoding="utf-8") if settings.exists() else ""
-    main, from_main = devkit_checkout()
-    # Хуки харнеса раскладываются тем же рубежом, что права и скиллы: с ветки
-    # задачи на машину они не едут, там их сверяют и чинят из основного чекаута.
-    gaps, gap_findings = hook_gaps(text, settings)
-    if gaps and fix and from_main:
-        fixed += install_hooks(settings, gaps, main)
+    paths, bads = contour_paths(name, profile, homes)
+    if bads:
+        return bads, [], False
+    settings, text = paths[AXIS_HOOKS[0]], ""
+    if settings is not None:
         text = settings.read_text(encoding="utf-8") if settings.exists() else ""
-    else:
-        findings += gap_findings
-    nf, nd = check_notify_hook(text, settings, fix)
+        # Хуки харнеса раскладываются тем же рубежом, что права и скиллы: с ветки
+        # задачи на машину они не едут, там их сверяют и чинят из основного чекаута.
+        gaps, gap_findings = hook_gaps(text, settings)
+        if gaps and fix and from_main:
+            fixed += install_hooks(settings, gaps, main)
+            text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+        else:
+            findings += gap_findings
+        pf, pd = perms.check(settings, fix, None if from_main else main)
+        findings += pf
+        fixed += pd
+    if paths[AXIS_AGENTS[0]] is not None:
+        f, d = check_agent_defs(fix, paths[AXIS_AGENTS[0]])
+        findings += f
+        fixed += d
+    if paths[AXIS_SKILLS[0]] is not None:
+        f, d = check_skills(fix, paths[AXIS_SKILLS[0]])
+        findings += f
+        fixed += d
+    return findings, fixed, SESSION_HOOK in text
+
+
+def check_machine(fix):
+    # Машинный контур, общий для всех проектов: хуки харнесов, права сессии
+    # без человека, бинари devkit, определения агентов, скиллы, глобальная точка
+    # правил, tmux и снимок квоты. Хозяйство раскладывается каждому включённому
+    # харнесу по его профилю, а машинное на всех одно.
+    findings, fixed = [], []
+    main, from_main = devkit_checkout()
+    devkit_src = main if (main / "kit" / "harness").is_dir() else DEVKIT
+    profiles, hf = rules.enabled_harnesses(None, devkit_src / "kit" / "harness")
+    findings += hf
+    homes = rules.machine_homes()
+    session_hook = False
+    for name, profile in profiles:
+        f, d, took = check_harness_contour(name, profile, homes, fix, main, from_main)
+        findings += f
+        fixed += d
+        session_hook = session_hook or took
+    # Уведомлять есть чем или нет, это свойство машины, а не харнеса: бэкенд
+    # один на всех, и спрашивать про него по разу на харнес значило бы
+    # повторять одну находку.
+    nf, nd = check_notify_hook(fix)
     findings += nf
     fixed += nd
-    pf, pd = perms.check(settings, fix, None if from_main else main)
-    findings += pf
-    fixed += pd
     # Носитель сторожка цикла цели: тем же рубежом, что хуки и права, потому
     # что launchd-агент показывает на чекаут, и с ветки задачи ему на машину
     # ехать нельзя.
     watchf, watchd = watch.check(fix, main, from_main)
     findings += watchf
     fixed += watchd
-    for check in (check_binaries, check_agent_defs, check_skills):
-        f, d = check(fix)
-        findings += f
-        fixed += d
+    f, d = check_binaries(fix)
+    findings += f
+    fixed += d
     # Обёртка devkitctl рядом с бинарями: без неё python-часть зовётся длинным
     # путём, а кладут её одинаково update и доктор.
     wf, wd = update.check_wrapper(main, fix, from_main)
@@ -1028,7 +1091,6 @@ def check_machine(fix):
     # Про вышедший релиз машине потребителя говорит только доктор: git pull в
     # отвязанном чекауте не работает, и другого канала у неё нет.
     findings += update.check_release(main)
-    devkit_src = main if (main / "kit" / "harness").is_dir() else DEVKIT
     whence = "" if from_main else ("devkit тут выложен worktree ветки задачи, класть на машину "
                                    "правила с непроверенной ветки нельзя; из основного чекаута %s: "
                                    % main)
@@ -1043,7 +1105,7 @@ def check_machine(fix):
     # Снимок квоты снимает хук SessionStart при первой же сессии, и мешает ему
     # только нехватка tmux. Пока и хук на месте, и tmux есть, отсутствие снимка
     # на свежей машине это не пробел, а ещё не наступившее событие.
-    if SESSION_HOOK not in text:
+    if not session_hook:
         blocked = "хук SessionStart, который его снимает, не подключён"
     elif not shutil.which("tmux"):
         blocked = "хук SessionStart снимает его панелью /usage, а tmux на машине нет"
@@ -1055,7 +1117,9 @@ def check_machine(fix):
     f, d = check_alt_sub(fix)
     findings += f
     fixed += d
-    return findings, fixed
+    # Нехватку машинного каталога видят и раскладка хозяйства, и глобальная
+    # точка правил: пробел один, и повторять его человеку незачем.
+    return list(dict.fromkeys(findings)), fixed
 
 
 def check_quota(fix, blocked=""):
@@ -1398,10 +1462,19 @@ def weigh_resident(start, runs, limit, model, prompt):
     # машинный контур (снимок квоты, tmux) на вес резидента не влияет и мерить
     # не мешает.
     root, _ = project_root(start)
-    findings = []
-    for check in (check_agent_defs, check_skills):
-        f, _ = check(False)
-        findings += ["машина: %s" % m for m in f]
+    main, _ = devkit_checkout()
+    devkit_src = main if (main / "kit" / "harness").is_dir() else DEVKIT
+    profiles, hf = rules.enabled_harnesses(None, devkit_src / "kit" / "harness")
+    homes = rules.machine_homes()
+    findings = ["машина: %s" % m for m in hf]
+    for name, profile in profiles:
+        paths, bads = contour_paths(name, profile, homes)
+        findings += ["машина: %s" % m for m in bads]
+        for axis, check in ((AXIS_AGENTS[0], check_agent_defs), (AXIS_SKILLS[0], check_skills)):
+            if bads or paths[axis] is None:
+                continue
+            f, _ = check(False, paths[axis])
+            findings += ["машина: %s" % m for m in f]
     rfindings, _ = rules.check(root, DEVKIT, False, SKIP_DIRS)
     findings += rfindings
     return weigh.measure(root, DEVKIT, findings, runs, limit, prompt, model)

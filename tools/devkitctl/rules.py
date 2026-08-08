@@ -35,6 +35,12 @@ PROJECT_CONFIG = ".devkit/harness.local"
 # которому резолвит харнес agentctl (harness.go, mergeLayers), и оно же
 # сегодняшнее поведение до первого прогона мастера настройки.
 DEFAULT_ENABLED = ("claude-code",)
+# Каталог машинного хозяйства харнеса и плейсхолдер, которым профиль на него
+# ссылается. Ключ машинный, а не профильный: каталог принадлежит машине, а в
+# коммитируемом профиле ему места нет (docs/lld/DK-090-heterogeneous-ladder.md,
+# раздел «Каталог конфигурации и окружение подпроцесса»).
+HOME_KEY = "home"
+HOME_MARK = "{home}"
 
 # Глубина правил: сколько их текста доезжает до харнеса. Выводится из оси
 # скиллов его профиля (docs/lld/DK-100-context-tree.md, раздел «Харнесы без
@@ -137,6 +143,83 @@ def enabled_harnesses(root, profiles_dir, machine_path=None):
             continue
         out.append((name, d))
     return out, findings
+
+
+def machine_homes(machine_path=None):
+    # Каталоги харнесов из машинного слоя: ключ home секции [<харнес>]. Ведущий
+    # ~/ разворачивается тут же, буквальный он завёл бы клиенту каталог с именем
+    # ~ в рабочем дереве. Битый машинный конфиг тут молчит: про него уже сказал
+    # enabled_harnesses, и вторая та же находка была бы шумом.
+    path = Path(os.path.expanduser(machine_path or MACHINE_CONFIG))
+    if not path.exists():
+        return {}
+    try:
+        d = harness.parse(str(path), read_text(path))
+    except harness.TomlError:
+        return {}
+    homes = {}
+    for sect in d.order:
+        if not sect:
+            continue
+        v = d.str_of(sect, HOME_KEY)
+        if v:
+            homes[sect] = os.path.expanduser(v)
+    return homes
+
+
+def harness_path(name, spec, homes, machine_path=None):
+    """Путь машинного хозяйства харнеса из его профиля: (путь, находка).
+
+    Профиль второй подписки считает пути от каталога конфигурации, а лежит тот
+    каталог в машинном слое, поэтому в профиле стоит плейсхолдер `{home}`.
+    Машинного ключа нет, значит подставлять нечего, и это отказ строкой, а не
+    раскладка в никуда: путь `{home}/skills` завёл бы на машине каталог с
+    фигурными скобками в имени, и заметили бы это не скоро.
+    """
+    if not spec:
+        return None, ""
+    if HOME_MARK in spec:
+        home = homes.get(name)
+        if not home:
+            return None, ("профиль харнеса %s считает машинные пути от %s, а каталога в машинном "
+                          "слое нет: вписать home в секцию [%s] файла %s (это каталог "
+                          "конфигурации, которым поднимается сам инструмент), иначе "
+                          "раскладывать его хозяйство некуда"
+                          % (name, HOME_MARK, name, machine_path or MACHINE_CONFIG))
+        spec = spec.replace(HOME_MARK, home)
+    return Path(os.path.expanduser(spec)), ""
+
+
+def one_text_per_file(targets):
+    """Развести харнесы по файлам, которые им пишет генератор: (кому писать,
+    находки).
+
+    На штатной раскладке второй подписки два включённых харнеса просят один и
+    тот же файл правил, и текст у них выходит один и тот же: пишется он один
+    раз, второй проход застаёт файл уже совпавшим. Разного текста у одного файла
+    генератор не сводит никак, он переписывал бы файл сам за собой на каждом
+    проходе, и чинится это правкой профиля, а не автоматикой.
+
+    Вход это список (харнес, ключ файла, что писать, чем он собран).
+    """
+    groups, order, findings, keep = {}, [], [], []
+    for name, key, want, why in targets:
+        if key not in groups:
+            order.append(key)
+        groups.setdefault(key, []).append((name, want, why))
+    for key in order:
+        group = groups[key]
+        if len({want for _, want, _ in group}) > 1:
+            findings.append("харнесы %s включены оба и просят у файла %s разного текста (%s): "
+                            "генератор переписывал бы его сам за собой на каждом проходе, и "
+                            "файл не пишется вовсе; развести харнесы по разным файлам в их "
+                            "профилях либо выключить лишний в %s"
+                            % (", ".join(n for n, _, _ in group), key,
+                               "; ".join("%s: %s" % (n, why) for n, _, why in group),
+                               MACHINE_CONFIG))
+            continue
+        keep.append(group[0][0])
+    return keep, findings
 
 
 def mode_of(profile):
@@ -563,14 +646,25 @@ def check_global(devkit, fix, machine_path=None, whence=""):
     findings, fixed = [], []
     profiles, f = enabled_harnesses(None, Path(devkit) / "kit" / "harness", machine_path)
     findings += f
+    homes = machine_homes(machine_path)
+    points, targets = {}, []
     for name, profile in profiles:
         if mode_of(profile) != "import":
             continue
         gf = profile.str_of("rules", "global_file")
         if not gf:
             continue
-        path = Path(os.path.expanduser(gf))
-        want = global_thin_text(profile, devkit)
+        path, bad = harness_path(name, gf, homes, machine_path)
+        if bad:
+            findings.append(bad)
+            continue
+        points[name] = (path, global_thin_text(profile, devkit))
+        targets.append((name, str(path), points[name][1],
+                        "строка импорта %s" % (profile.str_of("rules", "import_line") or "@{path}")))
+    keep, cf = one_text_per_file(targets)
+    findings += cf
+    for name in keep:
+        path, want = points[name]
         if not path.exists():
             if fix:
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -728,7 +822,21 @@ def check(root, devkit, fix=False, skip_dirs=()):
         embedded = find_block(read_text(agents)) is not None
     except BrokenMarkers:
         embedded = False
+    # Файл правил проекта у второй подписки тот же самый, что у первой, и текст
+    # ему выходит один и тот же: пишет его один харнес, второму писать уже
+    # нечего. Развести их умеет только правка профиля, поэтому разный текст у
+    # одного файла это находка, а не выбор генератора наугад.
+    by_file = [(name, profile.str_of("rules", "file"),
+                thin_text(profile, root, devkit, board, embedded, depths[name]),
+                "режим %s, глубина %s, строка импорта %s"
+                % (mode_of(profile), depths[name],
+                   profile.str_of("rules", "import_line") or "@{path}"))
+               for name, profile in imports]
+    keep, cf = one_text_per_file(by_file)
+    findings += cf
     for name, profile in imports:
+        if name not in keep:
+            continue
         tf, td = check_thin(name, profile, root, devkit, board, embedded, depths[name], fix)
         findings += tf
         fixed += td

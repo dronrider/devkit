@@ -1604,6 +1604,150 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len(post), 3, post)
 
 
+GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.
+
+[detect]
+
+[rules]
+mode = "import"
+file = "CLAUDE.md"
+import_line = "@{path}"
+global_file = "{home}/CLAUDE.md"
+
+[delegate]
+mode = "cli"
+command = ["claude", "-p", "{prompt}"]
+agents_dir = "{home}/agents"
+agents_format = "claude-code"
+
+[hooks]
+protocol = "claude-code"
+config = "{home}/settings.json"
+events = ["write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"]
+memory_index = "/memory/MEMORY.md"
+
+[skills]
+dir = "{home}/skills"
+format = "claude-code"
+discovery = "auto"
+
+[quota]
+"""
+
+MACHINE_CONF = 'enabled = ["claude-code", "glm-code"]\n\n[glm-code]\nhome = "~/.claude-glm"\n'
+
+
+def snapshot(home, skip=()):
+    """Слепок раскладки в HOME по содержимому: путь -> байты.
+
+    Им держится главный инвариант переезда с констант ~/.claude на профили: на
+    машине с одним включённым харнесом разложенное обязано совпасть побайтно с
+    тем, что раскладывалось до переезда.
+    """
+    out = {}
+    for p in sorted(Path(home).rglob("*")):
+        rel = p.relative_to(home).as_posix()
+        if not p.is_file() or any(rel.startswith(s) for s in skip):
+            continue
+        out[rel] = p.read_bytes()
+    return out
+
+
+class SecondSubscriptionLayoutTest(SandboxCase):
+    """Раскладка машинного контура по профилям включённых харнесов (DK-179).
+
+    Шаги стоят друг на друге: сперва машина с одним харнесом, потом на ту же
+    машину включается второй. Так и проверяется инвариант, ради которого
+    переезд затевался, а не два независимых стенда.
+    """
+
+    CHAIN = True
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.proj = cls.box.project("hlproj")
+        cls.box.dkctl_run("new", "--no-board", "-C", str(cls.proj))
+        cls.home = cls.box.root / "hlhome"
+        cls.home.mkdir()
+        cls.alt = cls.home / ".claude-glm"
+        cls.machine = cls.home / ".devkit" / "harness.local"
+
+    def doc(self, *args):
+        return self.box.doctor(self.proj, *args, home=self.home)
+
+    def test_01_one_harness_lays_out_as_before(self):
+        self.doc("--fix")
+        self.doc("--fix")
+        self.__class__.before = snapshot(self.home)
+        self.assertTrue((self.home / ".claude" / "settings.json").is_file(),
+                        "раскладка одного харнеса не завела настройки")
+        self.assertTrue((self.home / ".claude" / "skills" / "board-batch" / "SKILL.md").is_file(),
+                        "раскладка одного харнеса не завела скиллы")
+
+    def test_02_second_harness_gets_its_own_full_set(self):
+        write(self.box.dk / "kit" / "harness" / "glm-code.toml", GLM_PROFILE)
+        write(self.machine, MACHINE_CONF)
+        _, out = self.doc("--fix")
+        # Первый комплект не тронут ни на файл: переезд с констант на профиль
+        # обязан быть незаметным там, где путь профиля совпал с константой.
+        after = snapshot(self.home, skip=(".claude-glm/", ".devkit/harness.local"))
+        self.assertEqual(after, self.before,
+                         "раскладка первого харнеса изменилась после включения второго: %s" % out)
+        # Второй комплект полный: правила, хуки, права, скиллы, определения.
+        self.assertIn_("devkit", read(self.alt / "CLAUDE.md"),
+                       "второму харнесу не написана глобальная точка правил")
+        data = json.loads(read(self.alt / "settings.json"))
+        post = [h["command"] for g in data["hooks"]["PostToolUse"] for h in g["hooks"]]
+        self.assertTrue([c for c in post if "check-symbols.py" in c],
+                        "второму харнесу не подключены хуки: %s" % post)
+        self.assertIn("Bash(git:*)", data["permissions"]["allow"],
+                      "второму харнесу не разложены права машинного контура")
+        self.assertTrue((self.alt / "skills" / "board-batch" / "SKILL.md").is_file(),
+                        "второму харнесу не разложены скиллы")
+        self.assertTrue((self.alt / "agents" / "exec-medium.md").is_file(),
+                        "второму харнесу не разложены определения агентов")
+        # Файл правил проекта при этом один: у обоих харнесов режим import и
+        # одна строка импорта, генератор пишет им один и тот же текст.
+        self.assertEqual(sorted(p.name for p in Path(self.proj).glob("*.md")),
+                         ["AGENTS.md", "CLAUDE.md"], "файл правил проекта раздвоился")
+        self.assertNotIn_("разного текста", out, "штатная раскладка дала находку про один файл")
+
+    def test_03_repeated_fix_changes_nothing(self):
+        before = snapshot(self.home)
+        _, out = self.doc("--fix")
+        self.assertNotIn_("починено", out, "повторный --fix чинит уже разложенное")
+        self.assertEqual(snapshot(self.home), before, "повторный --fix переписал раскладку")
+
+    def test_04_profile_without_machine_home_refuses(self):
+        # Машинного ключа нет, подставлять в {home} нечего, и раскладка в
+        # каталог с фигурными скобками в имени хуже отказа.
+        write(self.machine, 'enabled = ["claude-code", "glm-code"]\n')
+        _, out = self.doc()
+        self.assertIn_("вписать home в секцию [glm-code]", out,
+                       "доктор промолчал про профиль с {home} без машинного ключа")
+        self.assertEqual(len([ln for ln in out.splitlines() if "вписать home в секцию" in ln]), 1,
+                         "один пробел назван дважды: %s" % out)
+        self.assertFalse(list(self.home.glob("*{home}*")), "разложено в каталог с плейсхолдером")
+        write(self.machine, MACHINE_CONF)
+
+    def test_05_two_harnesses_asking_one_file_for_different_text(self):
+        # Совпавший файл правил это штатная раскладка второй подписки, а вот
+        # разный текст у одного файла генератор писал бы сам за собой на
+        # каждом проходе.
+        write(self.box.dk / "kit" / "harness" / "glm-code.toml",
+              GLM_PROFILE.replace('import_line = "@{path}"', 'import_line = "@{path} # своё"'))
+        _, out = self.doc()
+        self.assertIn_("разного текста", out, "доктор не заметил спор двух харнесов за один файл")
+        self.assertIn_("CLAUDE.md", out, "находка не назвала файл, за который спор")
+        write(self.box.dk / "kit" / "harness" / "glm-code.toml", GLM_PROFILE)
+
+    @classmethod
+    def tearDownClass(cls):
+        (cls.box.dk / "kit" / "harness" / "glm-code.toml").unlink(missing_ok=True)
+        super().tearDownClass()
+
+
 class SinglePointOfBuildTest(unittest.TestCase):
     """Точка сборки одна, и советует доктор её же.
 

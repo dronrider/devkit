@@ -307,6 +307,20 @@ func cmdStatus(root string) (string, error) {
 	default:
 		out = append(out, "выкат: команды нет в "+deployConfigPath+", остаётся за пользователем")
 	}
+	// Последней строкой идёт следующий шаг конвейера: status гоняют ровно
+	// перед решением «сливать или ждать», и ответ на этот вопрос должен лежать
+	// в выводе, а не собираться в голове из веток и очереди.
+	st := pipelineState{train: train, autonomous: plan.autonomous}
+	for _, r := range b.sects["in-progress"] {
+		st.inProgress = append(st.inProgress, r.ID)
+	}
+	for _, r := range b.sects["check"] {
+		st.check = append(st.check, r.ID)
+	}
+	for _, f := range fails {
+		st.failed = append(st.failed, f.ID)
+	}
+	out = append(out, nextStep(st))
 	return strings.Join(out, "\n"), nil
 }
 
@@ -813,7 +827,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 				"перевод в Check прошёл, но пуш доски не прошёл, повторить git push руками"); err != nil {
 				return "", err
 			}
-			msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
+			msg = append(msg, nextAfterMerge(p.ID))
 			return strings.Join(msg, "\n"), nil
 		}
 		if now, _, err := trainTasks(root, main, b); err == nil {
@@ -829,6 +843,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		} else {
 			msg = append(msg, fmt.Sprintf("в поезде (состав не пересчитался: %v); выкат поезда: shipctl ship", err))
 		}
+		msg = append(msg, "следующий шаг: добрать поезд следующей задачей либо выкатить его (shipctl ship): выкат и перевод строк доски идут на весь состав разом")
 		return strings.Join(msg, "\n"), nil
 	}
 	if deploy.warn != "" && !p.Train {
@@ -870,7 +885,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
 	}
-	msg = append(msg, fmt.Sprintf("после проверки пользователем: taskctl close %s", p.ID))
+	msg = append(msg, nextAfterMerge(p.ID))
 	return strings.Join(msg, "\n"), nil
 }
 
@@ -1001,7 +1016,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
 	}
-	msg = append(msg, "после проверки каждая задача закрывается своим taskctl close")
+	msg = append(msg, nextAfterMerge(list))
 	return strings.Join(msg, "\n"), nil
 }
 

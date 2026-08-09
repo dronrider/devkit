@@ -233,3 +233,98 @@ func TestTrainCriteriaWarnings(t *testing.T) {
 		t.Fatalf("нет предупреждения о размере поезда: %v", ws)
 	}
 }
+
+// TestNextStep: подсказка следующего шага выбирает ветку по состоянию
+// конвейера, и порядок веток это порядок срочности. Юнит на голой логике,
+// без репозитория: репозиторий проверяется отдельно, в TestStatusNextStep.
+func TestNextStep(t *testing.T) {
+	cases := []struct {
+		name string
+		st   pipelineState
+		want string
+	}{
+		{"пусто", pipelineState{}, "взять задачу с доски"},
+		{"работа при autonomous", pipelineState{inProgress: []string{"XR-001"}, autonomous: true},
+			"слить самому (shipctl merge <ID>)"},
+		{"работа без autonomous", pipelineState{inProgress: []string{"XR-001"}},
+			"слияние за пользователем"},
+		{"поезд важнее работы", pipelineState{inProgress: []string{"XR-001"}, train: []string{"XR-002"}},
+			"выкатить поезд (shipctl ship)"},
+		{"Check важнее поезда", pipelineState{train: []string{"XR-002"}, check: []string{"XR-003"}},
+			"прогнать сценарий проверки XR-003"},
+		{"сломанный прод важнее всего",
+			pipelineState{inProgress: []string{"XR-001"}, train: []string{"XR-002"}, check: []string{"XR-003"}, failed: []string{"XR-004"}},
+			"чинить прод по XR-004"},
+	}
+	for _, c := range cases {
+		got := nextStep(c.st)
+		if !strings.HasPrefix(got, "следующий шаг") {
+			t.Errorf("%s: подсказка без общего зачина: %q", c.name, got)
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: жду %q, получил %q", c.name, c.want, got)
+		}
+	}
+
+	// Ветка autonomous называется вместе со значением флага: без него
+	// подсказка не отличает «сливаю сам» от «жду команды».
+	on := nextStep(pipelineState{inProgress: []string{"XR-001"}, autonomous: true})
+	off := nextStep(pipelineState{inProgress: []string{"XR-001"}})
+	if !strings.Contains(on, "autonomous = true") || !strings.Contains(off, "autonomous = false") {
+		t.Fatalf("развилка не называет флаг:\n%s\n%s", on, off)
+	}
+	if !strings.Contains(on, deployConfigPath) || !strings.Contains(off, deployConfigPath) {
+		t.Fatalf("развилка не называет файл флага:\n%s\n%s", on, off)
+	}
+}
+
+// TestStatusNextStep: status печатает следующий шаг последней строкой и берёт
+// флаг автономии из живого .devkit/deploy.local, а не из головы. Именно этот
+// вывод читают перед решением «сливать или ждать» (DK-205).
+func TestStatusNextStep(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, ".devkit/deploy.local", "deploy = echo катим\nautonomous = true\n")
+	msg, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(msg, "\n")
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "следующий шаг") {
+		t.Fatalf("последняя строка status не про следующий шаг:\n%s", msg)
+	}
+	if !strings.Contains(last, "shipctl merge <ID>") || !strings.Contains(last, "autonomous = true") {
+		t.Fatalf("при autonomous = true не назван merge своими силами: %q", last)
+	}
+	if !strings.Contains(last, "XR-001") {
+		t.Fatalf("подсказка не называет задачу в работе: %q", last)
+	}
+
+	// Снятый флаг разворачивает развилку на пользователя.
+	write(t, root, ".devkit/deploy.local", "deploy = echo катим\nautonomous = false\n")
+	msg, err = cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "слияние за пользователем") || !strings.Contains(msg, "autonomous = false") {
+		t.Fatalf("при autonomous = false развилка не за пользователем:\n%s", msg)
+	}
+}
+
+// TestMergeNextStep: после слияния и выката отчёт называет сдачу задачи, и
+// названы обе ветки сценария, агентская и пользовательская.
+func TestMergeNextStep(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := msg[strings.LastIndex(msg, "\n")+1:]
+	if !strings.HasPrefix(last, "следующий шаг: прогнать сценарий проверки XR-001") {
+		t.Fatalf("после merge не назван сценарий проверки: %q", last)
+	}
+	if !strings.Contains(last, "агентский") || !strings.Contains(last, "пользовательский") {
+		t.Fatalf("после merge не названы обе ветки сценария: %q", last)
+	}
+}

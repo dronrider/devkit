@@ -158,9 +158,10 @@ class TestCommitMsgHook(unittest.TestCase):
 
 class TestBoardIdOnMain(unittest.TestCase):
     """Пятый рубеж (DK-213): коммит кода на main репозитория с доской без ID
-    задачи в subject это находка (RULES.board.md, «Ветки, ревью и деплой»
-    п. 7). Ветка сеется явно как main: init без -b зависит от глобального
-    init.defaultBranch машины, а рубеж смотрит на конкретное имя."""
+    задачи в subject это находка (RULES.board.md, «Трекинг задач» п. 7,
+    «Связь с гитом»). Ветка сеется явно как main: init без -b зависит от
+    глобального init.defaultBranch машины, а рубеж смотрит на конкретное
+    имя."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

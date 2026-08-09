@@ -3,7 +3,7 @@
 (п. 4), одной строкой без body (п. 2), тип префикса из истории проекта (п. 1).
 След ищется не одного ассистента: рядом с родовыми «co-authored-by» и
 «generated with» стоят подписи ходовых остальных (см. ASSISTANTS). Пятый
-рубеж, ID задачи в subject (RULES.board.md, «Ветки, ревью и деплой» п. 7),
+рубеж, ID задачи в subject (RULES.board.md, «Трекинг задач» п. 7),
 стоит только в репозитории с доской (docs/TASKS.md у корня) на ветке main и
 только у коммита, который трогает файлы вне доски: доска пушится по ID уже
 самим устройством taskctl, а фичеветкам и репозиториям без доски рубеж не
@@ -139,7 +139,7 @@ def check(lines, history, board=False, on_main=False, paths=()):
                             "  осознанно, через git commit --no-verify"
                             % (m.group(1), ", ".join(sorted(types))))
     if board and on_main and lines and touches_non_board(paths) and not TASK_ID.search(lines[0]):
-        findings.append("нет ID задачи в subject на main проекта с доской (RULES.board.md, «Ветки, ревью и деплой» п. 7): %s\n"
+        findings.append("нет ID задачи в subject на main проекта с доской (RULES.board.md, «Трекинг задач» п. 7): %s\n"
                         "  как переписать: добавить ID вида ABC-123 в subject; коммиту без задачи\n"
                         "  (мелочь вне доски) обход осознанный, git commit --no-verify"
                         % lines[0].strip())

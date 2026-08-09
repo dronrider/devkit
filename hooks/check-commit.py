@@ -2,7 +2,12 @@
 """Проверка текста коммита по разделу «Git» RULES.md: без следов ассистента
 (п. 4), одной строкой без body (п. 2), тип префикса из истории проекта (п. 1).
 След ищется не одного ассистента: рядом с родовыми «co-authored-by» и
-«generated with» стоят подписи ходовых остальных (см. ASSISTANTS).
+«generated with» стоят подписи ходовых остальных (см. ASSISTANTS). Пятый
+рубеж, ID задачи в subject (RULES.board.md, «Ветки, ревью и деплой» п. 7),
+стоит только в репозитории с доской (docs/TASKS.md у корня) на ветке main и
+только у коммита, который трогает файлы вне доски: доска пушится по ID уже
+самим устройством taskctl, а фичеветкам и репозиториям без доски рубеж не
+касается.
 
   git log -n 100 --format=%s | check-commit.py <файл сообщения>
 
@@ -11,9 +16,14 @@
 всякий проект живёт по conventional commits, а перечень префиксов первых
 коммитов нормой проекта ещё не стал. Тип revert разрешён всегда, его пишет shipctl revert на
 аварийном пути. Комментарии git и хвост после scissors-строки не смотрятся.
+Ветку, доску и задетые файлы проверка спрашивает у git сама (staged-дифф на
+момент commit-msg это и есть состав будущего коммита); вне git-репозитория
+или без ответа команды рубеж про ID молчит, спросить было негде.
 Выход 0 чисто, 1 находки, осознанный обход: git commit --no-verify.
 """
+import os
 import re
+import subprocess
 import sys
 
 # Подписи ходовых ассистентов. Родовые «co-authored-by» и «generated with»
@@ -41,6 +51,53 @@ SCISSORS = re.compile(r"^# -+ >8 -+$")
 # выглядел бы чужим.
 HISTORY_MIN = 10
 
+# ID задачи в subject: перечень префиксов доски (кириллица допущена, у
+# board.go idRe тот же класс символов) через дефис и номер.
+TASK_ID = re.compile(r"\b[A-ZА-Я]+-[0-9]+\b")
+
+# Три места доски (RULES.board.md, «Трекинг задач» п. 1): открытая работа,
+# архив и файлы задач. Коммит, который держится в этих путях целиком, доску
+# и правит, а ID ему не нужен, его ставит сама taskctl.
+BOARD_FILES = ("docs/TASKS.md", "docs/TASKS-archive.md")
+BOARD_DIR = "docs/tasks/"
+
+
+def is_board_path(path):
+    return path in BOARD_FILES or path.startswith(BOARD_DIR)
+
+
+def touches_non_board(paths):
+    return any(not is_board_path(p) for p in paths)
+
+
+def git(*args):
+    """Ответ git одной строкой, либо None, когда спросить было негде: вне
+    репозитория, без git в PATH или на ошибке команды. Пустой ответ (например
+    git diff без застейдженных файлов) None не считается."""
+    try:
+        out = subprocess.run(["git"] + list(args), stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip()
+
+
+def repo_context():
+    """Board-репозиторий, ветка main и список задетых файлов, снятые с самого
+    git: staged-дифф на момент commit-msg это и есть состав будущего коммита.
+    Не-репозиторий, любая ошибка команды и репозиторий без docs/TASKS.md у
+    корня отвечают board=False, рубеж про ID тогда молчит."""
+    root = git("rev-parse", "--show-toplevel")
+    if root is None:
+        return False, False, []
+    board = os.path.isfile(os.path.join(root, "docs", "TASKS.md"))
+    branch = git("symbolic-ref", "--short", "HEAD") or ""
+    files = git("diff", "--cached", "--name-only") or ""
+    paths = [ln for ln in files.splitlines() if ln.strip()]
+    return board, branch == "main", paths
+
 
 def message_lines(raw):
     lines = []
@@ -55,7 +112,7 @@ def message_lines(raw):
     return lines
 
 
-def check(lines, history):
+def check(lines, history, board=False, on_main=False, paths=()):
     findings = []
     for i, ln in enumerate(lines, 1):
         if TRACES.search(ln):
@@ -81,6 +138,11 @@ def check(lines, history):
                             "  сотни коммитов (git log -n 100 --pretty=format:%%s); новый тип заводится\n"
                             "  осознанно, через git commit --no-verify"
                             % (m.group(1), ", ".join(sorted(types))))
+    if board and on_main and lines and touches_non_board(paths) and not TASK_ID.search(lines[0]):
+        findings.append("нет ID задачи в subject на main проекта с доской (RULES.board.md, «Ветки, ревью и деплой» п. 7): %s\n"
+                        "  как переписать: добавить ID вида ABC-123 в subject; коммиту без задачи\n"
+                        "  (мелочь вне доски) обход осознанный, git commit --no-verify"
+                        % lines[0].strip())
     return findings
 
 
@@ -95,7 +157,8 @@ def main(argv):
         sys.stderr.write("check-commit: %s\n" % e)
         return 2
     history = [] if sys.stdin.isatty() else sys.stdin.read().splitlines()
-    findings = check(lines, history)
+    board, on_main, paths = repo_context()
+    findings = check(lines, history, board=board, on_main=on_main, paths=paths)
     for f in findings:
         print(f)
     return 1 if findings else 0

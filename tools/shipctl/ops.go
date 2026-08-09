@@ -1347,5 +1347,8 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	if err := push("доска запушена", "откат и повторный выкат прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
 	}
+	if note := syncWindowTree(root, main); note != "" {
+		out = append(out, note)
+	}
 	return strings.Join(out, "\n"), nil
 }

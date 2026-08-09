@@ -208,3 +208,33 @@ func TestShipSyncsWindowTree(t *testing.T) {
 		t.Fatalf("копия должна включать коммит доски поезда: %s", log)
 	}
 }
+
+// TestRevertSyncsWindowTree: revert тоже двигает main (коммит отката, у
+// восстановленной задачи ещё и коммит доски обратно в In progress), и без
+// подтяжки копия отставала бы тем же способом, что до DK-214, просто до
+// следующего merge/ship (замечание ревью DK-214). Подтяжка обязана сработать
+// и здесь, тем же правилом, что в merge и ship: в самом конце, когда main
+// дописан всеми коммитами revert.
+func TestRevertSyncsWindowTree(t *testing.T) {
+	root, _ := setup(t, "", rowInProg) // задача уже в Check
+	write(t, root, "code.txt", "broken\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: XR-001 фича")
+	tree := windowTree(root)
+	gitT(t, root, "worktree", "add", "--detach", tree, "main")
+
+	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "копия окна "+tree+" подтянута на свежий main") {
+		t.Fatalf("revert должен подтянуть копию: %q", msg)
+	}
+	mainHead := gitT(t, root, "rev-parse", "main")
+	if head := gitT(t, tree, "rev-parse", "HEAD"); head != mainHead {
+		t.Fatalf("копия отстаёт после revert: копия %s, main %s", head, mainHead)
+	}
+	if log := gitT(t, tree, "log", "-1", "--format=%s"); !strings.Contains(log, "обратно в In progress") {
+		t.Fatalf("копия должна включать коммит доски отката, а не только revert-коммит: %s", log)
+	}
+}

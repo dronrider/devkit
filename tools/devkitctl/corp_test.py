@@ -10,8 +10,7 @@ import os
 import shutil
 import unittest
 
-from testenv import (SandboxCase, executable, git, git_init, read, run,
-                     without_hole, write)
+from testenv import SandboxCase, executable, git, git_init, read, rules, run, write
 
 FOREIGN_HOOK = "#!/bin/sh\necho чужой pre-commit\nexit 0\n"
 
@@ -47,12 +46,9 @@ class CorpTest(SandboxCase):
 
     @classmethod
     def corpdoc(cls, *args, **kw):
-        # Находка про недоехавшие правила доски вычитается: корп-проект с доской
-        # даёт её всегда, а эти проверки про обвязку контура, не про доставку
-        # правил (testenv.BOARD_IMPORT_HOLE).
         root = kw.pop("root", cls.clone)
-        return without_hole(*cls.box.dkctl_run("doctor", *(list(args) + ["-C", str(root)]),
-                                               path=cls.corppath, **kw))
+        return cls.box.dkctl_run("doctor", *(list(args) + ["-C", str(root)]),
+                                 path=cls.corppath, **kw)
 
     def test_01_corp_lays_out_the_pair(self):
         self.assertEqual(self.rc, 0, "corp не прошёл: %s" % self.out)
@@ -74,8 +70,23 @@ class CorpTest(SandboxCase):
                       "corp не спрятал тонкий файл строкой exclude")
         self.assertTrue((self.clone / "CLAUDE.md").is_file(),
                         "corp не положил тонкий файл контекста в корень клона")
-        self.assertIn("@../corp-proj-local/AGENTS.md", read(self.clone / "CLAUDE.md").split("\n"),
+        # Оба импорта клона ведут наружу, и оба записаны путями от его корня
+        # через свою ссылку: путь наружу клиент не разворачивает молча (DK-193).
+        thin = read(self.clone / "CLAUDE.md").split("\n")
+        self.assertIn("@.devkit/local/AGENTS.md", thin,
                       "тонкий файл клона не импортирует AGENTS.md боковой директории")
+        self.assertIn("@.devkit/devkit/RULES.board.md", thin,
+                      "тонкий файл клона не импортирует правила доски через ссылку")
+        self.assertFalse([ln for ln in thin if ln.startswith("@..")],
+                         "тонкий файл клона зовёт импорт путём наружу: %s" % thin)
+        links = self.clone / rules.LINK_DIR
+        self.assertEqual(os.path.realpath(str(links / rules.DEVKIT_LINK)),
+                         os.path.realpath(str(self.box.dk)),
+                         "ссылка на дерево devkit ведёт не туда")
+        self.assertEqual(os.path.realpath(str(links / rules.LOCAL_LINK)), self.localr,
+                         "ссылка на боковую директорию ведёт не туда")
+        self.assertIn(rules.LINK_DIR, read(self.clone / ".git" / "info" / "exclude").split("\n"),
+                      "corp не спрятал каталог со ссылками строкой exclude")
         self.assertFalse((self.clone / "AGENTS.md").exists(),
                          "corp положил AGENTS.md в дерево корп-клона")
         self.assertEqual(git(self.clone, "status", "--short")[1].strip(), "",

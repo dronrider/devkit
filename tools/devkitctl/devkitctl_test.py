@@ -63,9 +63,15 @@ class NewProjectTest(SandboxCase):
         thin = read(self.proj / "CLAUDE.md")
         self.assertRegex(thin.split("\n")[0], MARKER, "у тонкого CLAUDE.md нет маркера с хешем")
         self.assertIn("@AGENTS.md", thin.split("\n"), "тонкий CLAUDE.md не ссылается на AGENTS.md")
-        self.assertIn("@../devkit/RULES.md", thin.split("\n"),
+        self.assertIn("@.devkit/devkit/RULES.md", thin.split("\n"),
                       "тонкий CLAUDE.md не ссылается на правила devkit")
         self.assertNotIn("RULES.board.md", thin, "проекту без доски выписаны правила доски")
+        # Правила зовутся через ссылку на дерево devkit: путь наружу клиент не
+        # разворачивает и молчит об этом (DK-193).
+        link = self.proj / rules.LINK_DIR / rules.DEVKIT_LINK
+        self.assertTrue(link.is_symlink(), "подключение не положило ссылку на devkit")
+        self.assertTrue((link / "RULES.md").is_file(),
+                        "ссылка на devkit ведёт мимо дерева правил: %s" % os.readlink(str(link)))
         hooks = git(self.proj, "config", "core.hooksPath")[1].strip()
         self.assertTrue(hooks, "hooksPath не выставлен")
         self.assertTrue((self.proj / hooks / "pre-commit").is_file(),

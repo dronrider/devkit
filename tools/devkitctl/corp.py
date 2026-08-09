@@ -20,7 +20,10 @@ import subprocess
 import time
 from pathlib import Path
 
-TRACKER = os.path.join(".devkit", "tracker.local")
+# Каталог обвязки в корне клона: тут же лежат ссылки на соседние деревья, через
+# которые клон зовёт правила (rules.LINK_DIR, docs/lld/DK-193-rules-delivery.md).
+LINK_DIR = ".devkit"
+TRACKER = os.path.join(LINK_DIR, "tracker.local")
 # Отметку последнего pull статусов пишет trackctl sync (tools/trackctl/cmd.go,
 # syncMarkPath), здесь она только читается: доктор говорит про свежесть доски то
 # же, что trackctl status.
@@ -194,6 +197,13 @@ def exclude_lines(clone):
         return []
     with open(path, encoding="utf-8", errors="replace") as f:
         return [ln.strip() for ln in f]
+
+
+def hidden_names(thin_names):
+    """Что прячется строкой exclude: тонкие файлы харнесов и каталог обвязки со
+    ссылками на соседние деревья. В индекс чужого репозитория не едет ни то, ни
+    другое, а лежать оба обязаны в корне клона."""
+    return list(thin_names) + [LINK_DIR]
 
 
 def ensure_exclude(clone, names):
@@ -434,15 +444,16 @@ def check(clone, local, devkit, thin_names, fix):
                         "две боковые директории на один клон, разобрать руками"
                         % (clone, local_dir(clone, devkit), local))
     findings += index_findings(clone, thin_names)
-    missing = [n for n in thin_names if n not in set(exclude_lines(clone))]
+    hide = hidden_names(thin_names)
+    missing = [n for n in hide if n not in set(exclude_lines(clone))]
     if missing:
         if fix:
-            for n in ensure_exclude(clone, thin_names):
+            for n in ensure_exclude(clone, hide):
                 fixed.append(".git/info/exclude: спрятан %s" % n)
         else:
-            findings.append(".git/info/exclude не прячет %s: файл контекста харнеса обязан лежать "
-                            "в корне проекта, и без строки exclude он торчит в чужом git status"
-                            % ", ".join(missing))
+            findings.append(".git/info/exclude не прячет %s: обвязка devkit лежит в корне клона "
+                            "(файл контекста харнеса и ссылки на соседние деревья), и без строки "
+                            "exclude она торчит в чужом git status" % ", ".join(missing))
     hf = hook_findings(clone, devkit)
     if hf and fix:
         for name, state, chained in ensure_hooks(clone, devkit):

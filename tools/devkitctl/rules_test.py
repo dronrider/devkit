@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from testenv import (PY, DEVKIT_SRC, SandboxCase, fake_home, git_init, harness, read, rules,
-                     run, without_hole, without_pockets, write)
+                     run, without_pockets, write)
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 EMBED_MARKER = re.compile(r"^<!-- devkit:rules begin src=[0-9a-f]{12} body=[0-9a-f]{12} -->$", re.M)
@@ -115,7 +115,7 @@ class DepthTest(unittest.TestCase):
                                 rules.actual_depth(dk, proj, True, rules.DEPTH_POINTERS))
         self.assertTrue(early.startswith("<!-- devkit:generated body="), early)
         self.assertNotIn("Процедуры devkit", early)
-        self.assertIn("@../devkit/RULES.md\n", early)
+        self.assertIn("@.devkit/devkit/RULES.md\n", early)
         # Ядро нарезано наполовину: пока полон хоть один текст, глубины нет ни у
         # одной из двух неполных веток.
         write(self.dk / "RULES.core.md", "# ядро\n")
@@ -136,9 +136,12 @@ class DepthTest(unittest.TestCase):
         self.assertTrue(embedded.startswith("<!-- devkit:generated body="), embedded)
         thin = rules.thin_text(auto, proj, dk, True, False, rules.DEPTH_CORE)
         self.assertTrue(thin.startswith("<!-- devkit:generated depth=core body="), thin)
-        self.assertIn("@../devkit/RULES.core.md\n", thin)
-        self.assertIn("@../devkit/RULES.board.core.md\n", thin)
-        self.assertNotIn("@../devkit/RULES.md\n", thin)
+        # Ядро общих правил везёт глобальная точка машины, и тонкий файл его не
+        # зовёт вовсе; ядро доски она взять не может, и его он зовёт через
+        # ссылку каталога обвязки, а не путём наружу (DK-193).
+        self.assertNotIn("RULES.core.md", thin)
+        self.assertIn("@.devkit/devkit/RULES.board.core.md\n", thin)
+        self.assertNotIn("@../devkit/", thin)
 
     def test_pointers(self):
         # Указатели: строка на скилл с описанием и путём, по которому его читать.
@@ -241,11 +244,12 @@ class SelfHostingGuardTest(unittest.TestCase):
 
 
 class StablePathGuardTest(unittest.TestCase):
-    """DK-127, второй круг: обычный подключённый проект (devkit не
-    self-hosting) не должен переписывать свой тонкий файл на путь к другому
-    физическому чекауту devkit того же содержимого (чужой клон, временная
-    копия для тестов), а он именно так и делал раньше (замечание ревью,
-    воспроизведено `doctor --fix -C <проект>` из одноразового git-clone).
+    """DK-127, третий круг: обычный подключённый проект (devkit не
+    self-hosting) не должен переписывать свою коммитируемую обвязку под тот
+    физический чекаут devkit, из которого позвали доктора (чужой клон,
+    временная копия для тестов). После DK-193 тонкий файл чекаута не называет
+    вовсе, он зовёт правила через ссылку `.devkit/devkit`, и держать стабильным
+    остаётся её саму.
     """
 
     def setUp(self):
@@ -267,60 +271,141 @@ class StablePathGuardTest(unittest.TestCase):
         shutil.copytree(str(self.canon_dk), str(c))
         return c
 
-    def test_stabilized_sources_prefers_the_already_resolvable_target(self):
-        thin = write(self.proj / "CLAUDE.md", "<!-- devkit:generated body=x -->\n@AGENTS.md\n"
-                                              "@../../canon/devkit/RULES.md\n")
-        clone = self.clone("elsewhere")
-        stable = rules.stabilized_sources(thin, [clone / "RULES.md"])
-        self.assertEqual(stable, [self.canon_dk / "RULES.md"], stable)
+    def link(self):
+        return os.readlink(str(self.proj / rules.LINK_DIR / rules.DEVKIT_LINK))
 
-    def test_stabilized_sources_falls_back_when_content_differs(self):
-        thin = write(self.proj / "CLAUDE.md", "<!-- devkit:generated body=x -->\n@AGENTS.md\n"
-                                              "@../../canon/devkit/RULES.md\n")
-        clone = self.clone("elsewhere")
-        write(clone / "RULES.md", "# другие правила\n")
-        stable = rules.stabilized_sources(thin, [clone / "RULES.md"])
-        self.assertEqual(stable, [clone / "RULES.md"], stable)
-
-    def test_stabilized_sources_without_existing_thin_file_is_a_no_op(self):
-        missing = self.proj / "CLAUDE.md"
-        clone = self.clone("elsewhere")
-        stable = rules.stabilized_sources(missing, [clone / "RULES.md"])
-        self.assertEqual(stable, [clone / "RULES.md"], stable)
-
-    def test_clone_of_the_same_content_does_not_touch_the_thin_file(self):
+    def test_thin_file_names_no_checkout(self):
+        # Коммитируемый файл обязан выходить одинаковым на любой машине, а
+        # физический путь чекаута у каждой свой: в тонком файле его больше нет.
         with fake_home(self.home):
             findings, fixed = rules.check(self.proj, self.canon_dk, fix=True)
         self.assertIn("CLAUDE.md сгенерирован для харнеса claude-code", fixed, (findings, fixed))
-        before = read(self.proj / "CLAUDE.md")
-        self.assertIn("canon/devkit", before, before)
+        thin = read(self.proj / "CLAUDE.md")
+        self.assertIn("@.devkit/devkit/RULES.md\n", thin, thin)
+        self.assertNotIn("canon", thin, thin)
+        self.assertNotIn("..", thin, thin)
+        self.assertEqual(self.link(), os.path.relpath(str(self.canon_dk),
+                                                      str(self.proj / rules.LINK_DIR)))
 
-        clone = self.clone("elsewhere")
-        with fake_home(self.home):
-            findings, fixed = rules.check(self.proj, clone, fix=True)
-        after = read(self.proj / "CLAUDE.md")
-        self.assertEqual(after, before, "тонкий файл переписан на путь клона того же содержимого")
-        self.assertFalse([f for f in fixed if "CLAUDE.md" in f],
-                         "клон того же содержимого дал лишнюю правку: %r" % (fixed,))
-        self.assertFalse([f for f in findings if "CLAUDE.md" in f],
-                         "клон того же содержимого дал находку на исправном файле: %r" % (findings,))
-        self.assertNotIn("elsewhere", after, after)
-
-    def test_clone_with_changed_content_still_updates_normally(self):
-        # Осознанная граница: путь и содержимое изменились разом это обычное
-        # обновление devkit (git pull плюс переезд), генератор его доводит, как
-        # доводил всегда. Отличить такое обновление от подмены источника
-        # нечем, кроме имени файла и содержимого, а большего сигнала у
-        # генератора нет.
+    def test_clone_of_the_same_content_touches_nothing(self):
         with fake_home(self.home):
             rules.check(self.proj, self.canon_dk, fix=True)
+        before, link = read(self.proj / "CLAUDE.md"), self.link()
         clone = self.clone("elsewhere")
-        write(clone / "RULES.board.md", "# правила доски\n\nновая строка\n")
         with fake_home(self.home):
             findings, fixed = rules.check(self.proj, clone, fix=True)
-        self.assertTrue([f for f in fixed if "CLAUDE.md" in f],
-                        "обновлённое содержимое devkit не довелось до CLAUDE.md: %r/%r" % (findings, fixed))
-        self.assertIn("новая строка", read(clone / "RULES.board.md"))
+        self.assertEqual(read(self.proj / "CLAUDE.md"), before,
+                         "тонкий файл переписан прогоном из другого чекаута devkit")
+        self.assertEqual(self.link(), link,
+                         "ссылка перевешена на чекаут, из которого позвали доктора")
+        self.assertEqual(fixed, [], "чужой чекаут дал правку на исправном проекте: %r" % (fixed,))
+        self.assertFalse([f for f in findings if "CLAUDE.md" in f or "devkit/devkit" in f],
+                         "чужой чекаут дал находку на исправном проекте: %r" % (findings,))
+
+    def test_updated_rules_arrive_without_touching_the_project(self):
+        # Обновление правил в дереве, куда ведёт ссылка, до сессии доезжает
+        # само: тонкий файл называет путь, а не содержимое, и трогать его
+        # обновлению devkit больше незачем.
+        with fake_home(self.home):
+            rules.check(self.proj, self.canon_dk, fix=True)
+        before = read(self.proj / "CLAUDE.md")
+        write(self.canon_dk / "RULES.board.md", "# правила доски\n\nновая строка\n")
+        with fake_home(self.home):
+            findings, fixed = rules.check(self.proj, self.canon_dk, fix=True)
+        self.assertEqual(read(self.proj / "CLAUDE.md"), before, (findings, fixed))
+        through = self.proj / rules.LINK_DIR / rules.DEVKIT_LINK / "RULES.board.md"
+        self.assertIn("новая строка", read(through),
+                      "обновлённые правила не читаются путём, которым их зовёт тонкий файл")
+
+
+class DevkitLinkTest(unittest.TestCase):
+    """Ссылка `.devkit/devkit` на дерево правил: кому она кладётся, что доктор
+    говорит про пропавшую, чужую и занятую (DK-193, решения 2 и 5). Ядро в
+    выдуманном devkit нарезано: без него глубина падает до полного текста, и
+    ссылка нужна даже проекту без доски.
+    """
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix="devkit-link-"))
+        self.addCleanup(shutil.rmtree, str(self.work), True)
+        self.dk = self.work / "devkit"
+        for name, text in (("RULES.md", "# правила\n"), ("RULES.core.md", "# ядро\n"),
+                           ("RULES.board.md", "# правила доски\n"),
+                           ("RULES.board.core.md", "# ядро доски\n")):
+            write(self.dk / name, text)
+        shutil.copytree(str(DEVKIT_SRC / "kit" / "harness"), str(self.dk / "kit" / "harness"))
+        self.proj = self.work / "proj"
+        write(self.proj / "AGENTS.md", "# проект\n")
+        self.home = self.work / "home"
+        self.link = self.proj / rules.LINK_DIR / rules.DEVKIT_LINK
+
+    def board(self):
+        write(self.proj / "docs" / "TASKS.md", "# Задачи\n")
+
+    def check(self, fix=False):
+        with fake_home(self.home):
+            return rules.check(self.proj, self.dk, fix=fix)
+
+    def test_project_without_board_gets_neither_import_nor_link(self):
+        # Ядро общих правил везёт глобальная точка, и проекту без доски звать из
+        # devkit больше нечего: ссылку ему класть незачем.
+        findings, fixed = self.check(fix=True)
+        thin = read(self.proj / "CLAUDE.md")
+        self.assertEqual(rules.generated_parts(thin)[1], "@AGENTS.md\n", thin)
+        self.assertFalse(self.link.exists() or self.link.is_symlink(),
+                         "ссылка положена проекту, который через неё ничего не зовёт")
+        self.assertFalse([f for f in fixed if "ссылка" in f], (findings, fixed))
+        self.assertEqual(self.check()[0], [], "чистый проект без доски дал находки")
+
+    def test_board_project_gets_the_link_and_calls_rules_through_it(self):
+        self.board()
+        findings, fixed = self.check(fix=True)
+        self.assertTrue([f for f in fixed if "положена ссылка .devkit/devkit" in f],
+                        (findings, fixed))
+        self.assertEqual(os.readlink(str(self.link)),
+                         os.path.relpath(str(self.dk), str(self.proj / rules.LINK_DIR)),
+                         "цель ссылки не относительный путь до соседнего дерева")
+        thin = read(self.proj / "CLAUDE.md")
+        self.assertIn("@.devkit/devkit/RULES.board.core.md\n", thin, thin)
+        self.assertTrue((self.link / "RULES.board.core.md").is_file(),
+                        "импорт тонкого файла не разворачивается по диску")
+        self.assertEqual(self.check()[0], [], "чистый проект с доской дал находки")
+
+    def test_missing_link_is_a_finding_and_fix_lays_it_back(self):
+        self.board()
+        self.check(fix=True)
+        self.link.unlink()
+        findings, _ = self.check()
+        self.assertTrue([f for f in findings if "нет ссылки .devkit/devkit" in f], findings)
+        # Молчаливого состояния у дыры не остаётся: про тот же путь говорит и
+        # проверка битого импорта.
+        self.assertTrue([f for f in findings if "не разворачивается" in f], findings)
+        findings, fixed = self.check(fix=True)
+        self.assertTrue([f for f in fixed if "положена ссылка" in f], (findings, fixed))
+        self.assertEqual(findings, [], findings)
+
+    def test_link_to_a_stranger_is_repointed(self):
+        self.board()
+        self.check(fix=True)
+        stray = self.work / "stray"
+        stray.mkdir()
+        self.link.unlink()
+        self.link.symlink_to(os.path.relpath(str(stray), str(self.link.parent)))
+        findings, _ = self.check()
+        self.assertTrue([f for f in findings if "ссылка .devkit/devkit ведёт в" in f], findings)
+        findings, fixed = self.check(fix=True)
+        self.assertTrue([f for f in fixed if "перевешена" in f], (findings, fixed))
+        self.assertTrue((self.link / "RULES.board.core.md").is_file(),
+                        "перевешенная ссылка ведёт мимо дерева правил")
+
+    def test_taken_name_is_left_alone(self):
+        self.board()
+        write(self.proj / rules.LINK_DIR / rules.DEVKIT_LINK, "чужой файл\n")
+        findings, fixed = self.check(fix=True)
+        self.assertTrue([f for f in findings if "имя занято" in f], findings)
+        self.assertFalse([f for f in fixed if "ссылка" in f],
+                         "--fix тронул занятое имя: %s" % (fixed,))
+        self.assertEqual(read(self.link), "чужой файл\n", "--fix затёр чужой файл")
 
 
 class GlobalPointUnitsTest(unittest.TestCase):
@@ -461,9 +546,12 @@ class CoreBudgetTest(unittest.TestCase):
                                       rules.declared_depth(cc)[0])
             self.assertEqual(fact, rules.DEPTH_CORE, "ядро нарезано, а доехала глубина %s" % fact)
             thin = rules.thin_text(cc, str(proj), str(DEVKIT_SRC), board, False, fact)
-            self.assertIn("RULES.core.md\n", thin)
+            # Ядро общих правил в тонком файле не выписывается: его везёт
+            # глобальная точка машины, и вторая копия того же текста стоила бы
+            # проекту контекста ни за что (DK-193, решение 3).
+            self.assertNotIn("RULES.core.md", thin)
             self.assertNotIn("RULES.md\n", thin, "в тонкий файл уехал полный текст правил")
-            self.assertEqual("RULES.board.core.md\n" in thin, board, thin)
+            self.assertEqual("@.devkit/devkit/RULES.board.core.md\n" in thin, board, thin)
             self.assertNotIn("RULES.board.md\n", thin,
                              "в тонкий файл уехал полный текст правил доски")
 
@@ -495,8 +583,11 @@ class LayoutTest(unittest.TestCase):
             rc, out = run([PY, str(self.rules_cli), "--layout", d, str(lay / d), str(self.project)],
                           home=self.home)
             self.assertEqual(rc, 0, "раскладка глубины %s не собралась: %s" % (d, out))
-        self.assertTrue((lay / "core" / "RULES.core.md").is_file(),
-                        "в раскладке ядра нет RULES.core.md")
+        # Ядро общих правил приезжает в сессию глобальной точкой, и в раскладке
+        # оно лежит под home/, а не рядом с тонким файлом: тонкий файл его не
+        # зовёт вовсе (DK-193, решение 3).
+        self.assertFalse((lay / "core" / "RULES.core.md").exists(),
+                         "ядро общих правил лежит рядом с тонким файлом, а он его не зовёт")
         self.assertTrue((lay / "core" / "RULES.board.core.md").is_file(),
                         "в раскладке ядра нет RULES.board.core.md")
         self.assertFalse((lay / "core" / "RULES.md").exists(),
@@ -538,11 +629,11 @@ class LayoutTest(unittest.TestCase):
     def test_global_point_naming_the_core_directly(self):
         # Та же пара, но с глобальной точкой, которая называет ядро прямо
         # (сегодняшний сгенерированный вид, а не вчерашний симлинк на полный
-        # текст). Разница видна именно на «full»: там в раскладке уже лежит
-        # RULES.md (без ядра), а глобальная точка тянет RULES.core.md отдельным
-        # именем, и дедуп для неё не срабатывал бы. Своя копия ядра под glhome:
-        # импорт обязан быть путём от ~, а сам devkit почти наверняка снаружи
-        # любого синтетического home этого теста.
+        # текст). На «full» в раскладке уже лежит RULES.md, и ядро от
+        # глобальной точки снимается дедупом как тот же текст; на «core» ядро
+        # приезжает только ей, и снимать его нечем и незачем. Своя копия ядра
+        # под glhome: импорт обязан быть путём от ~, а сам devkit почти
+        # наверняка снаружи любого синтетического home этого теста.
         glhome = self.work / "glhome"
         (glhome / ".claude").mkdir(parents=True)
         (glhome / "nested-devkit").mkdir(parents=True)
@@ -557,8 +648,11 @@ class LayoutTest(unittest.TestCase):
             self.assertEqual(rc, 0, "раскладка глубины %s с прямым импортом ядра не собралась: %s"
                              % (d, out))
             stray = list((out_dir / "home").rglob("RULES.core.md"))
-            self.assertEqual(stray, [], "прямой импорт ядра глобальной точкой лёг в раскладку %s "
-                                        "вторым экземпляром" % d)
+            self.assertEqual(len(stray), 0 if d == "full" else 1,
+                             "ядро от глобальной точки в раскладке %s легло не по разу: %s"
+                             % (d, stray))
+            self.assertFalse((out_dir / "RULES.core.md").exists(),
+                             "ядро легло рядом с тонким файлом, а тонкий файл его не зовёт")
 
 
 class GlobalPointDoctorTest(SandboxCase):
@@ -692,10 +786,10 @@ class ThinFilesTest(SandboxCase):
         _, out = self.box.doctor(self.proj, "--fix")
         self.assertIn_("починено: CLAUDE.md перегенерирован", out,
                        "--fix не перегенерил устаревший файл")
-        self.assertIn("\n@../devkit/RULES.board.md\n", "\n" + read(self.proj / "CLAUDE.md"),
+        self.assertIn("\n@.devkit/devkit/RULES.board.md\n", "\n" + read(self.proj / "CLAUDE.md"),
                       "в перегенерённом файле нет правил доски")
         _, out = self.box.doctor(self.proj)
-        self.assertNotRegex(without_pockets(without_hole(0, out)[1]), r"CLAUDE\.md|AGENTS\.md",
+        self.assertNotRegex(without_pockets(out), r"CLAUDE\.md|AGENTS\.md",
                             "после перегенерации остались находки по правилам")
 
     def test_2_handwritten_thin_file(self):
@@ -890,7 +984,7 @@ class EmbedTest(SandboxCase):
         self.assertIn_("починено: CLAUDE.md перегенерирован", out,
                        "тонкий файл не вернул импорты devkit")
         self.assertNotIn("devkit:rules", read(self.agents), "в AGENTS.md остались маркеры вклейки")
-        self.assertIn("\n@../devkit/RULES.md\n", "\n" + read(self.thin),
+        self.assertIn("\n@.devkit/devkit/RULES.md\n", "\n" + read(self.thin),
                       "в тонком файле не вернулись правила devkit")
         (self.box.home / ".devkit" / "harness.local").unlink()
 
@@ -1032,6 +1126,20 @@ class ProjectImportsTest(SandboxCase):
     def test_7_import_in_a_code_block_is_a_sample(self):
         found = self.findings("# правила\n\n```\n@../devkit/RULES.board.md\n```\n")
         self.assertEqual(found, [], "строка импорта в блоке кода принята за импорт: %s" % (found,))
+
+    def test_9_generated_thin_file_of_a_board_project_arrives(self):
+        # Гашение дыры DK-190: подключённый проект с доской зовёт правила через
+        # ссылку, путь остаётся внутри проекта, и находки про недоехавший импорт
+        # у него нет вовсе.
+        proj = self.box.project("gproj", board=True)
+        self.box.dkctl_run("new", "--prefix", "GP", "-C", str(proj))
+        write(proj / ".devkit" / "deploy.local",
+              "deploy = echo выкат\ntest = echo тесты\nautonomous = false\n")
+        rc, out = self.box.doctor(proj)
+        self.assertNotIn_("до контекста не доезжает", out,
+                          "правила доски не доезжают до подключённого проекта")
+        self.assertEqual(rc, 0, "доктор нашёл находки на свежем проекте с доской: %s" % out)
+        self.assertIn("@.devkit/devkit/RULES.board.md\n", read(proj / "CLAUDE.md"))
 
     def test_8_doctor_names_both_defects_of_a_handwritten_file(self):
         # Стык с доктором: рукописный CLAUDE.md проекта, подключённого до

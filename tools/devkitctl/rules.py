@@ -57,6 +57,17 @@ DEPTH_TITLES = {
 }
 # Ядро текста правил лежит рядом с самим текстом: RULES.md -> RULES.core.md.
 CORE_SUFFIX = ".core.md"
+# Ядро общих правил в тонкий файл не выписывается вовсе: его везёт глобальная
+# точка машины (~/.claude/CLAUDE.md), и вторая копия того же текста стоила бы
+# проекту контекста ни за что (docs/lld/DK-193-rules-delivery.md, решение 3).
+CORE_RULES = "RULES" + CORE_SUFFIX
+# Ссылки на соседние деревья лежат в каталоге обвязки проекта, и импорты правил
+# записываются путями через них: граница разворота у клиента лексическая, и
+# путь через ссылку внутри проекта он разворачивает как внутренний, а `../devkit/...`
+# пропускает молча (тот же дизайн, решения 1 и 2).
+LINK_DIR = ".devkit"
+DEVKIT_LINK = "devkit"
+LOCAL_LINK = "local"
 
 GEN_RE = re.compile(r"^<!-- devkit:generated (?:depth=(?P<depth>[a-z]+) )?body=(?P<body>[0-9a-f]{12}) -->$")
 BEGIN_RE = re.compile(r"^<!-- devkit:rules begin (?:depth=[a-z]+ )?src=([0-9a-f]{12}) body=([0-9a-f]{12}) -->$")
@@ -277,44 +288,134 @@ def rule_sources(devkit, root, board, depth=DEPTH_FULL):
     if board:
         src.append(devkit / "RULES.board.md")
     if depth == DEPTH_FULL:
+        # Полный текст глобальная точка не везёт, и проект зовёт его сам.
         return src
-    return [core_of(p) if core_of(p).exists() else p for p in src]
-
-
-def stabilized_sources(existing_thin, sources):
-    # Источники правил, только у каждого путь тот, которым файл того же
-    # содержимого уже назван в существующем тонком файле, если такой ещё
-    # резолвится, а не путь, которым его назвал текущий вызов. Смена
-    # физического чекаута devkit между прогонами (чужой клон, временная копия
-    # для тестов) при том же содержимом правил не должна менять коммитируемый
-    # файл вовсе: новый путь переживёт только до уборки того, что его
-    # принесло, а старый как был рабочим, так и остаётся (DK-127). Содержимое
-    # действительно изменилось, значит это обычное обновление devkit, и путь
-    # меняется, как менялся всегда: отличить тут добросовестное обновление от
-    # подмены нечем, кроме имени файла и содержимого, а большего сигнала
-    # генератор не видит.
-    # Нормализация тут лексическая (os.path.normpath), не через симлинки
-    # (Path.resolve): относительный импорт лежит в тонком файле, посчитанный
-    # той же лексикой (os.path.relpath), и сравнивать нужно тем же способом,
-    # иначе на macOS честный `/var`, реально симлинк на `/private/var`, дал бы
-    # ложное расхождение и путь удлинился бы вместо того, чтобы остаться.
-    def norm(p):
-        return Path(os.path.normpath(str(p)))
-
-    if not existing_thin.is_file():
-        return sources
-    have = [Path(os.path.expanduser(t)) for t in import_targets(existing_thin)]
-    have = [norm(t if t.is_absolute() else existing_thin.parent / t) for t in have]
     out = []
-    for src in sources:
-        normalized = norm(src)
-        picked = src
-        for t in have:
-            if t.name == src.name and t.is_file() and t != normalized and read_text(t) == read_text(src):
-                picked = t
-                break
-        out.append(picked)
+    for p in src:
+        core = core_of(p)
+        if not core.exists():
+            out.append(p)
+        elif core.name != CORE_RULES:
+            out.append(core)
     return out
+
+
+def link_dest(root, dest):
+    """Цель ссылки: путь до соседнего дерева от каталога, где лежит сама ссылка.
+
+    Относительный, а не абсолютный: ссылка коммитится вместе с проектом и
+    обязана работать на любой машине, где devkit лежит соседом (README devkit,
+    раздел «Раскладка»). Проекту, лежащему не по правилу, тем же счётом выходит
+    цель до его фактического соседа.
+    """
+    return Path(os.path.relpath(str(dest), str(Path(root) / LINK_DIR)))
+
+
+def via_link(root, target, name, dest):
+    """Путь до target от корня проекта через ссылку .devkit/<name> -> dest.
+
+    None, если target лежит вне dest: тогда ссылка тут ни при чём.
+    """
+    rel = os.path.relpath(str(target), str(dest))
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return None
+    return (Path(LINK_DIR) / name / rel).as_posix()
+
+
+def import_path(root, target, links):
+    """Путь строки импорта: сам по себе, пока не уводит из проекта, иначе через
+    ссылку каталога обвязки.
+
+    Дорога через ссылку заодно снимает вопрос DK-127 (чужой чекаут devkit,
+    попавший в коммитируемый файл): физического чекаута записанный путь больше
+    не называет вовсе, и от того, из какой копии devkit позвали доктора, он не
+    зависит.
+    """
+    rel = Path(os.path.relpath(str(target), str(root))).as_posix()
+    if not rel.startswith("../"):
+        return rel
+    for name, dest in links:
+        through = via_link(root, target, name, dest)
+        if through:
+            return through
+    return rel
+
+
+def thin_links(root, devkit, agents_root=None):
+    """Ссылки, через которые проект зовёт соседние деревья: дерево devkit и, в
+    корп-контуре, боковую директорию с AGENTS.md."""
+    dk = Path(root) if is_devkit_checkout(root) else Path(devkit)
+    links = [(DEVKIT_LINK, dk)]
+    if agents_root is not None:
+        links.append((LOCAL_LINK, Path(agents_root)))
+    return links
+
+
+def used_links(texts, links):
+    """Из кандидатов остаются те, через которые импорт и правда записан: проекту
+    без своих импортов из devkit ссылка не нужна, и класть её ему незачем."""
+    return [(name, dest) for name, dest in links
+            if any("%s/%s/" % (LINK_DIR, name) in t for t in texts)]
+
+
+def link_fits(name, path, dest):
+    """Годится ли цель уже лежащей ссылки.
+
+    Ссылка на devkit коммитится вместе с проектом, и годится ей любое дерево
+    правил, а не только тот чекаут, из которого позвали доктора: иначе прогон
+    из временной копии перевешивал бы коммитируемую ссылку на неё, а это тот
+    же инцидент, что чинил DK-127. Ссылку на боковую директорию кладёт только
+    автоматика, она не коммитится, и ей цель сверяется точно.
+    """
+    target = Path(os.path.join(str(Path(path).parent), os.readlink(str(path))))
+    if name == DEVKIT_LINK:
+        return (target / "RULES.md").is_file()
+    return os.path.realpath(str(target)) == os.path.realpath(str(dest))
+
+
+def check_link(root, name, dest, fix):
+    """Ссылка .devkit/<name> на соседнее дерево: без неё импорт правил не
+    разворачивается ни лексически, ни по диску."""
+    findings, fixed = [], []
+    path = Path(root) / LINK_DIR / name
+    where = (Path(LINK_DIR) / name).as_posix()
+    want = link_dest(root, dest)
+    if path.is_symlink():
+        have = os.readlink(str(path))
+        if link_fits(name, path, dest):
+            return findings, fixed
+        if fix:
+            path.unlink()
+            path.symlink_to(str(want))
+            fixed.append("ссылка %s перевешена на %s" % (where, want))
+        else:
+            findings.append("ссылка %s ведёт в %s, а нужное дерево лежит в %s: импорты тонкого "
+                            "файла разворачиваются не туда; перевесить: devkitctl doctor --fix"
+                            % (where, have, dest))
+    elif path.exists():
+        # Занятое имя не перезаписывается даже с --fix: под ним лежит чужое, и
+        # снести его молча дороже, чем сказать об этом.
+        findings.append("%s это не ссылка на %s, а свой файл или каталог: имя занято, генератор "
+                        "его не трогает; убрать руками (mv %s %s.bak) и повторить "
+                        "devkitctl doctor --fix" % (where, dest, path, path))
+    elif fix:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(str(want))
+        fixed.append("положена ссылка %s -> %s: через неё до сессии доезжают правила" % (where, want))
+    else:
+        findings.append("нет ссылки %s -> %s: правила приезжают импортом через неё, и без ссылки "
+                        "до сессии не доезжают; положить: devkitctl doctor --fix" % (where, want))
+    return findings, fixed
+
+
+def check_links(root, texts, links, fix):
+    """Все ссылки, названные импортами тонких файлов."""
+    findings, fixed = [], []
+    for name, dest in used_links(texts, links):
+        lf, ld = check_link(root, name, dest, fix)
+        findings += lf
+        fixed += ld
+    return findings, fixed
 
 
 def actual_depth(devkit, root, board, depth):
@@ -386,16 +487,18 @@ def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=Non
     # в своей директории, а список файлов и их глубина остаются проектными.
     # agents_root это корп-контур: файл харнеса обязан лежать в корне клона, а
     # AGENTS.md со всем текстом живёт в боковой директории, и первым импортом
-    # выписывается путь туда.
+    # выписывается путь туда. Всё, что лежит вне проекта, зовётся через ссылку
+    # каталога обвязки: путь наружу клиент не разворачивает молча.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
     if embed:
         # Правил тонкий файл тогда не везёт вовсе, они лежат во вклейке, и
         # глубина это про неё: признак тут только гонял бы перегенерацию.
         depth = DEPTH_FULL
+    links = thin_links(root, devkit, agents_root)
     paths = [AGENTS_FILE if agents_root is None
-             else Path(os.path.relpath(Path(agents_root) / AGENTS_FILE, root)).as_posix()]
+             else import_path(root, Path(agents_root) / AGENTS_FILE, links)]
     if not embed:
-        paths += [Path(os.path.relpath(p, root)).as_posix()
+        paths += [import_path(root, p, links)
                   for p in (rule_sources(devkit, root, board, depth)
                             if sources is None else sources)]
     body = "".join(tpl.replace("{path}", p) + "\n" for p in paths)
@@ -689,8 +792,7 @@ def check_thin(name, profile, root, devkit, board, embed, depth, fix, agents_roo
     findings, fixed = [], []
     fname = profile.str_of("rules", "file")
     path = Path(root) / fname
-    sources = None if embed else stabilized_sources(path, rule_sources(devkit, root, board, depth))
-    want = thin_text(profile, root, devkit, board, embed, depth, sources=sources, agents_root=agents_root)
+    want = thin_text(profile, root, devkit, board, embed, depth, agents_root=agents_root)
     if not path.exists():
         if fix:
             path.write_text(want, encoding="utf-8")
@@ -958,6 +1060,13 @@ def check(root, devkit, fix=False, skip_dirs=()):
                for name, profile in imports]
     keep, cf = one_text_per_file(by_file)
     findings += cf
+    # Ссылки кладутся раньше тонких файлов: импорт через ссылку, которой ещё
+    # нет, не разворачивается, и починка, сделанная в обратном порядке, оставила
+    # бы за собой находку про битый импорт.
+    lf, ld = check_links(root, [t for n, _, t, _ in by_file if n in keep],
+                         thin_links(root, devkit), fix)
+    findings += lf
+    fixed += ld
     for name, profile in imports:
         if name not in keep:
             continue

@@ -268,25 +268,6 @@ def taken_at(hours_ago, fmt="%Y-%m-%dT%H:%M"):
     return (datetime.now() - timedelta(hours=hours_ago)).strftime(fmt)
 
 
-# Тонкий файл проекта зовёт правила доски путём наружу (@../devkit/RULES.board.md),
-# а такой импорт клиент не разворачивает и молчит об этом: правила доски до сессии
-# подключённого проекта не доезжают вовсе, и доктор говорит об этом находкой
-# (DK-190, замер в README devkitctl). Дыра в раскладке «devkit по соседству»,
-# чинится она в devkit, а не в проекте, и пока не починена, её вычитают проверки,
-# которые про другое. Ключ грепается: закроется дыра, уйдут и эти вычитания.
-BOARD_IMPORT_HOLE = "RULES.board.md есть на диске, а до контекста не доезжает"
-
-
-def without_hole(rc, out):
-    """(код возврата, вывод) доктора за вычетом находки про недоехавшие правила доски."""
-    lines = out.split("\n")
-    left = [ln for ln in lines if BOARD_IMPORT_HOLE not in ln]
-    found = re.search(r"(?m)^находок: (\d+)$", out)
-    if found and int(found.group(1)) == len(lines) - len(left):
-        rc = 0
-    return rc, "\n".join(left)
-
-
 def without_pockets(out):
     """Вывод доктора без таблицы карманов резидента: она информационная, а не находка."""
     left, table = [], False

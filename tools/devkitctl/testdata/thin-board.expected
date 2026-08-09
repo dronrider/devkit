@@ -1,4 +1,4 @@
-<!-- devkit:generated body=d6042b0bc7a2 -->
+<!-- devkit:generated body=1dd7ed4ae1f1 -->
 @AGENTS.md
-@../devkit/RULES.md
-@../devkit/RULES.board.md
+@.devkit/devkit/RULES.md
+@.devkit/devkit/RULES.board.md

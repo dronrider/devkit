@@ -1344,10 +1344,20 @@ def corp_thin(clone, local, imports, fix):
     # домашнего проекта, только AGENTS.md берётся оттуда.
     findings, fixed = [], []
     board = (Path(local) / "docs" / "TASKS.md").exists()
+    depths = {name: rules.actual_depth(DEVKIT, local, board, rules.declared_depth(profile)[0])
+              for name, profile in imports}
+    # Наружу у клона ведут оба импорта, и оба зовутся через свою ссылку в
+    # .devkit клона: дерево devkit и боковая директория с AGENTS.md.
+    texts = [rules.thin_text(profile, Path(clone), DEVKIT, board, False, depths[name],
+                             agents_root=Path(local))
+             for name, profile in imports]
+    lf, ld = rules.check_links(Path(clone), texts,
+                               rules.thin_links(clone, DEVKIT, agents_root=local), fix)
+    findings += lf
+    fixed += ld
     for name, profile in imports:
-        depth = rules.actual_depth(DEVKIT, local, board, rules.declared_depth(profile)[0])
-        tf, td = rules.check_thin(name, profile, Path(clone), DEVKIT, board, False, depth, fix,
-                                  agents_root=Path(local))
+        tf, td = rules.check_thin(name, profile, Path(clone), DEVKIT, board, False, depths[name],
+                                  fix, agents_root=Path(local))
         findings += tf
         fixed += td
     return findings, fixed
@@ -1861,7 +1871,7 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     imports, hfindings = corp_profiles(local)
     _, thin_fixed = corp_thin(clone, local, imports, fix=True)
     done += thin_fixed
-    for n in corp.ensure_exclude(clone, corp_thin_names(imports)):
+    for n in corp.ensure_exclude(clone, corp.hidden_names(corp_thin_names(imports))):
         done.append(".git/info/exclude: спрятан %s" % n)
     for hook, state, chained in corp.ensure_hooks(clone, DEVKIT):
         done.append("хук %s: цепочка %s%s"

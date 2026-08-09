@@ -107,6 +107,22 @@ if "замок" in parts:
         f.write(p.stdout)
         f.write("код %d\n" % p.returncode)
 
+# Слово «ход» в строке сценария: виток пишет строку хода тем же ключом, каким
+# её пишет живой виток по скиллу, и заодно снимает журнал в момент своей
+# работы. Снимок этот и есть ответ на вопрос задачи DK-117: видно ли ход
+# витка, пока виток идёт, а не после него.
+if "ход" in parts:
+    log = os.path.join(root, "proj", ".devkit", "goal-DK-100.log")
+    during = ""
+    if os.path.isfile(log):
+        with open(log, encoding="utf-8") as f:
+            during = f.read()
+    with open(os.path.join(root, "log-during"), "w", encoding="utf-8") as f:
+        f.write(during)
+    subprocess.run([os.environ["GOAL_RUN"], "DK-100", "-C", os.path.join(root, "proj"),
+                    "--say", "стаб: ход витка %d" % turn],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 print("виток стаба %d" % turn)
 if marker == "none":
     print("работа осталась, но маркер сказать забыли")
@@ -453,6 +469,78 @@ class GoalRunTests(unittest.TestCase):
         p = self.goal_run(root, "DK-100", "--foreground")
         self.assert_no_verdict(root, p, "упавшая сессия витка")
         self.assertIn("авария витка", self.shell_log(root))
+
+    # -- ход витка в журнале --------------------------------------------------
+
+    def log_during_turn(self, root):  # журнал, снятый витком посреди его работы
+        try:
+            with open(os.path.join(root, "log-during"), encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def test_log_grows_while_the_turn_is_still_running(self):
+        # Регресс DK-117: журнал цели наполнялся только между витками, потому
+        # что вывод `claude -p` буферизуется до конца сессии. Работающий виток
+        # выглядел снаружи так же, как вставший, и на прогоне DK-109 чат молчал
+        # час. Теперь строку подъёма пишет оболочка до сессии, а ход пишет сам
+        # виток ключом --say, и обе строки видны, пока виток идёт.
+        root = self.stand("continue ход запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        during = self.log_during_turn(root)
+        self.assertIn("виток 1 поднят", during, "журнал молчал, пока виток шёл")
+        self.assertNotIn("виток 1 маркер", during, "итог витка лёг в журнал раньше конца витка")
+        log = self.shell_log(root)
+        self.assertIn("стаб: ход витка 1", log)
+        self.assertLess(log.index("стаб: ход витка 1"), log.index("виток 1 маркер"),
+                        "строка хода легла в журнал позже итога витка")
+
+    def test_say_appends_progress_line_without_raising_the_loop(self):
+        # Ключ --say пишет строку хода и возвращается: ни витка, ни замка, ни
+        # tmux-сессии. Формат строки тот же, что у строк оболочки, иначе один
+        # tail показывал бы два разных журнала в одном файле.
+        root = self.stand("done запись")
+        p = self.goal_run(root, "DK-100", "--say", "DK-101 отдан исполнителю")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        p = self.goal_run(root, "DK-100", "--say", "DK-101 ушла в ревью")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        lines = [l for l in self.shell_log(root).split("\n") if l]
+        self.assertEqual(len(lines), 2, "строки хода не дописались, а перезаписали журнал")
+        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d DK-101 отдан исполнителю$")
+        self.assertIn("DK-101 ушла в ревью", lines[1])
+        self.assertIn("DK-101 ушла в ревью", p.stdout)
+        self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
+                         "строка хода подняла замок цикла")
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")), "строка хода подняла виток")
+
+    def test_say_works_where_the_loop_would_refuse_to_start(self):
+        # Ход пишет и виток живого чата, а там нет ни autonomous, ни claude в
+        # PATH: предполётные проверки оболочки строке хода не касаются.
+        root = self.stand("done запись")
+        with open(os.path.join(root, "proj", ".devkit", "deploy.local"), "w", encoding="utf-8") as f:
+            f.write("deploy = true\nautonomous = false\n")
+        os.remove(os.path.join(root, "bin", "claude"))
+        p = self.goal_run(root, "DK-100", "--say", "виток чата: нарезка начата")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("виток чата: нарезка начата", self.shell_log(root))
+
+    def test_say_refusals(self):
+        # Строка хода без текста, по цели без файла и вместе с циклом это
+        # ошибка вызова: журнал чужой цели заводить нечем, а промахнувшийся ID
+        # уводил бы ход в файл, который никто не читает.
+        root = self.stand("done запись")
+        p = self.goal_run(root, "DK-100", "--say")
+        self.assertEqual(p.returncode, 2, "оболочка приняла --say без текста")
+        p = self.goal_run(root, "DK-100", "--say", "   ")
+        self.assertEqual(p.returncode, 2, "оболочка приняла пустую строку хода")
+        p = self.goal_run(root, "DK-101", "--say", "ход не той цели")
+        self.assertEqual(p.returncode, 2, "оболочка написала ход по цели, файла которой нет")
+        self.assertFalse(os.path.isfile(os.path.join(root, "proj", ".devkit", "goal-DK-101.log")),
+                         "журнал цели, которой нет, всё же заведён")
+        p = self.goal_run(root, "DK-100", "--foreground", "--say", "и то и другое")
+        self.assertEqual(p.returncode, 2, "оболочка приняла --say вместе с --foreground")
+        self.assertEqual(self.shell_log(root), "", "отказавший вызов всё же тронул журнал")
 
     # -- отказы на старте ---------------------------------------------------
 

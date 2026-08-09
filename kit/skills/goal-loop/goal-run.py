@@ -6,11 +6,16 @@ headless-сессиями, пока виток отвечает маркером
 решает, когда перестать звать.
 
   goal-run.py <ID> [-C <корень проекта>] [--foreground]
+  goal-run.py <ID> [-C <корень проекта>] --say <строка хода>
 
 Без --foreground цикл уходит в свою tmux-сессию goal-<ID>, как съёмщик панели
 /usage поднимает клиента в одноразовой сессии, и оболочка возвращается сразу.
 С --foreground витки идут в этом же процессе: так цикл смотрят вживую и так
 его гоняют тесты.
+
+Ключ --say цикла не поднимает вовсе: он дописывает строку хода в тот же журнал
+и возвращается. Пишет её сам виток, пока работает, и по этим строкам видно
+живой виток, чей вывод сессии буферизуется до конца.
 
 Коды возврата: 0 штатный стоп по маркеру витка, 1 цикл остановила сама
 оболочка (исчерпанные попытки поднять вставший виток, воронка), 2 ошибка вызова
@@ -41,20 +46,21 @@ PAUSE_ENV = "DEVKIT_GOAL_RETRY_PAUSE"
 MARKERS = ("continue", "done", "over", "wait-human", "stuck")
 
 USAGE = """\
-goal-run.py <ID> [-C <корень проекта>] [--foreground]
+goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка>]
 
 Витки цели <ID> одноразовыми сессиями, пока виток отвечает marker: continue.
 Любой другой маркер завершает цикл и зовёт уведомитель громким поводом.
 
   -C <корень>    проект с доской, по умолчанию текущая директория
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
+  --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
 
 Виток, вставший без вердикта (упал, оборвался, ответил без маркера),
 поднимается заново, попыток подряд не больше трёх. Паузу между ними (20 секунд)
 перебивает DEVKIT_GOAL_RETRY_PAUSE, это для стендов.
 
 Ход цикла пишется в <корень>/.devkit/goal-<ID>.log: время, номер витка,
-маркер, код выхода.
+маркер, код выхода, а строками --say туда же ложится ход самого витка.
 """
 
 
@@ -67,6 +73,7 @@ def parse_args(argv):
     goal_id = None
     proj = os.getcwd()
     fg = False
+    note = None
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -78,6 +85,13 @@ def parse_args(argv):
         elif arg == "--foreground":
             fg = True
             i += 1
+        elif arg == "--say":
+            if i + 1 >= len(argv):
+                die("у --say нет значения: строка хода это его аргумент")
+            note = argv[i + 1]
+            if note.strip() == "":
+                die("строка хода пустая, в журнале от неё толку нет")
+            i += 2
         elif arg in ("-h", "--help"):
             sys.stdout.write(USAGE)
             sys.exit(0)
@@ -92,7 +106,9 @@ def parse_args(argv):
     if goal_id is None:
         sys.stderr.write(USAGE)
         die("не назван ID цели")
-    return goal_id, proj, fg
+    if fg and note is not None:
+        die("--say и --foreground вместе не ходят: строка хода цикла не поднимает")
+    return goal_id, proj, fg, note
 
 
 def resolve_proj(proj):
@@ -222,19 +238,33 @@ class Loop:
 
     # -- журнал оболочки и уведомитель --------------------------------------
 
-    def say(self, msg):  # строка в журнал оболочки и в вывод: панель tmux
-        # показывает то же
+    def append(self, msg):  # строка с временем в журнал цели, ошибка записи наверх
         line = "%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg)
+        os.makedirs(self.devdir, exist_ok=True)
+        with open(self.log, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        return line
+
+    def say(self, msg):  # строка в журнал цикла и в вывод: панель tmux
+        # показывает то же
         try:
-            os.makedirs(self.devdir, exist_ok=True)
+            line = self.append(msg)
         except OSError:
-            pass
-        try:
-            with open(self.log, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            pass
+            line = "%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg)
         print(line)
+
+    def note(self, msg):  # ключ --say: строка хода витка мимо цикла и замка
+        # Виток пишет ход туда же, куда пишет цикл: у вопроса «жив ли цикл»
+        # одно место ответа при любом способе запуска, и tail на него
+        # нацеливается один раз. Провал записи тут громкий, в отличие от say:
+        # молча потерянная строка хода это ровно та беда, ради которой ключ и
+        # заведён.
+        if not os.path.isfile(self.goal):
+            die("файла цели %s нет: ход пишется в журнал своей цели" % self.goal)
+        try:
+            print(self.append(msg))
+        except OSError as e:
+            die("строку хода не записать в %s: %s" % (self.log, e))
 
     def shout(self, title, text):  # заголовок, текст: стоп цикла молчать не должен
         if not os.path.isfile(NOTIFIER):
@@ -305,6 +335,11 @@ class Loop:
 
     def run_turn(self):
         before = self.journal_entries()
+        # Строка о подъёме идёт до сессии, а не после: вывод `claude -p`
+        # буферизуется до конца витка, и без неё журнал молчал бы всё время
+        # работы, а молчание неотличимо от вставшего цикла. Дальше журнал
+        # наполняет сам виток строками --say.
+        self.say("виток %d поднят, ход витка ниже" % self.turn)
         p = subprocess.run(["claude", "-p", self.prompt], cwd=self.proj,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         after = self.journal_entries()
@@ -389,9 +424,15 @@ class Loop:
 
 
 def main(argv):
-    goal_id, proj, fg = parse_args(argv)
+    goal_id, proj, fg, note = parse_args(argv)
     proj = resolve_proj(proj)
     loop = Loop(goal_id, proj)
+    if note is not None:
+        # Предполётной проверки строке хода не нужно: её пишет уже идущий
+        # виток, в том числе виток живого чата, где ни autonomous, ни claude в
+        # PATH оболочку не касаются.
+        loop.note(note)
+        return 0
     loop.preflight()
     if not fg:
         loop.launch_tmux()

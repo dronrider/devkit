@@ -138,3 +138,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-191 | taskctl/shipctl: команда перехода печатает следующий шаг конвейера | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-191.md](tasks/archive/2026/DK-191.md) |
 | DK-117 | Первый виток цели идёт в чате, а ход фоновых витков виден до их завершения | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-117.md](tasks/archive/2026/DK-117.md) |
 | DK-212 | Ворота перехода в Check: сценарий в файле задачи и слитая ветка | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-212.md](tasks/archive/2026/DK-212.md) |
+| DK-213 | Хук check-commit: ID задачи в коммите на main проекта с доской | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-213.md](tasks/archive/2026/DK-213.md) |

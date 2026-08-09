@@ -134,3 +134,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-171 | Цель: подписка z.ai в конвейере: гетерогенная лестница, запускатор vscode, скилл командной работы | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
 | DK-193 | LLD: доставка правил devkit в сессии подключённых проектов | LLD | P2 | 2026-08-09 | [tasks/archive/2026/DK-193.md](tasks/archive/2026/DK-193.md), `b2249d3`, `a2cb6aa`, `bd67ff2`, `ca3bff3`, `46aebad`, `87dceaf` |
 | DK-204 | Доставка правил через .devkit: ссылки и тонкий файл в devkitctl | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-204.md](tasks/archive/2026/DK-204.md) |
+| DK-205 | Доставка правил через .devkit: ссылки в дереве задачи от shipctl start | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-205.md](tasks/archive/2026/DK-205.md) |

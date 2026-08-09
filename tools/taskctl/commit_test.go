@@ -113,6 +113,7 @@ func TestPush(t *testing.T) {
 	gitOut(t, remote, "init", "-q", "--bare", "-b", "main")
 	gitOut(t, root, "remote", "add", "origin", remote)
 	gitOut(t, root, "push", "-q", "-u", "origin", "main")
+	giveScenario(t, root, "XR-004")
 	c := CommitOpts{Msg: "docs(tasks): XR-004 в Check", Push: true}
 	if _, err := cmdMove(root, "XR-004", SectCheck, "", c); err != nil {
 		t.Fatal(err)

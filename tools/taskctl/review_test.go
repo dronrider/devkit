@@ -28,7 +28,7 @@ func TestReviewAddAndResolve(t *testing.T) {
 	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	want := "# XR-005\n\n## Ревью\n\n- гонка в close\n- нейминг\n"
+	want := "# XR-005\n" + fixtureScenario + "\n## Ревью\n\n- гонка в close\n- нейминг\n"
 	if got := readTaskFile(t, root, "XR-005"); got != want {
 		t.Fatalf("файл задачи:\n%q\nожидал:\n%q", got, want)
 	}

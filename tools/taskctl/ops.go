@@ -364,6 +364,11 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			}
 		}
 	}
+	if target == SectCheck {
+		if err := checkGate(root, row); err != nil {
+			return "", err
+		}
+	}
 	// Заблокированной бывает только начатая задача (RULES.board.md, «Трекинг
 	// задач» п. 4): нетронутую строку разблокировать некому, и Blocked у неё
 	// значил бы просто «не начали», как весь Backlog. Ожидание своей же задачи

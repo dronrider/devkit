@@ -19,8 +19,8 @@ func setup(t *testing.T) string {
 	files := map[string]string{
 		boardPath(root):                   fixtureBoard,
 		archivePath(root):                 fixtureArchive,
-		filepath.Join(tasks, "XR-005.md"): "# XR-005\n",
-		filepath.Join(tasks, "XR-002.md"): "# XR-002\n",
+		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureScenario,
+		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureScenario,
 	}
 	for p, content := range files {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -28,6 +28,20 @@ func setup(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+// fixtureScenario это готовый сценарий проверки: без него ворота move не
+// пускают строку в Check (gate.go), а через Check ходит половина тестов.
+const fixtureScenario = "\n## Сценарий проверки\n\n1. Запустить.\n2. Ждём ok.\n"
+
+// giveScenario заводит задаче файл со сценарием проверки там, где фикстура
+// доски его не кладёт.
+func giveScenario(t *testing.T, root, id string) {
+	t.Helper()
+	p := filepath.Join(root, "docs", "tasks", id+".md")
+	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func backlogIDs(t *testing.T, root string) []string {
@@ -126,6 +140,7 @@ func TestStatusAliases(t *testing.T) {
 	if _, err := cmdAdd(root, AddParams{Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress"}); err != nil {
 		t.Fatal(err)
 	}
+	giveScenario(t, root, "XR-008")
 	if _, err := cmdMove(root, "XR-008", "Check", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}

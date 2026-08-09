@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// gitRevParse запускает «git -C root rev-parse <arg>» и возвращает вывод без
+// gitRevParse запускает «git -C root rev-parse <args>» и возвращает вывод без
 // хвостового перевода строки. Ошибка возвращается как есть, толкует её вызывающий.
-func gitRevParse(root, arg string) (string, error) {
-	out, err := exec.Command("git", "-C", root, "rev-parse", arg).Output()
+func gitRevParse(root string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", root, "rev-parse"}, args...)...).Output()
 	if err != nil {
 		return "", err
 	}

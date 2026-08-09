@@ -27,14 +27,19 @@ const mergedSection = "## Выкат"
 // поле ради разбора не стали, заголовок и так под ревью вместе с веткой.
 const agentScenarioSection = "## Сценарий проверки (агентский)"
 
-// checkMarks читает файл задачи и определяет два признака строки в Check:
-// держит ли она очередь выката и кто её принимает. Файла может не быть (в
-// Check пускают и со ссылкой вместо файла), тогда признаки не определить, и
-// это не ошибка, а честное ok=false.
-func checkMarks(root, id string) (queue, agent, ok bool) {
+// scenarioSection это заголовок сценария проверки, без которого задачу не
+// пускают в Check (RULES.board.md, «Трекинг задач» п. 6). Проверка по
+// префиксу, поэтому агентский вариант заголовка тоже считается сценарием.
+const scenarioSection = "## Сценарий проверки"
+
+// taskDocSections читает файл задачи и говорит, какие из заголовков want в
+// нём стоят. Файла может не быть (в Check пускают и со ссылкой вместо файла),
+// тогда разбирать нечего, и это не ошибка, а честное ok=false.
+func taskDocSections(root, id string, want ...string) (found []bool, ok bool) {
+	found = make([]bool, len(want))
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
-		return false, false, false
+		return found, false
 	}
 	// Заголовок внутри ограждённого блока это чужой вывод, а не раздел этого
 	// файла: агентский сценарий по RULES.board.md вкладывает в файл реальный
@@ -56,14 +61,26 @@ func checkMarks(root, id string) (queue, agent, ok bool) {
 		if fence != "" {
 			continue
 		}
-		if strings.HasPrefix(ln, mergedSection) {
-			queue = true
-		}
-		if strings.HasPrefix(ln, agentScenarioSection) {
-			agent = true
+		for i, w := range want {
+			if strings.HasPrefix(ln, w) {
+				found[i] = true
+			}
 		}
 	}
-	return queue, agent, true
+	return found, true
+}
+
+// checkMarks определяет два признака строки в Check: держит ли она очередь
+// выката и кто её принимает.
+func checkMarks(root, id string) (queue, agent, ok bool) {
+	f, ok := taskDocSections(root, id, mergedSection, agentScenarioSection)
+	return f[0], f[1], ok
+}
+
+// hasScenario отвечает, готов ли у задачи сценарий проверки в её файле.
+func hasScenario(root, id string) (has, hasFile bool) {
+	f, ok := taskDocSections(root, id, scenarioSection)
+	return f[0], ok
 }
 
 // checkMarkLabel собирает признаки в одну строку человеку: держит ли строка

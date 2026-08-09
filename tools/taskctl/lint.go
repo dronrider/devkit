@@ -83,6 +83,7 @@ func cmdLint(root string) ([]string, error) {
 				bp, r.LineIdx+1, r.ID))
 		}
 	}
+	finds = append(finds, lintUnmerged(root, b, bp)...)
 	finds = append(finds, lintOrphanTaskFiles(root, b, arch, bp)...)
 
 	for _, r := range arch.Rows {

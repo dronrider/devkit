@@ -1,0 +1,188 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// dropScenario оставляет задаче файл без раздела сценария: так выглядит файл,
+// заведённый в начале работы и не дописанный к переводу в Check.
+func dropScenario(t *testing.T, root, id string) {
+	t.Helper()
+	p := filepath.Join(root, "docs", "tasks", id+".md")
+	if err := os.WriteFile(p, []byte("# "+id+"\n\n## Ход работы\n\n- начали\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// branchWithCommit заводит ветку с одним коммитом и возвращает дерево на main.
+func branchWithCommit(t *testing.T, root, branch string) {
+	t.Helper()
+	gitOut(t, root, "checkout", "-q", "-b", branch)
+	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte(branch+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "work.txt")
+	gitOut(t, root, "commit", "-q", "-m", "feat: работа ветки")
+	gitOut(t, root, "checkout", "-q", "main")
+}
+
+func sect(t *testing.T, root, id string) string {
+	t.Helper()
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := b.find(id)
+	if r == nil {
+		t.Fatalf("%s нет на доске", id)
+	}
+	return r.Sect
+}
+
+func TestMoveToCheckNeedsScenarioSection(t *testing.T) {
+	root := setup(t)
+	dropScenario(t, root, "XR-005")
+	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("move в Check без раздела сценария должен падать")
+	}
+	if !strings.Contains(err.Error(), "Сценарий проверки") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+	if s := sect(t, root, "XR-005"); s != SectInProgress {
+		t.Fatalf("строка уехала при отказе: %s", s)
+	}
+}
+
+func TestMoveToCheckNeedsTaskFile(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdMove(root, "XR-004", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("move в Check без файла задачи должен падать")
+	}
+	if !strings.Contains(err.Error(), "taskctl file XR-004") {
+		t.Fatalf("отказ не называет следующий шаг: %v", err)
+	}
+}
+
+func TestMoveToCheckPassesWithScenario(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if s := sect(t, root, "XR-005"); s != SectCheck {
+		t.Fatalf("строка не дошла до Check: %s", s)
+	}
+}
+
+func TestMoveToCheckAcceptsAgentScenario(t *testing.T) {
+	root := setup(t)
+	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	if err := os.WriteFile(p, []byte("# XR-005\n\n## Сценарий проверки (агентский)\n\n1. Прогнать.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("агентский сценарий тоже сценарий: %v", err)
+	}
+}
+
+// Заголовок внутри ограждённого блока это чужой вывод, вложенный в файл, а не
+// сценарий этой задачи.
+func TestMoveToCheckIgnoresFencedScenario(t *testing.T) {
+	root := setup(t)
+	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	body := "# XR-005\n\n## Ход работы\n\n```\n## Сценарий проверки\n\n1. Чужой вывод.\n```\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err == nil {
+		t.Fatal("сценарий в ограждённом блоке не считается разделом файла")
+	}
+}
+
+// LLD-задача описывает проверку в дизайне, и строка ведёт туда: файла задачи у
+// неё может не быть, и ворота такую строку пропускают.
+func TestMoveToCheckSkipsRowLinkedToLLD(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-001", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdSet(root, SetParams{ID: "XR-001", Link: "[lld/search.md](lld/search.md)"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-001", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("строка со ссылкой на LLD должна проходить: %v", err)
+	}
+}
+
+func TestMoveToCheckRefusesUnmergedBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	branchWithCommit(t, root, "xr-005-gate")
+	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("move в Check при неслитой ветке должен падать")
+	}
+	for _, want := range []string{"xr-005-gate", "shipctl merge XR-005"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+	if s := sect(t, root, "XR-005"); s != SectInProgress {
+		t.Fatalf("строка уехала при отказе: %s", s)
+	}
+}
+
+func TestMoveToCheckPassesMergedBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	branchWithCommit(t, root, "xr-005-gate")
+	gitOut(t, root, "merge", "-q", "--ff-only", "xr-005-gate")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("слитая ветка воротам не помеха: %v", err)
+	}
+}
+
+// Чужая ветка с похожим началом имени не считается веткой задачи: опознание
+// то же, что у shipctl, по ID до дефиса.
+func TestMoveToCheckIgnoresForeignBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	branchWithCommit(t, root, "xr-0051-other")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("чужая ветка не должна держать строку: %v", err)
+	}
+}
+
+func TestLintFindsUnmergedCheckBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	branchWithCommit(t, root, "xr-005-gate")
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(finds, "\n")
+	for _, want := range []string{"XR-005 в Check", "xr-005-gate", "shipctl merge XR-005"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("в находках нет %q:\n%s", want, got)
+		}
+	}
+	gitOut(t, root, "merge", "-q", "--ff-only", "xr-005-gate")
+	finds, err = cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(finds, "\n"); strings.Contains(got, "xr-005-gate") {
+		t.Fatalf("слитая ветка не находка:\n%s", got)
+	}
+}

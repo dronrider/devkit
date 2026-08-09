@@ -183,6 +183,7 @@ func TestDepAddGuardsInProgressAndCheck(t *testing.T) {
 		t.Fatalf("зависимость на закрытую задачу не должна падать: %v", err)
 	}
 
+	giveScenario(t, root, "XR-001")
 	if _, err := cmdMove(root, "XR-001", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}

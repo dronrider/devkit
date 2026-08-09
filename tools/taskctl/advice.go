@@ -32,10 +32,24 @@ func autonomousFlag(root string) bool {
 		if !ok || strings.TrimSpace(key) != "autonomous" {
 			continue
 		}
-		on, err := strconv.ParseBool(strings.Trim(strings.TrimSpace(val), `"'`))
+		on, err := strconv.ParseBool(unquote(strings.TrimSpace(val)))
 		return err == nil && on
 	}
 	return false
+}
+
+// unquote снимает одну окружающую пару кавычек, если значение целиком в них
+// завёрнуто. Разбор тот же, что у shipctl (config.go): независимая обрезка с
+// обоих концов развела бы утилиты на значении вроде 'true" (одна читала бы
+// true, вторая false), и на развилке слияния они назвали бы разные ветки.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		q := s[0]
+		if (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // nextAfterMove называет следующий шаг конвейера после смены статуса. Знание

@@ -34,6 +34,11 @@ func TestAutonomousFlag(t *testing.T) {
 		{"# autonomous = true\ndeploy = echo\n", false},
 		{"autonomous = false\n", false},
 		{"autonomous = \"true\"\n", true},
+		// Несимметричные кавычки не значение, а опечатка: снимать их с концов
+		// независимо нельзя, иначе taskctl прочитает true там, где shipctl
+		// остался на false, и утилиты назовут разные ветки развилки слияния.
+		{"autonomous = 'true\"\n", false},
+		{"autonomous = \"true\n", false},
 		{"autonomous = ага\n", false},
 		{"deploy = echo катим\n", false},
 	}

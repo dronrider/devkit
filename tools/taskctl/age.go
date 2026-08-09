@@ -33,8 +33,9 @@ const agentScenarioSection = "## Сценарий проверки (агентс
 const scenarioSection = "## Сценарий проверки"
 
 // taskDocSections читает файл задачи и говорит, какие из перечисленных
-// заголовков в нём стоят. Файла может не быть (в Check пускают и со ссылкой вместо файла),
-// тогда разбирать нечего, и это не ошибка, а честное ok=false.
+// заголовков в нём стоят. Файла может не быть (в Check пускают и со
+// ссылкой вместо файла), тогда разбирать нечего, и это не ошибка, а
+// честное ok=false.
 func taskDocSections(root, id string, want ...string) (found []bool, ok bool) {
 	found = make([]bool, len(want))
 	data, err := os.ReadFile(taskFilePath(root, id))

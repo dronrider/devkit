@@ -420,7 +420,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s%s%s%s", id, row.Sect, target, quenched, tail, note), nil
+	return fmt.Sprintf("%s: %s -> %s%s%s%s\n%s", id, row.Sect, target, quenched, tail, note, nextAfterMove(root, id, target)), nil
 }
 
 // relocate вырезает строку из её секции и вставляет line в секцию target,
@@ -704,7 +704,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if len(depTouched) > 0 {
 		msg += ", маркер «после» снят у: " + strings.Join(depTouched, ", ")
 	}
-	return msg + tail, nil
+	return msg + tail + "\n" + nextAfterClose(), nil
 }
 
 // gitMv переносит файл через git mv, а вне git-репозитория (или для

@@ -30,6 +30,18 @@ func corpWrite(t *testing.T, path, body string) {
 	}
 }
 
+// corpSymlink кладёт симлинк link -> target, заводя родительский каталог: так
+// фикстура повторяет ссылки обвязки .devkit, какие раскладывает devkitctl corp.
+func corpSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // corpBoard кладёт скелет доски: findRoot ищет ровно docs/TASKS.md, содержимое
 // ему безразлично.
 func corpBoard(t *testing.T, dir string) {

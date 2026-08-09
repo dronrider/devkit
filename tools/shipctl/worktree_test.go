@@ -63,6 +63,38 @@ func TestStartWorktree(t *testing.T) {
 	}
 }
 
+// TestStartWorktreeCarriesCommittedLink: своему проекту start ссылки обвязки не
+// кладёт -- дерево правил приезжает в свой проект коммитом, и чекаут несёт
+// ссылку сам. Тест фиксирует это отсутствием специальной раскладки: ссылка
+// коммитится в проект и оказывается в worktree чекаутом, а не отдельной работой
+// start. Зеркало корп-тесту TestCorpStartPlacesLinks. DK-205, LLD DK-193 решение 2.
+func TestStartWorktreeCarriesCommittedLink(t *testing.T) {
+	root, _ := setup(t, "", "")
+	// Ссылка на дерево правил коммитится в свой проект (DK-204): git хранит её
+	// записью 120000, и чекаут раскладывает на любой машине сам, до всякого
+	// start. Каталог .devkit в чужом репозитории не нужен, ссылка одна.
+	if err := os.Mkdir(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../devkit", filepath.Join(root, ".devkit", "devkit")); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, root, "add", ".devkit/devkit")
+	gitT(t, root, "commit", "-qm", "link: .devkit/devkit")
+
+	if _, err := cmdStart(root, StartParams{ID: "XR-002", Slug: "link"}); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-xr-002")
+	got, err := os.Readlink(filepath.Join(wt, ".devkit", "devkit"))
+	if err != nil {
+		t.Fatalf("ссылка .devkit/devkit не приехала в worktree чекаутом: %v", err)
+	}
+	if got != "../../devkit" {
+		t.Fatalf(".devkit/devkit в worktree указывает на %q, ожидалась коммитируемая ../../devkit", got)
+	}
+}
+
 // TestMergeForeignWorktree: merge одной задачи из worktree другой отбивается,
 // иначе в main уехала бы чужая ветка, а в Check перевелась своя.
 func TestMergeForeignWorktree(t *testing.T) {

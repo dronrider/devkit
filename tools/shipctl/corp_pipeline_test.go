@@ -497,3 +497,64 @@ func TestCorpHomeUnaffected(t *testing.T) {
 		t.Fatalf("домашний status должен по-прежнему считать очередь: %q", st)
 	}
 }
+
+// TestCorpStartPlacesLinks: свежее дерево задачи корп-клона получает ссылки
+// обвязки .devkit на соседние деревья правил. Корп-репозиторий чужой, ссылки
+// туда не коммитятся, и в worktree их кладёт start, копируя дословно с готовых
+// ссылок клона (их положил devkitctl corp): дерево задачи лежит сиблингом клона
+// (treePath), и относительные цели разрешаются в те же деревья. DK-205, LLD
+// DK-193 решение 2.
+func TestCorpStartPlacesLinks(t *testing.T) {
+	clone, local, _, _ := corpPipeline(t, "LOC-9", corpTrack{Key: "ABC", Ticket: "ABC-9"}, trackOK)
+	base := filepath.Dir(clone)
+	// Готовые ссылки клона, какие кладёт devkitctl corp: devkit на дерево
+	// правил, local на боковую директорию. Цели относительные (LLD решение 2),
+	// деревья созданы, чтобы по ссылкам можно было сходить.
+	corpWrite(t, filepath.Join(base, "devkit", "RULES.md"), "rules\n")
+	corpSymlink(t, "../../devkit", filepath.Join(clone, ".devkit", "devkit"))
+	corpSymlink(t, "../../"+filepath.Base(local), filepath.Join(clone, ".devkit", "local"))
+
+	if _, err := cmdStart(local, StartParams{ID: "LOC-9"}); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(base, filepath.Base(clone)+"-abc-9")
+	for _, name := range []string{"devkit", "local"} {
+		link := filepath.Join(wt, ".devkit", name)
+		got, err := os.Readlink(link)
+		if err != nil {
+			t.Fatalf("в worktree нет ссылки .devkit/%s: %v", name, err)
+		}
+		want, _ := os.Readlink(filepath.Join(clone, ".devkit", name))
+		if got != want {
+			t.Fatalf(".devkit/%s: в worktree %q, ожидалась как в клоне %q", name, got, want)
+		}
+		// Сиблинг клона, поэтому цель сходится в то же дерево, что и ссылка
+		// клона: это и ловит мутацию «положить чужую цель».
+		cloneTree, _ := filepath.EvalSymlinks(filepath.Join(clone, ".devkit", name))
+		wtTree, _ := filepath.EvalSymlinks(link)
+		if cloneTree == "" || cloneTree != wtTree {
+			t.Fatalf(".devkit/%s в worktree разрешается в %q, а в клоне в %q (сиблинги должны сойтись)",
+				name, wtTree, cloneTree)
+		}
+	}
+}
+
+// TestCorpStartPlacesNoLinksFromBareClone: start не падает и не оставляет битых
+// ссылок, когда готовых ссылок в клоне нет (corp не доведён до конца): обвязка
+// это шов, а не предусловие, и отсутствие ссылок ловит доктор. Каталог .devkit
+// при этом заводится под журнал запусков.
+func TestCorpStartPlacesNoLinksFromBareClone(t *testing.T) {
+	clone, local, _, _ := corpPipeline(t, "LOC-10", corpTrack{Key: "ABC", Ticket: "ABC-10"}, trackOK)
+	if _, err := cmdStart(local, StartParams{ID: "LOC-10"}); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(filepath.Dir(clone), filepath.Base(clone)+"-abc-10")
+	if fi, err := os.Stat(filepath.Join(wt, ".devkit")); err != nil || !fi.IsDir() {
+		t.Fatal("start должен заводить .devkit в worktree даже без готовых ссылок")
+	}
+	for _, name := range []string{"devkit", "local"} {
+		if _, err := os.Lstat(filepath.Join(wt, ".devkit", name)); err == nil {
+			t.Fatalf(".devkit/%s появился в worktree без источника в клоне", name)
+		}
+	}
+}

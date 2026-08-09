@@ -86,6 +86,39 @@ func treePath(codeRoot, ref string) string {
 	return filepath.Join(filepath.Dir(codeRoot), filepath.Base(codeRoot)+"-"+strings.ToLower(ref))
 }
 
+// placeWrapping кладёт в свежее дерево задачи каталог обвязки .devkit, а для
+// корп-клона ещё и ссылки на соседние деревья правил. Каталог гитигнорнут и в
+// новое дерево не попадает, а без него не пишется журнал запусков (по нему merge
+// подсказывает про regcheck); в корп-клоне журнал всё равно идёт редиректом в
+// боковую директорию (findRoot по devkit.local), а .devkit worktree несёт только
+// ссылки -- через них тонкий файл разворачивает правила доски и корп-локальное.
+// Своему проекту ссылки не нужны: дерево правил приезжает в него коммитом, и
+// чекаут несёт их сам. Корп-репозиторий чужой, ссылки туда не коммитятся, и в
+// свежее дерево их кладёт start. Дерево задачи лежит сиблингом клона (treePath),
+// поэтому относительные цели готовых ссылок клона (их положил devkitctl corp)
+// верны и тут -- копируются они дословно. Копия окна (code, p.Tree != "") тут
+// не затрагивается: место у неё своё, и относительные цели клона там могут не
+// сойтись. Провал молчит: обвязка это шов, а не предусловие, отсутствие ссылок
+// ловит доктор.
+func placeWrapping(wtPath, codeRoot, root string, fresh bool) {
+	devkitDir := filepath.Join(wtPath, ".devkit")
+	os.Mkdir(devkitDir, 0o755)
+	if !fresh || codeRoot == root {
+		return
+	}
+	// devkit -- на дерево правил, local -- на боковую директорию с AGENTS.md.
+	// Имена это контракт с клиентом (импорт тонкого файла идёт как
+	// @.devkit/<имя>/...), источник правды -- tools/devkitctl/rules.py
+	// (DEVKIT_LINK, LOCAL_LINK): раскладку ссылок заводит devkitctl.
+	for _, name := range []string{"devkit", "local"} {
+		target, err := os.Readlink(filepath.Join(codeRoot, ".devkit", name))
+		if err != nil {
+			continue
+		}
+		os.Symlink(target, filepath.Join(devkitDir, name))
+	}
+}
+
 // branchOfTask: ветка называется по ID строчными, с хвостом-слагом или без
 // (`dk-005`, `dk-005-worktree`). Точного имени merge не знает, поэтому матч
 // по префиксу до дефиса.
@@ -387,14 +420,11 @@ func cmdStart(root string, p StartParams) (string, error) {
 		}
 		return "", fmt.Errorf("ветка не выложена в дерево:\n%s", tail(out))
 	}
-	if codeRoot == root {
-		// .devkit гитигнорнут и в новое дерево не попадает, а без него в
-		// worktree не пишется журнал запусков (по нему merge подсказывает про
-		// regcheck). В корп-контуре с найденным клоном .devkit уже есть в
-		// боковой директории (devkitctl corp его заводит), и findRoot дерева
-		// задачи находит его редиректом, создавать тут нечего.
-		os.Mkdir(filepath.Join(wtPath, ".devkit"), 0o755)
-	}
+	// Каталог обвязки .devkit в новое дерево не попадает (гитигнорнут), а без
+	// него в worktree не пишется журнал запусков (по нему merge подсказывает про
+	// regcheck); свежему дереву корп-клона он нужен ещё и под ссылки на соседние
+	// деревья правил. Разбор -- в placeWrapping.
+	placeWrapping(wtPath, codeRoot, root, p.Tree == "")
 	msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
 	if corpNote != "" {
 		msg = append(msg, corpNote)

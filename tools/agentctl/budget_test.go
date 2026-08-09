@@ -68,18 +68,20 @@ func TestCmdBudget(t *testing.T) {
 			[]string{"корректор вердикт не двигает"},
 		},
 		{
-			"профицит только week_all, потолок 5",
+			// pro жжёт week_max (замер DK-089), поэтому профицит одного week_all
+			// больше не поднимает потолок до пяти: корректор не двигает, потолок 3.
+			"профицит только week_all оставляет потолок 3",
 			freshAge,
 			[]bucket{bucketAt("week_all", 5, 24*time.Hour), bucketAt("week_max", 50, halfWindow)},
-			5,
-			[]string{"week_all", "профиците на свежем снимке"},
+			3,
+			[]string{"корректор вердикт не двигает"},
 		},
 		{
 			"pace ровно на пороге профицита это ещё профицит",
 			freshAge,
-			[]bucket{bucketAt("week_all", 0, halfWindow), bucketAt("week_max", 50, halfWindow)},
-			5,
-			[]string{"профиците на свежем снимке"},
+			[]bucket{bucketAt("week_all", 0, halfWindow), bucketAt("week_max", 0, halfWindow)},
+			3,
+			[]string{"поднимает opus до fable"},
 		},
 		{
 			"на процент ниже порога профицита это ещё норма",

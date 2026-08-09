@@ -182,14 +182,17 @@ func TestQuotaSpendLadder(t *testing.T) {
 			}
 		}
 	}
-	// Отдельный бакет панель держит один и на самой дорогой модели: у нижних
-	// ярусов наборы совпадают, и различает их только взвешенная цена расхода.
-	if got := q.Spend[tierMax]; len(got) != 2 || !contains(got, "week_max") {
-		t.Fatalf("ярус max тратит из %v, жду пару с week_max", got)
+	// Добавочный бакет дорогой панели жжёт и pro, и max: замер DK-089 показал,
+	// что opus расходует week_max, и прежде корректор этого не учитывал. У pro и
+	// max наборы бакетов совпадают, различает их только взвешенная цена расхода.
+	for _, tier := range []string{tierPro, tierMax} {
+		if got := q.Spend[tier]; len(got) != 2 || !contains(got, "week_max") {
+			t.Fatalf("ярус %s тратит из %v, жду пару с week_max", tier, got)
+		}
 	}
-	for _, tier := range []string{tierMini, tierBase, tierPro} {
+	for _, tier := range []string{tierMini, tierBase} {
 		if got := q.Spend[tier]; len(got) != 1 || got[0] != q.Required {
-			t.Fatalf("ярус %s тратит из %v, а панель у него своего бакета не показывает", tier, got)
+			t.Fatalf("ярус %s тратит из %v, а своего бакета у него нет", tier, got)
 		}
 	}
 	// Известный бакет вне лестницы трат: снимок со старого клиента читается, но
@@ -279,8 +282,10 @@ func TestCorrectTier(t *testing.T) {
 	}{
 		{"дефицит общего бакета снимает pro на ярус вниз", "pro", false,
 			snapOf(freshAge, deficitAll, normalFable), "base", "дефицит week_all"},
-		{"своего бакета у pro больше нет, дефицит week_max его не трогает", "pro", false,
-			snapOf(freshAge, normalAll, deficitFable), "pro", ""},
+		// pro расходует week_max (замер DK-089): дефицит этого бакета опускает
+		// его на base, иначе корректор не опускал бы никого, хотя pro сам бакет жжёт.
+		{"дефицит week_max опускает pro, потому что pro его расходует", "pro", false,
+			snapOf(freshAge, normalAll, deficitFable), "base", "дефицит week_max"},
 		{"base при дефиците уходит на mini", "base", false,
 			snapOf(freshAge, deficitAll), "mini", "дефицит week_all"},
 		{"ниже mini двигать некуда", "mini", false,
@@ -297,8 +302,12 @@ func TestCorrectTier(t *testing.T) {
 			snapOf(freshAge, bucketAt("week_all", 74, halfWindow), surplusFable), "pro", ""},
 		{"mini поднимает профицит общего бакета", "mini", false,
 			snapOf(freshAge, surplusAll), "base", "профицит week_all"},
-		{"base поднимает тот же общий бакет", "base", false,
-			snapOf(freshAge, surplusAll, normalFable), "pro", "профицит week_all"},
+		// pro расходует week_max, поэтому подъём base -> pro требует профицита
+		// обоих бакетов: одного общего мало, иначе pro входит с чужим дефицитом.
+		{"base не поднимается на pro без профицита week_max", "base", false,
+			snapOf(freshAge, surplusAll, normalFable), "base", ""},
+		{"base поднимается на pro при профиците обоих бакетов", "base", false,
+			snapOf(freshAge, surplusAll, surplusFable), "pro", "профицит week_all, week_max"},
 		{"профицита общего бакета для pro мало", "pro", false,
 			snapOf(freshAge, surplusAll, normalFable), "pro", ""},
 		{"выше max ярусов нет", "max", false,
@@ -382,15 +391,17 @@ func TestQuotaFacts(t *testing.T) {
 			want: "квота: week_all 50%, week_max в снимке нет, снимок 22м назад, сдвига нет",
 		},
 		{
+			// base/base при одном week_all в снимке: spend_base это только week_all,
+			// и строка занята сообщением про возраст, а не поиском week_max.
 			name: "снимок без момента снятия",
 			snap: snapshot{Buckets: []bucket{bucketAt("week_all", 50, halfWindow)}},
-			c:    correction{From: "pro", Tier: "pro"},
+			c:    correction{From: "base", Tier: "base"},
 			want: "квота: week_all 50%, момент снятия неизвестен, сдвига нет",
 		},
 		{
 			name: "снимок из будущего",
 			snap: snapOf(-time.Hour, bucketAt("week_all", 50, halfWindow)),
-			c:    correction{From: "pro", Tier: "pro"},
+			c:    correction{From: "base", Tier: "base"},
 			want: "квота: week_all 50%, снимок из будущего, часы разошлись, сдвига нет",
 		},
 		{

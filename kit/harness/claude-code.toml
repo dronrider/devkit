@@ -42,5 +42,7 @@ buckets = ["week_all", "week_max", "week_opus"]
 required = "week_all"
 spend_mini = ["week_all"]
 spend_base = ["week_all"]
-spend_pro = ["week_all"]
+# pro жжёт week_max наравне с max: замер DK-089 показал, что opus расходует
+# добавочный бакет, и прежде корректор поднимал его по запасу, которого нет.
+spend_pro = ["week_all", "week_max"]
 spend_max = ["week_all", "week_max"]

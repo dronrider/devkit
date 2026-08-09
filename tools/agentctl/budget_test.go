@@ -134,6 +134,51 @@ func TestCmdBudget(t *testing.T) {
 	}
 }
 
+// TestBudgetFreshSurplusHeterogeneous покрывает ветку freshSurplus бюджетного
+// потолка (случай 5 в таблице DK-048). Для claude-code после замера DK-089 эта
+// ветка недостижима: opus жжёт week_max, spend_pro совпал с spend_max, и
+// профицит одного week_all поднимает корректор до fable, уводя потолок на 3.
+// Ветка осталась для гетерогенной лестницы чужого харнеса, где pro и max
+// расходуют разные наборы бакетов: здесь собран синтетический spec, у которого
+// pro тратит из одного week_all, а max из week_all и week_other, и свежий
+// профицит pro-бакета не сдвигает корректор, а budgetLimit поднимает потолок
+// до пяти.
+func TestBudgetFreshSurplusHeterogeneous(t *testing.T) {
+	fixNow(t, testNow)
+	q := &quotaSpec{
+		Harness:  "synthetic",
+		Buckets:  []string{"week_all", "week_other"},
+		Required: "week_all",
+		Spend: map[string][]string{
+			tierMini: {"week_all"},
+			tierBase: {"week_all"},
+			tierPro:  {"week_all"},
+			tierMax:  {"week_all", "week_other"},
+		},
+	}
+	// week_all в профиците (остаток 95%, сутки из недели), week_other в норме
+	// (половина окна): pro-набор [week_all] в профиците, max-набор
+	// [week_all, week_other] в норме, значит корректор стоит на pro.
+	s := snapOf(freshAge,
+		bucketAt("week_all", 5, 24*time.Hour),
+		bucketAt("week_other", 50, halfWindow),
+	)
+	c := correctModel(q, s, testNow)
+	if c.Down {
+		t.Fatalf("корректор сдвинулся вниз: %+v", c)
+	}
+	if c.shifted() {
+		t.Fatalf("корректор ушёл с pro (%+v), а на гетерогенной лестнице не должен: профицит week_all не задевает week_other", c)
+	}
+	limit, why := budgetLimit(q, c, s, testNow)
+	if limit != 5 {
+		t.Fatalf("потолок %d, ждали 5 (freshSurplus на гетерогенной лестнице): %s", limit, why)
+	}
+	if !strings.Contains(why, "потолок 5") {
+		t.Fatalf("причина не назвала потолок 5: %s", why)
+	}
+}
+
 // TestCmdBudgetNoSnapshot: файла снимка ещё нет вовсе (свежая машина, quota
 // refresh не запускали). Потолок не падает, а строка называет команду, которой
 // снимок снимается.

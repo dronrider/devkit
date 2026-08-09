@@ -558,3 +558,34 @@ func TestCorpStartPlacesNoLinksFromBareClone(t *testing.T) {
 		}
 	}
 }
+
+// TestCorpStartPlacesNoLinksInWindow: копия окна (corp + p.Tree) лежит не
+// сиблингом клона, и относительные цели готовых ссылок клона в ней расходятся.
+// start обязан не класть туда ссылки: охрану !fresh в placeWrapping («Чего
+// хотим» п. 3) держит это, и тест её фиксирует. Каталог .devkit в окне нужен
+// (журнал запусков), а .devkit/devkit и .devkit/local -- нет. Ловит мутацию
+// «убрать !fresh»: она молча положит в окно ссылки с не сходящимися целями.
+func TestCorpStartPlacesNoLinksInWindow(t *testing.T) {
+	clone, local, _, _ := corpPipeline(t, "LOC-11", corpTrack{Key: "ABC", Ticket: "ABC-11"}, trackOK)
+	base := filepath.Dir(clone)
+	corpWrite(t, filepath.Join(base, "devkit", "RULES.md"), "rules\n")
+	corpSymlink(t, "../../devkit", filepath.Join(clone, ".devkit", "devkit"))
+	corpSymlink(t, "../../"+filepath.Base(local), filepath.Join(clone, ".devkit", "local"))
+	// Копия окна это готовое дерево задачи вне сиблингов клона: относительные
+	// цели ссылок клона (../../devkit и ../../<local>) разрешаются тут не туда,
+	// поэтому ссылки в окно не кладутся. Заводится worktree клона в отдельном
+	// каталоге, не рядом с клоном.
+	window := filepath.Join(t.TempDir(), "window")
+	corpGitT(t, clone, "worktree", "add", "--detach", window, "main")
+	if _, err := cmdStart(local, StartParams{ID: "LOC-11", Tree: window}); err != nil {
+		t.Fatalf("start в копию окна не должен падать: %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(window, ".devkit")); err != nil || !fi.IsDir() {
+		t.Fatal("каталог .devkit должен заводиться в окне под журнал запусков")
+	}
+	for _, name := range []string{"devkit", "local"} {
+		if _, err := os.Lstat(filepath.Join(window, ".devkit", name)); err == nil {
+			t.Fatalf(".devkit/%s оказался в копии окна, где цели клона не сходятся", name)
+		}
+	}
+}

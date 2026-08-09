@@ -827,6 +827,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 				"перевод в Check прошёл, но пуш доски не прошёл, повторить git push руками"); err != nil {
 				return "", err
 			}
+			if note := syncWindowTree(root, main); note != "" {
+				msg = append(msg, note)
+			}
 			msg = append(msg, nextAfterMerge(p.ID))
 			return strings.Join(msg, "\n"), nil
 		}
@@ -884,6 +887,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
+	}
+	if note := syncWindowTree(root, main); note != "" {
+		msg = append(msg, note)
 	}
 	msg = append(msg, nextAfterMerge(p.ID))
 	return strings.Join(msg, "\n"), nil
@@ -1015,6 +1021,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
+	}
+	if note := syncWindowTree(root, main); note != "" {
+		msg = append(msg, note)
 	}
 	msg = append(msg, nextAfterMerge(list))
 	return strings.Join(msg, "\n"), nil

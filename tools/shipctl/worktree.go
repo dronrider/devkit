@@ -197,6 +197,46 @@ func detachWorktree(root, wt, branch string) string {
 	return fmt.Sprintf("копия окна %s переведена на слитый коммит, ветка %s удалена: окно в копии живо", wt, branch)
 }
 
+// syncWindowTree подтягивает копию окна второй подписки на свежий main.
+// Merge зовёт её в самом конце, когда main уже дописан всеми своими
+// коммитами (правка задачи, перевод доски): раньше этой точки подтяжка
+// увела бы копию не туда, и main тут же уехал бы вперёд без неё (DK-214).
+// Копия на ветке (занята другой задачей) или с незакоммиченным не трогается,
+// причина уходит строкой отчёта; копии вовсе нет -- merge про неё молчит,
+// это не отказ, а обычное состояние проекта без второй подписки.
+func syncWindowTree(root, main string) string {
+	tree := windowTree(root)
+	_, linked, err := worktrees(root)
+	if err != nil {
+		return ""
+	}
+	present := false
+	for _, l := range linked {
+		if !samePath(l.Path, tree) {
+			continue
+		}
+		present = true
+		if l.Branch != "" {
+			return fmt.Sprintf("копия окна %s стоит на ветке %s, не подтянута на %s: занята другой задачей", tree, l.Branch, main)
+		}
+		break
+	}
+	if !present {
+		return ""
+	}
+	st, err := git(tree, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return fmt.Sprintf("копия окна %s: статус не проверился (%v), не подтянута", tree, err)
+	}
+	if st != "" {
+		return fmt.Sprintf("копия окна %s не подтянута на %s: незакоммиченные правки\n%s", tree, main, tail(st))
+	}
+	if out, err := git(tree, "checkout", "--detach", main); err != nil {
+		return fmt.Sprintf("копия окна %s не подтянута на %s (%s): довести руками git -C %s checkout --detach %s", tree, main, tail(out), tree, main)
+	}
+	return "копия окна " + tree + " подтянута на свежий " + main
+}
+
 // removeWorktree прибирает дерево слитой задачи и удаляет ветку. Провал не
 // ошибка: слияние к этому моменту прошло, а неубранное дерево (например, с
 // untracked-черновиками) прибирается руками, подсказка уходит в отчёт.

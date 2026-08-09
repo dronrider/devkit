@@ -190,7 +190,7 @@ def pockets(root, devkit, profile):
         # общий путь на диске (симлинк на тот же файл), либо совпадение имени и
         # содержимого: доктор, запущенный из worktree или из временной копии
         # devkit, видит те же правила вторым путём, и платить за них дважды
-        # расчёт не должен (та же мерка у stabilized_sources, DK-127).
+        # расчёт не должен (DK-190).
         keys = {path.resolve(), (path.name, text)}
         if keys & seen:
             return
@@ -561,8 +561,9 @@ def fill_probe(probe, root, devkit, profile):
             local.append(probe / src.name)
     # Отличие от боевого тонкого файла остаётся, но только в длине строки
     # импорта: в devkit она и так локальная (@RULES.board.md), а у проекта с
-    # соседним devkit вместо @../devkit/RULES.md выходит @RULES.md, дешевле на
-    # десяток символов. Против семи тысяч токенов недоехавших правил это шум.
+    # соседним devkit вместо @.devkit/devkit/RULES.board.md выходит
+    # @RULES.board.md, дешевле на два десятка символов. Против тысяч токенов
+    # самих правил это шум.
     text = rules.thin_text(profile, probe, devkit, board, embed=False, depth=depth,
                            sources=local)
     (probe / profile.str_of("rules", "file")).write_text(text, encoding="utf-8")

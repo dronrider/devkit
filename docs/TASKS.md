@@ -65,9 +65,9 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-186 | Заголовки открытых строк доски и замена «след» на «лог хода» в DK-112, DK-153, DK-156 [после DK-184] | task | P2 | 30 (25+4+0+0+1) | S | [lld/DK-173-agent-prose.md](lld/DK-173-agent-prose.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-171.md](tasks/DK-171.md) |
+| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/DK-171.md](tasks/DK-171.md) |
+| DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |

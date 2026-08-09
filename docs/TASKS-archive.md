@@ -136,3 +136,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-204 | Доставка правил через .devkit: ссылки и тонкий файл в devkitctl | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-204.md](tasks/archive/2026/DK-204.md) |
 | DK-205 | Доставка правил через .devkit: ссылки в дереве задачи от shipctl start | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-205.md](tasks/archive/2026/DK-205.md) |
 | DK-191 | taskctl/shipctl: команда перехода печатает следующий шаг конвейера | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-191.md](tasks/archive/2026/DK-191.md) |
+| DK-117 | Первый виток цели идёт в чате, а ход фоновых витков виден до их завершения | task | P2 | 2026-08-09 | [tasks/archive/2026/DK-117.md](tasks/archive/2026/DK-117.md) |

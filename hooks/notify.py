@@ -9,10 +9,14 @@
 чтобы не копить ленту.
 
 Режимы:
-  notify.py [--quiet] <заголовок> [<текст>]
+  notify.py [--quiet] [--reason <повод>] <заголовок> [<текст>]
                                     позвать уведомитель из чего угодно: скрипт
                                     выката, другой харнес, проверка расписания;
-                                    --quiet понижает повод до фонового
+                                    --quiet понижает повод до фонового, а
+                                    --reason называет повод словом для журнала
+                                    (goal_stop, wait_human, task_check), по
+                                    которому лента дашборда отличает стоп цикла
+                                    от завершённой задачи
   notify.py --hook [протокол]       хук харнеса: событие читается со stdin,
                                     разбирается по имени протокола таблицей
                                     hookio.py (голый --hook это claude-code), а
@@ -44,8 +48,10 @@
 утилита.
 
 Журнал последних отправок лежит в ~/.devkit/notify.log: время, сессия, повод,
-уровень, бэкенд, цель перехода и код возврата. Жалоба «уведомления не приходят»
-разбирается по нему, как и «важное не отличается от фонового».
+уровень, бэкенд, цель перехода, код возврата и хвостом текст баннера
+заголовком и телом в ёлочках. Жалоба «уведомления не приходят» разбирается по
+нему, как и «важное не отличается от фонового»; текстом хвоста живёт лента
+дашборда, которой строка без слов ничего не говорит.
 """
 import hashlib
 import json
@@ -533,12 +539,31 @@ def sandbox_reason(cwd, env=None):
     return None
 
 
-def log(session, key, backend, result, target=None, level=None):
+def one_line(text):
+    """Текст одной строкой без ёлочек: ими в журнале обрамлён сам текст, и
+    своя ёлочка внутри развалила бы разбор хвоста."""
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.split()).replace("«", "<").replace("»", ">")
+
+
+def log_text(title, body):
+    """Хвост строки журнала с текстом баннера. Пусто, когда текста нет: строка
+    тогда выглядит как раньше, и разбор хвоста ищет его по метке «текст»."""
+    title, body = one_line(title), one_line(body)
+    if not title and not body:
+        return ""
+    return " текст «%s» «%s»" % (title, body)
+
+
+def log(session, key, backend, result, target=None, level=None,
+        title=None, body=None):
     d = os.path.join(os.path.expanduser("~"), ".devkit")
     path = os.path.join(d, "notify.log")
-    line = "%s сессия %s повод %s уровень %s бэкенд %s цель %s %s\n" % (
+    line = "%s сессия %s повод %s уровень %s бэкенд %s цель %s %s%s\n" % (
         time.strftime("%Y-%m-%dT%H:%M:%S"), session or "-", key or "-",
-        level or "-", backend or "-", target[1] if target else "-", result)
+        level or "-", backend or "-", target[1] if target else "-", result,
+        log_text(title, body))
     try:
         os.makedirs(d, exist_ok=True)
         if os.path.exists(path) and os.path.getsize(path) > LOG_LIMIT:
@@ -566,14 +591,16 @@ def deliver(title, body, session="-", key="-", target=None, level=LOUD):
     """Отправить и записать в журнал. Возврат (бэкенд, код возврата)."""
     backend = pick_backend()
     if not backend:
-        log(session, key, None, "бэкенда нет: слать нечем", level=level)
+        log(session, key, None, "бэкенда нет: слать нечем", level=level,
+            title=title, body=body)
         return None, None
     # В журнал идёт цель, которая реально уехала: бэкенд без клика её не берёт,
     # и жалоба «клик не работает» тогда разбирается по строке, а не на глаз.
     sent = target if supports_click(backend) else None
     code = send(backend, title, body, sent, level, session)
     log(session, key, backend,
-        "код возврата: %s" % ("не запустился" if code is None else code), sent, level)
+        "код возврата: %s" % ("не запустился" if code is None else code), sent, level,
+        title, body)
     return backend, code
 
 
@@ -611,15 +638,18 @@ def run_hook(protocol):
         # на каждого субагента ни к чему.
         state = focus_state(root)
         if state == FOCUS_SESSION:
-            log(session, key, None, "пропуск: окно сессии в фокусе", level=level)
+            log(session, key, None, "пропуск: окно сессии в фокусе", level=level,
+                title=title, body=body)
             return 0
         if state == FOCUS_UNKNOWN:
             # Тишина тут хуже лишнего баннера: она неотличима от штатной работы,
             # а разрешение на управление компьютером выдают не на всякой машине.
-            log(session, key, None, "фокус %s, зовём" % FOCUS_UNKNOWN, level=level)
+            log(session, key, None, "фокус %s, зовём" % FOCUS_UNKNOWN, level=level,
+                title=title, body=body)
     if not allow(session, key):
         log(session, key, None,
-            "пропуск: повтор в окне %dс" % throttle(key)[1], level=level)
+            "пропуск: повтор в окне %dс" % throttle(key)[1], level=level,
+            title=title, body=body)
         return 0
     backend, _ = deliver(title, body, session, key, click_target(cwd=root), level)
     if not backend:
@@ -678,28 +708,39 @@ def main(argv):
     if argv[0] == "--self-test":
         return self_test()
     # Без флага зовущий скрипт считается громким: он зовёт человека к делу, а
-    # не рассказывает о ходе работы. Старые вызовы от этого не меняются.
-    level = LOUD
-    if argv[0] == "--quiet":
-        level, argv = QUIET, argv[1:]
+    # не рассказывает о ходе работы. Повода у аргументного вызова по умолчанию
+    # нет: строка журнала тогда встаёт с прочерком, как раньше, а назвавший
+    # повод словом получает его в журнале и в ленте дашборда.
+    level, key = LOUD, "-"
+    while argv and argv[0] in ("--quiet", "--reason"):
+        if argv[0] == "--quiet":
+            level, argv = QUIET, argv[1:]
+            continue
+        if len(argv) < 2 or not argv[1].strip():
+            sys.stderr.write("notify: --reason ждёт повод словом\n")
+            return 2
+        key, argv = argv[1].strip(), argv[2:]
     if not argv:
         sys.stderr.write(__doc__)
         return 2
     if os.environ.get("DEVKIT_NOTIFY_OFF"):
         return 0
-    reason = sandbox_reason(os.getcwd())
-    if reason:
-        # Молчать про пропуск нельзя: строка уходит и в журнал, и в stdout,
-        # откуда зовущая утилита доносит её до своего вывода.
-        log("-", "-", None, "пропуск: песочница, %s" % reason, level=level)
-        print("уведомление пропущено: %s, звать некого" % reason)
-        return 0
     title = short(argv[0])
     body = short(argv[1]) if len(argv) > 1 else ""
+    sandbox = sandbox_reason(os.getcwd())
+    if sandbox:
+        # Молчать про пропуск нельзя: строка уходит и в журнал, и в stdout,
+        # откуда зовущая утилита доносит её до своего вывода. Повод и текст в
+        # строке остаются: пропущенный баннер это про доставку, а не про то,
+        # что события не было.
+        log("-", key, None, "пропуск: песочница, %s" % sandbox, level=level,
+            title=title, body=body)
+        print("уведомление пропущено: %s, звать некого" % sandbox)
+        return 0
     # Троттлинга тут нет: позвал скрипт, значит шлём. Окно держит поток событий
     # харнеса, а не осознанный вызов.
-    backend, code = deliver(title, body, target=click_target(cwd=os.getcwd()),
-                            level=level)
+    backend, code = deliver(title, body, key=key,
+                            target=click_target(cwd=os.getcwd()), level=level)
     return 0 if backend and code == 0 else 1
 
 

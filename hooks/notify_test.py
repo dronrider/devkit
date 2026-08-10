@@ -1177,6 +1177,66 @@ class TestArgumentMode(HookCase):
         self.assertIn("пропуск: песочница", self.journal())
 
 
+class TestJournalText(unittest.TestCase):
+    """Хвост строки журнала с текстом баннера: по нему лента дашборда
+    показывает, о чём было уведомление, а строка без текста остаётся прежней."""
+
+    def test_title_and_body_go_in_yolki(self):
+        self.assertEqual(notify.log_text("цель DK-112: wait-human", "плановый стоп"),
+                         " текст «цель DK-112: wait-human» «плановый стоп»")
+
+    def test_no_text_leaves_the_line_as_before(self):
+        self.assertEqual(notify.log_text("", ""), "")
+        self.assertEqual(notify.log_text(None, None), "")
+
+    def test_empty_body_keeps_the_pair(self):
+        # Пара ёлочек всегда парой: разбор ищет второй кусок там же, где первый.
+        self.assertEqual(notify.log_text("заголовок", ""), " текст «заголовок» «»")
+
+    def test_own_yolki_do_not_break_the_tail(self):
+        self.assertEqual(notify.log_text("строка «внутри»", "тело"),
+                         " текст «строка <внутри>» «тело»")
+
+    def test_line_breaks_collapse(self):
+        self.assertEqual(notify.one_line("первая\nвторая   строка"), "первая вторая строка")
+
+
+class TestReasonFromArguments(HookCase):
+    """Повод аргументного вызова: без флага прочерк, как раньше, с флагом
+    слово в журнале, по которому лента отличает стоп цикла от задачи."""
+
+    def test_reason_reaches_the_journal(self):
+        r = self.cli("--reason", "goal_stop", "цель XR-100: стоп", "витков 3")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("повод goal_stop", self.journal())
+        self.assertIn("текст «цель XR-100: стоп» «витков 3»", self.journal())
+
+    def test_without_the_flag_the_reason_stays_a_dash(self):
+        r = self.cli("заголовок", "тело")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("повод - ", self.journal())
+
+    def test_reason_goes_with_quiet(self):
+        r = self.cli("--quiet", "--reason", "task_check", "XR-5 в Check", "проверка за тобой")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("повод task_check уровень фоновый", self.journal())
+
+    def test_reason_without_a_word_is_red(self):
+        r = self.cli("--reason")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--reason ждёт повод", r.stderr)
+
+    def test_sandbox_skip_keeps_the_reason_and_text(self):
+        # Пропущенный баннер это про доставку: событие было, и в ленте оно
+        # обязано остаться со своим поводом.
+        r = self.cli("--reason", "run_stop", "стоп из дашборда", "сессия снята",
+                     cwd=self.tmp, TMPDIR=self.tmp)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("повод run_stop", self.journal())
+        self.assertIn("пропуск: песочница", self.journal())
+        self.assertIn("текст «стоп из дашборда» «сессия снята»", self.journal())
+
+
 class TestSelfTest(HookCase):
     """Самопроверка говорит, чем именно послано, и краснеет, когда слать
     нечем."""

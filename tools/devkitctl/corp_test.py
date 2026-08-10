@@ -568,6 +568,8 @@ class InteractiveCorpTest(SandboxCase):
         self.assertEqual(rc, 2, "headless-прогон без префикса прошёл: %s" % out)
         self.assertIn_("без tty", out, "отказ без tty не назвал причину")
         self.assertIn_("--prefix", out, "отказ без tty не назвал флаг")
+        self.assertNotIn_("лягут в боковую директорию", out,
+                          "отказ без tty рассказал про боковую директорию, которой не завёл")
         self.assertFalse((self.box.root / "corp-headless-local" / "docs" / "TASKS.md").exists(),
                          "отказавший headless-прогон завёл доску")
 
@@ -577,6 +579,10 @@ class InteractiveCorpTest(SandboxCase):
         self.assertEqual(rc, 0, "headless-прогон с флагами не прошёл: %s" % out)
         self.assertIn_("заполнить base_url, user", out,
                        "headless-прогон перестал звать заполнить контур")
+        # Прогон, который и правда заводит доску, про боковую директорию говорит
+        # и без tty: вопросов там нет, а место рабочих файлов от этого не зависит.
+        self.assertIn_("лягут в боковую директорию", out,
+                       "headless-прогон промолчал о том, куда лягут доска и файлы задач")
         self.assertRegex(read(self.box.home / ".devkit" / "tracker" / "headcorp.local"),
                          r'(?m)^base_url = ""$', "болванка контура заполнилась без ответов")
 

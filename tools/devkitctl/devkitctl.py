@@ -1914,16 +1914,20 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     board = local / "docs" / "TASKS.md"
     # Про место рабочих файлов первый прогон говорит до вопросов, а не строкой
     # отчёта в конце: человек зовёт corp из клона и вправе ждать, что доска
-    # заведётся тут же, а она ложится сбоку.
-    if not board.exists():
-        print("доска и файлы задач лягут в боковую директорию %s, а не в клон: рабочим файлам "
-              "devkit в корп-репозитории не место, в клоне остаётся одна обвязка." % local)
+    # заведётся тут же, а она ложится сбоку. Печатается это тому, кому есть что
+    # ответить, а в headless-прогоне откладывается до места, где ясно, что
+    # прогон продолжится: отказ без --prefix там молчит в stdout, как раньше.
+    first = not board.exists()
+    announce = ("доска и файлы задач лягут в боковую директорию %s, а не в клон: рабочим файлам "
+                "devkit в корп-репозитории не место, в клоне остаётся одна обвязка." % local)
+    if first and corp.interactive():
+        print(announce)
     # Префикс доски, совпавший с ключом проекта в трекере, снимает правило про
     # локальный ID: рубеж следов не отличает ID строки доски от ключа тикета
     # (DK-124). На заведённой доске это уже находка доктора, а на незаведённой
     # префикс ещё выбирается, и дешевле остановиться здесь.
     bound_key = key or corp.tracker_value(local, "key", DEVKIT)
-    if not board.exists() and not prefix:
+    if first and not prefix:
         prefix = ask_prefix(clone.name, bound_key)
         if not prefix and corp.interactive():
             sys.stderr.write("годный префикс доски так и не назван, повторить corp "
@@ -1934,11 +1938,13 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
                              "прогон его не спрашивает\n" % local)
             return 2
     if prefix and bound_key and prefix == bound_key.upper():
-        if not board.exists():
+        if first:
             sys.stderr.write(PREFIX_CLASH % prefix + ", взять другой --prefix\n")
             return 2
         sys.stderr.write("предупреждение: префикс доски %s совпадает с ключом проекта в трекере, "
                          "рубеж следов на этой паре правило про локальный ID снимает\n" % prefix)
+    if first and not corp.interactive():
+        print(announce)
     answers = ask_contour(contour) if contour else {}
     done = []
     if not local.is_dir():

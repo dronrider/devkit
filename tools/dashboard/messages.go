@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,6 +24,10 @@ const inboxHeader = "## Входящие"
 // заводит, и первый POST ставит его перед «Журналом», рядом с которым
 // сообщения и читаются.
 const journalHeader = "## Журнал"
+
+// msgBodyLimit ограничивает тело POST message: сообщение это одна строка
+// списка витку, а не вложение; тело сверх предела отбивается своими словами.
+const msgBodyLimit = 16 << 10
 
 // addInboxLine дописывает строку в конец «Входящих»; без раздела заводит его
 // перед «Журналом», а без «Журнала» в конце файла.
@@ -172,7 +177,15 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		// Тело сверх предела это своя причина, а не «жду JSON»: JSON там мог
+		// быть нормальный.
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во «Входящие» кладётся короткая строка витку", msgBodyLimit/1024)})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}

@@ -550,7 +550,8 @@ async function wireChatFeed(project, feed) {
 }
 
 // Лежащие во «Входящих» строки: сообщение отправлено, но виток его ещё не
-// подхватил, и это честно называется ожиданием.
+// подхватил, и это честно называется ожиданием. Пустой раздел тоже говорит
+// словами: пустая коробка неотличима от неотрисованной.
 async function loadPending(project, id, box) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/goals/" + encodeURIComponent(id) + "/message");
@@ -559,7 +560,12 @@ async function loadPending(project, id, box) {
     box.append(el("div", "error", r.body.error || "«Входящие» не прочитались"));
     return;
   }
-  for (const line of r.body.pending || []) {
+  const pending = r.body.pending || [];
+  if (!pending.length) {
+    box.append(el("div", "empty", r.body.note || "во «Входящих» пусто: непрочитанных сообщений нет"));
+    return;
+  }
+  for (const line of pending) {
     box.append(chatBubble("вы", line, "ждёт витка: лежит во «Входящих» файла цели"));
   }
 }

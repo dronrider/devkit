@@ -38,6 +38,13 @@ DoD: стенд отработал.
 Пишет последний виток.
 `
 
+const taskFileFixture = `# XR-002: Обычная задача
+
+## Чего хотим
+
+Задача не цель, сообщений ей не кладут.
+`
+
 // gitFakeOK пишет каждый вызов в журнал и молчит: с точки зрения сервера
 // add, commit и push прошли.
 func gitFakeOK(logPath string) string {
@@ -60,6 +67,12 @@ func messagesEnv(t *testing.T, gitBody string) (*testEnv, *http.Client, string) 
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "XR-100.md"), []byte(goalFileFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// У обычной задачи XR-002 файл есть: без него отказ «не цель» был бы
+	// неотличим от отказа «файла нет», и стенд не доказывал бы защиту чужого
+	// файла.
+	if err := os.WriteFile(filepath.Join(dir, "XR-002.md"), []byte(taskFileFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return e, e.loggedClient(t), gitLog
@@ -160,6 +173,11 @@ func TestMessageRefusals(t *testing.T) {
 			t.Errorf("%s: %d %s, ожидал %d с %q", tc.name, resp.StatusCode, text, tc.code, tc.want)
 		}
 	}
+	// Отказ «не цель» бережёт чужой файл: сообщение в файл обычной задачи не
+	// легло, файл остался фикстурой байт в байт.
+	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "XR-002.md")); doc != taskFileFixture {
+		t.Errorf("отказ «не цель» тронул файл обычной задачи:\n%s", doc)
+	}
 	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "XR-100.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +188,35 @@ func TestMessageRefusals(t *testing.T) {
 	}
 	if git := readFile(t, gitLog); strings.Contains(git, "commit") {
 		t.Errorf("отказ дошёл до git commit: %s", git)
+	}
+}
+
+// Предел тела называется своими словами, а не «жду JSON»: JSON сверх предела
+// был нормальный. Под пределом сообщение проходит как обычно.
+func TestMessageBodyLimit(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+
+	under := strings.Repeat("а", 4000)
+	resp := postMessage(t, c, e, "XR-100", under)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("сообщение под пределом: %d %s", resp.StatusCode, text)
+	}
+	doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "XR-100.md"))
+	if !strings.Contains(doc, "из дашборда: "+under) {
+		t.Errorf("сообщение под пределом не легло во «Входящие»")
+	}
+
+	resp = postMessage(t, c, e, "XR-100", strings.Repeat("б", 20000))
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("тело сверх предела: %d %s, ожидал 400", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "предела 16 КБ") {
+		t.Errorf("отказ не называет предел: %s", text)
+	}
+	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "XR-100.md")); strings.Contains(doc, "ббб") {
+		t.Errorf("тело сверх предела дописало файл цели")
 	}
 }
 
@@ -290,6 +337,7 @@ func TestStaticChatHonesty(t *testing.T) {
 		"идущий виток его не увидит",
 		"ждёт витка",
 		"Стоп цикла",
+		"во «Входящих» пусто",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет честной надписи %q", want)

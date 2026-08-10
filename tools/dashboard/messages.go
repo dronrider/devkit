@@ -149,22 +149,6 @@ func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Projec
 	return found, id, path, true
 }
 
-// commitGoalFile коммитит и пушит правку файла цели, как положено правке
-// docs/tasks/. Провал возвращается словами, а не кодом ошибки: запись уже на
-// месте, и виток этой машины её прочитает и так.
-func commitGoalFile(dir, rel, msg string) string {
-	for _, args := range [][]string{
-		{"add", "--", rel},
-		{"commit", "-m", msg, "--", rel},
-		{"push"},
-	} {
-		if _, err := runProc("git", append([]string{"-C", dir}, args...)...); err != nil {
-			return fmt.Sprintf("запись на месте, но git %s не прошёл: %s", args[0], procErr(err))
-		}
-	}
-	return ""
-}
-
 func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -212,8 +196,8 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		"message": fmt.Sprintf("сообщение легло во «Входящие» файла цели %s: его прочитает следующий виток, идущий не увидит", id),
 	}
 	rel := filepath.ToSlash(filepath.Join("docs", "tasks", id+".md"))
-	if note := commitGoalFile(found.Path, rel,
-		fmt.Sprintf("docs(tasks): %s сообщение с дашборда во «Входящие»", id)); note != "" {
+	if note := commitDocs(found.Path,
+		fmt.Sprintf("docs(tasks): %s сообщение с дашборда во «Входящие»", id), rel); note != "" {
 		resp["note"] = note
 		s.logf("сообщение для %s в %s: %s", id, found.Name, note)
 	}

@@ -177,19 +177,196 @@ function renderBoard(project, board) {
   }
 }
 
-function findBoardRow(board, id) {
-  for (const sec of board.sections || []) {
-    for (const row of sec.rows || []) {
-      if (row.id === id) return { row, section: sec.title };
-    }
-  }
-  return null;
+// Слагаемые ранга по RANKING.md: имя, короткая подсказка и допустимые
+// значения. Правятся по месту списком, а не полем ввода: на телефоне это
+// родной барабан, и невозможного значения в списке просто нет. Сумму R и
+// бакет P считает taskctl, экран их не пересчитывает.
+const RANK_PARTS = [
+  {
+    name: "Серьёзность",
+    why: "ущерб, если не делать: 75 пользоваться нельзя, 50 основной сценарий сломан, 25 заметное трение, 0 косметика",
+    values: [0, 25, 50, 75],
+  },
+  {
+    name: "Ценность",
+    why: "чистая польза: 8-10 ради этого и затевается, 4-7 ощутимое улучшение, 1-3 небольшое удобство",
+    values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  },
+  {
+    name: "Неопределённость",
+    why: "сколько разбираться до исполнения: 5 нужен спайк, 3 развилки в деталях, 1 всё ясно; стык сервер-клиент это минимум 3",
+    values: [0, 1, 2, 3, 4, 5],
+  },
+  {
+    name: "Поправка на баг",
+    why: "5, если чинится дефект или регресс, а не делается новое",
+    values: [0, 5],
+  },
+  {
+    name: "Рычаг",
+    why: "будущая работа: 5 разблокирует чужую, 4 ускоряет свою и агента, 2 небольшая своя польза",
+    values: [0, 1, 2, 3, 4, 5],
+  },
+];
+const COST_VALUES = ["-", "S", "M", "L", "XL"];
+const TYPE_VALUES = ["task", "bug", "LLD"];
+
+// Правки строки, зависимостей и файла: всё уходит в API, а тот зовёт taskctl.
+// Ответ показывается словами, и удача, и отказ утилиты (кривая разбивка
+// ранга, цикл зависимостей). После удачной правки экран перечитывает данные:
+// порядок строк на доске выводится из ранга и мог поехать.
+async function sendTaskEdit(path, method, body) {
+  const r = await api(path, { method, body });
+  let said = r.body.message || r.body.error || "";
+  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+  sayResult(said, !r.ok);
+  if (r.ok) await refresh();
+  return r.ok;
 }
 
-// Экран задачи по макету DK-216 («02 Задача»): шапка со строкой доски и
-// карточка действия. Запуск поднимает цель оболочкой goal-run, задачу
-// headless-сессией конвейера; стоп снимает tmux-сессию.
-function renderTask(project, board, works, id) {
+function taskPath(project, id, tail) {
+  return "/api/projects/" + encodeURIComponent(project) + "/tasks/" + encodeURIComponent(id) + (tail || "");
+}
+
+async function patchTask(project, id, body) {
+  sayResult("правка " + id + "...");
+  return sendTaskEdit(taskPath(project, id), "PATCH", body);
+}
+
+async function addDep(project, id, dep) {
+  sayResult(id + " после " + dep + "...");
+  return sendTaskEdit(taskPath(project, id, "/deps"), "POST", { id: dep });
+}
+
+async function dropDep(project, id, dep) {
+  sayResult("снятие зависимости " + id + " от " + dep + "...");
+  return sendTaskEdit(taskPath(project, id, "/deps/" + encodeURIComponent(dep)), "DELETE");
+}
+
+async function makeTaskFile(project, id) {
+  sayResult("заведение файла задачи " + id + "...");
+  return sendTaskEdit(taskPath(project, id, "/file"), "POST", {});
+}
+
+async function saveTaskFile(project, id, text) {
+  sayResult("запись файла задачи " + id + "...");
+  return sendTaskEdit(taskPath(project, id, "/file"), "PUT", { text });
+}
+
+// Значение, правимое по месту: подпись и список допустимых значений.
+function pickField(label, values, cur, onPick) {
+  const wrap = el("label", "pick");
+  if (label) wrap.append(el("span", "pl", label));
+  const sel = el("select");
+  for (const v of values) {
+    const opt = el("option", "", String(v));
+    opt.value = String(v);
+    opt.selected = String(v) === String(cur);
+    sel.append(opt);
+  }
+  sel.addEventListener("change", () => { onPick(sel.value).catch(console.error); });
+  wrap.append(sel);
+  return wrap;
+}
+
+function depRow(project, id, side, dep) {
+  const row = el("div", "drow");
+  row.append(el("span", "id", dep.id));
+  row.append(el("span", "dt", dep.title || dep.note || ""));
+  if (dep.section) {
+    row.append(el("span", "chip" + (dep.sect === "in-progress" ? " c-run" : ""), dep.section));
+  }
+  if (dep.r) {
+    const rank = el("span", "rank");
+    rank.append(el("b", "", String(dep.r)));
+    row.append(rank);
+  }
+  const drop = el("button", "btn btn-sm", "Снять");
+  drop.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // «Держит» это та же зависимость с другой стороны: снимается она у той
+    // строки, в чьём заголовке стоит маркер [после ...].
+    const call = side === "after" ? dropDep(project, id, dep.id) : dropDep(project, dep.id, id);
+    call.catch(console.error);
+  });
+  row.append(drop);
+  row.addEventListener("click", () => { location.hash = project + "/" + dep.id; });
+  return row;
+}
+
+// Карточка зависимостей в обе стороны по макету «02 Задача»: кого ждёт строка
+// и кто ждёт её. Обе стороны живут на доске одним маркером [после ...],
+// поэтому «держит» это обратный поиск, а не вторая запись.
+function depsCard(project, id, after, blocks) {
+  const card = el("div", "card");
+  card.append(el("div", "dhead", "После, ждёт их"));
+  if (!after.length) card.append(el("div", "empty", "Никого не ждёт."));
+  for (const dep of after) card.append(depRow(project, id, "after", dep));
+
+  const add = el("div", "dadd");
+  const inp = el("input");
+  inp.placeholder = "DK-NNN";
+  inp.setAttribute("aria-label", "ID задачи, после которой делается эта");
+  const btn = el("button", "btn btn-sm", "Добавить");
+  const send = () => {
+    const dep = inp.value.trim().toUpperCase();
+    if (dep) addDep(project, id, dep).catch(console.error);
+  };
+  btn.addEventListener("click", send);
+  inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(); });
+  add.append(inp, btn);
+  card.append(add);
+
+  card.append(el("div", "dhead", "Держит, ждут её"));
+  if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
+  for (const dep of blocks) card.append(depRow(project, id, "blocks", dep));
+  return card;
+}
+
+// Панель файла задачи: текст как есть, правка целиком, а заведение файла
+// остаётся за taskctl (та же команда чинит ссылку в строке доски).
+function filePanel(project, id, detail) {
+  const card = el("div", "card fpanel");
+  const head = el("div", "fhead");
+  head.append(el("b", "", detail.file || "docs/tasks/" + id + ".md"));
+  head.append(el("span", "gap"));
+  const body = el("div", "fbody");
+  card.append(head, body);
+
+  if (!detail.file) {
+    const make = el("button", "btn btn-sm", "Завести файл");
+    make.addEventListener("click", () => { makeTaskFile(project, id).catch(console.error); });
+    head.append(make);
+    body.append(el("div", "empty", detail.note || "файла задачи нет"));
+    return card;
+  }
+  const show = () => {
+    body.replaceChildren(el("pre", "ftext", detail.text || ""));
+  };
+  const edit = el("button", "btn btn-sm", "Править");
+  head.append(edit);
+  edit.addEventListener("click", () => {
+    const ta = el("textarea");
+    ta.value = detail.text || "";
+    const row = el("div", "frow");
+    const save = el("button", "btn btn-acc btn-sm", "Сохранить");
+    save.addEventListener("click", () => { saveTaskFile(project, id, ta.value).catch(console.error); });
+    const cancel = el("button", "btn btn-sm", "Отмена");
+    cancel.addEventListener("click", show);
+    row.append(cancel, save);
+    body.replaceChildren(ta, row);
+    ta.focus();
+  });
+  show();
+  return card;
+}
+
+// Экран задачи по макету DK-216 («02 Задача»): шапка со строкой доски,
+// карточка действия, ранг со слагаемыми и зависимости в обе стороны. Строку
+// правит taskctl на стороне сервера, поэтому правится ровно то, что есть в
+// строке: заголовок, тип, слагаемые ранга и цена; порядок строк выводится из
+// ранга, перетаскивания мимо ранга нет.
+async function renderTask(project, works, id) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
 
@@ -197,27 +374,53 @@ function renderTask(project, board, works, id) {
   const back = el("span", "crumb-back", "Доска " + project);
   back.addEventListener("click", () => { location.hash = project; });
   crumb.append(back);
-  const hit = findBoardRow(board, id);
-  if (hit) crumb.append(el("span", "chip", hit.section));
   groups.append(crumb);
 
-  if (!hit) {
+  const r = await api(taskPath(project, id));
+  if (!r.ok) {
     const card = el("div", "card");
-    card.append(el("div", "error", "на доске " + project + " нет строки " + id));
+    card.append(el("div", "error", r.body.error || "строка не прочиталась"));
     groups.append(card);
     return;
   }
-  const row = hit.row;
+  const detail = r.body;
+  const row = detail.row || {};
+  if (row.section) crumb.append(el("span", "chip", row.section));
+  const stale = (row.notes || []).find((n) => /не двигалась/.test(n));
+  if (stale) crumb.append(el("span", "stale", stale));
+
   const head = el("div", "thead");
   head.append(el("span", "idbig", row.id));
-  head.append(el("h2", "", row.title));
+  const title = el("h2", "", row.title);
+  head.append(title);
+  const rename = el("button", "btn btn-sm", "Править");
+  rename.addEventListener("click", () => {
+    const ta = el("textarea", "tedit");
+    ta.value = row.title;
+    const save = el("button", "btn btn-acc btn-sm", "Сохранить");
+    save.addEventListener("click", () => {
+      const text = ta.value.trim();
+      if (text && text !== row.title) patchTask(project, id, { title: text }).catch(console.error);
+    });
+    const cancel = el("button", "btn btn-sm", "Отмена");
+    cancel.addEventListener("click", () => { renderTask(project, works, id).catch(console.error); });
+    head.replaceChildren(el("span", "idbig", row.id), ta, cancel, save);
+    ta.focus();
+  });
+  head.append(rename);
   groups.append(head);
+
   const chips = el("div", "tchips");
-  for (const chip of rowChips(row)) chips.append(chip);
-  const rank = el("span", "rank");
-  rank.append(el("b", "", String(row.r)));
-  rank.append(document.createTextNode(" " + (row.r_parts || []).join("+")));
-  chips.append(rank);
+  if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
+  chips.append(pickField("тип", TYPE_VALUES, row.type, (v) => patchTask(project, id, { type: v })));
+  chips.append(pickField("цена", COST_VALUES, row.cost, (v) => patchTask(project, id, { cost: v })));
+  if (row.p === "P0" || row.p === "P1") chips.append(el("span", "chip c-p1", row.p));
+  else chips.append(el("span", "chip", row.p));
+  if (row.fail) chips.append(el("span", "chip c-block", "провал: " + row.fail));
+  if (row.block) chips.append(el("span", "chip c-block", "блок: " + row.block));
+  for (const note of row.notes || []) {
+    if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
+  }
   groups.append(chips);
 
   const isGoal = /^Цель:/.test(row.title);
@@ -249,7 +452,36 @@ function renderTask(project, board, works, id) {
       ? "Цель поднимет оболочка goal-run в tmux-сессии goal-" + id + "."
       : "Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + "."));
   }
-  groups.append(act);
+
+  const rank = el("div", "card");
+  const rhead = el("div", "rhead");
+  rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
+  rank.append(rhead);
+  const big = el("div", "rbig");
+  big.append(el("span", "v", String(row.r)));
+  big.append(el("span", "f", "= " + (row.r_parts || []).join("+")));
+  rank.append(big);
+  RANK_PARTS.forEach((part, i) => {
+    const line = el("div", "rrow");
+    line.append(el("span", "nm", part.name));
+    line.append(el("span", "why", part.why));
+    line.append(pickField("", part.values, (row.r_parts || [])[i], (v) => {
+      // Правится одно слагаемое, остальные остаются прежними: пропущенное
+      // сервер берёт из строки, а не считает нулём.
+      const parts = [null, null, null, null, null];
+      parts[i] = Number(v);
+      return patchTask(project, id, { r_parts: parts });
+    }));
+    rank.append(line);
+  });
+  rank.append(el("div", "rnote",
+    "Порядок в Backlog выводится из ранга: правятся слагаемые, перетаскивания мимо ранга нет."));
+
+  const rail = el("div", "rrail");
+  rail.append(act, rank, depsCard(project, id, detail.after || [], detail.blocks || []));
+  const grid = el("div", "tgrid");
+  grid.append(filePanel(project, id, detail), rail);
+  groups.append(grid);
 }
 
 // Живые потоки экрана агента: EventSource журнала и транскрипта, таймер
@@ -688,7 +920,7 @@ async function refresh() {
   }
   if (rt.id) {
     document.getElementById("psub").textContent = rt.id;
-    renderTask(current.name, board, r.body.works, rt.id);
+    await renderTask(current.name, r.body.works, rt.id);
     return;
   }
   document.getElementById("psub").textContent =

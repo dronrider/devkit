@@ -71,6 +71,23 @@ func runProc(name string, args ...string) ([]byte, error) {
 	return out, err
 }
 
+// commitDocs коммитит и пушит правку доски или файла задачи: доска это общий
+// источник правды, и отставший remote оборачивается конфликтами (ядро правил
+// доски). Провал возвращается словами, а не кодом ошибки: правка уже на
+// месте, и утилита с витком видят её и без коммита.
+func commitDocs(dir, msg string, paths ...string) string {
+	for _, args := range [][]string{
+		append([]string{"add", "--"}, paths...),
+		append([]string{"commit", "-m", msg, "--"}, paths...),
+		{"push"},
+	} {
+		if _, err := runProc("git", append([]string{"-C", dir}, args...)...); err != nil {
+			return fmt.Sprintf("запись на месте, но git %s не прошёл: %s", args[0], procErr(err))
+		}
+	}
+	return ""
+}
+
 func taskctlMissing() string {
 	if taskctlPath() == "" {
 		return "taskctl не нашёлся ни рядом с бинарём дашборда, ни в PATH: доски не читаются, " +

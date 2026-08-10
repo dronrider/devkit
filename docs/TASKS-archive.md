@@ -155,3 +155,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-126 | hook_events падает traceback на структурно необычном hooks-JSON | bug | P2 | 2026-08-10 | [tasks/archive/2026/DK-126.md](tasks/archive/2026/DK-126.md), `982e67d`, `ff82475`, `1b0b3b5` |
 | DK-228 | Рубеж чтения секретов: permissions.deny и PreToolUse-хук на Bash | task | P1 | 2026-08-10 | [tasks/archive/2026/DK-228.md](tasks/archive/2026/DK-228.md), `6a73980`, `be786fc`, `1ac22b3`, `4d586a4` |
 | DK-222 | Лента уведомлений дашборда и smoke агентской части DoD | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-222.md](tasks/archive/2026/DK-222.md) |
+| DK-099 | taskctl: разбор аргументов подкоманд молча теряет данные (позиционный после флага, имя несуществующей подкоманды) | bug | P2 | 2026-08-10 | [tasks/archive/2026/DK-099.md](tasks/archive/2026/DK-099.md), `9b44437`, `7b4e34c`, `474e653` |

@@ -1,0 +1,1 @@
+{"session_id":"a1b2c3d4-0000-0000-0000-000000000000","transcript_path":"/Users/rider/.claude/projects/-private-tmp-proj/a1b2c3d4-0000-0000-0000-000000000000.jsonl","cwd":"/private/tmp/proj","prompt_id":"00000000-0000-0000-0000-000000000001","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat ~/.claude/access.local.md"}}

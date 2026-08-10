@@ -30,12 +30,16 @@ async function api(path, opts) {
 }
 
 // Хэш это экран: "#проект" доска, "#проект/DK-NNN" задача,
-// "#проект/agent/DK-NNN" живой статус агента.
+// "#проект/agent/DK-NNN" живой статус агента, "#проект/chat/DK-NNN"
+// переписка с агентом цели.
 function route() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ""));
   const parts = h.split("/");
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
+  }
+  if (parts.length >= 3 && parts[1] === "chat") {
+    return { proj: parts[0], id: parts[2], chat: true };
   }
   const cut = h.indexOf("/");
   if (cut < 0) return { proj: h, id: "" };
@@ -223,6 +227,11 @@ function renderTask(project, board, works, id) {
     const live = el("button", "btn", "Живой статус");
     live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
     act.append(live);
+  }
+  if (isGoal) {
+    const chat = el("button", "btn", "Переписка");
+    chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
+    act.append(chat);
   }
   if (work && work.via === "tmux") {
     const stop = el("button", "btn", "Стоп");
@@ -429,6 +438,11 @@ function renderAgent(project, works, id) {
   } else {
     head.append(el("span", "chip", "работа не идёт"));
   }
+  if (!work || work.kind === "goal") {
+    const chat = el("button", "btn", "Переписка");
+    chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
+    head.append(chat);
+  }
   groups.append(head);
 
   const jp = pane("Журнал цикла", ".devkit/goal-" + id + ".log");
@@ -459,6 +473,168 @@ function renderAgent(project, works, id) {
   wireJournal(project, id, jp.body);
   wireTranscript(project, tp).catch(console.error);
   wireTmux(id, tm, tmSub);
+}
+
+// Экран переписки по макету DK-216 («04 Переписка»). Ход и ответы читаются
+// из транскрипта свежей сессии проекта (API DK-219), а сообщение человека
+// уходит в раздел «Входящие» файла цели: писать в идущий процесс механики
+// нет, сообщение прочитает следующий виток, и надпись говорит это прямо.
+function dayEl(date) {
+  const day = el("div", "day");
+  day.append(el("i"), document.createTextNode(date), el("i"));
+  return day;
+}
+
+function chatBubble(who, text, meta) {
+  const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
+  wrap.append(el("div", "bb", text));
+  wrap.append(el("div", "mm", who + ", " + meta));
+  return wrap;
+}
+
+// Лента переписки: текстовые реплики человека и агента, без свёрнутых
+// инструментов и размышлений, дострение через SSE. Пустоты различимы:
+// «цель не гонялась» (сессий нет) и «в транскрипте нет реплик» это разные
+// слова.
+async function wireChatFeed(project, feed) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/sessions");
+  if (!r.ok) {
+    say(feed, "error", r.body.error || "сессии не прочитались");
+    return;
+  }
+  const list = r.body.sessions || [];
+  if (!list.length) {
+    say(feed, "empty", "цель не гонялась: " + (r.body.note || "транскриптов сессий нет"));
+    return;
+  }
+  const sid = list[0].id;
+  let lastSeq = -1;
+  let lastDay = "";
+  const append = (item) => {
+    if ((item.role !== "user" && item.role !== "assistant") || !item.text) return false;
+    const day = (item.time || "").slice(0, 10);
+    if (day && day !== lastDay) {
+      feed.append(dayEl(day));
+      lastDay = day;
+    }
+    const when = item.time ? item.time.slice(11, 16) + ", " : "";
+    feed.append(chatBubble(item.role === "user" ? "вы" : "агент", item.text, when + "из транскрипта"));
+    return true;
+  };
+  const first = await api("/api/projects/" + encodeURIComponent(project) +
+    "/sessions/" + encodeURIComponent(sid) + "?n=500");
+  if (first.ok) {
+    for (const item of first.body.items || []) {
+      lastSeq = item.seq;
+      append(item);
+    }
+  }
+  if (!feed.childElementCount) {
+    say(feed, "empty", (first.ok && first.body.note) ||
+      "переписки пока нет: в транскрипте нет текстовых реплик");
+  }
+  feed.scrollTop = feed.scrollHeight;
+  const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
+    "/sessions/" + encodeURIComponent(sid) + "?stream=1");
+  agentLive.push(() => es.close());
+  es.onmessage = (ev) => {
+    const item = JSON.parse(ev.data);
+    if (item.seq <= lastSeq) return;
+    lastSeq = item.seq;
+    if (feed.firstChild && feed.firstChild.className === "empty") {
+      feed.replaceChildren();
+      lastDay = "";
+    }
+    if (append(item)) feed.scrollTop = feed.scrollHeight;
+  };
+}
+
+// Лежащие во «Входящих» строки: сообщение отправлено, но виток его ещё не
+// подхватил, и это честно называется ожиданием.
+async function loadPending(project, id, box) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/goals/" + encodeURIComponent(id) + "/message");
+  box.replaceChildren();
+  if (!r.ok) {
+    box.append(el("div", "error", r.body.error || "«Входящие» не прочитались"));
+    return;
+  }
+  for (const line of r.body.pending || []) {
+    box.append(chatBubble("вы", line, "ждёт витка: лежит во «Входящих» файла цели"));
+  }
+}
+
+async function sendMessage(project, id, ta, pendbox) {
+  const text = ta.value.trim();
+  if (!text) return;
+  sayResult("отправка сообщения для " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/goals/" + encodeURIComponent(id) + "/message",
+    { method: "POST", body: { text } });
+  let said = r.body.message || r.body.error || "";
+  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+  sayResult(said, !r.ok);
+  if (r.ok) {
+    ta.value = "";
+    await loadPending(project, id, pendbox);
+  }
+}
+
+function renderChat(project, works, id) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+
+  const crumb = el("div", "crumb");
+  const back = el("span", "crumb-back", "Доска " + project);
+  back.addEventListener("click", () => { location.hash = project; });
+  crumb.append(back);
+  groups.append(crumb);
+
+  const work = (works || []).find((w) => w.id === id);
+  const head = el("div", "ahead");
+  if (work) head.append(el("span", "dot pulse"));
+  head.append(el("h2", "", "goal-" + id));
+  if (work && work.via === "tmux") {
+    head.append(el("span", "chip c-run", "цикл идёт"));
+  } else if (work) {
+    head.append(el("span", "chip", "ведётся снаружи"));
+  } else {
+    head.append(el("span", "chip", "цикл не идёт"));
+  }
+  groups.append(head);
+
+  const thread = el("div", "chatwrap");
+  const feed = el("div", "msgs");
+  const pendbox = el("div", "msgs");
+  thread.append(feed, pendbox);
+
+  const note = el("div", "cnote");
+  note.append(el("b", "", "Следующему витку."));
+  note.append(document.createTextNode(
+    " Сообщение ляжет в файл цели и уйдёт следующему витку, идущий виток его не увидит."));
+  thread.append(note);
+
+  const box = el("div", "cbox");
+  const ta = el("textarea");
+  ta.placeholder = "Написать следующему витку...";
+  const row = el("div", "crow");
+  if (work && work.via === "tmux") {
+    const stop = el("button", "btn", "Стоп цикла");
+    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+    row.append(stop);
+  }
+  const send = el("button", "btn btn-acc", "Отправить");
+  send.addEventListener("click", () => { sendMessage(project, id, ta, pendbox).catch(console.error); });
+  row.append(send);
+  box.append(ta, row);
+  thread.append(box);
+  thread.append(el("div", "stopnote",
+    "Стоп цикла это стоп сессии текущего витка; возобновление это новый запуск, " +
+    "и следующий виток прочтёт доску, файл цели и сообщение с диска."));
+  groups.append(thread);
+
+  wireChatFeed(project, feed).catch(console.error);
+  loadPending(project, id, pendbox).catch(console.error);
 }
 
 function showError(text) {
@@ -497,6 +673,11 @@ async function refresh() {
   if (rt.id && rt.agent) {
     document.getElementById("psub").textContent = "живой статус " + rt.id;
     renderAgent(current.name, r.body.works, rt.id);
+    return;
+  }
+  if (rt.id && rt.chat) {
+    document.getElementById("psub").textContent = "переписка " + rt.id;
+    renderChat(current.name, r.body.works, rt.id);
     return;
   }
   if (rt.id) {

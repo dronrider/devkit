@@ -39,6 +39,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/runs", s.auth(s.handleRunStart))
 	mux.HandleFunc("DELETE /api/projects/{p}/runs/{id}", s.auth(s.handleRunStop))
 	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/log", s.auth(s.handleGoalLog))
+	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/message", s.auth(s.handleGoalMessageGet))
+	mux.HandleFunc("POST /api/projects/{p}/goals/{id}/message", s.auth(s.handleGoalMessagePost))
 	mux.HandleFunc("GET /api/projects/{p}/sessions", s.auth(s.handleSessions))
 	mux.HandleFunc("GET /api/projects/{p}/sessions/{sid}", s.auth(s.handleSession))
 	mux.HandleFunc("GET /api/tmux", s.auth(s.handleTmuxList))

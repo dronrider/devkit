@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Ответ taskctl list --json изображает исполняемая фикстура: доска с одной
@@ -33,6 +34,7 @@ type testEnv struct {
 	cfg  *Config
 	home string
 	proj string // путь синтетического проекта
+	bin  string // каталог исполняемых фикстур в PATH
 }
 
 // newTestEnv поднимает сервер на временном доме с синтетическим проектом;
@@ -62,7 +64,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
 	srv := httptest.NewServer(newServer(cfg, os.DirFS("static"), nil).handler())
 	t.Cleanup(srv.Close)
-	return &testEnv{srv: srv, cfg: cfg, home: home, proj: proj}
+	return &testEnv{srv: srv, cfg: cfg, home: home, proj: proj, bin: bin}
 }
 
 // client без редиректов: ответы 302 проверяются как есть.
@@ -295,6 +297,56 @@ func TestLogout(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("после выхода: %d, ожидал 401", resp.StatusCode)
+	}
+}
+
+// Провал входа стоит паузу, она гасит перебор токена; верный вход не ждёт.
+func TestLoginFailurePause(t *testing.T) {
+	e := newTestEnv(t)
+	loginPause = 200 * time.Millisecond
+	t.Cleanup(func() { loginPause = 0 })
+	start := time.Now()
+	resp, err := plainClient().Post(e.srv.URL+"/api/login", "application/json",
+		strings.NewReader(`{"token": "не тот"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	took := time.Since(start)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("чужой токен: %d, ожидал 401", resp.StatusCode)
+	}
+	if took < loginPause {
+		t.Fatalf("провал входа занял %v при паузе %v: перебор токена ничем не гасится", took, loginPause)
+	}
+	start = time.Now()
+	e.loggedClient(t)
+	if took := time.Since(start); took >= loginPause {
+		t.Fatalf("верный вход занял %v: пауза должна стоять только на провале", took)
+	}
+}
+
+// Зависший taskctl оборачивается ошибкой ответа по сроку, а не вечным
+// ожиданием: подвисший подпроцесс не должен держать горутину запроса.
+func TestHungTaskctlAnsweredWithError(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", "sleep 60")
+	old := procTimeout
+	procTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { procTimeout = old })
+
+	c := e.loggedClient(t)
+	start := time.Now()
+	resp, err := c.Get(e.srv.URL + "/api/projects/demo/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := body(t, resp)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("ответ занял %v: срок подпроцесса не сработал", took)
+	}
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "по сроку") {
+		t.Fatalf("зависший taskctl: %d %s, ожидал 502 с ошибкой про срок", resp.StatusCode, text)
 	}
 }
 

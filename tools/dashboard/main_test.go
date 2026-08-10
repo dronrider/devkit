@@ -59,6 +59,18 @@ func TestInodeOf(t *testing.T) {
 	}
 }
 
+// Сервер собирается с пределом на чтение заголовков: без него молчащие
+// соединения висят вечно, а слушает демон все интерфейсы.
+func TestHTTPServerLimits(t *testing.T) {
+	s := httpServer(nil)
+	if s.ReadHeaderTimeout <= 0 {
+		t.Fatal("ReadHeaderTimeout не поставлен: молчащее соединение повиснет навсегда")
+	}
+	if s.WriteTimeout != 0 {
+		t.Fatal("WriteTimeout должен остаться нулевым: дальше по серии едут SSE-потоки")
+	}
+}
+
 // watchBinary не срабатывает, пока инода на месте, и останавливается по stop.
 func TestWatchBinaryQuietStop(t *testing.T) {
 	fired := make(chan struct{}, 1)

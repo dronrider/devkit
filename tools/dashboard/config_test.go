@@ -59,6 +59,23 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+// Строка без «=» это ошибка старта, но её содержимое в текст ошибки не идёт:
+// ошибка ложится в журнал с правами 644, а в такой строке может лежать секрет.
+func TestLoadConfigBrokenLineKeepsSecret(t *testing.T) {
+	home := t.TempDir()
+	writeConf(t, home, "root = /x\ntoken supersecret123\n")
+	_, err := LoadConfig(home)
+	if err == nil {
+		t.Fatal("строка без «=» должна ронять старт")
+	}
+	if strings.Contains(err.Error(), "supersecret123") {
+		t.Fatalf("секрет утёк в текст ошибки: %v", err)
+	}
+	if !strings.Contains(err.Error(), ":2:") {
+		t.Fatalf("ошибка не называет номер строки: %v", err)
+	}
+}
+
 func TestLoadConfigUnknownKey(t *testing.T) {
 	home := t.TempDir()
 	writeConf(t, home, "root = /x\nhost = 1.2.3.4\n")

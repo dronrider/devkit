@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Доска берётся подпроцессом taskctl list --json, а не своим разбором
@@ -19,6 +21,28 @@ import (
 // taskctlBin подменяется тестами, живой сервер зовёт бинарь из PATH.
 var taskctlBin = "taskctl"
 
+// procTimeout ограничивает подпроцессы сроком: подвисший taskctl или tmux не
+// должен держать горутину запроса вечно, тем более после ухода клиента.
+// Переменная, чтобы тест изображал зависание без настоящего ожидания.
+var procTimeout = 30 * time.Second
+
+// runProc гоняет подпроцесс со сроком; по срыву срока процесс снимается, а
+// ошибка называет срок, а не пересказывает сигнал убийства.
+func runProc(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Без WaitDelay Output ждёт трубу, а её после убийства процесса может
+	// держать открытой его выживший потомок: срок обязан вернуть управление,
+	// а не переложить вечное ожидание с процесса на трубу.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s не ответил за %s и снят по сроку", name, procTimeout)
+	}
+	return out, err
+}
+
 func taskctlMissing() string {
 	if _, err := exec.LookPath(taskctlBin); err != nil {
 		return "taskctl не нашёлся в PATH: доски не читаются, поставить бинари: devkitctl update"
@@ -28,7 +52,7 @@ func taskctlMissing() string {
 
 // boardJSON отдаёт доску проекта как есть, байтами ответа taskctl.
 func boardJSON(dir string) (json.RawMessage, error) {
-	out, err := exec.Command(taskctlBin, "list", "--json", "-C", dir).Output()
+	out, err := runProc(taskctlBin, "list", "--json", "-C", dir)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
@@ -102,7 +126,7 @@ func liveWorks(projectPath, prefix, home string) []Work {
 }
 
 func tmuxSessions() []string {
-	out, err := exec.Command("tmux", "ls", "-F", "#{session_name}").Output()
+	out, err := runProc("tmux", "ls", "-F", "#{session_name}")
 	if err != nil {
 		return nil
 	}

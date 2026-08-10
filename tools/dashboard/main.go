@@ -156,7 +156,7 @@ func cmdServe(home, staticDir string) error {
 		logf("старт не удался: %v", err)
 		return err
 	}
-	httpSrv := &http.Server{Handler: srv.handler()}
+	httpSrv := httpServer(srv.handler())
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}
@@ -189,6 +189,17 @@ func cmdServe(home, staticDir string) error {
 		}
 		logf("сервер упал: %v", err)
 		return err
+	}
+}
+
+// httpServer собирает сервер с пределами. ReadHeaderTimeout отрезает молча
+// висящие соединения: демон слушает все интерфейсы, и без предела их можно
+// набрать сколько угодно. WriteTimeout не ставится сознательно: дальше по
+// серии едут SSE-потоки, которым положено жить долго.
+func httpServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 }
 

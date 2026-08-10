@@ -72,7 +72,10 @@ func LoadConfig(home string) (*Config, error) {
 		}
 		key, val, ok := strings.Cut(ln, "=")
 		if !ok {
-			return nil, fmt.Errorf("%s:%d: жду строку «key = value», получил %q", cfg.Path, i+1, ln)
+			// Содержимое строки в ошибку не идёт: ошибка старта попадает в
+			// журнал с правами 644, а в строке без «=» может лежать секрет
+			// (например, «token abc» с потерянным знаком).
+			return nil, fmt.Errorf("%s:%d: строка без «=», жду «key = value»", cfg.Path, i+1)
 		}
 		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
 		switch key {

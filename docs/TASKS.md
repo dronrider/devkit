@@ -32,7 +32,10 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
+| DK-226 | secretctl: имена агенту, значение в подпроцесс через два бэкенда | task | P1 | 66 (50+8+3+0+5) | M | [docs/tasks/DK-207.md](docs/tasks/DK-207.md) |
 | DK-207 | Цель: исключить попадание секретов в контекст модели | task | P1 | 65 (50+8+3+0+4) | XL | [tasks/DK-207.md](tasks/DK-207.md) |
+| DK-228 | Рубеж чтения секретов: permissions.deny и PreToolUse-хук на Bash | task | P1 | 64 (50+7+3+0+4) | M | [docs/tasks/DK-207.md](docs/tasks/DK-207.md) |
+| DK-227 | Значения секретов переезжают из access.local.md в secretctl | task | P1 | 62 (50+7+2+0+3) | M | [docs/tasks/DK-207.md](docs/tasks/DK-207.md) |
 | DK-165 | Исполнитель возвращает работу незакоммиченной, ожидая фоновый прогон | bug | P2 | 41 (25+6+1+5+4) | S | [tasks/DK-165.md](tasks/DK-165.md) |
 | DK-137 | Цель: обёртка, отдающая агенту выжимку вместо всего вывода команды | task | P2 | 40 (25+8+3+0+4) | XL | [tasks/DK-137.md](tasks/DK-137.md) |
 | DK-146 | Повторный Read неизменённого файла отвечает подсказкой, а не содержимым | task | P2 | 40 (25+8+3+0+4) | M | [tasks/DK-146.md](tasks/DK-146.md) |
@@ -74,6 +77,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
+| DK-198 | goal-run через Agent SDK вместо разбора вывода claude -p | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-198.md](tasks/DK-198.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
 | DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |

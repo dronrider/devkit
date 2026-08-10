@@ -8,13 +8,39 @@
 [ -n "$DEVKIT_PUSH_OK" ] && exit 0
 [ -n "$CLAUDECODE$CLAUDE_CODE_ENTRYPOINT$CURSOR_AGENT" ] || exit 0
 
+# Пуш, где в диффе только доска (docs/TASKS.md, docs/TASKS-archive.md,
+# docs/tasks/), рубеж пропускает сам: правило требует пушить коммит доски
+# сразу (RULES.board.md, «Трекинг задач» п. 9), а у правки файла задачи,
+# сделанной руками, флагов -m/--push нет, и без этой калитки её путём
+# оставался бы обход DEVKIT_PUSH_OK (DK-119). Всё, что не разобрать как
+# движение вперёд от известного ремоута (новая ветка, удаление, дивергенция,
+# неизвестный sha), доской не считается и идёт под отбой ниже.
+zero=0000000000000000000000000000000000000000
+board=
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "$local_ref" ] || continue
+    board=
+    [ "$local_sha" = "$zero" ] && break
+    [ "$remote_sha" = "$zero" ] && break
+    git cat-file -e "$remote_sha" 2>/dev/null || break
+    git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null || break
+    files=$(git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
+    [ -n "$files" ] || break
+    printf '%s\n' "$files" |
+        grep -qvE '^docs/TASKS\.md$|^docs/TASKS-archive\.md$|^docs/tasks/' && break
+    board=y
+done
+[ -n "$board" ] && exit 0
+
 cat >&2 <<'EOF'
 пуш из сессии агента без разрешения (RULES.md, раздел «Git»): push в origin и
 создание MR делает пользователь.
 что делать: остановиться на локальном коммите и сказать, что ветка готова к
   пушу, не предлагая «дай команду, я запушу»;
-коммит доски пушится сразу, но своим путём: taskctl ... --push и shipctl ...
-  --push разрешение выдают сами, руками этот пуш повторять не надо;
+коммит доски пушится сразу: пуш, где в диффе только docs/TASKS.md,
+  docs/TASKS-archive.md и docs/tasks/, рубеж пропускает сам, а смешанный с
+  кодом идёт через taskctl ... --push и shipctl ... --push, они выдают
+  разрешение сами;
 автономный режим (слияние, пуш кода, выкат) идёт тем же shipctl;
 по прямой команде пользователя: DEVKIT_PUSH_OK=1 git push ... либо
   git push --no-verify.

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дашборд devkit</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div class="screen">
+  <aside class="side">
+    <div class="brand">
+      <h1>Дашборд devkit</h1>
+      <p id="brand-note"></p>
+    </div>
+    <div class="sgroup">Проекты</div>
+    <nav id="projects"></nav>
+    <div class="sgroup">Разделы</div>
+    <div class="sitem on">Доска</div>
+    <div class="sitem off">Агенты</div>
+    <div class="sitem off">Лента</div>
+    <div class="sfoot"><button id="logout" class="btn">Выйти</button></div>
+  </aside>
+  <main class="bmain">
+    <div class="bhead">
+      <h2 id="pname"></h2>
+      <span class="sub" id="psub"></span>
+      <select class="pselect" id="pselect" aria-label="Проект"></select>
+    </div>
+    <div class="live" id="live"></div>
+    <div class="groups" id="groups"></div>
+  </main>
+  <nav class="ptabs">
+    <div class="ptab on"><s></s>Доска</div>
+    <div class="ptab"><s></s>Агенты</div>
+    <div class="ptab"><s></s>Лента</div>
+  </nav>
+</div>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

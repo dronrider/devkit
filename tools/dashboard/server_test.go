@@ -1,0 +1,326 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Ответ taskctl list --json изображает исполняемая фикстура: доска с одной
+// строкой в работе и одной в Backlog, префикс XR.
+const boardFixtureJSON = `{"prefix":"XR","sections":[` +
+	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-005","title":"Задача в работе","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]},` +
+	`{"key":"check","title":"Check","rows":[]},` +
+	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Верхняя","type":"bug","p":"P1","r":55,"r_parts":[50,0,0,5,0],"cost":"-","link":"-"}]},` +
+	`{"key":"blocked","title":"Blocked","rows":[]}]}`
+
+func writeScript(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type testEnv struct {
+	srv  *httptest.Server
+	cfg  *Config
+	home string
+	proj string // путь синтетического проекта
+}
+
+// newTestEnv поднимает сервер на временном доме с синтетическим проектом;
+// taskctl и tmux подменены исполняемыми фикстурами в PATH.
+func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	loginPause = 0
+	home := t.TempDir()
+	root := filepath.Join(home, "projects")
+	proj := filepath.Join(root, "demo")
+	mkProject(t, proj)
+
+	bin := t.TempDir()
+	writeScript(t, bin, "taskctl", fmt.Sprintf("echo '%s'", boardFixtureJSON))
+	writeScript(t, bin, "tmux", "printf 'goal-XR-9\\ntask-XR-5\\nчужая-сессия\\n'")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	goals := filepath.Join(home, ".devkit", "goals")
+	if err := os.MkdirAll(goals, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "goal = XR-112\nroot = " + proj + "\n"
+	if err := os.WriteFile(filepath.Join(goals, "XR-112.watch"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
+	srv := httptest.NewServer(newServer(cfg, os.DirFS("static"), nil).handler())
+	t.Cleanup(srv.Close)
+	return &testEnv{srv: srv, cfg: cfg, home: home, proj: proj}
+}
+
+// client без редиректов: ответы 302 проверяются как есть.
+func plainClient() *http.Client {
+	return &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+}
+
+// loggedClient входит с верным токеном и держит куку.
+func (e *testEnv) loggedClient(t *testing.T) *http.Client {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &http.Client{Jar: jar}
+	resp, err := c.Post(e.srv.URL+"/api/login", "application/json",
+		strings.NewReader(`{"token": "test-token"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход с верным токеном: %d", resp.StatusCode)
+	}
+	return c
+}
+
+func body(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// Без входа не отдаётся ни одна строка данных: API отвечает 401 без строк
+// доски, страницы уводят на /login.
+func TestNoAuthNoData(t *testing.T) {
+	e := newTestEnv(t)
+	c := plainClient()
+	for _, path := range []string{"/api/projects", "/api/projects/demo/board"} {
+		resp, err := c.Get(e.srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s без входа: %d, ожидал 401", path, resp.StatusCode)
+		}
+		for _, leak := range []string{"XR-005", "XR-002", "demo"} {
+			if strings.Contains(text, leak) {
+				t.Errorf("%s без входа отдал данные: %q в %q", path, leak, text)
+			}
+		}
+	}
+	for _, path := range []string{"/", "/assets/app.js"} {
+		resp, err := c.Get(e.srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/login" {
+			t.Errorf("%s без входа: %d -> %q, ожидал 302 /login", path, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+}
+
+func TestHealthzOpen(t *testing.T) {
+	e := newTestEnv(t)
+	resp, err := plainClient().Get(e.srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OK       bool     `json:"ok"`
+		Version  string   `json:"version"`
+		Projects int      `json:"projects"`
+		Errors   []string `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !got.OK {
+		t.Fatalf("healthz: %d %+v", resp.StatusCode, got)
+	}
+	if !strings.HasPrefix(got.Version, "dashboard ") {
+		t.Errorf("версия %q не в формате утилит devkit", got.Version)
+	}
+	if got.Projects != 1 || len(got.Errors) != 0 {
+		t.Errorf("проектов %d, ошибки %v", got.Projects, got.Errors)
+	}
+}
+
+func TestLoginWrongToken(t *testing.T) {
+	e := newTestEnv(t)
+	resp, err := plainClient().Post(e.srv.URL+"/api/login", "application/json",
+		strings.NewReader(`{"token": "не тот"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("чужой токен: %d, ожидал 401", resp.StatusCode)
+	}
+	if len(resp.Cookies()) != 0 {
+		t.Fatal("провал входа не должен ставить куку")
+	}
+}
+
+func TestProjectsAfterLogin(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	resp, err := c.Get(e.srv.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Projects []struct {
+			Name     string         `json:"name"`
+			Sections map[string]int `json:"sections"`
+			Works    []Work         `json:"works"`
+		} `json:"projects"`
+		Errors []string `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(got.Projects) != 1 || got.Projects[0].Name != "demo" {
+		t.Fatalf("проекты: %+v", got.Projects)
+	}
+	p := got.Projects[0]
+	if p.Sections["in-progress"] != 1 || p.Sections["backlog"] != 1 || p.Sections["check"] != 0 {
+		t.Errorf("счётчики секций: %v", p.Sections)
+	}
+	var works []string
+	for _, w := range p.Works {
+		works = append(works, w.Kind+"-"+w.ID+"/"+w.Via)
+	}
+	want := "goal-XR-9/tmux,task-XR-5/tmux,goal-XR-112/registry"
+	if strings.Join(works, ",") != want {
+		t.Errorf("работы: %v, ожидал %s", works, want)
+	}
+}
+
+func TestBoardAfterLogin(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	resp, err := c.Get(e.srv.URL + "/api/projects/demo/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("доска после входа: %d\n%s", resp.StatusCode, text)
+	}
+	for _, want := range []string{"XR-005", "Задача в работе", `"prefix":"XR"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе доски нет %q", want)
+		}
+	}
+	resp, err = c.Get(e.srv.URL + "/api/projects/ghost/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("несуществующий проект: %d, ожидал 404", resp.StatusCode)
+	}
+}
+
+// Экран доски отдаётся вшитой статикой и не ссылается на внешние хосты:
+// внешних зависимостей у статики нет по решению LLD.
+func TestStaticNoExternalHosts(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	pages := []string{"/", "/login", "/assets/style.css", "/assets/app.js", "/assets/login.js"}
+	for _, page := range pages {
+		resp, err := c.Get(e.srv.URL + page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: %d", page, resp.StatusCode)
+		}
+		if strings.Contains(text, "http://") || strings.Contains(text, "https://") {
+			t.Errorf("%s ссылается на внешний хост", page)
+		}
+		if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+			t.Errorf("%s без CSP: %q", page, csp)
+		}
+	}
+}
+
+func TestLoginOriginCheck(t *testing.T) {
+	e := newTestEnv(t)
+	req, err := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"token": "test-token"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := plainClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("чужой Origin: %d, ожидал 403", resp.StatusCode)
+	}
+}
+
+func TestLogout(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	resp, err := c.Post(e.srv.URL+"/api/logout", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	resp, err = c.Get(e.srv.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("после выхода: %d, ожидал 401", resp.StatusCode)
+	}
+}
+
+// Пропавший taskctl это названная ошибка в /healthz и в ответе доски, а не
+// пустая доска: тихая деградация неотличима от «задач нет».
+func TestTaskctlMissingNamed(t *testing.T) {
+	e := newTestEnv(t)
+	old := taskctlBin
+	taskctlBin = "no-such-taskctl-binary"
+	t.Cleanup(func() { taskctlBin = old })
+
+	resp, err := plainClient().Get(e.srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := body(t, resp)
+	if !strings.Contains(text, "taskctl") {
+		t.Errorf("healthz молчит про пропавший taskctl: %s", text)
+	}
+	c := e.loggedClient(t)
+	resp, err = c.Get(e.srv.URL + "/api/projects/demo/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "taskctl") {
+		t.Errorf("ответ доски без taskctl: %d %s", resp.StatusCode, text)
+	}
+}

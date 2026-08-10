@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -235,4 +238,133 @@ func TestProjectsQueriedInParallel(t *testing.T) {
 			t.Fatalf("в списке нет проекта %s: %s", name, text)
 		}
 	}
+}
+
+// Паника подзадачи стоит одной подзадачи, а не демона. Пока опрос шёл в
+// горутине http-обработчика, её гасил recover самого net/http; в своей
+// горутине она уносит процесс целиком, и тестовый прогон валится дампом. Здесь
+// проверяется, что паникует одно дело, соседи доходят, а паника приезжает
+// ошибкой со словами и стеком.
+func TestInParallelSurvivesPanic(t *testing.T) {
+	const n = 5
+	done := make([]bool, n)
+	errs := inParallel(scanWorkers, n, func(i int) {
+		if i == 2 {
+			panic("доска рассыпалась")
+		}
+		done[i] = true
+	})
+	for i := range done {
+		if (i != 2) != done[i] {
+			t.Fatalf("дело %d: сделано %v, а паниковало дело 2", i, done[i])
+		}
+	}
+	for i, err := range errs {
+		if (i == 2) != (err != nil) {
+			t.Fatalf("дело %d вернуло ошибку %v: ошибка ждётся ровно у паниковавшего", i, err)
+		}
+	}
+	var rec *recovered
+	if !errors.As(errs[2], &rec) {
+		t.Fatalf("паника приехала как %T, жду ошибку с пойманной паникой", errs[2])
+	}
+	if !strings.Contains(rec.Error(), "доска рассыпалась") {
+		t.Fatalf("паника без слов: %q", rec.Error())
+	}
+	if !strings.Contains(rec.Stack(), "TestInParallelSurvivesPanic") {
+		t.Fatalf("стек паники не собрался: %q", rec.Stack())
+	}
+}
+
+// Сломанный проект называется словами в ответе, а стек уезжает в журнал: на
+// экране от потрохов пользы нет, а разбирать поломку по журналу.
+func TestPanicNamedInAnswerStackInLog(t *testing.T) {
+	var log strings.Builder
+	s := newServer(&Config{Home: t.TempDir()}, os.DirFS("static"),
+		func(format string, args ...any) { fmt.Fprintf(&log, format+"\n", args...) })
+	errs := inParallel(1, 1, func(int) { panic("доска рассыпалась") })
+
+	note := s.notePanic("опрос проекта demo", errs[0])
+	if !strings.Contains(note, "доска рассыпалась") {
+		t.Fatalf("в ответ уехало %q: причина не названа словами", note)
+	}
+	if strings.Contains(note, "goroutine") {
+		t.Fatalf("в ответ уехал стек: %q", note)
+	}
+	if !strings.Contains(log.String(), "опрос проекта demo") || !strings.Contains(log.String(), "goroutine") {
+		t.Fatalf("в журнале %q: жду строку с проектом и стеком", log.String())
+	}
+}
+
+// Потолок разом живущих подпроцессов держится: корень с сотней досок иначе
+// поднял бы сотню git одним запросом. Считает их сама подзадача.
+func TestInParallelKeepsWorkerCap(t *testing.T) {
+	var mu sync.Mutex
+	live, most := 0, 0
+	inParallel(scanWorkers, 4*scanWorkers, func(int) {
+		mu.Lock()
+		live++
+		if live > most {
+			most = live
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		live--
+		mu.Unlock()
+	})
+	if most > scanWorkers {
+		t.Fatalf("разом жили %d дел при потолке %d: семафор не держит", most, scanWorkers)
+	}
+	if most < 2 {
+		t.Fatalf("разом жило %d дело: дела идут по очереди", most)
+	}
+}
+
+// Тот же потолок на живых подпроцессах обхода: фикстура git отмечается на
+// время своей работы, и обход не должен поднимать её сверх потолка разом.
+func TestScanKeepsWorkerCap(t *testing.T) {
+	root := t.TempDir()
+	cands := 3 * scanWorkers
+	for i := 0; i < cands; i++ {
+		mkProject(t, filepath.Join(root, fmt.Sprintf("proj%d", i)))
+	}
+	bin, live := t.TempDir(), filepath.Join(t.TempDir(), "живые")
+	log := filepath.Join(t.TempDir(), "разом.log")
+	writeScript(t, bin, "git", fmt.Sprintf(`mkdir -p '%[1]s'
+touch '%[1]s'/$$
+ls '%[1]s' | wc -l >> '%[2]s'
+sleep 0.2
+rm -f '%[1]s'/$$
+printf '.git\n.git\n'`, live, log))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if projects, _ := scanProjects([]string{root}); len(projects) != cands {
+		t.Fatalf("проектов %d, жду %d", len(projects), cands)
+	}
+	most := 0
+	for _, f := range strings.Fields(readFileString(t, log)) {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n > most {
+			most = n
+		}
+	}
+	if most > scanWorkers {
+		t.Fatalf("разом жили %d процессов git при потолке %d: обход не держит потолок", most, scanWorkers)
+	}
+	if most < 2 {
+		t.Fatalf("разом жил %d процесс git: кандидаты спрашиваются по очереди", most)
+	}
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

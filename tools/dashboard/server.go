@@ -264,7 +264,16 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	// Проекты опрашиваются разом: каждый стоит своих подпроцессов (taskctl на
 	// доску, tmux на работы), и по очереди стартовая ждала бы их сумму.
 	infos := make([]projectInfo, len(projects))
-	inParallel(projectWorkers, len(projects), func(i int) { infos[i] = s.projectSummary(projects[i]) })
+	broken := inParallel(projectWorkers, len(projects), func(i int) { infos[i] = s.projectSummary(projects[i]) })
+	for i, err := range broken {
+		if err == nil {
+			continue
+		}
+		// Сломанный проект остаётся строкой с причиной: список не редеет молча
+		// и не уносит с собой соседей.
+		infos[i] = projectInfo{Project: projects[i], Works: []Work{},
+			Error: s.notePanic("опрос проекта "+projects[i].Name, err)}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": infos, "errors": errs})
 }
 

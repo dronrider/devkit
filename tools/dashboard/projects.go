@@ -91,8 +91,13 @@ func scanProjects(roots []string) ([]Project, []string) {
 	// самое дорогое место обхода: кандидаты спрашиваются разом, а порядок всё
 	// равно наводится ниже сортировкой.
 	linked := make([]bool, len(cands))
-	inParallel(scanWorkers, len(cands), func(i int) { linked[i] = isLinkedWorktree(cands[i].Path) })
+	broken := inParallel(scanWorkers, len(cands), func(i int) { linked[i] = isLinkedWorktree(cands[i].Path) })
 	for i, c := range cands {
+		// Сорвавшаяся проверка это причина в /healthz, а каталог остаётся
+		// проектом: молчащий git и до этого значил «бокового дерева не видно».
+		if broken[i] != nil {
+			errs = append(errs, fmt.Sprintf("каталог %s не проверился на боковое дерево: %v", c.Path, broken[i]))
+		}
 		if !linked[i] {
 			found = append(found, c)
 		}

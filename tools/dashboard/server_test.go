@@ -350,6 +350,82 @@ func TestHungTaskctlAnsweredWithError(t *testing.T) {
 	}
 }
 
+// Ненайденный tmux это названная ошибка в /healthz, в списке проектов и в
+// ответе доски, а не молча пустой список работ: пустота без причины
+// неотличима от «агенты не работают». Реестр целей при этом жив, он
+// читается с диска без подпроцесса.
+func TestTmuxMissingNamed(t *testing.T) {
+	e := newTestEnv(t)
+	if err := os.Remove(filepath.Join(e.bin, "tmux")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", e.bin)
+
+	resp, err := plainClient().Get(e.srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := body(t, resp); !strings.Contains(text, "tmux не нашёлся") {
+		t.Errorf("healthz молчит про пропавший tmux: %s", text)
+	}
+	c := e.loggedClient(t)
+	resp, err = c.Get(e.srv.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Projects []struct {
+			Works []Work `json:"works"`
+		} `json:"projects"`
+		Errors []string `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !strings.Contains(strings.Join(got.Errors, "; "), "tmux не нашёлся") {
+		t.Errorf("список проектов молчит про пропавший tmux: %v", got.Errors)
+	}
+	works := got.Projects[0].Works
+	if len(works) != 1 || works[0].Via != "registry" {
+		t.Errorf("ждал одну работу из реестра, получил %v", works)
+	}
+	resp, err = c.Get(e.srv.URL + "/api/projects/demo/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := body(t, resp); !strings.Contains(text, "tmux не нашёлся") {
+		t.Errorf("ответ доски молчит про пропавший tmux: %s", text)
+	}
+}
+
+// tmux на месте, но без единой сессии его сервер не живёт и ls отвечает
+// ненулевым кодом: это штатное «сессий нет», пустой список без ошибки.
+func TestTmuxNoServerQuiet(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "tmux", "exit 1")
+
+	resp, err := plainClient().Get(e.srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := body(t, resp); strings.Contains(text, "tmux") {
+		t.Errorf("healthz жалуется на живой tmux без сессий: %s", text)
+	}
+	c := e.loggedClient(t)
+	resp, err = c.Get(e.srv.URL + "/api/projects/demo/board")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := body(t, resp)
+	if strings.Contains(text, "tmux") {
+		t.Errorf("ответ доски жалуется на живой tmux без сессий: %s", text)
+	}
+	if !strings.Contains(text, `"via":"registry"`) {
+		t.Errorf("работа из реестра пропала: %s", text)
+	}
+}
+
 // Из-под launchd PATH системный, и taskctl ищется рядом с собственным
 // бинарём: фикстура в каталоге exeDir находится с пустым PATH. Дефект шага 5
 // сценария: /healthz отвечал «taskctl не нашёлся», хотя бинарь стоял рядом с

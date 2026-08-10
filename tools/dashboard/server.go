@@ -132,6 +132,9 @@ func (s *server) healthErrs() ([]Project, []string) {
 	if m := taskctlMissing(); m != "" {
 		errs = append(errs, m)
 	}
+	if m := tmuxMissingCheck(); m != "" {
+		errs = append(errs, m)
+	}
 	return projects, errs
 }
 
@@ -263,10 +266,17 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("ответ taskctl не разобрался: %v", err)})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
 		"board":   raw,
 		"works":   liveWorks(found.Path, view.Prefix, s.cfg.Home),
-	})
+		"errors":  []string{},
+	}
+	// Пустой список работ при ненайденном tmux это не «агенты не работают»,
+	// причина называется и здесь, а не только в /healthz.
+	if m := tmuxMissingCheck(); m != "" {
+		resp["errors"] = []string{m}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -158,6 +158,23 @@ func liveWorks(projectPath, prefix, home string) []Work {
 	return works
 }
 
+// tmuxMissingCheck называет ненайденный tmux: без него живые работы это
+// молча пустой список, неотличимый от «агенты не работают», а по LLD
+// («Молчание различимо») это обязаны быть разные ответы. tmux не утилита
+// devkit и соседом по каталогу не лежит, PATH launchd-агенту дописывает
+// devkitctl doctor --fix.
+func tmuxMissingCheck() string {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return "tmux не нашёлся в PATH: живые работы tmux-сессий не видны, поставить tmux " +
+			"или дописать PATH launchd-агенту (devkitctl doctor --fix)"
+	}
+	return ""
+}
+
+// tmuxSessions отдаёт имена сессий. Ненулевой код tmux ls это штатное
+// «сессий нет»: без единой сессии tmux не держит сервера и ls отвечает
+// ошибкой, поломкой это не считается; ненайденный бинарь называет
+// tmuxMissingCheck на уровне ответа, здесь оба случая дают пустой список.
 func tmuxSessions() []string {
 	out, err := runProc("tmux", "ls", "-F", "#{session_name}")
 	if err != nil {

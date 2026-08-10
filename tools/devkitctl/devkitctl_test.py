@@ -198,6 +198,39 @@ class ProjectFindingsTest(SandboxCase):
         _, out = self.box.doctor(self.proj)
         self.assertIn_("битая ссылка", out, "живая дока перестала проверяться вовсе")
 
+    def test_9_hooks_structurally_odd(self):
+        # settings.json правят и человек, и чужие инструменты, и структура в нём
+        # бывает любая: доктор на таком обязан давать находку и код 1, а не стек
+        # (DK-126). Синтаксис цел, форма нет: три случая из сценария задачи.
+        full = read(self.settings)
+        cases = (
+            ("число вместо объекта hooks", '{"hooks": 42}'),
+            ("строка вместо списка групп", '{"hooks": {"PostToolUse": "abc"}}'),
+            ("элемент группы не словарь", '{"hooks": {"PostToolUse": [42]}}'),
+        )
+        for why, body in cases:
+            write(self.settings, body)
+            rc, out = self.box.doctor(self.proj)
+            self.assertNotIn_("Traceback", out, "%s уронили доктор стеком" % why)
+            self.assertEqual(rc, 1, "%s не дали находки" % why)
+            self.assertIn_("структура hooks", out, "нет находки про структуру hooks: %s" % why)
+        write(self.settings, full)
+
+    def test_10_fix_on_odd_hooks(self):
+        # На той же структуре и --fix не падает: чинить раскладку хуков поверх
+        # нельзя, поэтому только находка, а само поле hooks фикс не трогает
+        # (DK-126). Прочие части --fix, вроде прав permissions, файл переписывают,
+        # и это их дело, а не подтверждение, что структура hooks починилась.
+        full = read(self.settings)
+        write(self.settings, '{"hooks": 42}')
+        rc, out = self.box.doctor(self.proj, "--fix")
+        self.assertNotIn_("Traceback", out, "--fix на странной структуре уронил доктор стеком")
+        self.assertEqual(rc, 1, "--fix на странной структуре не дал находки")
+        self.assertIn_("структура hooks", out, "нет находки про структуру hooks под --fix")
+        data = json.loads(read(self.settings))
+        self.assertEqual(data.get("hooks"), 42, "--fix починил или убрал поле hooks")
+        write(self.settings, full)
+
 
 class DoctorRootTest(SandboxCase):
     """Корень вне git: проектная половина (правила, git-хуки, доска, обвязка

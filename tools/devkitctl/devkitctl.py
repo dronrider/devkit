@@ -873,20 +873,47 @@ def check_skills(fix, dst_dir):
     return findings, fixed
 
 
+def _hooks_table(data):
+    """Событие хука -> список команд из настроек харнеса. None значит, что hooks
+    в настройках структурно необычен и сверять раскладку нельзя: settings.json
+    правят и человек, и чужие инструменты, и доктор на таком обязан находкой, а
+    не стеком, как и на битый JSON. Элемент группы не-словарь, строка вместо
+    списка групп или число вместо объекта hooks всё дают None целиком, а не
+    падают на первом же шаге итерации."""
+    hooks = data.get("hooks")
+    if hooks is None:
+        return {}
+    if not isinstance(hooks, dict):
+        return None
+    table = {}
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            return None
+        cmds = []
+        for group in groups:
+            if not isinstance(group, dict):
+                return None
+            for h in group.get("hooks") or []:
+                if isinstance(h, dict):
+                    cmds.append(h.get("command") or "")
+        table[event] = cmds
+    return table
+
+
 def hook_events(text, script):
-    # События, на которые в настройках повешен скрипт. None значит настройки не
-    # разобрались, и судить остаётся по подстроке.
+    # События, на которые в настройках повешен скрипт. None значит, настройки не
+    # разобрались (битый JSON или структурно необычный hooks), и судить остаётся
+    # по подстроке.
     try:
         data = json.loads(text or "{}")
     except ValueError:
         return None
-    found = set()
-    for event, groups in (data.get("hooks") or {}).items():
-        for group in groups or []:
-            for h in (group or {}).get("hooks") or []:
-                if script in (h.get("command") or ""):
-                    found.add(event)
-    return found
+    if not isinstance(data, dict):
+        return None
+    table = _hooks_table(data)
+    if table is None:
+        return None
+    return {event for event, cmds in table.items() if any(script in c for c in cmds)}
 
 
 def hook_gaps(text, settings):
@@ -894,6 +921,18 @@ def hook_gaps(text, settings):
     строка HOOK_LAYOUT, которую кладёт --fix, находка это тот же пробел словами
     для человека."""
     gaps, findings = [], []
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        data = None
+    if isinstance(data, dict) and data.get("hooks") is not None and _hooks_table(data) is None:
+        # JSON цел, но hooks не той формы (элемент группы не словарь, группа не
+        # список или сам hooks не объект): чинить раскладку поверх нельзя, и
+        # доктор называет это находкой, а не стеком, как уже делал для битого JSON.
+        findings.append("структура hooks в %s необычна: элемент группы не словарь, "
+                        "группа не список или сам hooks не объект; сверка раскладки "
+                        "хуков пропущена, править по hooks/README.md" % settings)
+        return gaps, findings
     notify_events = hook_events(text, NOTIFY_HOOK)
     if notify_events is None:
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
@@ -941,6 +980,10 @@ def install_hooks(settings, gaps, devkit):
     if path.startswith(home + os.sep):
         path = "~" + path[len(home):]
     hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        # Структурно необычный hooks раскладкой чинить нельзя: doctor --fix на
+        # таком даёт находку раньше, но и прямой вызов не должен ронять стек.
+        return []
     done = []
     for event, matcher, tpl in gaps:
         cmd = tpl % path

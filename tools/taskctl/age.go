@@ -210,6 +210,21 @@ func ageLabel(times map[int]int64, lineIdx int, clean bool) string {
 	return fmt.Sprintf("строка не двигалась %d %s", days, pluralDays(days))
 }
 
+// lineDate отдаёт дату последней правки строки доски (2006-01-02) для
+// машинного вывода: печать говорит о возрасте днями, а читателю --json
+// удобнее сама дата, из неё возраст считается обратно. Пусто там же, где
+// молчит ageLabel: грязное дерево, нет git, строка ещё не попадала в коммит.
+func lineDate(times map[int]int64, lineIdx int, clean bool) string {
+	if !clean {
+		return ""
+	}
+	sec, ok := times[lineIdx]
+	if !ok {
+		return ""
+	}
+	return time.Unix(sec, 0).Format("2006-01-02")
+}
+
 // pluralDays склоняет «день» по числу дней.
 func pluralDays(n int) string {
 	n = n % 100

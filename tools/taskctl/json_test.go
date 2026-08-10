@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func decodeBoard(t *testing.T, s string) jsonBoard {
@@ -281,6 +282,49 @@ func TestJSONFlagWiring(t *testing.T) {
 		var v any
 		if err := json.Unmarshal(out, &v); err != nil {
 			t.Fatalf("%v: вывод не JSON: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// Дата последней правки строки едет в --json отдельным полем: дашборд
+// показывает её вместо возраста днями (DK-243), и вычисляться она обязана на
+// сервере, а не гадаться клиентом.
+func TestListJSONMovedDate(t *testing.T) {
+	root := setup(t)
+	at := time.Date(2026, 3, 17, 10, 0, 0, 0, time.UTC)
+	gitOut(t, root, "init", "-q", "-b", "main")
+	gitOut(t, root, "config", "user.email", "test@test")
+	gitOut(t, root, "config", "user.name", "test")
+	gitOut(t, root, "add", ".")
+	gitCommitDated(t, root, at, "init")
+
+	out, err := cmdListJSON(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := at.Local().Format("2006-01-02")
+	for _, sec := range decodeBoard(t, out).Sections {
+		for _, r := range sec.Rows {
+			if r.Moved != want {
+				t.Errorf("%s: moved = %q, ожидал %q", r.ID, r.Moved, want)
+			}
+		}
+	}
+}
+
+// Вне git-репозитория даты нет, и поле молчит: выдуманная дата хуже пустого
+// места, там же молчит и возраст в notes.
+func TestListJSONMovedSilentWithoutGit(t *testing.T) {
+	root := setup(t)
+	out, err := cmdListJSON(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sec := range decodeBoard(t, out).Sections {
+		for _, r := range sec.Rows {
+			if r.Moved != "" {
+				t.Errorf("%s: вне git moved = %q, ожидал пусто", r.ID, r.Moved)
+			}
 		}
 	}
 }

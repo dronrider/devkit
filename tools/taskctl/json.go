@@ -14,8 +14,8 @@ import (
 // строки доски отсюда, а не грепом по печати.
 
 // jsonRow это строка доски в машинном виде: заголовок разобран на основу и
-// суффиксы, ранг на сумму и слагаемые, пометки list («код слит», возраст)
-// лежат отдельным списком.
+// суффиксы, ранг на сумму и слагаемые, дата последней правки строки лежит
+// отдельным полем, пометки list («код слит», возраст) отдельным списком.
 type jsonRow struct {
 	ID     string   `json:"id"`
 	Title  string   `json:"title"`
@@ -28,6 +28,7 @@ type jsonRow struct {
 	RParts [5]int   `json:"r_parts"`
 	Cost   string   `json:"cost"`
 	Link   string   `json:"link"`
+	Moved  string   `json:"moved,omitempty"`
 	Notes  []string `json:"notes,omitempty"`
 }
 
@@ -60,6 +61,10 @@ func makeJSONRow(root string, r *Row, times map[int]int64, clean bool) jsonRow {
 		Block: sufText(blockSuf, "блок"),
 		Type:  r.Type, P: r.P, R: r.RTotal, RParts: r.RParts,
 		Cost: r.Cost, Link: r.Link,
+		// Дата последней правки строки: перевод в статус двигает строку между
+		// секциями доски, то есть правит её, и отдельной даты перевода в доске
+		// нет. Возраст днями остаётся в notes, дашборд показывает дату.
+		Moved: lineDate(times, r.LineIdx, clean),
 		Notes: rowNoteParts(root, r.Sect, r, times, clean),
 	}
 }

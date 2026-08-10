@@ -98,6 +98,55 @@ func TestFileIdempotentSkipsEmptyCommit(t *testing.T) {
 	}
 }
 
+// TestCommitMsgRejectsFlagValue: flag.StringVar берёт значением -m следующий
+// аргумент, даже если тот сам флаг, поэтому вызов «... -m --push» даёт
+// Msg "--push", а сам --push остаётся невыставленным. validate отбивает такое
+// до записи на диск: иначе коммит получал бы subject "--push", пуш молча
+// пропадал, и доска отставала от origin.
+func TestCommitMsgRejectsFlagValue(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	before, _ := os.ReadFile(boardPath(root))
+	head0 := gitOut(t, root, "rev-parse", "HEAD")
+	_, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{Msg: "--push"})
+	if err == nil {
+		t.Fatal("значение -m, начинающееся с дефиса, должно отбиваться")
+	}
+	if after, _ := os.ReadFile(boardPath(root)); string(after) != string(before) {
+		t.Fatal("доска изменилась при отбитом -m")
+	}
+	if head1 := gitOut(t, root, "rev-parse", "HEAD"); head1 != head0 {
+		t.Fatalf("отбитый -m создал коммит: %s -> %s", head0, head1)
+	}
+}
+
+// TestCommitOptsValidate: границы проверки -m. Дефис в начале это проглоченный
+// флаг (отказ), дефис в середине текста и рабочие формы с пушем проходят.
+func TestCommitOptsValidate(t *testing.T) {
+	cases := []struct {
+		name string
+		c    CommitOpts
+		ok   bool
+	}{
+		{"пустое сообщение", CommitOpts{}, true},
+		{"рабочее сообщение", CommitOpts{Msg: "docs(tasks): XR-004 в работу"}, true},
+		{"дефис в середине текста", CommitOpts{Msg: "docs: -Werror потушен"}, true},
+		{"-m --push проглочен", CommitOpts{Msg: "--push"}, false},
+		{"-m -x проглочен", CommitOpts{Msg: "-x"}, false},
+		{"--push без -m", CommitOpts{Push: true}, false},
+		{"рабочее сообщение с пушем", CommitOpts{Msg: "docs: правка", Push: true}, true},
+	}
+	for _, tc := range cases {
+		err := tc.c.validate()
+		if tc.ok && err != nil {
+			t.Errorf("%s: ждал успех, получил %v", tc.name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("%s: ждал отказ, получил успех", tc.name)
+		}
+	}
+}
+
 func TestPush(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

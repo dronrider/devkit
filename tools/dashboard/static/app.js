@@ -40,6 +40,9 @@ function route() {
   if (parts.length >= 2 && parts[1] === "feed") {
     return { proj: parts[0], id: "", feed: true };
   }
+  if (parts.length >= 2 && parts[1] === "new") {
+    return { proj: parts[0], id: "", make: true };
+  }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
   }
@@ -211,6 +214,11 @@ function renderRow(project, row, works) {
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
+  const bar = el("div", "nbar");
+  bar.append(newTaskButton(project, "Новая задача"));
+  bar.append(el("span", "hint",
+    "По умолчанию черновик: метаданные ему выдаст грумминг, а полная строка требует ранга."));
+  groups.append(bar);
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
   for (const key of SECTION_ORDER) {
@@ -226,6 +234,17 @@ function renderBoard(project, board, works) {
     for (const row of sec.rows) card.append(renderRow(project, row, works));
     groups.append(card);
   }
+}
+
+// Кнопка заведения: стоит и на доске проекта, и на главной, потому что мысль
+// приходит вне машины, а не в тот момент, когда открыта нужная доска.
+function newTaskButton(project, label) {
+  const btn = el("button", "btn btn-acc", label);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    location.hash = project + "/new";
+  });
+  return btn;
 }
 
 // Слагаемые ранга по RANKING.md: имя, короткая подсказка и допустимые
@@ -1046,6 +1065,222 @@ function renderChat(project, works, id) {
   loadPending(project, id, pendbox).catch(console.error);
 }
 
+// Экран заведения (#проект/new). Черновик это путь по умолчанию: с телефона
+// мысль приходит целиком, а ранг там считать нечем, и грумминг всё равно
+// разберёт запись позже (taskctl add --id). Полная строка лежит под
+// разворотом: ей нужны заголовок, тип, цена и все пять слагаемых ранга.
+const DRAFT_HINT = "Черновик ляжет в docs/tasks/drafts/: метаданных у него нет, " +
+  "ID выдаёт taskctl, а ранг и тип выдаст грумминг накопителя.";
+const FULL_HINT = "Полная строка встаёт в Backlog сразу: место в нём выводится из ранга, " +
+  "и все пять слагаемых обязательны.";
+
+// Поля формы переживают перерисовку: доска перечитывается по фокусу окна, и
+// без этого набранный текст пропадал бы при первом же переключении на другое
+// окно. Форма одна на экран, как и черновик экрана задачи.
+const newForm = { project: "", text: "", full: false, title: "", type: "task", cost: "-", parts: [0, 0, 0, 0, 0], file: true };
+
+function resetNewForm(project) {
+  newForm.project = project;
+  newForm.text = "";
+  newForm.full = false;
+  newForm.title = "";
+  newForm.type = "task";
+  newForm.cost = "-";
+  newForm.parts = [0, 0, 0, 0, 0];
+  newForm.file = true;
+}
+
+// Отправка гасит кнопки на время запроса: повторное нажатие на медленной
+// связи заводило бы вторую строку тем же текстом, а откатить это нечем.
+async function sendNew(btns, call) {
+  for (const b of btns) b.disabled = true;
+  try {
+    return await call();
+  } finally {
+    for (const b of btns) b.disabled = false;
+  }
+}
+
+async function makeDraft(project, text, btns) {
+  sayResult("запись черновика...");
+  return sendNew(btns, async () => {
+    const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts",
+      { method: "POST", body: { text } });
+    let said = r.body.message || r.body.error || "";
+    if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+    sayResult(said, !r.ok);
+    return r.ok ? r.body : null;
+  });
+}
+
+async function makeTask(project, body, btns) {
+  sayResult("заведение строки...");
+  return sendNew(btns, async () => {
+    const r = await api("/api/projects/" + encodeURIComponent(project) + "/tasks",
+      { method: "POST", body });
+    let said = r.body.message || r.body.error || "";
+    if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+    sayResult(said, !r.ok);
+    return r.ok ? r.body : null;
+  });
+}
+
+// Подтверждение записанного черновика: ID, путь файла и что с ним будет
+// дальше. Уводить с экрана некуда, строки на доске у черновика нет.
+function draftDone(project, done) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const card = el("div", "card nform");
+  card.append(el("div", "nfhead", "Черновик " + (done.id || "") + " записан"));
+  const box = el("div", "nfbody");
+  box.append(el("div", "hint", done.file
+    ? "Файл " + done.file + " лежит в накопителе, на доске строки у него нет."
+    : "Файл лежит в накопителе, на доске строки у него нет."));
+  box.append(el("div", "hint",
+    "Разберёт его грумминг: он выдаст ранг с типом и заведёт строку (taskctl add --id)."));
+  const btns = el("div", "tbtns");
+  const again = el("button", "btn btn-acc", "Записать ещё");
+  again.addEventListener("click", () => {
+    resetNewForm(project);
+    renderNew(project);
+  });
+  const board = el("button", "btn", "На доску");
+  board.addEventListener("click", () => { location.hash = project; });
+  btns.append(again, board);
+  box.append(btns);
+  card.append(box);
+  groups.append(card);
+}
+
+function renderNew(project) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  if (newForm.project !== project) resetNewForm(project);
+
+  const crumb = el("div", "crumb");
+  const back = el("span", "crumb-back", "Доска " + project);
+  back.addEventListener("click", () => { location.hash = project; });
+  crumb.append(back);
+  groups.append(crumb);
+
+  const card = el("div", "card nform");
+  card.append(el("div", "nfhead", "Новая задача в " + project));
+  const box = el("div", "nfbody");
+  const ta = el("textarea");
+  ta.value = newForm.text;
+  ta.placeholder = "Мысль с телефона...";
+  ta.setAttribute("aria-label", "текст черновика");
+  const bad = el("div", "error", "");
+  const btns = el("div", "tbtns");
+  const send = el("button", "btn btn-acc", "Записать черновик");
+  const more = el("button", "btn", newForm.full ? "Свернуть полную строку" : "Полная строка");
+  btns.append(send, more);
+  box.append(ta, el("div", "hint", DRAFT_HINT), btns, bad);
+  card.append(box);
+  groups.append(card);
+
+  const full = el("div", "card nform");
+  full.hidden = !newForm.full;
+  groups.append(full);
+  full.append(el("div", "nfhead", "Полная строка"));
+  const fbox = el("div", "nfbody");
+  full.append(fbox);
+
+  const title = el("input");
+  title.value = newForm.title;
+  title.placeholder = "Заголовок строки";
+  title.setAttribute("aria-label", "заголовок строки");
+  fbox.append(title);
+
+  const chips = el("div", "tchips");
+  chips.append(pickField("тип", TYPE_VALUES, newForm.type, (v) => { newForm.type = v; touch(); }));
+  chips.append(pickField("цена", COST_VALUES, newForm.cost, (v) => { newForm.cost = v; touch(); }));
+  fbox.append(chips);
+
+  const sum = el("div", "rbig");
+  const sumv = el("span", "v", "0");
+  const sumf = el("span", "f", "");
+  sum.append(sumv, sumf);
+  fbox.append(sum);
+  RANK_PARTS.forEach((part, i) => {
+    const line = el("div", "rrow");
+    line.append(el("span", "nm", part.name));
+    line.append(el("span", "why", part.why));
+    line.append(pickField("", part.values, newForm.parts[i], (v) => {
+      newForm.parts[i] = Number(v);
+      touch();
+    }));
+    fbox.append(line);
+  });
+  fbox.append(el("div", "hint", P_HINT));
+
+  const withFile = el("label", "nfcheck");
+  const flag = el("input");
+  flag.type = "checkbox";
+  flag.checked = newForm.file;
+  flag.addEventListener("change", () => { newForm.file = flag.checked; });
+  withFile.append(flag, el("span", "", "завести файл задачи по шаблону (taskctl file)"));
+  fbox.append(withFile);
+
+  const fbad = el("div", "error", "");
+  const fbtns = el("div", "tbtns");
+  const make = el("button", "btn btn-acc", "Завести строку");
+  fbtns.append(make);
+  fbox.append(el("div", "hint", FULL_HINT), fbtns, fbad);
+
+  const all = [send, more, make];
+  // Рубежи те же, что у ручек: поправка на баг не про новую работу, а строки
+  // без заголовка и черновика без текста не бывает.
+  const touch = () => {
+    newForm.text = ta.value;
+    newForm.title = title.value;
+    const parts = newForm.parts;
+    sumv.textContent = String(parts.reduce((a, b) => a + Number(b), 0));
+    sumf.textContent = "= " + parts.join("+");
+    send.disabled = !newForm.text.trim();
+    fbad.textContent = newForm.type === "task" && Number(parts[3]) === 5 ? BUG_PART_REFUSAL
+      : !newForm.title.trim() ? "заголовок строки пустым не бывает" : "";
+    make.disabled = Boolean(fbad.textContent);
+    bad.textContent = "";
+  };
+  ta.addEventListener("input", touch);
+  title.addEventListener("input", touch);
+  more.addEventListener("click", () => {
+    newForm.full = !newForm.full;
+    full.hidden = !newForm.full;
+    more.textContent = newForm.full ? "Свернуть полную строку" : "Полная строка";
+  });
+  send.addEventListener("click", () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    makeDraft(project, text, all).then((done) => {
+      if (done) {
+        resetNewForm(project);
+        draftDone(project, done);
+      }
+    }).catch(console.error);
+  });
+  make.addEventListener("click", () => {
+    if (fbad.textContent) return;
+    const body = {
+      title: newForm.title.trim(),
+      type: newForm.type,
+      cost: newForm.cost,
+      r_parts: newForm.parts.map(Number),
+      file: newForm.file,
+    };
+    makeTask(project, body, all).then((done) => {
+      if (!done) return;
+      resetNewForm(project);
+      // Заведённая строка открывается сразу: с телефона следующий шаг это
+      // дописать постановку, а искать её глазами по Backlog неудобно.
+      if (done.id) location.hash = project + "/" + done.id;
+      else renderNew(project);
+    }).catch(console.error);
+  });
+  touch();
+}
+
 // Экран ленты уведомлений по макету DK-216 («05 Лента»): три типа событий DoD
 // (стоп работы, зов человека, завершение задачи), фильтры по типам,
 // группировка по дням и действие у стопа. События сервер берёт из журнала
@@ -1207,6 +1442,12 @@ function renderHome(projects) {
     card.append(row);
   }
   groups.append(card);
+  if (!shownProject) return;
+  const bar = el("div", "nbar");
+  bar.append(newTaskButton(shownProject, "Новая задача"));
+  bar.append(el("span", "hint",
+    "Ляжет на доску проекта " + shownProject + ", другой выбирается строкой списка."));
+  groups.append(bar);
 }
 
 function showError(text) {
@@ -1249,6 +1490,14 @@ async function refresh() {
   }
   document.getElementById("pname").textContent = current.name;
   renderLive(current.name, current.works);
+  if (rt.make) {
+    // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
+    // подпроцесса taskctl на каждый фокус окна.
+    document.getElementById("psub").textContent = "новая задача";
+    markNav(rt);
+    renderNew(current.name);
+    return;
+  }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
   if (!r.ok) {
     document.getElementById("psub").textContent = "";

@@ -45,6 +45,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.auth(s.handleLogout))
 	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/{p}/board", s.auth(s.handleBoard))
+	mux.HandleFunc("POST /api/projects/{p}/tasks", s.auth(s.handleTaskCreate))
+	mux.HandleFunc("POST /api/projects/{p}/drafts", s.auth(s.handleDraftPost))
 	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}", s.auth(s.handleTask))
 	mux.HandleFunc("PATCH /api/projects/{p}/tasks/{id}", s.auth(s.handleTaskPatch))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePost))

@@ -75,11 +75,17 @@ func parseBoardRows(raw json.RawMessage) (map[string]boardRow, error) {
 // дашборд не берётся. Ненайденный бинарь и сорванный срок это 502, там
 // сломан не ввод, а окружение.
 func taskctlDo(dir string, args ...string) (string, int, error) {
+	return taskctlDoIn(dir, "", args...)
+}
+
+// taskctlDoIn это taskctlDo с текстом на входе подпроцесса: так уезжает текст
+// черновика (разбор аргументов и страж подкоманд его бы не пропустили).
+func taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
 	bin := taskctlPath()
 	if bin == "" {
 		return "", http.StatusBadGateway, errors.New(taskctlMissing())
 	}
-	out, err := runProc(bin, append(args, "-C", dir)...)
+	out, err := runProcIn(stdin, bin, append(args, "-C", dir)...)
 	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {

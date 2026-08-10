@@ -57,9 +57,19 @@ var procTimeout = 30 * time.Second
 // runProc гоняет подпроцесс со сроком; по срыву срока процесс снимается, а
 // ошибка называет срок, а не пересказывает сигнал убийства.
 func runProc(name string, args ...string) ([]byte, error) {
+	return runProcIn("", name, args...)
+}
+
+// runProcIn это тот же запуск с текстом на входе. Текст черновика едет так, а
+// не аргументом: аргументом он проходит через разбор флагов и через стража
+// подкоманд taskctl, и мысль вида «-p» или «fix» там теряется целиком.
+func runProcIn(stdin, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	// Без WaitDelay Output ждёт трубу, а её после убийства процесса может
 	// держать открытой его выживший потомок: срок обязан вернуть управление,
 	// а не переложить вечное ожидание с процесса на трубу.

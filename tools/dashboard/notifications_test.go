@@ -216,8 +216,7 @@ func TestNotificationsStream(t *testing.T) {
 
 // Экран ленты собран по макету «05 Лента»: три типа DoD чипами фильтров,
 // группировка по дням, действие «Поднять виток» у стопа и живой поток вместо
-// перезагрузки страницы. Вход в раздел стоит в боковой колонке и в нижних
-// вкладках, заглушки там больше нет.
+// перезагрузки страницы.
 func TestStaticFeedScreen(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
@@ -234,20 +233,67 @@ func TestStaticFeedScreen(t *testing.T) {
 			t.Errorf("в static/app.js нет части экрана ленты %q", want)
 		}
 	}
-	page := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`id="nav-feed"`, `id="tab-feed"`} {
-		if !strings.Contains(page, want) {
-			t.Errorf("в static/index.html нет входа в ленту %q", want)
-		}
-	}
-	if strings.Contains(page, `class="sitem off">Лента`) {
-		t.Error("«Лента» в боковой колонке осталась заглушкой")
-	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, want := range []string{".fchip", ".nday", ".i-stop", ".i-wait", ".i-done"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет стиля ленты %q", want)
 		}
+	}
+}
+
+// Вход в ленту это колокольчик в шапке (DK-246), а не пункт разделов: шапка
+// стоит над любым экраном и на ноутбуке, и на телефоне, поэтому один вход
+// закрывает оба форм-фактора. Пункта «Лента» в боковой колонке и в нижних
+// вкладках больше нет.
+func TestStaticFeedBellEntry(t *testing.T) {
+	page := readFile(t, filepath.Join("static", "index.html"))
+	for _, want := range []string{`id="bell"`, `aria-label="Лента уведомлений"`, `id="bell-dot"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("в static/index.html нет колокольчика %q", want)
+		}
+	}
+	for _, gone := range []string{`id="nav-feed"`, `id="tab-feed"`, ">Лента<"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("в static/index.html остался прежний вход в ленту %q", gone)
+		}
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, `["bell", "/feed"]`) {
+		t.Error("колокольчик не ведёт на ленту")
+	}
+	if strings.Contains(app, "nav-feed") || strings.Contains(app, "tab-feed") {
+		t.Error("в static/app.js осталась разводка пункта «Лента»")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".bell{", ".bell.on", ".bdot{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет стиля колокольчика %q", want)
+		}
+	}
+}
+
+// Счётчика непрочитанного нет и не будет: отметок прочитанного сервер не
+// держит. Вместо числа точка новых с последнего захода, и заход помнит сам
+// браузер (DK-246): открытая лента гасит точку, а событие, пришедшее на
+// открытый экран, её не зажигает.
+func TestStaticFeedDotFromLocalSeen(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`const FEED_SEEN_KEY = "devkit.feed.seen"`,
+		"localStorage.getItem(FEED_SEEN_KEY)",
+		"localStorage.setItem(FEED_SEEN_KEY",
+		"function refreshBellDot()",
+		"showBellDot(Boolean(last) && last > seen)",
+		"markFeedSeen(nowStamp())",
+		"markFeedSeen(n.time)",
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет части индикатора новых %q", want)
+		}
+	}
+	page := readFile(t, filepath.Join("static", "index.html"))
+	if !strings.Contains(page, `class="bdot" hidden`) {
+		t.Error("точка индикатора зажжена в разметке, а не логикой")
 	}
 }
 

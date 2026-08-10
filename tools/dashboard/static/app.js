@@ -1365,7 +1365,70 @@ function renderFeedItems(box, project, items, note) {
   }
 }
 
+// Точка на колокольчике вместо счётчика непрочитанного (решение DK-246):
+// отметок прочитанного у сервера нет и не будет, поэтому «новое» считается по
+// времени последнего захода на ленту, а держит его сам браузер. Из двух
+// честных вариантов это тот, который не врёт числом: точка говорит, что после
+// прошлого захода события были, и не притворяется, что знает, сколько их
+// человек прочитал.
+const FEED_SEEN_KEY = "devkit.feed.seen";
+
+function feedSeen() {
+  try {
+    return localStorage.getItem(FEED_SEEN_KEY) || "";
+  } catch (err) {
+    // Приватное окно запрещает хранилище: точка тогда просто не загорается,
+    // ломать из-за этого экран не за что.
+    return "";
+  }
+}
+
+function markFeedSeen(time) {
+  if (!time || time <= feedSeen()) return;
+  try {
+    localStorage.setItem(FEED_SEEN_KEY, time);
+  } catch (err) {
+    return;
+  }
+  showBellDot(false);
+}
+
+function showBellDot(on) {
+  document.getElementById("bell-dot").hidden = !on;
+}
+
+// Время в журнале уведомителя местное и без зоны, поэтому и заход считается
+// местными часами браузера. Дашборд обычно смотрят с той же машины, а на чужой
+// с уехавшими часами точка ошибётся в одну сторону: покажет лишнее или
+// смолчит до следующего события.
+function nowStamp() {
+  const d = new Date();
+  const p = (v) => String(v).padStart(2, "0");
+  return isoDay(d) + "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" +
+    p(d.getSeconds());
+}
+
+// Колокольчик знает про новое, не открывая ленту: обычный (не потоковый)
+// ответ ленты стоит одного чтения журнала, и ходит он тем же кругом, что и
+// обновление доски, то есть по фокусу окна и смене экрана.
+async function refreshBellDot() {
+  const r = await api("/api/notifications");
+  const items = (r.body && r.body.items) || [];
+  const last = items.length ? items[items.length - 1].time || "" : "";
+  const seen = feedSeen();
+  // Первый заход в браузере: точка не загорается на всей прошлой истории
+  // журнала, отсчёт начинается с этой минуты.
+  if (!seen) {
+    markFeedSeen(nowStamp());
+    return;
+  }
+  showBellDot(Boolean(last) && last > seen);
+}
+
 function renderFeed(project) {
+  // Заход на ленту гасит точку: всё, что было до этой минуты, человек видит
+  // прямо сейчас.
+  markFeedSeen(nowStamp());
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   const head = el("div", "nhead");
@@ -1406,6 +1469,9 @@ function renderFeed(project) {
         return;
       }
       items.unshift(n);
+      // Событие пришло на открытую ленту: оно уже прочитано, и точка на
+      // колокольчике по нему не загорается.
+      markFeedSeen(n.time);
       redraw();
     };
   };
@@ -1471,6 +1537,9 @@ async function refresh() {
   // Проект помнится и на главной: с неё раздел «Доска» ведёт на тот проект,
   // который откроется по имени, а не на пустой хэш.
   shownProject = current ? current.name : "";
+  // Точка на колокольчике живёт отдельно от экрана: она нужна и на доске, и на
+  // главной, а ждать её ответа экрану незачем.
+  refreshBellDot().catch(console.error);
   renderSidebar(projects, rt.home ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
@@ -1540,12 +1609,14 @@ function plural(n, one, few, many) {
 }
 
 // Разделы боковой колонки и нижних вкладок: главная ведёт на список проектов,
-// доска и лента на свои экраны текущего проекта, открытый раздел подсвечен.
+// доска на свой экран текущего проекта, открытый раздел подсвечен. Лента
+// разделом больше не стоит, вход в неё это колокольчик в шапке, и открытая
+// лента подсвечивает его.
 function markNav(rt) {
   const on = rt.home ? "home" : rt.feed ? "feed" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
-    ["feed", ["nav-feed", "tab-feed"]]]) {
+    ["feed", ["bell"]]]) {
     for (const id of ids) {
       document.getElementById(id).classList.toggle("on", name === on);
     }
@@ -1553,7 +1624,7 @@ function markNav(rt) {
 }
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
-  ["nav-feed", "/feed"], ["tab-feed", "/feed"]]) {
+  ["bell", "/feed"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
     // имени увёл бы на "#/feed".

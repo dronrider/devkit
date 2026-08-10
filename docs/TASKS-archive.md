@@ -149,3 +149,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-218 | Запуск и стоп задачи и цели с дашборда | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-218.md](tasks/archive/2026/DK-218.md) |
 | DK-119 | Коммит доски, собранный руками, отбивает pre-push | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-119.md](tasks/archive/2026/DK-119.md) |
 | DK-219 | Живой статус агента в дашборде: журнал витка, транскрипт, tmux | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-219.md](tasks/archive/2026/DK-219.md) |
+| DK-220 | Переписка с агентом через состояние цели | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-220.md](tasks/archive/2026/DK-220.md) |

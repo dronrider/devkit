@@ -65,8 +65,11 @@ class PermsCliTest(SandboxCase):
 
     def test_tool_allowed_whole_covers_the_list(self):
         # Инструмент, разрешённый целиком, покрывает перечень: звать чинить
-        # исправное не за чем.
-        write(self.settings, '{"permissions": {"allow": ["Bash", "Read", "Edit", "Write"]}}\n')
+        # исправное не за чем. deny на секреты при этом должен стоять, иначе
+        # находка про чтение секрета всплывает поверх чистого allow.
+        write(self.settings, json.dumps({"permissions": {"allow": ["Bash", "Read", "Edit", "Write"],
+                                                          "deny": list(perms.SECRET_DENY)}},
+                                        ensure_ascii=False, indent=2))
         rc, out = self.pcli()
         self.assertEqual(rc, 0, "разрешённый целиком Bash не покрыл перечень: %s" % out)
 
@@ -84,7 +87,8 @@ class PermsCliTest(SandboxCase):
         # Запрет остаётся как записан, запрещённое право в allow не уезжает
         # (иначе allow и deny спорили бы друг с другом), а дописанное ложится в
         # конец, не двигая рукописного. Проверка позиционная: членства в списке
-        # мало, порядок в настройках значащий.
+        # мало, порядок в настройках значащий. deny-правила чтения секретов
+        # дописываются тем же правилом: после рукописного запрета, в конце.
         head = ["Bash(своё первое:*)", "Bash(taskctl:*)", "Bash(своё второе:*)"]
         deny = ["Bash(rm:*)", "Bash(git:*)"]
         write(self.settings, json.dumps({"permissions": {"allow": list(head), "deny": list(deny)}},
@@ -95,9 +99,34 @@ class PermsCliTest(SandboxCase):
         data = json.loads(read(self.settings))
         allow = data["permissions"]["allow"]
         self.assertEqual(allow[:3], head, "рукописные правила уехали с места")
-        self.assertEqual(data["permissions"]["deny"], deny, "запрет пользователя изменён")
+        # Рукописный запрет на месте, deny-правила секретов дописаны следом.
+        self.assertEqual(data["permissions"]["deny"][:len(deny)], deny,
+                         "запрет пользователя изменён")
+        self.assertEqual(data["permissions"]["deny"][len(deny):], list(perms.SECRET_DENY),
+                         "deny-правила секретов не дописаны в конец")
         added = [r for r in perms.MACHINE_ALLOW if r not in head and r != "Bash(git:*)"]
         self.assertEqual(allow[3:], added, "дописанное легло не в конец или не в порядке перечня")
+
+    def test_secret_deny_is_laid_out(self):
+        # Чтение секретов инструментом Read рубится в deny: без правки файл
+        # доступов, ключи, хранилище secretctl и local-docs читаются напрямую, и
+        # значение уезжает в контекст модели (цель DK-207). --fix ставит deny,
+        # повторный прогон находок не ищет.
+        write(self.settings, json.dumps({"permissions": {"allow": ["Bash", "Read", "Edit", "Write"]}},
+                                        ensure_ascii=False, indent=2))
+        rc, out = self.pcli()
+        self.assertEqual(rc, 1, "отсутствие deny на секреты прошло мимо проверки: %s" % out)
+        self.assertIn_("чтение секрета", out, "находка не назвала рубёж чтения")
+        self.assertIn_("doctor --fix", out, "находка не назвала команду починки")
+        rc, out = self.pcli("--fix")
+        self.assertEqual(rc, 0, "--fix не поставил deny на секреты: %s" % out)
+        self.assertRegex(out, r"починено: поставлено \d+ deny-правил\S* на чтение секрета в",
+                         "--fix не отчитался о поставленном deny")
+        data = json.loads(read(self.settings))
+        self.assertEqual(data["permissions"]["deny"], list(perms.SECRET_DENY),
+                         "deny-правила разложены не по перечню")
+        rc, out = self.pcli()
+        self.assertEqual(rc, 0, "после --fix проверка всё ещё ищет deny на секреты: %s" % out)
 
     def test_machine_without_settings(self):
         # Машина, на которой прав ещё не раскладывали: находка с командой

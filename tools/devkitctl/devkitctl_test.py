@@ -1628,9 +1628,13 @@ class HarnessHooksTest(SandboxCase):
         _, out = self.box.doctor(self.proj, home=self.home2)
         self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",
                          "доктор не заметил неподключённые хуки харнеса")
+        self.assertRegex(out, r"хук харнеса в[^\n]*на событии PreToolUse[^\n]*check-read-secret\.py",
+                         "доктор не заметил PreToolUse-хук чтения секретов")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-read-secret\.py на PreToolUse",
+                         "--fix не разложил PreToolUse-хук чтения секретов")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
@@ -1638,6 +1642,11 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
                          ["Edit|Write|NotebookEdit"], hooks["PostToolUse"])
+        # PreToolUse-хук чтения секретов (DK-228): один, на матчере Bash.
+        pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
+        self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
+        self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
+                         ["Bash"], hooks["PreToolUse"])
         for event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))

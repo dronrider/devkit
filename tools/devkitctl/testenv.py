@@ -57,11 +57,13 @@ RELEASE_MTIME = 1000000000
 # Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
 # и после реза он обязан оставаться разбираемым.
 NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
-SETTINGS = """{"permissions": {"allow": %s},
+SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
+]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
 ]}], "Notification": [{"hooks": [
@@ -399,8 +401,9 @@ class Sandbox:
         (home / ".claude" / "skills").mkdir(parents=True)
         (home / ".devkit" / "quota").mkdir(parents=True)
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
+        deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
         write(home / ".claude" / "settings.json",
-              SETTINGS % (allow, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
+              SETTINGS % (allow, deny, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

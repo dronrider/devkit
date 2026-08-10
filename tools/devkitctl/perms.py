@@ -23,6 +23,9 @@ from pathlib import Path
 
 # Три формы слова для счёта в отчёте: одно право, два права, тридцать пять прав.
 RIGHT = ("право машинного контура", "права машинного контура", "прав машинного контура")
+DENY_RIGHT = ("deny-правило на чтение секрета",
+              "deny-правила на чтение секрета",
+              "deny-правил на чтение секрета")
 SETTINGS = "~/.claude/settings.json"
 DOCTOR = Path(__file__).resolve().parent / "devkitctl.py"
 
@@ -82,6 +85,19 @@ MACHINE_ALLOW = (
     "Edit",
     "Write",
 )
+
+# Секретные пути, чтение которых инструментом Read режется в deny. Значения
+# секретов не должны ехать в контекст модели (цель DK-207), а secretctl даёт к
+# ним доступ без прямого чтения файла, поэтому рубить чтение можно, не оставляя
+# агента без средства получить значение. Обход этого запрета через Bash (cat,
+# grep и подобное) прикрывает PreToolUse-хук check-read-secret.py, пути те же.
+# local-docs ищется по cwd проекта, остальные по домашнему каталогу машины.
+SECRET_DENY = (
+    "Read(~/.claude/access.local.md)",
+    "Read(~/.ssh/**)",
+    "Read(~/.devkit/secrets/**)",
+    "Read(./local-docs/**)",
+)
 SECTIONS = ("allow", "deny", "ask")
 
 
@@ -133,14 +149,18 @@ def granted(data, key):
     return (data.get("permissions") or {}).get(key) or []
 
 
-def write(settings, data, missing):
+def write(settings, data, allow_missing, deny_missing=()):
     # Правка строго additive: рукописные правила остаются на месте и в своём
     # порядке, недостающие дописываются в конец, прочие ключи настроек
     # переезжают как есть. Файл при этом переписывается целиком, отступом в два
-    # пробела: JSON комментариев не держит, и терять в нём нечего.
+    # пробела: JSON комментариев не держит, и терять в нём нечего. Дописываются
+    # и allow (права машинного контура), и deny (чтение секретов): оба списка
+    # держит один рубеж, и чужой порядок в каждом остаётся как записан.
     perms = data.setdefault("permissions", {})
-    allow = perms.setdefault("allow", [])
-    allow.extend(missing)
+    if allow_missing:
+        perms.setdefault("allow", []).extend(allow_missing)
+    if deny_missing:
+        perms.setdefault("deny", []).extend(deny_missing)
     settings.parent.mkdir(parents=True, exist_ok=True)
     tmp = settings.with_name(settings.name + ".devkit-tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -173,20 +193,39 @@ def check(settings, fix=False, worktree_main=None):
                             "сессия без человека на них встанет, а записанное руками --fix "
                             "не трогает" % (key, settings, rule_list(rules)))
     allow = granted(data, "allow")
+    deny = granted(data, "deny")
     missing = [r for r in MACHINE_ALLOW if r not in blocked and not covered(r, allow)]
-    if not missing:
+    # SECRET_DENY режет инструмент Read на секретных путях, и из deny выпадает
+    # отдельной статьёй: обход через Bash прикрывает хук, а прямое чтение из
+    # контекста модели рубится именно тут.
+    missing_deny = [r for r in SECRET_DENY if r not in deny]
+    if not missing and not missing_deny:
         return findings, fixed
     if fix and from_main:
-        write(settings, data, missing)
-        # Сами правила тут не перечисляются: их три десятка, читать этот список
-        # человеку незачем, а посмотреть его есть где, в самих настройках.
-        fixed.append("дописано %s в %s" % (say.counted(len(missing), RIGHT), settings))
+        write(settings, data, missing, missing_deny)
+        if missing:
+            # Сами правила тут не перечисляются: их три десятка, читать этот список
+            # человеку незачем, а посмотреть его есть где, в самих настройках.
+            fixed.append("дописано %s в %s" % (say.counted(len(missing), RIGHT), settings))
+        if missing_deny:
+            fixed.append("поставлено %s в %s: инструмент Read режется на файле доступов, "
+                         "приватных ключах, хранилище secretctl и local-docs, значение "
+                         "берётся через secretctl (цель DK-207)"
+                         % (say.counted(len(missing_deny), DENY_RIGHT), settings))
         return findings, fixed
-    findings.append("в %s не хватает прав машинного контура, %d из %d (%s): одобрять запросы "
-                    "харнеса в сессии без человека некому, и виток цели молча не сделает "
-                    "ничего; разложить: %spython3 %s doctor --fix"
-                    % (settings, len(missing), len(MACHINE_ALLOW), rule_list(missing),
-                       whence, doctor))
+    if missing:
+        findings.append("в %s не хватает прав машинного контура, %d из %d (%s): одобрять запросы "
+                        "харнеса в сессии без человека некому, и виток цели молча не сделает "
+                        "ничего; разложить: %spython3 %s doctor --fix"
+                        % (settings, len(missing), len(MACHINE_ALLOW), rule_list(missing),
+                           whence, doctor))
+    if missing_deny:
+        findings.append("в %s не хватает %s в deny (%s): файл доступов, приватные ключи, "
+                        "хранилище secretctl и local-docs читаются инструментом Read, и "
+                        "значение уезжает в контекст модели; рубится deny, значение берётся "
+                        "через secretctl (цель DK-207); разложить: %spython3 %s doctor --fix"
+                        % (settings, say.counted(len(missing_deny), DENY_RIGHT),
+                           rule_list(missing_deny), whence, doctor))
     return findings, fixed
 
 

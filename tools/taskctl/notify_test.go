@@ -55,6 +55,11 @@ func TestMoveToCheckNotifiesLoud(t *testing.T) {
 	if !strings.Contains(line, "XR-005") || !strings.Contains(line, "в Check") {
 		t.Fatalf("заголовок уведомления не про Check: %q", line)
 	}
+	// Повод едет словом: по нему лента дашборда отбирает события задач, а из
+	// заголовка тип события не вытащить.
+	if !strings.HasPrefix(line, "--reason\ttask_check\t") {
+		t.Fatalf("уведомление ушло без повода task_check: %q", line)
+	}
 	if !strings.HasSuffix(line, "Задача в работе") {
 		t.Fatalf("в теле нет заголовка задачи: %q", line)
 	}
@@ -77,6 +82,9 @@ func TestMoveToBlockedNotifiesLoud(t *testing.T) {
 	line := strings.TrimSpace(string(got))
 	if !strings.Contains(line, "XR-004") || !strings.Contains(line, "на блокере") {
 		t.Fatalf("заголовок уведомления не про блокер: %q", line)
+	}
+	if !strings.HasPrefix(line, "--reason\ttask_blocked\t") {
+		t.Fatalf("уведомление ушло без повода task_blocked: %q", line)
 	}
 	if !strings.HasSuffix(line, "ждём железо") {
 		t.Fatalf("в теле нет причины блокировки: %q", line)

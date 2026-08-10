@@ -85,7 +85,7 @@ func cmdFail(root string, p FailParams) (string, error) {
 	}
 	// Повод громкий не меньше блокера: прод сломан, и в автономном режиме об
 	// этом иначе некому узнать (RULES.board.md, «Ветки, ревью и деплой» п. 8).
-	note := notify(root, fmt.Sprintf("%s: %s провал проверки", filepath.Base(root), p.ID), p.Reason)
+	note := notify(root, reasonFail, fmt.Sprintf("%s: %s провал проверки", filepath.Base(root), p.ID), p.Reason)
 	tail, err := p.Commit.apply(root, paths)
 	if err != nil {
 		return "", err

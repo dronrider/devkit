@@ -264,6 +264,9 @@ func TestFailNotifiesLoud(t *testing.T) {
 	if !strings.Contains(line, "XR-005") || !strings.Contains(line, "провал проверки") {
 		t.Fatalf("заголовок уведомления не про провал: %q", line)
 	}
+	if !strings.HasPrefix(line, "--reason\ttask_fail\t") {
+		t.Fatalf("уведомление ушло без повода task_fail: %q", line)
+	}
 	if !strings.HasSuffix(line, "500 на входе") {
 		t.Fatalf("в теле нет причины провала: %q", line)
 	}

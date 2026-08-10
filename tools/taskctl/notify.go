@@ -32,18 +32,26 @@ func notifyScript(root string) (string, error) {
 		strings.Join(cands, ", "))
 }
 
+// Поводы, которыми taskctl подписывает свои уведомления: по ним лента
+// дашборда собирает события задач в свой фильтр, а разбор стоит в заголовке.
+const (
+	reasonCheck   = "task_check"
+	reasonBlocked = "task_blocked"
+	reasonFail    = "task_fail"
+)
+
 // notify зовёт уведомитель громко: задача доехала до Check или встала на
 // блокере, поводы, ради которых человек подходит к машине (RULES.board.md,
 // «Ветки, ревью и деплой» п. 8). Move из-за непосланного уведомления падать
 // не должен, поэтому ошибка возвращается строкой-припиской к сообщению
 // команды, а не всплывает наверх: молчать про непосланное нельзя, но и
 // держать саму доску несдвинутой из-за этого тоже.
-func notify(root, title, body string) string {
+func notify(root, reason, title, body string) string {
 	script, err := notifyScript(root)
 	if err != nil {
 		return "\nуведомление не отправлено: " + err.Error()
 	}
-	cmd := exec.Command("python3", script, title, body)
+	cmd := exec.Command("python3", script, "--reason", reason, title, body)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

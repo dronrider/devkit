@@ -629,5 +629,34 @@ class GoalRunTests(unittest.TestCase):
         self.assertEqual(p.returncode, 3, "оболочка полезла в цель с уже поднятой tmux-сессией")
 
 
+class SkillInboxTests(unittest.TestCase):
+    """Формулировки SKILL.md про «Входящие» файла цели (DK-220). Дашборд кладёт
+    сообщения человека в этот раздел и рассчитывает, что виток читает их на
+    шаге состояния и убирает записью витка: уехавшая формулировка оборвала бы
+    канал переписки молча, поэтому её держит тест."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
+            cls.skill = f.read()
+
+    def test_inbox_is_read_on_the_state_step(self):
+        # Чтение «Входящих» стоит в шаге состояния, до всякой работы: виток
+        # читает файл цели целиком, и отдельного канала доставки нет.
+        state = self.skill[self.skill.index("1. Состояние"):self.skill.index("2. Гейт бюджета")]
+        self.assertIn("«Входящие»", state)
+        self.assertIn("из дашборда", state, "формат строки сообщения не назван")
+        self.assertIn("контекст витка", state)
+
+    def test_inbox_line_is_removed_by_the_turn_record(self):
+        # Убирается строка записью витка, а не при чтении: оборванный виток
+        # теряет только себя, и сообщение дожидается следующего.
+        state = self.skill[self.skill.index("1. Состояние"):self.skill.index("2. Гейт бюджета")]
+        self.assertIn("записью витка", state)
+        record = self.skill[self.skill.index("5. Запись витка"):self.skill.index("6. Выход маркером")]
+        self.assertIn("убирает из «Входящих»", record)
+        self.assertIn("ждёт витка", record, "надпись дашборда не привязана к лежащей строке")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

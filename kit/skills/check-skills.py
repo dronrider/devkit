@@ -181,6 +181,37 @@ def check_rules_backlink(here):
     return fails
 
 
+def check_background_rule(root):
+    # DK-165: у фоновой команды Bash в субагенте уведомление доходит только в
+    # главный цикл сессии, и ход, законченный текстом, считается финальным
+    # ответом. Без прямого правила в промпте исполнитель возвращается с
+    # незакоммиченной работой, а диспетчер без страховки принимает это за отчёт.
+    # Правило лежит во всех промптах исполнителей и ревьюверов, страховка
+    # диспетчера в board-batch и board-ship: выпавший из текста маркер это та же
+    # ловушка, что и вживую.
+    fails = []
+    agents = os.path.join(root, "kit", "agents")
+    prompts = ("exec-low", "exec-medium", "exec-high", "exec-xhigh",
+               "review-low", "review-medium", "review-high", "review-xhigh")
+    for prompt in prompts:
+        text = read(os.path.join(agents, prompt + ".md"))
+        if text is None:
+            fails.append("%s: промпт агента не найден, правило фонового прогона некуда положить" % prompt)
+            continue
+        if "возврат диспетчеру" not in text:
+            fails.append("%s: не сказано, что конец хода это возврат диспетчеру" % prompt)
+        if "foreground" not in text:
+            fails.append("%s: не сказано ждать фоновый прогон в foreground" % prompt)
+    skills = os.path.join(root, "kit", "skills")
+    for skill in ("board-batch", "board-ship"):
+        text = read(os.path.join(skills, skill, "SKILL.md"))
+        if text is None:
+            continue  # отдельно ловится check_skills
+        if "foreground" not in text:
+            fails.append("%s: нет страховки диспетчера от возврата с незакоммиченным" % skill)
+    return fails
+
+
 def run(here, root):
     """Все проверки разом. Возврат (находки, число скиллов)."""
     fails = []
@@ -191,6 +222,7 @@ def run(here, root):
     fails += check_groom(here)
     fails += check_team(here)
     fails += check_rules_backlink(here)
+    fails += check_background_rule(root)
     return fails, n
 
 

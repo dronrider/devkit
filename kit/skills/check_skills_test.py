@@ -274,5 +274,69 @@ class TestRunAndMain(SkillTree):
         self.assertTrue(any("board-team" in f for f in fails))
 
 
+class TestBackgroundRule(SkillTree):
+    """DK-165: правило «конец хода это возврат диспетчеру, фоновый прогон в
+    foreground» во всех промптах исполнителей и ревьюверов, страховка диспетчера
+    в board-batch и board-ship. Синтетическое дерево кладёт промпты в
+    kit/agents/ и скиллы в kit/skills/ рядом с корнем."""
+
+    PROMPTS = ("exec-low", "exec-medium", "exec-high", "exec-xhigh",
+               "review-low", "review-medium", "review-high", "review-xhigh")
+
+    def add_prompt(self, name, body):
+        d = os.path.join(self.root, "kit", "agents")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name + ".md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\ndescription: роль.\neffort: low\n---\n\n%s\n" % (name, body))
+
+    def all_prompts(self, body):
+        for name in self.PROMPTS:
+            self.add_prompt(name, body)
+
+    def test_passes_when_rule_everywhere(self):
+        self.all_prompts("Конец хода это возврат диспетчеру. Ждать в foreground.")
+        for skill in ("board-batch", "board-ship"):
+            self.add_skill(skill, body="страховка: дождаться в foreground\n" + "\n".join(["тело"] * 12))
+        self.assertEqual(check_skills.check_background_rule(self.root), [])
+
+    def test_fails_when_prompt_misses_return_phrase(self):
+        self.all_prompts("Ждать прогон в foreground.")
+        self.assertEqual(check_skills.check_background_rule(self.root),
+                         ["exec-low: не сказано, что конец хода это возврат диспетчеру",
+                          "exec-medium: не сказано, что конец хода это возврат диспетчеру",
+                          "exec-high: не сказано, что конец хода это возврат диспетчеру",
+                          "exec-xhigh: не сказано, что конец хода это возврат диспетчеру",
+                          "review-low: не сказано, что конец хода это возврат диспетчеру",
+                          "review-medium: не сказано, что конец хода это возврат диспетчеру",
+                          "review-high: не сказано, что конец хода это возврат диспетчеру",
+                          "review-xhigh: не сказано, что конец хода это возврат диспетчеру"])
+
+    def test_fails_when_prompt_misses_foreground(self):
+        self.all_prompts("Конец хода это возврат диспетчеру.")
+        self.assertTrue(all("не сказано ждать фоновый прогон в foreground" in f
+                            for f in check_skills.check_background_rule(self.root)))
+
+    def test_fails_when_prompt_absent(self):
+        # Ни одного промпта нет: каждый сообщает об отсутствии.
+        fails = check_skills.check_background_rule(self.root)
+        self.assertEqual(len(fails), len(self.PROMPTS))
+        self.assertTrue(all("промпт агента не найден" in f for f in fails))
+
+    def test_fails_when_skill_misses_foreground(self):
+        self.all_prompts("Конец хода это возврат диспетчеру. Ждать в foreground.")
+        for skill in ("board-batch", "board-ship"):
+            self.add_skill(skill, body="страховки нет, ждём как придётся\n" + "\n".join(["тело"] * 12))
+        fails = check_skills.check_background_rule(self.root)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(any("board-batch: нет страховки диспетчера" in f for f in fails))
+        self.assertTrue(any("board-ship: нет страховки диспетчера" in f for f in fails))
+
+    def test_skill_missing_is_not_double_reported(self):
+        # Скилл без SKILL.md отдельно ловится check_skills, здесь отрабатывает
+        # молча: находка про страховку не дублирует пропажу скилла.
+        self.all_prompts("Конец хода это возврат диспетчеру. Ждать в foreground.")
+        self.assertEqual(check_skills.check_background_rule(self.root), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

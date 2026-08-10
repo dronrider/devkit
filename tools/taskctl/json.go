@@ -153,7 +153,7 @@ func cmdShowJSON(root, id string) (string, error) {
 	}
 	if d := findDraft(drafts, id); d != nil {
 		return marshal(jsonShow{
-			jsonRow: jsonRow{ID: id},
+			jsonRow: jsonRow{ID: id, Title: d.Title},
 			Sect:    "draft",
 			File:    filepath.Join("docs", "tasks", "drafts", id+".md"),
 		})

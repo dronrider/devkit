@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -191,6 +193,34 @@ func TestShowJSONArchiveAndMissing(t *testing.T) {
 	}
 	if _, err := cmdShowJSON(root, "XR-404"); err == nil {
 		t.Fatal("несуществующий ID должен давать ошибку")
+	}
+}
+
+// Черновик в show --json несёт заголовок, как и печатный show: машинному
+// читателю про черновик известно не меньше, чем человеку.
+func TestShowJSONDraftTitle(t *testing.T) {
+	root := setup(t)
+	dir := filepath.Join(root, "docs", "tasks", "drafts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# Идея про дашборд\n\nзаписан 2026-08-01\n\nтекст черновика\n"
+	if err := os.WriteFile(filepath.Join(dir, "XR-009.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdShowJSON(root, "XR-009")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got jsonShow
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Sect != "draft" || got.File != "docs/tasks/drafts/XR-009.md" {
+		t.Fatalf("черновик разобран неверно: %+v", got)
+	}
+	if got.Title != "Идея про дашборд" {
+		t.Fatalf("title = %q, ожидал заголовок черновика", got.Title)
 	}
 }
 

@@ -120,19 +120,6 @@ func claudeMissing() string {
 	return ""
 }
 
-// goalLedOutside отвечает, ведётся ли цель записью реестра без tmux-сессии:
-// такой цикл поднят живым чатом, он не дашборда, и стоп ему не предлагается.
-func goalLedOutside(projectPath, id, home string) bool {
-	for _, path := range globSorted(filepath.Join(home, ".devkit", "goals", "*.watch")) {
-		entry := readEntry(path)
-		if entry["goal"] == id && entry["root"] != "" &&
-			filepath.Clean(entry["root"]) == filepath.Clean(projectPath) {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -238,26 +225,40 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	live := map[string]bool{}
-	for _, name := range tmuxSessions() {
-		live[name] = true
-	}
-	kind := ""
-	switch {
-	case live["goal-"+id]:
-		kind = "goal"
-	case live["task-"+id]:
-		kind = "task"
-	default:
-		if goalLedOutside(found.Path, id, s.cfg.Home) {
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error": fmt.Sprintf("цикл цели %s ведётся снаружи, без tmux-сессии дашборда: стоп там, где цикл поднят", id)})
-			return
-		}
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("работа %s не идёт: нет ни tmux-сессии goal-%s или task-%s, ни записи в реестре целей", id, id, id)})
+	raw, err := boardJSON(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
+	view, err := parseBoardView(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("ответ taskctl не разобрался: %v", err)})
+		return
+	}
+	// Стоп симметричен запуску: работа ищется среди живых работ этого
+	// проекта, где tmux-сессии привязаны префиксом его доски (liveWorks,
+	// правило DK-217), а не в общем списке сессий машины. Иначе стоп на
+	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
+	// в чужом корне.
+	var work *Work
+	works := liveWorks(found.Path, view.Prefix, s.cfg.Home)
+	for i := range works {
+		if works[i].ID == id {
+			work = &works[i]
+			break
+		}
+	}
+	if work == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии с префиксом его доски, ни записи в реестре целей", id, found.Name)})
+		return
+	}
+	if work.Via == "registry" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("цикл цели %s ведётся снаружи, без tmux-сессии дашборда: стоп там, где цикл поднят", id)})
+		return
+	}
+	kind := work.Kind
 	sess := kind + "-" + id
 	resp := map[string]string{"id": id, "kind": kind, "session": sess, "state": "стоп"}
 	if kind == "goal" {

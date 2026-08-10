@@ -272,6 +272,27 @@ func TestRunStopTask(t *testing.T) {
 	}
 }
 
+// Стоп привязан к проекту, которым позван: сессию с чужим префиксом
+// (goal-DK-777 при доске с префиксом XR) запрос с доски demo не снимает и
+// журнал через --say в чужом корне не заводит. Замечание ревью DK-218.
+func TestRunStopForeignPrefixUntouched(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, `goal-DK-777\n`)
+	callsLog := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(callsLog))
+
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/DK-777", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(text, "не идёт") {
+		t.Fatalf("стоп чужой сессии: %d %s, ожидал 404 про «не идёт»", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "kill-session") {
+		t.Errorf("чужая сессия снята: %s", got)
+	}
+	if got := readFile(t, callsLog); got != "" {
+		t.Errorf("goal-run позван в чужой проект: %q", got)
+	}
+}
+
 // Цель из реестра без tmux-сессии ведётся снаружи (живой чат): дашборд её не
 // убивает и говорит об этом словами.
 func TestRunStopGoalLedOutside(t *testing.T) {

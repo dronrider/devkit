@@ -536,6 +536,38 @@ func TestStaticTaskEditHonesty(t *testing.T) {
 	}
 }
 
+// Единая кнопка склеивает две ручки на клиенте, и порядок тут держит правку:
+// сначала строка (PATCH), потом файл (PUT), а отказ первой останавливает всё.
+// Уехавший файл при отбитой строке это половина сохранённой правки, и
+// заметить её потом нечем. Приём тот же, что у ранней проверки черновика в
+// renderTask: честный признак порядка кода.
+func TestStaticTaskSaveOrder(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	cut := strings.Index(text, "async function saveTaskDraft(")
+	if cut < 0 {
+		t.Fatal("в static/app.js нет saveTaskDraft: единой кнопке нечем сохранять")
+	}
+	body := text[cut:]
+	if stop := strings.Index(body, "\n}\n"); stop > 0 {
+		body = body[:stop]
+	}
+	patch, put := strings.Index(body, `"PATCH"`), strings.Index(body, `"PUT"`)
+	if patch < 0 || put < 0 {
+		t.Fatalf("saveTaskDraft зовёт не обе ручки: PATCH %d, PUT %d", patch, put)
+	}
+	if patch > put {
+		t.Error("в saveTaskDraft файл уезжает раньше строки: правка строки может не пройти уже после записи файла")
+	}
+	if !strings.Contains(body[patch:put], "return false") {
+		t.Error("в saveTaskDraft PUT уходит, не спросив исход PATCH: отбитая строка оставит файл переписанным")
+	}
+	// Черновик держится до полного успеха: сброс раньше PUT потерял бы поля
+	// на отказе второй ручки.
+	if drop := strings.Index(body, "taskDraft.dirty = false"); drop < 0 || drop < put {
+		t.Error("в saveTaskDraft черновик сбрасывается раньше записи файла: правка пропадёт на отказе PUT")
+	}
+}
+
 // Живое обновление при открытой правке не подменяет ввод: пока в черновике
 // есть правка, экран не перерисовывается, а уехавшая строка отмечается
 // пометкой с кнопкой. Молчаливая подмена признана дефектом на пользовательской

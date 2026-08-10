@@ -104,7 +104,7 @@ func (s *server) taskRow(w http.ResponseWriter, r *http.Request) (found *Project
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return nil, "", boardRow{}, nil, false
 	}
-	raw, err := boardJSON(found.Path)
+	raw, err := s.projectBoard(found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return nil, "", boardRow{}, nil, false

@@ -96,7 +96,8 @@ func taskctlMissing() string {
 	return ""
 }
 
-// boardJSON отдаёт доску проекта как есть, байтами ответа taskctl.
+// boardJSON отдаёт доску проекта как есть, байтами ответа taskctl. Память на
+// этот ответ живёт уровнем выше, в методе сервера (cache.go).
 func boardJSON(dir string) (json.RawMessage, error) {
 	bin := taskctlPath()
 	if bin == "" {

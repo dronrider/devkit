@@ -31,6 +31,7 @@ func writeScript(t testing.TB, dir, name, body string) {
 
 type testEnv struct {
 	srv  *httptest.Server
+	s    *server
 	cfg  *Config
 	home string
 	proj string // путь синтетического проекта
@@ -62,9 +63,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 
 	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
-	srv := httptest.NewServer(newServer(cfg, os.DirFS("static"), nil).handler())
+	s := newServer(cfg, os.DirFS("static"), nil)
+	srv := httptest.NewServer(s.handler())
 	t.Cleanup(srv.Close)
-	return &testEnv{srv: srv, cfg: cfg, home: home, proj: proj, bin: bin}
+	return &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}
 }
 
 // client без редиректов: ответы 302 проверяются как есть.

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,13 +22,20 @@ type server struct {
 	logf    func(format string, args ...any)
 	now     func() time.Time
 	started time.Time
+
+	// Память процесса на обход корней и на ответы taskctl (cache.go). Запросы
+	// идут разом, и своими горутинами ходит каждый из них, поэтому под замком.
+	mu     sync.Mutex
+	scan   scanEntry
+	boards map[string]boardEntry
 }
 
 func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now()}
+	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
+		boards: map[string]boardEntry{}}
 }
 
 func (s *server) handler() http.Handler {
@@ -144,7 +152,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // потому что тихая деградация неотличима от «проектов нет».
 func (s *server) healthErrs() ([]Project, []string) {
 	errs := append([]string{}, s.cfg.Errs...)
-	projects, scanErrs := scanProjects(s.cfg.Roots)
+	projects, scanErrs := s.projects()
 	errs = append(errs, scanErrs...)
 	if m := taskctlMissing(); m != "" {
 		errs = append(errs, m)
@@ -253,37 +261,41 @@ type projectInfo struct {
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	projects, errs := s.healthErrs()
-	infos := []projectInfo{}
-	for _, p := range projects {
-		info := projectInfo{Project: p, Works: []Work{}}
-		raw, err := boardJSON(p.Path)
-		if err != nil {
-			info.Error = err.Error()
-			s.logf("доска %s: %v", p.Name, err)
-			infos = append(infos, info)
-			continue
-		}
-		view, err := parseBoardView(raw)
-		if err != nil {
-			info.Error = fmt.Sprintf("ответ taskctl не разобрался: %v", err)
-			infos = append(infos, info)
-			continue
-		}
-		info.Sections = map[string]int{}
-		for _, sec := range view.Sections {
-			info.Sections[sec.Key] = len(sec.Rows)
-		}
-		info.Works = liveWorks(p.Path, view.Prefix, s.cfg.Home)
-		infos = append(infos, info)
-	}
+	// Проекты опрашиваются разом: каждый стоит своих подпроцессов (taskctl на
+	// доску, tmux на работы), и по очереди стартовая ждала бы их сумму.
+	infos := make([]projectInfo, len(projects))
+	inParallel(projectWorkers, len(projects), func(i int) { infos[i] = s.projectSummary(projects[i]) })
 	writeJSON(w, http.StatusOK, map[string]any{"projects": infos, "errors": errs})
+}
+
+// projectSummary собирает строку списка проектов: счётчики секций и живые
+// работы, а не прочитанная доска остаётся причиной вместо них.
+func (s *server) projectSummary(p Project) projectInfo {
+	info := projectInfo{Project: p, Works: []Work{}}
+	raw, err := s.projectBoard(p.Path)
+	if err != nil {
+		info.Error = err.Error()
+		s.logf("доска %s: %v", p.Name, err)
+		return info
+	}
+	view, err := parseBoardView(raw)
+	if err != nil {
+		info.Error = fmt.Sprintf("ответ taskctl не разобрался: %v", err)
+		return info
+	}
+	info.Sections = map[string]int{}
+	for _, sec := range view.Sections {
+		info.Sections[sec.Key] = len(sec.Rows)
+	}
+	info.Works = liveWorks(p.Path, view.Prefix, s.cfg.Home)
+	return info
 }
 
 // findProject находит проект из пути запроса; не найдя, сам отвечает 404 и
 // возвращает nil.
 func (s *server) findProject(w http.ResponseWriter, r *http.Request) *Project {
 	name := r.PathValue("p")
-	projects, _ := scanProjects(s.cfg.Roots)
+	projects, _ := s.projects()
 	for i := range projects {
 		if projects[i].Name == name {
 			return &projects[i]
@@ -298,7 +310,7 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	raw, err := boardJSON(found.Path)
+	raw, err := s.projectBoard(found.Path)
 	if err != nil {
 		s.logf("доска %s: %v", found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})

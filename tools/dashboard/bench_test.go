@@ -83,9 +83,10 @@ func benchEnv(b *testing.B) *Config {
 // заход, и кэш прошлого захода в него попадать не должен.
 func benchServer(b *testing.B, cfg *Config) (*httptest.Server, *http.Client) {
 	b.Helper()
-	srv := httptest.NewServer(newServer(cfg, os.DirFS("static"), nil).handler())
+	s := newServer(cfg, os.DirFS("static"), nil)
+	srv := httptest.NewServer(s.handler())
 	b.Cleanup(srv.Close)
-	e := &testEnv{srv: srv, cfg: cfg}
+	e := &testEnv{srv: srv, s: s, cfg: cfg}
 	return srv, e.loggedClient(b)
 }
 

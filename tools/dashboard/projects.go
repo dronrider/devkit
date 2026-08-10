@@ -26,10 +26,15 @@ func hasBoard(dir string) bool {
 // isLinkedWorktree узнаёт боковое дерево задачи расхождением git-dir и
 // git-common-dir, как рубеж taskctl: у дерева та же доска, и без отсева
 // каждый проект множился бы на свои деревья. Нет git или репозитория, значит
-// и дерева нет.
+// и дерева нет. Оба адреса спрашиваются одним rev-parse: подпроцесс тут самое
+// дорогое, а печатает утилита что попросили и в том порядке, в каком спросили.
 func isLinkedWorktree(dir string) bool {
-	one := gitLine(dir, "rev-parse", "--git-dir")
-	common := gitLine(dir, "rev-parse", "--git-common-dir")
+	// Строки, а не поля: путь репозитория бывает и с пробелом в имени.
+	lines := strings.Split(gitLine(dir, "rev-parse", "--git-dir", "--git-common-dir"), "\n")
+	if len(lines) != 2 {
+		return false
+	}
+	one, common := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
 	if one == "" || common == "" {
 		return false
 	}
@@ -57,7 +62,7 @@ func gitLine(dir string, args ...string) string {
 // подкаталог с docs/TASKS.md, глубже обход не идёт, чтобы не ползать по
 // деревьям сборки. Отдаёт проекты по имени и список ошибок для /healthz.
 func scanProjects(roots []string) ([]Project, []string) {
-	var found []Project
+	var found, cands []Project
 	var errs []string
 	for _, root := range roots {
 		fi, err := os.Stat(root)
@@ -76,10 +81,20 @@ func scanProjects(roots []string) ([]Project, []string) {
 		}
 		for _, e := range entries {
 			dir := filepath.Join(root, e.Name())
-			if !e.IsDir() || !hasBoard(dir) || isLinkedWorktree(dir) {
+			if !e.IsDir() || !hasBoard(dir) {
 				continue
 			}
-			found = append(found, Project{Name: e.Name(), Path: dir})
+			cands = append(cands, Project{Name: e.Name(), Path: dir})
+		}
+	}
+	// Отсев боковых деревьев стоит подпроцесса git на каждого кандидата, и это
+	// самое дорогое место обхода: кандидаты спрашиваются разом, а порядок всё
+	// равно наводится ниже сортировкой.
+	linked := make([]bool, len(cands))
+	inParallel(scanWorkers, len(cands), func(i int) { linked[i] = isLinkedWorktree(cands[i].Path) })
+	for i, c := range cands {
+		if !linked[i] {
+			found = append(found, c)
 		}
 	}
 	byName := map[string][]Project{}

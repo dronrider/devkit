@@ -181,7 +181,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := body.ID
-	raw, err := boardJSON(found.Path)
+	raw, err := s.projectBoard(found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -269,7 +269,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	raw, err := boardJSON(found.Path)
+	raw, err := s.projectBoard(found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

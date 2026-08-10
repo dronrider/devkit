@@ -314,6 +314,7 @@ if str(HERE) not in sys.path:
 import build  # noqa: E402
 import context  # noqa: E402
 import harness  # noqa: E402
+import leak  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
 import update  # noqa: E402

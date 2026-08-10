@@ -128,6 +128,7 @@ import dashboard
 import harness
 import importlib.util
 import json
+import leak
 import layout
 import os
 import perms
@@ -1057,6 +1058,12 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
         pf, pd = perms.check(settings, fix, None if from_main else main)
         findings += pf
         fixed += pd
+        # Литеральные токены в allow-правилах и резервные копии settings.json:
+        # тот же файл, тем же рубежом. Цель DK-207 держит контекст модели чистым
+        # от секретов, а значение в теле правила ездит в сессию как любая строка.
+        lf, ld = leak.check(settings, fix, None if from_main else main)
+        findings += lf
+        fixed += ld
     if paths[AXIS_AGENTS[0]] is not None:
         f, d = check_agent_defs(fix, paths[AXIS_AGENTS[0]])
         findings += f

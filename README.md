@@ -71,6 +71,12 @@ Claude Code это тонкий `CLAUDE.md` с импортами:
   REST API v3), статусы компании
   укладываются в секции доски таблицей машинного контура
   `~/.devkit/tracker/<имя>.local`, см. [tools/trackctl/README.md](tools/trackctl/README.md).
+- `tools/dashboard/` - Go-сервер веб-дашборда агентской разработки: доска и
+  текущие работы проектов с телефона и ноутбука, статика вшита в бинарь, вход
+  по своему токену с подписанной кукой. Своей базы нет, доску сервер берёт
+  подпроцессом `taskctl list --json`, а процесс держит launchd-агент, который
+  кладёт `devkitctl doctor --fix`,
+  см. [tools/dashboard/README.md](tools/dashboard/README.md).
 - `kit/harness/` - профили инструментов, в которых живёт сессия агента
   (`claude-code.toml`, `glm-code.toml` для второй подписки и дальше по одному на
   инструмент): что инструмент умеет

@@ -217,6 +217,28 @@ func TestDraftListAndShow(t *testing.T) {
 	}
 }
 
+// TestDraftTextGuard: одно слово латиницей это промах мимо подкоманды, а не
+// идея; живой текст черновика страж пропускает, включая тот, где латинское
+// слово стоит внутри строки.
+func TestDraftTextGuard(t *testing.T) {
+	for _, word := range []string{"show", "add", "list", "DK-162", "draft-list", " show "} {
+		if err := draftTextGuard(word); err == nil {
+			t.Errorf("%q: страж пропустил слово латиницей", word)
+		}
+	}
+	for _, text := range []string{
+		"хук уронил Bash всем сессиям",
+		"taskctl draft теряет текст",
+		"идея",
+		"go test падает на второй прогон",
+		"",
+	} {
+		if err := draftTextGuard(text); err != nil {
+			t.Errorf("%q: страж отбил живой текст: %v", text, err)
+		}
+	}
+}
+
 func TestAgeWords(t *testing.T) {
 	cases := []struct {
 		days int

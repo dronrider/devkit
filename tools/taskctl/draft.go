@@ -44,6 +44,25 @@ const (
 // причина» молча завёл бы черновик с текстом «defer».
 var draftSubs = map[string]bool{"list": true, "defer": true, "attach": true, "drop": true}
 
+// draftWordRe узнаёт одно слово латиницей: имя подкоманды и ID задачи выглядят
+// ровно так, а записанная на ходу идея так не выглядит никогда.
+var draftWordRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._/-]*$`)
+
+// draftTextGuard отбивает запись, когда текстом черновика оказалось одно слово
+// латиницей. Подкоманда узнаётся точным совпадением, и всё остальное падало в
+// ветку записи: «draft show DK-162» заводил черновик с текстом «show», а
+// «draft add "текст"» с текстом «add», выбросив саму идею, оба раза с кодом
+// возврата 0 и обычным сообщением на экране (DK-099).
+func draftTextGuard(text string) error {
+	word := strings.TrimSpace(text)
+	if !draftWordRe.MatchString(word) {
+		return nil
+	}
+	return fmt.Errorf("текстом черновика пришло одно слово латиницей (%q), а так выглядит промах мимо подкоманды, а не идея.\n"+
+		"  у draft есть только list, defer, attach, drop; черновик целиком печатает taskctl show <ID>\n"+
+		"  записать идею: taskctl draft \"текст идеи\"; если слово и есть весь текст, передай его на stdin", word)
+}
+
 // deferRe находит строку пометки в разделе «Грумминг»: «- 2026-08-05, отложен: ...»
 var deferRe = regexp.MustCompile(`^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен`)
 

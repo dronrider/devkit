@@ -78,6 +78,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
 целиком, без обрезки.
 У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
 тронутые файлы доски (и запушить), чужой индекс не задевается.
+Флаг стоит где угодно: и до позиционных аргументов, и после них, и между ними
+(«review add XR-1 -m "коммит" "текст"» это то же самое, что «review add XR-1
+"текст" -m "коммит"»); текст, начинающийся с дефиса, передаётся после «--».
+Лишний позиционный аргумент не выбрасывается молча, а отбивается ошибкой.
 Статусы принимаются в любом регистре, «In progress» = in-progress.
 Сумма R и бакет P считаются из разбивки --rank сами, руками их не передать.
 Колонка «Цена» это грубая оценка затрат агента на исполнение (шкала в
@@ -113,6 +117,45 @@ func globalDir(args []string) (string, []string, error) {
 		}
 	}
 	return dir, args, nil
+}
+
+// parseArgs разбирает аргументы подкоманды и отдаёт позиционные в порядке
+// набора. Стандартный flag.Parse останавливается на первом не-флаге, а хвост
+// из fs.Args() команды не смотрели вовсе, поэтому «-m "сообщение"» перед
+// текстом выбрасывал и текст, и сообщение молча (DK-099). Позиционный тут
+// снимается по одному, а разбор продолжается с остатка, так что флаг стоит где
+// угодно; всё, что за «--», позиционное как есть, даже если начинается с дефиса.
+func parseArgs(fs *flag.FlagSet, args []string) []string {
+	var pos []string
+	for {
+		head, tail := args, []string(nil)
+		for i, a := range args {
+			if a == "--" {
+				head, tail = args[:i+1], args[i+1:]
+				break
+			}
+		}
+		fs.Parse(head)
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return append(pos, tail...)
+		}
+		pos = append(pos, rest[0])
+		args = append(append([]string{}, rest[1:]...), tail...)
+	}
+}
+
+// needArgs проверяет число позиционных аргументов: и нехватку, и лишнее.
+// Лишний аргумент это потерянные кавычки или промах мимо флага, и выбросить
+// его молча значит потерять данные ровно так, как их теряла форма «флаг перед
+// текстом».
+func needArgs(pos []string, min, max int, usage string) {
+	if len(pos) < min {
+		fail(fmt.Errorf("жду: %s", usage))
+	}
+	if max >= 0 && len(pos) > max {
+		fail(fmt.Errorf("лишний аргумент %q, жду: %s", pos[max], usage))
+	}
 }
 
 // helpRequested ищет -h/--help среди аргументов до разбора: подкоманды с
@@ -176,7 +219,7 @@ func main() {
 		var p InitParams
 		fs.StringVar(&p.Prefix, "prefix", "", "префикс ID задач, заглавными (XR)")
 		fs.StringVar(&p.Name, "name", "", "название проекта в шапке, по умолчанию имя директории")
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "init --prefix XR [--name \"...\"]")
 		msg, err = cmdInit(*dir, p)
 	case "add":
 		fs := flag.NewFlagSet("add", flag.ExitOnError)
@@ -190,7 +233,7 @@ func main() {
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
 		commitFlags(fs, &p.Commit)
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "add --title \"...\" --type bug|task|LLD --rank \"а+б+в+г+д\"")
 		msg, err = cmdAdd(root(*dir), p)
 	case "draft":
 		// Подкоманда узнаётся точным совпадением первого позиционного
@@ -205,56 +248,57 @@ func main() {
 		case "list":
 			fs := flag.NewFlagSet("draft list", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			fs.Parse(args[2:])
+			needArgs(parseArgs(fs, args[2:]), 0, 0, "draft list")
 			msg, err = cmdDraftList(root(*dir))
 		case "defer":
-			if len(args) < 3 {
-				fail(fmt.Errorf("жду: draft defer <ID> \"причина\" либо draft defer <ID> --clear"))
-			}
-			reason, rest := "", args[3:]
-			if len(args) > 3 && !strings.HasPrefix(args[3], "-") {
-				reason, rest = args[3], args[4:]
-			}
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			clear := fs.Bool("clear", false, "снять пометку об отложенном")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(rest)
-			msg, err = cmdDraftDefer(root(*dir), args[2], reason, *clear, c)
-		case "attach":
-			if len(args) < 4 {
-				fail(fmt.Errorf("жду: draft attach <ID> <TASK-ID>"))
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 1, 2, "draft defer <ID> \"причина\" либо draft defer <ID> --clear")
+			reason := ""
+			if len(pos) > 1 {
+				reason = pos[1]
 			}
+			msg, err = cmdDraftDefer(root(*dir), pos[0], reason, *clear, c)
+		case "attach":
 			fs := flag.NewFlagSet("draft attach", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(args[4:])
-			msg, err = cmdDraftAttach(root(*dir), args[2], args[3], c)
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 2, 2, "draft attach <ID> <TASK-ID>")
+			msg, err = cmdDraftAttach(root(*dir), pos[0], pos[1], c)
 		case "drop":
-			if len(args) < 3 {
-				fail(fmt.Errorf("жду: draft drop <ID> --reason \"...\""))
-			}
 			fs := flag.NewFlagSet("draft drop", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			reason := fs.String("reason", "", "чем черновик протух, одна строка")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(args[3:])
-			msg, err = cmdDraftDrop(root(*dir), args[2], *reason, c)
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "draft drop <ID> --reason \"...\"")
+			msg, err = cmdDraftDrop(root(*dir), pos[0], *reason, c)
 		default:
-			text := ""
-			rest := args[1:]
-			if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-				text = args[1]
-				rest = args[2:]
-			}
 			fs := flag.NewFlagSet("draft", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(rest)
+			pos := parseArgs(fs, args[1:])
+			// Страж стоит до счёта аргументов: у «draft add "текст"» лишний
+			// аргумент есть, но сказать про него надо не «лишний», а что
+			// подкоманды add у draft нет.
+			if len(pos) > 0 {
+				if gerr := draftTextGuard(pos[0]); gerr != nil {
+					fail(gerr)
+				}
+			}
+			needArgs(pos, 0, 1, "draft [\"текст\"]")
+			text := ""
+			if len(pos) == 1 {
+				text = pos[0]
+			}
 			if text == "" {
 				text, err = readStdin()
 				if err != nil {
@@ -264,63 +308,56 @@ func main() {
 			msg, err = cmdDraft(root(*dir), text, c)
 		}
 	case "move":
-		if len(args) < 3 {
-			fail(fmt.Errorf("жду: move <ID> <статус> [--reason ...]"))
-		}
 		fs := flag.NewFlagSet("move", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		reason := fs.String("reason", "", "причина блокировки (для blocked)")
 		var c CommitOpts
 		commitFlags(fs, &c)
-		fs.Parse(args[3:])
-		msg, err = cmdMove(root(*dir), args[1], args[2], *reason, c)
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 2, 2, "move <ID> <статус> [--reason ...]")
+		msg, err = cmdMove(root(*dir), pos[0], pos[1], *reason, c)
 	case "fail":
-		if len(args) < 2 {
-			fail(fmt.Errorf("жду: fail <ID> --reason \"...\" либо fail <ID> --clear"))
-		}
 		fs := flag.NewFlagSet("fail", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := FailParams{ID: args[1]}
+		var p FailParams
 		fs.StringVar(&p.Reason, "reason", "", "чем сломан прод, одна строка")
 		fs.BoolVar(&p.Clear, "clear", false, "снять признак провала: прод починен")
 		commitFlags(fs, &p.Commit)
-		fs.Parse(args[2:])
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "fail <ID> --reason \"...\" либо fail <ID> --clear")
+		p.ID = pos[0]
 		msg, err = cmdFail(root(*dir), p)
 	case "set":
-		if len(args) < 2 {
-			fail(fmt.Errorf("жду: set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...]"))
-		}
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := SetParams{ID: args[1]}
+		var p SetParams
 		fs.StringVar(&p.Title, "title", "", "новый заголовок строки")
 		fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
 		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
 		fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
 		fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
 		commitFlags(fs, &p.Commit)
-		fs.Parse(args[2:])
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...]")
+		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
 	case "file":
-		if len(args) < 2 {
-			fail(fmt.Errorf("жду: file <ID>"))
-		}
 		fs := flag.NewFlagSet("file", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var c CommitOpts
 		commitFlags(fs, &c)
-		fs.Parse(args[2:])
-		msg, err = cmdFile(root(*dir), args[1], c)
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "file <ID>")
+		msg, err = cmdFile(root(*dir), pos[0], c)
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		jsonOut := fs.Bool("json", false, "машинный вывод JSON, Backlog целиком")
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 0, 1, "list [backlog|in-progress|check|blocked] [--json]")
 		sect := ""
-		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-			sect = args[1]
-			fs.Parse(args[2:])
-		} else {
-			fs.Parse(args[1:])
+		if len(pos) == 1 {
+			sect = pos[0]
 		}
 		if *jsonOut {
 			msg, err = cmdListJSON(root(*dir), sect)
@@ -328,17 +365,15 @@ func main() {
 			msg, err = cmdList(root(*dir), sect)
 		}
 	case "show":
-		if len(args) < 2 {
-			fail(fmt.Errorf("жду: show <ID>"))
-		}
 		fs := flag.NewFlagSet("show", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		jsonOut := fs.Bool("json", false, "машинный вывод JSON")
-		fs.Parse(args[2:])
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "show <ID> [--json]")
 		if *jsonOut {
-			msg, err = cmdShowJSON(root(*dir), args[1])
+			msg, err = cmdShowJSON(root(*dir), pos[0])
 		} else {
-			msg, err = cmdShow(root(*dir), args[1])
+			msg, err = cmdShow(root(*dir), pos[0])
 		}
 	case "review":
 		if len(args) < 2 {
@@ -346,58 +381,51 @@ func main() {
 		}
 		switch args[1] {
 		case "add":
-			if len(args) < 4 {
-				fail(fmt.Errorf("жду: review add <ID> \"суть замечания\""))
-			}
 			fs := flag.NewFlagSet("review add", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(args[4:])
-			msg, err = cmdReviewAdd(root(*dir), args[2], args[3], c)
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 2, 2, "review add <ID> \"суть замечания\"")
+			msg, err = cmdReviewAdd(root(*dir), pos[0], pos[1], c)
 		case "resolve":
-			if len(args) < 5 {
-				fail(fmt.Errorf("жду: review resolve <ID> <N> fixed|rejected [--reason \"...\"]"))
-			}
-			num, aerr := strconv.Atoi(args[3])
-			if aerr != nil {
-				fail(fmt.Errorf("номер замечания %q не число", args[3]))
-			}
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			reason := fs.String("reason", "", "причина отклонения (для rejected)")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(args[5:])
-			msg, err = cmdReviewResolve(root(*dir), args[2], num, args[4], *reason, c)
-		case "show":
-			if len(args) < 3 {
-				fail(fmt.Errorf("жду: review show <ID>"))
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 3, 3, "review resolve <ID> <N> fixed|rejected [--reason \"...\"]")
+			num, aerr := strconv.Atoi(pos[1])
+			if aerr != nil {
+				fail(fmt.Errorf("номер замечания %q не число", pos[1]))
 			}
+			msg, err = cmdReviewResolve(root(*dir), pos[0], num, pos[2], *reason, c)
+		case "show":
 			fs := flag.NewFlagSet("review show", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			fs.Parse(args[3:])
-			msg, err = cmdReviewShow(root(*dir), args[2])
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review show <ID>")
+			msg, err = cmdReviewShow(root(*dir), pos[0])
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			fs.Parse(args[2:])
+			needArgs(parseArgs(fs, args[2:]), 0, 0, "review stats")
 			msg, err = cmdReviewStats(root(*dir))
 		default:
 			fail(fmt.Errorf("неизвестная подкоманда review %q, жду add / resolve / show / stats", args[1]))
 		}
 	case "close":
-		if len(args) < 2 {
-			fail(fmt.Errorf("жду: close <ID> [--commit ...] [--date ...]"))
-		}
 		fs := flag.NewFlagSet("close", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := CloseParams{ID: args[1]}
+		var p CloseParams
 		fs.StringVar(&p.Commits, "commit", "", "хеши коммитов через запятую")
 		fs.StringVar(&p.Date, "date", "", "дата закрытия, по умолчанию сегодня")
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки в архиве, по умолчанию собирается сама")
 		commitFlags(fs, &p.Commit)
-		fs.Parse(args[2:])
+		pos := parseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "close <ID> [--commit ...] [--date ...]")
+		p.ID = pos[0]
 		msg, err = cmdClose(root(*dir), p)
 	case "dep":
 		if len(args) < 2 {
@@ -405,15 +433,13 @@ func main() {
 		}
 		switch args[1] {
 		case "add", "rm":
-			if len(args) < 4 {
-				fail(fmt.Errorf("жду: dep %s <ID> <DEP-ID>", args[1]))
-			}
 			fs := flag.NewFlagSet("dep "+args[1], flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var c CommitOpts
 			commitFlags(fs, &c)
-			fs.Parse(args[4:])
-			p := DepParams{ID: args[2], DepID: args[3], Commit: c}
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 2, 2, fmt.Sprintf("dep %s <ID> <DEP-ID>", args[1]))
+			p := DepParams{ID: pos[0], DepID: pos[1], Commit: c}
 			if args[1] == "add" {
 				msg, err = cmdDepAdd(root(*dir), p)
 			} else {
@@ -423,12 +449,11 @@ func main() {
 			fs := flag.NewFlagSet("dep list", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
+			pos := parseArgs(fs, args[2:])
+			needArgs(pos, 0, 1, "dep list [ID] [--json]")
 			id := ""
-			if len(args) > 2 && !strings.HasPrefix(args[2], "-") {
-				id = args[2]
-				fs.Parse(args[3:])
-			} else {
-				fs.Parse(args[2:])
+			if len(pos) == 1 {
+				id = pos[0]
 			}
 			if *jsonOut {
 				msg, err = cmdDepListJSON(root(*dir), id)
@@ -443,12 +468,12 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		var c CommitOpts
 		commitFlags(fs, &c)
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "sort")
 		msg, err = cmdSort(root(*dir), c)
 	case "lint":
 		fs := flag.NewFlagSet("lint", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "lint")
 		var finds []string
 		finds, err = cmdLint(root(*dir))
 		if err == nil {
@@ -467,12 +492,12 @@ func main() {
 		fs := flag.NewFlagSet("batch", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		limit := fs.Int("limit", batchDefaultLimit, "сколько задач берём в пачку")
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "batch [--limit N]")
 		msg, err = cmdBatch(root(*dir), *limit)
 	case "id":
 		fs := flag.NewFlagSet("id", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[1:])
+		needArgs(parseArgs(fs, args[1:]), 0, 0, "id")
 		msg, err = cmdID(root(*dir))
 	case "help":
 		fmt.Print(usageText)

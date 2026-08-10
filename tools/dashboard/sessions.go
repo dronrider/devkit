@@ -342,10 +342,15 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{"session": sid, "total": total, "items": items}
 	if total == 0 {
-		resp["note"] = "в транскрипте пока нет реплик"
+		resp["note"] = emptyTranscriptNote
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// emptyTranscriptNote называет пустую ленту словами и в обычном ответе, и
+// первым событием потока: молчащий стрим неотличим от оборвавшегося
+// (замечание ревью DK-219).
+const emptyTranscriptNote = "в транскрипте пока нет реплик"
 
 // streamSession шлёт последние реплики и дальше дострение по мере записи:
 // каждое событие это одна реплика в JSON. Нумерация продолжается с конца
@@ -368,6 +373,11 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 			sseEvent(w, f, "", marshalReply(item))
 		}
 		offset = int64(len(data))
+	}
+	// Пустая лента называется первым событием, как в обычном ответе: молчащий
+	// поток неотличим от оборвавшегося. Дострение дальше идёт как обычно.
+	if seq == 0 {
+		sseEvent(w, f, "note", emptyTranscriptNote)
 	}
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()

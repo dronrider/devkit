@@ -328,6 +328,10 @@ async function wireTranscript(project, tp) {
   const feed = el("div");
   tp.body.append(more, feed);
   let firstSeq = null;
+  // Кнопка «раньше» горит только когда раньше есть что показать: пока лента
+  // пуста или упёрлась в начало, кнопка гаснет, а не живёт мёртвой.
+  const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
+  updateMore();
   more.addEventListener("click", async () => {
     if (firstSeq === null || firstSeq === 0) return;
     const older = await api("/api/projects/" + encodeURIComponent(project) +
@@ -337,14 +341,23 @@ async function wireTranscript(project, tp) {
       feed.prepend(replyEl(item));
       firstSeq = item.seq;
     }
-    if (firstSeq === 0) more.textContent = "начало транскрипта";
+    updateMore();
   });
   const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
     "/sessions/" + encodeURIComponent(s.id) + "?stream=1");
   agentLive.push(() => es.close());
+  // Пустая лента приходит событием note: слова вместо пустой коробки,
+  // неотличимой от оборвавшегося потока.
+  es.addEventListener("note", (ev) => {
+    if (!feed.childElementCount) say(feed, "empty", ev.data);
+  });
   es.onmessage = (ev) => {
     const item = JSON.parse(ev.data);
-    if (firstSeq === null) firstSeq = item.seq;
+    if (feed.firstChild && feed.firstChild.className === "empty") feed.replaceChildren();
+    if (firstSeq === null) {
+      firstSeq = item.seq;
+      updateMore();
+    }
     feed.append(replyEl(item));
     tp.body.scrollTop = tp.body.scrollHeight;
   };

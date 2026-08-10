@@ -171,6 +171,75 @@ func TestSessionMissingNamed(t *testing.T) {
 	}
 }
 
+// Обход путей через sid отбивается до склейки пути: {sid} приходит из URL с
+// раскодированными %2F, мультиплексор их пропускает, и без сита sessionIDRe
+// склейка sessionPath отдала бы чужой файл с диска (замечание ревью DK-219).
+func TestSessionTraversalBlocked(t *testing.T) {
+	e := newTestEnv(t)
+	secret := `{"type":"user","message":{"role":"user","content":"секретное содержимое"},"timestamp":"2026-08-10T10:00:01.000Z"}` + "\n"
+	if err := os.WriteFile(filepath.Join(e.home, "secret.jsonl"), []byte(secret), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := e.loggedClient(t)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/..%2F..%2F..%2Fsecret", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("обход путей: %d %s, ожидал 400", resp.StatusCode, text)
+	}
+	if strings.Contains(text, "секретное содержимое") {
+		t.Errorf("чужой файл утёк наружу: %s", text)
+	}
+}
+
+// Пустая лента в потоке называется первым событием note, а не молчит: тихий
+// стрим неотличим от оборвавшегося; дострение после note идёт как обычно.
+func TestSessionStreamEmptyNamed(t *testing.T) {
+	e := newTestEnv(t)
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	t.Cleanup(func() { tailPoll = old })
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", "", time.Now())
+	c := e.loggedClient(t)
+
+	r, done := sseClient(t, c, e.srv.URL+"/api/projects/demo/sessions/aaa-1?stream=1")
+	defer done()
+	event, data := sseNext(t, r)
+	if event != "note" || data != "в транскрипте пока нет реплик" {
+		t.Fatalf("пустая лента без имени: event=%q data=%q", event, data)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Готово."}]},"timestamp":"2026-08-10T10:00:07.000Z"}` + "\n"
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	var item reply
+	_, data = sseNext(t, r)
+	if err := json.Unmarshal([]byte(data), &item); err != nil {
+		t.Fatal(err)
+	}
+	want := reply{Seq: 0, Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
+	if !reflect.DeepEqual(item, want) {
+		t.Fatalf("дострение после note: %+v, ожидал %+v", item, want)
+	}
+}
+
+// Экран транскрипта обязан слушать событие note и гасить кнопку «раньше»,
+// когда раньше нечего показывать: держится грепом по статике, как слово
+// «пауза» в тесте стопа. note слушают обе панели, журнал и транскрипт.
+func TestStaticTranscriptEmptyHandled(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	if strings.Count(text, `addEventListener("note"`) < 2 {
+		t.Error("в static/app.js меньше двух слушателей note: пустой транскрипт останется пустой коробкой")
+	}
+	if !strings.Contains(text, "more.hidden") {
+		t.Error("в static/app.js кнопка «раньше» не гаснет: мёртвая кнопка на пустой ленте")
+	}
+}
+
 // SSE транскрипта: последние реплики приходят сразу, дописанная запись
 // доезжает живым дострением с продолжением нумерации.
 func TestSessionStreamAppends(t *testing.T) {

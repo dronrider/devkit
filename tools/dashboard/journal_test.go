@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -164,6 +165,52 @@ func TestGoalLogStreamAppends(t *testing.T) {
 	f.Close()
 	if _, data := sseNext(t, r); data != "2026-08-09T23:05:03 виток 2 поднят, ход витка ниже" {
 		t.Fatalf("живое дострение: %q", data)
+	}
+}
+
+// Поток живёт ровно до ухода клиента: отменённый контекст запроса выводит
+// цикл дострения за пару секунд, а не оставляет горутину тикать вечно.
+// Мутация, на которой тест обязан краснеть адресно: снять case
+// <-r.Context().Done() в цикле потока (замечание ревью DK-219; раньше её
+// ловил только тайм-аут всего прогона на зависшем Close сервера).
+func TestStreamsExitOnClientGone(t *testing.T) {
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	t.Cleanup(func() { tailPoll = old })
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "goal-XR-1.log")
+	if err := os.WriteFile(logPath, []byte("2026-08-09T22:53:41 строка\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trPath := filepath.Join(dir, "s.jsonl")
+	if err := os.WriteFile(trPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &server{}
+	streams := []struct {
+		name string
+		run  func(w http.ResponseWriter, r *http.Request)
+	}{
+		{"журнал", func(w http.ResponseWriter, r *http.Request) { srv.streamGoalLog(w, r, logPath, "нет") }},
+		{"транскрипт", func(w http.ResponseWriter, r *http.Request) { srv.streamSession(w, r, trPath) }},
+	}
+	for _, s := range streams {
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest("GET", "/?stream=1", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			s.run(rec, req)
+			close(done)
+		}()
+		// Потоку хватает пары тиков отправить хвост, потом клиент уходит.
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: поток не вышел после ухода клиента", s.name)
+		}
 	}
 }
 

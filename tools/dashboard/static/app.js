@@ -29,12 +29,14 @@ async function api(path, opts) {
   return { ok: resp.ok, status: resp.status, body: await resp.json() };
 }
 
-// Хэш это экран: "#проект" доска, "#проект/DK-NNN" задача,
-// "#проект/agent/DK-NNN" живой статус агента, "#проект/chat/DK-NNN"
-// переписка с агентом цели, "#проект/feed" лента уведомлений.
+// Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
+// "#проект/DK-NNN" задача, "#проект/agent/DK-NNN" живой статус агента,
+// "#проект/chat/DK-NNN" переписка с агентом цели, "#проект/feed" лента
+// уведомлений.
 function route() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ""));
   const parts = h.split("/");
+  if (!h) return { proj: "", id: "", home: true };
   if (parts.length >= 2 && parts[1] === "feed") {
     return { proj: parts[0], id: "", feed: true };
   }
@@ -141,7 +143,50 @@ function rowChips(row) {
   return chips;
 }
 
-function renderRow(project, row) {
+// Ранг в строке это одна сумма: расшифровка слагаемых нужна изредка, а места
+// в строке ест столько же, сколько заголовок. На ноутбуке слагаемые приходят
+// подсказкой при наведении, на телефоне наведения нет, поэтому та же сумма
+// разворачивает их нажатием.
+function rankCell(row) {
+  const parts = (row.r_parts || []).join("+");
+  const cell = el("span", "rank");
+  const sum = el("button", "rsum", String(row.r));
+  sum.type = "button";
+  cell.append(sum);
+  if (!parts) return cell;
+  sum.title = "R = " + parts + " по RANKING.md";
+  sum.setAttribute("aria-expanded", "false");
+  sum.setAttribute("aria-label", "ранг " + row.r + ", слагаемые " + parts);
+  const fold = el("span", "rfold", parts);
+  cell.append(fold);
+  sum.addEventListener("click", (ev) => {
+    // Нажатие на сумму не уводит внутрь задачи: на телефоне это единственный
+    // способ увидеть слагаемые, и переход отнял бы его.
+    ev.stopPropagation();
+    const on = cell.classList.toggle("on");
+    sum.setAttribute("aria-expanded", on ? "true" : "false");
+  });
+  return cell;
+}
+
+// Действие прямо со строки: взять в работу или снять живую сессию, не заходя
+// внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
+// ответ выходит в ту же строку результата.
+function rowAction(project, row, works) {
+  const work = (works || []).find((w) => w.id === row.id);
+  if (work && work.via !== "tmux") {
+    return el("span", "stale", "ведётся снаружи");
+  }
+  const btn = el("button", "btn btn-sm" + (work ? "" : " btn-acc"), work ? "Стоп" : "В работу");
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const call = work ? stopRun(project, row.id) : startRun(project, row.id);
+    call.catch(console.error);
+  });
+  return btn;
+}
+
+function renderRow(project, row, works) {
   const tr = el("div", "trow");
   tr.append(el("span", "id", row.id));
   const tt = el("span", "tt");
@@ -149,18 +194,21 @@ function renderRow(project, row) {
   for (const chip of rowChips(row)) tt.append(chip);
   tr.append(tt);
   const meta = el("span", "meta");
-  const rank = el("span", "rank");
-  rank.append(el("b", "", String(row.r)));
-  rank.append(document.createTextNode(" " + (row.r_parts || []).join("+")));
-  meta.append(rank);
-  const age = (row.notes || []).find((n) => /не двигалась/.test(n));
-  if (age) meta.append(el("span", "stale", age));
+  meta.append(rankCell(row));
+  // Дата последней правки строки вместо возраста днями: считает её taskctl по
+  // git blame, клиент только показывает.
+  if (row.moved) {
+    const moved = el("span", "stale", "правка " + row.moved);
+    moved.title = "дата последней правки строки на доске: перевод в статус двигает её же";
+    meta.append(moved);
+  }
+  meta.append(rowAction(project, row, works));
   tr.append(meta);
   tr.addEventListener("click", () => { location.hash = project + "/" + row.id; });
   return tr;
 }
 
-function renderBoard(project, board) {
+function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   const byKey = {};
@@ -175,7 +223,7 @@ function renderBoard(project, board) {
     if (!sec.rows.length) {
       card.append(el("div", "empty", "Нет."));
     }
-    for (const row of sec.rows) card.append(renderRow(project, row));
+    for (const row of sec.rows) card.append(renderRow(project, row, works));
     groups.append(card);
   }
 }
@@ -390,7 +438,7 @@ function filePanel(project, id, detail, form, touch) {
 function taskSeen(detail) {
   const row = detail.row || {};
   return JSON.stringify([row.title, row.type, row.cost, row.p, row.r, row.r_parts,
-    row.section, row.fail, row.block, row.notes, detail.text || "", detail.file || ""]);
+    row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || ""]);
 }
 
 // Пометка «строка обновилась»: живое обновление при открытой правке молчаливо
@@ -453,8 +501,7 @@ async function renderTask(project, works, id) {
   const detail = r.body;
   const row = detail.row || {};
   if (row.section) crumb.append(el("span", "chip", row.section));
-  const stale = (row.notes || []).find((n) => /не двигалась/.test(n));
-  if (stale) crumb.append(el("span", "stale", stale));
+  if (row.moved) crumb.append(el("span", "stale", "правка строки " + row.moved));
 
   // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
   const base = (row.r_parts || []).map(Number);
@@ -1140,6 +1187,28 @@ function renderFeed(project) {
   wire();
 }
 
+// Главная это список проектов, и на неё уводит кнопка «На главную» с любого
+// экрана. На ноутбуке проекты стоят и в боковой колонке, на телефоне колонки
+// нет, а барабан выбора виден только на доске, поэтому свой экран у списка
+// нужен обоим форм-факторам.
+function renderHome(projects) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const card = el("div", "card");
+  if (!projects.length) card.append(el("div", "empty", "Проектов нет."));
+  for (const p of projects) {
+    const row = el("div", "prow");
+    if (p.works && p.works.length) row.append(el("span", "dot pulse"));
+    row.append(el("b", "", p.name));
+    row.append(el("span", "stale", p.works && p.works.length
+      ? p.works.length + " " + plural(p.works.length, "работа", "работы", "работ") + " в ходу"
+      : "тихо"));
+    row.addEventListener("click", () => { location.hash = p.name; });
+    card.append(row);
+  }
+  groups.append(card);
+}
+
 function showError(text) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
@@ -1157,10 +1226,21 @@ async function refresh() {
   const { body } = await api("/api/projects");
   const projects = body.projects || [];
   const current = currentProject(projects);
+  const rt = route();
+  // Проект помнится и на главной: с неё раздел «Доска» ведёт на тот проект,
+  // который откроется по имени, а не на пустой хэш.
   shownProject = current ? current.name : "";
-  renderSidebar(projects, current);
+  renderSidebar(projects, rt.home ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
+  if (rt.home) {
+    document.getElementById("pname").textContent = "Проекты";
+    document.getElementById("psub").textContent = "главная, доски из корней конфига";
+    renderLive("", []);
+    markNav(rt);
+    renderHome(projects);
+    return;
+  }
   if (!current) {
     document.getElementById("pname").textContent = "Проектов нет";
     document.getElementById("psub").textContent = "";
@@ -1177,7 +1257,6 @@ async function refresh() {
   }
   const board = r.body.board || {};
   renderLive(current.name, r.body.works);
-  const rt = route();
   markNav(rt);
   if (rt.feed) {
     document.getElementById("psub").textContent = "лента уведомлений";
@@ -1201,7 +1280,7 @@ async function refresh() {
   }
   document.getElementById("psub").textContent =
     "доска docs/TASKS.md" + (board.prefix ? ", " + board.prefix : "");
-  renderBoard(current.name, board);
+  renderBoard(current.name, board, r.body.works);
 }
 
 function plural(n, one, few, many) {
@@ -1211,11 +1290,12 @@ function plural(n, one, few, many) {
   return many;
 }
 
-// Разделы боковой колонки и нижних вкладок: доска и лента ведут на свои
-// экраны текущего проекта, открытый раздел подсвечен.
+// Разделы боковой колонки и нижних вкладок: главная ведёт на список проектов,
+// доска и лента на свои экраны текущего проекта, открытый раздел подсвечен.
 function markNav(rt) {
-  const on = rt.feed ? "feed" : "board";
-  for (const [name, ids] of [["board", ["nav-board", "tab-board"]],
+  const on = rt.home ? "home" : rt.feed ? "feed" : "board";
+  for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
+    ["board", ["nav-board", "tab-board"]],
     ["feed", ["nav-feed", "tab-feed"]]]) {
     for (const id of ids) {
       document.getElementById(id).classList.toggle("on", name === on);
@@ -1226,9 +1306,20 @@ function markNav(rt) {
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
   ["nav-feed", "/feed"], ["tab-feed", "/feed"]]) {
   document.getElementById(id).addEventListener("click", () => {
-    // Имя проекта берётся то, что показано: до первого перехода хэш пуст, и
-    // раздел без него увёл бы на "#/feed".
+    // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
+    // имени увёл бы на "#/feed".
     location.hash = (shownProject || route().proj) + tail;
+  });
+}
+
+// Кнопка на главную: она в шапке, а шапка стоит над любым экраном, поэтому
+// уход к списку проектов есть и с задачи, и с живого статуса, и с ленты. На
+// телефоне то же место занимает первая нижняя вкладка.
+for (const id of ["gohome", "nav-home", "tab-home"]) {
+  document.getElementById(id).addEventListener("click", () => {
+    // Пустой хэш это главная. Пустая строка оставила бы в адресе прежний "#x",
+    // поэтому решётка ставится явно.
+    location.hash = "#";
   });
 }
 

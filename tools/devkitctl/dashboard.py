@@ -62,9 +62,33 @@ def conf_port(home):
     return DEFAULT_PORT
 
 
+# PATH launchd-агента собирается из трёх частей: системное умолчание launchd,
+# из-за которого дефект и случился, и брю-каталоги обеих архитектур.
+SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+BREW_PATH = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def agent_path(binary):
+    """PATH для plist: каталог бинаря devkit, системные пути launchd и
+    брю-каталоги, которые есть на машине. Считается на doctor --fix по самой
+    машине (наличием каталогов), а не срезом живого PATH пользователя: срез
+    менялся бы от сессии к сессии, и доктор переписывал бы агента на каждом
+    прогоне. Без этой строки демон живёт с системным PATH launchd и не
+    находит tmux (дефект шага 5 сценария DK-217)."""
+    parts = [str(Path(binary).parent)]
+    parts += list(SYSTEM_PATH)
+    parts += [p for p in BREW_PATH if os.path.isdir(p)]
+    out = []
+    for p in parts:
+        if p not in out:
+            out.append(p)
+    return ":".join(out)
+
+
 def plist_text(binary, log):
-    """Тело launchd-агента: KeepAlive держит демон живым, а журнал процесса
-    совмещён с журналом сервера, обе стороны пишут дозаписью."""
+    """Тело launchd-агента: KeepAlive держит демон живым, журнал процесса
+    совмещён с журналом сервера (обе стороны пишут дозаписью), а PATH задан
+    явно, потому что умолчание launchd не знает ни брю, ни каталога бинарей."""
     return "\n".join([
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -77,6 +101,10 @@ def plist_text(binary, log):
         '    <string>%s</string>' % binary,
         '    <string>serve</string>',
         '  </array>',
+        '  <key>EnvironmentVariables</key>',
+        '  <dict>',
+        '    <key>PATH</key><string>%s</string>' % agent_path(binary),
+        '  </dict>',
         '  <key>KeepAlive</key><true/>',
         '  <key>RunAtLoad</key><true/>',
         '  <key>StandardOutPath</key><string>%s</string>' % log,

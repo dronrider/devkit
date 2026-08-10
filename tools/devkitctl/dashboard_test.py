@@ -75,6 +75,8 @@ class AgentTest(Stand):
         self.assertIn("<string>%s</string>" % self.binary, text)
         self.assertIn("<string>serve</string>", text)
         self.assertIn("<key>KeepAlive</key><true/>", text)
+        self.assertIn("<key>EnvironmentVariables</key>", text)
+        self.assertIn("<key>PATH</key><string>%s" % self.binary.parent, text)
         self.assertTrue(call.argv_with("bootstrap"), "launchd не позван: %s" % call.calls)
 
     def test_agent_pointing_elsewhere(self):
@@ -87,6 +89,34 @@ class AgentTest(Stand):
         self.assertEqual(f, [])
         self.assertEqual(len(d), 1, d)
         self.assertIn(str(self.binary), self.plist.read_text(encoding="utf-8"))
+
+    def test_agent_path_parts(self):
+        # PATH агента: каталог бинаря первым, системные пути launchd следом,
+        # без дублей, когда бинарь и так лежит в системном каталоге.
+        path = dashboard.agent_path(str(self.binary))
+        parts = path.split(":")
+        self.assertEqual(parts[0], str(self.binary.parent))
+        for p in dashboard.SYSTEM_PATH:
+            self.assertIn(p, parts)
+        dup = dashboard.agent_path("/usr/bin/dashboard").split(":")
+        self.assertEqual(len(dup), len(set(dup)), "дубли в PATH агента: %s" % dup)
+        self.assertEqual(dup[0], "/usr/bin")
+
+    def test_old_agent_without_path_is_rewritten(self):
+        # Агент, положенный до EnvironmentVariables, это находка, и --fix
+        # переписывает его: иначе дефект PATH пережил бы доводку.
+        self.check(fix=True)
+        text = self.plist.read_text(encoding="utf-8")
+        head, tail = text.split("  <key>EnvironmentVariables</key>\n", 1)
+        old = head + tail.split("  </dict>\n", 1)[1]
+        self.plist.write_text(old, encoding="utf-8")
+        f, d, _ = self.check()
+        self.assertEqual(len(f), 1, f)
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("<key>EnvironmentVariables</key>",
+                      self.plist.read_text(encoding="utf-8"))
 
     def test_fix_from_worktree_refuses(self):
         # На машину едет только проверенное: с worktree ветки задачи plist не

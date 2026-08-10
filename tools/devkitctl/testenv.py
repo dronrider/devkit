@@ -317,6 +317,7 @@ import harness  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
 import update  # noqa: E402
+import dashboard  # noqa: E402
 import watch  # noqa: E402
 import weigh  # noqa: E402
 
@@ -407,6 +408,7 @@ class Sandbox:
         write(home / ".devkit" / "quota" / "claude-code.local",
               "taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n" % taken_at(0))
         self.watch_agent(home)
+        self.dashboard_agent(home)
         self.global_rules(home)
         self.alt_sub(home)
         return home
@@ -437,6 +439,17 @@ class Sandbox:
               watch.plist_text(PY, main / "tools" / "devkitctl" / "devkitctl.py", log))
         write(log, "%s целей под надзором 0, вставших 0\n"
               % datetime.now().strftime(watch.STAMP))
+        return home
+
+    def dashboard_agent(self, home):
+        """Носитель дашборда: launchd-агент на заглушку бинаря из подставного
+        PATH, по той же причине, что и сторожок. Конфига ~/.devkit/dashboard.local
+        стенд не кладёт, поэтому живость по /healthz доктор тут не меряет:
+        сервер, который ни разу не стартовал, ещё не породил конфига."""
+        home = Path(home)
+        write(home / dashboard.PLIST[2:],
+              dashboard.plist_text(self.bin / "dashboard",
+                                   home / dashboard.LOG[2:]))
         return home
 
     def global_rules(self, home, dk=None):

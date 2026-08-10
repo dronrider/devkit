@@ -46,6 +46,9 @@
       носитель сторожка цикла цели (launchd-агент ru.devkit.goal-watch положен,
       показывает на основной чекаут, поднят и оставляет свежий след в
       ~/.devkit/goal-watch.log);
+      носитель дашборда (launchd-агент ru.devkit.dashboard держит dashboard
+      serve с KeepAlive, показывает на бинарь из PATH, /healthz отвечает и не
+      несёт ошибок конфига);
       профили харнесов devkit/kit/harness
       прогоняются через тот же валидатор, каким их читает agentctl; вес
       резидента по карманам печатается всегда, а под порогом в чекауте devkit
@@ -121,6 +124,7 @@ import argparse
 import build
 import context
 import corp
+import dashboard
 import harness
 import importlib.util
 import json
@@ -1096,6 +1100,11 @@ def check_machine(fix):
     f, d = check_binaries(fix)
     findings += f
     fixed += d
+    # Носитель дашборда после бинарей: агент показывает на бинарь dashboard из
+    # PATH, и на прогоне с --fix тот успевает встать на место строкой выше.
+    dashf, dashd = dashboard.check(fix, main, from_main)
+    findings += dashf
+    fixed += dashd
     # Обёртка devkitctl рядом с бинарями: без неё python-часть зовётся длинным
     # путём, а кладут её одинаково update и доктор.
     wf, wd = update.check_wrapper(main, fix, from_main)

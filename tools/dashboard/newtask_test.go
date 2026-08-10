@@ -89,6 +89,42 @@ func TestDraftAwkwardText(t *testing.T) {
 	}
 }
 
+// Текст за пределом отбивается своими словами и до утилиты не доезжает: в
+// черновик кладётся мысль, а не вложение, и молчаливо обрезанная запись хуже
+// отказа. Предел считается по телу запроса, поэтому кладётся текст заведомо
+// длиннее draftTextLimit.
+func TestDraftTextLimit(t *testing.T) {
+	e, c, gitLog := tasksEnv(t)
+
+	long := strings.Repeat("мысль без конца, ", draftTextLimit/8)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": `+strconv.Quote(long)+`}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "длиннее предела") {
+		t.Fatalf("текст за пределом: %d %s, ожидал 400 со словами про предел", resp.StatusCode, text)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "drafts")); !os.IsNotExist(err) {
+		t.Errorf("отбитый текст завёл накопитель черновиков: %v", err)
+	}
+	if git := readFile(t, gitLog); strings.Contains(git, "черновик записан с дашборда") {
+		t.Errorf("отбитый текст дошёл до коммита доски: %s", git)
+	}
+
+	// Мысль в предел укладывается и записывается тем же полем: рубеж стоит на
+	// вложении, а не на длинной записи.
+	fits := strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": `+strconv.Quote(fits)+`}`)
+	got := newResp(t, resp, "запись длинного черновика в пределе")
+	id, _ := got["id"].(string)
+	if id == "" {
+		t.Fatalf("черновик в пределе не завёлся: %v", got)
+	}
+	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")); !strings.Contains(doc, fits) {
+		t.Errorf("текст в пределе не доехал до файла целиком:\n%s", doc)
+	}
+}
+
 // Полная строка встаёт на доску руками утилиты: ранг, бакет P и место в
 // Backlog считает она, файл задачи заводится тем же заходом по флагу.
 func TestTaskCreateRow(t *testing.T) {

@@ -214,6 +214,21 @@ const RANK_PARTS = [
 const COST_VALUES = ["-", "S", "M", "L", "XL"];
 const TYPE_VALUES = ["task", "bug", "LLD"];
 
+// Поправка на баг живёт у дефекта, а не у новой работы: у типа task слагаемое
+// не ставится. Тот же отказ теми же словами держит ручка PATCH, клиент только
+// не даёт зря сходить на сервер.
+const BUG_PART_REFUSAL = "поправка на баг у типа task не ставится: по RANKING.md " +
+  "она про дефект или регресс, а не про новую работу; смени тип на bug";
+
+// Бакет P рукой не выбирается, и экран обязан это объяснять: иначе
+// отсутствие списка читается как забытое поле.
+const P_HINT = "Бакет P не выбирается рукой: он считается из суммы R по RANKING.md, " +
+  "поэтому правятся слагаемые, а P и место строки в Backlog выводит taskctl.";
+
+// Черновик экрана задачи: пока в форме есть правка, живое обновление её не
+// затирает. Экран один, поэтому и черновик один.
+const taskDraft = { id: "", dirty: false, seen: "" };
+
 // Правки строки, зависимостей и файла: всё уходит в API, а тот зовёт taskctl.
 // Ответ показывается словами, и удача, и отказ утилиты (кривая разбивка
 // ранга, цикл зависимостей). После удачной правки экран перечитывает данные:
@@ -231,9 +246,31 @@ function taskPath(project, id, tail) {
   return "/api/projects/" + encodeURIComponent(project) + "/tasks/" + encodeURIComponent(id) + (tail || "");
 }
 
-async function patchTask(project, id, body) {
-  sayResult("правка " + id + "...");
-  return sendTaskEdit(taskPath(project, id), "PATCH", body);
+// Сохранение черновика: строка и файл задачи правятся одной формой и уезжают
+// одной кнопкой. Ручек на сервере по-прежнему две (PATCH на строку, PUT на
+// файл), склейка живёт здесь. Не прошла первая, вторая не идёт, а черновик
+// остаётся в полях: половина сохранённой правки хуже отказа.
+async function saveTaskDraft(project, id, patch, text) {
+  sayResult("сохранение " + id + "...");
+  const said = [];
+  const call = async (path, method, body) => {
+    const r = await api(path, { method, body });
+    said.push(r.body.message || r.body.error || "");
+    if (r.ok && r.body.note) said.push(r.body.note);
+    return r.ok;
+  };
+  if (patch && !await call(taskPath(project, id), "PATCH", patch)) {
+    sayResult(said.join("; "), true);
+    return false;
+  }
+  if (text !== null && !await call(taskPath(project, id, "/file"), "PUT", { text })) {
+    sayResult(said.join("; "), true);
+    return false;
+  }
+  sayResult(said.join("; "));
+  taskDraft.dirty = false;
+  await refresh();
+  return true;
 }
 
 async function addDep(project, id, dep) {
@@ -251,12 +288,8 @@ async function makeTaskFile(project, id) {
   return sendTaskEdit(taskPath(project, id, "/file"), "POST", {});
 }
 
-async function saveTaskFile(project, id, text) {
-  sayResult("запись файла задачи " + id + "...");
-  return sendTaskEdit(taskPath(project, id, "/file"), "PUT", { text });
-}
-
-// Значение, правимое по месту: подпись и список допустимых значений.
+// Значение, правимое по месту: подпись и список допустимых значений. Выбор
+// уходит в черновик формы, а не на сервер: сервер зовёт одна кнопка.
 function pickField(label, values, cur, onPick) {
   const wrap = el("label", "pick");
   if (label) wrap.append(el("span", "pl", label));
@@ -267,7 +300,7 @@ function pickField(label, values, cur, onPick) {
     opt.selected = String(v) === String(cur);
     sel.append(opt);
   }
-  sel.addEventListener("change", () => { onPick(sel.value).catch(console.error); });
+  sel.addEventListener("change", () => { onPick(sel.value); });
   wrap.append(sel);
   return wrap;
 }
@@ -326,9 +359,10 @@ function depsCard(project, id, after, blocks) {
   return card;
 }
 
-// Панель файла задачи: текст как есть, правка целиком, а заведение файла
-// остаётся за taskctl (та же команда чинит ссылку в строке доски).
-function filePanel(project, id, detail) {
+// Панель файла задачи: текст правится прямо в поле, своей кнопки сохранения у
+// панели нет, она одна на всю форму. Заведение файла остаётся за taskctl (та
+// же команда чинит ссылку в строке доски).
+function filePanel(project, id, detail, form, touch) {
   const card = el("div", "card fpanel");
   const head = el("div", "fhead");
   head.append(el("b", "", detail.file || "docs/tasks/" + id + ".md"));
@@ -343,25 +377,48 @@ function filePanel(project, id, detail) {
     body.append(el("div", "empty", detail.note || "файла задачи нет"));
     return card;
   }
-  const show = () => {
-    body.replaceChildren(el("pre", "ftext", detail.text || ""));
-  };
-  const edit = el("button", "btn btn-sm", "Править");
-  head.append(edit);
-  edit.addEventListener("click", () => {
-    const ta = el("textarea");
-    ta.value = detail.text || "";
-    const row = el("div", "frow");
-    const save = el("button", "btn btn-acc btn-sm", "Сохранить");
-    save.addEventListener("click", () => { saveTaskFile(project, id, ta.value).catch(console.error); });
-    const cancel = el("button", "btn btn-sm", "Отмена");
-    cancel.addEventListener("click", show);
-    row.append(cancel, save);
-    body.replaceChildren(ta, row);
-    ta.focus();
-  });
-  show();
+  const ta = el("textarea");
+  ta.value = form.text;
+  ta.setAttribute("aria-label", "текст файла задачи " + id);
+  ta.addEventListener("input", () => { form.text = ta.value; touch(); });
+  body.append(ta);
   return card;
+}
+
+// Слепок показанного: по нему видно, что строка или файл уехали под руками.
+// Сравнивается ровно то, что нарисовано на экране.
+function taskSeen(detail) {
+  const row = detail.row || {};
+  return JSON.stringify([row.title, row.type, row.cost, row.p, row.r, row.r_parts,
+    row.section, row.fail, row.block, row.notes, detail.text || "", detail.file || ""]);
+}
+
+// Пометка «строка обновилась»: живое обновление при открытой правке молчаливо
+// подменяло значения полей, и это признано дефектом на пользовательской
+// проверке. Свежие данные ждут кнопки, ввод остаётся на месте.
+function taskStale(project, works, id) {
+  if (document.getElementById("tstale")) return;
+  const box = el("div", "tstale");
+  box.id = "tstale";
+  box.append(el("span", "", "строка обновилась, перечитать"));
+  const btn = el("button", "btn btn-sm", "Перечитать");
+  btn.addEventListener("click", () => {
+    // Перечитывает рука: правка в форме при этом теряется, и решает это
+    // пользователь, а не таймер фокуса.
+    taskDraft.dirty = false;
+    renderTask(project, works, id).catch(console.error);
+  });
+  box.append(btn);
+  document.getElementById("groups").prepend(box);
+}
+
+// Рубеж формы, тот же, что у ручки: поправка на баг не про новую работу, а
+// пустой текст затёр бы постановку. Отказ виден до похода на сервер.
+function draftRefusal(form, text) {
+  if (form.type === "task" && Number(form.parts[3]) === 5) return BUG_PART_REFUSAL;
+  if (text !== null && !text.trim()) return "пустой текст затёр бы постановку файла задачи";
+  if (!form.title.trim()) return "заголовок строки пустым не бывает";
+  return "";
 }
 
 // Экран задачи по макету DK-216 («02 Задача»): шапка со строкой доски,
@@ -371,6 +428,14 @@ function filePanel(project, id, detail) {
 // ранга, перетаскивания мимо ранга нет.
 async function renderTask(project, works, id) {
   const groups = document.getElementById("groups");
+  const r = await api(taskPath(project, id));
+  if (taskDraft.id === id && taskDraft.dirty) {
+    // В форме лежит правка: перерисовка стёрла бы её вместе с введённым
+    // текстом, поэтому экран остаётся как есть, а уехавшая строка отмечается
+    // пометкой.
+    if (r.ok && taskSeen(r.body) !== taskDraft.seen) taskStale(project, works, id);
+    return;
+  }
   groups.replaceChildren();
 
   const crumb = el("div", "crumb");
@@ -379,7 +444,6 @@ async function renderTask(project, works, id) {
   crumb.append(back);
   groups.append(crumb);
 
-  const r = await api(taskPath(project, id));
   if (!r.ok) {
     const card = el("div", "card");
     card.append(el("div", "error", r.body.error || "строка не прочиталась"));
@@ -392,31 +456,33 @@ async function renderTask(project, works, id) {
   const stale = (row.notes || []).find((n) => /не двигалась/.test(n));
   if (stale) crumb.append(el("span", "stale", stale));
 
+  // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
+  const base = (row.r_parts || []).map(Number);
+  const form = {
+    title: row.title || "",
+    type: row.type || "task",
+    cost: row.cost || "-",
+    parts: base.slice(),
+    text: detail.text || "",
+  };
+  // touch подставляется настоящий ниже, когда собрана кнопка: поля строятся
+  // раньше её и зовут ссылку через эту обёртку.
+  let touchForm = () => {};
+  const touch = () => { touchForm(); };
+
   const head = el("div", "thead");
   head.append(el("span", "idbig", row.id));
-  const title = el("h2", "", row.title);
+  const title = el("textarea", "tedit");
+  title.value = form.title;
+  title.setAttribute("aria-label", "заголовок строки " + id);
+  title.addEventListener("input", () => { form.title = title.value; touch(); });
   head.append(title);
-  const rename = el("button", "btn btn-sm", "Править");
-  rename.addEventListener("click", () => {
-    const ta = el("textarea", "tedit");
-    ta.value = row.title;
-    const save = el("button", "btn btn-acc btn-sm", "Сохранить");
-    save.addEventListener("click", () => {
-      const text = ta.value.trim();
-      if (text && text !== row.title) patchTask(project, id, { title: text }).catch(console.error);
-    });
-    const cancel = el("button", "btn btn-sm", "Отмена");
-    cancel.addEventListener("click", () => { renderTask(project, works, id).catch(console.error); });
-    head.replaceChildren(el("span", "idbig", row.id), ta, cancel, save);
-    ta.focus();
-  });
-  head.append(rename);
   groups.append(head);
 
   const chips = el("div", "tchips");
   if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
-  chips.append(pickField("тип", TYPE_VALUES, row.type, (v) => patchTask(project, id, { type: v })));
-  chips.append(pickField("цена", COST_VALUES, row.cost, (v) => patchTask(project, id, { cost: v })));
+  chips.append(pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); }));
+  chips.append(pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); }));
   if (row.p === "P0" || row.p === "P1") chips.append(el("span", "chip c-p1", row.p));
   else chips.append(el("span", "chip", row.p));
   if (row.fail) chips.append(el("span", "chip c-block", "провал: " + row.fail));
@@ -425,6 +491,57 @@ async function renderTask(project, works, id) {
     if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
   }
   groups.append(chips);
+  groups.append(el("div", "hint phint", P_HINT));
+
+  // Одна кнопка на всю форму: любое изменение поля включает её, и по ней
+  // уезжает всё изменённое разом. Двух правок, у заголовка и у файла, тут
+  // больше нет, с телефона это разваливало правку на два похода.
+  const bar = el("div", "card tsave");
+  const btns = el("div", "tbtns");
+  const save = el("button", "btn btn-acc", "Сохранить");
+  const drop = el("button", "btn", "Отменить правку");
+  btns.append(save, drop);
+  const note = el("div", "hint", "");
+  const bad = el("div", "error", "");
+  bar.append(btns, note, bad);
+  groups.append(bar);
+
+  const patchBody = () => {
+    const out = {};
+    if (form.title.trim() && form.title.trim() !== (row.title || "")) out.title = form.title.trim();
+    if (form.type !== (row.type || "task")) out.type = form.type;
+    if (form.cost !== (row.cost || "-")) out.cost = form.cost;
+    const parts = RANK_PARTS.map((_, i) => (form.parts[i] === base[i] ? null : form.parts[i]));
+    if (parts.some((v) => v !== null)) out.r_parts = parts;
+    return out;
+  };
+  // Текст файла едет, только когда он вправду изменён: PUT переписывает
+  // постановку целиком, и лишний заход коммитил бы её впустую.
+  const textBody = () => (detail.file && form.text !== (detail.text || "") ? form.text : null);
+
+  touchForm = () => {
+    const patch = patchBody();
+    const text = textBody();
+    const dirty = Object.keys(patch).length > 0 || text !== null;
+    const refusal = dirty ? draftRefusal(form, text) : "";
+    taskDraft.id = id;
+    taskDraft.dirty = dirty;
+    bad.textContent = refusal;
+    save.disabled = !dirty || Boolean(refusal);
+    note.textContent = dirty
+      ? "Изменённое уедет одной кнопкой: строка через taskctl, файл задачи целиком."
+      : "Правки нет: кнопка включится, как только поменяется поле.";
+  };
+  save.addEventListener("click", () => {
+    const patch = patchBody();
+    const text = textBody();
+    if (draftRefusal(form, text)) return;
+    saveTaskDraft(project, id, Object.keys(patch).length ? patch : null, text).catch(console.error);
+  });
+  drop.addEventListener("click", () => {
+    taskDraft.dirty = false;
+    renderTask(project, works, id).catch(console.error);
+  });
 
   const isGoal = /^Цель:/.test(row.title);
   const work = (works || []).find((w) => w.id === id);
@@ -468,12 +585,11 @@ async function renderTask(project, works, id) {
     const line = el("div", "rrow");
     line.append(el("span", "nm", part.name));
     line.append(el("span", "why", part.why));
-    line.append(pickField("", part.values, (row.r_parts || [])[i], (v) => {
+    line.append(pickField("", part.values, form.parts[i], (v) => {
       // Правится одно слагаемое, остальные остаются прежними: пропущенное
       // сервер берёт из строки, а не считает нулём.
-      const parts = [null, null, null, null, null];
-      parts[i] = Number(v);
-      return patchTask(project, id, { r_parts: parts });
+      form.parts[i] = Number(v);
+      touch();
     }));
     rank.append(line);
   });
@@ -483,8 +599,13 @@ async function renderTask(project, works, id) {
   const rail = el("div", "rrail");
   rail.append(act, rank, depsCard(project, id, detail.after || [], detail.blocks || []));
   const grid = el("div", "tgrid");
-  grid.append(filePanel(project, id, detail), rail);
+  grid.append(filePanel(project, id, detail, form, touch), rail);
   groups.append(grid);
+
+  taskDraft.id = id;
+  taskDraft.dirty = false;
+  taskDraft.seen = taskSeen(detail);
+  touchForm();
 }
 
 // Живые потоки экрана агента: EventSource журнала и транскрипта, таймер
@@ -1116,7 +1237,13 @@ document.getElementById("logout").addEventListener("click", async () => {
   location.href = "/login";
 });
 
-window.addEventListener("hashchange", () => { sayResult(""); refresh().catch(console.error); });
+window.addEventListener("hashchange", () => {
+  // Уход с экрана это отказ от черновика: он держит ровно ту задачу, которая
+  // на экране.
+  taskDraft.dirty = false;
+  sayResult("");
+  refresh().catch(console.error);
+});
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника
 // у неё нет, а постоянный опрос ест батарею телефона.
 window.addEventListener("focus", () => { refresh().catch(console.error); });

@@ -214,18 +214,55 @@ func rankArg(parts []*int, cur []int) (string, error) {
 		return "", fmt.Errorf("в разбивке ранга %d слагаемых, жду %d по RANKING.md: %s",
 			len(parts), len(rankNames), strings.Join(rankNames[:], ", "))
 	}
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		v := 0
-		switch {
-		case p != nil:
-			v = *p
-		case i < len(cur):
-			v = cur[i]
-		}
+	merged := mergeRank(parts, cur)
+	out := make([]string, len(merged))
+	for i, v := range merged {
 		out[i] = strconv.Itoa(v)
 	}
 	return strings.Join(out, "+"), nil
+}
+
+// mergeRank накладывает правку слагаемых на то, что стоит в строке:
+// пропущенное (null) остаётся прежним. По этой же склейке проверяется тип,
+// потому что правка едет одним запросом.
+func mergeRank(parts []*int, cur []int) []int {
+	out := make([]int, len(parts))
+	for i, p := range parts {
+		switch {
+		case p != nil:
+			out[i] = *p
+		case i < len(cur):
+			out[i] = cur[i]
+		}
+	}
+	return out
+}
+
+// parseRank разбирает разбивку строкой «а+б+в+г+д». Кривую строку тут никто не
+// ругает: пределы и формат держит taskctl, дашборду разбор нужен ровно для
+// сверки поправки на баг с типом.
+func parseRank(s string) []int {
+	fields := strings.Split(s, "+")
+	out := make([]int, 0, len(fields))
+	for _, f := range fields {
+		v, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil {
+			return nil
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// bugPartRefusal держит шкалу RANKING.md: поправка на баг это про дефект или
+// регресс, у новой работы её не бывает. Правило живёт и на клиенте, но ручка
+// повторяет его своими руками: экран не единственный, кто ходит в API.
+func bugPartRefusal(typ string, parts []int) string {
+	if typ != "task" || len(parts) < 4 || parts[3] == 0 {
+		return ""
+	}
+	return "поправка на баг у типа task не ставится: по RANKING.md " +
+		"она про дефект или регресс, а не про новую работу; смени тип на bug"
 }
 
 // boardCommitMsg собирает subject коммита доски: ID в subject обязателен, по
@@ -285,6 +322,22 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "нечего менять, жду title, type, r_parts (или rank), cost или link; " +
 				"порядок строк на доске выводится из ранга, ставить строку на место N нечем"})
+		return
+	}
+	// Тип и слагаемые правятся одним запросом, поэтому сверяется то, что
+	// получится после правки: пропущенное поле берётся из строки.
+	typ := body.Type
+	if typ == "" {
+		typ = row.Type
+	}
+	merged := row.RParts
+	if rank != "" {
+		if parsed := parseRank(rank); parsed != nil {
+			merged = parsed
+		}
+	}
+	if refusal := bugPartRefusal(typ, merged); refusal != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": refusal})
 		return
 	}
 	out, code, err := taskctlDo(found.Path, args...)

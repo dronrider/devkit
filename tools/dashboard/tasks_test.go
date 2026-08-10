@@ -453,8 +453,63 @@ func TestTaskPatchPushFailureNamed(t *testing.T) {
 	}
 }
 
+// Поправка на баг это шкала RANKING.md, а не свободное поле: у типа task
+// слагаемое отбивается ручкой, у bug оно штатно. Тип и слагаемые едут одним
+// запросом, поэтому сверяется то, что получится после правки.
+func TestTaskPatchBugPartByType(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	boardPath := filepath.Join(e.proj, "docs", "TASKS.md")
+	before := readFile(t, boardPath)
+
+	// Строка типа task: поправка на баг отбивается и списком слагаемых, и
+	// разбивкой строкой.
+	for _, in := range []string{
+		`{"r_parts": [null, null, null, 5, null]}`,
+		`{"rank": "25+2+1+5+2"}`,
+		`{"type": "task", "r_parts": [null, null, null, 5, null]}`,
+	} {
+		resp := doReq(t, c, "PATCH", taskURL(e, "XR-002", ""), in)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "поправка на баг у типа task не ставится") {
+			t.Errorf("поправка на баг у task прошла: %s -> %d %s", in, resp.StatusCode, text)
+		}
+	}
+	if after := readFile(t, boardPath); after != before {
+		t.Errorf("отбитая правка тронула доску:\n%s", after)
+	}
+
+	// У дефекта то же слагаемое штатно и встаёт вместе со сменой типа.
+	resp := doReq(t, c, "PATCH", taskURL(e, "XR-002", ""),
+		`{"type": "bug", "r_parts": [null, null, null, 5, null]}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("поправка на баг у bug не прошла: %d %s", resp.StatusCode, text)
+	}
+	task := getTask(t, c, e, "XR-002")
+	if got := fmt.Sprint(taskRowField(t, task, "r_parts")); got != "[25 2 1 5 2]" {
+		t.Errorf("разбивка ранга не та: %v", got)
+	}
+	if got := taskRowField(t, task, "type"); got != "bug" {
+		t.Errorf("тип не поменялся: %v", got)
+	}
+
+	// Обратный ход: тип назад в task при стоящей поправке отбивается, менять
+	// надо оба поля разом, и это же делает единая кнопка экрана.
+	resp = doReq(t, c, "PATCH", taskURL(e, "XR-002", ""), `{"type": "task"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "смени тип на bug") {
+		t.Errorf("возврат типа в task при поправке на баг: %d %s", resp.StatusCode, text)
+	}
+	resp = doReq(t, c, "PATCH", taskURL(e, "XR-002", ""),
+		`{"type": "task", "r_parts": [null, null, null, 0, null]}`)
+	if text = body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("возврат типа вместе со снятой поправкой: %d %s", resp.StatusCode, text)
+	}
+}
+
 // Экран задачи честен словами: слагаемые ранга названы по RANKING.md, обе
-// стороны зависимостей подписаны, а перетаскивания мимо ранга нет.
+// стороны зависимостей подписаны, а перетаскивания мимо ранга нет. Правка
+// собрана одной формой: кнопка сохранения одна, отдельной кнопки правки нет.
 func TestStaticTaskEditHonesty(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
@@ -464,9 +519,49 @@ func TestStaticTaskEditHonesty(t *testing.T) {
 		"После, ждёт их",
 		"Держит, ждут её",
 		"Завести файл",
+		"Сохранить",
+		"Отменить правку",
+		"поправка на баг у типа task не ставится",
+		"Бакет P не выбирается рукой",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет надписи %q", want)
 		}
+	}
+	if strings.Contains(text, `"Править"`) {
+		t.Error("в static/app.js осталась отдельная кнопка «Править»: правка снова разваливается на два похода")
+	}
+	if n := strings.Count(text, `"Сохранить"`); n != 1 {
+		t.Errorf("кнопок сохранения в static/app.js %d, жду одну на всю форму", n)
+	}
+}
+
+// Живое обновление при открытой правке не подменяет ввод: пока в черновике
+// есть правка, экран не перерисовывается, а уехавшая строка отмечается
+// пометкой с кнопкой. Молчаливая подмена признана дефектом на пользовательской
+// проверке.
+func TestStaticTaskLiveUpdateKeepsDraft(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		"строка обновилась, перечитать",
+		"Перечитать",
+		"taskDraft.dirty",
+		"function taskSeen(",
+		"function taskStale(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в static/app.js нет части спокойного обновления %q", want)
+		}
+	}
+	// Ранний возврат из renderTask при живом черновике: без него перерисовка
+	// по фокусу окна затирает поля.
+	cut := strings.Index(text, "async function renderTask(")
+	if cut < 0 {
+		t.Fatal("в static/app.js нет renderTask")
+	}
+	head := text[cut:]
+	if stop := strings.Index(head, "groups.replaceChildren()"); stop < 0 ||
+		!strings.Contains(head[:stop], "taskDraft.dirty") {
+		t.Error("renderTask чистит экран, не спросив черновик: правка в форме затирается свежими данными")
 	}
 }

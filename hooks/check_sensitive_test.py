@@ -72,10 +72,13 @@ class TestDiffMode(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
     def test_skip_files_are_left_alone(self):
-        # тестовые фикстуры с адресами и токенами это данные, не утечка
+        # тестовые фикстуры с адресами и секретами это данные, не утечка.
+        # значение у секрета достаточно длинное: «секрет со значением»
+        # требует 6+ знаков, иначе без SKIP_FILES строка всё равно зелёнеет
+        # и регрессию на пропуск тестовых файлов ассерт не держит.
         r = run("--diff", input='pkg/net_test.go:1:host := "10.1.2.3"\n')
         self.assertEqual(r.returncode, 0)
-        r = run("--diff", input='tests/test_client.py:1:TOKEN = "ghp_x"\n')
+        r = run("--diff", input='tests/test_client.py:1:password = "abcdef"\n')
         self.assertEqual(r.returncode, 0)
 
     def test_local_docs_never_rides_into_commit(self):

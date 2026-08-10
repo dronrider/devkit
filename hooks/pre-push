@@ -24,7 +24,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$remote_sha" = "$zero" ] && break
     git cat-file -e "$remote_sha" 2>/dev/null || break
     git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null || break
-    files=$(git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
+    # --no-renames: у переименования --name-only печатает только путь
+    # назначения, и перенос кода в docs/tasks/ сошёл бы за доску; заодно
+    # исход не зависит от diff.renames в конфиге пользователя.
+    files=$(git diff --no-renames --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
     [ -n "$files" ] || break
     printf '%s\n' "$files" |
         grep -qvE '^docs/TASKS\.md$|^docs/TASKS-archive\.md$|^docs/tasks/' && break

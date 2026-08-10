@@ -100,6 +100,14 @@ class TestBoardGate(unittest.TestCase):
         head = self.commit("доска", {"docs/TASKS.md": "| доска 2 |\n"})
         self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 1)
 
+    def test_rename_of_code_into_board_is_refused(self):
+        # Без --no-renames дифф печатает у переименования только путь
+        # назначения, и перенос кода в docs/tasks/ сходил бы за доску.
+        self.git("mv", "tools/app.txt", "docs/tasks/app.md")
+        self.git("commit", "-q", "-m", "перенос кода в доску")
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 1)
+
     def test_lookalike_path_is_refused(self):
         # Без якоря $ в шаблоне docs/TASKS.md.bak сошёл бы за доску.
         head = self.commit("подделка", {"docs/TASKS.md.bak": "мусор\n"})

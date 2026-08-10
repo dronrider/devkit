@@ -267,5 +267,11 @@ func (e *runEnv) environ(devkit, layout, scenario string, repeat int) []string {
 		"OBEY_LAYOUT="+layout,
 		"OBEY_SCENARIO="+scenario,
 		fmt.Sprintf("OBEY_REPEAT=%d", repeat),
+		// Стенд пишет секреты файлами-маркерами во временный HOME, и file-бэкенд
+		// их читает. На macOS default Keychain эти маркеры не видит, и secretctl
+		// exec возвращает «секрета нет», из-за чего сценарий про секрет либо ложно
+		// зеленеет, либо ловит обход. Та же фиксация бэкенда, что в тестах самого
+		// secretctl: см. tools/secretctl/backend.go, defaultBackend.
+		"SECRETCTL_BACKEND=file",
 	)
 }

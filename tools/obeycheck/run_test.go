@@ -375,3 +375,34 @@ func TestRunLog(t *testing.T) {
 		t.Fatalf("строки журнала: %q", data)
 	}
 }
+
+// environ() фиксирует file-бэкенд secretctl: на macOS по умолчанию secretctl
+// читает Keychain, куда подготовка сценария ничего не пишет, и секрет остаётся
+// невидим. Стенд оперирует файлами-маркерами во временном HOME, file-бэкенд их
+// читает. Заодно проверяются инварианты очистки: временный HOME и вычищенные
+// CLAUDE*.
+func TestEnvironPinsSecretctlBackend(t *testing.T) {
+	e := &runEnv{
+		Root:       t.TempDir(),
+		Home:       filepath.Join(t.TempDir(), "home"),
+		Project:    filepath.Join(t.TempDir(), "project"),
+		Origin:     filepath.Join(t.TempDir(), "origin.git"),
+		Transcript: filepath.Join(t.TempDir(), "transcript"),
+		Seed:       "deadbeef",
+	}
+	t.Setenv("CLAUDE_FOO", "leak")
+	have := e.environ("/devkit", "full", "11-secretctl", 1)
+	joined := "\n" + strings.Join(have, "\n") + "\n"
+	if !strings.Contains(joined, "\nSECRETCTL_BACKEND=file\n") {
+		t.Fatalf("SECRETCTL_BACKEND не зафиксирован в file:\n%s", joined)
+	}
+	if !strings.Contains(joined, "\nHOME="+e.Home+"\n") {
+		t.Fatalf("временный HOME не выставлен:\n%s", joined)
+	}
+	for _, kv := range have {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "CLAUDE") {
+			t.Fatalf("в прогон уехала CLAUDE*-переменная: %s", kv)
+		}
+	}
+}

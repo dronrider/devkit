@@ -18,8 +18,36 @@ import (
 // сервер берёт данные»). Честная ошибка «taskctl не нашёлся» полезнее
 // выживания с собственным разбором, который молча устареет.
 
-// taskctlBin подменяется тестами, живой сервер зовёт бинарь из PATH.
+// taskctlBin подменяется тестами.
 var taskctlBin = "taskctl"
+
+// exeDir отдаёт каталог собственного бинаря; подменяется тестами, потому что
+// os.Executable у go test показывает на тестовый бинарь во временной сборке.
+var exeDir = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+// taskctlPath ищет taskctl сначала рядом с собственным бинарём, потом по
+// PATH. Под launchd PATH системный (EnvironmentVariables в plist нет, бинарь
+// dashboard назван полным путём), а утилиты devkit лежат одним каталогом:
+// сосед по каталогу это и есть бинарь той же раскладки. PATH остаётся
+// откатом для запуска из исходников и тестов. Пусто, если не нашёлся нигде.
+func taskctlPath() string {
+	if dir := exeDir(); dir != "" {
+		p := filepath.Join(dir, taskctlBin)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	if p, err := exec.LookPath(taskctlBin); err == nil {
+		return p
+	}
+	return ""
+}
 
 // procTimeout ограничивает подпроцессы сроком: подвисший taskctl или tmux не
 // должен держать горутину запроса вечно, тем более после ухода клиента.
@@ -44,15 +72,20 @@ func runProc(name string, args ...string) ([]byte, error) {
 }
 
 func taskctlMissing() string {
-	if _, err := exec.LookPath(taskctlBin); err != nil {
-		return "taskctl не нашёлся в PATH: доски не читаются, поставить бинари: devkitctl update"
+	if taskctlPath() == "" {
+		return "taskctl не нашёлся ни рядом с бинарём дашборда, ни в PATH: доски не читаются, " +
+			"поставить бинари: devkitctl update"
 	}
 	return ""
 }
 
 // boardJSON отдаёт доску проекта как есть, байтами ответа taskctl.
 func boardJSON(dir string) (json.RawMessage, error) {
-	out, err := runProc(taskctlBin, "list", "--json", "-C", dir)
+	bin := taskctlPath()
+	if bin == "" {
+		return nil, errors.New(taskctlMissing())
+	}
+	out, err := runProc(bin, "list", "--json", "-C", dir)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {

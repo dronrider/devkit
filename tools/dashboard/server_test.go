@@ -350,6 +350,30 @@ func TestHungTaskctlAnsweredWithError(t *testing.T) {
 	}
 }
 
+// Из-под launchd PATH системный, и taskctl ищется рядом с собственным
+// бинарём: фикстура в каталоге exeDir находится с пустым PATH. Дефект шага 5
+// сценария: /healthz отвечал «taskctl не нашёлся», хотя бинарь стоял рядом с
+// самим dashboard.
+func TestTaskctlFoundNextToExecutable(t *testing.T) {
+	dir := t.TempDir()
+	writeScript(t, dir, "taskctl", fmt.Sprintf("echo '%s'", boardFixtureJSON))
+	oldExe := exeDir
+	exeDir = func() string { return dir }
+	t.Cleanup(func() { exeDir = oldExe })
+	t.Setenv("PATH", t.TempDir())
+
+	if m := taskctlMissing(); m != "" {
+		t.Fatalf("taskctl лежит рядом с бинарём, а диагностика: %s", m)
+	}
+	raw, err := boardJSON(t.TempDir())
+	if err != nil {
+		t.Fatalf("доска не прочиталась соседом по каталогу: %v", err)
+	}
+	if !strings.Contains(string(raw), `"prefix":"XR"`) {
+		t.Fatalf("ответ не от фикстуры: %s", raw)
+	}
+}
+
 // Пропавший taskctl это названная ошибка в /healthz и в ответе доски, а не
 // пустая доска: тихая деградация неотличима от «задач нет».
 func TestTaskctlMissingNamed(t *testing.T) {

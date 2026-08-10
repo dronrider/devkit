@@ -44,6 +44,11 @@ RETRY_LIMIT = 3
 RETRY_PAUSE = 20  # секунд между попытками: обрыв на стороне API переживает пауза
 PAUSE_ENV = "DEVKIT_GOAL_RETRY_PAUSE"
 MARKERS = ("continue", "done", "over", "wait-human", "stuck")
+# Повод стопа словом для журнала уведомителя: по нему лента дашборда отличает
+# вставший цикл от цикла, который зовёт человека к делу. Остальные маркеры и
+# стопы без вердикта идут общим поводом, разбор стоит в самом заголовке.
+STOP_KEY = "goal_stop"
+STOP_REASONS = {"wait-human": "wait_human"}
 
 USAGE = """\
 goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка>]
@@ -266,12 +271,13 @@ class Loop:
         except OSError as e:
             die("строку хода не записать в %s: %s" % (self.log, e))
 
-    def shout(self, title, text):  # заголовок, текст: стоп цикла молчать не должен
+    def shout(self, key, title, text):  # повод, заголовок, текст: стоп цикла молчать не должен
         if not os.path.isfile(NOTIFIER):
             self.say("уведомителя %s нет, стоп остался без голоса" % NOTIFIER)
             return
         try:
-            p = subprocess.run(["python3", NOTIFIER, title, text], cwd=self.proj,
+            p = subprocess.run(["python3", NOTIFIER, "--reason", key, title, text],
+                                cwd=self.proj,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             out = p.stdout.rstrip("\n")
         except OSError as e:
@@ -280,7 +286,7 @@ class Loop:
 
     def stop(self, reason, text, code):  # повод, текст, код
         self.say("цикл цели %s остановлен: %s, витков %d" % (self.id, reason, self.turn))
-        self.shout("цель %s: %s" % (self.id, reason), text)
+        self.shout(STOP_REASONS.get(reason, STOP_KEY), "цель %s: %s" % (self.id, reason), text)
         sys.exit(code)
 
     # -- «Журнал» файла цели -------------------------------------------------

@@ -183,10 +183,11 @@ description: Цикл заведённой цели на доске docs/TASKS.m
 
 Стопы не молчат. На `done`, `over`, `wait-human` и `stuck` виток зовёт
 уведомитель сам, потому что интерактивно поднятый виток оболочки не имеет, а
-бездействующий цикл обязан быть слышен:
+бездействующий цикл обязан быть слышен (повод у прочих стопов `goal_stop`):
 
 ```bash
-python3 ~/projects/devkit/hooks/notify.py "цель DK-100: wait-human" "DK-101 ждёт проверки"
+python3 ~/projects/devkit/hooks/notify.py --reason wait_human \
+  "цель DK-100: wait-human" "DK-101 ждёт проверки"
 ```
 
 ## Ожидание внутри витка

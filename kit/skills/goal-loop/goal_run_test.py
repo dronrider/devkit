@@ -274,6 +274,12 @@ class GoalRunTests(unittest.TestCase):
             log = self.shell_log(root)
             self.assertIn("остановлен: %s" % marker, log)
             self.assertIn("уровень громкий", self.notify_log(root))
+            # Повод стопа едет в журнал уведомителя словом: лента дашборда
+            # отличает по нему зов человека от вставшего цикла, а по тексту
+            # хвоста показывает, о чём был стоп.
+            key = "wait_human" if marker == "wait-human" else "goal_stop"
+            self.assertIn("повод %s" % key, self.notify_log(root))
+            self.assertIn("текст «цель DK-100: %s»" % marker, self.notify_log(root))
 
     # -- воронка --------------------------------------------------------------
 

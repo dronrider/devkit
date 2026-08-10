@@ -153,3 +153,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-229 | settings.json: allow без литеральных токенов, копии прочь, находка doctor | task | P1 | 2026-08-10 | [tasks/archive/2026/DK-229.md](tasks/archive/2026/DK-229.md), `1712cbf`, `6451734`, `c0882cc`, `671f858` |
 | DK-221 | Правка задачи и цели с дашборда, зависимости в обе стороны | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-221.md](tasks/archive/2026/DK-221.md) |
 | DK-126 | hook_events падает traceback на структурно необычном hooks-JSON | bug | P2 | 2026-08-10 | [tasks/archive/2026/DK-126.md](tasks/archive/2026/DK-126.md), `982e67d`, `ff82475`, `1b0b3b5` |
+| DK-228 | Рубеж чтения секретов: permissions.deny и PreToolUse-хук на Bash | task | P1 | 2026-08-10 | [tasks/archive/2026/DK-228.md](tasks/archive/2026/DK-228.md), `6a73980`, `be786fc`, `1ac22b3`, `4d586a4` |

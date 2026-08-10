@@ -111,7 +111,8 @@ func TestNoAuthNoData(t *testing.T) {
 	c := plainClient()
 	for _, path := range []string{"/api/projects", "/api/projects/demo/board",
 		"/api/projects/demo/goals/XR-100/log", "/api/projects/demo/sessions",
-		"/api/projects/demo/sessions/abc", "/api/tmux", "/api/tmux/goal-XR-9"} {
+		"/api/projects/demo/sessions/abc", "/api/notifications", "/api/tmux",
+		"/api/tmux/goal-XR-9"} {
 		resp, err := c.Get(e.srv.URL + path)
 		if err != nil {
 			t.Fatal(err)

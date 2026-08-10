@@ -259,6 +259,72 @@ sys.exit(2)
 	}
 }
 
+// writeNotifyFake кладёт фикстуру уведомителя в тот же синтетический чекаут
+// devkit, где лежит оболочка цикла: живой hooks/notify.py тут не зовётся,
+// иначе тест давал бы баннер на машине разработчика.
+func writeNotifyFake(t *testing.T, root, callsLog string) {
+	t.Helper()
+	dir := filepath.Join(root, "devkit", "hooks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`import sys
+with open(%q, "a") as f:
+    f.write("\t".join(sys.argv[1:]) + "\n")
+`, callsLog)
+	if err := os.WriteFile(filepath.Join(dir, "notify.py"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Стоп из дашборда говорит о себе тем же уведомителем, что виток и taskctl
+// move: без строки в журнале уведомителя снятую сессию видит только тот, кто
+// нажал кнопку, а лента для того и заведена, чтобы стоп доехал до второго
+// устройства.
+func TestRunStopNotifies(t *testing.T) {
+	e, c, _ := runsEnv(t, `goal-XR-100\n`)
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(filepath.Join(e.home, "goal-run.calls")))
+	notifyCalls := filepath.Join(e.home, "notify.calls")
+	writeNotifyFake(t, filepath.Dir(e.proj), notifyCalls)
+
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-100", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп цели: %d %s", resp.StatusCode, text)
+	}
+	got := readFile(t, notifyCalls)
+	if !strings.HasPrefix(strings.TrimSpace(got), "--reason\trun_stop\t") {
+		t.Fatalf("уведомитель позван без повода стопа: %q", got)
+	}
+	// В заголовке стоит проект и ID: по ним лента даёт кнопку «Поднять виток»,
+	// своего поля с работой у журнала уведомителя нет.
+	for _, want := range []string{"demo", "XR-100", "стоп из дашборда"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("в уведомлении о стопе нет %q: %q", want, got)
+		}
+	}
+	if strings.Contains(text, "note") {
+		t.Errorf("удавшееся уведомление оставило приписку: %s", text)
+	}
+}
+
+// Ненайденный уведомитель стоп не отменяет, но и не молчит: сессия снята, а
+// приписка говорит, что в ленте строки не будет.
+func TestRunStopWithoutNotifierNamed(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, `task-XR-002\n`)
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп без уведомителя: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "hooks/notify.py не нашёлся") {
+		t.Errorf("ненайденный уведомитель прошёл молча: %s", text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "kill-session -t =task-XR-002") {
+		t.Errorf("сессия не снята: %s", got)
+	}
+}
+
 // Стоп одиночной задачи снимает её tmux-сессию.
 func TestRunStopTask(t *testing.T) {
 	e, c, tmuxLog := runsEnv(t, `task-XR-002\n`)

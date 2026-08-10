@@ -31,10 +31,13 @@ async function api(path, opts) {
 
 // Хэш это экран: "#проект" доска, "#проект/DK-NNN" задача,
 // "#проект/agent/DK-NNN" живой статус агента, "#проект/chat/DK-NNN"
-// переписка с агентом цели.
+// переписка с агентом цели, "#проект/feed" лента уведомлений.
 function route() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ""));
   const parts = h.split("/");
+  if (parts.length >= 2 && parts[1] === "feed") {
+    return { proj: parts[0], id: "", feed: true };
+  }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
   }
@@ -875,6 +878,147 @@ function renderChat(project, works, id) {
   loadPending(project, id, pendbox).catch(console.error);
 }
 
+// Экран ленты уведомлений по макету DK-216 («05 Лента»): три типа событий DoD
+// (стоп работы, зов человека, завершение задачи), фильтры по типам,
+// группировка по дням и действие у стопа. События сервер берёт из журнала
+// уведомителя ~/.devkit/notify.log, живут они на SSE: стоп, случившийся при
+// открытом экране, доезжает без перезагрузки страницы.
+const FEED_FILTERS = [
+  { kind: "", name: "Все" },
+  { kind: "stop", name: "Стопы" },
+  { kind: "wait", name: "wait-human" },
+  { kind: "task", name: "Задачи" },
+];
+const FEED_ICONS = { stop: "i-stop", wait: "i-wait", task: "i-done" };
+const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня",
+  "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+
+function isoDay(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") +
+    "-" + String(d.getDate()).padStart(2, "0");
+}
+
+// Заголовок дня: уведомитель пишет местное время, поэтому сегодня и вчера
+// считаются местным же календарём, а не сдвигом в UTC.
+function dayLabel(day) {
+  const parts = day.split("-");
+  if (parts.length !== 3) return day || "без даты";
+  const human = Number(parts[2]) + " " + (MONTHS[Number(parts[1]) - 1] || "");
+  const now = new Date();
+  if (day === isoDay(now)) return "Сегодня, " + human;
+  if (day === isoDay(new Date(now.getTime() - 86400000))) return "Вчера, " + human;
+  return human + " " + parts[0];
+}
+
+function feedItemEl(project, n) {
+  const item = el("div", "nitem");
+  const ico = el("div", "nico " + (FEED_ICONS[n.kind] || "i-other"));
+  ico.append(el("i"));
+  item.append(ico);
+  const b = el("div", "nb2");
+  b.append(el("div", "t1", n.title));
+  if (n.body) b.append(el("div", "t2", n.body));
+  // Событие было, а баннера человек не видел: причина стоит рядом, иначе
+  // молчащий канал неотличим от исправного.
+  if (!n.sent && n.result) b.append(el("div", "t2", "баннера не было: " + n.result));
+  if (n.id) {
+    const acts = el("div", "acts");
+    if (n.kind === "stop") {
+      const up = el("button", "btn btn-acc", "Поднять виток");
+      up.addEventListener("click", () => { startRun(project, n.id).catch(console.error); });
+      const jrn = el("a", "", "Журнал цикла");
+      jrn.href = "#" + project + "/agent/" + n.id;
+      acts.append(up, jrn);
+    } else {
+      const open = el("button", "btn", "Открыть " + n.id);
+      open.addEventListener("click", () => { location.hash = project + "/" + n.id; });
+      acts.append(open);
+    }
+    b.append(acts);
+  }
+  item.append(b);
+  item.append(el("div", "ntime", (n.time || "").slice(11, 16)));
+  return item;
+}
+
+// Свежие сверху, дни отдельными карточками: так лента читается сверху вниз,
+// как её и рисует макет.
+function renderFeedItems(box, project, items, note) {
+  if (!items.length) {
+    say(box, "empty", note || "уведомлений нет");
+    return;
+  }
+  box.replaceChildren();
+  let day = "";
+  let card = null;
+  for (const n of items) {
+    const d = (n.time || "").slice(0, 10);
+    if (d !== day || !card) {
+      day = d;
+      card = el("div", "card");
+      box.append(el("div", "nday", dayLabel(d)), card);
+    }
+    card.append(feedItemEl(project, n));
+  }
+}
+
+function renderFeed(project) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const head = el("div", "nhead");
+  head.append(el("h2", "", "Лента"));
+  head.append(el("span", "sub", "уведомления машины: стопы работ, зов человека, завершённые задачи"));
+  const chips = el("div", "filters");
+  const list = el("div", "ngroups");
+  groups.append(head, chips, list);
+  groups.append(el("div", "chan",
+    "Лента машинная: в ней события всех досок сразу, а «Поднять виток» поднимает работу в проекте " +
+    project + "."));
+
+  let kind = "";
+  let items = [];
+  const wire = () => {
+    // Отбор держит сервер, экран ходит тем же параметром, что и smoke; поток
+    // прежнего фильтра закрывается, иначе соединения копились бы на каждом
+    // нажатии.
+    closeAgentLive();
+    items = [];
+    say(list, "empty", "лента читается...");
+    const es = new EventSource("/api/notifications?stream=1" + (kind ? "&kind=" + kind : ""));
+    agentLive.push(() => es.close());
+    let pending = 0;
+    const redraw = () => {
+      if (pending) return;
+      pending = setTimeout(() => { pending = 0; renderFeedItems(list, project, items); }, 0);
+    };
+    es.addEventListener("note", (ev) => {
+      items = [];
+      renderFeedItems(list, project, items, ev.data);
+    });
+    es.onmessage = (ev) => {
+      let n;
+      try {
+        n = JSON.parse(ev.data);
+      } catch (err) {
+        return;
+      }
+      items.unshift(n);
+      redraw();
+    };
+  };
+  for (const f of FEED_FILTERS) {
+    const chip = el("span", "fchip" + (f.kind === kind ? " on" : ""), f.name);
+    chip.addEventListener("click", () => {
+      kind = f.kind;
+      for (const c of chips.children) c.classList.remove("on");
+      chip.classList.add("on");
+      wire();
+    });
+    chips.append(chip);
+  }
+  wire();
+}
+
 function showError(text) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
@@ -883,11 +1027,16 @@ function showError(text) {
   groups.append(card);
 }
 
+// Проект, который сейчас на экране: по нему разделы боковой колонки строят
+// свой переход, когда в хэше проекта ещё нет.
+let shownProject = "";
+
 async function refresh() {
   closeAgentLive();
   const { body } = await api("/api/projects");
   const projects = body.projects || [];
   const current = currentProject(projects);
+  shownProject = current ? current.name : "";
   renderSidebar(projects, current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
@@ -908,6 +1057,12 @@ async function refresh() {
   const board = r.body.board || {};
   renderLive(current.name, r.body.works);
   const rt = route();
+  markNav(rt);
+  if (rt.feed) {
+    document.getElementById("psub").textContent = "лента уведомлений";
+    renderFeed(current.name);
+    return;
+  }
   if (rt.id && rt.agent) {
     document.getElementById("psub").textContent = "живой статус " + rt.id;
     renderAgent(current.name, r.body.works, rt.id);
@@ -933,6 +1088,27 @@ function plural(n, one, few, many) {
   if (m10 === 1 && m100 !== 11) return one;
   if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
   return many;
+}
+
+// Разделы боковой колонки и нижних вкладок: доска и лента ведут на свои
+// экраны текущего проекта, открытый раздел подсвечен.
+function markNav(rt) {
+  const on = rt.feed ? "feed" : "board";
+  for (const [name, ids] of [["board", ["nav-board", "tab-board"]],
+    ["feed", ["nav-feed", "tab-feed"]]]) {
+    for (const id of ids) {
+      document.getElementById(id).classList.toggle("on", name === on);
+    }
+  }
+}
+
+for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
+  ["nav-feed", "/feed"], ["tab-feed", "/feed"]]) {
+  document.getElementById(id).addEventListener("click", () => {
+    // Имя проекта берётся то, что показано: до первого перехода хэш пуст, и
+    // раздел без него увёл бы на "#/feed".
+    location.hash = (shownProject || route().proj) + tail;
+  });
 }
 
 document.getElementById("logout").addEventListener("click", async () => {

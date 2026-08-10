@@ -178,6 +178,37 @@ a:hover{text-decoration:underline}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
 .stopnote{font:400 11.5px/1.5 var(--sans);color:var(--tx3);margin-top:9px}
 
+/* экран ленты (макет «05 Лента»): фильтры чипами, дни группами, у стопа
+   действие «Поднять виток» */
+.nhead{display:flex;align-items:baseline;gap:14px;margin-top:4px}
+.nhead h2{margin:0;font:600 19px var(--sans)}
+.nhead .sub{font:400 12px var(--sans);color:var(--tx3)}
+.filters{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.fchip{height:32px;min-height:32px;padding:0 13px;border-radius:16px;display:inline-flex;align-items:center;font:500 12.5px var(--sans);color:var(--tx2);background:var(--bg2);border:1px solid var(--line);cursor:pointer}
+.fchip.on{background:var(--acc);color:var(--acc-ink);border-color:transparent;font-weight:600}
+.ngroups{margin-top:6px;max-width:760px}
+.nday{font:500 11px var(--sans);letter-spacing:0.07em;text-transform:uppercase;color:var(--tx3);padding:18px 2px 8px}
+.nitem{display:flex;gap:14px;padding:14px 18px;border-top:1px solid var(--line);align-items:flex-start}
+.nitem:first-child{border-top:none}
+.nico{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.nico i{display:block}
+.i-stop{background:color-mix(in oklab,var(--block) 15%,transparent)}
+.i-stop i{width:10px;height:10px;border-radius:2px;background:var(--block)}
+.i-wait{background:color-mix(in oklab,var(--check) 15%,transparent)}
+.i-wait i{width:11px;height:11px;border-radius:50%;border:2.5px solid var(--check)}
+.i-done{background:color-mix(in oklab,var(--run) 15%,transparent)}
+.i-done i{width:11px;height:6px;border-left:2.5px solid var(--run);border-bottom:2.5px solid var(--run);transform:rotate(-45deg);margin-top:-3px}
+.i-other{background:var(--bg2)}
+.i-other i{width:9px;height:9px;border-radius:50%;background:var(--tx3)}
+.nb2{flex:1;min-width:0}
+.nb2 .t1{font:500 13.5px/1.45 var(--sans);color:var(--tx);overflow-wrap:anywhere}
+.nb2 .t2{font:400 12px/1.5 var(--sans);color:var(--tx3);margin-top:3px;overflow-wrap:anywhere}
+.nb2 .acts{display:flex;gap:14px;margin-top:9px;align-items:center;flex-wrap:wrap}
+.nb2 .acts .btn{height:30px;padding:0 12px;font-size:12px}
+.nb2 .acts a{font:500 12px var(--sans)}
+.ntime{font:400 11.5px var(--mono);color:var(--tx3);flex:none;margin-top:2px}
+.chan{max-width:760px;padding:14px 2px 0;font:400 11.5px/1.5 var(--sans);color:var(--tx3)}
+
 /* нижние вкладки (телефон) */
 .ptabs{display:none;flex:none;height:78px;border-top:1px solid var(--line);background:var(--bg1);padding-bottom:12px}
 .ptab{flex:1;min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font:500 12px var(--sans);color:var(--tx3)}
@@ -214,6 +245,12 @@ a:hover{text-decoration:underline}
   .pick{height:36px}
   .fbody textarea{min-height:38vh}
   .ftext{max-height:46vh}
+  /* телефон: лента одной колонкой, кнопки и чипы с пальцем в 44 пикселя,
+     фильтры прокручиваются полосой */
+  .filters{flex-wrap:nowrap;overflow-x:auto}
+  .fchip{height:36px;min-height:36px}
+  .nitem{padding:13px 14px;gap:12px;min-height:44px}
+  .nb2 .acts .btn{height:36px;font-size:12.5px}
   .tmuxbar{display:none;margin-top:12px}
   .tmuxbar.onpane{display:block}
   .pbd{max-height:60vh}

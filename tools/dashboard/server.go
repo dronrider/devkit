@@ -36,6 +36,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.auth(s.handleLogout))
 	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/{p}/board", s.auth(s.handleBoard))
+	mux.HandleFunc("POST /api/projects/{p}/runs", s.auth(s.handleRunStart))
+	mux.HandleFunc("DELETE /api/projects/{p}/runs/{id}", s.auth(s.handleRunStop))
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
 		s.serveStatic(w, r, "login.html")
 	})
@@ -241,23 +243,28 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"projects": infos, "errors": errs})
 }
 
-func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
+// findProject находит проект из пути запроса; не найдя, сам отвечает 404 и
+// возвращает nil.
+func (s *server) findProject(w http.ResponseWriter, r *http.Request) *Project {
 	name := r.PathValue("p")
 	projects, _ := scanProjects(s.cfg.Roots)
-	var found *Project
 	for i := range projects {
 		if projects[i].Name == name {
-			found = &projects[i]
-			break
+			return &projects[i]
 		}
 	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("проекта %s нет в корнях конфига", name)})
+	return nil
+}
+
+func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r)
 	if found == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("проекта %s нет в корнях конфига", name)})
 		return
 	}
 	raw, err := boardJSON(found.Path)
 	if err != nil {
-		s.logf("доска %s: %v", name, err)
+		s.logf("доска %s: %v", found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}

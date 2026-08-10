@@ -1,6 +1,8 @@
-// Экран доски: список проектов, живые работы и секции со строками. Клиент
-// только рисует готовый JSON (решение LLD DK-112); все тексты вставляются
-// через textContent, HTML из данных не собирается.
+// Экраны доски и задачи: список проектов, живые работы, секции со строками,
+// запуск и стоп. Клиент только рисует готовый JSON и шлёт команды (решение
+// LLD DK-112); все тексты вставляются через textContent, HTML из данных не
+// собирается. Стоп называется стопом: возобновление это новый запуск,
+// читающий состояние с диска.
 
 const SECTION_ORDER = ["in-progress", "check", "backlog", "blocked"];
 
@@ -11,8 +13,14 @@ function el(tag, cls, text) {
   return node;
 }
 
-async function api(path) {
-  const resp = await fetch(path);
+async function api(path, opts) {
+  const init = {};
+  if (opts && opts.method) init.method = opts.method;
+  if (opts && opts.body !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(opts.body);
+  }
+  const resp = await fetch(path, init);
   if (resp.status === 401) {
     location.href = "/login";
     throw new Error("нужен вход");
@@ -20,8 +28,16 @@ async function api(path) {
   return { ok: resp.ok, status: resp.status, body: await resp.json() };
 }
 
+// Хэш это экран: "#проект" доска, "#проект/DK-NNN" задача.
+function route() {
+  const h = decodeURIComponent(location.hash.replace(/^#/, ""));
+  const cut = h.indexOf("/");
+  if (cut < 0) return { proj: h, id: "" };
+  return { proj: h.slice(0, cut), id: h.slice(cut + 1) };
+}
+
 function currentProject(projects) {
-  const want = decodeURIComponent(location.hash.replace(/^#/, ""));
+  const want = route().proj;
   const hit = projects.find((p) => p.name === want);
   return hit || projects[0] || null;
 }
@@ -50,14 +66,47 @@ function renderSidebar(projects, current) {
   sel.onchange = () => { location.hash = sel.value; };
 }
 
-function renderLive(works) {
+function sayResult(text, isError) {
+  const box = document.getElementById("actmsg");
+  box.textContent = text || "";
+  box.className = isError ? "actmsg error" : "actmsg";
+}
+
+// Запуск и стоп. Ответ сервера показывается словами: и удача, и причина
+// отказа (занятый замок, пропавший tmux или goal-run) видны с экрана.
+async function startRun(project, id) {
+  sayResult("запуск " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs",
+    { method: "POST", body: { id } });
+  sayResult(r.body.message || r.body.error || "", !r.ok);
+  if (r.ok) await refresh();
+}
+
+async function stopRun(project, id) {
+  sayResult("стоп " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs/" + encodeURIComponent(id),
+    { method: "DELETE" });
+  sayResult(r.body.message || r.body.error || "", !r.ok);
+  if (r.ok) await refresh();
+}
+
+function renderLive(project, works) {
   const live = document.getElementById("live");
   live.replaceChildren();
   for (const w of works || []) {
     const card = el("div", "lcard");
     card.append(el("span", "dot pulse"));
-    card.append(el("b", "", (w.kind === "goal" ? "goal-" : "") + w.id));
-    card.append(el("span", "via", w.via === "tmux" ? "tmux" : "ведётся снаружи"));
+    const name = (w.kind === "goal" ? "goal-" : "") + w.id;
+    const label = el("b", "", name);
+    label.addEventListener("click", () => { location.hash = project + "/" + w.id; });
+    card.append(label);
+    if (w.via === "tmux") {
+      const stop = el("button", "btn btn-sm", "Стоп");
+      stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
+      card.append(stop);
+    } else {
+      card.append(el("span", "via", "ведётся снаружи"));
+    }
     live.append(card);
   }
 }
@@ -79,7 +128,7 @@ function rowChips(row) {
   return chips;
 }
 
-function renderRow(row) {
+function renderRow(project, row) {
   const tr = el("div", "trow");
   tr.append(el("span", "id", row.id));
   const tt = el("span", "tt");
@@ -94,10 +143,11 @@ function renderRow(row) {
   const age = (row.notes || []).find((n) => /не двигалась/.test(n));
   if (age) meta.append(el("span", "stale", age));
   tr.append(meta);
+  tr.addEventListener("click", () => { location.hash = project + "/" + row.id; });
   return tr;
 }
 
-function renderBoard(board) {
+function renderBoard(project, board) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   const byKey = {};
@@ -112,9 +162,74 @@ function renderBoard(board) {
     if (!sec.rows.length) {
       card.append(el("div", "empty", "Нет."));
     }
-    for (const row of sec.rows) card.append(renderRow(row));
+    for (const row of sec.rows) card.append(renderRow(project, row));
     groups.append(card);
   }
+}
+
+function findBoardRow(board, id) {
+  for (const sec of board.sections || []) {
+    for (const row of sec.rows || []) {
+      if (row.id === id) return { row, section: sec.title };
+    }
+  }
+  return null;
+}
+
+// Экран задачи по макету DK-216 («02 Задача»): шапка со строкой доски и
+// карточка действия. Запуск поднимает цель оболочкой goal-run, задачу
+// headless-сессией конвейера; стоп снимает tmux-сессию.
+function renderTask(project, board, works, id) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+
+  const crumb = el("div", "crumb");
+  const back = el("span", "crumb-back", "Доска " + project);
+  back.addEventListener("click", () => { location.hash = project; });
+  crumb.append(back);
+  const hit = findBoardRow(board, id);
+  if (hit) crumb.append(el("span", "chip", hit.section));
+  groups.append(crumb);
+
+  if (!hit) {
+    const card = el("div", "card");
+    card.append(el("div", "error", "на доске " + project + " нет строки " + id));
+    groups.append(card);
+    return;
+  }
+  const row = hit.row;
+  const head = el("div", "thead");
+  head.append(el("span", "idbig", row.id));
+  head.append(el("h2", "", row.title));
+  groups.append(head);
+  const chips = el("div", "tchips");
+  for (const chip of rowChips(row)) chips.append(chip);
+  const rank = el("span", "rank");
+  rank.append(el("b", "", String(row.r)));
+  rank.append(document.createTextNode(" " + (row.r_parts || []).join("+")));
+  chips.append(rank);
+  groups.append(chips);
+
+  const isGoal = /^Цель:/.test(row.title);
+  const work = (works || []).find((w) => w.id === id);
+  const act = el("div", "card act");
+  if (work && work.via === "tmux") {
+    const stop = el("button", "btn", "Стоп");
+    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+    act.append(stop);
+    act.append(el("div", "hint", "Идёт tmux-сессия " + work.kind + "-" + id +
+      ". Стоп это стоп сессии; возобновление это новый запуск, читающий состояние с диска."));
+  } else if (work) {
+    act.append(el("div", "hint", "Цикл ведётся снаружи (живой чат), без tmux-сессии дашборда: стоп там, где он поднят."));
+  } else {
+    const start = el("button", "btn btn-acc", "В работу");
+    start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
+    act.append(start);
+    act.append(el("div", "hint", isGoal
+      ? "Цель поднимет оболочка goal-run в tmux-сессии goal-" + id + "."
+      : "Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + "."));
+  }
+  groups.append(act);
 }
 
 function showError(text) {
@@ -139,7 +254,7 @@ async function refresh() {
     return;
   }
   document.getElementById("pname").textContent = current.name;
-  renderLive(current.works);
+  renderLive(current.name, current.works);
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
   if (!r.ok) {
     document.getElementById("psub").textContent = "";
@@ -147,10 +262,16 @@ async function refresh() {
     return;
   }
   const board = r.body.board || {};
+  renderLive(current.name, r.body.works);
+  const id = route().id;
+  if (id) {
+    document.getElementById("psub").textContent = id;
+    renderTask(current.name, board, r.body.works, id);
+    return;
+  }
   document.getElementById("psub").textContent =
     "доска docs/TASKS.md" + (board.prefix ? ", " + board.prefix : "");
-  renderLive(r.body.works);
-  renderBoard(board);
+  renderBoard(current.name, board);
 }
 
 function plural(n, one, few, many) {
@@ -165,7 +286,7 @@ document.getElementById("logout").addEventListener("click", async () => {
   location.href = "/login";
 });
 
-window.addEventListener("hashchange", () => { refresh().catch(console.error); });
+window.addEventListener("hashchange", () => { sayResult(""); refresh().catch(console.error); });
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника
 // у неё нет, а постоянный опрос ест батарею телефона.
 window.addEventListener("focus", () => { refresh().catch(console.error); });

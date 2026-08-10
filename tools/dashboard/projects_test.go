@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mkProject(t *testing.T, dir string) {
@@ -70,6 +71,29 @@ func TestScanProjectsNameCollision(t *testing.T) {
 	}
 	if len(errs) != 1 || !strings.Contains(errs[0], "same") {
 		t.Errorf("коллизия должна быть названа: %v", errs)
+	}
+}
+
+// Зависший git не держит обход корней: gitLine идёт через runProc со сроком,
+// а обход стоит за /api/projects и открытым /healthz. Git молчит, значит
+// признака worktree нет и каталог остаётся проектом, а не висит навсегда.
+func TestScanProjectsHungGit(t *testing.T) {
+	root := t.TempDir()
+	mkProject(t, filepath.Join(root, "proj"))
+	bin := t.TempDir()
+	writeScript(t, bin, "git", "sleep 60")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	old := procTimeout
+	procTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { procTimeout = old })
+
+	start := time.Now()
+	projects, errs := scanProjects([]string{root})
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("обход занял %v: срок подпроцесса git не сработал", took)
+	}
+	if len(projects) != 1 || len(errs) != 0 {
+		t.Fatalf("проекты %v, ошибки %v: молчащий git не должен ронять обход", projects, errs)
 	}
 }
 

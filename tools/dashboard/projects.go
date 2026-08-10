@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,8 +42,11 @@ func isLinkedWorktree(dir string) bool {
 	return filepath.Clean(one) != filepath.Clean(common)
 }
 
+// gitLine ходит через runProc, как все подпроцессы сервера: обход корней
+// стоит за /api/projects и открытым /healthz, и зависший git держал бы их
+// горутины вечно.
 func gitLine(dir string, args ...string) string {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	out, err := runProc("git", append([]string{"-C", dir}, args...)...)
 	if err != nil {
 		return ""
 	}

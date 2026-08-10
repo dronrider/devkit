@@ -73,6 +73,9 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review show <ID>                            замечания с номерами и исходами
   review stats                                свод по живым задачам и архиву
 
+У list, show и dep list есть флаг --json: машинный вывод для дашборда и
+прочей автоматики, печатный вывод не меняется; list --json отдаёт Backlog
+целиком, без обрезки.
 У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
 тронутые файлы доски (и запушить), чужой индекс не задевается.
 Статусы принимаются в любом регистре, «In progress» = in-progress.
@@ -311,6 +314,7 @@ func main() {
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
+		jsonOut := fs.Bool("json", false, "машинный вывод JSON, Backlog целиком")
 		sect := ""
 		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 			sect = args[1]
@@ -318,15 +322,24 @@ func main() {
 		} else {
 			fs.Parse(args[1:])
 		}
-		msg, err = cmdList(root(*dir), sect)
+		if *jsonOut {
+			msg, err = cmdListJSON(root(*dir), sect)
+		} else {
+			msg, err = cmdList(root(*dir), sect)
+		}
 	case "show":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: show <ID>"))
 		}
 		fs := flag.NewFlagSet("show", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
+		jsonOut := fs.Bool("json", false, "машинный вывод JSON")
 		fs.Parse(args[2:])
-		msg, err = cmdShow(root(*dir), args[1])
+		if *jsonOut {
+			msg, err = cmdShowJSON(root(*dir), args[1])
+		} else {
+			msg, err = cmdShow(root(*dir), args[1])
+		}
 	case "review":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: review add|resolve|show|stats ..."))
@@ -409,6 +422,7 @@ func main() {
 		case "list":
 			fs := flag.NewFlagSet("dep list", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
+			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
 			id := ""
 			if len(args) > 2 && !strings.HasPrefix(args[2], "-") {
 				id = args[2]
@@ -416,7 +430,11 @@ func main() {
 			} else {
 				fs.Parse(args[2:])
 			}
-			msg, err = cmdDepList(root(*dir), id)
+			if *jsonOut {
+				msg, err = cmdDepListJSON(root(*dir), id)
+			} else {
+				msg, err = cmdDepList(root(*dir), id)
+			}
 		default:
 			fail(fmt.Errorf("неизвестная подкоманда dep %q, жду add / rm / list", args[1]))
 		}

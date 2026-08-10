@@ -150,6 +150,16 @@ func cmdList(root, sect string) (string, error) {
 // Check печатаются только в её секции, возраст, когда его удалось посчитать,
 // в любой; нет ни того, ни другого, значит nil, и вывод не меняется вовсе.
 func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []string {
+	notes := rowNoteParts(root, sect, r, times, clean)
+	if len(notes) == 0 {
+		return nil
+	}
+	return []string{"  " + strings.Join(notes, ", ")}
+}
+
+// rowNoteParts отдаёт те же пометки списком без вёрстки: печать склеивает их
+// в строку с отступом, --json кладёт как есть.
+func rowNoteParts(root, sect string, r *Row, times map[int]int64, clean bool) []string {
 	var notes []string
 	if sect == SectCheck {
 		if m := checkMarkLabel(root, r.ID); m != "" {
@@ -159,10 +169,7 @@ func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []stri
 	if a := ageLabel(times, r.LineIdx, clean); a != "" {
 		notes = append(notes, a)
 	}
-	if len(notes) == 0 {
-		return nil
-	}
-	return []string{"  " + strings.Join(notes, ", ")}
+	return notes
 }
 
 // cmdShow печатает строку задачи, её секцию и путь файла задачи; закрытые

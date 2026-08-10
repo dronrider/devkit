@@ -285,6 +285,78 @@ func TestLoginOriginCheck(t *testing.T) {
 	}
 }
 
+// Заход извне: посредник переписал Host на адрес апстрима и назвал внешнее имя
+// в X-Forwarded-Host, а браузер поставил Origin по внешнему имени. Сверка
+// Origin обязана сойтись, иначе с телефона не пройти даже вход.
+func TestLoginOriginForwardedHost(t *testing.T) {
+	e := newTestEnv(t)
+	req, err := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"token": "test-token"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "127.0.0.1:7112"
+	req.Header.Set("X-Forwarded-Host", "dash.entry.example")
+	req.Header.Set("Origin", "https://dash.entry.example")
+	resp, err := plainClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход через заход извне: %d, ожидал 200", resp.StatusCode)
+	}
+	if len(resp.Cookies()) == 0 {
+		t.Fatal("вход через заход извне прошёл без куки")
+	}
+}
+
+// Внешнее имя не открывает дверь кому попало: чужой Origin остаётся чужим и за
+// посредником.
+func TestLoginForeignOriginBehindProxy(t *testing.T) {
+	e := newTestEnv(t)
+	req, err := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"token": "test-token"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Forwarded-Host", "dash.entry.example")
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := plainClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("чужой Origin за посредником: %d, ожидал 403", resp.StatusCode)
+	}
+}
+
+func TestExternalHost(t *testing.T) {
+	cases := []struct {
+		name string
+		host string
+		fwd  string
+		want string
+	}{
+		{"без посредника", "192.168.1.10:7112", "", "192.168.1.10:7112"},
+		{"посредник назвал имя", "127.0.0.1:7112", "dash.entry.example", "dash.entry.example"},
+		{"цепочка посредников", "127.0.0.1:7112", "dash.entry.example, inner.example", "dash.entry.example"},
+		{"пробелы вокруг имени", "127.0.0.1:7112", "  dash.entry.example  ", "dash.entry.example"},
+		{"пустой заголовок", "192.168.1.10:7112", "   ", "192.168.1.10:7112"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/api/login", nil)
+			r.Host = c.host
+			if c.fwd != "" {
+				r.Header.Set("X-Forwarded-Host", c.fwd)
+			}
+			if got := externalHost(r); got != c.want {
+				t.Errorf("externalHost = %q, ожидал %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestLogout(t *testing.T) {
 	e := newTestEnv(t)
 	c := e.loggedClient(t)

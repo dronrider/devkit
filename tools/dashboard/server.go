@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -165,6 +166,27 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// externalHost называет имя, по которому дашборд открыт у браузера. Дома это
+// Host запроса, а за посредником захода извне Host занят адресом апстрима
+// (клиент шар xr-proxy переписывает его, чтобы сервис за публикацией видел
+// свой адрес), и внешнее имя приезжает в X-Forwarded-Host, как у любого
+// сервиса за прокси. Подставить заголовок из браузера чужая страница не может:
+// форма своих заголовков не ставит, а fetch со своим упирается в предполётный
+// запрос, на который дашборд не отвечает, так что сверка Origin остаётся
+// сверкой.
+func externalHost(r *http.Request) string {
+	fwd := r.Header.Get("X-Forwarded-Host")
+	// Цепочка посредников пишет имена через запятую, ближайшее к браузеру идёт
+	// первым: оно и стоит в Origin.
+	if i := strings.IndexByte(fwd, ','); i >= 0 {
+		fwd = fwd[:i]
+	}
+	if fwd = strings.TrimSpace(fwd); fwd != "" {
+		return fwd
+	}
+	return r.Host
+}
+
 // sameOrigin сверяет Origin на изменяющих методах: вторая половина защиты от
 // CSRF рядом с SameSite=Lax. Запрос без Origin (curl, smoke-сценарий) честнее
 // пропустить: CSRF это атака браузером, а браузер Origin ставит всегда.
@@ -174,7 +196,7 @@ func sameOrigin(r *http.Request) bool {
 		return true
 	}
 	u, err := url.Parse(origin)
-	return err == nil && u.Host == r.Host
+	return err == nil && u.Host == externalHost(r)
 }
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {

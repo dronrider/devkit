@@ -22,7 +22,7 @@ const boardFixtureJSON = `{"prefix":"XR","sections":[` +
 	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Верхняя","type":"bug","p":"P1","r":55,"r_parts":[50,0,0,5,0],"cost":"-","link":"-"}]},` +
 	`{"key":"blocked","title":"Blocked","rows":[]}]}`
 
-func writeScript(t *testing.T, dir, name, body string) {
+func writeScript(t testing.TB, dir, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func plainClient() *http.Client {
 }
 
 // loggedClient входит с верным токеном и держит куку.
-func (e *testEnv) loggedClient(t *testing.T) *http.Client {
+func (e *testEnv) loggedClient(t testing.TB) *http.Client {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {

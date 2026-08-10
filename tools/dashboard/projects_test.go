@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func mkProject(t *testing.T, dir string) {
+func mkProject(t testing.TB, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
 		t.Fatal(err)

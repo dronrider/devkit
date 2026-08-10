@@ -151,3 +151,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-219 | Живой статус агента в дашборде: журнал витка, транскрипт, tmux | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-219.md](tasks/archive/2026/DK-219.md) |
 | DK-220 | Переписка с агентом через состояние цели | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-220.md](tasks/archive/2026/DK-220.md) |
 | DK-229 | settings.json: allow без литеральных токенов, копии прочь, находка doctor | task | P1 | 2026-08-10 | [tasks/archive/2026/DK-229.md](tasks/archive/2026/DK-229.md), `1712cbf`, `6451734`, `c0882cc`, `671f858` |
+| DK-221 | Правка задачи и цели с дашборда, зависимости в обе стороны | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-221.md](tasks/archive/2026/DK-221.md) |

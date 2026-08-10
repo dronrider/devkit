@@ -86,7 +86,7 @@ TLS сервер не заводит: канал это решение выка�
 VPS держит сам клиент шар, изнутри.
 
 Дверей на пути две, и обе свои: сначала владельца пускает фронт входа
-(логин `owner` и пароль админки хаба xr-proxy), потом токен спрашивает сам
+(логин и пароль админки хаба xr-proxy, имя из `[[admin.users]]` его конфига), потом токен спрашивает сам
 дашборд. Порядок этот не совпадение: плейнтекст браузерной сессии живёт в
 памяти фронта, то есть фронт это доверенный посредник, и вход дашборда его
 доверием не заменяется.
@@ -126,7 +126,7 @@ secretctl exec DASHBOARD_ENTRY -- \
 secretctl exec DASHBOARD_ENTRY -- secretctl exec DASHBOARD_ENTRY_PASSWORD -- \
     sh -c 'jar=$(mktemp) && \
       curl -fsS -o /dev/null -c "$jar" "$DASHBOARD_ENTRY/.xr-web/login" \
-           -d "username=owner&password=$DASHBOARD_ENTRY_PASSWORD" && \
+           -d "username=admin&password=$DASHBOARD_ENTRY_PASSWORD" && \
       curl -fsS -b "$jar" "$DASHBOARD_ENTRY/healthz"; rm -f "$jar"'
 # -> {"errors":[],"ok":true,"projects":N,...}
 ```

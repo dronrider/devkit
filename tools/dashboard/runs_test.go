@@ -312,21 +312,26 @@ func TestRunsRequireLogin(t *testing.T) {
 // Изменяющие ручки сверяют Origin, как вход и выход: CSRF-запрос из чужого
 // браузера отбивается до всякого дела.
 func TestRunsForeignOrigin(t *testing.T) {
-	e, c, tmuxLog := runsEnv(t, "")
-	req, err := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/runs", strings.NewReader(`{"id": "XR-002"}`))
-	if err != nil {
-		t.Fatal(err)
+	e, c, tmuxLog := runsEnv(t, `task-XR-002\n`)
+	for _, call := range []struct{ method, url, body string }{
+		{"POST", e.srv.URL + "/api/projects/demo/runs", `{"id": "XR-002"}`},
+		{"DELETE", e.srv.URL + "/api/projects/demo/runs/XR-002", ""},
+	} {
+		req, err := http.NewRequest(call.method, call.url, strings.NewReader(call.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", "http://evil.example")
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("чужой Origin на %s: %d, ожидал 403", call.method, resp.StatusCode)
+		}
 	}
-	req.Header.Set("Origin", "http://evil.example")
-	resp, err := c.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("чужой Origin на запуске: %d, ожидал 403", resp.StatusCode)
-	}
-	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") || strings.Contains(got, "kill-session") {
 		t.Errorf("чужой Origin дошёл до tmux: %s", got)
 	}
 }

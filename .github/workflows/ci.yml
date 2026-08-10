@@ -31,6 +31,12 @@ jobs:
       - name: тесты obeycheck
         run: go test ./...
         working-directory: tools/obeycheck
+      # Сквозной прогон дашборда идёт этим же шагом (smoke_test.go): чужие
+      # программы он изображает своими фикстурами, живого tmux и taskctl ему
+      # не нужно.
+      - name: тесты dashboard
+        run: go test ./...
+        working-directory: tools/dashboard
       - name: тесты хуков
         run: python3 -m unittest discover -p '*_test.py'
         working-directory: hooks

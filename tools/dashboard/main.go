@@ -27,6 +27,12 @@ const usageText = `dashboard: веб-дашборд агентской разр�
   secret [--rotate]           напечатать токен входа (родится сам, если его
                               ещё нет); --rotate заменяет секрет, и все
                               выданные куки разом мертвы
+  smoke [--keep]              сквозной прогон по API на синтетическом
+                              окружении (свой дом, свой проект, фикстуры
+                              вместо чужих программ): доска, запуск, стоп,
+                              сообщение цели и уведомление о стопе в ленте;
+                              пройдя, печатает «dashboard smoke: ok».
+                              --keep оставляет временное окружение на месте
 
 Вход по токену из конфига: страница /login, кука на 30 дней. Без входа не
 отдаётся ни одна строка данных; открыт один /healthz с версией, аптаймом,
@@ -71,6 +77,16 @@ func main() {
 			fatal(err)
 		}
 		fmt.Println(token)
+	case "smoke":
+		fs := flag.NewFlagSet("smoke", flag.ExitOnError)
+		keep := fs.Bool("keep", false, "оставить временное окружение прогона")
+		fs.Parse(args[1:])
+		if err := cmdSmoke(os.Stdout, *keep); err != nil {
+			// Провал называет шаг и причину: код возврата без слов ничего не
+			// говорит тому, кто гонял прогон руками.
+			fmt.Fprintf(os.Stderr, "dashboard smoke: провал, %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "-h", "--help":
 		fmt.Print(usageText)
 	default:

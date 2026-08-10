@@ -356,6 +356,34 @@ func TestTaskPatchRefusals(t *testing.T) {
 	}
 }
 
+// Кривой ID отбивается ситом до похода на доску, и на всех шести ручках:
+// в путь ID приезжает из адреса, и «..%2F» доходит до обработчика уже с
+// разобранным слэшем. Дырка тут это обход пути к чужому файлу, поэтому
+// проверяются обе стороны, и {id}, и {dep}.
+func TestTaskIDSieve(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	const bad = "..%2FXR-002"
+	calls := []struct{ method, url, body string }{
+		{"GET", taskURL(e, bad, ""), ""},
+		{"PATCH", taskURL(e, bad, ""), `{"cost": "S"}`},
+		{"POST", taskURL(e, bad, "/file"), "{}"},
+		{"PUT", taskURL(e, bad, "/file"), `{"text": "текст"}`},
+		{"POST", taskURL(e, bad, "/deps"), `{"id": "XR-001"}`},
+		{"DELETE", taskURL(e, bad, "/deps/XR-001"), ""},
+		// Сито ID второй стороны: та же дырка приезжает и в теле, и в хвосте
+		// пути зависимости. В теле она едет JSON-ом, без экранирования.
+		{"POST", taskURL(e, "XR-004", "/deps"), `{"id": "../XR-001"}`},
+		{"DELETE", taskURL(e, "XR-004", "/deps/"+bad), ""},
+	}
+	for _, call := range calls {
+		resp := doReq(t, c, call.method, call.url, call.body)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "не похоже на ID задачи") {
+			t.Errorf("%s %s: %d %s, ожидал 400 со словами про ID", call.method, call.url, resp.StatusCode, text)
+		}
+	}
+}
+
 // Без входа не отдаётся и не принимается ни одна правка, чужой Origin
 // отбивается до всякой записи.
 func TestTaskEditAuthAndOrigin(t *testing.T) {

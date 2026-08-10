@@ -12,12 +12,15 @@ import contextlib
 import hashlib
 import json
 import os
+import pty
 import re
+import select
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -188,8 +191,7 @@ if argv[:1] == ["init"]:
 '''
 
 
-def run(args, cwd=None, env=None, path=None, home=None):
-    """Прогон команды с подставным окружением. Отдаёт код и слитый вывод."""
+def sandbox_env(env=None, path=None, home=None):
     e = dict(os.environ)
     # Сборка бинарей идёт в GOBIN либо GOPATH, а они на машине выставлены на
     # настоящий ~/go/bin: без сброса самопроверка положила бы туда заглушки.
@@ -205,9 +207,52 @@ def run(args, cwd=None, env=None, path=None, home=None):
                 e.pop(k, None)
             else:
                 e[k] = str(v)
-    p = subprocess.run([str(a) for a in args], cwd=cwd and str(cwd), env=e,
+    return e
+
+
+def run(args, cwd=None, env=None, path=None, home=None):
+    """Прогон команды с подставным окружением. Отдаёт код и слитый вывод.
+
+    Ввод закрыт наглухо: подключение спрашивает недостающее, когда видит tty, и
+    прогон, унаследовавший терминал раннера, вставал бы на вопросе. Диалог
+    проверяется отдельно, через run_tty.
+    """
+    p = subprocess.run([str(a) for a in args], cwd=cwd and str(cwd),
+                       env=sandbox_env(env, path, home), stdin=subprocess.DEVNULL,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+def run_tty(args, answers=(), cwd=None, env=None, path=None, home=None, timeout=120):
+    """Тот же прогон, но под псевдотерминалом: команда видит tty и задаёт свои
+    вопросы, а ответы подаются строками по порядку. Отдаёт код и вывод вместе с
+    эхом ответов, как его видит человек в терминале."""
+    master, slave = pty.openpty()
+    p = subprocess.Popen([str(a) for a in args], cwd=cwd and str(cwd),
+                         env=sandbox_env(env, path, home),
+                         stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+    os.close(slave)
+    os.write(master, "".join(a + "\n" for a in answers).encode("utf-8"))
+    out, deadline = [], time.time() + timeout
+    while time.time() < deadline:
+        r, _, _ = select.select([master], [], [], deadline - time.time())
+        if not r:
+            break
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            # Ребёнок закрыл свой конец: на linux это EIO, на macOS пустое чтение.
+            break
+        if not chunk:
+            break
+        out.append(chunk)
+    os.close(master)
+    try:
+        rc = p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        rc = p.wait()
+    return rc, b"".join(out).decode("utf-8", "replace")
 
 
 def go_cache_env():
@@ -470,7 +515,11 @@ class Sandbox:
         env = dict(kw.pop("env", None) or {})
         env.setdefault("DEVKIT_NOTIFY_BACKEND", str(self.notify_stub))
         env.setdefault(update.BIN_ENV, str(self.dkbin))
-        return run([PY, str(kw.pop("dkctl", self.dkctl))] + list(args), env=env, **kw)
+        answers = kw.pop("answers", None)
+        argv = [PY, str(kw.pop("dkctl", self.dkctl))] + list(args)
+        if answers is None:
+            return run(argv, env=env, **kw)
+        return run_tty(argv, answers, env=env, **kw)
 
     def doctor(self, root, *args, **kw):
         return self.dkctl_run("doctor", *(list(args) + ["-C", str(root)]), **kw)

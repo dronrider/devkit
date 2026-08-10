@@ -16,7 +16,9 @@ devkit.local в конфиге клона. Разбор его не перепи
 """
 import importlib.util
 import os
+import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -269,6 +271,48 @@ def ensure_binding(local, clone, values=None):
     return add
 
 
+def interactive():
+    """Есть ли кого спрашивать. Первый прогон подключения задаёт вопросы только
+    живому человеку: в headless-прогоне (сессия агента, CI) вопрос повис бы
+    молча, и там команда идёт как раньше, а недоделанное называет хвостом."""
+    try:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def ask(prompt, default=""):
+    """Вопрос первого прогона. Пустой ответ значит согласие с предложенным в
+    скобках, оборванный ввод (Ctrl-D) значит то же самое: подключение доводит
+    остальное, а неотвеченное уезжает в хвост «осталось сделать»."""
+    line = "%s [%s]: " % (prompt, default) if default else "%s: " % prompt
+    try:
+        got = input(line).strip()
+    except EOFError:
+        print("")
+        return default
+    return got or default
+
+
+def prefix_ok(prefix):
+    """Годится ли префикс доске. Рубеж тот же, что у taskctl init
+    (tools/taskctl/init.go, prefixArgRe): доску заводит он, и отказ его на
+    ответе человека выглядел бы падением подключения."""
+    return bool(re.match(r"^[A-ZА-Я]+$", prefix))
+
+
+def prefix_hint(name):
+    """Префикс доски, предложенный по имени клона: инициалы слов, а у имени в
+    одно слово две первые буквы. Правило нарочно предсказуемое, а не умное:
+    предложение человек видит в вопросе и меняет на месте, а угадывать он должен
+    не алгоритм, а свой ответ."""
+    words = [w for w in re.split(r"[^A-Za-zА-Яа-яЁё]+", name) if w]
+    if not words:
+        return ""
+    got = (words[0][:2] if len(words) == 1 else "".join(w[0] for w in words[:4])).upper()
+    return got if prefix_ok(got) else ""
+
+
 def contour_path(name):
     return os.path.join(os.path.expanduser("~"), ".devkit", "tracker", name + ".local")
 
@@ -292,17 +336,25 @@ def contour_value(name, key):
     return ""
 
 
-def ensure_contour(name):
-    """Болванка контура компании ~/.devkit/tracker/<имя>.local. Таблица
-    статусов кладётся заполненной обычными именами Jira: сверить её с трекером
-    компании дешевле, чем писать с нуля. Заполненный файл не трогается, отдаётся
-    путь заведённого либо пусто."""
+def ensure_contour(name, values=None):
+    """Контур компании ~/.devkit/tracker/<имя>.local. Таблица статусов кладётся
+    заполненной обычными именами Jira: сверить её с трекером компании дешевле,
+    чем писать с нуля. Адрес и пользователь приезжают ответами первого прогона
+    (values), а без них файл ложится болванкой, как раньше. Заполненный файл не
+    трогается, отдаётся путь заведённого либо пусто."""
     path = contour_path(name)
     if os.path.exists(path):
         return ""
+    text = CONTOUR_TEMPLATE
+    for key in ("base_url", "user"):
+        # Кавычки из ответа выкидываются: значение и так ложится в кавычках, а
+        # свои развалили бы файл на первом же чтении.
+        val = (values or {}).get(key, "").replace('"', "").strip()
+        if val:
+            text = text.replace('%s = ""' % key, '%s = "%s"' % (key, val), 1)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        f.write(CONTOUR_TEMPLATE)
+        f.write(text)
     return path
 
 

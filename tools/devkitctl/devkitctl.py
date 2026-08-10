@@ -7,7 +7,10 @@
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
   devkitctl corp [--prefix XX] [--name "..."] [-C dir]
-      подключить корп-проект: боковая директория ../<проект>-local со скелетом
+      подключить корп-проект: первый прогон спрашивает недостающее сам (префикс
+      доски с предложением по имени клона, адрес трекера и пользователя нового
+      контура компании), без tty вопросов нет и недоделанное едет в хвост;
+      боковая директория ../<проект>-local со скелетом
       доски и своим git-репозиторием, редирект git config devkit.local в клоне,
       тонкий файл контекста харнеса с импортом на AGENTS.md боковой директории и
       строкой в .git/info/exclude, обёртки хуков на pre-commit и commit-msg.
@@ -1854,6 +1857,48 @@ def print_remaining(steps, check):
     print("проверить обвязку можно командой %s" % check)
 
 
+PREFIX_CLASH = ("префикс доски %s совпадает с ключом проекта в трекере: рубеж следов не отличит "
+                "локальный ID доски от ключа тикета и правило про ID на этом проекте работать "
+                "не будет")
+# Сколько раз первый прогон переспрашивает префикс. Дальше он отступает с
+# отказом: заколдованный вопрос без выхода хуже отказа с командой в руках.
+PREFIX_TRIES = 3
+
+
+def ask_prefix(clone_name, bound_key):
+    """Префикс доски первого прогона: предложение из имени клона, которое
+    подтверждается пустым вводом либо заменяется на месте. Отдаёт пусто, когда
+    спрашивать некого (без tty) или человек так и не назвал годного."""
+    if not corp.interactive():
+        return ""
+    hint = corp.prefix_hint(clone_name)
+    if bound_key and hint == bound_key.upper():
+        hint = ""
+    for _ in range(PREFIX_TRIES):
+        got = corp.ask("префикс ID задач доски, заглавными буквами", hint).upper()
+        if not got:
+            print("без префикса доску заводить не с чем.")
+        elif not corp.prefix_ok(got):
+            print("префикс пишется одними заглавными буквами, без цифр и знаков.")
+        elif bound_key and got == bound_key.upper():
+            print(PREFIX_CLASH % got + ".")
+        else:
+            return got
+    return ""
+
+
+def ask_contour(contour):
+    """Ответы про контур компании: адрес трекера и имя пользователя. Секретов
+    тут нет, токен приезжает переменной окружения, поэтому и ввод обычный. Без
+    tty вопросов нет вовсе, и контур ложится болванкой, как раньше."""
+    if not corp.interactive() or os.path.exists(corp.contour_path(contour)):
+        return {}
+    print("контур компании %s заводится заново: адрес трекера и имя пользователя не секреты, "
+          "токен спрашивается не тут, а переменной окружения." % contour)
+    return {"base_url": corp.ask("адрес трекера, https://tracker.example"),
+            "user": corp.ask("имя пользователя в трекере, от него идут assign и ворклоги")}
+
+
 def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     # Подключение корп-проекта и оно же восстановление обвязки: заведённое не
     # переписывается, доводится только недостающее, поэтому повторный прогон
@@ -1867,22 +1912,34 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     clone = Path(corp.checkout(root) or root)
     local = Path(corp.local_dir(clone, DEVKIT) or (clone.parent / (clone.name + "-local")))
     board = local / "docs" / "TASKS.md"
-    if not board.exists() and not prefix:
-        sys.stderr.write("нужен --prefix для доски боковой директории (%s)\n" % local)
-        return 2
+    # Про место рабочих файлов первый прогон говорит до вопросов, а не строкой
+    # отчёта в конце: человек зовёт corp из клона и вправе ждать, что доска
+    # заведётся тут же, а она ложится сбоку.
+    if not board.exists():
+        print("доска и файлы задач лягут в боковую директорию %s, а не в клон: рабочим файлам "
+              "devkit в корп-репозитории не место, в клоне остаётся одна обвязка." % local)
     # Префикс доски, совпавший с ключом проекта в трекере, снимает правило про
     # локальный ID: рубеж следов не отличает ID строки доски от ключа тикета
     # (DK-124). На заведённой доске это уже находка доктора, а на незаведённой
     # префикс ещё выбирается, и дешевле остановиться здесь.
     bound_key = key or corp.tracker_value(local, "key", DEVKIT)
+    if not board.exists() and not prefix:
+        prefix = ask_prefix(clone.name, bound_key)
+        if not prefix and corp.interactive():
+            sys.stderr.write("годный префикс доски так и не назван, повторить corp "
+                             "с --prefix\n")
+            return 2
+        if not prefix:
+            sys.stderr.write("нужен --prefix для доски боковой директории (%s): без tty первый "
+                             "прогон его не спрашивает\n" % local)
+            return 2
     if prefix and bound_key and prefix == bound_key.upper():
         if not board.exists():
-            sys.stderr.write("префикс доски %s совпадает с ключом проекта в трекере: рубеж следов "
-                             "не отличит локальный ID доски от ключа тикета и правило про ID на "
-                             "этом проекте работать не будет, взять другой --prefix\n" % prefix)
+            sys.stderr.write(PREFIX_CLASH % prefix + ", взять другой --prefix\n")
             return 2
         sys.stderr.write("предупреждение: префикс доски %s совпадает с ключом проекта в трекере, "
                          "рубеж следов на этой паре правило про локальный ID снимает\n" % prefix)
+    answers = ask_contour(contour) if contour else {}
     done = []
     if not local.is_dir():
         local.mkdir(parents=True)
@@ -1928,10 +1985,12 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
                if bkey == "repo" else "")
         done.append("%s: вписан %s = %s%s" % (corp.TRACKER, bkey, bval, why))
     if contour:
-        cpath = corp.ensure_contour(contour)
+        cpath = corp.ensure_contour(contour, answers)
         if cpath:
-            done.append("контур компании %s заведён болванкой: адрес и пользователь вписать, "
-                        "таблицу [status] сверить с трекером" % cpath)
+            miss = [k for k in ("base_url", "user") if not corp.contour_value(contour, k)]
+            done.append("контур компании %s заведён %s: %sтаблицу [status] сверить с трекером"
+                        % (cpath, "болванкой" if miss else "с ответами первого прогона",
+                           "адрес и пользователя вписать, " if miss else ""))
     if remote and not corp.git(local, "remote"):
         rc, out = run(["git", "-C", str(local), "remote", "add", "origin", remote])
         if rc != 0:
@@ -1969,7 +2028,9 @@ def main(argv):
     n.add_argument("--no-board", action="store_true", help="без доски, задачи во внешнем трекере")
     c = sub.add_parser("corp", help="подключить корп-проект (боковая директория и обвязка клона)")
     c.add_argument("-C", dest="dir", default=".", help="директория корп-клона")
-    c.add_argument("--prefix", default="", help="префикс ID задач доски, заглавными (XR)")
+    c.add_argument("--prefix", default="",
+                   help="префикс ID задач доски, заглавными (XR); первый прогон спрашивает "
+                        "его сам, предложив по имени клона")
     c.add_argument("--name", default="", help="название проекта, по умолчанию имя директории клона")
     c.add_argument("--contour", default="", help="имя контура компании ~/.devkit/tracker/<имя>.local")
     c.add_argument("--key", default="", help="ключ проекта в трекере (ABC), отличный от --prefix")

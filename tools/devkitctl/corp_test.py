@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Корп-контур: подключение клона к боковой директории с доской, цепочка хуков,
-рубеж следов и корп-проверки доктора (DK-085, DK-124, DK-125).
+рубеж следов, диалог первого прогона и корп-проверки доктора (DK-085, DK-124,
+DK-125, DK-240).
 
 Доску заводит taskctl, а в подставном PATH он заглушка на «exit 0», поэтому на
 эти проверки кладётся своя, которая скелет доски всё-таки пишет: без доски
@@ -8,7 +9,10 @@
 """
 import os
 import shutil
+import tempfile
 import unittest
+
+import corp
 
 from testenv import SandboxCase, executable, git, git_init, read, rules, run, write
 
@@ -411,6 +415,170 @@ class CorpConnectTest(SandboxCase):
         self.assertIn_("рубеж следов", out, "отказ corp не назвал последствие совпадения")
         self.assertFalse((self.box.root / "corp-three-local" / "docs" / "TASKS.md").exists(),
                          "отказавший corp всё-таки завёл доску")
+
+
+class PrefixHintTest(unittest.TestCase):
+    """Предложение префикса по имени клона (DK-240): правило предсказуемое, а
+    предложенное годится доске без проверки человеком."""
+
+    def test_1_one_word_gives_two_letters(self):
+        self.assertEqual(corp.prefix_hint("gateway"), "GA")
+
+    def test_2_words_give_initials(self):
+        self.assertEqual(corp.prefix_hint("ucs-platform"), "UP")
+        self.assertEqual(corp.prefix_hint("api_gw.core"), "AGC")
+
+    def test_3_digits_are_not_letters(self):
+        self.assertEqual(corp.prefix_hint("api2-gw"), "AG")
+
+    def test_4_name_without_letters_gives_nothing(self):
+        # Предложить нечего, и вопрос уходит без подсказки, а не с мусором.
+        self.assertEqual(corp.prefix_hint("2026"), "")
+        self.assertEqual(corp.prefix_hint(""), "")
+
+    def test_5_hint_is_always_good_for_the_board(self):
+        for name in ("gateway", "ucs-platform", "api2-gw", "касса-онлайн", "x"):
+            hint = corp.prefix_hint(name)
+            self.assertTrue(not hint or corp.prefix_ok(hint),
+                            "предложенный по имени %s префикс %s доска не возьмёт" % (name, hint))
+
+
+class ContourAnswersTest(unittest.TestCase):
+    """Ответы первого прогона в файле контура компании (DK-240)."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.was = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        self.addCleanup(shutil.rmtree, self.home, True)
+
+    def tearDown(self):
+        if self.was is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self.was
+
+    def test_1_answers_land_in_the_file(self):
+        corp.ensure_contour("acme", {"base_url": "https://tracker.example", "user": "ivanov"})
+        text = read(corp.contour_path("acme"))
+        self.assertRegex(text, r'(?m)^base_url = "https://tracker\.example"$',
+                         "адрес трекера не вписан")
+        self.assertRegex(text, r'(?m)^user = "ivanov"$', "имя пользователя не вписано")
+        self.assertRegex(text, r'(?m)^assignee = "\{user\}"$',
+                         "подстановка assignee подменена ответом")
+        self.assertEqual(corp.contour_value("acme", "base_url"), "https://tracker.example")
+
+    def test_2_without_answers_it_is_the_old_stub(self):
+        corp.ensure_contour("acme")
+        self.assertRegex(read(corp.contour_path("acme")), r'(?m)^base_url = ""$',
+                         "болванка контура разъехалась с прежней")
+
+    def test_3_quotes_from_the_answer_are_dropped(self):
+        corp.ensure_contour("acme", {"base_url": '"https://t.example"', "user": "ivanov"})
+        self.assertEqual(corp.contour_value("acme", "base_url"), "https://t.example",
+                         "кавычки из ответа развалили файл контура")
+
+    def test_4_filled_file_is_left_alone(self):
+        corp.ensure_contour("acme", {"base_url": "https://t.example", "user": "ivanov"})
+        before = read(corp.contour_path("acme"))
+        self.assertEqual(corp.ensure_contour("acme", {"user": "petrov"}), "",
+                         "повторный прогон завёл контур заново")
+        self.assertEqual(read(corp.contour_path("acme")), before,
+                         "повторный прогон переписал заполненный контур")
+
+
+class InteractiveCorpTest(SandboxCase):
+    """Первый прогон corp одной командой (DK-240): недостающее команда
+    спрашивает под tty, а без него ведёт себя как раньше. Диалог гоняется на
+    настоящем прогоне под псевдотерминалом: подставить isatty значило бы
+    проверять заглушку вместо команды.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        corpbin = cls.box.root / "askbin"
+        corpbin.mkdir()
+        executable(corpbin / "taskctl", cls.box.board_taskctl())
+        cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
+
+    def clone(self, name):
+        root = git_init(self.box.root / name)
+        write(root / "readme.md", "readme\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "init")
+        return root
+
+    def corp(self, clone, *args, **kw):
+        return self.box.dkctl_run("corp", "-C", str(clone), *args, path=self.corppath, **kw)
+
+    def test_1_first_run_asks_the_contour_and_proposes_the_prefix(self):
+        clone = self.clone("corp-gate")
+        rc, out = self.corp(clone, "--contour", "gatecorp", "--key", "ABC",
+                            answers=["", "https://tracker.example", "ivanov"])
+        self.assertEqual(rc, 0, "первый прогон под tty не прошёл: %s" % out)
+        board = self.box.root / "corp-gate-local" / "docs" / "TASKS.md"
+        self.assertIn_("префикс CG", read(board),
+                       "доска заведена не с предложенным по имени клона префиксом")
+        contour = read(self.box.home / ".devkit" / "tracker" / "gatecorp.local")
+        self.assertRegex(contour, r'(?m)^base_url = "https://tracker\.example"$',
+                         "ответ про адрес трекера не доехал до контура: %s" % out)
+        self.assertRegex(contour, r'(?m)^user = "ivanov"$',
+                         "ответ про пользователя не доехал до контура: %s" % out)
+        self.assertNotIn_("заполнить base_url", out,
+                          "после ответов хвост опять зовёт в редактор контура")
+        self.assertIn_("с ответами первого прогона", out,
+                       "прогон не сказал, что контур заведён с ответов")
+        # Про боковую директорию сказано до вопросов, а не строкой отчёта потом.
+        self.assertIn_("лягут в боковую директорию", out,
+                       "прогон не сказал заранее, куда лягут доска и файлы задач")
+        self.assertLess(out.index("лягут в боковую директорию"), out.index("префикс ID задач"),
+                        "про боковую директорию сказано уже после вопросов: %s" % out)
+
+    def test_2_proposed_prefix_is_replaced_in_place(self):
+        clone = self.clone("corp-gate-two")
+        rc, out = self.corp(clone, answers=["zz"])
+        self.assertEqual(rc, 0, "прогон с заменой префикса не прошёл: %s" % out)
+        board = read(self.box.root / "corp-gate-two-local" / "docs" / "TASKS.md")
+        self.assertIn_("префикс ZZ", board, "доска заведена не с названным префиксом")
+
+    def test_3_prefix_equal_to_the_key_is_asked_again(self):
+        # Рубеж коллизии остаётся рубежом и в диалоге, но стоит он не отказом:
+        # префикс тут ещё выбирается, и второй ответ команда принимает.
+        clone = self.clone("corp-clash")
+        rc, out = self.corp(clone, "--key", "ABC", answers=["ABC", "CC"])
+        self.assertEqual(rc, 0, "прогон с переспросом префикса не прошёл: %s" % out)
+        self.assertIn_("рубеж следов", out, "переспрос не назвал причину")
+        board = read(self.box.root / "corp-clash-local" / "docs" / "TASKS.md")
+        self.assertIn_("префикс CC", board, "доска заведена с префиксом, равным ключу проекта")
+
+    def test_4_bad_answers_end_with_a_refusal(self):
+        clone = self.clone("corp-bad")
+        rc, out = self.corp(clone, answers=["1", "a b", "-"])
+        self.assertEqual(rc, 2, "прогон принял негодный префикс: %s" % out)
+        self.assertIn_("заглавными буквами", out, "команда не сказала, чем плох ответ")
+        self.assertFalse((self.box.root / "corp-bad-local" / "docs" / "TASKS.md").exists(),
+                         "отказавший прогон всё-таки завёл доску")
+
+    def test_5_headless_run_does_not_hang(self):
+        # Без tty вопросов нет вовсе: команда отказывает с прежним кодом 2 и
+        # называет флаг, а не ждёт ввода, которого некому дать.
+        clone = self.clone("corp-headless")
+        rc, out = self.corp(clone)
+        self.assertEqual(rc, 2, "headless-прогон без префикса прошёл: %s" % out)
+        self.assertIn_("без tty", out, "отказ без tty не назвал причину")
+        self.assertIn_("--prefix", out, "отказ без tty не назвал флаг")
+        self.assertFalse((self.box.root / "corp-headless-local" / "docs" / "TASKS.md").exists(),
+                         "отказавший headless-прогон завёл доску")
+
+    def test_6_headless_contour_stays_a_stub(self):
+        clone = self.clone("corp-headless-two")
+        rc, out = self.corp(clone, "--prefix", "HT", "--contour", "headcorp")
+        self.assertEqual(rc, 0, "headless-прогон с флагами не прошёл: %s" % out)
+        self.assertIn_("заполнить base_url, user", out,
+                       "headless-прогон перестал звать заполнить контур")
+        self.assertRegex(read(self.box.home / ".devkit" / "tracker" / "headcorp.local"),
+                         r'(?m)^base_url = ""$', "болванка контура заполнилась без ответов")
 
 
 if __name__ == "__main__":

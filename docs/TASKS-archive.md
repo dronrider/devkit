@@ -144,3 +144,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-215 | LLD дашборда: границы сервер-клиент, API, аутентификация, раскладка кода | LLD | P2 | 2026-08-10 | [tasks/archive/2026/DK-215.md](tasks/archive/2026/DK-215.md) |
 | DK-216 | Экраны дашборда в Claude Design: телефон и ноутбук | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-216.md](tasks/archive/2026/DK-216.md) |
 | DK-226 | secretctl: имена агенту, значение в подпроцесс через два бэкенда | task | P1 | 2026-08-10 | [tasks/archive/2026/DK-226.md](tasks/archive/2026/DK-226.md), `0ee4a9e`, `58b0ea0`, `c6d595e` |
+| DK-217 | Каркас дашборда: сервер с аутентификацией и доска проектов на чтение | task | P2 | 2026-08-10 | [tasks/archive/2026/DK-217.md](tasks/archive/2026/DK-217.md) |

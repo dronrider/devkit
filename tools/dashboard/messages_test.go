@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -326,21 +328,237 @@ func TestInboxLinesStopAtNextSection(t *testing.T) {
 	}
 }
 
-// Экран переписки честен словами: сообщение ляжет в файл цели и уйдёт
-// следующему витку, идущий его не увидит; лежащее показывается как «ждёт
-// витка», а стоп остаётся стопом цикла.
+// Экран чата честен словами макета: сообщение уйдёт агенту, он прочитает его
+// при следующем запуске, идущая сессия его не увидит; лежащее во «Входящих»
+// подписано тем же обещанием, а стоп остаётся стопом цикла.
 func TestStaticChatHonesty(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
-		"ляжет в файл цели",
-		"уйдёт следующему витку",
-		"идущий виток его не увидит",
-		"ждёт витка",
+		"Сообщение уйдёт агенту.",
+		"Он прочитает его при следующем запуске, идущая сессия его не увидит.",
+		"подхвачено при следующем запуске",
+		"Написать агенту...",
 		"Стоп цикла",
 		"во «Входящих» пусто",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет честной надписи %q", want)
+		}
+	}
+}
+
+// Вход в чат на всех экранах называется чатом с агентом: «Переписка» ушла из
+// кнопок и подписи шапки вместе с жаргоном витков.
+func TestStaticChatNamedAgentChat(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	if strings.Count(text, `"Чат с агентом"`) < 2 {
+		t.Error("в static/app.js меньше двух кнопок «Чат с агентом»: вход остался «Перепиской»")
+	}
+	if !strings.Contains(text, `"чат с агентом " + rt.id`) {
+		t.Error("шапка экрана чата подписана не чатом с агентом")
+	}
+	if strings.Contains(text, `"Переписка"`) || strings.Contains(text, `"переписка "`) {
+		t.Error("в static/app.js осталась надпись «Переписка»")
+	}
+}
+
+// Чат открывается хвостом: читается последняя порция реплик, лента сразу
+// стоит внизу, а история подаётся кнопкой «раньше» через ?before=.
+func TestStaticChatOpensAtTail(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, text, "async function wireChatFeed(")
+	for _, want := range []string{`"?n=" + CHAT_TAIL`, `"?before=" + firstSeq`, "more.hidden"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в ленте чата нет %q: хвост и история подаются не так", want)
+		}
+	}
+	draw := strings.Index(body, "\n  draw();")
+	bottom := strings.Index(body, "feed.scrollTop = feed.scrollHeight;")
+	if draw < 0 || bottom < 0 || draw > bottom {
+		t.Error("чат прокручивается вниз не после первой отрисовки: открытие хвостом не сработает")
+	}
+}
+
+// Якорь ленты: перед перерисовкой меряется, стоит ли лента внизу, и низ
+// держится только тогда; из истории прокрутку вниз не бросает.
+func TestStaticChatKeepsPlace(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, text, "async function wireChatFeed(")
+	measure := strings.Index(body, "const bottom = atBottom(feed);")
+	rebuild := strings.Index(body, "box.replaceChildren();")
+	if measure < 0 || rebuild < 0 || measure > rebuild {
+		t.Error("положение ленты мерится после перерисовки: якорь взят с уже сброшенной прокрутки")
+	}
+	if !strings.Contains(body, "keepPlace(feed, tail)") {
+		t.Error("лента чата не возвращается на прежнее место: взгляд в историю сорвёт дострение")
+	}
+	if strings.Contains(body, "es.onmessage") && strings.Contains(body, "feed.scrollTop = feed.scrollHeight;\n    ") {
+		t.Error("дострение чата прокручивает вниз мимо якоря")
+	}
+}
+
+// Время и день реплики берутся в поясе клиента: вырезка символов из метки
+// показывала бы UTC, и на телефоне это враньё.
+func TestStaticChatTimeIsLocal(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, name := range []string{"function localTime(", "function localDay(", "function localDayKey("} {
+		if !strings.Contains(text, name) {
+			t.Errorf("в static/app.js нет %s: время реплик осталось строкой транскрипта", name)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "function localTime("), "toLocaleTimeString") {
+		t.Error("localTime не спрашивает пояс клиента")
+	}
+	for _, head := range []string{"async function wireChatFeed(", "function replyEl("} {
+		if strings.Contains(funcBody(t, text, head), ".slice(11, 16)") {
+			t.Errorf("%s режет время строкой вместо пояса клиента", head)
+		}
+	}
+}
+
+// mdSource собирает рендер markdown из статики: тесты гоняют его как есть,
+// поэтому вырезаются те же строки, что уедут в браузер, а не их пересказ.
+func mdSource(t *testing.T, text string) string {
+	t.Helper()
+	line := ""
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "const MD_INLINE") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("в static/app.js нет MD_INLINE: рендер markdown не собрать")
+	}
+	parts := []string{line}
+	for _, head := range []string{
+		"function el(", "function mdLink(", "function mdInline(", "function mdRender(",
+	} {
+		parts = append(parts, funcBody(t, text, head)+"\n}")
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// mdHTML прогоняет реплики через рендер под node с игрушечным DOM: узлы
+// сериализуются с экранированием, поэтому в ответе видно ровно то, что
+// увидел бы браузер.
+func mdHTML(t *testing.T, inputs []string) []string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден, юниты рендера markdown не гоняются")
+	}
+	cases, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dom := `
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+class N {
+  constructor(tag) { this.tag = tag; this.kids = []; this.attrs = {}; }
+  get tagName() { return this.tag.toUpperCase(); }
+  set className(v) { if (v) this.attrs.class = v; }
+  set textContent(v) { this.kids = [{ text: String(v) }]; }
+  set href(v) { this.attrs.href = v; }
+  set target(v) { this.attrs.target = v; }
+  set rel(v) { this.attrs.rel = v; }
+  append(...nodes) { for (const n of nodes) this.kids.push(n); }
+}
+const document = {
+  createElement: (tag) => new N(tag),
+  createTextNode: (text) => ({ text: String(text) }),
+};
+function html(n) {
+  if (n.text !== undefined) return esc(n.text);
+  const at = Object.entries(n.attrs).map(([k, v]) => " " + k + '="' + esc(v) + '"').join("");
+  return "<" + n.tag + at + ">" + n.kids.map(html).join("") + "</" + n.tag + ">";
+}
+`
+	src := dom + "\n" + mdSource(t, readFile(t, filepath.Join("static", "app.js"))) + "\n" +
+		"console.log(JSON.stringify(" + string(cases) + ".map((s) => html(mdRender(s)))));\n"
+	path := filepath.Join(t.TempDir(), "md.mjs")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("рендер не отработал под node: %v\n%s", err, out)
+	}
+	var got []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &got); err != nil {
+		t.Fatalf("разбор ответа рендера: %v\n%s", err, out)
+	}
+	return got
+}
+
+// Разметка из реплики остаётся буквами: тег script, картинка с onerror и
+// закрывающий тег внутри кода уезжают в текст, а не в DOM. Проверка идёт
+// рендером, а не чтением исходника: экранирование обещано пользователю.
+func TestMarkdownEscapesInjection(t *testing.T) {
+	got := mdHTML(t, []string{
+		"<script>alert(1)</script> и **жирный**",
+		"<img src=x onerror=alert(1)>",
+		"`</code><script>alert(2)</script>`",
+	})
+	for i, out := range got {
+		if strings.Contains(out, "<script") || strings.Contains(out, "<img") {
+			t.Errorf("случай %d: разметка реплики попала в DOM: %s", i, out)
+		}
+	}
+	if !strings.Contains(got[0], "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("тег не показан словами: %s", got[0])
+	}
+	if !strings.Contains(got[0], "<b>жирный</b>") {
+		t.Errorf("жирный не отрендерился: %s", got[0])
+	}
+	if !strings.Contains(got[1], "&lt;img src=x onerror=alert(1)&gt;") {
+		t.Errorf("картинка с onerror не показана словами: %s", got[1])
+	}
+	if !strings.Contains(got[2], "<code>&lt;/code&gt;&lt;script&gt;alert(2)&lt;/script&gt;</code>") {
+		t.Errorf("строчный код не закрылся экранированием: %s", got[2])
+	}
+}
+
+// Ссылки кликабельны, но только http и https: javascript: в реплике остаётся
+// текстом, а чужая вкладка открывается без доступа к нашей.
+func TestMarkdownLinksSafe(t *testing.T) {
+	got := mdHTML(t, []string{
+		"[док](https://example.com/a?b=1)",
+		"смотри https://example.com/b тут",
+		"[клик](javascript:alert(1))",
+	})
+	want := `<a href="https://example.com/a?b=1" target="_blank" rel="noopener noreferrer">док</a>`
+	if !strings.Contains(got[0], want) {
+		t.Errorf("ссылка не кликабельна: %s", got[0])
+	}
+	if !strings.Contains(got[1], `<a href="https://example.com/b"`) {
+		t.Errorf("голый адрес не стал ссылкой: %s", got[1])
+	}
+	if strings.Contains(got[2], "<a ") || strings.Contains(got[2], "javascript:") {
+		t.Errorf("javascript: в реплике стал ссылкой: %s", got[2])
+	}
+	if !strings.Contains(got[2], "клик") {
+		t.Errorf("текст отвергнутой ссылки пропал: %s", got[2])
+	}
+}
+
+// Заголовки, списки, код-блок и строчный код рендерятся своим разбором:
+// внешней библиотеки в статике нет, а разметка реплик всё же читается.
+func TestMarkdownBlocks(t *testing.T) {
+	got := mdHTML(t, []string{
+		"# Виток 12\n\nтекст с `кодом`\n\n- раз\n- два\n\n```\nls -la <тут>\n```\n\n1. первый\n2. второй",
+	})
+	for _, want := range []string{
+		`<div class="mdh mdh1">Виток 12</div>`,
+		"<code>кодом</code>",
+		"<ul><li>раз</li><li>два</li></ul>",
+		"<pre>ls -la &lt;тут&gt;</pre>",
+		"<ol><li>первый</li><li>второй</li></ol>",
+	} {
+		if !strings.Contains(got[0], want) {
+			t.Errorf("в рендере нет %q: %s", want, got[0])
 		}
 	}
 }

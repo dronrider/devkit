@@ -208,12 +208,14 @@ a:hover{text-decoration:underline}
 .phd{display:flex;align-items:center;gap:9px;padding:12px 18px;border-bottom:1px solid var(--line)}
 .phd b{font:600 13px var(--sans)}
 .phd span{font:400 11.5px var(--mono);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.phd .chip{margin-left:auto;flex:none;font:500 11.5px var(--sans);color:var(--tx2);overflow:visible}
+.phd .c-run{background:color-mix(in oklab,var(--run) 16%,transparent);color:var(--run)}
 .pbd{max-height:46vh;overflow-y:auto;padding:14px 18px}
 .log{font:400 12px/1.9 var(--mono);color:var(--tx2);overflow-wrap:anywhere}
 .log .t{color:var(--tx3)}
 .turn{margin-bottom:14px}
 .turn .th{font:500 11.5px var(--mono);color:var(--tx3);margin-bottom:5px}
-.turn .tb{font:400 13px/1.6 var(--sans);color:var(--tx);white-space:pre-wrap;overflow-wrap:anywhere}
+.turn .tb{font:400 13px/1.6 var(--sans);color:var(--tx);overflow-wrap:anywhere}
 .tool{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin:8px 0;font:400 12px var(--mono);color:var(--tx2);overflow:hidden}
 .tool b{font-weight:600;color:var(--tx);flex:none}
 .tool span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -230,10 +232,14 @@ a:hover{text-decoration:underline}
    ожидающие витка тем же тоном; поле ввода с честной надписью */
 .chatwrap{max-width:760px;margin-top:16px;padding-bottom:8px}
 .msgs{display:flex;flex-direction:column}
+/* лента чата своей прокруткой: экран открывается концом разговора, и поле
+   ввода под лентой видно сразу, без листания страницы вниз */
+.chatfeed{max-height:52vh;overflow-y:auto}
+.mlist{display:flex;flex-direction:column}
 .day{display:flex;align-items:center;gap:12px;font:500 11px var(--sans);color:var(--tx3);margin-top:14px}
 .day i{flex:1;height:1px;background:var(--line)}
 .msg{max-width:82%;display:flex;flex-direction:column;gap:5px;margin-top:14px}
-.msg .bb{padding:12px 16px;border-radius:13px;font:400 13.5px/1.6 var(--sans);color:var(--tx);background:var(--bg1);border:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}
+.msg .bb{padding:12px 16px;border-radius:13px;font:400 13.5px/1.6 var(--sans);color:var(--tx);background:var(--bg1);border:1px solid var(--line);overflow-wrap:anywhere}
 .msg .mm{font:400 11px var(--mono);color:var(--tx3)}
 .msg.me{align-self:flex-end;align-items:flex-end}
 .msg.me .bb{background:color-mix(in oklab,var(--acc) 13%,var(--bg1));border-color:color-mix(in oklab,var(--acc) 30%,var(--line))}
@@ -340,7 +346,22 @@ a:hover{text-decoration:underline}
   .tmuxbar{display:none;margin-top:12px}
   .tmuxbar.onpane{display:block}
   .pbd{max-height:60vh}
+  .chatfeed{max-height:46vh}
 }
+
+/* markdown реплик: свой минимальный рендер без внешних библиотек, разметка из
+   реплики становится узлами, а не HTML */
+.md p{margin:0 0 8px;white-space:pre-wrap}
+.md p:last-child{margin-bottom:0}
+.md .mdh{font-weight:600;margin:10px 0 6px}
+.md .mdh:first-child{margin-top:0}
+.md .mdh1,.md .mdh2{font-size:1.08em}
+.md ul,.md ol{margin:6px 0;padding-left:20px}
+.md li{margin:2px 0}
+.md pre{margin:8px 0;padding:9px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;font:400 12px/1.6 var(--mono);color:var(--tx2);overflow-x:auto;white-space:pre}
+.md code{font:400 0.92em var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
+.md pre code{background:none;border:none;padding:0}
+.md a{overflow-wrap:anywhere}
 
 /* страница входа */
 .login{margin:auto;width:min(360px,86vw);display:flex;flex-direction:column;gap:14px}

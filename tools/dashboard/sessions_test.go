@@ -497,3 +497,19 @@ func TestSessionStreamAppends(t *testing.T) {
 		t.Fatalf("живое дострение: %+v, ожидал %+v", item, want)
 	}
 }
+
+// Транскрипт держит взгляд теми же якорями, что чат: дострение прокручивает
+// вниз, только когда лента и так стоит внизу, а догрузка истории возвращает
+// прежнее место, а не бросает к последней реплике.
+func TestStaticTranscriptKeepsPlace(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, text, "async function wireTranscript(")
+	for _, want := range []string{"const was = atBottom(tp.body)", "keepBottom(tp.body, was)", "keepPlace(tp.body, tail)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в транскрипте нет %q: прокрутка сорвётся при дострении", want)
+		}
+	}
+	if strings.Contains(body, "tp.body.scrollTop = tp.body.scrollHeight") {
+		t.Error("транскрипт прокручивается вниз мимо якоря")
+	}
+}

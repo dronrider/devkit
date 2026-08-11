@@ -618,7 +618,7 @@ async function renderTask(project, works, id) {
     act.append(live);
   }
   if (isGoal) {
-    const chat = el("button", "btn", "Переписка");
+    const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     act.append(chat);
   }
@@ -691,7 +691,7 @@ function pane(title, sub) {
   head.append(subEl);
   const body = el("div", "pbd");
   card.append(head, body);
-  return { card, sub: subEl, body };
+  return { card, head, sub: subEl, body };
 }
 
 function say(box, cls, text) {
@@ -725,6 +725,130 @@ function wireJournal(project, id, body) {
   };
 }
 
+// Время реплики в поясе того, кто смотрит: в транскрипте оно записано с
+// зоной, и вырезка символов из строки показывала бы UTC. Нераспознанная метка
+// не выдумывается, от неё остаются те же символы, что и раньше.
+function localTime(stamp) {
+  const d = new Date(stamp);
+  if (!stamp || isNaN(d.getTime())) return String(stamp || "").slice(11, 16);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Разделитель дня и ключ, по которому реплики в него собираются: день тоже
+// местный, иначе полуночная реплика уезжает в соседнюю дату.
+function localDay(stamp) {
+  const d = new Date(stamp);
+  if (!stamp || isNaN(d.getTime())) return String(stamp || "").slice(0, 10);
+  return d.toLocaleDateString([], { day: "numeric", month: "long" });
+}
+
+function localDayKey(stamp) {
+  const d = new Date(stamp);
+  if (!stamp || isNaN(d.getTime())) return String(stamp || "").slice(0, 10);
+  return d.toDateString();
+}
+
+// Ссылка из реплики: кликается только http и https, а javascript: и data:
+// остаются текстом. Чужая вкладка открывается без доступа к нашей (noopener).
+function mdLink(text, href) {
+  if (!/^https?:\/\//i.test(href)) return document.createTextNode(text);
+  const a = el("a", "", text);
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+// Строчная разметка: код в обратных кавычках, ссылка скобками, жирный,
+// курсив и голый адрес. Разбор идёт по одному совпадению за раз, остаток
+// уходит текстовым узлом.
+const MD_INLINE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|(\*\*|__)([\s\S]+?)\4|(\*|_)([\s\S]+?)\6|(https?:\/\/[^\s<>"']+)/;
+
+function mdInline(text, into) {
+  let rest = String(text);
+  for (;;) {
+    const m = MD_INLINE.exec(rest);
+    if (!m) break;
+    if (m.index) into.append(document.createTextNode(rest.slice(0, m.index)));
+    if (m[1] !== undefined) {
+      into.append(el("code", "", m[1]));
+    } else if (m[2] !== undefined) {
+      into.append(mdLink(m[2], m[3]));
+    } else if (m[5] !== undefined) {
+      const b = el("b");
+      mdInline(m[5], b);
+      into.append(b);
+    } else if (m[7] !== undefined) {
+      const i = el("i");
+      mdInline(m[7], i);
+      into.append(i);
+    } else {
+      into.append(mdLink(m[8], m[8]));
+    }
+    rest = rest.slice(m.index + m[0].length);
+  }
+  if (rest) into.append(document.createTextNode(rest));
+}
+
+// Минимальный markdown реплик: заголовки, списки, код-блоки, строчный код,
+// жирный и курсив, ссылки. Свой разбор без внешней библиотеки, и весь текст
+// кладётся в узлы через textContent, поэтому разметка из реплики остаётся
+// буквами: <script> в ответе агента виден словами, а не исполняется.
+function mdRender(text) {
+  const box = el("div", "md");
+  const lines = String(text || "").split("\n");
+  let list = null;
+  let para = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const buf = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) buf.push(lines[i]);
+      list = null;
+      para = null;
+      box.append(el("pre", "", buf.join("\n")));
+      continue;
+    }
+    const head = line.match(/^(#{1,6})\s+(.*)$/);
+    if (head) {
+      list = null;
+      para = null;
+      const h = el("div", "mdh mdh" + head[1].length);
+      mdInline(head[2], h);
+      box.append(h);
+      continue;
+    }
+    const item = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+    if (item) {
+      para = null;
+      const tag = /\d/.test(item[1]) ? "ol" : "ul";
+      if (!list || list.tagName.toLowerCase() !== tag) {
+        list = el(tag);
+        box.append(list);
+      }
+      const li = el("li");
+      mdInline(item[2], li);
+      list.append(li);
+      continue;
+    }
+    if (!line.trim()) {
+      list = null;
+      para = null;
+      continue;
+    }
+    if (para) {
+      para.append(document.createTextNode("\n"));
+      mdInline(line, para);
+      continue;
+    }
+    list = null;
+    para = el("p");
+    mdInline(line, para);
+    box.append(para);
+  }
+  return box;
+}
+
 function replyEl(item) {
   if (item.role === "thinking") return el("div", "think", "размышления свёрнуты");
   if (item.role === "tool") {
@@ -734,10 +858,30 @@ function replyEl(item) {
     return div;
   }
   const turn = el("div", "turn");
-  const when = item.time ? ", " + item.time.slice(11, 16) : "";
+  const when = item.time ? ", " + localTime(item.time) : "";
   turn.append(el("div", "th", (item.role === "user" ? "человек" : "агент") + when));
-  turn.append(el("div", "tb", item.text || ""));
+  const body = el("div", "tb");
+  body.append(mdRender(item.text || ""));
+  turn.append(body);
   return turn;
+}
+
+// Якорь ленты: низ держится, только когда человек и так смотрит в низ. Пока
+// он читает историю выше, дописанная реплика прокрутку не трогает.
+function atBottom(box) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+}
+
+// Дописывание с сохранением взгляда: что дописано вниз, то видно сразу, если
+// лента и так стояла внизу.
+function keepBottom(box, was) {
+  if (was) box.scrollTop = box.scrollHeight;
+}
+
+// Догрузка истории вверх: после вставки старых реплик видно то же место, что
+// и до неё, поэтому меряется расстояние от низа, а не сверху.
+function keepPlace(box, tail) {
+  box.scrollTop = box.scrollHeight - tail;
 }
 
 // Подпись сессии в списке: узнанная задача с источником узнавания либо
@@ -794,10 +938,12 @@ async function wireTranscript(project, tp, id) {
     const older = await api("/api/projects/" + encodeURIComponent(project) +
       "/sessions/" + encodeURIComponent(s.id) + "?before=" + firstSeq);
     if (!older.ok) return;
+    const tail = tp.body.scrollHeight - tp.body.scrollTop;
     for (const item of (older.body.items || []).reverse()) {
       feed.prepend(replyEl(item));
       firstSeq = item.seq;
     }
+    keepPlace(tp.body, tail);
     updateMore();
   });
   const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
@@ -810,13 +956,14 @@ async function wireTranscript(project, tp, id) {
   });
   es.onmessage = (ev) => {
     const item = JSON.parse(ev.data);
+    const was = atBottom(tp.body);
     if (feed.firstChild && feed.firstChild.className === "empty") feed.replaceChildren();
     if (firstSeq === null) {
       firstSeq = item.seq;
       updateMore();
     }
     feed.append(replyEl(item));
-    tp.body.scrollTop = tp.body.scrollHeight;
+    keepBottom(tp.body, was);
   };
 }
 
@@ -849,7 +996,7 @@ function wireTmux(id, card, sub) {
     if (hit.created) {
       row.append(el("span", "", "создана " + new Date(hit.created * 1000).toTimeString().slice(0, 5)));
     }
-    row.append(el("span", "chip c-check", "жива"));
+    row.append(el("span", "chip c-check", "активна"));
     const pr = await api("/api/tmux/" + encodeURIComponent(hit.name));
     snap.textContent = pr.ok ? (pr.body.text || "") : (pr.body.error || "");
     if (sub) sub.textContent = hit.name;
@@ -877,7 +1024,7 @@ function renderAgent(project, works, id) {
   if (work) head.append(el("span", "dot pulse"));
   head.append(el("h2", "", (work ? work.kind + "-" : "") + id));
   if (work && work.via === "tmux") {
-    head.append(el("span", "chip c-check", "tmux-сессия жива"));
+    head.append(el("span", "chip c-check", "tmux-сессия активна"));
     const stop = el("button", "btn", "Стоп");
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
     head.append(stop);
@@ -887,13 +1034,15 @@ function renderAgent(project, works, id) {
     head.append(el("span", "chip", "работа не идёт"));
   }
   if (!work || work.kind === "goal") {
-    const chat = el("button", "btn", "Переписка");
+    const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     head.append(chat);
   }
   groups.append(head);
 
   const jp = pane("Журнал цикла", ".devkit/goal-" + id + ".log");
+  // Живой хвост назван без одушевления: обновляется журнал сам, а не «живёт».
+  jp.head.append(el("span", "chip c-run", "обновляется само"));
   const tp = pane("Транскрипт", "");
   const grid = el("div", "agrid");
   grid.append(jp.card, tp.card);
@@ -923,10 +1072,11 @@ function renderAgent(project, works, id) {
   wireTmux(id, tm, tmSub);
 }
 
-// Экран переписки по макету DK-216 («04 Переписка»). Ход и ответы читаются
-// из транскрипта свежей сессии проекта (API DK-219), а сообщение человека
-// уходит в раздел «Входящие» файла цели: писать в идущий процесс механики
-// нет, сообщение прочитает следующий виток, и надпись говорит это прямо.
+// Экран чата с агентом по макету DK-216 («04 Переписка»). Ход и ответы
+// читаются из транскрипта сессии, узнанной этой целью (API DK-219), а
+// сообщение человека уходит в раздел «Входящие» файла цели: писать в идущую
+// сессию механики нет, сообщение агент прочитает при следующем запуске, и
+// надпись говорит это прямо.
 function dayEl(date) {
   const day = el("div", "day");
   day.append(el("i"), document.createTextNode(date), el("i"));
@@ -935,16 +1085,28 @@ function dayEl(date) {
 
 function chatBubble(who, text, meta) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
-  wrap.append(el("div", "bb", text));
+  const bb = el("div", "bb");
+  bb.append(mdRender(text));
+  wrap.append(bb);
   wrap.append(el("div", "mm", who + ", " + meta));
   return wrap;
 }
 
-// Лента переписки: текстовые реплики человека и агента, без свёрнутых
-// инструментов и размышлений, дострение через SSE. Сессия берётся узнанная
-// этой целью (?task=), чужая в переписку не попадает (DK-252). Пустоты
-// различимы: «сессий этой цели нет», «транскриптов нет вовсе» и «в
-// транскрипте нет реплик» это разные слова.
+// Текстовая реплика человека или агента: свёрнутые инструменты и размышления
+// в чат не идут, им место в транскрипте.
+function chatTalk(item) {
+  return (item.role === "user" || item.role === "assistant") && Boolean(item.text);
+}
+
+// Сколько реплик читается при открытии: чат открывается концом разговора, и
+// тянуть всю сессию ради последних слов незачем. Остальное подаёт «раньше».
+const CHAT_TAIL = 40;
+
+// Лента чата: последние реплики и поле ввода видны сразу, история
+// подгружается кнопкой «раньше» вверх. Сессия берётся узнанная этой целью
+// (?task=), чужая в чат не попадает (DK-252). Пустоты различимы: «сессий этой
+// цели нет», «транскриптов нет вовсе» и «в транскрипте нет реплик» это разные
+// слова.
 async function wireChatFeed(project, feed, id) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/sessions?task=" + encodeURIComponent(id));
@@ -959,32 +1121,73 @@ async function wireChatFeed(project, feed, id) {
     return;
   }
   const sid = list[0].id;
+  const more = el("div", "more", "раньше");
+  const box = el("div", "mlist");
+  feed.replaceChildren(more, box);
+
+  const talk = [];
   let lastSeq = -1;
-  let lastDay = "";
-  const append = (item) => {
-    if ((item.role !== "user" && item.role !== "assistant") || !item.text) return false;
-    const day = (item.time || "").slice(0, 10);
-    if (day && day !== lastDay) {
-      feed.append(dayEl(day));
-      lastDay = day;
+  let firstSeq = null;
+  let empty = "переписки пока нет: в транскрипте нет текстовых реплик";
+  // Кнопка «раньше» горит, только когда раньше есть что показать: упёршись в
+  // начало разговора, она гаснет, а не живёт мёртвой.
+  const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
+  // Лента перерисовывается целиком: разделители дней зависят от соседей, и
+  // догруженная история переставляет их сама собой. Взгляд при этом держится
+  // якорем: у нижнего края лента остаётся у нижнего края, а из истории её
+  // вниз не бросает, потому что мерится расстояние до низа.
+  const draw = () => {
+    const bottom = atBottom(feed);
+    const tail = feed.scrollHeight - feed.scrollTop;
+    if (!talk.length) {
+      box.replaceChildren(el("div", "empty", empty));
+      return;
     }
-    const when = item.time ? item.time.slice(11, 16) + ", " : "";
-    feed.append(chatBubble(item.role === "user" ? "вы" : "агент", item.text, when + "из транскрипта"));
-    return true;
+    box.replaceChildren();
+    let day = "";
+    for (const item of talk) {
+      const key = localDayKey(item.time);
+      if (key && key !== day) {
+        box.append(dayEl(localDay(item.time)));
+        day = key;
+      }
+      const when = item.time ? localTime(item.time) + ", " : "";
+      box.append(chatBubble(item.role === "user" ? "вы" : "агент", item.text,
+        when + "из транскрипта"));
+    }
+    if (bottom) keepBottom(feed, true);
+    else keepPlace(feed, tail);
   };
+
   const first = await api("/api/projects/" + encodeURIComponent(project) +
-    "/sessions/" + encodeURIComponent(sid) + "?n=500");
+    "/sessions/" + encodeURIComponent(sid) + "?n=" + CHAT_TAIL);
   if (first.ok) {
-    for (const item of first.body.items || []) {
+    const items = first.body.items || [];
+    if (items.length) firstSeq = items[0].seq;
+    for (const item of items) {
       lastSeq = item.seq;
-      append(item);
+      if (chatTalk(item)) talk.push(item);
     }
+    if (first.body.note) empty = first.body.note;
   }
-  if (!feed.childElementCount) {
-    say(feed, "empty", (first.ok && first.body.note) ||
-      "переписки пока нет: в транскрипте нет текстовых реплик");
-  }
+  // Открытие хвостом: последние слова разговора видны сразу, листать вниз от
+  // начала сессии не приходится.
+  draw();
   feed.scrollTop = feed.scrollHeight;
+  updateMore();
+
+  more.addEventListener("click", async () => {
+    if (firstSeq === null || firstSeq === 0) return;
+    const older = await api("/api/projects/" + encodeURIComponent(project) +
+      "/sessions/" + encodeURIComponent(sid) + "?before=" + firstSeq + "&n=" + CHAT_TAIL);
+    if (!older.ok) return;
+    const items = older.body.items || [];
+    if (items.length) firstSeq = items[0].seq;
+    talk.unshift(...items.filter(chatTalk));
+    draw();
+    updateMore();
+  });
+
   const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
     "/sessions/" + encodeURIComponent(sid) + "?stream=1");
   agentLive.push(() => es.close());
@@ -992,17 +1195,19 @@ async function wireChatFeed(project, feed, id) {
     const item = JSON.parse(ev.data);
     if (item.seq <= lastSeq) return;
     lastSeq = item.seq;
-    if (feed.firstChild && feed.firstChild.className === "empty") {
-      feed.replaceChildren();
-      lastDay = "";
+    if (firstSeq === null) {
+      firstSeq = item.seq;
+      updateMore();
     }
-    if (append(item)) feed.scrollTop = feed.scrollHeight;
+    if (!chatTalk(item)) return;
+    talk.push(item);
+    draw();
   };
 }
 
-// Лежащие во «Входящих» строки: сообщение отправлено, но виток его ещё не
-// подхватил, и это честно называется ожиданием. Пустой раздел тоже говорит
-// словами: пустая коробка неотличима от неотрисованной.
+// Лежащие во «Входящих» строки: сообщение отправлено, но запуска, который его
+// прочитает, ещё не было, и это честно называется ожиданием. Пустой раздел
+// тоже говорит словами: пустая коробка неотличима от неотрисованной.
 async function loadPending(project, id, box) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/goals/" + encodeURIComponent(id) + "/message");
@@ -1017,7 +1222,7 @@ async function loadPending(project, id, box) {
     return;
   }
   for (const line of pending) {
-    box.append(chatBubble("вы", line, "ждёт витка: лежит во «Входящих» файла цели"));
+    box.append(chatBubble("вы", line, "подхвачено при следующем запуске"));
   }
 }
 
@@ -1061,19 +1266,19 @@ function renderChat(project, works, id) {
   groups.append(head);
 
   const thread = el("div", "chatwrap");
-  const feed = el("div", "msgs");
+  const feed = el("div", "msgs chatfeed");
   const pendbox = el("div", "msgs");
   thread.append(feed, pendbox);
 
   const note = el("div", "cnote");
-  note.append(el("b", "", "Следующему витку."));
+  note.append(el("b", "", "Сообщение уйдёт агенту."));
   note.append(document.createTextNode(
-    " Сообщение ляжет в файл цели и уйдёт следующему витку, идущий виток его не увидит."));
+    " Он прочитает его при следующем запуске, идущая сессия его не увидит."));
   thread.append(note);
 
   const box = el("div", "cbox");
   const ta = el("textarea");
-  ta.placeholder = "Написать следующему витку...";
+  ta.placeholder = "Написать агенту...";
   const row = el("div", "crow");
   if (work && work.via === "tmux") {
     const stop = el("button", "btn", "Стоп цикла");
@@ -1693,7 +1898,7 @@ async function refresh() {
     return;
   }
   if (rt.id && rt.chat) {
-    document.getElementById("psub").textContent = "переписка " + rt.id;
+    document.getElementById("psub").textContent = "чат с агентом " + rt.id;
     renderChat(current.name, r.body.works, rt.id);
     return;
   }

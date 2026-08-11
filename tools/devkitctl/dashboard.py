@@ -62,22 +62,30 @@ def conf_port(home):
     return DEFAULT_PORT
 
 
-# PATH launchd-агента собирается из трёх частей: системное умолчание launchd,
-# из-за которого дефект и случился, и брю-каталоги обеих архитектур.
+# PATH launchd-агента собирается из четырёх частей: системное умолчание
+# launchd, из-за которого дефект и случился, брю-каталоги обеих архитектур и
+# ~/.local/bin, куда пипсовые и подобные установщики кладут символьные ссылки
+# (там стоит claude, третье звено того же корня, DK-247).
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 BREW_PATH = ("/opt/homebrew/bin", "/usr/local/bin")
+LOCAL_BIN = "~/.local/bin"
 
 
 def agent_path(binary):
-    """PATH для plist: каталог бинаря devkit, системные пути launchd и
-    брю-каталоги, которые есть на машине. Считается на doctor --fix по самой
-    машине (наличием каталогов), а не срезом живого PATH пользователя: срез
-    менялся бы от сессии к сессии, и доктор переписывал бы агента на каждом
-    прогоне. Без этой строки демон живёт с системным PATH launchd и не
-    находит tmux (дефект шага 5 сценария DK-217)."""
+    """PATH для plist: каталог бинаря devkit, системные пути launchd,
+    брю-каталоги и ~/.local/bin, которые есть на машине. Считается на
+    doctor --fix по самой машине (наличием каталогов), а не срезом живого
+    PATH пользователя: срез менялся бы от сессии к сессии, и доктор
+    переписывал бы агента на каждом прогоне. Тильда в ~/.local/bin
+    разворачивается по HOME процесса doctor. Без этой строки демон живёт с
+    системным PATH launchd и не находит tmux (дефект шага 5 сценария
+    DK-217) или claude (DK-247)."""
     parts = [str(Path(binary).parent)]
     parts += list(SYSTEM_PATH)
     parts += [p for p in BREW_PATH if os.path.isdir(p)]
+    local_bin = os.path.expanduser(LOCAL_BIN)
+    if os.path.isdir(local_bin):
+        parts.append(local_bin)
     out = []
     for p in parts:
         if p not in out:

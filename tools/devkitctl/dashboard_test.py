@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 import dashboard
+import testenv
 
 
 class Fake:
@@ -102,6 +103,23 @@ class AgentTest(Stand):
         self.assertEqual(len(dup), len(set(dup)), "дубли в PATH агента: %s" % dup)
         self.assertEqual(dup[0], "/usr/bin")
 
+    def test_agent_path_includes_existing_local_bin(self):
+        # claude на прод-машине стоит символьной ссылкой в ~/.local/bin
+        # (DK-247), и agent_path берёт его тем же правилом, что и брю: по
+        # наличию каталога, а не срезом живого PATH.
+        fake = self.dir / "fakehome-with-local-bin"
+        (fake / ".local" / "bin").mkdir(parents=True)
+        with testenv.fake_home(fake):
+            path = dashboard.agent_path(str(self.binary))
+        self.assertIn(str(fake / ".local" / "bin"), path.split(":"))
+
+    def test_agent_path_skips_missing_local_bin(self):
+        fake = self.dir / "fakehome-without-local-bin"
+        fake.mkdir()
+        with testenv.fake_home(fake):
+            path = dashboard.agent_path(str(self.binary))
+        self.assertNotIn(".local", path)
+
     def test_old_agent_without_path_is_rewritten(self):
         # Агент, положенный до EnvironmentVariables, это находка, и --fix
         # переписывает его: иначе дефект PATH пережил бы доводку.
@@ -117,6 +135,27 @@ class AgentTest(Stand):
         self.assertEqual(len(d), 1, d)
         self.assertIn("<key>EnvironmentVariables</key>",
                       self.plist.read_text(encoding="utf-8"))
+
+    def test_old_agent_without_local_bin_is_rewritten(self):
+        # Агент, положенный до появления ~/.local/bin в PATH (DK-247), это
+        # находка, и --fix переписывает его тем же правилом, что и старый
+        # агент вовсе без EnvironmentVariables.
+        fake = self.dir / "fakehome-rewrite-local-bin"
+        (fake / ".local" / "bin").mkdir(parents=True)
+        local_bin = str(fake / ".local" / "bin")
+        with testenv.fake_home(fake):
+            self.check(fix=True)
+            text = self.plist.read_text(encoding="utf-8")
+            self.assertIn(local_bin, text)
+            old = text.replace(":" + local_bin, "")
+            self.assertNotIn(local_bin, old)
+            self.plist.write_text(old, encoding="utf-8")
+            f, d, _ = self.check()
+            self.assertEqual(len(f), 1, f)
+            f, d, _ = self.check(fix=True)
+            self.assertEqual(f, [])
+            self.assertEqual(len(d), 1, d)
+            self.assertIn(local_bin, self.plist.read_text(encoding="utf-8"))
 
     def test_fix_from_worktree_refuses(self):
         # На машину едет только проверенное: с worktree ветки задачи plist не

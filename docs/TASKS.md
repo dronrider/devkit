@@ -81,6 +81,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md [после DK-042] | task | P3 | 10 (0+6+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-057 | Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник для agentctl pick --role review | task | P3 | 10 (0+4+3+0+3) | S | [tasks/archive/2026/DK-055.md](tasks/archive/2026/DK-055.md) |
 | DK-088 | LLD имитации человеческого темпа в трекере: строить ли вообще | LLD | P3 | 10 (0+3+5+0+2) | - | [lld/DK-074-corp-contour.md](lld/DK-074-corp-contour.md) |
+| DK-270 | dashboard: ручка message шьёт путь цели жёстко, журнал идёт по ссылке строки | bug | P3 | 10 (0+2+1+5+2) | S | [tasks/DK-270.md](tasks/DK-270.md) |
 | DK-032 | подключение машины к devkit одной командой: хуки в settings.json и глобальные правила | task | P3 | 9 (0+4+2+0+3) | M | [tasks/DK-032.md](tasks/DK-032.md) |
 | DK-076 | taskctl и agentctl читают разделы файла задачи мимо ограждённых блоков: review resolve перепишет строку внутри цитаты | bug | P3 | 9 (0+3+1+5+0) | S | - |
 | DK-077 | shipctl: trainTasks без тега deployed возвращает пустой поезд, ship переводит в Check не все слитые задачи | bug | P3 | 9 (0+3+1+5+0) | S | - |

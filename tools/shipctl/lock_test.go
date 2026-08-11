@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -71,6 +72,81 @@ func TestLockRefusesSecondRun(t *testing.T) {
 		t.Fatalf("merge не отпустил замок: %v", err)
 	}
 	release()
+}
+
+// TestLockRefusalExplainsEmptyFile: отказ по занятому замку объясняет, что
+// файл лежит пустым всегда и по его наличию (или исчезновению) занятость не
+// читается, а не только называет сам факт «конвейер занят». Регресс на
+// DK-137: сессия без этого текста ждала исчезновения файла 15-20 минут,
+// объявляла замок протухшим и снимала rm.
+func TestLockRefusalExplainsEmptyFile(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+
+	unlock, err := acquireLock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	_, err = acquireLock(root)
+	if err == nil {
+		t.Fatal("второй захват при занятом замке должен отказать")
+	}
+	for _, want := range []string{"пустым", "повторным запуском"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("отказ не объясняет, что файл ничего не значит (нет %q): %v", want, err)
+		}
+	}
+}
+
+// TestLockRetriesWhenFileReplacedMidAcquire: файл замка снят и пересоздан
+// между open и flock того же захвата (имитация чужого rm под живым
+// держателем: место успевает занять кто-то другой ещё до того, как наш
+// дескриптор дошёл до сравнения). До DK-271 flock у нас брался на уже
+// отвязанном от пути inode и ни с кем не конфликтовал: захват тихо проходил
+// параллельно настоящему держателю. После DK-271 расхождение инода ловится и
+// захват повторяется на актуальном файле, где настоящий держатель уже сидит,
+// и второй конвейер получает честный отказ вместо тихого параллельного хода.
+func TestLockRetriesWhenFileReplacedMidAcquire(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	path := filepath.Join(root, lockPath)
+
+	var other *os.File
+	fired := false
+	lockRaceHook = func() {
+		if fired {
+			return
+		}
+		fired = true
+		// Настоящий держатель уже сидит на пути замка: наш открытый файл
+		// (создан секундой раньше, пока пути ещё не было) с этого момента
+		// сам по себе ничего не гарантирует.
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		other, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { lockRaceHook = nil })
+
+	_, err := acquireLock(root)
+	if other != nil {
+		defer other.Close()
+	}
+	if err == nil {
+		t.Fatal("захват не должен был пройти параллельно настоящему держателю пути замка")
+	}
+	if !strings.Contains(err.Error(), "конвейер занят") {
+		t.Fatalf("ожидался отказ по занятости, а не иная ошибка: %v", err)
+	}
 }
 
 // TestLockSkippedWithoutDevkit: без директории .devkit замок не берётся, и

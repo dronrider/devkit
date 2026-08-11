@@ -12,5 +12,7 @@ dist/
 .devkit/*.local
 # Журнал запусков инструментов devkit, живёт только на машине.
 .devkit/log
+# Замок конвейера shipctl, лежит пустым и держится flock, а не содержимым.
+.devkit/ship.lock
 # Кеш python: юниты уведомителя грузят hooks/notify.py как модуль.
 __pycache__/

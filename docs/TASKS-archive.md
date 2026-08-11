@@ -168,3 +168,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-231 | Транскрипты ~/.claude/projects очищены от утёкших тел токенов | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-231.md](tasks/archive/2026/DK-231.md) |
 | DK-247 | Запуск конвейера из-под launchd не находит claude: ~/.local/bin мимо PATH агента | bug | P2 | 2026-08-11 | [tasks/archive/2026/DK-247.md](tasks/archive/2026/DK-247.md) |
 | DK-232 | Корп-домен вычищен из дерева и истории, force-push пользователя | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-232.md](tasks/archive/2026/DK-232.md) |
+| DK-207 | Цель: исключить попадание секретов в контекст модели | task | P1 | 2026-08-11 | [tasks/archive/2026/DK-207.md](tasks/archive/2026/DK-207.md) |

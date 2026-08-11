@@ -740,21 +740,47 @@ function replyEl(item) {
   return turn;
 }
 
-// Транскрипт: свежая сессия проекта, живое дострение через SSE, пагинация
-// назад кнопкой «раньше» через ?before=.
-async function wireTranscript(project, tp) {
+// Подпись сессии в списке: узнанная задача с источником узнавания либо
+// честное «задача не распознана» (DK-252).
+function sessionSign(s) {
+  return s.task ? s.task + ", " + (s.taskNote || "узнана") : (s.taskNote || "задача не распознана");
+}
+
+// Прочие сессии под словами о пустоте: работа рядом идёт, её видно списком, но
+// в ленту задачи она не лезет. Список нужен ровно затем, чтобы нераспознанная
+// сессия не пропадала молча.
+async function listOtherSessions(project, box) {
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/sessions");
+  if (!r.ok) return;
+  const list = r.body.sessions || [];
+  if (!list.length) return;
+  box.append(el("div", "hint", "Сессии проекта:"));
+  for (const s of list.slice(0, 10)) {
+    box.append(el("div", "hint",
+      s.id.slice(0, 8) + ", " + (s.mtime || "").slice(11, 16) + ", " + sessionSign(s)));
+  }
+}
+
+// Транскрипт: сессия, узнанная этой задачей (?task=), живое дострение через
+// SSE, пагинация назад кнопкой «раньше» через ?before=. Свежую сессию проекта
+// экран больше не берёт: при двух окнах по одному проекту под заголовком
+// задачи шёл ход соседней работы (DK-252).
+async function wireTranscript(project, tp, id) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/sessions?task=" + encodeURIComponent(id));
   if (!r.ok) {
     say(tp.body, "error", r.body.error || "сессии не прочитались");
     return;
   }
   const list = r.body.sessions || [];
   if (!list.length) {
-    say(tp.body, "empty", r.body.note || "транскриптов нет");
+    say(tp.body, "empty", r.body.note || "сессий этой задачи нет");
+    await listOtherSessions(project, tp.body);
     return;
   }
   const s = list[0];
-  tp.sub.textContent = s.id.slice(0, 8) + ".jsonl" + (s.branch ? ", " + s.branch : "");
+  tp.sub.textContent = s.id.slice(0, 8) + ".jsonl" + (s.branch ? ", " + s.branch : "") +
+    " (" + sessionSign(s) + ")";
   const more = el("div", "more", "раньше");
   const feed = el("div");
   tp.body.append(more, feed);
@@ -893,7 +919,7 @@ function renderAgent(project, works, id) {
 
   groups.append(seg, grid, tm);
   wireJournal(project, id, jp.body);
-  wireTranscript(project, tp).catch(console.error);
+  wireTranscript(project, tp, id).catch(console.error);
   wireTmux(id, tm, tmSub);
 }
 
@@ -915,11 +941,13 @@ function chatBubble(who, text, meta) {
 }
 
 // Лента переписки: текстовые реплики человека и агента, без свёрнутых
-// инструментов и размышлений, дострение через SSE. Пустоты различимы:
-// «цель не гонялась» (сессий нет) и «в транскрипте нет реплик» это разные
-// слова.
-async function wireChatFeed(project, feed) {
-  const r = await api("/api/projects/" + encodeURIComponent(project) + "/sessions");
+// инструментов и размышлений, дострение через SSE. Сессия берётся узнанная
+// этой целью (?task=), чужая в переписку не попадает (DK-252). Пустоты
+// различимы: «сессий этой цели нет», «транскриптов нет вовсе» и «в
+// транскрипте нет реплик» это разные слова.
+async function wireChatFeed(project, feed, id) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/sessions?task=" + encodeURIComponent(id));
   if (!r.ok) {
     say(feed, "error", r.body.error || "сессии не прочитались");
     return;
@@ -927,6 +955,7 @@ async function wireChatFeed(project, feed) {
   const list = r.body.sessions || [];
   if (!list.length) {
     say(feed, "empty", "цель не гонялась: " + (r.body.note || "транскриптов сессий нет"));
+    await listOtherSessions(project, feed);
     return;
   }
   const sid = list[0].id;
@@ -1061,7 +1090,7 @@ function renderChat(project, works, id) {
     "и следующий виток прочтёт доску, файл цели и сообщение с диска."));
   groups.append(thread);
 
-  wireChatFeed(project, feed).catch(console.error);
+  wireChatFeed(project, feed, id).catch(console.error);
   loadPending(project, id, pendbox).catch(console.error);
 }
 

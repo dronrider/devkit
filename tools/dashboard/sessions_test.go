@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -79,8 +80,10 @@ func TestSessionsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []sessionInfo{
-		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", First: "Выполни XR-007"},
-		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу"},
+		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", First: "Выполни XR-007",
+			Task: "DK-5", TaskNote: "по дереву задачи"},
+		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу",
+			Task: "XR-005", TaskNote: "по первой реплике"},
 	}
 	if !reflect.DeepEqual(got.Sessions, want) {
 		t.Errorf("список сессий:\n%+v\nожидал:\n%+v", got.Sessions, want)
@@ -101,6 +104,180 @@ func TestSessionsNoneNamed(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("в ответе нет %q: %s", want, text)
 		}
+	}
+}
+
+// sessionLine это одна строка транскрипта с репликой человека: задача
+// узнаётся по ней, поэтому текст и ветка задаются вызовом.
+func sessionLine(text, branch string) string {
+	return fmt.Sprintf(
+		`{"type":"user","message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:01.000Z","gitBranch":%q}`,
+		text, branch) + "\n"
+}
+
+// getSessions ходит за списком сессий и разбирает ответ.
+func getSessions(t *testing.T, e *testEnv, c *http.Client, query string) (string, []sessionInfo, string) {
+	t.Helper()
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions"+query, "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("список сессий%s: %d %s", query, resp.StatusCode, text)
+	}
+	var got struct {
+		Sessions []sessionInfo `json:"sessions"`
+		Note     string        `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	return text, got.Sessions, got.Note
+}
+
+// Экран задачи отдаёт только свою сессию: соседнее окно того же проекта
+// делает другую задачу и пишет свежее, и до DK-252 экран брал по mtime именно
+// его. Задача узнаётся первой репликой в главном дереве и именем бокового
+// дерева.
+func TestSessionsByTaskOnlyOwn(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("возьми задачу XR-101 в работу и доведи её конвейером", "main"),
+		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	writeSession(t, e.home, e.proj, "", "bbb-2",
+		sessionLine("Выполни цель XR-102", "main"),
+		time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
+	writeSession(t, e.home, e.proj, "-xr-103", "ccc-3",
+		sessionLine("продолжай, я подожду", "xr-103"),
+		time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC))
+	c := e.loggedClient(t)
+
+	text, list, _ := getSessions(t, e, c, "?task=XR-101")
+	want := []sessionInfo{{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main",
+		First: "возьми задачу XR-101 в работу и доведи её конвейером",
+		Task:  "XR-101", TaskNote: "по первой реплике"}}
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("сессии задачи XR-101:\n%+v\nожидал:\n%+v", list, want)
+	}
+	for _, alien := range []string{"bbb-2", "ccc-3"} {
+		if strings.Contains(text, alien) {
+			t.Errorf("чужая сессия %s приписана задаче XR-101: %s", alien, text)
+		}
+	}
+	if _, list, _ = getSessions(t, e, c, "?task=XR-102"); len(list) != 1 || list[0].ID != "bbb-2" {
+		t.Errorf("сессии задачи XR-102: %+v", list)
+	}
+	_, list, _ = getSessions(t, e, c, "?task=XR-103")
+	if len(list) != 1 || list[0].ID != "ccc-3" || list[0].TaskNote != "по дереву задачи" {
+		t.Errorf("сессия бокового дерева XR-103: %+v", list)
+	}
+}
+
+// Сессия без узнанной задачи не пропадает: в общем списке она подписана
+// словами, а в ленту задачи не идёт. «top-10» задачей не считается: ID пишется
+// прописными.
+func TestSessionUnknownTaskSigned(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("посмотри top-10 процессов", "main"),
+		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	c := e.loggedClient(t)
+
+	_, list, _ := getSessions(t, e, c, "")
+	if len(list) != 1 || list[0].Task != "" || list[0].TaskNote != unknownTaskNote {
+		t.Fatalf("подпись нераспознанной сессии: %+v", list)
+	}
+	text, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 0 {
+		t.Fatalf("нераспознанная сессия попала в ленту задачи: %s", text)
+	}
+	for _, want := range []string{"сессий задачи XR-101 нет", "1 без распознанной задачи"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("в словах о пустоте нет %q: %q", want, note)
+		}
+	}
+}
+
+// Пустоты различимы: «сессий этой задачи нет» и «транскриптов нет вовсе» это
+// разные слова, иначе по экрану не понять, ищется работа или отсутствует
+// вовсе.
+func TestSessionsEmptyKindsDiffer(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	_, _, none := getSessions(t, e, c, "?task=XR-101")
+	if !strings.Contains(none, "транскриптов нет") {
+		t.Errorf("пустой каталог назван не своими словами: %q", none)
+	}
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("Выполни цель XR-102", "main"), time.Now())
+	_, _, other := getSessions(t, e, c, "?task=XR-101")
+	if !strings.Contains(other, "сессий задачи XR-101 нет") || !strings.Contains(other, "1 о других задачах") {
+		t.Errorf("чужие сессии названы не своими словами: %q", other)
+	}
+	if none == other {
+		t.Error("обе пустоты сказаны одними словами")
+	}
+}
+
+// Параметр ?task= это ID задачи, а не любая строка из адреса: мусор отбивается
+// словами, а не молчаливым списком всех сессий подряд.
+func TestSessionsTaskParamSifted(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"), time.Now())
+	c := e.loggedClient(t)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions?task=../etc", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "не похоже на ID задачи") {
+		t.Fatalf("мусор в ?task=: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(text, "aaa-1") {
+		t.Errorf("по мусорному ?task= уехал список сессий: %s", text)
+	}
+}
+
+// Шапка транскрипта читается не на каждый запрос: пока отпечаток файла тот же,
+// ответ идёт из памяти процесса, а сменившийся отпечаток перечитывается. Файл
+// подменяется тем же размером и временем, поэтому старый ответ и есть
+// доказательство памяти.
+func TestSessionHeadCached(t *testing.T) {
+	e := newTestEnv(t)
+	stamped := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	path := writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"), stamped)
+	c := e.loggedClient(t)
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+		t.Fatalf("первое чтение шапки: %+v", list)
+	}
+
+	same := sessionLine("возьми задачу XR-102 в работу", "main")
+	if err := os.WriteFile(path, []byte(same), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, stamped, stamped); err != nil {
+		t.Fatal(err)
+	}
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+		t.Errorf("шапка перечитана при том же отпечатке: %+v", list)
+	}
+
+	moved := stamped.Add(time.Minute)
+	if err := os.Chtimes(path, moved, moved); err != nil {
+		t.Fatal(err)
+	}
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-102" {
+		t.Errorf("дописанный транскрипт остался в памяти старым: %+v", list)
+	}
+}
+
+// Экраны агента и переписки обязаны спрашивать сессии своей задачи и
+// показывать подпись сессии: держится грепом по статике, как слова про паузу
+// в тесте стопа.
+func TestStaticSessionsAskedByTask(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	if strings.Count(text, `"/sessions?task="`) < 2 {
+		t.Error("в static/app.js меньше двух запросов сессий с ?task=: экран возьмёт чужую сессию по mtime")
+	}
+	if !strings.Contains(text, "function sessionSign") {
+		t.Error("в static/app.js нет подписи сессии: нераспознанная работа пропадёт молча")
 	}
 }
 

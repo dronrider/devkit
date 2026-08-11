@@ -28,6 +28,7 @@ type server struct {
 	mu     sync.Mutex
 	scan   scanEntry
 	boards map[string]boardEntry
+	heads  map[string]headEntry
 }
 
 func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
@@ -35,7 +36,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		logf = func(string, ...any) {}
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
-		boards: map[string]boardEntry{}}
+		boards: map[string]boardEntry{}, heads: map[string]headEntry{}}
 }
 
 func (s *server) handler() http.Handler {

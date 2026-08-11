@@ -55,25 +55,35 @@ func sessionDirs(home, projPath string) []string {
 }
 
 // sessionInfo это строка списка сессий: id, время последней записи, ветка и
-// первая реплика человека, по ней сессию узнают в списке.
+// первая реплика человека, по ней сессию узнают в списке. Task с подписью
+// TaskNote говорят, чью работу сессия ведёт и чем она узнана; нераспознанная
+// сессия остаётся в списке с подписью, а в ленту задачи не идёт (DK-252).
 type sessionInfo struct {
-	ID     string `json:"id"`
-	Mtime  string `json:"mtime"`
-	Branch string `json:"branch,omitempty"`
-	First  string `json:"first,omitempty"`
-	path   string
-	mod    time.Time
+	ID       string `json:"id"`
+	Mtime    string `json:"mtime"`
+	Branch   string `json:"branch,omitempty"`
+	First    string `json:"first,omitempty"`
+	Task     string `json:"task,omitempty"`
+	TaskNote string `json:"taskNote,omitempty"`
+	path     string
+	suffix   string
+	stamp    string
+	mod      time.Time
 }
 
 // sessionFiles обходит каталоги транскриптов; сортировка свежие сверху, при
-// равном времени по id, чтобы порядок был устойчив.
+// равном времени по id, чтобы порядок был устойчив. Вместе с файлом берётся
+// хвост имени каталога (боковое дерево задачи называет им задачу) и отпечаток
+// файла для памяти процесса на шапку.
 func sessionFiles(home, projPath string) []sessionInfo {
 	var out []sessionInfo
+	base := claudeDirName(projPath)
 	for _, dir := range sessionDirs(home, projPath) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
+		suffix := strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir), base), "-")
 		for _, e := range entries {
 			name, ok := strings.CutSuffix(e.Name(), ".jsonl")
 			if !ok || e.IsDir() {
@@ -85,7 +95,10 @@ func sessionFiles(home, projPath string) []sessionInfo {
 			}
 			out = append(out, sessionInfo{
 				ID: name, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
-				path: filepath.Join(dir, e.Name()), mod: fi.ModTime(),
+				path:   filepath.Join(dir, e.Name()),
+				suffix: suffix,
+				stamp:  fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size()),
+				mod:    fi.ModTime(),
 			})
 		}
 	}
@@ -98,17 +111,28 @@ func sessionFiles(home, projPath string) []sessionInfo {
 	return out
 }
 
-// metaScanLimit ограничивает чтение шапки транскрипта: ветка и первая реплика
-// лежат в первых записях, тянуть мегабайты ради них незачем.
+// metaScanLimit ограничивает чтение шапки транскрипта: ветка, первая реплика
+// и названная ею задача лежат в первых записях, тянуть мегабайты ради них
+// незачем.
 const metaScanLimit = 256 * 1024
 
-// sessionMeta вычитывает из шапки транскрипта ветку и первую реплику
-// человека; служебные вставки в угловых скобках (<ide_opened_file> и родня)
-// репликой не считаются.
-func sessionMeta(path string) (branch, first string) {
+// sessionHead это всё, что читается из шапки транскрипта: ветка, первая
+// реплика человека для списка и ID задачи, названный этой репликой.
+type sessionHead struct {
+	Branch string
+	First  string
+	Named  string
+}
+
+// readSessionHead вычитывает шапку транскрипта; служебные вставки в угловых
+// скобках (<ide_opened_file> и родня) репликой не считаются. Второй ответ
+// говорит, дочитана ли голова до предела: дальше файл только дописывается, и
+// такая голова больше не меняется, на этом стоит память процесса.
+func readSessionHead(path string) (sessionHead, bool) {
+	var head sessionHead
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return head, false
 	}
 	defer f.Close()
 	buf := make([]byte, metaScanLimit)
@@ -124,22 +148,107 @@ func sessionMeta(path string) (branch, first string) {
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
 		}
-		if branch == "" {
-			branch = rec.GitBranch
+		if head.Branch == "" {
+			head.Branch = rec.GitBranch
 		}
-		if first == "" && rec.Type == "user" {
+		if head.First == "" && rec.Type == "user" {
 			for _, text := range contentTexts(rec.Message.Content) {
 				if !strings.HasPrefix(text, "<") {
-					first = firstLine(text)
+					head.First = firstLine(text)
+					// ID ищется по всей реплике, а не по обрезанной для списка
+					// строке: заказ работы бывает длиннее ста шестидесяти знаков.
+					head.Named = taskIDInText(text)
 					break
 				}
 			}
 		}
-		if branch != "" && first != "" {
+		if head.Branch != "" && head.First != "" {
 			break
 		}
 	}
-	return branch, first
+	return head, n >= metaScanLimit
+}
+
+// headTTL это потолок доверия к запомненной шапке. Отпечаток файла ловит
+// правку сам, а дочитанной голове верят и после дописывания, но переписанный
+// с нуля файл не поймать ни тем, ни другим, поэтому доверие кончается по
+// сроку.
+const headTTL = 5 * time.Minute
+
+// headEntry это запомненная шапка одного транскрипта.
+type headEntry struct {
+	head  sessionHead
+	stamp string
+	full  bool
+	born  time.Time
+}
+
+// sessionHeadCached отдаёт шапку транскрипта, по возможности из памяти
+// процесса (образец кэша DK-242). Экран агента ходит за сессиями на каждом
+// открытии, а сессий у проекта десятки: без памяти каждый запрос перечитывал
+// бы по четверти мегабайта на сессию.
+func (s *server) sessionHeadCached(path, stamp string) sessionHead {
+	now := s.now()
+	s.mu.Lock()
+	e, hit := s.heads[path]
+	s.mu.Unlock()
+	if hit && now.Sub(e.born) < headTTL && (e.full || e.stamp == stamp) {
+		return e.head
+	}
+	head, full := readSessionHead(path)
+	s.mu.Lock()
+	s.heads[path] = headEntry{head: head, stamp: stamp, full: full, born: now}
+	s.mu.Unlock()
+	return head
+}
+
+// taskIDTextRe ловит ID задачи в тексте первой реплики. Префикс только
+// прописными: так «Выполни цель DK-112» отличается от «top-10» и прочих слов
+// с числом через дефис.
+var taskIDTextRe = regexp.MustCompile(`\b([A-Z]{2,10})-(\d{1,6})\b`)
+
+// taskIDNameRe узнаёт ID в имени: ветка dk-252, хвост каталога бокового
+// дерева dk-252, имя с приставкой вроде dk-252-fix. Регистр тут любой, имена
+// пишутся строчными.
+var taskIDNameRe = regexp.MustCompile(`^([A-Za-z]{2,10})-(\d{1,6})(?:-|$)`)
+
+func taskIDInText(text string) string {
+	return upperID(taskIDTextRe.FindStringSubmatch(text))
+}
+
+func taskIDInName(name string) string {
+	return upperID(taskIDNameRe.FindStringSubmatch(name))
+}
+
+func upperID(m []string) string {
+	if m == nil {
+		return ""
+	}
+	return strings.ToUpper(m[1]) + "-" + m[2]
+}
+
+// unknownTaskNote подписывает сессию, чья задача не узнана. Молча выкидывать
+// такую сессию из списка нельзя: пропавшая работа неотличима от несделанной.
+const unknownTaskNote = "задача не распознана"
+
+// sessionTask называет задачу сессии и говорит, чем она узнана. Связи
+// «сессия -> задача» в транскриптах нет, поэтому источника три, и порядок их
+// не случаен: боковое дерево заводится ровно под одну задачу и врать не
+// умеет; первая реплика это заказ работы («Выполни цель DK-112», «возьми
+// задачу DK-207 в работу») и узнаёт сессию в главном дереве; ветка идёт
+// последней, потому что окно главного дерева часто стоит на ветке, оставшейся
+// от прошлой работы (решение DK-252).
+func sessionTask(dirSuffix string, head sessionHead) (task, note string) {
+	if id := taskIDInName(dirSuffix); id != "" {
+		return id, "по дереву задачи"
+	}
+	if head.Named != "" {
+		return head.Named, "по первой реплике"
+	}
+	if id := taskIDInName(head.Branch); id != "" {
+		return id, "по ветке"
+	}
+	return "", unknownTaskNote
 }
 
 func firstLine(text string) string {
@@ -266,25 +375,62 @@ const repliesDefault = 40
 
 const repliesMax = 500
 
+// headScanMax держит число сессий, у которых читается шапка: экрану хватает
+// свежих, а проект с сотней транскриптов иначе перечитывал бы их все на
+// первый же запрос.
+const headScanMax = 50
+
+// taskParamRe сито параметра ?task=: ID задачи, а не любая строка из адреса.
+var taskParamRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{1,6}$`)
+
 func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r)
 	if found == nil {
 		return
 	}
+	want := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("task")))
+	if want != "" && !taskParamRe.MatchString(want) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("%q не похоже на ID задачи", want)})
+		return
+	}
 	files := sessionFiles(s.cfg.Home, found.Path)
-	if n := intParam(r, "n", 20, 100); len(files) > n {
-		files = files[:n]
+	scanned := files
+	if len(scanned) > headScanMax {
+		scanned = scanned[:headScanMax]
 	}
 	sessions := []sessionInfo{}
-	for _, f := range files {
-		f.Branch, f.First = sessionMeta(f.path)
+	var others, unknown int
+	for _, f := range scanned {
+		head := s.sessionHeadCached(f.path, f.stamp)
+		f.Branch, f.First = head.Branch, head.First
+		f.Task, f.TaskNote = sessionTask(f.suffix, head)
+		if f.Task == "" {
+			unknown++
+		} else if want != "" && f.Task != want {
+			others++
+		}
+		// Чужая сессия в ленту задачи не идёт: до DK-252 экран брал свежую по
+		// mtime, и при двух живых окнах под заголовком одной задачи шёл ход
+		// соседней.
+		if want != "" && f.Task != want {
+			continue
+		}
 		sessions = append(sessions, f)
 	}
+	if n := intParam(r, "n", 20, 100); len(sessions) > n {
+		sessions = sessions[:n]
+	}
 	resp := map[string]any{"project": found.Name, "sessions": sessions}
-	if len(sessions) == 0 {
-		// Пустота различима: транскриптов нет это слова с адресом, где они
-		// искались, а не пустой список без причины.
+	// Пустоты различимы: транскриптов нет вовсе это слова с адресом, где они
+	// искались, а «сессий этой задачи нет» это счёт по чужим и нераспознанным.
+	switch {
+	case len(files) == 0:
 		resp["note"] = fmt.Sprintf("транскриптов нет: в ~/.claude/projects нет сессий с путём %s", found.Path)
+	case len(sessions) == 0 && want != "":
+		resp["note"] = fmt.Sprintf(
+			"сессий задачи %s нет: среди %d свежих сессий проекта %d о других задачах, %d без распознанной задачи",
+			want, len(scanned), others, unknown)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

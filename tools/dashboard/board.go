@@ -203,7 +203,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		works = append(works, Work{ID: goal, Kind: "goal", Title: rows[goal].Title, Via: "registry"})
 		busy[goal] = true
 	}
-	return append(works, s.sessionWorks(projectPath, prefix, board, busy)...)
+	return append(works, s.sessionWorks(projectPath, prefix, rows, busy)...)
 }
 
 // tmuxMissingCheck называет ненайденный tmux: без него живые работы это

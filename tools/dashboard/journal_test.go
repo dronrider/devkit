@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -378,5 +379,69 @@ func TestGoalLogStreamGoalDocAppends(t *testing.T) {
 	}
 	if _, data := sseNext(t, r); data != next {
 		t.Fatalf("живое дострение по правке файла цели: %q", data)
+	}
+}
+
+// journalBoardJSON это доска с одной целью XR-100 и заданной ссылкой на её
+// файл: сито ссылки проверяется только настоящей ссылкой, прочерк ведёт на
+// путь по умолчанию.
+func journalBoardJSON(link string) string {
+	return `{"prefix":"XR","sections":[{"key":"in-progress","title":"In progress","rows":[` +
+		`{"id":"XR-100","title":"Цель: пробный цикл","type":"task","p":"P2","r":41,` +
+		`"r_parts":[25,9,3,0,4],"cost":"XL","link":"` + link + `"}]}]}`
+}
+
+// writeDocAt кладёт файл цели по произвольному пути, в том числе мимо
+// docs/tasks и мимо самого проекта.
+func writeDocAt(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Ссылка со строки доски ведёт к файлу цели, но только относительная и без
+// выхода вверх: доска своя, а собирать по ней путь куда угодно незачем.
+// Абсолютная ссылка и ссылка через ../ отбиваются на docs/tasks/<ID>.md, и
+// журнал читается оттуда, а не из указанного ссылкой файла.
+func TestGoalDocLinkSieve(t *testing.T) {
+	t.Run("относительная ссылка подхватывается", func(t *testing.T) {
+		e := newTestEnv(t)
+		writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", journalBoardJSON("docs/goals/XR-100.md")))
+		writeDocAt(t, filepath.Join(e.proj, "docs", "goals", "XR-100.md"), goalDocFixture)
+
+		text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+		if !strings.Contains(text, "docs/goals/XR-100.md") || !strings.Contains(text, goalDocLines[0]) {
+			t.Fatalf("ссылка строки доски не подхвачена: %s", text)
+		}
+	})
+
+	// Файл цели ложится там, куда привела бы неотбитая ссылка: со снятым ситом
+	// журнал прочитался бы оттуда, и подмена видна строками.
+	for _, tc := range []struct {
+		name, link string
+		at         func(proj string) string
+	}{
+		{"абсолютная отбивается", "/docs/goals/XR-100.md",
+			func(proj string) string { return filepath.Join(proj, "docs", "goals", "XR-100.md") }},
+		{"выход вверх отбивается", "../XR-100.md",
+			func(proj string) string { return filepath.Join(filepath.Dir(proj), "XR-100.md") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", journalBoardJSON(tc.link)))
+			writeDocAt(t, tc.at(e.proj), goalDocFixture)
+
+			text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+			if strings.Contains(text, goalDocLines[0]) {
+				t.Fatalf("журнал прочитан по ссылке мимо docs/tasks: %s", text)
+			}
+			if !strings.Contains(text, `"exists":false`) || !strings.Contains(text, "docs/tasks/XR-100.md") {
+				t.Fatalf("путь не отбит на docs/tasks/XR-100.md: %s", text)
+			}
+		})
 	}
 }

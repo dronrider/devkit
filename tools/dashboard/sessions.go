@@ -271,10 +271,11 @@ const foreignTaskNote = "задача не с доски проекта"
 
 // sessionWorks собирает работы из транскриптов: интерактивное окно агента не
 // заводит ни tmux-сессии, ни записи в реестре, и единственный его след это
-// свежий транскрипт. Занятые задачи (busy) сюда не идут: headless-сессия
+// свежий транскрипт. Доска приходит уже разобранной: строка ищется на каждую
+// сессию, а разбирать ответ taskctl заново на каждой из них незачем. Занятые задачи (busy) сюда не идут: headless-сессия
 // конвейера тоже пишет транскрипт, и её работа уже собрана из tmux, а вторая
 // карточка о той же задаче читалась бы как два агента вместо одного.
-func (s *server) sessionWorks(projPath, prefix string, board json.RawMessage, busy map[string]bool) []Work {
+func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow, busy map[string]bool) []Work {
 	works := []Work{}
 	cutoff := s.now().Add(-sessionLiveTTL)
 	for _, f := range sessionFiles(s.cfg.Home, projPath) {
@@ -297,7 +298,7 @@ func (s *server) sessionWorks(projPath, prefix string, board json.RawMessage, bu
 			// открываются только у неё, и вид работы берётся со строки доски,
 			// а не из того, что окно вообще живо.
 			kind = "task"
-			if row, ok := findRow(board, task); !ok {
+			if row, ok := rows[task]; !ok {
 				kind = "session"
 			} else {
 				title = row.Title

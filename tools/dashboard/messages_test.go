@@ -335,10 +335,10 @@ func TestStaticChatHonesty(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		"Сообщение уйдёт агенту.",
-		"Он прочитает его при следующем запуске, идущая сессия его не увидит.",
-		"подхвачено при следующем запуске",
+		"Он отреагирует на него на следующей рабочей итерации.",
+		"подхвачено следующим витком",
 		"Написать агенту...",
-		"Стоп цикла",
+		"Остановить агента",
 		"во «Входящих» пусто",
 	} {
 		if !strings.Contains(text, want) {
@@ -559,6 +559,28 @@ func TestMarkdownBlocks(t *testing.T) {
 	} {
 		if !strings.Contains(got[0], want) {
 			t.Errorf("в рендере нет %q: %s", want, got[0])
+		}
+	}
+}
+
+// Плашка про судьбу сообщения закрывается крестиком, а лента чата прижата к
+// полю ввода: свежие реплики стоят внизу, у самого поля, а пустота короткой
+// переписки остаётся сверху (макет «04 Переписка»).
+func TestStaticChatNoteAndAnchor(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function renderChat(")
+	for _, want := range []string{`el("button", "nx")`, `icon("close")`, "note.remove()", "Закрыть"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в плашке чата нет %q: закрыть её нечем", want)
+		}
+	}
+	if !strings.Contains(body, "STOP_TIP") {
+		t.Error("у кнопки остановки в чате нет подсказки о последствиях")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".chatfeed .mlist{margin-top:auto}", ".cnote .nx{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет %q: лента чата не прижата к полю ввода", want)
 		}
 	}
 }

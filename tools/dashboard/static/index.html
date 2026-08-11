@@ -10,8 +10,11 @@
 <div class="screen">
   <aside class="side">
     <div class="brand">
-      <h1>Дашборд devkit</h1>
-      <p id="brand-note"></p>
+      <span class="logo" id="logo-side" title="На главную">dk</span>
+      <div>
+        <h1>Дашборд devkit</h1>
+        <p id="brand-note"></p>
+      </div>
     </div>
     <div class="sgroup">Проекты</div>
     <nav id="projects"></nav>
@@ -24,10 +27,12 @@
   </aside>
   <main class="bmain">
     <div class="bhead">
+      <span class="logo logo-top" id="logo-top" title="На главную">dk</span>
       <h2 id="pname"></h2>
       <span class="sub" id="psub"></span>
-      <button class="btn btn-sm gohome" id="gohome">На главную</button>
-      <button class="bell" id="bell" aria-label="Лента уведомлений" title="Лента уведомлений"><s></s><i id="bell-dot" class="bdot" hidden></i></button>
+      <span id="hlegend"></span>
+      <span class="hsp"></span>
+      <button class="bell" id="bell" aria-label="Лента уведомлений" title="Лента уведомлений"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8.6c0-3.3-2.7-6-6-6s-6 2.7-6 6c0 4.1-1.1 5.8-1.9 6.7-.4.4-.1 1.1.5 1.1h14.8c.6 0 .9-.7.5-1.1-.8-.9-1.9-2.6-1.9-6.7Z"></path><path d="M10 19.2c.4.8 1.1 1.3 2 1.3s1.6-.5 2-1.3"></path></svg><i id="bell-dot" class="bdot" hidden></i></button>
       <select class="pselect" id="pselect" aria-label="Проект"></select>
     </div>
     <div class="live" id="live"></div>
@@ -39,7 +44,17 @@
     <div class="ptab" id="tab-board"><s></s>Доска</div>
     <div class="ptab"><s></s>Агенты</div>
   </nav>
+  <div class="flashes" id="flashes"></div>
 </div>
+<!-- значки экранов лежат разметкой, а js их только копирует: рисовать фигуры
+     рамками в стилях выходило обрубками, а внешних картинок у статики нет -->
+<template id="icons">
+  <svg data-ico="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>
+  <svg data-ico="i-wait" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5v5l3 1.8"></path></svg>
+  <svg data-ico="i-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12.5l4 4 8-8.5"></path></svg>
+  <svg data-ico="i-other" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"></circle></svg>
+  <svg data-ico="close" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8"></path><path d="M12 4l-8 8"></path></svg>
+</template>
 <script type="module" src="/assets/app.js"></script>
 </body>
 </html>

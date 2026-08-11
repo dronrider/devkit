@@ -220,11 +220,11 @@ func TestNotificationsStream(t *testing.T) {
 func TestStaticFeedScreen(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
-		`{ kind: "stop", name: "Стопы" }`,
-		`{ kind: "wait", name: "wait-human" }`,
+		`{ kind: "stop", name: "Остановки" }`,
+		`{ kind: "wait", name: "Ожидание пользователя" }`,
 		`{ kind: "task", name: "Задачи" }`,
 		"Поднять виток",
-		"Журнал цикла",
+		"Журнал агента",
 		"/api/notifications?stream=1",
 		"dayLabel",
 		"баннера не было",
@@ -326,5 +326,91 @@ func TestNotificationsStreamMissingThenBorn(t *testing.T) {
 	writeNotifyLog(t, e.home, notifyFixture[3:4])
 	if _, data := sseNext(t, r); !strings.Contains(data, "wait_human") {
 		t.Fatalf("родившийся журнал не подхвачен: %q", data)
+	}
+}
+
+// Флеш всплывает на то, что случилось при открытом окне: хвост журнала,
+// который сервер отдаёт при подключении, не всплывает, и на открытой ленте
+// событие тоже не дублируется, там оно и так дописывается строкой.
+func TestStaticFlashWorthy(t *testing.T) {
+	heads := []string{"function flashWorthy("}
+	cases := []struct {
+		expr string
+		want string
+	}{
+		{`flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", false)`, "true"},
+		{`flashWorthy({time: "2026-08-11T09:20:00"}, "2026-08-11T10:00:00", false)`, "false"},
+		{`flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", true)`, "false"},
+		{`flashWorthy({}, "2026-08-11T10:00:00", false)`, "false"},
+		{`flashWorthy(null, "", false)`, "false"},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, c.expr); got != c.want {
+			t.Errorf("%s: %q, жду %q", c.expr, got, c.want)
+		}
+	}
+}
+
+// Флеш-уведомление собрано по макету «05 Лента»: полоска остатка времени,
+// не больше трёх штук с последним сверху, гаснет само, нажатие ведёт в ленту.
+// Поток живёт отдельно от экранов, иначе уведомление приходило бы только там,
+// где оно и так видно.
+func TestStaticFlashNotice(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	show := funcBody(t, app, "function showFlash(")
+	for _, want := range []string{`el("div", "flife")`, "animationDuration", "box.prepend(card)",
+		"FLASH_MAX", "card.remove()", `"/feed"`, "setTimeout"} {
+		if !strings.Contains(show, want) {
+			t.Errorf("во флеш-уведомлении нет %q", want)
+		}
+	}
+	wire := funcBody(t, app, "function wireFlash(")
+	for _, want := range []string{"/api/notifications?stream=1", "flashWorthy(n, flashSince, route().feed)",
+		"showBellDot"} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("в потоке флеша нет %q", want)
+		}
+	}
+	if strings.Contains(wire, "agentLive.push") {
+		t.Error("поток флеша закрывается вместе с экраном: уведомление придёт только на ленте")
+	}
+	if !strings.Contains(app, "\nwireFlash();") {
+		t.Error("поток флеша не поднимается при старте страницы")
+	}
+	page := readFile(t, filepath.Join("static", "index.html"))
+	if !strings.Contains(page, `id="flashes"`) {
+		t.Error("в static/index.html нет угла для флеш-уведомлений")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".flashes{", ".flash{", ".flife{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет стиля флеша %q", want)
+		}
+	}
+}
+
+// Заголовок ленты не пересказывает её состав: что в неё попадает, говорит
+// значок информации, а колокольчик и значки событий рисуются копией из
+// разметки, а не рамками стилей.
+func TestStaticFeedHeadAndIcons(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	feed := funcBody(t, app, "function renderFeed(")
+	for _, want := range []string{"На этом экране отображаются все уведомления от агентов", "tipq", "tipbox"} {
+		if !strings.Contains(feed, want) {
+			t.Errorf("в шапке ленты нет %q", want)
+		}
+	}
+	if strings.Contains(feed, "уведомления машины: стопы работ") {
+		t.Error("заголовок ленты снова пересказывает её состав подписью")
+	}
+	page := readFile(t, filepath.Join("static", "index.html"))
+	for _, want := range []string{`id="icons"`, `data-ico="i-stop"`, `data-ico="i-wait"`,
+		`data-ico="i-done"`, `data-ico="close"`, "<svg viewBox=\"0 0 24 24\""} {
+		if !strings.Contains(page, want) {
+			t.Errorf("в static/index.html нет значка %q", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, app, "function icon("), `[data-ico="`) {
+		t.Error("значок не берётся копией из разметки")
 	}
 }

@@ -288,9 +288,9 @@ func TestStaticNewTaskForm(t *testing.T) {
 	for _, want := range []string{
 		"Новая задача",
 		"Записать черновик",
-		"Мысль с телефона...",
-		"Полная строка",
-		"Завести строку",
+		"Что нужно сделать и зачем",
+		"Полная задача",
+		"Завести задачу",
 		"завести файл задачи по шаблону (taskctl file)",
 		"docs/tasks/drafts/",
 		"function renderNew(",

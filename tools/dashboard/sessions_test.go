@@ -653,8 +653,11 @@ func TestStaticInteractiveWork(t *testing.T) {
 func TestStaticWorkTitle(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	live := funcBody(t, text, "function renderLive(")
-	if !strings.Contains(live, "w.title || name") || !strings.Contains(live, `el("span", "wname", name)`) {
+	if !strings.Contains(live, `el("span", "wname wtitle", w.title)`) {
 		t.Error("полоса живых работ подписана именем сессии, а не заголовком задачи")
+	}
+	if strings.Contains(live, `"goal-"`) {
+		t.Error("в полосе живых работ осталось служебное имя сессии goal-<ID>: о занятии агента оно не говорит")
 	}
 	agent := funcBody(t, text, "function renderAgent(")
 	if !strings.Contains(agent, "work.title") || !strings.Contains(agent, "title || name") {
@@ -664,7 +667,7 @@ func TestStaticWorkTitle(t *testing.T) {
 		t.Error("имя сессии не осталось подписью в шапке экрана агента")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".lcard b.wtitle", ".lcard span.wname", ".ahead .wname"} {
+	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname", ".ahead .wname"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в стилях нет %s: заголовок и подпись рисуются одним кеглем", want)
 		}
@@ -681,5 +684,25 @@ func TestStaticJournalSource(t *testing.T) {
 	}
 	if strings.Contains(funcBody(t, text, "function renderAgent("), `".devkit/goal-" + id + ".log"`) {
 		t.Error("экран агента называет журнал goal-<ID>.log до ответа сервера: у цели живого чата такого файла нет")
+	}
+}
+
+// Язык экрана агента взят из макета «03 Агент»: панель хода витка называется
+// логом витка, а не транскриптом, журнал зовётся журналом агента, и жаргон
+// «строки» и «запуска» с экранов ушёл.
+func TestStaticAgentPaneWords(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function renderAgent(")
+	for _, want := range []string{`pane("Журнал агента"`, `pane("Лог витка"`,
+		`["Журнал", "Лог витка", "tmux"]`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в экране агента нет %q", want)
+		}
+	}
+	for _, gone := range []string{`"Транскрипт"`, `"Журнал цикла"`, `"Стоп цикла"`, "грумминг",
+		`"строка обновилась`} {
+		if strings.Contains(app, gone) {
+			t.Errorf("в static/app.js осталось слово %q: экраны говорят с пользователем иначе", gone)
+		}
 	}
 }

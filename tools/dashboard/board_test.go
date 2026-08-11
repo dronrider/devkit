@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,18 +76,21 @@ func TestStaticBoardMovedDate(t *testing.T) {
 	}
 }
 
-// Уйти на главную можно с любого экрана: кнопка в шапке стоит над всеми
-// экранами, на телефоне то же место занимает нижняя вкладка, а сама главная
-// это список проектов.
+// Уйти на главную можно с любого экрана: переход держит логотип в левом
+// верхнем углу (на телефоне он же стоит слева в шапке), на телефоне то же
+// место занимает нижняя вкладка, а сама главная это список проектов.
 func TestStaticHomeFromEveryScreen(t *testing.T) {
 	html := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`id="gohome"`, `id="nav-home"`, `id="tab-home"`, "На главную", "Главная"} {
+	for _, want := range []string{`id="logo-side"`, `id="logo-top"`, `id="nav-home"`, `id="tab-home"`, "На главную", "Главная"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в static/index.html нет %q: перехода на главную с экрана нет", want)
 		}
 	}
+	if strings.Contains(html, `id="gohome"`) {
+		t.Error("в static/index.html осталась кнопка «На главную»: её место занял логотип")
+	}
 	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{`"gohome", "nav-home", "tab-home"`, "function renderHome(", "home: true"} {
+	for _, want := range []string{`"logo-side", "logo-top", "nav-home", "tab-home"`, "function renderHome(", "home: true"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет %q: главная не собрана", want)
 		}
@@ -134,6 +139,103 @@ func TestNoOutsideWording(t *testing.T) {
 	for _, path := range append(files, append(static, "README.md")...) {
 		if strings.Contains(readFile(t, path), "ведётся снаружи") {
 			t.Errorf("%s всё ещё говорит «ведётся снаружи»", path)
+		}
+	}
+}
+
+// jsEval гоняет куски статики под node и печатает ответ выражения: логика
+// экрана проверяется работой, а не чтением исходника. Функции вырезаются те
+// же, что уедут в браузер.
+func jsEval(t *testing.T, heads []string, expr string) string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден, юниты статики не гоняются")
+	}
+	text := readFile(t, filepath.Join("static", "app.js"))
+	var parts []string
+	for _, head := range heads {
+		parts = append(parts, funcBody(t, text, head)+"\n}")
+	}
+	src := strings.Join(parts, "\n\n") + "\nconsole.log(String(" + expr + "));\n"
+	path := filepath.Join(t.TempDir(), "unit.mjs")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кусок статики не отработал под node: %v\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Кружок проекта считается по данным, а не по настроению: работа идёт это
+// зелёный, задача в Check это красный «требуется внимание», пусто это серый.
+// Подписи «тихо» у серого нет: кружок и есть всё, что о проекте известно.
+func TestStaticProjectDotState(t *testing.T) {
+	heads := []string{"function projectState(", "function projectWhy(", "function plural("}
+	cases := []struct{ input, dot, why string }{
+		{`{works: [{id: "DK-1"}, {id: "DK-2"}], sections: {check: 0}}`, "pd-run pulse",
+			"2 задачи в работе: DK-1, DK-2"},
+		{`{works: [], sections: {check: 1}}`, "pd-warn", "ждёт проверки: 1 задача в Check"},
+		{`{works: [], sections: {check: 0, backlog: 9}}`, "", ""},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, "projectState("+c.input+").cls"); got != c.dot {
+			t.Errorf("кружок для %s: %q, жду %q", c.input, got, c.dot)
+		}
+		if got := jsEval(t, heads, "projectWhy("+c.input+")"); got != c.why {
+			t.Errorf("причина для %s: %q, жду %q", c.input, got, c.why)
+		}
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if strings.Contains(app, `"тихо"`) {
+		t.Error("в static/app.js осталась подпись «тихо»: у тихого проекта её сменил серый кружок")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".pdot{", ".pd-run{", ".pd-warn{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет стиля кружка %q", want)
+		}
+	}
+}
+
+// Легенда кружков живёт у заголовка главной: на ноутбуке всплывает по знаку,
+// на телефоне тот же знак разворачивает её нажатием, потому что наведения
+// там нет.
+func TestStaticDotLegend(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function dotLegend(")
+	for _, want := range []string{"Статусы индикатора", "tipq", "tipbox", `classList.toggle("on")`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в легенде кружков нет %q", want)
+		}
+	}
+	for _, want := range []string{"нет активных задач", "идёт работа агентов",
+		"требуется внимание, задача приостановлена или ожидает пользователя"} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет строки легенды %q", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, app, "function renderHome("), "dotLegend()") {
+		t.Error("легенда не попала на главную")
+	}
+}
+
+// Логотип это и есть переход на главную, и на самой главной он погашен:
+// подсветка по наведению обещала бы переход, которого нет.
+func TestStaticLogoIsHomeLink(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	nav := funcBody(t, app, "function markNav(")
+	for _, want := range []string{`"logo-side", "logo-top"`, `classList.toggle("here"`, "Вы и так на главной"} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("в markNav нет %q: логотип на главной не гасится", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".logo{", ".logo:hover", ".logo.here"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет стиля логотипа %q", want)
 		}
 	}
 }

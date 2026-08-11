@@ -258,6 +258,9 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // либо причина, почему доска не прочиталась, вместо них.
 type projectInfo struct {
 	Project
+	// Prefix это префикс ID доски (DK, XR): им подписан проект на главной, и
+	// брать его оттуда дешевле, чем читать доску второй раз.
+	Prefix   string         `json:"prefix,omitempty"`
 	Sections map[string]int `json:"sections,omitempty"`
 	Works    []Work         `json:"works"`
 	Error    string         `json:"error,omitempty"`
@@ -296,6 +299,7 @@ func (s *server) projectSummary(p Project) projectInfo {
 		info.Error = fmt.Sprintf("ответ taskctl не разобрался: %v", err)
 		return info
 	}
+	info.Prefix = view.Prefix
 	info.Sections = map[string]int{}
 	for _, sec := range view.Sections {
 		info.Sections[sec.Key] = len(sec.Rows)

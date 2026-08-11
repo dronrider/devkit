@@ -60,6 +60,22 @@ function currentProject(projects) {
   return hit || projects[0] || null;
 }
 
+// Состояние проекта одним кружком (макет «00 Главная»): серый работы нет,
+// зелёный идёт работа, красный требуется внимание. Внимание берётся с доски, а
+// не из ленты: запись уведомителя машинная и проекта в себе не несёт, а
+// задача в Check ждёт ровно человека. Цветом одним такое не сказать, поэтому
+// рядом с зелёным и красным стоит причина словами, а у серого её нет: сказать
+// о нём нечего.
+function projectState(p) {
+  const works = (p.works || []).length;
+  if (works) {
+    return { cls: "pd-run pulse", short: works + " в работе" };
+  }
+  const check = (p.sections && p.sections.check) || 0;
+  if (check) return { cls: "pd-warn", short: "ждёт проверки" };
+  return { cls: "", short: "" };
+}
+
 function renderSidebar(projects, current) {
   const nav = document.getElementById("projects");
   const sel = document.getElementById("pselect");
@@ -67,11 +83,10 @@ function renderSidebar(projects, current) {
   sel.replaceChildren();
   for (const p of projects) {
     const item = el("div", "sitem" + (current && p.name === current.name ? " on" : ""));
-    if (p.works && p.works.length) {
-      item.append(el("span", "dot pulse"));
-    }
+    const st = projectState(p);
+    item.append(el("span", "pdot" + (st.cls ? " " + st.cls : "")));
     item.append(document.createTextNode(p.name));
-    const n = el("span", "n", p.works && p.works.length ? p.works.length + " в работе" : "тихо");
+    const n = el("span", "n", st.short);
     item.append(n);
     item.addEventListener("click", () => { location.hash = p.name; });
     nav.append(item);
@@ -116,19 +131,17 @@ function renderLive(project, works) {
     card.append(el("span", "dot pulse"));
     // Интерактивную сессию без узнанной задачи вести некуда: экран агента
     // открывается по ID, и вместо имени работы карточка называет её видом.
-    const name = w.id
-      ? (w.kind === "goal" && w.via !== "session" ? "goal-" : "") + w.id
-      : "интерактивная сессия";
-    // Работа зовётся заголовком со строки доски: имя сессии goal-XR-100 не
-    // говорит, чем агент занят, и уходит мелкой подписью рядом.
-    const label = el("b", (w.id ? "" : "flat") + (w.title ? " wtitle" : ""), w.title || name);
+    const name = w.id || "интерактивная сессия";
+    // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
+    // в подписи нет, о занятии агента оно не говорит ничего.
+    const label = el("b", w.id ? "" : "flat", name);
     if (w.id) {
       label.addEventListener("click", () => { location.hash = project + "/agent/" + w.id; });
     }
     card.append(label);
-    if (w.title) card.append(el("span", "wname", name));
+    if (w.title) card.append(el("span", "wname wtitle", w.title));
     if (w.via === "tmux") {
-      const stop = el("button", "btn btn-sm", "Стоп");
+      const stop = withTip(el("button", "btn btn-sm btn-danger", "Стоп"), STOP_TIP);
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
       card.append(stop);
     } else if (w.via === "session") {
@@ -146,7 +159,12 @@ function rowChips(row) {
   if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
   if (row.p === "P0" || row.p === "P1") chips.push(el("span", "chip c-p1", row.p));
   if (row.cost && row.cost !== "-") chips.push(el("span", "chip", row.cost));
-  if (row.after && row.after.length) chips.push(el("span", "chip", "после " + row.after.join(", ")));
+  // Маркер [после ...] со строки доски назван теми же словами, что и блок
+  // зависимостей: «после DK-248» требовало достроить, кто кого ждёт.
+  if (row.after && row.after.length) {
+    chips.push(el("span", "chip", plural(row.after.length, "заблокирована задачей ",
+      "заблокирована задачами ", "заблокирована задачами ") + row.after.join(", ")));
+  }
   if (row.fail) chips.push(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) chips.push(el("span", "chip c-block", "блок: " + row.block));
   for (const note of row.notes || []) {
@@ -212,12 +230,12 @@ function renderRow(project, row, works) {
   tr.append(tt);
   const meta = el("span", "meta");
   meta.append(rankCell(row));
-  // Дата последней правки строки вместо возраста днями: считает её taskctl по
-  // git blame, клиент только показывает.
+  // Дата последней правки вместо возраста днями: считает её taskctl по git
+  // blame, клиент только показывает. Слова «правка» рядом с датой нет,
+  // объяснение пришло подсказкой по наведению.
   if (row.moved) {
-    const moved = el("span", "stale", "правка " + row.moved);
-    moved.title = "дата последней правки строки на доске: перевод в статус двигает её же";
-    meta.append(moved);
+    meta.append(withTip(el("span", "stale dashed", row.moved),
+      "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
   meta.append(rowAction(project, row, works));
   tr.append(meta);
@@ -230,8 +248,6 @@ function renderBoard(project, board, works) {
   groups.replaceChildren();
   const bar = el("div", "nbar");
   bar.append(newTaskButton(project, "Новая задача"));
-  bar.append(el("span", "hint",
-    "По умолчанию черновик: метаданные ему выдаст грумминг, а полная строка требует ранга."));
   groups.append(bar);
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
@@ -239,7 +255,9 @@ function renderBoard(project, board, works) {
     const sec = byKey[key];
     if (!sec) continue;
     const head = el("div", "shead", sec.title);
-    head.append(el("span", "n", String(sec.rows.length)));
+    // Backlog стоит по рангу, и счётчик говорит это же: надписью под формой
+    // задачи порядок объяснять больше не надо.
+    head.append(el("span", "n", sec.rows.length + (key === "backlog" ? ", по рангу" : "")));
     groups.append(head);
     const card = el("div", "card");
     if (!sec.rows.length) {
@@ -301,10 +319,22 @@ const TYPE_VALUES = ["task", "bug", "LLD"];
 const BUG_PART_REFUSAL = "поправка на баг у типа task не ставится: по RANKING.md " +
   "она про дефект или регресс, а не про новую работу; смени тип на bug";
 
-// Бакет P рукой не выбирается, и экран обязан это объяснять: иначе
-// отсутствие списка читается как забытое поле.
-const P_HINT = "Бакет P не выбирается рукой: он считается из суммы R по RANKING.md, " +
-  "поэтому правятся слагаемые, а P и место строки в Backlog выводит taskctl.";
+// Бакет P рукой не выбирается, и экран обязан это объяснять: иначе отсутствие
+// списка читается как забытое поле. Объяснение висит подсказкой на самом
+// бакете, надписью под рядом метаданных оно стояло указкой.
+const P_HINT = "Бакет считается из суммы ранга, рукой не ставится: правьте слагаемые.";
+
+// Что случится по кнопке остановки: сессия снимается, а состояние остаётся на
+// диске. Одни и те же слова стоят на экране задачи, агента и в чате.
+const STOP_TIP = "Сессия агента будет завершена, при возобновлении состояние агента " +
+  "возобновится с диска.";
+
+// Подсказка по наведению на чипе или кнопке: короткое пояснение, за которым
+// экран не обязан держать отдельную надпись.
+function withTip(node, text) {
+  node.title = text;
+  return node;
+}
 
 // Черновик экрана задачи: пока в форме есть правка, живое обновление её не
 // затирает. Экран один, поэтому и черновик один.
@@ -401,8 +431,8 @@ function depRow(project, id, side, dep) {
   const drop = el("button", "btn btn-sm", "Снять");
   drop.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    // «Держит» это та же зависимость с другой стороны: снимается она у той
-    // строки, в чьём заголовке стоит маркер [после ...].
+    // Вторая сторона это та же зависимость наоборот: снимается она у той
+    // задачи, в чьём заголовке стоит маркер [после ...].
     const call = side === "after" ? dropDep(project, id, dep.id) : dropDep(project, dep.id, id);
     call.catch(console.error);
   });
@@ -411,12 +441,14 @@ function depRow(project, id, side, dep) {
   return row;
 }
 
-// Карточка зависимостей в обе стороны по макету «02 Задача»: кого ждёт строка
+// Карточка зависимостей в обе стороны по макету «02 Задача»: кого ждёт задача
 // и кто ждёт её. Обе стороны живут на доске одним маркером [после ...],
-// поэтому «держит» это обратный поиск, а не вторая запись.
+// поэтому вторая сторона это обратный поиск, а не вторая запись. Названы они
+// словами, а не «После» и «Держит»: от тех читателю приходилось достраивать,
+// кто кого ждёт.
 function depsCard(project, id, after, blocks) {
   const card = el("div", "card");
-  card.append(el("div", "dhead", "После, ждёт их"));
+  card.append(el("div", "dhead", "Заблокировано задачами"));
   if (!after.length) card.append(el("div", "empty", "Никого не ждёт."));
   for (const dep of after) card.append(depRow(project, id, "after", dep));
 
@@ -434,7 +466,7 @@ function depsCard(project, id, after, blocks) {
   add.append(inp, btn);
   card.append(add);
 
-  card.append(el("div", "dhead", "Держит, ждут её"));
+  card.append(el("div", "dhead", "Блокирует выполнение задач"));
   if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
   for (const dep of blocks) card.append(depRow(project, id, "blocks", dep));
   return card;
@@ -474,14 +506,14 @@ function taskSeen(detail) {
     row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || ""]);
 }
 
-// Пометка «строка обновилась»: живое обновление при открытой правке молчаливо
+// Пометка «задача обновилась»: живое обновление при открытой правке молчаливо
 // подменяло значения полей, и это признано дефектом на пользовательской
 // проверке. Свежие данные ждут кнопки, ввод остаётся на месте.
 function taskStale(project, works, id) {
   if (document.getElementById("tstale")) return;
   const box = el("div", "tstale");
   box.id = "tstale";
-  box.append(el("span", "", "строка обновилась, перечитать"));
+  box.append(el("span", "", "задача обновилась, перечитать"));
   const btn = el("button", "btn btn-sm", "Перечитать");
   btn.addEventListener("click", () => {
     // Перечитывает рука: правка в форме при этом теряется, и решает это
@@ -498,7 +530,7 @@ function taskStale(project, works, id) {
 function draftRefusal(form, text) {
   if (form.type === "task" && Number(form.parts[3]) === 5) return BUG_PART_REFUSAL;
   if (text !== null && !text.trim()) return "пустой текст затёр бы постановку файла задачи";
-  if (!form.title.trim()) return "заголовок строки пустым не бывает";
+  if (!form.title.trim()) return "заголовок задачи пустым не бывает";
   return "";
 }
 
@@ -527,14 +559,17 @@ async function renderTask(project, works, id) {
 
   if (!r.ok) {
     const card = el("div", "card");
-    card.append(el("div", "error", r.body.error || "строка не прочиталась"));
+    card.append(el("div", "error", r.body.error || "задача не прочиталась"));
     groups.append(card);
     return;
   }
   const detail = r.body;
   const row = detail.row || {};
   if (row.section) crumb.append(el("span", "chip", row.section));
-  if (row.moved) crumb.append(el("span", "stale", "правка строки " + row.moved));
+  if (row.moved) {
+    crumb.append(withTip(el("span", "stale dashed", row.moved),
+      "дата последней правки задачи на доске: перевод в статус двигает её же"));
+  }
 
   // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
   const base = (row.r_parts || []).map(Number);
@@ -554,7 +589,7 @@ async function renderTask(project, works, id) {
   head.append(el("span", "idbig", row.id));
   const title = el("textarea", "tedit");
   title.value = form.title;
-  title.setAttribute("aria-label", "заголовок строки " + id);
+  title.setAttribute("aria-label", "заголовок задачи " + id);
   title.addEventListener("input", () => { form.title = title.value; touch(); });
   head.append(title);
   groups.append(head);
@@ -563,27 +598,27 @@ async function renderTask(project, works, id) {
   if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
   chips.append(pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); }));
   chips.append(pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); }));
-  if (row.p === "P0" || row.p === "P1") chips.append(el("span", "chip c-p1", row.p));
-  else chips.append(el("span", "chip", row.p));
+  const p = el("span", "chip dashed" + (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p);
+  chips.append(withTip(p, P_HINT));
   if (row.fail) chips.append(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) chips.append(el("span", "chip c-block", "блок: " + row.block));
   for (const note of row.notes || []) {
     if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
   }
   groups.append(chips);
-  groups.append(el("div", "hint phint", P_HINT));
 
-  // Одна кнопка на всю форму: любое изменение поля включает её, и по ней
-  // уезжает всё изменённое разом. Двух правок, у заголовка и у файла, тут
-  // больше нет, с телефона это разваливало правку на два похода.
-  const bar = el("div", "card tsave");
-  const btns = el("div", "tbtns");
+  // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
+  // отдельной карточки действий у задачи больше нет, а надписи про пустую
+  // правку нет вовсе, о ней говорит погашенная кнопка. Сохранение одно на всю
+  // форму: любое изменение поля включает кнопку, и по ней уезжает всё
+  // изменённое разом.
+  const bar = el("div", "card abar");
   const save = el("button", "btn btn-acc", "Сохранить");
   const drop = el("button", "btn", "Отменить правку");
-  btns.append(save, drop);
-  const note = el("div", "hint", "");
+  // Отменять нечего, пока правки нет: мёртвая кнопка на полосе только мешает.
+  drop.hidden = true;
   const bad = el("div", "error", "");
-  bar.append(btns, note, bad);
+  bar.append(save, drop, el("span", "div"));
   groups.append(bar);
 
   const patchBody = () => {
@@ -608,9 +643,7 @@ async function renderTask(project, works, id) {
     taskDraft.dirty = dirty;
     bad.textContent = refusal;
     save.disabled = !dirty || Boolean(refusal);
-    note.textContent = dirty
-      ? "Изменённое уедет одной кнопкой: строка через taskctl, файл задачи целиком."
-      : "Правки нет: кнопка включится, как только поменяется поле.";
+    drop.hidden = !dirty;
   };
   save.addEventListener("click", () => {
     const patch = patchBody();
@@ -625,37 +658,38 @@ async function renderTask(project, works, id) {
 
   const isGoal = /^Цель:/.test(row.title);
   const work = (works || []).find((w) => w.id === id);
-  const act = el("div", "card act");
   if (work) {
     const live = el("button", "btn", "Живой статус");
     live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
-    act.append(live);
+    bar.append(live);
   }
   if (isGoal) {
     const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
-    act.append(chat);
+    bar.append(chat);
   }
   if (work && work.via === "tmux") {
-    const stop = el("button", "btn", "Стоп");
+    const stop = el("button", "btn btn-danger", "Остановить агента");
+    // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
+    // они стояли указкой над всей полосой.
+    withTip(stop, STOP_TIP);
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
-    act.append(stop);
-    act.append(el("div", "hint", "Идёт tmux-сессия " + work.kind + "-" + id +
-      ". Стоп это стоп сессии; возобновление это новый запуск, читающий состояние с диска."));
+    bar.append(stop);
   } else if (work && work.via === "session") {
-    act.append(el("div", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
-      "стоп из дашборда ей не нужен, окно закрывает человек."));
+    bar.append(el("span", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
+      "остановить её из дашборда нечем, окно закрывает человек."));
   } else if (work) {
-    act.append(el("div", "hint", "Цикл ведёт другая сессия (живой чат), tmux-сессии дашборда у него нет: " +
-      "стоп отсюда недоступен, снимать там, где цикл поднят."));
+    bar.append(el("span", "hint", "Задачу ведёт другая сессия (живой чат), tmux-сессии дашборда " +
+      "у неё нет: остановить отсюда нечем, снимать там, где она поднята."));
   } else {
     const start = el("button", "btn btn-acc", "В работу");
     start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
-    act.append(start);
-    act.append(el("div", "hint", isGoal
+    bar.append(start);
+    bar.append(el("span", "hint", isGoal
       ? "Цель поднимет оболочка goal-run в tmux-сессии goal-" + id + "."
       : "Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + "."));
   }
+  bar.append(bad);
 
   const rank = el("div", "card");
   const rhead = el("div", "rhead");
@@ -677,11 +711,9 @@ async function renderTask(project, works, id) {
     }));
     rank.append(line);
   });
-  rank.append(el("div", "rnote",
-    "Порядок в Backlog выводится из ранга: правятся слагаемые, перетаскивания мимо ранга нет."));
 
   const rail = el("div", "rrail");
-  rail.append(act, rank, depsCard(project, id, detail.after || [], detail.blocks || []));
+  rail.append(rank, depsCard(project, id, detail.after || [], detail.blocks || []));
   const grid = el("div", "tgrid");
   grid.append(filePanel(project, id, detail, form, touch), rail);
   groups.append(grid);
@@ -1051,7 +1083,7 @@ function renderAgent(project, works, id) {
   if (title) head.append(el("span", "wname", name));
   if (work && work.via === "tmux") {
     head.append(el("span", "chip c-check", "tmux-сессия активна"));
-    const stop = el("button", "btn", "Стоп");
+    const stop = withTip(el("button", "btn btn-danger", "Остановить агента"), STOP_TIP);
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
     head.append(stop);
   } else if (work && work.via === "session") {
@@ -1073,10 +1105,10 @@ function renderAgent(project, works, id) {
   }
   groups.append(head);
 
-  const jp = pane("Журнал цикла", "источник назовёт сервер");
+  const jp = pane("Журнал агента", "источник назовёт сервер");
   // Живой хвост назван без одушевления: обновляется журнал сам, а не «живёт».
-  jp.head.append(el("span", "chip c-run", "обновляется само"));
-  const tp = pane("Транскрипт", "");
+  jp.head.append(el("span", "chip c-run", "хвост обновляется"));
+  const tp = pane("Лог витка", "");
   const grid = el("div", "agrid");
   grid.append(jp.card, tp.card);
   const tm = el("div", "card tmuxbar");
@@ -1089,7 +1121,7 @@ function renderAgent(project, works, id) {
   // Телефон: те же панели табами, переключение классом onpane.
   const seg = el("div", "seg");
   const tabs = [jp.card, tp.card, tm];
-  ["Журнал", "Транскрипт", "tmux"].forEach((name, i) => {
+  ["Журнал", "Лог витка", "tmux"].forEach((name, i) => {
     const d = el("div", i === 0 ? "on" : "", name);
     d.addEventListener("click", () => {
       Array.from(seg.children).forEach((x, j) => { x.className = j === i ? "on" : ""; });
@@ -1255,7 +1287,7 @@ async function loadPending(project, id, box) {
     return;
   }
   for (const line of pending) {
-    box.append(chatBubble("вы", line, "подхвачено при следующем запуске"));
+    box.append(chatBubble("вы", line, "подхвачено следующим витком"));
   }
 }
 
@@ -1290,13 +1322,13 @@ function renderChat(project, works, id) {
   if (work) head.append(el("span", "dot pulse"));
   head.append(el("h2", "", "goal-" + id));
   if (work && work.via === "tmux") {
-    head.append(el("span", "chip c-run", "цикл идёт"));
+    head.append(el("span", "chip c-run", "агент работает"));
   } else if (work && work.via === "session") {
     head.append(el("span", "chip c-check", "интерактивная сессия"));
   } else if (work) {
     head.append(el("span", "chip", "ведёт другая сессия"));
   } else {
-    head.append(el("span", "chip", "цикл не идёт"));
+    head.append(el("span", "chip", "агент не работает"));
   }
   groups.append(head);
 
@@ -1305,10 +1337,18 @@ function renderChat(project, works, id) {
   const pendbox = el("div", "msgs");
   thread.append(feed, pendbox);
 
+  // Плашка про судьбу сообщения закрывается крестиком: прочитав её однажды,
+  // держать её над полем ввода незачем.
   const note = el("div", "cnote");
-  note.append(el("b", "", "Сообщение уйдёт агенту."));
-  note.append(document.createTextNode(
-    " Он прочитает его при следующем запуске, идущая сессия его не увидит."));
+  const said = el("span");
+  said.append(el("b", "", "Сообщение уйдёт агенту."));
+  said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
+  const close = el("button", "nx");
+  close.setAttribute("aria-label", "Закрыть");
+  close.title = "Закрыть";
+  close.append(icon("close"));
+  close.addEventListener("click", () => { note.remove(); });
+  note.append(said, close);
   thread.append(note);
 
   const box = el("div", "cbox");
@@ -1316,7 +1356,7 @@ function renderChat(project, works, id) {
   ta.placeholder = "Написать агенту...";
   const row = el("div", "crow");
   if (work && work.via === "tmux") {
-    const stop = el("button", "btn", "Стоп цикла");
+    const stop = withTip(el("button", "btn btn-danger", "Остановить агента"), STOP_TIP);
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
     row.append(stop);
   }
@@ -1325,9 +1365,7 @@ function renderChat(project, works, id) {
   row.append(send);
   box.append(ta, row);
   thread.append(box);
-  thread.append(el("div", "stopnote",
-    "Стоп цикла это стоп сессии текущего витка; возобновление это новый запуск, " +
-    "и следующий виток прочтёт доску, файл цели и сообщение с диска."));
+  thread.append(el("div", "stopnote", STOP_TIP));
   groups.append(thread);
 
   wireChatFeed(project, feed, id).catch(console.error);
@@ -1335,12 +1373,12 @@ function renderChat(project, works, id) {
 }
 
 // Экран заведения (#проект/new). Черновик это путь по умолчанию: с телефона
-// мысль приходит целиком, а ранг там считать нечем, и грумминг всё равно
+// мысль приходит целиком, а ранг там считать нечем, и груминг всё равно
 // разберёт запись позже (taskctl add --id). Полная строка лежит под
 // разворотом: ей нужны заголовок, тип, цена и все пять слагаемых ранга.
 const DRAFT_HINT = "Черновик ляжет в docs/tasks/drafts/: метаданных у него нет, " +
-  "ID выдаёт taskctl, а ранг и тип выдаст грумминг накопителя.";
-const FULL_HINT = "Полная строка встаёт в Backlog сразу: место в нём выводится из ранга, " +
+  "ID выдаёт taskctl, а ранг и тип выдаст груминг накопителя.";
+const FULL_HINT = "Полная задача встаёт в Backlog сразу: место в нём выводится из ранга, " +
   "и все пять слагаемых обязательны.";
 
 // Поля формы переживают перерисовку: доска перечитывается по фокусу окна, и
@@ -1383,7 +1421,7 @@ async function makeDraft(project, text, btns) {
 }
 
 async function makeTask(project, body, btns) {
-  sayResult("заведение строки...");
+  sayResult("заведение задачи...");
   return sendNew(btns, async () => {
     const r = await api("/api/projects/" + encodeURIComponent(project) + "/tasks",
       { method: "POST", body });
@@ -1403,10 +1441,10 @@ function draftDone(project, done) {
   card.append(el("div", "nfhead", "Черновик " + (done.id || "") + " записан"));
   const box = el("div", "nfbody");
   box.append(el("div", "hint", done.file
-    ? "Файл " + done.file + " лежит в накопителе, на доске строки у него нет."
-    : "Файл лежит в накопителе, на доске строки у него нет."));
+    ? "Файл " + done.file + " лежит в накопителе, на доске задачи у него нет."
+    : "Файл лежит в накопителе, на доске задачи у него нет."));
   box.append(el("div", "hint",
-    "Разберёт его грумминг: он выдаст ранг с типом и заведёт строку (taskctl add --id)."));
+    "Разберёт его груминг: он выдаст ранг с типом и заведёт задачу (taskctl add --id)."));
   const btns = el("div", "tbtns");
   const again = el("button", "btn btn-acc", "Записать ещё");
   again.addEventListener("click", () => {
@@ -1437,12 +1475,12 @@ function renderNew(project) {
   const box = el("div", "nfbody");
   const ta = el("textarea");
   ta.value = newForm.text;
-  ta.placeholder = "Мысль с телефона...";
+  ta.placeholder = "Что нужно сделать и зачем";
   ta.setAttribute("aria-label", "текст черновика");
   const bad = el("div", "error", "");
   const btns = el("div", "tbtns");
   const send = el("button", "btn btn-acc", "Записать черновик");
-  const more = el("button", "btn", newForm.full ? "Свернуть полную строку" : "Полная строка");
+  const more = el("button", "btn", newForm.full ? "Свернуть полную задачу" : "Полная задача");
   btns.append(send, more);
   box.append(ta, el("div", "hint", DRAFT_HINT), btns, bad);
   card.append(box);
@@ -1451,14 +1489,14 @@ function renderNew(project) {
   const full = el("div", "card nform");
   full.hidden = !newForm.full;
   groups.append(full);
-  full.append(el("div", "nfhead", "Полная строка"));
+  full.append(el("div", "nfhead", "Полная задача"));
   const fbox = el("div", "nfbody");
   full.append(fbox);
 
   const title = el("input");
   title.value = newForm.title;
-  title.placeholder = "Заголовок строки";
-  title.setAttribute("aria-label", "заголовок строки");
+  title.placeholder = "Заголовок задачи";
+  title.setAttribute("aria-label", "заголовок задачи");
   fbox.append(title);
 
   const chips = el("div", "tchips");
@@ -1493,7 +1531,7 @@ function renderNew(project) {
 
   const fbad = el("div", "error", "");
   const fbtns = el("div", "tbtns");
-  const make = el("button", "btn btn-acc", "Завести строку");
+  const make = el("button", "btn btn-acc", "Завести задачу");
   fbtns.append(make);
   fbox.append(el("div", "hint", FULL_HINT), fbtns, fbad);
 
@@ -1508,7 +1546,7 @@ function renderNew(project) {
     sumf.textContent = "= " + parts.join("+");
     send.disabled = !newForm.text.trim();
     fbad.textContent = newForm.type === "task" && Number(parts[3]) === 5 ? BUG_PART_REFUSAL
-      : !newForm.title.trim() ? "заголовок строки пустым не бывает" : "";
+      : !newForm.title.trim() ? "заголовок задачи пустым не бывает" : "";
     make.disabled = Boolean(fbad.textContent);
     bad.textContent = "";
   };
@@ -1517,7 +1555,7 @@ function renderNew(project) {
   more.addEventListener("click", () => {
     newForm.full = !newForm.full;
     full.hidden = !newForm.full;
-    more.textContent = newForm.full ? "Свернуть полную строку" : "Полная строка";
+    more.textContent = newForm.full ? "Свернуть полную задачу" : "Полная задача";
   });
   send.addEventListener("click", () => {
     const text = ta.value.trim();
@@ -1557,11 +1595,20 @@ function renderNew(project) {
 // открытом экране, доезжает без перезагрузки страницы.
 const FEED_FILTERS = [
   { kind: "", name: "Все" },
-  { kind: "stop", name: "Стопы" },
-  { kind: "wait", name: "wait-human" },
+  { kind: "stop", name: "Остановки" },
+  { kind: "wait", name: "Ожидание пользователя" },
   { kind: "task", name: "Задачи" },
 ];
 const FEED_ICONS = { stop: "i-stop", wait: "i-wait", task: "i-done" };
+
+// Значок берётся копией из разметки страницы (макет «05 Лента»): фигуры
+// событий и колокольчика собирались рамками стилей и читались обрубками, а
+// внешних картинок и шрифта значков у статики нет.
+function icon(name) {
+  const tpl = document.getElementById("icons");
+  const node = tpl && tpl.content.querySelector('[data-ico="' + name + '"]');
+  return node ? node.cloneNode(true) : el("i");
+}
 const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 
@@ -1584,8 +1631,9 @@ function dayLabel(day) {
 
 function feedItemEl(project, n) {
   const item = el("div", "nitem");
-  const ico = el("div", "nico " + (FEED_ICONS[n.kind] || "i-other"));
-  ico.append(el("i"));
+  const kind = FEED_ICONS[n.kind] || "i-other";
+  const ico = el("div", "nico " + kind);
+  ico.append(icon(kind));
   item.append(ico);
   const b = el("div", "nb2");
   b.append(el("div", "t1", n.title));
@@ -1598,7 +1646,7 @@ function feedItemEl(project, n) {
     if (n.kind === "stop") {
       const up = el("button", "btn btn-acc", "Поднять виток");
       up.addEventListener("click", () => { startRun(project, n.id).catch(console.error); });
-      const jrn = el("a", "", "Журнал цикла");
+      const jrn = el("a", "", "Журнал агента");
       jrn.href = "#" + project + "/agent/" + n.id;
       acts.append(up, jrn);
     } else {
@@ -1694,15 +1742,81 @@ async function refreshBellDot() {
   showBellDot(Boolean(last) && last > seen);
 }
 
+// Флеш-уведомление в углу окна (макет «05 Лента»): новое событие всплывает
+// поверх любого экрана и гаснет само, полоска под текстом показывает остаток
+// времени, нажатие ведёт в ленту. Копится не больше трёх, последнее сверху.
+const FLASH_LIFE = 8000;
+const FLASH_MAX = 3;
+
+// Момент подключения к потоку: хвост журнала, который сервер отдаёт сразу,
+// всплывать не должен. Флеш это про то, что случилось при открытом окне.
+let flashSince = "";
+
+function showFlash(n) {
+  const box = document.getElementById("flashes");
+  if (!box) return;
+  const card = el("div", "flash");
+  card.append(el("span", "pdot " + (n.kind === "task" ? "pd-run" : "pd-warn")));
+  const body = el("div", "ft");
+  body.append(el("b", "", n.title || "событие ленты"));
+  if (n.body) body.append(el("span", "", n.body));
+  const life = el("div", "flife");
+  life.style.animationDuration = FLASH_LIFE + "ms";
+  body.append(life);
+  card.append(body, el("span", "fw", "сейчас"));
+  card.addEventListener("click", () => {
+    card.remove();
+    location.hash = (shownProject || route().proj) + "/feed";
+  });
+  box.prepend(card);
+  while (box.childElementCount > FLASH_MAX) box.lastElementChild.remove();
+  setTimeout(() => { card.remove(); }, FLASH_LIFE);
+}
+
+// Всплывать ли уведомлению: событие старше подключения это хвост журнала,
+// который сервер отдаёт сразу, и всплывать ему незачем; на открытой ленте
+// событие и так дописывается строкой, второй раз его показывать не надо.
+function flashWorthy(n, since, onFeed) {
+  return Boolean(n && n.time) && n.time > since && !onFeed;
+}
+
+// Поток флеша живёт отдельно от экранов: он не закрывается при переходах,
+// иначе уведомление приходило бы только на ленте, где оно и так видно строкой.
+function wireFlash() {
+  flashSince = nowStamp();
+  const es = new EventSource("/api/notifications?stream=1");
+  es.onmessage = (ev) => {
+    let n;
+    try {
+      n = JSON.parse(ev.data);
+    } catch (err) {
+      return;
+    }
+    if (!flashWorthy(n, flashSince, route().feed)) return;
+    flashSince = n.time;
+    // Точка на колокольчике загорается тем же событием: ждать фокуса окна,
+    // чтобы узнать о случившемся при открытом окне, было бы странно.
+    showBellDot(n.time > feedSeen());
+    showFlash(n);
+  };
+}
+
 function renderFeed(project) {
   // Заход на ленту гасит точку: всё, что было до этой минуты, человек видит
   // прямо сейчас.
   markFeedSeen(nowStamp());
   const groups = document.getElementById("groups");
   groups.replaceChildren();
+  // Заголовок не пересказывает состав ленты: что в неё попадает, говорит
+  // значок информации по наведению.
   const head = el("div", "nhead");
   head.append(el("h2", "", "Лента"));
-  head.append(el("span", "sub", "уведомления машины: стопы работ, зов человека, завершённые задачи"));
+  const info = el("span", "tipwrap");
+  const knob = el("span", "tipq", "i");
+  knob.setAttribute("aria-label", "Что попадает в ленту");
+  knob.addEventListener("click", () => { info.classList.toggle("on"); });
+  info.append(knob, el("div", "tipbox", "На этом экране отображаются все уведомления от агентов"));
+  head.append(info);
   const chips = el("div", "filters");
   const list = el("div", "ngroups");
   groups.append(head, chips, list);
@@ -1761,18 +1875,67 @@ function renderFeed(project) {
 // экрана. На ноутбуке проекты стоят и в боковой колонке, на телефоне колонки
 // нет, а барабан выбора виден только на доске, поэтому свой экран у списка
 // нужен обоим форм-факторам.
+// Легенда кружков: на ноутбуке всплывает по знаку у заголовка, на телефоне
+// наведения нет, и тот же знак разворачивает её нажатием.
+const DOT_LEGEND = [
+  ["", "нет активных задач"],
+  ["pd-run", "идёт работа агентов"],
+  ["pd-warn", "требуется внимание, задача приостановлена или ожидает пользователя"],
+];
+
+function dotLegend() {
+  const wrap = el("span", "tipwrap");
+  const knob = el("span", "tipq", "?");
+  knob.setAttribute("aria-label", "Статусы индикатора");
+  const box = el("div", "tipbox");
+  box.append(el("b", "", "Статусы индикатора"));
+  for (const [cls, why] of DOT_LEGEND) {
+    const line = el("div", "tipl");
+    line.append(el("span", "pdot" + (cls ? " " + cls : "")), document.createTextNode(why));
+    box.append(line);
+  }
+  knob.addEventListener("click", () => { wrap.classList.toggle("on"); });
+  wrap.append(knob, box);
+  return wrap;
+}
+
+// Причина словами рядом с кружком: что именно идёт и почему проект ждёт
+// человека. У тихого проекта её нет.
+function projectWhy(p) {
+  const works = p.works || [];
+  if (works.length) {
+    const ids = works.map((w) => w.id || "интерактивная сессия").join(", ");
+    return works.length + " " + plural(works.length, "задача", "задачи", "задач") +
+      " в работе: " + ids;
+  }
+  const check = (p.sections && p.sections.check) || 0;
+  if (check) {
+    return "ждёт проверки: " + check + " " +
+      plural(check, "задача", "задачи", "задач") + " в Check";
+  }
+  return "";
+}
+
 function renderHome(projects) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
+  // Легенда стоит у заголовка шапки, а не отдельной строкой списка: заголовок
+  // экрана шапка и рисует.
+  document.getElementById("hlegend").replaceChildren(dotLegend());
   const card = el("div", "card");
   if (!projects.length) card.append(el("div", "empty", "Проектов нет."));
   for (const p of projects) {
     const row = el("div", "prow");
-    if (p.works && p.works.length) row.append(el("span", "dot pulse"));
+    const st = projectState(p);
+    row.append(el("span", "pdot" + (st.cls ? " " + st.cls : "")));
     row.append(el("b", "", p.name));
-    row.append(el("span", "stale", p.works && p.works.length
-      ? p.works.length + " " + plural(p.works.length, "работа", "работы", "работ") + " в ходу"
-      : "тихо"));
+    const total = Object.values(p.sections || {}).reduce((a, b) => a + b, 0);
+    if (p.prefix) {
+      row.append(el("span", "chip", p.prefix + ", " + total + " " +
+        plural(total, "задача", "задачи", "задач")));
+    }
+    const why = projectWhy(p);
+    if (why) row.append(el("span", "stale", why));
     row.addEventListener("click", () => { location.hash = p.name; });
     card.append(row);
   }
@@ -1784,8 +1947,6 @@ function renderHome(projects) {
   if (!shownProject) return;
   const bar = el("div", "nbar");
   bar.append(newTaskButton(shownProject, "Новая задача"));
-  bar.append(el("span", "hint",
-    "Ляжет на доску проекта " + shownProject + ", другой выбирается строкой списка."));
   groups.append(bar);
 }
 
@@ -1959,6 +2120,16 @@ function plural(n, one, few, many) {
 // разделом больше не стоит, вход в неё это колокольчик в шапке, и открытая
 // лента подсвечивает его.
 function markNav(rt) {
+  // На самой главной логотип погашен: он никуда не ведёт, и подсветка по
+  // наведению обещала бы переход, которого нет.
+  for (const id of ["logo-side", "logo-top"]) {
+    const logo = document.getElementById(id);
+    logo.classList.toggle("here", Boolean(rt.home));
+    logo.title = rt.home ? "Вы и так на главной" : "На главную";
+  }
+  // Легенда кружков живёт на главной: её рисует renderHome, а с остальных
+  // экранов она убирается вместе с ними.
+  if (!rt.home) document.getElementById("hlegend").replaceChildren();
   const on = rt.home ? "home" : rt.feed ? "feed" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
@@ -1978,10 +2149,10 @@ for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
   });
 }
 
-// Кнопка на главную: она в шапке, а шапка стоит над любым экраном, поэтому
-// уход к списку проектов есть и с задачи, и с живого статуса, и с ленты. На
-// телефоне то же место занимает первая нижняя вкладка.
-for (const id of ["gohome", "nav-home", "tab-home"]) {
+// Переход на главную это логотип в левом верхнем углу: на ноутбуке он стоит
+// вверху боковой колонки, на телефоне слева в шапке, кнопки «На главную» нет
+// нигде. На телефоне то же место занимает и первая нижняя вкладка.
+for (const id of ["logo-side", "logo-top", "nav-home", "tab-home"]) {
   document.getElementById(id).addEventListener("click", () => {
     // Пустой хэш это главная. Пустая строка оставила бы в адресе прежний "#x",
     // поэтому решётка ставится явно.
@@ -2007,4 +2178,5 @@ window.addEventListener("focus", () => { refresh().catch(console.error); });
 // Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале
 // колонки читалась бы как «подписок нет».
 paintQuota();
+wireFlash();
 refresh().catch(console.error);

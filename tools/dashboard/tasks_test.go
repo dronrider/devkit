@@ -516,13 +516,13 @@ func TestStaticTaskEditHonesty(t *testing.T) {
 		"Серьёзность", "Ценность", "Неопределённость", "Поправка на баг", "Рычаг",
 		"по RANKING.md",
 		"перетаскивания мимо ранга нет",
-		"После, ждёт их",
-		"Держит, ждут её",
+		"Заблокировано задачами",
+		"Блокирует выполнение задач",
 		"Завести файл",
 		"Сохранить",
 		"Отменить правку",
 		"поправка на баг у типа task не ставится",
-		"Бакет P не выбирается рукой",
+		"Бакет считается из суммы ранга, рукой не ставится",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет надписи %q", want)
@@ -575,7 +575,7 @@ func TestStaticTaskSaveOrder(t *testing.T) {
 func TestStaticTaskLiveUpdateKeepsDraft(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
-		"строка обновилась, перечитать",
+		"задача обновилась, перечитать",
 		"Перечитать",
 		"taskDraft.dirty",
 		"function taskSeen(",
@@ -595,5 +595,84 @@ func TestStaticTaskLiveUpdateKeepsDraft(t *testing.T) {
 	if stop := strings.Index(head, "groups.replaceChildren()"); stop < 0 ||
 		!strings.Contains(head[:stop], "taskDraft.dirty") {
 		t.Error("renderTask чистит экран, не спросив черновик: правка в форме затирается свежими данными")
+	}
+}
+
+// Сохранение и действия стоят одной полосой над содержимым (макет
+// «02 Задача»): отдельной карточки действий у задачи нет, надписи про пустую
+// правку нет вовсе (о ней говорит погашенная кнопка), а «Отменить правку»
+// появляется только тогда, когда отменять есть что.
+func TestStaticTaskActionBar(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	for _, want := range []string{`el("div", "card abar")`, "drop.hidden = true", "drop.hidden = !dirty",
+		"save.disabled = !dirty", `el("span", "div")`, "Остановить агента"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в полосе действий задачи нет %q", want)
+		}
+	}
+	for _, gone := range []string{"Правки нет", `el("div", "card act")`, "Изменённое уедет одной кнопкой"} {
+		if strings.Contains(app, gone) {
+			t.Errorf("в static/app.js осталось %q: форма снова объясняет себя надписью", gone)
+		}
+	}
+	if strings.Contains(body, "Порядок в Backlog выводится из ранга") {
+		t.Error("надпись про порядок в Backlog вернулась на экран задачи")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".abar{", ".abar .div{", ".btn-danger{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет стиля полосы действий %q", want)
+		}
+	}
+}
+
+// Пояснения ушли с экрана в подсказки по наведению: бакет P рассказывает о
+// себе сам, дата стоит без слова «правка», последствия остановки висят на
+// кнопке остановки.
+func TestStaticTaskTips(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(funcBody(t, app, "function withTip("), "node.title = text") {
+		t.Error("подсказка не садится на сам элемент: withTip не выставляет title")
+	}
+	for _, want := range []string{
+		`withTip(p, P_HINT)`,
+		`withTip(el("span", "stale dashed", row.moved)`,
+		"дата последней правки задачи на доске",
+		"Сессия агента будет завершена, при возобновлении состояние агента",
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет подсказки %q", want)
+		}
+	}
+	for _, gone := range []string{`"правка " + row.moved`, `"правка строки "`, `"hint phint"`} {
+		if strings.Contains(app, gone) {
+			t.Errorf("в static/app.js осталась надпись-указка %q", gone)
+		}
+	}
+	// Стоп называется одинаково везде: на задаче, на экране агента и в чате.
+	if n := strings.Count(app, `"Остановить агента"`); n < 3 {
+		t.Errorf("кнопок «Остановить агента» %d, жду три экрана: задача, агент, чат", n)
+	}
+}
+
+// Зависимости названы словами, а маркер [после ...] со строки доски говорит
+// то же самое: «после DK-248» требовало от читателя достроить, кто кого ждёт.
+func TestStaticDepsNamedInWords(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	chips := funcBody(t, app, "function rowChips(")
+	for _, want := range []string{"заблокирована задачей ", "заблокирована задачами "} {
+		if !strings.Contains(chips, want) {
+			t.Errorf("в чипах строки нет %q", want)
+		}
+	}
+	if strings.Contains(chips, `"после "`) {
+		t.Error("в чипах строки остался маркер «после»: кто кого ждёт, читателю приходится достраивать")
+	}
+	deps := funcBody(t, app, "function depsCard(")
+	for _, want := range []string{"Заблокировано задачами", "Блокирует выполнение задач"} {
+		if !strings.Contains(deps, want) {
+			t.Errorf("в карточке зависимостей нет заголовка %q", want)
+		}
 	}
 }

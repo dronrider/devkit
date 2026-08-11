@@ -285,7 +285,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
 	// в чужом корне.
 	var work *Work
-	works := liveWorks(found.Path, view.Prefix, s.cfg.Home)
+	works := s.liveWorks(found.Path, view.Prefix)
 	for i := range works {
 		if works[i].ID == id {
 			work = &works[i]
@@ -295,6 +295,11 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	if work == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии с префиксом его доски, ни записи в реестре целей", id, found.Name)})
+		return
+	}
+	if work.Via == "session" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("работа %s это интерактивная сессия: её ведёт человек в окне, снимать нечего", id)})
 		return
 	}
 	if work.Via == "registry" {

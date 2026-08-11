@@ -110,6 +110,7 @@ a:hover{text-decoration:underline}
 .actmsg{min-height:18px;padding:8px 4px 0;font:400 12.5px var(--sans);color:var(--tx2)}
 .actmsg.error{color:var(--block)}
 .lcard b{cursor:pointer}
+.lcard b.flat{cursor:default;color:var(--tx2)}
 .crumb{display:flex;align-items:center;gap:10px;padding:18px 4px 0;font:500 12.5px var(--sans);color:var(--tx3)}
 .crumb-back{color:var(--tx2);cursor:pointer}
 .crumb-back:hover{color:var(--tx)}

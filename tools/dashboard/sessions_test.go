@@ -513,3 +513,78 @@ func TestStaticTranscriptKeepsPlace(t *testing.T) {
 		t.Error("транскрипт прокручивается вниз мимо якоря")
 	}
 }
+
+// Транскрипт без ID задачи в шапке: окно человека, о котором известно только
+// то, что оно работает.
+const plainSessionFixture = `{"type":"user","message":{"role":"user","content":"поправь вёрстку карточки"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"main"}
+`
+
+// Интерактивные сессии видны живыми работами: свежий транскрипт даёт работу с
+// подписью, протухший по порогу не даёт, нераспознанная задача остаётся в
+// списке с подписью, а сессия задачи, у которой уже идёт tmux-работа, второй
+// карточкой не задваивается.
+func TestLiveWorksSessions(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "", "live-plain", plainSessionFixture, now.Add(-time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-77", "live-task", transcriptFixture, now.Add(-2*time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-5", "live-dup", transcriptFixture, now.Add(-3*time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-88", "stale", transcriptFixture, now.Add(-30*time.Minute))
+
+	c := e.loggedClient(t)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")
+	var got struct {
+		Works []Work `json:"works"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []Work{
+		{ID: "XR-9", Kind: "goal", Via: "tmux"},
+		{ID: "XR-5", Kind: "task", Via: "tmux"},
+		{ID: "XR-112", Kind: "goal", Via: "registry"},
+		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
+		{ID: "XR-77", Kind: "session", Via: "session", Session: "live-task"},
+	}
+	if !reflect.DeepEqual(got.Works, want) {
+		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got.Works, want)
+	}
+}
+
+// Стоп интерактивной сессии это отказ словами: её ведёт человек в окне, и
+// снимать дашборду нечего.
+func TestRunStopInteractiveSession(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "-xr-77", "live-task", transcriptFixture, now.Add(-time.Minute))
+
+	c := e.loggedClient(t)
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-77", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "человек в окне") {
+		t.Fatalf("стоп интерактивной сессии: %d %s, ожидал 409 про окно человека", resp.StatusCode, text)
+	}
+}
+
+// Клиент показывает интерактивную работу как таковую: в полосе живых работ у
+// неё подпись вместо кнопки стопа, а экран агента ставит фишку и оставляет
+// переход в чат.
+func TestStaticInteractiveWork(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	live := funcBody(t, text, "function renderLive(")
+	if !strings.Contains(live, `} else if (w.via === "session") {`) {
+		t.Error("полоса живых работ не различает интерактивную сессию")
+	}
+	if strings.Index(live, `w.via === "session"`) < strings.Index(live, `"btn btn-sm", "Стоп"`) {
+		t.Error("ветка интерактивной сессии стоит до кнопки стопа: кнопка достанется и ей")
+	}
+	agent := funcBody(t, text, "function renderAgent(")
+	if !strings.Contains(agent, `work.via === "session"`) || !strings.Contains(agent, "интерактивная сессия") {
+		t.Error("экран агента не подписывает интерактивную сессию")
+	}
+	if !strings.Contains(agent, `if (!work || work.kind === "goal" || work.via === "session") {`) {
+		t.Error("у интерактивной сессии пропала кнопка чата")
+	}
+}

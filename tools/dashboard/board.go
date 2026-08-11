@@ -143,23 +143,31 @@ func parseBoardView(raw json.RawMessage) (boardView, error) {
 	return v, err
 }
 
-// Work это живая работа проекта: tmux-сессия goal-*/task-* либо цель из
-// реестра ~/.devkit/goals (цикл, ведущийся снаружи, без своей tmux-сессии).
+// Work это живая работа проекта: tmux-сессия goal-*/task-*, цель из реестра
+// ~/.devkit/goals (цикл, ведущийся снаружи, без своей tmux-сессии) либо
+// интерактивная сессия человека в окне, узнанная по свежему транскрипту
+// (DK-263). Session и Note заполняет только третий источник: у интерактивной
+// работы есть транскрипт, а задача у неё бывает и не узнана.
 type Work struct {
-	ID   string `json:"id"`
-	Kind string `json:"kind"` // goal | task
-	Via  string `json:"via"`  // tmux | registry
+	ID      string `json:"id"`
+	Kind    string `json:"kind"` // goal | task | session
+	Via     string `json:"via"`  // tmux | registry | session
+	Session string `json:"session,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 // liveWorks собирает работы проекта. tmux-сессии на машине общие, к проекту
 // они привязываются префиксом ID с его доски; доска без префикса работ из
 // tmux не получает. Реестр целей привязан корнем и добирает цели, которые
-// ведёт живой чат без tmux-сессии.
-func liveWorks(projectPath, prefix, home string) []Work {
+// ведёт живой чат без tmux-сессии. Третьим идут интерактивные сессии: окно
+// агента у человека не заводит ни tmux-сессии, ни записи в реестре, и без
+// них половина работы на машине была бы невидима.
+func (s *server) liveWorks(projectPath, prefix string) []Work {
 	// Пустой список, а не null: клиент и smoke-сценарий различают «работ нет»
 	// и «поля нет».
 	works := []Work{}
 	seen := map[string]bool{}
+	busy := map[string]bool{}
 	if prefix != "" {
 		for _, name := range tmuxSessions() {
 			for _, kind := range []string{"goal", "task"} {
@@ -169,10 +177,11 @@ func liveWorks(projectPath, prefix, home string) []Work {
 				}
 				works = append(works, Work{ID: id, Kind: kind, Via: "tmux"})
 				seen[kind+"-"+id] = true
+				busy[id] = true
 			}
 		}
 	}
-	for _, path := range globSorted(filepath.Join(home, ".devkit", "goals", "*.watch")) {
+	for _, path := range globSorted(filepath.Join(s.cfg.Home, ".devkit", "goals", "*.watch")) {
 		entry := readEntry(path)
 		goal, root := entry["goal"], entry["root"]
 		if goal == "" || root == "" || filepath.Clean(root) != filepath.Clean(projectPath) {
@@ -182,8 +191,9 @@ func liveWorks(projectPath, prefix, home string) []Work {
 			continue
 		}
 		works = append(works, Work{ID: goal, Kind: "goal", Via: "registry"})
+		busy[goal] = true
 	}
-	return works
+	return append(works, s.sessionWorks(projectPath, prefix, busy)...)
 }
 
 // tmuxMissingCheck называет ненайденный tmux: без него живые работы это

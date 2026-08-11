@@ -114,14 +114,22 @@ function renderLive(project, works) {
   for (const w of works || []) {
     const card = el("div", "lcard");
     card.append(el("span", "dot pulse"));
-    const name = (w.kind === "goal" ? "goal-" : "") + w.id;
-    const label = el("b", "", name);
-    label.addEventListener("click", () => { location.hash = project + "/agent/" + w.id; });
+    // Интерактивную сессию без узнанной задачи вести некуда: экран агента
+    // открывается по ID, и вместо имени работы карточка называет её видом.
+    const name = w.id
+      ? (w.kind === "goal" ? "goal-" : "") + w.id
+      : "интерактивная сессия";
+    const label = el("b", w.id ? "" : "flat", name);
+    if (w.id) {
+      label.addEventListener("click", () => { location.hash = project + "/agent/" + w.id; });
+    }
     card.append(label);
     if (w.via === "tmux") {
       const stop = el("button", "btn btn-sm", "Стоп");
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
       card.append(stop);
+    } else if (w.via === "session") {
+      card.append(el("span", "via", w.note || "интерактивная сессия"));
     } else {
       card.append(el("span", "via", "ведётся снаружи"));
     }
@@ -177,6 +185,9 @@ function rankCell(row) {
 // ответ выходит в ту же строку результата.
 function rowAction(project, row, works) {
   const work = (works || []).find((w) => w.id === row.id);
+  if (work && work.via === "session") {
+    return el("span", "stale", "интерактивная сессия");
+  }
   if (work && work.via !== "tmux") {
     return el("span", "stale", "ведётся снаружи");
   }
@@ -628,6 +639,9 @@ async function renderTask(project, works, id) {
     act.append(stop);
     act.append(el("div", "hint", "Идёт tmux-сессия " + work.kind + "-" + id +
       ". Стоп это стоп сессии; возобновление это новый запуск, читающий состояние с диска."));
+  } else if (work && work.via === "session") {
+    act.append(el("div", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
+      "стоп из дашборда ей не нужен, окно закрывает человек."));
   } else if (work) {
     act.append(el("div", "hint", "Цикл ведётся снаружи (живой чат), без tmux-сессии дашборда: стоп там, где он поднят."));
   } else {
@@ -1022,18 +1036,22 @@ function renderAgent(project, works, id) {
   const work = (works || []).find((w) => w.id === id);
   const head = el("div", "ahead");
   if (work) head.append(el("span", "dot pulse"));
-  head.append(el("h2", "", (work ? work.kind + "-" : "") + id));
+  head.append(el("h2", "", (work && work.via !== "session" ? work.kind + "-" : "") + id));
   if (work && work.via === "tmux") {
     head.append(el("span", "chip c-check", "tmux-сессия активна"));
     const stop = el("button", "btn", "Стоп");
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
     head.append(stop);
+  } else if (work && work.via === "session") {
+    // Кнопки стопа тут нет: сессию ведёт человек в окне, и снимать её дашборду
+    // нечем.
+    head.append(el("span", "chip c-check", "интерактивная сессия"));
   } else if (work) {
     head.append(el("span", "chip", "ведётся снаружи"));
   } else {
     head.append(el("span", "chip", "работа не идёт"));
   }
-  if (!work || work.kind === "goal") {
+  if (!work || work.kind === "goal" || work.via === "session") {
     const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     head.append(chat);
@@ -1258,6 +1276,8 @@ function renderChat(project, works, id) {
   head.append(el("h2", "", "goal-" + id));
   if (work && work.via === "tmux") {
     head.append(el("span", "chip c-run", "цикл идёт"));
+  } else if (work && work.via === "session") {
+    head.append(el("span", "chip c-check", "интерактивная сессия"));
   } else if (work) {
     head.append(el("span", "chip", "ведётся снаружи"));
   } else {

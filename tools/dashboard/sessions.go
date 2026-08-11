@@ -255,6 +255,49 @@ func sessionTask(dirSuffix string, head sessionHead) (task, note string) {
 	return "", unknownTaskNote
 }
 
+// sessionLiveTTL это порог живости интерактивной сессии. Транскрипт
+// дописывается каждым ходом, но ход бывает долгим: одиночный прогон в
+// foreground харнес держит до десяти минут, и вокруг него идут ещё
+// размышления и правка, поэтому паузу в записи короче этого срока считать
+// концом работы нельзя. Пятнадцать минут держали бы закрытое окно живым
+// четверть часа, двенадцать оставляют запас над самым долгим ходом и убирают
+// доделанную работу с глаз тем же ходом, что человек уходит от окна.
+const sessionLiveTTL = 12 * time.Minute
+
+// foreignTaskNote подписывает сессию, чья задача узнана, но принадлежит чужой
+// доске: ходить по ней на экран задачи некуда, а сама работа идёт и в списке
+// остаётся.
+const foreignTaskNote = "задача не с доски проекта"
+
+// sessionWorks собирает работы из транскриптов: интерактивное окно агента не
+// заводит ни tmux-сессии, ни записи в реестре, и единственный его след это
+// свежий транскрипт. Занятые задачи (busy) сюда не идут: headless-сессия
+// конвейера тоже пишет транскрипт, и её работа уже собрана из tmux, а вторая
+// карточка о той же задаче читалась бы как два агента вместо одного.
+func (s *server) sessionWorks(projPath, prefix string, busy map[string]bool) []Work {
+	works := []Work{}
+	cutoff := s.now().Add(-sessionLiveTTL)
+	for _, f := range sessionFiles(s.cfg.Home, projPath) {
+		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.
+		if f.mod.Before(cutoff) {
+			break
+		}
+		task, note := sessionTask(f.suffix, s.sessionHeadCached(f.path, f.stamp))
+		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
+			task, note = "", foreignTaskNote
+		}
+		if task != "" {
+			if busy[task] {
+				continue
+			}
+			busy[task] = true
+			note = ""
+		}
+		works = append(works, Work{ID: task, Kind: "session", Via: "session", Session: f.ID, Note: note})
+	}
+	return works
+}
+
 func firstLine(text string) string {
 	line, _, _ := strings.Cut(text, "\n")
 	return truncate(line, 160)

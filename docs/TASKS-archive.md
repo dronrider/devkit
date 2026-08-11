@@ -169,3 +169,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-247 | Запуск конвейера из-под launchd не находит claude: ~/.local/bin мимо PATH агента | bug | P2 | 2026-08-11 | [tasks/archive/2026/DK-247.md](tasks/archive/2026/DK-247.md) |
 | DK-232 | Корп-домен вычищен из дерева и истории, force-push пользователя | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-232.md](tasks/archive/2026/DK-232.md) |
 | DK-207 | Цель: исключить попадание секретов в контекст модели | task | P1 | 2026-08-11 | [tasks/archive/2026/DK-207.md](tasks/archive/2026/DK-207.md) |
+| DK-252 | Транскрипт активной задачи мешает чужие сессии: выбор по mtime вместо привязки к задаче | bug | P2 | 2026-08-11 | [tasks/archive/2026/DK-252.md](tasks/archive/2026/DK-252.md) |

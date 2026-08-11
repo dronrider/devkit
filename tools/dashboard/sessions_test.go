@@ -268,6 +268,45 @@ func TestSessionHeadCached(t *testing.T) {
 	}
 }
 
+// bigTranscript это транскрипт длиннее предела головы: заказ работы первой
+// строкой, дальше служебные записи набивкой. Дописывание живой сессии
+// изображается именно так, поэтому набивка идёт разбираемыми записями, а не
+// мусором.
+func bigTranscript(order string) string {
+	pad := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-10T10:00:02.000Z"}` + "\n"
+	return sessionLine(order, "main") + strings.Repeat(pad, metaScanLimit/len(pad)+2)
+}
+
+// Голова, дочитанная до предела, переживает дописывание: jsonl только растёт,
+// и перечитывать первую четверть мегабайта на каждый запрос незачем, хотя
+// отпечаток файла сменился. Живая сессия пишется в транскрипт постоянно,
+// поэтому без этой ветки память процесса на ней не работала бы вовсе.
+// Подмена головы вместе с дописыванием и есть доказательство: перечитанный
+// файл назвал бы другую задачу.
+func TestSessionHeadCachedWhenFull(t *testing.T) {
+	e := newTestEnv(t)
+	stamped := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	path := writeSession(t, e.home, e.proj, "", "aaa-1",
+		bigTranscript("возьми задачу XR-101 в работу"), stamped)
+	c := e.loggedClient(t)
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+		t.Fatalf("первое чтение большой шапки: %+v", list)
+	}
+
+	grown := bigTranscript("возьми задачу XR-102 в работу") +
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Готово."}]},"timestamp":"2026-08-10T10:00:07.000Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(grown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	moved := stamped.Add(time.Minute)
+	if err := os.Chtimes(path, moved, moved); err != nil {
+		t.Fatal(err)
+	}
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+		t.Errorf("дочитанная голова перечитана после дописывания: %+v", list)
+	}
+}
+
 // Экраны агента и переписки обязаны спрашивать сессии своей задачи и
 // показывать подпись сессии: держится грепом по статике, как слова про паузу
 // в тесте стопа.

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -136,7 +137,10 @@ func readSessionHead(path string) (sessionHead, bool) {
 	}
 	defer f.Close()
 	buf := make([]byte, metaScanLimit)
-	n, _ := f.Read(buf)
+	// Чтение до заполнения буфера, а не одним Read: короткий ответ ядра выдал
+	// бы недочитанную голову за дочитанную, и память процесса поверила бы ей.
+	n, err := io.ReadFull(f, buf)
+	full := err == nil
 	for _, ln := range strings.Split(string(buf[:n]), "\n") {
 		var rec struct {
 			Type      string `json:"type"`
@@ -166,7 +170,7 @@ func readSessionHead(path string) (sessionHead, bool) {
 			break
 		}
 	}
-	return head, n >= metaScanLimit
+	return head, full
 }
 
 // headTTL это потолок доверия к запомненной шапке. Отпечаток файла ловит

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Замер экранов дашборда (DK-242). Стартовая и карточка задачи стоят ровно
@@ -150,3 +151,27 @@ func BenchmarkStartScreenCold(b *testing.B) { benchCold(b, startScreen) }
 func BenchmarkStartScreenWarm(b *testing.B) { benchWarm(b, startScreen) }
 func BenchmarkTaskScreenCold(b *testing.B)  { benchCold(b, taskScreen) }
 func BenchmarkTaskScreenWarm(b *testing.B)  { benchWarm(b, taskScreen) }
+
+// BenchmarkQuota меряет чтение снимков подписок: каталог с двумя файлами по
+// сотне байт, как на живой машине. По этому числу принято решение не заводить
+// снимкам памяти процесса (DK-253): рядом с подпроцессами экрана оно теряется.
+//
+//	GOWORK=off go test -run '^$' -bench Quota -benchtime 100x .
+func BenchmarkQuota(b *testing.B) {
+	home := b.TempDir()
+	dir := filepath.Join(home, ".devkit", "quota")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	for name, body := range map[string]string{"harness-one": quotaFixtureA, "harness-two": quotaFixtureB} {
+		if err := os.WriteFile(filepath.Join(dir, name+".local"), []byte(body), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	now := time.Now()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		readQuota(home, now)
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/1e3, "мкс/чтение")
+}

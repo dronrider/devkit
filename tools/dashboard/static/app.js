@@ -1508,12 +1508,86 @@ function renderHome(projects) {
     card.append(row);
   }
   groups.append(card);
+  const quota = el("div", "card qcard squota");
+  quota.id = "quota-card";
+  groups.append(quota);
+  paintQuota();
   if (!shownProject) return;
   const bar = el("div", "nbar");
   bar.append(newTaskButton(shownProject, "Новая задача"));
   bar.append(el("span", "hint",
     "Ляжет на доску проекта " + shownProject + ", другой выбирается строкой списка."));
   groups.append(bar);
+}
+
+// Остаток подписок (макет «00 Главная», блок в подвале боковой колонки). Имён
+// харнесов тут нет ни одного: что показывать, целиком решает ответ сервера, а
+// он собран из каталога снимков. На ноутбуке блок стоит в колонке над кнопкой
+// выхода, на телефоне колонки нет вовсе, и то же самое едет карточкой на
+// главную: остаток нужен как раз с телефона, чтобы понять, пора ли притормозить.
+let quotaView = null;
+
+// quotaWhen сжимает момент сброса до дня и месяца: в колонке шириной с ладонь
+// год и минуты места не стоят, а полный момент остаётся подсказкой.
+function quotaWhen(reset) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(reset || "");
+  return m ? m[3] + "." + m[2] : "";
+}
+
+function quotaRow(b) {
+  const row = el("div", "qrow");
+  row.append(el("em", "", b.name));
+  const meter = el("span", "meter");
+  const fill = el("i");
+  fill.style.width = Math.max(0, Math.min(100, b.used_pct)) + "%";
+  meter.append(fill);
+  row.append(meter);
+  row.append(el("b", "", b.used_pct + "%"));
+  const when = quotaWhen(b.reset);
+  if (when) {
+    const res = el("span", "qres", "до " + when);
+    res.title = "сброс " + b.reset;
+    row.append(res);
+  }
+  return row;
+}
+
+// quotaNodes собирает узлы блока. Пустота тут говорит словами, какая она:
+// каталога снимков нет, каталог пуст и снимок без бакетов это три разных
+// причины, и молчащий блок был бы неотличим от отработавшего.
+function quotaNodes(view) {
+  const out = [el("h4", "", "Квота подписок")];
+  if (!view) {
+    out.push(el("div", "qnote", "снимки читаются..."));
+    return out;
+  }
+  if (view.note) out.push(el("div", "qnote", view.note));
+  for (const h of view.harnesses || []) {
+    out.push(el("div", "qsub", h.name));
+    for (const b of h.buckets || []) out.push(quotaRow(b));
+    const parts = [];
+    if (h.age) parts.push("снимок " + h.age + " назад");
+    if (h.stale) parts.push(h.note || "протух");
+    else if (h.note) parts.push(h.note);
+    for (const w of h.warns || []) parts.push(w);
+    out.push(el("div", "qnote" + (h.stale ? " stale" : ""), parts.join(", ")));
+  }
+  return out;
+}
+
+// paintQuota рисует блок там, где он сейчас есть: колонка стоит над любым
+// экраном, карточка живёт только на главной.
+function paintQuota() {
+  for (const id of ["quota", "quota-card"]) {
+    const box = document.getElementById(id);
+    if (box) box.replaceChildren(...quotaNodes(quotaView));
+  }
+}
+
+async function refreshQuota() {
+  const r = await api("/api/quota");
+  quotaView = r.body;
+  paintQuota();
 }
 
 function showError(text) {
@@ -1540,6 +1614,9 @@ async function refresh() {
   // Точка на колокольчике живёт отдельно от экрана: она нужна и на доске, и на
   // главной, а ждать её ответа экрану незачем.
   refreshBellDot().catch(console.error);
+  // Остаток подписок тоже живёт отдельно от экрана: он стоит над любым из них,
+  // а держать экран ради чтения пары файлов незачем.
+  refreshQuota().catch(console.error);
   renderSidebar(projects, rt.home ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
@@ -1658,4 +1735,7 @@ window.addEventListener("hashchange", () => {
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника
 // у неё нет, а постоянный опрос ест батарею телефона.
 window.addEventListener("focus", () => { refresh().catch(console.error); });
+// Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале
+// колонки читалась бы как «подписок нет».
+paintQuota();
 refresh().catch(console.error);

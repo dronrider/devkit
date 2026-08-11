@@ -39,7 +39,26 @@ a:hover{text-decoration:underline}
 .sitem.off{color:var(--tx3);cursor:default}
 .sitem.off:hover{background:none}
 .sitem .n{margin-left:auto;font:500 11px var(--mono);color:var(--tx3)}
-.sfoot{margin-top:auto;border-top:1px solid var(--line);padding:14px 10px 0}
+.sfoot{border-top:1px solid var(--line);padding:14px 10px 0}
+/* остаток подписок в подвале колонки (макет «00 Главная»): полоска на бакет,
+   процент это потраченное, подпись под группой говорит возраст снимка. Блок
+   прижат книзу, поэтому свободное место колонки достаётся ему, а не кнопке
+   выхода под ним. */
+.squota{margin-top:auto;border-top:1px solid var(--line);padding:14px 10px 12px}
+.squota h4{margin:0 0 10px;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3)}
+.qsub{font:600 11.5px var(--mono);color:var(--tx2);margin:10px 0 7px}
+.qsub:first-of-type{margin-top:0}
+.qrow{display:flex;align-items:center;gap:8px;margin-bottom:8px;font:500 11px var(--mono);color:var(--tx2)}
+.qrow em{font-style:normal;width:62px;flex:none;color:var(--tx3)}
+.qrow b{font-weight:500;min-width:30px;text-align:right}
+.qres{color:var(--tx3);white-space:nowrap}
+.meter{flex:1;min-width:24px;height:4px;border-radius:2px;background:var(--bg3);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:2px;background:var(--acc)}
+.qnote{font:400 10.5px/1.45 var(--mono);color:var(--tx3);margin-top:6px}
+.qnote.stale{color:var(--check)}
+/* карточка на главной: на ноутбуке остаток стоит в колонке, и второй раз его
+   тут не показываем. */
+.qcard{display:none}
 
 /* главная колонка */
 .bmain{flex:1;display:flex;flex-direction:column;padding:24px 32px 0;overflow:hidden;min-width:0}
@@ -279,6 +298,13 @@ a:hover{text-decoration:underline}
   .rsum{min-width:44px;min-height:44px;text-align:left}
   .trow .meta .btn{margin-left:auto;height:36px}
   .prow{min-height:52px}
+  /* телефон: боковой колонки нет, и остаток подписок едет карточкой на
+     главную. Строка шире, чем в колонке, поэтому имя бакета не жмётся. */
+  .squota{margin-top:0}
+  .qcard{display:block;margin-top:14px;border-top:none;padding:14px 16px 12px}
+  .qrow{font-size:12px;min-height:22px}
+  .qrow em{width:78px}
+  .qnote{font-size:11.5px}
   .agrid{grid-template-columns:1fr;gap:0;margin-top:12px}
   .seg{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:3px;margin-top:14px}
   .seg div{flex:1;text-align:center;padding:8px 0;border-radius:8px;font:500 13px var(--sans);color:var(--tx3);cursor:pointer}

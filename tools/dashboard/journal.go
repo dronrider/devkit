@@ -206,22 +206,57 @@ func journalLines(doc string) (lines []string, section bool) {
 	return lines, section
 }
 
+// linkTargetRe вынимает путь из markdown-ссылки: в колонке доски ссылка стоит
+// разметкой целиком («[tasks/DK-112.md](tasks/DK-112.md)»), и путём тут
+// работает только адрес в скобках.
+var linkTargetRe = regexp.MustCompile(`\]\(([^)]+)\)`)
+
+// linkPath приводит ссылку строки доски к пути от каталога docs: вынимает
+// адрес из разметки (голый путь остаётся как есть), отрезает якорь и отбивает
+// всё, чем ходить по диску нельзя. Пути в доске относительны docs/, как и
+// считает их линтер taskctl.
+func linkPath(link string) string {
+	target := strings.TrimSpace(link)
+	if m := linkTargetRe.FindStringSubmatch(target); m != nil {
+		target = strings.TrimSpace(m[1])
+	}
+	if i := strings.IndexByte(target, '#'); i >= 0 {
+		target = target[:i]
+	}
+	if !safeRel(target) {
+		return ""
+	}
+	return target
+}
+
 // goalDocPath ищет файл цели: сначала ссылка со строки доски, потом обычное
-// место docs/tasks/<ID>.md. Ссылка берётся только относительная и без выхода
-// вверх: доска своя, но собирать по ней путь куда угодно незачем.
+// место docs/tasks/<ID>.md. Ссылка, которая никуда не ведёт (разметка без
+// адреса, путь наружу, файла по ней нет), откатывается на это же обычное
+// место: экрану честнее прочитать лежащий рядом файл цели, чем сказать
+// «журнала нет» из-за колонки доски.
 func (s *server) goalDocPath(projectPath, id string) journalDoc {
 	rel := taskFileRel(id)
 	if raw, err := s.projectBoard(projectPath); err == nil {
-		if row, ok := findRow(raw, id); ok && safeRel(row.Link) {
-			rel = row.Link
+		if row, ok := findRow(raw, id); ok {
+			if target := linkPath(row.Link); target != "" {
+				linked := filepath.ToSlash(filepath.Join("docs", target))
+				if isFile(filepath.Join(projectPath, filepath.FromSlash(linked))) {
+					rel = linked
+				}
+			}
 		}
 	}
 	path := filepath.Join(projectPath, filepath.FromSlash(rel))
 	return journalDoc{path: path, rel: rel, seen: isFile(path)}
 }
 
+// safeRel отбивает пути, по которым ходить незачем: пусто, прочерк пустой
+// колонки, абсолютный путь, выход вверх, чужая схема (http, mailto).
 func safeRel(link string) bool {
 	if link == "" || link == "-" || strings.HasPrefix(link, "/") || filepath.IsAbs(link) {
+		return false
+	}
+	if i := strings.IndexByte(link, ':'); i >= 0 {
 		return false
 	}
 	for _, part := range strings.Split(link, "/") {

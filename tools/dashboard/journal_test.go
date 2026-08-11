@@ -410,7 +410,7 @@ func writeDocAt(t *testing.T, path, body string) {
 func TestGoalDocLinkSieve(t *testing.T) {
 	t.Run("относительная ссылка подхватывается", func(t *testing.T) {
 		e := newTestEnv(t)
-		writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", journalBoardJSON("docs/goals/XR-100.md")))
+		writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", journalBoardJSON("goals/XR-100.md")))
 		writeDocAt(t, filepath.Join(e.proj, "docs", "goals", "XR-100.md"), goalDocFixture)
 
 		text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
@@ -425,10 +425,10 @@ func TestGoalDocLinkSieve(t *testing.T) {
 		name, link string
 		at         func(proj string) string
 	}{
-		{"абсолютная отбивается", "/docs/goals/XR-100.md",
+		{"абсолютная отбивается", "/goals/XR-100.md",
 			func(proj string) string { return filepath.Join(proj, "docs", "goals", "XR-100.md") }},
 		{"выход вверх отбивается", "../XR-100.md",
-			func(proj string) string { return filepath.Join(filepath.Dir(proj), "XR-100.md") }},
+			func(proj string) string { return filepath.Join(proj, "XR-100.md") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newTestEnv(t)
@@ -443,5 +443,50 @@ func TestGoalDocLinkSieve(t *testing.T) {
 				t.Fatalf("путь не отбит на docs/tasks/XR-100.md: %s", text)
 			}
 		})
+	}
+}
+
+// Живой формат ссылки строки доски это markdown целиком
+// («[tasks/DK-112.md](tasks/DK-112.md)», так её ставит taskctl), и путём
+// работает адрес в скобках, а не вся разметка. Пути в доске относительны
+// docs/, как их считает и линтер taskctl.
+func TestGoalDocMarkdownLink(t *testing.T) {
+	t.Run("обычное место через разметку", func(t *testing.T) {
+		e := newTestEnv(t)
+		writeScript(t, e.bin, "taskctl",
+			fmt.Sprintf("echo '%s'", journalBoardJSON("[tasks/XR-100.md](tasks/XR-100.md)")))
+		writeGoalDoc(t, e.proj, "XR-100", goalDocFixture)
+
+		text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+		if !strings.Contains(text, goalDocLines[0]) || !strings.Contains(text, `"source":"goal-file"`) {
+			t.Fatalf("разметка ссылки принята за путь: %s", text)
+		}
+	})
+
+	t.Run("ссылка мимо обычного места", func(t *testing.T) {
+		e := newTestEnv(t)
+		writeScript(t, e.bin, "taskctl",
+			fmt.Sprintf("echo '%s'", journalBoardJSON("[goals/XR-100.md](goals/XR-100.md)")))
+		writeDocAt(t, filepath.Join(e.proj, "docs", "goals", "XR-100.md"), goalDocFixture)
+
+		text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+		if !strings.Contains(text, "docs/goals/XR-100.md") || !strings.Contains(text, goalDocLines[0]) {
+			t.Fatalf("адрес из разметки не подхвачен: %s", text)
+		}
+	})
+}
+
+// Ссылка, ведущая на несуществующий файл, откатывается на docs/tasks/<ID>.md:
+// колонка доски бывает и устаревшей, а файл цели лежит на обычном месте, и
+// читать его честнее, чем отвечать «журнала нет».
+func TestGoalDocLinkFallback(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl",
+		fmt.Sprintf("echo '%s'", journalBoardJSON("[goals/XR-100.md](goals/XR-100.md)")))
+	writeGoalDoc(t, e.proj, "XR-100", goalDocFixture)
+
+	text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+	if !strings.Contains(text, "docs/tasks/XR-100.md") || !strings.Contains(text, goalDocLines[0]) {
+		t.Fatalf("отката на обычное место нет: %s", text)
 	}
 }

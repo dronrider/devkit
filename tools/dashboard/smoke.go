@@ -49,7 +49,7 @@ const (
 // smokeBoardJSON изображает ответ taskctl list --json: доска с целью в работе
 // и задачей в Backlog.
 const smokeBoardJSON = `{"prefix":"XR","sections":[` +
-	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"docs/tasks/XR-100.md"}]},` +
+	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"}]},` +
 	`{"key":"check","title":"Check","rows":[]},` +
 	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Соседка по доске","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"S","link":"-"}]},` +
 	`{"key":"blocked","title":"Blocked","rows":[]}]}`
@@ -483,6 +483,39 @@ func (s *smoke) stepMessage() (string, error) {
 	return fmt.Sprintf("строка «%s» ждёт витка, %s", v.Line, note), nil
 }
 
+// stepJournal: журнал цели читается из раздела «Журнал» её файла. Шаг идёт до
+// запуска работы: пока цель не гонялась оболочкой, файла .devkit/goal-XR-100.log
+// у неё нет, и строки обязаны прийти из файла цели, найденного по живой ссылке
+// строки доски (она стоит markdown-разметкой относительно docs/, как её пишет
+// taskctl). Шаг ловит ровно ту поломку, которую нашла живая проверка DK-255:
+// разметка, принятая за путь, оставляла экран агента без журнала.
+func (s *smoke) stepJournal() (string, error) {
+	var v struct {
+		Exists bool     `json:"exists"`
+		Source string   `json:"source"`
+		Sign   string   `json:"source_note"`
+		Note   string   `json:"note"`
+		Lines  []string `json:"lines"`
+	}
+	if err := s.call("GET", "/api/projects/demo/goals/"+smokeGoal+"/log", "", http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if !v.Exists || v.Source != "goal-file" {
+		return "", fmt.Errorf("журнал цели не прочитан из её файла: source %q, %s", v.Source, v.Note)
+	}
+	if !strings.Contains(v.Sign, "docs/tasks/"+smokeGoal+".md") {
+		return "", fmt.Errorf("источник журнала подписан %q", v.Sign)
+	}
+	last := ""
+	if len(v.Lines) > 0 {
+		last = v.Lines[len(v.Lines)-1]
+	}
+	if !strings.Contains(last, "цель заведена прогоном smoke") {
+		return "", fmt.Errorf("записи витка в журнале нет: %v", v.Lines)
+	}
+	return fmt.Sprintf("%d строк, источник назван: %s", len(v.Lines), v.Sign), nil
+}
+
 func (s *smoke) goalPath() string {
 	return filepath.Join(s.proj, "docs", "tasks", smokeGoal+".md")
 }
@@ -686,6 +719,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 	}
 	steps := []smokeStep{
 		{"доска со статусами и работами", s.stepBoard},
+		{"журнал цели из её файла", s.stepJournal},
 		{"запуск работы", s.stepStart},
 		{"работа видна живой", s.stepWorks},
 		{"сообщение цели", s.stepMessage},

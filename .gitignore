@@ -14,5 +14,8 @@ dist/
 .devkit/log
 # Замок конвейера shipctl, лежит пустым и держится flock, а не содержимым.
 .devkit/ship.lock
+# Полные выводы команд под обёрткой cmdout (DK-264): файлы пишет frame.Capture,
+# агенту виден путь в выжимке, в коммит им дороги нет.
+.devkit/cmdout/
 # Кеш python: юниты уведомителя грузят hooks/notify.py как модуль.
 __pycache__/

@@ -163,3 +163,6 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-245 | Заведение задачи и черновика с дашборда | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-245.md](tasks/archive/2026/DK-245.md) |
 | DK-246 | Лента уведомлений входом с колокольчика, а не пунктом меню | task | P3 | 2026-08-11 | [tasks/archive/2026/DK-246.md](tasks/archive/2026/DK-246.md) |
 | DK-134 | taskctl: -m съедает следующий флаг как сообщение, пуш молча пропадает | bug | P2 | 2026-08-11 | [tasks/archive/2026/DK-134.md](tasks/archive/2026/DK-134.md) |
+| DK-227 | Значения секретов переезжают из access.local.md в secretctl | task | P1 | 2026-08-11 | [tasks/archive/2026/DK-227.md](tasks/archive/2026/DK-227.md) |
+| DK-230 | check-sensitive: скоуп шире доски и паттерн корп-доменов, obeycheck | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-230.md](tasks/archive/2026/DK-230.md) |
+| DK-231 | Транскрипты ~/.claude/projects очищены от утёкших тел токенов | task | P2 | 2026-08-11 | [tasks/archive/2026/DK-231.md](tasks/archive/2026/DK-231.md) |

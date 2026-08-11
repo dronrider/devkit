@@ -31,7 +31,7 @@ func TestStaticBoardRowActions(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function rowAction(")
 	for _, want := range []string{"stopRun(project, row.id)", "startRun(project, row.id)",
-		"ev.stopPropagation()", `"Стоп"`, `"В работу"`, "ведёт другая сессия"} {
+		"ev.stopPropagation()", `"Стоп"`, "actionLabel(sect)", "ведёт другая сессия"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: действие со строки не доведено", want)
 		}
@@ -39,8 +39,35 @@ func TestStaticBoardRowActions(t *testing.T) {
 	if strings.Contains(body, "api(") {
 		t.Error("rowAction ходит на сервер сам, мимо startRun и stopRun: ручка у запуска и стопа одна")
 	}
-	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowAction(project, row, works)") {
+	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowAction(project, row, works, sect)") {
 		t.Error("строка доски рисуется без действия: за запуском снова придётся заходить внутрь задачи")
+	}
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), "renderRow(project, row, works, key)") {
+		t.Error("строка рисуется без своей секции: статус до кнопки не доходит, и действие снова одно на все")
+	}
+}
+
+// Действие называется по статусу строки: из Backlog задачу выполняют, начатую
+// продолжают, проверенную закрывают. Те же слова сервер кладёт в промпт
+// конвейеру, и подпись кнопки обязана совпадать с заказом.
+func TestStaticActionLabelBySection(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	labels := funcBody(t, text, "const ACTION_BY_SECT")
+	for _, want := range []string{`"in-progress": "Продолжить"`, `check: "Закрыть"`, `|| "Выполнить"`} {
+		if !strings.Contains(labels, want) {
+			t.Errorf("в подписях действий нет %q", want)
+		}
+	}
+	if strings.Contains(text, `"В работу"`) {
+		t.Error("в static/app.js осталась кнопка «В работу»: одна подпись на все статусы шлёт конвейеру не тот заказ")
+	}
+	// Заблокированная маркером строка действия не получает: кнопка стоит
+	// погашенной с причиной, а запуск с неё не уходит.
+	body := funcBody(t, text, "function rowAction(")
+	for _, want := range []string{"row.after && row.after.length", "wait.disabled = true", "сначала "} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в rowAction нет %q: заблокированная задача снова уходит в конвейер", want)
+		}
 	}
 }
 

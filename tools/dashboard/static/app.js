@@ -201,10 +201,20 @@ function rankCell(row) {
   return cell;
 }
 
-// Действие прямо со строки: взять в работу или снять живую сессию, не заходя
+// Действие зависит от статуса строки: из Backlog задачу выполняют, начатую
+// продолжают, проверенную закрывают. Подпись кнопки идёт от той же секции, по
+// которой сервер собирает промпт конвейеру, иначе кнопка обещала бы одно, а
+// агент получал другое.
+const ACTION_BY_SECT = { "in-progress": "Продолжить", check: "Закрыть" };
+
+function actionLabel(sect) {
+  return ACTION_BY_SECT[sect] || "Выполнить";
+}
+
+// Действие прямо со строки: поднять конвейер или снять живую сессию, не заходя
 // внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
 // ответ выходит в ту же строку результата.
-function rowAction(project, row, works) {
+function rowAction(project, row, works, sect) {
   const work = (works || []).find((w) => w.id === row.id);
   if (work && work.via === "session") {
     return el("span", "stale", "интерактивная сессия");
@@ -212,7 +222,14 @@ function rowAction(project, row, works) {
   if (work && work.via !== "tmux") {
     return el("span", "stale", "ведёт другая сессия");
   }
-  const btn = el("button", "btn btn-sm" + (work ? "" : " btn-acc"), work ? "Стоп" : "В работу");
+  if (!work && row.after && row.after.length) {
+    // Заблокированную маркером задачу конвейер брать не должен, и кнопка
+    // говорит это сама: погашенная с причиной понятнее исчезнувшей.
+    const wait = el("button", "btn btn-sm", actionLabel(sect));
+    wait.disabled = true;
+    return withTip(wait, "сначала " + row.after.join(", "));
+  }
+  const btn = el("button", "btn btn-sm" + (work ? "" : " btn-acc"), work ? "Стоп" : actionLabel(sect));
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     const call = work ? stopRun(project, row.id) : startRun(project, row.id);
@@ -221,7 +238,7 @@ function rowAction(project, row, works) {
   return btn;
 }
 
-function renderRow(project, row, works) {
+function renderRow(project, row, works, sect) {
   const tr = el("div", "trow");
   tr.append(el("span", "id", row.id));
   const tt = el("span", "tt");
@@ -237,7 +254,7 @@ function renderRow(project, row, works) {
     meta.append(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
-  meta.append(rowAction(project, row, works));
+  meta.append(rowAction(project, row, works, sect));
   tr.append(meta);
   tr.addEventListener("click", () => { location.hash = project + "/" + row.id; });
   return tr;
@@ -263,7 +280,7 @@ function renderBoard(project, board, works) {
     if (!sec.rows.length) {
       card.append(el("div", "empty", "Нет."));
     }
-    for (const row of sec.rows) card.append(renderRow(project, row, works));
+    for (const row of sec.rows) card.append(renderRow(project, row, works, key));
     groups.append(card);
   }
 }
@@ -539,6 +556,79 @@ function draftRefusal(form, text) {
 // правит taskctl на стороне сервера, поэтому правится ровно то, что есть в
 // строке: заголовок, тип, слагаемые ранга и цена; порядок строк выводится из
 // ранга, перетаскивания мимо ранга нет.
+// Где поднимется работа: подпись кнопки говорит про заказ, а надпись рядом
+// про место, откуда за ним смотреть.
+function taskActionHint(isGoal, sect, id) {
+  if (isGoal) {
+    return "Цель поведёт оболочка goal-run в tmux-сессии goal-" + id +
+      ", состояние следующий виток прочтёт с диска.";
+  }
+  const where = " в tmux-сессии task-" + id + ".";
+  if (sect === "in-progress") {
+    return "Начатую задачу конвейер продолжит с того места, где она стоит," + where;
+  }
+  if (sect === "check") {
+    return "Проверенную задачу конвейер закроет" + where +
+      " Агентский сценарий он прогонит сам, пользовательский оставит человеку.";
+  }
+  return "Задачу поднимет headless-сессия конвейера доски" + where;
+}
+
+// Полоса действий задачи: у живой работы её экран и стоп, у стоящей действие
+// по статусу строки теми же словами, что и на доске. Собрана отдельной
+// функцией, а не внутри экрана: тексты действий держат тесты, и смотреть им
+// на весь renderTask ради одной полосы незачем.
+function taskActions(project, id, row, works) {
+  const out = [];
+  const isGoal = /^Цель:/.test(row.title);
+  const work = (works || []).find((w) => w.id === id);
+  if (work) {
+    const live = el("button", "btn", "Живой статус");
+    live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
+    out.push(live);
+  }
+  if (isGoal) {
+    const chat = el("button", "btn", "Чат с агентом");
+    chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
+    out.push(chat);
+  }
+  if (work && work.via === "tmux") {
+    const stop = el("button", "btn btn-danger", "Остановить агента");
+    // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
+    // они стояли указкой над всей полосой.
+    withTip(stop, STOP_TIP);
+    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+    out.push(stop);
+    return out;
+  }
+  if (work && work.via === "session") {
+    out.push(el("span", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
+      "остановить её из дашборда нечем, окно закрывает человек."));
+    return out;
+  }
+  if (work) {
+    out.push(el("span", "hint", "Задачу ведёт другая сессия (живой чат), tmux-сессии дашборда " +
+      "у неё нет: остановить отсюда нечем, снимать там, где она поднята."));
+    return out;
+  }
+  const label = actionLabel(row.sect);
+  if (row.after && row.after.length) {
+    // Заблокированную маркером задачу конвейер брать не должен: кнопка стоит
+    // погашенной с причиной, а не пропадает с полосы.
+    const wait = el("button", "btn", label);
+    wait.disabled = true;
+    out.push(withTip(wait, "сначала " + row.after.join(", ")));
+    out.push(el("span", "hint", "Задача ждёт " + row.after.join(", ") +
+      ": пока маркер стоит, конвейер её не возьмёт."));
+    return out;
+  }
+  const start = el("button", "btn btn-acc", label);
+  start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
+  out.push(start);
+  out.push(el("span", "hint", taskActionHint(isGoal, row.sect, id)));
+  return out;
+}
+
 async function renderTask(project, works, id) {
   const groups = document.getElementById("groups");
   const r = await api(taskPath(project, id));
@@ -656,39 +746,7 @@ async function renderTask(project, works, id) {
     renderTask(project, works, id).catch(console.error);
   });
 
-  const isGoal = /^Цель:/.test(row.title);
-  const work = (works || []).find((w) => w.id === id);
-  if (work) {
-    const live = el("button", "btn", "Живой статус");
-    live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
-    bar.append(live);
-  }
-  if (isGoal) {
-    const chat = el("button", "btn", "Чат с агентом");
-    chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
-    bar.append(chat);
-  }
-  if (work && work.via === "tmux") {
-    const stop = el("button", "btn btn-danger", "Остановить агента");
-    // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
-    // они стояли указкой над всей полосой.
-    withTip(stop, STOP_TIP);
-    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
-    bar.append(stop);
-  } else if (work && work.via === "session") {
-    bar.append(el("span", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
-      "остановить её из дашборда нечем, окно закрывает человек."));
-  } else if (work) {
-    bar.append(el("span", "hint", "Задачу ведёт другая сессия (живой чат), tmux-сессии дашборда " +
-      "у неё нет: остановить отсюда нечем, снимать там, где она поднята."));
-  } else {
-    const start = el("button", "btn btn-acc", "В работу");
-    start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
-    bar.append(start);
-    bar.append(el("span", "hint", isGoal
-      ? "Цель поднимет оболочка goal-run в tmux-сессии goal-" + id + "."
-      : "Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + "."));
-  }
+  for (const node of taskActions(project, id, row, works)) bar.append(node);
   bar.append(bad);
 
   const rank = el("div", "card");

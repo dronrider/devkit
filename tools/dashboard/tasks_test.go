@@ -606,10 +606,13 @@ func TestStaticTaskActionBar(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "async function renderTask(")
 	for _, want := range []string{`el("div", "card abar")`, "drop.hidden = true", "drop.hidden = !dirty",
-		"save.disabled = !dirty", `el("span", "div")`, "Остановить агента"} {
+		"save.disabled = !dirty", `el("span", "div")`, "taskActions(project, id, row, works)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
+	}
+	if !strings.Contains(funcBody(t, app, "function taskActions("), "Остановить агента") {
+		t.Error("в полосе действий задачи нет стопа живой работы")
 	}
 	for _, gone := range []string{"Правки нет", `el("div", "card act")`, "Изменённое уедет одной кнопкой"} {
 		if strings.Contains(app, gone) {
@@ -623,6 +626,28 @@ func TestStaticTaskActionBar(t *testing.T) {
 	for _, want := range []string{".abar{", ".abar .div{", ".btn-danger{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет стиля полосы действий %q", want)
+		}
+	}
+}
+
+// Полоса действий задачи берёт действие из статуса строки, теми же словами,
+// что и доска: у формы своей подписи нет, иначе экран задачи и строка обещали
+// бы конвейеру разное. Заблокированная маркером задача действия не получает.
+func TestStaticTaskActionBySection(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function taskActions(")
+	for _, want := range []string{"actionLabel(row.sect)", "startRun(project, id)",
+		"row.after && row.after.length", "wait.disabled = true",
+		"taskActionHint(isGoal, row.sect, id)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в полосе действий задачи нет %q", want)
+		}
+	}
+	hint := funcBody(t, app, "function taskActionHint(")
+	for _, want := range []string{"goal-run", "Начатую задачу конвейер продолжит",
+		"Проверенную задачу конвейер закроет", "headless-сессия конвейера доски"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("надпись под действием не говорит про %q: откуда смотреть за работой, неясно", want)
 		}
 	}
 }

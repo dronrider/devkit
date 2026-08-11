@@ -10,9 +10,12 @@ import (
 )
 
 // Доска для тестов запуска: цель XR-100 (заголовок от слова «Цель:») и
-// одиночная задача XR-002.
+// одиночные задачи в трёх статусах, по одной на каждый заказ конвейеру.
 const runsBoardJSON = `{"prefix":"XR","sections":[` +
-	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"-"}]},` +
+	`{"key":"in-progress","title":"In progress","rows":[` +
+	`{"id":"XR-100","title":"Цель: пробный цикл","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"-"},` +
+	`{"id":"XR-004","title":"Начатая задача","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"-","link":"-"}]},` +
+	`{"key":"check","title":"Check","rows":[{"id":"XR-003","title":"Задача на проверке","type":"task","p":"P2","r":32,"r_parts":[25,4,1,0,2],"cost":"-","link":"-"}]},` +
 	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Обычная задача","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]}]}`
 
 // writeTmuxFake кладёт фикстуру tmux: пишет каждый вызов в журнал, на ls
@@ -112,27 +115,36 @@ func TestRunStartGoal(t *testing.T) {
 }
 
 // Одиночная задача поднимается tmux-сессией task-<ID> с headless-сессией
-// конвейера: claude -p с промптом про скиллы доски, из корня проекта.
-func TestRunStartTask(t *testing.T) {
-	e, c, tmuxLog := runsEnv(t, "")
-
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
-	text := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("запуск задачи: %d %s", resp.StatusCode, text)
-	}
-	for _, want := range []string{`"kind":"task"`, `"session":"task-XR-002"`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("в ответе запуска нет %q: %s", want, text)
-		}
-	}
-	got := readFile(t, tmuxLog)
-	// Промпт уходит одной заквоченной строкой: tmux склеивает хвост
-	// new-session пробелами и отдаёт шеллу.
-	want := "new-session -d -s task-XR-002 -c " + e.proj +
-		" claude -p 'возьми задачу XR-002 в работу и доведи её конвейером по скиллам board-task и board-ship'"
-	if !strings.Contains(got, want) {
-		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+// конвейера, и заказ ей идёт по статусу строки: из Backlog «Выполни», из
+// In progress «Продолжай выполнение», из Check «Закрой». Слова эти те же, что
+// человек пишет в чате, и разъехаться со скиллами доски им нельзя.
+func TestRunStartTaskPromptBySection(t *testing.T) {
+	for _, tc := range []struct{ id, prompt string }{
+		{"XR-002", "Выполни XR-002"},
+		{"XR-004", "Продолжай выполнение XR-004"},
+		{"XR-003", "Закрой XR-003"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			e, c, tmuxLog := runsEnv(t, "")
+			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, tc.id))
+			text := body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("запуск задачи: %d %s", resp.StatusCode, text)
+			}
+			for _, want := range []string{`"kind":"task"`, fmt.Sprintf(`"session":"task-%s"`, tc.id)} {
+				if !strings.Contains(text, want) {
+					t.Errorf("в ответе запуска нет %q: %s", want, text)
+				}
+			}
+			got := readFile(t, tmuxLog)
+			// Промпт уходит одной заквоченной строкой: tmux склеивает хвост
+			// new-session пробелами и отдаёт шеллу.
+			want := "new-session -d -s task-" + tc.id + " -c " + e.proj +
+				" claude -p '" + tc.prompt + "'"
+			if !strings.Contains(got, want) {
+				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+			}
+		})
 	}
 }
 

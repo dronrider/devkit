@@ -101,11 +101,20 @@ func (s *server) sayStop(root, project, id, kind string) string {
 	return ""
 }
 
-// taskPrompt это промпт headless-сессии конвейера одиночной задачи: свежая
+// runPrompt это промпт headless-сессии конвейера одиночной задачи: свежая
 // сессия-диспетчер ведёт строку по обычным скиллам доски, как это делается
-// руками, своих шагов конвейера у дашборда нет.
-func taskPrompt(id string) string {
-	return fmt.Sprintf("возьми задачу %s в работу и доведи её конвейером по скиллам board-task и board-ship", id)
+// руками, своих шагов конвейера у дашборда нет. Заказ зависит от статуса
+// строки: из Backlog задачу выполняют, начатую продолжают, проверенную
+// закрывают. Слова те же, какими эту работу заказывают в чате, по ним скиллы
+// доски и разводят конвейер.
+func runPrompt(sect, id string) string {
+	switch sect {
+	case "in-progress":
+		return "Продолжай выполнение " + id
+	case "check":
+		return "Закрой " + id
+	}
+	return "Выполни " + id
 }
 
 // shQuote квотит строку для shell: tmux склеивает хвостовые аргументы
@@ -195,6 +204,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// У цели заказ один на все статусы: и «выполнить», и «продолжить» это
+	// следующий виток, а промпт витка сочиняет не дашборд, а сама оболочка
+	// цикла, и лезть в её слова отсюда нечем.
 	if kind == "goal" {
 		gr := goalRunPath(s.cfg.Roots)
 		if gr == "" {
@@ -229,7 +241,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		"claude -p "+shQuote(taskPrompt(id))); err != nil {
+		"claude -p "+shQuote(runPrompt(row.Sect, id))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

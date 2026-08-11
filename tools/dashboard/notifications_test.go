@@ -284,12 +284,23 @@ func TestStaticFeedDotFromLocalSeen(t *testing.T) {
 		"localStorage.setItem(FEED_SEEN_KEY",
 		"function refreshBellDot()",
 		"showBellDot(Boolean(last) && last > seen)",
-		"markFeedSeen(nowStamp())",
-		"markFeedSeen(n.time)",
 	} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в static/app.js нет части индикатора новых %q", want)
 		}
+	}
+	// Гашение спрашивается у той функции, которая за него отвечает: та же
+	// строка стоит и в refreshBellDot, и поиск по всему файлу пропустил бы её
+	// пропажу с экрана ленты.
+	feed := funcBody(t, app, "function renderFeed(")
+	if !strings.Contains(feed, "markFeedSeen(nowStamp())") {
+		t.Error("заход на ленту не гасит точку: renderFeed не отмечает заход")
+	}
+	if !strings.Contains(feed, "markFeedSeen(n.time)") {
+		t.Error("событие на открытой ленте зажжёт точку: живой поток не отмечает прочитанное")
+	}
+	if !strings.Contains(funcBody(t, app, "async function refreshBellDot("), "markFeedSeen(nowStamp())") {
+		t.Error("первый заход в браузере зажжёт точку на всей истории журнала")
 	}
 	page := readFile(t, filepath.Join("static", "index.html"))
 	if !strings.Contains(page, `class="bdot" hidden`) {

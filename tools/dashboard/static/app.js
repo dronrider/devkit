@@ -117,7 +117,7 @@ function renderLive(project, works) {
     // Интерактивную сессию без узнанной задачи вести некуда: экран агента
     // открывается по ID, и вместо имени работы карточка называет её видом.
     const name = w.id
-      ? (w.kind === "goal" ? "goal-" : "") + w.id
+      ? (w.kind === "goal" && w.via !== "session" ? "goal-" : "") + w.id
       : "интерактивная сессия";
     const label = el("b", w.id ? "" : "flat", name);
     if (w.id) {
@@ -1051,7 +1051,10 @@ function renderAgent(project, works, id) {
   } else {
     head.append(el("span", "chip", "работа не идёт"));
   }
-  if (!work || work.kind === "goal" || work.via === "session") {
+  // Чат это переписка с циклом цели: у обычной задачи отправка получила бы
+  // «не цель», и кнопка вела бы в тупик. Вид работы приходит со строки доски,
+  // и интерактивная сессия обычной задачи сюда не попадает.
+  if (!work || work.kind === "goal") {
     const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     head.append(chat);

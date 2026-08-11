@@ -274,7 +274,7 @@ const foreignTaskNote = "задача не с доски проекта"
 // свежий транскрипт. Занятые задачи (busy) сюда не идут: headless-сессия
 // конвейера тоже пишет транскрипт, и её работа уже собрана из tmux, а вторая
 // карточка о той же задаче читалась бы как два агента вместо одного.
-func (s *server) sessionWorks(projPath, prefix string, busy map[string]bool) []Work {
+func (s *server) sessionWorks(projPath, prefix string, board json.RawMessage, busy map[string]bool) []Work {
 	works := []Work{}
 	cutoff := s.now().Add(-sessionLiveTTL)
 	for _, f := range sessionFiles(s.cfg.Home, projPath) {
@@ -286,14 +286,24 @@ func (s *server) sessionWorks(projPath, prefix string, busy map[string]bool) []W
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
 		}
+		kind := "session"
 		if task != "" {
 			if busy[task] {
 				continue
 			}
 			busy[task] = true
 			note = ""
+			// Цель это цель и в интерактивном окне: переписка и журнал цикла
+			// открываются только у неё, и вид работы берётся со строки доски,
+			// а не из того, что окно вообще живо.
+			kind = "task"
+			if title, ok := findRow(board, task); !ok {
+				kind = "session"
+			} else if isGoalTitle(title) {
+				kind = "goal"
+			}
 		}
-		works = append(works, Work{ID: task, Kind: "session", Via: "session", Session: f.ID, Note: note})
+		works = append(works, Work{ID: task, Kind: kind, Via: "session", Session: f.ID, Note: note})
 	}
 	return works
 }

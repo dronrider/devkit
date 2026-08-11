@@ -149,7 +149,9 @@ func parseBoardView(raw json.RawMessage) (boardView, error) {
 // (DK-263). Session и Note заполняет только третий источник: у интерактивной
 // работы есть транскрипт, а задача у неё бывает и не узнана.
 type Work struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// Kind говорит, о чём работа, а Via чем она видна. Вид session это работа
+	// с неузнанной задачей: чем она занята, сказать нечем.
 	Kind    string `json:"kind"` // goal | task | session
 	Via     string `json:"via"`  // tmux | registry | session
 	Session string `json:"session,omitempty"`
@@ -162,7 +164,7 @@ type Work struct {
 // ведёт живой чат без tmux-сессии. Третьим идут интерактивные сессии: окно
 // агента у человека не заводит ни tmux-сессии, ни записи в реестре, и без
 // них половина работы на машине была бы невидима.
-func (s *server) liveWorks(projectPath, prefix string) []Work {
+func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []Work {
 	// Пустой список, а не null: клиент и smoke-сценарий различают «работ нет»
 	// и «поля нет».
 	works := []Work{}
@@ -193,7 +195,7 @@ func (s *server) liveWorks(projectPath, prefix string) []Work {
 		works = append(works, Work{ID: goal, Kind: "goal", Via: "registry"})
 		busy[goal] = true
 	}
-	return append(works, s.sessionWorks(projectPath, prefix, busy)...)
+	return append(works, s.sessionWorks(projectPath, prefix, board, busy)...)
 }
 
 // tmuxMissingCheck называет ненайденный tmux: без него живые работы это

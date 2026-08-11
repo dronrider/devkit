@@ -285,7 +285,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
 	// в чужом корне.
 	var work *Work
-	works := s.liveWorks(found.Path, view.Prefix)
+	works := s.liveWorks(found.Path, view.Prefix, raw)
 	for i := range works {
 		if works[i].ID == id {
 			work = &works[i]

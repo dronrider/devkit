@@ -300,7 +300,7 @@ func (s *server) projectSummary(p Project) projectInfo {
 	for _, sec := range view.Sections {
 		info.Sections[sec.Key] = len(sec.Rows)
 	}
-	info.Works = s.liveWorks(p.Path, view.Prefix)
+	info.Works = s.liveWorks(p.Path, view.Prefix, raw)
 	return info
 }
 
@@ -338,7 +338,7 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		"project": found.Name,
 		"path":    found.Path,
 		"board":   raw,
-		"works":   s.liveWorks(found.Path, view.Prefix),
+		"works":   s.liveWorks(found.Path, view.Prefix, raw),
 		"errors":  []string{},
 	}
 	// Пустой список работ при ненайденном tmux это не «агенты не работают»,

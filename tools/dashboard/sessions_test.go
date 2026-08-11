@@ -519,37 +519,95 @@ func TestStaticTranscriptKeepsPlace(t *testing.T) {
 const plainSessionFixture = `{"type":"user","message":{"role":"user","content":"поправь вёрстку карточки"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"main"}
 `
 
-// Интерактивные сессии видны живыми работами: свежий транскрипт даёт работу с
-// подписью, протухший по порогу не даёт, нераспознанная задача остаётся в
-// списке с подписью, а сессия задачи, у которой уже идёт tmux-работа, второй
-// карточкой не задваивается.
+// Транскрипт, чья задача узнаётся веткой чужой доски.
+const foreignSessionFixture = `{"type":"user","message":{"role":"user","content":"поправь вёрстку карточки"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"ab-9"}
+`
+
+// Интерактивные сессии видны живыми работами: свежий транскрипт даёт работу,
+// протухший по порогу не даёт, нераспознанная задача остаётся в списке с
+// подписью, вид работы берётся со строки доски, а сессия задачи, у которой уже
+// идёт tmux-работа, второй карточкой не задваивается.
 func TestLiveWorksSessions(t *testing.T) {
 	e := newTestEnv(t)
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	e.s.now = func() time.Time { return now }
 	writeSession(t, e.home, e.proj, "", "live-plain", plainSessionFixture, now.Add(-time.Minute))
-	writeSession(t, e.home, e.proj, "-xr-77", "live-task", transcriptFixture, now.Add(-2*time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-005", "live-task", transcriptFixture, now.Add(-2*time.Minute))
 	writeSession(t, e.home, e.proj, "-xr-5", "live-dup", transcriptFixture, now.Add(-3*time.Minute))
 	writeSession(t, e.home, e.proj, "-xr-88", "stale", transcriptFixture, now.Add(-30*time.Minute))
 
-	c := e.loggedClient(t)
-	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")
+	want := []Work{
+		{ID: "XR-9", Kind: "goal", Via: "tmux"},
+		{ID: "XR-5", Kind: "task", Via: "tmux"},
+		{ID: "XR-112", Kind: "goal", Via: "registry"},
+		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
+		{ID: "XR-005", Kind: "task", Via: "session", Session: "live-task"},
+	}
+	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
+		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
+	}
+}
+
+// Два окна одной задачи это одна работа: без дедупликации по задаче доска
+// показывала бы двух агентов там, где сидит один человек. tmux в этом
+// окружении сессий не держит, дедуп делают сами сессии.
+func TestLiveWorksSessionsSameTask(t *testing.T) {
+	e, _, _ := runsEnv(t, "")
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "-xr-002", "win-new", transcriptFixture, now.Add(-time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-002", "win-old", transcriptFixture, now.Add(-2*time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-100", "win-goal", transcriptFixture, now.Add(-3*time.Minute))
+
+	// Цель со строки доски остаётся целью и в интерактивном окне: по виду
+	// работы клиент открывает переписку, и обычной задаче она не положена.
+	want := []Work{
+		{ID: "XR-002", Kind: "task", Via: "session", Session: "win-new"},
+		{ID: "XR-100", Kind: "goal", Via: "session", Session: "win-goal"},
+	}
+	got := boardWorks(t, e)
+	var sessions []Work
+	for _, w := range got {
+		if w.Via == "session" {
+			sessions = append(sessions, w)
+		}
+	}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Errorf("работы из сессий:\n%+v\nожидал:\n%+v", sessions, want)
+	}
+}
+
+// Задача с чужим префиксом проекту не приписывается: ходить по ней на экран
+// задачи некуда, и работа остаётся в списке с подписью.
+func TestLiveWorksSessionForeignTask(t *testing.T) {
+	e, _, _ := runsEnv(t, "")
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "", "win-foreign", foreignSessionFixture, now.Add(-time.Minute))
+
+	want := []Work{{Kind: "session", Via: "session", Session: "win-foreign", Note: foreignTaskNote}}
+	var sessions []Work
+	for _, w := range boardWorks(t, e) {
+		if w.Via == "session" {
+			sessions = append(sessions, w)
+		}
+	}
+	if !reflect.DeepEqual(sessions, want) {
+		t.Errorf("работа с чужой задачей:\n%+v\nожидал:\n%+v", sessions, want)
+	}
+}
+
+// boardWorks читает живые работы проекта из ответа доски.
+func boardWorks(t *testing.T, e *testEnv) []Work {
+	t.Helper()
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/board", "")
 	var got struct {
 		Works []Work `json:"works"`
 	}
 	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := []Work{
-		{ID: "XR-9", Kind: "goal", Via: "tmux"},
-		{ID: "XR-5", Kind: "task", Via: "tmux"},
-		{ID: "XR-112", Kind: "goal", Via: "registry"},
-		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
-		{ID: "XR-77", Kind: "session", Via: "session", Session: "live-task"},
-	}
-	if !reflect.DeepEqual(got.Works, want) {
-		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got.Works, want)
-	}
+	return got.Works
 }
 
 // Стоп интерактивной сессии это отказ словами: её ведёт человек в окне, и
@@ -558,10 +616,10 @@ func TestRunStopInteractiveSession(t *testing.T) {
 	e := newTestEnv(t)
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	e.s.now = func() time.Time { return now }
-	writeSession(t, e.home, e.proj, "-xr-77", "live-task", transcriptFixture, now.Add(-time.Minute))
+	writeSession(t, e.home, e.proj, "-xr-005", "live-task", transcriptFixture, now.Add(-time.Minute))
 
 	c := e.loggedClient(t)
-	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-77", "")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-005", "")
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "человек в окне") {
 		t.Fatalf("стоп интерактивной сессии: %d %s, ожидал 409 про окно человека", resp.StatusCode, text)
@@ -569,8 +627,9 @@ func TestRunStopInteractiveSession(t *testing.T) {
 }
 
 // Клиент показывает интерактивную работу как таковую: в полосе живых работ у
-// неё подпись вместо кнопки стопа, а экран агента ставит фишку и оставляет
-// переход в чат.
+// неё подпись вместо кнопки стопа, экран агента ставит фишку, а переписка
+// открывается только у цели, потому что обычной задаче отправка ответила бы
+// «не цель».
 func TestStaticInteractiveWork(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	live := funcBody(t, text, "function renderLive(")
@@ -584,7 +643,7 @@ func TestStaticInteractiveWork(t *testing.T) {
 	if !strings.Contains(agent, `work.via === "session"`) || !strings.Contains(agent, "интерактивная сессия") {
 		t.Error("экран агента не подписывает интерактивную сессию")
 	}
-	if !strings.Contains(agent, `if (!work || work.kind === "goal" || work.via === "session") {`) {
-		t.Error("у интерактивной сессии пропала кнопка чата")
+	if !strings.Contains(agent, `if (!work || work.kind === "goal") {`) {
+		t.Error("кнопка чата открыта не одной целью: у обычной задачи она ведёт в тупик")
 	}
 }

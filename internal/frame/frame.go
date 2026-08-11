@@ -18,13 +18,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Порог включения выжимки. Ниже вывод отдаётся как есть, на пороге или выше
 // строится сводка. Порог фиксирован в коде и не вынесен во флаги: развилка по
-// порогу решена в LLD DK-137, а не при каждом вызове.
+// порогу решена в LLD DK-137, а не при каждом вызове. Длина вывода измеряется в
+// символах UTF-8 (рунах), как и медиана замера DK-137, чтобы мультибайтный
+// вывод не перешагивал порог по байтам.
 const (
-	thresholdBytes = 4096
+	thresholdRunes = 4096
 	thresholdLines = 100
 	tailLines      = 30
 	significantLimit = 30
@@ -75,7 +78,7 @@ func Capture(dir string, argv []string) (*Summary, error) {
 	s := &Summary{Exit: exit}
 	s.Path = writeFull(dir, argv, out)
 	lines := splitLines(string(out))
-	if len(out) >= thresholdBytes || len(lines) >= thresholdLines {
+	if utf8.RuneCount(out) >= thresholdRunes || len(lines) >= thresholdLines {
 		buildSummary(s, lines)
 	} else {
 		s.Raw = string(out)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -90,20 +91,34 @@ func TestCaptureThresholdLines(t *testing.T) {
 	}
 }
 
-// TestCaptureThresholdBytes 4K символов это порог, выжимка строится даже для
-// одной строки: длина измеряется по байтам вывода, не по строкам.
-func TestCaptureThresholdBytes(t *testing.T) {
+// TestCaptureThresholdRunes порог измеряется в символах UTF-8 (рунах): 4097 цифр
+// одной строкой это и 4097 рун, и 4097 байт, выжимка строится.
+func TestCaptureThresholdRunes(t *testing.T) {
 	root := setupRepo(t)
-	// Одна строка длиннее 4K байт, строка всего одна: порог по символам решает.
+	// Одна строка длиннее 4K, строка всего одна: порог по символам решает.
 	s, err := Capture(root, sh("printf '%04097d\\n' 0"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !s.Summarized {
-		t.Fatalf("4096+ символов это порог, выжимка должна строиться: %+v", s)
+		t.Fatalf("4097 рун это порог, выжимка должна строиться: %+v", s)
 	}
 	if s.LinesTotal != 1 {
 		t.Fatalf("lines_total: %d, хотели 1", s.LinesTotal)
+	}
+}
+
+// TestCaptureThresholdMultibyte мультибайтный вывод 3000 кириллических рун это
+// 6000 байт UTF-8: по байтам выше порога, по символам ниже, выжимка не строится.
+// На байтовом пороге тест падал бы, ибо 6000 >= 4096.
+func TestCaptureThresholdMultibyte(t *testing.T) {
+	root := setupRepo(t)
+	s, err := Capture(root, sh("printf 'а%.0s' $(seq 1 3000); echo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Summarized {
+		t.Fatalf("3000 рун ниже порога 4096, выжимка не должна строиться: байт=%d", len(s.Raw))
 	}
 }
 
@@ -244,12 +259,16 @@ func TestPathWrittenToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл вывода не читается: %v", err)
 	}
-	// Каждая из 200 строк seq должна найтись в файле.
+	// Каждая из 200 строк seq должна лежать в файле по порядку.
 	body := string(data)
-	for i := 1; i <= 200; i++ {
-		row := strings.SplitN(body, "\n", 2)[0]
-		if row != "1" {
-			t.Fatalf("первая строка файла %q, хотели 1", row)
+	rows := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	if len(rows) != 200 {
+		t.Fatalf("строк в файле: %d, хотели 200", len(rows))
+	}
+	for i, row := range rows {
+		want := strconv.Itoa(i + 1)
+		if row != want {
+			t.Fatalf("строка %d: %q, хотели %q", i+1, row, want)
 		}
 	}
 	if !strings.HasSuffix(body, "200\n") {

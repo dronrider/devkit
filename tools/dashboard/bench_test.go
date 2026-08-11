@@ -156,7 +156,7 @@ func BenchmarkTaskScreenWarm(b *testing.B)  { benchWarm(b, taskScreen) }
 // сотне байт, как на живой машине. По этому числу принято решение не заводить
 // снимкам памяти процесса (DK-253): рядом с подпроцессами экрана оно теряется.
 //
-//	GOWORK=off go test -run '^$' -bench Quota -benchtime 100x .
+//	GOWORK=off go test -run '^$' -bench Quota -benchtime 200x .
 func BenchmarkQuota(b *testing.B) {
 	home := b.TempDir()
 	dir := filepath.Join(home, ".devkit", "quota")

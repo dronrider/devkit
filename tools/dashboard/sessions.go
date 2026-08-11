@@ -286,7 +286,7 @@ func (s *server) sessionWorks(projPath, prefix string, board json.RawMessage, bu
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
 		}
-		kind := "session"
+		kind, title := "session", ""
 		if task != "" {
 			if busy[task] {
 				continue
@@ -297,13 +297,16 @@ func (s *server) sessionWorks(projPath, prefix string, board json.RawMessage, bu
 			// открываются только у неё, и вид работы берётся со строки доски,
 			// а не из того, что окно вообще живо.
 			kind = "task"
-			if title, ok := findRow(board, task); !ok {
+			if row, ok := findRow(board, task); !ok {
 				kind = "session"
-			} else if isGoalTitle(title) {
-				kind = "goal"
+			} else {
+				title = row.Title
+				if isGoalTitle(row.Title) {
+					kind = "goal"
+				}
 			}
 		}
-		works = append(works, Work{ID: task, Kind: kind, Via: "session", Session: f.ID, Note: note})
+		works = append(works, Work{ID: task, Kind: kind, Title: title, Via: "session", Session: f.ID, Note: note})
 	}
 	return works
 }

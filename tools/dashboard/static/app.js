@@ -119,11 +119,14 @@ function renderLive(project, works) {
     const name = w.id
       ? (w.kind === "goal" && w.via !== "session" ? "goal-" : "") + w.id
       : "интерактивная сессия";
-    const label = el("b", w.id ? "" : "flat", name);
+    // Работа зовётся заголовком со строки доски: имя сессии goal-XR-100 не
+    // говорит, чем агент занят, и уходит мелкой подписью рядом.
+    const label = el("b", (w.id ? "" : "flat") + (w.title ? " wtitle" : ""), w.title || name);
     if (w.id) {
       label.addEventListener("click", () => { location.hash = project + "/agent/" + w.id; });
     }
     card.append(label);
+    if (w.title) card.append(el("span", "wname", name));
     if (w.via === "tmux") {
       const stop = el("button", "btn btn-sm", "Стоп");
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
@@ -131,7 +134,7 @@ function renderLive(project, works) {
     } else if (w.via === "session") {
       card.append(el("span", "via", w.note || "интерактивная сессия"));
     } else {
-      card.append(el("span", "via", "ведётся снаружи"));
+      card.append(el("span", "via", "ведёт другая сессия"));
     }
     live.append(card);
   }
@@ -189,7 +192,7 @@ function rowAction(project, row, works) {
     return el("span", "stale", "интерактивная сессия");
   }
   if (work && work.via !== "tmux") {
-    return el("span", "stale", "ведётся снаружи");
+    return el("span", "stale", "ведёт другая сессия");
   }
   const btn = el("button", "btn btn-sm" + (work ? "" : " btn-acc"), work ? "Стоп" : "В работу");
   btn.addEventListener("click", (ev) => {
@@ -643,7 +646,8 @@ async function renderTask(project, works, id) {
     act.append(el("div", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
       "стоп из дашборда ей не нужен, окно закрывает человек."));
   } else if (work) {
-    act.append(el("div", "hint", "Цикл ведётся снаружи (живой чат), без tmux-сессии дашборда: стоп там, где он поднят."));
+    act.append(el("div", "hint", "Цикл ведёт другая сессия (живой чат), tmux-сессии дашборда у него нет: " +
+      "стоп отсюда недоступен, снимать там, где цикл поднят."));
   } else {
     const start = el("button", "btn btn-acc", "В работу");
     start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
@@ -726,11 +730,14 @@ function logLine(line) {
 
 // Журнал цикла: SSE-хвост .devkit/goal-<ID>.log. Отсутствие журнала сервер
 // называет событием note, слова видны вместо пустого экрана.
-function wireJournal(project, id, body) {
+function wireJournal(project, id, body, sub) {
   body.classList.add("log");
   const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
     "/goals/" + encodeURIComponent(id) + "/log?stream=1");
   agentLive.push(() => es.close());
+  // Источник журнала говорит сервер: у цели под оболочкой это goal-<ID>.log, у
+  // цели, которую ведёт живой чат, раздел «Журнал» файла цели (DK-255).
+  es.addEventListener("source", (ev) => { sub.textContent = ev.data; });
   es.addEventListener("note", (ev) => { say(body, "empty", ev.data); });
   es.onmessage = (ev) => {
     if (body.firstChild && body.firstChild.className === "empty") body.replaceChildren();
@@ -1036,7 +1043,12 @@ function renderAgent(project, works, id) {
   const work = (works || []).find((w) => w.id === id);
   const head = el("div", "ahead");
   if (work) head.append(el("span", "dot pulse"));
-  head.append(el("h2", "", (work && work.via !== "session" ? work.kind + "-" : "") + id));
+  // Шапка зовёт работу заголовком с доски, а имя сессии остаётся подписью:
+  // goal-XR-100 о занятии агента не говорит ничего.
+  const name = (work && work.via !== "session" ? work.kind + "-" : "") + id;
+  const title = work && work.title;
+  head.append(el("h2", title ? "wtitle" : "", title || name));
+  if (title) head.append(el("span", "wname", name));
   if (work && work.via === "tmux") {
     head.append(el("span", "chip c-check", "tmux-сессия активна"));
     const stop = el("button", "btn", "Стоп");
@@ -1047,7 +1059,7 @@ function renderAgent(project, works, id) {
     // нечем.
     head.append(el("span", "chip c-check", "интерактивная сессия"));
   } else if (work) {
-    head.append(el("span", "chip", "ведётся снаружи"));
+    head.append(el("span", "chip", "ведёт другая сессия"));
   } else {
     head.append(el("span", "chip", "работа не идёт"));
   }
@@ -1061,7 +1073,7 @@ function renderAgent(project, works, id) {
   }
   groups.append(head);
 
-  const jp = pane("Журнал цикла", ".devkit/goal-" + id + ".log");
+  const jp = pane("Журнал цикла", "источник назовёт сервер");
   // Живой хвост назван без одушевления: обновляется журнал сам, а не «живёт».
   jp.head.append(el("span", "chip c-run", "обновляется само"));
   const tp = pane("Транскрипт", "");
@@ -1088,7 +1100,7 @@ function renderAgent(project, works, id) {
   tabs[0].classList.add("onpane");
 
   groups.append(seg, grid, tm);
-  wireJournal(project, id, jp.body);
+  wireJournal(project, id, jp.body, jp.sub);
   wireTranscript(project, tp, id).catch(console.error);
   wireTmux(id, tm, tmSub);
 }
@@ -1282,7 +1294,7 @@ function renderChat(project, works, id) {
   } else if (work && work.via === "session") {
     head.append(el("span", "chip c-check", "интерактивная сессия"));
   } else if (work) {
-    head.append(el("span", "chip", "ведётся снаружи"));
+    head.append(el("span", "chip", "ведёт другая сессия"));
   } else {
     head.append(el("span", "chip", "цикл не идёт"));
   }

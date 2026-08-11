@@ -541,7 +541,7 @@ func TestLiveWorksSessions(t *testing.T) {
 		{ID: "XR-5", Kind: "task", Via: "tmux"},
 		{ID: "XR-112", Kind: "goal", Via: "registry"},
 		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
-		{ID: "XR-005", Kind: "task", Via: "session", Session: "live-task"},
+		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Via: "session", Session: "live-task"},
 	}
 	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
@@ -562,8 +562,8 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 	// Цель со строки доски остаётся целью и в интерактивном окне: по виду
 	// работы клиент открывает переписку, и обычной задаче она не положена.
 	want := []Work{
-		{ID: "XR-002", Kind: "task", Via: "session", Session: "win-new"},
-		{ID: "XR-100", Kind: "goal", Via: "session", Session: "win-goal"},
+		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Via: "session", Session: "win-new"},
+		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Via: "session", Session: "win-goal"},
 	}
 	got := boardWorks(t, e)
 	var sessions []Work
@@ -645,5 +645,41 @@ func TestStaticInteractiveWork(t *testing.T) {
 	}
 	if !strings.Contains(agent, `if (!work || work.kind === "goal") {`) {
 		t.Error("кнопка чата открыта не одной целью: у обычной задачи она ведёт в тупик")
+	}
+}
+
+// Работа зовётся заголовком с доски и на полосе живых работ, и в шапке экрана
+// агента, а имя сессии остаётся мелкой подписью рядом.
+func TestStaticWorkTitle(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	live := funcBody(t, text, "function renderLive(")
+	if !strings.Contains(live, "w.title || name") || !strings.Contains(live, `el("span", "wname", name)`) {
+		t.Error("полоса живых работ подписана именем сессии, а не заголовком задачи")
+	}
+	agent := funcBody(t, text, "function renderAgent(")
+	if !strings.Contains(agent, "work.title") || !strings.Contains(agent, "title || name") {
+		t.Error("шапка экрана агента подписана именем сессии, а не заголовком задачи")
+	}
+	if !strings.Contains(agent, `if (title) head.append(el("span", "wname", name));`) {
+		t.Error("имя сессии не осталось подписью в шапке экрана агента")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".lcard b.wtitle", ".lcard span.wname", ".ahead .wname"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в стилях нет %s: заголовок и подпись рисуются одним кеглем", want)
+		}
+	}
+}
+
+// Экран агента называет источник журнала подписью панели: строки приходят либо
+// из журнала оболочки, либо из раздела «Журнал» файла цели, и путать их нельзя.
+func TestStaticJournalSource(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, text, "function wireJournal(")
+	if !strings.Contains(body, `es.addEventListener("source"`) || !strings.Contains(body, "sub.textContent") {
+		t.Error("подпись источника журнала не приходит с сервера")
+	}
+	if strings.Contains(funcBody(t, text, "function renderAgent("), `".devkit/goal-" + id + ".log"`) {
+		t.Error("экран агента называет журнал goal-<ID>.log до ответа сервера: у цели живого чата такого файла нет")
 	}
 }

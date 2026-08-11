@@ -116,28 +116,15 @@ func shQuote(s string) string {
 }
 
 // findRow ищет строку доски в ответе taskctl: по ней решается, цель это или
-// одиночная задача. Цель узнаётся заголовком от слова «Цель:», как везде на
-// доске.
-func findRow(raw json.RawMessage, id string) (title string, ok bool) {
-	var v struct {
-		Sections []struct {
-			Rows []struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
-			} `json:"rows"`
-		} `json:"sections"`
+// одиночная задача, ею же подписывается живая работа и по её ссылке ищется
+// файл цели. Цель узнаётся заголовком от слова «Цель:», как везде на доске.
+func findRow(raw json.RawMessage, id string) (boardRow, bool) {
+	rows, err := parseBoardRows(raw)
+	if err != nil {
+		return boardRow{}, false
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return "", false
-	}
-	for _, sec := range v.Sections {
-		for _, row := range sec.Rows {
-			if row.ID == id {
-				return row.Title, true
-			}
-		}
-	}
-	return "", false
+	row, ok := rows[id]
+	return row, ok
 }
 
 func isGoalTitle(title string) bool {
@@ -186,7 +173,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	title, ok := findRow(raw, id)
+	row, ok := findRow(raw, id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
 		return
@@ -196,7 +183,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := "task"
-	if isGoalTitle(title) {
+	if isGoalTitle(row.Title) {
 		kind = "goal"
 	}
 	sess := kind + "-" + id
@@ -304,7 +291,8 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	}
 	if work.Via == "registry" {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("цикл цели %s ведётся снаружи, без tmux-сессии дашборда: стоп там, где цикл поднят", id)})
+			"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
+				"стоп отсюда недоступен, снимать там, где цикл поднят", id)})
 		return
 	}
 	kind := work.Kind

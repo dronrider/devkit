@@ -130,12 +130,12 @@ func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Projec
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return nil, "", "", false
 	}
-	title, rowOK := findRow(raw, id)
+	row, rowOK := findRow(raw, id)
 	if !rowOK {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
 		return nil, "", "", false
 	}
-	if !isGoalTitle(title) {
+	if !isGoalTitle(row.Title) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("%s не цель: заголовок не начинается с «Цель:», а сообщение кладётся только в файл цели", id)})
 		return nil, "", "", false

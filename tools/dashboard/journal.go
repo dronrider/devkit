@@ -133,6 +133,105 @@ func sseEvent(w io.Writer, f http.Flusher, name, data string) {
 	f.Flush()
 }
 
+// Журнал у цели бывает из двух источников. Цикл под оболочкой goal-run пишет
+// .devkit/goal-<ID>.log, а цель, которую ведёт живой чат, такого файла не
+// заводит и не заведёт: её виток пишет ход в раздел «Журнал» файла цели
+// (скилл goal-loop). Второй источник и читается, когда первого нет, с
+// подписью, откуда взяты строки (DK-255).
+
+// journalDoc это раздел «Журнал» файла цели как источник строк для экрана.
+type journalDoc struct {
+	path string // файл цели
+	rel  string // его путь от корня проекта, он же подпись источника
+	seen bool   // файл цели нашёлся
+}
+
+// journalSources сводит оба источника одной цели: имена для подписей и слова про
+// каждую из пустот.
+type journalSources struct {
+	id      string
+	project string
+	logName string
+	doc     journalDoc
+}
+
+func (j journalSources) logSign() string { return "журнал оболочки .devkit/" + j.logName }
+
+func (j journalSources) docSign() string { return "журнал из файла цели " + j.doc.rel }
+
+// docLines читает строки раздела «Журнал» файла цели. Пустота тут не одна, и
+// три её причины называются по-разному: файла цели нет вовсе, раздела в нём
+// нет, раздел заведён и пуст.
+func (j journalSources) docLines() ([]string, string) {
+	none := fmt.Sprintf("журнала %s нет и файла цели %s в %s нет: цель %s не гонялась ни оболочкой goal-run, ни живым чатом",
+		j.logName, j.doc.rel, j.project, j.id)
+	if !j.doc.seen {
+		return nil, none
+	}
+	data, err := os.ReadFile(j.doc.path)
+	if err != nil {
+		return nil, none
+	}
+	lines, section := journalLines(string(data))
+	switch {
+	case !section:
+		return nil, fmt.Sprintf("журнала %s нет, а в файле цели %s нет раздела «Журнал»: писать ход цели пока некуда", j.logName, j.doc.rel)
+	case len(lines) == 0:
+		return nil, fmt.Sprintf("раздел «Журнал» файла цели %s пуст: витков у цели %s ещё не было", j.doc.rel, j.id)
+	}
+	return lines, ""
+}
+
+// journalLines вынимает строки списка из раздела «Журнал» файла цели. Прочая
+// проза раздела (строка-заготовка от goal-start) на экран не едет: журнал это
+// строки витков и снимков квоты.
+func journalLines(doc string) (lines []string, section bool) {
+	in := false
+	for _, ln := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimRight(ln, " ")
+		if trimmed == journalHeader {
+			in, section = true, true
+			continue
+		}
+		if in && strings.HasPrefix(trimmed, "## ") {
+			break
+		}
+		if !in {
+			continue
+		}
+		if item, ok := strings.CutPrefix(trimmed, "- "); ok {
+			lines = append(lines, item)
+		}
+	}
+	return lines, section
+}
+
+// goalDocPath ищет файл цели: сначала ссылка со строки доски, потом обычное
+// место docs/tasks/<ID>.md. Ссылка берётся только относительная и без выхода
+// вверх: доска своя, но собирать по ней путь куда угодно незачем.
+func (s *server) goalDocPath(projectPath, id string) journalDoc {
+	rel := taskFileRel(id)
+	if raw, err := s.projectBoard(projectPath); err == nil {
+		if row, ok := findRow(raw, id); ok && safeRel(row.Link) {
+			rel = row.Link
+		}
+	}
+	path := filepath.Join(projectPath, filepath.FromSlash(rel))
+	return journalDoc{path: path, rel: rel, seen: isFile(path)}
+}
+
+func safeRel(link string) bool {
+	if link == "" || link == "-" || strings.HasPrefix(link, "/") || filepath.IsAbs(link) {
+		return false
+	}
+	for _, part := range strings.Split(link, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *server) handleGoalLog(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r)
 	if found == nil {
@@ -144,41 +243,102 @@ func (s *server) handleGoalLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Join(found.Path, ".devkit", "goal-"+id+".log")
-	// Пустота различима: отсутствие журнала называется словами, а не пустым
-	// списком, «цель не гонялась» и «цикл молчит» это разные состояния.
-	note := fmt.Sprintf("журнала %s нет: цель %s в %s не гонялась оболочкой goal-run", "goal-"+id+".log", id, found.Name)
+	j := journalSources{id: id, project: found.Name, logName: "goal-" + id + ".log",
+		doc: s.goalDocPath(found.Path, id)}
 	if r.URL.Query().Get("stream") == "1" {
-		s.streamGoalLog(w, r, path, note)
+		s.streamGoalLog(w, r, path, j)
 		return
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"goal": id, "exists": false, "note": note, "lines": []string{}})
+	if data, err := os.ReadFile(path); err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"goal": id, "exists": true, "source": "goal-log", "source_note": j.logSign(),
+			"lines": tailLines(data, intParam(r, "n", tailDefault, tailMax)),
+		})
 		return
+	}
+	// Пустота различима: отсутствие строк называется словами, а не пустым
+	// списком, «цель не гонялась» и «цикл молчит» это разные состояния.
+	lines, note := j.docLines()
+	if note != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"goal": id, "exists": false, "source": "none", "note": note, "lines": []string{}})
+		return
+	}
+	if n := intParam(r, "n", tailDefault, tailMax); len(lines) > n {
+		lines = lines[len(lines)-n:]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"goal": id, "exists": true,
-		"lines": tailLines(data, intParam(r, "n", tailDefault, tailMax)),
-	})
+		"goal": id, "exists": true, "source": "goal-file", "source_note": j.docSign(), "lines": lines})
+}
+
+// docTail дострачивает раздел «Журнал» файла цели. Файл цели переписывается
+// целиком, и смещением в байтах, как у растущего журнала оболочки, тут не
+// обойтись: новые строки узнаются по изменившемуся файлу и по числу уже
+// отданных строк.
+type docTail struct {
+	mod  time.Time
+	size int64
+	sent int
+}
+
+func (d *docTail) stamp(path string) {
+	if fi, err := os.Stat(path); err == nil {
+		d.mod, d.size = fi.ModTime(), fi.Size()
+	}
+}
+
+func (d *docTail) next(j journalSources) []string {
+	fi, err := os.Stat(j.doc.path)
+	if err != nil {
+		return nil
+	}
+	if fi.ModTime().Equal(d.mod) && fi.Size() == d.size {
+		return nil
+	}
+	d.mod, d.size = fi.ModTime(), fi.Size()
+	j.doc.seen = true
+	lines, _ := j.docLines()
+	if len(lines) <= d.sent {
+		// Раздел переписали короче: гнать заново уже показанное незачем, счёт
+		// продолжается от нынешней длины.
+		d.sent = len(lines)
+		return nil
+	}
+	out := lines[d.sent:]
+	d.sent = len(lines)
+	return out
 }
 
 // streamGoalLog шлёт хвост журнала и дальше дописывает новые строки по мере
-// записи; отсутствие файла называется событием note, а появление подхватит
-// опрос. Соединение живёт до ухода клиента.
-func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path, note string) {
+// записи. Источник называется событием source, пустота событием note, а
+// появление журнала оболочки подхватит опрос: цикл могли поднять уже при
+// открытом экране, и строки дальше идут оттуда. Соединение живёт до ухода
+// клиента.
+func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path string, j journalSources) {
 	f, ok := sseOpen(w)
 	if !ok {
 		return
 	}
 	var offset int64
+	var doc *docTail
 	if data, err := os.ReadFile(path); err == nil {
+		sseEvent(w, f, "source", j.logSign())
 		data = lastComplete(data)
 		for _, ln := range tailLines(data, tailDefault) {
 			sseEvent(w, f, "", ln)
 		}
 		offset = int64(len(data))
 	} else {
-		sseEvent(w, f, "note", note)
+		lines, note := j.docLines()
+		sseEvent(w, f, "source", j.docSign())
+		for _, ln := range lines {
+			sseEvent(w, f, "", ln)
+		}
+		if note != "" {
+			sseEvent(w, f, "note", note)
+		}
+		doc = &docTail{sent: len(lines)}
+		doc.stamp(j.doc.path)
 	}
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()
@@ -189,6 +349,13 @@ func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path, not
 		case <-t.C:
 			var lines []string
 			lines, offset = newLines(path, offset)
+			if len(lines) > 0 && doc != nil {
+				doc = nil
+				sseEvent(w, f, "source", j.logSign())
+			}
+			if doc != nil {
+				lines = doc.next(j)
+			}
 			for _, ln := range lines {
 				sseEvent(w, f, "", ln)
 			}

@@ -29,7 +29,7 @@ func TestStaticBoardRowActions(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function rowAction(")
 	for _, want := range []string{"stopRun(project, row.id)", "startRun(project, row.id)",
-		"ev.stopPropagation()", `"Стоп"`, `"В работу"`, "ведётся снаружи"} {
+		"ev.stopPropagation()", `"Стоп"`, `"В работу"`, "ведёт другая сессия"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: действие со строки не доведено", want)
 		}
@@ -92,5 +92,48 @@ func TestStaticHomeFromEveryScreen(t *testing.T) {
 	}
 	if !strings.Contains(funcBody(t, text, "function markNav("), `["home", ["nav-home", "tab-home"]]`) {
 		t.Error("раздел главной не подсвечивается: открытый экран неотличим от доски")
+	}
+}
+
+// Живая работа подписана заголовком со строки доски: имя сессии goal-XR-100 о
+// занятии агента не говорит ничего. Работа, чьей строки на доске нет, остаётся
+// при своём ID.
+func TestLiveWorksTitleFromBoard(t *testing.T) {
+	e, _, _ := runsEnv(t, `goal-XR-100\ntask-XR-002\n`)
+	titles := map[string]string{}
+	for _, w := range boardWorks(t, e) {
+		titles[w.ID] = w.Title
+	}
+	want := map[string]string{"XR-100": "Цель: пробный цикл", "XR-002": "Обычная задача", "XR-112": ""}
+	for id, title := range want {
+		if got, ok := titles[id]; !ok || got != title {
+			t.Errorf("работа %s подписана %q, ожидал %q", id, got, title)
+		}
+	}
+}
+
+// Формулировка «ведётся снаружи» ушла из ответов и статики: она не говорила ни
+// кто ведёт работу, ни почему стоп из дашборда ей не положен.
+func TestNoOutsideWording(t *testing.T) {
+	all, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Тесты сами называют ушедшую формулировку: греп идёт по коду, статике и
+	// доке, а не по этому файлу.
+	var files []string
+	for _, path := range all {
+		if !strings.HasSuffix(path, "_test.go") {
+			files = append(files, path)
+		}
+	}
+	static, err := filepath.Glob(filepath.Join("static", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range append(files, append(static, "README.md")...) {
+		if strings.Contains(readFile(t, path), "ведётся снаружи") {
+			t.Errorf("%s всё ещё говорит «ведётся снаружи»", path)
+		}
 	}
 }

@@ -66,8 +66,8 @@ func TestGoalLogTail(t *testing.T) {
 	}
 }
 
-// Отсутствие журнала называется словами: цель не гонялась оболочкой, и это
-// другое состояние, чем молчащий цикл.
+// Отсутствие обоих источников называется словами: ни журнала оболочки, ни
+// файла цели, и это другое состояние, чем молчащий цикл.
 func TestGoalLogMissingNamed(t *testing.T) {
 	e := newTestEnv(t)
 	c := e.loggedClient(t)
@@ -76,7 +76,7 @@ func TestGoalLogMissingNamed(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("журнал без файла: %d %s", resp.StatusCode, text)
 	}
-	for _, want := range []string{`"exists":false`, "журнала", "не гонялась оболочкой goal-run"} {
+	for _, want := range []string{`"exists":false`, "журнала", "не гонялась ни оболочкой goal-run, ни живым чатом"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в ответе нет %q: %s", want, text)
 		}
@@ -150,6 +150,9 @@ func TestGoalLogStreamAppends(t *testing.T) {
 
 	r, done := sseClient(t, c, e.srv.URL+"/api/projects/demo/goals/XR-100/log?stream=1")
 	defer done()
+	if event, data := sseNext(t, r); event != "source" || !strings.Contains(data, "goal-XR-100.log") {
+		t.Fatalf("источник не назван: event=%q data=%q", event, data)
+	}
 	for i, want := range goalLogFixture {
 		if _, data := sseNext(t, r); data != want {
 			t.Fatalf("строка %d хвоста: %q, ожидал %q", i, data, want)
@@ -191,7 +194,9 @@ func TestStreamsExitOnClientGone(t *testing.T) {
 		name string
 		run  func(w http.ResponseWriter, r *http.Request)
 	}{
-		{"журнал", func(w http.ResponseWriter, r *http.Request) { srv.streamGoalLog(w, r, logPath, "нет") }},
+		{"журнал", func(w http.ResponseWriter, r *http.Request) {
+			srv.streamGoalLog(w, r, logPath, journalSources{id: "XR-1", logName: "goal-XR-1.log"})
+		}},
 		{"транскрипт", func(w http.ResponseWriter, r *http.Request) { srv.streamSession(w, r, trPath) }},
 	}
 	for _, s := range streams {
@@ -225,12 +230,153 @@ func TestGoalLogStreamMissingThenBorn(t *testing.T) {
 
 	r, done := sseClient(t, c, e.srv.URL+"/api/projects/demo/goals/XR-100/log?stream=1")
 	defer done()
+	if event, data := sseNext(t, r); event != "source" || !strings.Contains(data, "файла цели") {
+		t.Fatalf("источник не назван: event=%q data=%q", event, data)
+	}
 	event, data := sseNext(t, r)
-	if event != "note" || !strings.Contains(data, "не гонялась оболочкой") {
+	if event != "note" || !strings.Contains(data, "не гонялась ни оболочкой") {
 		t.Fatalf("пустота без имени: event=%q data=%q", event, data)
 	}
 	writeGoalLog(t, e.proj, "XR-100", goalLogFixture[:1])
+	// Журнал оболочки завёлся при открытом экране: подпись источника меняется
+	// и дальше строки идут оттуда.
+	if event, data := sseNext(t, r); event != "source" || !strings.Contains(data, "goal-XR-100.log") {
+		t.Fatalf("родившийся журнал не назван источником: event=%q data=%q", event, data)
+	}
 	if _, data := sseNext(t, r); data != goalLogFixture[0] {
 		t.Fatalf("родившийся журнал не подхвачен: %q", data)
+	}
+}
+
+// writeGoalDoc кладёт фикстурный файл цели: у цели, которую ведёт живой чат,
+// журнала оболочки нет, а ход витков лежит в её разделе «Журнал».
+func writeGoalDoc(t *testing.T, proj, id, body string) string {
+	t.Helper()
+	dir := filepath.Join(proj, "docs", "tasks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, id+".md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const goalDocFixture = `# XR-100: Цель: пробный цикл
+
+## Журнал
+
+Строки витков и снимков квоты допишет цикл.
+- снимок 2026-08-09T22:53: week_all 83%, week_max 61%
+- 2026-08-09, нарезка: 9 задач, порядок по dep; continue
+
+## Итог
+
+- сюда цикл не пишет
+`
+
+var goalDocLines = []string{
+	"снимок 2026-08-09T22:53: week_all 83%, week_max 61%",
+	"2026-08-09, нарезка: 9 задач, порядок по dep; continue",
+}
+
+// Журнал цели, которую ведёт живой чат: файла .devkit/goal-XR-100.log нет, и
+// строки приходят из раздела «Журнал» файла цели с подписью источника. Проза
+// раздела и строки соседних разделов в журнал не едут.
+func TestGoalLogFromGoalDoc(t *testing.T) {
+	e := newTestEnv(t)
+	writeGoalDoc(t, e.proj, "XR-100", goalDocFixture)
+	c := e.loggedClient(t)
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", "")
+	var got struct {
+		Exists bool     `json:"exists"`
+		Source string   `json:"source"`
+		Sign   string   `json:"source_note"`
+		Lines  []string `json:"lines"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Exists || got.Source != "goal-file" {
+		t.Fatalf("журнал из файла цели не отдан: %+v", got)
+	}
+	if !strings.Contains(got.Sign, "docs/tasks/XR-100.md") {
+		t.Errorf("подписи источника нет: %q", got.Sign)
+	}
+	if !reflect.DeepEqual(got.Lines, goalDocLines) {
+		t.Errorf("строки раздела:\n%v\nожидал:\n%v", got.Lines, goalDocLines)
+	}
+}
+
+// Журнал оболочки старше файла цели: пока goal-<ID>.log есть, читается он, а
+// раздел файла цели остаётся вторым источником.
+func TestGoalLogPrefersShellLog(t *testing.T) {
+	e := newTestEnv(t)
+	writeGoalDoc(t, e.proj, "XR-100", goalDocFixture)
+	writeGoalLog(t, e.proj, "XR-100", goalLogFixture)
+	c := e.loggedClient(t)
+
+	text := body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+	if !strings.Contains(text, `"source":"goal-log"`) || !strings.Contains(text, goalLogFixture[0]) {
+		t.Fatalf("журнал оболочки не в приоритете: %s", text)
+	}
+}
+
+// Пустота различима тремя причинами: файла цели нет вовсе, раздела «Журнал» в
+// нём нет, раздел заведён и пуст. Каждая называется своими словами.
+func TestGoalLogEmptyKinds(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"без файла цели", "", "не гонялась ни оболочкой goal-run, ни живым чатом"},
+		{"без раздела", "# XR-100: Цель: пробный цикл\n\n## Итог\n\n- пусто\n", "нет раздела «Журнал»"},
+		{"раздел пуст", "# XR-100: Цель: пробный цикл\n\n## Журнал\n\nСтроки допишет цикл.\n", "пуст"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			if tc.doc != "" {
+				writeGoalDoc(t, e.proj, "XR-100", tc.doc)
+			}
+			text := body(t, doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+			if !strings.Contains(text, `"exists":false`) || !strings.Contains(text, tc.want) {
+				t.Fatalf("пустота без имени: %s", text)
+			}
+		})
+	}
+}
+
+// SSE журнала из файла цели: хвост раздела приходит сразу с подписью
+// источника, дописанная витком строка доезжает живым дострением по правке
+// файла, а строки прочих разделов в поток не попадают.
+func TestGoalLogStreamGoalDocAppends(t *testing.T) {
+	e := newTestEnv(t)
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	t.Cleanup(func() { tailPoll = old })
+	path := writeGoalDoc(t, e.proj, "XR-100", goalDocFixture)
+	c := e.loggedClient(t)
+
+	r, done := sseClient(t, c, e.srv.URL+"/api/projects/demo/goals/XR-100/log?stream=1")
+	defer done()
+	if event, data := sseNext(t, r); event != "source" || !strings.Contains(data, "docs/tasks/XR-100.md") {
+		t.Fatalf("источник не назван: event=%q data=%q", event, data)
+	}
+	for i, want := range goalDocLines {
+		if _, data := sseNext(t, r); data != want {
+			t.Fatalf("строка %d хвоста: %q, ожидал %q", i, data, want)
+		}
+	}
+	next := "2026-08-10, виток 2: пачка DK-215 и DK-216 слита; continue"
+	doc := strings.Replace(goalDocFixture, "\n\n## Итог", "\n- "+next+"\n\n## Итог", 1)
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, data := sseNext(t, r); data != next {
+		t.Fatalf("живое дострение по правке файла цели: %q", data)
 	}
 }

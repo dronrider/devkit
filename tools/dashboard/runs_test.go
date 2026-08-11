@@ -359,14 +359,14 @@ func TestRunStopForeignPrefixUntouched(t *testing.T) {
 	}
 }
 
-// Цель из реестра без tmux-сессии ведётся снаружи (живой чат): дашборд её не
-// убивает и говорит об этом словами.
+// Цель из реестра без tmux-сессии ведёт другая сессия (живой чат): дашборд её
+// не убивает и говорит об этом словами.
 func TestRunStopGoalLedOutside(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-112", "")
 	text := body(t, resp)
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "ведётся снаружи") {
-		t.Fatalf("стоп чужого цикла: %d %s, ожидал 409 про «ведётся снаружи»", resp.StatusCode, text)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "стоп отсюда недоступен") {
+		t.Fatalf("стоп чужого цикла: %d %s, ожидал 409 про недоступный отсюда стоп", resp.StatusCode, text)
 	}
 }
 

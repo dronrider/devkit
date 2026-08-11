@@ -144,7 +144,7 @@ func parseBoardView(raw json.RawMessage) (boardView, error) {
 }
 
 // Work это живая работа проекта: tmux-сессия goal-*/task-*, цель из реестра
-// ~/.devkit/goals (цикл, ведущийся снаружи, без своей tmux-сессии) либо
+// ~/.devkit/goals (цикл, который ведёт другая сессия, без tmux-сессии) либо
 // интерактивная сессия человека в окне, узнанная по свежему транскрипту
 // (DK-263). Session и Note заполняет только третий источник: у интерактивной
 // работы есть транскрипт, а задача у неё бывает и не узнана.
@@ -152,8 +152,12 @@ type Work struct {
 	ID string `json:"id"`
 	// Kind говорит, о чём работа, а Via чем она видна. Вид session это работа
 	// с неузнанной задачей: чем она занята, сказать нечем.
-	Kind    string `json:"kind"` // goal | task | session
-	Via     string `json:"via"`  // tmux | registry | session
+	Kind string `json:"kind"` // goal | task | session
+	Via  string `json:"via"`  // tmux | registry | session
+	// Title это заголовок со строки доски: им работа и подписана на экране,
+	// имя сессии goal-DK-112 о занятии агента не говорит ничего (DK-255).
+	// Пусто у работы, чьей строки на доске нет.
+	Title   string `json:"title,omitempty"`
 	Session string `json:"session,omitempty"`
 	Note    string `json:"note,omitempty"`
 }
@@ -170,6 +174,10 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	works := []Work{}
 	seen := map[string]bool{}
 	busy := map[string]bool{}
+	// Заголовки берутся с доски разом: работа подписывается им, а не именем
+	// сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).
+	// Строки на доске может и не быть, и тогда работа остаётся при своём ID.
+	rows, _ := parseBoardRows(board)
 	if prefix != "" {
 		for _, name := range tmuxSessions() {
 			for _, kind := range []string{"goal", "task"} {
@@ -177,7 +185,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 				if !ok || !strings.HasPrefix(id, prefix+"-") {
 					continue
 				}
-				works = append(works, Work{ID: id, Kind: kind, Via: "tmux"})
+				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title, Via: "tmux"})
 				seen[kind+"-"+id] = true
 				busy[id] = true
 			}
@@ -192,7 +200,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if seen["goal-"+goal] {
 			continue
 		}
-		works = append(works, Work{ID: goal, Kind: "goal", Via: "registry"})
+		works = append(works, Work{ID: goal, Kind: "goal", Title: rows[goal].Title, Via: "registry"})
 		busy[goal] = true
 	}
 	return append(works, s.sessionWorks(projectPath, prefix, board, busy)...)

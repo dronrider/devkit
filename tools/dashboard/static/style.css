@@ -82,6 +82,8 @@ a:hover{text-decoration:underline}
 .lcard{flex:none;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg1);border:1px solid var(--line);border-radius:12px}
 .lcard b{font:600 13px var(--mono);color:var(--tx);white-space:nowrap}
 .lcard span.via{font:400 11.5px var(--sans);color:var(--tx3);white-space:nowrap}
+.lcard b.wtitle{font-family:var(--sans);overflow:hidden;text-overflow:ellipsis;max-width:34ch}
+.lcard span.wname{font:400 11.5px var(--mono);color:var(--tx3);white-space:nowrap}
 .groups{flex:1;overflow-y:auto;padding-bottom:24px}
 .empty{padding:12px 16px;font:400 13px var(--sans);color:var(--tx3)}
 .error{padding:12px 16px;font:400 13px var(--sans);color:var(--block)}
@@ -204,6 +206,8 @@ a:hover{text-decoration:underline}
    внизу; на телефоне те же панели табами через .seg */
 .ahead{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
 .ahead h2{margin:0;font:600 19px var(--mono)}
+.ahead h2.wtitle{font-family:var(--sans)}
+.ahead .wname{font:400 12px var(--mono);color:var(--tx3)}
 .agrid{display:grid;grid-template-columns:1fr 1.25fr;gap:18px;margin-top:18px}
 .pane{display:flex;flex-direction:column;overflow:hidden}
 .phd{display:flex;align-items:center;gap:9px;padding:12px 18px;border-bottom:1px solid var(--line)}

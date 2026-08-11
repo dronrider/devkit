@@ -37,6 +37,8 @@ def fake_devkit(root):
     write(root / "tools" / "obeycheck" / "go.mod", "module obeycheck\n")
     write(root / "tools" / "obeycheck" / "testdata" / "test_tool.py", "print(1)\n")
     write(root / "tools" / "obeycheck" / "testdata" / "fake-agent.sh", SH_FUNC)
+    write(root / "internal" / "go.mod", "module internal\n")
+    write(root / "internal" / "frame" / "capture.go", "package frame\n")
     write(root / "kit" / "skills" / "check-skills.py", "print(1)\n")
     write(root / "kit" / "skills" / "check_skills_test.py", "print(1)\n")
     write(root / "kit" / "skills" / "goal-loop" / "SKILL.md", "---\nname: goal-loop\n---\n")
@@ -198,8 +200,21 @@ class LayoutTest(SandboxCase):
         self.assertTrue([f for f in found if f.startswith("tools/helper.sh: %s" % layout.ONE_LANG)],
                         "файл в tools/ мимо директории инструмента не найден: %s" % found)
 
-    def test_untracked_file_is_not_a_finding(self):
-        # На живом дереве лежат __pycache__, собранные бинари и рабочие файлы
+    def test_internal_is_go_only(self):
+        # internal/ завёл DK-237 под общий go-модуль каркаса: go там лежит как у
+        # себя дома (молчание чистого дерева это и проверяет), а python в нём
+        # находка, потому что каркас go-шный.
+        self.assertEqual(layout.lang_rule("internal/frame/capture.go"), "",
+                         "go в internal/ посчитан нарушением")
+        planted = self.plant("internal/frame/helper.py", "print(1)\n")
+        try:
+            found = layout.check(self.dk)
+        finally:
+            self.drop(planted)
+        self.assertIn("%s: %s" % (planted, layout.TOOL_CODE), found,
+                      "python в internal/ прошёл молча: %s" % found)
+
+    def test_untracked_file_is_not_a_finding(self):        # На живом дереве лежат __pycache__, собранные бинари и рабочие файлы
         # worktree: проверка по диску краснела бы на чистом репозитории каждый
         # день.
         write(self.dk / "taskctl.bin.go", "package main\n")
@@ -281,10 +296,10 @@ class ReadmeGuardTest(unittest.TestCase):
         self.assertEqual(layout.readme_gaps(self.text), [],
                          "белый список проверки разошёлся с разделом «Раскладка» README")
 
-    def test_all_thirteen_entries_are_named(self):
+    def test_all_fourteen_entries_are_named(self):
         entries = layout.readme_entries(self.text)
-        self.assertEqual(len(layout.TOP_LEVEL), 13,
-                         "записей белого списка %d, а правило называет тринадцать" % len(layout.TOP_LEVEL))
+        self.assertEqual(len(layout.TOP_LEVEL), 14,
+                         "записей белого списка %d, а правило называет четырнадцать" % len(layout.TOP_LEVEL))
         for e in layout.TOP_LEVEL:
             self.assertTrue(any(name == e or name.endswith(".md") for name in entries),
                             "README не называет запись «%s»" % e)

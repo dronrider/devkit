@@ -16,12 +16,13 @@ import re
 import subprocess
 from pathlib import Path
 
-# Белый список верхнего уровня, тринадцать записей: четыре каталога раскладки,
+# Белый список верхнего уровня, четырнадцать записей: пять каталогов раскладки,
 # два служебных, пять корневых файлов по имени, шаблон правил и .gitignore. Тот
 # же состав стоит в разделе «Раскладка» README.md, и сверяет их сторож
 # (readme_gaps ниже): разъехавшиеся списки это правило, которого нет ни в тексте,
-# ни в проверке.
-TOP_LEVEL = ("tools", "kit", "hooks", "docs",
+# ни в проверке. Пятый каталог раскладки, internal/, завёл DK-237: это общий
+# go-модуль каркаса утилит, library, а не команда, поэтому под tools/ он не лёг.
+TOP_LEVEL = ("tools", "kit", "hooks", "docs", "internal",
              ".github", ".devkit",
              "README.md", "CONNECT.md", "AGENTS.md", "CLAUDE.md", "RANKING.md",
              "RULES*.md", ".gitignore")
@@ -121,7 +122,7 @@ def lang_rule(rel):
     if rel.endswith(".go"):
         if top in ("kit", "docs"):
             return MATERIAL
-        if top != "tools":
+        if top not in ("tools", "internal"):
             return TOOL_CODE
     if rel.endswith(".py"):
         if top == "docs":

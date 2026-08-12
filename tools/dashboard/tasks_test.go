@@ -783,11 +783,24 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 	body := funcBody(t, app, "async function renderTask(")
 	for _, want := range []string{`el("div", "card rcard rfolded")`, `el("div", "rtop")`,
 		`el("div", "rbody")`, `el("span", "rfold", "развернуть")`,
-		`rank.classList.toggle("rfolded") ? "развернуть" : "свернуть"`,
+		`rank.classList.toggle("rfolded")`, `shut ? "развернуть" : "свернуть"`,
 		"rbody.append(line)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в карточке ранга нет %q: свернуть её нажатием нечем", want)
 		}
+	}
+	// Шапка ранга это не кнопка разметки, поэтому клавиатуру ей дают руками, и
+	// ровно там, где она вправду сворачивает: на узком экране.
+	for _, want := range []string{`window.matchMedia("(max-width:900px)").matches`,
+		`rtop.setAttribute("role", "button")`, `rtop.setAttribute("tabindex", "0")`,
+		`rtop.setAttribute("aria-expanded", shut ? "false" : "true")`,
+		`ev.key !== "Enter" && ev.key !== " "`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("шапка ранга недоступна с клавиатуры: нет %q", want)
+		}
+	}
+	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".rtop:focus-visible{") {
+		t.Error("у шапки ранга нет видимого фокуса: с клавиатуры непонятно, где стоишь")
 	}
 	if !strings.Contains(funcBody(t, app, "function depsCard("), `el("div", "card dcard")`) {
 		t.Error("у карточки зависимостей нет своего класса: на телефоне её не увести под описание")
@@ -848,6 +861,83 @@ func TestStaticTaskBarIcons(t *testing.T) {
 	for _, want := range []string{".abar .btn .lb{display:none}", ".abar .btn{height:44px;min-width:44px"} {
 		if !strings.Contains(narrow, want) {
 			t.Errorf("на узком экране полоса действий не сведена к значкам: нет %q", want)
+		}
+	}
+}
+
+// cssRules режет статику на правила «селектор, тело»: правила в style.css
+// пишутся по одному в строке, включая вложенные в @media, поэтому разбор
+// построчный и во вложенность не лезет.
+func cssRules(css string) [][2]string {
+	var out [][2]string
+	for _, line := range strings.Split(css, "\n") {
+		line = strings.TrimSpace(line)
+		open := strings.Index(line, "{")
+		if open <= 0 || !strings.HasSuffix(line, "}") {
+			continue
+		}
+		out = append(out, [2]string{strings.TrimSpace(line[:open]), line[open+1 : len(line)-1]})
+	}
+	return out
+}
+
+func cssNameByte(b byte) bool {
+	return b == '-' || b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+}
+
+// cssSubject отвечает, правит ли селектор сам элемент класса cls, а не его
+// предка: у «.abar .btn .lb» подлежащее это .lb, и к кнопке правило не
+// относится.
+func cssSubject(sel, cls string) bool {
+	for _, one := range strings.Split(sel, ",") {
+		fields := strings.Fields(strings.ReplaceAll(one, ">", " "))
+		if len(fields) == 0 {
+			continue
+		}
+		last := fields[len(fields)-1]
+		for i := 0; ; {
+			at := strings.Index(last[i:], "."+cls)
+			if at < 0 {
+				break
+			}
+			end := i + at + len(cls) + 1
+			if end >= len(last) || !cssNameByte(last[end]) {
+				return true
+			}
+			i = end
+		}
+	}
+	return false
+}
+
+// Атрибут hidden прячет только то, чему страница не назначила свой display:
+// правило страницы сильнее встроенного [hidden]{display:none} браузера, и
+// специфичность тут ни при чём. Экран задачи прячет hidden кнопки правки и
+// разделитель, и без своего правила они оставались на полосе (замечание ревью
+// DK-284, поймано настоящим Chromium). Тест смотрит на исход каскада, а не на
+// строку в исходнике: назначенный display без пары [hidden] это та же
+// поломка, каким бы селектором её ни написали.
+func TestStaticHiddenBeatsDisplay(t *testing.T) {
+	rules := cssRules(readFile(t, filepath.Join("static", "style.css")))
+	// Классы, которые статика прячет атрибутом: кнопки полосы правки,
+	// разделитель между правкой и действиями, точка на колокольчике.
+	for _, cls := range []string{"btn", "div", "bdot"} {
+		setter, guard := "", false
+		for _, rule := range rules {
+			if !cssSubject(rule[0], cls) {
+				continue
+			}
+			if strings.Contains(rule[0], "[hidden]") {
+				guard = guard || strings.Contains(rule[1], "display:none")
+				continue
+			}
+			if setter == "" && strings.Contains(rule[1], "display:") {
+				setter = rule[0]
+			}
+		}
+		if setter != "" && !guard {
+			t.Errorf("правило %q назначает .%s свой display, а правила .%s[hidden]{display:none} нет: "+
+				"скрытый элемент остаётся на экране", setter, cls, cls)
 		}
 	}
 }

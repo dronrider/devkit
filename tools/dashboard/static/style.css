@@ -129,6 +129,10 @@ a:hover{text-decoration:underline}
 .rank{font:500 12px var(--mono);color:var(--tx3);white-space:nowrap}
 .rank b{color:var(--tx);font-weight:600;font-size:13px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:9px;font:600 13px var(--sans);background:var(--bg3);color:var(--tx);border:1px solid var(--line2);cursor:pointer;white-space:nowrap}
+/* своё display у кнопки сильнее встроенного [hidden]{display:none} браузера,
+   и без этой строки скрытая кнопка остаётся на экране (приём тот же, что у
+   .bdot точки на колокольчике) */
+.btn[hidden]{display:none}
 .btn-acc{background:var(--acc);color:var(--acc-ink);border-color:transparent}
 .btn-lg{height:48px;padding:0 20px;font-size:15px;border-radius:12px}
 .btn-sm{height:28px;padding:0 10px;font-size:12px;border-radius:7px}
@@ -188,6 +192,7 @@ a:hover{text-decoration:underline}
 /* сворачивание ранга живёт только на телефоне: на ноутбуке карточка открыта
    всегда, и класс .rfolded там ничего не значит */
 .rfold{display:none}
+.rtop:focus-visible{outline:1px solid var(--acc);border-radius:12px}
 .rrow{display:flex;align-items:center;gap:10px;padding:8px 14px 8px 18px;border-top:1px solid var(--line)}
 .rrow .nm{font:500 13px var(--sans);color:var(--tx2);width:132px;flex:none}
 .rrow .why{font:400 11.5px/1.45 var(--sans);color:var(--tx3);flex:1;min-width:0}

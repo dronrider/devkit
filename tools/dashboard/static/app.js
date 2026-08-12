@@ -852,9 +852,10 @@ async function renderTask(project, works, id) {
 
   // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
   // отдельной карточки действий у задачи больше нет, а надписи про пустую
-  // правку нет вовсе, о ней говорит погашенная кнопка. Сохранение одно на всю
-  // форму: любое изменение поля включает кнопку, и по ней уезжает всё
-  // изменённое разом.
+  // правку нет вовсе. У нетронутой формы нет и самих кнопок правки: они
+  // приходят с первым изменением поля вместе с разделителем. Сохранение одно
+  // на всю форму, по нему уезжает всё изменённое разом, а отказ проверки
+  // гасит кнопку и говорит причину рядом.
   const bar = el("div", "card abar");
   const save = barBtn("btn btn-acc", "Сохранить", "i-done");
   const drop = barBtn("btn", "Отменить правку", "close");
@@ -930,9 +931,26 @@ async function renderTask(project, works, id) {
   big.append(el("span", "f", "= " + (row.r_parts || []).join("+")));
   const fold = el("span", "rfold", "развернуть");
   rtop.append(rhead, big, fold);
-  rtop.addEventListener("click", () => {
-    fold.textContent = rank.classList.toggle("rfolded") ? "развернуть" : "свернуть";
-  });
+  const foldRank = () => {
+    const shut = rank.classList.toggle("rfolded");
+    fold.textContent = shut ? "развернуть" : "свернуть";
+    rtop.setAttribute("aria-expanded", shut ? "false" : "true");
+  };
+  rtop.addEventListener("click", foldRank);
+  // Управляющим шапка ранга становится там же, где ранг сворачивается, на
+  // узком экране: на ноутбуке карточка открыта всегда, и обход с клавиатуры
+  // упирался бы в кнопку, которая ничего не меняет. Слагаемые открываются
+  // Enter и пробелом, иначе с клавиатуры до них не добраться.
+  if (window.matchMedia("(max-width:900px)").matches) {
+    rtop.setAttribute("role", "button");
+    rtop.setAttribute("tabindex", "0");
+    rtop.setAttribute("aria-expanded", "false");
+    rtop.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      foldRank();
+    });
+  }
   rank.append(rtop);
   const rbody = el("div", "rbody");
   rank.append(rbody);

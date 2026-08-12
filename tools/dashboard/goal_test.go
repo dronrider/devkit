@@ -58,6 +58,11 @@ func composed(t *testing.T, got map[string]any) []map[string]any {
 	return out
 }
 
+// closedDate это дата закрытия фикстурной задачи: она стоит в колонке
+// «Закрыто» архива, и состав обязан приехать ровно с ней, а не с соседней
+// колонкой таблицы.
+const closedDate = "2026-01-31"
+
 const goalDocBody = `# XR-100: Цель: пробный цикл
 
 ## Задачи цели
@@ -95,7 +100,9 @@ func TestGoalTasksFromDoc(t *testing.T) {
 	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "XR-004.md")); err != nil {
 		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "close", "XR-004")
+	// Дата закрытия ставится руками: со сверкой точного значения видно, что в
+	// состав едет колонка «Закрыто» архива, а не соседняя с ней.
+	runTaskctl(t, e.proj, "close", "XR-004", "--date", closedDate)
 
 	got := goalTasksResp(t, c, e, "XR-100")
 	if note, hit := got["note"]; hit {
@@ -128,8 +135,8 @@ func TestGoalTasksFromDoc(t *testing.T) {
 	if done, _ := closed["done"].(bool); !done {
 		t.Errorf("закрытая задача не помечена закрытой: %v", closed)
 	}
-	if when, _ := closed["closed"].(string); when == "" {
-		t.Errorf("дата закрытия из архива не приехала: %v", closed)
+	if when, _ := closed["closed"].(string); when != closedDate {
+		t.Errorf("дата закрытия %q, жду %q из колонки «Закрыто» архива", when, closedDate)
 	}
 	if title, _ := closed["title"].(string); title != "Четвёртая" {
 		t.Errorf("заголовок закрытой задачи %q, жду из архива", title)

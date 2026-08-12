@@ -160,6 +160,39 @@ func TestStaticDraftsSection(t *testing.T) {
 	}
 }
 
+// Без входа груминг не поднимается, чужой Origin отбивается до подъёма сессии:
+// ручка изменяющая, чужая страница из браузера дотянуться до неё не должна.
+func TestDraftGroomAuthAndOrigin(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "мысль про накопитель"}`).Body.Close()
+
+	url := e.srv.URL + "/api/projects/demo/drafts/XR-005/groom"
+	resp := doReq(t, plainClient(), "POST", url, "")
+	if text := body(t, resp); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("груминг без входа: %d %s, ожидал 401", resp.StatusCode, text)
+	}
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err = c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("груминг с чужим Origin: %d, ожидал 403", resp.StatusCode)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("отбитый запрос поднял сессию: %s", got)
+	}
+}
+
 // Черновика нет, оформлять нечего: сессия не поднимается, а причина называется
 // словами.
 func TestDraftGroomMissing(t *testing.T) {

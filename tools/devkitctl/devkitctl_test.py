@@ -2152,6 +2152,20 @@ class GoWorkFindingTest(SandboxCase):
         self.assertIn_("deploy=", out, "находка не назвала ключ deploy=")
         self.assertIn_("test=", out, "находка не назвала ключ test=")
 
+    def test_8_comment_in_use_block_does_not_mask_missing_project(self):
+        # Регрессия: парсер go.work не пропускал комментарии // внутри
+        # use ( ... ), и строка-комментарий резолвилась в корень /, откуда
+        # project_in_gowork отвечал True для любого проекта и находка молчала
+        # на валидном чужом go.work с комментарием в use-блоке.
+        proj = self.make_proj("cmt")
+        write(self.ws / "go.work",
+              "go 1.21\n\nuse (\n\t// sibling only, proj is foreign\n\t./sibling\n)\n")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertIn_("go.work", out,
+                       "комментарий в use-блоке закрыл находку, хотя проект не перечислен")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -474,9 +474,10 @@ def gowork_use_directories(gowork_path, gowork_dir):
     """Каталоги, которые go.work подключает через use.
 
     Пути в use пишутся относительно каталога go.work и обязаны начинаться с
-    ./, ../ либо быть абсолютными; bare-слов го в синтаксисе не допускает.
-    Блочная форма «use ( ... )» раскрывается построчно, однострочная «use
-    ./path» разбирается прямо в ней.
+    ./, ../ либо быть абсолютными; use без префикса ./, ../ или / го в
+    синтаксисе не допускает. Блочная форма «use ( ... )» раскрывается
+    построчно, однострочная «use ./path» разбирается прямо в ней. Комментарии
+    //, допустимые в любой строке use-блока, выкидываются до разбора пути.
     """
     uses = []
     try:
@@ -490,6 +491,8 @@ def gowork_use_directories(gowork_path, gowork_dir):
             if s.startswith(")"):
                 in_block = False
                 continue
+            if s.startswith("//"):
+                continue  # строка-комментарий, го её из use выкидывает
             tok = s.split()[0] if s.split() else ""
             if tok.startswith(("./", "../", "/")):
                 uses.append((gowork_dir / tok).resolve())
@@ -555,14 +558,14 @@ def has_go_mod(root):
 def check_gowork(root, deploy, test):
     """Находка про чужой go.work рядом с го-проектом (DK-115).
 
-    go.work, в котором проект не перечислен, ломает го-команды из его каталога
-    ответом «directory prefix . does not contain modules listed in go.work».
-    Для shipctl merge это выглядит как красные тесты после ребейза на зелёном
-    коде, и слияние встаёт на ровном месте. Починка называется в самом тексте:
-    GOWORK=off перед го-командой в deploy.local гасит рабочее пространство го
-    для этого вызова. Молчит, когда проекта нет ни в одном предке, проекта в
-    go.work нет, го-команд в обвязке выката нет, либо они уже обёрнуты
-    GOWORK=off.
+    go.work, в котором проект не перечислен, отказывает го-командам из его
+    каталога ответом «directory prefix . does not contain modules listed in
+    go.work». Для shipctl merge это выглядит как красные тесты после ребейза на
+    зелёном коде, и слияние встаёт на ровном месте. Починка называется в самом
+    тексте: GOWORK=off перед го-командой в deploy.local гасит рабочее
+    пространство го для этого вызова. Молчит, когда проекта нет ни в одном
+    предке, проекта в go.work нет, го-команд в обвязке выката нет, либо они уже
+    обёрнуты GOWORK=off.
     """
     findings = []
     proot = Path(root).resolve()
@@ -584,9 +587,10 @@ def check_gowork(root, deploy, test):
     rel = os.path.relpath(gowork_path, proot)
     findings.append(
         "рядом лежит %s, где проект не перечислен в use: го-команды из каталога "
-        "проекта ломаются ответом «directory prefix . does not contain modules "
-        "listed in go.work», для shipctl merge это красные тесты после ребейза "
-        "на ровном месте; дописать «export %s; » в начало ключа %s файла %s"
+        "проекта отказывают тем же ответом «directory prefix . does not contain "
+        "modules listed in go.work», для shipctl merge это красные тесты после "
+        "ребейза на ровном месте; дописать «export %s; » в начало ключа %s "
+        "файла %s"
         % (rel, GOWORK_ENV, keys, DEPLOY_CONFIG)
     )
     return findings

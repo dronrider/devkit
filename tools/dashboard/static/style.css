@@ -232,6 +232,21 @@ a:hover{text-decoration:underline}
 .prow b{font:600 13.5px var(--sans);color:var(--tx)}
 .prow .stale{margin-left:auto}
 
+/* экран «Агенты» (#/agents, макет «08 Агенты»): работы всех досок одним
+   списком, заголовок задачи первым, время и действия справа */
+.arow{display:flex;align-items:flex-start;gap:14px;padding:15px 18px;border-top:1px solid var(--line)}
+.arow:first-child{border-top:none}
+.arow .dot{margin-top:6px}
+.arow .dot-other{background:var(--check)}
+.ab{flex:1;min-width:0}
+.ab .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.ab .l1 .tt{font:500 14px var(--sans);color:var(--tx)}
+.ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3)}
+.aacts{display:flex;align-items:center;gap:9px;flex:none}
+.aacts .stale{max-width:210px;white-space:normal;text-align:right}
+.atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap}
+.empty b{display:block;font:600 14px var(--sans);color:var(--tx2);margin-bottom:5px}
+
 /* экран заведения (#проект/new, макет «07 Заведение»): форма одна на задачу и
    черновик, переключатель меняет только то, куда ляжет написанное; у черновика
    лишние поля гасятся с подписью, а не прячутся */
@@ -442,6 +457,11 @@ a:hover{text-decoration:underline}
   .abar .btn{height:44px}
   .flashes{top:12px;right:10px;left:10px}
   .flash{width:auto}
+  /* телефон: работа встаёт карточкой, кнопки в ряд с пальцем в 44 пикселя */
+  .arow{flex-wrap:wrap;gap:10px 12px;padding:14px 15px}
+  .aacts{width:100%;flex-wrap:wrap}
+  .aacts .btn{flex:1;min-height:44px}
+  .aacts .stale{max-width:none;text-align:left}
   .tmuxbar{display:none;margin-top:12px}
   .tmuxbar.onpane{display:block}
   .pbd{max-height:60vh}

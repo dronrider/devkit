@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -264,5 +266,177 @@ func TestStaticLogoIsHomeLink(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет стиля логотипа %q", want)
 		}
+	}
+}
+
+// Экран «Агенты» собран из ответа со списком проектов: своей ручки у него нет,
+// works приходят одним запросом, и каждая работа встаёт строкой с заголовком
+// задачи впереди.
+func TestStaticAgentsScreen(t *testing.T) {
+	html := readFile(t, filepath.Join("static", "index.html"))
+	for _, want := range []string{`id="nav-agents"`, `id="tab-agents"`, `id="nav-agents-n"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("в static/index.html нет %q: пункт «Агенты» не ожил", want)
+		}
+	}
+	if strings.Contains(html, `class="sitem off">Агенты`) {
+		t.Error("пункт «Агенты» остался погашенной заглушкой")
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, `if (h === "/agents") return { proj: "", id: "", agents: true };`) {
+		t.Error("хэша экрана «Агенты» нет: раздел никуда не ведёт")
+	}
+	if !strings.Contains(funcBody(t, app, "function markNav("), `["agents", ["nav-agents", "tab-agents"]]`) {
+		t.Error("раздел «Агенты» не подсвечивается: открытый экран неотличим от доски")
+	}
+	if !strings.Contains(app, `for (const id of ["nav-agents", "tab-agents"]) {`) {
+		t.Error("пункт колонки и вкладка телефона не ведут на экран")
+	}
+	refresh := funcBody(t, app, "async function refresh(")
+	if !strings.Contains(refresh, "renderAgents(projects)") {
+		t.Error("экран «Агенты» не рисуется из ответа /api/projects")
+	}
+	if strings.Contains(refresh, `"/agents") + "/board"`) {
+		t.Error("экран «Агенты» ходит за доской: works уже пришли со списком проектов")
+	}
+	row := funcBody(t, app, "function agentRow(")
+	if strings.Index(row, `el("span", "tt", w.title`) > strings.Index(row, "workChips(") {
+		t.Error("строка начинается не с заголовка задачи")
+	}
+	for _, want := range []string{"агент цели", "конвейер задачи", "ведёт другая сессия",
+		"интерактивная сессия"} {
+		if !strings.Contains(funcBody(t, app, "function workChips("), want) {
+			t.Errorf("вид работы %q не назван чипом", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".arow{", ".aacts{", ".atime{", ".arow{flex-wrap:wrap"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет %q: экран не собран на обоих форм-факторах", want)
+		}
+	}
+}
+
+// Переходы строки те же, что на экране агента: чат открыт одной цели, стоп
+// стоит только у работы, чьей tmux-сессией дашборд распоряжается, а поднятой
+// мимо него остаётся переход на задачу.
+func TestStaticAgentsRowGates(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	row := funcBody(t, app, "function agentRow(")
+	if !strings.Contains(row, `goButton("Живой статус", project + "/agent/" + w.id)`) {
+		t.Error("перехода в живой статус нет")
+	}
+	if !strings.Contains(row, `if (w.kind === "goal") acts.append(goButton("Чат с агентом"`) {
+		t.Error("чат открыт не одной целью: у обычной задачи он ведёт в тупик")
+	}
+	if !strings.Contains(row, `if (w.via === "tmux") {`) || !strings.Contains(row, `"Остановить"`) {
+		t.Error("кнопка стопа стоит не у tmux-работы")
+	}
+	if strings.Index(row, `w.via === "registry"`) > strings.Index(row, `w.via === "tmux"`) {
+		t.Error("ветка реестровой работы стоит после стопа: кнопка достанется и ей")
+	}
+	if !strings.Contains(row, "работа поднята мимо дашборда: остановить можно там, где поднята") {
+		t.Error("реестровая работа не объясняет, почему стопа у неё нет")
+	}
+	if !strings.Contains(row, `goButton("Открыть задачу"`) {
+		t.Error("у реестровой работы нет перехода на задачу")
+	}
+}
+
+// Пустота экрана говорит словами и зовёт запустить задачу: раздел открывается
+// и тогда, когда ни одной работы не идёт.
+func TestStaticAgentsEmpty(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function renderAgents(")
+	for _, want := range []string{"Агентов сейчас нет.",
+		"Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в пустоте экрана «Агенты» нет %q", want)
+		}
+	}
+	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".empty b{") {
+		t.Error("в стилях нет заголовка пустоты: слова встанут одним куском")
+	}
+}
+
+// Экран считает работы всех проектов сразу, тем же списком, что и счётчик у
+// пункта колонки; время работы берётся с её начала, а работа без начала
+// остаётся без времени, а не с нулём минут.
+func TestStaticAgentsCollect(t *testing.T) {
+	heads := []string{"function allWorks(", "function workSub(", "function workAge("}
+	projects := `[{name: "devkit", works: [{id: "DK-112", kind: "goal", via: "tmux"}]},` +
+		`{name: "xr", works: []},` +
+		`{name: "byblos", works: [{id: "BB-7", kind: "task", via: "registry"}, {kind: "session", via: "session", session: "abc", note: "задача не узнана"}]}]`
+	if got := jsEval(t, heads, "allWorks("+projects+").length"); got != "3" {
+		t.Errorf("собрано %s работ, ожидал 3 со всех проектов", got)
+	}
+	if got := jsEval(t, heads, `allWorks(`+projects+`).map((x) => x.project).join(",")`); got != "devkit,byblos,byblos" {
+		t.Errorf("проекты работ %q: список собран не по всем доскам", got)
+	}
+	cases := []struct{ expr, want string }{
+		{`workSub({id: "DK-112", kind: "goal", via: "tmux"})`, "DK-112, сессия goal-DK-112"},
+		{`workSub({id: "BB-7", kind: "task", via: "registry"})`, "BB-7, сессии дашборда нет"},
+		{`workSub({kind: "session", via: "session", session: "abc", note: "задача не узнана"})`,
+			"задача не узнана, сессия abc"},
+		{"workAge(0, 1000000)", ""},
+		{"workAge(1000, 1000 * 1000 + 52 * 60 * 1000)", "52 мин"},
+		{"workAge(1000, 1000 * 1000 + 75 * 60 * 1000)", "1 ч 15 мин"},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, c.expr); got != c.want {
+			t.Errorf("%s дал %q, ожидал %q", c.expr, got, c.want)
+		}
+	}
+}
+
+// Ответ со списком проектов несёт живые работы каждого из них: экран
+// «Агенты» собирается из одного запроса, и работа второй доски в него
+// попадает наравне с первой.
+func TestProjectsWorksEveryProject(t *testing.T) {
+	e := newTestEnv(t)
+	other := filepath.Join(e.home, "projects", "other")
+	mkProject(t, other)
+	// Фикстура taskctl отвечает по спрошенному каталогу: у второго проекта своя
+	// доска с префиксом ZZ, иначе обе получили бы одни и те же сессии.
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf(
+		"case \"$*\" in\n*other*) echo '%s';;\n*) echo '%s';;\nesac",
+		strings.ReplaceAll(boardFixtureJSON, `"XR`, `"ZZ`), boardFixtureJSON))
+	writeScript(t, e.bin, "tmux", "printf 'goal-XR-9\\t1\\t1000\\ntask-ZZ-5\\t1\\t2000\\n'")
+
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects", "")
+	var got struct {
+		Projects []projectInfo `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	works := map[string][]string{}
+	for _, p := range got.Projects {
+		for _, w := range p.Works {
+			works[p.Name] = append(works[p.Name], w.ID)
+		}
+	}
+	if len(works["demo"]) != 2 || works["demo"][0] != "XR-9" {
+		t.Errorf("работы demo %v, ожидал tmux-работу XR-9 и цель реестра", works["demo"])
+	}
+	if len(works["other"]) != 1 || works["other"][0] != "ZZ-5" {
+		t.Errorf("работы other %v, ожидал ZZ-5: работы второй доски в ответ не попали", works["other"])
+	}
+}
+
+// Работа из tmux несёт момент начала: по нему экран «Агенты» говорит, сколько
+// она идёт. У цели из реестра начала не видно, и время в ответе нулевое, а не
+// выдуманное.
+func TestLiveWorksStartedFromTmux(t *testing.T) {
+	e, _, _ := runsEnv(t, `goal-XR-100\t1\t1786000000\n`)
+	starts := map[string]int64{}
+	for _, w := range boardWorks(t, e) {
+		starts[w.ID] = w.Started
+	}
+	if starts["XR-100"] != 1786000000 {
+		t.Errorf("начало работы XR-100 %d, ожидал момент создания tmux-сессии", starts["XR-100"])
+	}
+	if starts["XR-112"] != 0 {
+		t.Errorf("у цели из реестра начало %d, а его неоткуда взять", starts["XR-112"])
 	}
 }

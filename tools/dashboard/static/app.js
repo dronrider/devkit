@@ -32,11 +32,13 @@ async function api(path, opts) {
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
 // "#проект/DK-NNN" задача, "#проект/agent/DK-NNN" живой статус агента,
 // "#проект/chat/DK-NNN" переписка с агентом цели, "#проект/feed" лента
-// уведомлений.
+// уведомлений. Экран «Агенты» проекту не принадлежит и стоит за "#/agents":
+// голое "#agents" отняло бы имя у проекта, названного так же.
 function route() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ""));
   const parts = h.split("/");
   if (!h) return { proj: "", id: "", home: true };
+  if (h === "/agents") return { proj: "", id: "", agents: true };
   if (parts.length >= 2 && parts[1] === "feed") {
     return { proj: parts[0], id: "", feed: true };
   }
@@ -100,6 +102,11 @@ function renderSidebar(projects, current) {
     sel.append(opt);
   }
   sel.onchange = () => { location.hash = sel.value; };
+  // Счётчик у раздела «Агенты» считает тот же список, что рисует экран: два
+  // разных числа рядом читались бы как потерянная работа.
+  const live = allWorks(projects).length;
+  document.getElementById("nav-agents-n").textContent =
+    live ? live + " " + plural(live, "работа", "работы", "работ") : "";
 }
 
 function sayResult(text, isError) {
@@ -2303,6 +2310,111 @@ function renderHome(projects) {
   groups.append(bar);
 }
 
+// Экран «Агенты» (макет «08 Агенты»): живые работы всех проектов одним
+// списком. Своей ручки у экрана нет: works приходят в ответе /api/projects
+// вместе со списком проектов, и второго похода на сервер экран не стоит.
+function allWorks(projects) {
+  const out = [];
+  for (const p of projects || []) {
+    for (const w of p.works || []) out.push({ project: p.name, work: w });
+  }
+  return out;
+}
+
+// Вид работы словами: чипы отвечают, кто её ведёт и чем она видна. Цель
+// названа целью и в интерактивном окне, потому что переписка открыта ровно у
+// неё.
+function workChips(project, w) {
+  const chips = [el("span", "chip", project)];
+  if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
+  if (w.via === "registry") chips.push(el("span", "chip c-check", "ведёт другая сессия"));
+  else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
+  else if (w.kind !== "goal") chips.push(el("span", "chip", "конвейер задачи"));
+  return chips;
+}
+
+// Подпись под заголовком: ID, чем работа видна и имя сессии, по которому её
+// находят в tmux. У работы без начала времени в строке нет вовсе: ноль минут
+// был бы неотличим от только что поднятой.
+function workSub(w) {
+  const parts = [];
+  if (w.id) parts.push(w.id);
+  if (w.via === "registry") parts.push("сессии дашборда нет");
+  if (w.note) parts.push(w.note);
+  // Имя сессии называется там, где она есть: у работы из реестра дашборд
+  // сессии не видит, и выдуманное task-BB-7 отправило бы искать её в tmux.
+  const name = w.via === "session" ? w.session : (w.via === "tmux" && w.id ? w.kind + "-" + w.id : "");
+  if (name) parts.push("сессия " + name);
+  return parts.join(", ");
+}
+
+function workAge(started, now) {
+  if (!started) return "";
+  const mins = Math.floor((now / 1000 - started) / 60);
+  if (mins < 1) return "меньше минуты";
+  if (mins < 60) return mins + " мин";
+  return Math.floor(mins / 60) + " ч " + (mins % 60) + " мин";
+}
+
+function goButton(label, hash) {
+  const btn = el("button", "btn btn-sm", label);
+  btn.addEventListener("click", () => { location.hash = hash; });
+  return btn;
+}
+
+function agentRow(project, w, now) {
+  const row = el("div", "arow");
+  row.append(el("span", "dot" + (w.via === "registry" ? " dot-other" : " pulse")));
+  const box = el("div", "ab");
+  const line = el("div", "l1");
+  // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
+  // говорит ничего, и место ему в подписи.
+  line.append(el("span", "tt", w.title || w.id || "интерактивная сессия"));
+  for (const chip of workChips(project, w)) line.append(chip);
+  box.append(line, el("div", "l2", workSub(w)));
+  row.append(box);
+
+  const acts = el("div", "aacts");
+  const age = workAge(w.started, now);
+  if (age) acts.append(el("span", "atime", age));
+  if (w.via === "registry") {
+    // Работа поднята мимо дашборда: её сессией он не распоряжается, и вместо
+    // кнопок остаётся переход на задачу.
+    acts.append(el("span", "stale",
+      "работа поднята мимо дашборда: остановить можно там, где поднята"));
+    if (w.id) acts.append(goButton("Открыть задачу", project + "/" + w.id));
+  } else if (w.id) {
+    acts.append(goButton("Живой статус", project + "/agent/" + w.id));
+    // Чат это переписка с циклом цели, у обычной задачи отправка ответила бы
+    // «не цель»: гейт тот же, что на экране агента.
+    if (w.kind === "goal") acts.append(goButton("Чат с агентом", project + "/chat/" + w.id));
+    if (w.via === "tmux") {
+      const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
+      stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
+      acts.append(stop);
+    }
+  }
+  row.append(acts);
+  return row;
+}
+
+function renderAgents(projects) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const card = el("div", "card");
+  const list = allWorks(projects);
+  if (!list.length) {
+    const empty = el("div", "empty");
+    empty.append(el("b", "", "Агентов сейчас нет."));
+    empty.append(document.createTextNode(
+      "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
+    card.append(empty);
+  }
+  const now = Date.now();
+  for (const item of list) card.append(agentRow(item.project, item.work, now));
+  groups.append(card);
+}
+
 // Остаток подписок (макет «00 Главная», блок в подвале боковой колонки). Имён
 // харнесов тут нет ни одного: что показывать, целиком решает ответ сервера, а
 // он собран из каталога снимков. На ноутбуке блок стоит в колонке над кнопкой
@@ -2400,9 +2512,19 @@ async function refresh() {
   // Остаток подписок тоже живёт отдельно от экрана: он стоит над любым из них,
   // а держать экран ради чтения пары файлов незачем.
   refreshQuota().catch(console.error);
-  renderSidebar(projects, rt.home ? null : current);
+  renderSidebar(projects, rt.home || rt.agents ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
+  if (rt.agents) {
+    // Экран собран из того же ответа, что и колонка: живые работы всех
+    // проектов приходят одним запросом, и доска ему не нужна.
+    document.getElementById("pname").textContent = "Агенты";
+    document.getElementById("psub").textContent = "работы, идущие сейчас по всем доскам";
+    renderLive("", []);
+    markNav(rt);
+    renderAgents(projects);
+    return;
+  }
   if (rt.home) {
     document.getElementById("pname").textContent = "Проекты";
     document.getElementById("psub").textContent = "главная, доски из корней конфига";
@@ -2491,9 +2613,10 @@ function markNav(rt) {
   // Легенда кружков живёт на главной: её рисует renderHome, а с остальных
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
-  const on = rt.home ? "home" : rt.feed ? "feed" : "board";
+  const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
+    ["agents", ["nav-agents", "tab-agents"]],
     ["feed", ["bell"]]]) {
     for (const id of ids) {
       document.getElementById(id).classList.toggle("on", name === on);
@@ -2508,6 +2631,12 @@ for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
     // имени увёл бы на "#/feed".
     location.hash = (shownProject || route().proj) + tail;
   });
+}
+
+// Раздел «Агенты» имени проекта не просит: он показывает работы всех досок
+// сразу, и хэш у него один на весь дашборд.
+for (const id of ["nav-agents", "tab-agents"]) {
+  document.getElementById(id).addEventListener("click", () => { location.hash = "/agents"; });
 }
 
 // Переход на главную это логотип в левом верхнем углу: на ноутбуке он стоит

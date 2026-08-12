@@ -160,6 +160,12 @@ type Work struct {
 	Title   string `json:"title,omitempty"`
 	Session string `json:"session,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// Started это момент начала работы в unix-секундах: экран «Агенты» считает
+	// по нему, сколько она идёт. Знает его только tmux, у которого сессия
+	// заведена; запись реестра и транскрипт помечены последним касанием, а не
+	// первым, и время работы из них не выводится. Ноль значит «начала не
+	// видно», и строка тогда остаётся без времени, а не с нулём минут.
+	Started int64 `json:"started,omitempty"`
 }
 
 // liveWorks собирает работы проекта. tmux-сессии на машине общие, к проекту
@@ -179,13 +185,16 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	// Строки на доске может и не быть, и тогда работа остаётся при своём ID.
 	rows, _ := parseBoardRows(board)
 	if prefix != "" {
-		for _, name := range tmuxSessions() {
+		// Сессии спрашиваются со временем создания (tmuxList): по нему экран
+		// «Агенты» говорит, сколько работа идёт.
+		for _, sess := range tmuxList() {
 			for _, kind := range []string{"goal", "task"} {
-				id, ok := strings.CutPrefix(name, kind+"-")
+				id, ok := strings.CutPrefix(sess.Name, kind+"-")
 				if !ok || !strings.HasPrefix(id, prefix+"-") {
 					continue
 				}
-				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title, Via: "tmux"})
+				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title,
+					Via: "tmux", Started: sess.Created})
 				seen[kind+"-"+id] = true
 				busy[id] = true
 			}
@@ -219,10 +228,11 @@ func tmuxMissingCheck() string {
 	return ""
 }
 
-// tmuxSessions отдаёт имена сессий. Ненулевой код tmux ls это штатное
-// «сессий нет»: без единой сессии tmux не держит сервера и ls отвечает
-// ошибкой, поломкой это не считается; ненайденный бинарь называет
-// tmuxMissingCheck на уровне ответа, здесь оба случая дают пустой список.
+// tmuxSessions отдаёт одни имена: занятость задачи и поиск сессии по имени
+// временем не интересуются. Ненулевой код tmux ls это штатное «сессий нет»:
+// без единой сессии tmux не держит сервера и ls отвечает ошибкой, поломкой это
+// не считается; ненайденный бинарь называет tmuxMissingCheck на уровне ответа,
+// здесь оба случая дают пустой список.
 func tmuxSessions() []string {
 	out, err := runProc("tmux", "ls", "-F", "#{session_name}")
 	if err != nil {

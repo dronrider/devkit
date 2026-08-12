@@ -132,6 +132,18 @@ func parseNotifyLine(line string) (Notification, bool) {
 	return n, true
 }
 
+// notifySandboxSkip это префикс результата у строк, которые уведомитель сам
+// пометил пропуском по песочнице (log() в hooks/notify.py, DK-196): корень
+// прогона лежит под TMPDIR, баннер про него ложный, и лента не должна
+// смешивать его с живыми событиями (DK-283).
+const notifySandboxSkip = "пропуск: песочница"
+
+// sandboxSkipped узнаёт строку песочницы по результату: событие в журнале
+// осталось, а до ленты доезжать ему незачем.
+func (n Notification) sandboxSkipped() bool {
+	return strings.HasPrefix(n.Result, notifySandboxSkip)
+}
+
 func dashless(v string) string {
 	if v == "-" {
 		return ""
@@ -162,6 +174,11 @@ func parseNotifications(lines []string, filter map[string]bool) (items []Notific
 	for _, ln := range lines {
 		n, ok := parseNotifyLine(ln)
 		if !ok {
+			continue
+		}
+		if n.sandboxSkipped() {
+			// Строка песочницы: событие было, но не своё, и лента ведёт себя
+			// так, будто строки в журнале не было вовсе (DK-283).
 			continue
 		}
 		seen = true

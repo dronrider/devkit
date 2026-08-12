@@ -20,6 +20,11 @@ var notifyFixture = []string{
 	"2026-08-10T00:41:02 сессия - повод run_stop уровень громкий бэкенд - цель - пропуск: песочница, корень /tmp/x лежит под /tmp текст «demo: XR-100 стоп из дашборда» «цикл цели снят из дашборда»",
 }
 
+// notifyStopSent это настоящий доехавший стоп, соседний по тексту с
+// пропуском по песочнице notifyFixture[4]: живой поток обязан отдать его
+// событием, а призрак песочницы рядом - нет (DK-283).
+const notifyStopSent = "2026-08-10T00:41:05 сессия - повод run_stop уровень громкий бэкенд terminal-notifier цель - код возврата: 0 текст «demo: XR-100 стоп из дашборда» «цикл цели снят из дашборда»"
+
 func writeNotifyLog(t *testing.T, home string, lines []string) string {
 	t.Helper()
 	dir := filepath.Join(home, ".devkit")
@@ -120,13 +125,15 @@ func TestParseNotifyLineBroken(t *testing.T) {
 }
 
 // Лента отдаёт хвост журнала свежими событиями и разбирает их поводы; вход
-// обязателен, как и всюду.
+// обязателен, как и всюду. Пятая строка образца это пропуск по песочнице
+// (DK-283), и в счёт она не идёт: 22-52 строки этого файла её так же не ждут.
 func TestNotificationsTail(t *testing.T) {
 	e := newTestEnv(t)
 	writeNotifyLog(t, e.home, notifyFixture)
 	out := getFeed(t, e, "")
-	if !out.Exists || len(out.Items) != len(notifyFixture) {
-		t.Fatalf("лента отдала %d событий из %d (note %q)", len(out.Items), len(notifyFixture), out.Note)
+	want := len(notifyFixture) - 1
+	if !out.Exists || len(out.Items) != want {
+		t.Fatalf("лента отдала %d событий из %d (note %q)", len(out.Items), want, out.Note)
 	}
 	if out.Items[0].Time != "2026-08-02T14:03:11" {
 		t.Errorf("порядок ленты: первым %q", out.Items[0].Time)
@@ -135,13 +142,14 @@ func TestNotificationsTail(t *testing.T) {
 	for _, n := range out.Items {
 		kinds[n.Kind]++
 	}
-	if kinds["stop"] != 1 || kinds["wait"] != 1 || kinds["task"] != 1 || kinds["other"] != 2 {
+	if kinds["stop"] != 0 || kinds["wait"] != 1 || kinds["task"] != 1 || kinds["other"] != 2 {
 		t.Errorf("типы событий: %v", kinds)
 	}
 }
 
 // Фильтр по типам берёт три типа DoD порознь и вместе: экран ленты ходит
-// теми же параметрами, что и smoke.
+// теми же параметрами, что и smoke. Пропуск по песочнице (пятая строка
+// образца) под фильтр stop не попадает ни разу: лента его не показывает.
 func TestNotificationsFilter(t *testing.T) {
 	e := newTestEnv(t)
 	writeNotifyLog(t, e.home, notifyFixture)
@@ -149,15 +157,36 @@ func TestNotificationsFilter(t *testing.T) {
 		query string
 		want  int
 	}{
-		{"?kind=stop", 1},
+		{"?kind=stop", 0},
 		{"?kind=wait", 1},
-		{"?kind=stop,wait,task", 3},
-		{"?kind=", 5},
+		{"?kind=stop,wait,task", 2},
+		{"?kind=", 4},
 	} {
 		out := getFeed(t, e, c.query)
 		if len(out.Items) != c.want {
 			t.Errorf("%s: %d событий, ожидал %d", c.query, len(out.Items), c.want)
 		}
+	}
+}
+
+// Строка с пометкой «пропуск: песочница» не идёт в ленту вовсе: она видна в
+// parseNotifyLine (тест разбора строки), но до аггрегата ленты не доезжает,
+// как будто её не было в журнале (DK-283). Журнал из одной такой строки
+// читается как пустой, а не как «событие, не прошедшее фильтр».
+func TestNotificationsHidesSandboxSkip(t *testing.T) {
+	e := newTestEnv(t)
+	writeNotifyLog(t, e.home, notifyFixture)
+	out := getFeed(t, e, "")
+	for _, n := range out.Items {
+		if n.sandboxSkipped() {
+			t.Fatalf("строка песочницы доехала до ленты: %+v", n)
+		}
+	}
+
+	writeNotifyLog(t, e.home, notifyFixture[4:5])
+	out = getFeed(t, e, "")
+	if len(out.Items) != 0 || !strings.Contains(out.Note, "журнал уведомителя пуст") {
+		t.Fatalf("журнал из одной строки песочницы: %d событий, note %q", len(out.Items), out.Note)
 	}
 }
 
@@ -200,7 +229,10 @@ func TestNotificationsStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(notifyFixture[4] + "\n"); err != nil {
+	// Пропуск по песочнице дописывается первым и своего события отдать не
+	// должен: следом идёт настоящий стоп, и лента обязана донести именно его,
+	// а не призрак песочницы (DK-283).
+	if _, err := f.WriteString(notifyFixture[4] + "\n" + notifyStopSent + "\n"); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
@@ -209,7 +241,7 @@ func TestNotificationsStream(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &n); err != nil {
 		t.Fatalf("событие потока не разобралось: %v (%q)", err, data)
 	}
-	if n.Kind != "stop" || n.ID != "XR-100" {
+	if n.Kind != "stop" || n.ID != "XR-100" || !n.Sent {
 		t.Fatalf("живой стоп в ленте: %+v", n)
 	}
 }

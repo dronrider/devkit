@@ -746,10 +746,30 @@ func (s *smoke) stepFeedStop() (string, error) {
 	}
 }
 
+// smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
+// системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
+// TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
+// DK-196), а прогон нарочно подставляет DEVKIT_NOTIFY_BACKEND=notify-fake,
+// чтобы шаг «уведомление о стопе в ленте» проверял настоящую доставку через
+// бэкенд, а не пропуск по песочнице: под системным temp сам пропуск гасил бы
+// строку в ленте и там, где лента её как раз обязана показать (DK-283).
+func smokeBase() (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(cache, "devkit-dashboard-smoke")
+	return dir, os.MkdirAll(dir, 0o755)
+}
+
 // cmdSmoke проходит цепочку DoD и печатает ход по шагам: провалившийся шаг
 // называет себя и причину, а не оставляет один ненулевой код.
 func cmdSmoke(out io.Writer, keep bool) error {
-	dir, err := os.MkdirTemp("", "dashboard-smoke-")
+	base, err := smokeBase()
+	if err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp(base, "run-")
 	if err != nil {
 		return err
 	}

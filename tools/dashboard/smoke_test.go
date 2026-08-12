@@ -61,7 +61,11 @@ func TestSmokeLeavesNothingBehind(t *testing.T) {
 
 func smokeDirs(t *testing.T) map[string]bool {
 	t.Helper()
-	found, err := filepath.Glob(filepath.Join(os.TempDir(), "dashboard-smoke-*"))
+	base, err := smokeBase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := filepath.Glob(filepath.Join(base, "run-*"))
 	if err != nil {
 		t.Fatal(err)
 	}

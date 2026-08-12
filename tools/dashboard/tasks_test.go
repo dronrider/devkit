@@ -91,6 +91,7 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
 	e := newTestEnv(t)
 	taskctlFixture(t, e.bin)
+	sandboxRealNotifier(t, e)
 	if err := os.Remove(filepath.Join(e.proj, "docs", "TASKS.md")); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +113,53 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	gitLog := filepath.Join(e.home, "git.log")
 	writeScript(t, e.bin, "git", gitFakeOK(gitLog))
 	return e, e.loggedClient(t), gitLog
+}
+
+// sandboxRealNotifier не даёт настоящему taskctl зовущему настоящий
+// hooks/notify.py (move на Check и на блокер, RULES.board.md «Ветки, ревью и
+// деплой» п. 8) дотянуться до живого журнала машины. taskctl ищет notify.py
+// вплоть до ~/projects/devkit (notifyScript в tools/taskctl/notify.go), а сам
+// notify.py пишет журнал по HOME процесса, не зная о песочнице прогона: без
+// подмены обоих на дом стенда строки «demo: XR-004 в Check» ложатся в живой
+// ~/.devkit/notify.log (DK-283). HOME подменяется на дом стенда, а
+// hooks/notify.py остаётся настоящим: символьная ссылка кладёт его туда же,
+// где его находит notifyScript, - рядом с синтетическим корнем, тем же
+// образцом, каким подменяет HOME смок (tools/dashboard/smoke.go).
+func sandboxRealNotifier(t *testing.T, e *testEnv) {
+	t.Helper()
+	t.Setenv("HOME", e.home)
+	checkout := devkitCheckout()
+	if checkout == "" {
+		t.Fatal("чекаут devkit не нашёлся: прогону нужен настоящий hooks/notify.py, указать чекаут: DEVKIT_HOME=<путь>")
+	}
+	root := filepath.Dir(e.proj)
+	if err := os.MkdirAll(filepath.Join(root, "devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(checkout, "hooks"), filepath.Join(root, "devkit", "hooks")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Move в Check зовёт настоящий hooks/notify.py тем же порядком, что и живой
+// прогон, - контракт формата журнала стоит проверять на нём, а не на
+// выдумке теста (DK-112). Без подмены HOME он находит и пишет журнал по
+// живому дому машины, и на ленту дашборда попадают чужие строки вроде
+// «demo: XR-004 в Check» (DK-283). Регрессия: журнал стенда обязан лечь в
+// дом песочницы прогона, а не куда-то ещё.
+func TestTaskctlMoveNotifiesIntoSandboxHome(t *testing.T) {
+	e, _, _ := tasksEnv(t)
+	goalDoc(t, e, "XR-004", "# XR-004: Четвёртая\n\n## Сценарий проверки\n\nАгентский: прогнать тесты.\n")
+	runTaskctl(t, e.proj, "move", "XR-004", "check")
+
+	logPath := filepath.Join(e.home, ".devkit", "notify.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("журнал уведомителя не лёг в дом песочницы %s: %v", logPath, err)
+	}
+	if !strings.Contains(string(data), "task_check") {
+		t.Fatalf("журнал песочницы без повода task_check: %s", data)
+	}
 }
 
 func taskURL(e *testEnv, id, tail string) string {

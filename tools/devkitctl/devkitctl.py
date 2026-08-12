@@ -24,8 +24,9 @@
       печатается как обычно (DK-160). AGENTS.md на месте, генерённые файлы
       правил свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
-      (.devkit/deploy.local есть, с командой и гитигнорнута), локальные
-      markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
+      (.devkit/deploy.local есть, с командой и гитигнорнута; рядом с чужим
+      go.work, где проект не перечислен, го-команды в ней обёрнуты GOWORK=off),
+      локальные markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
       файлы берутся из боковой директории, а сверх обычных проверок идут
       корп-: чистота корп-индекса, exclude-строка, цепочки на обоих хуках,
       remote боковой директории и свежесть sync, и прогнанный в боковой
@@ -255,6 +256,14 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "target", "local-docs",
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CODE_SPAN_RE = re.compile(r"`+[^`]*`+")
+GOWORK_FILENAME = "go.work"
+GOWORK_ENV = "GOWORK=off"
+# Команда, в которой го зовётся напрямую: отдельное слово go со своим первым
+# аргументом. Слово нужно чтобы отличить от «lego», «django», «golangci» и иже
+# с ними: \b отделит go от соседних букв. «python3 build.py» под это не подходит
+# (сборка спрятана за обёрткой и GOWORK=off ставит внутри себя), «go test» и
+# «cd x && go build» подходят.
+GO_INVOCATION_RE = re.compile(r"\bgo\s+\S")
 
 
 def run(args, cwd=None):
@@ -442,6 +451,145 @@ def patch_deploy(root):
     with dep.open("a", encoding="utf-8") as f:
         f.write(sep + addition)
     return ["%s: дописан недостающий ключ %s" % (DEPLOY_CONFIG, key) for key, _ in missing]
+
+
+def nearest_gowork(start):
+    """Ближайший вверх от start go.work либо None.
+
+    Подъём идёт по тем же правилам, что у самого го: первый встреченный по
+    дороге вверх. Каталог go.work нужен, чтобы пути из его use-директив
+    разрешать от него, а не от проекта.
+    """
+    cur = Path(start).resolve()
+    while True:
+        candidate = cur / GOWORK_FILENAME
+        if candidate.is_file():
+            return candidate, cur
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+
+
+def gowork_use_directories(gowork_path, gowork_dir):
+    """Каталоги, которые go.work подключает через use.
+
+    Пути в use пишутся относительно каталога go.work и обязаны начинаться с
+    ./, ../ либо быть абсолютными; bare-слов го в синтаксисе не допускает.
+    Блочная форма «use ( ... )» раскрывается построчно, однострочная «use
+    ./path» разбирается прямо в ней.
+    """
+    uses = []
+    try:
+        text = gowork_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return uses
+    in_block = False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if in_block:
+            if s.startswith(")"):
+                in_block = False
+                continue
+            tok = s.split()[0] if s.split() else ""
+            if tok.startswith(("./", "../", "/")):
+                uses.append((gowork_dir / tok).resolve())
+            continue
+        if not s.startswith("use"):
+            continue
+        rest = s[3:].strip()
+        if rest.startswith("("):
+            rest = rest[1:].strip()
+            if rest.startswith(")"):
+                continue  # пустой use ()
+            in_block = True
+            if not rest:
+                continue
+            tok = rest.split()[0]
+            if tok.startswith(("./", "../", "/")):
+                uses.append((gowork_dir / tok).resolve())
+            continue
+        if not rest:
+            continue
+        tok = rest.split()[0]
+        if tok.startswith(("./", "../", "/")):
+            uses.append((gowork_dir / tok).resolve())
+    return uses
+
+
+def project_in_gowork(project_root, gowork_path, gowork_dir):
+    """True, если проект покрыт use-директивами go.work.
+
+    Покрытым считается проект, чей корень сам лежит в use, или лежит ниже
+    use-пути (use указывает на него или его предка), или содержит один из
+    use-путей (один из его модулей охвачен). Полное покрытие всех модулей тут
+    не проверяется: находка доктора подсказывает приём GOWORK=off, а не
+    досматривает редкий случай много-модульного проекта с частичным покрытием.
+    """
+    proot = Path(project_root).resolve()
+    for use_dir in gowork_use_directories(gowork_path, gowork_dir):
+        try:
+            use_dir.relative_to(proot)
+            return True  # use внутри проекта: один из модулей охвачен
+        except ValueError:
+            pass
+        try:
+            proot.relative_to(use_dir)
+            return True  # use выше проекта: весь проект внутри use
+        except ValueError:
+            pass
+    return False
+
+
+def has_go_mod(root):
+    """Есть ли в проекте go.mod. Без него находка про go.work лезла бы в
+    нерелевантный проект (python, rust и пр.), случайно лежащий рядом с чужим
+    go.work."""
+    root = Path(root)
+    for dp, dirnames, filenames in os.walk(root):
+        if "go.mod" in filenames:
+            return True
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+    return False
+
+
+def check_gowork(root, deploy, test):
+    """Находка про чужой go.work рядом с го-проектом (DK-115).
+
+    go.work, в котором проект не перечислен, ломает го-команды из его каталога
+    ответом «directory prefix . does not contain modules listed in go.work».
+    Для shipctl merge это выглядит как красные тесты после ребейза на зелёном
+    коде, и слияние встаёт на ровном месте. Починка называется в самом тексте:
+    GOWORK=off перед го-командой в deploy.local гасит рабочее пространство го
+    для этого вызова. Молчит, когда проекта нет ни в одном предке, проекта в
+    go.work нет, го-команд в обвязке выката нет, либо они уже обёрнуты
+    GOWORK=off.
+    """
+    findings = []
+    proot = Path(root).resolve()
+    near = nearest_gowork(proot)
+    if near is None:
+        return findings
+    if not has_go_mod(proot):
+        return findings
+    gowork_path, gowork_dir = near
+    if project_in_gowork(proot, gowork_path, gowork_dir):
+        return findings
+    bare = []
+    for key, value in (("test", test), ("deploy", deploy)):
+        if value and GO_INVOCATION_RE.search(value) and GOWORK_ENV not in value:
+            bare.append(key)
+    if not bare:
+        return findings
+    keys = " и ".join("%s=" % k for k in bare)
+    rel = os.path.relpath(gowork_path, proot)
+    findings.append(
+        "рядом лежит %s, где проект не перечислен в use: го-команды из каталога "
+        "проекта ломаются ответом «directory prefix . does not contain modules "
+        "listed in go.work», для shipctl merge это красные тесты после ребейза "
+        "на ровном месте; дописать «export %s; » в начало ключа %s файла %s"
+        % (rel, GOWORK_ENV, keys, DEPLOY_CONFIG)
+    )
+    return findings
 
 
 def log_run(root, cmd, code):
@@ -1586,6 +1734,7 @@ def doctor(start, fix=False):
                 findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
                                 "вызов, а процедура пачки сочинять его не умеет; вписать команду "
                                 "тестов проекта" % DEPLOY_CONFIG)
+            findings += check_gowork(root, deploy, test)
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
             if rc != 0:
                 if fix and ensure_gitignore(root, DEPLOY_IGNORE):

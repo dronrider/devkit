@@ -2035,5 +2035,123 @@ class CmdoutCleanTest(SandboxCase):
         self.assertTrue(self.fresh_dir.exists(), "свежий каталог пропал после повтора")
 
 
+class GoWorkFindingTest(SandboxCase):
+    """Чужой go.work рядом с го-проектом (DK-115).
+
+    Го-проект подложенным go.work не покрыт, и го-команды из его каталога
+    отвечают «directory prefix . does not contain modules listed in go.work»:
+    shipctl merge видит красные тесты на ровном месте. Доктор печатает находку
+    с причиной и командой починки, молчит, когда проект вписан в go.work, либо
+    команды уже обёрнуты GOWORK=off, либо го в них не зовётся напрямую.
+    """
+
+    # Чужой go.work: один сиблинг в use, проект нет. Форма с блоком use ( ... )
+    # покрывает оба способа писать пути, однострочный и блочный.
+    FOREIGN = "go 1.21\n\nuse (\n\t./sibling\n)\n"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Рабочее дерево под go.work, отдельное от остальных классов: sandbox
+        # свой на класс. Сиблинг в use, проект нет.
+        cls.ws = cls.box.root / "ws"
+        cls.ws.mkdir()
+        sibling = cls.ws / "sibling"
+        sibling.mkdir()
+        write(sibling / "go.mod", "module sibling\n\ngo 1.21\n")
+        write(cls.ws / "go.work", cls.FOREIGN)
+
+    def setUp(self):
+        super().setUp()
+        # Тест, переписывавший go.work под себя, не должен протечь в следующий:
+        # иначе тишина одного теста приезжала бы находкой другого.
+        write(self.ws / "go.work", self.FOREIGN)
+
+    def make_proj(self, name):
+        proj = git_init(self.ws / name)
+        write(proj / "go.mod", "module %s\n\ngo 1.21\n" % name)
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        write(proj / "docs" / "TASKS.md", "# Задачи\n")
+        return proj
+
+    def deploy_local(self, proj):
+        return proj / ".devkit" / "deploy.local"
+
+    def sysdoctor(self, root, *args):
+        return self.box.doctor(root, *args, path=str(self.box.sys))
+
+    def test_1_foreign_gowork_finds_missing_gowork_off(self):
+        # Базовый сценарий DK-115: го-проект под чужим go.work, в ключе test=
+        # го зовётся напрямую, GOWORK=off нет.
+        proj = self.make_proj("bare")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertIn_("go.work", out, "нет находки про чужой go.work рядом")
+        self.assertIn_("directory prefix", out, "находка не назвала причину отказа го")
+        self.assertIn_("GOWORK=off", out, "находка не назвала команду починки")
+        self.assertIn_("test=", out, "находка не назвала ключ, которому грозит отказ")
+
+    def test_2_silent_when_project_is_listed_in_gowork(self):
+        # Тот же проект, но вписан в go.work: отказа го нет, находка молчит.
+        proj = self.make_proj("listed")
+        write(self.ws / "go.work",
+              "go 1.21\n\nuse (\n\t./sibling\n\t./listed\n)\n")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertNotIn_("go.work", out, "находка горит на проекте, вписанном в go.work")
+
+    def test_3_silent_when_gowork_off_in_command(self):
+        # Команда уже обёрнута GOWORK=off: находка не нужна, го не откажет.
+        proj = self.make_proj("wrapped")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\n"
+              "test = export GOWORK=off; go test ./...\n"
+              "autonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertNotIn_("go.work", out, "находка горит при уже обёрнутой команде")
+
+    def test_4_silent_when_command_does_not_invoke_go_directly(self):
+        # Команды, которые го не зовут напрямую (python, make), GOWORK=off не
+        # нужны: внутренние обёртки ставят его сами, и находка сбивает с толку.
+        proj = self.make_proj("nogocmd")
+        write(self.deploy_local(proj),
+              "deploy = python3 build.py\ntest = make test\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertNotIn_("go.work", out,
+                          "находка советует GOWORK=off команде, которая го не зовёт")
+
+    def test_5_silent_without_go_mod(self):
+        # Без go.mod это не го-проект: находка про go.work нерелевантна.
+        proj = git_init(self.ws / "nogo")
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        write(proj / "docs" / "TASKS.md", "# Задачи\n")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertNotIn_("go.work", out, "находка горит на проекте без go.mod")
+
+    def test_6_silent_without_gowork_in_ancestors(self):
+        # Нет go.work ни в одном предке: находке не о чем говорить.
+        proj = git_init(self.box.root / "lonely")
+        write(proj / "go.mod", "module lonely\n\ngo 1.21\n")
+        self.box.dkctl_run("new", "--no-board", "-C", str(proj))
+        write(proj / "docs" / "TASKS.md", "# Задачи\n")
+        write(self.deploy_local(proj),
+              "deploy = make deploy\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertNotIn_("go.work", out, "находка горит без go.work по дереву вверх")
+
+    def test_7_finding_names_both_keys_when_both_invoke_go(self):
+        # И deploy=, и test= зовут го без GOWORK=off: находка зовёт оба ключа.
+        proj = self.make_proj("twobare")
+        write(self.deploy_local(proj),
+              "deploy = go build -o /tmp/x .\ntest = go test ./...\nautonomous = false\n")
+        _, out = self.sysdoctor(proj)
+        self.assertIn_("deploy=", out, "находка не назвала ключ deploy=")
+        self.assertIn_("test=", out, "находка не назвала ключ test=")
+
+
 if __name__ == "__main__":
     unittest.main()

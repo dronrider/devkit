@@ -191,3 +191,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-265 | regcheck: хвосты обоих прогонов и пути к полным логам | bug | P2 | 2026-08-12 | [tasks/archive/2026/DK-265.md](tasks/archive/2026/DK-265.md), `4af1650a` |
 | DK-267 | cmdout: чистка старых выводов, гитигнор, находка doctor | task | P3 | 2026-08-12 | [tasks/archive/2026/DK-267.md](tasks/archive/2026/DK-267.md) |
 | DK-268 | правило про длинные прогоны в долгоживящей доке | task | P3 | 2026-08-12 | [tasks/archive/2026/DK-268.md](tasks/archive/2026/DK-268.md) |
+| DK-184 | Скилл proofread для вычитки прозы с парами, словарём и сторожевым корпусом | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-184.md](tasks/archive/2026/DK-184.md) |
+| DK-196 | Конец хода сессии из песочницы звонит баннером: хук-путь notify без фильтра временных корней | bug | P2 | 2026-08-12 | [tasks/archive/2026/DK-196.md](tasks/archive/2026/DK-196.md) |

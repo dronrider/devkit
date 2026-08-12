@@ -248,6 +248,74 @@ class TestTeam(SkillTree):
         self.assertIn("board-team: скилл командной работы не заведён", fails)
 
 
+class TestProofread(SkillTree):
+    """DK-184: скилл вычитки держит процедуру, пары, словарь и сторожевой
+    корпус. Вычитка без материала бесполезна: пустой словарь помечает
+    «поезд» как кандидат, а без корпуса правка пар уходит без страховки."""
+
+    TERMS = ("поезд", "виток", "лестница", "накопитель",
+             "сторожок", "заход", "ворота", "рубеж", "дорезка")
+    PAIRS = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n" % i
+                       for i in range(1, 9))
+    BAD_HALVES = "## Плохая половина\n\nне меньше 14 находок из 16\n"
+    ETALON_HALVES = "## Эталонная половина\n\nне больше двух ложных\n"
+
+    def write_proofread(self, pairs=None, dictionary=None, corpus=None, skill_body=None):
+        d = os.path.join(self.here, "proofread")
+        os.makedirs(d, exist_ok=True)
+        body = skill_body or "\n".join(["тело скилла"] * 15)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: proofread\ndescription: Звать, при вычитке.\n---\n\n%s\n" % body)
+        with open(os.path.join(d, "pairs.md"), "w", encoding="utf-8") as f:
+            f.write(pairs if pairs is not None else self.PAIRS)
+        with open(os.path.join(d, "dictionary.md"), "w", encoding="utf-8") as f:
+            f.write(dictionary if dictionary is not None else " ".join(self.TERMS))
+        with open(os.path.join(d, "corpus.md"), "w", encoding="utf-8") as f:
+            f.write(corpus if corpus is not None else self.BAD_HALVES + "\n" + self.ETALON_HALVES)
+
+    def test_full_proofread_passes(self):
+        self.write_proofread()
+        self.assertEqual(check_skills.check_proofread(self.here), [])
+
+    def test_missing_skill_directory(self):
+        fails = check_skills.check_proofread(self.here)
+        self.assertIn("proofread: скилл вычитки не заведён", fails)
+
+    def test_missing_pair_for_typology_point(self):
+        pairs = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n" % i
+                          for i in range(1, 8))
+        self.write_proofread(pairs=pairs)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет пары для пункта типологии 8" in f for f in fails), fails)
+
+    def test_pairs_without_well_formed_block(self):
+        pairs = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n" % i for i in range(1, 9))
+        self.write_proofread(pairs=pairs)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("меньше восьми" in f for f in fails), fails)
+
+    def test_dictionary_missing_term(self):
+        self.write_proofread(dictionary="поезд виток лестница накопитель сторожок заход ворота рубеж")
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет термина «дорезка»" in f for f in fails), fails)
+
+    def test_corpus_missing_bad_half(self):
+        self.write_proofread(corpus=self.ETALON_HALVES)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет плохой половины" in f for f in fails), fails)
+
+    def test_corpus_missing_bad_threshold(self):
+        corpus = "## Плохая половина\n\n## Эталонная половина\n\nне больше двух ложных\n"
+        self.write_proofread(corpus=corpus)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("не зафиксирован порог плохой половины" in f for f in fails), fails)
+
+    def test_corpus_missing_etalon_half(self):
+        self.write_proofread(corpus=self.BAD_HALVES)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет эталонной половины" in f for f in fails), fails)
+
+
 class TestRulesBacklink(SkillTree):
     def test_backlink_present(self):
         for name in ("board-task", "board-ship", "test-standard"):

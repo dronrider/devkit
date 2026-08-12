@@ -170,6 +170,46 @@ def check_team(here):
     return fails
 
 
+def check_proofread(here):
+    # Скилл вычитки (DK-184): процедуре нужен материал, и без него он теряет
+    # смысл. pairs.md держит восемь пар по типологии DK-173, dictionary.md
+    # принятые термины проекта, corpus.md сторожевой прогон. Вычитка, которой
+    # подсунули пустой словарь, помечает «поезд» и «виток» как кандидаты, а
+    # без корпуса правка пар или словаря уходит без страховки.
+    fails = []
+    skill = os.path.join(here, "proofread")
+    sk = read(os.path.join(skill, "SKILL.md"))
+    if sk is None:
+        fails.append("proofread: скилл вычитки не заведён")
+        return fails
+    pairs = read(os.path.join(skill, "pairs.md")) or ""
+    dictionary = read(os.path.join(skill, "dictionary.md")) or ""
+    corpus = read(os.path.join(skill, "corpus.md")) or ""
+    # Восемь пунктов типологии, по паре на каждый.
+    for i in range(1, 9):
+        marker = "## %d." % i
+        if pairs.count(marker) < 1:
+            fails.append("proofread: в pairs.md нет пары для пункта типологии %d" % i)
+    if pairs.count("\nХорошо:") < 8:
+        fails.append("proofread: в pairs.md пар «плохо/хорошо» меньше восьми")
+    # Словарь принятых терминов проекта (открытый вопрос 1 LLD DK-173).
+    for term in ("поезд", "виток", "лестница", "накопитель",
+                 "сторожок", "заход", "ворота", "рубеж", "дорезка"):
+        if term not in dictionary:
+            fails.append("proofread: в dictionary.md нет термина «%s»" % term)
+    # Сторожевой корпус: плохая половина с 16 фразами, эталонная с тремя
+    # задачами и пороги зафиксированы.
+    if "## Плохая половина" not in corpus:
+        fails.append("proofread: в corpus.md нет плохой половины, некому поймать регрессию")
+    if "## Эталонная половина" not in corpus:
+        fails.append("proofread: в corpus.md нет эталонной половины, ложные находки не видны")
+    if "14 находок из 16" not in corpus:
+        fails.append("proofread: в corpus.md не зафиксирован порог плохой половины")
+    if "двух ложных" not in corpus:
+        fails.append("proofread: в corpus.md не зафиксирован порог эталонной половины")
+    return fails
+
+
 def check_rules_backlink(here):
     # Скилл ссылается на правило, из которого выведен: расхождение процедуры
     # с правилом иначе замечается только чтением обоих подряд.
@@ -221,6 +261,7 @@ def run(here, root):
     fails += check_goal_split(here)
     fails += check_groom(here)
     fails += check_team(here)
+    fails += check_proofread(here)
     fails += check_rules_backlink(here)
     fails += check_background_rule(root)
     return fails, n

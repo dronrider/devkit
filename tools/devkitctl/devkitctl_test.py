@@ -1544,6 +1544,20 @@ class FreshConnectTest(SandboxCase):
         # делает new.
         write(cls.box.home / ".gitconfig", "[user]\n\tname = t\n\temail = t@t\n")
 
+    def test_0_internal_module_resolves_in_sandbox(self):
+        # DK-266: Sandbox обязан выложить internal/, иначе потребитель с relative
+        # replace ../../internal в go.mod (shipctl с DK-266) из тестового чекаута
+        # с GOWORK=off не собирается. test_2 собирает shipctl для прогона start
+        # и тем уже ловил регрессию, но собирать потребителя стоит и напрямую,
+        # без привязки к сценарию подключения: фикс копирования internal сам по
+        # себе, и падает он на «replacement directory ../../internal does not
+        # exist».
+        env = go_cache_env()
+        env["GOWORK"] = "off"
+        rc, out = run(["go", "build", "-o", os.devnull, "."],
+                      cwd=str(self.box.dk / "tools" / "shipctl"), env=env)
+        self.assertEqual(rc, 0, "shipctl не собрался из Sandbox: %s" % out)
+
     def test_1_new_on_a_missing_directory(self):
         proj = self.box.root / "fresh-proj"
         self.assertFalse(proj.exists(), "фикстура не та: директория проекта уже есть")

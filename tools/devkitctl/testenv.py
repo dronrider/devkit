@@ -377,7 +377,10 @@ class Sandbox:
         self.root = Path(tempfile.mkdtemp(prefix="devkitctl-test-"))
         self.dk = self.root / "devkit"
         self.dk.mkdir()
-        for d in ("tools", "kit", "hooks"):
+        # internal копируется за tools: с DK-237 это общий go-модуль, на который
+        # утилиты ссылаются relative replace ../../internal в go.mod, и без
+        # каталога рядом сборка потребителя (shipctl с DK-266) в Sandbox падает.
+        for d in ("tools", "kit", "hooks", "internal"):
             shutil.copytree(str(DEVKIT_SRC / d), str(self.dk / d))
         for f in ("RULES.md", "RULES.board.md"):
             shutil.copy(str(DEVKIT_SRC / f), str(self.dk / f))

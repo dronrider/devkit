@@ -115,6 +115,7 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	return e, e.loggedClient(t), gitLog
 }
 
+// regcheck:test-begin
 // sandboxRealNotifier не даёт настоящему taskctl зовущему настоящий
 // hooks/notify.py (move на Check и на блокер, RULES.board.md «Ветки, ревью и
 // деплой» п. 8) дотянуться до живого журнала машины. taskctl ищет notify.py
@@ -161,6 +162,8 @@ func TestTaskctlMoveNotifiesIntoSandboxHome(t *testing.T) {
 		t.Fatalf("журнал песочницы без повода task_check: %s", data)
 	}
 }
+
+// regcheck:test-end
 
 func taskURL(e *testEnv, id, tail string) string {
 	return e.srv.URL + "/api/projects/demo/tasks/" + id + tail

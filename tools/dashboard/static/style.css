@@ -325,6 +325,11 @@ a:hover{text-decoration:underline}
 .msg .mm{font:400 11px var(--mono);color:var(--tx3)}
 .msg.me{align-self:flex-end;align-items:flex-end}
 .msg.me .bb{background:color-mix(in oklab,var(--acc) 13%,var(--bg1));border-color:color-mix(in oklab,var(--acc) 30%,var(--line))}
+/* Состояние своей реплики видно и краем глаза: уходящая бледнеет, неушедшая
+   подсвечена красной рамкой и несёт кнопку повтора. */
+.msg.m-sending{opacity:0.6}
+.msg.m-failed .bb{border-color:color-mix(in oklab,var(--block) 55%,var(--line))}
+.msg.m-failed .mm{color:var(--block)}
 .cnote{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-radius:9px;background:color-mix(in oklab,var(--check) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--check) 25%,transparent);font:400 12px/1.5 var(--sans);color:var(--tx2);margin:16px 0 10px}
 .cnote b{color:var(--check);font-weight:600;white-space:nowrap}
 .cnote .nx{margin-left:auto;flex:none;width:24px;height:24px;border-radius:6px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}

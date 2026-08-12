@@ -270,6 +270,62 @@ func TestMessagePendingList(t *testing.T) {
 	}
 }
 
+// Повтор того же текста второй строки во «Входящих» не заводит: на слабой
+// связи ответ теряется, человек жмёт «Отправить» ещё раз, и виток получал бы
+// одно сообщение дважды (DK-281). Ответ при этом остаётся успешным и называет
+// лежащую строку. Подхваченное витком из раздела уходит, и тот же текст после
+// подхвата кладётся заново: ключ повтора это неподхваченные строки.
+func TestMessageRepeatKeepsOneLine(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
+
+	first := body(t, postMessage(t, c, e, "XR-100", "проверь ленту"))
+	resp := postMessage(t, c, e, "XR-100", "проверь ленту")
+	second := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("повтор отбит: %d %s", resp.StatusCode, second)
+	}
+	if !strings.Contains(second, "уже лежит во «Входящих»") {
+		t.Errorf("повтор не назван словами: %s", second)
+	}
+	if line(t, first) != line(t, second) {
+		t.Errorf("повтор назвал другую строку: %q и %q", line(t, first), line(t, second))
+	}
+	doc := readFile(t, path)
+	if got := strings.Count(doc, "из дашборда: проверь ленту"); got != 1 {
+		t.Fatalf("во «Входящих» %d строк одного сообщения, ждал одну:\n%s", got, doc)
+	}
+
+	// Другой текст ложится своей строкой: дедупликация не глотает переписку.
+	postMessage(t, c, e, "XR-100", "и журнал тоже").Body.Close()
+	if got := len(inboxLines(readFile(t, path))); got != 2 {
+		t.Errorf("во «Входящих» %d строк, ждал две:\n%s", got, readFile(t, path))
+	}
+
+	// Виток подхватил строки и убрал их: тот же текст после этого снова
+	// ложится во «Входящие».
+	cleared := strings.ReplaceAll(readFile(t, path), "## Входящие", "## Пусто")
+	if err := os.WriteFile(path, []byte(cleared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	postMessage(t, c, e, "XR-100", "проверь ленту").Body.Close()
+	if got := len(inboxLines(readFile(t, path))); got != 1 {
+		t.Errorf("после подхвата сообщение не легло заново:\n%s", readFile(t, path))
+	}
+}
+
+// line достаёт поле line из ответа ручки message.
+func line(t *testing.T, resp string) string {
+	t.Helper()
+	var v struct {
+		Line string `json:"line"`
+	}
+	if err := json.Unmarshal([]byte(resp), &v); err != nil {
+		t.Fatalf("ответ не разобрался: %v (%s)", err, resp)
+	}
+	return v.Line
+}
+
 // Без входа 401 и ни одной строки данных, чужой Origin на изменяющем методе
 // отбивается до всякой записи.
 func TestMessageLoginAndOrigin(t *testing.T) {
@@ -336,7 +392,7 @@ func TestStaticChatHonesty(t *testing.T) {
 	for _, want := range []string{
 		"Сообщение уйдёт агенту.",
 		"Он отреагирует на него на следующей рабочей итерации.",
-		"подхвачено следующим витком",
+		"ждёт витка",
 		"Написать агенту...",
 		"Остановить агента",
 		"во «Входящих» пусто",
@@ -344,6 +400,47 @@ func TestStaticChatHonesty(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет честной надписи %q", want)
 		}
+	}
+}
+
+// Реплика человека несёт своё состояние и встаёт в ленту до ответа сервера
+// (DK-281): отправку и потерю связи видно на самой реплике, а не строкой в
+// углу экрана, неушедшая остаётся с кнопкой «Повторить», подхваченная витком
+// не исчезает, а подписывается прочитанной.
+func TestStaticChatMessageStates(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{"отправляется...", "ждёт витка", "прочитано агентом", "не ушло", "Повторить"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в static/app.js нет состояния реплики %q", want)
+		}
+	}
+	body := funcBody(t, text, "function makeOutbox(")
+	// Пузырь рисуется до запроса, а не после ответа: порядок и есть предмет
+	// починки.
+	shown := strings.Index(body, "m.state = \"sending\";\n    draw();")
+	post := strings.Index(body, `await api(url, { method: "POST"`)
+	if strings.Index(body, "mine.push(m)") < 0 || shown < 0 || post < 0 || shown > post {
+		t.Error("реплика встаёт в ленту после ответа сервера: на слабой связи отправка снова выглядит непрошедшей")
+	}
+	if !strings.Contains(body, `m.state = "failed"`) {
+		t.Error("провал отправки не оседает состоянием реплики")
+	}
+	if !strings.Contains(body, `m.state = "read"`) && !strings.Contains(body, `: "read"`) {
+		t.Error("подхваченная витком реплика не подписывается прочитанной")
+	}
+	if !strings.Contains(body, "sentWrite(project, id, mine)") {
+		t.Error("свои отправки не запоминаются: после перезагрузки след прочитанного пропадёт")
+	}
+}
+
+// Второе нажатие «Отправить» подряд не уходит вслепую: кнопка на время
+// отправки гаснет, а серверная дедупликация добивает случай оборванного
+// ответа.
+func TestStaticChatSendGuard(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, text, "function renderChat(")
+	if !strings.Contains(body, "send.disabled = true") || !strings.Contains(body, "send.disabled = false") {
+		t.Error("кнопка отправки не гаснет на время запроса: двойное нажатие снова шлёт два запроса")
 	}
 }
 

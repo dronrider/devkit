@@ -1477,41 +1477,143 @@ async function wireChatFeed(project, feed, id) {
   };
 }
 
-// Лежащие во «Входящих» строки: сообщение отправлено, но запуска, который его
-// прочитает, ещё не было, и это честно называется ожиданием. Пустой раздел
-// тоже говорит словами: пустая коробка неотличима от неотрисованной.
-async function loadPending(project, id, box) {
-  const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/goals/" + encodeURIComponent(id) + "/message");
-  box.replaceChildren();
-  if (!r.ok) {
-    box.append(el("div", "error", r.body.error || "«Входящие» не прочитались"));
-    return;
-  }
-  const pending = r.body.pending || [];
-  if (!pending.length) {
-    box.append(el("div", "empty", r.body.note || "во «Входящих» пусто: непрочитанных сообщений нет"));
-    return;
-  }
-  for (const line of pending) {
-    box.append(chatBubble("вы", line, "подхвачено следующим витком"));
+// Состояния своей реплики. Строка встаёт в ленту сразу, ещё до ответа
+// сервера, и сама говорит, что с ней: на слабой связи молчание с надписью в
+// углу экрана неотличимо от непрошедшей отправки, и человек жмёт «Отправить»
+// второй раз. Неушедшая реплика остаётся на месте с кнопкой «Повторить»,
+// а не пропадает вместе с текстом.
+const SENT_META = {
+  sending: "отправляется...",
+  waiting: "ждёт витка",
+  read: "прочитано агентом",
+  failed: "не ушло",
+};
+
+// Свои отправки помнит браузер (приём DK-246): отметок прочитанного у сервера
+// нет, «Входящие» знают только лежащее, а подхваченная витком строка из них
+// просто уходит. Дашборд держит список своих реплик сам и по пропаже строки
+// из «Входящих» показывает её прочитанной; в другом браузере такого следа не
+// будет, зато своего источника правды дашборд не заводит, состояние остаётся
+// в файле цели.
+const SENT_KEY = "devkit.chat.sent.";
+const SENT_MAX = 50;
+
+function sentRead(project, id) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SENT_KEY + project + "/" + id) || "[]");
+    return Array.isArray(raw) ? raw.filter((m) => m && m.text && SENT_META[m.state]) : [];
+  } catch (err) {
+    // Приватное окно запрещает хранилище, битую запись читать тоже нечем:
+    // чат тогда живёт без памяти о прошлых отправках, но работает.
+    return [];
   }
 }
 
-async function sendMessage(project, id, ta, pendbox) {
+function sentWrite(project, id, list) {
+  try {
+    // Незакончившаяся отправка не переживает перезагрузку: чем она кончилась,
+    // после закрытия вкладки неизвестно, и врать про это нельзя.
+    const keep = list.filter((m) => m.state !== "sending").slice(-SENT_MAX);
+    localStorage.setItem(SENT_KEY + project + "/" + id, JSON.stringify(keep));
+  } catch (err) {
+    return;
+  }
+}
+
+// Отправленное человеком под лентой чата: свои реплики со своими состояниями
+// плюс чужие строки «Входящих» (их мог положить другой браузер или рука).
+// Пустота говорит словами: пустая коробка неотличима от неотрисованной.
+function makeOutbox(project, id, box) {
+  const url = "/api/projects/" + encodeURIComponent(project) +
+    "/goals/" + encodeURIComponent(id) + "/message";
+  const mine = sentRead(project, id);
+  let others = [];
+  let empty = "во «Входящих» пусто: непрочитанных сообщений нет";
+  let failed = "";
+
+  const bubble = (m) => {
+    const wrap = chatBubble("вы", m.text, (m.at ? m.at + ", " : "") + SENT_META[m.state]);
+    wrap.classList.add("m-" + m.state);
+    if (m.state === "failed") {
+      const again = el("button", "btn btn-sm", "Повторить");
+      again.addEventListener("click", () => { post(m).catch(console.error); });
+      wrap.append(again);
+    }
+    return wrap;
+  };
+
+  const draw = () => {
+    box.replaceChildren();
+    for (const line of others) box.append(chatBubble("вы", line, "ждёт витка"));
+    for (const m of mine) box.append(bubble(m));
+    if (!others.length && !mine.length) box.append(el("div", "empty", empty));
+    if (failed) box.append(el("div", "error", failed));
+  };
+
+  // Сверка с «Входящими»: своя строка на месте значит «ждёт витка», пропавшая
+  // значит подхваченная, и след её остаётся в ленте прочитанным.
+  const load = async () => {
+    const r = await api(url);
+    if (!r.ok) {
+      failed = r.body.error || "«Входящие» не прочитались";
+      draw();
+      return;
+    }
+    failed = "";
+    const pending = r.body.pending || [];
+    if (r.body.note) empty = r.body.note;
+    const known = new Set(mine.map((m) => m.line).filter(Boolean));
+    others = pending.filter((line) => !known.has("- " + line));
+    for (const m of mine) {
+      if (m.state === "sending" || m.state === "failed") continue;
+      m.state = pending.includes(String(m.line).replace(/^- /, "")) ? "waiting" : "read";
+    }
+    sentWrite(project, id, mine);
+    draw();
+  };
+
+  const post = async (m) => {
+    m.state = "sending";
+    draw();
+    const r = await api(url, { method: "POST", body: { text: m.text } });
+    let said = r.body.message || r.body.error || "";
+    if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+    sayResult(said, !r.ok);
+    if (!r.ok) {
+      m.state = "failed";
+      sentWrite(project, id, mine);
+      draw();
+      return false;
+    }
+    m.line = r.body.line || "";
+    m.state = "waiting";
+    // Повтор сервер кладёт в ту же строку «Входящих», и второй пузырь на неё
+    // был бы тем же обманом, что и вторая строка в файле цели.
+    const twin = mine.findIndex((o) => o !== m && o.line && o.line === m.line);
+    if (twin >= 0) mine.splice(mine.indexOf(m), 1);
+    sentWrite(project, id, mine);
+    draw();
+    await load();
+    return true;
+  };
+
+  const send = async (text) => {
+    const m = { text, state: "sending", at: localTime(new Date().toISOString()) };
+    mine.push(m);
+    if (mine.length > SENT_MAX) mine.splice(0, mine.length - SENT_MAX);
+    draw();
+    return post(m);
+  };
+
+  return { load, send, draw };
+}
+
+async function sendMessage(project, id, ta, out) {
   const text = ta.value.trim();
   if (!text) return;
+  ta.value = "";
   sayResult("отправка сообщения для " + id + "...");
-  const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/goals/" + encodeURIComponent(id) + "/message",
-    { method: "POST", body: { text } });
-  let said = r.body.message || r.body.error || "";
-  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-  sayResult(said, !r.ok);
-  if (r.ok) {
-    ta.value = "";
-    await loadPending(project, id, pendbox);
-  }
+  await out.send(text);
 }
 
 function renderChat(project, works, id) {
@@ -1567,8 +1669,16 @@ function renderChat(project, works, id) {
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
     row.append(stop);
   }
+  const out = makeOutbox(project, id, pendbox);
   const send = el("button", "btn btn-acc", "Отправить");
-  send.addEventListener("click", () => { sendMessage(project, id, ta, pendbox).catch(console.error); });
+  // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи
+  // это ровно тот случай, из которого росли дубли во «Входящих».
+  send.addEventListener("click", () => {
+    send.disabled = true;
+    sendMessage(project, id, ta, out)
+      .catch(console.error)
+      .finally(() => { send.disabled = false; });
+  });
   row.append(send);
   box.append(ta, row);
   thread.append(box);
@@ -1576,7 +1686,8 @@ function renderChat(project, works, id) {
   groups.append(thread);
 
   wireChatFeed(project, feed, id).catch(console.error);
-  loadPending(project, id, pendbox).catch(console.error);
+  out.draw();
+  out.load().catch(console.error);
 }
 
 // Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком,

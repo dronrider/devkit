@@ -493,6 +493,19 @@ func (s *smoke) stepMessage() (string, error) {
 	if lines := inboxLines(string(doc)); len(lines) != 1 {
 		return "", fmt.Errorf("во «Входящих» файла цели %d строк, ждал одну", len(lines))
 	}
+	// Повтор той же реплики: второе нажатие «Отправить» по неотвечающей связи
+	// не должно оборачиваться вторым сообщением витку (DK-281).
+	if err := s.call("POST", "/api/projects/demo/goals/"+smokeGoal+"/message",
+		fmt.Sprintf(`{"text": %q}`, smokeMessage), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	again, err := os.ReadFile(s.goalPath())
+	if err != nil {
+		return "", err
+	}
+	if lines := inboxLines(string(again)); len(lines) != 1 {
+		return "", fmt.Errorf("повтор сообщения завёл вторую строку: во «Входящих» %d", len(lines))
+	}
 	note := "коммит прошёл"
 	if v.Note != "" {
 		// Синтетический проект не репозиторий, и провал коммита тут штатен:

@@ -25,6 +25,12 @@ const inboxHeader = "## Входящие"
 // сообщения и читаются.
 const journalHeader = "## Журнал"
 
+// inboxFrom это подпись дашборда в строке «Входящих»: по ней строка
+// узнаётся своей, и по ней же из неё достаётся текст сообщения. Строку,
+// написанную в раздел руками, дашборд чужой не считает и ключом повтора не
+// берёт.
+const inboxFrom = ", из дашборда: "
+
 // msgBodyLimit ограничивает тело POST message: сообщение это одна строка
 // списка витку, а не вложение; тело сверх предела отбивается своими словами.
 const msgBodyLimit = 16 << 10
@@ -112,6 +118,23 @@ func inboxLines(doc string) []string {
 	return out
 }
 
+// pendingSame ищет среди неподхваченных строк ту же реплику дашборда. Отсюда
+// растёт дедупликация повтора: своего состояния сервер не заводит, память о
+// сказанном это сами «Входящие», а подхваченная витком строка из них уходит,
+// и тот же текст после подхвата кладётся заново.
+func pendingSame(doc, text string) (string, bool) {
+	for _, ln := range inboxLines(doc) {
+		i := strings.Index(ln, inboxFrom)
+		if i < 0 {
+			continue
+		}
+		if ln[i+len(inboxFrom):] == text {
+			return "- " + ln, true
+		}
+	}
+	return "", false
+}
+
 // goalFile проверяет, что id это цель проекта, и отдаёт путь её файла.
 // Отказы называются словами и пишутся здесь же: строка не на доске, строка
 // не цель (заголовок не от «Цель:»), файла цели нет.
@@ -186,7 +209,19 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
 		return
 	}
-	line := fmt.Sprintf("- %s, из дашборда: %s", s.now().Format("2006-01-02 15:04"), text)
+	// Второе нажатие «Отправить» второй строки не заводит: на слабой связи
+	// ответ теряется, человек жмёт ещё раз, и виток получал бы одно сообщение
+	// дважды. Ответ при этом остаётся успешным и называет лежащую строку,
+	// клиенту повтор различать незачем.
+	if same, dup := pendingSame(string(doc), text); dup {
+		s.logf("повтор сообщения для %s в %s: строка уже лежит во «Входящих»", id, found.Name)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"id": id, "line": same,
+			"message": fmt.Sprintf("такое сообщение уже лежит во «Входящих» файла цели %s: второй строки не завожу, виток прочитает одну", id),
+		})
+		return
+	}
+	line := "- " + s.now().Format("2006-01-02 15:04") + inboxFrom + text
 	if err := os.WriteFile(path, []byte(addInboxLine(string(doc), line)), 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не записался: %v", err)})
 		return

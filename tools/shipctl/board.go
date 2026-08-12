@@ -163,8 +163,11 @@ func (b *board) rowOf(id string) *row {
 }
 
 // openReviewNotes возвращает замечания раздела «Ревью» файла задачи без
-// зафиксированного исхода: по RULES.board.md у каждой строки должен быть итог
-// «исправлено» либо «отклонено» с причиной.
+// зафиксированного исхода: по RULES.board.md у каждого элемента списка должен
+// стоять итог «исправлено» либо «отклонено» с причиной. Замечанием считается
+// элемент списка целиком (маркерная строка вместе со строками продолжения), а
+// вердикт без замечаний замечанием не считается. Критерий тот же, каким судит
+// taskctl outcome, иначе merge и review show разойдутся на одной строке.
 func openReviewNotes(root, id string) ([]string, error) {
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md"))
 	if err != nil {
@@ -174,14 +177,9 @@ func openReviewNotes(root, id string) ([]string, error) {
 		return nil, err
 	}
 	var open []string
-	for _, ln := range sectionLines(string(data), "## Ревью") {
-		t := strings.TrimSpace(ln)
-		if !strings.HasPrefix(t, "- ") && !strings.HasPrefix(t, "* ") {
-			continue
-		}
-		low := strings.ToLower(t)
-		if !strings.Contains(low, "исправлено") && !strings.Contains(low, "отклонено") {
-			open = append(open, t)
+	for _, item := range reviewItems(string(data), "## Ревью") {
+		if reviewOutcome(item) == "" {
+			open = append(open, strings.TrimSpace(item))
 		}
 	}
 	return open, nil

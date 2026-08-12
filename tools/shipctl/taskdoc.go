@@ -105,3 +105,50 @@ func sectionLines(doc, heading string) []string {
 	}
 	return out
 }
+
+// reviewItems собирает элементы списка раздела: маркерная строка вместе со
+// строками продолжения (до пустой или следующей маркерной) составляет один
+// элемент целиком. Абзац без маркера элементом не считается, поэтому чистый
+// вердикт абзацем парсер не видит вовсе, а замечание, перенесённое на несколько
+// строк, судится по всему тексту, и исход на строке переноса закрывает его.
+func reviewItems(doc, heading string) []string {
+	var items []string
+	var cur []string
+	flush := func() {
+		if len(cur) > 0 {
+			items = append(items, strings.Join(cur, " "))
+			cur = nil
+		}
+	}
+	for _, ln := range sectionLines(doc, heading) {
+		t := strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* "):
+			flush()
+			cur = append(cur, t)
+		case t == "":
+			flush()
+		case len(cur) > 0:
+			cur = append(cur, t)
+		}
+	}
+	flush()
+	return items
+}
+
+// reviewOutcome возвращает исход элемента раздела «Ревью»: «исправлено»,
+// «отклонено», «чисто» (вердикт без замечаний) или пусто у открытого заме-
+// чания. Порядок проверок исход -> чистый итог -> открыто тот же, что в taskctl
+// outcome: «исправлено: теперь без замечаний» остаётся закрытым.
+func reviewOutcome(item string) string {
+	low := strings.ToLower(item)
+	switch {
+	case strings.Contains(low, "исправлено"):
+		return "исправлено"
+	case strings.Contains(low, "отклонено"):
+		return "отклонено"
+	case strings.Contains(low, "без замечаний"), strings.Contains(low, "замечаний нет"):
+		return "чисто"
+	}
+	return ""
+}

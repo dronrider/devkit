@@ -302,6 +302,27 @@ func TestMergeOpenReview(t *testing.T) {
 	}
 }
 
+// Чистый вердикт с маркером списка замечанием не считается, а замечание,
+// перенесённое на несколько строк с исходом на переносе, судится целиком:
+// открытым остаётся только то, у чего правда нет исхода. Иначе merge
+// отбивался бы на разметке, а не на содержании (DK-277).
+func TestReviewNotesMarkup(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md",
+		"# XR-001: починка бага\n\n"+
+			"## Ревью\n\n"+
+			"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n"+
+			"- длинное замечание,\n  перенесённое на две строки: исправлено\n"+
+			"- ещё одно, без исхода\n")
+	open, err := openReviewNotes(root, "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || !strings.Contains(open[0], "ещё одно") {
+		t.Fatalf("открытым должно быть только замечание без исхода, получили: %v", open)
+	}
+}
+
 func TestMergeRedTests(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)

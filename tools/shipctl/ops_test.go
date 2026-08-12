@@ -530,6 +530,40 @@ func TestTrainMergeAndShip(t *testing.T) {
 	}
 }
 
+// TestMergeTrainQueueBusy: занятая очередь запирает прод, а не main. Поездное
+// слияние на прод ничего не везёт и проходит; выкат и одиночный merge на той
+// же доске отбиваются как раньше.
+func TestMergeTrainQueueBusy(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3, rowCheck)
+	codeCommit(t, root, "XR-009", "nine.txt")
+	gitT(t, root, "tag", "deployed") // XR-009 уехала на прод и ждёт проверки
+
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatalf("поездное слияние при занятой очереди должно проходить: %v", err)
+	}
+	if !strings.Contains(msg, "в поезде: XR-001") {
+		t.Fatalf("поездное слияние: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move") {
+		t.Fatalf("поездное слияние не должно двигать доску: %q", calls)
+	}
+
+	// Выкат остаётся запертым: непроверенный выкат один.
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "очередь занята: XR-009") {
+		t.Fatalf("ship при занятой очереди должен отбиваться: %v", err)
+	}
+
+	// Одиночный merge выкатывает сам, ему занятая очередь по-прежнему отказ.
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "очередь занята: XR-009") {
+		t.Fatalf("одиночный merge при занятой очереди должен отбиваться: %v", err)
+	}
+}
+
 // TestShipPreconditions: пустой поезд и занятая очередь это чистые ошибки.
 func TestShipPreconditions(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")

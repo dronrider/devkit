@@ -630,12 +630,18 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", fmt.Errorf("%s; поезд при сломанном проде не копится, чинить одиночным merge или откатом", brokenProd(f))
 		}
 	}
-	busy, err := checkQueue(root, main, b)
-	if err != nil {
-		return "", err
-	}
-	if len(busy) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
+	// Занятая очередь держит выкат, а не main: инвариант «непроверенный выкат
+	// один» сказан про прод. Поездное слияние на прод ничего не везёт, оно
+	// возвращается до блока выката, и очередь его не касается; одиночный merge
+	// выкатывает сам, ему отказ остаётся.
+	if !p.Train {
+		busy, err := checkQueue(root, main, b)
+		if err != nil {
+			return "", err
+		}
+		if len(busy) > 0 {
+			return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
+		}
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
 	// правки, а в Check перевёл только свою задачу: инвариант ломается молча.

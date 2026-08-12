@@ -189,3 +189,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-266 | shipctl на cmdout: 13 вызовов tail() в ops.go переезжают на обёртку | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-266.md](tasks/archive/2026/DK-266.md), `2b042a4` |
 | DK-256 | Экран «Агенты»: живые агенты всех проектов списком, переходы в статус и чат | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-256.md](tasks/archive/2026/DK-256.md) |
 | DK-265 | regcheck: хвосты обоих прогонов и пути к полным логам | bug | P2 | 2026-08-12 | [tasks/archive/2026/DK-265.md](tasks/archive/2026/DK-265.md), `4af1650a` |
+| DK-267 | cmdout: чистка старых выводов, гитигнор, находка doctor | task | P3 | 2026-08-12 | [tasks/archive/2026/DK-267.md](tasks/archive/2026/DK-267.md) |

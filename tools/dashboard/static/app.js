@@ -43,6 +43,9 @@ function route() {
   if (parts.length >= 2 && parts[1] === "new") {
     return { proj: parts[0], id: "", make: true };
   }
+  if (parts.length >= 2 && parts[1] === "drafts") {
+    return { proj: parts[0], id: parts[2] || "", drafts: true };
+  }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
   }
@@ -264,7 +267,7 @@ function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   const bar = el("div", "nbar");
-  bar.append(newTaskButton(project, "Новая задача"));
+  bar.append(newTaskButton(project, "Новая задача"), draftsButton(project));
   groups.append(bar);
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
@@ -292,6 +295,18 @@ function newTaskButton(project, label) {
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     location.hash = project + "/new";
+  });
+  return btn;
+}
+
+// Вход в накопитель черновиков стоит рядом с заведением, на доске и на
+// главной: записанная с телефона мысль иначе видна только в файле, а разбирать
+// её приходится с ноутбука.
+function draftsButton(project) {
+  const btn = el("button", "btn", "Черновики");
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    location.hash = project + "/drafts";
   });
   return btn;
 }
@@ -629,6 +644,114 @@ function taskActions(project, id, row, works) {
   return out;
 }
 
+// Состав цели сабтасками (макет «06 Цель»). Источник это раздел «Задачи цели»
+// файла цели плюс строки доски и архива, всё это сводит сервер. Живые задачи
+// стоят сверху, закрытые свёрнуты в одну строку: у долгой цели их набирается
+// больше, чем помещается на экран, а смотрят в состав ради того, что ещё не
+// сделано.
+const SECT_CHIP = {
+  "in-progress": "c-run",
+  check: "c-check",
+  blocked: "c-block",
+  archive: "c-check",
+};
+
+const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "мая", "июн",
+  "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+// Дата закрытия днём и месяцем: год в строке состава занимает место, а
+// закрытая на этой неделе задача от закрытой в прошлом году отличается днём.
+function shortDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+  if (!m) return iso || "";
+  return String(Number(m[3])) + " " + MONTHS_SHORT[Number(m[2]) - 1];
+}
+
+function goalTaskRow(project, task) {
+  const row = el("div", "srow" + (task.done ? " done" : ""));
+  row.append(el("span", "id", task.id));
+  // Заголовок берётся со строки доски или из архива, а судьба из нарезки
+  // остаётся под ним подсказкой: строка доски говорит, что это за задача, а
+  // нарезка, зачем она цели.
+  const st = el("span", "st", task.title || task.fate || "");
+  if (task.title && task.fate) withTip(st, task.fate);
+  row.append(st);
+  const meta = el("span", "sm");
+  if (task.r) meta.append(el("span", "rank", String(task.r)));
+  if (task.done) {
+    meta.append(el("span", "chip c-check", "закрыта " + shortDate(task.closed)));
+  } else if (task.section) {
+    meta.append(el("span", "chip " + (SECT_CHIP[task.sect] || ""), task.section));
+  }
+  if (task.note) meta.append(el("span", "stale", task.note));
+  row.append(meta);
+  // Закрытая задача уехала в архив, и экрана задачи у неё нет: строка доски
+  // читается только у живой.
+  if (!task.done && task.section) {
+    row.addEventListener("click", () => { location.hash = project + "/" + task.id; });
+  }
+  return row;
+}
+
+function goalCounts(c) {
+  const parts = [];
+  if (c.closed) parts.push(c.closed + " закрыто");
+  if (c.running) parts.push(c.running + " в работе");
+  if (c.ahead) parts.push(c.ahead + " впереди");
+  return parts.join(", ");
+}
+
+async function goalComposition(project, id, into) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/goals/" + encodeURIComponent(id) + "/tasks");
+  const card = el("div", "card comp");
+  const head = el("div", "chd");
+  head.append(el("b", "", "Задачи цели"));
+  if (!r.ok) {
+    card.append(head, el("div", "empty", r.body.error || "состав цели не прочитался"));
+    into.append(card);
+    return;
+  }
+  const tasks = r.body.tasks || [];
+  const counts = r.body.counts || {};
+  head.append(el("span", "cnt", goalCounts(counts)));
+  const bar = el("div", "prog");
+  const total = counts.total || 0;
+  for (const [n, cls] of [[counts.closed, "done"], [counts.running, "run"]]) {
+    const seg = el("i", cls);
+    seg.style.width = (total ? Math.round((n || 0) * 100 / total) : 0) + "%";
+    bar.append(seg);
+  }
+  head.append(bar, el("span", "gap"));
+  head.append(el("span", "stale", "нарезка из " + (r.body.file || "файла цели")));
+  card.append(head);
+  // Пустота различима: сервер называет её словами, и они честнее пустой
+  // карточки, из которой не видно, нарезана цель или файл её не найден.
+  if (r.body.note) {
+    card.append(el("div", "empty", r.body.note));
+    into.append(card);
+    return;
+  }
+  const live = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  for (const task of live) card.append(goalTaskRow(project, task));
+  if (done.length) {
+    const fold = el("div", "more", "Ещё " + done.length + " " +
+      plural(done.length, "закрытая задача", "закрытые задачи", "закрытых задач"));
+    const box = el("div", "");
+    box.hidden = true;
+    for (const task of done) box.append(goalTaskRow(project, task));
+    fold.addEventListener("click", () => {
+      box.hidden = !box.hidden;
+      fold.textContent = box.hidden
+        ? "Ещё " + done.length + " " + plural(done.length, "закрытая задача", "закрытые задачи", "закрытых задач")
+        : "Свернуть закрытые";
+    });
+    card.append(fold, box);
+  }
+  into.append(card);
+}
+
 async function renderTask(project, works, id) {
   const groups = document.getElementById("groups");
   const r = await api(taskPath(project, id));
@@ -748,6 +871,15 @@ async function renderTask(project, works, id) {
 
   for (const node of taskActions(project, id, row, works)) bar.append(node);
   bar.append(bad);
+
+  // Состав цели стоит над содержимым: с экрана цели смотрят прежде всего на
+  // него. Ждать его отрисовка задачи не обязана, состав приезжает отдельным
+  // запросом и встаёт на своё место сам.
+  if (/^Цель:/.test(row.title || "")) {
+    const comp = el("div", "");
+    groups.append(comp);
+    goalComposition(project, id, comp).catch(console.error);
+  }
 
   const rank = el("div", "card");
   const rhead = el("div", "rhead");
@@ -1430,25 +1562,147 @@ function renderChat(project, works, id) {
   loadPending(project, id, pendbox).catch(console.error);
 }
 
-// Экран заведения (#проект/new). Черновик это путь по умолчанию: с телефона
-// мысль приходит целиком, а ранг там считать нечем, и груминг всё равно
-// разберёт запись позже (taskctl add --id). Полная строка лежит под
-// разворотом: ей нужны заголовок, тип, цена и все пять слагаемых ранга.
-const DRAFT_HINT = "Черновик ляжет в docs/tasks/drafts/: метаданных у него нет, " +
-  "ID выдаёт taskctl, а ранг и тип выдаст груминг накопителя.";
-const FULL_HINT = "Полная задача встаёт в Backlog сразу: место в нём выводится из ранга, " +
-  "и все пять слагаемых обязательны.";
+// Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком,
+// текст записи по нажатию и действие «Оформить». Черновик не виден на доске, и
+// без этого раздела записанная с телефона мысль лежит в файле, до которого с
+// телефона не добраться. Разбор поднимает ту же механику, что и конвейер
+// задачи: сессия агента с заказом груминга, после которого строка оказывается
+// в Backlog.
+const DRAFTS_HINT = "Записанные мимо доски идеи: метаданных у них нет, ранг и " +
+  "тип выдаст груминг, он же заведёт строку.";
+const GROOM_HINT = "«Оформить» поднимает сессию груминга: она разберёт запись " +
+  "и доведёт её до строки Backlog либо снимет с причиной.";
+
+async function groomDraft(project, id) {
+  sayResult("подъём груминга " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/drafts/" + encodeURIComponent(id) + "/groom", { method: "POST", body: {} });
+  sayResult(r.body.message || r.body.error || "", !r.ok);
+  return r.ok;
+}
+
+// Текст черновика читается по нажатию: список показывает первую строку, а
+// разбирать запись, не прочитав её целиком, нечем.
+async function draftText(project, id, box) {
+  box.replaceChildren(el("div", "stale", "чтение..."));
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/drafts/" + encodeURIComponent(id));
+  box.replaceChildren();
+  if (!r.ok) {
+    box.append(el("div", "error", r.body.error || "черновик не прочитался"));
+    return;
+  }
+  box.append(el("div", "fhead", r.body.file || ""));
+  const text = el("pre", "log");
+  text.textContent = r.body.text || "";
+  box.append(text);
+}
+
+function draftRow(project, d) {
+  const row = el("div", "srow");
+  row.append(el("span", "id", d.id));
+  row.append(el("span", "st", d.title || ""));
+  const meta = el("span", "sm");
+  meta.append(el("span", "stale", d.age_words || ""));
+  if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
+  const groom = el("button", "btn btn-sm btn-acc", "Оформить");
+  meta.append(groom);
+  row.append(meta);
+  const box = el("div", "dtext");
+  box.hidden = true;
+  row.addEventListener("click", (ev) => {
+    if (ev.target === groom) return;
+    box.hidden = !box.hidden;
+    if (!box.hidden) draftText(project, d.id, box).catch(console.error);
+  });
+  groom.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    groom.disabled = true;
+    groomDraft(project, d.id).then((ok) => {
+      groom.disabled = false;
+      // Сессия поднята, и смотреть за ней там же, где за остальными работами:
+      // разбор идёт под тем же ID, каким черновик станет строкой.
+      if (ok) location.hash = project + "/agent/" + d.id;
+    }).catch((err) => { groom.disabled = false; console.error(err); });
+  });
+  const wrap = el("div", "");
+  wrap.append(row, box);
+  return wrap;
+}
+
+async function renderDrafts(project) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const crumb = el("div", "crumb");
+  const back = el("span", "crumb-back", "Доска " + project);
+  back.addEventListener("click", () => { location.hash = project; });
+  crumb.append(back);
+  groups.append(crumb);
+
+  const bar = el("div", "nbar");
+  bar.append(newTaskButton(project, "Новая задача"), el("span", "hint", DRAFTS_HINT));
+  groups.append(bar);
+
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
+  const card = el("div", "card");
+  groups.append(card);
+  if (!r.ok) {
+    card.append(el("div", "error", r.body.error || "накопитель не прочитался"));
+    return;
+  }
+  const drafts = r.body.drafts || [];
+  const head = el("div", "chd");
+  head.append(el("b", "", "Черновики"));
+  head.append(el("span", "cnt", drafts.length + " " +
+    plural(drafts.length, "запись", "записи", "записей")));
+  card.append(head);
+  // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
+  // неотрисованной.
+  if (!drafts.length) {
+    card.append(el("div", "empty", r.body.note || "черновиков нет"));
+    return;
+  }
+  for (const d of drafts) card.append(draftRow(project, d));
+  const foot = el("div", "nbar");
+  foot.append(el("span", "hint", GROOM_HINT));
+  groups.append(foot);
+}
+
+// Экран заведения (#проект/new) по макету «07 Заведение»: форма одна на оба
+// случая и повторяет правку задачи, те же поля в том же порядке и та же сумма
+// ранга. Переключатель наверху меняет только то, куда ляжет написанное. В
+// режиме черновика поля не прячутся, а гасятся с подписью, кто их заполнит:
+// перестроенная форма скрывала бы от человека, чего черновик лишён.
+const DRAFT_NOTE_HEAD = "Черновику доступен только груминг.";
+const DRAFT_NOTE = "Задачи на доске у него нет, в работу его не взять: " +
+  "ранг и тип выдаст разбор накопителя, он же заведёт задачу.";
+const DRAFT_HINT = "Ляжет в docs/tasks/drafts/, ID выдаст taskctl. " +
+  "На доске его не будет, пока груминг не заведёт задачу.";
+const FULL_HINT = "Встанет в Backlog сразу, место выведется из ранга. " +
+  "После заведения откроется карточка задачи.";
+// Взять в работу можно только сохранённое: у ненаписанной строки нет ни ID,
+// ни статуса, по которому конвейер выбирает заказ. Кнопки запуска на этом
+// экране нет вовсе, и сказано это словами, а не погашенной кнопкой.
+const NEW_RUN_HINT = "Взять в работу можно с карточки задачи: до заведения " +
+  "у неё нет ни ID, ни статуса, от которого конвейер берёт заказ.";
+const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
+// Погашенные поля черновика подписаны тем, кто их заполнит.
+const DRAFT_OFF_TYPE = "тип выдаст груминг";
+const DRAFT_OFF_COST = "цена выдаст груминг";
+const DRAFT_OFF_RANK = "ранг выведет груминг";
+const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пока не заполняются";
 
 // Поля формы переживают перерисовку: доска перечитывается по фокусу окна, и
 // без этого набранный текст пропадал бы при первом же переключении на другое
-// окно. Форма одна на экран, как и черновик экрана задачи.
-const newForm = { project: "", text: "", full: false, title: "", type: "task", cost: "-", parts: [0, 0, 0, 0, 0], file: true };
+// окно. Форма одна на экран, как и черновик экрана задачи. Поле написанного
+// тоже одно: у задачи это заголовок строки, у черновика текст записи, и
+// переключатель их не теряет.
+const newForm = { project: "", draft: false, text: "", type: "task", cost: "-", parts: [0, 0, 0, 0, 0], file: true };
 
 function resetNewForm(project) {
   newForm.project = project;
+  newForm.draft = false;
   newForm.text = "";
-  newForm.full = false;
-  newForm.title = "";
   newForm.type = "task";
   newForm.cost = "-";
   newForm.parts = [0, 0, 0, 0, 0];
@@ -1529,55 +1783,66 @@ function renderNew(project) {
   groups.append(crumb);
 
   const card = el("div", "card nform");
-  card.append(el("div", "nfhead", "Новая задача в " + project));
+  const head = el("div", "nfhead", (newForm.draft ? "Новый черновик в " : "Новая задача в ") + project);
+  card.append(head);
   const box = el("div", "nfbody");
-  const ta = el("textarea");
-  ta.value = newForm.text;
-  ta.placeholder = "Что нужно сделать и зачем";
-  ta.setAttribute("aria-label", "текст черновика");
-  const bad = el("div", "error", "");
-  const btns = el("div", "tbtns");
-  const send = el("button", "btn btn-acc", "Записать черновик");
-  const more = el("button", "btn", newForm.full ? "Свернуть полную задачу" : "Полная задача");
-  btns.append(send, more);
-  box.append(ta, el("div", "hint", DRAFT_HINT), btns, bad);
   card.append(box);
   groups.append(card);
 
-  const full = el("div", "card nform");
-  full.hidden = !newForm.full;
-  groups.append(full);
-  full.append(el("div", "nfhead", "Полная задача"));
-  const fbox = el("div", "nfbody");
-  full.append(fbox);
+  // Переключатель: одна форма, два места, куда ляжет написанное.
+  const swch = el("div", "swch");
+  const asTask = el("div", newForm.draft ? "" : "on", "Задача");
+  const asDraft = el("div", newForm.draft ? "on" : "", "Черновик");
+  swch.append(asTask, asDraft);
+  box.append(swch);
 
-  const title = el("input");
-  title.value = newForm.title;
-  title.placeholder = "Заголовок задачи";
-  title.setAttribute("aria-label", "заголовок задачи");
-  fbox.append(title);
+  // Пометка про груминг стоит только у черновика и говорит сразу обе правды:
+  // и чего у него нет, и кто это выдаст.
+  const note = el("div", "dnote");
+  note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
+  note.hidden = !newForm.draft;
+  box.append(note);
 
-  const chips = el("div", "tchips");
-  chips.append(pickField("тип", TYPE_VALUES, newForm.type, (v) => { newForm.type = v; touch(); }));
-  chips.append(pickField("цена", COST_VALUES, newForm.cost, (v) => { newForm.cost = v; touch(); }));
-  fbox.append(chips);
+  const field = el("div", "");
+  field.append(el("span", "flab", "Заголовок"));
+  const ta = el("textarea");
+  ta.value = newForm.text;
+  ta.placeholder = NEW_PLACEHOLDER;
+  ta.setAttribute("aria-label", "заголовок задачи или текст черновика");
+  field.append(ta);
+  box.append(field);
 
+  // Метаданные и ранг у черновика гасятся, а не прячутся: видно, чего он
+  // лишён, и форма не перестраивается при переключении.
+  const meta = el("div", "meta2");
+  const typePick = pickField("тип", TYPE_VALUES, newForm.type, (v) => { newForm.type = v; touch(); });
+  const costPick = pickField("цена", COST_VALUES, newForm.cost, (v) => { newForm.cost = v; touch(); });
+  const typeOff = el("span", "chip", DRAFT_OFF_TYPE);
+  const costOff = el("span", "chip", DRAFT_OFF_COST);
+  meta.append(typePick, costPick, typeOff, costOff);
+  box.append(meta);
+
+  const rankbox = el("div", "rankbox");
   const sum = el("div", "rbig");
   const sumv = el("span", "v", "0");
   const sumf = el("span", "f", "");
   sum.append(sumv, sumf);
-  fbox.append(sum);
+  rankbox.append(sum);
+  const picks = [];
   RANK_PARTS.forEach((part, i) => {
     const line = el("div", "rrow");
     line.append(el("span", "nm", part.name));
     line.append(el("span", "why", part.why));
-    line.append(pickField("", part.values, newForm.parts[i], (v) => {
+    const pick = pickField("", part.values, newForm.parts[i], (v) => {
       newForm.parts[i] = Number(v);
       touch();
-    }));
-    fbox.append(line);
+    });
+    picks.push(pick);
+    line.append(pick);
+    rankbox.append(line);
   });
-  fbox.append(el("div", "hint", P_HINT));
+  box.append(rankbox);
+  box.append(el("div", "hint", P_HINT));
 
   const withFile = el("label", "nfcheck");
   const flag = el("input");
@@ -1585,56 +1850,86 @@ function renderNew(project) {
   flag.checked = newForm.file;
   flag.addEventListener("change", () => { newForm.file = flag.checked; });
   withFile.append(flag, el("span", "", "завести файл задачи по шаблону (taskctl file)"));
-  fbox.append(withFile);
+  box.append(withFile);
 
-  const fbad = el("div", "error", "");
-  const fbtns = el("div", "tbtns");
-  const make = el("button", "btn btn-acc", "Завести задачу");
-  fbtns.append(make);
-  fbox.append(el("div", "hint", FULL_HINT), fbtns, fbad);
+  const bad = el("div", "error", "");
+  const btns = el("div", "tbtns");
+  const send = el("button", "btn btn-acc", "Завести задачу");
+  btns.append(send);
+  const hint = el("div", "hint", FULL_HINT);
+  const runHint = el("div", "hint", NEW_RUN_HINT);
+  box.append(hint, runHint, btns, bad);
 
-  const all = [send, more, make];
+  // Режим меняет подписи и гасит лишнее, но не перестраивает форму: поля
+  // остаются на своих местах, а написанное переживает переключение.
+  const paint = () => {
+    const draft = newForm.draft;
+    head.textContent = (draft ? "Новый черновик в " : "Новая задача в ") + project;
+    asTask.className = draft ? "" : "on";
+    asDraft.className = draft ? "on" : "";
+    note.hidden = !draft;
+    typePick.hidden = draft;
+    costPick.hidden = draft;
+    typeOff.hidden = !draft;
+    costOff.hidden = !draft;
+    meta.classList.toggle("off", draft);
+    rankbox.classList.toggle("off", draft);
+    withFile.hidden = draft;
+    runHint.hidden = draft;
+    for (const pick of picks) pick.hidden = draft;
+    sumv.textContent = draft ? "-" : String(newForm.parts.reduce((a, b) => a + Number(b), 0));
+    sumf.textContent = draft ? DRAFT_OFF_RANK : "= " + newForm.parts.join("+");
+    // У черновика подсказка шкалы ни к чему, и на её месте стоит одна подпись
+    // про то, кто эти поля заполнит.
+    const whys = rankbox.querySelectorAll(".rrow .why");
+    RANK_PARTS.forEach((part, i) => {
+      whys[i].textContent = draft ? (i === 0 ? DRAFT_OFF_PARTS : "") : part.why;
+    });
+    send.textContent = draft ? "Записать черновик" : "Завести задачу";
+    hint.textContent = draft ? DRAFT_HINT : FULL_HINT;
+  };
+
   // Рубежи те же, что у ручек: поправка на баг не про новую работу, а строки
   // без заголовка и черновика без текста не бывает.
   const touch = () => {
     newForm.text = ta.value;
-    newForm.title = title.value;
-    const parts = newForm.parts;
-    sumv.textContent = String(parts.reduce((a, b) => a + Number(b), 0));
-    sumf.textContent = "= " + parts.join("+");
-    send.disabled = !newForm.text.trim();
-    fbad.textContent = newForm.type === "task" && Number(parts[3]) === 5 ? BUG_PART_REFUSAL
-      : !newForm.title.trim() ? "заголовок задачи пустым не бывает" : "";
-    make.disabled = Boolean(fbad.textContent);
-    bad.textContent = "";
+    paint();
+    if (newForm.draft) {
+      bad.textContent = "";
+      send.disabled = !newForm.text.trim();
+      return;
+    }
+    bad.textContent = newForm.type === "task" && Number(newForm.parts[3]) === 5 ? BUG_PART_REFUSAL
+      : !newForm.text.trim() ? "заголовок задачи пустым не бывает" : "";
+    send.disabled = Boolean(bad.textContent);
   };
   ta.addEventListener("input", touch);
-  title.addEventListener("input", touch);
-  more.addEventListener("click", () => {
-    newForm.full = !newForm.full;
-    full.hidden = !newForm.full;
-    more.textContent = newForm.full ? "Свернуть полную задачу" : "Полная задача";
-  });
+  for (const [node, draft] of [[asTask, false], [asDraft, true]]) {
+    node.addEventListener("click", () => {
+      newForm.draft = draft;
+      sayResult("");
+      touch();
+    });
+  }
   send.addEventListener("click", () => {
     const text = ta.value.trim();
-    if (!text) return;
-    makeDraft(project, text, all).then((done) => {
-      if (done) {
+    if (!text || bad.textContent) return;
+    if (newForm.draft) {
+      makeDraft(project, text, [send]).then((done) => {
+        if (!done) return;
         resetNewForm(project);
         draftDone(project, done);
-      }
-    }).catch(console.error);
-  });
-  make.addEventListener("click", () => {
-    if (fbad.textContent) return;
+      }).catch(console.error);
+      return;
+    }
     const body = {
-      title: newForm.title.trim(),
+      title: text,
       type: newForm.type,
       cost: newForm.cost,
       r_parts: newForm.parts.map(Number),
       file: newForm.file,
     };
-    makeTask(project, body, all).then((done) => {
+    makeTask(project, body, [send]).then((done) => {
       if (!done) return;
       resetNewForm(project);
       // Заведённая строка открывается сразу: с телефона следующий шаг это
@@ -2004,7 +2299,7 @@ function renderHome(projects) {
   paintQuota();
   if (!shownProject) return;
   const bar = el("div", "nbar");
-  bar.append(newTaskButton(shownProject, "Новая задача"));
+  bar.append(newTaskButton(shownProject, "Новая задача"), draftsButton(shownProject));
   groups.append(bar);
 }
 
@@ -2127,9 +2422,17 @@ async function refresh() {
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
-    document.getElementById("psub").textContent = "новая задача";
+    document.getElementById("psub").textContent = newForm.draft ? "новый черновик" : "новая задача";
     markNav(rt);
     renderNew(current.name);
+    return;
+  }
+  if (rt.drafts) {
+    // Накопителю доска тоже не нужна: он читается своей ручкой, и лишний поход
+    // за доской стоил бы подпроцесса taskctl на каждый фокус окна.
+    document.getElementById("psub").textContent = "черновики";
+    markNav(rt);
+    await renderDrafts(current.name);
     return;
   }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");

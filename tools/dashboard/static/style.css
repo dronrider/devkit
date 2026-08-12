@@ -206,6 +206,25 @@ a:hover{text-decoration:underline}
 .rfold{display:none;margin-left:6px}
 .rank.on .rfold{display:inline}
 
+/* состав цели сабтасками и накопитель черновиков (макет «06 Цель»): шапка со
+   счётчиками и полосой прогресса, строки задач под ней */
+.comp{margin-top:14px}
+.chd{display:flex;align-items:center;gap:12px;padding:13px 16px 10px;flex-wrap:wrap}
+.chd b{font:600 13px var(--sans);color:var(--tx)}
+.chd .cnt{font:500 12px var(--mono);color:var(--tx3)}
+.prog{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;display:flex;flex:1;max-width:300px;min-width:120px}
+.prog i{display:block;height:100%}
+.prog .done{background:var(--run)}
+.prog .run{background:var(--acc)}
+.srow{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;padding:9px 16px;border-top:1px solid var(--line);min-height:44px}
+.srow:first-child{border-top:none}
+.srow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow.done .st{color:var(--tx3)}
+.srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
+.dtext{padding:0 16px 14px}
+.dtext .fhead{font:500 11.5px var(--mono);color:var(--tx3);padding:0 0 6px;border:none}
+.dtext .log{margin:0;white-space:pre-wrap;background:var(--bg0);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;max-height:40vh;overflow:auto}
+
 /* главная: список проектов карточкой */
 .prow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
 .prow:first-child{border-top:none}
@@ -213,8 +232,9 @@ a:hover{text-decoration:underline}
 .prow b{font:600 13.5px var(--sans);color:var(--tx)}
 .prow .stale{margin-left:auto}
 
-/* экран заведения (#проект/new): черновик первым полем, полная строка
-   разворотом под ним */
+/* экран заведения (#проект/new, макет «07 Заведение»): форма одна на задачу и
+   черновик, переключатель меняет только то, куда ляжет написанное; у черновика
+   лишние поля гасятся с подписью, а не прячутся */
 .nbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px 4px 0}
 .nbar .hint{flex:1;min-width:190px}
 .nform{margin-top:16px;max-width:760px}
@@ -229,6 +249,17 @@ a:hover{text-decoration:underline}
 .nfbody .error:empty{display:none}
 .nfcheck{display:flex;align-items:center;gap:10px;min-height:36px;font:400 12.5px var(--sans);color:var(--tx2)}
 .nfcheck input{width:18px;height:18px}
+.swch{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:3px;max-width:340px}
+.swch div{flex:1;text-align:center;padding:9px 14px;border-radius:8px;font:500 13px var(--sans);color:var(--tx3);min-height:22px;cursor:pointer}
+.swch .on{background:var(--bg3);color:var(--tx);font-weight:600}
+.flab{font:500 11.5px var(--sans);color:var(--tx3);margin-bottom:6px;display:block}
+.meta2{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.meta2 .chip{height:30px;padding:0 11px}
+.rankbox{border:1px solid var(--line);border-radius:11px;padding:4px 14px 8px}
+.dnote{display:flex;flex-wrap:wrap;gap:4px;padding:11px 14px;border-radius:10px;background:color-mix(in oklab,var(--goal) 10%,var(--bg1));border:1px solid color-mix(in oklab,var(--goal) 28%,transparent);font:400 12.5px/1.55 var(--sans);color:var(--tx2)}
+.dnote b{color:var(--goal);font-weight:600}
+/* погашенные поля черновика: видно, что они есть, и видно, что не заполняются */
+.nfbody .off{opacity:0.45}
 
 /* экран агента (макет «03 Агент»): журнал и транскрипт рядом, tmux полосой
    внизу; на телефоне те же панели табами через .seg */
@@ -398,6 +429,13 @@ a:hover{text-decoration:underline}
   .nfbody .tbtns .btn{flex:1;height:44px}
   .nfcheck{min-height:44px}
   .nfcheck input{width:22px;height:22px}
+  .swch{max-width:none}
+  .swch div{min-height:44px;display:flex;align-items:center;justify-content:center}
+  /* телефон: строка состава в две колонки, статус переносится под заголовок */
+  .srow{grid-template-columns:70px 1fr;gap:10px}
+  .srow .st{white-space:normal}
+  .srow .sm{grid-column:1 / -1;justify-content:flex-start}
+  .prog{width:100%;max-width:none}
   /* телефон: полоса действий задачи с пальцем в 44 пикселя, флеш во всю
      ширину окна */
   .abar{padding:12px 14px}

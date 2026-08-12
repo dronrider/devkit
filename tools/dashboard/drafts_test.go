@@ -1,0 +1,179 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// Раздел «Черновики»: список накопителя, текст записи и «Оформить». Стенд тот
+// же, что у заведения: настоящий taskctl на фикстурной доске, tmux и claude
+// исполняемыми фикстурами.
+
+func draftsResp(t *testing.T, c *http.Client, e *testEnv) map[string]any {
+	t.Helper()
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("накопитель черновиков: %d %s", resp.StatusCode, text)
+	}
+	var v map[string]any
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ накопителя не разобрался: %v\n%s", err, text)
+	}
+	return v
+}
+
+// Накопитель виден списком с ID, первой строкой и возрастом словами утилиты, а
+// текст черновика читается целиком: разбирать запись с телефона нельзя, не
+// прочитав её.
+func TestDraftsListAndText(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+
+	empty := draftsResp(t, c, e)
+	if list, ok := empty["drafts"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("пустой накопитель приехал не пустым списком: %v", empty["drafts"])
+	}
+	if note, _ := empty["note"].(string); !strings.Contains(note, "пуст") {
+		// Пустой список без слов неотличим от неотрисованного раздела.
+		t.Errorf("пустой накопитель молчит вместо слов: %v", empty)
+	}
+
+	for _, text := range []string{
+		"уведомитель шумит из песочницы",
+		"дашборд не показывает накопитель черновиков",
+	} {
+		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			`{"text": `+strconv.Quote(text)+`}`).Body.Close()
+	}
+	got := draftsResp(t, c, e)
+	list, _ := got["drafts"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("в накопителе %d черновиков, жду 2: %v", len(list), got)
+	}
+	first, _ := list[0].(map[string]any)
+	if id, _ := first["id"].(string); id != "XR-005" {
+		t.Errorf("ID первого черновика %v, жду XR-005", first["id"])
+	}
+	if title, _ := first["title"].(string); title != "уведомитель шумит из песочницы" {
+		t.Errorf("первая строка черновика не приехала: %v", first)
+	}
+	if words, _ := first["age_words"].(string); words == "" {
+		t.Errorf("возраст словами не приехал: %v", first)
+	}
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("текст черновика: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "уведомитель шумит из песочницы") {
+		t.Errorf("текст черновика не приехал: %s", text)
+	}
+	if !strings.Contains(text, "docs/tasks/drafts/XR-005.md") {
+		t.Errorf("путь файла черновика не назван: %s", text)
+	}
+
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-404", "")
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(text, "черновика XR-404") {
+		t.Fatalf("несуществующий черновик: %d %s, ожидал 404 со словами", resp.StatusCode, text)
+	}
+}
+
+// «Оформить» поднимает сессию груминга той же механикой, что и конвейер
+// задачи: tmux-сессия с headless-сессией конвейера и заказом теми же словами,
+// какими груминг просят в чате.
+func TestDraftGroomPrompt(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "дашборд не показывает накопитель черновиков"}`).Body.Close()
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг черновика: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"session":"task-XR-005"`) {
+		t.Errorf("имя сессии груминга не то: %s", text)
+	}
+	want := "new-session -d -s task-XR-005 -c " + e.proj + " claude -p 'Проведи груминг XR-005'"
+	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
+		t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
+	}
+
+	// Поверх живой работы с тем же ID вторая сессия не поднимается: разбирать
+	// один черновик двумя агентами нечего.
+	writeTmuxFake(t, e.bin, tmuxLog, `task-XR-005\n`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "уже идёт") {
+		t.Fatalf("груминг поверх живой сессии: %d %s, ожидал 409", resp.StatusCode, text)
+	}
+}
+
+// Раздел «Черновики» на экране: список с текстом по нажатию, «Оформить» и вход
+// с доски и с главной.
+func TestStaticDraftsSection(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		"Черновики",
+		"Оформить",
+		"async function renderDrafts(",
+		"function draftsButton(",
+		"async function groomDraft(",
+		"async function draftText(",
+		"/drafts",
+		"груминга",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в static/app.js нет надписи %q", want)
+		}
+	}
+	// Вход стоит на обоих экранах: черновик пишется с телефона, и разбирать его
+	// приходится оттуда же.
+	for _, fn := range []string{"function renderBoard(", "function renderHome("} {
+		cut := strings.Index(text, fn)
+		if cut < 0 {
+			t.Fatalf("в static/app.js нет %s", fn)
+		}
+		part := text[cut:]
+		if stop := strings.Index(part, "\n}\n"); stop > 0 {
+			part = part[:stop]
+		}
+		if !strings.Contains(part, "draftsButton(") {
+			t.Errorf("в %s нет входа в раздел черновиков", fn)
+		}
+	}
+	// Раздел это свой экран хэша, иначе с телефона на него не сослаться.
+	if !strings.Contains(text, `parts[1] === "drafts"`) {
+		t.Error("у раздела черновиков нет своего хэша: route его не узнаёт")
+	}
+	if !strings.Contains(text, "renderDrafts(current.name)") {
+		t.Error("экран черновиков не подключён к разбору хэша")
+	}
+}
+
+// Черновика нет, оформлять нечего: сессия не поднимается, а причина называется
+// словами.
+func TestDraftGroomMissing(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-404/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(text, "оформлять нечего") {
+		t.Fatalf("груминг пропавшего черновика: %d %s, ожидал 404 со словами", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессия поднялась под пропавший черновик: %s", got)
+	}
+}

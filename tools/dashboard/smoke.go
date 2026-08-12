@@ -75,9 +75,25 @@ const smokeGoalDoc = `# XR-100: Цель: пробный цикл smoke
 Синтетическая цель прогона smoke: на ней проверяется переписка через файл
 цели и подхват сообщения витком.
 
+## Задачи цели
+
+Нарезка прогона smoke, две строки.
+
+- XR-002 (task, S, R=30). Соседка по доске, стоит в Backlog.
+- XR-001 (task, S, R=20). Закрытая до прогона, лежит в архиве.
+
 ## Журнал
 
 - 2026-01-01, цель заведена прогоном smoke; continue
+`
+
+// smokeArchiveDoc держит закрытую задачу состава: строка закрытой задачи
+// уезжает с доски, и без архива состав цели показывал бы её потерянной.
+const smokeArchiveDoc = `# Синтетический архив smoke
+
+| ID | Задача | Тип | P | Закрыто | Ссылка |
+|--------|--------|-----|---|---------|--------|
+| XR-001 | Закрытая до прогона | task | P2 | 2026-01-01 | - |
 `
 
 // smokeStep это шаг цепочки DoD: имя для вывода и сама проверка, которая
@@ -247,6 +263,9 @@ func newSmoke(dir string) (*smoke, error) {
 		return nil, err
 	}
 	if err := smokeWrite(filepath.Join(s.proj, "docs", "tasks", smokeGoal+".md"), smokeGoalDoc, 0o644); err != nil {
+		return nil, err
+	}
+	if err := smokeWrite(filepath.Join(s.proj, "docs", "TASKS-archive.md"), smokeArchiveDoc, 0o644); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(s.bin, 0o755); err != nil {
@@ -516,6 +535,36 @@ func (s *smoke) stepJournal() (string, error) {
 	return fmt.Sprintf("%d строк, источник назван: %s", len(v.Lines), v.Sign), nil
 }
 
+// stepComposition: состав цели сабтасками. Проверяется весь путь до экрана:
+// нарезка читается из раздела «Задачи цели» файла цели, живая задача берёт
+// статус со строки доски, а закрытая из архива, куда её строка уехала.
+func (s *smoke) stepComposition() (string, error) {
+	var v struct {
+		File  string     `json:"file"`
+		Note  string     `json:"note"`
+		Tasks []goalTask `json:"tasks"`
+		Count goalCounts `json:"counts"`
+	}
+	if err := s.call("GET", "/api/projects/demo/goals/"+smokeGoal+"/tasks", "", http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if v.Note != "" || len(v.Tasks) != 2 {
+		return "", fmt.Errorf("состав цели не прочитан: %s (%d задач)", v.Note, len(v.Tasks))
+	}
+	live, closed := v.Tasks[0], v.Tasks[1]
+	if live.ID != smokeTask || live.Sect != "backlog" || live.Title == "" {
+		return "", fmt.Errorf("живая задача состава пришла без строки доски: %+v", live)
+	}
+	if !closed.Done || closed.Closed == "" {
+		return "", fmt.Errorf("закрытая задача состава пришла без архива: %+v", closed)
+	}
+	if v.Count.Closed != 1 || v.Count.Ahead != 1 {
+		return "", fmt.Errorf("счётчики состава не сошлись: %+v", v.Count)
+	}
+	return fmt.Sprintf("%d задачи из %s: %s %s, %s закрыта %s",
+		v.Count.Total, v.File, live.ID, live.Section, closed.ID, closed.Closed), nil
+}
+
 func (s *smoke) goalPath() string {
 	return filepath.Join(s.proj, "docs", "tasks", smokeGoal+".md")
 }
@@ -720,6 +769,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 	steps := []smokeStep{
 		{"доска со статусами и работами", s.stepBoard},
 		{"журнал цели из её файла", s.stepJournal},
+		{"состав цели сабтасками", s.stepComposition},
 		{"запуск работы", s.stepStart},
 		{"работа видна живой", s.stepWorks},
 		{"сообщение цели", s.stepMessage},

@@ -52,7 +52,7 @@ func TestDraftCreate(t *testing.T) {
 	if !strings.Contains(doc, "мысль с телефона: доска не заводится с дашборда") {
 		t.Errorf("текст не доехал до файла черновика:\n%s", doc)
 	}
-	// Строки на доске у черновика нет: он ждёт грумминга.
+	// Строки на доске у черновика нет: он ждёт груминга.
 	if board := readFile(t, filepath.Join(e.proj, "docs", "TASKS.md")); strings.Contains(board, "XR-005") {
 		t.Errorf("черновик встал строкой на доску:\n%s", board)
 	}
@@ -280,16 +280,14 @@ func TestNewTaskAuthAndOrigin(t *testing.T) {
 	}
 }
 
-// Экран заведения честен словами: черновик стоит первым и назван черновиком,
-// полная строка лежит под разворотом со слагаемыми из RANKING.md, кнопка
-// заведения есть и на доске, и на главной.
+// Экран заведения честен словами: форма одна на задачу и черновик, поля те
+// же, что у правки задачи, и кнопка заведения есть и на доске, и на главной.
 func TestStaticNewTaskForm(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		"Новая задача",
 		"Записать черновик",
 		"Что нужно сделать и зачем",
-		"Полная задача",
 		"Завести задачу",
 		"завести файл задачи по шаблону (taskctl file)",
 		"docs/tasks/drafts/",
@@ -331,5 +329,54 @@ func TestStaticNewTaskForm(t *testing.T) {
 	}
 	if !strings.Contains(part, "disabled = true") || !strings.Contains(part, "finally") {
 		t.Error("sendNew не гасит кнопки на время запроса либо не включает их назад")
+	}
+}
+
+// Переключатель задача-черновик по макету «07 Заведение»: форма одна, поля у
+// черновика гасятся с подписью, кто их заполнит, а не прячутся; несохранённое
+// в работу не берётся, и сказано это словами.
+func TestStaticNewFormSwitch(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`el("div", "swch")`,
+		"Черновику доступен только груминг",
+		"в работу его не взять",
+		"тип выдаст груминг",
+		"цена выдаст груминг",
+		"ранг выведет груминг",
+		"поля те же, что у задачи, но пока не заполняются",
+		"Ляжет в docs/tasks/drafts/, ID выдаст taskctl",
+		"Встанет в Backlog сразу, место выведется из ранга",
+		"Взять в работу можно с карточки задачи",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в static/app.js нет надписи %q", want)
+		}
+	}
+	cut := strings.Index(text, "function renderNew(")
+	if cut < 0 {
+		t.Fatal("в static/app.js нет renderNew")
+	}
+	form := text[cut:]
+	if stop := strings.Index(form, "\n}\n"); stop > 0 {
+		form = form[:stop]
+	}
+	// Форма одна: и черновик, и строка уезжают одной кнопкой с одного поля.
+	if !strings.Contains(form, "makeDraft(project") || !strings.Contains(form, "makeTask(project") {
+		t.Error("форма заведения не отправляет оба случая: переключатель некуда вести")
+	}
+	// Взять в работу с формы нечего: запуска на этом экране нет вовсе.
+	if strings.Contains(form, "startRun(") {
+		t.Error("на форме заведения есть запуск работы: у несохранённой задачи нет ни ID, ни статуса")
+	}
+	// Погашенное не спрятано: у черновика те же поля, только с подписью.
+	if !strings.Contains(form, `classList.toggle("off"`) {
+		t.Error("режим черновика не гасит поля класса off: форма перестраивается вместо подписи")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".swch", ".dnote", ".nfbody .off"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет правила %q", want)
+		}
 	}
 }

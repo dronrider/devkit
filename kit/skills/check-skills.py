@@ -46,6 +46,18 @@ def read(path):
         return None
 
 
+def section(text, heading):
+    """Тело раздела до следующего заголовка того же уровня, пустая строка если
+    раздела нет. Заголовок даётся целиком, вместе с решётками."""
+    body = "\n" + text
+    start = body.find("\n" + heading + "\n")
+    if start < 0:
+        return ""
+    rest = body[start + len(heading) + 2:]
+    end = rest.find("\n## ")
+    return rest if end < 0 else rest[:end]
+
+
 def check_skills(here):
     """Возврат (находки, число скиллов)."""
     fails = []
@@ -120,6 +132,44 @@ def check_goal_split(here):
         fails.append("goal-start: тащит процедуру витка, разрез сросся обратно")
     if "\n## Разделы файла цели" in loop:
         fails.append("goal-loop: тащит постановку, разрез сросся обратно")
+    return fails
+
+
+def check_goal_cut(here):
+    # DK-208: нарезка цели вынесена третьим скиллом, потому что зовут её двое, и
+    # правила у них одни. Пробная нарезка постановки продумывает состав до
+    # старта цикла и оставляет список кандидатов, виток его материализует
+    # строками, а всякая нарезка кончается сверкой оценки с остатком бюджета.
+    # Связка держится одним текстом, и пропажа любой её части тихая: без формата
+    # кандидатов виток режет цель заново поверх продуманного списка, без сверки
+    # расхождение с рамкой вылезает на gate: over, то есть после слитого
+    # бюджета.
+    fails = []
+    cut = read(os.path.join(here, "goal-cut", "SKILL.md"))
+    start = read(os.path.join(here, "goal-start", "SKILL.md"))
+    loop = read(os.path.join(here, "goal-loop", "SKILL.md"))
+    if cut is None:
+        fails.append("goal-cut: скилл нарезки не заведён, правила состава цели терять некуда")
+        return fails
+    if not section(cut, "## Список кандидатов"):
+        fails.append("goal-cut: нет формата списка кандидатов, пробной нарезке нечего оставить витку")
+    if start is not None:
+        if not section(start, "## Пробная нарезка"):
+            fails.append("goal-start: нет пробной нарезки, состав цели до старта цикла не прикинуть")
+        if "goal-cut" not in start:
+            fails.append("goal-start: пробная нарезка не зовёт goal-cut, правила нарезки разъедутся")
+    if loop is not None and "goal-cut" not in loop:
+        fails.append("goal-loop: виток не зовёт goal-cut, нарезка витка разойдётся с пробной")
+    check = section(cut, "## Сверка оценки с остатком бюджета")
+    if not check:
+        fails.append("goal-cut: нет сверки оценки с бюджетом, расхождение вылезет только на gate: over")
+        return fails
+    if "wait-human" not in check:
+        fails.append("goal-cut: сверка не выходит маркером wait-human, виток пройдёт мимо расхождения молча")
+    if "порог" not in check.lower():
+        fails.append("goal-cut: ширина порога расхождения не названа, сверке нечем решать")
+    if "не правит" not in check:
+        fails.append("goal-cut: не сказано, что чисел «Бюджета» цикл не правит")
     return fails
 
 
@@ -284,6 +334,7 @@ def run(here, root):
     fails += skill_fails
     fails += check_procedural_rules(here, root)
     fails += check_goal_split(here)
+    fails += check_goal_cut(here)
     fails += check_groom(here)
     fails += check_team(here)
     fails += check_proofread(here)

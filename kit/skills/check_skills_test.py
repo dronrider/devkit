@@ -172,6 +172,96 @@ class TestGoalSplit(SkillTree):
         self.assertTrue(any("goal-start: скилл режима цели не заведён" in f for f in fails), fails)
 
 
+class TestGoalCut(SkillTree):
+    """DK-208: нарезка цели третьим скиллом, пробная нарезка в постановке,
+    материализация списка кандидатов витком и сверка оценки с бюджетом."""
+
+    CUT = ("## Список кандидатов\n\n- кандидат 1 (task, M, R=38). Первая задача.\n\n"
+           "## Сверка оценки с остатком бюджета\n\nСумма цен против остатка.\n"
+           "Порог в полтора раза, шире него выход wait-human.\n"
+           "Чисел «Бюджета» цикл не правит ни в какую сторону.\n")
+    START = "## Пробная нарезка\n\nСостав до старта цикла по скиллу goal-cut.\n"
+    LOOP = "## Виток\n\nНарезка идёт по скиллу goal-cut.\n"
+
+    def write_goal(self, cut=None, start=None, loop=None):
+        for name, body in (("goal-cut", self.CUT if cut is None else cut),
+                           ("goal-start", self.START if start is None else start),
+                           ("goal-loop", self.LOOP if loop is None else loop)):
+            if body == "":
+                continue
+            d = os.path.join(self.here, name)
+            os.makedirs(d)
+            with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: %s\ndescription: Звать, всегда.\n---\n\n%s\n" % (name, body))
+
+    def test_three_skills_in_place(self):
+        self.write_goal()
+        self.assertEqual(check_skills.check_goal_cut(self.here), [])
+
+    def test_cut_skill_absent(self):
+        self.write_goal(cut="")
+        self.assertEqual(check_skills.check_goal_cut(self.here),
+                         ["goal-cut: скилл нарезки не заведён, правила состава цели терять некуда"])
+
+    def test_cut_without_candidate_format(self):
+        self.write_goal(cut=self.CUT.replace("## Список кандидатов", "## Состав"))
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("нет формата списка кандидатов" in f for f in fails), fails)
+
+    def test_probe_section_lost(self):
+        self.write_goal(start="## Порядок\n\nЗавести строку и файл, дальше goal-cut.\n")
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("нет пробной нарезки" in f for f in fails), fails)
+
+    def test_probe_does_not_call_cut(self):
+        self.write_goal(start="## Пробная нарезка\n\nПрикинуть состав своим порядком.\n")
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("пробная нарезка не зовёт goal-cut" in f for f in fails), fails)
+
+    def test_turn_does_not_call_cut(self):
+        self.write_goal(loop="## Виток\n\nНарезка своим порядком, кандидатов не знает.\n")
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("виток не зовёт goal-cut" in f for f in fails), fails)
+
+    def test_check_section_lost(self):
+        self.write_goal(cut="## Список кандидатов\n\n- кандидат 1 (task, M, R=38). Задача.\n")
+        self.assertEqual(check_skills.check_goal_cut(self.here),
+                         ["goal-cut: нет сверки оценки с бюджетом, "
+                          "расхождение вылезет только на gate: over"])
+
+    def test_check_without_marker(self):
+        self.write_goal(cut=self.CUT.replace("выход wait-human", "нарезка едет дальше"))
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("не выходит маркером wait-human" in f for f in fails), fails)
+
+    def test_check_without_threshold(self):
+        self.write_goal(cut=self.CUT.replace("Порог в полтора раза, шире него ", ""))
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("ширина порога расхождения не названа" in f for f in fails), fails)
+
+    def test_check_lets_budget_be_edited(self):
+        self.write_goal(cut=self.CUT.replace(
+            "Чисел «Бюджета» цикл не правит ни в какую сторону.",
+            "Не хватило, значит поднять числа «Бюджета» самому."))
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("чисел «Бюджета» цикл не правит" in f for f in fails), fails)
+
+    def test_next_section_ends_the_check(self):
+        # Сверка кончается следующим заголовком: маркер из соседнего раздела за
+        # неё не считается, иначе проверка держалась бы на слове где угодно.
+        self.write_goal(cut="## Список кандидатов\n\n- кандидат 1 (task, M).\n\n"
+                        "## Сверка оценки с остатком бюджета\n\nПорог в полтора раза, "
+                        "чисел «Бюджета» цикл не правит.\n\n## Маркеры\n\nwait-human\n")
+        fails = check_skills.check_goal_cut(self.here)
+        self.assertTrue(any("не выходит маркером wait-human" in f for f in fails), fails)
+
+    def test_neighbours_absent_are_reported_elsewhere(self):
+        # Постановки и витка нет вовсе: их пропажу называет check_goal_split, и
+        # дублировать её здесь нечем.
+        self.write_goal(start="", loop="")
+        self.assertEqual(check_skills.check_goal_cut(self.here), [])
+
+
 class TestGroom(SkillTree):
     def write_groom(self, body):
         d = os.path.join(self.here, "board-groom")

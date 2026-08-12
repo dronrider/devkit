@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,11 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
 			"\n## Ревью\n\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
 	write(t, root, "code.txt", "old\n")
+	// .devkit/cmdout это место, куда DK-266 складывает полные выводы провалившихся
+	// команд из сводки frame.Summarize: в репозитории проекта каталог гитигнорнут
+	// правилами devkit, а тестовый репозиторий заводится без gitignore, и без этой
+	// записи untracked файлы вывода смазывали бы статусные проверки в worktree.
+	write(t, root, ".gitignore", ".devkit/cmdout/\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed")
 
@@ -909,5 +915,84 @@ func TestMissingTaskctlNamesTheInstallCommand(t *testing.T) {
 		if strings.Contains(msg, "devkit/taskctl") {
 			t.Fatalf("%s: отказ зовёт в каталог, которого нет после переезда: %s", c.name, msg)
 		}
+	}
+}
+
+// TestCmdoutFrameCatchesSignificant это регрессионный тест DK-266: на выводе со
+// значимым маркером (FAIL, panic:) в середине и хвостом без маркеров бывшая
+// tail(out) показывала только последние 30 строк, и значимая строка из середины
+// пропадала. cmdoutFrame строит сводку по формату LLD, и значимая строка видна
+// агенту в блоке significant, а полный вывод лежит в файле по path. Тест падает
+// на прежнем tail (в выводе нет ни significant, ни path), на новом проходит.
+func TestCmdoutFrameCatchesSignificant(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	// Двести строк: в середине строки 40 и 80 несут FAIL и panic:, последние 30
+	// строк (171..200) без маркеров. Прежняя tail(out) отдала бы только хвост.
+	var b strings.Builder
+	for i := 1; i <= 200; i++ {
+		switch i {
+		case 40:
+			b.WriteString("FAIL middle_row\n")
+		case 80:
+			b.WriteString("panic: middle_row_two\n")
+		default:
+			fmt.Fprintf(&b, "line %d\n", i)
+		}
+	}
+	rendered := cmdoutFrame(root, "test", b.String())
+	for _, want := range []string{
+		"exit: 1",
+		"lines_total: 200",
+		"significant:",
+		"FAIL middle_row",
+		"panic: middle_row_two",
+		"tail:",
+		"line 200",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("в выжимке нет %q:\n%s", want, rendered)
+		}
+	}
+	// path указывает на существующий файл внутри .devkit/cmdout.
+	pathLine := ""
+	for _, l := range strings.Split(strings.TrimRight(rendered, "\n"), "\n") {
+		if strings.HasPrefix(l, "path: ") {
+			pathLine = strings.TrimPrefix(l, "path: ")
+			break
+		}
+	}
+	if pathLine == "" {
+		t.Fatalf("в выжимке нет path:\n%s", rendered)
+	}
+	if info, err := os.Stat(pathLine); err != nil || info.Size() == 0 {
+		t.Errorf("файл вывода по path не читается или пуст: %s (err=%v)", pathLine, err)
+	}
+	// Хвост без маркеров: значимые строки из середины в хвост не попадают.
+	for _, bad := range []string{"FAIL middle_row", "panic: middle_row_two"} {
+		tailStart := strings.Index(rendered, "tail:\n")
+		if tailStart < 0 {
+			t.Fatal("хвост не найден в выжимке")
+		}
+		if strings.Contains(rendered[tailStart:], bad) {
+			t.Errorf("значимая строка %q попала в хвост, а хвост был без маркеров", bad)
+		}
+	}
+}
+
+// TestCmdoutFrameShortOutput: ниже порога выжимка не строится, полный вывод
+// отдаётся как есть, к нему приписывается path к файлу. Это путь коротких
+// статусных выводов git (status --porcelain с парой строк), где резать нечего.
+func TestCmdoutFrameShortOutput(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	out := " M code.txt\n?? draft.txt\n"
+	rendered := cmdoutFrame(root, "git-status", out)
+	if !strings.HasPrefix(rendered, out) {
+		t.Errorf("короткий вывод не прошёл как есть: %q", rendered)
+	}
+	if !strings.Contains(rendered, "path: ") {
+		t.Errorf("path пропал в коротком выводе: %q", rendered)
+	}
+	if strings.Contains(rendered, "lines_total") {
+		t.Errorf("поле lines_total не должно присутствовать ниже порога: %q", rendered)
 	}
 }

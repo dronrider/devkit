@@ -215,7 +215,7 @@ func ensureWindowTree(primary string) (string, string, error) {
 		return "", "", err
 	}
 	if out, err := git(primary, "worktree", "add", "--detach", tree, main); err != nil {
-		return "", "", fmt.Errorf("копия окна не завелась:\n%s", tail(out))
+		return "", "", fmt.Errorf("копия окна не завелась:\n%s", cmdoutFrame(primary, "git-worktree", out))
 	}
 	// Путь отдаётся развёрнутым, как его отдаёт git списком деревьев: иначе
 	// первое открытие окна называло бы копию одним путём, а следующее другим,
@@ -599,6 +599,20 @@ func openEditor(tree string) error {
 	}
 }
 
+// probeBody укорачивает тело ответа пробника для диагностического сообщения.
+// Сюда приходит не вывод команды, а тело HTTP: у него нет git-корня для файла
+// полного вывода и нет argv для slug-а, поэтому frame.Summarize к нему не
+// прикладывается. LimitReader на чтение уже обрезал тело по байтам, а probeBody
+// режет то, что пойдёт в ошибку, чтобы длинный JSON одной строкой не разрывал
+// сообщение. Берётся хвост: в конце тела обычно лежит сообщение сервера.
+func probeBody(s string) string {
+	const limit = 500
+	if len(s) <= limit {
+		return s
+	}
+	return "..." + s[len(s)-limit:]
+}
+
 // probeAlt стучится в endpoint второй подписки Anthropic-совместимым запросом.
 // Печать окружения показывает, что окно уйдёт по нужному адресу, но не что там
 // живая подписка: протухший токен и опечатка в адресе выглядят на печати
@@ -638,14 +652,14 @@ func probeAlt(a altSub) (string, error) {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	answer := strings.TrimSpace(a.redact(string(raw)))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("пробник %s: ответ %s, окно уйдёт в нерабочую подписку; проверить endpoint и токен в %s (%s)", url, resp.Status, a.Settings, tail(answer))
+		return "", fmt.Errorf("пробник %s: ответ %s, окно уйдёт в нерабочую подписку; проверить endpoint и токен в %s (%s)", url, resp.Status, a.Settings, probeBody(answer))
 	}
 	var ans struct {
 		Model string `json:"model"`
 	}
 	json.Unmarshal(raw, &ans)
 	if ans.Model == "" {
-		return "", fmt.Errorf("пробник %s: ответ 200, а модели в теле нет: endpoint отвечает не по-Anthropic-совместимому (%s)", url, tail(answer))
+		return "", fmt.Errorf("пробник %s: ответ 200, а модели в теле нет: endpoint отвечает не по-Anthropic-совместимому (%s)", url, probeBody(answer))
 	}
 	return fmt.Sprintf("пробник %s: 200, модель в ответе %s", url, ans.Model), nil
 }

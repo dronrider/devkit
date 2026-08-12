@@ -188,11 +188,11 @@ func samePath(a, b string) bool {
 func detachWorktree(root, wt, branch string) string {
 	if out, err := git(wt, "checkout", "--detach"); err != nil {
 		return fmt.Sprintf("копия окна %s не переведена на слитый коммит (%s): ветка %s осталась занятой, довести руками: git -C %s checkout --detach && git branch -d %s",
-			wt, tail(out), branch, wt, branch)
+			wt, cmdoutFrame(wt, "git-checkout", out), branch, wt, branch)
 	}
 	if out, err := git(root, "branch", "-d", branch); err != nil {
 		return fmt.Sprintf("копия окна %s стоит на слитом коммите, а ветка %s не удалилась (%s), убрать руками: git branch -d %s",
-			wt, branch, tail(out), branch)
+			wt, branch, cmdoutFrame(root, "git-branch", out), branch)
 	}
 	return fmt.Sprintf("копия окна %s переведена на слитый коммит, ветка %s удалена: окно в копии живо", wt, branch)
 }
@@ -229,10 +229,10 @@ func syncWindowTree(root, main string) string {
 		return fmt.Sprintf("копия окна %s: статус не проверился (%v), не подтянута", tree, err)
 	}
 	if st != "" {
-		return fmt.Sprintf("копия окна %s не подтянута на %s: незакоммиченные правки\n%s", tree, main, tail(st))
+		return fmt.Sprintf("копия окна %s не подтянута на %s: незакоммиченные правки\n%s", tree, main, cmdoutFrame(tree, "git-status", st))
 	}
 	if out, err := git(tree, "checkout", "--detach", main); err != nil {
-		return fmt.Sprintf("копия окна %s не подтянута на %s (%s): довести руками git -C %s checkout --detach %s", tree, main, tail(out), tree, main)
+		return fmt.Sprintf("копия окна %s не подтянута на %s (%s): довести руками git -C %s checkout --detach %s", tree, main, cmdoutFrame(tree, "git-checkout", out), tree, main)
 	}
 	return "копия окна " + tree + " подтянута на свежий " + main
 }
@@ -280,7 +280,7 @@ func switchable(tree, branch string) error {
 		return err
 	}
 	if st != "" {
-		return fmt.Errorf("в %s лежат правки прошлой задачи, на ветку %s дерево так не переключить: закоммитить их в свою ветку либо убрать, и повторить:\n%s", tree, branch, tail(st))
+		return fmt.Errorf("в %s лежат правки прошлой задачи, на ветку %s дерево так не переключить: закоммитить их в свою ветку либо убрать, и повторить:\n%s", tree, branch, cmdoutFrame(tree, "git-status", st))
 	}
 	return nil
 }
@@ -456,9 +456,9 @@ func cmdStart(root string, p StartParams) (string, error) {
 	}
 	if out, err := git(where, args...); err != nil {
 		if sect == "backlog" {
-			return "", fmt.Errorf("доска переведена, но ветка не выложена в дерево:\n%s", tail(out))
+			return "", fmt.Errorf("доска переведена, но ветка не выложена в дерево:\n%s", cmdoutFrame(where, "git-checkout", out))
 		}
-		return "", fmt.Errorf("ветка не выложена в дерево:\n%s", tail(out))
+		return "", fmt.Errorf("ветка не выложена в дерево:\n%s", cmdoutFrame(where, "git-checkout", out))
 	}
 	// Каталог обвязки .devkit в новое дерево не попадает (гитигнорнут), а без
 	// него в worktree не пишется журнал запусков (по нему merge подсказывает про

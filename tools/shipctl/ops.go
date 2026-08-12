@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/dronrider/devkit/internal/frame"
 )
 
 // pushEnv выдаёт разрешение на пуш хуку pre-push. Правила разрешают пуш доске
@@ -91,12 +93,22 @@ func deployProblem(cmdStr string, timedOut bool, limit time.Duration) (short, fu
 		short, cmdStr, limit, deployConfigPath)
 }
 
-func tail(s string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > 30 {
-		lines = append([]string{"..."}, lines[len(lines)-30:]...)
-	}
-	return strings.Join(lines, "\n")
+// cmdoutFrame строит выжимку вывода провалившейся команды для ошибок shipctl.
+// Это замена бывшей tail(out): на месте последних 30 строк без контекста
+// агенту видна сводка по формату LLD (exit, lines_total, lines_hidden,
+// significant, tail, path), и полный вывод лежит в файле по path. cmdName идёт
+// в slug файла вывода, выше порога значимые строки с маркерами (FAIL, panic:,
+// CONFLICT) видны агенту даже из середины вывода, а не только из хвоста. dir это
+// каталог, из которого звалась команда: по нему ищется git-корень для файла
+// полного вывода, и пустой dir не ломает построение сводки, просто оставляя
+// path пустым. Exit код у провалившейся команды ненулевой, но он не всегда
+// известен вызывающему, поэтому здесь он зафиксирован как 1: единственное, что
+// читает агент в этом поле, «команда провалилась», и обманывать его кодом 0
+// нельзя. По DK-266 выжимка въезжает на месте тринадцати tail(out) в этом файле
+// и соседних вызовов в worktree.go и editor.go.
+func cmdoutFrame(dir, cmdName, out string) string {
+	s := frame.Summarize(dir, []string{cmdName}, []byte(out), 1)
+	return s.Render()
 }
 
 func mainBranch(root string) (string, error) {
@@ -123,7 +135,7 @@ func preflight(root string) (string, error) {
 		return "", err
 	}
 	if st != "" {
-		return "", fmt.Errorf("в рабочем дереве незакоммиченное, сначала закоммить:\n%s", tail(st))
+		return "", fmt.Errorf("в рабочем дереве незакоммиченное, сначала закоммить:\n%s", cmdoutFrame(root, "git-status", st))
 	}
 	return main, nil
 }
@@ -598,7 +610,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", err
 		}
 		if st != "" {
-			return "", fmt.Errorf("в worktree %s незакоммиченное, сначала закоммить:\n%s", wt, tail(st))
+			return "", fmt.Errorf("в worktree %s незакоммиченное, сначала закоммить:\n%s", wt, cmdoutFrame(wt, "git-status", st))
 		}
 	}
 	b, err := loadBoard(root)
@@ -713,10 +725,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	if out, err := git(workDir, "rebase", main); err != nil {
 		git(workDir, "rebase", "--abort")
-		return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, tail(out))
+		return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", out))
 	}
 	if out, err := runShell(workDir, test); err != nil {
-		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", tail(out))
+		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", cmdoutFrame(workDir, "test", out))
 	}
 	if wt == "" {
 		if _, err := git(root, "checkout", main); err != nil {
@@ -862,8 +874,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	case deploy.run != "":
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
-			note := notify(root, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+tail(out))
-			return "", fmt.Errorf("слито, но выкат %s, задача остаётся в In progress:\n%s%s", full, tail(out), note)
+			outSummary := cmdoutFrame(root, "deploy", out)
+			note := notify(root, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+outSummary)
+			return "", fmt.Errorf("слито, но выкат %s, задача остаётся в In progress:\n%s%s", full, outSummary, note)
 		}
 		msg = append(msg, "выкат прошёл")
 	case deploy.manual != "":
@@ -988,8 +1001,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	case deploy.run != "":
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
-			note := notify(root, fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+tail(out))
-			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, tail(out), note)
+			outSummary := cmdoutFrame(root, "deploy", out)
+			note := notify(root, fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+outSummary)
+			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
 	case deploy.manual != "":
@@ -1044,7 +1058,7 @@ func freshMain(root, main string) error {
 		return nil
 	}
 	if out, err := git(root, "fetch", "origin", main); err != nil {
-		return fmt.Errorf("git fetch origin не прошёл, состояние origin неизвестно:\n%s", tail(out))
+		return fmt.Errorf("git fetch origin не прошёл, состояние origin неизвестно:\n%s", cmdoutFrame(root, "git-fetch", out))
 	}
 	if _, err := git(root, "merge-base", "--is-ancestor", "origin/"+main, main); err != nil {
 		return fmt.Errorf("локальный %s отстал от origin/%s, сначала подтянуть его (git pull --rebase)", main, main)
@@ -1194,7 +1208,7 @@ func ffCatchUp(root, workDir, wt, main, branch string) (string, int, error) {
 		if ffErr == nil {
 			return preSha, catchUps, nil
 		}
-		refused := fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
+		refused := fmt.Errorf("fast-forward не прошёл:\n%s", cmdoutFrame(root, "git-merge", out))
 		if catchUps == catchUpLimit {
 			return "", catchUps, fmt.Errorf("%v\nдоборов ребейза сделано %d, main меняется быстрее, чем идёт слияние: повторить merge", refused, catchUps)
 		}
@@ -1229,7 +1243,7 @@ func ffCatchUp(root, workDir, wt, main, branch string) (string, int, error) {
 			}
 		}
 		if rebaseErr != nil {
-			return "", catchUps, fmt.Errorf("повторный ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, tail(rebaseOut))
+			return "", catchUps, fmt.Errorf("повторный ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", rebaseOut))
 		}
 	}
 }
@@ -1327,7 +1341,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	// умеет падать в конфликт и оставлять прод полупочиненным.
 	if out, err := git(root, append([]string{"revert", "--no-commit"}, shas...)...); err != nil {
 		git(root, "revert", "--abort")
-		return "", fmt.Errorf("revert в конфликте, чинить форвард-фиксом:\n%s", tail(out))
+		return "", fmt.Errorf("revert в конфликте, чинить форвард-фиксом:\n%s", cmdoutFrame(root, "git-revert", out))
 	}
 	// Заглушка на случай, когда прошлый откат шёл с нераспознаваемым -m и
 	// граница по subject его не увидела: пустой revert значит уже откачено.
@@ -1348,7 +1362,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	}
 	if p.Test != "" {
 		if out, err := runShell(root, p.Test); err != nil {
-			return "", fmt.Errorf("тесты после отката красные:\n%s", tail(out))
+			return "", fmt.Errorf("тесты после отката красные:\n%s", cmdoutFrame(root, "test", out))
 		}
 	}
 	// Автономия действует и на аварийном пути, здесь она нужнее всего: без
@@ -1386,8 +1400,9 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	case plan.run != "":
 		if o, timedOut, err := runShellLimit(root, plan.run, plan.timeout); err != nil {
 			short, full := deployProblem(plan.run, timedOut, plan.timeout)
-			note := notify(root, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+tail(o))
-			return "", fmt.Errorf("откат закоммичен, но повторный выкат %s:\n%s%s", full, tail(o), note)
+			oSummary := cmdoutFrame(root, "deploy", o)
+			note := notify(root, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+oSummary)
+			return "", fmt.Errorf("откат закоммичен, но повторный выкат %s:\n%s%s", full, oSummary, note)
 		}
 		out = append(out, "повторный выкат прошёл")
 	case plan.manual != "":

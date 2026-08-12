@@ -51,6 +51,7 @@ func loadReview(path string) (*reviewFile, error) {
 	}
 	rf := &reviewFile{path: path, lines: strings.Split(string(data), "\n")}
 	in := false
+	contOpen := false
 	for i, ln := range rf.lines {
 		if strings.HasPrefix(ln, "## ") {
 			if in {
@@ -72,14 +73,23 @@ func loadReview(path string) (*reviewFile, error) {
 		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
 			rf.notes = append(rf.notes, reviewNote{LineIdx: i, Text: strings.TrimSpace(t[2:]), Span: 1})
 			rf.insertAt = i + 1
+			contOpen = true
 			continue
 		}
-		// Строка продолжения прирастает к последнему замечанию: длинное
-		// замечание, перенесённое на несколько строк, судится целиком, и
-		// исход на строке переноса закрывает его. Пустая строка и новый
-		// маркер элемент закрывают; абзац без маркера вне элемента
-		// игнорируется (чистый вердикт абзацем замечанием не считается).
-		if t != "" && len(rf.notes) > 0 {
+		// Пустая строка закрывает текущий элемент: абзац после неё к замечанию
+		// не прирастает, иначе исход из чужого абзаца закрыл бы замечание и
+		// разошёлся бы с shipctl, чей reviewItems сбрасывает элемент на пустой
+		// строке.
+		if t == "" {
+			contOpen = false
+			continue
+		}
+		// Строка продолжения прирастает к последнему замечанию, пока элемент
+		// не закрыт пустой строкой или новым маркером: длинное замечание,
+		// перенесённое на несколько строк, судится целиком, и исход на строке
+		// переноса закрывает его. Абзац без маркера вне элемента игнорируется
+		// (чистый вердикт абзацем замечанием не считается).
+		if contOpen && len(rf.notes) > 0 {
 			n := &rf.notes[len(rf.notes)-1]
 			if n.Text != "" {
 				n.Text += " "

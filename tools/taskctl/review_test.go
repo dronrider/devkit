@@ -169,6 +169,31 @@ func TestReviewOutcomeMarkup(t *testing.T) {
 	}
 }
 
+// Пустая строка между маркером замечания и абзацем со словом исхода закрывает
+// элемент: loadReview не прирастает к замечанию через пустую строку, иначе
+// исход чужого абзаца закрывал бы открытое замечание и расходился бы с shipctl,
+// чей reviewItems сбрасывает элемент на пустой строке (DK-277, DoD).
+func TestReviewBlankLineClosesItem(t *testing.T) {
+	root := setup(t)
+	taskContent := "# XR-005\n\n## Ревью\n\n- открытое\n\nисправлено в коммите abc\n"
+	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(taskContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := loadReview(taskFileAbs(root, "XR-005"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rf.notes) != 1 {
+		t.Fatalf("ожидал 1 элемент, разобрано %d: абзац не должен прирастать через пустую строку", len(rf.notes))
+	}
+	if got := rf.notes[0].outcome(); got != "" {
+		t.Errorf("замечание должно быть открыто, outcome %q (текст: %s)", got, rf.notes[0].Text)
+	}
+	if strings.Contains(rf.notes[0].Text, "исправлено") {
+		t.Errorf("абзац прирастал к замечанию через пустую строку: %s", rf.notes[0].Text)
+	}
+}
+
 // resolve многострочного замечания схлопывает элемент в одну строку: loadReview
 // собрал продолжения в n.Text, и строки переноса уходят из файла, иначе резолвнутая
 // строка повторяла бы их после себя (DK-277).

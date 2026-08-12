@@ -1,6 +1,7 @@
 package frame
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -388,6 +389,162 @@ func TestCaptureNotFound(t *testing.T) {
 	root := setupRepo(t)
 	if _, err := Capture(root, []string{"нет-такой-команды-xyz"}); err == nil {
 		t.Fatal("несуществующая команда должна дать ошибку")
+	}
+}
+
+// TestSummarizeFromBytes строит сводку из готового вывода, не запуская команду.
+// Короткий вывод ниже порога: Summarized ложь, Raw совпадает с входом, exit
+// сохранён, путь к файлу полного вывода заполнен. Это путь shipctl с уже
+// готовым out от exec.Command: повторно команду пускать нельзя.
+func TestSummarizeFromBytes(t *testing.T) {
+	root := setupRepo(t)
+	out := []byte("line 1\nline 2\nline 3\n")
+	s := Summarize(root, []string{"git", "status"}, out, 42)
+	if s.Summarized {
+		t.Fatalf("короткий вывод не должен строить выжимку: %+v", s)
+	}
+	if s.Raw != string(out) {
+		t.Fatalf("Raw: %q, хотели %q", s.Raw, string(out))
+	}
+	if s.Exit != 42 {
+		t.Fatalf("exit: %d, хотели 42", s.Exit)
+	}
+	if s.Path == "" {
+		t.Fatal("Path пустой, файл полного вывода не записан")
+	}
+	if !filepath.IsAbs(s.Path) {
+		t.Errorf("Path не абсолютный: %q", s.Path)
+	}
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		t.Fatalf("файл вывода не читается: %v", err)
+	}
+	if string(data) != string(out) {
+		t.Fatalf("содержимое файла: %q, хотели %q", string(data), string(out))
+	}
+}
+
+// TestSummarizeThreshold сто строк это порог, выжимка строится из готового
+// вывода тем же путём, что и в Capture. Состав полей не должен разъехаться.
+func TestSummarizeThreshold(t *testing.T) {
+	root := setupRepo(t)
+	// seq 1 100 одной строкой, без запуска команды.
+	var b strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&b, "%d\n", i)
+	}
+	s := Summarize(root, []string{"seq"}, []byte(b.String()), 0)
+	if !s.Summarized {
+		t.Fatal("100 строк должны дать выжимку")
+	}
+	if s.LinesTotal != 100 {
+		t.Errorf("lines_total: %d, хотели 100", s.LinesTotal)
+	}
+	if len(s.Tail) != 30 {
+		t.Errorf("tail: %d строк, хотели 30", len(s.Tail))
+	}
+	if s.Tail[len(s.Tail)-1] != "100" {
+		t.Errorf("последняя строка tail: %q, хотели 100", s.Tail[len(s.Tail)-1])
+	}
+}
+
+// TestSummarizeSignificant это регрессионный тест бага DK-266: вывод со
+// значимым маркером (FAIL, panic:) в середине и хвостом без маркеров на старом
+// tail(out) показывал только хвост, на Summarize маркер ловится в significant.
+// Двести строк, маркеры в строках 40 и 80, хвост 171..200 без маркеров.
+func TestSummarizeSignificant(t *testing.T) {
+	root := setupRepo(t)
+	var b strings.Builder
+	for i := 1; i <= 200; i++ {
+		switch i {
+		case 40:
+			b.WriteString("FAIL row_forty\n")
+		case 80:
+			b.WriteString("panic: row_eighty\n")
+		default:
+			fmt.Fprintf(&b, "line %d\n", i)
+		}
+	}
+	s := Summarize(root, []string{"test"}, []byte(b.String()), 1)
+	if !s.Summarized {
+		t.Fatal("200 строк должны дать выжимку")
+	}
+	want := []string{"FAIL row_forty", "panic: row_eighty"}
+	if len(s.Significant) != len(want) {
+		t.Fatalf("significant: %d строк, хотели %d: %v", len(s.Significant), len(want), s.Significant)
+	}
+	for i, w := range want {
+		if s.Significant[i] != w {
+			t.Errorf("significant[%d]: %q, хотели %q", i, s.Significant[i], w)
+		}
+	}
+	// Хвост 171..200 без маркеров: ни одна significant строка в хвост не попадает.
+	for _, tl := range s.Tail {
+		for _, w := range want {
+			if tl == w {
+				t.Errorf("significant строка %q попала в tail, а хвост был без маркеров", tl)
+			}
+		}
+	}
+	// lines_total: 200, significant 2, tail 30, без пересечений. hidden = 200 - 32 = 168.
+	if s.LinesHidden != 168 {
+		t.Errorf("lines_hidden: %d, хотели 168", s.LinesHidden)
+	}
+}
+
+// TestSummarizeEmptyArgv не ошибается на пустом argv: готовый вывод мог
+// прийти не из команды. Slug падает на «cmd», файл всё равно пишется.
+func TestSummarizeEmptyArgv(t *testing.T) {
+	root := setupRepo(t)
+	var b strings.Builder
+	for i := 1; i <= 150; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	s := Summarize(root, nil, []byte(b.String()), 1)
+	if !s.Summarized {
+		t.Fatal("150 строк должны дать выжимку даже без argv")
+	}
+	if s.Path == "" {
+		t.Fatal("Path пустой без argv, файл не записан")
+	}
+	// Slug «cmd» виден в пути каталога.
+	if !strings.Contains(s.Path, "-cmd") {
+		t.Errorf("Path без slug «cmd» при пустом argv: %q", s.Path)
+	}
+}
+
+// TestRenderRaw это Render для Summarized ложь: вывод отдаётся как есть, к нему
+// приписывается path. Поле path единственное, никаких полей LLD выше порога.
+func TestRenderRaw(t *testing.T) {
+	s := &Summary{
+		Exit:       0,
+		Path:       "/tmp/short",
+		Raw:        "line 1\nline 2\n",
+		Summarized: false,
+	}
+	out := s.Render()
+	if !strings.HasPrefix(out, "line 1\nline 2\n") {
+		t.Errorf("Raw не в начале вывода: %q", out)
+	}
+	if !strings.Contains(out, "path: /tmp/short") {
+		t.Errorf("path пропал в коротком выводе: %q", out)
+	}
+	if strings.Contains(out, "lines_total") {
+		t.Errorf("поле lines_total не должно присутствовать ниже порога: %q", out)
+	}
+}
+
+// TestRenderRawNoPath: если git-корня нет, path пустой, и Render ниже порога
+// отдаёт только Raw без хвоста «path: ». Так сводка остаётся читаемой в тестах
+// и во внешних каталогах.
+func TestRenderRawNoPath(t *testing.T) {
+	s := &Summary{
+		Raw:        "короткий вывод\n",
+		Summarized: false,
+	}
+	out := s.Render()
+	if out != "короткий вывод\n" {
+		t.Fatalf("Render с пустым Path: %q, хотели только Raw", out)
 	}
 }
 

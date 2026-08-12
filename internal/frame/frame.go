@@ -75,6 +75,19 @@ func Capture(dir string, argv []string) (*Summary, error) {
 			return nil, fmt.Errorf("запуск %s: %v", argv[0], err)
 		}
 	}
+	return Summarize(dir, argv, out, exit), nil
+}
+
+// Summarize строит сводку из уже готового вывода команды, не запуская её
+// заново. Переиспользует writeFull и buildSummary, для потребителей, которые
+// держат out и exit сами: shipctl пускает команды через exec.Command и в ошибке
+// хочет выжимку вместо бывшего tail(out), regcheck тем же путём выкладывает
+// второй прогон. argv уходит в slug имени каталога и в путь файла полного
+// вывода; пустой argv не ошибочен (в отличие от Capture), slug падает на «cmd»:
+// готовый вывод мог прийти не из команды (тело HTTP-ответа), и сводка по нему
+// всё равно осмыслена. Capture сводится к запуску команды и вызову Summarize,
+// поэтому состав полей и порог суммы не разъезжаются.
+func Summarize(dir string, argv []string, out []byte, exit int) *Summary {
 	s := &Summary{Exit: exit}
 	s.Path = writeFull(dir, argv, out)
 	lines := splitLines(string(out))
@@ -83,7 +96,7 @@ func Capture(dir string, argv []string) (*Summary, error) {
 	} else {
 		s.Raw = string(out)
 	}
-	return s, nil
+	return s
 }
 
 // writeFull кладёт полный вывод файлом в .devkit/cmdout/<timestamp>-<slug>/out
@@ -173,8 +186,22 @@ func buildSummary(s *Summary, lines []string) {
 
 // Render отдаёт сводку одной строкой на поле в порядке LLD: exit, lines_total,
 // lines_hidden, significant, tail, path. Порядок фиксирован, чтобы агенту было
-// просто парсить без поиска по именам.
+// просто парсить без поиска по именам. Ниже порога выжимка не строилась, и Render
+// отдаёт полный вывод (Raw) с приписанным путём файла: поле path для короткого
+// вывода всё равно осмысленно, полный текст уже у агента под рукой, но путь
+// закрывает молчаливую потерю файла на повторный разбор.
 func (s *Summary) Render() string {
+	if !s.Summarized {
+		var b strings.Builder
+		b.WriteString(s.Raw)
+		if s.Raw != "" && !strings.HasSuffix(s.Raw, "\n") {
+			b.WriteByte('\n')
+		}
+		if s.Path != "" {
+			fmt.Fprintf(&b, "path: %s\n", s.Path)
+		}
+		return b.String()
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit: %d\n", s.Exit)
 	fmt.Fprintf(&b, "lines_total: %d\n", s.LinesTotal)
@@ -202,8 +229,12 @@ func isSignificant(line string) bool {
 }
 
 // slug это базовое имя первой лексемы команды: «go test» даёт «go», полный путь
-// к бинарю даёт его имя. Пустой argv сюда не доходит, проверка в Capture.
+// к бинарю даёт его имя. Пустой argv сюда приходит из Summarize, когда вывод
+// взят не из команды (тело HTTP-ответа), и slug падает на «cmd».
 func slug(argv []string) string {
+	if len(argv) == 0 {
+		return "cmd"
+	}
 	first := argv[0]
 	if i := strings.LastIndexAny(first, "/\\"); i >= 0 {
 		first = first[i+1:]

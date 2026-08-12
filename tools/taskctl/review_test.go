@@ -128,6 +128,47 @@ func TestReviewKeepsOtherSections(t *testing.T) {
 	}
 }
 
+// Чистый вердикт с маркером списка замечанием не считается, а замечание,
+// перенесённое на несколько строк, судится целиком: исход на строке переноса
+// закрывает его. Критерий должен согласовывать review show с shipctl merge,
+// иначе одна и та же строка расходится в оценке (DK-277).
+func TestReviewOutcomeMarkup(t *testing.T) {
+	root := setup(t)
+	content := "# XR-005\n\n## Ревью\n\n" +
+		"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n" +
+		"- длинное замечание,\n  перенесённое на две строки: исправлено\n" +
+		"- открытое, без исхода\n"
+	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := loadReview(taskFileAbs(root, "XR-005"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rf.notes) != 3 {
+		t.Fatalf("ожидал 3 элемента списка, разобрано %d", len(rf.notes))
+	}
+	want := []string{"чисто", "исправлено", ""}
+	for i, w := range want {
+		if got := rf.notes[i].outcome(); got != w {
+			t.Errorf("замечание %d: outcome %q, жду %q (текст: %s)", i+1, got, w, rf.notes[i].Text)
+		}
+	}
+	show, err := cmdReviewShow(root, "XR-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(show, "[чисто] Вердикт") {
+		t.Errorf("чистый вердикт не помечен [чисто]:\n%s", show)
+	}
+	if !strings.Contains(show, "[исправлено] длинное") {
+		t.Errorf("перенесённое замечание не помечено [исправлено]:\n%s", show)
+	}
+	if c := strings.Count(show, "[открыто]"); c != 1 {
+		t.Errorf("открытым должно быть только замечание без исхода, отмечено %d:\n%s", c, show)
+	}
+}
+
 func TestReviewStats(t *testing.T) {
 	root := setup(t)
 	if msg, err := cmdReviewStats(root); err != nil || !strings.Contains(msg, "пока нет") {

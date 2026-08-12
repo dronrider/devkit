@@ -14,9 +14,12 @@ type reviewNote struct {
 	Text    string // текст замечания без маркера списка
 }
 
-// outcome возвращает исход замечания («исправлено», «отклонено») или пустую
-// строку у открытого. Критерий тот же, каким shipctl merge решает, закрыто ли
-// ревью: слово исхода где-то в строке.
+// outcome возвращает исход замечания: «исправлено», «отклонено», «чисто»
+// (ревью без замечаний, не требующее исхода) или пустую строку у открытого.
+// Критерий тот же, каким shipctl merge решает, закрыто ли ревью: слово исхода
+// где-то в элементе списка. Порядок проверок исход -> чистый итог -> открыто,
+// поэтому «исправлено: теперь без замечаний» остаётся закрытым, а не уходит в
+// чистый вердикт.
 func (n reviewNote) outcome() string {
 	low := strings.ToLower(n.Text)
 	switch {
@@ -24,6 +27,8 @@ func (n reviewNote) outcome() string {
 		return "исправлено"
 	case strings.Contains(low, "отклонено"):
 		return "отклонено"
+	case strings.Contains(low, "без замечаний"), strings.Contains(low, "замечаний нет"):
+		return "чисто"
 	}
 	return ""
 }
@@ -60,8 +65,25 @@ func loadReview(path string) (*reviewFile, error) {
 			continue
 		}
 		t := strings.TrimSpace(ln)
-		if in && (strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ")) {
+		if !in {
+			continue
+		}
+		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
 			rf.notes = append(rf.notes, reviewNote{LineIdx: i, Text: strings.TrimSpace(t[2:])})
+			rf.insertAt = i + 1
+			continue
+		}
+		// Строка продолжения прирастает к последнему замечанию: длинное
+		// замечание, перенесённое на несколько строк, судится целиком, и
+		// исход на строке переноса закрывает его. Пустая строка и новый
+		// маркер элемент закрывают; абзац без маркера вне элемента
+		// игнорируется (чистый вердикт абзацем замечанием не считается).
+		if t != "" && len(rf.notes) > 0 {
+			n := &rf.notes[len(rf.notes)-1]
+			if n.Text != "" {
+				n.Text += " "
+			}
+			n.Text += t
 			rf.insertAt = i + 1
 		}
 	}
@@ -236,6 +258,9 @@ func cmdReviewStats(root string) (string, error) {
 			}
 			a.tasks++
 			for i, n := range rf.notes {
+				if n.outcome() == "чисто" {
+					continue
+				}
 				a.notes++
 				switch n.outcome() {
 				case "исправлено":

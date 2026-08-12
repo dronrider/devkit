@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/frame"
 )
 
 type Params struct {
@@ -32,14 +34,21 @@ func runCmd(dir string, argv []string) (string, error) {
 	return string(out), err
 }
 
-// tail обрезает вывод теста до хвоста: итог прогона внизу, а простыня целиком
-// только зря съедает контекст читающего агента.
-func tail(s string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > 30 {
-		lines = append([]string{"..."}, lines[len(lines)-30:]...)
-	}
-	return strings.Join(lines, "\n")
+// cmdoutFrame строит выжимку вывода прогона теста для ошибок regcheck. Это
+// замена бывшей tail(out): на месте последних 30 строк без контекста агенту
+// видна сводка по формату LLD (exit, lines_total, lines_hidden, significant,
+// tail, path), и полный вывод лежит в файле по path. cmdName идёт в slug файла
+// вывода; dir это каталог, из которого звалась команда (по нему ищется
+// git-корень для файла полного вывода). exit передаётся явно: у первого прогона
+// он ненулевой (провал), у второго в ветке «зелёный и на старом» это ноль, и
+// сводка должна это отражать честно, а не ставить единицу успешному прогону.
+// Зелёный прогон обычно короткий (строка ok у go test), и порог выжимки его не
+// задевает: Render ниже порога отдаёт вывод как есть с приписанным path, что и
+// есть минимум для агента. Длинный вывод свернётся в полную выжимку тем же
+// путём, что и у красного прогона.
+func cmdoutFrame(dir, cmdName, out string, exit int) string {
+	s := frame.Summarize(dir, []string{cmdName}, []byte(out), exit)
+	return s.Render()
 }
 
 // isTestPath отделяет тестовые файлы от правки: их переносим на старый код,
@@ -306,7 +315,7 @@ func Run(p Params) (string, error) {
 		}
 	}
 	if out, err := runCmd(root, p.Cmd); err != nil {
-		return "", fmt.Errorf("тест не проходит на текущем коде, сначала чинить его:\n%s", tail(out))
+		return "", fmt.Errorf("тест не проходит на текущем коде, сначала чинить его:\n%s", cmdoutFrame(root, "test", out, 1))
 	}
 	tmp, err := os.MkdirTemp("", "regcheck-")
 	if err != nil {
@@ -342,9 +351,13 @@ func Run(p Params) (string, error) {
 			return "", err
 		}
 	}
-	if _, err := runCmd(wt, p.Cmd); err == nil {
+	if oldOut, err := runCmd(wt, p.Cmd); err == nil {
+		// Второй прогон гоняется в worktree, который defer'ом удаляется вместе
+		// с деревом. Полный вывод должен жить в основном репозитории, иначе path
+		// будет вести в пустоту: dir здесь это root, а не wt.
 		return "", fmt.Errorf("тест зелёный и на старом коде (%s), регрессию он не ловит; "+
-			"если правка уже закоммичена, укажи базу без неё (--base main)", base)
+			"если правка уже закоммичена, укажи базу без неё (--base main)\n%s",
+			base, cmdoutFrame(root, "test-old", oldOut, 0))
 	}
 	all := append(append([]string{}, tests...), p.Inline...)
 	return fmt.Sprintf("тест краснеет на %s и проходит на текущем коде, регрессия закрыта (тесты: %s)",

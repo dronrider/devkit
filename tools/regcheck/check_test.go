@@ -352,3 +352,119 @@ func TestIsTestPath(t *testing.T) {
 		}
 	}
 }
+
+// TestFirstRunSummaryCatchesSignificant это регрессионный тест DK-265: на
+// выводе первого прогона со значимым маркером (FAIL, panic:) в середине и хвостом
+// без маркеров бывшая tail(out) показывала только последние 30 строк, и значимые
+// строки из середины пропадали. cmdoutFrame строит сводку по формату LLD, и
+// значимые строки видны агенту в блоке significant, а полный вывод лежит в файле
+// по path. Тест падает на прежней tail (в ошибке нет ни significant, ни path), на
+// новом проходит.
+func TestFirstRunSummaryCatchesSignificant(t *testing.T) {
+	root := setupRepo(t)
+	write(t, root, "code.txt", "fixed\n")
+	// probe_test.sh всегда падает с длинным выводом: FAIL и panic: стоят в
+	// строках 40 и 80, последние 30 строк (171..200) без маркеров. Прежняя
+	// tail(out) отдала бы только хвост.
+	script := `n=1
+while [ $n -le 200 ]; do
+  case $n in
+    40) echo "FAIL middle_row";;
+    80) echo "panic: middle_row_two";;
+    *) echo "line $n";;
+  esac
+  n=$((n+1))
+done
+exit 1
+`
+	write(t, root, "probe_test.sh", script)
+	_, err := Run(Params{Dir: root, Cmd: []string{"sh", "probe_test.sh"}})
+	if err == nil || !strings.Contains(err.Error(), "не проходит на текущем") {
+		t.Fatalf("ожидал ошибку про красный первый прогон, получил: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"exit: 1",
+		"lines_total: 200",
+		"significant:",
+		"FAIL middle_row",
+		"panic: middle_row_two",
+		"tail:",
+		"line 200",
+		"path: ",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("в ошибке первого прогона нет %q:\n%s", want, msg)
+		}
+	}
+	// path указывает на существующий файл с полным выводом.
+	path := pathFromError(t, msg)
+	if info, perr := os.Stat(path); perr != nil || info.Size() == 0 {
+		t.Errorf("файл вывода по path не читается или пуст: %s (err=%v)", path, perr)
+	}
+	// Хвост без маркеров: значимые строки из середины в хвост не попадают.
+	tailStart := strings.Index(msg, "tail:\n")
+	if tailStart < 0 {
+		t.Fatal("блок tail не найден в ошибке")
+	}
+	for _, bad := range []string{"FAIL middle_row", "panic: middle_row_two"} {
+		if strings.Contains(msg[tailStart:], bad) {
+			t.Errorf("значимая строка %q попала в хвост, а хвост был без маркеров", bad)
+		}
+	}
+}
+
+// TestSecondRunSummaryInFalseGreen это регрессионный тест DK-265 для второго
+// прогона: при зелёном на старом коде с длинным выводом прежняя реализация
+// отбрасывала out полностью, и агенту не видно было ни хвоста, ни лога
+// зелёного прогона. Теперь в ошибке «зелёный и на старом» лежит выжимка
+// второго прогона с path к полному логу. Пробник всегда зелёный и на новом, и
+// на старом, с длинным выводом выше порога.
+func TestSecondRunSummaryInFalseGreen(t *testing.T) {
+	root := setupRepo(t)
+	write(t, root, "code.txt", "fixed\n")
+	// seq 1 150 даёт 150 строк выше порога, значимых маркеров нет. Первый прогон
+	// проходит на текущем коде, второй в worktree тоже проходит -> «зелёный и на
+	// старом», и в ошибке лежит выжимка второго прогона.
+	write(t, root, "probe_test.sh", "seq 1 150\n")
+	_, err := Run(Params{Dir: root, Cmd: []string{"sh", "probe_test.sh"}})
+	if err == nil || !strings.Contains(err.Error(), "зелёный и на старом") {
+		t.Fatalf("ожидал ошибку про зелёный на старом, получил: %v", err)
+	}
+	msg := err.Error()
+	// exit 0: второй прогон зелёный по определению этой ветки, и сводка должна
+	// это отражать, а не ставить единицу успешному прогону.
+	if !strings.Contains(msg, "exit: 0") {
+		t.Errorf("в ошибке нет «exit: 0» для зелёного второго прогона:\n%s", msg)
+	}
+	if !strings.Contains(msg, "lines_total: 150") {
+		t.Errorf("в ошибке нет «lines_total: 150» для второго прогона:\n%s", msg)
+	}
+	// path к файлу полного вывода второго прогона: файл лежит в основном
+	// репозитории, не в удалённом worktree, и читается целиком.
+	path := pathFromError(t, msg)
+	if info, perr := os.Stat(path); perr != nil || info.Size() == 0 {
+		t.Errorf("файл вывода второго прогона не читается или пуст: %s (err=%v)", path, perr)
+	}
+	data, perr := os.ReadFile(path)
+	if perr != nil {
+		t.Fatalf("файл вывода второго прогона не читается: %v", perr)
+	}
+	body := strings.TrimSuffix(string(data), "\n")
+	if rows := strings.Split(body, "\n"); len(rows) != 150 || rows[149] != "150" {
+		t.Errorf("полный вывод второго прогона в файле искажён: %d строк, последняя %q", len(rows), rows[len(rows)-1])
+	}
+}
+
+// pathFromError достаёт абсолютный путь из строки «path: ...» ошибки regcheck.
+// Регрессионные тесты DK-265 проверяют, что файл полного вывода жив и читается.
+func pathFromError(t *testing.T, msg string) string {
+	t.Helper()
+	for _, l := range strings.Split(msg, "\n") {
+		if strings.HasPrefix(l, "path: ") {
+			return strings.TrimPrefix(l, "path: ")
+		}
+	}
+	t.Fatalf("в ошибке нет строки path:\n%s", msg)
+	return ""
+}

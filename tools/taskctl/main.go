@@ -22,7 +22,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   show <ID>                                   строка задачи, секция, те же пометки,
                                               файл задачи (закрытые ищутся в архиве)
   id                                          следующий свободный ID
-  draft list                                  накопитель черновиков: ID, первая
+  draft list [--json]                         накопитель черновиков: ID, первая
                                               строка, возраст, пометка «отложен»
   batch [--limit N]                           кандидаты в поезд выката и причина
                                               отказа по каждой остальной строке
@@ -73,7 +73,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review show <ID>                            замечания с номерами и исходами
   review stats                                свод по живым задачам и архиву
 
-У list, show и dep list есть флаг --json: машинный вывод для дашборда и
+У list, show, dep list и draft list есть флаг --json: машинный вывод для дашборда и
 прочей автоматики, печатный вывод не меняется; list --json отдаёт Backlog
 целиком, без обрезки.
 У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
@@ -248,7 +248,12 @@ func main() {
 		case "list":
 			fs := flag.NewFlagSet("draft list", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			needArgs(parseArgs(fs, args[2:]), 0, 0, "draft list")
+			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
+			needArgs(parseArgs(fs, args[2:]), 0, 0, "draft list [--json]")
+			if *jsonOut {
+				msg, err = cmdDraftListJSON(root(*dir))
+				break
+			}
 			msg, err = cmdDraftList(root(*dir))
 		case "defer":
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)

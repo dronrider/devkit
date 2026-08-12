@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -267,6 +268,67 @@ func TestDraftListAndShow(t *testing.T) {
 	}
 	if _, err := cmdShow(root, "XR-404"); err == nil {
 		t.Fatal("несуществующий ID должен падать")
+	}
+}
+
+// TestDraftListJSON: машинный вид накопителя для дашборда. Пустой накопитель
+// отдаёт пустой список, а не отсутствие поля: «черновиков нет» читатель обязан
+// отличать от неприехавшего ответа. Возраст едет и днями, и словами утилиты:
+// считать «вчера» второй раз своей шкалой значит разойтись с печатным list.
+func TestDraftListJSON(t *testing.T) {
+	root := setup(t)
+	out, err := cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var empty struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}
+	if err := json.Unmarshal([]byte(out), &empty); err != nil {
+		t.Fatalf("пустой накопитель не разобрался: %v\n%s", err, out)
+	}
+	if empty.Drafts == nil || len(empty.Drafts) != 0 {
+		t.Fatalf("пустой накопитель обязан быть пустым списком: %s", out)
+	}
+
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraft(root, "вторая идея", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	ageDraft(t, root, "XR-008", 3)
+	if _, err := cmdDraftDefer(root, "XR-009", "ждёт решения по каналу", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("накопитель не разобрался: %v\n%s", err, out)
+	}
+	if len(got.Drafts) != 2 {
+		t.Fatalf("черновиков в ответе %d, жду 2: %s", len(got.Drafts), out)
+	}
+	first := got.Drafts[0]
+	if first.ID != "XR-008" || first.Title != "уведомитель шумит из песочницы" {
+		t.Errorf("первый черновик не тот: %+v", first)
+	}
+	if first.File != "docs/tasks/drafts/XR-008.md" {
+		t.Errorf("путь файла черновика %q, жду docs/tasks/drafts/XR-008.md", first.File)
+	}
+	if first.AgeDays != 3 || first.AgeWords != "3 дня" {
+		t.Errorf("возраст черновика %d (%q), жду 3 дня словами утилиты", first.AgeDays, first.AgeWords)
+	}
+	if first.Written == "" {
+		t.Errorf("дата записи не назвалась: %+v", first)
+	}
+	if second := got.Drafts[1]; second.ID != "XR-009" || second.Deferred == "" {
+		t.Errorf("отложенный черновик приехал без пометки: %+v", second)
 	}
 }
 

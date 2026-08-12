@@ -166,6 +166,44 @@ func cmdShowJSON(root, id string) (string, error) {
 	return "", fmt.Errorf("%s нет ни на доске, ни в архиве, ни в черновиках", id)
 }
 
+// jsonDraft это черновик накопителя машинным видом. Возраст едет и днями, и
+// теми же словами, что печатает draft list: читателю-человеку (дашборд рисует
+// накопитель списком) слова нужны те же, а считать их второй раз по своей
+// шкале значит разойтись с утилитой на первом же «вчера».
+type jsonDraft struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	File     string `json:"file"`
+	Written  string `json:"written,omitempty"`
+	AgeDays  int    `json:"age_days"`
+	AgeWords string `json:"age_words"`
+	Deferred string `json:"deferred,omitempty"`
+}
+
+// cmdDraftListJSON печатает накопитель одним объектом JSON. Пустой накопитель
+// это пустой список, а не отсутствие поля: «черновиков нет» читатель обязан
+// отличать от «список не приехал».
+func cmdDraftListJSON(root string) (string, error) {
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		return "", err
+	}
+	out := struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}{Drafts: []jsonDraft{}}
+	for _, d := range drafts {
+		item := jsonDraft{
+			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
+			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
+		}
+		if !d.Written.IsZero() {
+			item.Written = d.Written.Format(draftDateLayout)
+		}
+		out.Drafts = append(out.Drafts, item)
+	}
+	return marshal(out)
+}
+
 // jsonDep это зависимости одной задачи в обе стороны, как их печатает
 // dep list: после кого она делается и кого держит.
 type jsonDep struct {

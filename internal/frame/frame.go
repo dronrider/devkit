@@ -33,6 +33,13 @@ const (
 	significantLimit = 30
 )
 
+// DefaultCleanDays умолчание для чистки старых выводов: полный вывод отладочного
+// прогона ценен короткое время, пока разбор свеж, а через неделю это уже мусор.
+// Порог возраста фиксирован тут, как и порог выжимки, и флаг --days подкоманды
+// cmdout clean только перекрывает его, не заменяет правила. Doctor про число
+// знает через сухой прогон cmdout clean, и правило живёт в одном месте.
+const DefaultCleanDays = 7
+
 // Significant markers, стартовый набор из LLD DK-137. Пополняется по находкам
 // регчеков и CI. Поиск по подстроке без сведения регистра: набор и так покрывает
 // оба написания (error и Error:), а case-insensitive раздувало бы хвост ложными
@@ -137,6 +144,84 @@ func writeFull(dir string, argv []string, out []byte) string {
 		return path
 	}
 	return abs
+}
+
+// CleanStats описывает результат чистки .devkit/cmdout. Removed это пути
+// каталогов, подпавших под порог возраста: в dry-run они остались на месте и
+// только перечислены, без dry-run они удалены. Bytes это суммарный размер
+// удалённых каталогов до удаления, посчитанный по walk: orphan-каталоги без out
+// тоже чистятся, поэтому размер берётся по дереву, а не по одному файлу.
+type CleanStats struct {
+	Root    string
+	MaxAge  time.Duration
+	Now     time.Time
+	DryRun  bool
+	Removed []string
+	Bytes   int64
+}
+
+// Clean обходит .devkit/cmdout корня репозитория и удаляет каталоги вывода
+// старше maxAge от now. now параметром, а не time.Now внутри, чтобы тест
+// оставался детерминированным: mtime тестовых каталогов ставится через
+// os.Chtimes, а now фиксируется. dry-run не трогает файлы, только собирает
+// список и размер. Возвращает статистику даже при пустом или отсутствующем
+// cmdout: чистильщик отработал штатно, чистить просто нечего. Не git-репозиторий
+// или нет прав на чтение не смертельны, как и у writeFull: возвращается пустая
+// статистика без ошибки, чтобы подкоманда и doctor молчали там, где писать не
+// кому.
+func Clean(dir string, maxAge time.Duration, now time.Time, dryRun bool) (*CleanStats, error) {
+	root, err := gitRoot(dir)
+	if err != nil {
+		return nil, nil
+	}
+	base := filepath.Join(root, ".devkit", "cmdout")
+	stats := &CleanStats{Root: base, MaxAge: maxAge, Now: now, DryRun: dryRun}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return stats, nil
+		}
+		return stats, nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) <= maxAge {
+			continue
+		}
+		path := filepath.Join(base, e.Name())
+		stats.Bytes += dirSize(path)
+		if dryRun {
+			stats.Removed = append(stats.Removed, path)
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return stats, err
+		}
+		stats.Removed = append(stats.Removed, path)
+	}
+	return stats, nil
+}
+
+// dirSize это суммарный размер файлов по дереву каталога, без прав на symlink.
+// Считается до удаления, чтобы CleanStats нёс размер, который освобождается.
+func dirSize(root string) int64 {
+	var total int64
+	filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // buildSummary наполняет Summary по разметке вывода: значимые строки, хвост и

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setupRepo делает временный git-репозиторий с каталогом .devkit/cmdout: полный
@@ -571,5 +572,169 @@ func TestSignificantMarkersGuard(t *testing.T) {
 	}
 	if isSignificant("обычная строка без маркеров") {
 		t.Error("обычная строка попала в significant")
+	}
+}
+
+// cmdoutDir кладёт каталог вывода с указанным содержимым и mtime. mtime ставится
+// через os.Chtimes, а не временем создания: Clean сверяется именно с ModTime
+// каталога, и тест задаёт его прямо.
+func cmdoutDir(t *testing.T, root, name string, body []byte, mtime time.Time) string {
+	t.Helper()
+	dir := filepath.Join(root, ".devkit", "cmdout", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "out"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dir, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	// Chtimes каталога на некоторых ФС не меняет mtime файлов внутри, а Clean
+	// считает размер по дереву: страхуем, чтобы размер не плавал от платформы.
+	if err := os.Chtimes(filepath.Join(dir, "out"), mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestCleanRemovesStaleDirs: каталог старше порога удаляется, свежий остаётся.
+// now параметром, возраст каталога фиксирован относительно него, а не от
+// реального времени: тест детерминирован на любой машине.
+func TestCleanRemovesStaleDirs(t *testing.T) {
+	root := setupRepo(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	maxAge := 7 * 24 * time.Hour
+	cmdoutDir(t, root, "20260101T000000-old", []byte("старый вывод\n"),
+		now.Add(-30*24*time.Hour))
+	cmdoutDir(t, root, "20260812T120000-fresh", []byte("свежий вывод\n"),
+		now.Add(-1*time.Hour))
+	stats, err := Clean(root, maxAge, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Removed) != 1 {
+		t.Fatalf("Removed: %d, хотели 1: %v", len(stats.Removed), stats.Removed)
+	}
+	if filepath.Base(stats.Removed[0]) != "20260101T000000-old" {
+		t.Errorf("удалён %q, хотели old", stats.Removed[0])
+	}
+	if stats.Bytes != int64(len("старый вывод\n")) {
+		t.Errorf("Bytes: %d, хотели %d", stats.Bytes, len("старый вывод\n"))
+	}
+	oldPath := filepath.Join(root, ".devkit", "cmdout", "20260101T000000-old")
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("старый каталог не удалён: %v", err)
+	}
+	freshPath := filepath.Join(root, ".devkit", "cmdout", "20260812T120000-fresh")
+	if _, err := os.Stat(freshPath); err != nil {
+		t.Errorf("свежий каталог пропал: %v", err)
+	}
+}
+
+// TestCleanDryRun не трогает файлы: старые каталоги попадают в Removed, но
+// остаются на диске, потому что dry-run только сообщает, что ушло бы.
+func TestCleanDryRun(t *testing.T) {
+	root := setupRepo(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	maxAge := 7 * 24 * time.Hour
+	cmdoutDir(t, root, "20260101T000000-old", []byte("старый вывод\n"),
+		now.Add(-30*24*time.Hour))
+	stats, err := Clean(root, maxAge, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stats.DryRun {
+		t.Fatal("статистика без DryRun")
+	}
+	if len(stats.Removed) != 1 || filepath.Base(stats.Removed[0]) != "20260101T000000-old" {
+		t.Fatalf("Removed: %v, хотели только old", stats.Removed)
+	}
+	oldPath := filepath.Join(root, ".devkit", "cmdout", "20260101T000000-old")
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Errorf("dry-run удалил каталог: %v", err)
+	}
+}
+
+// TestCleanEmptyRepo: пустой .devkit/cmdout или отсутствующий не ошибочны,
+// чистильщик отдаёт пустую статистику. Так подкоманда молчит на свежем проекте.
+func TestCleanEmptyRepo(t *testing.T) {
+	root := setupRepo(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	stats, err := Clean(root, 7*24*time.Hour, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Removed) != 0 {
+		t.Fatalf("на пустом cmdout Removed не пуст: %v", stats.Removed)
+	}
+}
+
+// TestCleanThresholdBoundary: возраст ровно maxAge каталог не подпадает, чистка
+// строгая по порогу (старше, а не старше или равно). Граничный тест держит
+// правило, пока возраст меньше или равен maxAge.
+func TestCleanThresholdBoundary(t *testing.T) {
+	root := setupRepo(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	maxAge := 7 * 24 * time.Hour
+	cmdoutDir(t, root, "20260805T120000-boundary", []byte("ровно порог\n"),
+		now.Add(-maxAge))
+	cmdoutDir(t, root, "20260805T115900-over", []byte("чуть старше\n"),
+		now.Add(-maxAge-1*time.Second))
+	stats, err := Clean(root, maxAge, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range stats.Removed {
+		if filepath.Base(p) == "20260805T120000-boundary" {
+			t.Errorf("каталог возрастом ровно maxAge подпал под чистку")
+		}
+	}
+	found := false
+	for _, p := range stats.Removed {
+		if filepath.Base(p) == "20260805T115900-over" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("каталог на секунду старше maxAge не подпал под чистку: %v", stats.Removed)
+	}
+}
+
+// TestCleanNotGit молчит вне репозитория, как и writeFull: чистить вне корня
+// некого, и ошибка тут была бы шумом на машинах без git-проекта.
+func TestCleanNotGit(t *testing.T) {
+	stats, err := Clean(t.TempDir(), 7*24*time.Hour, time.Now(), false)
+	if err != nil {
+		t.Fatalf("Clean вне git должен молчать, а не ошибаться: %v", err)
+	}
+	if stats != nil && len(stats.Removed) != 0 {
+		t.Errorf("Clean вне git вернул непустую статистику: %+v", stats)
+	}
+}
+
+// TestCleanIgnoresFiles: случайный файл в .devkit/cmdout не подпадает под
+// чистку, удаляются только каталоги. writeFull кладёт только каталоги, но
+// ручной файл там оказаться мог, и чистильщик его не трогает.
+func TestCleanIgnoresFiles(t *testing.T) {
+	root := setupRepo(t)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	base := filepath.Join(root, ".devkit", "cmdout")
+	if err := os.WriteFile(filepath.Join(base, "loose-file"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(base, "loose-file"),
+		now.Add(-30*24*time.Hour), now.Add(-30*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := Clean(root, 7*24*time.Hour, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Removed) != 0 {
+		t.Errorf("Clean тронул файл в cmdout: %v", stats.Removed)
+	}
+	if _, err := os.Stat(filepath.Join(base, "loose-file")); err != nil {
+		t.Errorf("файл пропал после чистки: %v", err)
 	}
 }

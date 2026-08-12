@@ -194,3 +194,6 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-184 | Скилл proofread для вычитки прозы с парами, словарём и сторожевым корпусом | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-184.md](tasks/archive/2026/DK-184.md) |
 | DK-196 | Конец хода сессии из песочницы звонит баннером: хук-путь notify без фильтра временных корней | bug | P2 | 2026-08-12 | [tasks/archive/2026/DK-196.md](tasks/archive/2026/DK-196.md) |
 | DK-115 | Находка диагностики про чужой go.work рядом с go-проектом | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-115.md](tasks/archive/2026/DK-115.md) |
+| DK-279 | dashboard: производная tmux-сессия становится мусорной работой на экране | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-279.md](tasks/archive/2026/DK-279.md) |
+| DK-282 | dashboard: флеш-уведомление нечем закрыть | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-282.md](tasks/archive/2026/DK-282.md) |
+| DK-283 | Тестовый стенд дашборда пишет уведомления в живой журнал машины | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-283.md](tasks/archive/2026/DK-283.md) |

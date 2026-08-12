@@ -143,6 +143,9 @@ a:hover{text-decoration:underline}
 .crumb-back:hover{color:var(--tx)}
 .thead{display:flex;align-items:flex-start;gap:14px;margin-top:14px}
 .idbig{font:600 17px var(--mono);color:var(--acc);margin-top:3px;white-space:nowrap}
+/* номер в хлебных крошках: он для телефона, где доска, номер и статус стоят
+   одной строкой, на ноутбуке номер живёт рядом с заголовком */
+.idsm{display:none}
 .tchips{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
 /* в ряду метаданных чипы и селекты стоят одной высоты, её задаёт селект:
    разнобой высот в ряду был виден на пользовательской проверке */
@@ -155,6 +158,9 @@ a:hover{text-decoration:underline}
 .abar .div{width:1px;height:24px;background:var(--line);margin:0 4px}
 .abar .hint{flex:1;min-width:180px}
 .abar .btn[disabled]{opacity:0.45;cursor:default}
+/* кнопка полосы это значок со словом, на телефоне слово прячется и остаётся
+   один значок */
+.abar .btn svg{width:16px;height:16px;flex:none}
 .btn-danger{background:transparent;color:var(--block);border-color:color-mix(in oklab,var(--block) 45%,transparent)}
 .tbtns{display:flex;gap:12px;flex-wrap:wrap}
 .abar .error{padding:0;flex-basis:100%}
@@ -179,6 +185,9 @@ a:hover{text-decoration:underline}
 .rbig{display:flex;align-items:baseline;gap:10px;padding:8px 18px 10px}
 .rbig .v{font:600 30px var(--mono);color:var(--tx)}
 .rbig .f{font:500 13px var(--mono);color:var(--tx3)}
+/* сворачивание ранга живёт только на телефоне: на ноутбуке карточка открыта
+   всегда, и класс .rfolded там ничего не значит */
+.rfold{display:none}
 .rrow{display:flex;align-items:center;gap:10px;padding:8px 14px 8px 18px;border-top:1px solid var(--line)}
 .rrow .nm{font:500 13px var(--sans);color:var(--tx2);width:132px;flex:none}
 .rrow .why{font:400 11.5px/1.45 var(--sans);color:var(--tx3);flex:1;min-width:0}
@@ -424,11 +433,27 @@ a:hover{text-decoration:underline}
   .seg .on{background:var(--bg3);color:var(--tx)}
   .agrid .pane{display:none}
   .agrid .pane.onpane{display:flex}
-  /* телефон: файл задачи под рангом и зависимостями, действие в конце
-     колонки, кнопки и списки с пальцем в 44 пикселя */
+  /* телефон: доска, номер и статус одной строкой, заголовок под ними во всю
+     ширину */
+  .crumb{gap:8px;padding-top:14px;flex-wrap:nowrap;min-width:0;overflow:hidden}
+  .crumb-back,.crumb .stale{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crumb .chip{flex:none}
+  .idsm{display:inline;flex:none;font:600 13px var(--mono);color:var(--acc)}
+  .thead{gap:0;margin-top:10px}
+  .thead .idbig{display:none}
+  /* телефон: ранг свёрнут в одну строку над описанием, описание идёт во всю
+     ширину, зависимости уходят под него */
   .tgrid{display:flex;flex-direction:column;gap:14px;margin-top:14px}
-  .rrail{gap:14px}
+  .rrail{display:contents}
+  .rcard{order:1}
   .fpanel{order:2}
+  .dcard{order:3}
+  .rtop{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 14px;cursor:pointer}
+  .rhead{padding:0}
+  .rbig{padding:0}
+  .rbig .v{font-size:20px}
+  .rfold{display:inline;margin-left:auto;white-space:nowrap;font:500 12px var(--sans);color:var(--tx3)}
+  .rcard.rfolded .rbody{display:none}
   .rrow{padding:6px 12px 6px 16px;min-height:44px}
   .rrow .nm{width:auto;flex:1}
   .rrow .why{display:none}
@@ -463,12 +488,14 @@ a:hover{text-decoration:underline}
   .srow .st{white-space:normal}
   .srow .sm{grid-column:1 / -1;justify-content:flex-start}
   .prog{width:100%;max-width:none}
-  /* телефон: полоса действий задачи с пальцем в 44 пикселя, флеш во всю
+  /* телефон: полоса действий задачи значками с пальцем в 44 пикселя, флеш во всю
      ширину окна. Карточка одна: три подряд закрывают собой весь экран, а
      единственный способ их убрать уводил бы с того места, где человек
      работал, поэтому лишние ждут своей очереди скрытыми. */
   .abar{padding:12px 14px}
-  .abar .btn{height:44px}
+  .abar .btn{height:44px;min-width:44px;padding:0 11px}
+  .abar .btn .lb{display:none}
+  .abar .btn svg{width:21px;height:21px}
   .flashes{top:12px;right:10px;left:10px}
   .flash{width:auto}
   .flash:not(:first-child){display:none}

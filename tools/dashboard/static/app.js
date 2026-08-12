@@ -496,7 +496,7 @@ function depRow(project, id, side, dep) {
 // словами, а не «После» и «Держит»: от тех читателю приходилось достраивать,
 // кто кого ждёт.
 function depsCard(project, id, after, blocks) {
-  const card = el("div", "card");
+  const card = el("div", "card dcard");
   card.append(el("div", "dhead", "Заблокировано задачами"));
   if (!after.length) card.append(el("div", "empty", "Никого не ждёт."));
   for (const dep of after) card.append(depRow(project, id, "after", dep));
@@ -610,22 +610,32 @@ function taskActionHint(isGoal, sect, id) {
 // по статусу строки теми же словами, что и на доске. Собрана отдельной
 // функцией, а не внутри экрана: тексты действий держат тесты, и смотреть им
 // на весь renderTask ради одной полосы незачем.
+// Кнопка полосы действий: значок и слово рядом. На телефоне слово прячут
+// стили, и полоса становится рядом значков под палец, поэтому подпись уезжает
+// ещё и в aria-label, иначе с телефона кнопка остаётся без имени.
+function barBtn(cls, label, ico) {
+  const btn = el("button", cls);
+  btn.append(icon(ico), el("span", "lb", label));
+  btn.setAttribute("aria-label", label);
+  return btn;
+}
+
 function taskActions(project, id, row, works) {
   const out = [];
   const isGoal = /^Цель:/.test(row.title);
   const work = (works || []).find((w) => w.id === id);
   if (work) {
-    const live = el("button", "btn", "Живой статус");
+    const live = barBtn("btn", "Живой статус", "i-live");
     live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
     out.push(live);
   }
   if (isGoal) {
-    const chat = el("button", "btn", "Чат с агентом");
+    const chat = barBtn("btn", "Чат с агентом", "i-chat");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     out.push(chat);
   }
   if (work && work.via === "tmux") {
-    const stop = el("button", "btn btn-danger", "Остановить агента");
+    const stop = barBtn("btn btn-danger", "Остановить агента", "i-stop");
     // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
     // они стояли указкой над всей полосой.
     withTip(stop, STOP_TIP);
@@ -647,14 +657,14 @@ function taskActions(project, id, row, works) {
   if (row.after && row.after.length) {
     // Заблокированную маркером задачу конвейер брать не должен: кнопка стоит
     // погашенной с причиной, а не пропадает с полосы.
-    const wait = el("button", "btn", label);
+    const wait = barBtn("btn", label, "i-play");
     wait.disabled = true;
     out.push(withTip(wait, "сначала " + row.after.join(", ")));
     out.push(el("span", "hint", "Задача ждёт " + row.after.join(", ") +
       ": пока маркер стоит, конвейер её не возьмёт."));
     return out;
   }
-  const start = el("button", "btn btn-acc", label);
+  const start = barBtn("btn btn-acc", label, "i-play");
   start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
   out.push(start);
   out.push(el("span", "hint", taskActionHint(isGoal, row.sect, id)));
@@ -795,6 +805,9 @@ async function renderTask(project, works, id) {
   }
   const detail = r.body;
   const row = detail.row || {};
+  // Номер второй раз, мелким: на телефоне доска, номер и статус стоят одной
+  // строкой, и большой номер рядом с заголовком там прячется стилями.
+  crumb.append(el("span", "idsm", row.id));
   if (row.section) crumb.append(el("span", "chip", row.section));
   if (row.moved) {
     crumb.append(withTip(el("span", "stale dashed", row.moved),
@@ -843,12 +856,16 @@ async function renderTask(project, works, id) {
   // форму: любое изменение поля включает кнопку, и по ней уезжает всё
   // изменённое разом.
   const bar = el("div", "card abar");
-  const save = el("button", "btn btn-acc", "Сохранить");
-  const drop = el("button", "btn", "Отменить правку");
-  // Отменять нечего, пока правки нет: мёртвая кнопка на полосе только мешает.
+  const save = barBtn("btn btn-acc", "Сохранить", "i-done");
+  const drop = barBtn("btn", "Отменить правку", "close");
+  // Пока правки нет, сохранять и отменять нечего: на телефоне две мёртвые
+  // кнопки съедали полосу, а погашенная кнопка неотличима от живой.
+  const sep = el("span", "div");
+  save.hidden = true;
   drop.hidden = true;
+  sep.hidden = true;
   const bad = el("div", "error", "");
-  bar.append(save, drop, el("span", "div"));
+  bar.append(save, drop, sep);
   groups.append(bar);
 
   const patchBody = () => {
@@ -873,7 +890,9 @@ async function renderTask(project, works, id) {
     taskDraft.dirty = dirty;
     bad.textContent = refusal;
     save.disabled = !dirty || Boolean(refusal);
+    save.hidden = !dirty;
     drop.hidden = !dirty;
+    sep.hidden = !dirty;
   };
   save.addEventListener("click", () => {
     const patch = patchBody();
@@ -898,14 +917,25 @@ async function renderTask(project, works, id) {
     goalComposition(project, id, comp).catch(console.error);
   }
 
-  const rank = el("div", "card");
+  // Ранг стоит там же, где стоял, над описанием: на телефоне он сворачивается
+  // в одну строку с суммой, и переносить его вниз незачем. Свёрнут он с самого
+  // начала, разворачивает нажатие на строку; на ноутбуке карточка открыта
+  // всегда, и класс сворачивания там ни на что не влияет.
+  const rank = el("div", "card rcard rfolded");
+  const rtop = el("div", "rtop");
   const rhead = el("div", "rhead");
   rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
-  rank.append(rhead);
   const big = el("div", "rbig");
   big.append(el("span", "v", String(row.r)));
   big.append(el("span", "f", "= " + (row.r_parts || []).join("+")));
-  rank.append(big);
+  const fold = el("span", "rfold", "развернуть");
+  rtop.append(rhead, big, fold);
+  rtop.addEventListener("click", () => {
+    fold.textContent = rank.classList.toggle("rfolded") ? "развернуть" : "свернуть";
+  });
+  rank.append(rtop);
+  const rbody = el("div", "rbody");
+  rank.append(rbody);
   RANK_PARTS.forEach((part, i) => {
     const line = el("div", "rrow");
     line.append(el("span", "nm", part.name));
@@ -916,7 +946,7 @@ async function renderTask(project, works, id) {
       form.parts[i] = Number(v);
       touch();
     }));
-    rank.append(line);
+    rbody.append(line);
   });
 
   const rail = el("div", "rrail");

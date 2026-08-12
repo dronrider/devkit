@@ -651,8 +651,8 @@ func TestStaticTaskLiveUpdateKeepsDraft(t *testing.T) {
 
 // Сохранение и действия стоят одной полосой над содержимым (макет
 // «02 Задача»): отдельной карточки действий у задачи нет, надписи про пустую
-// правку нет вовсе (о ней говорит погашенная кнопка), а «Отменить правку»
-// появляется только тогда, когда отменять есть что.
+// правку нет вовсе, а «Сохранить» и «Отменить правку» появляются только тогда,
+// когда сохранять и отменять есть что.
 func TestStaticTaskActionBar(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "async function renderTask(")
@@ -749,6 +749,105 @@ func TestStaticDepsNamedInWords(t *testing.T) {
 	for _, want := range []string{"Заблокировано задачами", "Блокирует выполнение задач"} {
 		if !strings.Contains(deps, want) {
 			t.Errorf("в карточке зависимостей нет заголовка %q", want)
+		}
+	}
+}
+
+// Шапка задачи на телефоне: доска, номер и статус стоят одной строкой, а
+// заголовок идёт под ними во всю ширину. Тремя уровнями по вертикали они
+// съедали экран до того, как начиналось содержимое задачи.
+func TestStaticTaskNarrowHead(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	if !strings.Contains(body, `crumb.append(el("span", "idsm", row.id))`) {
+		t.Error("номер задачи не встал в строку с доской и статусом")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".idsm{display:none}") {
+		t.Error("номер из крошек виден на ноутбуке: он там стоит вторым разом рядом с заголовком")
+	}
+	narrow := funcBody(t, css, "@media (max-width:900px){")
+	for _, want := range []string{".idsm{display:inline", ".thead .idbig{display:none}",
+		".crumb{gap:8px;padding-top:14px;flex-wrap:nowrap"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("на узком экране шапка задачи не собрана в строку: нет %q", want)
+		}
+	}
+}
+
+// Ранг на телефоне свёрнут в одну строку и разворачивается нажатием, а
+// описание идёт следом во всю ширину: колонкой в пол-экрана ранг отжимал
+// описание за нижний край.
+func TestStaticTaskNarrowRankFold(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	for _, want := range []string{`el("div", "card rcard rfolded")`, `el("div", "rtop")`,
+		`el("div", "rbody")`, `el("span", "rfold", "развернуть")`,
+		`rank.classList.toggle("rfolded") ? "развернуть" : "свернуть"`,
+		"rbody.append(line)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в карточке ранга нет %q: свернуть её нажатием нечем", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, app, "function depsCard("), `el("div", "card dcard")`) {
+		t.Error("у карточки зависимостей нет своего класса: на телефоне её не увести под описание")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".rfold{display:none}") {
+		t.Error("разворот ранга виден на ноутбуке: там карточка открыта всегда")
+	}
+	narrow := funcBody(t, css, "@media (max-width:900px){")
+	for _, want := range []string{".rcard.rfolded .rbody{display:none}", ".rrail{display:contents}",
+		".rcard{order:1}", ".fpanel{order:2}", ".dcard{order:3}", ".rtop{display:flex",
+		".rfold{display:inline"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("на узком экране ранг не сведён к строке над описанием: нет %q", want)
+		}
+	}
+}
+
+// Кнопки сохранения появляются у изменённой формы, а не стоят погашенными:
+// на телефоне мёртвая пара кнопок занимала полосу целиком. Сама полоса на
+// телефоне это значки, на ноутбуке значок со словом.
+func TestStaticTaskBarIcons(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	for _, want := range []string{"save.hidden = true", "save.hidden = !dirty",
+		"sep.hidden = true", "sep.hidden = !dirty",
+		`barBtn("btn btn-acc", "Сохранить", "i-done")`, `barBtn("btn", "Отменить правку", "close")`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в полосе сохранения нет %q: кнопки видны у нетронутой формы", want)
+		}
+	}
+	mk := funcBody(t, app, "function barBtn(")
+	for _, want := range []string{"icon(ico)", `el("span", "lb", label)`, `setAttribute("aria-label", label)`} {
+		if !strings.Contains(mk, want) {
+			t.Errorf("кнопка полосы собрана без %q: значок на телефоне остаётся без имени", want)
+		}
+	}
+	acts := funcBody(t, app, "function taskActions(")
+	for _, want := range []string{`barBtn("btn", "Живой статус", "i-live")`,
+		`barBtn("btn", "Чат с агентом", "i-chat")`,
+		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
+		`barBtn("btn btn-acc", label, "i-play")`} {
+		if !strings.Contains(acts, want) {
+			t.Errorf("действие полосы осталось без значка: нет %q", want)
+		}
+	}
+	page := readFile(t, filepath.Join("static", "index.html"))
+	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-chat"`, `data-ico="i-live"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("в static/index.html нет значка %q", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".abar .btn svg{width:16px") {
+		t.Error("на ноутбуке значок кнопки не размерен: полоса собрана только под телефон")
+	}
+	narrow := funcBody(t, css, "@media (max-width:900px){")
+	for _, want := range []string{".abar .btn .lb{display:none}", ".abar .btn{height:44px;min-width:44px"} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("на узком экране полоса действий не сведена к значкам: нет %q", want)
 		}
 	}
 }

@@ -717,12 +717,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", err
 		}
 	}
-	preSha, err := git(root, "rev-parse", "HEAD")
+	preSha, catchUps, err := ffCatchUp(root, workDir, wt, main, branch)
 	if err != nil {
 		return "", err
-	}
-	if out, err := git(root, "merge", "--ff-only", branch); err != nil {
-		return "", fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
 	}
 	// Слитый диапазон известен ровно здесь, до записи в файл задачи: её коммит
 	// лежит под docs/ и признак не смазывает, но считать признак по чистому
@@ -773,6 +770,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward", p.ID, main)}
 	if testFromConfig {
 		msg = append(msg, "тесты гнались командой из "+deployConfigPath+": "+test)
+	}
+	if catchUps > 0 {
+		msg = append(msg, fmt.Sprintf("за время прогона %s уехал на коммиты доски, ff добран повторным ребейзом, заходов %d, тесты не перегонялись", main, catchUps))
 	}
 	if wtNote != "" {
 		msg = append(msg, wtNote)
@@ -1159,6 +1159,94 @@ func rangeDocsOnly(root, from, to string) (bool, error) {
 			return false, err
 		}
 		if !docsOnly(files) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// catchUpLimit ограничивает число доборов ff. Упёрлись в потолок значит main
+// меняется быстрее, чем идёт слияние, и повторять его бесконечно бессмысленно.
+const catchUpLimit = 3
+
+// ffCatchUp уводит main на ветку fast-forward, переживая коммиты доски, легшие
+// в main за время прогона тестов: такой коммит идёт мимо замка конвейера
+// (его кладёт taskctl соседней сессии) и оставляет ветку позади. Пока уехавшее
+// это только доска, ff добирается повторным ребейзом без повторного прогона:
+// тесты такой дельты не касаются. Возвращает preSha того захода, на котором ff
+// прошёл, и число доборов.
+func ffCatchUp(root, workDir, wt, main, branch string) (string, int, error) {
+	for catchUps := 0; ; catchUps++ {
+		// preSha переснимается на каждом заходе: со старым recordMerge записал бы
+		// в файл задачи чужие коммиты доски, а тег поезда втащил бы их в окно
+		// выката.
+		preSha, err := git(root, "rev-parse", "HEAD")
+		if err != nil {
+			return "", catchUps, err
+		}
+		out, ffErr := git(root, "merge", "--ff-only", branch)
+		if ffErr == nil {
+			return preSha, catchUps, nil
+		}
+		refused := fmt.Errorf("fast-forward не прошёл:\n%s", tail(out))
+		if catchUps == catchUpLimit {
+			return "", catchUps, fmt.Errorf("%v\nдоборов ребейза сделано %d, main меняется быстрее, чем идёт слияние: повторить merge", refused, catchUps)
+		}
+		// Дельту уехавшего main наивным preSha..main не увидеть: preSha снят уже
+		// после уезда, и диапазон пуст. Считаем от merge-base ветки и main.
+		base, err := git(root, "merge-base", "HEAD", branch)
+		if err != nil {
+			return "", catchUps, refused
+		}
+		board, err := rangeBoardOnly(root, base, "HEAD")
+		if err != nil {
+			return "", catchUps, err
+		}
+		if !board {
+			return "", catchUps, refused
+		}
+		// Без worktree ветка к этому моменту не в чекауте, там стоит main.
+		// Ребейз чекаутит её сам, а выход отсюда обязан вернуть дерево на main,
+		// как оставляет его красный ff.
+		if wt == "" {
+			if _, err := git(root, "checkout", branch); err != nil {
+				return "", catchUps, err
+			}
+		}
+		rebaseOut, rebaseErr := git(workDir, "rebase", main)
+		if rebaseErr != nil {
+			git(workDir, "rebase", "--abort")
+		}
+		if wt == "" {
+			if _, err := git(root, "checkout", main); err != nil {
+				return "", catchUps, err
+			}
+		}
+		if rebaseErr != nil {
+			return "", catchUps, fmt.Errorf("повторный ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, tail(rebaseOut))
+		}
+	}
+}
+
+// rangeBoardOnly отвечает, состоит ли диапазон целиком из коммитов доски.
+// Признак тут уже, чем docsOnly: тестовый набор самого devkit читает docs/
+// (doctor --layout ловит там код-файлы), и дельта «весь docs/» провезла бы
+// красноту мимо прогона. Пустой диапазон доборным не считается: уезда не было,
+// и красный ff говорит о другом.
+func rangeBoardOnly(root, from, to string) (bool, error) {
+	log, err := git(root, "log", from+".."+to, "--format=%H")
+	if err != nil {
+		return false, err
+	}
+	if log == "" {
+		return false, nil
+	}
+	for _, sha := range strings.Split(log, "\n") {
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return false, err
+		}
+		if !boardOnly(files) {
 			return false, nil
 		}
 	}

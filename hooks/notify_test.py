@@ -1143,6 +1143,60 @@ class TestDelegatedSubprocess(HookCase):
         self.assertTrue(self.sent(), "без переменной конец хода перестал звонить")
 
 
+class TestHookSandbox(HookCase):
+    """Хук-путь фильтрует сессии из песочницы симметрично аргументному (DK-196):
+    корень под TMPDIR это синтетическая доска обкатки сценария или вложенная
+    headless-сессия из scratchpad, и живой баннер про неё ложный. Пропуск
+    виден в журнале той же строкой, что и у аргументного пути."""
+
+    def test_every_hook_reason_is_filtered(self):
+        # Ни один повод хук-пути не звонит из песочницы: запрос разрешения,
+        # ждёт ввода, конец хода и субагент проверяются по одному корню.
+        # На старом коде фильтр песочницы стоял только на аргументном пути, и
+        # каждый из этих поводов доходил до бэкенда.
+        cases = (
+            self.event("Notification", "permission_prompt", "sess-perm", cwd=self.tmp),
+            self.event("Notification", "idle_prompt", "sess-idle", cwd=self.tmp),
+            self.event("Stop", session="sess-turn", cwd=self.tmp),
+            self.event("SubagentStop", session="sess-sub", cwd=self.tmp),
+        )
+        for text in cases:
+            self.clear()
+            r = self.hook(text)
+            self.assertEqual(r.returncode, 0, text)
+            self.assertEqual(self.sent(), [], text)
+            self.assertIn("пропуск: песочница", self.journal())
+
+    def test_sandbox_skip_keeps_reason_and_text(self):
+        # Пропущенный баннер это про доставку: событие было, и повод с текстом
+        # остаются в журнале, по ним лента дашборда хранит эту отправку.
+        r = self.hook(self.event("Stop", session="sess-text", cwd=self.tmp))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+        self.assertIn("повод turn_done уровень громкий", self.journal())
+        self.assertIn("текст «%s: ход закончен»" % os.path.basename(self.tmp),
+                      self.journal())
+
+    def test_sandbox_skips_the_focus_poll(self):
+        # Песочница отсекается до опроса фокуса: лишние 180 мс на корень, которого
+        # через минуту нет, тратить незачем. Заголовок переднего окна тут ни при
+        # чём: фокус не спрашивался вовсе.
+        self.look_at("Правка notify.py - devkit-dk-034")
+        r = self.hook(self.event("Stop", session="sess-nofocus", cwd=self.tmp),
+                      focus=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.asked_size(), 0)
+        self.assertIn("пропуск: песочница", self.journal())
+
+    def test_real_root_still_rings_from_the_hook(self):
+        # Симметрия: настоящий корень фильтром не зацеплен, баннер доезжает, как
+        # и до правки. Ловит мутацию «sandbox_reason истинен всегда».
+        r = self.hook(self.event("Stop", session="sess-real"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+
+
 class TestArgumentMode(HookCase):
     """Зовётся не только хуком, поэтому заголовок и тело идут прямо."""
 
@@ -1261,11 +1315,27 @@ class TestLiveSamples(HookCase):
         with open(os.path.join(DATA, name), encoding="utf-8") as f:
             return f.read()
 
-    def test_live_permission_prompt_reaches_the_backend(self):
+    def test_live_permission_prompt_is_filtered_as_sandbox(self):
+        # Образец снят с живой сессии в scratchpad: cwd под /private/tmp, и это
+        # ровно тот случай, ради которого на хук-пути стоит фильтр песочницы
+        # (DK-196). Баннер про репозиторий, которого через минуту нет, ложный, и
+        # пропуск виден строкой в журнале.
         r = self.hook(self.sample("notify-permission.json"))
         self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), [])
+        self.assertIn("пропуск: песочница", self.journal())
+
+    def test_live_permission_prompt_rings_from_a_real_root(self):
+        # Тот же образец на настоящем корне звонит, как прежде: фильтр не зацепил
+        # лишнего, и заголовок с телом доезжают до бэкенда. След scratchpad
+        # убран из транскрипта, иначе session_tree вычитал бы его оттуда.
+        event = json.loads(self.sample("notify-permission.json"))
+        event["cwd"] = "/Users/x/projects/devkit"
+        event["transcript_path"] = ""
+        r = self.hook(json.dumps(event))
+        self.assertEqual(r.returncode, 0)
         self.assertEqual(self.sent(),
-                         ["work: нужно разрешение|Claude needs your permission"])
+                         ["devkit: нужно разрешение|Claude needs your permission"])
 
     def test_live_file_write_is_not_a_notification(self):
         r = self.hook(self.sample("write-memory-index.json"))

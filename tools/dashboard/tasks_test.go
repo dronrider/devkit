@@ -782,32 +782,40 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "async function renderTask(")
 	for _, want := range []string{`el("div", "card rcard rfolded")`, `el("div", "rtop")`,
-		`el("div", "rbody")`, `el("span", "rfold", "развернуть")`,
+		`el("div", "rbody")`, `el("button", "rfold", "развернуть")`,
 		`rank.classList.toggle("rfolded")`, `shut ? "развернуть" : "свернуть"`,
 		"rbody.append(line)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в карточке ранга нет %q: свернуть её нажатием нечем", want)
 		}
 	}
-	// Шапка ранга это не кнопка разметки, поэтому клавиатуру ей дают руками, и
-	// ровно там, где она вправду сворачивает: на узком экране.
-	for _, want := range []string{`window.matchMedia("(max-width:900px)").matches`,
-		`rtop.setAttribute("role", "button")`, `rtop.setAttribute("tabindex", "0")`,
-		`rtop.setAttribute("aria-expanded", shut ? "false" : "true")`,
-		`ev.key !== "Enter" && ev.key !== " "`} {
+	// Клавиатура достаётся развороту настоящей кнопкой, а прячут её стили:
+	// Enter и пробел жмут кнопку сами, а спрятанная кнопка не попадает ни в
+	// обход табом, ни под палец. Ширину экрана статика при этом не спрашивает,
+	// иначе доступность встала бы по моменту отрисовки, а не по ширине окна.
+	for _, want := range []string{`fold.setAttribute("aria-expanded", "false")`,
+		`fold.setAttribute("aria-expanded", shut ? "false" : "true")`,
+		"ev.stopPropagation()"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("шапка ранга недоступна с клавиатуры: нет %q", want)
+			t.Errorf("разворот ранга собран не кнопкой: нет %q", want)
 		}
 	}
-	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".rtop:focus-visible{") {
-		t.Error("у шапки ранга нет видимого фокуса: с клавиатуры непонятно, где стоишь")
+	for _, gone := range []string{"matchMedia", "innerWidth", `setAttribute("tabindex"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("доступность ранга снова считается статикой (%q): при смене ширины окна "+
+				"без перерисовки она врёт в обе стороны", gone)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".rfold{display:none;") {
+		t.Error("разворот ранга не спрятан на ноутбуке: там карточка открыта всегда, " +
+			"и кнопка в обходе табом ведёт в никуда")
+	}
+	if !strings.Contains(css, ".rfold:focus-visible{") {
+		t.Error("у кнопки разворота нет видимого фокуса: с клавиатуры непонятно, где стоишь")
 	}
 	if !strings.Contains(funcBody(t, app, "function depsCard("), `el("div", "card dcard")`) {
 		t.Error("у карточки зависимостей нет своего класса: на телефоне её не увести под описание")
-	}
-	css := readFile(t, filepath.Join("static", "style.css"))
-	if !strings.Contains(css, ".rfold{display:none}") {
-		t.Error("разворот ранга виден на ноутбуке: там карточка открыта всегда")
 	}
 	narrow := funcBody(t, css, "@media (max-width:900px){")
 	for _, want := range []string{".rcard.rfolded .rbody{display:none}", ".rrail{display:contents}",

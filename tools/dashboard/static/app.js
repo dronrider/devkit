@@ -929,28 +929,27 @@ async function renderTask(project, works, id) {
   const big = el("div", "rbig");
   big.append(el("span", "v", String(row.r)));
   big.append(el("span", "f", "= " + (row.r_parts || []).join("+")));
-  const fold = el("span", "rfold", "развернуть");
+  // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
+  // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
+  // стили (.rfold на ноутбуке display:none), а спрятанная кнопка ни в обход
+  // табом, ни под палец не попадает. Считать ширину в момент отрисовки
+  // означало бы держать её потом руками: поворот планшета и растянутое окно
+  // оставляли бы то фокусируемую пустышку, то ранг без клавиатуры.
+  const fold = el("button", "rfold", "развернуть");
+  fold.setAttribute("aria-expanded", "false");
   rtop.append(rhead, big, fold);
   const foldRank = () => {
     const shut = rank.classList.toggle("rfolded");
     fold.textContent = shut ? "развернуть" : "свернуть";
-    rtop.setAttribute("aria-expanded", shut ? "false" : "true");
+    fold.setAttribute("aria-expanded", shut ? "false" : "true");
   };
+  // Нажатие на всю строку остаётся: пальцем целятся в неё, а не в слово. С
+  // кнопки нажатие дальше не идёт, иначе ранг свернулся бы дважды.
   rtop.addEventListener("click", foldRank);
-  // Управляющим шапка ранга становится там же, где ранг сворачивается, на
-  // узком экране: на ноутбуке карточка открыта всегда, и обход с клавиатуры
-  // упирался бы в кнопку, которая ничего не меняет. Слагаемые открываются
-  // Enter и пробелом, иначе с клавиатуры до них не добраться.
-  if (window.matchMedia("(max-width:900px)").matches) {
-    rtop.setAttribute("role", "button");
-    rtop.setAttribute("tabindex", "0");
-    rtop.setAttribute("aria-expanded", "false");
-    rtop.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter" && ev.key !== " ") return;
-      ev.preventDefault();
-      foldRank();
-    });
-  }
+  fold.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    foldRank();
+  });
   rank.append(rtop);
   const rbody = el("div", "rbody");
   rank.append(rbody);

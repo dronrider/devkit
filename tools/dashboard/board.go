@@ -160,6 +160,10 @@ type Work struct {
 	Title   string `json:"title,omitempty"`
 	Session string `json:"session,omitempty"`
 	Note    string `json:"note,omitempty"`
+	// Sect это ключ секции доски (in-progress, check, backlog, blocked): им
+	// подписан статус работы на экране «Агенты». Пусто у работы, чьей строки на
+	// доске нет.
+	Sect string `json:"sect,omitempty"`
 	// Started это момент начала работы в unix-секундах: экран «Агенты» считает
 	// по нему, сколько она идёт. Знает его только tmux, у которого сессия
 	// заведена; запись реестра и транскрипт помечены последним касанием, а не
@@ -194,7 +198,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 					continue
 				}
 				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title,
-					Via: "tmux", Started: sess.Created})
+					Sect: rows[id].Sect, Via: "tmux", Started: sess.Created})
 				seen[kind+"-"+id] = true
 				busy[id] = true
 			}
@@ -209,7 +213,8 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if seen["goal-"+goal] {
 			continue
 		}
-		works = append(works, Work{ID: goal, Kind: "goal", Title: rows[goal].Title, Via: "registry"})
+		works = append(works, Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
+			Sect: rows[goal].Sect, Via: "registry"})
 		busy[goal] = true
 	}
 	return append(works, s.sessionWorks(projectPath, prefix, rows, busy)...)

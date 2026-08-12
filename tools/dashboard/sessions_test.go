@@ -541,7 +541,7 @@ func TestLiveWorksSessions(t *testing.T) {
 		{ID: "XR-5", Kind: "task", Via: "tmux"},
 		{ID: "XR-112", Kind: "goal", Via: "registry"},
 		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
-		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Via: "session", Session: "live-task"},
+		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session", Session: "live-task"},
 	}
 	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
@@ -562,8 +562,8 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 	// Цель со строки доски остаётся целью и в интерактивном окне: по виду
 	// работы клиент открывает переписку, и обычной задаче она не положена.
 	want := []Work{
-		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Via: "session", Session: "win-new"},
-		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Via: "session", Session: "win-goal"},
+		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Sect: "backlog", Via: "session", Session: "win-new"},
+		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Sect: "in-progress", Via: "session", Session: "win-goal"},
 	}
 	got := boardWorks(t, e)
 	var sessions []Work

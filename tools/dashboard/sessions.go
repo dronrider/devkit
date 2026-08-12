@@ -287,7 +287,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
 		}
-		kind, title := "session", ""
+		kind, title, sect := "session", "", ""
 		if task != "" {
 			if busy[task] {
 				continue
@@ -301,13 +301,14 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			if row, ok := rows[task]; !ok {
 				kind = "session"
 			} else {
-				title = row.Title
+				title, sect = row.Title, row.Sect
 				if isGoalTitle(row.Title) {
 					kind = "goal"
 				}
 			}
 		}
-		works = append(works, Work{ID: task, Kind: kind, Title: title, Via: "session", Session: f.ID, Note: note})
+		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
+			Via: "session", Session: f.ID, Note: note})
 	}
 	return works
 }

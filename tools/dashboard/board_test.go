@@ -20,7 +20,13 @@ func funcBody(t *testing.T, text, head string) string {
 		t.Fatalf("в static/app.js нет %s", head)
 	}
 	body := text[cut:]
-	if stop := strings.Index(body, "\n}\n"); stop > 0 {
+	// Кусок кончается закрывающей скобкой в первой колонке: у функции она стоит
+	// одна, у словаря с точкой с запятой, и берётся та, что встретилась раньше.
+	stop := strings.Index(body, "\n}\n")
+	if semi := strings.Index(body, "\n};\n"); semi > 0 && (stop < 0 || semi < stop) {
+		stop = semi
+	}
+	if stop > 0 {
 		body = body[:stop]
 	}
 	return body
@@ -363,7 +369,8 @@ func TestStaticAgentsEmpty(t *testing.T) {
 // пункта колонки; время работы берётся с её начала, а работа без начала
 // остаётся без времени, а не с нулём минут.
 func TestStaticAgentsCollect(t *testing.T) {
-	heads := []string{"function allWorks(", "function workSub(", "function workAge("}
+	heads := []string{"function allWorks(", "const SECT_WORD = {", "function workSub(",
+		"function workAge("}
 	projects := `[{name: "devkit", works: [{id: "DK-112", kind: "goal", via: "tmux"}]},` +
 		`{name: "xr", works: []},` +
 		`{name: "byblos", works: [{id: "BB-7", kind: "task", via: "registry"}, {kind: "session", via: "session", session: "abc", note: "задача не узнана"}]}]`
@@ -374,6 +381,16 @@ func TestStaticAgentsCollect(t *testing.T) {
 		t.Errorf("проекты работ %q: список собран не по всем доскам", got)
 	}
 	cases := []struct{ expr, want string }{
+		// Статус со строки доски идёт в подписи русским словом, а работа без
+		// строки остаётся без него: взять его неоткуда.
+		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "check"})`,
+			"DK-247, на проверке, сессия task-DK-247"},
+		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "in-progress"})`,
+			"DK-247, в работе, сессия task-DK-247"},
+		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "backlog"})`,
+			"DK-247, в очереди, сессия task-DK-247"},
+		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "blocked"})`,
+			"DK-247, заблокирована, сессия task-DK-247"},
 		{`workSub({id: "DK-112", kind: "goal", via: "tmux"})`, "DK-112, сессия goal-DK-112"},
 		{`workSub({id: "BB-7", kind: "task", via: "registry"})`, "BB-7, сессии дашборда нет"},
 		{`workSub({kind: "session", via: "session", session: "abc", note: "задача не узнана"})`,
@@ -438,5 +455,22 @@ func TestLiveWorksStartedFromTmux(t *testing.T) {
 	}
 	if starts["XR-112"] != 0 {
 		t.Errorf("у цели из реестра начало %d, а его неоткуда взять", starts["XR-112"])
+	}
+}
+
+// Работа несёт статус со своей строки доски: подпись на экране «Агенты»
+// называет его словом, а работа, чьей строки на доске нет, остаётся без
+// статуса, а не с выдуманным.
+func TestLiveWorksSectFromBoard(t *testing.T) {
+	e, _, _ := runsEnv(t, `goal-XR-100\t1\t100\ntask-XR-003\t1\t100\n`)
+	sects := map[string]string{}
+	for _, w := range boardWorks(t, e) {
+		sects[w.ID] = w.Sect
+	}
+	want := map[string]string{"XR-100": "in-progress", "XR-003": "check", "XR-112": ""}
+	for id, sect := range want {
+		if got, ok := sects[id]; !ok || got != sect {
+			t.Errorf("статус работы %s %q, ожидал %q", id, got, sect)
+		}
 	}
 }

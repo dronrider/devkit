@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // formatVer одна строка формата «<имя> <версия> (<коммит>)», как и в соседних
@@ -189,5 +190,129 @@ func TestBinaryExitCodePassThrough(t *testing.T) {
 		t.Fatal("ожидали ненулевой exit, получили 0")
 	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 7 {
 		t.Fatalf("exit cmdout: %v, хотели 7", err)
+	}
+}
+
+// ageCmdoutDir кладёт каталог вывода с указанным содержимым и mtime. Порог
+// чистки это возраст, а не количество, и фиксация mtime делает тест независимым
+// от того, когда его запустили.
+func ageCmdoutDir(t *testing.T, root, name, body string, mtime time.Time) string {
+	t.Helper()
+	dir := filepath.Join(root, ".devkit", "cmdout", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	if err := os.WriteFile(out, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dir, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(out, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// daysAgo отдаёт время на N дней раньше текущего момента: возраст каталога
+// задаётся от реального now, который позвала подкоманда, а не от фиксированной
+// даты, чтобы порог срабатывал как на машине, так и в CI.
+func daysAgo(days int) time.Time {
+	return time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+}
+
+// TestBinaryCleanDryRun на собранном бинаре: --dry-run печатает старый каталог и
+// оставляет оба на месте. Сухой прогон показателен именно на бинаре: флаг не
+// должен дойти до удаления по дороге из командной строки в frame.Clean.
+func TestBinaryCleanDryRun(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	ageCmdoutDir(t, root, "20260101T000000-old", "старый вывод\n", daysAgo(30))
+	ageCmdoutDir(t, root, "20260812T120000-fresh", "свежий вывод\n", daysAgo(0))
+	cmd := exec.Command(bin, "clean", "--days", "7", "--dry-run")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("clean --dry-run: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "20260101T000000-old") {
+		t.Errorf("старый каталог не попал в dry-run: %q", string(out))
+	}
+	if strings.Contains(string(out), "20260812T120000-fresh") {
+		t.Errorf("свежий каталог попал в dry-run: %q", string(out))
+	}
+	for _, name := range []string{"20260101T000000-old", "20260812T120000-fresh"} {
+		if _, err := os.Stat(filepath.Join(root, ".devkit", "cmdout", name)); err != nil {
+			t.Errorf("dry-run удалил каталог %s: %v", name, err)
+		}
+	}
+}
+
+// TestBinaryCleanRemoves на собранном бинаре: без --dry-run старый каталог
+// удаляется, свежий остаётся, код возврата 0.
+func TestBinaryCleanRemoves(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	ageCmdoutDir(t, root, "20260101T000000-old", "старый вывод\n", daysAgo(30))
+	ageCmdoutDir(t, root, "20260812T120000-fresh", "свежий вывод\n", daysAgo(0))
+	cmd := exec.Command(bin, "clean", "--days", "7")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clean: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "cmdout", "20260101T000000-old")); !os.IsNotExist(err) {
+		t.Errorf("старый каталог не удалён: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "cmdout", "20260812T120000-fresh")); err != nil {
+		t.Errorf("свежий каталог пропал: %v", err)
+	}
+}
+
+// TestBinaryCleanEmptyRepo: на пустом .devkit/cmdout clean выходит нулём и
+// ничего не печатает. Так подкоманда молчит на свежем проекте и в CI.
+func TestBinaryCleanEmptyRepo(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	cmd := exec.Command(bin, "clean")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("clean на пустом репо: %v\n%s", err, out)
+	}
+	if len(out) != 0 {
+		t.Errorf("clean на пустом репо что-то напечатал: %q", string(out))
+	}
+}
+
+// TestBinaryCleanDefaultDays использует умолчание 7, не передавая --days:
+// свежий (возраст 0) остаётся, старый (30 дней) уходит. Раздельно от теста с
+// явным флагом, потому что умолчание отдельно от разбора.
+func TestBinaryCleanDefaultDays(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	ageCmdoutDir(t, root, "20260101T000000-old", "старый вывод\n", daysAgo(30))
+	cmd := exec.Command(bin, "clean")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clean: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "cmdout", "20260101T000000-old")); !os.IsNotExist(err) {
+		t.Errorf("старый каталог не удалён по умолчанию 7 дней: %v", err)
+	}
+}
+
+// TestBinaryCleanBadDays: отрицательный --days это ошибка разбора, exit 2, как и
+// у пустого вызова cmdout без аргументов. Код 2 отличает «плохой аргумент» от
+// «прогон упал» (код команды).
+func TestBinaryCleanBadDays(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	cmd := exec.Command(bin, "clean", "--days", "-1")
+	cmd.Dir = root
+	if err := cmd.Run(); err == nil {
+		t.Fatal("ожидали ненулевой exit на отрицательном --days")
+	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
+		t.Fatalf("exit на отрицательном --days: %v, хотели 2", err)
 	}
 }

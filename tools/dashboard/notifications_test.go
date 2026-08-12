@@ -364,6 +364,17 @@ func TestStaticFlashNotice(t *testing.T) {
 			t.Errorf("во флеш-уведомлении нет %q", want)
 		}
 	}
+	if !strings.Contains(show, `icon("close")`) || !strings.Contains(show, `aria-label", "Закрыть"`) {
+		t.Error("у флеша нет крестика закрытия")
+	}
+	if !strings.Contains(show, "ev.stopPropagation()") {
+		t.Error("крестик флеша не гасит клик по карточке: нажатие на него заодно уведёт в ленту")
+	}
+	for _, want := range []string{"pointerdown", "pointermove", "pointerup", "pointercancel", "flashSwiped(dx)"} {
+		if !strings.Contains(show, want) {
+			t.Errorf("во флеше нет смахивания %q", want)
+		}
+	}
 	wire := funcBody(t, app, "function wireFlash(")
 	for _, want := range []string{"/api/notifications?stream=1", "flashWorthy(n, flashSince, route().feed)",
 		"showBellDot"} {
@@ -382,10 +393,48 @@ func TestStaticFlashNotice(t *testing.T) {
 		t.Error("в static/index.html нет угла для флеш-уведомлений")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".flashes{", ".flash{", ".flife{"} {
+	for _, want := range []string{".flashes{", ".flash{", ".flife{", ".flash .nx{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет стиля флеша %q", want)
 		}
+	}
+}
+
+// Смахивание отличают от дрожания пальца при тапе: короткий сдвиг остаётся
+// тапом и ведёт в ленту (проверено в TestStaticFlashNotice), дальний
+// закрывает карточку.
+func TestStaticFlashSwiped(t *testing.T) {
+	heads := []string{"function flashSwiped("}
+	cases := []struct {
+		expr string
+		want string
+	}{
+		{"flashSwiped(0)", "false"},
+		{"flashSwiped(47)", "false"},
+		{"flashSwiped(-47)", "false"},
+		{"flashSwiped(48)", "true"},
+		{"flashSwiped(-60)", "true"},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, c.expr); got != c.want {
+			t.Errorf("%s: %q, жду %q", c.expr, got, c.want)
+		}
+	}
+}
+
+// На узком экране флеш занимает всю ширину, и три карточки подряд закрывают
+// собой рабочий экран целиком, а единственный способ их убрать (по DK-282,
+// до этой задачи) уводил бы с того места, где человек работал. Держит это
+// одна видимая карточка: очередь в DOM остаётся прежней (не больше трёх), но
+// лишние скрыты, пока верхнюю не закроют или она не погаснет сама.
+func TestStaticFlashNarrowQueue(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	narrow := funcBody(t, css, "@media (max-width:900px){")
+	if !strings.Contains(narrow, ".flash:not(:first-child){display:none}") {
+		t.Error("на узком экране флеш не сведён к одной карточке")
+	}
+	if !strings.Contains(narrow, ".flash .nx{") {
+		t.Error("крестик флеша на узком экране остался мимо пальца в 44 пикселя")
 	}
 }
 

@@ -2114,13 +2114,24 @@ async function refreshBellDot() {
 
 // Флеш-уведомление в углу окна (макет «05 Лента»): новое событие всплывает
 // поверх любого экрана и гаснет само, полоска под текстом показывает остаток
-// времени, нажатие ведёт в ленту. Копится не больше трёх, последнее сверху.
+// времени. Крестик и смахивание пальцем убирают карточку на месте, не трогая
+// открытый экран, тап по телу ведёт в ленту. Копится не больше трёх,
+// последнее сверху; на узком экране видна только верхняя (см.
+// `.flash:not(:first-child)` в style.css), три подряд там закрывают собой
+// весь рабочий экран.
 const FLASH_LIFE = 8000;
 const FLASH_MAX = 3;
 
 // Момент подключения к потоку: хвост журнала, который сервер отдаёт сразу,
 // всплывать не должен. Флеш это про то, что случилось при открытом окне.
 let flashSince = "";
+
+// Смахивание отличают от дрожания пальца при тапе пройденным расстоянием:
+// короткий сдвиг остаётся тапом и ведёт в ленту, дальний (48 пикселей,
+// заметно больше случайного дрожания) закрывает карточку без перехода.
+function flashSwiped(dx) {
+  return Math.abs(dx) >= 48;
+}
 
 function showFlash(n) {
   const box = document.getElementById("flashes");
@@ -2133,14 +2144,58 @@ function showFlash(n) {
   const life = el("div", "flife");
   life.style.animationDuration = FLASH_LIFE + "ms";
   body.append(life);
-  card.append(body, el("span", "fw", "сейчас"));
-  card.addEventListener("click", () => {
+  const close = el("button", "nx");
+  close.setAttribute("aria-label", "Закрыть");
+  close.title = "Закрыть";
+  close.append(icon("close"));
+  const timer = setTimeout(() => dismiss(), FLASH_LIFE);
+  function dismiss() {
+    clearTimeout(timer);
     card.remove();
+  }
+  close.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    dismiss();
+  });
+  card.append(body, el("span", "fw", "сейчас"), close);
+  // Смахивание работает через pointer-события: они покрывают и тач, и мышь
+  // одним обработчиком, второй код на touchstart/touchmove не нужен.
+  let startX = null;
+  let dx = 0;
+  card.addEventListener("pointerdown", (ev) => {
+    startX = ev.clientX;
+    dx = 0;
+    card.classList.add("dragging");
+    card.setPointerCapture(ev.pointerId);
+  });
+  card.addEventListener("pointermove", (ev) => {
+    if (startX === null) return;
+    dx = ev.clientX - startX;
+    card.style.transform = "translateX(" + dx + "px)";
+    card.style.opacity = String(Math.max(1 - Math.abs(dx) / 260, 0.2));
+  });
+  const release = () => {
+    if (startX === null) return;
+    startX = null;
+    card.classList.remove("dragging");
+    if (flashSwiped(dx)) {
+      dismiss();
+      return;
+    }
+    card.style.transform = "";
+    card.style.opacity = "";
+  };
+  card.addEventListener("pointerup", release);
+  card.addEventListener("pointercancel", release);
+  card.addEventListener("click", () => {
+    // Смахивание не должно попутно уводить в ленту: клик проверяет тот же
+    // пройденный путь, что и release.
+    if (flashSwiped(dx)) return;
+    dismiss();
     location.hash = (shownProject || route().proj) + "/feed";
   });
   box.prepend(card);
   while (box.childElementCount > FLASH_MAX) box.lastElementChild.remove();
-  setTimeout(() => { card.remove(); }, FLASH_LIFE);
 }
 
 // Всплывать ли уведомлению: событие старше подключения это хвост журнала,

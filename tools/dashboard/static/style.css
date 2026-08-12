@@ -363,13 +363,20 @@ a:hover{text-decoration:underline}
 .chan{max-width:760px;padding:14px 2px 0;font:400 11.5px/1.5 var(--sans);color:var(--tx3)}
 /* флеш-уведомления в углу окна: всплывают на новое событие ленты и гаснут
    сами, полоска под текстом показывает остаток времени. Копится не больше
-   трёх, последнее сверху; нажатие ведёт туда же, куда ведёт событие в ленте. */
+   трёх, последнее сверху; тап по телу ведёт туда же, куда ведёт событие в
+   ленте, крестик и смахивание пальцем закрывают карточку на месте. */
 .flashes{position:fixed;top:18px;right:18px;z-index:20;display:flex;flex-direction:column;gap:10px;pointer-events:none}
-.flash{width:min(352px,86vw);border-radius:14px;background:color-mix(in oklab,var(--bg2) 96%,transparent);border:1px solid var(--line2);box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:13px 15px 11px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;pointer-events:auto}
+.flash{width:min(352px,86vw);border-radius:14px;background:color-mix(in oklab,var(--bg2) 96%,transparent);border:1px solid var(--line2);box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:13px 15px 11px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;pointer-events:auto;touch-action:pan-y;transition:transform .18s ease,opacity .18s ease}
+.flash.dragging{transition:none}
 .flash .ft{flex:1;min-width:0}
 .flash .ft b{display:block;font:600 13.5px var(--sans);color:var(--tx);overflow-wrap:anywhere}
 .flash .ft span{display:block;font:400 12.5px/1.45 var(--sans);color:var(--tx2);margin-top:3px;overflow-wrap:anywhere}
 .flash .fw{font:400 11px var(--mono);color:var(--tx3);flex:none}
+/* крестик закрытия: тот же приём, что у плашки чата (.cnote .nx), тычок по
+   нему не должен доходить до клика по карточке. */
+.flash .nx{flex:none;width:26px;height:26px;border-radius:7px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.flash .nx svg{width:12px;height:12px;display:block}
+.flash .nx:hover{color:var(--tx);background:var(--bg2)}
 .flife{height:2px;border-radius:1px;background:color-mix(in oklab,var(--acc) 70%,transparent);margin:11px 0 0;width:100%}
 @media (prefers-reduced-motion:no-preference){
   .flife{animation:dklife linear forwards}
@@ -452,11 +459,15 @@ a:hover{text-decoration:underline}
   .srow .sm{grid-column:1 / -1;justify-content:flex-start}
   .prog{width:100%;max-width:none}
   /* телефон: полоса действий задачи с пальцем в 44 пикселя, флеш во всю
-     ширину окна */
+     ширину окна. Карточка одна: три подряд закрывают собой весь экран, а
+     единственный способ их убрать уводил бы с того места, где человек
+     работал, поэтому лишние ждут своей очереди скрытыми. */
   .abar{padding:12px 14px}
   .abar .btn{height:44px}
   .flashes{top:12px;right:10px;left:10px}
   .flash{width:auto}
+  .flash:not(:first-child){display:none}
+  .flash .nx{width:44px;height:44px}
   /* телефон: работа встаёт карточкой, кнопки в ряд с пальцем в 44 пикселя */
   .arow{flex-wrap:wrap;gap:10px 12px;padding:14px 15px}
   .aacts{width:100%;flex-wrap:wrap}

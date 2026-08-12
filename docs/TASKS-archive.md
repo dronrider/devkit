@@ -197,3 +197,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-279 | dashboard: производная tmux-сессия становится мусорной работой на экране | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-279.md](tasks/archive/2026/DK-279.md) |
 | DK-282 | dashboard: флеш-уведомление нечем закрыть | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-282.md](tasks/archive/2026/DK-282.md) |
 | DK-283 | Тестовый стенд дашборда пишет уведомления в живой журнал машины | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-283.md](tasks/archive/2026/DK-283.md) |
+| DK-277 | shipctl merge считает открытым замечанием любую строку раздела «Ревью» с маркером списка | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-277.md](tasks/archive/2026/DK-277.md) |

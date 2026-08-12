@@ -137,6 +137,7 @@ func TestReviewOutcomeMarkup(t *testing.T) {
 	content := "# XR-005\n\n## Ревью\n\n" +
 		"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n" +
 		"- длинное замечание,\n  перенесённое на две строки: исправлено\n" +
+		"- гибрид: исправлено, теперь без замечаний\n" +
 		"- открытое, без исхода\n"
 	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -145,10 +146,12 @@ func TestReviewOutcomeMarkup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rf.notes) != 3 {
-		t.Fatalf("ожидал 3 элемента списка, разобрано %d", len(rf.notes))
+	if len(rf.notes) != 4 {
+		t.Fatalf("ожидал 4 элемента списка, разобрано %d", len(rf.notes))
 	}
-	want := []string{"чисто", "исправлено", ""}
+	// «исправлено» бьёт «без замечаний»: порядок проверок исход -> чистый итог,
+	// поэтому гибрид остаётся исправленным, а не уезжает в «чисто».
+	want := []string{"чисто", "исправлено", "исправлено", ""}
 	for i, w := range want {
 		if got := rf.notes[i].outcome(); got != w {
 			t.Errorf("замечание %d: outcome %q, жду %q (текст: %s)", i+1, got, w, rf.notes[i].Text)

@@ -151,6 +151,59 @@ func TestDraftPromotedByAdd(t *testing.T) {
 	}
 }
 
+// TestAddPromotesUntrackedDraft: черновик, не закоммиченный командой draft (с
+// пустым CommitOpts), при оформлении через add --id -m переезжает в
+// docs/tasks/<ID>.md, а коммит не падает на pathspec по исчезнувшему пути
+// drafts/<ID>.md. На старом коде gitMv отбивался от git mv и срабатывал
+// запасной rename, а путь черновика всё равно ехал в pathspec коммита и ронял
+// его: строка и перенос файла успевали, коммит и пуш оставались руками (DK-080).
+func TestAddPromotesUntrackedDraft(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "идея черновика", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// Черновик незакоммичен: cmdDraft с пустым CommitOpts не зовёт git, и
+	// git mv по такому файлу отбивается, оставаясь на rename. Гит печатает
+	// накопитель целиком как untracked-директорию, поэтому ищем префикс.
+	if out := gitOut(t, root, "status", "--porcelain"); !strings.Contains(out, "?? docs/tasks/drafts/") {
+		t.Fatalf("черновик не untracked, статус:\n%s", out)
+	}
+	p := AddParams{
+		ID: "XR-008", Title: "Оформленная", Type: "bug",
+		Rank: "25+4+2+5+2", Cost: "S",
+		Commit: CommitOpts{Msg: "docs(tasks): XR-008 оформлена"},
+	}
+	if _, err := cmdAdd(root, p); err != nil {
+		t.Fatalf("add --id по untracked черновику упал: %v", err)
+	}
+	if _, err := os.Stat(draftFile(root, "XR-008")); !os.IsNotExist(err) {
+		t.Fatalf("черновик остался в drafts/: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не появился: %v", err)
+	}
+	if !strings.Contains(string(data), "идея черновика") {
+		t.Fatalf("текст черновика потерян: %s", data)
+	}
+	if st := gitOut(t, root, "status", "--porcelain"); st != "" {
+		t.Fatalf("после add в рабочем дереве осталось незакоммиченное:\n%s", st)
+	}
+	// Коммит увёз правку доски и новый файл задачи, а исходный путь drafts/
+	// в pathspec не ехал: git его не знает, и pathspec по нему ронял бы коммит.
+	files := gitOut(t, root, "show", "--name-status", "--pretty=", "-M")
+	if !strings.Contains(files, "M\tdocs/TASKS.md") {
+		t.Errorf("в коммите нет правки доски:\n%s", files)
+	}
+	if !strings.Contains(files, "A\tdocs/tasks/XR-008.md") {
+		t.Errorf("в коммите нет нового файла задачи:\n%s", files)
+	}
+	if strings.Contains(files, "drafts/XR-008.md") {
+		t.Errorf("в коммите всплыл путь из drafts/:\n%s", files)
+	}
+}
+
 // TestAddValidationKeepsDraft: упавшая на разборе add не должна уносить
 // черновик с прежнего места, иначе после ошибки его не найти ни там, ни там.
 func TestAddValidationKeepsDraft(t *testing.T) {

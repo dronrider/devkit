@@ -315,14 +315,18 @@ func draftsLine(drafts []Draft) string {
 
 // promoteDraft переносит черновик в docs/tasks/<ID>.md: грумминг доводит
 // taskctl add --id, отдельной команды на промоушен нет, иначе черновик можно
-// потерять, забыв её позвать. Перенос через git mv, как в close.
-func promoteDraft(root, id string) (bool, error) {
+// потерять, забыв её позвать. Перенос через git mv, как в close. Возвращаемое
+// staged=true значит, что перенос шёл через git mv (git знал исходный путь):
+// только тогда исходный путь уместен в pathspec коммита. На неотслеживаемом
+// черновике git mv отбивается, срабатывает rename, и возвращается staged=false.
+func promoteDraft(root, id string) (promoted, staged bool, err error) {
 	from := draftPath(root, id)
 	if _, err := os.Stat(from); err != nil {
-		return false, nil
+		return false, false, nil
 	}
-	if err := gitMv(root, from, filepath.Join(root, "docs", "tasks", id+".md")); err != nil {
-		return false, err
+	staged, err = gitMv(root, from, filepath.Join(root, "docs", "tasks", id+".md"))
+	if err != nil {
+		return false, false, err
 	}
-	return true, nil
+	return true, staged, nil
 }

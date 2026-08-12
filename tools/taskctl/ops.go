@@ -274,7 +274,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	}
 	// Перенос черновика идёт после всех проверок: упавшая на кривом ранге
 	// команда не должна оставлять файл на новом месте без строки на доске.
-	promoted, err := promoteDraft(root, id)
+	promoted, staged, err := promoteDraft(root, id)
 	if err != nil {
 		return "", err
 	}
@@ -303,9 +303,13 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	}
 	paths := []string{filepath.Join("docs", "TASKS.md")}
 	if promoted {
-		// Обе стороны переноса: исчезнувший исходный путь apply в git add не
-		// потащит, но в pathspec коммита он нужен, иначе удаление не уедет.
-		paths = append(paths, filepath.Join("docs", "tasks", "drafts", id+".md"))
+		// Обе стороны переноса едят pathspec, только когда перенос шёл через
+		// git mv: неотслеживаемый черновик git не знает, и pathspec по
+		// исчезнувшему пути drafts/ ронял бы коммит. Сам файл уже на новом
+		// месте через rename, и в коммит попадает как вновь добавленный.
+		if staged {
+			paths = append(paths, filepath.Join("docs", "tasks", "drafts", id+".md"))
+		}
 		if taskFile == "" {
 			taskFile = filepath.Join("docs", "tasks", id+".md")
 		}
@@ -631,7 +635,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	taskFile := filepath.Join(root, "docs", "tasks", p.ID+".md")
 	if _, err := os.Stat(taskFile); err == nil {
 		dst := filepath.Join(root, "docs", "tasks", "archive", year, p.ID+".md")
-		if err := gitMv(root, taskFile, dst); err != nil {
+		if _, err := gitMv(root, taskFile, dst); err != nil {
 			return "", err
 		}
 
@@ -720,18 +724,22 @@ func cmdClose(root string, p CloseParams) (string, error) {
 }
 
 // gitMv переносит файл через git mv, а вне git-репозитория (или для
-// неотслеживаемого файла) обычным rename.
-func gitMv(root, from, to string) error {
+// неотслеживаемого файла) обычным rename. Возвращаемое staged=true значит, что
+// перенос шёл через git mv и git знал исходный путь: только тогда исходный путь
+// уместен в pathspec коммита. На неотслеживаемом файле git mv отбивается,
+// срабатывает rename, и pathspec по исчезнувшему пути ронял бы коммит.
+func gitMv(root, from, to string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-		return err
+		return false, err
 	}
 	cmd := exec.Command("git", "-C", root, "mv", from, to)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if renameErr := os.Rename(from, to); renameErr != nil {
-			return fmt.Errorf("git mv: %v (%s); rename: %v", err, strings.TrimSpace(string(out)), renameErr)
+			return false, fmt.Errorf("git mv: %v (%s); rename: %v", err, strings.TrimSpace(string(out)), renameErr)
 		}
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 // fullLinkRe находит markdown-ссылки вида [текст](цель)

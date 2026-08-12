@@ -1976,5 +1976,64 @@ class SinglePointOfBuildTest(unittest.TestCase):
                       "подсказки перестали называть точку сборки")
 
 
+def age_cmdout_dir(root, name, body, days_ago):
+    """Каталог вывода .devkit/cmdout/<name>/out с содержимым и mtime на days_ago
+    дней назад. Порог чистки это возраст, поэтому mtime фиксируется явно."""
+    d = Path(root) / ".devkit" / "cmdout" / name
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / "out"
+    write(out, body)
+    when = time.time() - days_ago * 86400
+    os.utime(str(d), (when, when))
+    os.utime(str(out), (when, when))
+    return d
+
+
+class CmdoutCleanTest(SandboxCase):
+    """Чистка устаревших выводов .devkit/cmdout: находка doctor и её --fix
+    (DK-267). Doctor не дублирует порог возраста из internal/frame, а судит о
+    нём через сухой прогон «cmdout clean --dry-run», поэтому для проверки нужен
+    живой бинарь cmdout из этой же копии devkit, а не заглушка Sandbox.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Подмена cmdout в sandbox-бине на настоящую сборку из копии devkit:
+        # заглушка печатает версию и выходит нулём, а для чистки нужен бинарь,
+        # знающий подкоманду. Версию зашиваем ту же, что у заглушки, чтобы
+        # check_binaries на ней не загорелся.
+        err = build.compile_one(cls.box.dk, "cmdout", cls.box.bin / "cmdout",
+                                cls.box.version, cls.box.commit)
+        if err:
+            raise unittest.SkipTest(err)
+        cls.proj = cls.box.project("cmdout-proj")
+        cls.box.dkctl_run("new", "--no-board", "-C", str(cls.proj))
+        # Старый каталог на 30 дней старше порога 7, свежий сегодняшним днём.
+        cls.old_dir = age_cmdout_dir(cls.proj, "20260101T000000-old",
+                                     "старый вывод\n", 30)
+        cls.fresh_dir = age_cmdout_dir(cls.proj, "20260812T120000-fresh",
+                                       "свежий вывод\n", 0)
+
+    def test_1_doctor_finds_accumulation(self):
+        rc, out = self.box.doctor(self.proj)
+        self.assertEqual(rc, 1, "doctor не увидел скопления cmdout: %s" % out)
+        self.assertIn_("cmdout", out, "нет находки про скопление cmdout")
+        # doctor без --fix не удаляет: оба каталога на месте.
+        self.assertTrue(self.old_dir.exists(), "doctor удалил без --fix")
+        self.assertTrue(self.fresh_dir.exists(), "doctor задел свежий без --fix")
+
+    def test_2_fix_cleans_stale(self):
+        rc, out = self.box.doctor(self.proj, "--fix")
+        self.assertIn_("починено", out, "doctor --fix не почистил cmdout")
+        self.assertFalse(self.old_dir.exists(), "старый каталог не удалён через --fix")
+        self.assertTrue(self.fresh_dir.exists(), "doctor --fix задел свежий каталог")
+
+    def test_3_repeat_doctor_is_clean(self):
+        rc, out = self.box.doctor(self.proj)
+        self.assertEqual(rc, 0, "повторный doctor нашёл находку: %s" % out)
+        self.assertTrue(self.fresh_dir.exists(), "свежий каталог пропал после повтора")
+
+
 if __name__ == "__main__":
     unittest.main()

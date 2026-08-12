@@ -1436,6 +1436,34 @@ def corp_thin(clone, local, imports, fix):
     return findings, fixed
 
 
+def check_cmdout(root, fix):
+    """Скопление устаревших выводов в .devkit/cmdout.
+
+    Порог возраста и правило удаления живут в internal/frame, и доктор их не
+    дублирует: он наблюдает сухой прогон «cmdout clean --dry-run», который
+    списком отдаёт каталоги, подпавшие под порог. Список непустой это находка,
+    а «cmdout clean» подпроцессом чинит её. Так порог в одном языке (Go), а не
+    в двух. Бинаря cmdout нет или нет .devkit/cmdout, доктор молчит: про бинарь
+    уже говорит машинный раздел, а пустой каталог чистить нечего.
+    """
+    cmdout = shutil.which("cmdout")
+    if not cmdout or not (Path(root) / ".devkit" / "cmdout").is_dir():
+        return [], []
+    rc, out = run([cmdout, "clean", "--dry-run"], cwd=str(root))
+    if rc != 0:
+        return [], []
+    stale = [ln for ln in out.splitlines() if ln.strip()]
+    if not stale:
+        return [], []
+    if fix:
+        rc, _ = run([cmdout, "clean"], cwd=str(root))
+        if rc == 0:
+            return [], ["почищено %d устаревших выводов в .devkit/cmdout" % len(stale)]
+        return ["cmdout clean не прошёл; почистить руками"], []
+    return [".devkit/cmdout скопилось %d устаревших выводов; почистить: cmdout clean"
+            % len(stale)], []
+
+
 def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
@@ -1575,6 +1603,9 @@ def doctor(start, fix=False):
                                     "добавить %s в .gitignore" % (RUN_LOG, RUN_LOG))
     if in_git:
         findings += check_links(root)
+        cf, cd = check_cmdout(root, fix)
+        findings += cf
+        fixed += cd
     for m in fixed:
         print("починено: %s" % m)
     for f in findings:

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -455,6 +456,23 @@ func TestLiveWorksStartedFromTmux(t *testing.T) {
 	}
 	if starts["XR-112"] != 0 {
 		t.Errorf("у цели из реестра начало %d, а его неоткуда взять", starts["XR-112"])
+	}
+}
+
+// Производная сессия конвейера (task-XR-004_1_1786532648) с prefix-проверкой
+// не отсеивается: у неё тот же префикс доски, а хвост это номер и
+// unix-момент запуска, а не ID. liveWorks гоняет ту же проверку, что ручки
+// журнала и черновика (goalIDRe), и такая сессия работой не становится
+// (DK-279).
+func TestLiveWorksSkipsDerivedSession(t *testing.T) {
+	e, _, _ := runsEnv(t, `task-XR-004\t1\t1000\ntask-XR-004_1_1786532648\t1\t2000\n`)
+	var ids []string
+	for _, w := range boardWorks(t, e) {
+		ids = append(ids, w.ID)
+	}
+	want := []string{"XR-004", "XR-112"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Errorf("работы %v, ожидал %v: производная сессия конвейера стала лишней карточкой", ids, want)
 	}
 }
 

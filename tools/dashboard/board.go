@@ -194,7 +194,11 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		for _, sess := range tmuxList() {
 			for _, kind := range []string{"goal", "task"} {
 				id, ok := strings.CutPrefix(sess.Name, kind+"-")
-				if !ok || !strings.HasPrefix(id, prefix+"-") {
+				// Производная сессия конвейера (task-DK-208_1_1786532648) с
+				// prefix-проверкой не отсеивается: у неё тот же префикс доски,
+				// а хвост это номер и unix-момент запуска, а не ID (DK-279).
+				// goalIDRe та же проверка, что у ручек журнала и черновика.
+				if !ok || !strings.HasPrefix(id, prefix+"-") || !goalIDRe.MatchString(id) {
 					continue
 				}
 				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title,

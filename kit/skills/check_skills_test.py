@@ -172,11 +172,38 @@ class TestGoalSplit(SkillTree):
         self.assertTrue(any("goal-start: скилл режима цели не заведён" in f for f in fails), fails)
 
 
+class TestSection(unittest.TestCase):
+    """Вырезка раздела: на ней стоят проверки содержания, и обрезанный раздел
+    выглядит так же, как целый."""
+
+    TEXT = ("# Скилл\n\n## Первый\n\nтело первого\n\n```markdown\n## Внутри примера\n\n"
+            "строка примера\n```\n\nхвост первого\n\n## Второй\n\nтело второго\n")
+
+    def test_body_until_next_heading(self):
+        self.assertIn("тело первого", check_skills.section(self.TEXT, "## Первый"))
+        self.assertNotIn("тело второго", check_skills.section(self.TEXT, "## Первый"))
+
+    def test_fenced_heading_is_not_the_end(self):
+        body = check_skills.section(self.TEXT, "## Первый")
+        self.assertIn("хвост первого", body)
+        self.assertIn("## Внутри примера", body)
+
+    def test_last_section_reaches_the_end(self):
+        self.assertIn("тело второго", check_skills.section(self.TEXT, "## Второй"))
+
+    def test_missing_heading_gives_nothing(self):
+        self.assertEqual(check_skills.section(self.TEXT, "## Третий"), "")
+
+
 class TestGoalCut(SkillTree):
     """DK-208: нарезка цели третьим скиллом, пробная нарезка в постановке,
     материализация списка кандидатов витком и сверка оценки с бюджетом."""
 
-    CUT = ("## Список кандидатов\n\n- кандидат 1 (task, M, R=38). Первая задача.\n\n"
+    # Пример списка идёт оградой с куском markdown внутри, как в боевом скилле:
+    # свой «## Задачи цели» там лежит текстом примера, а не заголовком раздела.
+    CUT = ("## Список кандидатов\n\nСтрока на кандидата:\n\n"
+           "```markdown\n## Задачи цели\n\n- кандидат 1 (task, M, R=38). Первая задача.\n```\n\n"
+           "Номер живёт до материализации.\n\n"
            "## Сверка оценки с остатком бюджета\n\nСумма цен против остатка.\n"
            "Порог в полтора раза, шире него выход wait-human.\n"
            "Чисел «Бюджета» цикл не правит ни в какую сторону.\n")
@@ -254,6 +281,17 @@ class TestGoalCut(SkillTree):
                         "чисел «Бюджета» цикл не правит.\n\n## Маркеры\n\nwait-human\n")
         fails = check_skills.check_goal_cut(self.here)
         self.assertTrue(any("не выходит маркером wait-human" in f for f in fails), fails)
+
+    def test_example_does_not_cut_the_candidate_section(self):
+        # Пример списка держит внутри ограды свой «## Задачи цели», и раздел
+        # обязан дочитаться до конца: обрезанный на примере, он выглядит целым, а
+        # всякая проверка его хвоста молча смотрит на первые пару строк.
+        self.write_goal()
+        body = check_skills.section(
+            check_skills.read(os.path.join(self.here, "goal-cut", "SKILL.md")),
+            "## Список кандидатов")
+        self.assertIn("Номер живёт до материализации", body)
+        self.assertNotIn("Сумма цен против остатка", body)
 
     def test_neighbours_absent_are_reported_elsewhere(self):
         # Постановки и витка нет вовсе: их пропажу называет check_goal_split, и

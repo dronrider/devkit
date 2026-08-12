@@ -48,14 +48,25 @@ def read(path):
 
 def section(text, heading):
     """Тело раздела до следующего заголовка того же уровня, пустая строка если
-    раздела нет. Заголовок даётся целиком, вместе с решётками."""
-    body = "\n" + text
-    start = body.find("\n" + heading + "\n")
-    if start < 0:
-        return ""
-    rest = body[start + len(heading) + 2:]
-    end = rest.find("\n## ")
-    return rest if end < 0 else rest[:end]
+    раздела нет. Заголовок даётся целиком, вместе с решётками.
+
+    Заголовок внутри ограды примера концом раздела не считается: в скиллах в
+    таких оградах лежат куски markdown со своими «## », и раздел резался бы
+    посреди примера, а проверка хвоста молча смотрела бы на обрезок."""
+    out = []
+    inside = False
+    fenced = False
+    for line in text.split("\n"):
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced and line.startswith("## "):
+            if inside:
+                break
+            inside = line == heading
+            continue
+        if inside:
+            out.append(line)
+    return "\n".join(out)
 
 
 def check_skills(here):

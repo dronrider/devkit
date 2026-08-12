@@ -11,7 +11,8 @@ const reviewHeading = "## Ревью"
 
 type reviewNote struct {
 	LineIdx int
-	Text    string // текст замечания без маркера списка
+	Text    string // текст замечания без маркера списка, продолжения прирастают через пробел
+	Span    int    // число строк элемента: маркерная плюс строки продолжения
 }
 
 // outcome возвращает исход замечания: «исправлено», «отклонено», «чисто»
@@ -69,7 +70,7 @@ func loadReview(path string) (*reviewFile, error) {
 			continue
 		}
 		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
-			rf.notes = append(rf.notes, reviewNote{LineIdx: i, Text: strings.TrimSpace(t[2:])})
+			rf.notes = append(rf.notes, reviewNote{LineIdx: i, Text: strings.TrimSpace(t[2:]), Span: 1})
 			rf.insertAt = i + 1
 			continue
 		}
@@ -84,6 +85,7 @@ func loadReview(path string) (*reviewFile, error) {
 				n.Text += " "
 			}
 			n.Text += t
+			n.Span++
 			rf.insertAt = i + 1
 		}
 	}
@@ -210,7 +212,14 @@ func cmdReviewResolve(root, id string, num int, outcome, reason string, c Commit
 	if reason != "" {
 		line += ", " + reason
 	}
-	rf.lines[n.LineIdx] = line
+	// Многострочный элемент схлопываем в одну строку: loadReview собрал его
+	// продолжения в n.Text, и строки переноса из файла уходят, иначе резолвнутая
+	// строка повторяла бы их после себя.
+	span := n.Span
+	if span < 1 {
+		span = 1
+	}
+	rf.lines = append(rf.lines[:n.LineIdx], append([]string{line}, rf.lines[n.LineIdx+span:]...)...)
 	if err := rf.save(); err != nil {
 		return "", err
 	}

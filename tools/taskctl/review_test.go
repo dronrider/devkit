@@ -169,6 +169,29 @@ func TestReviewOutcomeMarkup(t *testing.T) {
 	}
 }
 
+// resolve многострочного замечания схлопывает элемент в одну строку: loadReview
+// собрал продолжения в n.Text, и строки переноса уходят из файла, иначе резолвнутая
+// строка повторяла бы их после себя (DK-277).
+func TestReviewResolveWrapped(t *testing.T) {
+	root := setup(t)
+	content := "# XR-005\n\n## Ревью\n\n" +
+		"- длинное замечание,\n  перенесённое на две строки\n"
+	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	want := "- длинное замечание, перенесённое на две строки: исправлено\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("перенесённое замечание не схлопнуто в одну строку:\n%s\nожидалось %q", got, want)
+	}
+	if c := strings.Count(got, "перенесённое"); c != 1 {
+		t.Errorf("слово перенесённое должно встречаться 1 раз, встречается %d:\n%s", c, got)
+	}
+}
+
 func TestReviewStats(t *testing.T) {
 	root := setup(t)
 	if msg, err := cmdReviewStats(root); err != nil || !strings.Contains(msg, "пока нет") {

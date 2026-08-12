@@ -184,3 +184,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-273 | shipctl merge: коммит доски за время тестов роняет fast-forward | bug | P2 | 2026-08-12 | [tasks/archive/2026/DK-273.md](tasks/archive/2026/DK-273.md), `cd0293e` |
 | DK-250 | Действия задачи по статусу: выполнить, продолжить, закрыть со своими промптами конвейеру | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-250.md](tasks/archive/2026/DK-250.md) |
 | DK-274 | shipctl merge --train проходит при занятой очереди выката | task | P2 | 2026-08-12 | [tasks/archive/2026/DK-274.md](tasks/archive/2026/DK-274.md), `c2b9191`, `de34c6a`, `5648978`, `89e55b6` |
+| DK-080 | taskctl add --id: флаг -m падает, когда черновик не закоммичен (pathspec на удалённый файл) | bug | P3 | 2026-08-12 | [tasks/archive/2026/DK-080.md](tasks/archive/2026/DK-080.md), `6f18703`, `82a3704`, `dea4eb4`, `f0c2aed`, `8de5331` |

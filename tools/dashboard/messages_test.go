@@ -314,6 +314,28 @@ func TestMessageRepeatKeepsOneLine(t *testing.T) {
 	}
 }
 
+// Своей дашборд считает строку своего же вида: дата, время и подпись в
+// начале. Рукописная строка, где та же фраза попалась в тексте, повтором не
+// считается и настоящую отправку не отбивает (замечание ревью DK-281).
+func TestMessageHandWrittenLineIsNotRepeat(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
+	doc := readFile(t, path)
+	hand := "- заметка себе: строка, из дашборда: проверь ленту, выглядит своей\n"
+	if err := os.WriteFile(path, []byte(addInboxLine(doc, strings.TrimSuffix(hand, "\n"))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postMessage(t, c, e, "XR-100", "проверь ленту, выглядит своей")
+	text := body(t, resp)
+	if strings.Contains(text, "уже лежит во «Входящих»") {
+		t.Fatalf("рукописная строка сошла за свою и отбила отправку: %s", text)
+	}
+	if got := len(inboxLines(readFile(t, path))); got != 2 {
+		t.Errorf("во «Входящих» %d строк, ждал две:\n%s", got, readFile(t, path))
+	}
+}
+
 // line достаёт поле line из ответа ручки message.
 func line(t *testing.T, resp string) string {
 	t.Helper()
@@ -431,6 +453,25 @@ func TestStaticChatMessageStates(t *testing.T) {
 	if !strings.Contains(body, "sentWrite(project, id, mine)") {
 		t.Error("свои отправки не запоминаются: после перезагрузки след прочитанного пропадёт")
 	}
+}
+
+// Обрыв связи это исключение из fetch, а не ответ со статусом, и проверкой
+// текста исходника такой случай не берётся: он виден только исполнением.
+// Стенд поднимает статику в node с заглушкой DOM, роняет отправку и смотрит,
+// что осталось на экране (замечание ревью DK-281). Без node шаг пропускается:
+// узел стенда, а не рабочей части, и валить из-за него пакет не за что.
+func TestChatOfflineSendShowsFailed(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд обрыва связи пропущен")
+	}
+	cmd := exec.Command(node, filepath.Join("testdata", "outbox_offline.mjs"),
+		filepath.Join("static", "app.js"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("обрыв связи на отправке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }
 
 // Второе нажатие «Отправить» подряд не уходит вслепую: кнопка на время

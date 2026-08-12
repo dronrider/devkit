@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -30,6 +31,13 @@ const journalHeader = "## Журнал"
 // написанную в раздел руками, дашборд чужой не считает и ключом повтора не
 // берёт.
 const inboxFrom = ", из дашборда: "
+
+// inboxOwnRe узнаёт свою строку по началу: дата, время и подпись стоят там,
+// где их ставит POST. Искать подпись где попало нельзя, иначе рукописная
+// строка, где эта фраза попалась в тексте (хоть в разговоре про саму
+// переписку), сойдёт за свою и отобьёт следующую настоящую отправку как
+// повтор.
+var inboxOwnRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}` + inboxFrom)
 
 // msgBodyLimit ограничивает тело POST message: сообщение это одна строка
 // списка витку, а не вложение; тело сверх предела отбивается своими словами.
@@ -124,11 +132,11 @@ func inboxLines(doc string) []string {
 // и тот же текст после подхвата кладётся заново.
 func pendingSame(doc, text string) (string, bool) {
 	for _, ln := range inboxLines(doc) {
-		i := strings.Index(ln, inboxFrom)
-		if i < 0 {
+		head := inboxOwnRe.FindString(ln)
+		if head == "" {
 			continue
 		}
-		if ln[i+len(inboxFrom):] == text {
+		if ln[len(head):] == text {
 			return "- " + ln, true
 		}
 	}

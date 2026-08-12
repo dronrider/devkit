@@ -1553,7 +1553,16 @@ function makeOutbox(project, id, box) {
   // Сверка с «Входящими»: своя строка на месте значит «ждёт витка», пропавшая
   // значит подхваченная, и след её остаётся в ленте прочитанным.
   const load = async () => {
-    const r = await api(url);
+    let r;
+    try {
+      r = await api(url);
+    } catch (err) {
+      // Обрыв связи и на чтении говорит словами: пустая коробка под лентой
+      // неотличима от опустевших «Входящих».
+      failed = "«Входящие» не прочитались: " + (err && err.message ? err.message : "связи нет");
+      draw();
+      return;
+    }
     if (!r.ok) {
       failed = r.body.error || "«Входящие» не прочитались";
       draw();
@@ -1572,19 +1581,30 @@ function makeOutbox(project, id, box) {
     draw();
   };
 
+  const drop = (m, said) => {
+    m.state = "failed";
+    sayResult(said, true);
+    sentWrite(project, id, mine);
+    draw();
+    return false;
+  };
+
   const post = async (m) => {
     m.state = "sending";
     draw();
-    const r = await api(url, { method: "POST", body: { text: m.text } });
+    let r;
+    try {
+      r = await api(url, { method: "POST", body: { text: m.text } });
+    } catch (err) {
+      // Оборванная связь это не ответ со статусом: fetch бросает исключение, и
+      // без перехвата реплика застряла бы в «отправляется...» навсегда. Ровно
+      // этот случай видно с телефона в авиарежиме.
+      return drop(m, "сообщение не ушло: " + (err && err.message ? err.message : "связи нет"));
+    }
     let said = r.body.message || r.body.error || "";
     if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-    sayResult(said, !r.ok);
-    if (!r.ok) {
-      m.state = "failed";
-      sentWrite(project, id, mine);
-      draw();
-      return false;
-    }
+    if (!r.ok) return drop(m, said || "сообщение не ушло");
+    sayResult(said);
     m.line = r.body.line || "";
     m.state = "waiting";
     // Повтор сервер кладёт в ту же строку «Входящих», и второй пузырь на неё

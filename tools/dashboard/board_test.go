@@ -492,3 +492,25 @@ func TestLiveWorksSectFromBoard(t *testing.T) {
 		}
 	}
 }
+
+// Переписка есть только у строки, чей заголовок начинается с «Цель:»:
+// isGoalRow ищет строку по всем секциям доски и не путает обычную задачу с
+// целью, у чьей строки просто похожий регистр или пробел (DK-296).
+func TestIsGoalRow(t *testing.T) {
+	heads := []string{"function boardRow(", "function isGoalRow("}
+	board := `{sections: [
+		{key: "in-progress", rows: [{id: "DK-208", title: "Обычная задача"}]},
+		{key: "backlog", rows: [{id: "XR-100", title: "Цель: пробный цикл"}]}
+	]}`
+	cases := []struct{ expr, want string }{
+		{`isGoalRow(${board}, "XR-100")`, "true"},
+		{`isGoalRow(${board}, "DK-208")`, "false"},
+		{`isGoalRow(${board}, "DK-999")`, "false"},
+	}
+	for _, c := range cases {
+		expr := strings.ReplaceAll(c.expr, "${board}", board)
+		if got := jsEval(t, heads, expr); got != c.want {
+			t.Errorf("%s = %s, ожидал %s", c.expr, got, c.want)
+		}
+	}
+}

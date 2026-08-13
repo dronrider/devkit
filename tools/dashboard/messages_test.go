@@ -654,6 +654,39 @@ func TestStaticChatNamedAgentChat(t *testing.T) {
 	}
 }
 
+// Прямая ссылка на чат обычной задачи (DK-208) не собирает заголовок
+// goal-<id> и не рисует ленту переписки: экран отвечает словами и ведёт
+// назад на задачу, вместо того чтобы прятать отказ ручки в подвале
+// «Входящих» (DK-296).
+func TestStaticChatRefusesNonGoal(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function renderChat(")
+	if !strings.Contains(body, "if (!isGoalRow(board, id)) {") {
+		t.Error("экран чата не проверяет строку доски: обычная задача снова попадёт в ленту")
+	}
+	refusal := body[strings.Index(body, "if (!isGoalRow(board, id)) {"):]
+	ret := strings.Index(refusal, "\n  }")
+	if ret > 0 {
+		refusal = refusal[:ret]
+	}
+	if !strings.Contains(refusal, "не цель") {
+		t.Error("отказ по прямой ссылке не называет причину «не цель»")
+	}
+	if !strings.Contains(refusal, `location.hash = project + "/" + id;`) {
+		t.Error("отказ по прямой ссылке не ведёт обратно на задачу")
+	}
+	if !strings.Contains(refusal, "return;") {
+		t.Error("отказ не останавливает отрисовку: под ним всё равно соберётся лента чата")
+	}
+	if !strings.Contains(body, `head.append(el("h2", "", "goal-" + id));`) {
+		t.Error("заголовок чата цели ушёл: goal-<id> остаётся её именем")
+	}
+	if !strings.Contains(funcBody(t, app, "async function refresh("),
+		"renderChat(current.name, r.body.works, rt.id, board)") {
+		t.Error("экран чата рисуется без доски: гейту нечем проверить, цель ли это")
+	}
+}
+
 // Чат открывается хвостом: читается последняя порция реплик, лента сразу
 // стоит внизу, а история подаётся кнопкой «раньше» через ?before=.
 func TestStaticChatOpensAtTail(t *testing.T) {

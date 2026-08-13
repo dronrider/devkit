@@ -797,7 +797,7 @@ func TestStaticInteractiveWork(t *testing.T) {
 	if !strings.Contains(agent, `work.via === "session"`) || !strings.Contains(agent, "интерактивная сессия") {
 		t.Error("экран агента не подписывает интерактивную сессию")
 	}
-	if !strings.Contains(agent, `if (!work || work.kind === "goal") {`) {
+	if !strings.Contains(agent, "if (isGoalRow(board, id)) {") {
 		t.Error("кнопка чата открыта не одной целью: у обычной задачи она ведёт в тупик")
 	}
 }
@@ -858,5 +858,22 @@ func TestStaticAgentPaneWords(t *testing.T) {
 		if strings.Contains(app, gone) {
 			t.Errorf("в static/app.js осталось слово %q: экраны говорят с пользователем иначе", gone)
 		}
+	}
+}
+
+// Кнопка чата на экране агента стоит у цели, а не у отсутствия работы: у
+// обычной задачи DK-208 живой работы нет, но чат от этого целью её не
+// делает, и без гейта по строке доски кнопка вела бы в тупик (DK-296).
+func TestStaticAgentChatGoalGate(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(funcBody(t, app, "function renderAgent("), "if (isGoalRow(board, id)) {") {
+		t.Error("кнопка чата на экране агента гейтится не по строке доски")
+	}
+	if strings.Contains(funcBody(t, app, "function renderAgent("), `!work || work.kind === "goal"`) {
+		t.Error("кнопка чата снова появляется у любой задачи без живой работы")
+	}
+	if !strings.Contains(funcBody(t, app, "async function refresh("),
+		"renderAgent(current.name, r.body.works, rt.id, board)") {
+		t.Error("экран агента рисуется без доски: строку задачи ему взять неоткуда")
 	}
 }

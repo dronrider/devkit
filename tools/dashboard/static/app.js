@@ -1403,10 +1403,31 @@ function wireTmux(id, card, sub) {
   agentLive.push(() => clearInterval(t));
 }
 
+// Строка задачи по id: ищет во всех секциях доски разом, а не только в той,
+// что видна фильтром. Экран агента и чат зовут её ради заголовка «Цель:»,
+// когда живой работы нет и спросить не у кого (DK-296).
+function boardRow(board, id) {
+  for (const sec of (board && board.sections) || []) {
+    for (const row of sec.rows || []) {
+      if (row.id === id) return row;
+    }
+  }
+  return null;
+}
+
+// Переписка есть только у цели: строки без заголовка «Цель:», как и id, чьей
+// строки на доске не нашлось, отправкой получили бы отказ ручки. Гейт общий
+// для экрана агента и чата, чтобы кнопка и прямая ссылка не разошлись снова
+// (DK-296).
+function isGoalRow(board, id) {
+  const row = boardRow(board, id);
+  return !!(row && /^Цель:/.test(row.title));
+}
+
 // Экран живого статуса агента по макету DK-216 («03 Агент»): на ноутбуке
 // журнал и транскрипт рядом, tmux полосой внизу; на телефоне те же панели
 // табами.
-function renderAgent(project, works, id) {
+function renderAgent(project, works, id, board) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
 
@@ -1445,9 +1466,10 @@ function renderAgent(project, works, id) {
       "работы пусты, лента читается как есть."));
   }
   // Чат это переписка с циклом цели: у обычной задачи отправка получила бы
-  // «не цель», и кнопка вела бы в тупик. Вид работы приходит со строки доски,
-  // и интерактивная сессия обычной задачи сюда не попадает.
-  if (!work || work.kind === "goal") {
+  // «не цель», и кнопка вела бы в тупик. Гейт по заголовку строки доски, а не
+  // по отсутствию работы: задача без живой работы не становится целью от
+  // этого (DK-296), гейт тот же, что на строке доски и на экране «Агенты».
+  if (isGoalRow(board, id)) {
     const chat = el("button", "btn", "Чат с агентом");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
     head.append(chat);
@@ -1884,7 +1906,7 @@ async function sendMessage(project, id, ta, out) {
   await out.send(text);
 }
 
-function renderChat(project, works, id) {
+function renderChat(project, works, id, board) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
 
@@ -1893,6 +1915,20 @@ function renderChat(project, works, id) {
   back.addEventListener("click", () => { location.hash = project; });
   crumb.append(back);
   groups.append(crumb);
+
+  // Переписка идёт только с циклом цели: заход по прямой ссылке на чужой ID
+  // отвечает словами вместо ленты, а не собирает заголовок goal-<id> тому, кто
+  // не цель (DK-296).
+  if (!isGoalRow(board, id)) {
+    const card = el("div", "card");
+    card.append(el("div", "error",
+      id + " не цель: переписка идёт только с циклом цели."));
+    const goTask = el("button", "btn", "Открыть задачу");
+    goTask.addEventListener("click", () => { location.hash = project + "/" + id; });
+    card.append(goTask);
+    groups.append(card);
+    return;
+  }
 
   const work = (works || []).find((w) => w.id === id);
   const head = el("div", "ahead");
@@ -3022,12 +3058,12 @@ async function refresh() {
   }
   if (rt.id && rt.agent) {
     document.getElementById("psub").textContent = "живой статус " + rt.id;
-    renderAgent(current.name, r.body.works, rt.id);
+    renderAgent(current.name, r.body.works, rt.id, board);
     return;
   }
   if (rt.id && rt.chat) {
     document.getElementById("psub").textContent = "чат с агентом " + rt.id;
-    renderChat(current.name, r.body.works, rt.id);
+    renderChat(current.name, r.body.works, rt.id, board);
     return;
   }
   if (rt.id) {

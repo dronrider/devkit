@@ -316,49 +316,148 @@ func TestMessageRepeatKeepsOneLine(t *testing.T) {
 	}
 }
 
-// Два запроса с одним текстом разом кладут одну строку. Случай не выдуманный:
-// очередь исходящих дожимает сообщение своим циклом в каждой открытой вкладке
-// чата, и по событию online обе шлют его почти одновременно (замечание ревью
-// DK-287). Сверка с лежащим и запись это одно действие под замком, иначе оба
-// запроса читают файл цели до чужой записи и обе строки ложатся.
+// meeting делает встречу горутин на шве записи: пришедшие ждут друг друга и
+// расходятся, когда собрались все либо когда вышел срок. Без замка все
+// попытки доходят до записи разом, под замком дальше первой не проходит
+// никто, и разницу видно и по счётчику, и по самому файлу цели.
+func meeting(hands int) (probe func(root string), count func() int) {
+	var mu sync.Mutex
+	arrived := 0
+	met := make(chan struct{})
+	return func(string) {
+			mu.Lock()
+			arrived++
+			if arrived == hands {
+				close(met)
+			}
+			mu.Unlock()
+			select {
+			case <-met:
+			case <-time.After(300 * time.Millisecond):
+			}
+		}, func() int {
+			mu.Lock()
+			defer mu.Unlock()
+			return arrived
+		}
+}
+
+// Разные сообщения, отправленные разом, все доходят до «Входящих». Файл цели
+// переписывается целиком поверх прочитанного снимка, поэтому без замка запись
+// второго ложится поверх первой и сообщение пропадает молча (замечание ревью
+// DK-287): не дубль, а потеря.
+func TestMessageConcurrentSendKeepsEveryLine(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
+
+	const hands = 4
+	probe, _ := meeting(hands)
+	e.s.inboxProbe = probe
+
+	var wg sync.WaitGroup
+	for i := 0; i < hands; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			postMessage(t, c, e, "XR-100", fmt.Sprintf("сообщение %d", n)).Body.Close()
+		}(i)
+	}
+	wg.Wait()
+
+	doc := readFile(t, path)
+	for i := 0; i < hands; i++ {
+		if !strings.Contains(doc, fmt.Sprintf("из дашборда: сообщение %d", i)) {
+			t.Errorf("сообщение %d потерялось под чужой записью:\n%s", i, doc)
+		}
+	}
+}
+
+// Один текст, отправленный разом, ложится одной строкой. Случай не
+// выдуманный: очередь исходящих дожимает сообщение своим циклом в каждой
+// открытой вкладке чата, и по событию online обе шлют его почти одновременно
+// (DK-287). Одного числа строк тут мало: при одинаковом тексте и совпавшей до
+// минуты метке потерянная запись выглядит так же, как отбитый повтор, поэтому
+// стенд смотрит ещё и сколько запросов дошло до записи. Под замком дальше
+// сверки проходит один, остальные видят его строку и уходят повтором.
 func TestMessageConcurrentSendKeepsOneLine(t *testing.T) {
 	e, c, _ := messagesEnv(t, "")
 	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
 
-	// Встреча горутин между сверкой и записью: без замка сюда приходят все
-	// разом и расходятся сразу, под замком первая ждёт срока и уходит писать
-	// одна, а остальным писать уже нечего.
 	const hands = 4
-	var mu sync.Mutex
-	arrived := 0
-	met := make(chan struct{})
-	e.s.inboxProbe = func() {
-		mu.Lock()
-		arrived++
-		if arrived == hands {
-			close(met)
-		}
-		mu.Unlock()
-		select {
-		case <-met:
-		case <-time.After(300 * time.Millisecond):
-		}
-	}
+	probe, arrived := meeting(hands)
+	e.s.inboxProbe = probe
 
 	var wg sync.WaitGroup
 	for i := 0; i < hands; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp := postMessage(t, c, e, "XR-100", "проверь ленту")
-			resp.Body.Close()
+			postMessage(t, c, e, "XR-100", "проверь ленту").Body.Close()
 		}()
 	}
 	wg.Wait()
 
+	if got := arrived(); got != 1 {
+		t.Errorf("до записи дошло запросов: %d, ждал один: сверка с лежащим идёт не под замком", got)
+	}
 	doc := readFile(t, path)
 	if got := strings.Count(doc, "из дашборда: проверь ленту"); got != 1 {
 		t.Fatalf("во «Входящих» %d строк одного сообщения, ждал одну:\n%s", got, doc)
+	}
+}
+
+// Замок стоит на репозитории, а не на всём дашборде: под ним держится и
+// коммит с пушем, а недоступный origin одного проекта запирал бы отправку во
+// все доски разом (замечание ревью DK-287). Стенд держит запись одного
+// проекта и смотрит, что сообщение соседнего уходит, не дожидаясь его.
+func TestMessageInboxLockIsPerProject(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	// Второй проект того же дома: доску ему отдаёт та же фикстура taskctl, и
+	// цель XR-100 у него своя.
+	other := filepath.Join(filepath.Dir(e.proj), "vtoroy")
+	mkProject(t, other)
+	dir := filepath.Join(other, "docs", "tasks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "XR-100.md"), []byte(goalFileFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	e.s.inboxProbe = func(root string) {
+		if root != e.proj {
+			return
+		}
+		close(holding)
+		<-release
+	}
+
+	held := make(chan struct{})
+	go func() {
+		defer close(held)
+		postMessage(t, c, e, "XR-100", "первый проект").Body.Close()
+	}()
+	<-holding
+
+	free := make(chan struct{})
+	go func() {
+		defer close(free)
+		doReq(t, c, "POST", e.srv.URL+"/api/projects/vtoroy/goals/XR-100/message",
+			`{"text": "второй проект"}`).Body.Close()
+	}()
+	select {
+	case <-free:
+	case <-time.After(3 * time.Second):
+		t.Error("замок одного проекта держит отправку в остальные: он общий на весь дашборд")
+	}
+	close(release)
+	<-held
+
+	doc := readFile(t, filepath.Join(other, "docs", "tasks", "XR-100.md"))
+	if !strings.Contains(doc, "из дашборда: второй проект") {
+		t.Errorf("сообщение соседнего проекта не легло:\n%s", doc)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/frame"
 )
 
 const usageText = `trackctl: разговор с трекером задач корп-контура (docs/lld/DK-074-corp-contour.md)
@@ -37,6 +39,8 @@ const usageText = `trackctl: разговор с трекером задач к�
 
 Общий флаг -C <dir>: откуда искать корень рабочих файлов devkit, ставится и
 перед командой, и после неё.
+Флаги подкоманд стоят где угодно относительно позиционных: и до ключа, и после,
+и между ними; лишний позиционный не выбрасывается молча, а отбивается ошибкой.
 `
 
 // globalDir вырезает -C до выбора команды, как в соседях: справка обещает
@@ -77,6 +81,17 @@ func fail(err error) {
 	os.Exit(1)
 }
 
+// needArgs проверяет число позиционных через общий frame.NeedArgs, а выход
+// через os.Exit держит локальный fail. Разбор позиционных сам по себе
+// (frame.ParseArgs) снимает позиционные из хвоста после fs.Parse, так что флаг
+// стоит где угодно, а лишний позиционный отбивается здесь, а не молчит
+// (DK-236).
+func needArgs(pos []string, min, max int, usage string) {
+	if err := frame.NeedArgs(pos, min, max, usage); err != nil {
+		fail(err)
+	}
+}
+
 func root(dir string) string {
 	r, err := findRoot(dir)
 	if err != nil {
@@ -111,42 +126,36 @@ func main() {
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[1:])
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "status")
 		logStart = *dir
 		msg, err = cmdStatus(root(*dir))
 	case "issue":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: issue <KEY>"))
-		}
 		fs := flag.NewFlagSet("issue", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "issue <KEY>")
 		logStart = *dir
-		msg, err = cmdIssue(root(*dir), args[1])
+		msg, err = cmdIssue(root(*dir), pos[0])
 	case "take":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: take <KEY>"))
-		}
 		fs := flag.NewFlagSet("take", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "take <KEY>")
 		logStart = *dir
-		msg, err = cmdTake(root(*dir), args[1])
+		msg, err = cmdTake(root(*dir), pos[0])
 	case "submit":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: submit <KEY> [--log-only]"))
-		}
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		logOnly := fs.Bool("log-only", false, "написать ворклоги и не трогать статус")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "submit <KEY> [--log-only]")
 		logStart = *dir
-		msg, err = cmdSubmit(root(*dir), args[1], *logOnly)
+		msg, err = cmdSubmit(root(*dir), pos[0], *logOnly)
 	case "sync":
 		fs := flag.NewFlagSet("sync", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		ifStale := fs.Bool("if-stale", false, "гонять, только если отметка прогона протухла")
-		fs.Parse(args[1:])
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "sync [--if-stale]")
 		logStart = *dir
 		msg, err = cmdSync(root(*dir), *ifStale)
 	case "help":

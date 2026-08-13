@@ -39,7 +39,6 @@ func TestParseArgsMixesFlagsAndPositionals(t *testing.T) {
 		dir := fs.String("C", ".", "стартовая директория")
 		msg := fs.String("m", "", "сообщение коммита")
 		fs.String("role", "", "роль")
-		_ = fs.Lookup("role")
 		got := ParseArgs(fs, c.in)
 		if strings.Join(got, "|") != strings.Join(c.pos, "|") {
 			t.Errorf("%s: позиционные %v, ожидал %v", c.name, got, c.pos)
@@ -66,7 +65,7 @@ func TestNeedArgs(t *testing.T) {
 	}
 	// max < 0 снимает верхний порог: любое число позиционных проходит.
 	if err := NeedArgs([]string{"a", "b", "c"}, 1, -1, usage); err != nil {
-		t.Errorf("max=-0 сняло порог, но отбито: %v", err)
+		t.Errorf("max=-1 сняло порог, но отбито: %v", err)
 	}
 	// min=0, max=0: ни одного позиционного, ловит лишний у подкоманд без
 	// позиционных (status, budget, sync).

@@ -210,3 +210,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-092 | shipctl: ворота готовности правки как предусловие merge | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-092.md](tasks/archive/2026/DK-092.md), `561da82f`, `a1e4d754`, `a4781997`, `db7251a8`, `96a90716`, `6169eb97` |
 | DK-112 | Цель: дашборд управления агентской разработкой с любого устройства | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-112.md](tasks/archive/2026/DK-112.md) |
 | DK-298 | taskctl: вид приёмки суффиксом строки доски, флаги add и set, ворота move check | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-298.md](tasks/archive/2026/DK-298.md) |
+| DK-306 | LLD: очередь слияния при занятом выкате | LLD | P2 | 2026-08-13 | [tasks/archive/2026/DK-306.md](tasks/archive/2026/DK-306.md) |

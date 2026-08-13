@@ -369,29 +369,24 @@ func TestTaskScreenOpensAgentTalk(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// cssRule достаёт объявления правила по точному селектору: селектор берётся
-// целиком, поэтому «.seg» не путается с «.tseg» и с «.seg div».
-func cssRule(t *testing.T, css, selector string) string {
-	t.Helper()
-	for at := 0; ; {
-		cut := strings.Index(css[at:], selector+"{")
-		if cut < 0 {
-			return ""
-		}
-		cut += at
-		at = cut + len(selector)
-		// Селектор кончается там же, где начинается: перед ним либо перенос
-		// строки, либо запятая перечисления, а не хвост чужого имени класса.
-		if cut > 0 && !strings.ContainsRune("\n,} ", rune(css[cut-1])) {
+// cssDisplay считает, каким показом кончает элемент класса cls: правила той же
+// специфичности перебиваются по порядку, и действует последнее, а не первое.
+// Правила приходят разобранными (cssRules) и отобранными по подлежащему
+// (cssSubject): у «.seg div» подлежащее это div, и к самому переключателю
+// правило не относится.
+func cssDisplay(rules [][2]string, cls string) string {
+	out := ""
+	for _, rule := range rules {
+		if !cssSubject(rule[0], cls) {
 			continue
 		}
-		body := css[cut+len(selector)+1:]
-		end := strings.Index(body, "}")
-		if end < 0 {
-			t.Fatalf("правило %s не закрыто", selector)
+		for _, decl := range strings.Split(rule[1], ";") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(decl), "display:"); ok {
+				out = strings.TrimSpace(v)
+			}
 		}
-		return body[:end]
 	}
+	return out
 }
 
 // Переключатель разговоров задачи виден на обеих ширинах, а переключатель
@@ -400,8 +395,10 @@ func cssRule(t *testing.T, css, selector string) string {
 // display:none по умолчанию, а display:flex он получает только внутри
 // медиазапроса телефона (замечание ревью DK-280). Заглушка DOM такое не
 // ловит, каскада она не считает, поэтому предмет проверки тут сами правила:
-// чем переключатель разговоров собран в статике и что об этом классе сказано
-// в стилях по умолчанию и на телефоне.
+// чем переключатель разговоров собран в статике и каким показом класс кончает
+// по умолчанию и на телефоне. Разбор идёт тем же cssRules, каким по DK-284
+// ловится спор hidden с display: считать каскад дважды незачем, и своя
+// половина разбора отдавала первое правило вместо последнего.
 func TestStaticTranscriptSegVisible(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	if !strings.Contains(funcBody(t, app, "async function wireTranscript("), `el("div", "tseg")`) {
@@ -413,23 +410,27 @@ func TestStaticTranscriptSegVisible(t *testing.T) {
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	narrow := funcBody(t, css, "@media (max-width:900px){")
-	base := strings.Replace(css, narrow, "", 1)
+	wide := cssRules(strings.Replace(css, narrow, "", 1))
+	// На телефоне медиазапрос ложится поверх правил по умолчанию, поэтому
+	// считается он вместе с ними, а не отдельно.
+	phone := append(append([][2]string{}, wide...), cssRules(narrow)...)
 
-	// Разговоры переключают на обеих ширинах: правило по умолчанию показывает
-	// их, и телефонный медиазапрос ничего не отнимает.
-	if got := cssRule(t, base, ".tseg"); !strings.Contains(got, "display:flex") {
-		t.Errorf("переключатель разговоров не показан по умолчанию: правило .tseg это %q", got)
+	// Разговоры переключают на обеих ширинах: по умолчанию показ стоит, и
+	// телефонный медиазапрос его не отнимает.
+	if got := cssDisplay(wide, "tseg"); got != "flex" {
+		t.Errorf("на ноутбуке переключатель разговоров кончает показом %q: соседний разговор "+
+			"задачи открыть нечем, хотя в разметке он есть", got)
 	}
-	if got := cssRule(t, narrow, ".tseg"); strings.Contains(got, "display:none") {
-		t.Errorf("на телефоне переключатель разговоров спрятан: правило .tseg это %q", got)
+	if got := cssDisplay(phone, "tseg"); got == "none" {
+		t.Error("на телефоне переключатель разговоров спрятан")
 	}
 	// Панели переключают только на телефоне, и это остаётся как было: на
 	// ноутбуке они стоят рядом, и вкладки там лишние.
-	if got := cssRule(t, base, ".seg"); !strings.Contains(got, "display:none") {
-		t.Errorf("вкладки панелей видны по умолчанию: правило .seg это %q", got)
+	if got := cssDisplay(wide, "seg"); got != "none" {
+		t.Errorf("на ноутбуке вкладки панелей кончают показом %q: панели там стоят рядом", got)
 	}
-	if got := cssRule(t, narrow, ".seg"); !strings.Contains(got, "display:flex") {
-		t.Errorf("на телефоне вкладки панелей спрятаны: правило .seg это %q", got)
+	if got := cssDisplay(phone, "seg"); got != "flex" {
+		t.Errorf("на телефоне вкладки панелей кончают показом %q", got)
 	}
 }
 

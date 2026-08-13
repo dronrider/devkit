@@ -211,3 +211,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-112 | Цель: дашборд управления агентской разработкой с любого устройства | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-112.md](tasks/archive/2026/DK-112.md) |
 | DK-298 | taskctl: вид приёмки суффиксом строки доски, флаги add и set, ворота move check | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-298.md](tasks/archive/2026/DK-298.md) |
 | DK-306 | LLD: очередь слияния при занятом выкате | LLD | P2 | 2026-08-13 | [tasks/archive/2026/DK-306.md](tasks/archive/2026/DK-306.md) |
+| DK-302 | shipctl и taskctl batch читают вид: один совет после выката и отбор пачки полем | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-302.md](tasks/archive/2026/DK-302.md), `9466f830`, `7e61cfd1`, `d9103266`, `e718b953` |
+| DK-299 | Критерии вида приёмки в ACCEPTANCE.md и вопрос про вид в груминге, нарезке цели, работе и ревью | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-299.md](tasks/archive/2026/DK-299.md), `6184d850`, `fc680ff2`, `002e3530`, `6d8e3a9e` |

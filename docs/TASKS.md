@@ -66,6 +66,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-233 | Цель: серия LLD DK-173 про прозу агентов закрыта целиком | task | P2 | 35 (25+7+1+0+2) | XL | [tasks/DK-233.md](tasks/DK-233.md) |
 | DK-285 | dashboard: доска на телефоне, заголовок строки и полоса действий | task | P2 | 35 (25+7+2+0+1) | M | [tasks/DK-285.md](tasks/DK-285.md) |
 | DK-302 | shipctl и taskctl batch читают вид: один совет после выката и отбор пачки полем [после DK-298] | task | P2 | 35 (25+6+1+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
+| DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 35 (25+4+1+5+0) | - | [tasks/DK-315.md](tasks/DK-315.md) |
 | DK-303 | Открытые строки доски получают вид приёмки по критериям [после DK-299] | task | P2 | 34 (25+6+0+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
 | DK-234 | Цель в Backlog при идущих витках это находка | task | P2 | 33 (25+4+2+0+2) | S | [tasks/DK-234.md](tasks/DK-234.md) |
 | DK-122 | Отказ «конвейер занят» не говорит, кто держит замок | task | P2 | 32 (25+4+1+0+2) | S | [tasks/DK-122.md](tasks/DK-122.md) |

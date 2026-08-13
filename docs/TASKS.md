@@ -51,11 +51,15 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-161 | Цель: цикл цели ловит дефекты до выката, а человека спрашивает до старта | task | P2 | 38 (25+6+3+0+4) | XL | [tasks/DK-161.md](tasks/DK-161.md) |
 | DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P2 | 38 (25+7+3+0+3) | M | [tasks/DK-172.md](tasks/DK-172.md) |
 | DK-298 | taskctl: вид приёмки суффиксом строки доски, флаги add и set, ворота move check | task | P2 | 38 (25+7+1+0+5) | M | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
+| DK-310 | shipctl: merge при занятой очереди сливается в поезд вместо отказа | task | P2 | 38 (25+8+1+0+4) | M | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
+| DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
+| DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |
 | DK-145 | Прогресс цели одной командой: закрытый вес против сожжённого бюджета | task | P2 | 37 (25+7+2+0+3) | M | [tasks/DK-145.md](tasks/DK-145.md) |
 | DK-168 | Цель: доска сама называет, что брать сейчас | task | P2 | 37 (25+6+2+0+4) | XL | [tasks/DK-168.md](tasks/DK-168.md) |
 | DK-299 | Критерии вида приёмки в ACCEPTANCE.md и вопрос про вид в груминге, нарезке цели, работе и ревью [после DK-298] | task | P2 | 37 (25+7+1+0+4) | M | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
 | DK-300 | Рубеж против фиктивного агентского сценария: вопрос ревью и ворота close [после DK-299] | task | P2 | 37 (25+7+2+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
+| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-120 | Строка вердикта ревью от pick --record остаётся незакоммиченной и валит merge | task | P2 | 36 (25+5+2+0+4) | S | [tasks/DK-120.md](tasks/DK-120.md) |
 | DK-301 | Дашборд заводит задачу с видом приёмки, флаг add становится обязательным [после DK-299] | task | P2 | 36 (25+6+2+0+3) | M | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |

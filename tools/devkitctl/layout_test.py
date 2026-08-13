@@ -296,10 +296,10 @@ class ReadmeGuardTest(unittest.TestCase):
         self.assertEqual(layout.readme_gaps(self.text), [],
                          "белый список проверки разошёлся с разделом «Раскладка» README")
 
-    def test_all_fourteen_entries_are_named(self):
+    def test_all_fifteen_entries_are_named(self):
         entries = layout.readme_entries(self.text)
-        self.assertEqual(len(layout.TOP_LEVEL), 14,
-                         "записей белого списка %d, а правило называет четырнадцать" % len(layout.TOP_LEVEL))
+        self.assertEqual(len(layout.TOP_LEVEL), 15,
+                         "записей белого списка %d, а правило называет пятнадцать" % len(layout.TOP_LEVEL))
         for e in layout.TOP_LEVEL:
             self.assertTrue(any(name == e or name.endswith(".md") for name in entries),
                             "README не называет запись «%s»" % e)

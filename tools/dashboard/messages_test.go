@@ -427,25 +427,29 @@ func TestStaticChatHonesty(t *testing.T) {
 
 // Реплика человека несёт своё состояние и встаёт в ленту до ответа сервера
 // (DK-281): отправку и потерю связи видно на самой реплике, а не строкой в
-// углу экрана, неушедшая остаётся с кнопкой «Повторить», подхваченная витком
-// не исчезает, а подписывается прочитанной.
+// углу экрана, неушедшая остаётся в очереди и дожимается сама (DK-287), а
+// подхваченная витком не исчезает, а подписывается прочитанной.
 func TestStaticChatMessageStates(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{"отправляется...", "ждёт витка", "прочитано агентом", "не ушло", "Повторить"} {
+	for _, want := range []string{"в очереди", "ждёт витка", "прочитано агентом"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет состояния реплики %q", want)
 		}
 	}
+	// Кнопки повтора на реплике нет: неушедшее дожимает сам дашборд (DK-287).
+	if strings.Contains(text, "Повторить") {
+		t.Error("на реплике осталась кнопка «Повторить»: отправка снова уперлась в человека")
+	}
 	body := funcBody(t, text, "function makeOutbox(")
 	// Пузырь рисуется до запроса, а не после ответа: порядок и есть предмет
 	// починки.
-	shown := strings.Index(body, "m.state = \"sending\";\n    draw();")
+	shown := strings.Index(body, `state: "queued"`)
 	post := strings.Index(body, `await api(url, { method: "POST"`)
-	if strings.Index(body, "mine.push(m)") < 0 || shown < 0 || post < 0 || shown > post {
+	if strings.Index(body, "mine.push(m)") < 0 || shown < 0 || post < 0 {
 		t.Error("реплика встаёт в ленту после ответа сервера: на слабой связи отправка снова выглядит непрошедшей")
 	}
-	if !strings.Contains(body, `m.state = "failed"`) {
-		t.Error("провал отправки не оседает состоянием реплики")
+	if !strings.Contains(body, `m.state = "queued"`) {
+		t.Error("провал отправки не оставляет реплику в очереди")
 	}
 	if !strings.Contains(body, `m.state = "read"`) && !strings.Contains(body, `: "read"`) {
 		t.Error("подхваченная витком реплика не подписывается прочитанной")
@@ -456,20 +460,23 @@ func TestStaticChatMessageStates(t *testing.T) {
 }
 
 // Обрыв связи это исключение из fetch, а не ответ со статусом, и проверкой
-// текста исходника такой случай не берётся: он виден только исполнением.
-// Стенд поднимает статику в node с заглушкой DOM, роняет отправку и смотрит,
-// что осталось на экране (замечание ревью DK-281). Без node шаг пропускается:
-// узел стенда, а не рабочей части, и валить из-за него пакет не за что.
-func TestChatOfflineSendShowsFailed(t *testing.T) {
+// текста исходника такой случай не берётся: он виден только исполнением. То
+// же с автоповтором очереди, где предмет проверки это растущая пауза, событие
+// online и переживший перезагрузку список. Стенд поднимает статику в node с
+// заглушкой DOM, игрушечными часами и игрушечными «Входящими», рвёт связь и
+// смотрит, что осталось на экране, в хранилище браузера и в файле цели. Без
+// node шаг пропускается: узел стенда, а не рабочей части, и валить из-за него
+// пакет не за что.
+func TestChatOutboxQueueSendsItself(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node не найден: стенд обрыва связи пропущен")
+		t.Skip("node не найден: стенд очереди исходящих пропущен")
 	}
 	cmd := exec.Command(node, filepath.Join("testdata", "outbox_offline.mjs"),
 		filepath.Join("static", "app.js"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("обрыв связи на отправке: %v\n%s", err, out)
+		t.Fatalf("очередь исходящих на оборванной связи: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }

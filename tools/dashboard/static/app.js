@@ -1572,14 +1572,21 @@ async function wireChatFeed(project, feed, id) {
 // Состояния своей реплики. Строка встаёт в ленту сразу, ещё до ответа
 // сервера, и сама говорит, что с ней: на слабой связи молчание с надписью в
 // углу экрана неотличимо от непрошедшей отправки, и человек жмёт «Отправить»
-// второй раз. Неушедшая реплика остаётся на месте с кнопкой «Повторить»,
-// а не пропадает вместе с текстом.
+// второй раз. Нажимать на самой реплике нечего: неушедшее дожимает дашборд,
+// как это делают телеграм с сигналом, а человеку остаётся смотреть.
 const SENT_META = {
-  sending: "отправляется...",
+  queued: "в очереди",
   waiting: "ждёт витка",
   read: "прочитано агентом",
-  failed: "не ушло",
 };
+
+// Шаг повтора: первая задержка короткая, дальше удвоение до потолка, чтобы
+// сутки без связи не превратились в тысячи запросов. Через OUTBOX_STUCK
+// подпись реплики перестаёт молчать о причине и начинает считать время:
+// молчаливое «в очереди» на пятой минуте неотличимо от отправленного.
+const OUTBOX_FIRST = 2000;
+const OUTBOX_MAX = 60000;
+const OUTBOX_STUCK = 60000;
 
 // Свои отправки помнит браузер (приём DK-246): отметок прочитанного у сервера
 // нет, «Входящие» знают только лежащее, а подхваченная витком строка из них
@@ -1593,7 +1600,16 @@ const SENT_MAX = 50;
 function sentRead(project, id) {
   try {
     const raw = JSON.parse(localStorage.getItem(SENT_KEY + project + "/" + id) || "[]");
-    return Array.isArray(raw) ? raw.filter((m) => m && m.text && SENT_META[m.state]) : [];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((m) => m && m.text).map((m) => ({
+      text: m.text,
+      // Записи прошлой версии дашборда («отправляется...» и «не ушло»)
+      // становятся очередью: их как раз и надо дожать, а не выбросить.
+      state: SENT_META[m.state] ? m.state : "queued",
+      at: m.at || "",
+      line: m.line || "",
+      since: m.since || Date.now(),
+    }));
   } catch (err) {
     // Приватное окно запрещает хранилище, битую запись читать тоже нечем:
     // чат тогда живёт без памяти о прошлых отправках, но работает.
@@ -1601,11 +1617,14 @@ function sentRead(project, id) {
   }
 }
 
+// Здесь же и живёт очередь исходящих: неушедшая реплика лежит в том же
+// списке состоянием «в очереди», поэтому перезагрузка страницы её не теряет,
+// а следующее открытие чата подхватывает и дожимает.
 function sentWrite(project, id, list) {
   try {
-    // Незакончившаяся отправка не переживает перезагрузку: чем она кончилась,
-    // после закрытия вкладки неизвестно, и врать про это нельзя.
-    const keep = list.filter((m) => m.state !== "sending").slice(-SENT_MAX);
+    const keep = list.slice(-SENT_MAX).map((m) => ({
+      text: m.text, state: m.state, at: m.at, line: m.line || "", since: m.since || 0,
+    }));
     localStorage.setItem(SENT_KEY + project + "/" + id, JSON.stringify(keep));
   } catch (err) {
     return;
@@ -1622,15 +1641,28 @@ function makeOutbox(project, id, box) {
   let others = [];
   let empty = "во «Входящих» пусто: непрочитанных сообщений нет";
   let failed = "";
+  // Заход очереди идёт по одному: два параллельных дожима слали бы один и тот
+  // же текст дважды. told помнит, о какой реплике человеку уже сказали, чтобы
+  // повторы не молотили флешем в углу.
+  let timer = null;
+  let wait = OUTBOX_FIRST;
+  let pumping = false;
+  const told = new Set();
+
+  // Долгая неудача не выглядит отправленной: после OUTBOX_STUCK подпись
+  // называет причину и считает минуты, а до того «в очереди» одинаково
+  // подходит и идущему запросу, и первым неудачным попыткам.
+  const label = (m) => {
+    if (m.state !== "queued") return SENT_META[m.state];
+    const held = m.since ? Date.now() - m.since : 0;
+    if (held < OUTBOX_STUCK) return SENT_META.queued;
+    return "в очереди " + Math.max(1, Math.round(held / 60000)) + " мин, связи нет";
+  };
 
   const bubble = (m) => {
-    const wrap = chatBubble("вы", m.text, (m.at ? m.at + ", " : "") + SENT_META[m.state]);
+    const wrap = chatBubble("вы", m.text, (m.at ? m.at + ", " : "") + label(m));
     wrap.classList.add("m-" + m.state);
-    if (m.state === "failed") {
-      const again = el("button", "btn btn-sm", "Повторить");
-      again.addEventListener("click", () => { post(m).catch(console.error); });
-      wrap.append(again);
-    }
+    if (m.state === "queued" && label(m) !== SENT_META.queued) wrap.classList.add("m-stuck");
     return wrap;
   };
 
@@ -1666,36 +1698,39 @@ function makeOutbox(project, id, box) {
     const known = new Set(mine.map((m) => m.line).filter(Boolean));
     others = pending.filter((line) => !known.has("- " + line));
     for (const m of mine) {
-      if (m.state === "sending" || m.state === "failed") continue;
+      if (m.state === "queued") continue;
       m.state = pending.includes(String(m.line).replace(/^- /, "")) ? "waiting" : "read";
     }
     sentWrite(project, id, mine);
     draw();
   };
 
-  const drop = (m, said) => {
-    m.state = "failed";
-    sayResult(said, true);
+  // Неудача оставляет реплику в очереди: дожимать её будет pump, а человеку
+  // говорится один раз, дальше за состояние отвечает сама реплика.
+  const hold = (m, said) => {
+    m.state = "queued";
+    if (!told.has(m)) {
+      told.add(m);
+      sayResult(said, true);
+    }
     sentWrite(project, id, mine);
     draw();
     return false;
   };
 
   const post = async (m) => {
-    m.state = "sending";
-    draw();
     let r;
     try {
       r = await api(url, { method: "POST", body: { text: m.text } });
     } catch (err) {
       // Оборванная связь это не ответ со статусом: fetch бросает исключение, и
-      // без перехвата реплика застряла бы в «отправляется...» навсегда. Ровно
-      // этот случай видно с телефона в авиарежиме.
-      return drop(m, "сообщение не ушло: " + (err && err.message ? err.message : "связи нет"));
+      // без перехвата реплика вылетела бы из очереди с необработанной ошибкой.
+      // Ровно этот случай видно с телефона в авиарежиме.
+      return hold(m, "сообщение в очереди: " + (err && err.message ? err.message : "связи нет"));
     }
     let said = r.body.message || r.body.error || "";
     if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-    if (!r.ok) return drop(m, said || "сообщение не ушло");
+    if (!r.ok) return hold(m, said || "сообщение в очереди, отправлю снова");
     sayResult(said);
     m.line = r.body.line || "";
     m.state = "waiting";
@@ -1709,15 +1744,75 @@ function makeOutbox(project, id, box) {
     return true;
   };
 
-  const send = async (text) => {
-    const m = { text, state: "sending", at: localTime(new Date().toISOString()) };
-    mine.push(m);
-    if (mine.length > SENT_MAX) mine.splice(0, mine.length - SENT_MAX);
-    draw();
-    return post(m);
+  // Задержка перед следующим заходом очереди: растёт от неудачи к неудаче,
+  // сбрасывается удачной отправкой и возвращением сети.
+  const plan = () => {
+    if (timer) return;
+    timer = setTimeout(() => { timer = null; pump().catch(console.error); }, wait);
+    wait = Math.min(wait * 2, OUTBOX_MAX);
   };
 
-  return { load, send, draw };
+  // Очередь дожимается сама: пока в списке есть «в очереди», дашборд пробует
+  // отправку снова, по растущей задержке, по событию online и при следующем
+  // открытии чата. Дублей от этого не будет, и держится это свойство на
+  // сервере: ручка message узнаёт свою неподхваченную строку во «Входящих» и
+  // второй раз её не кладёт (pendingSame в messages.go, DK-281). Сломав там
+  // узнавание, здесь получат по строке на каждый повтор.
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    try {
+      for (;;) {
+        const m = mine.find((o) => o.state === "queued");
+        if (!m) return;
+        if (!await post(m)) {
+          plan();
+          return;
+        }
+        wait = OUTBOX_FIRST;
+      }
+    } finally {
+      pumping = false;
+    }
+  };
+
+  // Вернувшаяся сеть это повод не ждать отсчёта: телефон вышел из метро, и
+  // сообщение уходит сразу.
+  const wake = () => {
+    wait = OUTBOX_FIRST;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    pump().catch(console.error);
+  };
+  window.addEventListener("online", wake);
+
+  const stop = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    window.removeEventListener("online", wake);
+  };
+
+  const send = async (text) => {
+    const m = {
+      text,
+      state: "queued",
+      at: localTime(new Date().toISOString()),
+      line: "",
+      since: Date.now(),
+    };
+    mine.push(m);
+    if (mine.length > SENT_MAX) mine.splice(0, mine.length - SENT_MAX);
+    // Запись до первой попытки: закрытая на полуслове вкладка не должна
+    // унести текст с собой.
+    sentWrite(project, id, mine);
+    draw();
+    await pump();
+    return m.state !== "queued";
+  };
+
+  return { load, send, draw, pump, stop };
 }
 
 async function sendMessage(project, id, ta, out) {
@@ -1782,6 +1877,7 @@ function renderChat(project, works, id) {
     row.append(stop);
   }
   const out = makeOutbox(project, id, pendbox);
+  agentLive.push(out.stop);
   const send = el("button", "btn btn-acc", "Отправить");
   // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи
   // это ровно тот случай, из которого росли дубли во «Входящих».
@@ -1800,6 +1896,9 @@ function renderChat(project, works, id) {
   wireChatFeed(project, feed, id).catch(console.error);
   out.draw();
   out.load().catch(console.error);
+  // Оставшееся с прошлого раза в очереди уходит при открытии чата: закрытая
+  // вкладка отправку не отменяет.
+  out.pump().catch(console.error);
 }
 
 // Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком,

@@ -54,7 +54,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |
 | DK-145 | Прогресс цели одной командой: закрытый вес против сожжённого бюджета | task | P2 | 37 (25+7+2+0+3) | M | [tasks/DK-145.md](tasks/DK-145.md) |
 | DK-168 | Цель: доска сама называет, что брать сейчас | task | P2 | 37 (25+6+2+0+4) | XL | [tasks/DK-168.md](tasks/DK-168.md) |
-| DK-299 | Критерии вида приёмки в ACCEPTANCE.md и вопрос про вид в груминге, нарезке цели, работе и ревью | task | P2 | 37 (25+7+1+0+4) | M | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
+| DK-299 | Критерии вида приёмки в ACCEPTANCE.md и вопрос про вид в груминге, нарезке цели, работе и ревью | task | P2 | 37 (25+7+1+0+4) | M | [tasks/DK-299.md](tasks/DK-299.md) |
 | DK-300 | Рубеж против фиктивного агентского сценария: вопрос ревью и ворота close [после DK-299] | task | P2 | 37 (25+7+2+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
@@ -64,7 +64,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-211 | Тело скилла goal-loop впритык к порогу weigh: взять запас под следующие правки | task | P2 | 35 (25+3+3+0+4) | M | [tasks/DK-211.md](tasks/DK-211.md) |
 | DK-233 | Цель: серия LLD DK-173 про прозу агентов закрыта целиком | task | P2 | 35 (25+7+1+0+2) | XL | [tasks/DK-233.md](tasks/DK-233.md) |
 | DK-285 | dashboard: доска на телефоне, заголовок строки и полоса действий | task | P2 | 35 (25+7+2+0+1) | M | [tasks/DK-285.md](tasks/DK-285.md) |
-| DK-302 | shipctl и taskctl batch читают вид: один совет после выката и отбор пачки полем | task | P2 | 35 (25+6+1+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
+| DK-302 | shipctl и taskctl batch читают вид: один совет после выката и отбор пачки полем | task | P2 | 35 (25+6+1+0+3) | S | [tasks/DK-302.md](tasks/DK-302.md) |
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 35 (25+4+1+5+0) | - | [tasks/DK-315.md](tasks/DK-315.md) |
 | DK-303 | Открытые строки доски получают вид приёмки по критериям [после DK-299] | task | P2 | 34 (25+6+0+0+3) | S | [lld/DK-292-check-kind.md](lld/DK-292-check-kind.md) |
 | DK-234 | Цель в Backlog при идущих витках это находка | task | P2 | 33 (25+4+2+0+2) | S | [tasks/DK-234.md](tasks/DK-234.md) |

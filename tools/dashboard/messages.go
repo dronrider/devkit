@@ -147,7 +147,7 @@ func pendingSame(doc, text string) (string, bool) {
 // Отказы называются словами и пишутся здесь же: строка не на доске, строка
 // не цель (заголовок не от «Цель:»), файла цели нет.
 func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Project, id, path string, ok bool) {
-	found = s.findProject(w, r)
+	found = s.findProject(w, r, "сообщения цели")
 	if found == nil {
 		return nil, "", "", false
 	}

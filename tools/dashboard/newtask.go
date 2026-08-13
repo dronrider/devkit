@@ -36,7 +36,7 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "черновик")
 	if found == nil {
 		return
 	}
@@ -97,7 +97,7 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "заведение задачи")
 	if found == nil {
 		return
 	}

@@ -194,7 +194,7 @@ type goalCounts struct {
 }
 
 func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "задачи цели")
 	if found == nil {
 		return
 	}

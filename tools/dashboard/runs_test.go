@@ -624,8 +624,8 @@ func TestRunStartProjectNotFoundLogged(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
 	}
-	if !lc.contains(t, "проект unknown не найден 404") {
-		t.Errorf("запуск неизвестного проекта не залогировался: %v", lc.lines)
+	if !lc.contains(t, "запуск отклонён: проект unknown не найден 404") {
+		t.Errorf("запуск неизвестного проекта не залогировался с именем ручки: %v", lc.lines)
 	}
 }
 
@@ -654,8 +654,8 @@ func TestRunStopProjectNotFoundLogged(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
 	}
-	if !lc.contains(t, "проект unknown не найден 404") {
-		t.Errorf("стоп с неизвестным проектом не залогировался: %v", lc.lines)
+	if !lc.contains(t, "стоп отклонён: проект unknown не найден 404") {
+		t.Errorf("стоп с неизвестным проектом не залогировался с именем ручки: %v", lc.lines)
 	}
 }
 

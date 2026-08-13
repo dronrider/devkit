@@ -166,10 +166,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "запуск")
 	if found == nil {
-		projName := r.PathValue("p")
-		s.logf("запуск отклонён: проект %s не найден 404", projName)
 		return
 	}
 	var body struct {
@@ -267,10 +265,8 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "стоп")
 	if found == nil {
-		projName := r.PathValue("p")
-		s.logf("стоп отклонён: проект %s не найден 404", projName)
 		return
 	}
 	id := r.PathValue("id")

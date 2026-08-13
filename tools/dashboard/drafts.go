@@ -28,7 +28,7 @@ func groomPrompt(id string) string {
 func draftSession(id string) string { return "task-" + id }
 
 func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "накопитель черновиков")
 	if found == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func draftPathOf(projectPath, id string) (abs, rel string) {
 }
 
 func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "черновик")
 	if found == nil {
 		return
 	}
@@ -92,10 +92,8 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "груминг")
 	if found == nil {
-		projName := r.PathValue("p")
-		s.logf("груминг отклонён: проект %s не найден 404", projName)
 		return
 	}
 	id := r.PathValue("id")

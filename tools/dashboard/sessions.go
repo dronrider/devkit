@@ -456,7 +456,7 @@ const taskScanBudget = 3 * time.Second
 var taskParamRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{1,6}$`)
 
 func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "сессии")
 	if found == nil {
 		return
 	}
@@ -538,7 +538,7 @@ func sessionPath(home, projPath, sid string) string {
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "сессия")
 	if found == nil {
 		return
 	}

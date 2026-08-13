@@ -101,7 +101,7 @@ func taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
 // taskRow находит проект и строку задачи на его доске; не найдя, отвечает
 // словами сам и возвращает ok=false.
 func (s *server) taskRow(w http.ResponseWriter, r *http.Request) (found *Project, id string, row boardRow, rows map[string]boardRow, ok bool) {
-	found = s.findProject(w, r)
+	found = s.findProject(w, r, "задача")
 	if found == nil {
 		return nil, "", boardRow{}, nil, false
 	}

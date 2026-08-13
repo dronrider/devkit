@@ -343,7 +343,7 @@ func (s *server) projectSummary(p Project) projectInfo {
 
 // findProject находит проект из пути запроса; не найдя, сам отвечает 404 и
 // возвращает nil.
-func (s *server) findProject(w http.ResponseWriter, r *http.Request) *Project {
+func (s *server) findProject(w http.ResponseWriter, r *http.Request, action string) *Project {
 	name := r.PathValue("p")
 	projects, _ := s.projects()
 	for i := range projects {
@@ -351,12 +351,13 @@ func (s *server) findProject(w http.ResponseWriter, r *http.Request) *Project {
 			return &projects[i]
 		}
 	}
+	s.logf("%s отклонён: проект %s не найден 404", action, name)
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("проекта %s нет в корнях конфига", name)})
 	return nil
 }
 
 func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "доска")
 	if found == nil {
 		return
 	}

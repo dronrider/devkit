@@ -268,7 +268,7 @@ func safeRel(link string) bool {
 }
 
 func (s *server) handleGoalLog(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r)
+	found := s.findProject(w, r, "журнал цели")
 	if found == nil {
 		return
 	}

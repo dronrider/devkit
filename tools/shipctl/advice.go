@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/accept"
 )
 
 const runLogPath = ".devkit/log"
@@ -60,12 +62,44 @@ func mergeFork(ids []string, autonomous bool) string {
 		" стоит autonomous = false, агент останавливается на локальном коммите и ждёт команды"
 }
 
-// nextAfterMerge говорит, чем задача сдаётся после слияния и выката. Ветку
-// сценария (агентский или пользовательский) выбирает не утилита: пометка
-// стоит прозой в файле задачи, поэтому названы обе.
-func nextAfterMerge(ids string) string {
-	return "следующий шаг: прогнать сценарий проверки " + ids +
-		" и закрыть задачу (taskctl close <ID>); агентский сценарий агент прогоняет сам, пользовательский ждёт слова пользователя"
+// nextAfterMerge говорит, чем задача сдаётся после слияния и выката. Совет
+// один на вид, а не обе ветки сразу: вид приёмки читается из строки доски
+// (LLD DK-292, решение 3), и у каждого вида свой следующий шаг (LLD DK-292,
+// решение 2). Агентский вид прогоняет сценарий и закрывает задачу, смешанный
+// прогоняет агентскую часть, вкладывает вывод и ждёт пользователя,
+// пользовательский ждёт слова человека. У поезда задачи группируются по виду,
+// и каждый вид звучит своей строкой.
+func nextAfterMerge(b *board, ids []string) string {
+	byKind := map[string][]string{}
+	for _, id := range ids {
+		kind := accept.Agent
+		if r := b.rowOf(id); r != nil {
+			kind = accept.KindOf(r.Title)
+		}
+		byKind[kind] = append(byKind[kind], id)
+	}
+	var lines []string
+	for _, kind := range []string{accept.Agent, accept.Mixed, accept.User} {
+		if grp := byKind[kind]; len(grp) > 0 {
+			lines = append(lines, nextStepByKind(kind, strings.Join(grp, ", ")))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// nextStepByKind это один следующий шаг по виду приёмки. Тексты зафиксированы
+// решением 2 LLD DK-292: у каждого вида свой путь сдачи.
+func nextStepByKind(kind, ids string) string {
+	switch kind {
+	case accept.Mixed:
+		return "следующий шаг: прогнать агентскую часть сценария " + ids +
+			", вложить вывод в файл задачи, дальше задачу ждёт пользователь"
+	case accept.User:
+		return "следующий шаг: " + ids + " ждёт пользователя (пользовательский сценарий проверки, прогон за человеком)"
+	default:
+		return "следующий шаг: прогнать сценарий проверки " + ids +
+			" и закрыть задачу (taskctl close <ID>)"
+	}
 }
 
 // readTaskDoc читает файл задачи как строку. Нет файла значит пустая строка:

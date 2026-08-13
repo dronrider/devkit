@@ -71,9 +71,16 @@ func cmdBatch(root string, limit int) (string, error) {
 	g := &batchGroups{}
 	for _, r := range b.Sects[SectBacklog].Rows {
 		unc := r.RParts[2]
+		kind := acceptOf(r.Title)
 		switch {
 		case isLLD(r.Type):
 			g.add("тип LLD", r.ID)
+		// В поезд идут агентские задачи: их сценарий прогоняет и закрывает
+		// сам агент. Смешанный и пользовательский вид требуют человека, их
+		// отбирают отдельно, когда очередь выката получит окна проверок (LLD
+		// DK-292, решение 2; RULES.board.md п. 9).
+		case kind != acceptAgent:
+			g.add("вид приёмки не агентский", fmt.Sprintf("%s (%s)", r.ID, kind))
 		case r.Cost != "S" && r.Cost != "M":
 			g.add("цена не S и не M", fmt.Sprintf("%s (%s)", r.ID, r.Cost))
 		case unc > 1:

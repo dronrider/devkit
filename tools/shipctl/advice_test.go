@@ -327,8 +327,11 @@ func TestStatusNextStep(t *testing.T) {
 	}
 }
 
-// TestMergeNextStep: после слияния и выката отчёт называет сдачу задачи, и
-// названы обе ветки сценария, агентская и пользовательская.
+// TestMergeNextStep: после слияния и выката отчёт называет один следующий
+// шаг по виду приёмки, а не обе ветки сразу. XR-001 без суффикса вида это
+// агентская задача, и совет просит прогнать сценарий и закрыть, не называя
+// пользовательскую ветку. На старом коде (обе ветки сразу) совет содержал
+// слово «пользовательский», и проверка его отсутствия падает.
 func TestMergeNextStep(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
@@ -340,7 +343,39 @@ func TestMergeNextStep(t *testing.T) {
 	if !strings.HasPrefix(last, "следующий шаг: прогнать сценарий проверки XR-001") {
 		t.Fatalf("после merge не назван сценарий проверки: %q", last)
 	}
-	if !strings.Contains(last, "агентский") || !strings.Contains(last, "пользовательский") {
-		t.Fatalf("после merge не названы обе ветки сценария: %q", last)
+	if !strings.Contains(last, "закрыть задачу") {
+		t.Fatalf("после merge агентской задачи не названо закрытие: %q", last)
+	}
+	if strings.Contains(last, "пользовательск") {
+		t.Fatalf("агентский совет не должен называть пользовательскую ветку: %q", last)
+	}
+}
+
+// TestNextAfterMerge: совет после выката читает вид из строки доски и печатает
+// один шаг на вид. Агентский прогоняет сценарий и закрывает, смешанный
+// прогоняет агентскую часть, пользовательский ждёт человека.
+func TestNextAfterMerge(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		want  string
+		bad   string
+	}{
+		{"агентский", "Починка бага", "прогнать сценарий проверки", "пользовательск"},
+		{"смешанный", "Правка [приёмка: mixed]", "прогнать агентскую часть", ""},
+		{"пользовательский", "Правка [приёмка: user]", "ждёт пользователя", "закрыть задачу"},
+	}
+	for _, c := range cases {
+		b := &board{sects: map[string][]row{"check": {{ID: "XR-001", Title: c.title}}}}
+		got := nextAfterMerge(b, []string{"XR-001"})
+		if !strings.HasPrefix(got, "следующий шаг") {
+			t.Errorf("%s: совет без общего зачина: %q", c.name, got)
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: жду %q в совете, получил %q", c.name, c.want, got)
+		}
+		if c.bad != "" && strings.Contains(got, c.bad) {
+			t.Errorf("%s: совет не должен содержать %q: %q", c.name, c.bad, got)
+		}
 	}
 }

@@ -867,7 +867,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			if note := syncWindowTree(root, main); note != "" {
 				msg = append(msg, note)
 			}
-			msg = append(msg, nextAfterMerge(p.ID))
+			msg = append(msg, nextAfterMerge(b, []string{p.ID}))
 			return strings.Join(msg, "\n"), nil
 		}
 		if now, _, err := trainTasks(root, main, b); err == nil {
@@ -929,7 +929,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)
 	}
-	msg = append(msg, nextAfterMerge(p.ID))
+	msg = append(msg, nextAfterMerge(b, []string{p.ID}))
 	return strings.Join(msg, "\n"), nil
 }
 
@@ -1064,7 +1064,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)
 	}
-	msg = append(msg, nextAfterMerge(list))
+	msg = append(msg, nextAfterMerge(b, train))
 	return strings.Join(msg, "\n"), nil
 }
 

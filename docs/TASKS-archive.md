@@ -201,3 +201,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-281 | dashboard: сообщение агенту идёт без статуса отправки и дублируется повтором | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-281.md](tasks/archive/2026/DK-281.md) |
 | DK-284 | dashboard: экран задачи на телефоне, шапка, ранг и описание | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-284.md](tasks/archive/2026/DK-284.md) |
 | DK-278 | гитигнор-записи .devkit/cmdout/ и ship.lock не раскладываются автоматикой, doctor их отсутствие пропускает | task | P3 | 2026-08-13 | [tasks/archive/2026/DK-278.md](tasks/archive/2026/DK-278.md) |
+| DK-137 | Цель: обёртка, отдающая агенту выжимку вместо всего вывода команды | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-137.md](tasks/archive/2026/DK-137.md) |

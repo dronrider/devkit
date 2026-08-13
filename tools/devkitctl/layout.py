@@ -25,7 +25,7 @@ from pathlib import Path
 TOP_LEVEL = ("tools", "kit", "hooks", "docs", "internal",
              ".github", ".devkit",
              "README.md", "CONNECT.md", "AGENTS.md", "CLAUDE.md", "RANKING.md",
-             "RULES*.md", ".gitignore")
+             "ACCEPTANCE.md", "RULES*.md", ".gitignore")
 # Места, где sh допустим сверх оболочки скилла: обёртка хука, съёмщик остатка
 # квоты и одноразовый сценарий проверки задачи.
 SH_PLACES = ("hooks/", "kit/harness/snap/", "docs/tasks/")

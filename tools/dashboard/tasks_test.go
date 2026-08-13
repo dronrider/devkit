@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Правка строки и файла задачи. Стенд гоняет настоящий taskctl на фикстурной
@@ -948,4 +951,164 @@ func TestStaticHiddenBeatsDisplay(t *testing.T) {
 				"скрытый элемент остаётся на экране", setter, cls, cls)
 		}
 	}
+}
+
+// Ширина блоков на телефоне меряется настоящим движком, а не поиском строки в
+// стилях: прошлый круг задачи проверял раскладку текстом исходника и пропустил
+// ровно эту поломку. Строки на месте (флекс-колонка, order, display:contents),
+// а описание и зависимости стояли в 240 и 311 пикселей из 390, потому что
+// базовое .tgrid несёт align-items:start, и в колоночном флексе это значит «по
+// ширине содержимого». Такое видно только тому, кто вправду считает каскад и
+// раскладку, поэтому стенд открывает страницу дашборда в headless-chrome,
+// подкладывает разметку экрана задачи и снимает координаты. Разбор правил
+// (приём TestStaticHiddenBeatsDisplay) тут не годится: поломку дало сложение
+// трёх правил из разных мест файла, и повторять их сложение в тесте значило бы
+// писать свой движок и верить ему. Без chrome шаг пропускается: это узел
+// стенда, а не рабочей части.
+func TestStaticTaskNarrowWidths(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер раскладки экрана задачи пропущен")
+	}
+	// Разметка стенда повторяет renderTask руками, и разъехаться с ней она
+	// может молча: замер на своей вёрстке зеленел бы и после того, как экран
+	// перестали собирать этим блоком.
+	body := funcBody(t, readFile(t, filepath.Join("static", "app.js")), "async function renderTask(")
+	for _, want := range []string{`el("div", "tpage")`, "page.append(bar)", "page.append(grid)"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("экран задачи собран не блоком .tpage (нет %q): замер на стендовой "+
+				"разметке перестал говорить о рабочем экране", want)
+		}
+	}
+	dir := t.TempDir()
+	page := filepath.Join(dir, "task.html")
+	html := readFile(t, filepath.Join("static", "index.html"))
+	if html == "" {
+		t.Fatal("static/index.html не прочитан")
+	}
+	css, err := filepath.Abs(filepath.Join("static", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := filepath.Abs(filepath.Join("testdata", "task_narrow.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html = strings.Replace(html, "/assets/style.css", "file://"+css, 1)
+	html = strings.Replace(html, `<script type="module" src="/assets/app.js"></script>`,
+		`<script src="file://`+probe+`"></script>`, 1)
+	if !strings.Contains(html, probe) {
+		t.Fatal("замерочный скрипт не встал на место app.js: разметка index.html разъехалась с тестом")
+	}
+	if err := os.WriteFile(page, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	narrow := chromeMeasure(t, chrome, dir, page, "390,844")
+	if narrow["screen"] != 390 {
+		t.Fatalf("окно стенда не 390 пикселей: %v", narrow)
+	}
+	// Полоса под содержимым, отступы .bmain по 16 с каждой стороны: карточке
+	// остаётся 358 из 390, и меньше 340 это уже прежняя поломка.
+	for _, name := range []string{"fpanel", "dcard", "rcard"} {
+		if narrow[name] < 340 {
+			t.Errorf("на экране 390 блок %s занял %d пикселей: описание, ранг и зависимости "+
+				"идут во всю ширину", name, narrow[name])
+		}
+	}
+	if narrow["actmsg"] != 0 {
+		t.Errorf("пустая строка результата занимает %d пикселей высоты: сказать нечего, "+
+			"и места она занимать не должна", narrow["actmsg"])
+	}
+	if narrow["bar-under"] != 1 {
+		t.Error("полоса действий на телефоне стоит над описанием: она отодвигает постановку " +
+			"ещё на ряд кнопок вниз")
+	}
+
+	wide := chromeMeasure(t, chrome, dir, page, "1280,900")
+	if wide["bar-under"] != 0 {
+		t.Error("на ноутбуке полоса действий уехала под содержимое: там она видна сразу и " +
+			"остаётся над ним")
+	}
+	if wide["fpanel"] < 500 || wide["rcard"] > 420 {
+		t.Errorf("на ноутбуке колонки экрана задачи разъехались: описание %d, ранг %d",
+			wide["fpanel"], wide["rcard"])
+	}
+}
+
+// findChrome ищет браузер стенда: сперва названный переменной окружения, потом
+// обычные места установки. Первым берётся headless-сборка: полный Chrome в
+// таком прогоне поднимает окно и профиль и на замер отвечает не всегда. Пусто
+// это «браузера нет», и шаг пропускается.
+func findChrome() string {
+	if named := os.Getenv("DASHBOARD_CHROME"); named != "" {
+		return named
+	}
+	for _, name := range []string{"chrome-headless-shell", "chromium", "google-chrome-stable", "chrome"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	var globs []string
+	if home != "" {
+		globs = append(globs,
+			filepath.Join(home, "Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
+			filepath.Join(home, ".cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
+			filepath.Join(home, "Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"),
+			filepath.Join(home, ".cache/ms-playwright/chromium-*/chrome-linux/chrome"))
+	}
+	globs = append(globs, "/Applications/Chromium.app/Contents/MacOS/Chromium")
+	for _, glob := range globs {
+		found, err := filepath.Glob(glob)
+		if err != nil || len(found) == 0 {
+			continue
+		}
+		return found[len(found)-1]
+	}
+	return ""
+}
+
+// chromeMeasure открывает страницу стенда в заданном окне и поднимает замеры
+// из заголовка получившейся страницы: --dump-dom отдаёт разметку после
+// исполнения скриптов, и заголовок это самый короткий способ вынести из
+// браузера числа.
+func chromeMeasure(t *testing.T, chrome, dir, page, window string) map[string]int {
+	t.Helper()
+	ctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
+	defer stop()
+	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox",
+		"--hide-scrollbars", "--allow-file-access-from-files",
+		"--user-data-dir="+filepath.Join(dir, "profile-"+strings.ReplaceAll(window, ",", "x")),
+		"--window-size="+window, "--virtual-time-budget=4000", "--dump-dom", "file://"+page)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("chrome на окне %s: %v\n%s", window, err, out)
+	}
+	title := ""
+	if at := strings.Index(string(out), "<title>"); at >= 0 {
+		rest := string(out)[at+len("<title>"):]
+		if end := strings.Index(rest, "</title>"); end >= 0 {
+			title = rest[:end]
+		}
+	}
+	vals := map[string]int{}
+	for _, pair := range strings.Fields(title) {
+		name, num, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			continue
+		}
+		vals[name] = n
+	}
+	if len(vals) == 0 {
+		t.Fatalf("замер не вернулся из браузера, заголовок %q\n%s", title, out)
+	}
+	return vals
 }

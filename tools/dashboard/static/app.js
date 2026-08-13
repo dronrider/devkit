@@ -790,17 +790,21 @@ async function renderTask(project, works, id) {
     return;
   }
   groups.replaceChildren();
+  // Экран задачи лежит одним блоком: на телефоне полоса действий уходит под
+  // содержимое, а порядок задаёт order, и для него нужен общий флекс-родитель.
+  const page = el("div", "tpage");
+  groups.append(page);
 
   const crumb = el("div", "crumb");
   const back = el("span", "crumb-back", "Доска " + project);
   back.addEventListener("click", () => { location.hash = project; });
   crumb.append(back);
-  groups.append(crumb);
+  page.append(crumb);
 
   if (!r.ok) {
     const card = el("div", "card");
     card.append(el("div", "error", r.body.error || "задача не прочиталась"));
-    groups.append(card);
+    page.append(card);
     return;
   }
   const detail = r.body;
@@ -835,7 +839,7 @@ async function renderTask(project, works, id) {
   title.setAttribute("aria-label", "заголовок задачи " + id);
   title.addEventListener("input", () => { form.title = title.value; touch(); });
   head.append(title);
-  groups.append(head);
+  page.append(head);
 
   const chips = el("div", "tchips");
   if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
@@ -848,7 +852,7 @@ async function renderTask(project, works, id) {
   for (const note of row.notes || []) {
     if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
   }
-  groups.append(chips);
+  page.append(chips);
 
   // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
   // отдельной карточки действий у задачи больше нет, а надписи про пустую
@@ -867,7 +871,7 @@ async function renderTask(project, works, id) {
   sep.hidden = true;
   const bad = el("div", "error", "");
   bar.append(save, drop, sep);
-  groups.append(bar);
+  page.append(bar);
 
   const patchBody = () => {
     const out = {};
@@ -914,7 +918,7 @@ async function renderTask(project, works, id) {
   // запросом и встаёт на своё место сам.
   if (/^Цель:/.test(row.title || "")) {
     const comp = el("div", "");
-    groups.append(comp);
+    page.append(comp);
     goalComposition(project, id, comp).catch(console.error);
   }
 
@@ -970,7 +974,7 @@ async function renderTask(project, works, id) {
   rail.append(rank, depsCard(project, id, detail.after || [], detail.blocks || []));
   const grid = el("div", "tgrid");
   grid.append(filePanel(project, id, detail, form, touch), rail);
-  groups.append(grid);
+  page.append(grid);
 
   taskDraft.id = id;
   taskDraft.dirty = false;

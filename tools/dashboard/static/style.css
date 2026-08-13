@@ -139,6 +139,10 @@ a:hover{text-decoration:underline}
 
 /* запуск и стоп: строка результата и экран задачи (макет «02 Задача») */
 .actmsg{min-height:18px;padding:8px 4px 0;font:400 12.5px var(--sans);color:var(--tx2)}
+/* сказать нечего, и строка не занимает места: пустой она висела отступом под
+   шапкой на каждом экране, а на телефоне это заметная часть высоты (приём тот
+   же, что у .nfbody .error:empty) */
+.actmsg:empty{display:none}
 .actmsg.error{color:var(--block)}
 .lcard b{cursor:pointer}
 .lcard b.flat{cursor:default;color:var(--tx2)}
@@ -448,7 +452,10 @@ a:hover{text-decoration:underline}
   .thead .idbig{display:none}
   /* телефон: ранг свёрнут в одну строку над описанием, описание идёт во всю
      ширину, зависимости уходят под него */
-  .tgrid{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+  /* align-items:stretch тут не украшение: базовое правило .tgrid несёт
+     align-items:start, в колоночном флексе это значит «по ширине содержимого»,
+     и описание с зависимостями вставали в 240 и 311 пикселей из 390 */
+  .tgrid{display:flex;flex-direction:column;align-items:stretch;gap:14px;margin-top:14px}
   .rrail{display:contents}
   .rcard{order:1}
   .fpanel{order:2}
@@ -497,6 +504,11 @@ a:hover{text-decoration:underline}
      ширину окна. Карточка одна: три подряд закрывают собой весь экран, а
      единственный способ их убрать уводил бы с того места, где человек
      работал, поэтому лишние ждут своей очереди скрытыми. */
+  /* полоса действий уходит под содержимое: на ноутбуке она стоит над ним и
+     видна сразу, а на телефоне отодвигала описание ещё на ряд кнопок вниз.
+     Порядок задаёт order у полосы, разметка на обеих ширинах одна */
+  .tpage{display:flex;flex-direction:column}
+  .tpage>.abar{order:1}
   .abar{padding:12px 14px}
   .abar .btn{height:44px;min-width:44px;padding:0 11px}
   .abar .btn .lb{display:none}

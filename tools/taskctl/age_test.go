@@ -35,6 +35,10 @@ func TestPluralDays(t *testing.T) {
 	}
 }
 
+// TestCheckMarks прогоняет сборку пометки Check (очередь выката + вид приёмки)
+// по сочетаниям признаков: вид читается из суффикса заголовка, а не из
+// заголовка сценария в файле, поэтому агентский вид без суффикса и user с
+// суффиксом [приёмка: user] разбираются одной функцией.
 func TestCheckMarks(t *testing.T) {
 	root := t.TempDir()
 	tasks := filepath.Join(root, "docs", "tasks")
@@ -46,30 +50,28 @@ func TestCheckMarks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("XR-010", "# XR-010\n\n## Выкат\n\n- 2026-01-01 слито: 1234567\n\n## Сценарий проверки (агентский)\n\nшаги\n")
+	write("XR-010", "# XR-010\n\n## Выкат\n\n- 2026-01-01 слито: 1234567\n\n## Сценарий проверки\n\nшаги\n")
 	write("XR-011", "# XR-011\n\n## Сценарий проверки\n\nшаги\n")
-	write("XR-012", "# XR-012\n\n## Сценарий проверки (агентский)\n\nшаги\n")
+	write("XR-012", "# XR-012\n\n## Сценарий проверки\n\nшаги\n")
 	write("XR-013", "# XR-013\n\n## Выкат\n\n- 2026-01-01 слито: 1234567\n\n## Сценарий проверки\n\nшаги\n")
 
 	cases := []struct {
 		id        string
+		title     string
 		wantQueue bool
-		wantAgent bool
-		wantOK    bool
 		wantLabel string
 	}{
-		{"XR-010", true, true, true, "код слит, сценарий агентский"},
-		{"XR-011", false, false, true, "без выката, сценарий пользовательский"},
-		{"XR-012", false, true, true, "без выката, сценарий агентский"},
-		{"XR-013", true, false, true, "код слит, сценарий пользовательский"},
-		{"XR-404", false, false, false, ""},
+		{"XR-010", "Со сценарием агента и выкатом", true, "код слит, вид agent"},
+		{"XR-011", "Пользовательская без выката [приёмка: user]", false, "без выката, вид user"},
+		{"XR-012", "Без выката", false, "без выката, вид agent"},
+		{"XR-013", "Пользовательская с выкатом [приёмка: user]", true, "код слит, вид user"},
+		{"XR-404", "Без файла", false, "вид agent"},
 	}
 	for _, c := range cases {
-		queue, agent, ok := checkMarks(root, c.id)
-		if queue != c.wantQueue || agent != c.wantAgent || ok != c.wantOK {
-			t.Errorf("checkMarks(%s) = %v,%v,%v; ожидал %v,%v,%v", c.id, queue, agent, ok, c.wantQueue, c.wantAgent, c.wantOK)
+		if queue, ok := checkQueue(root, c.id); queue != c.wantQueue || ok != (c.id != "XR-404") {
+			t.Errorf("checkQueue(%s) = %v,%v; ожидал %v,%v", c.id, queue, ok, c.wantQueue, c.id != "XR-404")
 		}
-		if got := checkMarkLabel(root, c.id); got != c.wantLabel {
+		if got := checkMarkLabel(root, c.id, c.title); got != c.wantLabel {
 			t.Errorf("checkMarkLabel(%s) = %q, ожидал %q", c.id, got, c.wantLabel)
 		}
 	}
@@ -175,21 +177,18 @@ func TestCheckMarksIgnoresFenced(t *testing.T) {
 	}
 	doc := "# XR-001: задача\n\n## Сценарий проверки\n\nшаги\n\n" +
 		"## Прогон после выката\n\n```\n## Выкат\n\n- 2026-08-03 слито: 1a2b3c4\n" +
-		"## Сценарий проверки (агентский)\n```\n"
+		"## Сценарий проверки\n```\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-001.md"), []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	queue, agent, ok := checkMarks(root, "XR-001")
+	queue, ok := checkQueue(root, "XR-001")
 	if !ok {
 		t.Fatal("файл задачи есть, признаки обязаны читаться")
 	}
 	if queue {
 		t.Error("процитированный «## Выкат» принят за свой раздел")
 	}
-	if agent {
-		t.Error("процитированный заголовок агентского сценария принят за свой")
-	}
-	if got := checkMarkLabel(root, "XR-001"); got != "без выката, сценарий пользовательский" {
+	if got := checkMarkLabel(root, "XR-001", "Задача [приёмка: user]"); got != "без выката, вид user" {
 		t.Fatalf("пометка по цитате: %q", got)
 	}
 }

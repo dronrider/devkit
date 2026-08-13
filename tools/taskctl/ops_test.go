@@ -71,14 +71,14 @@ func TestNextID(t *testing.T) {
 func TestAddSorted(t *testing.T) {
 	root := setup(t)
 	// Равный R с XR-002: новая строка с большим номером встаёт ниже.
-	if _, err := cmdAdd(root, AddParams{Title: "Равный ранг", Type: "bug", Rank: "50+0+0+5+0", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Равный ранг", Type: "bug", Rank: "50+0+0+5+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	// Максимальный ранг встаёт первым, минимальный последним.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-020", Title: "Наверх", Type: "task", Rank: "75+0+1+0+0", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{ID: "XR-020", Title: "Наверх", Type: "task", Rank: "75+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{ID: "XR-021", Title: "В хвост", Type: "task", Rank: "0+0+1+0+0", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{ID: "XR-021", Title: "В хвост", Type: "task", Rank: "0+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(backlogIDs(t, root), " ")
@@ -107,7 +107,7 @@ func TestAddValidation(t *testing.T) {
 func TestAddWithoutFileAndBareLink(t *testing.T) {
 	root := setup(t)
 	// Файла задачи нет: в ячейке ссылки плейсхолдер, add не падает.
-	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -115,7 +115,7 @@ func TestAddWithoutFileAndBareLink(t *testing.T) {
 		t.Fatalf("нет строки с плейсхолдером:\n%s", board)
 	}
 	// Голый путь в --link оборачивается в markdown-ссылку.
-	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "task", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "task", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ = os.ReadFile(boardPath(root))
@@ -126,7 +126,7 @@ func TestAddWithoutFileAndBareLink(t *testing.T) {
 
 func TestAddWithCost(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -137,7 +137,7 @@ func TestAddWithCost(t *testing.T) {
 
 func TestStatusAliases(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	giveScenario(t, root, "XR-008")
@@ -377,7 +377,7 @@ func TestList(t *testing.T) {
 	}
 	// Разросшийся Backlog обрезается с подсказкой, list backlog отдаёт целиком.
 	for i := 0; i < listBacklogTop; i++ {
-		p := AddParams{ID: fmt.Sprintf("XR-%03d", 20+i), Title: "Наполнение", Type: "task", Rank: "0+1+1+0+1", Link: "x"}
+		p := AddParams{ID: fmt.Sprintf("XR-%03d", 20+i), Title: "Наполнение", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}
 		if _, err := cmdAdd(root, p); err != nil {
 			t.Fatal(err)
 		}
@@ -610,7 +610,7 @@ func TestLintTaskFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte("# XR-005\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	finds, err = cmdLint(root)
@@ -652,7 +652,7 @@ func TestLintFlagsLegacyBoard(t *testing.T) {
 // байтам, задача остаётся только в архиве.
 func TestCycle(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-008", SectInProgress, "", CommitOpts{}); err != nil {
@@ -780,7 +780,7 @@ func TestCloseWithLinks(t *testing.T) {
 	root := setup(t)
 
 	// Добавить новую задачу в работу
-	if _, err := cmdAdd(root, AddParams{ID: "XR-099", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{ID: "XR-099", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-099", SectInProgress, "", CommitOpts{}); err != nil {
@@ -833,7 +833,7 @@ func TestCloseWithLinks(t *testing.T) {
 func TestCloseRewritesIncomingLinks(t *testing.T) {
 	root := setup(t)
 
-	if _, err := cmdAdd(root, AddParams{ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-077", SectInProgress, "", CommitOpts{}); err != nil {
@@ -1043,6 +1043,7 @@ func TestAddBlockedRejected(t *testing.T) {
 	_, err := cmdAdd(root, AddParams{
 		Title: "Сразу на блокере", Type: "task", Rank: "0+1+1+0+1", Link: "x",
 		Status: "blocked",
+		Accept: "agent",
 	})
 	if err == nil {
 		t.Fatal("add --status blocked должен отбиваться")

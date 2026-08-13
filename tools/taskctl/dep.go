@@ -10,13 +10,15 @@ import (
 // depSufRe разбирает суффикс заголовка «[после ID, ID]» (задача делается
 // после перечисленных). Хранится только это направление, обратное (кого
 // держит задача) считается по всей доске. Порядок суффиксов в заголовке
-// фиксирован: сначала [после ...], потом [провал: ...], потом [блок: ...].
+// фиксирован (LLD DK-292, решение 3): сначала [после ...], потом
+// [приёмка: ...], потом [провал: ...], потом [блок: ...], то есть постоянные
+// свойства строки раньше временных пометок.
 var depSufRe = regexp.MustCompile(`\s*\[после ([^\]|]+)\]\s*$`)
 
 // splitTitle разбирает полный текст заголовка строки на основу, список
-// зависимостей из «[после ...]» и хвосты «[провал: ...]» и «[блок: ...]» как
-// есть (с ведущим пробелом) либо пустые строки.
-func splitTitle(title string) (base string, deps []string, failSuf, blockSuf string) {
+// зависимостей из «[после ...]» и хвосты «[приёмка: ...]», «[провал: ...]» и
+// «[блок: ...]» как есть (с ведущим пробелом) либо пустые строки.
+func splitTitle(title string) (base string, deps []string, acceptSuf, failSuf, blockSuf string) {
 	rest := title
 	if m := blockSufRe.FindString(rest); m != "" {
 		rest = strings.TrimSuffix(rest, m)
@@ -26,6 +28,10 @@ func splitTitle(title string) (base string, deps []string, failSuf, blockSuf str
 		rest = strings.TrimSuffix(rest, m)
 		failSuf = m
 	}
+	if m := acceptSufRe.FindString(rest); m != "" {
+		rest = strings.TrimSuffix(rest, m)
+		acceptSuf = m
+	}
 	if m := depSufRe.FindStringSubmatch(rest); m != nil {
 		base = rest[:len(rest)-len(m[0])]
 		for _, id := range strings.Split(m[1], ",") {
@@ -34,19 +40,19 @@ func splitTitle(title string) (base string, deps []string, failSuf, blockSuf str
 				deps = append(deps, id)
 			}
 		}
-		return base, deps, failSuf, blockSuf
+		return base, deps, acceptSuf, failSuf, blockSuf
 	}
-	return rest, nil, failSuf, blockSuf
+	return rest, nil, acceptSuf, failSuf, blockSuf
 }
 
 // joinTitle собирает заголовок обратно: основа, затем «[после ...]» (если
-// список не пуст), затем хвосты провала и блокировки как есть.
-func joinTitle(base string, deps []string, failSuf, blockSuf string) string {
+// список не пуст), затем хвосты приёмки, провала и блокировки как есть.
+func joinTitle(base string, deps []string, acceptSuf, failSuf, blockSuf string) string {
 	t := base
 	if len(deps) > 0 {
 		t += " [после " + strings.Join(deps, ", ") + "]"
 	}
-	return t + failSuf + blockSuf
+	return t + acceptSuf + failSuf + blockSuf
 }
 
 func joinOrDash(xs []string) string {
@@ -63,7 +69,7 @@ func joinOrDash(xs []string) string {
 func reachable(rows []*Row, from, to string) bool {
 	adj := map[string][]string{}
 	for _, r := range rows {
-		_, deps, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _ := splitTitle(r.Title)
 		adj[r.ID] = deps
 	}
 	visited := map[string]bool{}
@@ -126,7 +132,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if (row.Sect == SectInProgress || row.Sect == SectCheck || row.Sect == SectBlocked) && !arch.has(p.DepID) {
 		return "", fmt.Errorf("%s уже в %s, нельзя добавить незакрытую зависимость %s", p.ID, sectTitles[row.Sect], p.DepID)
 	}
-	base, deps, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	for _, d := range deps {
 		if d == p.DepID {
 			return "", fmt.Errorf("%s уже после %s", p.ID, p.DepID)
@@ -136,7 +142,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 		return "", fmt.Errorf("%s после %s замкнёт цикл зависимостей", p.ID, p.DepID)
 	}
 	deps = append(deps, p.DepID)
-	row.Title = joinTitle(base, deps, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
 	b.Lines[row.LineIdx] = formatRow(row)
 	if err := b.Save(); err != nil {
 		return "", err
@@ -165,7 +171,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	}
-	base, deps, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	idx := -1
 	for i, d := range deps {
 		if d == p.DepID {
@@ -177,7 +183,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 		return "", fmt.Errorf("%s не зависит от %s", p.ID, p.DepID)
 	}
 	deps = append(deps[:idx], deps[idx+1:]...)
-	row.Title = joinTitle(base, deps, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
 	b.Lines[row.LineIdx] = formatRow(row)
 	if err := b.Save(); err != nil {
 		return "", err
@@ -200,7 +206,7 @@ func depSides(b *Board) map[string]*struct{ after, blocks []string } {
 		return all[id]
 	}
 	for _, r := range b.Rows {
-		_, deps, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _ := splitTitle(r.Title)
 		if len(deps) == 0 {
 			continue
 		}

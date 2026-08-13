@@ -472,7 +472,7 @@ func TestDraftPromoteKeepsGroom(t *testing.T) {
 	if _, err := cmdDraftDefer(root, id, "ждём повторного случая", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{ID: id, Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{ID: id, Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md"))

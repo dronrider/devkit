@@ -29,8 +29,8 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	base, deps, _, _ := splitTitle(row.Title)
-	title := joinTitle(base, deps, "", "")
+	base, deps, _, _, _ := splitTitle(row.Title)
+	title := joinTitle(base, deps, "", "", "")
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return false, err
 	}
@@ -161,10 +161,16 @@ func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []stri
 // в строку с отступом, --json кладёт как есть.
 func rowNoteParts(root, sect string, r *Row, times map[int]int64, clean bool) []string {
 	var notes []string
+	kind := acceptOf(r.Title)
 	if sect == SectCheck {
-		if m := checkMarkLabel(root, r.ID); m != "" {
-			notes = append(notes, m)
-		}
+		// В Check вид печатается всегда: это момент приёмки, и кто её
+		// принимает (агент, пользователь или оба) здесь главный вопрос.
+		notes = append(notes, checkMarkLabel(root, r.ID, r.Title))
+	} else if kind != acceptAgent {
+		// В остальных секциях вид печатается только у user и mixed: агентский
+		// это умолчание, и пометка на четырёх строках из пяти глаза не стоит
+		// (LLD DK-292, решение 2).
+		notes = append(notes, "вид "+kind)
 	}
 	if a := ageLabel(times, r.LineIdx, clean); a != "" {
 		notes = append(notes, a)

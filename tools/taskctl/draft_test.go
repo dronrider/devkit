@@ -96,7 +96,7 @@ func TestNextIDCountsDrafts(t *testing.T) {
 	if id != "XR-009" {
 		t.Fatalf("следующий свободный ID %s, ожидал XR-009 (XR-008 занял черновик)", id)
 	}
-	msg, err := cmdAdd(root, AddParams{Title: "Вторая", Type: "task", Rank: "0+1+1+0+1"})
+	msg, err := cmdAdd(root, AddParams{Title: "Вторая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestDraftPromotedByAdd(t *testing.T) {
 	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S"})
+	msg, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +173,7 @@ func TestAddPromotesUntrackedDraft(t *testing.T) {
 	p := AddParams{
 		ID: "XR-008", Title: "Оформленная", Type: "bug",
 		Rank: "25+4+2+5+2", Cost: "S",
+		Accept: "agent",
 		Commit: CommitOpts{Msg: "docs(tasks): XR-008 оформлена"},
 	}
 	if _, err := cmdAdd(root, p); err != nil {
@@ -212,7 +213,7 @@ func TestAddValidationKeepsDraft(t *testing.T) {
 	if _, err := cmdDraft(root, "идея", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Кривой ранг", Type: "task", Rank: "3+1+1+0+1"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Кривой ранг", Type: "task", Rank: "3+1+1+0+1", Accept: "agent"}); err == nil {
 		t.Fatal("серьёзность 3 не из шкалы, add обязан упасть")
 	}
 	if _, err := os.Stat(draftFile(root, "XR-008")); err != nil {

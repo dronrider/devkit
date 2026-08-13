@@ -95,7 +95,48 @@ func cmdLint(root string) ([]string, error) {
 	}
 	finds = append(finds, lintDeps(b, arch, bp)...)
 	finds = append(finds, lintFailed(b, bp)...)
+	finds = append(finds, lintAcceptance(root, b, bp)...)
 	return finds, nil
+}
+
+// lintAcceptance ловит ошибку назначения вида в дорогую сторону (LLD DK-292,
+// решение 6): у строки с видом user или mixed в файле задачи обязан стоять
+// раздел «Приёмка» с ключом барьера из шести, иначе задача простояла в очереди
+// без названной причины. Счёт обходов ворота move check проверяют, а lint
+// смотрит сам факт раздела и того, что суффикс разбирается.
+func lintAcceptance(root string, b *Board, bp string) []string {
+	var finds []string
+	for _, r := range b.Rows {
+		kind := acceptOf(r.Title)
+		if kind == acceptAgent {
+			continue
+		}
+		text, found, ok := acceptanceSection(root, r.ID)
+		if !ok {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s вид %s, а файла задачи нет: виду с барьером нужен раздел «Приёмка» (taskctl file %s)",
+				bp, r.LineIdx+1, r.ID, kind, r.ID))
+			continue
+		}
+		if !found {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s вид %s без раздела «Приёмка» в файле задачи: назвать барьер и перебрать обходы",
+				bp, r.LineIdx+1, r.ID, kind))
+			continue
+		}
+		barrier, bypasses := parseAcceptance(text)
+		if barrier == "" {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s вид %s, а в «Приёмка» нет строки «- барьер «<ключ>»:»",
+				bp, r.LineIdx+1, r.ID, kind))
+			continue
+		}
+		if want, known := acceptBarriers[barrier]; !known {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s барьер «%s» не из шести",
+				bp, r.LineIdx+1, r.ID, barrier))
+		} else if bypasses != want {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s у барьера «%s» обходов %d, а перебор в «Приёмка» имеет строк %d",
+				bp, r.LineIdx+1, r.ID, barrier, want, bypasses))
+		}
+	}
+	return finds
 }
 
 // lintFailed ловит признак провала проверки там, где его быть не может.
@@ -106,7 +147,7 @@ func lintFailed(b *Board, bp string) []string {
 	var finds []string
 	for _, key := range []string{SectBacklog, SectCheck} {
 		for _, r := range b.Sects[key].Rows {
-			if _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+			if _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
 				finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с признаком провала проверки%s: он ставится задаче в работе, снять: taskctl fail %s --clear",
 					bp, r.LineIdx+1, r.ID, sectTitles[key], failSuf, r.ID))
 			}
@@ -125,7 +166,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
-		_, deps, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _ := splitTitle(r.Title)
 		seen := map[string]bool{}
 		for _, d := range deps {
 			switch {
@@ -141,7 +182,7 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 	}
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
-			_, deps, _, _ := splitTitle(r.Title)
+			_, deps, _, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if !arch.has(d) {
 					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s, вернуть в Backlog",
@@ -162,7 +203,7 @@ func lintDepCycles(rows []*Row, bp string) []string {
 	line := map[string]int{}
 	for _, r := range rows {
 		line[r.ID] = r.LineIdx
-		_, deps, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _ := splitTitle(r.Title)
 		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
 		// циклом в две строки её дублировать незачем.
 		for _, d := range deps {

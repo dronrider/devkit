@@ -22,11 +22,6 @@ func taskFilePath(root, id string) string {
 // `shipctl status`, здесь только один бит «код слит».
 const mergedSection = "## Выкат"
 
-// agentScenarioSection это заголовок, которым сценарий проверки уже
-// помечает себя агентским в девяти закрытых задачах; заводить отдельное
-// поле ради разбора не стали, заголовок и так под ревью вместе с веткой.
-const agentScenarioSection = "## Сценарий проверки (агентский)"
-
 // scenarioSection это заголовок сценария проверки, без которого задачу не
 // пускают в Check (RULES.board.md, «Трекинг задач» п. 6). Проверка по
 // префиксу, поэтому агентский вариант заголовка тоже считается сценарием.
@@ -71,11 +66,14 @@ func taskDocSections(root, id string, want ...string) (found []bool, ok bool) {
 	return found, true
 }
 
-// checkMarks определяет два признака строки в Check: держит ли она очередь
-// выката и кто её принимает.
-func checkMarks(root, id string) (queue, agent, ok bool) {
-	f, ok := taskDocSections(root, id, mergedSection, agentScenarioSection)
-	return f[0], f[1], ok
+// checkQueue говорит, есть ли в файле задачи раздел «Выкат» (код слит).
+// Третье значение ok=false значит, что файла нет.
+func checkQueue(root, id string) (queue, ok bool) {
+	f, ok := taskDocSections(root, id, mergedSection)
+	if !ok {
+		return false, false
+	}
+	return f[0], true
 }
 
 // hasScenario отвечает, готов ли у задачи сценарий проверки в её файле.
@@ -84,23 +82,22 @@ func hasScenario(root, id string) (has, hasFile bool) {
 	return f[0], ok
 }
 
-// checkMarkLabel собирает признаки в одну строку человеку: держит ли строка
-// очередь выката и кто её проверяет. Оба значения печатаются всегда, даже
-// когда оба «нет»: это и есть ответ на вопрос «чего ждут от владельца».
-func checkMarkLabel(root, id string) string {
-	queue, agent, ok := checkMarks(root, id)
+// checkMarkLabel собирает признаки строки в Check в одну строку человеку:
+// держит ли очередь выката и каков её вид приёмки. Вид читается из суффикса
+// строки доски (LLD DK-292, решение 3), а не из заголовка сценария, как
+// раньше: заголовок «## Сценарий проверки (агентский)» теперь наследие, и
+// вида с него больше не читают. Очередь по-прежнему из раздела «Выкат».
+func checkMarkLabel(root, id, title string) string {
+	kind := acceptOf(title)
+	queue, ok := checkQueue(root, id)
 	if !ok {
-		return ""
+		return "вид " + kind
 	}
 	q := "без выката"
 	if queue {
 		q = "код слит"
 	}
-	a := "сценарий пользовательский"
-	if agent {
-		a = "сценарий агентский"
-	}
-	return q + ", " + a
+	return q + ", вид " + kind
 }
 
 // timeNow подменяется тестами, чтобы возраст строки считался от известного

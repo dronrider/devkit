@@ -40,13 +40,13 @@ func cmdFail(root string, p FailParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	}
-	base, deps, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	paths := []string{filepath.Join("docs", "TASKS.md")}
 	if p.Clear {
 		if failSuf == "" {
 			return "", fmt.Errorf("у %s нет признака провала проверки, снимать нечего", p.ID)
 		}
-		row.Title = joinTitle(base, deps, "", blockSuf)
+		row.Title = joinTitle(base, deps, acceptSuf, "", blockSuf)
 		b.Lines[row.LineIdx] = formatRow(row)
 		if err := b.Save(); err != nil {
 			return "", err
@@ -70,7 +70,7 @@ func cmdFail(root string, p FailParams) (string, error) {
 		return "", fmt.Errorf("%s в %s: провал ставится задаче из Check или из In progress", p.ID, sectTitles[row.Sect])
 	}
 	moved := *row
-	moved.Title = joinTitle(base, deps, " [провал: "+p.Reason+"]", blockSuf)
+	moved.Title = joinTitle(base, deps, acceptSuf, " [провал: "+p.Reason+"]", blockSuf)
 	line := formatRow(&moved)
 	from := row.Sect
 	if from == SectCheck {

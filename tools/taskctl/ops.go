@@ -202,8 +202,8 @@ func wrapLink(link string) string {
 }
 
 type AddParams struct {
-	ID, Title, Type, Rank, Cost, Link, Status string
-	Commit                                            CommitOpts
+	ID, Title, Type, Rank, Cost, Link, Status, Accept, Barrier string
+	Commit                                                            CommitOpts
 }
 
 func cmdAdd(root string, p AddParams) (string, error) {
@@ -242,6 +242,28 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := checkCell("заголовок", p.Title); err != nil {
 		return "", err
 	}
+	// Вид приёмки обязателен при заведении (LLD DK-292, решение 3): без него
+	// отсутствие суффикса значило бы «не думали вовсе», а не «решили, что
+	// агентский». Не агентский вид требует барьер из шести с закрытым списком
+	// обходов, и команда заводит файл задачи с разделом «Приёмка».
+	if p.Accept == "" {
+		return "", fmt.Errorf("нужен --accept agent|mixed|user (LLD DK-292: вид приёмки обязателен при заведении строки)")
+	}
+	if !validAccept(p.Accept) {
+		return "", fmt.Errorf("--accept %q не из {agent, mixed, user}", p.Accept)
+	}
+	if p.Accept == acceptAgent {
+		if p.Barrier != "" {
+			return "", fmt.Errorf("--barrier не имеет смысла у агентского вида: барьер называют там, где вида нет")
+		}
+	} else {
+		if p.Barrier == "" {
+			return "", fmt.Errorf("для --accept %s нужен --barrier <ключ> из шести барьеров (глаза, доступ, необратимость, секрет, согласие, событие)", p.Accept)
+		}
+		if _, ok := acceptBarriers[p.Barrier]; !ok {
+			return "", fmt.Errorf("--barrier %q не из закрытого списка (глаза, доступ, необратимость, секрет, согласие, событие)", p.Barrier)
+		}
+	}
 	if err := checkType(p.Type); err != nil {
 		return "", err
 	}
@@ -264,7 +286,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("неизвестный статус %q, жду backlog / in-progress / check / blocked", status)
 	}
-	title := p.Title
+	title := p.Title + acceptSuffix(p.Accept)
 	if status == SectBlocked {
 		// Новая строка в Blocked обходила бы тот же инвариант, что и move из
 		// Backlog (RULES.board.md, «Трекинг задач» п. 4): заблокированной
@@ -289,6 +311,24 @@ func cmdAdd(root string, p AddParams) (string, error) {
 			taskFile = filepath.Join("docs", rel)
 		} else {
 			link = "-"
+		}
+	}
+	// Не агентский вид держит причину в файле задачи: add заводит этот файл с
+	// разделом «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
+	// строку обхода исход, имена обходов лежат в ACCEPTANCE.md (задача DK-299).
+	if p.Accept != acceptAgent && taskFile == "" {
+		rel := fmt.Sprintf("tasks/%s.md", id)
+		abs := filepath.Join(root, "docs", rel)
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return "", err
+		}
+		body := fmt.Sprintf("# %s: %s\n\n## Приёмка\n\n- вид: %s\n- барьер «%s»:\n", id, p.Title, p.Accept, p.Barrier)
+		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+			return "", err
+		}
+		taskFile = filepath.Join("docs", rel)
+		if link == "-" {
+			link = fmt.Sprintf("[%s](%s)", rel, rel)
 		}
 	}
 	if err := checkCell("ссылка", link); err != nil {
@@ -368,7 +408,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		_, deps, _, _ := splitTitle(row.Title)
+		_, deps, _, _, _ := splitTitle(row.Title)
 		for _, d := range deps {
 			if !arch.has(d) {
 				return "", fmt.Errorf("%s зависит от незакрытой %s, нельзя перевести в in-progress", id, d)
@@ -407,8 +447,8 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// shipctl merge и ship после удачного выката, поэтому дочищать признак
 	// руками после починки не приходится.
 	quenched := ""
-	if base, deps, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
-		moved.Title = joinTitle(base, deps, "", blockSuf)
+	if base, deps, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
+		moved.Title = joinTitle(base, deps, acceptSuf, "", blockSuf)
 		quenched = ", признак провала снят"
 	}
 	if moved.Title != row.Title {
@@ -425,7 +465,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// он тут же, где меняется статус, а не в shipctl или где-то ещё, кто бы
 	// move ни позвал (RULES.board.md, «Ветки, ревью и деплой» п. 8).
 	var note string
-	base, _, _, _ := splitTitle(row.Title)
+	base, _, _, _, _ := splitTitle(row.Title)
 	switch target {
 	case SectCheck:
 		note = notify(root, reasonCheck, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
@@ -455,16 +495,16 @@ func relocate(b *Board, row *Row, target string, moved *Row, line string) (*Boar
 }
 
 type SetParams struct {
-	ID, Title, Type, Rank, Cost, Link string
-	Commit                            CommitOpts
+	ID, Title, Type, Rank, Cost, Link, Accept string
+	Commit                                          CommitOpts
 }
 
 func cmdSet(root string, p SetParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
-	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" {
-		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost и/или --link")
+	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" && p.Accept == "" {
+		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost, --link и/или --accept")
 	}
 	if err := boardGuard(root, "set"); err != nil {
 		return "", err
@@ -483,12 +523,16 @@ func cmdSet(root string, p SetParams) (string, error) {
 			return "", err
 		}
 		title := p.Title
-		// У строки с зависимостью, провалом проверки и/или причиной блокировки
-		// эти хвосты живут в заголовке, при замене текста они переносятся в
-		// новый (в исходном порядке: «после», «провал», «блок»).
-		_, deps, failSuf, blockSuf := splitTitle(row.Title)
+		// У строки с зависимостью, приёмкой, провалом проверки и/или причиной
+		// блокировки эти хвосты живут в заголовке, при замене текста они
+		// переносятся в новый (в исходном порядке: «после», «приёмка», «провал»,
+		// «блок»).
+		_, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 		if len(deps) > 0 && !strings.Contains(title, "[после") {
-			title = joinTitle(title, deps, "", "")
+			title = joinTitle(title, deps, "", "", "")
+		}
+		if acceptSuf != "" && !strings.Contains(title, "[приёмка:") {
+			title += acceptSuf
 		}
 		if failSuf != "" && !strings.Contains(title, "[провал:") {
 			title += failSuf
@@ -499,6 +543,31 @@ func cmdSet(root string, p SetParams) (string, error) {
 		if title != row.Title {
 			changes = append(changes, "заголовок")
 			row.Title = title
+		}
+	}
+	if p.Accept != "" {
+		// Пересмотр вида по ходу работы (LLD DK-292, решение 4): значение в
+		// строке доски правит только set --accept, причину (обход или барьер)
+		// исполнитель дописывает в раздел «Приёмка» файла задачи сам. Барьер
+		// «согласие» повышения не подлежит, и это единственный запрет.
+		if !validAccept(p.Accept) {
+			return "", fmt.Errorf("--accept %q не из {agent, mixed, user}", p.Accept)
+		}
+		old := acceptOf(row.Title)
+		if p.Accept == acceptAgent && old != acceptAgent {
+			// Повышение до агентского: непреходящий барьер «согласие» повышения
+			// не подлежит (LLD DK-292, решение 1: обхода у него нет по
+			// определению).
+			if text, found, _ := acceptanceSection(root, p.ID); found {
+				if bar, _ := parseAcceptance(text); bar == "согласие" {
+					return "", fmt.Errorf("%s: барьер «согласие» не подлежит повышению (LLD DK-292, решение 1: у него нет обхода по определению)", p.ID)
+				}
+			}
+		}
+		if p.Accept != old {
+			base, deps, _, failSuf, blockSuf := splitTitle(row.Title)
+			row.Title = joinTitle(base, deps, acceptSuffix(p.Accept), failSuf, blockSuf)
+			changes = append(changes, fmt.Sprintf("вид %s -> %s", old, p.Accept))
 		}
 	}
 	if p.Type != "" {
@@ -605,7 +674,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	}
 	// Закрыть задачу с непогашенным провалом значит увезти в архив сломанный
 	// прод: строка с доски уйдёт, и очередь выката отпустит его молча.
-	if _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
+	if _, _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
 		return "", fmt.Errorf("у %s непогашенный провал проверки%s: сначала починить прод (shipctl revert %s либо форвард-фикс и shipctl merge %s), а если он уже починен мимо shipctl, снять признак: taskctl fail %s --clear",
 			p.ID, failSuf, p.ID, p.ID, p.ID)
 	}
@@ -671,9 +740,11 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		return "", err
 	}
 	// В архивную строку маркер зависимости не попадает: закрытая задача
-	// саму себя ждать больше не заставит.
-	archBase, _, _, archBlockSuf := splitTitle(row.Title)
-	cells := []string{p.ID, joinTitle(archBase, nil, "", archBlockSuf), row.Type, row.P, date, linkCell}
+	// саму себя ждать больше не заставит. Суффикс приёмки переживает закрытие
+	// наравне с «[блок: ...]» (LLD DK-292, решение 3): вид это свойство самой
+	// задачи, а не её положения в очереди, и без него сводке нечего считать.
+	archBase, _, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
+	cells := []string{p.ID, joinTitle(archBase, nil, archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
 	}
@@ -684,7 +755,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if r.ID == p.ID {
 			continue
 		}
-		base, deps, failSuf, blockSuf := splitTitle(r.Title)
+		base, deps, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 		idx := -1
 		for i, d := range deps {
 			if d == p.ID {
@@ -696,7 +767,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			continue
 		}
 		deps = append(deps[:idx], deps[idx+1:]...)
-		r.Title = joinTitle(base, deps, failSuf, blockSuf)
+		r.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
 		b.Lines[r.LineIdx] = formatRow(r)
 		depTouched = append(depTouched, r.ID)
 	}

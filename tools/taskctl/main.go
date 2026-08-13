@@ -206,8 +206,10 @@ func main() {
 		fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
 		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
+		fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
+		fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")
 		commitFlags(fs, &p.Commit)
-		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "add --title \"...\" --type bug|task|LLD --rank \"а+б+в+г+д\"")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "add --title \"...\" --type bug|task|LLD --rank \"а+б+в+г+д\" --accept agent|mixed|user")
 		msg, err = cmdAdd(root(*dir), p)
 	case "draft":
 		// Подкоманда узнаётся точным совпадением первого позиционного
@@ -315,9 +317,10 @@ func main() {
 		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
 		fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
 		fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
+		fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
 		commitFlags(fs, &p.Commit)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...]")
+		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...]")
 		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
 	case "file":

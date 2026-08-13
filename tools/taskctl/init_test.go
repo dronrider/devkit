@@ -32,7 +32,7 @@ func TestInitAndFirstTask(t *testing.T) {
 	if id != "AB-001" {
 		t.Fatalf("ожидал AB-001, получил %s", id)
 	}
-	if _, err := cmdAdd(dir, AddParams{Title: "Первая", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err != nil {
+	if _, err := cmdAdd(dir, AddParams{Title: "Первая", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if ids := backlogIDs(t, dir); len(ids) != 1 || ids[0] != "AB-001" {

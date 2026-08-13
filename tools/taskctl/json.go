@@ -20,6 +20,7 @@ type jsonRow struct {
 	ID     string   `json:"id"`
 	Title  string   `json:"title"`
 	After  []string `json:"after,omitempty"`
+	Accept string   `json:"accept,omitempty"`
 	Fail   string   `json:"fail,omitempty"`
 	Block  string   `json:"block,omitempty"`
 	Type   string   `json:"type"`
@@ -52,13 +53,14 @@ func sufText(suf, label string) string {
 }
 
 func makeJSONRow(root string, r *Row, times map[int]int64, clean bool) jsonRow {
-	base, deps, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
-		ID:    r.ID,
-		Title: strings.TrimSpace(base),
-		After: deps,
-		Fail:  sufText(failSuf, "провал"),
-		Block: sufText(blockSuf, "блок"),
+		ID:     r.ID,
+		Title:  strings.TrimSpace(base),
+		After:  deps,
+		Accept: sufText(acceptSuf, "приёмка"),
+		Fail:   sufText(failSuf, "провал"),
+		Block:  sufText(blockSuf, "блок"),
 		Type:  r.Type, P: r.P, R: r.RTotal, RParts: r.RParts,
 		Cost: r.Cost, Link: r.Link,
 		// Дата последней правки строки: перевод в статус двигает строку между

@@ -91,6 +91,40 @@ func checkGate(root string, row *Row) error {
 	if br, ahead := unmergedTaskBranch(root, id); br != "" {
 		return fmt.Errorf("%s: ветка %s не слита, впереди main её коммитов %d, а Check значит, что код уже доехал до пользователя: сначала «shipctl merge %s», он и переведёт строку", id, br, ahead, id)
 	}
+	// Не агентский вид требует раздел «Приёмка» с перебором обходов
+	// (LLD DK-292, решение 4): машина считает строки, ревьювер судит причины.
+	if kind := acceptOf(row.Title); kind != acceptAgent {
+		if err := acceptGate(root, id, kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// acceptGate проверяет, что у не агентского вида в файле задачи стоит раздел
+// «Приёмка» с ключом барьера из шести и строкой перебора на каждый обход этого
+// барьера. Судить убедительность причины обхода машина не берётся, это работа
+// ревьювера; здесь только счёт по закрытому списку.
+func acceptGate(root, id, kind string) error {
+	rel := "docs/tasks/" + id + ".md"
+	text, found, ok := acceptanceSection(root, id)
+	if !ok {
+		return fmt.Errorf("%s: вид приёмки %s, а файла %s нет: вид с барьером требует раздел «Приёмка» в файле задачи (LLD DK-292, решение 3)", id, kind, rel)
+	}
+	if !found {
+		return fmt.Errorf("%s: вид приёмки %s, а раздела «Приёмка» в %s нет: назвать барьер и перебрать обходы (LLD DK-292, решение 1) и повторить move", id, kind, rel)
+	}
+	barrier, bypasses := parseAcceptance(text)
+	if barrier == "" {
+		return fmt.Errorf("%s: в разделе «Приёмка» нет строки «- барьер «<ключ>»:», а вид %s её требует", id, kind)
+	}
+	want, known := acceptBarriers[barrier]
+	if !known {
+		return fmt.Errorf("%s: барьер «%s» в разделе «Приёмка» не из закрытого списка (глаза, доступ, необратимость, секрет, согласие, событие)", id, barrier)
+	}
+	if bypasses != want {
+		return fmt.Errorf("%s: у барьера «%s» обходов %d, а перебор в «Приёмка» имеет строк %d (нужно столько же, по строке на обход с исходом)", id, barrier, want, bypasses)
+	}
 	return nil
 }
 

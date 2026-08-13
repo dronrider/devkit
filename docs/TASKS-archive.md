@@ -205,3 +205,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-287 | dashboard: сообщение в чате уходит само, без кнопки «Повторить» | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-287.md](tasks/archive/2026/DK-287.md) |
 | DK-280 | dashboard: разговор законченной работы не открыть ни с задачи, ни с чата | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-280.md](tasks/archive/2026/DK-280.md) |
 | DK-296 | dashboard: чат открывается у обычной задачи и зовёт её целью | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-296.md](tasks/archive/2026/DK-296.md) |
+| DK-292 | LLD: критерии вида приёмки задачи и место, где он назначается | LLD | P2 | 2026-08-13 | [tasks/archive/2026/DK-292.md](tasks/archive/2026/DK-292.md), `ec4839b1`, `dd981904`, `39a62af9`, `53b4769e`, `bf61a2ab`, `14d7db05` |

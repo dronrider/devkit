@@ -379,3 +379,31 @@ func TestNextAfterMerge(t *testing.T) {
 		}
 	}
 }
+
+// TestNextAfterMergeTrain: поезд из задач разных видов группируется по виду,
+// каждый вид звучит своей строкой в порядке agent/mixed/user, а одноранговые
+// ID склеиваются через запятую. Контракт группировки описан в докстринге
+// nextAfterMerge и README, но без этого утверждения регрессия ловится только
+// глазами: TestNextAfterMerge гоняет каждый вид по одной задаче.
+func TestNextAfterMergeTrain(t *testing.T) {
+	b := &board{sects: map[string][]row{"check": {
+		{ID: "XR-1", Title: "Агентская раз"},
+		{ID: "XR-2", Title: "Агентская два"},
+		{ID: "XR-3", Title: "Смешанная [приёмка: mixed]"},
+		{ID: "XR-4", Title: "Пользовательская [приёмка: user]"},
+	}}}
+	got := nextAfterMerge(b, []string{"XR-1", "XR-2", "XR-3", "XR-4"})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("жду 3 строки совета (по виду), получил %d: %q", len(lines), got)
+	}
+	if !strings.Contains(lines[0], "XR-1, XR-2") || !strings.Contains(lines[0], "прогнать сценарий проверки") {
+		t.Errorf("первая строка agent склеивает агентские ID: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "XR-3") || !strings.Contains(lines[1], "агентскую часть") {
+		t.Errorf("вторая строка mixed: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "XR-4") || !strings.Contains(lines[2], "ждёт пользователя") {
+		t.Errorf("третья строка user: %q", lines[2])
+	}
+}

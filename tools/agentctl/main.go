@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/frame"
 )
 
 const usageText = `agentctl: выбор исполнителя под задачу по метаданным доски (RULES.board.md)
@@ -75,6 +77,8 @@ run: инструмент со своим спавном получает инс
 неопределённость из разбивки ранга) описаны в tools/agentctl/README.md.
 Общий флаг -C <dir>: откуда искать корень (директорию с docs/TASKS.md),
 ставится и перед командой, и после неё.
+Флаги подкоманд стоят где угодно относительно позиционных: и до ID, и после,
+и между ними; лишний позиционный не выбрасывается молча, а отбивается ошибкой.
 `
 
 // globalDir вырезает -C до выбора команды, как в taskctl: справка обещает
@@ -115,6 +119,17 @@ func fail(err error) {
 	os.Exit(1)
 }
 
+// needArgs проверяет число позиционных через общий frame.NeedArgs, а выход
+// через os.Exit держит локальный fail. Разбор позиционных сам по себе
+// (frame.ParseArgs) снимает позиционные из хвоста после fs.Parse, так что флаг
+// стоит где угодно, а лишний позиционный отбивается здесь, а не молчит
+// (DK-236).
+func needArgs(pos []string, min, max int, usage string) {
+	if err := frame.NeedArgs(pos, min, max, usage); err != nil {
+		fail(err)
+	}
+}
+
 func main() {
 	if versionRequested() {
 		return
@@ -139,31 +154,27 @@ func main() {
 	var err error
 	switch args[0] {
 	case "pick":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: pick <ID>"))
-		}
 		fs := flag.NewFlagSet("pick", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		role := fs.String("role", roleExec, "роль субагента: exec или review")
 		goal := fs.String("goal", "", "файл цели, из него берётся потолок яруса")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "pick <ID> [--record] [--role exec|review] [--goal <файл>]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
 		}
-		msg, err = cmdPick(root, args[1], *record, *role, *goal)
+		msg, err = cmdPick(root, pos[0], *record, *role, *goal)
 	case "run":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: run <ID>"))
-		}
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		role := fs.String("role", roleExec, "роль исполнителя: exec или review")
 		goal := fs.String("goal", "", "файл цели, из него берётся потолок яруса")
 		workdir := fs.String("workdir", "", "рабочая директория задачи, по умолчанию корень проекта")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "run <ID> [--record] [--role exec|review] [--goal <файл>] [--workdir <dir>]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
@@ -171,7 +182,7 @@ func main() {
 		// Вывод подпроцесса идёт наружу по ходу дела, а не собирается в строку:
 		// делегированная сессия живёт минутами, и молчащий терминал до её конца
 		// неотличим от повисшего.
-		code, rerr := cmdRun(root, args[1], *record, *role, *goal, *workdir, os.Stdout, os.Stderr)
+		code, rerr := cmdRun(root, pos[0], *record, *role, *goal, *workdir, os.Stdout, os.Stderr)
 		if rerr != nil {
 			fail(rerr)
 		}
@@ -182,7 +193,8 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		goal := fs.String("goal", "", "файл цели с разделами «Бюджет» и «Журнал»")
 		record := fs.Bool("record", false, "дописать текущий снимок квоты в «Журнал» файла цели")
-		fs.Parse(args[1:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 0, 0, "spend --goal <файл цели> [--record]")
 		if *goal == "" {
 			fail(fmt.Errorf("жду: spend --goal <файл цели>"))
 		}
@@ -206,7 +218,7 @@ func main() {
 		if len(args) > 1 && args[1] == "refresh" {
 			fs := flag.NewFlagSet("quota refresh", flag.ExitOnError)
 			ifStale := fs.Bool("if-stale", false, "снимать панель, только если снимок протух")
-			fs.Parse(args[2:])
+			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "quota refresh [--if-stale]")
 			msg, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
 			break
 		}
@@ -218,12 +230,10 @@ func main() {
 		fs := flag.NewFlagSet("harness", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		name := fs.String("harness", "", "имя харнеса, перебивает детект")
-		fs.Parse(args[1:])
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "harness [--harness <имя>]")
 		msg, err = cmdHarness(*dir, *name)
 	case "budget":
-		if len(args) > 1 {
-			fail(fmt.Errorf("жду: budget"))
-		}
+		needArgs(args[1:], 0, 0, "budget")
 		msg, err = cmdBudget(gdir, timeNow())
 	case "help":
 		fmt.Print(usageText)

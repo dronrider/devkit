@@ -200,3 +200,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-277 | shipctl merge считает открытым замечанием любую строку раздела «Ревью» с маркером списка | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-277.md](tasks/archive/2026/DK-277.md) |
 | DK-281 | dashboard: сообщение агенту идёт без статуса отправки и дублируется повтором | bug | P2 | 2026-08-13 | [tasks/archive/2026/DK-281.md](tasks/archive/2026/DK-281.md) |
 | DK-284 | dashboard: экран задачи на телефоне, шапка, ранг и описание | task | P2 | 2026-08-13 | [tasks/archive/2026/DK-284.md](tasks/archive/2026/DK-284.md) |
+| DK-278 | гитигнор-записи .devkit/cmdout/ и ship.lock не раскладываются автоматикой, doctor их отсутствие пропускает | task | P3 | 2026-08-13 | [tasks/archive/2026/DK-278.md](tasks/archive/2026/DK-278.md) |

@@ -186,3 +186,104 @@ func TestLintFindsUnmergedCheckBranch(t *testing.T) {
 		t.Fatalf("слитая ветка не находка:\n%s", got)
 	}
 }
+
+// dropVerification оставляет задаче файл без раздела «Проверка»: так выглядит
+// агентская задача, закрытая до того, как вывод прогона вложен.
+func dropVerification(t *testing.T, root, id string) {
+	t.Helper()
+	p := filepath.Join(root, "docs", "tasks", id+".md")
+	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// emptyVerification заводит файл с пустым разделом «Проверка»: заголовок стоит,
+// а тела нет, и ворота обязаны считать это пустым закрытием.
+func emptyVerification(t *testing.T, root, id string) {
+	t.Helper()
+	p := filepath.Join(root, "docs", "tasks", id+".md")
+	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario+"\n## Проверка\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCloseAgentGateRejectsWithoutVerification: агентская задача без раздела
+// «Проверка» воротами close не закрывается (LLD DK-292, решение 4). На старом
+// коде ворот не было, и пустое закрытие проходило.
+func TestCloseAgentGateRejectsWithoutVerification(t *testing.T) {
+	root := setup(t)
+	dropVerification(t, root, "XR-005")
+	_, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"})
+	if err == nil {
+		t.Fatal("close агентской задачи без «Проверка» должен падать")
+	}
+	if !strings.Contains(err.Error(), "Проверка") {
+		t.Fatalf("отказ не называет раздел «Проверка»: %v", err)
+	}
+	// Строка осталась на доске, в архив не уехала.
+	b, _ := LoadBoard(boardPath(root))
+	if b.find("XR-005") == nil {
+		t.Fatal("строка уехала в архив при отказе ворот")
+	}
+}
+
+// TestCloseAgentGateRejectsEmptyVerification: пустой раздел «Проверка»
+// считается отсутствующим, ворота требуют непустого тела с реальным выводом.
+func TestCloseAgentGateRejectsEmptyVerification(t *testing.T) {
+	root := setup(t)
+	emptyVerification(t, root, "XR-005")
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err == nil {
+		t.Fatal("close агентской задачи с пустым разделом «Проверка» должен падать")
+	}
+}
+
+// TestCloseAgentGatePassesWithVerification: непустой раздел «Проверка»
+// пропускает агентскую задачу в архив.
+func TestCloseAgentGatePassesWithVerification(t *testing.T) {
+	root := setup(t)
+	// XR-005 в фикстуре уже с непустой «Проверкой» (fixtureVerification).
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
+		t.Fatalf("close агентской задачи с непустой «Проверкой» должен пройти: %v", err)
+	}
+	arch, _ := LoadArchive(archivePath(root))
+	if !arch.has("XR-005") {
+		t.Fatal("задача не уехала в архив")
+	}
+}
+
+// TestCloseAgentGateIgnoresFencedVerification: заголовок «## Проверка» внутри
+// ограждённого блока это чужой вывод, вложенный в файл, а не раздел этой задачи,
+// и ворота его не считают.
+func TestCloseAgentGateIgnoresFencedVerification(t *testing.T) {
+	root := setup(t)
+	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	body := "# XR-005\n" + fixtureScenario +
+		"\n```\n## Проверка\n\n- чужой вывод.\n```\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err == nil {
+		t.Fatal("«Проверка» в ограждённом блоке не считается разделом файла")
+	}
+}
+
+// TestCloseNonAgentSkipsVerificationGate: не агентский вид воротами close не
+// трогается, его перебор обходов держат ворота move check. user-задача без
+// раздела «Проверка» закрывается, как и раньше.
+func TestCloseNonAgentSkipsVerificationGate(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Пользовательская", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
+		t.Fatal(err)
+	}
+	acceptanceBody := "# XR-100: Пользовательская\n" +
+		"\n## Приёмка\n\n- вид: user\n- барьер «событие»: причина\n" +
+		"  - событие в логе: годится\n" +
+		"  - пустой лог: годится\n" +
+		"  - сторонний источник: годится\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-100.md"), []byte(acceptanceBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-100", Date: "2026-07-08"}); err != nil {
+		t.Fatalf("не агентский вид закрывается без «Проверки»: %v", err)
+	}
+}

@@ -80,11 +80,20 @@ func acceptSuffix(kind string) string {
 // acceptanceHeading это заголовок раздела «Приёмка» файла задачи.
 const acceptanceHeading = "## Приёмка"
 
-// acceptanceSection читает текст раздела «Приёмка» файла задачи (без строки
-// заголовка) с учётом ограждений блоков кода тем же порядком, что
-// taskDocSections: заголовок внутри ``` это чужой вывод, а не раздел.
-// ok=false значит, что файла нет; found=false что раздела в нём нет.
-func acceptanceSection(root, id string) (text string, found, ok bool) {
+// verificationHeading это заголовок раздела «Проверка», куда после выката
+// вкладывается реальный вывод прогона (LLD DK-292, решение 4: рубеж против
+// фиктивного агентского сценария). Ворота close проверяют по нему, что
+// агентская задача закрыта непустым прогоном, а не пустой правкой. Совпадение
+// по префиксу, поэтому «## Проверка после выката» и «## Проверка на проде»
+// считаются тем же разделом.
+const verificationHeading = "## Проверка"
+
+// readTaskSection читает тело раздела файла задачи (без строки заголовка) с
+// учётом ограждений блоков кода тем же порядком, что taskDocSections: заголовок
+// внутри ``` это чужой вывод, а не раздел этого файла. ok=false значит, что
+// файла нет; found=false что раздела в нём нет. Раздел кончается следующим
+// заголовком уровня «## ».
+func readTaskSection(root, id, heading string) (text string, found, ok bool) {
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
 		return "", false, false
@@ -112,18 +121,31 @@ func acceptanceSection(root, id string) (text string, found, ok bool) {
 			continue
 		}
 		if !inSection {
-			if strings.HasPrefix(ln, acceptanceHeading) {
+			if strings.HasPrefix(ln, heading) {
 				inSection = true
 			}
 			continue
 		}
-		// Следующий заголовок уровня раздела кончает «Приёмка».
+		// Следующий заголовок уровня раздела кончает текущий.
 		if strings.HasPrefix(ln, "## ") {
 			break
 		}
 		out = append(out, ln)
 	}
 	return strings.Join(out, "\n"), inSection, true
+}
+
+// acceptanceSection читает текст раздела «Приёмка» файла задачи (без строки
+// заголовка). ok=false значит, что файла нет; found=false что раздела в нём нет.
+func acceptanceSection(root, id string) (text string, found, ok bool) {
+	return readTaskSection(root, id, acceptanceHeading)
+}
+
+// verificationSection читает текст раздела «Проверка» файла задачи (без строки
+// заголовка), куда диспетчер вкладывает реальный вывод прогона. ok=false значит,
+// что файла нет; found=false что раздела в нём нет.
+func verificationSection(root, id string) (text string, found, ok bool) {
+	return readTaskSection(root, id, verificationHeading)
 }
 
 // parseAcceptance разбирает текст раздела «Приёмка» на ключ барьера и число

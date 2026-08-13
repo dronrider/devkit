@@ -19,8 +19,8 @@ func setup(t *testing.T) string {
 	files := map[string]string{
 		boardPath(root):                   fixtureBoard,
 		archivePath(root):                 fixtureArchive,
-		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureScenario,
-		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureScenario,
+		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureScenario + fixtureVerification,
 	}
 	for p, content := range files {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -33,6 +33,12 @@ func setup(t *testing.T) string {
 // fixtureScenario это готовый сценарий проверки: без него ворота move не
 // пускают строку в Check (gate.go), а через Check ходит половина тестов.
 const fixtureScenario = "\n## Сценарий проверки\n\n1. Запустить.\n2. Ждём ok.\n"
+
+// fixtureVerification это непустой раздел «Проверка»: ворота close требуют его
+// у агентского вида (DK-300), а XR-005 в фикстуре идёт без суффикса, то есть
+// агентский. Тем же разделом пользуются тесты, где close гоняется на агентской
+// строке напрямую.
+const fixtureVerification = "\n## Проверка\n\n- прогон пройден, вывод вложен.\n"
 
 // giveScenario заводит задаче файл со сценарием проверки там, где фикстура
 // доски его не кладёт.
@@ -797,6 +803,10 @@ func TestCloseWithLinks(t *testing.T) {
 
 Описание:
 - [LLD](../lld/XR-099.md)
+
+## Проверка
+
+- вывод прогона вложен.
 `
 	taskPath := filepath.Join(root, "docs", "tasks", "XR-099.md")
 	os.WriteFile(taskPath, []byte(taskContent), 0o644)
@@ -841,7 +851,7 @@ func TestCloseRewritesIncomingLinks(t *testing.T) {
 	}
 	os.WriteFile(
 		filepath.Join(root, "docs", "tasks", "XR-077.md"),
-		[]byte("# XR-077\nTask\n"),
+		[]byte("# XR-077\nTask\n\n## Проверка\n\n- вывод прогона вложен.\n"),
 		0o644,
 	)
 	os.WriteFile(

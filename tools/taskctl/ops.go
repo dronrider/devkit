@@ -682,6 +682,15 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		return "", fmt.Errorf("у %s непогашенный провал проверки%s: сначала починить прод (shipctl revert %s либо форвард-фикс и shipctl merge %s), а если он уже починен мимо shipctl, снять признак: taskctl fail %s --clear",
 			p.ID, failSuf, p.ID, p.ID, p.ID)
 	}
+	// Агентский вид требует непустого раздела «Проверка» в файле задачи (LLD
+	// DK-292, решение 4): пустое закрытие агентской задачи запрещено, и это
+	// машинный рубеж против фиктивного сценария из повтора тестов ветки. Не
+	// агентский вид тут не трогается, его держат ворота move check.
+	if kind := acceptOf(row.Title); kind == acceptAgent {
+		if err := closeAgentGate(root, p.ID); err != nil {
+			return "", err
+		}
+	}
 	date := p.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")

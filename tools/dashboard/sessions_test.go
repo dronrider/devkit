@@ -369,6 +369,70 @@ func TestTaskScreenOpensAgentTalk(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// cssRule достаёт объявления правила по точному селектору: селектор берётся
+// целиком, поэтому «.seg» не путается с «.tseg» и с «.seg div».
+func cssRule(t *testing.T, css, selector string) string {
+	t.Helper()
+	for at := 0; ; {
+		cut := strings.Index(css[at:], selector+"{")
+		if cut < 0 {
+			return ""
+		}
+		cut += at
+		at = cut + len(selector)
+		// Селектор кончается там же, где начинается: перед ним либо перенос
+		// строки, либо запятая перечисления, а не хвост чужого имени класса.
+		if cut > 0 && !strings.ContainsRune("\n,} ", rune(css[cut-1])) {
+			continue
+		}
+		body := css[cut+len(selector)+1:]
+		end := strings.Index(body, "}")
+		if end < 0 {
+			t.Fatalf("правило %s не закрыто", selector)
+		}
+		return body[:end]
+	}
+}
+
+// Переключатель разговоров задачи виден на обеих ширинах, а переключатель
+// панелей остаётся телефонным. Первым заходом разговоры собрались классом
+// телефонных панелей, и на ноутбуке экран их не показывал: у того класса
+// display:none по умолчанию, а display:flex он получает только внутри
+// медиазапроса телефона (замечание ревью DK-280). Заглушка DOM такое не
+// ловит, каскада она не считает, поэтому предмет проверки тут сами правила:
+// чем переключатель разговоров собран в статике и что об этом классе сказано
+// в стилях по умолчанию и на телефоне.
+func TestStaticTranscriptSegVisible(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(funcBody(t, app, "async function wireTranscript("), `el("div", "tseg")`) {
+		t.Fatal("переключатель разговоров собран не классом tseg: класс телефонных панелей " +
+			"прячет его на ноутбуке")
+	}
+	if !strings.Contains(funcBody(t, app, "function renderAgent("), `el("div", "seg")`) {
+		t.Error("переключатель панелей собран не классом seg: телефонные вкладки остались без стилей")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	narrow := funcBody(t, css, "@media (max-width:900px){")
+	base := strings.Replace(css, narrow, "", 1)
+
+	// Разговоры переключают на обеих ширинах: правило по умолчанию показывает
+	// их, и телефонный медиазапрос ничего не отнимает.
+	if got := cssRule(t, base, ".tseg"); !strings.Contains(got, "display:flex") {
+		t.Errorf("переключатель разговоров не показан по умолчанию: правило .tseg это %q", got)
+	}
+	if got := cssRule(t, narrow, ".tseg"); strings.Contains(got, "display:none") {
+		t.Errorf("на телефоне переключатель разговоров спрятан: правило .tseg это %q", got)
+	}
+	// Панели переключают только на телефоне, и это остаётся как было: на
+	// ноутбуке они стоят рядом, и вкладки там лишние.
+	if got := cssRule(t, base, ".seg"); !strings.Contains(got, "display:none") {
+		t.Errorf("вкладки панелей видны по умолчанию: правило .seg это %q", got)
+	}
+	if got := cssRule(t, narrow, ".seg"); !strings.Contains(got, "display:flex") {
+		t.Errorf("на телефоне вкладки панелей спрятаны: правило .seg это %q", got)
+	}
+}
+
 // Долгий обход не выдаётся за полный: когда бюджет поиска кончился, ответ
 // говорит, сколько транскриптов просмотрено из скольких. Часы стенда идут
 // шагами по две секунды, поэтому бюджета хватает на пару файлов, а не на весь

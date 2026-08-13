@@ -1297,7 +1297,9 @@ async function wireTranscript(project, tp, id) {
   if (r.body.note) tp.body.append(el("div", "hint", r.body.note));
   const box = el("div");
   if (list.length > 1) {
-    const seg = el("div", "seg");
+    // Свой класс, а не .seg панелей телефона: тот на ноутбуке спрятан стилями,
+    // и переключатель разговоров уходил бы вместе с ним (замечание ревью).
+    const seg = el("div", "tseg");
     list.forEach((s, i) => {
       const tab = el("div", i === 0 ? "on" : "", sessionTab(s));
       tab.addEventListener("click", () => {

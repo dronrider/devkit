@@ -222,7 +222,7 @@ if (streams.length !== 1 || !streams[0].url.includes("bbb-22222222")) {
 
 // Переключение на прежний разговор: лента собирается заново, а поток прежней
 // закрывается, иначе на экран сыпались бы реплики двух сессий разом.
-const seg = tp.body.children.find((n) => n.className === "seg");
+const seg = tp.body.children.find((n) => n.className === "tseg");
 if (!seg || seg.children.length !== 2) {
   fail("переключателя разговоров на экране нет: " + shown);
 }

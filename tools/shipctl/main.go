@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/frame"
 )
 
 const usageText = `shipctl: слияние и откат задач по правилам доски (RULES.board.md)
@@ -62,6 +64,8 @@ autonomous=true merge и revert пушат сами и без флага, ина
 задаёт своё, если в проекте белый список префиксов.
 Общий флаг -C <dir>: откуда искать корень (директорию с docs/TASKS.md),
 ставится и перед командой, и после неё.
+Флаги подкоманд стоят где угодно относительно позиционных: и до ID, и после,
+и между ними; лишний позиционный не выбрасывается молча, а отбивается ошибкой.
 `
 
 // globalDir вырезает -C до выбора команды, как в taskctl: справка обещает
@@ -104,6 +108,17 @@ func fail(err error) {
 	os.Exit(1)
 }
 
+// needArgs проверяет число позиционных через общий frame.NeedArgs, а выход
+// через os.Exit держит локальный fail. Разбор позиционных сам по себе
+// (frame.ParseArgs) снимает позиционные из хвоста после fs.Parse, так что флаг
+// стоит где угодно, а лишний позиционный отбивается здесь, а не молчит
+// (DK-236).
+func needArgs(pos []string, min, max int, usage string) {
+	if err := frame.NeedArgs(pos, min, max, usage); err != nil {
+		fail(err)
+	}
+}
+
 func root(dir string) string {
 	r, err := findRoot(dir)
 	if err != nil {
@@ -138,42 +153,39 @@ func main() {
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		fs.Parse(args[1:])
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "status")
 		msg, err = cmdStatus(root(*dir))
 	case "start":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: start <ID> [--slug хвост] [--push]"))
-		}
 		fs := flag.NewFlagSet("start", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := StartParams{ID: args[1]}
+		p := StartParams{}
 		fs.StringVar(&p.Slug, "slug", "", "хвост имени ветки: <id>-<хвост>")
 		fs.BoolVar(&p.Push, "push", false, "запушить коммит доски после перевода в In progress")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "start <ID> [--slug хвост] [--push]")
+		p.ID = pos[0]
 		msg, err = cmdStart(root(*dir), p)
 	case "code":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: code <ID> [--dry-run] [--probe]"))
-		}
 		fs := flag.NewFlagSet("code", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := CodeParams{ID: args[1]}
+		p := CodeParams{}
 		fs.BoolVar(&p.DryRun, "dry-run", false, "напечатать окружение и не запускать редактор")
 		fs.BoolVar(&p.Probe, "probe", false, "сходить в endpoint второй подписки и назвать модель из ответа")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "code <ID> [--dry-run] [--probe]")
+		p.ID = pos[0]
 		msg, err = cmdCode(root(*dir), p)
 	case "merge":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push]"))
-		}
 		fs := flag.NewFlagSet("merge", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := MergeParams{ID: args[1]}
+		p := MergeParams{}
 		fs.StringVar(&p.Test, "test", "", "команда тестов проекта (sh -c)")
 		fs.StringVar(&p.Deploy, "deploy", "", "команда выката, без неё выкат за пользователем")
 		fs.BoolVar(&p.Train, "train", false, "слить в поезд: без выката, задача остаётся в In progress")
 		fs.BoolVar(&p.Push, "push", false, "запушить main и доску после слияния")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push]")
+		p.ID = pos[0]
 		msg, err = cmdMerge(root(*dir), p)
 	case "ship":
 		fs := flag.NewFlagSet("ship", flag.ExitOnError)
@@ -181,19 +193,18 @@ func main() {
 		p := ShipParams{}
 		fs.StringVar(&p.Deploy, "deploy", "", "команда выката, без неё берётся из .devkit/deploy.local")
 		fs.BoolVar(&p.Push, "push", false, "запушить main, тег и доску после выката")
-		fs.Parse(args[1:])
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "ship [--deploy \"cmd\"] [--push]")
 		msg, err = cmdShip(root(*dir), p)
 	case "revert":
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
-			fail(fmt.Errorf("жду: revert <ID> [--test \"cmd\"] [-m \"...\"] [--push]"))
-		}
 		fs := flag.NewFlagSet("revert", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		p := RevertParams{ID: args[1]}
+		p := RevertParams{}
 		fs.StringVar(&p.Test, "test", "", "команда тестов после отката (sh -c)")
 		fs.StringVar(&p.Msg, "m", "", "сообщение коммита-отката")
 		fs.BoolVar(&p.Push, "push", false, "запушить откат и доску")
-		fs.Parse(args[2:])
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "revert <ID> [--test \"cmd\"] [-m \"...\"] [--push]")
+		p.ID = pos[0]
 		msg, err = cmdRevert(root(*dir), p)
 	case "help":
 		fmt.Print(usageText)

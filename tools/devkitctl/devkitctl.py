@@ -227,6 +227,22 @@ WINDOW_HARNESS_KEY = "DEVKIT_HARNESS"
 DEPLOY_CONFIG = ".devkit/deploy.local"
 DEPLOY_IGNORE = ".devkit/*.local"
 RUN_LOG = ".devkit/log"
+# Машинные записи .devkit, которые автоматика подключения раскладывает в
+# .gitignore, а отсутствие доктор помечает находкой и чинит по --fix, как журнал
+# запусков. Путь path уходит в git check-ignore (для cmdout завершающий слэш
+# обязателен: без него при отсутствующем на диске каталоге git игнор не
+# подтверждает и выйдет ложная находка), comment встаёт в .gitignore строкой
+# выше паттерна, а why поясняет находку. Список общий для
+# scaffold_machine_gitignore (new, corp) и check_machine_ignore (doctor), иначе
+# две копии разойдутся в первый же раз.
+MACHINE_IGNORE_ENTRIES = (
+    (".devkit/cmdout/",
+     "# Полные выводы команд под обёрткой cmdout (DK-264), живут только на машине.",
+     "полные выводы команд замусорят status"),
+    (".devkit/ship.lock",
+     "# Замок конвейера shipctl, живёт только на машине.",
+     "замок конвейера замусорит status"),
+)
 # Ключи болванки выката: имя, комментарий (со своим завершающим \n) и значение
 # для файла, заводимого с нуля. Один источник для DEPLOY_TEMPLATE (новый файл)
 # и для дописывания недостающего в уже существующий: комментарий у ключа один,
@@ -430,6 +446,19 @@ def scaffold_deploy(root):
         done.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
     if ensure_gitignore(root, RUN_LOG, LOG_IGNORE_COMMENT):
         done.append(".gitignore: добавлен %s" % RUN_LOG)
+    return done
+
+
+def scaffold_machine_gitignore(root):
+    # Машинные гитигнор-записи .devkit (cmdout/, ship.lock) раскладываются при
+    # любом подключении проекта, в том числе без доски: cmdout и shipctl работают
+    # и в проекте без доски, и doctor проверяет их в блоке in_git, а не доски.
+    # Список MACHINE_IGNORE_ENTRIES общий с check_machine_ignore, иначе две
+    # копии разойдутся в первый же раз.
+    done = []
+    for path, comment, _why in MACHINE_IGNORE_ENTRIES:
+        if ensure_gitignore(root, path, comment):
+            done.append(".gitignore: добавлен %s" % path)
     return done
 
 
@@ -1588,6 +1617,28 @@ def corp_thin(clone, local, imports, fix):
     return findings, fixed
 
 
+def check_machine_ignore(root, fix):
+    """Машинные записи .devkit в .gitignore (cmdout/, ship.lock).
+
+    Список MACHINE_IGNORE_ENTRIES общий с scaffold_machine_gitignore:
+    подключение нового проекта (new, corp) раскладывает записи тем же списком, а
+    здесь доктор подхватывает проект, подключённый до их появления. Проверка зовётся из блока in_git, а не
+    из блока доски: cmdout и shipctl работают и в проекте без доски. Путь
+    cmdout/ сверяется со слэшом: без него git check-ignore по отсутствующему на
+    диске каталогу ответ не подтверждает, и выходит ложная находка.
+    """
+    findings, fixed = [], []
+    for path, comment, why in MACHINE_IGNORE_ENTRIES:
+        rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", path])
+        if rc != 0:
+            if fix and ensure_gitignore(root, path, comment):
+                fixed.append(".gitignore: добавлен %s" % path)
+            else:
+                findings.append("%s не гитигнорнут: %s, добавить %s в .gitignore"
+                                % (path, why, path))
+    return findings, fixed
+
+
 def check_cmdout(root, fix):
     """Скопление устаревших выводов в .devkit/cmdout.
 
@@ -1756,6 +1807,9 @@ def doctor(start, fix=False):
                                     "добавить %s в .gitignore" % (RUN_LOG, RUN_LOG))
     if in_git:
         findings += check_links(root)
+        cf, cd = check_machine_ignore(root, fix)
+        findings += cf
+        fixed += cd
         cf, cd = check_cmdout(root, fix)
         findings += cf
         fixed += cd
@@ -1966,6 +2020,7 @@ def new(start, prefix, name, no_board):
     done = started + ["%s создан из шаблона" % rules.AGENTS_FILE]
     applied, residual = connect_git_hooks(root)
     done.append(applied or residual or "git-хуки уже подключены")
+    done += scaffold_machine_gitignore(root)
     if no_board:
         done.append("доска не заводилась: вписать в %s, какой это трекер" % rules.AGENTS_FILE)
     else:
@@ -2162,6 +2217,7 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
             return 1
         done.append(out)
     done += scaffold_deploy(local)
+    done += scaffold_machine_gitignore(local)
     applied, residual = connect_git_hooks(local)
     if applied or residual:
         done.append(applied or residual)

@@ -541,6 +541,49 @@ class DeployTest(SandboxCase):
         self.assertIn_("пустой deploy=", out, "после дописывания нет находки про пустой deploy=")
         self.assertIn_("пустой test=", out, "после дописывания нет находки про пустой test=")
 
+    def test_16_machine_ignore_paths(self):
+        # Машинные записи .devkit (cmdout/, ship.lock) раскладывает автоматика
+        # подключения (new), а отсутствие доктор помечает находкой и чинит по
+        # --fix, как журнал запусков (DK-278). Проверка идёт в блоке in_git, а не
+        # блока доски: cmdout и shipctl работают и в проекте без доски.
+        proj = self.box.project("mproj")
+        self.box.dkctl_run("new", "--prefix", "MP", "-C", str(proj), path=self.boardpath)
+        # Каталога .devkit/cmdout на диске ещё нет: проверка через путь со слэшом
+        # не должна давать ложную находку от git check-ignore без слэша.
+        self.assertFalse((proj / ".devkit" / "cmdout").exists(),
+                         "каталог cmdout не должен существовать перед проверкой")
+        # new дописал обе записи в .gitignore: сверка по конкретному пути, а не
+        # греп вывода (то же требование стоит отдельной строкой DK-027).
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/cmdout/")[0], 0,
+                         "new не гитигнорнул .devkit/cmdout/")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
+                         "new не гитигнорнул .devkit/ship.lock")
+        # Старый проект, подключённый до появления записей: стёрли их из .gitignore.
+        gi = proj / ".gitignore"
+        kept = [ln for ln in gi.read_text(encoding="utf-8").splitlines()
+                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock")]
+        gi.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        rc, out = self.box.doctor(proj)
+        self.assertEqual(rc, 1, "doctor не вернул 1 при отсутствующих машинных гитигнор-записях")
+        self.assertIn_(".devkit/cmdout/ не гитигнорнут", out,
+                       "doctor не нашёл отсутствующий гитигнор cmdout")
+        self.assertIn_(".devkit/ship.lock не гитигнорнут", out,
+                       "doctor не нашёл отсутствующий гитигнор ship.lock")
+        # doctor --fix дописывает обе записи со своим комментарием.
+        _, out = self.box.doctor(proj, "--fix")
+        self.assertIn_("починено: .gitignore: добавлен .devkit/cmdout/", out,
+                       "doctor --fix не дописал cmdout")
+        self.assertIn_("починено: .gitignore: добавлен .devkit/ship.lock", out,
+                       "doctor --fix не дописал ship.lock")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/cmdout/")[0], 0,
+                         "после --fix cmdout не гитигнорнут")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
+                         "после --fix ship.lock не гитигнорнут")
+        # Повторный доктор находок по машинным путям не даёт.
+        _, out = self.box.doctor(proj)
+        self.assertNotIn_(".devkit/cmdout/", out, "повторный doctor всё ещё видит cmdout")
+        self.assertNotIn_(".devkit/ship.lock", out, "повторный doctor всё ещё видит ship.lock")
+
 
 class MachineContourTest(SandboxCase):
     """Машинный контур: бинари, определения агентов, скиллы, снимок квоты и

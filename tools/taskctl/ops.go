@@ -242,17 +242,21 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := checkCell("заголовок", p.Title); err != nil {
 		return "", err
 	}
-	// Вид приёмки обязателен при заведении (LLD DK-292, решение 3): без него
+	// Вид приёмки при заведении (LLD DK-292, решение 3): без пометки
 	// отсутствие суффикса значило бы «не думали вовсе», а не «решили, что
-	// агентский». Не агентский вид требует барьер из шести с закрытым списком
-	// обходов, и команда заводит файл задачи с разделом «Приёмка».
+	// агентский». Обязательным флаг становится не раньше, чем его научились
+	// слать все три входа («Входы заведения строки»), а форму дашборда учит
+	// DK-301: до неё add без --accept заводит строку с предупреждением,
+	// молчаливого умолчания в переходный период не остаётся.
+	warn := ""
 	if p.Accept == "" {
-		return "", fmt.Errorf("нужен --accept agent|mixed|user (LLD DK-292: вид приёмки обязателен при заведении строки)")
-	}
-	if !validAccept(p.Accept) {
+		if p.Barrier != "" {
+			return "", fmt.Errorf("--barrier без --accept не имеет смысла: барьер называют вместе с видом")
+		}
+		warn = "\nвнимание: вид приёмки не назначен, строка читается агентской; --accept станет обязательным с DK-301"
+	} else if !validAccept(p.Accept) {
 		return "", fmt.Errorf("--accept %q не из {agent, mixed, user}", p.Accept)
-	}
-	if p.Accept == acceptAgent {
+	} else if p.Accept == acceptAgent {
 		if p.Barrier != "" {
 			return "", fmt.Errorf("--barrier не имеет смысла у агентского вида: барьер называют там, где вида нет")
 		}
@@ -316,7 +320,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	// Не агентский вид держит причину в файле задачи: add заводит этот файл с
 	// разделом «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
 	// строку обхода исход, имена обходов лежат в ACCEPTANCE.md (задача DK-299).
-	if p.Accept != acceptAgent && taskFile == "" {
+	if p.Accept != "" && p.Accept != acceptAgent && taskFile == "" {
 		rel := fmt.Sprintf("tasks/%s.md", id)
 		abs := filepath.Join(root, "docs", rel)
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -365,7 +369,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if promoted {
 		msg += ", черновик перенесён в docs/tasks/" + id + ".md"
 	}
-	return msg + tail, nil
+	return msg + tail + warn, nil
 }
 
 func mustNum(id string) int {

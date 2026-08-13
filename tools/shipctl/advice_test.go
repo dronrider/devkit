@@ -113,6 +113,75 @@ func TestScenarioGateHeadingLevel(t *testing.T) {
 	}
 }
 
+// TestUnterminatedFenceSpeaksUp: незакрытое ограждение (обычный обрыв при
+// вставке вывода) уводит в цитату весь остаток файла вместе с настоящими
+// разделами. Молча это терять нельзя: запись «Выкат» после такого блока не
+// прочитается, очередь посчитается без неё, а merge допишет свою строку туда,
+// откуда её потом никто не увидит.
+func TestUnterminatedFenceSpeaksUp(t *testing.T) {
+	doc := "# XR-001: задача\n\n## Ход работы\n\nВывод merge:\n\n```\nдоска: XR-001 в Check\n\n" +
+		"## Выкат\n\n- 2026-08-01 слито: 1111111\n"
+	if at := openFenceLine(doc); at != 7 {
+		t.Fatalf("незакрытое ограждение не найдено: строка %d", at)
+	}
+	if at := openFenceLine("# XR-001\n\n```\nвывод\n```\n\n## Выкат\n"); at != 0 {
+		t.Fatalf("закрытый блок принят за оборванный: строка %d", at)
+	}
+
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md", doc)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 оборванный вывод")
+	branchWithFix(t, root)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "не закрыт ограждённый блок") {
+		t.Fatalf("слияние по оборванному файлу задачи прошло молча: %v", err)
+	}
+	if !strings.Contains(err.Error(), "строка 7") {
+		t.Fatalf("отказ не называет строку ограждения: %v", err)
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "docs/tasks/XR-001.md") || !strings.Contains(st, "не закрыт ограждённый блок") {
+		t.Fatalf("status молчит про оборванный файл задачи:\n%s", st)
+	}
+}
+
+// TestUnterminatedFenceInWorktree: обрыв заводится там, где файл задачи и
+// пишется, в дереве задачи. Основной чекаут стоит на main и этих правок не
+// видит, поэтому и merge, и status обязаны смотреть в дерево ветки: читая
+// файл из main, merge пропустил бы оборванный хвост и дописал бы в него
+// запись, а status молчал бы ровно в типовом случае In progress.
+func TestUnterminatedFenceInWorktree(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	wt := startTask(t, root, "XR-001", "code.txt")
+	write(t, wt, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n## Ход работы\n\nВывод merge:\n\n"+
+		"```\nдоска: XR-001 в Check\n\n## Выкат\n\n- 2026-08-01 слито: 1111111\n")
+	gitT(t, wt, "add", ".")
+	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-001 оборванный вывод")
+
+	head := gitT(t, root, "rev-parse", "main")
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "не закрыт ограждённый блок") {
+		t.Fatalf("merge читает файл задачи в основном чекауте, а не в дереве ветки: %v", err)
+	}
+	if now := gitT(t, root, "rev-parse", "main"); now != head {
+		t.Fatal("отказ по оборванному файлу случился после слияния, а не до него")
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("отказ не должен трогать дерево задачи")
+	}
+
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "не закрыт ограждённый блок") || !strings.Contains(st, wt) {
+		t.Fatalf("status не смотрит в дерево задачи:\n%s", st)
+	}
+}
 
 func writeLog(t *testing.T, content string) string {
 	t.Helper()

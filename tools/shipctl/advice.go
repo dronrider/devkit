@@ -214,7 +214,7 @@ func testsGate(root, main, branch string, docsBranch bool, doc string) error {
 	}
 	files, err := git(root, "diff", "--name-only", main+"..."+branch)
 	if err != nil {
-		// Ошибка git здесь не валяет слияние по тому же правилу, что и в
+		// Ошибка git здесь не валит слияние по тому же правилу, что и в
 		// trainOverlap: вороту хватит общего случая, а падать из-за неё дороже,
 		// чем пропустить.
 		return nil

@@ -437,10 +437,20 @@ const repliesDefault = 40
 
 const repliesMax = 500
 
-// headScanMax держит число сессий, у которых читается шапка: экрану хватает
-// свежих, а проект с сотней транскриптов иначе перечитывал бы их все на
-// первый же запрос.
+// headScanMax держит число сессий, у которых читается шапка в общем списке:
+// список показывают десятком свежих строк, а проект с сотней транскриптов
+// иначе перечитывал бы их все на первый же запрос.
 const headScanMax = 50
+
+// taskScanBudget это потолок ожидания при поиске сессий одной задачи. Поиск по
+// ID идёт по всем транскриптам проекта: разговор законченной работы лежит тем
+// глубже, чем дольше она закончилась, и под окном свежих его как раз и не
+// находили (DK-280). Цена обхода это чтение шапок, и она платится один раз:
+// дочитанная голова оседает в памяти процесса, второй заход укладывается в
+// миллисекунды. Бюджет остаётся страховкой на дерево, где транскриптов накопились
+// тысячи: экран получает найденное и слова о том, что обход не дошёл до конца,
+// вместо долгого ожидания.
+const taskScanBudget = 3 * time.Second
 
 // taskParamRe сито параметра ?task=: ID задачи, а не любая строка из адреса.
 var taskParamRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{1,6}$`)
@@ -457,13 +467,23 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files := sessionFiles(s.cfg.Home, found.Path)
-	scanned := files
-	if len(scanned) > headScanMax {
-		scanned = scanned[:headScanMax]
+	limit := headScanMax
+	if want != "" {
+		limit = len(files)
 	}
+	deadline := s.now().Add(taskScanBudget)
 	sessions := []sessionInfo{}
-	var others, unknown int
-	for _, f := range scanned {
+	var scanned, others, unknown int
+	cut := false
+	for _, f := range files {
+		if scanned >= limit {
+			break
+		}
+		if want != "" && s.now().After(deadline) {
+			cut = true
+			break
+		}
+		scanned++
 		head := s.sessionHeadCached(f.path, f.stamp)
 		f.Branch, f.First = head.Branch, head.First
 		f.Task, f.TaskNote = sessionTask(f.suffix, head)
@@ -486,13 +506,20 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"project": found.Name, "sessions": sessions}
 	// Пустоты различимы: транскриптов нет вовсе это слова с адресом, где они
 	// искались, а «сессий этой задачи нет» это счёт по чужим и нераспознанным.
+	// Обрыв обхода по бюджету называется словами и при найденной сессии: она
+	// может оказаться не единственной, и молчание тут выдало бы неполный поиск
+	// за полный.
 	switch {
 	case len(files) == 0:
 		resp["note"] = fmt.Sprintf("транскриптов нет: в ~/.claude/projects нет сессий с путём %s", found.Path)
+	case want != "" && cut:
+		resp["note"] = fmt.Sprintf(
+			"обход прерван по времени: просмотрено %d транскриптов из %d, разговор задачи %s мог остаться дальше",
+			scanned, len(files), want)
 	case len(sessions) == 0 && want != "":
 		resp["note"] = fmt.Sprintf(
-			"сессий задачи %s нет: среди %d свежих сессий проекта %d о других задачах, %d без распознанной задачи",
-			want, len(scanned), others, unknown)
+			"сессий задачи %s нет: просмотрены все %d транскриптов проекта, %d о других задачах, %d без распознанной задачи",
+			want, scanned, others, unknown)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

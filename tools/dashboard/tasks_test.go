@@ -852,7 +852,8 @@ func TestStaticTaskBarIcons(t *testing.T) {
 		}
 	}
 	acts := funcBody(t, app, "function taskActions(")
-	for _, want := range []string{`barBtn("btn", "Живой статус", "i-live")`,
+	for _, want := range []string{`work ? "Живой статус" : "Разговор агента"`,
+		`work ? "i-live" : "i-talk"`,
 		`barBtn("btn", "Чат с агентом", "i-chat")`,
 		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
 		`barBtn("btn btn-acc", label, "i-play")`} {
@@ -861,7 +862,8 @@ func TestStaticTaskBarIcons(t *testing.T) {
 		}
 	}
 	page := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-chat"`, `data-ico="i-live"`} {
+	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-chat"`, `data-ico="i-live"`,
+		`data-ico="i-talk"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("в static/index.html нет значка %q", want)
 		}

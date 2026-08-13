@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -307,6 +308,94 @@ func TestSessionHeadCachedWhenFull(t *testing.T) {
 	}
 }
 
+// Разговор законченной работы находится и тогда, когда лежит глубже окна
+// свежих: до DK-280 шапки читались только у headScanMax сессий, и работа,
+// после которой в проекте прошёл десяток чужих, пропадала с экрана задачи
+// насовсем. Шаг 1 сценария проверки: сессия задачи стоит последней в списке
+// свежести.
+func TestSessionsFoundBeyondHeadScan(t *testing.T) {
+	e := newTestEnv(t)
+	old := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	writeSession(t, e.home, e.proj, "", "old-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"), old)
+	for i := 0; i < headScanMax+10; i++ {
+		writeSession(t, e.home, e.proj, "", fmt.Sprintf("new-%02d", i),
+			sessionLine("посмотри логи", "main"), old.Add(time.Duration(i+1)*time.Hour))
+	}
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 1 || list[0].ID != "old-1" {
+		t.Fatalf("разговор задачи за окном свежих сессий не найден: %+v, %q", list, note)
+	}
+	if note != "" {
+		t.Errorf("при найденном разговоре сказано лишнее: %q", note)
+	}
+	// Общий список остаётся дешёвым: показывают его десятком строк, и читать
+	// ради него шапки у всех транскриптов проекта незачем.
+	if _, all, _ := getSessions(t, e, c, ""); len(all) != 20 {
+		t.Errorf("общий список сессий: %d строк, ожидал 20", len(all))
+	}
+	// Ненайденное называется словами и говорит, что искали по всем, а не по
+	// свежей полусотне.
+	_, list, note = getSessions(t, e, c, "?task=XR-999")
+	if len(list) != 0 {
+		t.Fatalf("по задаче без сессий приехал список: %+v", list)
+	}
+	for _, want := range []string{"сессий задачи XR-999 нет",
+		fmt.Sprintf("просмотрены все %d транскриптов проекта", headScanMax+11),
+		"1 о других задачах", fmt.Sprintf("%d без распознанной задачи", headScanMax+10)} {
+		if !strings.Contains(note, want) {
+			t.Errorf("в словах о пустоте нет %q: %q", want, note)
+		}
+	}
+}
+
+// Экран задачи ведёт к разговору агента и тогда, когда работа кончилась, а
+// разговоров у задачи бывает несколько. Предмет проверки это набор кнопок и
+// собранная лента, а не написанное в исходнике, поэтому статика поднимается в
+// node с заглушкой DOM (стенд testdata/task_sessions.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestTaskScreenOpensAgentTalk(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд перехода к разговору пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "task_sessions.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("переход к разговору с экрана задачи: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Долгий обход не выдаётся за полный: когда бюджет поиска кончился, ответ
+// говорит, сколько транскриптов просмотрено из скольких. Часы стенда идут
+// шагами по две секунды, поэтому бюджета хватает на пару файлов, а не на весь
+// каталог.
+func TestSessionsScanBudgetNamed(t *testing.T) {
+	e := newTestEnv(t)
+	base := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < 10; i++ {
+		writeSession(t, e.home, e.proj, "", fmt.Sprintf("new-%02d", i),
+			sessionLine("посмотри логи", "main"), base.Add(time.Duration(i)*time.Hour))
+	}
+	c := e.loggedClient(t)
+	ticks := 0
+	e.s.now = func() time.Time {
+		ticks++
+		return base.Add(time.Duration(ticks) * 2 * time.Second)
+	}
+
+	_, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 0 {
+		t.Fatalf("сессии задачи XR-101: %+v", list)
+	}
+	if !strings.Contains(note, "обход прерван по времени") || !strings.Contains(note, "из 10") {
+		t.Errorf("прерванный обход назван не своими словами: %q", note)
+	}
+}
+
 // Экраны агента и переписки обязаны спрашивать сессии своей задачи и
 // показывать подпись сессии: держится грепом по статике, как слова про паузу
 // в тесте стопа.
@@ -503,7 +592,7 @@ func TestSessionStreamAppends(t *testing.T) {
 // прежнее место, а не бросает к последней реплике.
 func TestStaticTranscriptKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, text, "async function wireTranscript(")
+	body := funcBody(t, text, "function openTranscript(")
 	for _, want := range []string{"const was = atBottom(tp.body)", "keepBottom(tp.body, was)", "keepPlace(tp.body, tail)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в транскрипте нет %q: прокрутка сорвётся при дострении", want)

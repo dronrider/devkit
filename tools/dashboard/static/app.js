@@ -624,11 +624,14 @@ function taskActions(project, id, row, works) {
   const out = [];
   const isGoal = /^Цель:/.test(row.title);
   const work = (works || []).find((w) => w.id === id);
-  if (work) {
-    const live = barBtn("btn", "Живой статус", "i-live");
-    live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
-    out.push(live);
-  }
+  // Переход на экран агента стоит у любой задачи, а не только у живой работы:
+  // транскрипт законченного разговора лежит на диске, и до DK-280 попасть в
+  // него с экрана задачи было нечем. Подпись говорит, что там найдётся: у
+  // живой работы это ход прямо сейчас, у законченной запись разговора.
+  const live = barBtn("btn", work ? "Живой статус" : "Разговор агента",
+    work ? "i-live" : "i-talk");
+  live.addEventListener("click", () => { location.hash = project + "/agent/" + id; });
+  out.push(live);
   if (isGoal) {
     const chat = barBtn("btn", "Чат с агентом", "i-chat");
     chat.addEventListener("click", () => { location.hash = project + "/chat/" + id; });
@@ -1027,9 +1030,16 @@ function watchTaskLayout(parts) {
 // снимка tmux. Закрываются при любом уходе с экрана, иначе соединения
 // копились бы с каждым переходом.
 let agentLive = [];
+
+// Дострение открытой ленты транскрипта держится отдельным списком: разговоров
+// у задачи бывает несколько, и переключение на соседний снимает поток только
+// прежней ленты, а журнал и снимок tmux остаются работать.
+let transcriptLive = [];
 function closeAgentLive() {
   for (const stop of agentLive) stop();
   agentLive = [];
+  for (const stop of transcriptLive) stop();
+  transcriptLive = [];
 }
 
 function pane(title, sub) {
@@ -1257,10 +1267,18 @@ async function listOtherSessions(project, box) {
   }
 }
 
-// Транскрипт: сессия, узнанная этой задачей (?task=), живое дострение через
+// Подпись разговора в переключателе: день и время последней записи, по ним
+// сессии одной задачи и различают. Дата берётся в поясе клиента.
+function sessionTab(s) {
+  return s.mtime ? localDay(s.mtime) + ", " + localTime(s.mtime) : s.id.slice(0, 8);
+}
+
+// Транскрипт: сессии, узнанные этой задачей (?task=), живое дострение через
 // SSE, пагинация назад кнопкой «раньше» через ?before=. Свежую сессию проекта
 // экран больше не берёт: при двух окнах по одному проекту под заголовком
-// задачи шёл ход соседней работы (DK-252).
+// задачи шёл ход соседней работы (DK-252). Разговоров у задачи бывает
+// несколько (взяли, вернули на доработку, доделали другой сессией): открыт
+// свежий, остальные ждут переключателем над лентой (решение DK-280).
 async function wireTranscript(project, tp, id) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/sessions?task=" + encodeURIComponent(id));
@@ -1274,12 +1292,37 @@ async function wireTranscript(project, tp, id) {
     await listOtherSessions(project, tp.body);
     return;
   }
-  const s = list[0];
+  // Неполный обход не выдаётся за полный: сервер говорит, что не дошёл до
+  // конца, и слова эти видны над лентой.
+  if (r.body.note) tp.body.append(el("div", "hint", r.body.note));
+  const box = el("div");
+  if (list.length > 1) {
+    const seg = el("div", "seg");
+    list.forEach((s, i) => {
+      const tab = el("div", i === 0 ? "on" : "", sessionTab(s));
+      tab.addEventListener("click", () => {
+        Array.from(seg.children).forEach((x, j) => { x.className = j === i ? "on" : ""; });
+        openTranscript(project, tp, list[i], box);
+      });
+      seg.append(tab);
+    });
+    tp.body.append(seg);
+  }
+  tp.body.append(box);
+  openTranscript(project, tp, list[0], box);
+}
+
+// Одна лента разговора: переключение на соседний разговор собирает ленту
+// заново в той же коробке, поэтому дострение прежней ленты снимается, а
+// переключатель и слова над ним остаются на месте.
+function openTranscript(project, tp, s, box) {
+  for (const stop of transcriptLive) stop();
+  transcriptLive = [];
   tp.sub.textContent = s.id.slice(0, 8) + ".jsonl" + (s.branch ? ", " + s.branch : "") +
     " (" + sessionSign(s) + ")";
   const more = el("div", "more", "раньше");
   const feed = el("div");
-  tp.body.append(more, feed);
+  box.replaceChildren(more, feed);
   let firstSeq = null;
   // Кнопка «раньше» горит только когда раньше есть что показать: пока лента
   // пуста или упёрлась в начало, кнопка гаснет, а не живёт мёртвой.
@@ -1300,7 +1343,7 @@ async function wireTranscript(project, tp, id) {
   });
   const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
     "/sessions/" + encodeURIComponent(s.id) + "?stream=1");
-  agentLive.push(() => es.close());
+  transcriptLive.push(() => es.close());
   // Пустая лента приходит событием note: слова вместо пустой коробки,
   // неотличимой от оборвавшегося потока.
   es.addEventListener("note", (ev) => {
@@ -1392,7 +1435,12 @@ function renderAgent(project, works, id) {
   } else if (work) {
     head.append(el("span", "chip", "ведёт другая сессия"));
   } else {
+    // Работа кончилась, а разговор её остался на диске, и приходят сюда теперь
+    // как раз за ним (DK-280): чип называет случай, чтобы пустой журнал и
+    // молчащий tmux не читались поломкой.
     head.append(el("span", "chip", "работа не идёт"));
+    head.append(el("span", "hint", "Разговор открыт записью: журнал и tmux у законченной " +
+      "работы пусты, лента читается как есть."));
   }
   // Чат это переписка с циклом цели: у обычной задачи отправка получила бы
   // «не цель», и кнопка вела бы в тупик. Вид работы приходит со строки доски,

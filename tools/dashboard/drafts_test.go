@@ -275,13 +275,17 @@ func TestDraftGroomProjectNotFoundLogged(t *testing.T) {
 
 // Ошибки на груминг должны логироваться: tmux не нашёлся
 func TestDraftGroomNoTmuxLogged(t *testing.T) {
-	e, c, _ := tasksEnv(t)
-	tmuxLog := filepath.Join(e.home, "tmux.log")
-	writeTmuxFake(t, e.bin, tmuxLog, "")
-	writeScript(t, e.bin, "claude", "exit 0")
-	// Пишем черновик
-	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "новая мысль"}`).Body.Close()
+	e, c, _, lc := runsEnvWithLog(t, "")
+
+	// Создаём черновик на диск
+	draftsDir := filepath.Join(e.proj, "docs", "tasks", "drafts")
+	if err := os.MkdirAll(draftsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	draftFile := filepath.Join(draftsDir, "XR-005.md")
+	if err := os.WriteFile(draftFile, []byte("новая мысль\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Удалим tmux
 	if err := os.Remove(filepath.Join(e.bin, "tmux")); err != nil {
@@ -290,8 +294,10 @@ func TestDraftGroomNoTmuxLogged(t *testing.T) {
 	t.Setenv("PATH", e.bin)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	resp.Body.Close()
-	// Проверяем что при отсутствии tmux получаем ошибку
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("груминг без tmux не должен успешно завершиться")
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("ожидал 502, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "груминг XR-005 в demo отклонён: tmux не нашёлся 502") {
+		t.Errorf("груминг без tmux не залогировался в журнал: %v", lc.lines)
 	}
 }

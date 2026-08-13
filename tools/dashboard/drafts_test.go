@@ -210,3 +210,51 @@ func TestDraftGroomMissing(t *testing.T) {
 		t.Errorf("сессия поднялась под пропавший черновик: %s", got)
 	}
 }
+
+// Ошибки на груминг должны логироваться: Foreign Origin
+func TestDraftGroomForeignOriginLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	// Пишем черновик
+	req, _ := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/drafts",
+		strings.NewReader(`{"text": "новая мысль"}`))
+	req.Header.Set("Content-Type", "application/json")
+	c.Do(req)
+
+	// Груминг с чужим Origin
+	req, _ = http.NewRequest("POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", nil)
+	req.Header.Set("Origin", "http://evil.example")
+	resp, _ := c.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("ожидал 403, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "чужой Origin 403") {
+		t.Errorf("груминг с чужим Origin не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на груминг должны логироваться: Bad ID
+func TestDraftGroomBadIDLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/bad-id/groom", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ожидал 400, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "кривой ID 400") {
+		t.Errorf("груминг с кривым ID не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на груминг должны логироваться: Missing draft file
+func TestDraftGroomMissingLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-404/groom", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "файл черновика не найден 404") {
+		t.Errorf("груминг пропавшего черновика не залогировался: %v", lc.lines)
+	}
+}

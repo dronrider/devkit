@@ -88,6 +88,7 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 // молча, а поверх живой работы с тем же ID вторую поднимать нельзя.
 func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
+		s.logf("груминг отклонён: чужой Origin 403")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
@@ -97,16 +98,19 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if !goalIDRe.MatchString(id) {
+		s.logf("груминг %s отклонён: кривой ID 400", id)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
 	path, rel := draftPathOf(found.Path, id)
 	if !isFile(path) {
+		s.logf("груминг %s в %s отклонён: файл черновика не найден 404", id, found.Name)
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, оформлять нечего", id, found.Name, rel)})
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
+		s.logf("груминг %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}

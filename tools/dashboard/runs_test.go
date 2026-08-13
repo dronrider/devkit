@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -469,5 +471,147 @@ func TestGoalRunPathRootItself(t *testing.T) {
 	}
 	if got := goalRunPath([]string{t.TempDir()}); got != "" {
 		t.Fatalf("в пустом корне нашлось лишнее: %q", got)
+	}
+}
+
+// logCapture собирает строки логирования для проверки
+type logCapture struct {
+	lines []string
+}
+
+func (l *logCapture) log(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *logCapture) contains(t *testing.T, substr string) bool {
+	t.Helper()
+	for _, line := range l.lines {
+		if strings.Contains(line, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// runsEnvWithLog поднимает окружение с журналированием
+func runsEnvWithLog(t *testing.T, sessions string) (*testEnv, *http.Client, string, *logCapture) {
+	t.Helper()
+	home := t.TempDir()
+	root := filepath.Join(home, "projects")
+	proj := filepath.Join(root, "demo")
+	mkProject(t, proj)
+
+	bin := t.TempDir()
+	writeScript(t, bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
+	tmuxLog := filepath.Join(home, "tmux.log")
+	writeTmuxFake(t, bin, tmuxLog, sessions)
+	writeScript(t, bin, "claude", "exit 0")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	goals := filepath.Join(home, ".devkit", "goals")
+	if err := os.MkdirAll(goals, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "goal = XR-112\nroot = " + proj + "\n"
+	if err := os.WriteFile(filepath.Join(goals, "XR-112.watch"), []byte(entry), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
+	lc := &logCapture{}
+	s := newServer(cfg, os.DirFS("static"), lc.log)
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	resp, _ := c.Post(srv.URL+"/api/login", "application/json",
+		strings.NewReader(`{"token": "test-token"}`))
+	resp.Body.Close()
+
+	return &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}, c, tmuxLog, lc
+}
+
+// Ошибки на запуск должны логироваться: Foreign Origin
+func TestRunStartForeignOriginLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	req, _ := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/runs", strings.NewReader(`{"id": "XR-002"}`))
+	req.Header.Set("Origin", "http://evil.example")
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := c.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("ожидал 403, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "чужой Origin 403") {
+		t.Errorf("запуск с чужим Origin не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на запуск должны логироваться: Malformed JSON
+func TestRunStartBadRequestLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ожидал 400, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "битое тело запроса 400") {
+		t.Errorf("запуск с ошибкой тела не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на запуск должны логироваться: Unknown task
+func TestRunStartUnknownRowLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-999"}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "нет строки на доске 404") {
+		t.Errorf("запуск неизвестной строки не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на стоп должны логироваться: Foreign Origin
+func TestRunStopForeignOriginLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, `task-XR-002\n`)
+	req, _ := http.NewRequest("DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", strings.NewReader(""))
+	req.Header.Set("Origin", "http://evil.example")
+	resp, _ := c.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("ожидал 403, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "чужой Origin 403") {
+		t.Errorf("стоп с чужим Origin не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на стоп должны логироваться: Work not running
+func TestRunStopNotRunningLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "работа не идёт 404") {
+		t.Errorf("стоп неидущей работы не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на стоп должны логироваться: Interactive session
+func TestRunStopInteractiveSessionLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, `claude_interactive\n`)
+	// Помечаем сессию как интерактивную через реестр целей
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-112", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("ожидал 409, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "цикл ведёт другая сессия 409") {
+		t.Errorf("стоп цикла из реестра не залогировался: %v", lc.lines)
 	}
 }

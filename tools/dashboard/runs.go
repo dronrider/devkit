@@ -162,6 +162,7 @@ func claudeMissing() string {
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
+		s.logf("запуск отклонён: чужой Origin 403")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
@@ -173,21 +174,25 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
+		s.logf("запуск отклонён: битое тело запроса 400")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"id\": \"DK-NNN\"}"})
 		return
 	}
 	id := body.ID
 	raw, err := s.projectBoard(found.Path)
 	if err != nil {
+		s.logf("запуск %s в %s не удался: доска не прочиталась 502: %v", id, found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	row, ok := findRow(raw, id)
 	if !ok {
+		s.logf("запуск %s в %s отклонён: нет строки на доске 404", id, found.Name)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
+		s.logf("запуск %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -256,6 +261,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
+		s.logf("стоп отклонён: чужой Origin 403")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
@@ -265,16 +271,19 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if m := tmuxMissingCheck(); m != "" {
+		s.logf("стоп %s отклонён: tmux не нашёлся 502", id)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	raw, err := s.projectBoard(found.Path)
 	if err != nil {
+		s.logf("стоп %s не удался: доска не прочиталась 502: %v", id, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	view, err := parseBoardView(raw)
 	if err != nil {
+		s.logf("стоп %s не удался: ответ taskctl не разобрался 502: %v", id, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("ответ taskctl не разобрался: %v", err)})
 		return
 	}
@@ -292,16 +301,19 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if work == nil {
+		s.logf("стоп %s отклонён: работа не идёт 404", id)
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии с префиксом его доски, ни записи в реестре целей", id, found.Name)})
 		return
 	}
 	if work.Via == "session" {
+		s.logf("стоп %s отклонён: интерактивная сессия 409", id)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("работа %s это интерактивная сессия: её ведёт человек в окне, снимать нечего", id)})
 		return
 	}
 	if work.Via == "registry" {
+		s.logf("стоп %s отклонён: цикл ведёт другая сессия 409", id)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
 				"стоп отсюда недоступен, снимать там, где цикл поднят", id)})

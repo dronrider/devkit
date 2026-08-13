@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,37 +84,9 @@ func TestHelpAfterSubcommand(t *testing.T) {
 	}
 }
 
-// TestParseArgsMixesFlagsAndPositionals: позиционный аргумент возвращается
-// независимо от того, где стоят флаги, а «--» кончает флаги совсем.
-func TestParseArgsMixesFlagsAndPositionals(t *testing.T) {
-	cases := []struct {
-		name string
-		in   []string
-		pos  []string
-		dir  string
-		msg  string
-	}{
-		{"флаг после позиционных", []string{"XR-001", "текст", "-m", "коммит"}, []string{"XR-001", "текст"}, ".", "коммит"},
-		{"флаг перед позиционными", []string{"-m", "коммит", "XR-001", "текст"}, []string{"XR-001", "текст"}, ".", "коммит"},
-		{"флаг между позиционными", []string{"XR-001", "-C", "/x", "текст"}, []string{"XR-001", "текст"}, "/x", ""},
-		{"только флаги", []string{"-C", "/x"}, nil, "/x", ""},
-		{"только позиционные", []string{"XR-001"}, []string{"XR-001"}, ".", ""},
-		{"дефисный текст за терминатором", []string{"-m", "коммит", "--", "-m"}, []string{"-m"}, ".", "коммит"},
-		{"терминатор после позиционного", []string{"XR-001", "--", "-C"}, []string{"XR-001", "-C"}, ".", ""},
-	}
-	for _, c := range cases {
-		fs := flag.NewFlagSet("тест", flag.ContinueOnError)
-		dir := fs.String("C", ".", "стартовая директория")
-		msg := fs.String("m", "", "сообщение коммита")
-		got := parseArgs(fs, c.in)
-		if strings.Join(got, "|") != strings.Join(c.pos, "|") {
-			t.Errorf("%s: позиционные %v, ожидал %v", c.name, got, c.pos)
-		}
-		if *dir != c.dir || *msg != c.msg {
-			t.Errorf("%s: -C=%q -m=%q, ожидал -C=%q -m=%q", c.name, *dir, *msg, c.dir, c.msg)
-		}
-	}
-}
+// TestParseArgsMixesFlagsAndPositionals переехал в internal/frame: разбор
+// аргументов стал общим каркасом (LLD DK-237, волна из DK-236), и его регрессия
+// держится там, где живёт код.
 
 // TestFlagBeforePositional: флаг перед позиционным аргументом уносил сам
 // аргумент, потому что fs.Parse останавливается на первом не-флаге, а хвост

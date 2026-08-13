@@ -821,8 +821,10 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 		t.Error("у карточки зависимостей нет своего класса: на телефоне её не увести под описание")
 	}
 	narrow := funcBody(t, css, "@media (max-width:900px){")
-	for _, want := range []string{".rcard.rfolded .rbody{display:none}", ".rrail{display:contents}",
-		".rcard{order:1}", ".fpanel{order:2}", ".dcard{order:3}", ".rtop{display:flex",
+	// Порядок блоков на узком экране стилями не задаётся: ранг над описанием и
+	// зависимости под ним ставит в разметку сама статика, за этим смотрит
+	// TestStaticTaskNarrowWidths. Стилям остаётся вид самой строки ранга.
+	for _, want := range []string{".rcard.rfolded .rbody{display:none}", ".rtop{display:flex",
 		".rfold{display:inline"} {
 		if !strings.Contains(narrow, want) {
 			t.Errorf("на узком экране ранг не сведён к строке над описанием: нет %q", want)
@@ -973,11 +975,36 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 	// Разметка стенда повторяет renderTask руками, и разъехаться с ней она
 	// может молча: замер на своей вёрстке зеленел бы и после того, как экран
 	// перестали собирать этим блоком.
-	body := funcBody(t, readFile(t, filepath.Join("static", "app.js")), "async function renderTask(")
-	for _, want := range []string{`el("div", "tpage")`, "page.append(bar)", "page.append(grid)"} {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	for _, want := range []string{`el("div", "tpage")`, "page.append(grid)",
+		"watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps })"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("экран задачи собран не блоком .tpage (нет %q): замер на стендовой "+
 				"разметке перестал говорить о рабочем экране", want)
+		}
+	}
+	// Полосу ставит в разметку сама статика, и место она держит подпиской:
+	// стенд открывает оба случая параметром, а рабочий экран обязан выдавать
+	// их той же ширине. Снимок при отрисовке тут не годится по той же причине,
+	// что и у разворота ранга: окно растягивают без перерисовки экрана.
+	watch := funcBody(t, app, "function watchTaskLayout(")
+	for _, want := range []string{`window.matchMedia("(max-width:900px)")`,
+		"parts.grid.append(parts.rank, parts.file, parts.deps)", "parts.page.append(parts.bar)",
+		"parts.rail.remove()", "parts.rail.append(parts.rank, parts.deps)",
+		"parts.chips.after(parts.bar)",
+		`mq.addEventListener("change", place)`,
+		`taskLayoutWatch.mq.removeEventListener("change", taskLayoutWatch.place)`} {
+		if !strings.Contains(watch, want) {
+			t.Errorf("блоки экрана задачи не встают в разметку по ширине окна: нет %q", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, gone := range []string{".abar{order", ".tpage>.abar{order", ".rcard{order",
+		".fpanel{order", ".dcard{order", ".rrail{display:contents}"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("блоки экрана снова двигают стилями (%q): order переставляет картинку, "+
+				"а обход табом идёт по разметке, и они расходятся", gone)
 		}
 	}
 	dir := t.TempDir()
@@ -1004,7 +1031,7 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	narrow := chromeMeasure(t, chrome, dir, page, "390,844")
+	narrow := chromeMeasure(t, chrome, dir, page, "390,844", "under")
 	if narrow["screen"] != 390 {
 		t.Fatalf("окно стенда не 390 пикселей: %v", narrow)
 	}
@@ -1024,11 +1051,18 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 		t.Error("полоса действий на телефоне стоит над описанием: она отодвигает постановку " +
 			"ещё на ряд кнопок вниз")
 	}
+	if narrow["tab-order"] != 1 {
+		t.Error("на телефоне обход табом разошёлся с картинкой: таб уводит на полосу " +
+			"внизу экрана и только потом возвращается вверх к описанию")
+	}
 
-	wide := chromeMeasure(t, chrome, dir, page, "1280,900")
+	wide := chromeMeasure(t, chrome, dir, page, "1280,900", "over")
 	if wide["bar-under"] != 0 {
 		t.Error("на ноутбуке полоса действий уехала под содержимое: там она видна сразу и " +
 			"остаётся над ним")
+	}
+	if wide["tab-order"] != 1 {
+		t.Error("на ноутбуке обход табом разошёлся с картинкой")
 	}
 	if wide["fpanel"] < 500 || wide["rcard"] > 420 {
 		t.Errorf("на ноутбуке колонки экрана задачи разъехались: описание %d, ранг %d",
@@ -1076,14 +1110,14 @@ func findChrome() string {
 // из заголовка получившейся страницы: --dump-dom отдаёт разметку после
 // исполнения скриптов, и заголовок это самый короткий способ вынести из
 // браузера числа.
-func chromeMeasure(t *testing.T, chrome, dir, page, window string) map[string]int {
+func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[string]int {
 	t.Helper()
 	ctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
 	defer stop()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox",
 		"--hide-scrollbars", "--allow-file-access-from-files",
 		"--user-data-dir="+filepath.Join(dir, "profile-"+strings.ReplaceAll(window, ",", "x")),
-		"--window-size="+window, "--virtual-time-budget=4000", "--dump-dom", "file://"+page)
+		"--window-size="+window, "--virtual-time-budget=4000", "--dump-dom", "file://"+page+"?bar="+bar)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("chrome на окне %s: %v\n%s", window, err, out)

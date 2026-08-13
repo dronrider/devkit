@@ -790,8 +790,9 @@ async function renderTask(project, works, id) {
     return;
   }
   groups.replaceChildren();
-  // Экран задачи лежит одним блоком: на телефоне полоса действий уходит под
-  // содержимое, а порядок задаёт order, и для него нужен общий флекс-родитель.
+  // Экран задачи лежит одним блоком: полоса действий переезжает по нему с
+  // ширины на ширину, и ей нужен родитель, чей состав не зависит от того, что
+  // ещё лежит на экране.
   const page = el("div", "tpage");
   groups.append(page);
 
@@ -871,7 +872,6 @@ async function renderTask(project, works, id) {
   sep.hidden = true;
   const bad = el("div", "error", "");
   bar.append(save, drop, sep);
-  page.append(bar);
 
   const patchBody = () => {
     const out = {};
@@ -971,15 +971,56 @@ async function renderTask(project, works, id) {
   });
 
   const rail = el("div", "rrail");
-  rail.append(rank, depsCard(project, id, detail.after || [], detail.blocks || []));
+  const deps = depsCard(project, id, detail.after || [], detail.blocks || []);
+  const file = filePanel(project, id, detail, form, touch);
   const grid = el("div", "tgrid");
-  grid.append(filePanel(project, id, detail, form, touch), rail);
   page.append(grid);
+  // Блоки экрана встают в разметку туда же, где они нарисованы: полоса
+  // действий на ноутбуке над содержимым, на телефоне под ним, ранг на телефоне
+  // над описанием, зависимости под ним. Переставлять их стилями нельзя, order
+  // двигает картинку, а обход табом идёт по разметке, и на телефоне таб уводил
+  // с заголовка вниз на «Сохранить» и только потом возвращался вверх к
+  // описанию (замечание ревью 9).
+  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps });
 
   taskDraft.id = id;
   taskDraft.dirty = false;
   taskDraft.seen = taskSeen(detail);
   touchForm();
+}
+
+// Порядок блоков экрана задачи зависит от ширины окна, и держит его подписка,
+// а не снимок в момент отрисовки: окно растягивают, планшет поворачивают, и
+// экран при этом не перерисовывается. Раскладка на ноутбуке это две колонки,
+// описание и правая колонка с рангом и зависимостями; на телефоне колонок нет,
+// и блоки идут потоком: ранг, описание, зависимости, полоса действий.
+// append переносит уже созданный узел, поэтому обе раскладки собираются из
+// одних и тех же блоков. Подписка одна на весь дашборд: следующая отрисовка
+// экрана задачи снимает прежнюю, иначе слушатели копились бы с каждым
+// переходом и двигали блоки в выброшенной разметке.
+let taskLayoutWatch = null;
+function watchTaskLayout(parts) {
+  if (taskLayoutWatch) {
+    taskLayoutWatch.mq.removeEventListener("change", taskLayoutWatch.place);
+    taskLayoutWatch = null;
+  }
+  const mq = window.matchMedia("(max-width:900px)");
+  const place = () => {
+    if (mq.matches) {
+      parts.grid.append(parts.rank, parts.file, parts.deps);
+      // Колонка на телефоне не нужна вовсе, а опустевшей она осталась бы в
+      // сетке лишним отступом сверху при возврате с ноутбучной ширины.
+      parts.rail.remove();
+      parts.page.append(parts.bar);
+      return;
+    }
+    parts.rail.append(parts.rank, parts.deps);
+    parts.grid.append(parts.file, parts.rail);
+    parts.chips.after(parts.bar);
+  };
+  place();
+  mq.addEventListener("change", place);
+  taskLayoutWatch = { mq, place };
 }
 
 // Живые потоки экрана агента: EventSource журнала и транскрипта, таймер

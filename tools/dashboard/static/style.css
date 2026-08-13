@@ -451,15 +451,13 @@ a:hover{text-decoration:underline}
   .thead{gap:0;margin-top:10px}
   .thead .idbig{display:none}
   /* телефон: ранг свёрнут в одну строку над описанием, описание идёт во всю
-     ширину, зависимости уходят под него */
+     ширину, зависимости уходят под него. Порядок блоков стилями не двигается:
+     их переставляет в разметке сама статика, иначе обход табом расходился бы
+     с картинкой */
   /* align-items:stretch тут не украшение: базовое правило .tgrid несёт
      align-items:start, в колоночном флексе это значит «по ширине содержимого»,
      и описание с зависимостями вставали в 240 и 311 пикселей из 390 */
   .tgrid{display:flex;flex-direction:column;align-items:stretch;gap:14px;margin-top:14px}
-  .rrail{display:contents}
-  .rcard{order:1}
-  .fpanel{order:2}
-  .dcard{order:3}
   .rtop{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 14px;cursor:pointer}
   .rhead{padding:0}
   .rbig{padding:0}
@@ -504,11 +502,6 @@ a:hover{text-decoration:underline}
      ширину окна. Карточка одна: три подряд закрывают собой весь экран, а
      единственный способ их убрать уводил бы с того места, где человек
      работал, поэтому лишние ждут своей очереди скрытыми. */
-  /* полоса действий уходит под содержимое: на ноутбуке она стоит над ним и
-     видна сразу, а на телефоне отодвигала описание ещё на ряд кнопок вниз.
-     Порядок задаёт order у полосы, разметка на обеих ширинах одна */
-  .tpage{display:flex;flex-direction:column}
-  .tpage>.abar{order:1}
   .abar{padding:12px 14px}
   .abar .btn{height:44px;min-width:44px;padding:0 11px}
   .abar .btn .lb{display:none}

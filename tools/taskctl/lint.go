@@ -102,8 +102,9 @@ func cmdLint(root string) ([]string, error) {
 // lintAcceptance ловит ошибку назначения вида в дорогую сторону (LLD DK-292,
 // решение 6): у строки с видом user или mixed в файле задачи обязан стоять
 // раздел «Приёмка» с ключом барьера из шести, иначе задача простояла в очереди
-// без названной причины. Счёт обходов ворота move check проверяют, а lint
-// смотрит сам факт раздела и того, что суффикс разбирается.
+// без названной причины. Счёт обходов воротам move check (решение 4): на
+// свежем скелете, который заводит add, обходов ноль, и проверка их числа в lint
+// тут шумит, не ловя ошибку назначения.
 func lintAcceptance(root string, b *Board, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
@@ -122,18 +123,15 @@ func lintAcceptance(root string, b *Board, bp string) []string {
 				bp, r.LineIdx+1, r.ID, kind))
 			continue
 		}
-		barrier, bypasses := parseAcceptance(text)
+		barrier, _ := parseAcceptance(text)
 		if barrier == "" {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s вид %s, а в «Приёмка» нет строки «- барьер «<ключ>»:»",
 				bp, r.LineIdx+1, r.ID, kind))
 			continue
 		}
-		if want, known := acceptBarriers[barrier]; !known {
+		if _, known := acceptBarriers[barrier]; !known {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s барьер «%s» не из шести",
 				bp, r.LineIdx+1, r.ID, barrier))
-		} else if bypasses != want {
-			finds = append(finds, fmt.Sprintf("%s:%d: %s у барьера «%s» обходов %d, а перебор в «Приёмка» имеет строк %d",
-				bp, r.LineIdx+1, r.ID, barrier, want, bypasses))
 		}
 	}
 	return finds

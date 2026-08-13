@@ -61,9 +61,14 @@ func validAccept(kind string) bool {
 
 // acceptOf читает вид из заголовка строки. Без суффикса вид агентский: это
 // умолчание, перевёрнутое относительно старого «при сомнениях пользовательский»
-// (LLD DK-292, решение 1).
+// (LLD DK-292, решение 1). Сопоставление идёт тем же путём, что splitTitle:
+// хвосты [провал: ...] и [блок: ...] снимаются до поиска [приёмка: ...].
+// Иначе они стоят после приёмки в фиксированном порядке суффиксов и
+// регулярка, привязанная к концу строки, их прокусывает, читая user-задачу
+// с суффиксом провала или блокировки как агентскую.
 func acceptOf(title string) string {
-	if m := acceptSufRe.FindStringSubmatch(title); m != nil {
+	_, _, acceptSuf, _, _ := splitTitle(title)
+	if m := acceptSufRe.FindStringSubmatch(acceptSuf); m != nil {
 		return m[1]
 	}
 	return acceptAgent
@@ -82,7 +87,7 @@ func acceptSuffix(kind string) string {
 const acceptanceHeading = "## Приёмка"
 
 // acceptanceSection читает текст раздела «Приёмка» файла задачи (без строки
-// заголовка), honouring ограждения блоков кода тем же порядком, что
+// заголовка) с учётом ограждений блоков кода тем же порядком, что
 // taskDocSections: заголовок внутри ``` это чужой вывод, а не раздел.
 // ok=false значит, что файла нет; found=false что раздела в нём нет.
 func acceptanceSection(root, id string) (text string, found, ok bool) {

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,32 @@ func TestAcceptOfSuffix(t *testing.T) {
 		{"Смешанная [приёмка: mixed]", acceptMixed},
 		{"С другими скобками [блок: ждём]", acceptAgent},
 		{"Вид и зависимость [после XR-001] [приёмка: user]", acceptUser},
+	}
+	for _, c := range cases {
+		if got := acceptOf(c.title); got != c.kind {
+			t.Errorf("acceptOf(%q) = %q, ожидал %q", c.title, got, c.kind)
+		}
+	}
+}
+
+// TestAcceptOfWithTrailingSuffixes: фиксированный порядок ставит [приёмка:]
+// раньше [провал:] и [блок:] (dep.go:13-16), поэтому end-anchored регулярка на
+// сыром заголовке прокусывает user/mixed-задачу с суффиксом провала или
+// блокировки и читает её как агентскую. acceptOf разбирает вид через
+// splitTitle, снимая хвосты fail/block до сопоставления (LLD DK-292, решение 3).
+func TestAcceptOfWithTrailingSuffixes(t *testing.T) {
+	cases := []struct {
+		title string
+		kind  string
+	}{
+		{"С провалом [приёмка: user] [провал: 500]", acceptUser},
+		{"С блоком [приёмка: user] [блок: ждём]", acceptUser},
+		{"Mixed с провалом [приёмка: mixed] [провал: 500]", acceptMixed},
+		{"Mixed с блоком [приёмка: mixed] [блок: ждём]", acceptMixed},
+		{"Все хвосты [после XR-001] [приёмка: user] [провал: 500] [блок: ждём]", acceptUser},
+		// Агентский суффикса не несёт, но провал и блок бывают.
+		{"Агентский с провалом [провал: 500]", acceptAgent},
+		{"Агентский с блоком [блок: ждём]", acceptAgent},
 	}
 	for _, c := range cases {
 		if got := acceptOf(c.title); got != c.kind {
@@ -325,5 +352,47 @@ func TestAcceptanceSectionHonoursFences(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("обходов из чужого блока насчитано %d, ждал 1", n)
+	}
+}
+
+// TestLintAcceptanceIgnoresBypassCount: lint ловит отсутствие раздела «Приёмка»
+// и чужой ключ барьера, но не считает строки обхода. Счёт оставлен воротам move
+// check (LLD DK-292, решение 4), а у свежего скелета, который заводит add,
+// обходов ноль, и пересчёт шумел бы на каждой новой user/mixed-задаче (решение
+// 6). На старом коде, где lintAcceptance проверял bypasses != want, тест падал
+// на первом шаге: находка про «обходов 3, а строк 0».
+func TestLintAcceptanceIgnoresBypassCount(t *testing.T) {
+	root := setup(t)
+	// Свежий скелет: барьер есть, обходов ноль. lint молчит.
+	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
+		t.Fatal(err)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range finds {
+		if strings.Contains(f, "XR-100") {
+			t.Fatalf("на свежем скелете lint нашёл: %s", f)
+		}
+	}
+	// Чужой ключ барьера ловится по-прежнему: заменим «глаза» на «чего».
+	p := filepath.Join(root, "docs", "tasks", "XR-100.md")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ReplaceAll(string(data), "глаза", "чего")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	finds, err = cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(finds, func(f string) bool {
+		return strings.Contains(f, "XR-100") && strings.Contains(f, "не из шести")
+	}) {
+		t.Fatalf("чужой ключ барьера не пойман: %v", finds)
 	}
 }

@@ -91,13 +91,36 @@ let now = Date.UTC(2026, 7, 11, 10, 17);
 // сервер узнаёт и второй строки не заводит (pendingSame в messages.go).
 const inbox = [];
 // «up» связь есть, «down» запрос не доходит, «lost» сервер записал строку, а
-// ответ до браузера не добрался.
+// ответ до браузера не добрался, «hang» ответа нет вовсе, пока стенд его не
+// отпустит.
 let link = "lost";
+let held = null;
+
+// Сколько раз текст лёг во «Входящие» за всё время: лежащих строк мало,
+// подхваченную витком строку файл цели уже не помнит, а агент её прочитал.
+const laid = new Map();
 
 function put(text) {
   const line = "11 авг, из дашборда: " + text;
-  if (!inbox.includes(line)) inbox.push(line);
+  // Строка ложится один раз, пока она ещё лежит непрочитанной: ровно так
+  // ведёт себя pendingSame на сервере.
+  if (!inbox.includes(line)) {
+    inbox.push(line);
+    laid.set(text, (laid.get(text) || 0) + 1);
+  }
   return "- " + line;
+}
+
+// Сколько строк одного сообщения лежит во «Входящих».
+function count(text) {
+  return inbox.filter((line) => line.endsWith(": " + text)).length;
+}
+
+// Виток забрал строку: во «Входящих» её больше нет.
+function taken(text) {
+  const at = inbox.indexOf("11 авг, из дашборда: " + text);
+  if (at < 0) fail("витку нечего забирать: " + JSON.stringify(inbox));
+  inbox.splice(at, 1);
 }
 
 function reply(body) {
@@ -167,6 +190,9 @@ const sandbox = {
   },
   fetch: (path, init) => {
     const post = Boolean(init && init.method === "POST");
+    // Запрос без ответа: стенду нужен зазор, в котором цикл очереди стоит на
+    // await, чтобы застать уход с экрана посреди отправки.
+    if (link === "hang") return new Promise((res, rej) => { held = { res, rej }; });
     if (link === "up" || (link === "lost" && post)) {
       const text = post ? JSON.parse(init.body).text : "";
       const line = post ? put(text) : "";
@@ -267,7 +293,7 @@ if (!shown.includes("ждёт витка")) {
 if (shown.includes("в очереди")) {
   fail("ушедшая реплика осталась в очереди: " + shown);
 }
-if (inbox.length !== 1) {
+if (count("проверь ленту") !== 1) {
   fail("повторы завели во «Входящих» лишние строки: " + JSON.stringify(inbox));
 }
 if (saved().length !== 1 || saved()[0].state !== "waiting") {
@@ -300,9 +326,67 @@ shown = dump(box3);
 if (!shown.includes("ждёт витка")) {
   fail("поднятая после перезагрузки очередь не дожалась: " + shown);
 }
-if (inbox.length !== 2) {
-  fail("во «Входящих» не две строки: " + JSON.stringify(inbox));
+if (count("второе сообщение") !== 1) {
+  fail("после перезагрузки повтор завёл лишнюю строку: " + JSON.stringify(inbox));
+}
+out3.stop();
+
+// Сценарий 3: уход с экрана посреди отправки цикл не переживает. Иначе
+// вернувшийся в чат человек поднял бы вторую очередь на ту же запись, и один
+// текст слали бы два цикла разом.
+link = "hang";
+const box4 = sandbox.document.createElement("div");
+const out4 = sandbox.makeOutbox("demo", "XR-101", box4);
+const sending = out4.send("третье сообщение");
+await settle();
+if (!held) fail("стенд не застал отправку на полпути");
+if (timers.length) fail("повтор запланирован до ответа сервера");
+
+out4.stop();
+held.rej(new TypeError("Failed to fetch"));
+held = null;
+await sending;
+await settle();
+if (timers.length) {
+  fail("stop() не остановил цикл: после ухода с экрана запланирован повтор");
+}
+// Событие online зомби-цикл тоже не будит.
+for (const fn of sandbox.window.listeners.online || []) fn();
+await settle();
+if (timers.length || held) {
+  fail("остановленный цикл ожил по событию online");
 }
 
+// Сценарий 4: виток забрал строку между попытками. Дедупликация на сервере
+// держится на неподхваченной строке, и подхваченную она уже не узнаёт: тот же
+// текст ляжет второй строкой. Риск принят решением в файле задачи, а стенд
+// держит границу принятого, чтобы смена поведения не прошла молча.
+link = "lost";
+const box5 = sandbox.document.createElement("div");
+const out5 = sandbox.makeOutbox("demo", "XR-102", box5);
+await out5.send("четвёртое сообщение");
+await settle();
+if (count("четвёртое сообщение") !== 1) {
+  fail("сервер не записал строку до потери ответа: " + JSON.stringify(inbox));
+}
+taken("четвёртое сообщение");
+link = "up";
+await out5.pump();
+await settle();
+// Двойка тут и есть принятая граница: подхваченную строку сервер уже не
+// узнаёт, и повтор кладёт её заново, так что агент прочитает текст дважды.
+// Лежащая строка при этом одна, дубль виден только по счёту положенного.
+// Тест упадёт и когда дубль перестанет появляться, и это будет поводом
+// переписать решение в файле задачи, а не молча поправить ожидание.
+if ((laid.get("четвёртое сообщение") || 0) !== 2 || count("четвёртое сообщение") !== 1) {
+  fail("подхваченная витком строка ведёт себя не как принято решением: " +
+    laid.get("четвёртое сообщение") + " раз положено, " + JSON.stringify(inbox));
+}
+if (!dump(box5).includes("ждёт витка")) {
+  fail("повтор после подхвата не довёл реплику до «ждёт витка»: " + dump(box5));
+}
+out5.stop();
+
 console.log("очередь исходящих: обрыв связи держится, сеть вернулась и сообщение ушло само," +
-  " перезагрузка очередь не потеряла, во «Входящих» по одной строке на сообщение");
+  " перезагрузка очередь не потеряла, уход с экрана цикл гасит," +
+  " во «Входящих» по одной строке на сообщение");

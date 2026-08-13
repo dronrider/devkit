@@ -1647,6 +1647,7 @@ function makeOutbox(project, id, box) {
   let timer = null;
   let wait = OUTBOX_FIRST;
   let pumping = false;
+  let stopped = false;
   const told = new Set();
 
   // Долгая неудача не выглядит отправленной: после OUTBOX_STUCK подпись
@@ -1747,7 +1748,7 @@ function makeOutbox(project, id, box) {
   // Задержка перед следующим заходом очереди: растёт от неудачи к неудаче,
   // сбрасывается удачной отправкой и возвращением сети.
   const plan = () => {
-    if (timer) return;
+    if (stopped || timer) return;
     timer = setTimeout(() => { timer = null; pump().catch(console.error); }, wait);
     wait = Math.min(wait * 2, OUTBOX_MAX);
   };
@@ -1758,14 +1759,22 @@ function makeOutbox(project, id, box) {
   // сервере: ручка message узнаёт свою неподхваченную строку во «Входящих» и
   // второй раз её не кладёт (pendingSame в messages.go, DK-281). Сломав там
   // узнавание, здесь получат по строке на каждый повтор.
+  //
+  // Флаг stopped проверяется после каждого ожидания, и это не перестраховка:
+  // уход с экрана застаёт цикл на await, снятого таймера ему мало, и без
+  // проверки он доживал бы до следующего plan(). Вернувшийся в тот же чат
+  // человек поднял бы вторую очередь на ту же запись, и один текст слали бы
+  // два цикла разом (замечание ревью DK-287).
   const pump = async () => {
-    if (pumping) return;
+    if (pumping || stopped) return;
     pumping = true;
     try {
       for (;;) {
         const m = mine.find((o) => o.state === "queued");
-        if (!m) return;
-        if (!await post(m)) {
+        if (!m || stopped) return;
+        const sent = await post(m);
+        if (stopped) return;
+        if (!sent) {
           plan();
           return;
         }
@@ -1779,6 +1788,7 @@ function makeOutbox(project, id, box) {
   // Вернувшаяся сеть это повод не ждать отсчёта: телефон вышел из метро, и
   // сообщение уходит сразу.
   const wake = () => {
+    if (stopped) return;
     wait = OUTBOX_FIRST;
     if (timer) {
       clearTimeout(timer);
@@ -1789,6 +1799,7 @@ function makeOutbox(project, id, box) {
   window.addEventListener("online", wake);
 
   const stop = () => {
+    stopped = true;
     if (timer) clearTimeout(timer);
     timer = null;
     window.removeEventListener("online", wake);

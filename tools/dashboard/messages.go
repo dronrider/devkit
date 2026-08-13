@@ -212,6 +212,15 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	// Чтение, сверка с лежащим и запись идут под одним замком: пара запросов с
+	// одним текстом приходит не только от двойного нажатия, но и от двух
+	// вкладок одного чата, где очередь исходящих дожимает сообщение своим
+	// циклом в каждой (DK-287). Без замка оба успевают прочитать файл цели до
+	// чужой записи, ни один не видит строки, и во «Входящих» оказываются две.
+	// Коммит держится тем же замком: параллельные git-коммиты в один репозиторий
+	// дерутся за индекс.
+	s.inbox.Lock()
+	defer s.inbox.Unlock()
 	doc, err := os.ReadFile(path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
@@ -228,6 +237,9 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 			"message": fmt.Sprintf("такое сообщение уже лежит во «Входящих» файла цели %s: второй строки не завожу, виток прочитает одну", id),
 		})
 		return
+	}
+	if s.inboxProbe != nil {
+		s.inboxProbe()
 	}
 	line := "- " + s.now().Format("2006-01-02 15:04") + inboxFrom + text
 	if err := os.WriteFile(path, []byte(addInboxLine(string(doc), line)), 0o644); err != nil {

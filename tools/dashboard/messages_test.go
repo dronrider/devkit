@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // Переписка через состояние цели: сообщение уходит в раздел «Входящие» файла
@@ -311,6 +313,52 @@ func TestMessageRepeatKeepsOneLine(t *testing.T) {
 	postMessage(t, c, e, "XR-100", "проверь ленту").Body.Close()
 	if got := len(inboxLines(readFile(t, path))); got != 1 {
 		t.Errorf("после подхвата сообщение не легло заново:\n%s", readFile(t, path))
+	}
+}
+
+// Два запроса с одним текстом разом кладут одну строку. Случай не выдуманный:
+// очередь исходящих дожимает сообщение своим циклом в каждой открытой вкладке
+// чата, и по событию online обе шлют его почти одновременно (замечание ревью
+// DK-287). Сверка с лежащим и запись это одно действие под замком, иначе оба
+// запроса читают файл цели до чужой записи и обе строки ложатся.
+func TestMessageConcurrentSendKeepsOneLine(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
+
+	// Встреча горутин между сверкой и записью: без замка сюда приходят все
+	// разом и расходятся сразу, под замком первая ждёт срока и уходит писать
+	// одна, а остальным писать уже нечего.
+	const hands = 4
+	var mu sync.Mutex
+	arrived := 0
+	met := make(chan struct{})
+	e.s.inboxProbe = func() {
+		mu.Lock()
+		arrived++
+		if arrived == hands {
+			close(met)
+		}
+		mu.Unlock()
+		select {
+		case <-met:
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < hands; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := postMessage(t, c, e, "XR-100", "проверь ленту")
+			resp.Body.Close()
+		}()
+	}
+	wg.Wait()
+
+	doc := readFile(t, path)
+	if got := strings.Count(doc, "из дашборда: проверь ленту"); got != 1 {
+		t.Fatalf("во «Входящих» %d строк одного сообщения, ждал одну:\n%s", got, doc)
 	}
 }
 

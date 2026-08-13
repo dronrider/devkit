@@ -29,6 +29,13 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+
+	// Запись во «Входящие» файла цели: сверка с лежащим и запись это одно
+	// действие, и разводить их по разным горутинам нельзя (messages.go).
+	inbox sync.Mutex
+	// Шов для теста гонки: тест ставит сюда встречу горутин между сверкой и
+	// записью, в работе поле пустое.
+	inboxProbe func()
 }
 
 func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {

@@ -168,6 +168,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	found := s.findProject(w, r)
 	if found == nil {
+		projName := r.PathValue("p")
+		s.logf("запуск отклонён: проект %s не найден 404", projName)
 		return
 	}
 	var body struct {
@@ -267,6 +269,8 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	}
 	found := s.findProject(w, r)
 	if found == nil {
+		projName := r.PathValue("p")
+		s.logf("стоп отклонён: проект %s не найден 404", projName)
 		return
 	}
 	id := r.PathValue("id")

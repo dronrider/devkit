@@ -351,7 +351,6 @@ func (s *server) findProject(w http.ResponseWriter, r *http.Request) *Project {
 			return &projects[i]
 		}
 	}
-	s.logf("проект %s не найден 404", name)
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("проекта %s нет в корнях конфига", name)})
 	return nil
 }

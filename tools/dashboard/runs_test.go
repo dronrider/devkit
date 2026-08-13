@@ -532,7 +532,7 @@ func runsEnvWithLog(t *testing.T, sessions string) (*testEnv, *http.Client, stri
 	return &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}, c, tmuxLog, lc
 }
 
-// Ошибки на запуск должны логироваться: Foreign Origin
+// Ошибки на запуск должны логироваться: чужой Origin
 func TestRunStartForeignOriginLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	req, _ := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/runs", strings.NewReader(`{"id": "XR-002"}`))
@@ -548,7 +548,7 @@ func TestRunStartForeignOriginLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на запуск должны логироваться: Malformed JSON
+// Ошибки на запуск должны логироваться: битое тело запроса
 func TestRunStartBadRequestLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{}`)
@@ -561,7 +561,7 @@ func TestRunStartBadRequestLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на запуск должны логироваться: Unknown task
+// Ошибки на запуск должны логироваться: неизвестная строка
 func TestRunStartUnknownRowLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-999"}`)
@@ -574,7 +574,7 @@ func TestRunStartUnknownRowLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на стоп должны логироваться: Foreign Origin
+// Ошибки на стоп должны логироваться: чужой Origin
 func TestRunStopForeignOriginLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, `task-XR-002\n`)
 	req, _ := http.NewRequest("DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", strings.NewReader(""))
@@ -589,7 +589,7 @@ func TestRunStopForeignOriginLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на стоп должны логироваться: Work not running
+// Ошибки на стоп должны логироваться: работа не идёт
 func TestRunStopNotRunningLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
@@ -602,7 +602,7 @@ func TestRunStopNotRunningLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на стоп должны логироваться: Interactive session
+// Ошибки на стоп должны логироваться: интерактивная сессия
 func TestRunStopInteractiveSessionLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, `claude_interactive\n`)
 	// Помечаем сессию как интерактивную через реестр целей
@@ -613,5 +613,65 @@ func TestRunStopInteractiveSessionLogged(t *testing.T) {
 	}
 	if !lc.contains(t, "цикл ведёт другая сессия 409") {
 		t.Errorf("стоп цикла из реестра не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на запуск должны логироваться: проект не найден
+func TestRunStartProjectNotFoundLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/unknown/runs", `{"id": "XR-002"}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "проект unknown не найден 404") {
+		t.Errorf("запуск неизвестного проекта не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на запуск должны логироваться: tmux не нашёлся
+func TestRunStartNoTmuxLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	if err := os.Remove(os.ExpandEnv(filepath.Join(e.bin, "tmux"))); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", e.bin)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("ожидал 502, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "tmux не нашёлся 502") {
+		t.Errorf("запуск без tmux не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на стоп должны логироваться: проект не найден
+func TestRunStopProjectNotFoundLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/unknown/runs/XR-002", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "проект unknown не найден 404") {
+		t.Errorf("стоп с неизвестным проектом не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на стоп должны логироваться: tmux не нашёлся
+func TestRunStopNoTmuxLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	if err := os.Remove(os.ExpandEnv(filepath.Join(e.bin, "tmux"))); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", e.bin)
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("ожидал 502, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "tmux не нашёлся 502") {
+		t.Errorf("стоп без tmux не залогировался: %v", lc.lines)
 	}
 }

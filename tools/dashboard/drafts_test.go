@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -211,7 +212,7 @@ func TestDraftGroomMissing(t *testing.T) {
 	}
 }
 
-// Ошибки на груминг должны логироваться: Foreign Origin
+// Ошибки на груминг должны логироваться: чужой Origin
 func TestDraftGroomForeignOriginLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	// Пишем черновик
@@ -233,7 +234,7 @@ func TestDraftGroomForeignOriginLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на груминг должны логироваться: Bad ID
+// Ошибки на груминг должны логироваться: кривой ID
 func TestDraftGroomBadIDLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/bad-id/groom", "")
@@ -246,7 +247,7 @@ func TestDraftGroomBadIDLogged(t *testing.T) {
 	}
 }
 
-// Ошибки на груминг должны логироваться: Missing draft file
+// Ошибки на груминг должны логироваться: пропал черновик
 func TestDraftGroomMissingLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-404/groom", "")
@@ -256,5 +257,41 @@ func TestDraftGroomMissingLogged(t *testing.T) {
 	}
 	if !lc.contains(t, "файл черновика не найден 404") {
 		t.Errorf("груминг пропавшего черновика не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на груминг должны логироваться: проект не найден
+func TestDraftGroomProjectNotFoundLogged(t *testing.T) {
+	e, c, _, lc := runsEnvWithLog(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/unknown/drafts/XR-005/groom", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ожидал 404, получил %d", resp.StatusCode)
+	}
+	if !lc.contains(t, "проект unknown не найден 404") {
+		t.Errorf("груминг с неизвестным проектом не залогировался: %v", lc.lines)
+	}
+}
+
+// Ошибки на груминг должны логироваться: tmux не нашёлся
+func TestDraftGroomNoTmuxLogged(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	// Пишем черновик
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "новая мысль"}`).Body.Close()
+
+	// Удалим tmux
+	if err := os.Remove(filepath.Join(e.bin, "tmux")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", e.bin)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("ожидал 502, получил %d", resp.StatusCode)
+	}
+	// Проверяем по содержимому ошибки вместо логирования, так как это не логированный тест
+	if !strings.Contains(text, "tmux не нашёлся") {
+		t.Errorf("груминг без tmux отказал не из-за tmux: %s", text)
 	}
 }

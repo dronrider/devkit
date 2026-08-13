@@ -94,6 +94,8 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	found := s.findProject(w, r)
 	if found == nil {
+		projName := r.PathValue("p")
+		s.logf("груминг отклонён: проект %s не найден 404", projName)
 		return
 	}
 	id := r.PathValue("id")

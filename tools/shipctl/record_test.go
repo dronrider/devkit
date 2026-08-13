@@ -8,11 +8,14 @@ import (
 )
 
 // branchNoID заводит ветку задачи, в коммитах которой ID не упомянут: ровно
-// тот случай, ради которого коммиты пишутся в файл задачи.
+// тот случай, ради которого коммиты пишутся в файл задачи. Тестовый файл
+// выводится из имени правки, чтобы второй круг доработки дал свой тест, а не
+// повторил уже слитый в main.
 func branchNoID(t *testing.T, root, id, branch, file string) {
 	t.Helper()
 	gitT(t, root, "checkout", "-qb", branch, "main")
 	write(t, root, file, "правка\n")
+	write(t, root, strings.TrimSuffix(file, filepath.Ext(file))+"_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: правка без номера задачи")
 }
@@ -220,6 +223,7 @@ func TestMergeIgnoresFencedReviewNote(t *testing.T) {
 func TestTrainOverlapFromRecord(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	setBoard7(t, root)
+	taskWithScenario(t, root, "XR-003")
 
 	branchNoID(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {

@@ -53,6 +53,7 @@ func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
 	root, callLog := setup(t, rowInProg, "")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
 	write(t, root, "a.txt", "новое\n")
+	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
 	write(t, root, "code.txt", "вернули как было\n")
@@ -95,77 +96,67 @@ func TestTrainEmptyBranchIsNotDocsOnly(t *testing.T) {
 	}
 }
 
-// TestTrainScenarioWarning: поезд переводит в Check всю пачку разом и уже
-// после выката, поэтому merge --train подсказывает, что у задачи нет сценария
-// проверки. Признак это заголовок «Сценарий проверки» в файле задачи.
-func TestTrainScenarioWarning(t *testing.T) {
+// TestTrainScenarioGate: поезд переводит в Check всю пачку разом и уже после
+// выката, поэтому ворот сценария отказывает до слияния, если у задачи нет
+// раздела «Сценарий проверки». Признак это заголовок вне ограждённых блоков.
+func TestTrainScenarioGate(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 
-	// У XR-003 файла задачи нет вовсе: сценария нет, подсказка обязана быть.
+	// У XR-003 файла задачи нет вовсе: сценария нет, ворот отказывает.
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
-	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(msg, "нет раздела «Сценарий проверки»") {
-		t.Fatalf("нет подсказки про сценарий: %q", msg)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err == nil || !strings.Contains(err.Error(), "нет раздела") {
+		t.Fatalf("задача без сценария должна отбиваться воротом: %v", err)
 	}
 
-	// У XR-001 сценарий в файле задачи есть, и подсказка молчит.
+	// У XR-001 сценарий в файле задачи есть, и ворот его пропускает.
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
-	msg, err = cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(msg, "Сценарий проверки") {
-		t.Fatalf("при готовом сценарии подсказка лишняя: %q", msg)
+		t.Fatalf("при готовом сценарии отказ лишний: %q", msg)
 	}
 }
 
-// TestTrainDocsOnlyScenarioWarning: у бескодовой задачи без сценария рядом
-// вставали две взаимоисключающие строки, «ship переведёт в Check» и «доска:
-// XR-003 в Check» от этого же merge. Подсказка обязана называть того, кто
-// задачу переводит на самом деле.
-func TestTrainDocsOnlyScenarioWarning(t *testing.T) {
-	root, callLog := setup(t, rowInProg+rowInProg3, "")
+
+// TestTrainDocsOnlyScenarioGate: бескодовая задача без сценария отбивается
+// воротом: выката нет, и подтвердить её по сценарию это единственный способ, а
+// не повтор проверки прода. Отказ называет того, кто задачу переводит (этот
+// merge, без выката), а не ship, который бескодовую задачу не везёт.
+func TestTrainDocsOnlyScenarioGate(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
 	gitT(t, root, "checkout", "-qb", "xr-003-docs", "main")
 	write(t, root, "docs/lld/train.md", "# LLD\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs: XR-003 правка LLD")
 
-	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
-	if err != nil {
-		t.Fatal(err)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err == nil || !strings.Contains(err.Error(), "бескодовую задачу merge переведёт в Check без выката") {
+		t.Fatalf("бескодовая задача без сценария должна отбиваться: %v", err)
 	}
-	if !strings.Contains(msg, "merge переведёт бескодовую задачу в Check прямо сейчас") {
-		t.Fatalf("подсказка должна называть перевод этим же merge: %q", msg)
-	}
-	if strings.Contains(msg, "ship переведёт") {
-		t.Fatalf("ship бескодовую задачу не везёт, обещать его нельзя: %q", msg)
-	}
-	// Задача и правда уехала в Check тем же прогоном: обещание сходится с делом.
-	if calls, _ := os.ReadFile(callLog); !strings.Contains(string(calls), "move XR-003 check") {
-		t.Fatalf("бескодовая задача должна уехать в Check: %q", calls)
+	if strings.Contains(err.Error(), "ship переведёт") {
+		t.Fatalf("ship бескодовую задачу не везёт, обещать его нельзя: %v", err)
 	}
 }
 
+
 // TestTrainScenarioProseIsNotScenario: упоминание сценария в прозе («сценарий
-// проверки напишу после выката») сценарием не считается, признак это заголовок
-// раздела.
+// проверки напишу после выката») разделом не считается, и ворот отбивается:
+// признак это заголовок.
 func TestTrainScenarioProseIsNotScenario(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\nСценарий проверки напишу после выката.\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 ход работы")
-	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(msg, "нет раздела «Сценарий проверки»") {
-		t.Fatalf("проза сценарием не считается: %q", msg)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err == nil || !strings.Contains(err.Error(), "нет раздела") {
+		t.Fatalf("проза разделом не считается, ворот должен отбиться: %v", err)
 	}
 }
+
 
 // TestTrainScenarioWarningReadsBranch: сценарий пишется в дереве задачи, и
 // читать его merge обязан там: в основном чекауте на main файла ещё нет.
@@ -191,6 +182,8 @@ func TestTrainScenarioWarningReadsBranch(t *testing.T) {
 // полный и все три ушли в Check.
 func TestTrainPipelineThreeTasks(t *testing.T) {
 	root, callLog := setup(t, rowInProg+rowInProg3+rowInProg4, "")
+	taskWithScenario(t, root, "XR-003")
+	taskWithScenario(t, root, "XR-004")
 	ids := []string{"XR-001", "XR-003", "XR-004"}
 	wts := map[string]string{}
 	for i, id := range ids {

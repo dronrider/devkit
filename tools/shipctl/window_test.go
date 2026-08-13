@@ -30,6 +30,7 @@ func TestMergeKeepsWindowAlive(t *testing.T) {
 
 	// Правка задачи идёт там же, где открыто окно.
 	write(t, tree, "code.txt", "new\n")
+	write(t, tree, "fix_test.go", "package main\n")
 	gitT(t, tree, "add", ".")
 	gitT(t, tree, "commit", "-qm", "fix: XR-001 правка")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {

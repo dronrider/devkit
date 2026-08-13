@@ -154,7 +154,8 @@ func TestStartPreconditions(t *testing.T) {
 }
 
 // startTask прогоняет боевую связку: start заводит worktree, правка кода
-// коммитится там.
+// коммитится там. Вместе с правкой кладётся тестовый файл по ID задачи: ворота
+// готовности требуют тест в диффе, и ветка без него слияния не пройдёт.
 func startTask(t *testing.T, root, id, file string) string {
 	t.Helper()
 	if _, err := cmdStart(root, StartParams{ID: id, Slug: "fix"}); err != nil {
@@ -162,6 +163,7 @@ func startTask(t *testing.T, root, id, file string) string {
 	}
 	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+strings.ToLower(id))
 	write(t, wt, file, "new\n")
+	write(t, wt, strings.ToLower(id)+"_test.go", "package main\n")
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "fix: "+id+" правка")
 	return wt

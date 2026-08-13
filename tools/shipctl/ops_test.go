@@ -94,6 +94,7 @@ func branchWithFix(t *testing.T, root string) {
 	t.Helper()
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
 	write(t, root, "code.txt", "new\n")
+	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
 }
@@ -491,13 +492,25 @@ func TestRevertAutonomous(t *testing.T) {
 const rowInProg3 = "| XR-003 | Вторая мелочь | task | P3 | 8 (0+3+0+5+0) |  |\n"
 
 // branchFor заводит фичеветку задачи с одним коммитом кода и остаётся на ней:
-// merge запускается с фичеветки.
+// merge запускается с фичеветки. Тестовый файл зовётся по ID задачи, чтобы у
+// веток разных задач не было ложного пересечения по одному и тому же файлу.
 func branchFor(t *testing.T, root, id, branch, file string) {
 	t.Helper()
 	gitT(t, root, "checkout", "-qb", branch, "main")
 	write(t, root, file, id+"\n")
+	write(t, root, strings.ToLower(id)+"_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: "+id+" правка")
+}
+
+// taskWithScenario пишет минимальный файл задачи со сценарием проверки и
+// коммитит его на текущую ветку: ворот сценария проверяет наличие раздела, а не
+// его содержание. Звать до branchFor, чтобы файл ушёл на main и поднялся веткой.
+func taskWithScenario(t *testing.T, root, id string) {
+	t.Helper()
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+": заголовок\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	gitT(t, root, "add", "docs/tasks/"+id+".md")
+	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
 }
 
 // TestTrainMergeAndShip: два поездных слияния копятся без выката и без
@@ -520,8 +533,9 @@ func TestTrainMergeAndShip(t *testing.T) {
 	gitT(t, root, "rev-parse", "--verify", "deployed") // первый merge --train заводит тег
 
 	// Коммит только по файлам задач попадает в окно тега, но членства в
-	// поезде не даёт: запись «в работу» это не код.
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n")
+	// поезде не даёт: запись «в работу» это не код. Сценарий в файле нужен,
+	// чтобы дальше XR-003 прошла ворот сценария при своём слиянии.
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
 	st, err := cmdStatus(root)
@@ -627,6 +641,7 @@ func TestShipPreconditions(t *testing.T) {
 func TestRevertFromTrain(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	addRemote(t, root)
+	taskWithScenario(t, root, "XR-003")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)
@@ -701,6 +716,7 @@ func TestTrainTagPushed(t *testing.T) {
 func TestTrainStray(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	addRemote(t, root)
+	taskWithScenario(t, root, "XR-003")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)

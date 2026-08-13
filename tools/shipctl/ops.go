@@ -697,6 +697,26 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := freshMain(root, main); err != nil {
 		return "", err
 	}
+	// Ворота готовности правки. Это предусловия, а не подсказки: пропуск шага
+	// ловится здесь, а не вниманием ревьювера. Каждое гасится либо правкой, либо
+	// пометкой-исключением в файле задачи (читается в дереве ветки, как и ревью:
+	// писать исключение туда же). Действуют в обоих режимах, одиночном и
+	// поездном: они про готовность правки, а не про то, кто жмёт слияние.
+	// Дифф ветки против main осмыслен до ребейза, поэтому ворота идут здесь.
+	taskDoc := readTaskDoc(reviewRoot, p.ID)
+	docsBranch, err := rangeDocsOnly(root, main, branch)
+	if err != nil {
+		return "", err
+	}
+	if err := regcheckGate(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, taskDoc); err != nil {
+		return "", err
+	}
+	if err := testsGate(root, main, branch, docsBranch, taskDoc); err != nil {
+		return "", err
+	}
+	if err := scenarioGate(p.ID, docsBranch, taskDoc); err != nil {
+		return "", err
+	}
 	// Предупреждения собираются до ребейза (diff ветки против main ещё
 	// осмысленный) и не валят слияние: это подсказки по правилам, а не
 	// предусловия.
@@ -704,9 +724,8 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if subjects, err := git(root, "log", main+".."+branch, "--format=%s"); err == nil && !strings.Contains(subjects, p.ID) {
 		warns = append(warns, fmt.Sprintf("предупреждение: в коммитах ветки нет %s в subject; очередь, поезд и revert найдут их по записи в файле задачи, но по истории задачу так не собрать", p.ID))
 	}
-	warns = append(warns, regcheckWarning(root, reviewRoot, main, branch, b.rowOf(p.ID).Type)...)
 	if p.Train {
-		warns = append(warns, trainWarnings(root, reviewRoot, main, branch, b, p.ID, train)...)
+		warns = append(warns, trainWarnings(root, main, branch, b, p.ID, train)...)
 	}
 	warn := ""
 	if len(warns) > 0 {

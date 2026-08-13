@@ -16,6 +16,9 @@ import re
 import sys
 
 RULES_BACKLINK_RE = re.compile(r"RULES\.(board\.)?md")
+# Граница слова отсекает «асинхронный»: этим словом правило не сказано, а
+# отменено.
+SYNC_SPAWN_RE = re.compile(r"\bсинхронн")
 
 
 def meta(path, key):  # значение ключа frontmatter
@@ -252,6 +255,28 @@ def check_background_rule(root):
     return fails
 
 
+def check_sync_spawn(root):
+    # DK-314: работу с экрана дашборда ведёт headless-сессия (`claude -p`), а
+    # она кончает ход финальным текстом и добивает недождавшиеся фоновые задачи
+    # через десять минут. Диспетчер, спавнящий исполнителя или ревьювера фоном,
+    # теряет любого субагента длиннее этих десяти минут: работа остаётся
+    # незакоммиченным диффом в дереве задачи, tmux-сессия схлопывается. Правило
+    # держится одним текстом board-batch и board-ship, поэтому вместе со словом
+    # про синхронный спавн проверяется и причина: без неё правило читается как
+    # предпочтение диспетчера и переживёт первое же сомнение.
+    fails = []
+    skills = os.path.join(root, "kit", "skills")
+    for skill in ("board-batch", "board-ship"):
+        text = read(os.path.join(skills, skill, "SKILL.md"))
+        if text is None:
+            continue  # отдельно ловится check_skills
+        if not SYNC_SPAWN_RE.search(text):
+            fails.append("%s: спавн субагента не назван синхронным, в headless фоновый исполнитель гибнет" % skill)
+        if "headless" not in text:
+            fails.append("%s: синхронный спавн назван без причины, а причина это headless-сессия и её десять минут" % skill)
+    return fails
+
+
 def run(here, root):
     """Все проверки разом. Возврат (находки, число скиллов)."""
     fails = []
@@ -264,6 +289,7 @@ def run(here, root):
     fails += check_proofread(here)
     fails += check_rules_backlink(here)
     fails += check_background_rule(root)
+    fails += check_sync_spawn(root)
     return fails, n
 
 

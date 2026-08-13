@@ -406,5 +406,55 @@ class TestBackgroundRule(SkillTree):
         self.assertEqual(check_skills.check_background_rule(self.root), [])
 
 
+class TestSyncSpawn(SkillTree):
+    """DK-314: спавн исполнителя и ревьювера назван синхронным вместе с
+    причиной (headless-сессия дашборда кончает ход финальным текстом и добивает
+    фоновые задачи через десять минут). Правило живёт в board-batch и
+    board-ship, синтетический каталог кладёт их в kit/skills/ рядом с корнем."""
+
+    REASON = "headless-сессия добивает фоновое через десять минут"
+
+    def add_board_skills(self, body):
+        for skill in ("board-batch", "board-ship"):
+            self.add_skill(skill, body=body + "\n" + "\n".join(["тело"] * 12))
+
+    def test_passes_when_sync_named_with_reason(self):
+        self.add_board_skills("Спавн синхронный: " + self.REASON)
+        self.assertEqual(check_skills.check_sync_spawn(self.root), [])
+
+    def test_fails_when_spawn_not_named_sync(self):
+        # Тексты до правки DK-314: спавн описан, синхронность не названа.
+        self.add_board_skills("Спавн одним сообщением, чтобы субагенты шли параллельно")
+        fails = check_skills.check_sync_spawn(self.root)
+        self.assertEqual(len(fails), 4)
+        self.assertTrue(any("board-batch: спавн субагента не назван синхронным" in f
+                            for f in fails), fails)
+        self.assertTrue(any("board-ship: спавн субагента не назван синхронным" in f
+                            for f in fails), fails)
+
+    def test_fails_when_reason_missing(self):
+        self.add_board_skills("Спавн синхронный, так надо")
+        fails = check_skills.check_sync_spawn(self.root)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(all("синхронный спавн назван без причины" in f for f in fails), fails)
+
+    def test_async_word_is_not_the_rule(self):
+        # «Асинхронный» это отмена правила, а не его формулировка: подстрока
+        # совпала бы, слово нет.
+        self.add_board_skills("Спавн асинхронный: " + self.REASON)
+        fails = check_skills.check_sync_spawn(self.root)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(all("не назван синхронным" in f for f in fails), fails)
+
+    def test_skill_missing_is_not_double_reported(self):
+        # Пропажу скилла отдельно ловит check_skills, здесь молчание.
+        self.assertEqual(check_skills.check_sync_spawn(self.root), [])
+
+    def test_run_reports_sync_spawn(self):
+        self.add_board_skills("Спавн одним сообщением, чтобы субагенты шли параллельно")
+        fails, _ = check_skills.run(self.here, self.root)
+        self.assertTrue(any("спавн субагента не назван синхронным" in f for f in fails), fails)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

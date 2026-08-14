@@ -70,12 +70,26 @@ function tabClipped() {
     .some((t) => t.scrollWidth > t.clientWidth + 1);
 }
 
+// Шапка доски заполняется как на живом экране: имя проекта, подпись, поле
+// поиска, лупа и колокольчик. Пустая шапка влезала бы в любую ширину, и замер
+// на ней ничего не говорил бы о телефоне (DK-325).
+document.getElementById("pname").textContent = "devkit";
+document.getElementById("psub").textContent = "доска docs/TASKS.md, DK";
+document.getElementById("pselect").innerHTML = "<option>devkit</option>";
+
 const ttl = box(".trow .ttl");
 const chips = box(".trow .rchips");
 const fab = box(".fab");
 const seen = document.querySelector(".bsec:not(.onsec)").getBoundingClientRect();
+const head = box(".bhead");
 
 const out = [
+  "hfind=" + Math.round(box(".hfind").width),
+  "hfbtn=" + Math.round(box(".hfbtn").width),
+  // Шапка вылезла за экран, если её правый край ушёл за ширину окна: поле с
+  // лупой съели бы имя проекта и колокольчик разом.
+  "head-over=" + (head.right > document.documentElement.clientWidth + 1 ? "1" : "0"),
+  "head-h=" + Math.round(head.height),
   "screen=" + Math.round(document.documentElement.clientWidth),
   "ttl=" + Math.round(ttl.width),
   "ttl-h=" + Math.round(ttl.height),

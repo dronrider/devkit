@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -506,6 +507,63 @@ func boardRun(v smokeBoard, id string) string {
 }
 
 // stepStart: запуск работы, второй пункт DoD.
+// stepSearch: поиск задач, десятый сценарий цели DK-327. Проверяется тут стык
+// трёх источников сразу: живая доска приходит из кэша сервера, архив
+// разбирается файлом, а текст ищется обходом docs/tasks. Каждый по
+// отдельности проверен тестом, а вот сойтись в одной выдаче они могут только
+// на живом проекте с файлами на диске.
+func (s *smoke) stepSearch() (string, error) {
+	ask := func(q string) (searchResp, error) {
+		var v searchResp
+		err := s.call("GET", "/api/projects/demo/search?q="+url.QueryEscape(q), "", http.StatusOK, &v)
+		return v, err
+	}
+	rows := func(v searchResp, key string) []searchRow {
+		for _, g := range v.Groups {
+			if g.Key == key {
+				return g.Rows
+			}
+		}
+		return nil
+	}
+	live, err := ask("соседка")
+	if err != nil {
+		return "", err
+	}
+	board := rows(live, "board")
+	if len(board) != 1 || board[0].ID != smokeTask || board[0].Sect != "backlog" {
+		return "", fmt.Errorf("поиск по живой доске: %+v, ждал %s из Backlog", board, smokeTask)
+	}
+	closed, err := ask("закрытая")
+	if err != nil {
+		return "", err
+	}
+	arch := rows(closed, "archive")
+	if len(arch) != 1 || arch[0].ID != "XR-001" || arch[0].Closed != "2026-01-01" {
+		return "", fmt.Errorf("поиск по архиву: %+v, ждал XR-001 с датой закрытия", arch)
+	}
+	if arch[0].R != 0 || arch[0].Cost != "" {
+		return "", fmt.Errorf("архивная строка выдумала ранг или цену: %+v", arch[0])
+	}
+	text, err := ask("переписка через файл")
+	if err != nil {
+		return "", err
+	}
+	hits := rows(text, "text")
+	if len(hits) != 1 || hits[0].ID != smokeGoal || !strings.Contains(hits[0].Quote, "переписка через файл") {
+		return "", fmt.Errorf("поиск по тексту задач: %+v, ждал цитату из файла %s", hits, smokeGoal)
+	}
+	empty, err := ask("тарабарщина")
+	if err != nil {
+		return "", err
+	}
+	if empty.Note == "" {
+		return "", fmt.Errorf("пустая выдача не сказала, где искали: %+v", empty)
+	}
+	return fmt.Sprintf("доска: %s, архив: %s от %s, текст: %s строка %d; пустая выдача подписана",
+		board[0].ID, arch[0].ID, arch[0].Closed, hits[0].File, hits[0].Line), nil
+}
+
 func (s *smoke) stepStart() (string, error) {
 	var v struct {
 		Kind    string `json:"kind"`
@@ -995,6 +1053,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 	}
 	steps := []smokeStep{
 		{"доска со статусами и работами", s.stepBoard},
+		{"поиск по доске, архиву и тексту задач", s.stepSearch},
 		{"журнал цели из её файла", s.stepJournal},
 		{"состав цели сабтасками", s.stepComposition},
 		{"запуск работы", s.stepStart},

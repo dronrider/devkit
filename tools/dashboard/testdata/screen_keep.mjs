@@ -9,6 +9,10 @@
 // теряет фокус. Пересобранный целиком экран на этом и валится, перерисованный
 // по месту проходит.
 //
+// Тем же стендом проверяется поиск (DK-325): выдача занимает свой экран,
+// набранное уезжает в адрес одним запросом по задержке, поле держит курсор
+// между буквами, а вход в поиск есть и с клавиатуры, и с телефона.
+//
 // Последним шагом стенд смотрит ответ на нажатие: он приходит карточкой поверх
 // экрана и не трогает ни одного узла из потока документа, поэтому раскладка от
 // него не едет. Поток стенд берёт из настоящего index.html, а «поверх экрана»
@@ -182,7 +186,10 @@ const doc = {
     }
     return byId.get(id);
   },
-  addEventListener: () => {},
+  // Обработчики документа складываются так же, как узловые: горячей клавише
+  // («/» ставит курсор в поле поиска) больше неоткуда взяться.
+  handlers: {},
+  addEventListener: (name, fn) => { doc.handlers[name] = fn; },
 };
 doc.body = makeNode("body");
 doc.activeElement = doc.body;
@@ -328,6 +335,44 @@ const alien = {
 let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
 let slowSessions = false;
 
+// Поиск: сервер отвечает четырьмя группами в постоянном порядке (DK-325).
+// Игрушечный сервер повторяет его контракт, а не выдумывает свой: доска,
+// накопитель, архив и найденное в тексте файлов задач. Архивная строка едет с
+// датой закрытия и без ранга с ценой, их в архиве нет.
+const archived = [{ id: "XR-90", title: "Колокольчик в шапке", closed: "2026-08-01" }];
+const searchAsked = [];
+let slowSearch = false;
+
+function searchReply(q) {
+  const needle = String(q).trim().toLowerCase();
+  const groups = [
+    { key: "board", title: "Доска", rows: [] },
+    { key: "drafts", title: "Черновики", rows: [] },
+    { key: "archive", title: "Архив", rows: [] },
+    { key: "text", title: "В тексте задач", rows: [] },
+  ];
+  if (needle.length < 2) return { project: "demo", q, groups, note: "Ждём двух символов." };
+  const hit = (text) => String(text).toLowerCase().includes(needle);
+  groups[0].rows = rows.filter((r) => hit(r.title) || hit(r.id))
+    .map((r) => ({ id: r.id, title: r.title, sect: "backlog", section: "Backlog",
+      type: r.type, p: r.p, cost: r.cost, r: r.r, r_parts: r.r_parts }));
+  groups[1].rows = drafts.filter((d) => hit(d.title))
+    .map((d) => ({ id: d.id, title: d.title, age_words: d.age_words }));
+  groups[2].rows = archived.filter((a) => hit(a.title) || hit(a.id))
+    .map((a) => ({ id: a.id, title: a.title, closed: a.closed, where: "архив" }));
+  if (hit("цитата найденной строки")) {
+    groups[3].rows = [{ id: "XR-7", title: "строка доски номер 7",
+      file: "docs/tasks/XR-7.md", line: 12, quote: "цитата найденной строки файла" }];
+  }
+  const found = groups.reduce((sum, g) => sum + g.rows.length, 0);
+  const resp = { project: "demo", q, groups };
+  if (!found) {
+    resp.note = "По запросу ничего нет. Ищем по номеру, заголовку и тексту файлов: " +
+      "живая доска, черновики, архив.";
+  }
+  return resp;
+}
+
 // Игрушечные таймеры: карточка ответа гаснет по времени, и ждать его
 // по-честному стенду нечем. Заказанное складывается в список, а срабатывает по
 // команде стенда.
@@ -355,7 +400,9 @@ const sandbox = {
     innerWidth: 1200,
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
   },
-  location: { hash: "#demo", href: "", replace: () => {} },
+  // Замена адреса без записи в историю: ею уезжает в адрес набранный запрос
+  // поиска, и экран после неё собирается тем же путём, что и по ссылке.
+  location: { hash: "#demo", href: "", replace: (hash) => { sandbox.location.hash = hash; } },
   localStorage: {
     getItem: () => null,
     setItem: () => {},
@@ -386,6 +433,16 @@ const sandbox = {
       return slowSessions ? slowReply({ sessions }) : reply({ sessions });
     }
     if (path.includes("/sessions/")) return reply({ items: talk });
+    if (path.includes("/search?q=")) {
+      const q = decodeURIComponent(path.slice(path.indexOf("?q=") + 3));
+      searchAsked.push(q);
+      const answer = searchReply(q);
+      if (slowSearch) {
+        slowSearch = false;
+        return slowReply(answer);
+      }
+      return reply(answer);
+    }
     if (path === "/api/notifications") return reply({ items: [] });
     if (path === "/api/quota") return reply({ buckets: [] });
     return reply({});
@@ -512,6 +569,162 @@ if (find(groups, "XR-D2") !== wrap) {
 if (wrap.children[1].hidden) fail("обновление закрыло раскрытую запись");
 if (groups.scrollTop !== 120) {
   fail("обновление накопителя сбило прокрутку: " + groups.scrollTop + " вместо 120");
+}
+
+// Поиск (DK-325). Выдача занимает свой экран по адресу "#проект/find/<запрос>":
+// запрос в адресе делает её ссылкой и переживает кнопку «назад». Группы стоят
+// в постоянном порядке, совпадения подсвечены, архивная строка ранга и цены не
+// выдумывает, а поле переживает набор буквы за буквой.
+await go("#demo/find/" + encodeURIComponent("колокольчик"));
+if (!find(groups, "find-q")) {
+  fail("на экране выдачи нет поля запроса: " + dump(groups).slice(0, 200));
+}
+if (byId.get("hq").value !== "колокольчик") {
+  fail("поле шапки не показывает запрос, с которым открыт экран: " + byId.get("hq").value);
+}
+const archCard = find(groups, "find-card-archive");
+if (!archCard) fail("группы «Архив» на экране выдачи нет: " + dump(groups).slice(0, 300));
+if (!dump(find(groups, "find-head-archive")).includes("Архив")) {
+  fail("группа выдачи не подписана: " + dump(find(groups, "find-head-archive")));
+}
+if (!dump(archCard).includes("закрыта 2026-08-01")) {
+  fail("архивная строка не несёт даты закрытия: " + dump(archCard));
+}
+if (byClass(archCard, "rank")) {
+  fail("архивная строка показывает ранг, которого в архиве нет: " + dump(archCard));
+}
+const lit = byClass(archCard, "hit");
+if (!lit || lit.textContent !== "Колокольчик") {
+  fail("совпадение в заголовке не подсвечено: " + dump(archCard));
+}
+// Ненайденное и найденное различимы: сервер говорит, где искал, а клиент это
+// показывает, а не молчит пустой карточкой.
+await go("#demo/find/" + encodeURIComponent("тарабарщина"));
+if (!dump(groups).includes("Ищем по номеру, заголовку и тексту файлов")) {
+  fail("пустая выдача не говорит, где искали: " + dump(groups));
+}
+if (find(groups, "find-card-archive")) fail("по пустой выдаче нарисована группа архива");
+
+// Строка доски ведёт на экран задачи, а найденное в тексте едет цитатой с
+// путём файла.
+await go("#demo/find/" + encodeURIComponent("доски номер 3"));
+const boardCard = find(groups, "find-card-board");
+if (!boardCard) fail("группы «Доска» на экране выдачи нет: " + dump(groups).slice(0, 300));
+if (!byClass(boardCard, "rank")) {
+  fail("строка доски в выдаче потеряла ранг: " + dump(boardCard));
+}
+boardCard.children[0].handlers.click();
+if (sandbox.location.hash !== "demo/XR-3") {
+  fail("строка выдачи не ведёт на экран задачи: " + sandbox.location.hash);
+}
+await go("#demo/find/" + encodeURIComponent("цитата найденной строки"));
+const textCard = find(groups, "find-card-text");
+if (!textCard) fail("группы «В тексте задач» нет: " + dump(groups).slice(0, 300));
+for (const want of ["файла", "docs/tasks/XR-7.md:12", "строка доски номер 7"]) {
+  if (!dump(textCard).includes(want)) {
+    fail("в строке текстовой группы нет " + JSON.stringify(want) + ": " + dump(textCard));
+  }
+}
+// Совпадение подсвечено и в цитате, а не только в заголовке.
+const quoted = byClass(textCard, "fquote");
+if (!quoted || !byClass(quoted, "hit")) {
+  fail("совпадение в цитате не подсвечено: " + dump(textCard));
+}
+
+// Набор в поле шапки: буквы копятся, запрос уходит один раз по задержке, а
+// экран выдачи собирается тем же путём, что и по ссылке.
+await go("#demo");
+const hq = byId.get("hq");
+timers.length = 0;
+const askedWas = searchAsked.length;
+hq.value = "коло";
+hq.handlers.input();
+hq.value = "колокольчик";
+hq.handlers.input();
+if (searchAsked.length !== askedWas) {
+  fail("каждая буква ушла своим запросом: " + JSON.stringify(searchAsked.slice(askedWas)));
+}
+for (const t of timers.splice(0)) t.fn();
+if (sandbox.location.hash !== "#demo/find/" + encodeURIComponent("колокольчик")) {
+  fail("набор в поле шапки не увёл на экран выдачи: " + sandbox.location.hash);
+}
+await sandbox.refresh();
+await settle();
+if (searchAsked.length !== askedWas + 1) {
+  fail("на один набор ушло запросов: " + (searchAsked.length - askedWas));
+}
+if (!find(groups, "find-card-archive")) {
+  fail("выдача по набранному запросу не собралась: " + dump(groups).slice(0, 300));
+}
+
+// Поле экрана переживает набор: пересобранное на каждой букве, оно теряло бы
+// курсор вместе с набранным.
+const screenQ = find(groups, "find-q");
+const screenInput = screenQ.children[1];
+screenInput.focus();
+screenInput.value = "колокольчик в";
+screenInput.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+await sandbox.refresh();
+await settle();
+if (find(groups, "find-q") !== screenQ) fail("набор пересобрал поле запроса на экране выдачи");
+if (doc.activeElement !== screenInput || screenInput.value !== "колокольчик в") {
+  fail("набор отобрал у поля фокус или стёр набранное: " + screenInput.value);
+}
+
+// Запоздавший ответ не рисуется поверх свежего: пока сервер отвечал на прежний
+// запрос, человек дописал слово, и чужие строки на экране выглядели бы выдачей.
+slowSearch = true;
+sandbox.location.hash = "#demo/find/" + encodeURIComponent("колокольчик");
+const stale = sandbox.refresh();
+sandbox.location.hash = "#demo/find/" + encodeURIComponent("цитата найденной строки");
+await sandbox.refresh();
+await stale;
+await settle();
+if (!find(groups, "find-card-text") || find(groups, "find-card-archive")) {
+  fail("запоздавший ответ нарисован поверх свежей выдачи: " + dump(groups).slice(0, 300));
+}
+
+// Косая черта ставит курсор в поле шапки: руки на клавиатуре, и тянуться мышью
+// ради поиска не надо.
+doc.body.focus();
+if (!doc.handlers.keydown) fail("горячей клавиши поиска нет: документ не слушает клавиатуру");
+doc.handlers.keydown({ key: "/", preventDefault: () => {} });
+if (doc.activeElement !== hq) {
+  fail("косая черта не поставила курсор в поле поиска: " + dump(doc.activeElement));
+}
+// В поле ввода косая черта остаётся косой чертой.
+screenInput.focus();
+doc.handlers.keydown({ key: "/", preventDefault: () => {} });
+if (doc.activeElement !== screenInput) {
+  fail("косая черта в поле ввода перебросила курсор в шапку");
+}
+
+// Телефон: поля в шапке нет, и в поиск ведёт лупа рядом с колокольчиком. Экран
+// открывается пустым запросом, и поле на нём сразу ждёт набора.
+await go("#demo");
+byId.get("find-btn").handlers.click();
+if (sandbox.location.hash !== "demo/find/") {
+  fail("лупа в шапке не открыла экран поиска: " + sandbox.location.hash);
+}
+await sandbox.refresh();
+await settle();
+const phoneQ = find(groups, "find-q");
+if (!phoneQ) fail("экран поиска с телефона не собрался: " + dump(groups).slice(0, 300));
+if (doc.activeElement !== phoneQ.children[1]) {
+  fail("поле поиска на телефоне не ждёт набора: курсора в нём нет");
+}
+if (!dump(groups).includes("Ждём двух символов")) {
+  fail("пустой запрос не говорит, чего ждёт: " + dump(groups).slice(0, 300));
+}
+// Поле на экране выдачи это телефонный узел: на ноутбуке его гасят стили, и
+// стенд читает это в самом style.css, а не пересказывает себя.
+const findCSS = fs.readFileSync(path.join(path.dirname(appPath), "style.css"), "utf8");
+if (!/\.fqbar\{[^}]*display:none/.test(findCSS)) {
+  fail("поле экрана выдачи не спрятано на ноутбуке: в шапке уже стоит своё");
+}
+if (!/\.hfbtn\{display:none\}/.test(findCSS) || !/\.hfbtn\{display:flex\}/.test(findCSS)) {
+  fail("лупа шапки не отдана телефону: на ноутбуке её место занимает поле");
 }
 
 // Чат: лента, поле ввода и поток событий переживают обновление, а пришедшая
@@ -853,4 +1066,6 @@ sandbox.sayResult("");
 if (flashes.children.length) fail("пустой ответ не снял карточку: " + dump(flashes));
 
 console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус, " +
-  "экран агента держит выбранный разговор, ответ на нажатие не двигает раскладку");
+  "экран агента держит выбранный разговор, ответ на нажатие не двигает раскладку; " +
+  "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
+  "косая черта и лупа ведут в поиск");

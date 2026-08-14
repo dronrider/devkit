@@ -83,6 +83,16 @@ a:hover{text-decoration:underline}
 .bell svg{width:19px;height:19px;display:block}
 .bdot{position:absolute;top:7px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--acc);border:2px solid var(--bg2)}
 .bdot[hidden]{display:none}
+/* поиск в шапке доски: на ноутбуке поле видно всегда и косая черта ставит в
+   него курсор, на телефоне шапка тесная, и вместо поля там лупа рядом с
+   колокольчиком, а поле во всю ширину стоит на самом экране выдачи */
+.hfind{display:flex;align-items:center;gap:8px;flex:none;width:270px;height:38px;padding:0 11px;background:var(--bg2);border:1px solid var(--line2);border-radius:10px}
+.hfind:focus-within{border-color:var(--acc)}
+.hfind svg{width:16px;height:16px;flex:none;color:var(--tx3)}
+.hfind input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--tx);font:400 13px var(--sans)}
+.hfind input::placeholder{color:var(--tx3)}
+.hfbtn{display:none}
+.hfbtn svg{width:19px;height:19px;display:block}
 .pselect{display:none;background:var(--bg2);color:var(--tx);border:1px solid var(--line2);border-radius:9px;font:500 14px var(--sans);padding:8px 10px;max-width:46%}
 .live{display:flex;gap:12px;margin-top:16px;flex:none;overflow-x:auto}
 .lcard{flex:none;display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg1);border:1px solid var(--line);border-radius:12px}
@@ -237,6 +247,17 @@ a:hover{text-decoration:underline}
 .srow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow.done .st{color:var(--tx3)}
 .srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
+/* экран выдачи поиска (#проект/find/<запрос>): поле во всю ширину стоит на
+   телефоне, где в шапке его нет, а подсветка совпадений идёт везде, включая
+   заголовки и цитаты из текста задач */
+.fqbar{display:none;align-items:center;gap:9px;margin-top:14px;padding:0 12px;height:44px;background:var(--bg1);border:1px solid var(--line2);border-radius:11px}
+.fqbar:focus-within{border-color:var(--acc)}
+.fqbar svg{width:17px;height:17px;flex:none;color:var(--tx3)}
+.fqbar input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--tx);font:400 15px var(--sans)}
+.fqbar input::placeholder{color:var(--tx3)}
+.hit{background:var(--acc);color:var(--bg0);border-radius:3px;padding:0 1px}
+.fquote{margin-top:4px;font:400 12px/1.45 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere}
+.srow .st.fst{white-space:normal;overflow:visible}
 .dtext{padding:0 16px 14px}
 .dtext .fhead{font:500 11.5px var(--mono);color:var(--tx3);padding:0 0 6px;border:none}
 .dtext .log{margin:0;white-space:pre-wrap;background:var(--bg0);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;max-height:40vh;overflow:auto}
@@ -509,6 +530,11 @@ a:hover{text-decoration:underline}
      фильтры прокручиваются полосой */
   .bell{width:44px;height:44px}
   .bell svg{width:21px;height:21px}
+  /* телефон: поля в шапке нет, вход в поиск это лупа рядом с колокольчиком, а
+     поле открывается на самом экране выдачи */
+  .hfind{display:none}
+  .hfbtn{display:flex}
+  .fqbar{display:flex}
   /* телефон: боковой колонки нет, и логотип с переходом на главную стоит
      слева в шапке экрана */
   .logo-top{display:flex}

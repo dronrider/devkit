@@ -153,21 +153,34 @@ func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
 // глазами, и закрытие такой строки с экрана идёт мимо сессии агента.
 const acceptUser = "user"
 
-// parseBoardRows раскладывает ответ taskctl по ID: экрану задачи нужна одна
-// строка, но заголовки соседей нужны карточке зависимостей.
-func parseBoardRows(raw json.RawMessage) (map[string]boardRow, error) {
+// boardSect это секция доски со строками, как её отдаёт taskctl list --json.
+type boardSect struct {
+	Key   string     `json:"key"`
+	Title string     `json:"title"`
+	Rows  []boardRow `json:"rows"`
+}
+
+// parseBoardSects разбирает ответ taskctl секциями в их порядке: поиску нужен
+// порядок доски, а не алфавит ID.
+func parseBoardSects(raw json.RawMessage) ([]boardSect, error) {
 	var v struct {
-		Sections []struct {
-			Key   string     `json:"key"`
-			Title string     `json:"title"`
-			Rows  []boardRow `json:"rows"`
-		} `json:"sections"`
+		Sections []boardSect `json:"sections"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, err
 	}
+	return v.Sections, nil
+}
+
+// parseBoardRows раскладывает ответ taskctl по ID: экрану задачи нужна одна
+// строка, но заголовки соседей нужны карточке зависимостей.
+func parseBoardRows(raw json.RawMessage) (map[string]boardRow, error) {
+	sects, err := parseBoardSects(raw)
+	if err != nil {
+		return nil, err
+	}
 	rows := map[string]boardRow{}
-	for _, sec := range v.Sections {
+	for _, sec := range sects {
 		for _, row := range sec.Rows {
 			row.Sect, row.Section = sec.Key, sec.Title
 			rows[row.ID] = row

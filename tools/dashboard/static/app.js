@@ -200,6 +200,12 @@ function route() {
   if (parts.length >= 2 && parts[1] === "drafts") {
     return { proj: parts[0], id: parts[2] || "", drafts: true };
   }
+  // Запрос стоит в адресе (LLD DK-328): выдача становится ссылкой и переживает
+  // кнопку «назад». Хвост собирается обратно, потому что косая черта в самом
+  // запросе разрезала бы его на части.
+  if (parts.length >= 2 && parts[1] === "find") {
+    return { proj: parts[0], id: "", find: true, q: parts.slice(2).join("/") };
+  }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
   }
@@ -2666,6 +2672,254 @@ async function renderDrafts(project) {
   sync(groups, items);
 }
 
+// Поиск задач (LLD DK-328, решение 2). Поле стоит в шапке доски и на самом
+// экране выдачи, а выдача занимает свой экран по адресу
+// "#проект/find/<запрос>": выпадающий список под полем на телефоне дрался бы с
+// клавиатурой за нижнюю половину экрана. Ищет сервер одной ручкой, а клиент не
+// подменяет её чтением всей доски: архив с сотнями строк на телефон не тянут.
+
+// Задержка ввода: пока человек печатает, каждая буква не уходит своим
+// запросом. Четверть секунды это промежуток между словами, а не между
+// буквами.
+const FIND_WAIT = 250;
+
+// Слова пустых случаев приезжают с сервера (состав источников знает он), а
+// эти остаются на крайние случаи: ответ без слов и оборванная связь.
+const FIND_EMPTY = "По запросу ничего нет.";
+
+let findTimer = null;
+
+// Поколение запроса: ответ на прежний запрос приходит после того, как человек
+// дописал слово, и нарисованный поверх свежей выдачи он показывал бы чужие
+// строки. Отменяется тут именно отрисовка: сам ответ сервера уже в пути.
+let findGen = 0;
+
+function findInput(cls, q) {
+  const box = el("div", cls);
+  const ico = el("span", "fico");
+  ico.append(icon("i-find"));
+  box.append(ico);
+  const input = el("input", "");
+  input.type = "text";
+  input.value = q || "";
+  input.placeholder = "Поиск задач";
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("aria-label", "Поиск по доске, черновикам и архиву");
+  wireFindField(input);
+  box.append(input);
+  return box;
+}
+
+// Поле поиска: набор с задержкой, ввод отправляет запрос сразу. Поля два, в
+// шапке и на экране выдачи, и ведут они себя одинаково.
+function wireFindField(input) {
+  input.addEventListener("input", () => { findType(input.value); });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter") return;
+    clearTimeout(findTimer);
+    findGo(input.value);
+  });
+}
+
+// Набор с задержкой: запрос уезжает в адрес, а не в ручку напрямую, и экран
+// выдачи собирается тем же путём, каким открывается по ссылке.
+function findType(value) {
+  clearTimeout(findTimer);
+  findTimer = setTimeout(() => { findGo(value); }, FIND_WAIT);
+}
+
+function findGo(value) {
+  const project = shownProject || route().proj;
+  if (!project) return;
+  const hash = "#" + project + "/find/" + encodeURIComponent(String(value).trim());
+  if (hash === "#" + location.hash.replace(/^#/, "")) return;
+  // Набор это не переход: каждая буква отдельной записью в истории браузера
+  // превратила бы «назад» в перемотку по буквам. Переход на экран выдачи
+  // записью остаётся, с него «назад» и возвращает на доску.
+  if (route().find) location.replace(hash);
+  else location.hash = hash;
+}
+
+// Курсор в поле поиска по косой черте: руки на клавиатуре, и тянуться мышью к
+// шапке ради поиска не надо. В поле ввода косая черта остаётся косой чертой.
+function wireFindKey() {
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "/" || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const at = document.activeElement;
+    const tag = at && at.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || (at && at.isContentEditable)) return;
+    if (ev.preventDefault) ev.preventDefault();
+    const field = document.getElementById("hq");
+    if (field && field.focus) field.focus();
+  });
+}
+
+// Подсветка совпадений: текст режется на куски вокруг запроса, найденное
+// уходит в <mark>. Регистр не важен, как и на сервере. Куски вставляются
+// текстовыми узлами, HTML из данных по-прежнему не собирается.
+function markHits(box, text, q) {
+  const src = String(text === undefined || text === null ? "" : text);
+  const needle = String(q || "").trim().toLowerCase();
+  if (!needle) {
+    box.append(document.createTextNode(src));
+    return box;
+  }
+  const low = src.toLowerCase();
+  let at = 0;
+  for (;;) {
+    const hit = low.indexOf(needle, at);
+    if (hit < 0) break;
+    if (hit > at) box.append(document.createTextNode(src.slice(at, hit)));
+    box.append(el("mark", "hit", src.slice(hit, hit + needle.length)));
+    at = hit + needle.length;
+  }
+  if (at < src.length) box.append(document.createTextNode(src.slice(at)));
+  return box;
+}
+
+// Строка выдачи. Группы рисуются одним путём, а разница между ними это то, что
+// у строки заполнено: у доски секция с ценой и рангом, у черновика возраст, у
+// архивной строки дата закрытия (ранга и цены в архиве нет вовсе), у найденной
+// в тексте цитата с местом файла.
+function findRow(project, key, row, q) {
+  const tr = el("div", "srow");
+  tr.append(el("span", "id", row.id));
+  const st = el("span", "st fst");
+  markHits(st, row.title || "", q);
+  if (row.quote) {
+    const quote = el("div", "fquote");
+    markHits(quote, row.quote, q);
+    st.append(quote);
+  }
+  tr.append(st);
+  const meta = el("span", "sm");
+  if (row.section) meta.append(el("span", "chip", row.section));
+  if (row.closed) meta.append(el("span", "chip", "закрыта " + row.closed));
+  if (row.where) meta.append(el("span", "chip", row.where));
+  if (row.type && row.type !== "task") meta.append(el("span", "chip", row.type));
+  if (row.cost && row.cost !== "-") meta.append(el("span", "chip", row.cost));
+  if (row.age_words) meta.append(el("span", "stale", row.age_words));
+  if (row.file) {
+    meta.append(el("span", "stale", row.file + (row.line ? ":" + row.line : "")));
+  }
+  if (row.r) meta.append(rankCell(row));
+  tr.append(meta);
+  // Черновик ведёт в накопитель, остальное на экран задачи: закрытая задача
+  // открывается там же и называет свой архив словами.
+  tr.addEventListener("click", () => {
+    location.hash = key === "drafts" ? project + "/drafts" : project + "/" + row.id;
+  });
+  return tr;
+}
+
+function findGroupItems(project, group, q) {
+  const rows = (group.rows || []).map((row) => ({
+    key: group.key + "-" + row.id,
+    sign: JSON.stringify(row) + "|" + q,
+    make: () => findRow(project, group.key, row, q),
+  }));
+  if (group.note) {
+    rows.push({ key: group.key + "-note", sign: group.note, make: () => el("div", "error", group.note) });
+  }
+  // Урезанная выдача не выглядит полной: хвост назван числом и тем, что с ним
+  // делать.
+  if (group.more) {
+    const tail = "ещё " + group.more + " " +
+      plural(group.more, "совпадение", "совпадения", "совпадений") + ", уточните запрос";
+    rows.push({ key: group.key + "-more", sign: tail, make: () => el("div", "empty", tail) });
+  }
+  const total = (group.rows || []).length + (group.more || 0);
+  return [{
+    key: "find-head-" + group.key,
+    sign: group.title + "|" + total,
+    make: () => {
+      const head = el("div", "chd");
+      head.append(el("b", "", group.title));
+      head.append(el("span", "cnt", String(total)));
+      return head;
+    },
+  }, {
+    key: "find-card-" + group.key,
+    sign: rows.map((r) => r.key + "=" + r.sign).join("\n"),
+    make: () => {
+      const card = el("div", "card");
+      sync(card, rows);
+      return card;
+    },
+    fill: (card) => { sync(card, rows); },
+  }];
+}
+
+async function renderFind(project, q) {
+  const groups = document.getElementById("groups");
+  const head = [{
+    key: "find-crumb",
+    sign: project,
+    make: () => {
+      const crumb = el("div", "crumb");
+      const back = el("span", "crumb-back", "Доска " + project);
+      back.addEventListener("click", () => { location.hash = project; });
+      crumb.append(back);
+      return crumb;
+    },
+  }, {
+    key: "find-q",
+    sign: project + "|" + q,
+    make: () => {
+      const box = findInput("fqbar", q);
+      // Пустой запрос это заход с лупы: поле открылось ради набора, и экрану
+      // не нужно второго касания ради курсора.
+      if (!q) box.children[1].focus();
+      return box;
+    },
+    // Поле переживает перерисовку: пересобранное на каждой букве, оно теряло
+    // бы курсор вместе с набранным. Значение правится только вне фокуса, иначе
+    // набор дёргался бы под пальцами.
+    fill: (box) => {
+      const input = box.children[1];
+      if (document.activeElement !== input && input.value !== q) input.value = q;
+    },
+  }];
+  // Поле шапки держит тот же запрос: экран выдачи открывается и по ссылке, и
+  // кнопкой «назад», а поле при этом пустовало бы.
+  const field = document.getElementById("hq");
+  if (field && document.activeElement !== field && field.value !== q) field.value = q;
+  // Первый заход рисует крошку с полем сразу, до ответа сервера: пустой экран
+  // не давал бы набрать запрос. Дальше прежняя выдача стоит, пока не приехала
+  // новая, и экран не моргает пустотой на каждой букве.
+  if (!findKey(groups, "find-q")) sync(groups, head);
+  const gen = ++findGen;
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/search?q=" + encodeURIComponent(q));
+  if (gen !== findGen) return;
+  const items = head.slice();
+  if (!r.ok) {
+    const text = r.body.error || "поиск не отработал (" + r.status + ")";
+    items.push({
+      key: "find-error",
+      sign: text,
+      make: () => {
+        const card = el("div", "card");
+        card.append(el("div", "error", text));
+        return card;
+      },
+    });
+    sync(groups, items);
+    return;
+  }
+  for (const group of r.body.groups || []) {
+    if (!(group.rows || []).length && !group.note) continue;
+    for (const item of findGroupItems(project, group, q)) items.push(item);
+  }
+  // Пустая выдача говорит словами сервера, где искали: молчаливая пустота
+  // неотличима от «архив в поиск не входит».
+  if (items.length === head.length) {
+    const note = r.body.note || FIND_EMPTY;
+    items.push({ key: "find-empty", sign: note, make: () => el("div", "empty", note) });
+  }
+  sync(groups, items);
+}
+
 // Экран заведения (#проект/new) по макету «07 Заведение»: форма одна на оба
 // случая и повторяет правку задачи, те же поля в том же порядке и та же сумма
 // ранга. Переключатель наверху меняет только то, куда ляжет написанное. В
@@ -3599,8 +3853,10 @@ let shownProject = "";
 let shownScreen = "";
 
 function screenKey(rt) {
+  // Запрос в ключ не входит: набор буквы это не переход на другой экран, и
+  // выдача обязана перерисоваться по месту, а не собраться заново под пальцем.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
-    rt.agent, rt.chat].join("|");
+    rt.agent, rt.chat, rt.find].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те
@@ -3685,6 +3941,14 @@ async function paint() {
     await renderDrafts(current.name);
     return;
   }
+  if (rt.find) {
+    // Выдаче доска не нужна: поиск живёт своей ручкой и сам берёт доску из
+    // кэша сервера вместе с накопителем и архивом.
+    document.getElementById("psub").textContent = "поиск задач";
+    markNav(rt);
+    await renderFind(current.name, rt.q);
+    return;
+  }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
   if (!r.ok) {
     document.getElementById("psub").textContent = "";
@@ -3741,11 +4005,13 @@ function markNav(rt) {
   // Легенда кружков живёт на главной: её рисует renderHome, а с остальных
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
-  const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed" : "board";
+  const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed"
+    : rt.find ? "find" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
     ["agents", ["nav-agents", "tab-agents"]],
-    ["feed", ["bell"]]]) {
+    ["feed", ["bell"]],
+    ["find", ["find-btn"]]]) {
     for (const id of ids) {
       document.getElementById(id).classList.toggle("on", name === on);
     }
@@ -3753,7 +4019,7 @@ function markNav(rt) {
 }
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
-  ["bell", "/feed"]]) {
+  ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
     // имени увёл бы на "#/feed".
@@ -3793,6 +4059,10 @@ window.addEventListener("hashchange", () => {
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника
 // у неё нет, а постоянный опрос ест батарею телефона.
 window.addEventListener("focus", () => { refresh().catch(console.error); });
+// Поле поиска в шапке живёт разметкой, а не сборкой экрана: шапка стоит над
+// любым из них, и перерисовка доски поле не задевает.
+wireFindField(document.getElementById("hq"));
+wireFindKey();
 // Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале
 // колонки читалась бы как «подписок нет».
 paintQuota();

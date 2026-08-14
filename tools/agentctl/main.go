@@ -47,8 +47,19 @@ const usageText = `agentctl: выбор исполнителя под задач
                           (hooks/README.md)
   harness [--harness      окно в резолв харнеса: активный инструмент и чем он
            <имя>]         определён, включённый список после слияния слоёв,
-                          маппинг ярусов, режим делегирования, снимок квоты;
-                          --harness перебивает детект, как и DEVKIT_HARNESS
+          [--json]        маппинг ярусов, режим делегирования, снимок квоты;
+                          --harness перебивает детект, как и DEVKIT_HARNESS.
+                          --json печатает машинную раскладку подписок для чужой
+                          программы: имя, признаки включён и по умолчанию, чем
+                          поднимается клиент, имена пар окружения; значений
+                          окружения в ответе нет никогда
+  exec --harness <имя>    запуск команды на выбранной подписке: кладёт пары
+       -- <команда>       окружения харнеса из машинного слоя и DEVKIT_HARNESS,
+                          дальше поднимает команду и отдаёт наружу её код
+                          выхода. Вердикта, ярусов и ролей не считает, поэтому
+                          годится и там, где вердикта нет (сессия конвейера,
+                          груминг черновика). Ограничитель вложенности не
+                          ставится: поднятая сессия делегировать вправе
   budget                  потолок пачки для taskctl batch --limit: первая
                           строка машинная (batch: N), вторая называет бакет,
                           темп и причину потолка. Потолок не выводится своим
@@ -230,8 +241,33 @@ func main() {
 		fs := flag.NewFlagSet("harness", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		name := fs.String("harness", "", "имя харнеса, перебивает детект")
-		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "harness [--harness <имя>]")
+		asJSON := fs.Bool("json", false, "машинная раскладка подписок JSON-ом")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "harness [--harness <имя>] [--json]")
+		if *asJSON {
+			// Пара флагов бессмысленна вместе: машинный вид не резолвит активный
+			// харнес вовсе, и перебивать в нём нечего.
+			if *name != "" {
+				fail(fmt.Errorf("флаги --json и --harness вместе не работают: --json отдаёт раскладку машины целиком, а --harness перебивает детект активного"))
+			}
+			msg, err = cmdHarnessJSON(*dir)
+			break
+		}
 		msg, err = cmdHarness(*dir, *name)
+	case "exec":
+		fs := flag.NewFlagSet("exec", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		name := fs.String("harness", "", "имя харнеса, чьё окружение получает команда")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, -1, "exec --harness <имя> -- <команда>")
+		// Вывод команды идёт наружу по ходу дела, а не собирается в строку: под
+		// exec живут сессии агентов, и молчащий терминал до их конца неотличим от
+		// повисшего.
+		code, rerr := cmdExec(*dir, *name, pos, os.Stdout, os.Stderr)
+		if rerr != nil {
+			fail(rerr)
+		}
+		logRun(code)
+		os.Exit(code)
 	case "budget":
 		needArgs(args[1:], 0, 0, "budget")
 		msg, err = cmdBudget(gdir, timeNow())

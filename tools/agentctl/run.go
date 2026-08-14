@@ -183,6 +183,60 @@ func refreshQuotaDetached(harness string) {
 	}()
 }
 
+// harnessPairs достаёт пары окружения харнеса из машинного слоя. Пар нет,
+// значит слоя про этот харнес нет вовсе: своим каталогом конфигурации он не
+// поднимается, и команда идёт на подписке по умолчанию.
+func harnessPairs(l *layers, name string) []envPair {
+	if l == nil {
+		return nil
+	}
+	if s := l.Setup[name]; s != nil {
+		return s.Env
+	}
+	return nil
+}
+
+// harnessEnviron складывает окружение подпроцесса: унаследованное, пары
+// харнеса, имя харнеса последним. Порядок значим, последнее значение
+// побеждает: пара из машинного слоя перебивает унаследованное, а
+// DEVKIT_HARNESS не перебивается ничем (имена с приставкой DEVKIT_ в env
+// запрещены чтением машинного слоя, и вторым рубежом стоит эта очерёдность).
+// Харнес ставится явно, потому что детект по переменным родителя в гнезде
+// сессий неоднозначен по построению. Общая она у делегирования (run) и у
+// запуска чужой команды (exec): подписка у них одна и та же, и собранная
+// дважды она разъехалась бы на первой правке.
+func harnessEnviron(base []string, pairs []envPair, harness string) []string {
+	env := append([]string{}, base...)
+	for _, p := range pairs {
+		env = append(env, p.Name+"="+p.Value)
+	}
+	return append(env, harnessEnv+"="+harness)
+}
+
+// runChild гоняет собранную команду и разворачивает её исход в код выхода.
+// Код подпроцесса проезжает наружу как есть; чем объявлена команда, говорит
+// хвост what, он идёт в отказ «не поднялся».
+func runChild(cmd *exec.Cmd, errw io.Writer, what string) (int, error) {
+	err := cmd.Run()
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, nil
+	case errors.As(err, &ee):
+		code := ee.ExitCode()
+		if code < 0 {
+			// Убитый сигналом подпроцесс кода выхода не имеет, а отдать наружу
+			// минус единицу нельзя: она обернулась бы в 255 и читалась бы как
+			// чужой код возврата.
+			fmt.Fprintf(errw, "подпроцесс кончился сигналом (%v), наружу идёт код 1\n", ee)
+			code = 1
+		}
+		return code, nil
+	default:
+		return 0, fmt.Errorf("подпроцесс %s не поднялся (%v); %s", cmd.Path, err, what)
+	}
+}
+
 // cmdRun печатает вердикт и отдаёт задачу тому, кого назвала строка via.
 // Возвращает код выхода: ноль это сделанная работа (или инструкция диспетчеру
 // на харнесе со своим спавном), три это «делегировать нечем», код подпроцесса
@@ -261,12 +315,7 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	// конфигурации (CLAUDE_CONFIG_DIR у второй подписки), а через него base URL и
 	// токен. Имена печатаются, значения нет: в env кладут и токены, а вывод run
 	// уезжает в логи и в контекст диспетчера.
-	var pairs []envPair
-	if hc.L != nil {
-		if s := hc.L.Setup[who]; s != nil {
-			pairs = s.Env
-		}
-	}
+	pairs := harnessPairs(hc.L, who)
 	tail := ""
 	if len(pairs) > 0 {
 		tail = ", окружение: " + strings.Join(envNames(pairs), ", ")
@@ -274,34 +323,9 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s%s\n", who, prof.Path, argv[0], workdir, tail)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = workdir
-	// Окружение складывается поверх унаследованного, последнее значение
-	// побеждает: сначала пары харнеса назначения, потом своё. Ограничитель
-	// вложенности и имя харнеса идут последними не для порядка, а чтобы их нельзя
-	// было перебить (имена с приставкой DEVKIT_ в env запрещены чтением машинного
-	// слоя, и вторым рубежом стоит эта очерёдность). Детект по переменным родителя
-	// в гнезде сессий неоднозначен по построению, поэтому харнес ставится явно.
-	cmd.Env = os.Environ()
-	for _, p := range pairs {
-		cmd.Env = append(cmd.Env, p.Name+"="+p.Value)
-	}
-	cmd.Env = append(cmd.Env, harnessEnv+"="+who, runDepthEnv+"=1")
+	// Ограничитель вложенности идёт после общей сборки окружения: делегированная
+	// сессия делегировать дальше не вправе, иначе выйдет воронка сессий.
+	cmd.Env = append(harnessEnviron(os.Environ(), pairs, who), runDepthEnv+"=1")
 	cmd.Stdout, cmd.Stderr = out, errw
-	err = cmd.Run()
-	var ee *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, nil
-	case errors.As(err, &ee):
-		code := ee.ExitCode()
-		if code < 0 {
-			// Убитый сигналом подпроцесс кода выхода не имеет, а отдать наружу
-			// минус единицу нельзя: она обернулась бы в 255 и читалась бы как
-			// чужой код возврата.
-			fmt.Fprintf(errw, "подпроцесс кончился сигналом (%v), наружу идёт код 1\n", ee)
-			code = 1
-		}
-		return code, nil
-	default:
-		return 0, fmt.Errorf("подпроцесс %s не поднялся (%v); команду объявляет [delegate] command профиля %s", argv[0], err, prof.Path)
-	}
+	return runChild(cmd, errw, "команду объявляет [delegate] command профиля "+prof.Path)
 }

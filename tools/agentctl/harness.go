@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1175,6 +1176,102 @@ func quotaSpecFor(start string) (*quotaSpec, error) {
 		return nil, fmt.Errorf("%s", hc.quotaWhy())
 	}
 	return hc.Quota, nil
+}
+
+// harnessJSON это одна подписка машинным видом. Значений окружения тут нет
+// никогда, только имена: в env лежат каталог конфигурации, base URL и токен, а
+// ответ уезжает по HTTP в дашборд и в логи.
+type harnessJSON struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Default bool   `json:"default"`
+	// Bin это чем поднимается клиент инструмента: путь из машинного слоя, иначе
+	// [detect] bin профиля, иначе первое слово [delegate] command.
+	Bin string   `json:"bin,omitempty"`
+	Env []string `json:"env,omitempty"`
+}
+
+// harnessesJSON это ответ команды: машинная раскладка подписок целиком.
+type harnessesJSON struct {
+	Default   string        `json:"default,omitempty"`
+	Source    string        `json:"source"`
+	Harnesses []harnessJSON `json:"harnesses"`
+	Note      string        `json:"note,omitempty"`
+	Warns     []string      `json:"warns,omitempty"`
+}
+
+// clientBin отвечает, чем поднимается клиент харнеса. Порядок тот же, каким
+// его ищет сам devkit: путь машинного слоя (инструмент вне PATH), потом
+// [detect] bin профиля, потом первое слово шаблона команды делегирования.
+func clientBin(p *profile, s *setup) string {
+	if s != nil && s.Bin != "" {
+		return s.Bin
+	}
+	if p == nil {
+		return ""
+	}
+	if bin := p.section("detect").str("bin"); bin != "" {
+		return bin
+	}
+	if cmd := p.section("delegate").arr("command"); len(cmd) > 0 {
+		return cmd[0]
+	}
+	return ""
+}
+
+// cmdHarnessJSON печатает машинную раскладку подписок для чужой программы.
+// Человеческий вывод cmdHarness для этого не годится: он живой текст, меняется
+// от любой правки формулировки, и разбирать его регекспом хрупко.
+//
+// Список идёт полным, включённые и невключённые вперемешку с признаком
+// enabled: потребитель решает сам, кого показывать (дашборд оставляет одних
+// включённых), а команда, которая молча прячет половину раскладки, отвечала бы
+// на вопрос «какие подписки на машине» неправдой. Активный харнес тут не
+// считается вовсе: резолв зависит от окружения того, кто зовёт, а признак «по
+// умолчанию» приезжает из машинного слоя и одинаков у всех.
+func cmdHarnessJSON(start string) (string, error) {
+	dir, err := harnessDir(start)
+	if err != nil {
+		return "", err
+	}
+	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
+	if err != nil {
+		return "", err
+	}
+	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{}, Warns: l.Warns}
+	var names []string
+	for name := range l.Setup {
+		names = append(names, name)
+	}
+	for _, name := range l.Enabled {
+		if _, ok := l.Setup[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		h := harnessJSON{Name: name, Enabled: inList(l.Enabled, name), Default: name == l.Default}
+		h.Bin = clientBin(l.Profiles[name], l.Setup[name])
+		h.Env = envNames(l.Setup[name].envOf())
+		v.Harnesses = append(v.Harnesses, h)
+	}
+	if len(l.Enabled) == 0 {
+		v.Note = fmt.Sprintf("включённых харнесов нет (%s); включить: вписать enabled в %s", l.Source, machineConfigPath())
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// envOf отдаёт пары окружения секции, переживая её отсутствие: харнес бывает
+// включён без единой строки в машинном слое.
+func (s *setup) envOf() []envPair {
+	if s == nil {
+		return nil
+	}
+	return s.Env
 }
 
 // cmdHarness это окно в резолв: любой сдвиг поведения между машинами

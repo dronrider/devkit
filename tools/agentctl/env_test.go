@@ -155,6 +155,13 @@ env = ["SECRET_TOKEN=`+marker+`"]
 		t.Fatal(err)
 	}
 	texts["harness"] = harness
+	// Машинный вид той же команды уезжает по HTTP в дашборд, и значение,
+	// просочившееся в JSON, попало бы в браузер вместе с ним.
+	asJSON, err := cmdHarnessJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts["harness --json"] = asJSON
 	pick, err := cmdPick(root, "T-001", false, roleExec, "")
 	if err != nil {
 		t.Fatal(err)

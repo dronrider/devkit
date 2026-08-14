@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -460,6 +461,102 @@ func TestCmdHarness(t *testing.T) {
 	t.Setenv("DEVKIT_HOME", broken)
 	if _, err := cmdHarness("..", ""); err == nil || !strings.Contains(err.Error(), "claude-code.toml: [rules] нет ключа file") {
 		t.Fatalf("ошибка %v", err)
+	}
+}
+
+// TestCmdHarnessJSON: машинная раскладка подписок для чужой программы (DK-326).
+// Отдаётся то, что рисует экран выбора подписки: имя, признаки «включён» и «по
+// умолчанию», чем поднимается клиент и имена пар окружения. Значения пар в
+// ответе не появляются ни при каких условиях, это проверяет отдельный тест
+// ниже.
+func TestCmdHarnessJSON(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", `[delegate]
+mode = "cli"
+command = ["клиент-дома", "run", "{prompt}"]
+
+[hooks]
+
+[quota]
+`)
+	writeProfile(t, kit, "secondcli", `[delegate]
+mode = "cli"
+command = ["клиент-второй", "run", "{prompt}"]
+
+[hooks]
+
+[quota]
+`)
+	writeProfile(t, kit, "offcli", echoProfile)
+	writeMachine(t, kit, `enabled = ["homecli", "secondcli"]
+default = "homecli"
+
+[homecli]
+mini = "cheap"
+base = "cheap"
+pro = "strong"
+max = "strong"
+
+[secondcli]
+home = "~/.claude-second"
+env = ["CLAUDE_CONFIG_DIR={home}", "SECOND_TOKEN=секрет"]
+
+[offcli]
+home = "~/.claude-off"
+env = ["CLAUDE_CONFIG_DIR={home}"]
+`)
+	text, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v harnessesJSON
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
+	}
+	if v.Default != "homecli" {
+		t.Fatalf("подписка по умолчанию %q, жду homecli", v.Default)
+	}
+	got := map[string]harnessJSON{}
+	for _, h := range v.Harnesses {
+		got[h.Name] = h
+	}
+	if len(got) != 3 {
+		t.Fatalf("в раскладке %d харнесов, жду три (включённые и невключённый с секцией): %s", len(got), text)
+	}
+	if h := got["homecli"]; !h.Enabled || !h.Default || h.Bin != "клиент-дома" {
+		t.Fatalf("домашняя подписка пришла как %+v", h)
+	}
+	if h := got["secondcli"]; !h.Enabled || h.Default || h.Bin != "клиент-второй" {
+		t.Fatalf("вторая подписка пришла как %+v", h)
+	}
+	// Невключённый харнес остаётся в раскладке с признаком: прятать половину
+	// машины значило бы отвечать на вопрос «какие подписки есть» неправдой, а
+	// кого показывать на экране, решает потребитель.
+	if h := got["offcli"]; h.Enabled {
+		t.Fatalf("невключённый харнес пришёл включённым: %+v", h)
+	}
+	if names := strings.Join(got["secondcli"].Env, ","); names != "CLAUDE_CONFIG_DIR,SECOND_TOKEN" {
+		t.Fatalf("имена пар окружения %q", names)
+	}
+}
+
+// TestCmdHarnessJSONEmpty: пустой включённый список говорит о себе словами, а
+// не пустым массивом. Молчание тут неотличимо от отработавшей команды, и экран
+// показал бы «выбора нет» без причины.
+func TestCmdHarnessJSONEmpty(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeMachine(t, kit, "enabled = []\n")
+	text, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v harnessesJSON
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Harnesses) != 0 || !strings.Contains(v.Note, "включённых харнесов нет") {
+		t.Fatalf("пустая раскладка молчит о причине:\n%s", text)
 	}
 }
 

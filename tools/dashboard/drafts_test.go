@@ -88,6 +88,35 @@ func TestDraftsListAndText(t *testing.T) {
 	}
 }
 
+// Список накопителя и текст записи несут заказ дословно, той же строкой, что
+// унесёт headless-сессии groomPrompt: подсказка кнопки «Провести груминг»
+// читает готовое поле вместо того, чтобы собирать его второй раз на клиенте
+// (DK-286).
+func TestDraftsCarryOrder(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
+
+	list := draftsResp(t, c, e)
+	drafts, _ := list["drafts"].([]any)
+	if len(drafts) != 1 {
+		t.Fatalf("в накопителе %d черновиков, жду 1: %v", len(drafts), list)
+	}
+	first, _ := drafts[0].(map[string]any)
+	if order, _ := first["order"].(string); order != "Проведи груминг XR-005" {
+		t.Errorf("заказ строки накопителя %q, ждал «Проведи груминг XR-005»", order)
+	}
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("текст черновика: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"order":"Проведи груминг XR-005"`) {
+		t.Errorf("заказ экрана записи не приехал: %s", text)
+	}
+}
+
 // «Провести груминг» поднимает сессию разбора той же механикой, что и конвейер
 // задачи: tmux-сессия с headless-сессией конвейера и заказом теми же словами,
 // какими груминг просят в чате.

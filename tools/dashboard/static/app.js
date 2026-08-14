@@ -307,16 +307,36 @@ function sayResult(text, isError) {
   });
 }
 
+// Переход на экран поднятой работы после удачного запуска (DK-286): обычный
+// уход с экрана снимает сказанное (хэш-обработчик ниже стирает прежний
+// ответ), а тут снимать нечего. Человек только что нажал кнопку и ждёт ровно
+// этих слов. Флаг одноразовый: следующий хэш-переход, чей бы он ни был, снова
+// стирает карточку, как и раньше.
+let keepResult = false;
+
+async function goKeepingResult(hash) {
+  keepResult = true;
+  location.hash = hash;
+  await refresh();
+}
+
 // Запуск и стоп. Ответ сервера показывается словами: и удача, и причина
 // отказа (занятый замок, пропавший tmux или goal-run) видны с экрана.
 // Подписка едет полем harness: пусто значит «как раньше», на подписке по
-// умолчанию.
-async function startRun(project, id, harness) {
+// умолчанию. afterOk это хэш экрана этой работы: заполнен на экране задачи,
+// пуст на строке списка, где человек нарочно остаётся на доске (DK-316).
+async function startRun(project, id, harness, afterOk) {
   sayResult("запуск " + id + (harness ? " на подписке " + harness : "") + "...");
   const body = harness ? { id, harness } : { id };
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs",
     { method: "POST", body });
-  sayResult(r.body.message || r.body.error || "", !r.ok);
+  const said = r.body.message || r.body.error || "";
+  if (r.ok && afterOk) {
+    await goKeepingResult(afterOk);
+    sayResult(said, false);
+    return;
+  }
+  sayResult(said, !r.ok);
   if (r.ok) await refresh();
 }
 
@@ -536,14 +556,19 @@ function harnessRow(h) {
 // нажатие на строку списка запускает работу на ней же, без второго нажатия.
 // Выбор действует на один запуск, а не на экран: две работы рядом идут на
 // разных подписках, и переключателя-настройки для этого не нужно.
-function runControl(project, id, make, label, isGoal) {
+// tip называет заказ дословно (orderHint), afterOk это экран, куда ведёт
+// удачный запуск: пусто на строке списка, где человек нарочно остаётся на
+// доске (DK-316), и заполнено на экране задачи, откуда до DK-286 нажатие
+// вело в никуда.
+function runControl(project, id, make, label, isGoal, tip, afterOk) {
   const wide = make(label);
+  if (tip) withTip(wide, tip);
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
   // второе нажатие уходило вторым запуском, а возвращалось отказом «работа уже
   // идёт».
   const fire = (node, harness) => {
     node.disabled = true;
-    startRun(project, id, harness).catch(console.error).finally(() => { node.disabled = false; });
+    startRun(project, id, harness, afterOk).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -554,7 +579,7 @@ function runControl(project, id, make, label, isGoal) {
   grp.append(wide);
   if (isGoal || list.length < 2) {
     const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
-    if (why) withTip(wide, why);
+    if (why) withTip(wide, tip ? tip + " " + why : why);
     return grp;
   }
   const menu = el("div", "hmenu");
@@ -602,8 +627,11 @@ function rowAction(project, row, sect) {
     return withTip(wait, "сначала " + row.after.join(", "));
   }
   if (!live) {
+    // Строка списка остаётся на доске и после нажатия (DK-316): экран не
+    // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
+    // равно виден по наведению.
     return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
-      actionLabel(sect), /^Цель:/.test(row.title));
+      actionLabel(sect), /^Цель:/.test(row.title), orderHint(row.order, row.accept, sect, row.id));
   }
   const btn = el("button", "btn btn-sm", "Стоп");
   btn.addEventListener("click", (ev) => {
@@ -1516,22 +1544,34 @@ function draftRefusal(form, text) {
 // правит taskctl на стороне сервера, поэтому правится ровно то, что есть в
 // строке: заголовок, тип, слагаемые ранга и цена; порядок строк выводится из
 // ранга, перетаскивания мимо ранга нет.
-// Где поднимется работа: подпись кнопки говорит про заказ, а надпись рядом
-// про место, откуда за ним смотреть.
-function taskActionHint(isGoal, sect, id) {
+// Заказ агенту дословно, той же строкой, что унесёт headless-сессии runPrompt
+// на сервере (row.order). Подсказка кнопки читает готовое поле, а не
+// пересказывает его ветвление вторым разбором на клиенте: второй разбор рано
+// или поздно разошёлся бы с настоящим заказом (DK-286). Проверенная строка с
+// пользовательской приёмкой закрывается прямо с экрана командой taskctl, без
+// сессии агента, и у неё нет заказа вовсе (closeFromCheck).
+function orderHint(order, accept, sect, id) {
+  if (sect === "check" && accept === "user") {
+    return "Закроется командой taskctl close, без сессии агента: приёмка пользовательская, " +
+      "человек уже принял работу глазами.";
+  }
+  if (!order) return "";
+  return "Конвейер получит заказ «" + order + "» в tmux-сессии task-" + id + ".";
+}
+
+// Где поднимется работа: подпись кнопки называет заказ дословно, а надпись
+// рядом про место, откуда за ним смотреть.
+function taskActionHint(isGoal, row, id) {
   if (isGoal) {
     return "Цель поведёт оболочка goal-run в tmux-сессии goal-" + id +
       ", состояние следующий виток прочтёт с диска.";
   }
-  const where = " в tmux-сессии task-" + id + ".";
-  if (sect === "in-progress") {
-    return "Начатую задачу конвейер продолжит с того места, где она стоит," + where;
-  }
-  if (sect === "check") {
-    return "Проверенную задачу конвейер закроет" + where +
-      " Агентский сценарий он прогонит сам, пользовательский оставит человеку.";
-  }
-  return "Задачу поднимет headless-сессия конвейера доски" + where;
+  const tip = orderHint(row.order, row.accept, row.sect, id);
+  if (row.sect === "check" && row.accept === "user") return tip;
+  const hint = tip || ("Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + ".");
+  return row.sect === "check"
+    ? hint + " Агентский сценарий он прогонит сам, пользовательский оставит человеку."
+    : hint;
 }
 
 // Полоса действий задачи: у живой работы её экран и стоп, у стоящей действие
@@ -1595,8 +1635,15 @@ function taskActions(project, id, row, works) {
       ": пока маркер стоит, конвейер её не возьмёт."));
     return out;
   }
-  out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal));
-  let hint = taskActionHint(isGoal, row.sect, id);
+  // Удачный запуск ведёт на экран этой работы: до DK-286 нажатие оставляло
+  // человека на прежнем месте, а работа уходила в tmux-сессию незримо.
+  // Проверенная строка с пользовательской приёмкой закрывается тут же, без
+  // сессии агента, и вести после неё некуда.
+  const closesWithoutSession = row.sect === "check" && row.accept === "user";
+  const afterOk = closesWithoutSession ? "" : project + "/agent/" + id;
+  out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
+    orderHint(row.order, row.accept, row.sect, id), afterOk));
+  let hint = taskActionHint(isGoal, row, id);
   // Причина, по которой выбирать не из чего, стоит в той же подписи под
   // полосой: на широком экране место для неё есть, и подсказкой по наведению
   // она бы там пряталась.
@@ -3211,12 +3258,22 @@ const GROOM_HINT = "«Провести груминг» поднимает се�
   "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
   "видны на экране записи.";
 
-async function groomDraft(project, id, ask) {
+// afterOk это хэш экрана записи: заполнен со строки накопителя, до DK-286
+// нажатие там уводило на общий экран агента, у которого нет ни текста
+// записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
+// записи afterOk не передают, там уже стоит экран этой работы.
+async function groomDraft(project, id, ask, afterOk) {
   sayResult("подъём груминга " + id + "...");
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id) + "/groom",
     { method: "POST", body: ask ? { ask } : {} });
-  sayResult(r.body.message || r.body.error || "", !r.ok);
+  const said = r.body.message || r.body.error || "";
+  if (r.ok && afterOk) {
+    await goKeepingResult(afterOk);
+    sayResult(said, false);
+    return true;
+  }
+  sayResult(said, !r.ok);
   return r.ok;
 }
 
@@ -3230,6 +3287,7 @@ function draftRow(project, d) {
   meta.append(el("span", "stale", d.age_words || ""));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
   const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
+  if (d.order) withTip(groom, "Заказ агенту: «" + d.order + "».");
   meta.append(groom);
   row.append(meta);
   row.addEventListener("click", (ev) => {
@@ -3239,12 +3297,11 @@ function draftRow(project, d) {
   groom.addEventListener("click", (ev) => {
     ev.stopPropagation();
     groom.disabled = true;
-    groomDraft(project, d.id).then((ok) => {
-      groom.disabled = false;
-      // Сессия поднята, и смотреть за ней там же, где за остальными работами:
-      // разбор идёт под тем же ID, каким черновик станет строкой.
-      if (ok) location.hash = project + "/agent/" + d.id;
-    }).catch((err) => { groom.disabled = false; console.error(err); });
+    // Разбор идёт под тем же ID, каким черновик станет строкой, и смотреть за
+    // ним удобнее на экране записи: ход, исход и повторная ходка стоят там.
+    groomDraft(project, d.id, "", project + "/draft/" + d.id)
+      .catch((err) => { console.error(err); })
+      .finally(() => { groom.disabled = false; });
   });
   return row;
 }
@@ -3850,6 +3907,7 @@ async function renderDraft(project, works, id) {
         head.append(stop);
       } else if (kept) {
         const groom = el("button", "btn btn-acc", "Провести груминг");
+        if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
         groom.addEventListener("click", () => {
           groom.disabled = true;
           groomDraft(project, id).then((ok) => {
@@ -5059,7 +5117,10 @@ window.addEventListener("hashchange", () => {
   // Уход с экрана это отказ от черновика: он держит ровно ту задачу, которая
   // на экране.
   taskDraft.dirty = false;
-  sayResult("");
+  // Переход сразу после удачного запуска карточку ответа не снимает: флаг
+  // одноразовый, а дальше уход с экрана снимает сказанное, как и раньше.
+  if (keepResult) keepResult = false;
+  else sayResult("");
   refresh().catch(console.error);
 });
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника

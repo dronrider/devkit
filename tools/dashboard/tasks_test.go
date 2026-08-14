@@ -297,6 +297,34 @@ func TestTaskPatchRowAndRank(t *testing.T) {
 	}
 }
 
+// Экран задачи получает заказ headless-сессии дословно, той же строкой, что
+// уйдёт агенту: подсказка кнопки читает готовое поле (row.order), а не
+// пересказывает его ветвление вторым разбором на клиенте (DK-286).
+func TestHandleTaskCarriesOrder(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	runTaskctl(t, e.proj, "move", "XR-004", "in-progress")
+
+	task := getTask(t, c, e, "XR-004")
+	if got := taskRowField(t, task, "order"); got != "Продолжай выполнение XR-004" {
+		t.Errorf("заказ начатой задачи %v, ждал «Продолжай выполнение XR-004»", got)
+	}
+}
+
+// Проверенная задача с пользовательской приёмкой закрывается прямо с экрана
+// командой taskctl, без сессии агента: для неё нет заказа, и подсказке
+// кнопки показывать нечего (closeFromCheck, DK-289).
+func TestHandleTaskOrderOmittedForUserAcceptClose(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	runTaskctl(t, e.proj, "set", "XR-004", "--accept", "user")
+	goalDoc(t, e, "XR-004", userAcceptDoc)
+	runTaskctl(t, e.proj, "move", "XR-004", "check")
+
+	task := getTask(t, c, e, "XR-004")
+	if got := taskRowField(t, task, "order"); got != nil {
+		t.Errorf("проверенная задача с пользовательской приёмкой несёт заказ агенту %v, а закрывается без сессии", got)
+	}
+}
+
 // Ответ на правку ранга называет фактическое место строки: свежую разбивку с
 // суммой и бакетом и соседей по Backlog сверху и снизу. Клиент считает ранг
 // щели сам, пока держит строку пальцем, но это превью по той доске, которую
@@ -825,17 +853,44 @@ func TestStaticTaskActionBySection(t *testing.T) {
 	body := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{"actionLabel(row.sect)", "runControl(project, id",
 		"row.after && row.after.length", "wait.disabled = true",
-		"taskActionHint(isGoal, row.sect, id)"} {
+		"taskActionHint(isGoal, row, id)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
 	}
 	hint := funcBody(t, app, "function taskActionHint(")
-	for _, want := range []string{"goal-run", "Начатую задачу конвейер продолжит",
-		"Проверенную задачу конвейер закроет", "headless-сессия конвейера доски"} {
+	for _, want := range []string{"goal-run", "orderHint(row.order, row.accept, row.sect, id)",
+		"Агентский сценарий он прогонит сам, пользовательский оставит человеку"} {
 		if !strings.Contains(hint, want) {
 			t.Errorf("надпись под действием не говорит про %q: откуда смотреть за работой, неясно", want)
 		}
+	}
+}
+
+// Подсказка кнопки называет заказ дословно, той же строкой, что уйдёт
+// headless-сессии (row.order, её собирает runPrompt на сервере): клиент
+// заказ не сочиняет второй раз, а читает готовое поле. У проверенной строки
+// с пользовательской приёмкой нет заказа, она закрывается без сессии агента
+// (DK-286).
+func TestStaticOrderHintReadsServerField(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	hint := funcBody(t, app, "function orderHint(")
+	for _, want := range []string{
+		`sect === "check" && accept === "user"`,
+		"Закроется командой taskctl close, без сессии агента",
+		`"Конвейер получит заказ «" + order + "»`,
+	} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("в orderHint нет %q", want)
+		}
+	}
+	// Кнопка на экране задачи и кнопка в строке списка читают одно и то же
+	// поле, а не сочиняют заказ каждая по-своему.
+	if !strings.Contains(funcBody(t, app, "function taskActions("), "orderHint(row.order, row.accept, row.sect, id)") {
+		t.Error("полоса действий задачи не читает подсказку из orderHint")
+	}
+	if !strings.Contains(funcBody(t, app, "function rowAction("), "orderHint(row.order, row.accept, sect, row.id)") {
+		t.Error("действие в строке списка не читает подсказку из orderHint")
 	}
 }
 

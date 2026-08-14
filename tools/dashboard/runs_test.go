@@ -150,6 +150,28 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 	}
 }
 
+// rowOrder называет заказ той же строкой, что соберёт headless-сессии
+// runPrompt: подсказке кнопки разойтись с реальным заказом нечем. У строки
+// цели и у проверенной строки с пользовательской приёмкой нет заказа вовсе:
+// первую ведёт своя оболочка, вторая закрывается без сессии агента.
+func TestRowOrder(t *testing.T) {
+	for _, tc := range []struct{ name, sect, id, accept, title, want string }{
+		{"backlog", "backlog", "XR-002", "", "Обычная задача", "Выполни XR-002"},
+		{"in-progress", "in-progress", "XR-004", "", "Начатая задача", "Продолжай выполнение XR-004"},
+		{"check agent", "check", "XR-003", "", "Задача на проверке", "Закрой XR-003"},
+		{"check mixed", "check", "XR-005", "mixed", "Смешанная приёмка", "Закрой XR-005"},
+		{"check user closes without session", "check", "XR-006", "user", "Пользовательская приёмка", ""},
+		{"goal in progress", "in-progress", "XR-100", "", "Цель: пробный цикл", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rowOrder(tc.sect, tc.id, tc.accept, tc.title); got != tc.want {
+				t.Errorf("rowOrder(%q,%q,%q,%q) = %q, ждал %q",
+					tc.sect, tc.id, tc.accept, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
 // Выбранная подписка доезжает до команды сессии: она заворачивается в
 // agentctl exec, и клиент поднимается тот, который назвала раскладка. До
 // DK-326 запуск всегда шёл первой подпиской, а вторая простаивала.

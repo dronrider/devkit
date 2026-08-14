@@ -63,15 +63,44 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("ответ taskctl draft list --json не разобрался: %v", err)})
 		return
 	}
-	resp := map[string]any{"project": found.Name, "drafts": v.Drafts}
-	if v.Drafts == nil {
-		resp["drafts"] = []json.RawMessage{}
-	}
+	resp := map[string]any{"project": found.Name, "drafts": draftsWithOrder(v.Drafts)}
 	if len(v.Drafts) == 0 {
 		// Пустой список без слов неотличим от неотрисованного раздела.
 		resp["note"] = fmt.Sprintf("накопитель черновиков %s пуст: записанных мимо доски идей нет", found.Name)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// draftsWithOrder дописывает каждой записи накопителя заказ груминга
+// дословно, той же строкой, что унесёт groomPrompt в headless-сессию
+// (DK-286): подсказка кнопки «Провести груминг» читает готовую строку, а не
+// собирает её второй раз. Ответ пересобирается по общей карте, а не типом:
+// формат записи накопителя держит taskctl, и разбор в типизированную строку
+// потерял бы поля, неизвестные дашборду. Неразобранная запись уезжает
+// нетронутой, без подсказки: без неё запись рисуется по-старому.
+func draftsWithOrder(items []json.RawMessage) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(items))
+	for _, raw := range items {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			out = append(out, raw)
+			continue
+		}
+		var id string
+		json.Unmarshal(m["id"], &id)
+		if id != "" {
+			if mark, err := json.Marshal(groomPrompt(id, "")); err == nil {
+				m["order"] = mark
+			}
+		}
+		enc, err := json.Marshal(m)
+		if err != nil {
+			out = append(out, raw)
+			continue
+		}
+		out = append(out, enc)
+	}
+	return out
 }
 
 // draftPath отдаёт путь файла черновика и его путь от корня проекта.
@@ -97,7 +126,10 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "file": rel, "text": string(text)})
+	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Провести
+	// груминг», и подсказка на ней читает то же поле, что и строка накопителя.
+	writeJSON(w, http.StatusOK, map[string]string{
+		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, "")})
 }
 
 // handleDraftGroom поднимает сессию грумминга черновика. Проверки те же и в том

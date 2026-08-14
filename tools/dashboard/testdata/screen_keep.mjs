@@ -139,7 +139,15 @@ function makeNode(tag) {
   };
   node.removeChild = (kid) => { detach(kid); return kid; };
   node.remove = () => { detach(node); };
-  node.after = () => {};
+  // Экран задачи ставит полосу действий сразу за шапкой этим вызовом
+  // (watchTaskLayout, static/app.js): без него полоса нигде не встаёт в
+  // дерево, и кнопка запуска стенду не найти.
+  node.after = (...kids) => {
+    const par = node.parentElement;
+    if (!par) return;
+    const ref = par.children[par.children.indexOf(node) + 1] || null;
+    for (const kid of kids) par.insertBefore(kid, ref);
+  };
   node.setAttribute = () => {};
   node.removeAttribute = () => {};
   // Вертикаль узла: настоящих размеров у стенда нет, и по умолчанию их нет ни
@@ -293,6 +301,18 @@ function button(node, label) {
   return null;
 }
 
+// Кнопка полосы действий задачи (barBtn, static/app.js): подпись лежит в
+// дочернем узле рядом со значком, а не прямо в textContent самой кнопки.
+function actionButton(node, label) {
+  if (!node) return null;
+  if (node.tagName === "BUTTON" && dump(node).trim() === label) return node;
+  for (const kid of node.children || []) {
+    const hit = actionButton(kid, label);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 // Узел с таким классом где-нибудь в поддереве: списки разговоров ключей
 // перерисовки не носят, и ищутся они классом.
 function byClass(node, cls) {
@@ -383,14 +403,26 @@ for (let i = 2; i <= 9; i += 1) {
   rows.push(row("XR-" + i, "строка доски номер " + i));
 }
 
+// Заказ дословно, тем же способом, каким его собирает сервер (rowOrder,
+// tools/dashboard/runs.go): у цели нет заказа, следующий виток сочиняет
+// goal-run.py, а не дашборд.
+function rowOrder(sect, r) {
+  if (r.type === "goal") return "";
+  if (sect === "in-progress") return "Продолжай выполнение " + r.id;
+  if (sect === "check") return "Закрой " + r.id;
+  return "Выполни " + r.id;
+}
+
 // Признак идущей работы дописывает строкам сервер (boardRuns, tasks.go), и
 // игрушечный сервер повторяет ровно это: у строки с живой работой это то, чем
-// работа видна, у строки In progress без работы gone.
+// работа видна, у строки In progress без работы gone. Заказ дописывается той
+// же разметкой.
 function marked(list, key) {
   return list.map((r) => {
     const live = works().find((w) => w.id === r.id);
     const run = live ? live.via : (key === "in-progress" ? "gone" : "");
-    return Object.assign({}, r, run ? { run } : {});
+    const order = rowOrder(key, r);
+    return Object.assign({}, r, run ? { run } : {}, order ? { order } : {});
   });
 }
 
@@ -424,10 +456,12 @@ function harnessBody() {
   return { harnesses: harnessList, note: harnessNote };
 }
 
+// Заказ дословно, тем же способом, каким его собирает сервер (groomPrompt,
+// tools/dashboard/drafts.go): подсказка кнопки читает готовое поле.
 const drafts = [
-  { id: "XR-D1", title: "первая запись накопителя", age_words: "вчера" },
-  { id: "XR-D2", title: "вторая запись накопителя", age_words: "сегодня" },
-  { id: "XR-D3", title: "третья запись накопителя", age_words: "сегодня" },
+  { id: "XR-D1", title: "первая запись накопителя", age_words: "вчера", order: "Проведи груминг XR-D1" },
+  { id: "XR-D2", title: "вторая запись накопителя", age_words: "сегодня", order: "Проведи груминг XR-D2" },
+  { id: "XR-D3", title: "третья запись накопителя", age_words: "сегодня", order: "Проведи груминг XR-D3" },
 ];
 
 // Экран черновика (DK-321): исход груминга сервер читает следами на диске, а
@@ -640,13 +674,28 @@ const sandbox = {
       patched.push(sent);
       return patchRow(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)), sent);
     }
+    // Экран задачи (#проект/<ID>): строка та же, что на доске, разметка заказа
+    // и полосы действий та же самая (handleTask, tools/dashboard/tasks.go).
+    if (path.includes("/tasks/") && (!init || !init.method)) {
+      const id = decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+      const r = rows.find((x) => x.id === id);
+      if (!r) return refuse(404, { error: "на доске demo нет строки " + id });
+      const sect = id === "XR-1" ? "in-progress" : "backlog";
+      const order = rowOrder(sect, r);
+      return reply({
+        project: "demo", id,
+        row: Object.assign({}, r, { sect, section: sect }, order ? { order } : {}),
+        after: [], blocks: [],
+      });
+    }
     if (path === "/api/harnesses") return reply(harnessBody());
     if (path.endsWith("/board")) return reply(boardBody());
     if (path.endsWith("/drafts")) return reply({ drafts });
     if (path.endsWith("/outcome")) return reply(draftOut);
     if (path.endsWith("/groom") && post) {
       groomAsk = JSON.parse(init.body).ask || "";
-      return reply({ message: "грумминг XR-D2 поднят" });
+      const gid = path.slice(path.indexOf("/drafts/") + "/drafts/".length, path.indexOf("/groom"));
+      return reply({ message: "груминг " + gid + " поднят в tmux-сессии task-" + gid });
     }
     if (path.includes("/drafts/") && init && init.method === "DELETE") {
       dropped = JSON.parse(init.body).reason || "";
@@ -712,6 +761,12 @@ const third = find(groups, "XR-3");
 if (!third) fail("строки XR-3 на доске нет: " + dump(groups).slice(0, 200));
 const act = button(third, "Выполнить");
 if (!act) fail("у строки нет кнопки действия: " + dump(third));
+// Подсказка кнопки называет заказ дословно, той же строкой, что уйдёт
+// headless-сессии (row.order): до DK-286 надпись была общей, и нажимать
+// было страшно.
+if (!String(act.title).includes("Выполни XR-3")) {
+  fail("подсказка кнопки строки не называет заказ дословно: " + JSON.stringify(act.title));
+}
 groups.scrollTop = 240;
 act.focus();
 
@@ -853,6 +908,36 @@ if (groups.scrollTop !== 240) {
 // же контейнере ответы на нажатие.
 for (const t of timers.splice(0)) t.fn();
 
+// Экран задачи (#проект/<ID>): подсказка кнопки называет заказ дословно, той
+// же строкой, что уйдёт headless-сессии (row.order, handleTask в
+// tools/dashboard/tasks.go), а удачный запуск ведёт на экран этой работы,
+// не оставляя человека на месте (DK-286).
+running = false;
+await go("#demo/XR-6");
+const taskRun = actionButton(groups, "Выполнить");
+if (!taskRun) fail("на экране задачи нет кнопки запуска: " + dump(groups).slice(0, 300));
+if (!String(taskRun.title).includes("Выполни XR-6")) {
+  fail("подсказка кнопки запуска не называет заказ дословно: " + JSON.stringify(taskRun.title));
+}
+if (!dump(groups).includes("Выполни XR-6")) {
+  fail("надпись под кнопкой не называет заказ дословно: " + dump(groups).slice(0, 400));
+}
+timers.length = 0;
+byId.get("flashes").replaceChildren();
+taskRun.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (sandbox.location.hash !== "demo/agent/XR-6") {
+  fail("удачный запуск с экрана задачи не увёл на экран этой работы: " + sandbox.location.hash);
+}
+if (!find(groups, "agent-panes-XR-6")) {
+  fail("после перехода экран агента не собрался: " + dump(groups).slice(0, 300));
+}
+if (!dump(byId.get("flashes")).includes("сессия поднята")) {
+  fail("переход на экран работы стёр карточку ответа на нажатие: " + dump(byId.get("flashes")));
+}
+for (const t of timers.splice(0)) t.fn();
+byId.get("flashes").replaceChildren();
+
 // Черновики: строки и прокрутка переживают обновление, а кнопка разбора зовёт
 // груминг грумингом (DK-321).
 running = false;
@@ -873,6 +958,33 @@ if (find(groups, "XR-D2") !== wrap) {
 if (groups.scrollTop !== 120) {
   fail("обновление накопителя сбило прокрутку: " + groups.scrollTop + " вместо 120");
 }
+
+// Груминг со строки накопителя ведёт на экран записи, а не на общий экран
+// агента: у того нет ни текста черновика, ни исхода разбора (LLD DK-328,
+// «Отвергнутое»). Подсказка кнопки называет заказ дословно, а переход не
+// теряет карточку ответа (DK-286).
+const d3Row = find(groups, "XR-D3");
+if (!d3Row) fail("в накопителе нет записи XR-D3: " + dump(groups).slice(0, 300));
+const d3Groom = button(d3Row, "Провести груминг");
+if (!d3Groom) fail("у записи XR-D3 нет кнопки груминга: " + dump(d3Row));
+if (!String(d3Groom.title).includes("Проведи груминг XR-D3")) {
+  fail("подсказка кнопки груминга не называет заказ дословно: " + JSON.stringify(d3Groom.title));
+}
+timers.length = 0;
+byId.get("flashes").replaceChildren();
+d3Groom.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (sandbox.location.hash !== "demo/draft/XR-D3") {
+  fail("груминг со строки накопителя увёл не на экран записи: " + sandbox.location.hash);
+}
+if (!find(groups, "draft-head")) {
+  fail("после перехода экран записи не собрался: " + dump(groups).slice(0, 300));
+}
+if (!dump(byId.get("flashes")).includes("груминг XR-D3 поднят")) {
+  fail("переход на экран записи стёр карточку ответа на нажатие: " + dump(byId.get("flashes")));
+}
+for (const t of timers.splice(0)) t.fn();
+byId.get("flashes").replaceChildren();
 
 // Поиск (DK-325). Выдача занимает свой экран по адресу "#проект/find/<запрос>":
 // запрос в адресе делает её ссылкой и переживает кнопку «назад». Группы стоят

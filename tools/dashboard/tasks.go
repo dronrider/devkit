@@ -40,6 +40,12 @@ type boardRow struct {
 	// назначается на доске, и своего признака дашборд не заводит. Пусто у
 	// агентского вида, он умолчание и суффикса не носит.
 	Accept  string   `json:"accept,omitempty"`
+	// Order это заказ headless-сессии дословно, той же строкой, что уйдёт
+	// агенту (rowOrder, tools/dashboard/runs.go): подсказка кнопки читает
+	// готовое поле, а не собирает заказ второй раз. Пусто у строки цели (её
+	// виток сочиняет goal-run) и у проверенной строки с пользовательской
+	// приёмкой (закрытие идёт без сессии, closeFromCheck).
+	Order   string   `json:"order,omitempty"`
 	Fail    string   `json:"fail,omitempty"`
 	Block   string   `json:"block,omitempty"`
 	Type    string   `json:"type"`
@@ -96,12 +102,12 @@ func rowRun(live map[string]string, id, key string) string {
 	return ""
 }
 
-// boardRuns дописывает каждой строке ответа taskctl признак идущей работы.
-// Ответ пересобирается по общим картам, а не по типу boardRow: сервер отдаёт
-// доску как есть, и часть полей строки (дата правки, пометки) он не знает
-// вовсе, а разбор в типизированную строку их бы потерял. Неразобранный ответ
-// уезжает нетронутым: без признака строка рисуется по-старому, а вот без
-// доски экран пуст.
+// boardRuns дописывает каждой строке ответа taskctl признак идущей работы и
+// заказ headless-сессии (DK-286). Ответ пересобирается по общим картам, а не
+// по типу boardRow: сервер отдаёт доску как есть, и часть полей строки (дата
+// правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
+// потерял. Неразобранный ответ уезжает нетронутым: без признака строка
+// рисуется по-старому, а вот без доски экран пуст.
 func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -120,17 +126,24 @@ func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
 			return raw
 		}
 		for _, row := range rows {
-			var id string
+			var id, title, accept string
 			json.Unmarshal(row["id"], &id)
-			run := rowRun(live, id, key)
-			if run == "" {
-				continue
+			json.Unmarshal(row["title"], &title)
+			json.Unmarshal(row["accept"], &accept)
+			if run := rowRun(live, id, key); run != "" {
+				mark, err := json.Marshal(run)
+				if err != nil {
+					return raw
+				}
+				row["run"] = mark
 			}
-			mark, err := json.Marshal(run)
-			if err != nil {
-				return raw
+			if order := rowOrder(key, id, accept, title); order != "" {
+				mark, err := json.Marshal(order)
+				if err != nil {
+					return raw
+				}
+				row["order"] = mark
 			}
-			row["run"] = mark
 		}
 		marked, err := json.Marshal(rows)
 		if err != nil {
@@ -338,6 +351,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		view, _ := parseBoardView(raw)
 		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), id, row.Sect)
 	}
+	row.Order = rowOrder(row.Sect, id, row.Accept, row.Title)
 	resp := map[string]any{
 		"project": found.Name,
 		"id":      id,

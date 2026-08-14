@@ -544,6 +544,7 @@ func TestLiveWorksSkipsDerivedSession(t *testing.T) {
 type boardRunRow struct {
 	ID     string `json:"id"`
 	Run    string `json:"run"`
+	Order  string `json:"order"`
 	RParts []int  `json:"r_parts"`
 	Link   string `json:"link"`
 }
@@ -589,6 +590,45 @@ func TestBoardRowsCarryRun(t *testing.T) {
 	// поля, которых сервер не знает, обязаны доехать до клиента целыми.
 	if got := rows["XR-004"]; len(got.RParts) != 5 || got.Link != "-" {
 		t.Errorf("строка XR-004 после разметки: r_parts %v, link %q, ожидал строку целиком", got.RParts, got.Link)
+	}
+}
+
+// Строка доски несёт заказ дословно, той же строкой, что уйдёт headless-сессии
+// (rowOrder читает её у runPrompt): подсказка кнопки на экране показывает
+// готовое поле, а не пересказывает его ветвление вторым разбором на клиенте.
+// У строки цели нет заказа: следующий виток сочиняет goal-run.py, а не
+// дашборд (DK-286).
+func TestBoardRowsCarryOrder(t *testing.T) {
+	e, _, _ := runsEnv(t, "")
+	rows := boardRows(t, e)
+	want := map[string]string{
+		"XR-100": "", // цель: следующий виток сочиняет заказ сам
+		"XR-004": "Продолжай выполнение XR-004",
+		"XR-003": "Закрой XR-003",
+		"XR-002": "Выполни XR-002",
+	}
+	for id, order := range want {
+		if got, hit := rows[id]; !hit || got.Order != order {
+			t.Errorf("заказ строки %s %q, ожидал %q", id, got.Order, order)
+		}
+	}
+}
+
+// Проверенная строка с пользовательской приёмкой закрывается прямо с экрана
+// командой taskctl, без сессии агента (closeFromCheck, DK-289): у неё нет
+// заказа, а строке рядом со смешанной приёмкой заказ остаётся.
+func TestBoardRowOrderOmittedForUserAcceptClose(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", acceptBoardJSON))
+	rows := boardRows(t, e)
+	if got := rows["XR-006"].Order; got != "" {
+		t.Errorf("проверенная строка с пользовательской приёмкой несёт заказ агенту %q, а закрывается без сессии", got)
+	}
+	if got := rows["XR-005"].Order; got != "Закрой XR-005" {
+		t.Errorf("смешанная приёмка в Check осталась без заказа: %q", got)
+	}
+	if got := rows["XR-007"].Order; got != "Выполни XR-007" {
+		t.Errorf("пользовательская приёмка в Backlog осталась без заказа: %q, там ещё нет проверки", got)
 	}
 }
 

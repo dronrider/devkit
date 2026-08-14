@@ -968,6 +968,10 @@ func TestStaticButtonsLook(t *testing.T) {
 	if !strings.Contains(row, `el("button", "btn btn-sm", actionLabel(sect))`) {
 		t.Error("заблокированная строка собрана не мелкой кнопкой")
 	}
+	if !strings.Contains(funcBody(t, app, "function draftRunCard("),
+		`el("button", "btn btn-sm btn-danger", "Остановить груминг")`) {
+		t.Error("стоп груминга собран не в шапке карточки хода: макет 12 ставит его туда")
+	}
 	drop := funcBody(t, app, "function draftDropCard(")
 	for _, want := range []string{`el("button", "btn btn-danger", "Удалить черновик")`,
 		`el("button", "btn", "Отмена")`, `el("div", "drow")`} {
@@ -1018,6 +1022,13 @@ func TestStaticButtonsLook(t *testing.T) {
 	if bar["m-more-h"] != 36 {
 		t.Errorf("узкая часть в полосе действий высотой %d, а широкая 36", bar["m-more-h"])
 	}
+	// Ширина узкой части одна на оба размера: макет 11 задаёт её строкой на
+	// весь файл, включая свою полноразмерную составную кнопку в полосе
+	// действий. Тридцать два макета 12 остаются экрану черновика, где
+	// составной кнопки у дашборда пока нет (DK-337, сверка).
+	if bar["m-more-w"] != 30 {
+		t.Errorf("узкая часть в полосе действий шириной %d, макет 11 держит 30", bar["m-more-w"])
+	}
 
 	// Телефон: строка доски держит палец в 36 пикселей, это правило места, а не
 	// кнопки, и макетных 30 там быть не должно.
@@ -1040,6 +1051,18 @@ func TestStaticButtonsLook(t *testing.T) {
 			t.Errorf("кнопка подтверждения %s высотой %d, макет держит полный размер 36",
 				id, drops[id+"-h"])
 		}
+	}
+
+	// Шапка карточки хода груминга: стоп мелкой красной кнопкой у правого
+	// края, рядом с именем сессии, которую он снимает (макет 12).
+	run := chromeMeasure(t, chrome, dir, page, "1280,900", "run")
+	if run["m-gstop-h"] != 30 || run["m-gstop-r"] != 8 || run["m-gstop-pad"] != 12 {
+		t.Errorf("стоп груминга не мелкой кнопкой: высота %d, радиус %d, поле %d",
+			run["m-gstop-h"], run["m-gstop-r"], run["m-gstop-pad"])
+	}
+	if run["gstop-gap"] < 40 {
+		t.Errorf("стоп груминга стоит впритык за именем сессии (%d пикселей): в шапке "+
+			"карточки он прижат к правому краю", run["gstop-gap"])
 	}
 
 	// Повторная ходка груминга: кнопка под полем и по его правому краю.

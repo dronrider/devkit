@@ -76,7 +76,18 @@ const ASK = `
     </div>
   </div>`;
 
-const MARKUP = { row: ROW, bar: ABAR, drop: DROP, ask: ASK };
+// Шапка карточки хода груминга: имя сессии слева, стоп у правого края (макет
+// «12 Груминг черновика», фрейм состояний).
+const RUN = `
+  <div class="card dcol-run">
+    <div class="phd" id="m-phd">
+      <b>Ход груминга</b>
+      <span>task-DK-329</span>
+      <button class="btn btn-sm btn-danger" id="m-gstop">Остановить груминг</button>
+    </div>
+  </div>`;
+
+const MARKUP = { row: ROW, bar: ABAR, drop: DROP, ask: ASK, run: RUN };
 document.getElementById("groups").innerHTML = MARKUP[what] || ROW;
 
 function box(sel) {
@@ -95,6 +106,7 @@ function shape(id) {
   const rect = node.getBoundingClientRect();
   return [
     id + "-h=" + Math.round(rect.height),
+    id + "-w=" + Math.round(rect.width),
     id + "-r=" + Math.round(parseFloat(cs.borderTopLeftRadius) || 0),
     id + "-pad=" + Math.round(parseFloat(cs.paddingLeft) || 0),
     id + "-fs=" + Math.round(parseFloat(cs.fontSize) || 0),
@@ -119,6 +131,14 @@ if (what === "row") {
     "why-above=" + (why.bottom <= row.top + 1 ? "1" : "0"),
     // Кнопки прижаты к правому краю коробки.
     "row-right=" + Math.round(conf.right - row.right),
+  ]);
+} else if (what === "run") {
+  const name = document.querySelector("#m-phd span").getBoundingClientRect();
+  const stop = box("#m-gstop");
+  out = out.concat(shape("m-gstop"), [
+    // Стоп отодвинут от имени сессии автоматическим полем, а не стоит впритык
+    // за ним на общем зазоре шапки: считать поля самой шапки для этого не надо.
+    "gstop-gap=" + Math.round(stop.left - name.right),
   ]);
 } else {
   // Кнопка повторной ходки стоит под полем и по его правому краю: считать от

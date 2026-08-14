@@ -156,11 +156,8 @@ a:hover{text-decoration:underline}
    поэтому строка доски от него не едет */
 .split{display:inline-flex;position:relative}
 .split .btn:not(.more2){border-top-right-radius:0;border-bottom-right-radius:0}
-.split .more2{border-top-left-radius:0;border-bottom-left-radius:0;padding:0;width:32px;
+.split .more2{border-top-left-radius:0;border-bottom-left-radius:0;padding:0;width:30px;
   gap:0;border-left:1px solid color-mix(in oklab,var(--acc-ink) 30%,transparent)}
-/* у мелкой кнопки строки доски узкая часть тоже мельче: макет 11 рисует её в
-   30 пикселей против 32 у полноразмерной кнопки полосы действий (макет 12) */
-.split .more2.btn-sm{width:30px}
 /* галочка рисуется рамкой, а не значком: своего значка ради шеврона в шаблоне
    не заводится, а угол в 45 градусов одинаков в любом кегле */
 .car{width:7px;height:7px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;
@@ -393,6 +390,9 @@ a:hover{text-decoration:underline}
 .phd b{font:600 13px var(--sans)}
 .phd span{font:400 11.5px var(--mono);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .phd .chip{margin-left:auto;flex:none;font:500 11.5px var(--sans);color:var(--tx2);overflow:visible}
+/* кнопка в шапке карточки стоит у правого края, как в макете 12: стоп груминга
+   живёт рядом с именем сессии, которую снимает */
+.phd .btn{margin-left:auto;flex:none}
 .phd .c-run{background:color-mix(in oklab,var(--run) 16%,transparent);color:var(--run)}
 .pbd{max-height:46vh;overflow-y:auto;padding:14px 18px}
 .log{font:400 12px/1.9 var(--mono);color:var(--tx2);overflow-wrap:anywhere}
@@ -556,7 +556,7 @@ a:hover{text-decoration:underline}
      44 пикселя по ширине, а список подписок не выходит за край экрана */
   .trow .meta .split{margin-left:auto}
   .trow .meta .split .btn{margin-left:0}
-  .split .more2,.split .more2.btn-sm{width:44px}
+  .split .more2{width:44px}
   .hpop{width:min(326px,86vw)}
   /* телефон: полоса действий задачи собрана значками с пальцем в 44 пикселя
      (.abar .btn выше), и узкая часть держит там свою ширину без отступов */

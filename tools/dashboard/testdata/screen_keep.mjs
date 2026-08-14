@@ -1240,13 +1240,23 @@ if (!dhead) fail("экран черновика не собрался: " + dump(
 if (!dump(dhead).includes("груминг идёт")) {
   fail("идущий груминг ничем не помечен: " + dump(dhead));
 }
-if (!button(dhead, "Остановить груминг")) fail("у идущего груминга нет стопа: " + dump(dhead));
 if (button(dhead, "Провести груминг")) {
   fail("поверх идущего груминга экран предлагает поднять второй: " + dump(dhead));
 }
 const runCol = find(groups, "draft-col-run");
 if (!runCol || !dump(runCol).includes("хвост груминга")) {
   fail("живого хвоста груминга на экране нет: " + dump(runCol));
+}
+// Стоп стоит в шапке карточки хода, рядом с именем сессии, которую он снимает
+// (макет 12), и собран мелкой красной кнопкой. В шапке экрана его больше нет.
+const runStop = button(runCol, "Остановить груминг");
+if (!runStop) fail("у идущего груминга нет стопа в шапке карточки хода: " + dump(runCol));
+if (!String(runStop.className).includes("btn-sm") ||
+  !String(runStop.className).includes("btn-danger")) {
+  fail("стоп груминга собран не мелкой красной кнопкой: " + runStop.className);
+}
+if (button(dhead, "Остановить груминг")) {
+  fail("стоп груминга остался и в шапке экрана: " + dump(dhead));
 }
 
 // Колонка хода видна и на телефоне. Класс tmuxbar на ней гасил её целиком:

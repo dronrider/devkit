@@ -3882,12 +3882,20 @@ function draftDropCard(project, id) {
 // хотя внутри тот же снимок: на телефоне он гасится до нажатия на вкладку
 // (`.tmuxbar{display:none}`), а вкладок на этом экране нет, и колонка пропадала
 // с телефона целиком вместе с живым хвостом (браузерная приёмка DK-321).
-function draftRunCard(id) {
+// Карточка хода: заголовок с именем tmux-сессии и живой хвост под ним. У
+// идущего груминга в шапке стоит стоп (макет «12 Груминг черновика», фрейм
+// состояний): снимает он именно эту сессию, и стоять ему рядом с её именем.
+function draftRunCard(project, id, running) {
   const card = el("div", "card dcol-run");
   const head = el("div", "phd");
   head.append(el("b", "", "Ход груминга"));
   const sub = el("span", "", "");
   head.append(sub);
+  if (running) {
+    const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить груминг"), STOP_TIP);
+    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+    head.append(stop);
+  }
   card.append(head);
   wireTmux(id, card, sub);
   return card;
@@ -3944,10 +3952,10 @@ async function renderDraft(project, works, id) {
       head.append(el("h2", title ? "wtitle" : "", title || id));
       if (title) head.append(el("span", "wname", id));
       if (running) {
+        // Стоп груминга стоит в шапке карточки хода, рядом с именем сессии
+        // (макет 12): в шапке экрана он отвечал на вопрос «что делать с этой
+        // записью», хотя снимает он идущую сессию.
         head.append(el("span", "chip c-check", "груминг идёт в tmux-сессии task-" + id));
-        const stop = withTip(el("button", "btn btn-danger", "Остановить груминг"), STOP_TIP);
-        stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
-        head.append(stop);
       } else if (kept) {
         const groom = el("button", "btn btn-acc", "Провести груминг");
         if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
@@ -3979,8 +3987,11 @@ async function renderDraft(project, works, id) {
     },
   }, {
     key: "draft-col-run",
-    sign: "",
-    make: () => draftRunCard(id),
+    // Отпечаток держит одно: идёт груминг или нет. Обновление по фокусу окна
+    // карточку не пересобирает, и живой хвост его переживает, а вот конец
+    // сессии обязан снять из шапки стоп, которому больше нечего снимать.
+    sign: running ? "run" : "idle",
+    make: () => draftRunCard(project, id, running),
   }, {
     key: "draft-col-text",
     sign: [text.ok, text.ok ? text.body.text : text.body.error].join("|"),

@@ -229,3 +229,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-317 | dashboard: строка задачи не знает про идущую работу, ни признака, ни стопа | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-317.md](tasks/archive/2026/DK-317.md) |
 | DK-289 | dashboard: кнопка «Закрыть» поднимает сессию агента и молчит про это | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-289.md](tasks/archive/2026/DK-289.md) |
 | DK-305 | dashboard: экран агента на телефоне, вкладка разговора и подпись живого потока | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-305.md](tasks/archive/2026/DK-305.md) |
+| DK-326 | dashboard: выбор подписки при запуске работы | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-326.md](tasks/archive/2026/DK-326.md) |

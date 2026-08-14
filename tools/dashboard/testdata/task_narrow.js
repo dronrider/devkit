@@ -69,12 +69,28 @@ function tabMatchesEyes() {
   return true;
 }
 
+// Ответ на нажатие приходит карточкой поверх экрана, и он не двигает
+// раскладку. Строкой в потоке документа он двигал: появление слов о нажатии
+// («конвейер задачи DK-136 поднят в tmux-сессии task-DK-136») уводило список
+// вниз на свою высоту, и нажатие выглядело промахом (приёмка DK-316).
+// Карточка ставится той же разметкой, что и статика. Стенд меряет верх списка
+// до неё и после, а заодно её собственную высоту: спрятанная стилями карточка
+// не двигала бы ничего и без всякого выноса из потока, и замер сошёлся бы на
+// пустом месте.
+const TOAST = `
+<div class="flash res"><div class="ft"><b>конвейер задачи DK-136 поднят в tmux-сессии task-DK-136</b><div class="flife"></div></div><button class="nx"></button></div>`;
+
+const listTop = box("#groups").top;
+document.getElementById("flashes").innerHTML = TOAST;
+const toastShift = box("#groups").top - listTop;
+
 const out = [
   "screen=" + Math.round(document.documentElement.clientWidth),
   "fpanel=" + Math.round(box(".fpanel").width),
   "dcard=" + Math.round(box(".dcard").width),
   "rcard=" + Math.round(box(".rcard").width),
-  "actmsg=" + Math.round(box("#actmsg").height),
+  "toast-shift=" + Math.round(toastShift),
+  "toast-h=" + Math.round(box(".flash.res").height),
   "bar-under=" + (box(".abar").top > box(".fpanel").top ? "1" : "0"),
   "tab-order=" + (tabMatchesEyes() ? "1" : "0"),
 ];

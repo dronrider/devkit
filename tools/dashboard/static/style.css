@@ -137,13 +137,6 @@ a:hover{text-decoration:underline}
 .btn-lg{height:48px;padding:0 20px;font-size:15px;border-radius:12px}
 .btn-sm{height:28px;padding:0 10px;font-size:12px;border-radius:7px}
 
-/* запуск и стоп: строка результата и экран задачи (макет «02 Задача») */
-.actmsg{min-height:18px;padding:8px 4px 0;font:400 12.5px var(--sans);color:var(--tx2)}
-/* сказать нечего, и строка не занимает места: пустой она висела отступом под
-   шапкой на каждом экране, а на телефоне это заметная часть высоты (приём тот
-   же, что у .nfbody .error:empty) */
-.actmsg:empty{display:none}
-.actmsg.error{color:var(--block)}
 .lcard b{cursor:pointer}
 .lcard b.flat{cursor:default;color:var(--tx2)}
 .crumb{display:flex;align-items:center;gap:10px;padding:18px 4px 0;font:500 12.5px var(--sans);color:var(--tx3)}
@@ -412,6 +405,11 @@ a:hover{text-decoration:underline}
 .flash .ft b{display:block;font:600 13.5px var(--sans);color:var(--tx);overflow-wrap:anywhere}
 .flash .ft span{display:block;font:400 12.5px/1.45 var(--sans);color:var(--tx2);margin-top:3px;overflow-wrap:anywhere}
 .flash .fw{font:400 11px var(--mono);color:var(--tx3);flex:none}
+/* ответ на нажатие приходит той же карточкой: у него нет своей рамки. Нажимать
+   на нём нечего, в отличие от события ленты, а отказ отличается от удачи
+   цветом слов и тем, что у него вовсе нет таймера */
+.flash.res{cursor:default}
+.flash.res.err .ft b{color:var(--block)}
 /* крестик закрытия: тот же приём, что у плашки чата (.cnote .nx), тычок по
    нему не должен доходить до клика по карточке. */
 .flash .nx{flex:none;width:26px;height:26px;border-radius:7px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}

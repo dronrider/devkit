@@ -9,9 +9,16 @@
 // теряет фокус. Пересобранный целиком экран на этом и валится, перерисованный
 // по месту проходит.
 //
+// Последним шагом стенд смотрит ответ на нажатие: он приходит карточкой поверх
+// экрана и не трогает ни одного узла из потока документа, поэтому раскладка от
+// него не едет. Поток стенд берёт из настоящего index.html, а «поверх экрана»
+// сверяет с настоящим style.css, чтобы проверка не выродилась в пересказ самой
+// себя.
+//
 // Зовётся из go-теста (board_test.go), путь к статике приходит аргументом.
 
 import fs from "node:fs";
+import path from "node:path";
 import vm from "node:vm";
 
 const appPath = process.argv[2];
@@ -80,6 +87,10 @@ function makeNode(tag) {
     reflow(node);
     return kid;
   };
+  node.prepend = (...kids) => {
+    node.children.unshift(...kids.map(adopt));
+    reflow(node);
+  };
   node.replaceChildren = (...kids) => {
     for (const kid of node.children.slice()) detach(kid);
     node.children = kids.map(adopt);
@@ -112,6 +123,9 @@ function makeNode(tag) {
   });
   Object.defineProperty(node, "childElementCount", {
     get: () => node.children.length,
+  });
+  Object.defineProperty(node, "lastElementChild", {
+    get: () => node.children[node.children.length - 1] || null,
   });
   if (node.tagName === "TEXTAREA" || node.tagName === "INPUT") {
     node.selectionStart = 0;
@@ -303,10 +317,23 @@ const alien = {
 let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
 let slowSessions = false;
 
+// Игрушечные таймеры: карточка ответа гаснет по времени, и ждать его
+// по-честному стенду нечем. Заказанное складывается в список, а срабатывает по
+// команде стенда.
+const timers = [];
+let timerSeq = 0;
+
 const sandbox = {
   console: { log: () => {}, error: () => {}, warn: () => {} },
-  setTimeout: () => 0,
-  clearTimeout: () => {},
+  setTimeout: (fn, ms) => {
+    timerSeq += 1;
+    timers.push({ id: timerSeq, fn, ms });
+    return timerSeq;
+  },
+  clearTimeout: (id) => {
+    const at = timers.findIndex((t) => t.id === id);
+    if (at >= 0) timers.splice(at, 1);
+  },
   setInterval: () => 0,
   clearInterval: () => {},
   document: doc,
@@ -659,5 +686,75 @@ if (liveTalks().length) {
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
 
+// Ответ на нажатие: он приходит карточкой поверх экрана и не двигает
+// раскладку. Строкой над списком он стоял в потоке документа, и появление слов
+// («конвейер задачи DK-136 поднят в tmux-сессии task-DK-136») уводило доску
+// вниз на свою высоту: человек жал кнопку, а экран уезжал из-под пальца
+// (приёмка DK-316). Стенд берёт поток из настоящего index.html, а не из своих
+// представлений о нём: узел ответа лежал ровно там.
+const staticDir = path.dirname(appPath);
+const html = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
+const css = fs.readFileSync(path.join(staticDir, "style.css"), "utf8");
+const main = /<main class="bmain">([\s\S]*?)<\/main>/.exec(html);
+if (!main) fail("в index.html нет блока <main class=\"bmain\">: поток экрана стенду не найти");
+const flowIds = [...main[1].matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+if (!flowIds.includes("groups")) fail("в потоке экрана нет списка #groups: разметка разъехалась со стендом");
+
+// Контейнер карточек вынесен из потока стилями, и стенд читает это в самом
+// style.css: без такой сверки проверка пересказывала бы саму себя.
+if (!/\.flashes\{[^}]*position:fixed/.test(css)) {
+  fail("контейнер .flashes стоит в потоке документа: карточка ответа будет двигать экран");
+}
+
+await go("#demo");
+timers.length = 0;
+const flashes = byId.get("flashes");
+const flowWas = flowIds.map((id) => id + "=" + dump(byId.get(id)));
+const said = "конвейер задачи DK-136 поднят в tmux-сессии task-DK-136";
+sandbox.sayResult(said);
+
+const flowNow = flowIds.map((id) => id + "=" + dump(byId.get(id)));
+for (let i = 0; i < flowIds.length; i += 1) {
+  if (flowWas[i] !== flowNow[i]) {
+    fail("ответ на нажатие тронул узел из потока документа (#" + flowIds[i] +
+      "): раскладка от него едет");
+  }
+}
+if (flashes.children.length !== 1 || !dump(flashes).includes(said)) {
+  fail("ответ на нажатие не всплыл карточкой поверх экрана: " + dump(flashes));
+}
+
+// Слова о начале сменяются словами об исходе, а не копятся столбиком.
+sandbox.sayResult("стоп DK-136...");
+if (flashes.children.length !== 1 || dump(flashes).includes(said)) {
+  fail("ответы на нажатия копятся столбиком: " + dump(flashes));
+}
+
+// Удача гаснет сама.
+const fireAll = () => {
+  for (const t of timers.splice(0)) t.fn();
+};
+fireAll();
+if (flashes.children.length) fail("карточка удачи не погасла по таймеру: " + dump(flashes));
+
+// Отказ ждёт крестика: причину человек читает, а не ловит.
+sandbox.sayResult("замок занят: сессия task-DK-136 уже поднята", true);
+fireAll();
+if (flashes.children.length !== 1) fail("карточка отказа погасла сама: причину не прочитать");
+const refusal = flashes.children[0];
+if (!String(refusal.className).includes("err")) {
+  fail("отказ ничем не отличается от удачи: " + refusal.className);
+}
+const cross = tag(refusal, "BUTTON");
+if (!cross) fail("на карточке отказа нет крестика: снять её нечем");
+cross.handlers.click({ stopPropagation: () => {} });
+if (flashes.children.length) fail("крестик не снял карточку отказа: " + dump(flashes));
+
+// Уход с экрана снимает сказанное: слова о прежнем нажатии на новом экране
+// висели бы без повода.
+sandbox.sayResult("запуск DK-136...");
+sandbox.sayResult("");
+if (flashes.children.length) fail("пустой ответ не снял карточку: " + dump(flashes));
+
 console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус, " +
-  "экран агента держит выбранный разговор");
+  "экран агента держит выбранный разговор, ответ на нажатие не двигает раскладку");

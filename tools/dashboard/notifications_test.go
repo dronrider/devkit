@@ -508,16 +508,25 @@ func TestStaticFlashWorthy(t *testing.T) {
 func TestStaticFlashNotice(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	show := funcBody(t, app, "function showFlash(")
+	// Каркас карточки (крестик, таймер жизни, потолок числа) общий с ответом на
+	// нажатие и лежит в toast: событию остаётся своё содержимое, смахивание и
+	// переход в ленту.
+	card := funcBody(t, app, "function toast(")
 	for _, want := range []string{`el("div", "flife")`, "animationDuration", "box.prepend(card)",
-		"FLASH_MAX", "card.remove()", `"/feed"`, "setTimeout"} {
+		"FLASH_MAX", "card.remove()", "setTimeout"} {
+		if !strings.Contains(card, want) {
+			t.Errorf("в каркасе карточки нет %q", want)
+		}
+	}
+	for _, want := range []string{"FLASH_LIFE", `"/feed"`} {
 		if !strings.Contains(show, want) {
 			t.Errorf("во флеш-уведомлении нет %q", want)
 		}
 	}
-	if !strings.Contains(show, `icon("close")`) || !strings.Contains(show, `aria-label", "Закрыть"`) {
+	if !strings.Contains(card, `icon("close")`) || !strings.Contains(card, `aria-label", "Закрыть"`) {
 		t.Error("у флеша нет крестика закрытия")
 	}
-	if !strings.Contains(show, "ev.stopPropagation()") {
+	if !strings.Contains(card, "ev.stopPropagation()") {
 		t.Error("крестик флеша не гасит клик по карточке: нажатие на него заодно уведёт в ленту")
 	}
 	for _, want := range []string{"pointerdown", "pointermove", "pointerup", "pointercancel", "flashSwiped(dx)"} {

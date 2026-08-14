@@ -156,9 +156,9 @@ function viewBack(snap) {
   // терял, и присваивание тут ничего не меняет.
   if (groups.scrollTop !== snap.top) groups.scrollTop = snap.top;
   focusBack(snap.focus);
-  // Сдвиг раскладки над списком: строка результата (.actmsg) появляется и
-  // пропадает вместе со словами о нажатии, и список едет на её высоту. У
-  // верха списка сдвигать нечего, там картинка и так стоит на месте.
+  // Сдвиг раскладки над списком: полоса живых работ прибавляет карточку с
+  // поднятой работой, и список едет вниз на её высоту. У верха списка сдвигать
+  // нечего, там картинка и так стоит на месте.
   if (!snap.key || !snap.top) return;
   const node = findKey(groups, snap.key);
   if (!node) return;
@@ -261,16 +261,31 @@ function renderSidebar(projects, current) {
     live ? live + " " + plural(live, "работа", "работы", "работ") : "";
 }
 
+// Ответ на нажатие всплывает карточкой поверх экрана, а не строкой над
+// списком. Строкой он стоял в потоке документа, и появление слов о нажатии
+// («конвейер задачи DK-136 поднят в tmux-сессии task-DK-136») двигало доску
+// вниз на свою высоту: человек жал кнопку, а экран уезжал из-под пальца
+// (приёмка DK-316). Карточка лежит в том же фиксированном углу, что и события
+// ленты, и не трогает раскладку ни появлением, ни уходом.
+//
+// Ответ на экране один: слова о начале («запуск DK-136...») сменяются словами
+// об исходе, а не копятся столбиком. Удача гаснет сама, отказ ждёт крестика:
+// причину отказа человек читает, а не ловит.
+const RESULT_LIFE = 6000;
+let resultToast = null;
+
 function sayResult(text, isError) {
-  const box = document.getElementById("actmsg");
-  // Строка результата стоит над списком и пустой свёрнута стилями: появившись
-  // по нажатию кнопки, она сдвигала список вниз на свою высоту, и нажатие
-  // выглядело промахом. Снимок места до слов возвращает картинку на прежнее
-  // место после них.
-  const snap = viewSnap();
-  box.textContent = text || "";
-  box.className = isError ? "actmsg error" : "actmsg";
-  viewBack(snap);
+  if (resultToast) resultToast.dismiss();
+  resultToast = null;
+  if (!text) return;
+  const body = el("div", "ft");
+  body.append(el("b", "", text));
+  resultToast = toast({
+    parts: [body],
+    body,
+    life: isError ? 0 : RESULT_LIFE,
+    cls: isError ? "res err" : "res",
+  });
 }
 
 // Запуск и стоп. Ответ сервера показывается словами: и удача, и причина
@@ -3065,31 +3080,54 @@ function flashSwiped(dx) {
   return Math.abs(dx) >= 48;
 }
 
-function showFlash(n) {
+// Карточка поверх экрана: общий каркас всплывающего события ленты и ответа на
+// нажатие. Контейнер `.flashes` вынесен из потока документа (`position:fixed`
+// в style.css), поэтому ни появление карточки, ни её уход на экране ничего не
+// двигают. У двух случаев общий ровно каркас: карточка, крестик, полоска
+// остатка времени с таймером и потолок числа карточек; смахивание пальцем и
+// переход в ленту остаются событию, ответ на нажатие никуда не ведёт. Жизнь в
+// ноль означает карточку без таймера: она ждёт крестика, и так живёт отказ.
+function toast(spec) {
   const box = document.getElementById("flashes");
-  if (!box) return;
-  const card = el("div", "flash");
-  card.append(el("span", "pdot " + (n.kind === "task" ? "pd-run" : "pd-warn")));
-  const body = el("div", "ft");
-  body.append(el("b", "", n.title || "событие ленты"));
-  if (n.body) body.append(el("span", "", n.body));
-  const life = el("div", "flife");
-  life.style.animationDuration = FLASH_LIFE + "ms";
-  body.append(life);
+  if (!box) return null;
+  const card = el("div", "flash" + (spec.cls ? " " + spec.cls : ""));
   const close = el("button", "nx");
   close.setAttribute("aria-label", "Закрыть");
   close.title = "Закрыть";
   close.append(icon("close"));
-  const timer = setTimeout(() => dismiss(), FLASH_LIFE);
-  function dismiss() {
+  let timer = 0;
+  const dismiss = () => {
     clearTimeout(timer);
     card.remove();
+  };
+  if (spec.life) {
+    const bar = el("div", "flife");
+    bar.style.animationDuration = spec.life + "ms";
+    spec.body.append(bar);
+    timer = setTimeout(dismiss, spec.life);
   }
   close.addEventListener("click", (ev) => {
     ev.stopPropagation();
     dismiss();
   });
-  card.append(body, el("span", "fw", "сейчас"), close);
+  card.append(...spec.parts, close);
+  box.prepend(card);
+  while (box.childElementCount > FLASH_MAX) box.lastElementChild.remove();
+  return { card, dismiss };
+}
+
+function showFlash(n) {
+  const dot = el("span", "pdot " + (n.kind === "task" ? "pd-run" : "pd-warn"));
+  const body = el("div", "ft");
+  body.append(el("b", "", n.title || "событие ленты"));
+  if (n.body) body.append(el("span", "", n.body));
+  const shown = toast({
+    parts: [dot, body, el("span", "fw", "сейчас")],
+    body,
+    life: FLASH_LIFE,
+  });
+  if (!shown) return;
+  const { card, dismiss } = shown;
   // Смахивание работает через pointer-события: они покрывают и тач, и мышь
   // одним обработчиком, второй код на touchstart/touchmove не нужен.
   let startX = null;
@@ -3126,8 +3164,6 @@ function showFlash(n) {
     dismiss();
     location.hash = (shownProject || route().proj) + "/feed";
   });
-  box.prepend(card);
-  while (box.childElementCount > FLASH_MAX) box.lastElementChild.remove();
 }
 
 // Всплывать ли уведомлению: событие старше подключения это хвост журнала,

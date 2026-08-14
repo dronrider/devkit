@@ -109,8 +109,12 @@ class LookTest(Stand):
         notify = call.argv_with("notify.py")
         self.assertEqual(len(notify), 1, "уведомитель позван не один раз: %s" % call.calls)
         self.assertNotIn("--quiet", notify[0], "зов вставшего цикла обязан быть громким")
-        self.assertIn(GOAL, notify[0][2], "в заголовке уведомления нет цели: %s" % notify[0])
-        self.assertIn(str(self.proj.name), notify[0][3])
+        self.assertIn(GOAL, notify[0][4], "в заголовке уведомления нет цели: %s" % notify[0])
+        self.assertIn(str(self.proj.name), notify[0][5])
+        # Цель едет и полем строки журнала (DK-323): по нему лента дашборда
+        # ведёт от вставшего цикла к строке цели, а заголовок она не разбирает.
+        self.assertEqual(notify[0][2:4], ["--task", GOAL],
+                         "зов ушёл без поля цели: %s" % notify[0])
 
     def test_shout_names_the_whole_resume_command(self):
         # Сам цикл сторожок не поднимает, поэтому зов обязан нести команду
@@ -121,7 +125,7 @@ class LookTest(Stand):
         self.runlog(200)
         called, line, call = self.look(path)
         self.assertTrue(called, line)
-        body = call.argv_with("notify.py")[0][3]
+        body = call.argv_with("notify.py")[0][5]
         want = "python3 %s %s -C %s" % (
             watch.DEVKIT / "kit" / "skills" / "goal-loop" / "goal-run.py", GOAL, self.proj)
         self.assertIn(want, body, "в зове нет готовой команды продолжения: %s" % body)

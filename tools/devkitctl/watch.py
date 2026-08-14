@@ -178,13 +178,17 @@ def board_present(root):
     return Path(root, BOARD).is_file()
 
 
-def shout(title, body, root, call=None):
+def shout(title, body, root, call=None, task=None):
     """Громкий зов уведомителем. Зовётся он из корня проекта, как из оболочки
     goal-run: по рабочему дереву уведомитель собирает заголовок баннера и цель
-    перехода по клику."""
+    перехода по клику. Цель едет ключом `--task`: по полю события лента
+    дашборда ведёт от вставшего цикла к строке цели (DK-323)."""
     call = subprocess.run if call is None else call
+    argv = [sys.executable, str(NOTIFIER)]
+    if task:
+        argv += ["--task", task]
     try:
-        p = call([sys.executable, str(NOTIFIER), title, body], cwd=root,
+        p = call(argv + [title, body], cwd=root,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
         return str(e)
@@ -249,7 +253,7 @@ def look(path, now, idle, call=None):
     body = "движения в %s нет с %s при пороге %s; продолжить цикл: %s" % (
         os.path.basename(root.rstrip("/")), moved.strftime(STAMP), say.human_age(idle),
         resume_command(goal, root))
-    said = shout(title, body, root, call)
+    said = shout(title, body, root, call, goal)
     entry["stopped"] = now.strftime(STAMP)
     write_entry(path, entry)
     return True, "цель %s в %s: простой %s при пороге %s, зову; %s" % (

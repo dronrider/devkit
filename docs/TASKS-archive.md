@@ -226,3 +226,6 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-148 | Регулярный замер расхода контекста по журналам сессий | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-148.md](tasks/archive/2026/DK-148.md) |
 | DK-290 | dashboard: лента задачи склеивает разговоры разных сессий | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-290.md](tasks/archive/2026/DK-290.md) |
 | DK-285 | dashboard: доска на телефоне, заголовок строки и полоса действий | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-285.md](tasks/archive/2026/DK-285.md) |
+| DK-317 | dashboard: строка задачи не знает про идущую работу, ни признака, ни стопа | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-317.md](tasks/archive/2026/DK-317.md) |
+| DK-289 | dashboard: кнопка «Закрыть» поднимает сессию агента и молчит про это | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-289.md](tasks/archive/2026/DK-289.md) |
+| DK-305 | dashboard: экран агента на телефоне, вкладка разговора и подпись живого потока | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-305.md](tasks/archive/2026/DK-305.md) |

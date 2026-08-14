@@ -230,3 +230,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-289 | dashboard: кнопка «Закрыть» поднимает сессию агента и молчит про это | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-289.md](tasks/archive/2026/DK-289.md) |
 | DK-305 | dashboard: экран агента на телефоне, вкладка разговора и подпись живого потока | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-305.md](tasks/archive/2026/DK-305.md) |
 | DK-326 | dashboard: выбор подписки при запуске работы | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-326.md](tasks/archive/2026/DK-326.md) |
+| DK-325 | dashboard: поиск задач по доске и архиву | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-325.md](tasks/archive/2026/DK-325.md) |
+| DK-321 | dashboard: груминг черновика зовётся грумингом, исход виден, черновик удаляется | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-321.md](tasks/archive/2026/DK-321.md) |

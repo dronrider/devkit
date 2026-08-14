@@ -76,7 +76,7 @@ func TestProfileClaudeCode(t *testing.T) {
 			t.Fatalf("[%s] %s = %q, жду %q", c.section, c.key, got, c.want)
 		}
 	}
-	if got := strings.Join(p.section("hooks").arr("events"), ","); got != "write,session-start,notify,subagent-done,turn-done,prompt-submit" {
+	if got := strings.Join(p.section("hooks").arr("events"), ","); got != "write,session-start,notify,subagent-done,turn-done,prompt-submit,tool-done" {
 		t.Fatalf("events = %q", got)
 	}
 }

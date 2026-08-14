@@ -39,7 +39,7 @@ map_max = "glm-5.2"
 [hooks]
 protocol = "claude-code"
 config = "{home}/settings.json"
-events = ["write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit"]
+events = ["write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit", "tool-done"]
 memory_index = "/memory/MEMORY.md"
 
 [skills]

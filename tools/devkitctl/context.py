@@ -27,10 +27,11 @@
 надо перенастраивать под длину сессии или модель. Первый запрос потока это
 старт, он пишет префикс с нуля и считается отдельной строкой, а не нарушением.
 """
-import json
 import os
 import re
 from pathlib import Path
+
+import sessions
 
 PROJECTS = "~/.claude/projects"
 # Сколько перезаписей и тулов печатать поимённо: остальное сворачивается в
@@ -47,6 +48,11 @@ def slug(path):
 def logs_dir(root, home=None):
     home = Path(home or os.path.expanduser("~"))
     return home / ".claude" / "projects" / slug(root)
+
+
+def projects_dir(home=None):
+    """Корень журналов всех проектов: drain --all ходит по нему целиком."""
+    return Path(home or os.path.expanduser("~")) / ".claude" / "projects"
 
 
 def streams(directory):
@@ -67,12 +73,8 @@ def requests(path):
     """
     seen = set()
     out = []
-    for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            rec = json.loads(ln)
-        except ValueError:
-            continue
-        if not isinstance(rec, dict) or rec.get("type") != "assistant":
+    for rec in sessions.records(path):
+        if rec.get("type") != "assistant":
             continue
         msg = rec.get("message")
         if not isinstance(msg, dict):
@@ -115,44 +117,14 @@ def tool_volume(path):
 
     В токенах его тут не считают: результаты это код и вывод команд, а
     коэффициент DK-100 снят с русской прозы правил и на них соврал бы.
+    Связка вызов-результат берётся из общего разбора sessions: второй парсер
+    тех же журналов тут не нужен.
     """
-    names, sizes = {}, {}
-    for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            rec = json.loads(ln)
-        except ValueError:
-            continue
-        if not isinstance(rec, dict):
-            continue
-        msg = rec.get("message")
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_use":
-                names[block.get("id")] = block.get("name") or "?"
-            elif block.get("type") == "tool_result":
-                name = names.get(block.get("tool_use_id"), "неизвестный тул")
-                sizes[name] = sizes.get(name, 0) + text_len(block.get("content"))
+    sizes = {}
+    for use_block, text, _is_error in sessions.tool_pairs(path):
+        name = (use_block or {}).get("name") or "неизвестный тул"
+        sizes[name] = sizes.get(name, 0) + len(text)
     return sizes
-
-
-def text_len(content):
-    if isinstance(content, str):
-        return len(content)
-    if isinstance(content, list):
-        total = 0
-        for block in content:
-            if isinstance(block, dict):
-                total += len(block.get("text") or "")
-            elif isinstance(block, str):
-                total += len(block)
-        return total
-    return 0
 
 
 def collect(directory):

@@ -360,10 +360,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import build  # noqa: E402
 import context  # noqa: E402
+import drain  # noqa: E402
 import harness  # noqa: E402
 import leak  # noqa: E402
 import perms  # noqa: E402
 import rules  # noqa: E402
+import sessions  # noqa: E402
 import update  # noqa: E402
 import dashboard  # noqa: E402
 import watch  # noqa: E402

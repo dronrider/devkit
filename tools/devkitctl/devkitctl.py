@@ -114,6 +114,18 @@
       объём: старт против истории, перезаписи префикса с их ценой, топ тулов по
       объёму результатов; правило подписи перезаписи в context.py
 
+  devkitctl drain [-C dir] [--all]
+      регулярный замер расхода контекста по журналам сессий харнеса
+      (DK-148): куда уходит вывод инструментов и токены. По умолчанию разбирает
+      сессии текущего проекта (тот же слепок пути, что у stats --context), а
+      под --all весь ~/.claude/projects, как разовый скрипт tstats.py из файла
+      задачи. Печатает вызовы и объём по инструментам, разбор Bash по головной
+      команде конвейера, sed (правка файла против чтения фрагмента), чтения
+      файлом целиком против куска, повторные чтения внутри сессии,
+      перцентили размера одного вывода и хвост самых жирных; разбор jsonl
+      общий со stats --context (sessions.py), второй парсер не заводится.
+      Выход 2, если журналов сессий нет или в них не нашлось вызовов
+
   devkitctl watch [--idle <минуты>]
       сторожок цикла цели: обойти реестр целей ~/.devkit/goals и позвать
       громким уведомлением по тем, где движения нет дольше порога. Обычно его
@@ -129,6 +141,7 @@ import build
 import context
 import corp
 import dashboard
+import drain
 import harness
 import importlib.util
 import json
@@ -1925,6 +1938,24 @@ def stats_context(start):
     return 0
 
 
+def drain_run(start, all_projects=False):
+    # --all ходит по всему ~/.claude/projects, как разовый скрипт tstats.py;
+    # без него разбирается слепок пути текущего проекта, тот же, что у stats
+    # --context. Журналы сессий харнес кладёт по слепку пути, а сессия живёт в
+    # клоне, поэтому корень здесь остаётся клоном и в корп-контуре.
+    directory = context.projects_dir() if all_projects else context.logs_dir(project_root(start)[0])
+    label = "весь корпус" if all_projects else str(directory)
+    if not directory.is_dir():
+        sys.stderr.write("журналы сессий не найдены: %s\n"
+                         "харнес пишет их по слепку пути проекта, и для сессий отсюда "
+                         "такой директории нет\n" % label)
+        return 2
+    if not drain.report(directory, sys.stdout):
+        sys.stderr.write("в журналах сессий нет вызовов инструментов: %s\n" % label)
+        return 2
+    return 0
+
+
 def stats(start, ctx=False):
     if ctx:
         # Журналы сессий харнес кладёт по слепку пути проекта, а сессия живёт в
@@ -2299,6 +2330,10 @@ def main(argv):
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
                    help="разбивка объёма по журналам сессий вместо журнала запусков")
+    dr = sub.add_parser("drain", help="замер расхода контекста по журналам сессий")
+    dr.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    dr.add_argument("--all", action="store_true",
+                   help="разобрать весь ~/.claude/projects, как разовый скрипт tstats.py")
     g = sub.add_parser("watch", help="сторожок цикла цели: позвать по вставшим")
     g.add_argument("--idle", type=int, default=0,
                    help="порог простоя в минутах, по умолчанию %d" % (watch.IDLE // 60))
@@ -2326,6 +2361,8 @@ def main(argv):
         rc = update_devkit(a.pin, a.check, a.restarted)
     elif a.cmd == "watch":
         rc = watch.run(idle=a.idle * 60 if a.idle else None)
+    elif a.cmd == "drain":
+        rc = drain_run(a.dir, a.all)
     else:
         rc = stats(a.dir, a.context)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,

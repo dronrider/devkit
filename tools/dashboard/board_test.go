@@ -946,3 +946,106 @@ func TestStaticRunSplitLayout(t *testing.T) {
 		t.Error("раскрытый вверх список всё равно достаёт до нижних вкладок")
 	}
 }
+
+// Кнопки действий меряются настоящим движком (DK-337). Приёмка нашла, что к
+// макетам приведена одна составная кнопка, а прочие остались прежних размеров:
+// мелкая кнопка строки была ниже макетной на два пикселя, с другими полями и
+// радиусом, а погашенная кнопка ничем не отличалась от живой. Разбор правил
+// такое пропускает: высота складывается из правила кнопки с правилами её
+// места. Без chrome шаг пропускается: это узел стенда, а не рабочей части.
+func TestStaticButtonsLook(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер кнопок пропущен")
+	}
+	// Классы кнопок сверяются по самой статике: замер идёт по стендовой
+	// разметке, и разъехаться с рабочей она может молча.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	row := funcBody(t, app, "function rowAction(")
+	if !strings.Contains(row, `el("button", "btn btn-sm btn-danger", "Стоп")`) {
+		t.Error("стоп в строке доски собран не красной кнопкой: макет 11 рисует его btn-danger")
+	}
+	if !strings.Contains(row, `el("button", "btn btn-sm", actionLabel(sect))`) {
+		t.Error("заблокированная строка собрана не мелкой кнопкой")
+	}
+	drop := funcBody(t, app, "function draftDropCard(")
+	for _, want := range []string{`el("button", "btn btn-danger", "Удалить черновик")`,
+		`el("button", "btn", "Отмена")`, `el("div", "drow")`} {
+		if !strings.Contains(drop, want) {
+			t.Errorf("подтверждение удаления собрано не по макету 12 (нет %q)", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, app, "function draftAskCard("),
+		`el("button", "btn btn-acc dend", "Повторить груминг")`) {
+		t.Error("повторная ходка груминга собрана без правого края (класс dend)")
+	}
+	dir, page := chromeStand(t, "buttons.js")
+
+	// Строка доски: мелкая кнопка макета это 30 пикселей высоты, поля по 12 и
+	// радиус 8. Погашенная кнопка гасится везде, а не только в полосе действий.
+	rowVals := chromeMeasure(t, chrome, dir, page, "1280,900", "row")
+	for _, id := range []string{"m-run", "m-stop", "m-wait"} {
+		if got := rowVals[id+"-h"]; got != 30 {
+			t.Errorf("кнопка %s высотой %d, макет держит 30", id, got)
+		}
+		if got := rowVals[id+"-r"]; got != 8 {
+			t.Errorf("кнопка %s с радиусом %d, макет держит 8", id, got)
+		}
+		if got := rowVals[id+"-pad"]; got != 12 {
+			t.Errorf("кнопка %s с полем %d, макет держит 12", id, got)
+		}
+		if got := rowVals[id+"-fs"]; got != 12 {
+			t.Errorf("кнопка %s кеглем %d, макет держит 12", id, got)
+		}
+	}
+	if rowVals["m-wait-dim"] != 45 {
+		t.Errorf("погашенная кнопка строки видна на %d процентов: заблокированная задача "+
+			"выглядит нажимаемой", rowVals["m-wait-dim"])
+	}
+	if rowVals["m-run-dim"] != 100 {
+		t.Error("живая кнопка строки нарисована погашенной")
+	}
+
+	// Полоса действий задачи: полноразмерная кнопка это 36 пикселей, поля по 16
+	// и радиус 9, а узкая часть при ней шире, чем при мелкой кнопке строки.
+	bar := chromeMeasure(t, chrome, dir, page, "1280,900", "bar")
+	for _, id := range []string{"m-live", "m-bar"} {
+		if bar[id+"-h"] != 36 || bar[id+"-r"] != 9 || bar[id+"-pad"] != 16 || bar[id+"-fs"] != 13 {
+			t.Errorf("кнопка полосы действий %s не по макету: высота %d, радиус %d, поле %d, кегль %d",
+				id, bar[id+"-h"], bar[id+"-r"], bar[id+"-pad"], bar[id+"-fs"])
+		}
+	}
+	if bar["m-more-h"] != 36 {
+		t.Errorf("узкая часть в полосе действий высотой %d, а широкая 36", bar["m-more-h"])
+	}
+
+	// Телефон: строка доски держит палец в 36 пикселей, это правило места, а не
+	// кнопки, и макетных 30 там быть не должно.
+	narrow := chromeMeasure(t, chrome, dir, page, "390,844", "row")
+	if narrow["m-run-h"] < 36 {
+		t.Errorf("на телефоне кнопка строки высотой %d: пальцу мало", narrow["m-run-h"])
+	}
+
+	// Удаление черновика: причина во всю ширину над кнопками, кнопки полного
+	// размера и прижаты вправо (макет 12).
+	drops := chromeMeasure(t, chrome, dir, page, "1280,900", "drop")
+	if drops["why-full"] != 1 || drops["why-above"] != 1 {
+		t.Error("поле причины удаления не стоит своей строкой над кнопками")
+	}
+	if drops["row-right"] != 0 {
+		t.Errorf("кнопки подтверждения не прижаты вправо: до края %d пикселей", drops["row-right"])
+	}
+	for _, id := range []string{"m-no", "m-drop"} {
+		if drops[id+"-h"] != 36 {
+			t.Errorf("кнопка подтверждения %s высотой %d, макет держит полный размер 36",
+				id, drops[id+"-h"])
+		}
+	}
+
+	// Повторная ходка груминга: кнопка под полем и по его правому краю.
+	ask := chromeMeasure(t, chrome, dir, page, "1280,900", "ask")
+	if ask["again-under"] != 1 || ask["again-right"] != 0 {
+		t.Errorf("«Повторить груминг» стоит не под полем справа: под полем %d, до края %d",
+			ask["again-under"], ask["again-right"])
+	}
+}

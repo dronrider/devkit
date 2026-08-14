@@ -145,7 +145,10 @@ a:hover{text-decoration:underline}
 .btn[hidden]{display:none}
 .btn-acc{background:var(--acc);color:var(--acc-ink);border-color:transparent}
 .btn-lg{height:48px;padding:0 20px;font-size:15px;border-radius:12px}
-.btn-sm{height:28px;padding:0 10px;font-size:12px;border-radius:7px}
+.btn-sm{height:30px;padding:0 12px;font-size:12px;border-radius:8px}
+/* погашенная кнопка одинакова везде: до DK-337 её гасили две местные строки, и
+   заблокированная задача на доске выглядела нажимаемой */
+.btn[disabled]{opacity:0.45;cursor:default}
 /* составная кнопка запуска (макет «11 Подписка при запуске»): слева работа,
    справа выбор подписки. Половины одного цвета и делит их полоска внутри
    узкой части, а не зазор: зазором сквозь кнопку виден фон, и две половины
@@ -153,8 +156,11 @@ a:hover{text-decoration:underline}
    поэтому строка доски от него не едет */
 .split{display:inline-flex;position:relative}
 .split .btn:not(.more2){border-top-right-radius:0;border-bottom-right-radius:0}
-.split .more2{border-top-left-radius:0;border-bottom-left-radius:0;padding:0;width:30px;
+.split .more2{border-top-left-radius:0;border-bottom-left-radius:0;padding:0;width:32px;
   gap:0;border-left:1px solid color-mix(in oklab,var(--acc-ink) 30%,transparent)}
+/* у мелкой кнопки строки доски узкая часть тоже мельче: макет 11 рисует её в
+   30 пикселей против 32 у полноразмерной кнопки полосы действий (макет 12) */
+.split .more2.btn-sm{width:30px}
 /* галочка рисуется рамкой, а не значком: своего значка ради шеврона в шаблоне
    не заводится, а угол в 45 градусов одинаков в любом кегле */
 .car{width:7px;height:7px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;
@@ -201,7 +207,6 @@ a:hover{text-decoration:underline}
 .abar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;padding:11px 16px}
 .abar .div{width:1px;height:24px;background:var(--line);margin:0 4px}
 .abar .hint{flex:1;min-width:180px}
-.abar .btn[disabled]{opacity:0.45;cursor:default}
 /* кнопка полосы это значок со словом, на телефоне слово прячется и остаётся
    один значок */
 .abar .btn svg{width:16px;height:16px;flex:none}
@@ -318,9 +323,13 @@ a:hover{text-decoration:underline}
 .dcard .dbd{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:14px 18px}
 .dsay{font:400 12.5px/1.6 var(--sans);color:var(--tx2)}
 .dwhy{font:500 12.5px/1.6 var(--sans);color:var(--tx)}
+.dcard .dbd .btn.dend{align-self:flex-end}
 .dask{width:100%;min-height:76px;resize:vertical;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg0);color:var(--tx);font:400 13px/1.55 var(--sans)}
-.dconfirm{display:flex;align-items:center;gap:9px;flex-wrap:wrap;width:100%}
-.dwhyin{flex:1;min-width:160px;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
+/* подтверждение удаления по макету «12 Груминг черновика»: причина своей
+   строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
+.dconfirm{display:flex;flex-direction:column;gap:10px;width:100%}
+.dconfirm .drow{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.dwhyin{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
 /* главная: список проектов карточкой */
 .prow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
@@ -356,7 +365,6 @@ a:hover{text-decoration:underline}
 .nfbody>input{height:42px;padding:0 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px var(--sans)}
 .nfbody .rrow{padding:8px 0}
 .nfbody .rbig{padding:0}
-.nfbody .btn[disabled]{opacity:0.45;cursor:default}
 .nfbody .error{padding:0}
 .nfbody .error:empty{display:none}
 .nfcheck{display:flex;align-items:center;gap:10px;min-height:36px;font:400 12.5px var(--sans);color:var(--tx2)}
@@ -548,7 +556,7 @@ a:hover{text-decoration:underline}
      44 пикселя по ширине, а список подписок не выходит за край экрана */
   .trow .meta .split{margin-left:auto}
   .trow .meta .split .btn{margin-left:0}
-  .split .more2{width:44px}
+  .split .more2,.split .more2.btn-sm{width:44px}
   .hpop{width:min(326px,86vw)}
   /* телефон: полоса действий задачи собрана значками с пальцем в 44 пикселя
      (.abar .btn выше), и узкая часть держит там свою ширину без отступов */

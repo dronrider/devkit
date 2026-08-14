@@ -674,7 +674,7 @@ function rowAction(project, row, sect) {
     return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
       actionLabel(sect), /^Цель:/.test(row.title), orderHint(row.order, row.accept, sect, row.id));
   }
-  const btn = el("button", "btn btn-sm", "Стоп");
+  const btn = el("button", "btn btn-sm btn-danger", "Стоп");
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     // Кнопка гаснет до ответа: пока стоп идёт, строка выглядит прежней, и
@@ -3781,7 +3781,7 @@ function draftOutcomeCard(project, id, out, phase) {
     body.append(go);
   }
   if (phase === "attached" && out.task) {
-    const go = el("button", "btn btn-sm", "Открыть задачу " + out.task);
+    const go = el("button", "btn btn-sm", "Открыть " + out.task);
     go.addEventListener("click", () => { location.hash = project + "/" + out.task; });
     body.append(go);
   }
@@ -3804,7 +3804,7 @@ function draftAskCard(project, id, question) {
   field.placeholder = "Уточнение для новой ходки груминга";
   body.append(field);
   body.append(el("div", "hint", DRAFT_ASK_HINT));
-  const again = el("button", "btn btn-acc", "Повторить груминг");
+  const again = el("button", "btn btn-acc dend", "Повторить груминг");
   again.addEventListener("click", () => {
     again.disabled = true;
     groomDraft(project, id, field.value.trim()).then((ok) => {
@@ -3835,9 +3835,11 @@ function draftDropCard(project, id) {
   const why = el("input", "dwhyin");
   why.type = "text";
   why.placeholder = "Чем запись протухла";
-  const go = el("button", "btn btn-sm btn-danger", "Удалить черновик");
-  const no = el("button", "btn btn-sm", "Отмена");
-  box.append(why, go, no);
+  const go = el("button", "btn btn-danger", "Удалить черновик");
+  const no = el("button", "btn", "Отмена");
+  const row = el("div", "drow");
+  row.append(no, go);
+  box.append(why, row);
   body.append(start, box, el("div", "hint", DRAFT_DROP_HINT));
   start.addEventListener("click", () => {
     box.hidden = false;

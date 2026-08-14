@@ -14,6 +14,158 @@ function el(tag, cls, text) {
   return node;
 }
 
+// Частичная перерисовка (DK-316). Экран перечитывается по фокусу окна и по
+// приходу события, и собранный заново список уводит из-под пальца всё сразу:
+// место, на котором стоял человек, кнопку под фокусом, раскрытую запись
+// черновика. Слой обновляет только изменившиеся узлы: у узла есть ключ (кто
+// это) и отпечаток (из чего он нарисован). Совпал отпечаток, значит рисовать
+// нечего, разошёлся, значит меняется один этот узел, а соседи остаются как
+// стояли.
+
+// Ключ и отпечаток живут на самом узле: между обновлениями клиентская часть
+// не хранит состояние, а перерисовка приходит к уже нарисованному дереву и
+// читает их оттуда.
+function keyed(node, key, sign) {
+  node.dataset.pkey = key;
+  node.dataset.psign = sign === undefined ? "" : String(sign);
+  return node;
+}
+
+// Дети коробки по описаниям вида {key, sign, make, fill}: make рисует узел с
+// нуля, fill правит нарисованный по месту. Без fill изменившийся узел
+// рисуется заново, но встаёт туда же, где стоял, и соседей это не задевает;
+// fill нужен там, где узел держит живое: открытый поток событий, набранный
+// текст, раскрытую запись.
+function sync(box, items) {
+  const was = new Map();
+  for (const kid of Array.from(box.children)) {
+    const key = kid.dataset && kid.dataset.pkey;
+    if (key) was.set(key, kid);
+  }
+  const want = [];
+  for (const item of items) {
+    const sign = item.sign === undefined ? "" : String(item.sign);
+    let node = was.get(item.key);
+    if (!node) {
+      node = item.make();
+    } else if ((node.dataset.psign || "") !== sign) {
+      if (item.fill) item.fill(node);
+      else node = item.make();
+    }
+    want.push(keyed(node, item.key, sign));
+  }
+  // Порядок правится по месту: узел, стоящий там, где надо, не трогается
+  // вовсе. Опустевшая коробка сбрасывает прокрутку, поэтому лишнее снимается
+  // по одному, а не общим replaceChildren.
+  let at = 0;
+  for (const node of want) {
+    if (box.children[at] !== node) box.insertBefore(node, box.children[at] || null);
+    at += 1;
+  }
+  while (box.children.length > want.length) {
+    box.removeChild(box.children[box.children.length - 1]);
+  }
+  return want;
+}
+
+// Узел по ключу где угодно в поддереве: перерисовка могла заменить сам узел, и
+// найти его снова можно только по ключу, а не по прежней ссылке.
+function findKey(root, key) {
+  for (const kid of (root && root.children) || []) {
+    if (kid.dataset && kid.dataset.pkey === key) return kid;
+    const hit = findKey(kid, key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Где стоял фокус: ключ ближайшего узла списка и номера детей от него вниз.
+// Дорогой, а не ссылкой, потому что узел под фокусом перерисовка могла
+// заменить, а место его в списке осталось прежним. Фокус вне списков (поле
+// шапки, боковая колонка) слой не трогает: там ничего и не перерисовывается.
+function focusSnap() {
+  const node = document.activeElement;
+  if (!node || !node.parentElement) return null;
+  const path = [];
+  let cur = node;
+  while (cur.parentElement && !(cur.dataset && cur.dataset.pkey)) {
+    path.unshift(Array.prototype.indexOf.call(cur.parentElement.children, cur));
+    cur = cur.parentElement;
+  }
+  const key = cur.dataset && cur.dataset.pkey;
+  if (!key) return null;
+  const snap = { node, key, path };
+  // Каретка в поле ввода это часть места: вернуть фокус в набранный текст и
+  // поставить курсор в начало значит потерять то же самое.
+  if (typeof node.selectionStart === "number") {
+    snap.from = node.selectionStart;
+    snap.to = node.selectionEnd;
+  }
+  return snap;
+}
+
+function focusBack(snap) {
+  if (!snap) return;
+  // Узел пережил обновление: трогать фокус незачем, лишний focus() ещё и
+  // дёрнул бы экран к нему.
+  if (document.activeElement === snap.node) return;
+  let node = findKey(document.getElementById("groups"), snap.key);
+  for (const at of snap.path) node = node && node.children[at];
+  if (!node || !node.focus) return;
+  node.focus();
+  if (snap.from !== undefined && typeof node.setSelectionRange === "function") {
+    node.setSelectionRange(snap.from, snap.to);
+  }
+}
+
+// Якорь прокрутки: узел, по которому после перерисовки видно, сдвинулась ли
+// картинка. Берётся тот, на котором стоял фокус, иначе первый видимый узел
+// списка: на него человек и смотрит.
+function anchorKey(groups, focus) {
+  if (!groups) return "";
+  if (focus && findKey(groups, focus.key)) return focus.key;
+  const top = groups.getBoundingClientRect().top;
+  for (const kid of groups.children) {
+    if (!(kid.dataset && kid.dataset.pkey)) continue;
+    if (kid.getBoundingClientRect().bottom > top) return kid.dataset.pkey;
+  }
+  return "";
+}
+
+// Место на экране целиком: прокрутка списка, фокус и якорь. Список прокручен
+// внутри себя (.groups), а не окном, поэтому мерится он, а не страница.
+function viewSnap() {
+  const groups = document.getElementById("groups");
+  const focus = focusSnap();
+  const key = anchorKey(groups, focus);
+  const at = key ? findKey(groups, key) : null;
+  return {
+    groups,
+    top: groups ? groups.scrollTop : 0,
+    focus,
+    key,
+    at: at ? at.getBoundingClientRect().top : 0,
+  };
+}
+
+function viewBack(snap) {
+  if (!snap || !snap.groups) return;
+  const groups = snap.groups;
+  // Прокрутку возвращать приходится тем экранам, которые собираются целиком:
+  // опустевший список сбрасывает её в ноль. Перерисованный по месту её и не
+  // терял, и присваивание тут ничего не меняет.
+  if (groups.scrollTop !== snap.top) groups.scrollTop = snap.top;
+  focusBack(snap.focus);
+  // Сдвиг раскладки над списком: строка результата (.actmsg) появляется и
+  // пропадает вместе со словами о нажатии, и список едет на её высоту. У
+  // верха списка сдвигать нечего, там картинка и так стоит на месте.
+  if (!snap.key || !snap.top) return;
+  const node = findKey(groups, snap.key);
+  if (!node) return;
+  const dy = node.getBoundingClientRect().top - snap.at;
+  if (dy) groups.scrollTop = snap.top + dy;
+}
+
 async function api(path, opts) {
   const init = {};
   if (opts && opts.method) init.method = opts.method;
@@ -111,8 +263,14 @@ function renderSidebar(projects, current) {
 
 function sayResult(text, isError) {
   const box = document.getElementById("actmsg");
+  // Строка результата стоит над списком и пустой свёрнута стилями: появившись
+  // по нажатию кнопки, она сдвигала список вниз на свою высоту, и нажатие
+  // выглядело промахом. Снимок места до слов возвращает картинку на прежнее
+  // место после них.
+  const snap = viewSnap();
   box.textContent = text || "";
   box.className = isError ? "actmsg error" : "actmsg";
+  viewBack(snap);
 }
 
 // Запуск и стоп. Ответ сервера показывается словами: и удача, и причина
@@ -135,8 +293,7 @@ async function stopRun(project, id) {
 
 function renderLive(project, works) {
   const live = document.getElementById("live");
-  live.replaceChildren();
-  for (const w of works || []) {
+  const liveCard = (w) => {
     const card = el("div", "lcard");
     card.append(el("span", "dot pulse"));
     // Интерактивную сессию без узнанной задачи вести некуда: экран агента
@@ -159,8 +316,15 @@ function renderLive(project, works) {
     } else {
       card.append(el("span", "via", "ведёт другая сессия"));
     }
-    live.append(card);
-  }
+    return card;
+  };
+  // Полоса живых работ перерисовывается по месту: она стоит над списком, и
+  // пересобранная целиком дёргала бы его при каждом обновлении.
+  sync(live, (works || []).map((w, i) => ({
+    key: w.id || ("live-" + i),
+    sign: [w.id, w.title, w.via, w.note].join("|"),
+    make: () => liveCard(w),
+  })));
 }
 
 function rowChips(row) {
@@ -280,29 +444,63 @@ function renderRow(project, row, works, sect) {
   return tr;
 }
 
+// Отпечаток строки доски: всё, из чего она нарисована, включая живую работу и
+// секцию, от которой идёт подпись кнопки. У строки, где не изменилось ничего,
+// узел переживает обновление нетронутым вместе с фокусом на кнопке.
+function rowSign(row, works, sect) {
+  const work = (works || []).find((w) => w.id === row.id);
+  return JSON.stringify(row) + "|" + sect + "|" + (work ? work.via : "");
+}
+
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
-  groups.replaceChildren();
-  const bar = el("div", "nbar");
-  bar.append(newTaskButton(project, "Новая задача"), draftsButton(project));
-  groups.append(bar);
+  const items = [{
+    key: "board-bar",
+    sign: project,
+    make: () => {
+      const bar = el("div", "nbar");
+      bar.append(newTaskButton(project, "Новая задача"), draftsButton(project));
+      return bar;
+    },
+  }];
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
   for (const key of SECTION_ORDER) {
     const sec = byKey[key];
     if (!sec) continue;
-    const head = el("div", "shead", sec.title);
-    // Backlog стоит по рангу, и счётчик говорит это же: надписью под формой
-    // задачи порядок объяснять больше не надо.
-    head.append(el("span", "n", sec.rows.length + (key === "backlog" ? ", по рангу" : "")));
-    groups.append(head);
-    const card = el("div", "card");
-    if (!sec.rows.length) {
-      card.append(el("div", "empty", "Нет."));
+    items.push({
+      key: "head-" + key,
+      sign: sec.title + "|" + sec.rows.length,
+      make: () => {
+        const head = el("div", "shead", sec.title);
+        // Backlog стоит по рангу, и счётчик говорит это же: надписью под
+        // формой задачи порядок объяснять больше не надо.
+        head.append(el("span", "n", sec.rows.length + (key === "backlog" ? ", по рангу" : "")));
+        return head;
+      },
+    });
+    const rows = sec.rows.map((row) => ({
+      key: row.id,
+      sign: rowSign(row, works, key),
+      make: () => renderRow(project, row, works, key),
+    }));
+    if (!rows.length) {
+      rows.push({ key: "empty", sign: "", make: () => el("div", "empty", "Нет.") });
     }
-    for (const row of sec.rows) card.append(renderRow(project, row, works, key));
-    groups.append(card);
+    // Отпечаток карточки собран из отпечатков строк: не изменилась ни одна,
+    // значит в карточку можно не заходить вовсе.
+    items.push({
+      key: "card-" + key,
+      sign: rows.map((r) => r.key + "=" + r.sign).join("\n"),
+      make: () => {
+        const card = el("div", "card");
+        sync(card, rows);
+        return card;
+      },
+      fill: (card) => { sync(card, rows); },
+    });
   }
+  sync(groups, items);
 }
 
 // Кнопка заведения: стоит и на доске проекта, и на главной, потому что мысль
@@ -1568,29 +1766,37 @@ async function wireChatFeed(project, feed, id) {
   // Кнопка «раньше» горит, только когда раньше есть что показать: упёршись в
   // начало разговора, она гаснет, а не живёт мёртвой.
   const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
-  // Лента перерисовывается целиком: разделители дней зависят от соседей, и
-  // догруженная история переставляет их сама собой. Взгляд при этом держится
-  // якорем: у нижнего края лента остаётся у нижнего края, а из истории её
-  // вниз не бросает, потому что мерится расстояние до низа.
+  // Лента пересчитывается целиком, а перерисовывается по месту: разделители
+  // дней зависят от соседей, и догруженная история переставляет их сама
+  // собой, но реплика с прежним ключом и отпечатком остаётся тем же узлом.
+  // Пришедшая снизу реплика не трогает ни одной прежней, и разговор на приходе
+  // события больше не дёргается. Взгляд держится якорем: у нижнего края лента
+  // остаётся у нижнего края, а из истории её вниз не бросает, потому что
+  // мерится расстояние до низа.
   const draw = () => {
     const bottom = atBottom(feed);
     const tail = feed.scrollHeight - feed.scrollTop;
     if (!talk.length) {
-      box.replaceChildren(el("div", "empty", empty));
+      sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
       return;
     }
-    box.replaceChildren();
+    const items = [];
     let day = "";
     for (const item of talk) {
       const key = localDayKey(item.time);
       if (key && key !== day) {
-        box.append(dayEl(localDay(item.time)));
+        items.push({ key: "day-" + key, sign: key, make: () => dayEl(localDay(item.time)) });
         day = key;
       }
       const when = item.time ? localTime(item.time) + ", " : "";
-      box.append(chatBubble(item.role === "user" ? "вы" : "агент", item.text,
-        when + "из транскрипта"));
+      items.push({
+        key: "seq-" + item.seq,
+        sign: [item.role, item.time, item.text].join("|"),
+        make: () => chatBubble(item.role === "user" ? "вы" : "агент", item.text,
+          when + "из транскрипта"),
+      });
     }
+    sync(box, items);
     if (bottom) keepBottom(feed, true);
     else keepPlace(feed, tail);
   };
@@ -1908,94 +2114,130 @@ async function sendMessage(project, id, ta, out) {
 
 function renderChat(project, works, id, board) {
   const groups = document.getElementById("groups");
-  groups.replaceChildren();
-
-  const crumb = el("div", "crumb");
-  const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { location.hash = project; });
-  crumb.append(back);
-  groups.append(crumb);
+  const crumb = {
+    key: "chat-crumb",
+    sign: project,
+    make: () => {
+      const crumb = el("div", "crumb");
+      const back = el("span", "crumb-back", "Доска " + project);
+      back.addEventListener("click", () => { location.hash = project; });
+      crumb.append(back);
+      return crumb;
+    },
+  };
 
   // Переписка идёт только с циклом цели: заход по прямой ссылке на чужой ID
   // отвечает словами вместо ленты, а не собирает заголовок goal-<id> тому, кто
   // не цель (DK-296).
   if (!isGoalRow(board, id)) {
-    const card = el("div", "card");
-    card.append(el("div", "error",
-      id + " не цель: переписка идёт только с циклом цели."));
-    const goTask = el("button", "btn", "Открыть задачу");
-    goTask.addEventListener("click", () => { location.hash = project + "/" + id; });
-    card.append(goTask);
-    groups.append(card);
+    sync(groups, [crumb, {
+      key: "chat-refusal",
+      sign: id,
+      make: () => {
+        const card = el("div", "card");
+        card.append(el("div", "error",
+          id + " не цель: переписка идёт только с циклом цели."));
+        const goTask = el("button", "btn", "Открыть задачу");
+        goTask.addEventListener("click", () => { location.hash = project + "/" + id; });
+        card.append(goTask);
+        return card;
+      },
+    }]);
     return;
   }
 
   const work = (works || []).find((w) => w.id === id);
-  const head = el("div", "ahead");
-  if (work) head.append(el("span", "dot pulse"));
-  head.append(el("h2", "", "goal-" + id));
-  if (work && work.via === "tmux") {
-    head.append(el("span", "chip c-run", "агент работает"));
-  } else if (work && work.via === "session") {
-    head.append(el("span", "chip c-check", "интерактивная сессия"));
-  } else if (work) {
-    head.append(el("span", "chip", "ведёт другая сессия"));
-  } else {
-    head.append(el("span", "chip", "агент не работает"));
-  }
-  groups.append(head);
+  const live = Boolean(work && work.via === "tmux");
+  const head = {
+    key: "chat-head",
+    sign: id + "|" + (work ? work.via : ""),
+    make: () => {
+      const head = el("div", "ahead");
+      if (work) head.append(el("span", "dot pulse"));
+      head.append(el("h2", "", "goal-" + id));
+      if (work && work.via === "tmux") {
+        head.append(el("span", "chip c-run", "агент работает"));
+      } else if (work && work.via === "session") {
+        head.append(el("span", "chip c-check", "интерактивная сессия"));
+      } else if (work) {
+        head.append(el("span", "chip", "ведёт другая сессия"));
+      } else {
+        head.append(el("span", "chip", "агент не работает"));
+      }
+      return head;
+    },
+  };
 
-  const thread = el("div", "chatwrap");
-  const feed = el("div", "msgs chatfeed");
-  const pendbox = el("div", "msgs");
-  thread.append(feed, pendbox);
+  const thread = () => {
+    const thread = el("div", "chatwrap");
+    const feed = el("div", "msgs chatfeed");
+    const pendbox = el("div", "msgs");
+    thread.append(feed, pendbox);
 
-  // Плашка про судьбу сообщения закрывается крестиком: прочитав её однажды,
-  // держать её над полем ввода незачем.
-  const note = el("div", "cnote");
-  const said = el("span");
-  said.append(el("b", "", "Сообщение уйдёт агенту."));
-  said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
-  const close = el("button", "nx");
-  close.setAttribute("aria-label", "Закрыть");
-  close.title = "Закрыть";
-  close.append(icon("close"));
-  close.addEventListener("click", () => { note.remove(); });
-  note.append(said, close);
-  thread.append(note);
+    // Плашка про судьбу сообщения закрывается крестиком: прочитав её однажды,
+    // держать её над полем ввода незачем.
+    const note = el("div", "cnote");
+    const said = el("span");
+    said.append(el("b", "", "Сообщение уйдёт агенту."));
+    said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
+    const close = el("button", "nx");
+    close.setAttribute("aria-label", "Закрыть");
+    close.title = "Закрыть";
+    close.append(icon("close"));
+    close.addEventListener("click", () => { note.remove(); });
+    note.append(said, close);
+    thread.append(note);
 
-  const box = el("div", "cbox");
-  const ta = el("textarea");
-  ta.placeholder = "Написать агенту...";
-  const row = el("div", "crow");
-  if (work && work.via === "tmux") {
+    const box = el("div", "cbox");
+    const ta = el("textarea");
+    ta.placeholder = "Написать агенту...";
+    const row = el("div", "crow");
+    // Кнопка стопа приходит и уходит вместе с работой агента, но рисуется
+    // сразу: перебирать ряд значило бы пересобирать поле ввода, а в нём в
+    // это время набирают.
     const stop = withTip(el("button", "btn btn-danger", "Остановить агента"), STOP_TIP);
     stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+    stop.hidden = !live;
+    keyed(stop, "chat-stop", "");
     row.append(stop);
-  }
-  const out = makeOutbox(project, id, pendbox);
-  agentLive.push(out.stop);
-  const send = el("button", "btn btn-acc", "Отправить");
-  // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи
-  // это ровно тот случай, из которого росли дубли во «Входящих».
-  send.addEventListener("click", () => {
-    send.disabled = true;
-    sendMessage(project, id, ta, out)
-      .catch(console.error)
-      .finally(() => { send.disabled = false; });
-  });
-  row.append(send);
-  box.append(ta, row);
-  thread.append(box);
-  thread.append(el("div", "stopnote", STOP_TIP));
-  groups.append(thread);
+    const out = makeOutbox(project, id, pendbox);
+    agentLive.push(out.stop);
+    const send = el("button", "btn btn-acc", "Отправить");
+    // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи
+    // это ровно тот случай, из которого росли дубли во «Входящих».
+    send.addEventListener("click", () => {
+      send.disabled = true;
+      sendMessage(project, id, ta, out)
+        .catch(console.error)
+        .finally(() => { send.disabled = false; });
+    });
+    row.append(send);
+    box.append(ta, row);
+    thread.append(box);
+    thread.append(el("div", "stopnote", STOP_TIP));
 
-  wireChatFeed(project, feed, id).catch(console.error);
-  out.draw();
-  out.load().catch(console.error);
-  // Оставшееся с прошлого раза в очереди уходит при открытии чата: закрытая
-  // вкладка отправку не отменяет.
-  out.pump().catch(console.error);
+    wireChatFeed(project, feed, id).catch(console.error);
+    out.draw();
+    out.load().catch(console.error);
+    // Оставшееся с прошлого раза в очереди уходит при открытии чата: закрытая
+    // вкладка отправку не отменяет.
+    out.pump().catch(console.error);
+    return thread;
+  };
+
+  // Разговор собирается один раз на заход: лента с потоком событий, очередь
+  // исходящих и набранное в поле ввода перерисовку переживают целиком.
+  // Перечитанная по фокусу окна доска меняет на нём только кнопку стопа
+  // (DK-316), а раньше рвала поток и собирала ленту заново.
+  sync(groups, [crumb, head, {
+    key: "chat-thread-" + id,
+    sign: String(live),
+    make: thread,
+    fill: (node) => {
+      const stop = findKey(node, "chat-stop");
+      if (stop) stop.hidden = !live;
+    },
+  }]);
 }
 
 // Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком,
@@ -2066,42 +2308,90 @@ function draftRow(project, d) {
   return wrap;
 }
 
+// Накопитель рисуется после ответа сервера, а не до него: очищенный заранее
+// экран моргал бы пустотой на каждом обновлении по фокусу окна, а раскрытая
+// запись закрывалась бы вместе с ним.
 async function renderDrafts(project) {
   const groups = document.getElementById("groups");
-  groups.replaceChildren();
-  const crumb = el("div", "crumb");
-  const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { location.hash = project; });
-  crumb.append(back);
-  groups.append(crumb);
-
-  const bar = el("div", "nbar");
-  bar.append(newTaskButton(project, "Новая задача"), el("span", "hint", DRAFTS_HINT));
-  groups.append(bar);
-
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
-  const card = el("div", "card");
-  groups.append(card);
+  const items = [{
+    key: "drafts-crumb",
+    sign: project,
+    make: () => {
+      const crumb = el("div", "crumb");
+      const back = el("span", "crumb-back", "Доска " + project);
+      back.addEventListener("click", () => { location.hash = project; });
+      crumb.append(back);
+      return crumb;
+    },
+  }, {
+    key: "drafts-bar",
+    sign: project,
+    make: () => {
+      const bar = el("div", "nbar");
+      bar.append(newTaskButton(project, "Новая задача"), el("span", "hint", DRAFTS_HINT));
+      return bar;
+    },
+  }];
   if (!r.ok) {
-    card.append(el("div", "error", r.body.error || "накопитель не прочитался"));
+    const text = r.body.error || "накопитель не прочитался";
+    items.push({
+      key: "drafts-card",
+      sign: "error|" + text,
+      make: () => {
+        const card = el("div", "card");
+        card.append(el("div", "error", text));
+        return card;
+      },
+    });
+    sync(groups, items);
     return;
   }
   const drafts = r.body.drafts || [];
-  const head = el("div", "chd");
-  head.append(el("b", "", "Черновики"));
-  head.append(el("span", "cnt", drafts.length + " " +
-    plural(drafts.length, "запись", "записи", "записей")));
-  card.append(head);
+  const rows = [{
+    key: "drafts-head",
+    sign: String(drafts.length),
+    make: () => {
+      const head = el("div", "chd");
+      head.append(el("b", "", "Черновики"));
+      head.append(el("span", "cnt", drafts.length + " " +
+        plural(drafts.length, "запись", "записи", "записей")));
+      return head;
+    },
+  }];
   // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
   // неотрисованной.
   if (!drafts.length) {
-    card.append(el("div", "empty", r.body.note || "черновиков нет"));
-    return;
+    const note = r.body.note || "черновиков нет";
+    rows.push({ key: "empty", sign: note, make: () => el("div", "empty", note) });
   }
-  for (const d of drafts) card.append(draftRow(project, d));
-  const foot = el("div", "nbar");
-  foot.append(el("span", "hint", GROOM_HINT));
-  groups.append(foot);
+  // Ключ строки это ID черновика: раскрытый по нажатию текст живёт внутри
+  // строки, и пересобранный список закрывал бы его на каждом обновлении.
+  for (const d of drafts) {
+    rows.push({ key: d.id, sign: JSON.stringify(d), make: () => draftRow(project, d) });
+  }
+  items.push({
+    key: "drafts-card",
+    sign: rows.map((row) => row.key + "=" + row.sign).join("\n"),
+    make: () => {
+      const card = el("div", "card");
+      sync(card, rows);
+      return card;
+    },
+    fill: (card) => { sync(card, rows); },
+  });
+  if (drafts.length) {
+    items.push({
+      key: "drafts-foot",
+      sign: "",
+      make: () => {
+        const foot = el("div", "nbar");
+        foot.append(el("span", "hint", GROOM_HINT));
+        return foot;
+      },
+    });
+  }
+  sync(groups, items);
 }
 
 // Экран заведения (#проект/new) по макету «07 Заведение»: форма одна на оба
@@ -2972,6 +3262,9 @@ async function refreshQuota() {
 
 function showError(text) {
   const groups = document.getElementById("groups");
+  // Экран уходит целиком, вместе с ним и живые потоки: чат свою ленту при
+  // обновлении переживает, но пережить снятый с экрана разговор она не может.
+  closeAgentLive();
   groups.replaceChildren();
   const card = el("div", "card");
   card.append(el("div", "error", text));
@@ -2982,12 +3275,43 @@ function showError(text) {
 // свой переход, когда в хэше проекта ещё нет.
 let shownProject = "";
 
+// Экран, который сейчас нарисован: по нему обновление отличает перечитанное
+// от перехода. Тому же экрану возвращается место и фокус, а переход открывает
+// новый экран сверху и снимает живые потоки прежнего.
+let shownScreen = "";
+
+function screenKey(rt) {
+  return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
+    rt.agent, rt.chat].join("|");
+}
+
+// Обновление экрана с сохранением места: перерисовка идёт по месту, а те
+// экраны, что собираются целиком, теряют прокрутку на опустевшем списке, и
+// она возвращается снимком. Переход это другой экран, ему прежнее место не
+// принадлежит.
 async function refresh() {
-  closeAgentLive();
+  const was = shownScreen;
+  const snap = viewSnap();
+  try {
+    await paint();
+  } finally {
+    if (shownScreen === was) viewBack(snap);
+    else if (snap.groups) snap.groups.scrollTop = 0;
+  }
+}
+
+async function paint() {
+  const rt = route();
+  const screen = screenKey(rt);
+  // Живые потоки закрываются при уходе с экрана, а не на каждом обновлении:
+  // чат свою ленту, очередь исходящих и поле ввода переживает целиком, и
+  // рвать ради перечитанной доски поток событий незачем (DK-316). Остальные
+  // экраны собираются заново, и их потоки перед сборкой снимаются.
+  if (screen !== shownScreen || !rt.chat) closeAgentLive();
+  shownScreen = screen;
   const { body } = await api("/api/projects");
   const projects = body.projects || [];
   const current = currentProject(projects);
-  const rt = route();
   // Проект помнится и на главной: с неё раздел «Доска» ведёт на тот проект,
   // который откроется по имени, а не на пустой хэш.
   shownProject = current ? current.name : "";

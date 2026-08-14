@@ -299,7 +299,7 @@ func TestStaticAgentsScreen(t *testing.T) {
 	if !strings.Contains(app, `for (const id of ["nav-agents", "tab-agents"]) {`) {
 		t.Error("пункт колонки и вкладка телефона не ведут на экран")
 	}
-	refresh := funcBody(t, app, "async function refresh(")
+	refresh := funcBody(t, app, "async function paint(")
 	if !strings.Contains(refresh, "renderAgents(projects)") {
 		t.Error("экран «Агенты» не рисуется из ответа /api/projects")
 	}
@@ -513,4 +513,25 @@ func TestIsGoalRow(t *testing.T) {
 			t.Errorf("%s = %s, ожидал %s", c.expr, got, c.want)
 		}
 	}
+}
+
+// Обновление экрана не пересобирает списки целиком: доска, накопитель
+// черновиков и лента чата перерисовываются по месту, и человек остаётся там,
+// где стоял. Предмет проверки это не написанное в исходнике, а прокрутка,
+// фокус, раскрытая запись и живой поток событий после перерисовки, поэтому
+// статика поднимается в node с игрушечным DOM (стенд testdata/screen_keep.mjs).
+// Игрушечный DOM повторяет от браузера то, от чего страдал человек: опустевшая
+// коробка сбрасывает прокрутку, снятый с дерева узел теряет фокус. Без node
+// шаг пропускается: узел стенда, а не рабочей части.
+func TestScreenKeepsPlaceOnRefresh(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд частичной перерисовки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "screen_keep.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("частичная перерисовка экранов: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

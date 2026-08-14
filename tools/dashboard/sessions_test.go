@@ -872,7 +872,7 @@ func TestStaticAgentChatGoalGate(t *testing.T) {
 	if strings.Contains(funcBody(t, app, "function renderAgent("), `!work || work.kind === "goal"`) {
 		t.Error("кнопка чата снова появляется у любой задачи без живой работы")
 	}
-	if !strings.Contains(funcBody(t, app, "async function refresh("),
+	if !strings.Contains(funcBody(t, app, "async function paint("),
 		"renderAgent(current.name, r.body.works, rt.id, board)") {
 		t.Error("экран агента рисуется без доски: строку задачи ему взять неоткуда")
 	}

@@ -718,7 +718,7 @@ func TestStaticChatRefusesNonGoal(t *testing.T) {
 	if !strings.Contains(body, `head.append(el("h2", "", "goal-" + id));`) {
 		t.Error("заголовок чата цели ушёл: goal-<id> остаётся её именем")
 	}
-	if !strings.Contains(funcBody(t, app, "async function refresh("),
+	if !strings.Contains(funcBody(t, app, "async function paint("),
 		"renderChat(current.name, r.body.works, rt.id, board)") {
 		t.Error("экран чата рисуется без доски: гейту нечем проверить, цель ли это")
 	}
@@ -747,7 +747,7 @@ func TestStaticChatKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "async function wireChatFeed(")
 	measure := strings.Index(body, "const bottom = atBottom(feed);")
-	rebuild := strings.Index(body, "box.replaceChildren();")
+	rebuild := strings.Index(body, "sync(box, items);")
 	if measure < 0 || rebuild < 0 || measure > rebuild {
 		t.Error("положение ленты мерится после перерисовки: якорь взят с уже сброшенной прокрутки")
 	}

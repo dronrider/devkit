@@ -472,9 +472,9 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	base, _, _, _, _ := splitTitle(row.Title)
 	switch target {
 	case SectCheck:
-		note = notify(root, reasonCheck, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
+		note = notify(root, reasonCheck, id, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
 	case SectBlocked:
-		note = notify(root, reasonBlocked, fmt.Sprintf("%s: %s на блокере", filepath.Base(root), id), reason)
+		note = notify(root, reasonBlocked, id, fmt.Sprintf("%s: %s на блокере", filepath.Base(root), id), reason)
 	}
 	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
 	if err != nil {

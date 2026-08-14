@@ -60,6 +60,11 @@ func TestMoveToCheckNotifiesLoud(t *testing.T) {
 	if !strings.HasPrefix(line, "--reason\ttask_check\t") {
 		t.Fatalf("уведомление ушло без повода task_check: %q", line)
 	}
+	// Задача едет своим ключом (DK-323): по полю события лента дашборда ведёт
+	// к строке доски, а из заголовка баннера ID она больше не выковыривает.
+	if !strings.Contains(line, "--task\tXR-005\t") {
+		t.Fatalf("уведомление ушло без поля задачи: %q", line)
+	}
 	if !strings.HasSuffix(line, "Задача в работе") {
 		t.Fatalf("в теле нет заголовка задачи: %q", line)
 	}
@@ -85,6 +90,9 @@ func TestMoveToBlockedNotifiesLoud(t *testing.T) {
 	}
 	if !strings.HasPrefix(line, "--reason\ttask_blocked\t") {
 		t.Fatalf("уведомление ушло без повода task_blocked: %q", line)
+	}
+	if !strings.Contains(line, "--task\tXR-004\t") {
+		t.Fatalf("уведомление ушло без поля задачи: %q", line)
 	}
 	if !strings.HasSuffix(line, "ждём железо") {
 		t.Fatalf("в теле нет причины блокировки: %q", line)

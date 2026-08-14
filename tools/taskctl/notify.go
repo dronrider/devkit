@@ -46,12 +46,17 @@ const (
 // не должен, поэтому ошибка возвращается строкой-припиской к сообщению
 // команды, а не всплывает наверх: молчать про непосланное нельзя, но и
 // держать саму доску несдвинутой из-за этого тоже.
-func notify(root, reason, title, body string) string {
+// Задача едет своим ключом: по полю события лента дашборда ведёт к строке
+// доски и к журналу агента, а разбором заголовка она больше не занимается
+// (DK-323). Проект уведомитель собирает сам по рабочей директории: имя дерева
+// задачи он от имени проекта отличает, а `taskctl -C` двигает доску и из
+// бокового дерева.
+func notify(root, reason, id, title, body string) string {
 	script, err := notifyScript(root)
 	if err != nil {
 		return "\nуведомление не отправлено: " + err.Error()
 	}
-	cmd := exec.Command("python3", script, "--reason", reason, title, body)
+	cmd := exec.Command("python3", script, "--reason", reason, "--task", id, title, body)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

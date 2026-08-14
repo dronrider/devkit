@@ -657,6 +657,11 @@ class DoctorResidencyTest(SandboxCase):
         write(cls.rdk / "RULES.board.core.md", "# ядро доски\n\nтекст ядра доски.\n")
         write(cls.rdk / "RULES.md", "# правила\n")
         write(cls.rdk / "RULES.board.md", "# правила доски\n")
+        # README у каталогов выкидывается фикстурой ниже, а полнота доки
+        # (DK-071) спрашивает по ним: болванки закрывают проверку, чтобы
+        # краснота весов не тонула в находках про отсутствующую доку.
+        write(cls.rdk / "hooks" / "README.md", "# Хуки\n")
+        write(cls.rdk / "tools" / "README.md", "# Утилиты\n")
         write(cls.rdk / "AGENTS.md", "# devkit\n\nтестовый проект.\n")
         git_init(cls.rdk)
         write(cls.rdk / "docs" / "TASKS.md", "# Задачи\n\nПрефикс: RD\n")

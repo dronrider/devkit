@@ -141,6 +141,7 @@ import build
 import context
 import corp
 import dashboard
+import describe
 import drain
 import harness
 import importlib.util
@@ -1848,6 +1849,11 @@ def doctor(start, fix=False):
                                     "добавить %s в .gitignore" % (RUN_LOG, RUN_LOG))
     if in_git:
         findings += check_links(root)
+        # Полнота доки идёт рядом с проверкой её ссылок: битая ссылка это
+        # дока про отсутствующее, а тут ищется отсутствующая дока целиком
+        # (DK-071). Корень без манифеста и не под git молчит: без репозитория
+        # проектной половины нет вовсе.
+        findings += describe.check(root)
         cf, cd = check_machine_ignore(root, fix)
         findings += cf
         fixed += cd

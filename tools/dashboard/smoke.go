@@ -51,6 +51,18 @@ const (
 	smokeAccepted = "XR-003"
 )
 
+// Подписки стенда. Имена выдуманные, живых тут нет ни одного: в коде дашборда
+// имён харнесов не стоит вовсе (рубеж TestQuotaNoHarnessNamesInCode), а прогон
+// проверяет дорогу, а не конкретную подписку. Клиентов два, по одному на
+// подписку, и оба лежат фикстурами в PATH стенда: выбор доехал до команды
+// тогда, когда сессию поднял клиент выбранной подписки, а не соседней.
+const (
+	smokeHarnessOne = "первая-подписка"
+	smokeHarnessTwo = "вторая-подписка"
+	smokeClientOne  = "клиент-один"
+	smokeClientTwo  = "клиент-два"
+)
+
 // smokeBoardJSON изображает ответ taskctl list --json: доска с целью в работе,
 // принятой задачей в Check и соседкой в Backlog. Закрытие уносит строку Check с
 // доски, и таким прогон видит её после нажатия.
@@ -231,6 +243,7 @@ esac
 	for name, body := range map[string]string{
 		"taskctl": taskctl,
 		"tmux": fmt.Sprintf(`list=%s
+runs=%s
 case "$1" in
 ls)
   [ -s "$list" ] || exit 1
@@ -238,10 +251,17 @@ ls)
   ;;
 new-session)
   prev=""
+  cmd=""
   for a in "$@"; do
     [ "$prev" = "-s" ] && printf '%%s\n' "$a" >> "$list"
     prev="$a"
+    cmd="$a"
   done
+  printf 'сессия: %%s\n' "$cmd" >> "$runs"
+  # Команда сессии не только записывается, но и исполняется: «имя доехало до
+  # команды» иначе проверялось бы по строке запроса, а не по тому, кого эта
+  # строка подняла.
+  sh -c "$cmd" >> "$runs" 2>&1 || true
   ;;
 kill-session)
   name=${3#=}
@@ -250,10 +270,35 @@ kill-session)
   ;;
 esac
 exit 0
-`, shQuote(sessions)),
+`, shQuote(sessions), shQuote(s.runsFile())),
 		// claude только ищется в PATH до подъёма сессии задачи, звать его
 		// прогону незачем.
 		"claude": "exit 0\n",
+		// agentctl: раскладку подписок печатает машинным видом, а exec ставит имя
+		// выбранной подписки и поднимает переданную команду. Обе половины тут те
+		// же, что у живой утилиты, и обе нужны прогону: по первой собирается
+		// список на экране, по второй имя доезжает до клиента.
+		"agentctl": fmt.Sprintf(`runs=%s
+case "$1 $2" in
+"harness --json")
+  cat <<'JSON'
+%s
+JSON
+  ;;
+"exec --harness")
+  name=$3
+  shift 4
+  printf 'exec: подписка %%s, команда %%s\n' "$name" "$*" >> "$runs"
+  DEVKIT_HARNESS="$name" "$@"
+  ;;
+esac
+exit 0
+`, shQuote(s.runsFile()), smokeHarnessJSON),
+		// Клиенты подписок: каждый пишет, кем его подняли и с каким заказом.
+		// Разными их держит прогон нарочно, иначе выбор подписки был бы неотличим
+		// от её отсутствия.
+		smokeClientOne: smokeClientBody(s.runsFile(), smokeClientOne),
+		smokeClientTwo: smokeClientBody(s.runsFile(), smokeClientTwo),
 		// Бэкенд уведомлений: баннер на машине прогона не появляется, а
 		// строка в журнале уведомителя пишется как при живой отправке.
 		"notify-fake": "exit 0\n",
@@ -291,9 +336,31 @@ else:
 		goalRun, 0o755)
 }
 
+// smokeHarnessJSON это машинный вид agentctl harness --json: две включённые
+// подписки со своими клиентами, первая по умолчанию.
+var smokeHarnessJSON = fmt.Sprintf(`{
+  "default": %q,
+  "source": "машинный слой стенда",
+  "harnesses": [
+    {"name": %q, "enabled": true, "default": true, "bin": %q},
+    {"name": %q, "enabled": true, "default": false, "bin": %q, "env": ["CONFIG_DIR"]}
+  ]
+}`, smokeHarnessOne, smokeHarnessOne, smokeClientOne, smokeHarnessTwo, smokeClientTwo)
+
+// smokeClientBody это тело фикстуры клиента: имя подписки он берёт из
+// окружения, как настоящий клиент берёт оттуда свой каталог конфигурации.
+func smokeClientBody(runs, name string) string {
+	return fmt.Sprintf("printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$2\" >> %s\nexit 0\n",
+		name, shQuote(runs))
+}
+
 // Файлы стенда, которые правит фикстура taskctl: доска машинным видом, файл
 // доски проекта, архив и журнал вызовов утилиты.
 func (s *smoke) boardFile() string  { return filepath.Join(s.dir, "board.json") }
+
+// runsFile это журнал поднятых сессий: строка команды, строка agentctl exec и
+// строка клиента, который в итоге поднялся.
+func (s *smoke) runsFile() string { return filepath.Join(s.dir, "runs.log") }
 func (s *smoke) callsFile() string  { return filepath.Join(s.dir, "taskctl.calls") }
 func (s *smoke) boardDoc() string   { return filepath.Join(s.proj, "docs", "TASKS.md") }
 func (s *smoke) archiveDoc() string { return filepath.Join(s.proj, "docs", "TASKS-archive.md") }
@@ -1011,6 +1078,70 @@ func (s *smoke) stepCloseAccepted() (string, error) {
 	return fmt.Sprintf("%s, сессии не поднималось, %s; второе нажатие: %s", v.Message, git, refusal.Error), nil
 }
 
+// stepHarnessRun: выбор подписки доезжает до запускаемой команды (DK-326).
+// Шаг идёт до самого клиента, а не до строки запроса: список приезжает ручкой
+// /api/harnesses, запрос называет вторую подписку, а поднимается в итоге её
+// клиент с её именем в окружении. Проверять по ответу сервера тут было бы
+// нечестно, потому что сломаться может ровно то, что между: команда сессии,
+// обёртка agentctl exec и имя, которое до клиента не доехало.
+func (s *smoke) stepHarnessRun() (string, error) {
+	var list HarnessView
+	if err := s.call("GET", "/api/harnesses", "", http.StatusOK, &list); err != nil {
+		return "", err
+	}
+	if len(list.Harnesses) != 2 {
+		return "", fmt.Errorf("подписок в ответе %d, ждал две: %+v", len(list.Harnesses), list)
+	}
+	if list.Harnesses[0].Name != smokeHarnessOne || !list.Harnesses[0].Default {
+		return "", fmt.Errorf("подписка по умолчанию не названа: %+v", list.Harnesses[0])
+	}
+	if list.Harnesses[1].Name != smokeHarnessTwo || list.Harnesses[1].Bin != smokeClientTwo {
+		return "", fmt.Errorf("вторая подписка пришла без своего клиента: %+v", list.Harnesses[1])
+	}
+	// Имя, которого на машине нет, отбивается словами и до всякой сессии:
+	// устаревший экран не должен молча уезжать на подписку по умолчанию.
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("POST", "/api/projects/demo/runs",
+		fmt.Sprintf(`{"id": %q, "harness": "подписка-которой-нет"}`, smokeTask),
+		http.StatusBadRequest, &refusal); err != nil {
+		return "", err
+	}
+	if !strings.Contains(refusal.Error, "на машине нет") {
+		return "", fmt.Errorf("незнакомая подписка отбита выдуманной причиной: %s", refusal.Error)
+	}
+	var v struct {
+		Session string `json:"session"`
+		Harness string `json:"harness"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/runs",
+		fmt.Sprintf(`{"id": %q, "harness": %q}`, smokeTask, smokeHarnessTwo), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if v.Harness != smokeHarnessTwo || !strings.Contains(v.Message, smokeHarnessTwo) {
+		return "", fmt.Errorf("ответ запуска не называет подписку: %+v", v)
+	}
+	runs, err := os.ReadFile(s.runsFile())
+	if err != nil {
+		return "", fmt.Errorf("журнала поднятых сессий нет: %v", err)
+	}
+	text := string(runs)
+	if !strings.Contains(text, "agentctl' exec --harness") {
+		return "", fmt.Errorf("команда сессии не завёрнута в agentctl exec:\n%s", text)
+	}
+	want := fmt.Sprintf("%s: подписка %s, заказ Выполни %s", smokeClientTwo, smokeHarnessTwo, smokeTask)
+	if !strings.Contains(text, want) {
+		return "", fmt.Errorf("до клиента подписка не доехала, ждал %q:\n%s", want, text)
+	}
+	if strings.Contains(text, smokeClientOne+":") {
+		return "", fmt.Errorf("сессию поднял клиент чужой подписки:\n%s", text)
+	}
+	return fmt.Sprintf("%s, сессию поднял %s с именем подписки в окружении; незнакомая подписка отбита: %s",
+		v.Message, smokeClientTwo, refusal.Error), nil
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -1065,6 +1196,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"уведомление о стопе в ленте", s.stepFeedStop},
 		{"сообщение при стоящем цикле", s.stepIdleMessage},
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
+		{"выбор подписки доезжает до команды", s.stepHarnessRun},
 	}
 	for i, st := range steps {
 		note, err := st.run()

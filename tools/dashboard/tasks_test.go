@@ -724,7 +724,7 @@ func TestStaticTaskActionBar(t *testing.T) {
 func TestStaticTaskActionBySection(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "function taskActions(")
-	for _, want := range []string{"actionLabel(row.sect)", "startRun(project, id)",
+	for _, want := range []string{"actionLabel(row.sect)", "runControl(project, id",
 		"row.after && row.after.length", "wait.disabled = true",
 		"taskActionHint(isGoal, row.sect, id)"} {
 		if !strings.Contains(body, want) {
@@ -890,7 +890,7 @@ func TestStaticTaskBarIcons(t *testing.T) {
 		`work ? "i-live" : "i-talk"`,
 		`barBtn("btn", "Чат с агентом", "i-chat")`,
 		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
-		`barBtn("btn btn-acc", label, "i-play")`} {
+		`barBtn("btn btn-acc", name, "i-play")`} {
 		if !strings.Contains(acts, want) {
 			t.Errorf("действие полосы осталось без значка: нет %q", want)
 		}

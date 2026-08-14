@@ -29,6 +29,10 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Раскладка подписок машины (harnesses.go): её спрашивает и экран, и
+	// каждый запуск, а стоит она подпроцесса agentctl.
+	harn     *HarnessView
+	harnBorn time.Time
 
 	// Замки записи во «Входящие», по одному на репозиторий: сверка с лежащим и
 	// запись это одно действие, и разводить их по разным горутинам нельзя
@@ -97,6 +101,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/sessions/{sid}", s.auth(s.handleSession))
 	mux.HandleFunc("GET /api/notifications", s.auth(s.handleNotifications))
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
+	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
 	mux.HandleFunc("GET /api/tmux", s.auth(s.handleTmuxList))
 	mux.HandleFunc("GET /api/tmux/{name}", s.auth(s.handleTmuxPane))
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {

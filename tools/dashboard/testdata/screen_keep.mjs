@@ -296,6 +296,19 @@ function works() {
   return running ? [{ id: "XR-3", via: "tmux", title: "строка доски номер 3" }] : [];
 }
 
+// Подписки машины и то, чем их назвали при запуске: выбор в кнопке проверяется
+// по телу запроса, а не по нарисованному, потому что ломается ровно оно.
+// Имена выдуманные: их в клиенте нет ни одного, они приходят ответом ручки.
+const harnessOne = { name: "подписка-раз", default: true, bin: "клиент-раз" };
+const harnessTwo = { name: "подписка-два", default: false, bin: "клиент-два" };
+let harnessList = [harnessOne, harnessTwo];
+let harnessNote = "";
+const started = [];
+
+function harnessBody() {
+  return { harnesses: harnessList, note: harnessNote };
+}
+
 const drafts = [
   { id: "XR-D1", title: "первая запись накопителя", age_words: "вчера" },
   { id: "XR-D2", title: "вторая запись накопителя", age_words: "сегодня" },
@@ -424,8 +437,10 @@ const sandbox = {
     }
     if (path.endsWith("/runs") && post) {
       running = true;
+      started.push(init && init.body ? JSON.parse(init.body) : {});
       return reply({ message: "сессия поднята" });
     }
+    if (path === "/api/harnesses") return reply(harnessBody());
     if (path.endsWith("/board")) return reply(boardBody());
     if (path.endsWith("/drafts")) return reply({ drafts });
     if (path.includes("/drafts/")) return reply({ file: "docs/tasks/drafts/x.md", text: "текст записи" });
@@ -528,6 +543,73 @@ if (!dump(now).includes("работает")) {
 if (doc.activeElement.textContent !== "Стоп") {
   fail("после нажатия фокус ушёл со строки: " + dump(doc.activeElement));
 }
+
+// Выбор подписки в самой кнопке запуска (DK-326). Широкая часть поднимает
+// работу на подписке по умолчанию, узкая открывает список, а строка списка
+// запускает работу на своей подписке без второго нажатия. Проверяется тело
+// запроса: нарисованный список без доехавшего имени это ровно та поломка,
+// ради которой задача и заведена.
+if (started[started.length - 1].harness !== harnessOne.name) {
+  fail("широкая часть кнопки ушла не на подписку по умолчанию: " +
+    JSON.stringify(started[started.length - 1]));
+}
+running = false;
+await sandbox.refresh();
+await settle();
+const pickRow = find(groups, "XR-5");
+const grp = byClass(pickRow, "rungrp");
+if (!grp) fail("у строки нет составной кнопки запуска: " + dump(pickRow));
+const menu = byClass(grp, "hmenu");
+if (!menu || !menu.hidden) fail("список подписок открыт до нажатия на стрелку");
+grp.children[1].handlers.click({ stopPropagation: () => {} });
+if (menu.hidden) fail("стрелка не открыла список подписок");
+if (menu.children.length !== 2) {
+  fail("в списке подписок " + menu.children.length + " строк, ждал две: " + dump(menu));
+}
+if (!dump(menu).includes(harnessTwo.name) || !dump(menu).includes("по умолчанию")) {
+  fail("список подписок не называет ни имён, ни подписки по умолчанию: " + dump(menu));
+}
+menu.children[1].handlers.click({ stopPropagation: () => {} });
+await settle();
+if (started[started.length - 1].harness !== harnessTwo.name) {
+  fail("строка списка подняла работу не на своей подписке: " +
+    JSON.stringify(started[started.length - 1]));
+}
+if (!menu.hidden) fail("список подписок остался открытым после выбора");
+
+// Подписка на машине одна: стрелки нет вовсе, а причина висит подсказкой.
+// Список не прочитан: то же самое, и запуск идёт как до этой задачи, без имени.
+running = false;
+for (const [list, note, why] of [
+  [[harnessOne], "", "подписка на машине одна"],
+  [[], "agentctl не нашёлся", "agentctl не нашёлся"],
+]) {
+  harnessList = list;
+  harnessNote = note;
+  await sandbox.refresh();
+  await settle();
+  const one = find(groups, "XR-6");
+  if (byClass(one, "harrow")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
+  const only = button(one, "Выполнить");
+  if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
+  if (!String(only.title).includes(why)) {
+    fail("причина отсутствия выбора не названа: " + JSON.stringify(only.title) + ", ждал про " + why);
+  }
+  only.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const sent = started[started.length - 1];
+  if (list.length && sent.harness !== harnessOne.name) {
+    fail("единственная подписка не доехала до запроса: " + JSON.stringify(sent));
+  }
+  if (!list.length && sent.harness) {
+    fail("непрочитанный список всё равно назвал подписку: " + JSON.stringify(sent));
+  }
+  running = false;
+}
+harnessList = [harnessOne, harnessTwo];
+harnessNote = "";
+await sandbox.refresh();
+await settle();
 
 // Работа кончилась сама, и уведомитель сказал об этом: строка перечитывается
 // событием, а не фокусом окна. Без этого смена статуса доезжала до списка

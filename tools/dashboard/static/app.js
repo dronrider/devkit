@@ -296,10 +296,13 @@ function sayResult(text, isError) {
 
 // Запуск и стоп. Ответ сервера показывается словами: и удача, и причина
 // отказа (занятый замок, пропавший tmux или goal-run) видны с экрана.
-async function startRun(project, id) {
-  sayResult("запуск " + id + "...");
+// Подписка едет полем harness: пусто значит «как раньше», на подписке по
+// умолчанию.
+async function startRun(project, id, harness) {
+  sayResult("запуск " + id + (harness ? " на подписке " + harness : "") + "...");
+  const body = harness ? { id, harness } : { id };
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs",
-    { method: "POST", body: { id } });
+    { method: "POST", body });
   sayResult(r.body.message || r.body.error || "", !r.ok);
   if (r.ok) await refresh();
 }
@@ -443,6 +446,126 @@ const SECT_WORD = {
   blocked: "заблокирована",
 };
 
+// Подписки машины: список приезжает ручкой /api/harnesses, а собирает его
+// agentctl. Имён харнесов в клиенте нет ни одного, как и в сервере: третья
+// подписка появится в списке сама, стоит ей включиться на машине.
+let harnessView = null;
+
+// Список читается на каждой сборке экрана, а не один раз на загрузку: своего
+// состояния клиент между обновлениями не держит нигде, и включённая на машине
+// подписка обязана появиться в кнопке без перезагрузки страницы. Стоит это
+// одного запроса, подпроцесс за ним держит память процесса на стороне сервера.
+async function loadHarnesses() {
+  const r = await api("/api/harnesses");
+  harnessView = r.ok ? r.body
+    : { harnesses: [], note: r.body.error || "список подписок не прочитан (" + r.status + ")" };
+}
+
+function harnesses() {
+  return (harnessView && harnessView.harnesses) || [];
+}
+
+// Подписка по умолчанию: на неё идёт широкая часть кнопки. Признак ставит
+// машинный слой, а без признака берётся первая в списке, чтобы кнопка работала
+// и на полураскрытом конфиге.
+function harnessDefault() {
+  const list = harnesses();
+  return ((list.find((h) => h.default) || list[0] || {}).name) || "";
+}
+
+// Почему выбора нет. Молчания тут нет ни в одном случае: подписка на машине
+// одна, список не прочитан вовсе или его читать нечем.
+function harnessWhy() {
+  const list = harnesses();
+  if (list.length === 1) return "поедет на " + list[0].name + ", подписка на машине одна";
+  if (!list.length) {
+    return (harnessView && harnessView.note) || "список подписок не прочитан: запуск идёт как раньше";
+  }
+  return "";
+}
+
+// У цели выбора нет: виток поднимает оболочка цикла своей сессией, и передать
+// ей подписку нечем. Сервер отвечает на такой запрос тем же отказом.
+const GOAL_HARNESS_TIP = "виток цели поднимает оболочка цикла: он идёт на подписке по умолчанию";
+
+// Строка списка подписок: имя, признак «по умолчанию» и остаток квоты. Остаток
+// тут не для красоты, подписку выбирают ровно из-за него, а снимок берётся из
+// того же ответа, которым нарисован блок квоты в колонке. Снимка нет, значит
+// так и написано, а не нарисован ноль.
+function harnessRow(h) {
+  const row = el("button", "hrow");
+  row.type = "button";
+  const head = el("span", "hhead");
+  head.append(el("b", "", h.name));
+  if (h.default) head.append(el("span", "hdef", "по умолчанию"));
+  row.append(head);
+  const snap = (quotaView && (quotaView.harnesses || []).find((q) => q.name === h.name)) || null;
+  const buckets = snap ? (snap.buckets || []) : [];
+  if (!snap) {
+    row.append(el("span", "qnote", "снимка квоты нет"));
+  } else if (!buckets.length) {
+    row.append(el("span", "qnote", snap.note || "бакетов в снимке нет"));
+  } else {
+    // Две полоски: столько же, сколько стоит в блоке квоты, и больше в строку
+    // выбора не влезает даже на ноутбуке.
+    for (const b of buckets.slice(0, 2)) row.append(quotaRow(b));
+    if (snap.stale) row.append(el("span", "qnote stale", "снимок протух" + (snap.age ? ", " + snap.age + " назад" : "")));
+  }
+  return row;
+}
+
+// Кнопка запуска с выбором подписки (макет «Кнопка запуска», LLD DK-328,
+// решение 3). Широкая часть поднимает работу на подписке по умолчанию, то есть
+// частый путь не подорожал ни на одно нажатие; узкая открывает список, и
+// нажатие на строку списка запускает работу на ней же, без второго нажатия.
+// Выбор действует на один запуск, а не на экран: две работы рядом идут на
+// разных подписках, и переключателя-настройки для этого не нужно.
+function runControl(project, id, make, label, isGoal) {
+  const wide = make(label);
+  // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
+  // второе нажатие уходило вторым запуском, а возвращалось отказом «работа уже
+  // идёт».
+  const fire = (node, harness) => {
+    node.disabled = true;
+    startRun(project, id, harness).catch(console.error).finally(() => { node.disabled = false; });
+  };
+  wide.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    fire(wide, harnessDefault());
+  });
+  const list = harnesses();
+  const grp = el("span", "rungrp");
+  grp.append(wide);
+  if (isGoal || list.length < 2) {
+    const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
+    if (why) withTip(wide, why);
+    return grp;
+  }
+  const menu = el("div", "hmenu");
+  menu.hidden = true;
+  for (const h of list) {
+    const row = harnessRow(h);
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      menu.hidden = true;
+      fire(wide, h.name);
+    });
+    menu.append(row);
+  }
+  const more = el("button", wide.className + " harrow");
+  more.append(icon("i-more"));
+  more.setAttribute("aria-label", "Выбрать подписку");
+  more.setAttribute("aria-expanded", "false");
+  withTip(more, "Выбрать подписку: " + list.map((h) => h.name).join(", "));
+  more.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    menu.hidden = !menu.hidden;
+    more.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+  });
+  grp.append(more, menu);
+  return grp;
+}
+
 // Действие прямо со строки: поднять конвейер или снять живую сессию, не заходя
 // внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
 // ответ выходит в ту же строку результата. Что со строкой сейчас, говорит её
@@ -462,17 +585,24 @@ function rowAction(project, row, sect) {
     wait.disabled = true;
     return withTip(wait, "сначала " + row.after.join(", "));
   }
-  const btn = el("button", "btn btn-sm" + (live ? "" : " btn-acc"), live ? "Стоп" : actionLabel(sect));
+  if (!live) {
+    return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
+      actionLabel(sect), /^Цель:/.test(row.title));
+  }
+  const btn = el("button", "btn btn-sm", "Стоп");
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
-    // второе нажатие уходило вторым запуском, а возвращалось отказом «работа
-    // уже идёт».
+    // Кнопка гаснет до ответа: пока стоп идёт, строка выглядит прежней, и
+    // второе нажатие уходило вторым запросом.
     btn.disabled = true;
-    const call = live ? stopRun(project, row.id) : startRun(project, row.id);
-    call.catch(console.error).finally(() => { btn.disabled = false; });
+    stopRun(project, row.id).catch(console.error).finally(() => { btn.disabled = false; });
   });
-  return btn;
+  // Стоп живёт в той же обёртке, что и запуск, хотя выбирать ему нечего: фокус
+  // возвращается после перерисовки путём от строки, и кнопка, лежащая на
+  // строку выше своей соседки, теряла бы его на каждом нажатии.
+  const grp = el("span", "rungrp");
+  grp.append(btn);
+  return grp;
 }
 
 function renderRow(project, row, sect) {
@@ -511,7 +641,14 @@ function renderRow(project, row, sect) {
 // строки. У строки, где не изменилось ничего, узел переживает обновление
 // нетронутым вместе с фокусом на кнопке.
 function rowSign(row, sect) {
-  return JSON.stringify(row) + "|" + sect;
+  return JSON.stringify(row) + "|" + sect + "|" + harnessSign();
+}
+
+// Отпечаток списка подписок: им нарисована кнопка запуска, и строка, не
+// знающая про смену списка, держала бы стрелку выбора там, где выбирать уже
+// нечего, до самой перезагрузки страницы.
+function harnessSign() {
+  return harnesses().map((h) => h.name).join(",") + "|" + ((harnessView && harnessView.note) || "");
 }
 
 // Разделы доски на телефоне разложены по двум табам: In progress и Check это
@@ -1020,10 +1157,14 @@ function taskActions(project, id, row, works) {
       ": пока маркер стоит, конвейер её не возьмёт."));
     return out;
   }
-  const start = barBtn("btn btn-acc", label, "i-play");
-  start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
-  out.push(start);
-  out.push(el("span", "hint", taskActionHint(isGoal, row.sect, id)));
+  out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal));
+  let hint = taskActionHint(isGoal, row.sect, id);
+  // Причина, по которой выбирать не из чего, стоит в той же подписи под
+  // полосой: на широком экране место для неё есть, и подсказкой по наведению
+  // она бы там пряталась.
+  const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
+  if (why) hint += " " + why.charAt(0).toUpperCase() + why.slice(1) + ".";
+  out.push(el("span", "hint", hint));
   return out;
 }
 
@@ -3896,6 +4037,10 @@ async function paint() {
   // Остаток подписок тоже живёт отдельно от экрана: он стоит над любым из них,
   // а держать экран ради чтения пары файлов незачем.
   refreshQuota().catch(console.error);
+  // А вот список подписок экран ждёт: из него собрана кнопка запуска, и
+  // пришедший позже он перерисовал бы кнопку под пальцем. Ждать тут дёшево,
+  // ходит запрос один раз на загрузку страницы.
+  await loadHarnesses();
   renderSidebar(projects, rt.home || rt.agents ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");

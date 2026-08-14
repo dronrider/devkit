@@ -154,14 +154,55 @@ func procErr(err error) string {
 	return err.Error()
 }
 
-// claudeMissing называет ненайденный claude до подъёма tmux-сессии: сессия с
+// defaultClient это клиент, которым конвейер поднимается без выбора подписки:
+// ровно то, что дашборд звал до появления выбора.
+const defaultClient = "claude"
+
+// clientMissing называет ненайденный клиент до подъёма tmux-сессии: сессия с
 // ненайденной командой умерла бы молча, и стоп был бы неотличим от запуска.
-func claudeMissing() string {
-	if _, err := exec.LookPath("claude"); err != nil {
-		return "claude не нашёлся в PATH: headless-сессию конвейера поднять нечем; " +
+// Имя приезжает раскладкой подписок (`bin` харнеса), а не зашито: у второй
+// подписки клиент бывает и другой.
+func clientMissing(bin string) string {
+	if _, err := exec.LookPath(bin); err != nil {
+		return bin + " не нашёлся в PATH: headless-сессию конвейера поднять нечем; " +
 			"PATH launchd-агенту дописывает devkitctl doctor --fix"
 	}
 	return ""
+}
+
+func claudeMissing() string {
+	return clientMissing(defaultClient)
+}
+
+// sessionCommand собирает команду tmux-сессии конвейера. Без выбранной подписки
+// это прежний `claude -p '<заказ>'`. С выбранной команда заворачивается в
+// `agentctl exec`: пары окружения подписки кладёт он, и значения при этом
+// никуда не уезжают, ни в веб-сервер, ни в панель сессии, которую дашборд
+// показывает на экране (LLD DK-328, решение 3). Собирать пары тут самому нельзя
+// по той же причине: токен и base URL второй подписки поселились бы в процессе,
+// который эти панели и раздаёт.
+// harnessTail это хвост строки журнала про выбранную подписку: по журналу
+// разбирают, куда ушла квота, и запуск без имени от запуска с именем там обязан
+// отличаться.
+func harnessTail(h *Harness) string {
+	if h == nil {
+		return ""
+	}
+	return ", подписка " + h.Name
+}
+
+func sessionCommand(agentctl string, h *Harness, prompt string) string {
+	if h == nil {
+		return defaultClient + " -p " + shQuote(prompt)
+	}
+	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
+	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
+	// подписки остаётся именем: его ищет тот же PATH, каким дашборд находил
+	// claude до этой задачи, и проверка «не нашёлся» идёт по нему же.
+	// Имя, путь и клиент квотятся наравне с заказом: строка уходит шеллу сессии,
+	// и пробел в пути рассыпал бы команду на слова.
+	return shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
+		shQuote(h.Bin) + " -p " + shQuote(prompt)
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +217,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		ID string `json:"id"`
+		// Harness это выбранная подписка. Пусто значит «как раньше»: список не
+		// прочитан или экран старый, и работа идёт на подписке по умолчанию.
+		Harness string `json:"harness"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
@@ -201,6 +245,12 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// и квоты (DK-289). Вид приёмки приезжает суффиксом строки доски, читать его
 	// больше неоткуда, и решается всё до проверок tmux: закрытие ими не связано.
 	if row.Sect == "check" && row.Accept == acceptUser {
+		if body.Harness != "" {
+			// Подписка тут ни при чём: закрытие идёт командой taskctl, сессии
+			// агента за ним нет, и квоты оно не тратит. В журнале это сказано,
+			// чтобы выбор не выглядел потерянным.
+			s.logf("закрытие %s в %s: выбранная подписка %s не понадобилась, сессии агента тут нет", id, found.Name, body.Harness)
+		}
 		s.closeFromCheck(w, found, id)
 		return
 	}
@@ -212,6 +262,17 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	kind := "task"
 	if isGoalTitle(row.Title) {
 		kind = "goal"
+	}
+	// Цикл цели поднимает оболочка goal-run своей сессией, и подписку ей
+	// передать нечем: виток она заводит сама, каждый раз заново. Отказ тут
+	// честнее молчаливого запуска на подписке по умолчанию, потому что имя
+	// человек уже выбрал.
+	if kind == "goal" && body.Harness != "" {
+		why := fmt.Sprintf("цель %s поднимает оболочка цикла goal-run своей сессией, и выбор подписки до неё не доезжает: "+
+			"виток пойдёт на подписке по умолчанию, а выбрать её можно у одиночной задачи", id)
+		s.logf("запуск цели %s в %s отклонён: выбор подписки цели не передаётся", id, found.Name)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
 	}
 	sess := kind + "-" + id
 	for _, name := range tmuxSessions() {
@@ -253,23 +314,47 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if m := claudeMissing(); m != "" {
+	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
+	// нет, верить нельзя, иначе экран, устаревший на смену конфига, поднимал бы
+	// сессию неизвестно на чём.
+	var harness *Harness
+	if body.Harness != "" {
+		h, why := s.harnesses().pick(body.Harness)
+		if h == nil {
+			s.logf("запуск задачи %s в %s отклонён: %s", id, found.Name, why)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+			return
+		}
+		harness = h
+	}
+	client := defaultClient
+	if harness != nil {
+		client = harness.Bin
+	}
+	if m := clientMissing(client); m != "" {
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, m)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		"claude -p "+shQuote(runPrompt(row.Sect, id))); err != nil {
+		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	s.logf("задача %s поднята в %s (tmux-сессия %s)", id, found.Name, sess)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"id": id, "kind": kind, "session": sess,
-		"message": fmt.Sprintf("конвейер задачи %s поднят в tmux-сессии %s", id, sess),
-	})
+	// Строка результата называет подписку: подмена квоты иначе ничем не видна, а
+	// сказано тут именно про сессию конвейера. Куда она отдаст исполнителя
+	// дальше, решает вердикт pick по лестнице этой подписки, и обещать тут
+	// большее значило бы обещать чужую настройку.
+	resp := map[string]string{"id": id, "kind": kind, "session": sess,
+		"message": fmt.Sprintf("конвейер задачи %s поднят в tmux-сессии %s", id, sess)}
+	if harness != nil {
+		resp["harness"] = harness.Name
+		resp["message"] = fmt.Sprintf("конвейер задачи %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+	}
+	s.logf("задача %s поднята в %s (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {

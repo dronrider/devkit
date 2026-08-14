@@ -31,23 +31,25 @@ var exeDir = func() string {
 	return filepath.Dir(exe)
 }
 
-// taskctlPath ищет taskctl сначала рядом с собственным бинарём, потом по
+// binPath ищет утилиту devkit сначала рядом с собственным бинарём, потом по
 // PATH. Под launchd PATH системный (EnvironmentVariables в plist нет, бинарь
 // dashboard назван полным путём), а утилиты devkit лежат одним каталогом:
 // сосед по каталогу это и есть бинарь той же раскладки. PATH остаётся
 // откатом для запуска из исходников и тестов. Пусто, если не нашёлся нигде.
-func taskctlPath() string {
+func binPath(name string) string {
 	if dir := exeDir(); dir != "" {
-		p := filepath.Join(dir, taskctlBin)
+		p := filepath.Join(dir, name)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 			return p
 		}
 	}
-	if p, err := exec.LookPath(taskctlBin); err == nil {
+	if p, err := exec.LookPath(name); err == nil {
 		return p
 	}
 	return ""
 }
+
+func taskctlPath() string { return binPath(taskctlBin) }
 
 // procTimeout ограничивает подпроцессы сроком: подвисший taskctl или tmux не
 // должен держать горутину запроса вечно, тем более после ухода клиента.

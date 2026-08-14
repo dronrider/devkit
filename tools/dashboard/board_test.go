@@ -39,7 +39,7 @@ func funcBody(t *testing.T, text, head string) string {
 func TestStaticBoardRowActions(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"stopRun(project, row.id)", "startRun(project, row.id)",
+	for _, want := range []string{"stopRun(project, row.id)", "runControl(project, row.id",
 		"ev.stopPropagation()", `"Стоп"`, "actionLabel(sect)", "ведёт другая сессия"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: действие со строки не доведено", want)

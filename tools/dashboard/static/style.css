@@ -146,6 +146,26 @@ a:hover{text-decoration:underline}
 .btn-acc{background:var(--acc);color:var(--acc-ink);border-color:transparent}
 .btn-lg{height:48px;padding:0 20px;font-size:15px;border-radius:12px}
 .btn-sm{height:28px;padding:0 10px;font-size:12px;border-radius:7px}
+/* составная кнопка запуска: широкая часть с действием и узкая со стрелкой,
+   которая открывает список подписок. Список висит поверх экрана и раскладки не
+   двигает, поэтому строка доски от него не едет */
+.rungrp{position:relative;display:inline-flex;align-items:stretch}
+.rungrp>.btn{border-top-right-radius:0;border-bottom-right-radius:0}
+.rungrp .harrow{padding:0 6px;gap:0;border-top-left-radius:0;border-bottom-left-radius:0;
+  margin-left:1px;min-width:26px}
+.rungrp .harrow svg{width:16px;height:16px}
+.hmenu{position:absolute;top:calc(100% + 6px);right:0;z-index:30;min-width:236px;
+  padding:6px;border:1px solid var(--line2);border-radius:11px;background:var(--bg2);
+  box-shadow:0 14px 34px rgba(0,0,0,.28)}
+.hmenu[hidden]{display:none}
+.hrow{display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-radius:8px;
+  background:none;color:var(--tx);cursor:pointer}
+.hrow:hover{background:var(--bg3)}
+.hrow .hhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.hrow .hhead b{font:600 12.5px var(--mono)}
+.hdef{font:500 10.5px var(--mono);color:var(--tx3)}
+.hrow .qrow{margin-bottom:5px}
+.hrow .qnote{margin-top:2px}
 
 .lcard b{cursor:pointer}
 .lcard b.flat{cursor:default;color:var(--tx2)}
@@ -484,6 +504,12 @@ a:hover{text-decoration:underline}
      прижато к правому краю */
   .rsum{min-width:44px;min-height:44px;text-align:left}
   .trow .meta .btn{margin-left:auto;height:36px}
+  /* телефон: составная кнопка целиком уходит вправо, стрелка держит палец в
+     44 пикселя по ширине, а список подписок не выходит за край экрана */
+  .trow .meta .rungrp{margin-left:auto}
+  .trow .meta .rungrp .btn{margin-left:0}
+  .rungrp .harrow{min-width:44px}
+  .hmenu{min-width:0;width:max-content;max-width:min(300px,86vw)}
   .prow{min-height:52px}
   /* телефон: боковой колонки нет, и остаток подписок едет карточкой на
      главную. Строка шире, чем в колонке, поэтому имя бакета не жмётся. */

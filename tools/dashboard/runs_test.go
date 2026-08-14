@@ -150,6 +150,98 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 	}
 }
 
+// Выбранная подписка доезжает до команды сессии: она заворачивается в
+// agentctl exec, и клиент поднимается тот, который назвала раскладка. До
+// DK-326 запуск всегда шёл первой подпиской, а вторая простаивала.
+func TestRunStartOnChosenHarness(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-002", "harness": "втораяtest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск на второй подписке: %d %s", resp.StatusCode, text)
+	}
+	// Ответ называет подписку: подмена квоты иначе ничем не видна.
+	for _, want := range []string{`"harness":"втораяtest"`, "поднят на подписке втораяtest"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе запуска нет %q: %s", want, text)
+		}
+	}
+	// agentctl зовётся полным путём: tmux-сессия наследует PATH дашборда, а под
+	// launchd он системный, и утилит devkit в нём может не быть.
+	want := "new-session -d -s task-XR-002 -c " + e.proj + " '" + filepath.Join(e.bin, "agentctl") +
+		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002'"
+	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
+		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+	}
+}
+
+// Без выбора всё остаётся как было: прежний клиент и прежняя команда, без
+// обёртки. Экран, который списка не прочитал, работает ровно как до задачи.
+func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск без выбора: %d %s", resp.StatusCode, text)
+	}
+	got := readFile(t, tmuxLog)
+	if !strings.Contains(got, " claude -p 'Выполни XR-002'") {
+		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
+	}
+	if strings.Contains(got, "agentctl exec") {
+		t.Errorf("запуск без выбора завернулся в exec:\n%s", got)
+	}
+}
+
+// Подписка, которой на машине нет, отбивается словами и до всякой сессии:
+// молча уехать на подписку по умолчанию нельзя, человек выбрал имя.
+func TestRunStartUnknownHarness(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-002", "harness": "четвёртаяtest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "на машине нет") {
+		t.Fatalf("незнакомая подписка: %d %s, ожидал 400 со словами", resp.StatusCode, text)
+	}
+	if strings.Contains(readFile(t, tmuxLog), "new-session") {
+		t.Errorf("сессия поднялась вопреки отказу:\n%s", readFile(t, tmuxLog))
+	}
+}
+
+// Клиент выбранной подписки ищется в PATH до подъёма сессии, как и прежний:
+// сессия с ненайденной командой умерла бы молча.
+func TestRunStartChosenClientMissing(t *testing.T) {
+	// Фикстуры клиента второй подписки в PATH стенда нет вовсе, а прежний
+	// claude на месте: ищется именно клиент выбранной подписки.
+	e, c, _ := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-002", "harness": "втораяtest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "клиент-2 не нашёлся") {
+		t.Fatalf("ненайденный клиент подписки: %d %s, ожидал 502 с его именем", resp.StatusCode, text)
+	}
+}
+
+// У цели выбор подписки не работает: цикл поднимает оболочка goal-run своей
+// сессией, и передать ей имя нечем. Отказ словами честнее молчаливого запуска
+// на подписке по умолчанию.
+func TestRunStartGoalRefusesHarness(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(filepath.Join(e.home, "goal-run.calls")))
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-100", "harness": "втораяtest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "оболочка цикла goal-run") {
+		t.Fatalf("выбор подписки у цели: %d %s, ожидал 400 с причиной", resp.StatusCode, text)
+	}
+}
+
 // Строки нет на доске, значит и запускать нечего: 404 с именем доски.
 func TestRunStartUnknownRow(t *testing.T) {
 	e, c, _ := runsEnv(t, "")

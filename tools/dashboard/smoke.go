@@ -44,24 +44,41 @@ const smokeToken = "smoke-token"
 const (
 	smokeGoal = "XR-100"
 	smokeTask = "XR-002"
+	// smokeAccepted это принятая человеком задача в Check: на ней проверяется
+	// закрытие мимо витка. Вид приёмки она носит суффиксом заголовка, а до
+	// дашборда он доезжает полем accept ответа taskctl.
+	smokeAccepted = "XR-003"
 )
 
-// smokeBoardJSON изображает ответ taskctl list --json: доска с целью в работе
-// и задачей в Backlog.
-const smokeBoardJSON = `{"prefix":"XR","sections":[` +
-	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"}]},` +
-	`{"key":"check","title":"Check","rows":[]},` +
-	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Соседка по доске","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"S","link":"-"}]},` +
+// smokeBoardJSON изображает ответ taskctl list --json: доска с целью в работе,
+// принятой задачей в Check и соседкой в Backlog. Закрытие уносит строку Check с
+// доски, и таким прогон видит её после нажатия.
+const smokeBoardJSON = smokeBoardHead +
+	`{"key":"check","title":"Check","rows":[{"id":"XR-003","title":"Принятая глазами","accept":"user","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"S","link":"-"}]},` +
+	smokeBoardTail
+
+const smokeBoardClosedJSON = smokeBoardHead + `{"key":"check","title":"Check","rows":[]},` + smokeBoardTail
+
+const smokeBoardHead = `{"prefix":"XR","sections":[` +
+	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"}]},`
+
+const smokeBoardTail = `{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Соседка по доске","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"S","link":"-"}]},` +
 	`{"key":"blocked","title":"Blocked","rows":[]}]}`
 
 const smokeBoardDoc = `# Синтетическая доска smoke (префикс XR)
 
 Доска стенда: строки прогон берёт фикстурой taskctl, а этот файл держит
-признак проекта, по которому дашборд ищет доски в корнях конфига.
+признак проекта, по которому дашборд ищет доски в корнях конфига. Строка
+принятой задачи стоит и тут: закрытие правит доску файлом, и по нему сервер
+узнаёт, что помнить прежний ответ утилиты больше нельзя.
 
 ## In progress
 
 ## Check
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+| XR-003 | Принятая глазами [приёмка: user] | task | P2 | 31 (25+3+1+0+2) | S | - |
 
 ## Backlog
 
@@ -183,8 +200,35 @@ func devkitCheckout() string {
 // появилась бы в списке живых.
 func (s *smoke) fixtures() error {
 	sessions := filepath.Join(s.dir, "tmux.sessions")
+	if err := smokeWrite(s.boardFile(), smokeBoardJSON+"\n", 0o644); err != nil {
+		return err
+	}
+	if err := smokeWrite(s.boardFile()+".closed", smokeBoardClosedJSON+"\n", 0o644); err != nil {
+		return err
+	}
+	// taskctl отвечает доской из файла, а не одной зашитой строкой: close
+	// обязан её править, иначе закрытая задача осталась бы на экране. Каждый
+	// вызов ложится в журнал, по нему прогон и сверяет, какой командой дашборд
+	// закрыл строку.
+	taskctl := fmt.Sprintf(`board=%s
+doc=%s
+arch=%s
+printf '%%s\n' "$*" >> %s
+case "$1" in
+close)
+  cp "$board.closed" "$board"
+  grep -v -F "$2" "$doc" > "$doc.new"
+  mv "$doc.new" "$doc"
+  printf '| %%s | Принятая глазами [приёмка: user] | task | P2 | 2026-01-02 | - |\n' "$2" >> "$arch"
+  printf '%%s закрыта 2026-01-02, строка в архиве\n' "$2"
+  ;;
+*)
+  cat "$board"
+  ;;
+esac
+`, shQuote(s.boardFile()), shQuote(s.boardDoc()), shQuote(s.archiveDoc()), shQuote(s.callsFile()))
 	for name, body := range map[string]string{
-		"taskctl": fmt.Sprintf("printf '%%s\\n' %s\n", shQuote(smokeBoardJSON)),
+		"taskctl": taskctl,
 		"tmux": fmt.Sprintf(`list=%s
 case "$1" in
 ls)
@@ -245,6 +289,13 @@ else:
 	return smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "goal-loop", "goal-run.py"),
 		goalRun, 0o755)
 }
+
+// Файлы стенда, которые правит фикстура taskctl: доска машинным видом, файл
+// доски проекта, архив и журнал вызовов утилиты.
+func (s *smoke) boardFile() string  { return filepath.Join(s.dir, "board.json") }
+func (s *smoke) callsFile() string  { return filepath.Join(s.dir, "taskctl.calls") }
+func (s *smoke) boardDoc() string   { return filepath.Join(s.proj, "docs", "TASKS.md") }
+func (s *smoke) archiveDoc() string { return filepath.Join(s.proj, "docs", "TASKS-archive.md") }
 
 // pyQuote квотит строку для python-фикстуры.
 func pyQuote(s string) string {
@@ -799,6 +850,76 @@ func (s *smoke) stepIdleMessage() (string, error) {
 	return "", fmt.Errorf("строки сообщения нет во «Входящих» файла цели: %v", inboxLines(string(doc)))
 }
 
+// stepCloseAccepted: закрытие принятой задачи идёт без витка. Нажатие
+// «Закрыть» у строки с пользовательской приёмкой это тот же POST /runs, что и у
+// любой работы, но сессии агента за ним нет: человек уже принял задачу глазами,
+// и сервер зовёт taskctl close сам. Шаг сверяет вызов по журналу фикстуры и по
+// строке синтетической доски, а вторым нажатием ещё и ответ устаревшему экрану:
+// закрытая задача обязана называть себя закрытой, а не пропавшей с доски.
+func (s *smoke) stepCloseAccepted() (string, error) {
+	var v struct {
+		Kind    string `json:"kind"`
+		Session string `json:"session"`
+		Message string `json:"message"`
+		Note    string `json:"note"`
+	}
+	if err := s.call("POST", "/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, smokeAccepted),
+		http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if v.Kind != "close" || v.Session != "" {
+		return "", fmt.Errorf("нажатие подняло работу вместо закрытия: kind=%q session=%q", v.Kind, v.Session)
+	}
+	calls, err := os.ReadFile(s.callsFile())
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(string(calls), "close "+smokeAccepted) {
+		return "", fmt.Errorf("taskctl close не позван, вызовы утилиты: %s", strings.TrimSpace(string(calls)))
+	}
+	sessions, _ := os.ReadFile(filepath.Join(s.dir, "tmux.sessions"))
+	if strings.Contains(string(sessions), "task-"+smokeAccepted) {
+		return "", fmt.Errorf("закрытие подняло tmux-сессию task-%s: виток тут лишний", smokeAccepted)
+	}
+	doc, err := os.ReadFile(s.boardDoc())
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(string(doc), smokeAccepted) {
+		return "", fmt.Errorf("строка %s осталась на синтетической доске:\n%s", smokeAccepted, doc)
+	}
+	board, err := s.board()
+	if err != nil {
+		return "", err
+	}
+	for _, sec := range board.Board.Sections {
+		for _, row := range sec.Rows {
+			if row.ID == smokeAccepted {
+				return "", fmt.Errorf("закрытая задача всё ещё на доске, секция %s", sec.Key)
+			}
+		}
+	}
+	// Второе нажатие с устаревшего экрана: строки нет, а причина этому не
+	// «нет строки», а закрытие, которое уже прошло (DK-289).
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("POST", "/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, smokeAccepted),
+		http.StatusNotFound, &refusal); err != nil {
+		return "", err
+	}
+	if !strings.Contains(refusal.Error, "уже закрыта") {
+		return "", fmt.Errorf("устаревшему экрану отказали выдуманной причиной: %s", refusal.Error)
+	}
+	git := "коммит доски прошёл"
+	if v.Note != "" {
+		// Синтетический проект не репозиторий: важно, что провал коммита назван
+		// словами, а не проглочен.
+		git = "закрытие на месте, git назван словами"
+	}
+	return fmt.Sprintf("%s, сессии не поднималось, %s; второе нажатие: %s", v.Message, git, refusal.Error), nil
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -851,6 +972,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"стоп работы", s.stepStop},
 		{"уведомление о стопе в ленте", s.stepFeedStop},
 		{"сообщение при стоящем цикле", s.stepIdleMessage},
+		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 	}
 	for i, st := range steps {
 		note, err := st.run()

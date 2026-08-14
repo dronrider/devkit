@@ -192,7 +192,16 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	row, ok := findRow(raw, id)
 	if !ok {
 		s.logf("запуск %s в %s отклонён: нет строки на доске 404", id, found.Name)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": rowGone(found, id)})
+		return
+	}
+	// Проверенная задача с пользовательской приёмкой закрывается тут же, своей
+	// командой: кнопка «Закрыть» у неё это подтверждение принятого глазами, а не
+	// заказ работы, и сессия агента ради taskctl close стоила бы минут ожидания
+	// и квоты (DK-289). Вид приёмки приезжает суффиксом строки доски, читать его
+	// больше неоткуда, и решается всё до проверок tmux: закрытие ими не связано.
+	if row.Sect == "check" && row.Accept == acceptUser {
+		s.closeFromCheck(w, found, id)
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {

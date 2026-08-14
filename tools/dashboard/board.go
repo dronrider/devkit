@@ -86,11 +86,24 @@ func runProcIn(stdin, name string, args ...string) ([]byte, error) {
 // доски). Провал возвращается словами, а не кодом ошибки: правка уже на
 // месте, и утилита с витком видят её и без коммита.
 func commitDocs(dir, msg string, paths ...string) string {
-	for _, args := range [][]string{
-		append([]string{"add", "--"}, paths...),
+	// В add идут только те пути, что есть на диске: файл закрытой задачи уехал
+	// в архив руками git mv, переименование уже лежит в индексе, а pathspec по
+	// исчезнувшему пути add уронил бы. В pathspec коммита нужны оба конца
+	// переезда, иначе в коммит попала бы его половина.
+	var add []string
+	for _, p := range paths {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			add = append(add, p)
+		}
+	}
+	steps := [][]string{
 		append([]string{"commit", "-m", msg, "--"}, paths...),
 		{"push"},
-	} {
+	}
+	if len(add) > 0 {
+		steps = append([][]string{append([]string{"add", "--"}, add...)}, steps...)
+	}
+	for _, args := range steps {
 		if _, err := runProc("git", append([]string{"-C", dir}, args...)...); err != nil {
 			return fmt.Sprintf("запись на месте, но git %s не прошёл: %s", args[0], procErr(err))
 		}

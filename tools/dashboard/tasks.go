@@ -31,9 +31,14 @@ var rankNames = [5]string{"серьёзность", "ценность", "нео�
 // boardRow это строка доски, как её отдаёт taskctl list --json, плюс секция,
 // в которой она нашлась.
 type boardRow struct {
-	ID      string   `json:"id"`
-	Title   string   `json:"title"`
-	After   []string `json:"after,omitempty"`
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	After []string `json:"after,omitempty"`
+	// Accept это вид приёмки задачи (agent, mixed, user). Его отдаёт taskctl,
+	// разобрав суффикс заголовка строки «[приёмка: ...]» (LLD DK-292): вид
+	// назначается на доске, и своего признака дашборд не заводит. Пусто у
+	// агентского вида, он умолчание и суффикса не носит.
+	Accept  string   `json:"accept,omitempty"`
 	Fail    string   `json:"fail,omitempty"`
 	Block   string   `json:"block,omitempty"`
 	Type    string   `json:"type"`
@@ -46,6 +51,10 @@ type boardRow struct {
 	Sect    string   `json:"sect"`
 	Section string   `json:"section"`
 }
+
+// acceptUser это пользовательский вид приёмки: задачу принимает человек
+// глазами, и закрытие такой строки с экрана идёт мимо сессии агента.
+const acceptUser = "user"
 
 // parseBoardRows раскладывает ответ taskctl по ID: экрану задачи нужна одна
 // строка, но заголовки соседей нужны карточке зависимостей.
@@ -122,10 +131,28 @@ func (s *server) taskRow(w http.ResponseWriter, r *http.Request) (found *Project
 	}
 	row, hit := rows[id]
 	if !hit {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": rowGone(found, id)})
 		return nil, "", boardRow{}, nil, false
 	}
 	return found, id, row, rows, true
+}
+
+// rowGone называет судьбу строки, которой на доске нет. Закрытая задача с
+// доски уезжает в архив, и «на доске нет строки» на устаревшем экране читается
+// как поломка, хотя всё сработало: человек закрыл задачу с одного устройства, а
+// нажал с другого (DK-289). Архив читается файлом, тем же порядком, что у
+// состава цели.
+func rowGone(found *Project, id string) string {
+	row, closed := archiveRows(found.Path)[id]
+	if !closed {
+		return fmt.Sprintf("на доске %s нет строки %s", found.Name, id)
+	}
+	when := ""
+	if row.Closed != "" {
+		when = " " + row.Closed
+	}
+	return fmt.Sprintf("задача %s уже закрыта%s и уехала в архив: экран устарел, строки на доске %s больше нет",
+		id, when, found.Name)
 }
 
 // depRef это соседняя строка в карточке зависимостей: ID с заголовком и
@@ -275,6 +302,50 @@ func bugPartRefusal(typ string, parts []int) string {
 // нему находятся коммиты задачи (ядро правил доски).
 func boardCommitMsg(id, what string) string {
 	return fmt.Sprintf("docs(tasks): %s %s", id, what)
+}
+
+// closedTaskPaths собирает пути, которые тронуло закрытие: обе доски и файл
+// задачи, уехавший в архив. Год каталога архива не угадывается, а ищется:
+// close ставит его по дате закрытия, и около полуночи она разойдётся с датой
+// на часах сервера. Старый путь файла едет рядом с новым, потому что
+// переименование лежит в индексе после git mv и без него коммит унёс бы
+// половину переезда.
+func closedTaskPaths(dir, id string) []string {
+	paths := []string{
+		filepath.ToSlash(filepath.Join("docs", "TASKS.md")),
+		filepath.ToSlash(filepath.Join("docs", "TASKS-archive.md")),
+	}
+	for _, moved := range globSorted(filepath.Join(dir, "docs", "tasks", "archive", "*", id+".md")) {
+		rel, err := filepath.Rel(dir, moved)
+		if err != nil {
+			continue
+		}
+		paths = append(paths, taskFileRel(id), filepath.ToSlash(rel))
+	}
+	return paths
+}
+
+// closeFromCheck закрывает проверенную задачу прямо с экрана: taskctl close и
+// коммит доски, без сессии агента. Так закрывается только пользовательская
+// приёмка: человек уже принял работу глазами, и поднимать ради одной команды
+// headless-сессию значит платить минутами ожидания и квотой за подтверждение
+// того, что и так проверено (DK-289). Агентский вид остаётся за сессией, там
+// закрытие это работа.
+func (s *server) closeFromCheck(w http.ResponseWriter, found *Project, id string) {
+	out, code, err := taskctlDo(found.Path, "close", id)
+	if err != nil {
+		s.logf("закрытие %s в %s не удалось: %v", id, found.Name, err)
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	resp := map[string]string{"id": id, "kind": "close", "message": out}
+	if note := commitDocs(found.Path, boardCommitMsg(id, "закрыта с дашборда"),
+		closedTaskPaths(found.Path, id)...); note != "" {
+		resp["note"] = note
+		s.logf("закрытие %s в %s: %s", id, found.Name, note)
+	}
+	s.logf("закрытие %s в %s: %s", id, found.Name, out)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {

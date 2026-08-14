@@ -681,3 +681,146 @@ func TestRunStopNoTmuxLogged(t *testing.T) {
 		t.Errorf("стоп без tmux не залогировался: %v", lc.lines)
 	}
 }
+
+// Доска для проверки вида приёмки: в Check стоят смешанная и пользовательская
+// строки, в Backlog пользовательская. Вид приезжает полем accept, куда taskctl
+// кладёт разобранный суффикс заголовка «[приёмка: ...]».
+const acceptBoardJSON = `{"prefix":"XR","sections":[` +
+	`{"key":"in-progress","title":"In progress","rows":[]},` +
+	`{"key":"check","title":"Check","rows":[` +
+	`{"id":"XR-005","title":"Смешанная приёмка","accept":"mixed","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"},` +
+	`{"id":"XR-006","title":"Пользовательская приёмка","accept":"user","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]},` +
+	`{"key":"backlog","title":"Backlog","rows":[` +
+	`{"id":"XR-007","title":"Пользовательская в очереди","accept":"user","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]}]}`
+
+// gitFakeMoving пишет вызовы в журнал и по-настоящему двигает файл на «git mv»:
+// close уносит файл задачи в архив его руками, а молчаливая фикстура оставила
+// бы утилиту с ненайденным местом назначения.
+func gitFakeMoving(logPath string) string {
+	return fmt.Sprintf(`echo "$@" >> %q
+[ "$3" = mv ] && mv "$4" "$5"
+exit 0`, logPath)
+}
+
+// userAcceptDoc это файл задачи с пользовательской приёмкой: раздела
+// «Сценарий проверки» требуют ворота move check, раздела «Приёмка» с барьером и
+// перебором обходов ворота не агентского вида (LLD DK-292).
+const userAcceptDoc = `# XR-004: Четвёртая
+
+## Сценарий проверки
+
+Открыть доску, нажать «Закрыть» у строки в Check.
+
+## Приёмка
+
+- вид: user
+- барьер «согласие»: закрывать задачу решает человек, машине этого не отдают
+  - спросить у витка: не годится, согласие даёт человек, а не агент
+`
+
+// Проверенная задача с пользовательской приёмкой закрывается прямо с экрана:
+// taskctl close вместо сессии агента. До DK-289 кнопка «Закрыть» поднимала
+// tmux-сессию с заказом «Закрой XR-004», то есть платила минутами ожидания и
+// квотой за подтверждение того, что человек уже принял глазами. Стенд гоняет
+// настоящий taskctl: вид приёмки живёт суффиксом строки доски, и подменять его
+// выдумкой значило бы проверять не тот путь, каким вид приезжает на самом деле.
+func TestRunStartUserAcceptClosesWithoutSession(t *testing.T) {
+	e, c, gitLog := tasksEnv(t)
+	writeScript(t, e.bin, "git", gitFakeMoving(gitLog))
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	runTaskctl(t, e.proj, "set", "XR-004", "--accept", "user")
+	goalDoc(t, e, "XR-004", userAcceptDoc)
+	runTaskctl(t, e.proj, "move", "XR-004", "check")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("закрытие принятой задачи: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"kind":"close"`, "XR-004 закрыта"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе закрытия нет %q: %s", want, text)
+		}
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("закрытие принятой задачи подняло сессию агента:\n%s", got)
+	}
+	if got := runTaskctl(t, e.proj, "list", "--json"); strings.Contains(got, "XR-004") {
+		t.Errorf("строка XR-004 осталась на доске: %s", got)
+	}
+	if got := readFile(t, filepath.Join(e.proj, "docs", "TASKS-archive.md")); !strings.Contains(got, "XR-004") {
+		t.Errorf("закрытая задача не легла в архив:\n%s", got)
+	}
+	// Коммит доски идёт следом за закрытием: доска это общий источник правды, и
+	// закрытие, оставшееся некоммиченным, разъезжается с remote. В pathspec
+	// коммита оба конца переезда файла, иначе в него попала бы его половина.
+	got := readFile(t, gitLog)
+	if !strings.Contains(got, "docs(tasks): XR-004 закрыта с дашборда") {
+		t.Errorf("коммит доски не позван с ID в subject:\n%s", got)
+	}
+	if !strings.Contains(got, "docs/tasks/archive/") || !strings.Contains(got, "docs/tasks/XR-004.md") {
+		t.Errorf("в коммит уехал не весь переезд файла задачи:\n%s", got)
+	}
+}
+
+// Закрытие мимо сессии включается ровно для пользовательской приёмки в Check:
+// смешанной закрытие ещё предстоит агентской частью, а пользовательская строка
+// в Backlog это работа, которую никто не проверял.
+func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
+	for _, tc := range []struct{ id, prompt string }{
+		{"XR-005", "Закрой XR-005"},
+		{"XR-007", "Выполни XR-007"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			e := newTestEnv(t)
+			writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", acceptBoardJSON))
+			tmuxLog := filepath.Join(e.home, "tmux.log")
+			writeTmuxFake(t, e.bin, tmuxLog, "")
+			writeScript(t, e.bin, "claude", "exit 0")
+			c := e.loggedClient(t)
+
+			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, tc.id))
+			text := body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("запуск задачи: %d %s", resp.StatusCode, text)
+			}
+			if !strings.Contains(text, `"kind":"task"`) {
+				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
+			}
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+"'") {
+				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
+			}
+		})
+	}
+}
+
+// Устаревший экран получает настоящую причину отказа: закрытая задача уехала в
+// архив, а «на доске нет строки» читается как поломка, хотя закрытие прошло.
+// Второе нажатие с телефона по строке, закрытой с ноутбука, до DK-289 отвечало
+// именно так.
+func TestRunStartClosedRowNamesArchive(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| XR-009 | Принятая глазами | task | P2 | 2026-08-13 | - |\n"
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "TASKS-archive.md"), []byte(arch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ what, method, path, body string }{
+		{"нажатие", "POST", "/api/projects/demo/runs", `{"id": "XR-009"}`},
+		{"экран задачи", "GET", "/api/projects/demo/tasks/XR-009", ""},
+	} {
+		resp := doReq(t, c, tc.method, e.srv.URL+tc.path, tc.body)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s по закрытой задаче: %d %s", tc.what, resp.StatusCode, text)
+		}
+		for _, want := range []string{"уже закрыта 2026-08-13", "экран устарел"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s по закрытой задаче не назвал причину %q: %s", tc.what, want, text)
+			}
+		}
+	}
+}

@@ -2285,21 +2285,24 @@ async function sendMessage(project, id, ta, out) {
   await out.send(text);
 }
 
-// Плашка над полем ввода. При идущем цикле она говорит, когда агент прочитает
-// сообщение, и закрывается крестиком: прочитав её однажды, держать её над
-// полем незачем. При стоящем цикле она говорит прямо, что читать сообщение
-// некому, и держит ту же ручку подъёма витка, что кнопка в ленте: до DK-319
-// строка ложилась во «Входящие» с молчаливым «ждёт витка», и человек ждал
-// ответа от закончившего работу агента. Отказ крестиком не закрывается,
-// спрятанный отказ это то же молчание. Доставку идущей сессии дашборд не
-// обещает и здесь: механики для неё в devkit нет, её проектирует DK-136.
-function fillChatNote(note, live) {
+// Плашка над полем ввода. При идущем цикле в ней сказано, когда агент
+// прочитает сообщение, и закрывается она крестиком: прочитав её однажды,
+// держать её над полем незачем. При стоящем цикле в ней сказано прямо, что
+// читать сообщение некому, и рядом стоит та же ручка подъёма витка, что кнопка
+// в ленте: до DK-319 строка ложилась во «Входящие» с молчаливым «ждёт витка», а
+// человек ждал ответа от закончившего работу агента. Отказ крестиком не
+// закрывается, спрятанный отказ это то же молчание. Признак running приходит
+// той же работой цели, какую сервер считает живой (goalIdle в messages.go):
+// цикл в чужом окне и цель из реестра для плашки живые, хотя кнопка стопа их и
+// не берёт. Доставку идущей сессии дашборд не обещает и здесь: механики для
+// неё в devkit нет, её проектирует DK-136.
+function fillChatNote(note, running) {
   const said = findKey(note, "chat-said");
   const start = findKey(note, "chat-start");
   const close = findKey(note, "chat-close");
   if (!said || !start || !close) return;
   said.replaceChildren();
-  if (live) {
+  if (running) {
     said.append(el("b", "", "Сообщение уйдёт агенту."));
     said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
   } else {
@@ -2307,10 +2310,10 @@ function fillChatNote(note, live) {
     said.append(document.createTextNode(
       " Сообщение ляжет во «Входящие» файла цели и будет лежать там, пока виток не поднят."));
   }
-  note.className = live ? "cnote" : "cnote idle";
-  start.hidden = live;
-  close.hidden = !live;
-  if (!live) note.hidden = false;
+  note.className = running ? "cnote" : "cnote idle";
+  start.hidden = running;
+  close.hidden = !running;
+  if (!running) note.hidden = false;
 }
 
 function renderChat(project, works, id, board) {
@@ -2348,7 +2351,14 @@ function renderChat(project, works, id, board) {
   }
 
   const work = (works || []).find((w) => w.id === id);
+  // Кнопка стопа висит на tmux-сессии дашборда: цикл в чужом окне и цель из
+  // реестра снимаются там, где подняты, и ручка стопа их не берёт. Плашка же
+  // считает живым всё, что живо для сервера: работой цели он признаёт и запись
+  // реестра, и живое окно человека (goalIdle в messages.go), и разойдись эти
+  // признаки, экран показывал бы «цикл не идёт» там, где ручка отвечает
+  // обещанием витка (замечание ревью DK-319).
   const live = Boolean(work && work.via === "tmux");
+  const running = Boolean(work);
   const head = {
     key: "chat-head",
     sign: id + "|" + (work ? work.via : ""),
@@ -2386,7 +2396,7 @@ function renderChat(project, works, id, board) {
     close.addEventListener("click", () => { note.hidden = true; });
     note.append(said, start, close);
     keyed(note, "chat-note", "");
-    fillChatNote(note, live);
+    fillChatNote(note, running);
     thread.append(note);
 
     const box = el("div", "cbox");
@@ -2433,13 +2443,13 @@ function renderChat(project, works, id, board) {
   // заново.
   sync(groups, [crumb, head, {
     key: "chat-thread-" + id,
-    sign: String(live),
+    sign: live + "|" + running,
     make: thread,
     fill: (node) => {
       const stop = findKey(node, "chat-stop");
       if (stop) stop.hidden = !live;
       const note = findKey(node, "chat-note");
-      if (note) fillChatNote(note, live);
+      if (note) fillChatNote(note, running);
     },
   }]);
 }

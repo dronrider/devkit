@@ -137,12 +137,13 @@ class TestBoundary(LongFileCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_long_lines_spanning_chunk_boundary(self):
-        # Длинные строки (по сотне байт), чтобы счётчик переводов строки ушёл за
-        # границу одного блока чтения: ранний выход обязан сработать корректно и
-        # на файле, где переводы разбросаны реже.
+        # Длинные строки (по 240 байт), чтобы порог LONG_LINES переводов не
+        # уместился в один блок чтения: 305 строк на 240 байт это ~73 KB, и
+        # рубеж в 300 строк достигается только во втором блоке. Ранний выход
+        # обязан сработать корректно при переходе через границу блока.
         with open(self.file, "w", encoding="utf-8") as f:
             for _ in range(check_longfile.LONG_LINES + 5):
-                f.write("x" * 200 + "\n")
+                f.write("x" * 239 + "\n")
         r = self.hook(read_event(self.file))
         self.assertEqual(r.returncode, 2, r.stderr)
 

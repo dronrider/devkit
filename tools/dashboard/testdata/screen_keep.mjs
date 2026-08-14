@@ -1,8 +1,11 @@
-// Стенд частичной перерисовки (DK-316). Предмет проверки это не написанное в
-// исходнике, а то, что остаётся на экране после обновления: прокрутка списка,
-// фокус на кнопке, раскрытая запись черновика, набранное в поле чата и живой
-// поток событий. Проверкой текста статики такое не берётся, поэтому app.js
-// поднимается в песочнице node с игрушечным DOM и игрушечным сервером.
+// Стенд частичной перерисовки (DK-316) и экранов, которые ею живут. Предмет
+// проверки это не написанное в исходнике, а то, что остаётся на экране после
+// обновления: прокрутка списка, фокус на кнопке, набранное в поле чата, живой
+// поток событий, набранное уточнение груминга и раскрытое подтверждение
+// удаления. Проверкой текста статики такое не берётся, поэтому app.js
+// поднимается в песочнице node с игрушечным DOM и игрушечным сервером. Тем же
+// стендом проверяются состояния экрана черновика (DK-321): их рисует статика
+// по ответу сервера, и сверять их разбором исходника значит пересказывать его.
 //
 // Игрушечный DOM повторяет от браузера ровно то, от чего страдал человек:
 // опустевшая коробка сбрасывает прокрутку к нулю, а снятый с дерева узел
@@ -321,6 +324,19 @@ const drafts = [
   { id: "XR-D3", title: "третья запись накопителя", age_words: "сегодня" },
 ];
 
+// Экран черновика (DK-321): исход груминга сервер читает следами на диске, а
+// стенд подставляет его ответ прямо. Груминг идёт, пока жива работа с тем же
+// ID, и стенд держит её отдельным признаком: ход разбора берётся снимком
+// tmux-сессии, тем же, что на экране агента.
+let draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md", note: "груминг записи не касался" };
+let grooming = false;
+let groomAsk = null;
+let dropped = null;
+
+function groomWorks() {
+  return grooming ? [{ id: "XR-D2", via: "tmux", title: "вторая запись накопителя" }] : works();
+}
+
 const talk = [
   { seq: 1, role: "user", text: "как дела с витком", time: "2026-08-13T10:00:00+03:00" },
   { seq: 2, role: "assistant", text: "виток идёт, задачи режу", time: "2026-08-13T10:01:00+03:00" },
@@ -439,7 +455,7 @@ const sandbox = {
   fetch: (path, init) => {
     const post = Boolean(init && init.method === "POST");
     if (path === "/api/projects") {
-      return reply({ projects: [{ name: "demo", works: works(), sections: { check: 1 } }] });
+      return reply({ projects: [{ name: "demo", works: groomWorks(), sections: { check: 1 } }] });
     }
     if (path.endsWith("/runs") && post) {
       running = true;
@@ -449,7 +465,22 @@ const sandbox = {
     if (path === "/api/harnesses") return reply(harnessBody());
     if (path.endsWith("/board")) return reply(boardBody());
     if (path.endsWith("/drafts")) return reply({ drafts });
-    if (path.includes("/drafts/")) return reply({ file: "docs/tasks/drafts/x.md", text: "текст записи" });
+    if (path.endsWith("/outcome")) return reply(draftOut);
+    if (path.endsWith("/groom") && post) {
+      groomAsk = JSON.parse(init.body).ask || "";
+      return reply({ message: "грумминг XR-D2 поднят" });
+    }
+    if (path.includes("/drafts/") && init && init.method === "DELETE") {
+      dropped = JSON.parse(init.body).reason || "";
+      return reply({ message: "XR-D2 удалён как протухший" });
+    }
+    if (path.includes("/drafts/")) {
+      return reply({ file: "docs/tasks/drafts/XR-D2.md", text: "текст записи\nвторая строка" });
+    }
+    if (path === "/api/tmux") {
+      return reply({ sessions: grooming ? [{ name: "task-XR-D2", windows: 1, created: 0 }] : [] });
+    }
+    if (path.startsWith("/api/tmux/")) return reply({ text: "хвост груминга" });
     if (path.includes("/sessions?task=")) {
       return slowSessions ? slowReply({ sessions }) : reply({ sessions });
     }
@@ -638,23 +669,23 @@ if (groups.scrollTop !== 240) {
 // же контейнере ответы на нажатие.
 for (const t of timers.splice(0)) t.fn();
 
-// Черновики: раскрытая запись и прокрутка переживают обновление.
+// Черновики: строки и прокрутка переживают обновление, а кнопка разбора зовёт
+// груминг грумингом (DK-321).
 running = false;
 await go("#demo/drafts");
 const wrap = find(groups, "XR-D2");
 if (!wrap) fail("накопитель не собрался: записи XR-D2 нет");
-wrap.children[0].handlers.click({ target: makeNode("span") });
-await settle();
-if (wrap.children[1].hidden) fail("текст записи не раскрылся по нажатию");
+if (!button(wrap, "Провести груминг")) {
+  fail("кнопка строки накопителя не зовёт груминг грумингом: " + dump(wrap));
+}
 groups.scrollTop = 120;
 
 await sandbox.refresh();
 await settle();
 
 if (find(groups, "XR-D2") !== wrap) {
-  fail("список черновиков пересобран целиком: раскрытая запись закрылась");
+  fail("список черновиков пересобран целиком: строки уехали из-под пальца");
 }
-if (wrap.children[1].hidden) fail("обновление закрыло раскрытую запись");
 if (groups.scrollTop !== 120) {
   fail("обновление накопителя сбило прокрутку: " + groups.scrollTop + " вместо 120");
 }
@@ -815,6 +846,144 @@ if (!/\.hfbtn\{display:none\}/.test(findCSS) || !/\.hfbtn\{display:flex\}/.test(
   fail("лупа шапки не отдана телефону: на ноутбуке её место занимает поле");
 }
 
+// Строка накопителя ведёт на экран записи: разворот текста в строке уступил
+// место одному экрану с текстом, ходом груминга и его исходом.
+wrap.handlers.click({ target: makeNode("span") });
+if (sandbox.location.hash !== "demo/draft/XR-D2") {
+  fail("нажатие на строку накопителя не открыло экран записи: " + sandbox.location.hash);
+}
+
+// Экран черновика, состояние первое: груминг идёт. Живой хвост берётся снимком
+// tmux-сессии, и рядом стоит стоп; кнопки подъёма второго разбора нет.
+grooming = true;
+await go("#demo/draft/XR-D2");
+let dhead = find(groups, "draft-head");
+if (!dhead) fail("экран черновика не собрался: " + dump(groups).slice(0, 200));
+if (!dump(dhead).includes("груминг идёт")) {
+  fail("идущий груминг ничем не помечен: " + dump(dhead));
+}
+if (!button(dhead, "Остановить груминг")) fail("у идущего груминга нет стопа: " + dump(dhead));
+if (button(dhead, "Провести груминг")) {
+  fail("поверх идущего груминга экран предлагает поднять второй: " + dump(dhead));
+}
+const runCol = find(groups, "draft-col-run");
+if (!runCol || !dump(runCol).includes("хвост груминга")) {
+  fail("живого хвоста груминга на экране нет: " + dump(runCol));
+}
+
+// Обновление по фокусу окна не рвёт хвост: карточка хода собирается один раз
+// на заход, как панели экрана агента.
+await sandbox.refresh();
+await settle();
+if (find(groups, "draft-col-run") !== runCol) {
+  fail("обновление пересобрало карточку хода груминга: хвост оборвался бы на каждом фокусе окна");
+}
+
+// Состояние второе: груминг кончился исходом. Исходов четыре, и каждый назван
+// вместе со следом, по которому сервер его узнал.
+grooming = false;
+const outcomes = [
+  [{ state: "row", note: "груминг завёл строку: XR-D2 стоит на доске demo, секция Backlog" },
+    "Черновик оформлен строкой", "Открыть задачу XR-D2"],
+  [{ state: "attached", task: "XR-4", task_file: "docs/tasks/XR-4.md",
+    note: "груминг признал запись частью стоящей работы: текст уехал разделом «Из черновика XR-D2» в docs/tasks/XR-4.md" },
+  "Черновик приписан к стоящей строке", "Открыть задачу XR-4"],
+  [{ state: "deferred", deferred: "2026-08-05", reason: "ждём повторного случая",
+    file: "docs/tasks/drafts/XR-D2.md",
+    note: "груминг отложил запись 2026-08-05: она осталась в накопителе" },
+  "Черновик отложен", ""],
+  [{ state: "dropped", note: "следов груминга нет ни одного: файла docs/tasks/drafts/XR-D2.md не видно" },
+    "Черновик удалён", ""],
+];
+for (const [out, head, go2] of outcomes) {
+  draftOut = out;
+  await go("#demo/draft/XR-D2");
+  const col = find(groups, "draft-col-out");
+  if (!col || !dump(col).includes(head)) {
+    fail("исход " + out.state + " на экране не назван: " + dump(col));
+  }
+  if (!dump(col).includes(out.note)) {
+    fail("экран не сказал, каким следом узнан исход " + out.state + ": " + dump(col));
+  }
+  if (go2 && !button(col, go2)) {
+    fail("у исхода " + out.state + " нет перехода туда, куда груминг увёл запись: " + dump(col));
+  }
+}
+
+// Состояние третье: груминг кончился вопросом. Вопрос стоит карточкой, под ним
+// поле уточнения, и ответ уходит новой ходкой, а не в закрывшуюся сессию.
+draftOut = {
+  state: "open", file: "docs/tasks/drafts/XR-D2.md",
+  question: "Какой из двух дублей оставить, XR-D2 или XR-D3?",
+  session: "abcdef1234567890",
+  note: "груминг вышел, не оставив следа на диске",
+};
+await go("#demo/draft/XR-D2");
+let outCol = find(groups, "draft-col-out");
+if (!dump(outCol).includes("Груминг кончился вопросом")) {
+  fail("кончившийся вопросом груминг назван иначе: " + dump(outCol));
+}
+if (!dump(outCol).includes(draftOut.question)) {
+  fail("вопрос груминга не стоит на экране: " + dump(outCol));
+}
+if (!dump(outCol).includes("новой ходкой")) {
+  fail("экран не говорит, что ответ уходит новой ходкой: " + dump(outCol));
+}
+const ask = tag(outCol, "TEXTAREA");
+if (!ask) fail("поля уточнения на экране нет: " + dump(outCol));
+ask.value = "оставить XR-D2, второй дубль снять";
+ask.focus();
+
+await sandbox.refresh();
+await settle();
+
+outCol = find(groups, "draft-col-out");
+if (tag(outCol, "TEXTAREA") !== ask || ask.value !== "оставить XR-D2, второй дубль снять") {
+  fail("обновление стёрло набранное уточнение: " + ask.value);
+}
+if (doc.activeElement !== ask) fail("обновление отобрало фокус у поля уточнения");
+button(outCol, "Повторить груминг").handlers.click({ stopPropagation: () => {} });
+await settle();
+if (groomAsk !== "оставить XR-D2, второй дубль снять") {
+  fail("повторная ходка ушла без уточнения: " + JSON.stringify(groomAsk));
+}
+
+// Удаление: подтверждение раскрывается на месте, без причины запрос не уходит,
+// а набранная причина переживает обновление экрана.
+draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md", note: "груминг записи не касался" };
+await go("#demo/draft/XR-D2");
+outCol = find(groups, "draft-col-out");
+const del = button(outCol, "Удалить");
+if (!del) fail("удаления с экрана записи нет: " + dump(outCol));
+const confirm = byClass(outCol, "dconfirm");
+if (!confirm || !confirm.hidden) fail("подтверждение удаления раскрыто до нажатия");
+del.handlers.click({ stopPropagation: () => {} });
+if (confirm.hidden) fail("нажатие «Удалить» не раскрыло подтверждение с полем причины");
+const why = tag(confirm, "INPUT");
+if (!why) fail("в подтверждении нет поля причины: " + dump(confirm));
+button(confirm, "Удалить черновик").handlers.click({ stopPropagation: () => {} });
+await settle();
+if (dropped !== null) fail("черновик удалился без причины: " + JSON.stringify(dropped));
+if (!dump(byId.get("flashes")).includes("жду причину")) {
+  fail("отказ без причины не сказан словами: " + dump(byId.get("flashes")));
+}
+for (const t of timers.splice(0)) t.fn();
+byId.get("flashes").replaceChildren();
+
+why.value = "мусор из одного слова show";
+await sandbox.refresh();
+await settle();
+if (tag(byClass(find(groups, "draft-col-out"), "dconfirm"), "INPUT") !== why) {
+  fail("обновление закрыло подтверждение удаления вместе с набранной причиной");
+}
+button(byClass(find(groups, "draft-col-out"), "dconfirm"), "Удалить черновик")
+  .handlers.click({ stopPropagation: () => {} });
+await settle();
+if (dropped !== "мусор из одного слова show") {
+  fail("причина удаления не уехала в ручку: " + JSON.stringify(dropped));
+}
+for (const t of timers.splice(0)) t.fn();
+byId.get("flashes").replaceChildren();
 // Чат: лента, поле ввода и поток событий переживают обновление, а пришедшая
 // реплика не трогает соседних.
 await go("#demo/chat/XR-1");
@@ -1157,4 +1326,5 @@ console.log("частичная перерисовка: доска, чернов
   "экран агента держит выбранный разговор, ответ на нажатие не двигает раскладку; " +
   "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
   "косая черта и лупа ведут в поиск; подписки: широкая часть кнопки идёт на " +
-  "подписку по умолчанию, строка списка на свою, без выбора стрелки нет");
+  "подписку по умолчанию, строка списка на свою, без выбора стрелки нет; " +
+  "экран черновика: три состояния груминга, уточнение новой ходкой, удаление с причиной");

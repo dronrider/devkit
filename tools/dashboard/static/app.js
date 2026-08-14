@@ -183,7 +183,8 @@ async function api(path, opts) {
 
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
 // "#проект/DK-NNN" задача, "#проект/agent/DK-NNN" живой статус агента,
-// "#проект/chat/DK-NNN" переписка с агентом цели, "#проект/feed" лента
+// "#проект/chat/DK-NNN" переписка с агентом цели, "#проект/draft/DK-NNN"
+// запись накопителя с грумингом и его исходом, "#проект/feed" лента
 // уведомлений. Экран «Агенты» проекту не принадлежит и стоит за "#/agents":
 // голое "#agents" отняло бы имя у проекта, названного так же.
 function route() {
@@ -205,6 +206,9 @@ function route() {
   // запросе разрезала бы его на части.
   if (parts.length >= 2 && parts[1] === "find") {
     return { proj: parts[0], id: "", find: true, q: parts.slice(2).join("/") };
+  }
+  if (parts.length >= 3 && parts[1] === "draft") {
+    return { proj: parts[0], id: parts[2], draft: true };
   }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
@@ -2659,42 +2663,29 @@ function renderChat(project, works, id, board) {
   }]);
 }
 
-// Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком,
-// текст записи по нажатию и действие «Оформить». Черновик не виден на доске, и
-// без этого раздела записанная с телефона мысль лежит в файле, до которого с
-// телефона не добраться. Разбор поднимает ту же механику, что и конвейер
-// задачи: сессия агента с заказом груминга, после которого строка оказывается
-// в Backlog.
+// Раздел «Черновики» (#проект/drafts): накопитель docs/tasks/drafts/ списком.
+// Черновик не виден на доске, и без этого раздела записанная с телефона мысль
+// лежит в файле, до которого с телефона не добраться. Разбор поднимает ту же
+// механику, что и конвейер задачи: сессия агента с заказом груминга, после
+// которого строка оказывается в Backlog. Сама запись со своим текстом, ходом
+// разбора и исходом живёт экраном ниже: одно место лучше двух.
 const DRAFTS_HINT = "Записанные мимо доски идеи: метаданных у них нет, ранг и " +
   "тип выдаст груминг, он же заведёт строку.";
-const GROOM_HINT = "«Оформить» поднимает сессию груминга: она разберёт запись " +
-  "и доведёт её до строки Backlog либо снимет с причиной.";
+const GROOM_HINT = "«Провести груминг» поднимает сессию разбора: она доведёт " +
+  "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
+  "видны на экране записи.";
 
-async function groomDraft(project, id) {
+async function groomDraft(project, id, ask) {
   sayResult("подъём груминга " + id + "...");
   const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/drafts/" + encodeURIComponent(id) + "/groom", { method: "POST", body: {} });
+    "/drafts/" + encodeURIComponent(id) + "/groom",
+    { method: "POST", body: ask ? { ask } : {} });
   sayResult(r.body.message || r.body.error || "", !r.ok);
   return r.ok;
 }
 
-// Текст черновика читается по нажатию: список показывает первую строку, а
-// разбирать запись, не прочитав её целиком, нечем.
-async function draftText(project, id, box) {
-  box.replaceChildren(el("div", "stale", "чтение..."));
-  const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/drafts/" + encodeURIComponent(id));
-  box.replaceChildren();
-  if (!r.ok) {
-    box.append(el("div", "error", r.body.error || "черновик не прочитался"));
-    return;
-  }
-  box.append(el("div", "fhead", r.body.file || ""));
-  const text = el("pre", "log");
-  text.textContent = r.body.text || "";
-  box.append(text);
-}
-
+// Строка накопителя ведёт на экран записи, а кнопка груминга остаётся и в ней:
+// накопитель разбирают пачкой, не заходя внутрь каждой записи (LLD DK-328).
 function draftRow(project, d) {
   const row = el("div", "srow");
   row.append(el("span", "id", d.id));
@@ -2702,15 +2693,12 @@ function draftRow(project, d) {
   const meta = el("span", "sm");
   meta.append(el("span", "stale", d.age_words || ""));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
-  const groom = el("button", "btn btn-sm btn-acc", "Оформить");
+  const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
   meta.append(groom);
   row.append(meta);
-  const box = el("div", "dtext");
-  box.hidden = true;
   row.addEventListener("click", (ev) => {
     if (ev.target === groom) return;
-    box.hidden = !box.hidden;
-    if (!box.hidden) draftText(project, d.id, box).catch(console.error);
+    location.hash = project + "/draft/" + d.id;
   });
   groom.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -2722,14 +2710,12 @@ function draftRow(project, d) {
       if (ok) location.hash = project + "/agent/" + d.id;
     }).catch((err) => { groom.disabled = false; console.error(err); });
   });
-  const wrap = el("div", "");
-  wrap.append(row, box);
-  return wrap;
+  return row;
 }
 
 // Накопитель рисуется после ответа сервера, а не до него: очищенный заранее
-// экран моргал бы пустотой на каждом обновлении по фокусу окна, а раскрытая
-// запись закрывалась бы вместе с ним.
+// экран моргал бы пустотой на каждом обновлении по фокусу окна, а список уезжал
+// бы к началу из-под пальца.
 async function renderDrafts(project) {
   const groups = document.getElementById("groups");
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
@@ -2784,8 +2770,8 @@ async function renderDrafts(project) {
     const note = r.body.note || "черновиков нет";
     rows.push({ key: "empty", sign: note, make: () => el("div", "empty", note) });
   }
-  // Ключ строки это ID черновика: раскрытый по нажатию текст живёт внутри
-  // строки, и пересобранный список закрывал бы его на каждом обновлении.
+  // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
+  // строки, что изменились, и список не уезжает из-под пальца.
   for (const d of drafts) {
     rows.push({ key: d.id, sign: JSON.stringify(d), make: () => draftRow(project, d) });
   }
@@ -3058,6 +3044,314 @@ async function renderFind(project, q) {
     const note = r.body.note || FIND_EMPTY;
     items.push({ key: "find-empty", sign: note, make: () => el("div", "empty", note) });
   }
+  sync(groups, items);
+}
+
+// Экран черновика (#проект/draft/<ID>) по макету DK-328, решение 4: слева
+// текст записи с путём файла, справа то, что с ней сделали. Груминг живёт
+// здесь же и зовётся грумингом: «Оформить» скрывало, что у разбора четыре
+// исхода вплоть до удаления. Состояний три. Груминг идёт: живой хвост и стоп.
+// Груминг кончился исходом: карточка называет исход и следующий шаг, а сам
+// исход сервер прочитал следами на диске. Груминг кончился вопросом: вопрос
+// стоит карточкой, под ним поле уточнения и повторная ходка.
+const DRAFT_ASK_HINT = "Уточнение уедет новой ходкой груминга: агент перечитает " +
+  "черновик и пойдёт с начала. Писать в закончившуюся сессию дашборду нечем, и " +
+  "доставки в неё он не обещает.";
+const DRAFT_DROP_HINT = "Причина уедет сообщением коммита доски: файла после " +
+  "удаления нет, и живёт она только там.";
+
+// Исход груминга словами: что случилось и что дальше. Сам след читает сервер,
+// его слова стоят рядом отдельной строкой, и придумывать их второй раз на
+// клиенте незачем.
+const DRAFT_PHASES = {
+  running: {
+    head: "Груминг идёт",
+    next: "Разбор кончится строкой, припиской, пометкой «отложен» либо удалением записи.",
+  },
+  row: {
+    head: "Черновик оформлен строкой",
+    next: "Дальше работа идёт по задаче: ранг и цена у неё уже стоят.",
+  },
+  attached: {
+    head: "Черновик приписан к стоящей строке",
+    next: "Дальше работа идёт по задаче-приёмнику, текст записи лежит разделом в её файле.",
+  },
+  deferred: {
+    head: "Черновик отложен",
+    next: "Запись осталась в накопителе: груминг вернётся к ней, когда причина отпадёт.",
+  },
+  dropped: {
+    head: "Черновик удалён",
+    next: "Записи больше нет, причина удаления лежит сообщением коммита доски.",
+  },
+  question: {
+    head: "Груминг кончился вопросом",
+    next: "Ответить можно новой ходкой: агент перечитает черновик вместе с уточнением.",
+  },
+  open: {
+    head: "Груминга не было",
+    next: "Разбор поднимается кнопкой «Провести груминг».",
+  },
+  error: {
+    head: "Исход груминга не прочитался",
+    next: "Пока сервер не ответил, разбор с экрана не поднимается: причина стоит выше.",
+  },
+};
+
+// Состояние экрана: живая работа с тем же ID это идущий груминг, а
+// кончившийся разбор без единого следа на диске, но со словом агента в
+// транскрипте, это вопрос.
+function draftPhase(out, running) {
+  if (running) return "running";
+  const state = (out && out.state) || "open";
+  if (state === "open") return out && out.question ? "question" : "open";
+  return state;
+}
+
+async function dropDraft(project, id, reason) {
+  sayResult("удаление черновика " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/drafts/" + encodeURIComponent(id), { method: "DELETE", body: { reason } });
+  let said = r.body.message || r.body.error || "";
+  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
+  sayResult(said, !r.ok);
+  return r.ok;
+}
+
+// Карточка исхода: заголовок состояния, слова сервера про след, следующий шаг
+// и переход туда, куда груминг увёл запись.
+function draftOutcomeCard(project, id, out, phase) {
+  const card = el("div", "card dcard");
+  const head = el("div", "phd");
+  const said = DRAFT_PHASES[phase] || DRAFT_PHASES.open;
+  head.append(el("b", "", said.head));
+  card.append(head);
+  const body = el("div", "dbd");
+  // След на диске это про прошлое: у идущего разбора он говорил бы «груминга
+  // не было» ровно в тот момент, когда груминг идёт.
+  if (out.note && phase !== "running") {
+    body.append(el("div", phase === "error" ? "error" : "dsay", out.note));
+  }
+  if (phase === "deferred" && out.reason) {
+    body.append(el("div", "dwhy", "Причина: " + out.reason));
+  }
+  body.append(el("div", "hint", said.next));
+  if (phase === "row") {
+    const go = el("button", "btn btn-sm", "Открыть задачу " + id);
+    go.addEventListener("click", () => { location.hash = project + "/" + id; });
+    body.append(go);
+  }
+  if (phase === "attached" && out.task) {
+    const go = el("button", "btn btn-sm", "Открыть задачу " + out.task);
+    go.addEventListener("click", () => { location.hash = project + "/" + out.task; });
+    body.append(go);
+  }
+  card.append(body);
+  return card;
+}
+
+// Карточка вопроса: последнее слово агента разметкой, поле уточнения и
+// повторная ходка. Поле стоит только здесь: изображать ввод в идущую сессию
+// дашборду нечем, и подпись под полем говорит это прямо.
+function draftAskCard(project, id, question) {
+  const card = el("div", "card dcard");
+  const head = el("div", "phd");
+  head.append(el("b", "", "Вопрос груминга"));
+  card.append(head);
+  const body = el("div", "dbd");
+  body.append(mdRender(question));
+  body.append(el("div", "dwhy", "Что ответить грумингу"));
+  const field = el("textarea", "dask");
+  field.placeholder = "Уточнение для новой ходки груминга";
+  body.append(field);
+  body.append(el("div", "hint", DRAFT_ASK_HINT));
+  const again = el("button", "btn btn-acc", "Повторить груминг");
+  again.addEventListener("click", () => {
+    again.disabled = true;
+    groomDraft(project, id, field.value.trim()).then((ok) => {
+      again.disabled = false;
+      if (ok) {
+        field.value = "";
+        refresh().catch(console.error);
+      }
+    }).catch((err) => { again.disabled = false; console.error(err); });
+  });
+  body.append(again);
+  card.append(body);
+  return card;
+}
+
+// Удаление с подтверждением на месте: строка с полем причины раскрывается там
+// же, где стояла кнопка. Модальных окон в дашборде нет, а причина обязательна
+// и здесь, и у самой утилиты.
+function draftDropCard(project, id) {
+  const card = el("div", "card dcard");
+  const head = el("div", "phd");
+  head.append(el("b", "", "Удаление записи"));
+  card.append(head);
+  const body = el("div", "dbd");
+  const start = el("button", "btn btn-danger", "Удалить");
+  const box = el("div", "dconfirm");
+  box.hidden = true;
+  const why = el("input", "dwhyin");
+  why.type = "text";
+  why.placeholder = "Чем запись протухла";
+  const go = el("button", "btn btn-sm btn-danger", "Удалить черновик");
+  const no = el("button", "btn btn-sm", "Отмена");
+  box.append(why, go, no);
+  body.append(start, box, el("div", "hint", DRAFT_DROP_HINT));
+  start.addEventListener("click", () => {
+    box.hidden = false;
+    start.hidden = true;
+    why.focus();
+  });
+  no.addEventListener("click", () => {
+    box.hidden = true;
+    start.hidden = false;
+    why.value = "";
+  });
+  go.addEventListener("click", () => {
+    const reason = why.value.trim();
+    if (!reason) {
+      // Отказ виден там же, где поле: причина уезжает в коммит, и пустой она
+      // не бывает ни здесь, ни у утилиты.
+      sayResult("жду причину: она уезжает в коммит доски, и без неё черновик не удаляется", true);
+      why.focus();
+      return;
+    }
+    go.disabled = true;
+    dropDraft(project, id, reason).then((ok) => {
+      go.disabled = false;
+      if (ok) {
+        box.hidden = true;
+        start.hidden = false;
+        why.value = "";
+        refresh().catch(console.error);
+      }
+    }).catch((err) => { go.disabled = false; console.error(err); });
+  });
+  card.append(body);
+  return card;
+}
+
+// Ход груминга: тот же снимок tmux-сессии, что на экране агента, второго
+// механизма живого хвоста не заводится. Карточка собирается один раз на заход
+// и живёт своим опросом: поднявшийся груминг она видит сама, а пересборка
+// оборвала бы хвост на каждом обновлении экрана.
+function draftRunCard(id) {
+  const card = el("div", "card tmuxbar dcol-run");
+  const head = el("div", "phd");
+  head.append(el("b", "", "Ход груминга"));
+  const sub = el("span", "", "");
+  head.append(sub);
+  card.append(head);
+  wireTmux(id, card, sub);
+  return card;
+}
+
+function draftTextCard(text) {
+  const card = el("div", "card pane dcol-text");
+  const head = el("div", "phd");
+  head.append(el("b", "", "Текст записи"));
+  const sub = el("span", "", text.ok ? (text.body.file || "") : "");
+  head.append(sub);
+  const body = el("div", "pbd");
+  if (text.ok) {
+    const pre = el("pre", "log");
+    pre.textContent = text.body.text || "";
+    body.append(pre);
+  } else {
+    // Пропавший файл это не поломка экрана, а след исхода: груминг мог увести
+    // запись строкой, припиской или удалением, и сказано это словами сервера.
+    body.append(el("div", "empty", text.body.error || "текст записи не прочитался"));
+  }
+  card.append(head, body);
+  return card;
+}
+
+async function renderDraft(project, works, id) {
+  const groups = document.getElementById("groups");
+  const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
+  const [text, outcome] = await Promise.all([api(base), api(base + "/outcome")]);
+  // Неотвеченный исход не выдаётся за «груминга не было»: молчание сервера и
+  // нетронутая запись это разные вещи, и причина отказа видна словами.
+  const out = outcome.ok ? outcome.body : { note: outcome.body.error || "исход груминга не прочитался" };
+  const running = Boolean((works || []).find((w) => w.id === id));
+  const phase = outcome.ok ? draftPhase(out, running) : "error";
+  const kept = phase === "open" || phase === "deferred" || phase === "question";
+  const title = text.ok ? String(text.body.text || "").split("\n").find((ln) => ln.trim()) || "" : "";
+
+  const items = [{
+    key: "draft-crumb",
+    sign: project,
+    make: () => {
+      const crumb = el("div", "crumb");
+      const back = el("span", "crumb-back", "Черновики " + project);
+      back.addEventListener("click", () => { location.hash = project + "/drafts"; });
+      crumb.append(back);
+      return crumb;
+    },
+  }, {
+    key: "draft-head",
+    sign: [id, title, phase].join("|"),
+    make: () => {
+      const head = el("div", "ahead");
+      if (running) head.append(el("span", "dot pulse"));
+      head.append(el("h2", title ? "wtitle" : "", title || id));
+      if (title) head.append(el("span", "wname", id));
+      if (running) {
+        head.append(el("span", "chip c-check", "груминг идёт в tmux-сессии task-" + id));
+        const stop = withTip(el("button", "btn btn-danger", "Остановить груминг"), STOP_TIP);
+        stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+        head.append(stop);
+      } else if (kept) {
+        const groom = el("button", "btn btn-acc", "Провести груминг");
+        groom.addEventListener("click", () => {
+          groom.disabled = true;
+          groomDraft(project, id).then((ok) => {
+            groom.disabled = false;
+            if (ok) refresh().catch(console.error);
+          }).catch((err) => { groom.disabled = false; console.error(err); });
+        });
+        head.append(groom);
+      }
+      return head;
+    },
+  }];
+
+  // Колонки живут в одной сетке: ход груминга держит живой опрос и на
+  // обновлении не пересобирается, а исход и текст перерисовываются, когда
+  // ответ сервера разошёлся с нарисованным.
+  const columns = [{
+    key: "draft-col-out",
+    sign: [phase, JSON.stringify(out)].join("|"),
+    make: () => {
+      const col = el("div", "dcol-out");
+      col.append(draftOutcomeCard(project, id, out, phase));
+      if (phase === "question") col.append(draftAskCard(project, id, out.question));
+      if (kept) col.append(draftDropCard(project, id));
+      return col;
+    },
+  }, {
+    key: "draft-col-run",
+    sign: "",
+    make: () => draftRunCard(id),
+  }, {
+    key: "draft-col-text",
+    sign: [text.ok, text.ok ? text.body.text : text.body.error].join("|"),
+    make: () => draftTextCard(text),
+  }];
+  const fillGrid = (box) => { sync(box, columns); };
+  items.push({
+    key: "draft-grid-" + id,
+    sign: columns.map((col) => col.key + "=" + col.sign).join("\n"),
+    make: () => {
+      const box = el("div", "dgrid");
+      fillGrid(box);
+      return box;
+    },
+    fill: fillGrid,
+  });
   sync(groups, items);
 }
 
@@ -3997,7 +4291,7 @@ function screenKey(rt) {
   // Запрос в ключ не входит: набор буквы это не переход на другой экран, и
   // выдача обязана перерисоваться по месту, а не собраться заново под пальцем.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
-    rt.agent, rt.chat, rt.find].join("|");
+    rt.agent, rt.chat, rt.find, rt.draft].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те
@@ -4021,9 +4315,10 @@ async function paint() {
   // Живые потоки закрываются при уходе с экрана, а не на каждом обновлении:
   // чат свою ленту, очередь исходящих и поле ввода переживает целиком, и
   // рвать ради перечитанной доски поток событий незачем (DK-316). Экран агента
-  // держит так же журнал, ленту разговора и снимок tmux (DK-290). Остальные
-  // экраны собираются заново, и их потоки перед сборкой снимаются.
-  if (screen !== shownScreen || !(rt.chat || rt.agent)) closeAgentLive();
+  // держит так же журнал, ленту разговора и снимок tmux (DK-290), а экран
+  // черновика снимок tmux с ходом груминга. Остальные экраны собираются
+  // заново, и их потоки перед сборкой снимаются.
+  if (screen !== shownScreen || !(rt.chat || rt.agent || rt.draft)) closeAgentLive();
   shownScreen = screen;
   const { body } = await api("/api/projects");
   const projects = body.projects || [];
@@ -4092,6 +4387,14 @@ async function paint() {
     document.getElementById("psub").textContent = "поиск задач";
     markNav(rt);
     await renderFind(current.name, rt.q);
+    return;
+  }
+  if (rt.draft && rt.id) {
+    // Экрану записи доска тоже не нужна: идущий груминг виден среди живых
+    // работ проекта, а исход разбора читает своей ручкой сервер.
+    document.getElementById("psub").textContent = "черновик " + rt.id;
+    markNav(rt);
+    await renderDraft(current.name, current.works, rt.id);
     return;
   }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");

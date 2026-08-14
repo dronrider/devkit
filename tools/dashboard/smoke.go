@@ -49,6 +49,9 @@ const (
 	// закрытие мимо витка. Вид приёмки она носит суффиксом заголовка, а до
 	// дашборда он доезжает полем accept ответа taskctl.
 	smokeAccepted = "XR-003"
+	// smokeDraft это запись накопителя: на ней проверяется удаление черновика с
+	// экрана, до которого раньше приходилось идти в терминал.
+	smokeDraft = "XR-009"
 )
 
 // Подписки стенда. Имена выдуманные, живых тут нет ни одного: в коде дашборда
@@ -124,6 +127,13 @@ const smokeArchiveDoc = `# Синтетический архив smoke
 | ID | Задача | Тип | P | Закрыто | Ссылка |
 |--------|--------|-----|---|---------|--------|
 | XR-001 | Закрытая до прогона | task | P2 | 2026-01-01 | - |
+`
+
+// smokeDraftDoc это запись накопителя из одного слова: ровно такой мусор с
+// доски и снимают, а до дашборда снять его можно было только терминалом.
+const smokeDraftDoc = `show
+
+записан 2026-01-03
 `
 
 // smokeStep это шаг цепочки DoD: имя для вывода и сама проверка, которая
@@ -226,7 +236,28 @@ func (s *smoke) fixtures() error {
 	taskctl := fmt.Sprintf(`board=%s
 doc=%s
 arch=%s
+drafts=%s
 printf '%%s\n' "$*" >> %s
+case "$1 $2" in
+"draft list")
+  printf '{"drafts":['
+  first=1
+  for f in "$drafts"/*.md; do
+    [ -e "$f" ] || continue
+    id=$(basename "$f" .md)
+    [ $first = 1 ] || printf ','
+    first=0
+    printf '{"id":"%%s","title":"%%s","age_words":"сегодня"}' "$id" "$(head -1 "$f")"
+  done
+  printf ']}\n'
+  exit 0
+  ;;
+"draft drop")
+  rm -f "$drafts/$3.md"
+  printf '%%s удалён как протухший: %%s\n' "$3" "$5"
+  exit 0
+  ;;
+esac
 case "$1" in
 close)
   cp "$board.closed" "$board"
@@ -239,7 +270,8 @@ close)
   cat "$board"
   ;;
 esac
-`, shQuote(s.boardFile()), shQuote(s.boardDoc()), shQuote(s.archiveDoc()), shQuote(s.callsFile()))
+`, shQuote(s.boardFile()), shQuote(s.boardDoc()), shQuote(s.archiveDoc()),
+		shQuote(s.draftsDir()), shQuote(s.callsFile()))
 	for name, body := range map[string]string{
 		"taskctl": taskctl,
 		"tmux": fmt.Sprintf(`list=%s
@@ -356,14 +388,16 @@ func smokeClientBody(runs, name string) string {
 
 // Файлы стенда, которые правит фикстура taskctl: доска машинным видом, файл
 // доски проекта, архив и журнал вызовов утилиты.
-func (s *smoke) boardFile() string  { return filepath.Join(s.dir, "board.json") }
+func (s *smoke) boardFile() string { return filepath.Join(s.dir, "board.json") }
 
 // runsFile это журнал поднятых сессий: строка команды, строка agentctl exec и
 // строка клиента, который в итоге поднялся.
-func (s *smoke) runsFile() string { return filepath.Join(s.dir, "runs.log") }
+func (s *smoke) runsFile() string   { return filepath.Join(s.dir, "runs.log") }
 func (s *smoke) callsFile() string  { return filepath.Join(s.dir, "taskctl.calls") }
 func (s *smoke) boardDoc() string   { return filepath.Join(s.proj, "docs", "TASKS.md") }
 func (s *smoke) archiveDoc() string { return filepath.Join(s.proj, "docs", "TASKS-archive.md") }
+func (s *smoke) draftsDir() string  { return filepath.Join(s.proj, "docs", "tasks", "drafts") }
+func (s *smoke) draftFile() string  { return filepath.Join(s.draftsDir(), smokeDraft+".md") }
 
 // pyQuote квотит строку для python-фикстуры.
 func pyQuote(s string) string {
@@ -385,6 +419,9 @@ func newSmoke(dir string) (*smoke, error) {
 		return nil, err
 	}
 	if err := smokeWrite(filepath.Join(s.proj, "docs", "TASKS-archive.md"), smokeArchiveDoc, 0o644); err != nil {
+		return nil, err
+	}
+	if err := smokeWrite(s.draftFile(), smokeDraftDoc, 0o644); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(s.bin, 0o755); err != nil {
@@ -1142,6 +1179,65 @@ func (s *smoke) stepHarnessRun() (string, error) {
 		v.Message, smokeClientTwo, refusal.Error), nil
 }
 
+// stepDropDraft: черновик снимается с экрана, а не из терминала. Причина
+// обязательна и здесь, и у утилиты: файла после команды нет, и живёт причина
+// сообщением коммита доски, поэтому шаг сначала жмёт удаление без причины и
+// ждёт отказа, а потом сверяет вызов утилиты по журналу фикстуры и пропажу
+// файла синтетического накопителя.
+func (s *smoke) stepDropDraft() (string, error) {
+	path := "/api/projects/demo/drafts/" + smokeDraft
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("DELETE", path, `{"reason": ""}`, http.StatusBadRequest, &refusal); err != nil {
+		return "", err
+	}
+	if !strings.Contains(refusal.Error, "причину") {
+		return "", fmt.Errorf("удаление без причины отбито выдуманной причиной: %s", refusal.Error)
+	}
+	if _, err := os.Stat(s.draftFile()); err != nil {
+		return "", fmt.Errorf("отбитый запрос всё равно тронул файл черновика: %v", err)
+	}
+	reason := "след промаха мимо подкоманды, разбирать нечего"
+	var v struct {
+		Message string `json:"message"`
+		Note    string `json:"note"`
+	}
+	if err := s.call("DELETE", path, fmt.Sprintf(`{"reason": %q}`, reason), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(s.draftFile()); !os.IsNotExist(err) {
+		return "", fmt.Errorf("файл черновика остался на месте: %v", err)
+	}
+	calls, err := os.ReadFile(s.callsFile())
+	if err != nil {
+		return "", err
+	}
+	if want := "draft drop " + smokeDraft + " --reason " + reason; !strings.Contains(string(calls), want) {
+		return "", fmt.Errorf("taskctl draft drop позван не так, вызовы утилиты: %s", strings.TrimSpace(string(calls)))
+	}
+	// Исход груминга по следам: черновика нет, строки на доске нет, приписки
+	// нет, и ручка исхода обязана назвать это удалением, а не молчать.
+	var out struct {
+		State string `json:"state"`
+		Note  string `json:"note"`
+	}
+	if err := s.call("GET", path+"/outcome", "", http.StatusOK, &out); err != nil {
+		return "", err
+	}
+	if out.State != draftStateDropped {
+		return "", fmt.Errorf("исход удалённого черновика приехал как %q: %s", out.State, out.Note)
+	}
+	git := "коммит доски прошёл"
+	if v.Note != "" {
+		// Синтетический проект не репозиторий: важно, что провал коммита назван
+		// словами, а не проглочен.
+		git = "удаление на месте, git назван словами"
+	}
+	return fmt.Sprintf("%s; отказ без причины: %s; %s; исход по следам: %s",
+		v.Message, refusal.Error, git, out.Note), nil
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -1197,6 +1293,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"сообщение при стоящем цикле", s.stepIdleMessage},
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 		{"выбор подписки доезжает до команды", s.stepHarnessRun},
+		{"удаление черновика с причиной", s.stepDropDraft},
 	}
 	for i, st := range steps {
 		note, err := st.run()

@@ -278,9 +278,22 @@ a:hover{text-decoration:underline}
 .hit{background:var(--acc);color:var(--bg0);border-radius:3px;padding:0 1px}
 .fquote{margin-top:4px;font:400 12px/1.45 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere}
 .srow .st.fst{white-space:normal;overflow:visible}
-.dtext{padding:0 16px 14px}
-.dtext .fhead{font:500 11.5px var(--mono);color:var(--tx3);padding:0 0 6px;border:none}
-.dtext .log{margin:0;white-space:pre-wrap;background:var(--bg0);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;max-height:40vh;overflow:auto}
+
+/* экран черновика (#проект/draft/<ID>, макет DK-328): текст записи слева,
+   исход груминга и ход разбора справа. На телефоне порядок переставлен
+   областями сетки: исход сверху, текст записи последним */
+.dgrid{display:grid;grid-template-columns:1fr 1.1fr;grid-template-areas:"text out" "text run";gap:18px;margin-top:18px;align-items:start}
+.dcol-text{grid-area:text}
+.dcol-out{grid-area:out;display:flex;flex-direction:column;gap:14px}
+.dcol-run{grid-area:run;margin-top:0}
+.dcol-text .pbd{max-height:60vh}
+.dcol-text .log{white-space:pre-wrap}
+.dcard .dbd{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:14px 18px}
+.dsay{font:400 12.5px/1.6 var(--sans);color:var(--tx2)}
+.dwhy{font:500 12.5px/1.6 var(--sans);color:var(--tx)}
+.dask{width:100%;min-height:76px;resize:vertical;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg0);color:var(--tx);font:400 13px/1.55 var(--sans)}
+.dconfirm{display:flex;align-items:center;gap:9px;flex-wrap:wrap;width:100%}
+.dwhyin{flex:1;min-width:160px;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
 /* главная: список проектов карточкой */
 .prow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
@@ -524,6 +537,10 @@ a:hover{text-decoration:underline}
   .seg .on{background:var(--bg3);color:var(--tx)}
   .agrid .pane{display:none}
   .agrid .pane.onpane{display:flex}
+  /* телефон: с записи чаще смотрят, чем читают её, поэтому исход груминга идёт
+     сверху, за ним ход разбора, а текст записи последним */
+  .dgrid{grid-template-columns:1fr;grid-template-areas:"out" "run" "text";gap:14px;margin-top:12px}
+  .dcol-text .pbd{max-height:44vh}
   /* телефон: доска, номер и статус одной строкой, заголовок под ними во всю
      ширину */
   .crumb{gap:8px;padding-top:14px;flex-wrap:nowrap;min-width:0;overflow:hidden}

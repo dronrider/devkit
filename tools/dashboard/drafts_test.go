@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -394,6 +395,15 @@ func TestDraftOutcomeTraces(t *testing.T) {
 		t.Errorf("дата пометки не приехала: %v", got)
 	}
 
+	// Похожая на пометку строка в свободном тексте записи исходом не считается:
+	// «отложен» ставит разбор разделом «Грумминг», а не человек прозой.
+	sneaky := makeDraft(t, c, e, "мысль про откладывание\n\nв прошлый раз пометка "+
+		"выглядела так:\n- 2026-08-10, отложен: ждём смежника")
+	got = draftOutcomeResp(t, c, e, sneaky)
+	if got["state"] != "open" {
+		t.Errorf("строка посреди прозы сошла за пометку разбора: %v", got)
+	}
+
 	// Приписан: текст уехал разделом в файл стоящей задачи, и в ответе стоит
 	// номер приёмника, а не одно «черновика нет».
 	attached := makeDraft(t, c, e, "то же самое, что XR-002")
@@ -479,6 +489,67 @@ func TestDraftGroomAsk(t *testing.T) {
 	want := "claude -p 'Проведи груминг " + id + ". Человек уточняет: оставить эту, вторую снять'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
+	}
+}
+
+// Уточнение это свободный текст человека, и до сессии он едет через shell:
+// tmux склеивает хвост new-session пробелами и отдаёт строку шеллу. Кавычка и
+// обратные кавычки в уточнении не должны ни рвать команду, ни исполняться,
+// поэтому заказ из журнала фикстуры разбирается настоящим shell, а не глазами
+// (замечание ревью DK-321).
+func TestDraftGroomAskQuoting(t *testing.T) {
+	e, c, _ := draftsEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	id := makeDraft(t, c, e, "запись с непростым уточнением")
+
+	ask := "оставить 'эту', а `rm -rf /` не трогать"
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+		`{"ask": `+strconv.Quote(ask)+`}`)
+	if got := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг с уточнением в кавычках: %d %s", resp.StatusCode, got)
+	}
+	logged := readFile(t, tmuxLog)
+	cut := strings.LastIndex(logged, "claude -p ")
+	if cut < 0 {
+		t.Fatalf("сессия с заказом не поднялась:\n%s", logged)
+	}
+	quoted := strings.TrimSpace(logged[cut+len("claude -p "):])
+	// Тот же разбор, что сделает шелл tmux: заказ обязан прийти одной строкой и
+	// ровно тем текстом, который написал человек. Порванная цитата уронила бы
+	// сам shell, а неэкранированные обратные кавычки подставили бы сюда вывод
+	// команды.
+	out, err := exec.Command("sh", "-c", "printf '%s' "+quoted).Output()
+	if err != nil {
+		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
+	}
+	want := "Проведи груминг " + id + ". Человек уточняет: " + ask
+	if string(out) != want {
+		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
+	}
+}
+
+// Пометка «отложен» читается только в разделе «Грумминг»: запись это свободный
+// текст человека, и строка того же вида посреди прозы выдавала бы за исход
+// разбора то, чего разбор не ставил (замечание ревью DK-321).
+func TestDraftDeferredOnlyInGroomSection(t *testing.T) {
+	free := "мысль про откладывание\n\nв прошлый раз пометка выглядела так:\n" +
+		"- 2026-08-10, отложен: ждём смежника\n"
+	if when, reason := draftDeferred(free); when != "" || reason != "" {
+		t.Errorf("похожая строка в свободном тексте сошла за пометку: %q %q", when, reason)
+	}
+	marked := free + "\n" + draftGroomHeading + "\n\n- 2026-08-12, отложен: ждём повторного случая\n"
+	when, reason := draftDeferred(marked)
+	if when != "2026-08-12" || reason != "ждём повторного случая" {
+		t.Errorf("пометка раздела прочиталась как %q %q", when, reason)
+	}
+	// Раздел кончается следующим заголовком того же уровня, и строка за ним
+	// принадлежит уже не разбору.
+	after := "черновик\n\n" + draftGroomHeading + "\n\n- разбор заходил, исхода нет\n\n" +
+		"## Хвост\n\n- 2026-08-13, отложен: не отсюда\n"
+	if when, _ := draftDeferred(after); when != "" {
+		t.Errorf("строка за концом раздела сошла за пометку: %q", when)
 	}
 }
 

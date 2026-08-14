@@ -261,19 +261,37 @@ const (
 	draftStateDropped  = "dropped"
 )
 
-// deferredRe находит пометку об отложенном в разделе «Грумминг» файла
-// черновика. Формат ставит taskctl draft defer (tools/taskctl/groom.go), здесь
-// он только читается: дата и причина стоят в одной строке, и причина нужна
-// экрану целиком.
-var deferredRe = regexp.MustCompile(`(?m)^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен:\s*(.+)$`)
+// draftGroomHeading это заголовок раздела, в котором живёт пометка об
+// отложенном. Раздел пишет taskctl draft defer (tools/taskctl/groom.go), и
+// границы его те же: от заголовка до следующего заголовка второго уровня.
+const draftGroomHeading = "## Грумминг"
 
-// draftDeferred вынимает дату и причину пометки «отложен».
+// deferredRe находит пометку об отложенном. Формат ставит taskctl draft defer,
+// здесь он только читается: дата и причина стоят в одной строке, и причина
+// нужна экрану целиком.
+var deferredRe = regexp.MustCompile(`^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен:\s*(.+)$`)
+
+// draftDeferred вынимает дату и причину пометки «отложен». Ищется она только в
+// разделе «Грумминг»: сама запись это свободный текст человека, и строка того
+// же вида посреди прозы выдавала бы за исход разбора то, чего разбор не ставил
+// (замечание ревью DK-321).
 func draftDeferred(text string) (when, reason string) {
-	m := deferredRe.FindStringSubmatch(text)
-	if m == nil {
-		return "", ""
+	lines := strings.Split(text, "\n")
+	for i, ln := range lines {
+		if strings.TrimSpace(ln) != draftGroomHeading {
+			continue
+		}
+		for _, in := range lines[i+1:] {
+			if strings.HasPrefix(in, "## ") {
+				break
+			}
+			if m := deferredRe.FindStringSubmatch(strings.TrimSpace(in)); m != nil {
+				return m[1], strings.TrimSpace(m[2])
+			}
+		}
+		break
 	}
-	return m[1], strings.TrimSpace(m[2])
+	return "", ""
 }
 
 // draftAttachedTo ищет приёмника приписки: раздел «Из черновика <ID>» пишет

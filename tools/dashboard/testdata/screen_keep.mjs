@@ -261,13 +261,24 @@ for (let i = 2; i <= 9; i += 1) {
   rows.push(row("XR-" + i, "строка доски номер " + i));
 }
 
+// Признак идущей работы дописывает строкам сервер (boardRuns, tasks.go), и
+// игрушечный сервер повторяет ровно это: у строки с живой работой это то, чем
+// работа видна, у строки In progress без работы gone.
+function marked(list, key) {
+  return list.map((r) => {
+    const live = works().find((w) => w.id === r.id);
+    const run = live ? live.via : (key === "in-progress" ? "gone" : "");
+    return Object.assign({}, r, run ? { run } : {});
+  });
+}
+
 function boardBody() {
   return {
     board: {
       prefix: "XR",
       sections: [
-        { key: "in-progress", title: "In progress", rows: [rows[0]] },
-        { key: "backlog", title: "Backlog", rows: rows.slice(1) },
+        { key: "in-progress", title: "In progress", rows: marked([rows[0]], "in-progress") },
+        { key: "backlog", title: "Backlog", rows: marked(rows.slice(1), "backlog") },
       ],
     },
     works: works(),
@@ -427,10 +438,21 @@ if (find(groups, "card-backlog") !== card) {
   fail("карточка секции пересобрана заново, хотя строки в ней те же");
 }
 
+// Строка в работе, за которой не стоит живой сессии, помечена этим, а не
+// выглядит очередью: до DK-317 оборванный конвейер был неотличим от штатного
+// ожидания.
+const goalRow = find(groups, "XR-1");
+if (!dump(goalRow).includes("сессии нет")) {
+  fail("строка в работе без живой сессии ничем не помечена: " + dump(goalRow));
+}
+
 // Нажатие кнопки: строка обновляется на месте, экран не уезжает, а фокус
 // остаётся на той же строке.
 const untouched = find(groups, "XR-4");
 act.handlers.click({ stopPropagation: () => {} });
+if (!act.disabled) {
+  fail("нажатая кнопка осталась живой: второе нажатие уйдёт вторым запуском");
+}
 await settle();
 
 if (groups.scrollTop !== 240) {
@@ -443,9 +465,33 @@ const now = find(groups, "XR-3");
 if (!button(now, "Стоп")) {
   fail("строка не узнала о поднятой работе: " + dump(now));
 }
+if (!dump(now).includes("работает")) {
+  fail("у идущей работы в строке нет признака выполнения: " + dump(now));
+}
 if (doc.activeElement.textContent !== "Стоп") {
   fail("после нажатия фокус ушёл со строки: " + dump(doc.activeElement));
 }
+
+// Работа кончилась сама, и уведомитель сказал об этом: строка перечитывается
+// событием, а не фокусом окна. Без этого смена статуса доезжала до списка
+// только после ухода из окна и обратно.
+running = false;
+const bell = streams.find((s) => s.url.includes("/api/notifications"));
+if (!bell) fail("поток уведомлений не поднят: перечитывать доску событием нечем");
+bell.onmessage({
+  data: JSON.stringify({ time: "2099-01-01T00:00:00", project: "demo", kind: "stop", id: "XR-3" }),
+});
+await settle();
+const back = find(groups, "XR-3");
+if (!button(back, "Выполнить")) {
+  fail("событие уведомителя не перечитало строку: " + dump(back));
+}
+if (groups.scrollTop !== 240) {
+  fail("перечитывание по событию сбило прокрутку: " + groups.scrollTop + " вместо 240");
+}
+// Карточка самого события гаснет по своему таймеру: дальше стенд смотрит в том
+// же контейнере ответы на нажатие.
+for (const t of timers.splice(0)) t.fn();
 
 // Черновики: раскрытая запись и прокрутка переживают обновление.
 running = false;

@@ -50,6 +50,103 @@ type boardRow struct {
 	Notes   []string `json:"notes,omitempty"`
 	Sect    string   `json:"sect"`
 	Section string   `json:"section"`
+	// Run это признак идущей работы: чем работа видна (tmux, registry,
+	// session, теми же словами, что Via у живой работы) либо gone у строки в
+	// работе, за которой живой сессии нет. Пусто у стоящей задачи. Признак
+	// приезжает вместе со строкой, потому что собранный на клиенте из строки и
+	// списка работ он отвечал ровно на один вопрос, «есть ли сейчас работа с
+	// таким же ID», и оборванный конвейер в нём был неотличим от очереди.
+	Run string `json:"run,omitempty"`
+}
+
+// Признак идущей работы словами: tmux это сессия дашборда, её и снимает
+// «Стоп»; registry это цикл цели, поднятый другой сессией; session это
+// интерактивное окно человека; gone это строка в работе, за которой живой
+// сессии нет.
+const (
+	runGone = "gone"
+	sectRun = "in-progress"
+)
+
+// runMarks собирает живые работы по ID: работа без ID это интерактивная
+// сессия с неузнанной задачей, строки на доске у неё нет.
+func runMarks(works []Work) map[string]string {
+	live := map[string]string{}
+	for _, w := range works {
+		if w.ID != "" {
+			live[w.ID] = w.Via
+		}
+	}
+	return live
+}
+
+// rowRun называет признак строки: у живой работы это то, чем она видна, у
+// строки из In progress без живой работы gone. Оборванный конвейер иначе
+// выглядит штатной очередью: строка стоит в работе, кнопка предлагает
+// продолжить, и сказать, идёт ли кто-то по ней прямо сейчас, нечем (хвост
+// DK-314).
+func rowRun(live map[string]string, id, key string) string {
+	if via, hit := live[id]; hit {
+		return via
+	}
+	if key == sectRun {
+		return runGone
+	}
+	return ""
+}
+
+// boardRuns дописывает каждой строке ответа taskctl признак идущей работы.
+// Ответ пересобирается по общим картам, а не по типу boardRow: сервер отдаёт
+// доску как есть, и часть полей строки (дата правки, пометки) он не знает
+// вовсе, а разбор в типизированную строку их бы потерял. Неразобранный ответ
+// уезжает нетронутым: без признака строка рисуется по-старому, а вот без
+// доски экран пуст.
+func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+	var secs []map[string]json.RawMessage
+	if err := json.Unmarshal(doc["sections"], &secs); err != nil {
+		return raw
+	}
+	live := runMarks(works)
+	for _, sec := range secs {
+		var key string
+		json.Unmarshal(sec["key"], &key)
+		var rows []map[string]json.RawMessage
+		if err := json.Unmarshal(sec["rows"], &rows); err != nil {
+			return raw
+		}
+		for _, row := range rows {
+			var id string
+			json.Unmarshal(row["id"], &id)
+			run := rowRun(live, id, key)
+			if run == "" {
+				continue
+			}
+			mark, err := json.Marshal(run)
+			if err != nil {
+				return raw
+			}
+			row["run"] = mark
+		}
+		marked, err := json.Marshal(rows)
+		if err != nil {
+			return raw
+		}
+		sec["rows"] = marked
+	}
+	sections, err := json.Marshal(secs)
+	if err != nil {
+		return raw
+	}
+	doc["sections"] = sections
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // acceptUser это пользовательский вид приёмки: задачу принимает человек
@@ -219,6 +316,13 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
+	}
+	// Признак идущей работы едет строкой и сюда: экран задачи спрашивает о ней
+	// то же самое, что список, а доска в этот момент лежит в памяти процесса и
+	// второго подпроцесса taskctl не стоит.
+	if raw, err := s.projectBoard(found.Path); err == nil {
+		view, _ := parseBoardView(raw)
+		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), id, row.Sect)
 	}
 	resp := map[string]any{
 		"project": found.Name,

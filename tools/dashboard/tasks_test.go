@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -215,6 +216,35 @@ func depIDs(t *testing.T, task map[string]any, side string) []string {
 	return out
 }
 
+// boardSectionIDs отдаёт номера строк секции по порядку, как они пришли в
+// ответе доски.
+func boardSectionIDs(t *testing.T, text, key string) []string {
+	t.Helper()
+	var got struct {
+		Board struct {
+			Sections []struct {
+				Key  string `json:"key"`
+				Rows []struct {
+					ID string `json:"id"`
+				} `json:"rows"`
+			} `json:"sections"`
+		} `json:"board"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ доски не разобрался: %v\n%s", err, text)
+	}
+	ids := []string{}
+	for _, sec := range got.Board.Sections {
+		if sec.Key != key {
+			continue
+		}
+		for _, row := range sec.Rows {
+			ids = append(ids, row.ID)
+		}
+	}
+	return ids
+}
+
 // Правка заголовка, цены и одного слагаемого ранга: строка на доске меняется,
 // сумму R и бакет P пересчитывает taskctl, а Backlog переставляется по рангу.
 func TestTaskPatchRowAndRank(t *testing.T) {
@@ -248,11 +278,15 @@ func TestTaskPatchRowAndRank(t *testing.T) {
 	}
 
 	// Порядок строк выводится из ранга: XR-002 встала выше XR-001 сама.
+	// Считается он по разобранным строкам секции, а не по месту номера в
+	// тексте ответа: номер соседки стоит и в маркере зависимостей, и поиском по
+	// тексту порядок читался неверно.
 	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")
 	board := body(t, resp)
-	first, second := strings.Index(board, "XR-002"), strings.Index(board, "XR-001")
+	order := boardSectionIDs(t, board, "backlog")
+	first, second := slices.Index(order, "XR-002"), slices.Index(order, "XR-001")
 	if first < 0 || second < 0 || first > second {
-		t.Errorf("Backlog не отсортирован по рангу после правки: %s", board)
+		t.Errorf("Backlog не отсортирован по рангу после правки: %v\n%s", order, board)
 	}
 
 	git := readFile(t, gitLog)

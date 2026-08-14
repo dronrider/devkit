@@ -372,11 +372,16 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("ответ taskctl не разобрался: %v", err)})
 		return
 	}
+	// Живые работы едут и отдельным списком (его рисует полоса наверху экрана),
+	// и признаком в самих строках доски: полосе нужен список работ, а строке
+	// нужно знать про себя, и сводить одно к другому на клиенте значило
+	// собирать состояние строки из двух ответов сразу (DK-317).
+	works := s.liveWorks(found.Path, view.Prefix, raw)
 	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
-		"board":   raw,
-		"works":   s.liveWorks(found.Path, view.Prefix, raw),
+		"board":   boardRuns(raw, works),
+		"works":   works,
 		"errors":  []string{},
 	}
 	// Пустой список работ при ненайденном tmux это не «агенты не работают»,

@@ -342,8 +342,35 @@ function renderLive(project, works) {
   })));
 }
 
-function rowChips(row) {
+// Признак идущей работы стоит в самой строке и приезжает её полем (row.run):
+// клиент ничего не сводит со списком работ, потому что сведённый по ID признак
+// умел отвечать только про живую сессию с тем же номером, а строка в работе
+// без сессии выглядела штатной очередью. Слова признака: работа идёт либо
+// сессии за строкой нет.
+function runChip(row) {
+  if (row.run === "gone") return el("span", "chip", "сессии нет");
+  if (!row.run) return null;
+  const chip = el("span", "chip c-run");
+  chip.append(el("span", "dot pulse"), el("span", "", "работает"));
+  return chip;
+}
+
+function rowChips(project, row) {
   const chips = [];
+  // Признак работы стоит первым чипом: он про то, что происходит со строкой
+  // прямо сейчас, а тип с ценой про то, чем она заведена. У идущей работы чип
+  // ведёт на её живой статус: со строки туда не было хода вовсе.
+  const run = runChip(row);
+  if (run) {
+    if (row.run !== "gone") {
+      run.className += " clicky";
+      run.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        location.hash = project + "/agent/" + row.id;
+      });
+    }
+    chips.push(run);
+  }
   if (/^Цель:/.test(row.title)) chips.push(el("span", "chip c-goal", "цель"));
   if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
   if (row.p === "P0" || row.p === "P1") chips.push(el("span", "chip c-p1", row.p));
@@ -412,32 +439,37 @@ const SECT_WORD = {
 
 // Действие прямо со строки: поднять конвейер или снять живую сессию, не заходя
 // внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
-// ответ выходит в ту же строку результата.
-function rowAction(project, row, works, sect) {
-  const work = (works || []).find((w) => w.id === row.id);
-  if (work && work.via === "session") {
+// ответ выходит в ту же строку результата. Что со строкой сейчас, говорит её
+// признак работы, а не поиск по списку работ.
+function rowAction(project, row, sect) {
+  const live = row.run && row.run !== "gone";
+  if (row.run === "session") {
     return el("span", "stale", "интерактивная сессия");
   }
-  if (work && work.via !== "tmux") {
+  if (live && row.run !== "tmux") {
     return el("span", "stale", "ведёт другая сессия");
   }
-  if (!work && row.after && row.after.length) {
+  if (!live && row.after && row.after.length) {
     // Заблокированную маркером задачу конвейер брать не должен, и кнопка
     // говорит это сама: погашенная с причиной понятнее исчезнувшей.
     const wait = el("button", "btn btn-sm", actionLabel(sect));
     wait.disabled = true;
     return withTip(wait, "сначала " + row.after.join(", "));
   }
-  const btn = el("button", "btn btn-sm" + (work ? "" : " btn-acc"), work ? "Стоп" : actionLabel(sect));
+  const btn = el("button", "btn btn-sm" + (live ? "" : " btn-acc"), live ? "Стоп" : actionLabel(sect));
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    const call = work ? stopRun(project, row.id) : startRun(project, row.id);
-    call.catch(console.error);
+    // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
+    // второе нажатие уходило вторым запуском, а возвращалось отказом «работа
+    // уже идёт».
+    btn.disabled = true;
+    const call = live ? stopRun(project, row.id) : startRun(project, row.id);
+    call.catch(console.error).finally(() => { btn.disabled = false; });
   });
   return btn;
 }
 
-function renderRow(project, row, works, sect) {
+function renderRow(project, row, sect) {
   const tr = el("div", "trow");
   tr.append(el("span", "id", row.id));
   const tt = el("span", "tt");
@@ -446,7 +478,7 @@ function renderRow(project, row, works, sect) {
   // они уходят под него отдельной строкой, и заголовку достаётся вся ширина.
   // Рядом с заголовком они ширины не отдавали, и от длинного названия
   // оставался столбик обрубков.
-  const chips = rowChips(row);
+  const chips = rowChips(project, row);
   if (chips.length) {
     const box = el("span", "rchips");
     for (const chip of chips) box.append(chip);
@@ -462,18 +494,18 @@ function renderRow(project, row, works, sect) {
     meta.append(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
-  meta.append(rowAction(project, row, works, sect));
+  meta.append(rowAction(project, row, sect));
   tr.append(meta);
   tr.addEventListener("click", () => { location.hash = project + "/" + row.id; });
   return tr;
 }
 
-// Отпечаток строки доски: всё, из чего она нарисована, включая живую работу и
-// секцию, от которой идёт подпись кнопки. У строки, где не изменилось ничего,
-// узел переживает обновление нетронутым вместе с фокусом на кнопке.
-function rowSign(row, works, sect) {
-  const work = (works || []).find((w) => w.id === row.id);
-  return JSON.stringify(row) + "|" + sect + "|" + (work ? work.via : "");
+// Отпечаток строки доски: всё, из чего она нарисована, вместе с секцией, от
+// которой идёт подпись кнопки. Живая работа в отпечаток входит сама, полем
+// строки. У строки, где не изменилось ничего, узел переживает обновление
+// нетронутым вместе с фокусом на кнопке.
+function rowSign(row, sect) {
+  return JSON.stringify(row) + "|" + sect;
 }
 
 // Разделы доски на телефоне разложены по двум табам: In progress и Check это
@@ -553,7 +585,7 @@ function newTaskFab(project) {
   return btn;
 }
 
-function renderBoard(project, board, works) {
+function renderBoard(project, board) {
   const groups = document.getElementById("groups");
   const items = [{
     key: "board-tabs",
@@ -589,8 +621,8 @@ function renderBoard(project, board, works) {
     });
     const rows = sec.rows.map((row) => ({
       key: row.id,
-      sign: rowSign(row, works, key),
-      make: () => renderRow(project, row, works, key),
+      sign: rowSign(row, key),
+      make: () => renderRow(project, row, key),
     }));
     if (!rows.length) {
       rows.push({ key: "empty", sign: "", make: () => el("div", "empty", "Нет.") });
@@ -1161,6 +1193,10 @@ async function renderTask(project, works, id) {
   page.append(head);
 
   const chips = el("div", "tchips");
+  // Тот же признак работы, что и в строке списка, и теми же словами: решение
+  // «продолжить или не трогать» принимают чаще всего на этом экране.
+  const run = runChip(row);
+  if (run) chips.append(run);
   if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
   chips.append(pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); }));
   chips.append(pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); }));
@@ -3180,6 +3216,17 @@ function flashWorthy(n, since, onFeed) {
   return Boolean(n && n.time) && n.time > since && !onFeed;
 }
 
+// Событие уведомителя это и повод перечитать открытый список задач: статус
+// строки двигает агент у себя, и до списка это доезжало только по фокусу окна,
+// то есть после ухода из окна и обратно. Постоянного опроса при этом не
+// заводится, ход идёт на пришедшее событие своего проекта.
+function boardEcho(n) {
+  const rt = route();
+  if (!rt.proj || rt.id || rt.feed || rt.drafts || rt.make) return;
+  if (n && n.project && n.project !== rt.proj) return;
+  refresh().catch(console.error);
+}
+
 // Поток флеша живёт отдельно от экранов: он не закрывается при переходах,
 // иначе уведомление приходило бы только на ленте, где оно и так видно строкой.
 function wireFlash() {
@@ -3192,6 +3239,10 @@ function wireFlash() {
     } catch (err) {
       return;
     }
+    // Хвост журнала, который сервер отдаёт при подключении, доску не дёргает:
+    // перечитывать её на каждое вчерашнее событие значило бы гонять taskctl
+    // пачкой на ровном месте.
+    if (Boolean(n && n.time) && n.time > flashSince) boardEcho(n);
     if (!flashWorthy(n, flashSince, route().feed)) return;
     flashSince = n.time;
     // Точка на колокольчике загорается тем же событием: ждать фокуса окна,
@@ -3665,7 +3716,7 @@ async function paint() {
   }
   document.getElementById("psub").textContent =
     "доска docs/TASKS.md" + (board.prefix ? ", " + board.prefix : "");
-  renderBoard(current.name, board, r.body.works);
+  renderBoard(current.name, board);
 }
 
 function plural(n, one, few, many) {

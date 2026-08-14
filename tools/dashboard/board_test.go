@@ -48,11 +48,73 @@ func TestStaticBoardRowActions(t *testing.T) {
 	if strings.Contains(body, "api(") {
 		t.Error("rowAction ходит на сервер сам, мимо startRun и stopRun: ручка у запуска и стопа одна")
 	}
-	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowAction(project, row, works, sect)") {
+	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowAction(project, row, sect)") {
 		t.Error("строка доски рисуется без действия: за запуском снова придётся заходить внутрь задачи")
 	}
-	if !strings.Contains(funcBody(t, text, "function renderBoard("), "renderRow(project, row, works, key)") {
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), "renderRow(project, row, key)") {
 		t.Error("строка рисуется без своей секции: статус до кнопки не доходит, и действие снова одно на все")
+	}
+}
+
+// Что со строкой происходит сейчас, она знает сама: признак идущей работы
+// приезжает её полем (row.run), и ни действие, ни отпечаток строки не сводят
+// её со списком работ. Сведение по ID отвечало на один вопрос, «есть ли живая
+// сессия с таким же номером», и оборванный конвейер выглядел в нём очередью
+// (DK-317).
+func TestStaticRowRunFromRowData(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	act := funcBody(t, text, "function rowAction(")
+	for _, want := range []string{"row.run", `row.run === "session"`, `row.run !== "tmux"`} {
+		if !strings.Contains(act, want) {
+			t.Errorf("в rowAction нет %q: признак работы снова собирается на клиенте", want)
+		}
+	}
+	if strings.Contains(act, "works") {
+		t.Error("rowAction снова ищет работу в списке works: строка обязана знать про себя сама")
+	}
+	if sign := funcBody(t, text, "function rowSign("); strings.Contains(sign, "works") {
+		t.Error("отпечаток строки собран со списком работ: признак работы входит в него полем строки")
+	}
+	chip := funcBody(t, text, "function runChip(")
+	for _, want := range []string{`row.run === "gone"`, "сессии нет", "работает", `"dot pulse"`} {
+		if !strings.Contains(chip, want) {
+			t.Errorf("в признаке работы нет %q: идущая работа снова неотличима от оборванной", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "function rowChips("), "runChip(row)") {
+		t.Error("строка доски рисуется без признака работы: на экране его снова нет")
+	}
+}
+
+// Повторное нажатие того же действия невозможно: до ответа сервера кнопка
+// погашена. Пока строка выглядела прежней, второе нажатие уходило вторым
+// запуском и возвращалось отказом «работа уже идёт» (журнал дашборда,
+// 2026-08-13 21:21).
+func TestStaticRowActionGuardsSecondPress(t *testing.T) {
+	act := funcBody(t, readFile(t, filepath.Join("static", "app.js")), "function rowAction(")
+	for _, want := range []string{"btn.disabled = true", "btn.disabled = false"} {
+		if !strings.Contains(act, want) {
+			t.Errorf("в rowAction нет %q: второе нажатие снова уйдёт вторым запуском", want)
+		}
+	}
+}
+
+// Смена статуса доезжает до открытого списка задач событием уведомителя, а не
+// фокусом окна: статус двигает агент у себя, и до DK-317 узнать об этом можно
+// было, только уйдя из окна и вернувшись.
+func TestStaticBoardEchoOnNotification(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	echo := funcBody(t, text, "function boardEcho(")
+	for _, want := range []string{"rt.id", "n.project !== rt.proj", "refresh()"} {
+		if !strings.Contains(echo, want) {
+			t.Errorf("в boardEcho нет %q: перечитывание доски уходит не туда", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "function wireFlash("), "boardEcho(n)") {
+		t.Error("поток уведомлений не перечитывает доску: статус снова доедет только по фокусу окна")
+	}
+	if strings.Contains(text, "setInterval(() => { refresh()") {
+		t.Error("доска ушла в постоянный опрос: он ест батарею телефона, ход идёт на событие")
 	}
 }
 
@@ -473,6 +535,71 @@ func TestLiveWorksSkipsDerivedSession(t *testing.T) {
 	want := []string{"XR-004", "XR-112"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Errorf("работы %v, ожидал %v: производная сессия конвейера стала лишней карточкой", ids, want)
+	}
+}
+
+// boardRunRow это строка ответа доски, как её читает тест: признак идущей
+// работы, который дописывает сервер, и поля от taskctl, по которым видно, что
+// разметка провезла строку целиком.
+type boardRunRow struct {
+	ID     string `json:"id"`
+	Run    string `json:"run"`
+	RParts []int  `json:"r_parts"`
+	Link   string `json:"link"`
+}
+
+func boardRows(t *testing.T, e *testEnv) map[string]boardRunRow {
+	t.Helper()
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/board", "")
+	var got struct {
+		Board struct {
+			Sections []struct {
+				Rows []boardRunRow `json:"rows"`
+			} `json:"sections"`
+		} `json:"board"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]boardRunRow{}
+	for _, sec := range got.Board.Sections {
+		for _, r := range sec.Rows {
+			rows[r.ID] = r
+		}
+	}
+	return rows
+}
+
+// Строка доски несёт признак идущей работы своим полем: у работы с
+// tmux-сессией дашборда это tmux (по нему строка и рисует «Стоп»), у строки в
+// работе без живой сессии gone, у стоящей задачи признака нет вовсе. До
+// DK-317 признака в строке не было, и клиент сводил её со списком работ по ID:
+// такое сведение отвечало только про живую сессию с тем же номером, а
+// оборванный конвейер выглядел в нём штатной очередью.
+func TestBoardRowsCarryRun(t *testing.T) {
+	e, _, _ := runsEnv(t, "task-XR-004\t1\t1786000000\n")
+	rows := boardRows(t, e)
+	want := map[string]string{"XR-004": "tmux", "XR-100": "gone", "XR-003": "", "XR-002": ""}
+	for id, run := range want {
+		if got, hit := rows[id]; !hit || got.Run != run {
+			t.Errorf("признак работы строки %s %q, ожидал %q", id, got.Run, run)
+		}
+	}
+	// Разметка идёт по строке ответа taskctl, а не по разбору в свой тип:
+	// поля, которых сервер не знает, обязаны доехать до клиента целыми.
+	if got := rows["XR-004"]; len(got.RParts) != 5 || got.Link != "-" {
+		t.Errorf("строка XR-004 после разметки: r_parts %v, link %q, ожидал строку целиком", got.RParts, got.Link)
+	}
+}
+
+// Цикл цели, поднятый другой сессией, виден строке тем же признаком: работа
+// идёт, но tmux-сессии дашборда за ней нет, и стоп ей со строки не достаётся.
+func TestBoardRowRunFromRegistry(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", "echo '"+strings.ReplaceAll(runsBoardJSON, "XR-100", "XR-112")+"'")
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	if got := boardRows(t, e)["XR-112"].Run; got != "registry" {
+		t.Errorf("признак работы цели из реестра %q, ожидал registry", got)
 	}
 }
 

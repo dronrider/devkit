@@ -200,6 +200,10 @@ a:hover{text-decoration:underline}
 .dadd{display:flex;gap:10px;padding:8px 14px 12px 18px}
 .dadd input{flex:1;min-width:0;height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:500 12.5px var(--mono)}
 .c-run{background:color-mix(in oklab,var(--run) 16%,transparent);color:var(--run)}
+/* чип идущей работы уводит на её живой статус, и палец обязан видеть, что это
+   не подпись */
+.chip.clicky{cursor:pointer}
+.chip.clicky:hover{background:color-mix(in oklab,var(--run) 26%,transparent)}
 
 /* строки задач: сетка на ноутбуке, две строки на телефоне */
 .shead{display:flex;align-items:baseline;gap:9px;padding:22px 4px 9px;font:600 13px var(--sans);color:var(--tx)}

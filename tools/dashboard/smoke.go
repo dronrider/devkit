@@ -423,6 +423,9 @@ type smokeBoard struct {
 			Rows []struct {
 				ID    string `json:"id"`
 				Title string `json:"title"`
+				// Run это признак идущей работы в самой строке: по нему строка
+				// рисует «Стоп» и отличает оборванную работу от очереди.
+				Run string `json:"run"`
 			} `json:"rows"`
 		} `json:"sections"`
 	} `json:"board"`
@@ -477,7 +480,29 @@ func (s *smoke) stepBoard() (string, error) {
 	if len(v.Works) != 0 {
 		return "", fmt.Errorf("до запуска работ быть не должно, пришло %d", len(v.Works))
 	}
-	return fmt.Sprintf("секции %v, строк %d, работ нет", list.Projects[0].Sections, len(rows)), nil
+	// Признак идущей работы приезжает в самой строке: до запуска цель стоит в
+	// работе без живой сессии, и строка обязана сказать это словом gone, а не
+	// выглядеть штатной очередью. Задача в Backlog остаётся без признака.
+	if run := boardRun(v, smokeGoal); run != "gone" {
+		return "", fmt.Errorf("признак работы строки %s %q, до запуска ждал gone", smokeGoal, run)
+	}
+	if run := boardRun(v, smokeTask); run != "" {
+		return "", fmt.Errorf("строка %s в Backlog помечена работой %q", smokeTask, run)
+	}
+	return fmt.Sprintf("секции %v, строк %d, работ нет, строка цели помечена «сессии нет»",
+		list.Projects[0].Sections, len(rows)), nil
+}
+
+// boardRun достаёт признак идущей работы из строки доски.
+func boardRun(v smokeBoard, id string) string {
+	for _, sec := range v.Board.Sections {
+		for _, row := range sec.Rows {
+			if row.ID == id {
+				return row.Run
+			}
+		}
+	}
+	return ""
 }
 
 // stepStart: запуск работы, второй пункт DoD.
@@ -498,15 +523,20 @@ func (s *smoke) stepStart() (string, error) {
 }
 
 // stepWorks: поднятая работа видна доской как живая, и остановить её можно
-// только зная это.
+// только зная это. Знает про неё и сама строка: признак в её данных это то, по
+// чему список задач рисует пометку и «Стоп» (DK-317).
 func (s *smoke) stepWorks() (string, error) {
 	v, err := s.board()
 	if err != nil {
 		return "", err
 	}
+	if run := boardRun(v, smokeGoal); run != "tmux" {
+		return "", fmt.Errorf("признак работы строки %s %q, после запуска ждал tmux: "+
+			"строка списка снова не знает про идущую работу", smokeGoal, run)
+	}
 	for _, w := range v.Works {
 		if w.ID == smokeGoal && w.Kind == "goal" && w.Via == "tmux" {
-			return fmt.Sprintf("работа %s ведётся tmux-сессией goal-%s", w.ID, w.ID), nil
+			return fmt.Sprintf("работа %s ведётся tmux-сессией goal-%s, строка помечена признаком tmux", w.ID, w.ID), nil
 		}
 	}
 	return "", fmt.Errorf("поднятой работы %s в списке живых нет: %+v", smokeGoal, v.Works)
@@ -781,7 +811,10 @@ func (s *smoke) stepStop() (string, error) {
 	if len(board.Works) != 0 {
 		return "", fmt.Errorf("после стопа работа всё ещё живая: %+v", board.Works)
 	}
-	return "сессия снята, строка про стоп в журнале цикла, живых работ нет", nil
+	if run := boardRun(board, smokeGoal); run != "gone" {
+		return "", fmt.Errorf("признак работы строки %s после стопа %q, ждал gone", smokeGoal, run)
+	}
+	return "сессия снята, строка про стоп в журнале цикла, живых работ нет, строка снова помечена «сессии нет»", nil
 }
 
 // stepFeedStop: уведомление о стопе доезжает в открытую ленту, последний

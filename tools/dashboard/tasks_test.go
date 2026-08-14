@@ -1009,29 +1009,7 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 				"а обход табом идёт по разметке, и они расходятся", gone)
 		}
 	}
-	dir := t.TempDir()
-	page := filepath.Join(dir, "task.html")
-	html := readFile(t, filepath.Join("static", "index.html"))
-	if html == "" {
-		t.Fatal("static/index.html не прочитан")
-	}
-	css, err := filepath.Abs(filepath.Join("static", "style.css"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	probe, err := filepath.Abs(filepath.Join("testdata", "task_narrow.js"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	html = strings.Replace(html, "/assets/style.css", "file://"+css, 1)
-	html = strings.Replace(html, `<script type="module" src="/assets/app.js"></script>`,
-		`<script src="file://`+probe+`"></script>`, 1)
-	if !strings.Contains(html, probe) {
-		t.Fatal("замерочный скрипт не встал на место app.js: разметка index.html разъехалась с тестом")
-	}
-	if err := os.WriteFile(page, []byte(html), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	dir, page := chromeStand(t, "task_narrow.js")
 
 	narrow := chromeMeasure(t, chrome, dir, page, "390,844", "under")
 	if narrow["screen"] != 390 {
@@ -1106,6 +1084,38 @@ func findChrome() string {
 		return found[len(found)-1]
 	}
 	return ""
+}
+
+// chromeStand собирает страницу замера: настоящий index.html со своими стилями,
+// а вместо статики стенд из testdata. Страница берётся рабочая, потому что
+// замер должен считать тот же каскад, что и браузер человека; своя разметка
+// вокруг стенда врала бы отступами шапки и нижних вкладок.
+func chromeStand(t *testing.T, probeName string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	page := filepath.Join(dir, "stand.html")
+	html := readFile(t, filepath.Join("static", "index.html"))
+	if html == "" {
+		t.Fatal("static/index.html не прочитан")
+	}
+	css, err := filepath.Abs(filepath.Join("static", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := filepath.Abs(filepath.Join("testdata", probeName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html = strings.Replace(html, "/assets/style.css", "file://"+css, 1)
+	html = strings.Replace(html, `<script type="module" src="/assets/app.js"></script>`,
+		`<script src="file://`+probe+`"></script>`, 1)
+	if !strings.Contains(html, probe) {
+		t.Fatal("замерочный скрипт не встал на место app.js: разметка index.html разъехалась с тестом")
+	}
+	if err := os.WriteFile(page, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, page
 }
 
 // chromeMeasure открывает страницу стенда в заданном окне и поднимает замеры

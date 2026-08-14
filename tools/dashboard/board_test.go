@@ -535,3 +535,132 @@ func TestScreenKeepsPlaceOnRefresh(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Доска на телефоне: заголовок строки идёт словами во всю ширину, чипы стоят
+// под ним, разделы переключаются полосой в одну строку, а заведение задачи
+// сидит плавающим плюсом над нижними вкладками. Предмет проверки это ширины и
+// края, а не написанное в стилях: заголовок схлопывался не одним правилом, а
+// сложением флекса с чипами, которые ширину не отдают, и разбор правил такую
+// поломку уже пропускал (DK-284). Поэтому стенд открывает страницу дашборда в
+// headless-chrome и снимает координаты. Без chrome шаг пропускается: это узел
+// стенда, а не рабочей части.
+func TestStaticBoardNarrowRow(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер раскладки доски пропущен")
+	}
+	// Разметка стенда повторяет renderRow и renderBoard руками, и разъехаться
+	// с ними она может молча: замер на своей вёрстке зеленел бы и после того,
+	// как доску перестали собирать этими блоками.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	row := funcBody(t, app, "function renderRow(")
+	for _, want := range []string{`el("span", "rchips")`, `el("span", "ttl", row.title)`} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("строка доски собрана не тем блоком (нет %q): замер на стендовой "+
+				"разметке перестал говорить о рабочей строке", want)
+		}
+	}
+	board := funcBody(t, app, "function renderBoard(")
+	for _, want := range []string{"boardTabsBar(project)", "newTaskFab(project)",
+		`sectionClass("shead", key, boardTab)`, `sectionClass("card", key, boardTab)`,
+		`"nbar bbar"`} {
+		if !strings.Contains(board, want) {
+			t.Fatalf("доска собрана не тем блоком (нет %q)", want)
+		}
+	}
+	dir, page := chromeStand(t, "board_narrow.js")
+
+	narrow := chromeMeasure(t, chrome, dir, page, "390,844", "phone")
+	if narrow["screen"] != 390 {
+		t.Fatalf("окно стенда не 390 пикселей: %v", narrow)
+	}
+	// Отступы .bmain по 16 и .trow по 14 с каждой стороны: заголовку остаётся
+	// 330 из 390, и меньше 280 это прежняя поломка, где от него оставался
+	// столбик обрубков.
+	if narrow["ttl"] < 280 {
+		t.Errorf("на экране 390 заголовок строки занял %d пикселей: чипы снова забрали "+
+			"ширину, и от названия остаётся столбик", narrow["ttl"])
+	}
+	// Три строки при высоте строки в 18 пикселей это 55: заголовок, вставший в
+	// столбик по слову, набирает вчетверо больше.
+	if narrow["ttl-h"] > 60 {
+		t.Errorf("заголовок строки занял %d пикселей высоты: он читается словами в одну-две "+
+			"строки, а не столбиком", narrow["ttl-h"])
+	}
+	if narrow["chips-under"] != 1 {
+		t.Error("чипы строки стоят в одной строке с заголовком: заголовку не остаётся ширины")
+	}
+	if narrow["tabs-row"] != 1 || narrow["tabs"] > 60 {
+		t.Errorf("полоса разделов встала не в одну строку: высота %d, один ряд %d",
+			narrow["tabs"], narrow["tabs-row"])
+	}
+	if narrow["tab-clip"] != 0 {
+		t.Error("подписи разделов режутся: в одну строку полоса влезла обрубками")
+	}
+	if narrow["other-tab"] != 0 {
+		t.Errorf("раздел из другого таба занимает %d пикселей: полоса разделов не "+
+			"переключает список", narrow["other-tab"])
+	}
+	if narrow["bar"] != 0 {
+		t.Errorf("полоса кнопок на телефоне занимает %d пикселей: её место заняли табы "+
+			"и плавающий плюс", narrow["bar"])
+	}
+	if narrow["fab"] < 44 {
+		t.Errorf("плавающий плюс шириной %d: заведение задачи с телефона идёт с него, "+
+			"и палец просит 44 пикселя", narrow["fab"])
+	}
+	if narrow["fab-hits-tabs"] != 0 {
+		t.Error("плавающий плюс залез на нижние вкладки: он стоит над ними, а не поверх")
+	}
+
+	wide := chromeMeasure(t, chrome, dir, page, "1280,900", "laptop")
+	if wide["chips-under"] != 0 {
+		t.Error("на ноутбуке чипы уехали под заголовок: там строка остаётся одной строкой")
+	}
+	if wide["tabs"] != 0 || wide["fab"] != 0 {
+		t.Errorf("на ноутбуке появились телефонные табы (%d) и плавающий плюс (%d): "+
+			"там доска идёт списком, а кнопки стоят полосой", wide["tabs"], wide["fab"])
+	}
+	if wide["bar"] == 0 {
+		t.Error("на ноутбуке пропала полоса кнопок доски")
+	}
+	if wide["other-tab"] == 0 {
+		t.Error("на ноутбуке видна только часть разделов: табы телефона отрезали остальные")
+	}
+}
+
+// Полоса разделов раскладывает секции доски по табам, а кнопки главной
+// называют доску, в которую заведут задачу: проектов на дашборде несколько, и
+// «Новая задача» без имени заводит её молча в тот проект, что показан.
+func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
+	heads := []string{"function sectionTab(", "function sectionClass(", "function homeBarLabels("}
+	cases := []struct{ expr, want string }{
+		{`sectionTab("in-progress")`, "sess"},
+		{`sectionTab("check")`, "sess"},
+		{`sectionTab("backlog")`, "back"},
+		{`sectionTab("blocked")`, "back"},
+		{`sectionClass("card", "backlog", "back")`, "card bsec onsec"},
+		{`sectionClass("card", "backlog", "sess")`, "card bsec"},
+		{`sectionClass("shead", "check", "sess")`, "shead bsec onsec"},
+		{`homeBarLabels("devkit").make`, "Новая задача в devkit"},
+		{`homeBarLabels("devkit").drafts`, "Черновики devkit"},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, c.expr); got != c.want {
+			t.Errorf("%s = %q, ожидал %q", c.expr, got, c.want)
+		}
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	home := funcBody(t, app, "function renderHome(")
+	for _, want := range []string{"homeBarLabels(shownProject)", "labels.make", "labels.drafts"} {
+		if !strings.Contains(home, want) {
+			t.Errorf("кнопки главной не называют доску: в renderHome нет %q", want)
+		}
+	}
+	bar := funcBody(t, app, "function boardTabsBar(")
+	for _, want := range []string{"boardTabs()", `"Черновики"`, `project + "/drafts"`, "markBoardTab("} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("полоса разделов собрана не полностью: нет %q", want)
+		}
+	}
+}

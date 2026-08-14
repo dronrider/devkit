@@ -216,6 +216,7 @@ a:hover{text-decoration:underline}
 .trow:first-child{border-top:none}
 .trow .tt{font:400 13.5px var(--sans);color:var(--tx);display:flex;align-items:center;gap:8px;min-width:0}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
 .trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
 /* ранг строки: сумма всегда, слагаемые разворотом (подсказка при наведении
@@ -413,6 +414,13 @@ a:hover{text-decoration:underline}
   @keyframes dklife{from{width:100%}to{width:0}}
 }
 
+/* полоса разделов доски и плавающий плюс: живут только на телефоне, на
+   ноутбуке разделы идут списком подряд, а заведение стоит полосой кнопок */
+.btabs{display:none;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:3px;margin-top:14px}
+.btab{flex:1;min-width:0;min-height:40px;padding:0 8px;border:none;border-radius:8px;background:none;font:500 13px var(--sans);color:var(--tx3);white-space:nowrap;cursor:pointer}
+.btab.onbtab{background:var(--bg3);color:var(--tx);font-weight:600}
+.fab{display:none;position:fixed;right:16px;bottom:94px;width:56px;height:56px;align-items:center;justify-content:center;border:none;border-radius:28px;background:var(--acc);color:var(--acc-ink);font:400 30px/1 var(--sans);cursor:pointer;box-shadow:0 6px 18px oklch(0 0 0/0.45);z-index:5}
+
 /* нижние вкладки (телефон) */
 .ptabs{display:none;flex:none;height:78px;border-top:1px solid var(--line);background:var(--bg1);padding-bottom:12px}
 .ptab{flex:1;min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font:500 12px var(--sans);color:var(--tx3)}
@@ -427,9 +435,18 @@ a:hover{text-decoration:underline}
   .ptabs{display:flex}
   .bmain{padding:16px 16px 0}
   .pselect{display:block}
+  /* телефон: доска разложена по табам, кнопки полосы заменяет плавающий плюс */
+  .btabs{display:flex}
+  .fab{display:flex}
+  .bbar{display:none}
+  .bsec:not(.onsec){display:none}
   .trow{display:flex;flex-direction:column;align-items:stretch;gap:5px;padding:12px 14px}
-  .trow .tt{order:2}
-  .trow .tt .ttl{white-space:normal;line-height:1.35}
+  /* телефон: заголовок строки идёт своей строкой во всю ширину, чипы под ним.
+     В одном ряду с ним чипы ширины не отдают, и от длинного названия остаётся
+     столбик обрубков по букве */
+  .trow .tt{order:2;flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
+  .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
   .trow .meta{order:1;justify-content:flex-start}
   /* телефон: сумма ранга и действие строки с пальцем в 44 пикселя, действие
      прижато к правому краю */

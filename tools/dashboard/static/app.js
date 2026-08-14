@@ -427,7 +427,16 @@ function renderRow(project, row, works, sect) {
   tr.append(el("span", "id", row.id));
   const tt = el("span", "tt");
   tt.append(el("span", "ttl", row.title));
-  for (const chip of rowChips(row)) tt.append(chip);
+  // Чипы лежат своей коробкой, а не россыпью рядом с заголовком: на телефоне
+  // они уходят под него отдельной строкой, и заголовку достаётся вся ширина.
+  // Рядом с заголовком они ширины не отдавали, и от длинного названия
+  // оставался столбик обрубков.
+  const chips = rowChips(row);
+  if (chips.length) {
+    const box = el("span", "rchips");
+    for (const chip of chips) box.append(chip);
+    tt.append(box);
+  }
   tr.append(tt);
   const meta = el("span", "meta");
   meta.append(rankCell(row));
@@ -452,13 +461,96 @@ function rowSign(row, works, sect) {
   return JSON.stringify(row) + "|" + sect + "|" + (work ? work.via : "");
 }
 
+// Разделы доски на телефоне разложены по двум табам: In progress и Check это
+// то, что уже двинулось и ведётся сессиями, Backlog и Blocked это очередь.
+// Четыре секции подряд на экране в 390 пикселей не читаются: до бэклога надо
+// прокрутить чужую работу, а сам список у бэклога длиннее всех.
+function sectionTab(key) {
+  return key === "backlog" || key === "blocked" ? "back" : "sess";
+}
+
+// Класс блока раздела: секция помечена своим табом и гасится стилями телефона,
+// когда открыт другой. Секции не выкидываются из разметки, потому что на
+// ноутбуке табов нет вовсе и там видны все сразу.
+function sectionClass(base, key, tab) {
+  return base + " bsec" + (sectionTab(key) === tab ? " onsec" : "");
+}
+
+function boardTabs() {
+  return [
+    { key: "sess", label: "Сессии" },
+    { key: "back", label: "Бэклог" },
+  ];
+}
+
+let boardTab = "sess";
+
+// Полоса разделов (только телефон): два таба доски и переход в накопитель
+// черновиков. Черновики стоят тем же табом, потому что с телефона мысль чаще
+// записывают, чем разбирают, и путь к накопителю с доски короче не бывает.
+function boardTabsBar(project) {
+  const bar = el("div", "btabs");
+  for (const tab of boardTabs()) {
+    const btn = el("button", "btab" + (tab.key === boardTab ? " onbtab" : ""), tab.label);
+    btn.type = "button";
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      boardTab = tab.key;
+      markBoardTab();
+    });
+    bar.append(btn);
+  }
+  const drafts = el("button", "btab", "Черновики");
+  drafts.type = "button";
+  drafts.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    location.hash = project + "/drafts";
+  });
+  bar.append(drafts);
+  return bar;
+}
+
+// Открытый таб отмечается по месту, без перерисовки доски: список уже собран,
+// и пересобирать его ради подсветки значило бы ронять прокрутку и фокус.
+function markBoardTab() {
+  const groups = document.getElementById("groups");
+  for (const node of groups.querySelectorAll(".bsec")) {
+    node.classList.toggle("onsec", node.dataset.tab === boardTab);
+  }
+  const bar = groups.querySelector(".btabs");
+  if (!bar) return;
+  boardTabs().forEach((tab, i) => {
+    bar.children[i].classList.toggle("onbtab", tab.key === boardTab);
+  });
+}
+
+// Заведение задачи на телефоне это плавающий плюс над нижними вкладками:
+// полоса кнопок съедала полэкрана ещё до первой строки доски.
+function newTaskFab(project) {
+  const btn = el("button", "fab", "+");
+  btn.type = "button";
+  btn.title = "Новая задача в " + project;
+  btn.setAttribute("aria-label", "Новая задача в " + project);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    location.hash = project + "/new";
+  });
+  return btn;
+}
+
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   const items = [{
+    key: "board-tabs",
+    sign: project,
+    make: () => boardTabsBar(project),
+  }, {
     key: "board-bar",
     sign: project,
     make: () => {
-      const bar = el("div", "nbar");
+      // Полоса кнопок остаётся ноутбуку: на телефоне её место заняли табы и
+      // плавающий плюс, и класс .bbar её там гасит.
+      const bar = el("div", "nbar bbar");
       bar.append(newTaskButton(project, "Новая задача"), draftsButton(project));
       return bar;
     },
@@ -472,7 +564,8 @@ function renderBoard(project, board, works) {
       key: "head-" + key,
       sign: sec.title + "|" + sec.rows.length,
       make: () => {
-        const head = el("div", "shead", sec.title);
+        const head = el("div", sectionClass("shead", key, boardTab), sec.title);
+        head.dataset.tab = sectionTab(key);
         // Backlog стоит по рангу, и счётчик говорит это же: надписью под
         // формой задачи порядок объяснять больше не надо.
         head.append(el("span", "n", sec.rows.length + (key === "backlog" ? ", по рангу" : "")));
@@ -493,13 +586,15 @@ function renderBoard(project, board, works) {
       key: "card-" + key,
       sign: rows.map((r) => r.key + "=" + r.sign).join("\n"),
       make: () => {
-        const card = el("div", "card");
+        const card = el("div", sectionClass("card", key, boardTab));
+        card.dataset.tab = sectionTab(key);
         sync(card, rows);
         return card;
       },
       fill: (card) => { sync(card, rows); },
     });
   }
+  items.push({ key: "board-fab", sign: project, make: () => newTaskFab(project) });
   sync(groups, items);
 }
 
@@ -517,8 +612,15 @@ function newTaskButton(project, label) {
 // Вход в накопитель черновиков стоит рядом с заведением, на доске и на
 // главной: записанная с телефона мысль иначе видна только в файле, а разбирать
 // её приходится с ноутбука.
-function draftsButton(project) {
-  const btn = el("button", "btn", "Черновики");
+// Подписи кнопок главной: доска там не одна, и «Новая задача» без имени
+// заводила её молча в тот проект, который показан списком последним. Кнопка
+// называет проект сама, потому что заголовка доски рядом с ней нет.
+function homeBarLabels(project) {
+  return { make: "Новая задача в " + project, drafts: "Черновики " + project };
+}
+
+function draftsButton(project, label) {
+  const btn = el("button", "btn", label || "Черновики");
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     location.hash = project + "/drafts";
@@ -3089,7 +3191,8 @@ function renderHome(projects) {
   paintQuota();
   if (!shownProject) return;
   const bar = el("div", "nbar");
-  bar.append(newTaskButton(shownProject, "Новая задача"), draftsButton(shownProject));
+  const labels = homeBarLabels(shownProject);
+  bar.append(newTaskButton(shownProject, labels.make), draftsButton(shownProject, labels.drafts));
   groups.append(bar);
 }
 

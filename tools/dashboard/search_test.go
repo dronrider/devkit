@@ -252,6 +252,42 @@ func TestSearchLimits(t *testing.T) {
 	}
 }
 
+// Пропавший taskctl остаётся бедой одной группы: доска приходит из кэша
+// сервера, архив разбирается файлом, и обе группы отвечают как ни в чём не
+// бывало, а вот накопитель без утилиты не прочитать, и группа черновиков несёт
+// причину словами. Уронив на этом весь поиск, ручка отняла бы у человека и то,
+// что у неё на руках уже есть (замечание ревью DK-325).
+func TestSearchDraftsFailureStaysInGroup(t *testing.T) {
+	e, c := searchEnv(t)
+	// Кэш доски греется первым запросом: он держит ответ утилиты, пока файл
+	// доски не тронут, и второму запросу taskctl для доски уже не нужен.
+	if len(group(t, searched(t, c, e, "поиск"), "board").Rows) != 1 {
+		t.Fatal("стенд не нашёл строку доски до пропажи taskctl")
+	}
+	t.Setenv("PATH", t.TempDir())
+	if taskctlPath() != "" {
+		t.Fatalf("taskctl всё ещё находится: %s", taskctlPath())
+	}
+	got := searched(t, c, e, "поиск")
+	if ids := rowIDs(group(t, got, "board")); strings.Join(ids, ",") != "XR-010" {
+		t.Errorf("группа «Доска» без taskctl: %v, ждал XR-010 из кэша", ids)
+	}
+	if ids := rowIDs(group(t, got, "archive")); strings.Join(ids, ",") != "XR-900" {
+		t.Errorf("группа «Архив» без taskctl: %v, ждал XR-900 из файла архива", ids)
+	}
+	drafts := group(t, got, "drafts")
+	if len(drafts.Rows) != 0 {
+		t.Errorf("накопитель без утилиты приехал строками: %+v", drafts.Rows)
+	}
+	if !strings.Contains(drafts.Note, "накопитель черновиков не прочитался") ||
+		!strings.Contains(drafts.Note, "taskctl не нашёлся") {
+		t.Errorf("группа черновиков молчит о причине: %q", drafts.Note)
+	}
+	if got.Note != "" {
+		t.Errorf("нашедшийся запрос подписан пустотой: %q", got.Note)
+	}
+}
+
 // Без входа поиск не отдаёт ни строки: ручка стоит за той же дверью, что
 // доска.
 func TestSearchNeedsAuth(t *testing.T) {

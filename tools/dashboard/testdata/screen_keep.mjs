@@ -274,6 +274,43 @@ function tag(node, name) {
   return null;
 }
 
+// Тело медиазапроса из настоящего style.css: правила телефона живут в нём, и
+// читать их стенд обязан из файла, а не из своих представлений о нём. Границы
+// берутся счётом фигурных скобок, как их считает и разбор браузера.
+function mediaBlock(css, head) {
+  const at = css.indexOf(head);
+  if (at < 0) return "";
+  const from = css.indexOf("{", at);
+  if (from < 0) return "";
+  let depth = 0;
+  for (let i = from; i < css.length; i += 1) {
+    if (css[i] === "{") depth += 1;
+    if (css[i] === "}") {
+      depth -= 1;
+      if (!depth) return css.slice(from + 1, i);
+    }
+  }
+  return "";
+}
+
+// Чем кончится display у узла с такими классами. Правила из одних классов
+// подходят, когда все их классы есть у узла (`.tmuxbar.onpane` узлу без onpane
+// не достаётся), а из подошедших побеждает последнее: специфичность у них
+// равная, и браузер выбирает так же.
+function phoneDisplay(css, classes) {
+  let out = "";
+  const rules = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = rules.exec(css))) {
+    const sel = m[1].trim();
+    if (!/^(\.[A-Za-z0-9_-]+)+$/.test(sel)) continue;
+    if (!sel.split(".").filter(Boolean).every((cls) => classes.includes(cls))) continue;
+    const d = /display:\s*([a-z-]+)/.exec(m[2]);
+    if (d) out = d[1];
+  }
+  return out;
+}
+
 const streams = [];
 let running = false;
 
@@ -897,6 +934,25 @@ if (button(dhead, "Провести груминг")) {
 const runCol = find(groups, "draft-col-run");
 if (!runCol || !dump(runCol).includes("хвост груминга")) {
   fail("живого хвоста груминга на экране нет: " + dump(runCol));
+}
+
+// Колонка хода видна и на телефоне. Класс tmuxbar на ней гасил её целиком:
+// правило `.tmuxbar{display:none}` заведено для вкладок экрана агента, а на
+// экране черновика вкладок нет, и onpane ей никто не ставит. С телефона за
+// идущим грумингом было не посмотреть, хотя шапка звала его идущим (браузерная
+// приёмка DK-321). Классы берутся с нарисованного узла, а правила из
+// настоящего style.css: своих представлений о стилях у стенда нет.
+const phoneCSS = mediaBlock(findCSS, "@media (max-width:900px)");
+if (!phoneCSS) fail("в style.css нет телефонной части: правило про колонку хода искать негде");
+const runClasses = String(runCol.className).split(" ").filter(Boolean);
+if (phoneDisplay(phoneCSS, runClasses) === "none") {
+  fail("на телефоне колонка хода груминга погашена стилями (классы " +
+    runClasses.join(", ") + "): живого хвоста с телефона не видно");
+}
+// Место в сетке у неё при этом своё: погашенная колонка и колонка без области
+// это разные поломки, и вторая тут тоже не годится.
+if (!/\.dgrid\{[^}]*grid-template-areas:"out" "run" "text"/.test(phoneCSS)) {
+  fail("телефонная сетка экрана черновика не отводит места ходу груминга");
 }
 
 // Обновление по фокусу окна не рвёт хвост: карточка хода собирается один раз

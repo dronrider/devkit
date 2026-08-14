@@ -233,3 +233,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-325 | dashboard: поиск задач по доске и архиву | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-325.md](tasks/archive/2026/DK-325.md) |
 | DK-321 | dashboard: груминг черновика зовётся грумингом, исход виден, черновик удаляется | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-321.md](tasks/archive/2026/DK-321.md) |
 | DK-294 | dashboard: разговор живой сессии без узнанной задачи не открыть | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-294.md](tasks/archive/2026/DK-294.md) |
+| DK-310 | shipctl: merge при занятой очереди сливается в поезд вместо отказа | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-310.md](tasks/archive/2026/DK-310.md) |

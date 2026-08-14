@@ -1689,6 +1689,8 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук чтения секретов")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-reread\.py|check-reread\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук повторных чтений")
+        self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
+                         "доктор не заметил PreToolUse-хук длинных чтений")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
@@ -1696,6 +1698,8 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук чтения секретов")
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-reread\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук повторных чтений")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-longfile\.py на PreToolUse",
+                         "--fix не разложил PreToolUse-хук длинных чтений")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
@@ -1704,10 +1708,12 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
                          ["Edit|Write|NotebookEdit"], hooks["PostToolUse"])
         # PreToolUse: две группы на двух матчерах, Bash (чтение секретов) и Read
-        # (повторные чтения). Каждая своим скриптом, порядок как в HOOK_LAYOUT.
+        # (два рубежа: повторные чтения и длинные чтения). Каждая своим скриптом,
+        # порядок как в HOOK_LAYOUT.
         pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
                          ["Bash", "Read"], hooks["PreToolUse"])
         for event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):

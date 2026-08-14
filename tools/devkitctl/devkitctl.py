@@ -167,11 +167,20 @@ POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 # Хук чтения секретов через Bash (DK-228): PreToolUse на Bash, отдельной
 # категорией от пост-проверок текстов, и в hook_gaps сообщение про него своё.
 PRE_SCRIPTS = ("check-read-secret.py",)
-# Рубеж повторных чтений (DK-146): PreToolUse на Read. Категория отдельная от
-# проверок текстов и от чтения секретов через Bash, и сообщение про неё своё.
-# Каркас рассчитан на расширение: параллельная DK-147 добавит ещё один рубеж
-# на том же матчере Read, и записи в HOOK_LAYOUT на одном событии живут рядом.
-PRE_READ_SCRIPTS = ("check-reread.py",)
+# Рубежи на PreToolUse Read. Категория отдельная от проверок текстов и от чтения
+# секретов через Bash, и сообщение про каждый своё. Записей на одном матчере
+# сколько угодно: check-reread режет повторы, check-longfile режет чтение длинного
+# файла целиком, и каждая блокирует Read своим выходом 2 со своей подсказкой.
+PRE_READ_SCRIPTS = ("check-reread.py", "check-longfile.py")
+# Что идёт не так, когда конкретный рубеж на Read не подключён. Доктор говорит
+# это находкой, и сообщение обязано отличать один рубеж от другого: «повторные
+# чтения не режутся» про отсутствующий check-longfile это ложь.
+PRE_READ_GAPS = {
+    "check-reread.py": "повторные чтения файлов не режутся, и контекст съедает "
+                       "перечитывание уже прочитанного",
+    "check-longfile.py": "чтение длинного файла целиком не режется, и контекст "
+                         "съедает разовый большой вывод Read",
+}
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
@@ -188,6 +197,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
+    ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1178,10 +1188,14 @@ def hook_gaps(text, settings):
                         % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_pre,
                                      settings, " на событии PreToolUse"))
     if missing_pre_read:
-        findings.append("%s на PreToolUse Read; повторные чтения файлов не режутся, и контекст "
-                        "съедает перечитывание уже прочитанного (hooks/README.md)"
-                        % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_pre_read,
-                                     settings, ""))
+        # Каждый рубеж на Read режет свою дыру, и сообщение про него обязано
+        # называть именно её, а не общим «повторные чтения»: иначе отсутствующий
+        # check-longfile выдаётся за повторные чтения, которых на машине нет.
+        for script in missing_pre_read:
+            findings.append("%s на PreToolUse Read; %s (hooks/README.md)"
+                            % (say.folded(("не подключён", "не подключено"), HOOK_WORD,
+                                          [script], settings, ""),
+                               PRE_READ_GAPS.get(script, "контекст расходуется впустую")))
     if missing_notify:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
                         "разрешения, и не говорит, что закончила ход или что субагент "

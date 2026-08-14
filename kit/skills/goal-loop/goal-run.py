@@ -276,7 +276,11 @@ class Loop:
             self.say("уведомителя %s нет, стоп остался без голоса" % NOTIFIER)
             return
         try:
-            p = subprocess.run(["python3", NOTIFIER, "--reason", key, title, text],
+            # Цель едет ключом --task: событие ленты ведёт к строке цели полем,
+            # а не разбором заголовка (DK-323). Проект уведомитель соберёт сам
+            # по рабочей директории, а зовётся он из корня проекта.
+            p = subprocess.run(["python3", NOTIFIER, "--reason", key,
+                                "--task", self.id, title, text],
                                 cwd=self.proj,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             out = p.stdout.rstrip("\n")

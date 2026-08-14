@@ -280,6 +280,9 @@ class GoalRunTests(unittest.TestCase):
             key = "wait_human" if marker == "wait-human" else "goal_stop"
             self.assertIn("повод %s" % key, self.notify_log(root))
             self.assertIn("текст «цель DK-100: %s»" % marker, self.notify_log(root))
+            # Цель едет полем строки, а не одним заголовком (DK-323): по нему
+            # лента дашборда ведёт от стопа к строке цели и к журналу агента.
+            self.assertIn("задача DK-100 проект", self.notify_log(root))
 
     # -- воронка --------------------------------------------------------------
 

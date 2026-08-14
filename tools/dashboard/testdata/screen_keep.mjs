@@ -123,7 +123,13 @@ function makeNode(tag) {
   node.setAttribute = () => {};
   node.removeAttribute = () => {};
   node.getBoundingClientRect = () => ({ top: 0, bottom: 0, height: 0, width: 0 });
-  node.focus = () => { doc.activeElement = node; };
+  // Фокус берёт только прикреплённый к документу узел: собранный, но ещё не
+  // вставленный узел браузер не фокусирует вовсе, и вызов на нём проходит
+  // молча. Приёмка нашла ровно это: поле поиска фокусировалось внутри make(),
+  // до вставки, и человеку нужно было второе касание (хвост DK-325).
+  node.focus = () => {
+    if (attached(node)) doc.activeElement = node;
+  };
   node.scrollIntoView = () => {};
   node.addEventListener = (name, fn) => { node.handlers[name] = fn; };
   node.removeEventListener = () => {};
@@ -158,6 +164,20 @@ function reflow(node) {
   node.scrollHeight = node.children.reduce((sum, kid) => sum + height(kid), 0);
   const max = Math.max(0, node.scrollHeight - node.clientHeight);
   if (node.scrollTop > max) node.scrollTop = max;
+}
+
+// Узел прикреплён к документу, если его цепочка родителей упирается в узел
+// страницы: в стенде это тело документа и коробки по id (#groups и соседи),
+// сами они лежат готовыми. Собранный статикой узел до вставки в такую коробку
+// висит сам по себе, и браузер его не фокусирует.
+function attached(node) {
+  let cur = node;
+  while (cur.parentElement) cur = cur.parentElement;
+  if (cur === doc.body) return true;
+  for (const root of byId.values()) {
+    if (root === cur) return true;
+  }
+  return false;
 }
 
 // Снятый с дерева узел теряет фокус: ровно так браузер и отбирает кнопку у
@@ -832,6 +852,14 @@ const phoneQ = find(groups, "find-q");
 if (!phoneQ) fail("экран поиска с телефона не собрался: " + dump(groups).slice(0, 300));
 if (doc.activeElement !== phoneQ.children[1]) {
   fail("поле поиска на телефоне не ждёт набора: курсора в нём нет");
+}
+// Курсор ставится один раз, на заходе: обновление по фокусу окна тянуло бы его
+// обратно в поле у человека, который уже ушёл читать выдачу.
+doc.body.focus();
+await sandbox.refresh();
+await settle();
+if (doc.activeElement !== doc.body) {
+  fail("обновление вернуло курсор в поле поиска: " + dump(doc.activeElement));
 }
 if (!dump(groups).includes("Ждём двух символов")) {
   fail("пустой запрос не говорит, чего ждёт: " + dump(groups).slice(0, 300));

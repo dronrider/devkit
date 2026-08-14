@@ -2992,13 +2992,7 @@ async function renderFind(project, q) {
   }, {
     key: "find-q",
     sign: project + "|" + q,
-    make: () => {
-      const box = findInput("fqbar", q);
-      // Пустой запрос это заход с лупы: поле открылось ради набора, и экрану
-      // не нужно второго касания ради курсора.
-      if (!q) box.children[1].focus();
-      return box;
-    },
+    make: () => findInput("fqbar", q),
     // Поле переживает перерисовку: пересобранное на каждой букве, оно теряло
     // бы курсор вместе с набранным. Значение правится только вне фокуса, иначе
     // набор дёргался бы под пальцами.
@@ -3014,7 +3008,18 @@ async function renderFind(project, q) {
   // Первый заход рисует крошку с полем сразу, до ответа сервера: пустой экран
   // не давал бы набрать запрос. Дальше прежняя выдача стоит, пока не приехала
   // новая, и экран не моргает пустотой на каждой букве.
-  if (!findKey(groups, "find-q")) sync(groups, head);
+  const fresh = !findKey(groups, "find-q");
+  if (fresh) {
+    sync(groups, head);
+    // Пустой запрос это заход с лупы: поле открылось ради набора, и экрану не
+    // нужно второго касания ради курсора. Курсор ставится после вставки узла в
+    // документ, а не при сборке: фокус на неприкреплённом узле пуст, и
+    // приёмка находила ровно это (хвост DK-325).
+    if (!q) {
+      const box = findKey(groups, "find-q");
+      if (box) box.children[1].focus();
+    }
+  }
   const gen = ++findGen;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/search?q=" + encodeURIComponent(q));

@@ -67,6 +67,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"}
+]}, {"matcher": "Read", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-reread.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"}
 ]}], "Notification": [{"hooks": [

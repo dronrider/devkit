@@ -167,12 +167,18 @@ POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
 # Хук чтения секретов через Bash (DK-228): PreToolUse на Bash, отдельной
 # категорией от пост-проверок текстов, и в hook_gaps сообщение про него своё.
 PRE_SCRIPTS = ("check-read-secret.py",)
+# Рубеж повторных чтений (DK-146): PreToolUse на Read. Категория отдельная от
+# проверок текстов и от чтения секретов через Bash, и сообщение про неё своё.
+# Каркас рассчитан на расширение: параллельная DK-147 добавит ещё один рубеж
+# на том же матчере Read, и записи в HOOK_LAYOUT на одном событии живут рядом.
+PRE_READ_SCRIPTS = ("check-reread.py",)
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
+PRE_READ_MATCHER = "Read"
 # Раскладка хуков харнеса: событие, матчер, команда с местом под чекаут devkit.
 # Тот же перечень нарисован в hooks/README.md, но раскладывает его отсюда
 # доктор: список ручных шагов в README это перекладывание раскладки на человека.
@@ -181,6 +187,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-memory.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
+    ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1140,7 +1147,7 @@ def hook_gaps(text, settings):
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
         # уведомитель там есть на всех событиях, либо нет ни на одном.
         notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
-    missing_notify, missing_post, missing_pre = [], [], []
+    missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
     for event, matcher, cmd in HOOK_LAYOUT:
         script = os.path.basename(cmd.split()[1])
         if script == NOTIFY_HOOK:
@@ -1156,6 +1163,8 @@ def hook_gaps(text, settings):
             missing_post.append(script)
         elif script in PRE_SCRIPTS:
             missing_pre.append(script)
+        elif script in PRE_READ_SCRIPTS:
+            missing_pre_read.append(script)
         elif script == SESSION_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
@@ -1168,6 +1177,11 @@ def hook_gaps(text, settings):
         findings.append("%s; чтение секретов через Bash идёт мимо хука (hooks/README.md)"
                         % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_pre,
                                      settings, " на событии PreToolUse"))
+    if missing_pre_read:
+        findings.append("%s на PreToolUse Read; повторные чтения файлов не режутся, и контекст "
+                        "съедает перечитывание уже прочитанного (hooks/README.md)"
+                        % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_pre_read,
+                                     settings, ""))
     if missing_notify:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
                         "разрешения, и не говорит, что закончила ход или что субагент "

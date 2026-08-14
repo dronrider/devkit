@@ -86,6 +86,26 @@ class ManifestTest(SandboxCase):
         # по xr-hub обязана гореть и после того, как таблица распознана.
         self.assertNotIn("xr-hub", describe.map_dirs(self.proj, "xr-hub"))
 
+    def test_nested_member_named_by_heading_is_a_finding(self):
+        # Член из вложенного каталога (crates/hub), названный в заголовке
+        # карты без ссылки на него: заголовок без тела раздела не гасит
+        # проверку, и находка остаётся находкой «нет описания», а не
+        # смягчается до «имя названо заголовком».
+        nested = self.box.root / "nested"
+        git_init(nested)
+        write(nested / "Cargo.toml",
+              '[workspace]\nmembers = ["crates/hub"]\n')
+        write(nested / "docs" / "ARCHITECTURE.md",
+              "# Архитектура\n\n### hub: транзит\n\nТекст.\n")
+        write(nested / "crates" / "hub" / "src" / "main.rs", "mod api;\n")
+        git(nested, "add", "-A")
+        git(nested, "commit", "-qm", "стенд")
+        found = describe.check(nested)
+        self.assertEqual(len(found), 1,
+                         "находок %d, а не описан один crates/hub: %s"
+                         % (len(found), found))
+        self.assertIn("crates/hub: нет описания компонента", found[0])
+
     def test_exception_silences_the_finding(self):
         write(self.proj / ".devkit" / "describe.ignore",
               "# генерённый кодогенератором\nxr-hub: кодогенерация\n")

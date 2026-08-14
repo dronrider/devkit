@@ -6,7 +6,9 @@
 
   hookio.write_event(protocol)     фрагменты записи: путь и записанные куски
   hookio.session_event(protocol)   событие сессии для уведомителя
-  hookio.reply(protocol)           канал ответа: чем сказать о находках
+  hookio.tool_event(protocol)      завершённый ход инструмента для почтальона
+  hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
+  hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
 
 Имя протокола приходит аргументом `--hook <протокол>`; голый `--hook` это
@@ -27,6 +29,8 @@ NOTIFY = "notify"
 TURN_DONE = "turn-done"
 SUBAGENT_DONE = "subagent-done"
 PROMPT_SUBMIT = "prompt-submit"
+# Ось завершённого хода инструмента, ею живёт доставка почты в идущий виток.
+TOOL_DONE = "tool-done"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,6 +41,11 @@ Write = collections.namedtuple("Write", "path chunks")
 # Событие сессии в общих полях: ось, повод (у оси notify), сессия, рабочее
 # дерево, транскрипт, текст события и роль субагента.
 Session = collections.namedtuple("Session", "kind reason session cwd transcript message agent")
+# Завершённый ход инструмента: сессия целиком, дерево хода, имя инструмента и
+# роль субагента, если ход шёл под ним. ID тут не режется до восьми символов, в
+# отличие от события сессии: уведомителю он нужен подписью в баннере, а
+# почтальону сверкой с именем витка, и половина UUID такой сверки не выдержит.
+Tool = collections.namedtuple("Tool", "session cwd tool agent")
 
 
 class Unknown(Exception):
@@ -57,6 +66,27 @@ class Reply(object):
 
     def found(self, text):
         (self.stream or sys.stderr).write(text)
+        return self.code
+
+
+class Context(object):
+    """Канал добавки контекста. Хук печатает на stdout запись JSON и выходит
+    нулём, а харнес привешивает текст к ходу инструмента без рамки провала: ход
+    остаётся удачным, и повторять его агент не идёт. Тем и отличается от
+    находки, у которой рамка «поправь то, что сделал» стоит на любом ходе, хоть
+    на записи файла, хоть на `git push`."""
+
+    def __init__(self, event, stream=None):
+        self.code = 0
+        self.event = event
+        self.stream = stream
+
+    def say(self, text):
+        out = self.stream or sys.stdout
+        json.dump({"hookSpecificOutput": {"hookEventName": self.event,
+                                          "additionalContext": text}},
+                  out, ensure_ascii=False)
+        out.write("\n")
         return self.code
 
 
@@ -102,10 +132,26 @@ def claude_code_session(event):
                    agent=event.get("agent_type"))
 
 
-# Таблица разборщиков: протокол, разбор записи, разбор события сессии, канал
-# ответа. Новый инструмент добавляется строкой сюда и директорией образцов.
+def claude_code_tool(event):
+    """Завершённый ход инструмента. Роль лежит в событии только у хода под
+    субагентом, у хода самой сессии её нет вовсе, и пустое место тут значит
+    именно это, а не потерянное поле."""
+    if text_of(event.get("hook_event_name")) != "PostToolUse":
+        return None
+    return Tool(session=text_of(event.get("session_id")),
+                cwd=text_of(event.get("cwd")),
+                tool=text_of(event.get("tool_name")),
+                agent=event.get("agent_type"))
+
+
+# Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор
+# хода инструмента и два канала ответа. Новый инструмент добавляется строкой
+# сюда и директорией образцов.
+Protocol = collections.namedtuple("Protocol", "write session tool reply context")
+
 PROTOCOLS = {
-    "claude-code": (claude_code_write, claude_code_session, Reply(2)),
+    "claude-code": Protocol(claude_code_write, claude_code_session,
+                            claude_code_tool, Reply(2), Context("PostToolUse")),
 }
 
 
@@ -126,7 +172,11 @@ def entry(name):
 
 
 def reply(name):
-    return entry(name)[2]
+    return entry(name).reply
+
+
+def context(name):
+    return entry(name).context
 
 
 def load(stream=None):
@@ -143,11 +193,15 @@ def load(stream=None):
 
 
 def parse_write(name, event):
-    return entry(name)[0](event)
+    return entry(name).write(event)
 
 
 def parse_session(name, event):
-    return entry(name)[1](event)
+    return entry(name).session(event)
+
+
+def parse_tool(name, event):
+    return entry(name).tool(event)
 
 
 def write_event(name, stream=None):
@@ -162,6 +216,15 @@ def session_event(name, stream=None):
     """Событие сессии со stdin. None значит ось не наша (BadEvent зовущий ловит
     сам: уведомителю причина нужна для журнала)."""
     return parse_session(name, load(stream))
+
+
+def tool_event(name, stream=None):
+    """Ход инструмента со stdin. None значит, что событие не про ход, и хук на
+    нём уходит нулём: почтальон стоит в чужой работе и ронять её не вправе."""
+    try:
+        return parse_tool(name, load(stream))
+    except BadEvent:
+        return None
 
 
 def harness_dir():

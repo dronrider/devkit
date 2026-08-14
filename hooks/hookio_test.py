@@ -28,6 +28,10 @@ WRITES = {
     "write-memory-index.json": ("/scratchpad/memory/MEMORY.md",
                                 ["- [Проба](proba.md) - крючок\n"]),
 }
+TOOLS = {
+    "tool-done-bash.json": ("Bash", None),
+    "tool-done-subagent.json": ("Bash", "general-purpose"),
+}
 SESSIONS = {
     "prompt-submit.json": (hookio.PROMPT_SUBMIT, "", None, None),
     "turn-done.json": (hookio.TURN_DONE, "", "Готово.", None),
@@ -77,6 +81,35 @@ class TestSamples(unittest.TestCase):
         for name in SESSIONS:
             self.assertIsNone(hookio.parse_write(hookio.DEFAULT, sample(name)), name)
 
+    def test_tool_axis(self):
+        for name, (tool, agent) in TOOLS.items():
+            event = sample(name)
+            got = hookio.parse_tool(hookio.DEFAULT, event)
+            self.assertEqual((got.tool, got.agent), (tool, agent), name)
+            # Сессия целиком: почтальон сверяет её с именем витка, и обрезанный
+            # ID такой сверки не выдержит.
+            self.assertEqual(got.session, event["session_id"], name)
+            self.assertEqual(len(got.session), 36, name)
+            # Дерево берётся из события, а не из транскрипта, и у обоих образцов
+            # это дерево задачи, в котором их сняли.
+            self.assertEqual(got.cwd, event["cwd"], name)
+            self.assertNotIn("/scratchpad/", got.cwd, name)
+
+    def test_write_turn_is_a_tool_turn(self):
+        # Запись файла это такой же завершённый ход, и почта на нём доставляется
+        # наравне с ходом Bash.
+        for name in WRITES:
+            got = hookio.parse_tool(hookio.DEFAULT, sample(name))
+            self.assertEqual(got.tool, sample(name)["tool_name"], name)
+            self.assertIsNone(got.agent, name)
+
+    def test_unfinished_and_sessionwide_events_are_not_tool_turns(self):
+        # Ход, который ещё не случился, и события сессии почтой не будят: у
+        # первого нет результата, у вторых нет хода вовсе.
+        for name in list(SESSIONS) + ["pre-tool-use-bash.json", "pre-tool-use-read.json"]:
+            self.assertIsNone(hookio.parse_tool(hookio.DEFAULT, sample(name)), name)
+
+
 
 class TestProtocolName(unittest.TestCase):
     def test_bare_hook_stays_claude_code(self):
@@ -92,7 +125,9 @@ class TestProtocolName(unittest.TestCase):
     def test_unknown_protocol_names_the_known_ones(self):
         for call in (lambda: hookio.parse_write("codex", {}),
                      lambda: hookio.parse_session("codex", {}),
-                     lambda: hookio.reply("codex")):
+                     lambda: hookio.parse_tool("codex", {}),
+                     lambda: hookio.reply("codex"),
+                     lambda: hookio.context("codex")):
             with self.assertRaises(hookio.Unknown) as e:
                 call()
             self.assertIn("claude-code", str(e.exception))
@@ -112,6 +147,11 @@ class TestBadEvent(unittest.TestCase):
         # Проверке текста причина ни к чему: смотреть нечего, и хук уходит нулём.
         self.assertIsNone(hookio.write_event(hookio.DEFAULT, io.StringIO("не json")))
 
+    def test_the_postman_sees_nothing_to_deliver_to(self):
+        # Почтальон стоит на каждом ходе чужой работы: кривой вход это тихий
+        # ноль, а не traceback посреди витка.
+        self.assertIsNone(hookio.tool_event(hookio.DEFAULT, io.StringIO("не json")))
+
     def test_event_without_tool_input(self):
         self.assertIsNone(hookio.parse_write(hookio.DEFAULT, {"tool_input": "строкой"}))
         self.assertIsNone(hookio.parse_write(hookio.DEFAULT, {}))
@@ -126,6 +166,38 @@ class TestReply(unittest.TestCase):
         self.assertEqual(reply.found("находка\n"), 2)
         self.assertEqual(out.getvalue(), "находка\n")
         self.assertEqual(hookio.reply(hookio.DEFAULT).code, 2)
+
+
+class TestContext(unittest.TestCase):
+    """Второй канал: добавка контекста. Она приезжает к модели без рамки
+    провала, поэтому ею говорят то, что ходу инструмента претензией не является,
+    и живая реплика человека это ровно такой случай."""
+
+    def test_addition_goes_out_as_one_json_record(self):
+        out = io.StringIO()
+        channel = hookio.Context("PostToolUse", out)
+        # Ноль, а не двойка: ход остался удачным, повторять его незачем.
+        self.assertEqual(channel.say("реплика человека"), 0)
+        self.assertEqual(hookio.context(hookio.DEFAULT).code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0]),
+                         {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                 "additionalContext": "реплика человека"}})
+
+    def test_russian_text_goes_out_as_it_was_written(self):
+        # Экранированный JSON харнес разберёт, а вот человеку, который смотрит
+        # ручной прогон хука, вместо реплики достанутся коды символов.
+        out = io.StringIO()
+        hookio.Context("PostToolUse", out).say("реплика")
+        self.assertIn("реплика", out.getvalue())
+
+    def test_the_two_channels_are_told_apart(self):
+        # Находка и добавка это разные ответы на разное, и спутать их нельзя:
+        # рамка «поправь то, что сделал» на ходе git push читается витком как
+        # провал с побочными эффектами, а понятная реакция на провал это повтор.
+        self.assertFalse(hasattr(hookio.reply(hookio.DEFAULT), "say"))
+        self.assertFalse(hasattr(hookio.context(hookio.DEFAULT), "found"))
 
 
 class TestMemoryIndex(unittest.TestCase):

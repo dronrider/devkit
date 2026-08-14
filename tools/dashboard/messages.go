@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -143,41 +142,44 @@ func pendingSame(doc, text string) (string, bool) {
 	return "", false
 }
 
-// goalFile проверяет, что id это цель проекта, и отдаёт путь её файла.
-// Отказы называются словами и пишутся здесь же: строка не на доске, строка
-// не цель (заголовок не от «Цель:»), файла цели нет.
-func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Project, id, path string, ok bool) {
+// goalFile проверяет, что id это цель проекта, и отдаёт путь её файла вместе
+// с относительным путём от корня проекта (для коммита). Путь вычисляет
+// goalDocPath тем же разбором ссылки строки доски, что и журнал: жёсткой
+// склейки docs/tasks/<ID>.md здесь нет, и путь не может разойтись с
+// журналом. Отказы называются словами и пишутся здесь же: строка не на
+// доске, строка не цель (заголовок не от «Цель:»), файла цели нет.
+func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Project, id, path, rel string, ok bool) {
 	found = s.findProject(w, r, "сообщения цели")
 	if found == nil {
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 	id = r.PathValue("id")
 	if !goalIDRe.MatchString(id) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 	raw, err := s.projectBoard(found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 	row, rowOK := findRow(raw, id)
 	if !rowOK {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
 	if !isGoalTitle(row.Title) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("%s не цель: заголовок не начинается с «Цель:», а сообщение кладётся только в файл цели", id)})
-		return nil, "", "", false
+		return nil, "", "", "", false
 	}
-	path = filepath.Join(found.Path, "docs", "tasks", id+".md")
-	if !isFile(path) {
+	doc := s.goalDocPath(found.Path, id)
+	if !doc.seen {
 		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("файла цели docs/tasks/%s.md в %s нет: класть сообщение некуда", id, found.Name)})
-		return nil, "", "", false
+			"error": fmt.Sprintf("файла цели %s в %s нет: класть сообщение некуда", doc.rel, found.Name)})
+		return nil, "", "", "", false
 	}
-	return found, id, path, true
+	return found, id, doc.path, doc.rel, true
 }
 
 func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +187,7 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, path, ok := s.goalFile(w, r)
+	found, id, path, rel, ok := s.goalFile(w, r)
 	if !ok {
 		return
 	}
@@ -254,7 +256,6 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		"id": id, "line": line,
 		"message": fmt.Sprintf("сообщение легло во «Входящие» файла цели %s: его прочитает следующий виток, идущий не увидит", id),
 	}
-	rel := filepath.ToSlash(filepath.Join("docs", "tasks", id+".md"))
 	if note := commitDocs(found.Path,
 		fmt.Sprintf("docs(tasks): %s сообщение с дашборда во «Входящие»", id), rel); note != "" {
 		resp["note"] = note
@@ -265,7 +266,7 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGoalMessageGet(w http.ResponseWriter, r *http.Request) {
-	_, id, path, ok := s.goalFile(w, r)
+	_, id, path, _, ok := s.goalFile(w, r)
 	if !ok {
 		return
 	}

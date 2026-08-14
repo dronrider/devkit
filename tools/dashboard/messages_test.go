@@ -195,6 +195,43 @@ func TestMessageRefusals(t *testing.T) {
 	}
 }
 
+// Регресс DK-270: goalFile собирал путь жёсткой склейкой docs/tasks/<ID>.md
+// мимо ссылки строки доски, а goalDocPath журнала шёл по ссылке. У цели с
+// нестандартной ссылкой сообщение легло бы не туда, откуда его читают журнал
+// и экран. Сообщение обязано лечь в файл по ссылке, обычное место остаётся
+// нетронутым, и журнал обязан читать тот же файл.
+func TestMessageLandsAtLinkedGoalPath(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", journalBoardJSON("goals/XR-100.md")))
+	gitLog := filepath.Join(e.home, "git.log")
+	writeScript(t, e.bin, "git", gitFakeOK(gitLog))
+	linked := filepath.Join(e.proj, "docs", "goals", "XR-100.md")
+	writeDocAt(t, linked, goalDocFixture)
+	c := e.loggedClient(t)
+
+	resp := postMessage(t, c, e, "XR-100", "привет по ссылке")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка сообщения по ссылке: %d %s", resp.StatusCode, text)
+	}
+	doc := readFile(t, linked)
+	if !strings.Contains(doc, "из дашборда: привет по ссылке") {
+		t.Fatalf("сообщение не легло в файл по ссылке:\n%s", doc)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "XR-100.md")); err == nil {
+		t.Errorf("сообщение попало на обычное место docs/tasks/XR-100.md мимо ссылки")
+	}
+	if git := readFile(t, gitLog); !strings.Contains(git, "add -- docs/goals/XR-100.md") {
+		t.Errorf("коммит не назвал файл по ссылке: %s", git)
+	}
+
+	// Тот же файл читает журнал: ручки сходятся на одном пути по ссылке.
+	logText := body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/goals/XR-100/log", ""))
+	if !strings.Contains(logText, "docs/goals/XR-100.md") || !strings.Contains(logText, goalDocLines[0]) {
+		t.Errorf("журнал не читает файл по той же ссылке: %s", logText)
+	}
+}
+
 // Предел тела называется своими словами, а не «жду JSON»: JSON сверх предела
 // был нормальный. Под пределом сообщение проходит как обычно.
 func TestMessageBodyLimit(t *testing.T) {

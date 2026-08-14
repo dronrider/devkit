@@ -262,6 +262,55 @@ class TestSessionLabelBranch(unittest.TestCase):
             "it-road-course (irc-75)")
 
 
+class TestEventTarget(unittest.TestCase):
+    """Задача и проект события полями: по ним лента дашборда ведёт к строке
+    доски, и догадка по тексту баннера ей больше не нужна (DK-323)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def repo(self, branch, name="checkout"):
+        path = os.path.join(self.dir, name)
+        os.makedirs(os.path.join(path, ".git"))
+        with open(os.path.join(path, ".git", "HEAD"), "w", encoding="utf-8") as f:
+            f.write("ref: refs/heads/%s\n" % branch)
+        return path
+
+    def test_worktree_of_the_subagent_names_both(self):
+        self.assertEqual(
+            notify.event_target("/p/it-road-course-irc-75", "/p/it-road-course"),
+            ("IRC-75", "it-road-course"))
+
+    def test_session_inside_the_worktree_still_names_the_project(self):
+        # Окно сессии стоит на самом дереве задачи: проектом тут зовётся не
+        # «devkit-dk-323», такого проекта у дашборда нет, а devkit.
+        self.assertEqual(notify.event_target("/p/devkit-dk-323", "/p/devkit-dk-323"),
+                         ("DK-323", "devkit"))
+
+    def test_branch_gives_the_task_in_the_main_checkout(self):
+        path = self.repo("dk-121", "devkit")
+        self.assertEqual(notify.event_target(path, path), ("DK-121", "devkit"))
+
+    def test_main_branch_leaves_the_task_empty(self):
+        path = self.repo("main", "devkit")
+        self.assertEqual(notify.event_target(path, path), ("", "devkit"))
+
+    def test_tree_without_an_id_is_not_a_task(self):
+        # Боковое дерево под второй харнес зовётся не по задаче, и выдумывать
+        # ей ID не из чего: событие честно едет без задачи.
+        self.assertEqual(notify.event_target("/p/devkit-glm", "/p/devkit"),
+                         ("", "devkit"))
+
+    def test_no_trees_name_nothing(self):
+        self.assertEqual(notify.event_target("", ""), ("", ""))
+
+    def test_task_id_takes_only_board_ids(self):
+        self.assertEqual(notify.task_id("dk-323"), "DK-323")
+        self.assertEqual(notify.task_id("XR-1"), "XR-1")
+        for junk in ("main", "feature/x", "dk-", "-323", "", None):
+            self.assertEqual(notify.task_id(junk), "", junk)
+
+
 class TestClickTarget(unittest.TestCase):
     VSCODE = {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"}
 
@@ -646,7 +695,7 @@ class TestHookFocus(unittest.TestCase):
         self.assertEqual(sent, [])
         self.assertEqual(asked, 1)
         self.assertIn("повод turn_done уровень громкий бэкенд - цель - "
-                      "пропуск: окно сессии в фокусе", self.journal())
+                      "задача DK-034 проект devkit пропуск: окно сессии в фокусе", self.journal())
 
     def test_main_tree_window_is_not_the_worktree(self):
         # Сессия сидит в worktree задачи, а впереди окно самого проекта: это
@@ -932,7 +981,7 @@ class TestHookFocusProcess(HookCase):
         self.assertEqual(self.sent(), [])
         self.assertTrue(self.asked_size(), "фокус не спрашивался вовсе")
         self.assertIn("повод turn_done уровень громкий бэкенд - цель - "
-                      "пропуск: окно сессии в фокусе", self.journal())
+                      "задача DK-034 проект devkit пропуск: окно сессии в фокусе", self.journal())
 
     def test_alien_window_gets_the_call(self):
         # Дерево проекта и дерево задачи это разные окна: сессия сидит в
@@ -1020,7 +1069,7 @@ class TestBadEvent(HookCase):
                                   "session_id": "sess-bad"}))
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stderr, "")
-        self.assertIn("сессия sess-bad повод - уровень - бэкенд - цель - "
+        self.assertIn("сессия sess-bad повод - уровень - бэкенд - цель - задача - проект - "
                       "событие не разобрано: поля не той формы", self.journal())
         self.assertEqual(self.sent(), [])
 
@@ -1043,7 +1092,7 @@ class TestClickTargetProcess(HookCase):
         self.assertTrue(self.sent()[0].endswith(
             "-open vscode://file/p/devkit-dk-034?windowId=_blank"), self.sent())
         self.assertIn("цель vscode://file/p/devkit-dk-034?windowId=_blank "
-                      "код возврата: 0", self.journal())
+                      "задача DK-034 проект devkit код возврата: 0", self.journal())
 
     def test_worktree_subagent_leads_to_the_session_window(self):
         # Субагент работает в дереве задачи, а окно сессии стоит на своём:
@@ -1071,7 +1120,7 @@ class TestClickTargetProcess(HookCase):
         self.assertNotIn("open", self.sent()[0])
         self.assertRegex(self.journal(), "сессия sess-noc.* повод idle_prompt "
                                          "уровень громкий бэкенд .* цель - "
-                                         "код возврата: 0")
+                                         "задача DK-034 проект devkit код возврата: 0")
 
     def test_cwd_not_a_string_falls_back(self):
         r = self.click(json.dumps({"hook_event_name": "Notification",
@@ -1289,6 +1338,74 @@ class TestReasonFromArguments(HookCase):
         self.assertIn("повод run_stop", self.journal())
         self.assertIn("пропуск: песочница", self.journal())
         self.assertIn("текст «стоп из дашборда» «сессия снята»", self.journal())
+
+
+class TestTargetInTheJournal(HookCase):
+    """Задача и проект своими полями строки журнала: лента дашборда ведёт от
+    события к строке доски по полю, а не по разбору текста (DK-323)."""
+
+    def tree(self, name, branch=None):
+        """Рабочее дерево прогона, при желании с веткой в HEAD."""
+        path = os.path.join(self.tmp, name)
+        os.makedirs(path, exist_ok=True)
+        if branch:
+            os.makedirs(os.path.join(path, ".git"), exist_ok=True)
+            with open(os.path.join(path, ".git", "HEAD"), "w", encoding="utf-8") as f:
+                f.write("ref: refs/heads/%s\n" % branch)
+        return path
+
+    def test_hook_takes_them_from_the_worktree(self):
+        # Событие рождается в дереве задачи, и ID в тексте баннера не написан:
+        # раньше лента такое событие показывала оторванным.
+        r = self.hook(self.event("Stop", session="sess-turn"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача DK-034 проект devkit ", self.journal())
+
+    def test_arguments_name_them_themselves(self):
+        r = self.cli("--reason", "task_check", "--task", "XR-213",
+                     "--project", "it-road-course", "XR-213 в Check", "проверка за тобой")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача XR-213 проект it-road-course ", self.journal())
+
+    def test_arguments_without_the_keys_read_the_tree(self):
+        # Ключей нет, зато есть рабочая директория: уведомитель собирает поля
+        # по ней тем же правилом, что и в хук-режиме.
+        r = self.cli("выкат", "прод обновлён", cwd=self.tree("devkit", "dk-121"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача DK-121 проект devkit ", self.journal())
+
+    def test_event_without_a_task_says_so_with_a_dash(self):
+        r = self.cli("авария контура", "роутер DE не отвечает",
+                     cwd=self.tree("devkit", "main"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача - проект devkit ", self.journal())
+
+    def test_key_that_is_not_an_id_leaves_the_field_empty(self):
+        # Назвали задачу словом, а не ID доски: в поле честный прочерк, лента
+        # по нему никуда не ведёт и оторванным событие не выглядит.
+        r = self.cli("--task", "цель", "стоп", "витков 3",
+                     cwd=self.tree("devkit", "main"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача - проект devkit ", self.journal())
+
+    def test_key_without_a_word_is_red(self):
+        for flag, word in (("--task", "задачу"), ("--project", "проект")):
+            r = self.cli(flag)
+            self.assertEqual(r.returncode, 2, flag)
+            self.assertIn("%s ждёт %s" % (flag, word), r.stderr)
+
+    def test_sandbox_skip_keeps_the_fields(self):
+        # Пропущенный баннер это про доставку: событие в ленте остаётся, и
+        # вести от него есть куда.
+        r = self.cli("--task", "XR-100", "--project", "demo", "стоп", "сессия снята",
+                     cwd=self.tmp, TMPDIR=self.tmp)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача XR-100 проект demo ", self.journal())
+
+    def test_self_test_goes_without_a_task(self):
+        r = self.cli("--self-test", cwd=self.tree("devkit", "main"))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("задача - проект devkit ", self.journal())
 
 
 class TestSelfTest(HookCase):

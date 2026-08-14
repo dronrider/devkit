@@ -9,14 +9,17 @@
 чтобы не копить ленту.
 
 Режимы:
-  notify.py [--quiet] [--reason <повод>] <заголовок> [<текст>]
+  notify.py [--quiet] [--reason <повод>] [--task <ID>] [--project <имя>]
+            <заголовок> [<текст>]
                                     позвать уведомитель из чего угодно: скрипт
                                     выката, другой харнес, проверка расписания;
-                                    --quiet понижает повод до фонового, а
+                                    --quiet понижает повод до фонового,
                                     --reason называет повод словом для журнала
                                     (goal_stop, wait_human, task_check), по
                                     которому лента дашборда отличает стоп цикла
-                                    от завершённой задачи
+                                    от завершённой задачи, а --task и --project
+                                    называют задачу и проект события, по
+                                    которым лента ведёт к строке доски
   notify.py --hook [протокол]       хук харнеса: событие читается со stdin,
                                     разбирается по имени протокола таблицей
                                     hookio.py (голый --hook это claude-code), а
@@ -49,14 +52,24 @@ scratchpad, и живой баннер про неё ложный. Пропус�
 зовущая утилита.
 
 Журнал последних отправок лежит в ~/.devkit/notify.log: время, сессия, повод,
-уровень, бэкенд, цель перехода, код возврата и хвостом текст баннера
-заголовком и телом в ёлочках. Жалоба «уведомления не приходят» разбирается по
-нему, как и «важное не отличается от фонового»; текстом хвоста живёт лента
-дашборда, которой строка без слов ничего не говорит.
+уровень, бэкенд, цель перехода, задача, проект, код возврата и хвостом текст
+баннера заголовком и телом в ёлочках. Жалоба «уведомления не приходят»
+разбирается по нему, как и «важное не отличается от фонового»; текстом хвоста
+живёт лента дашборда, которой строка без слов ничего не говорит.
+
+Задача и проект стоят в строке своими полями, а не угадываются из текста
+баннера (DK-323): по ним лента дашборда ведёт от события к строке доски и к
+журналу агента, а «Поднять виток» бьёт в тот проект, где событие случилось.
+В хук-режиме поля собираются из рабочего дерева (у дерева задачи имя собрано
+как «проект-ID», у обычного чекаута ID лежит на ветке), в аргументном их
+называют ключи `--task` и `--project`, а без ключей они собираются так же по
+рабочей директории. Задачи у события может честно не быть (самопроверка,
+авария контура), и тогда в поле стоит прочерк.
 """
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -123,6 +136,10 @@ WAIT_WINDOW = 180
 # когда переменная перебита; варианты с /private стоят своими строками, чтобы
 # не зависеть от того, разрешит ли realpath симлинки macOS на этой машине.
 TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+# Чего ждёт ключ аргументного вызова: слово идёт в отказ, чтобы «ключ без
+# значения» читался прямо в терминале, а не сверялся с докой.
+FLAG_WORD = {"--reason": "повод", "--task": "задачу", "--project": "проект"}
 
 # Куда переключает клик по баннеру. Умеет это только terminal-notifier: она шлёт
 # от своего имени, а display notification постит от имени Script Editor, и клик
@@ -197,6 +214,42 @@ def task_label(tree):
     `main`/`master`: их веткой задачи не считаем."""
     branch = tree_branch(tree)
     return branch if branch and branch not in BRANCH_NOT_A_TASK else ""
+
+
+# ID доски: буква, дальше буквы с цифрами, дефис и номер (DK-323, XR-001).
+# Регистр свободный: на ветке и в имени дерева ID лежит строчными, а в доске и
+# в ленте он ходит заглавными.
+TASK_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[0-9]+$")
+# Имя дерева задачи собрано как «проект-ID» (`shipctl start`), и из него
+# читаются оба поля сразу: и задача, и проект, чьё это дерево.
+TREE_TASK_RE = re.compile(r"^(?P<home>.+)-(?P<task>[A-Za-z][A-Za-z0-9]*-[0-9]+)$")
+
+
+def task_id(label):
+    """Метка, приведённая к виду ID доски, пустая строка если это не ID.
+    Веткой задачи бывает и `glm`, и `feature/x`, и такое событие честно едет
+    без задачи, а не с выдуманной."""
+    label = label.strip() if isinstance(label, str) else ""
+    return label.upper() if TASK_ID_RE.match(label) else ""
+
+
+def event_target(cwd, root=None):
+    """Задача и проект события парой. Дерево задачи названо «проект-ID», и
+    оттуда читаются оба поля; у обычного чекаута задача лежит на ветке, а
+    проектом зовётся само дерево. Ничего не нашлось значит пустая строка:
+    поле с прочерком честнее угаданного."""
+    name, home = tree_name(cwd), tree_name(root)
+    task, project = "", ""
+    for label in (name, home):
+        m = TREE_TASK_RE.match(label) if label else None
+        if m:
+            task, project = m.group("task").upper(), m.group("home")
+            break
+    if not project:
+        project = home or name
+    if not task:
+        task = task_id(task_label(root or cwd))
+    return task, project
 
 
 def session_label(cwd, root=None):
@@ -558,13 +611,14 @@ def log_text(title, body):
 
 
 def log(session, key, backend, result, target=None, level=None,
-        title=None, body=None):
+        title=None, body=None, task=None, project=None):
     d = os.path.join(os.path.expanduser("~"), ".devkit")
     path = os.path.join(d, "notify.log")
-    line = "%s сессия %s повод %s уровень %s бэкенд %s цель %s %s%s\n" % (
+    line = ("%s сессия %s повод %s уровень %s бэкенд %s цель %s "
+            "задача %s проект %s %s%s\n") % (
         time.strftime("%Y-%m-%dT%H:%M:%S"), session or "-", key or "-",
-        level or "-", backend or "-", target[1] if target else "-", result,
-        log_text(title, body))
+        level or "-", backend or "-", target[1] if target else "-",
+        task or "-", project or "-", result, log_text(title, body))
     try:
         os.makedirs(d, exist_ok=True)
         if os.path.exists(path) and os.path.getsize(path) > LOG_LIMIT:
@@ -588,12 +642,13 @@ def terminal_sequence(title, body):
     return "\033]9;%s\007" % text
 
 
-def deliver(title, body, session="-", key="-", target=None, level=LOUD):
+def deliver(title, body, session="-", key="-", target=None, level=LOUD,
+            task=None, project=None):
     """Отправить и записать в журнал. Возврат (бэкенд, код возврата)."""
     backend = pick_backend()
     if not backend:
         log(session, key, None, "бэкенда нет: слать нечем", level=level,
-            title=title, body=body)
+            title=title, body=body, task=task, project=project)
         return None, None
     # В журнал идёт цель, которая реально уехала: бэкенд без клика её не берёт,
     # и жалоба «клик не работает» тогда разбирается по строке, а не на глаз.
@@ -601,7 +656,7 @@ def deliver(title, body, session="-", key="-", target=None, level=LOUD):
     code = send(backend, title, body, sent, level, session)
     log(session, key, backend,
         "код возврата: %s" % ("не запустился" if code is None else code), sent, level,
-        title, body)
+        title, body, task, project)
     return backend, code
 
 
@@ -633,6 +688,11 @@ def run_hook(protocol):
     if not parsed:
         return 0
     key, title, body, level = parsed
+    # Задача и проект собираются из деревьев события: рабочего дерева самого
+    # повода и окна сессии, которое его подняло. Дальше они едут в каждую
+    # строку журнала, включая строки пропусков: событие, до баннера не
+    # доехавшее, лента всё равно показывает и вести от него должна туда же.
+    task, project = event_target(sess.cwd, root)
     sandbox = sandbox_reason(root)
     if sandbox:
         # Симметрично аргументному пути: корень под TMPDIR это песочница вроде
@@ -641,7 +701,7 @@ def run_hook(protocol):
         # строкой, что и у аргументного вызова, а опрос фокуса и троттлинг
         # переводить на такой корень незачем.
         log(session, key, None, "пропуск: песочница, %s" % sandbox, level=level,
-            title=title, body=body)
+            title=title, body=body, task=task, project=project)
         return 0
     if key == TURN_DONE:
         # Фокус спрашивается только тут. Запрос разрешения и вопрос агента зовут
@@ -650,19 +710,20 @@ def run_hook(protocol):
         state = focus_state(root)
         if state == FOCUS_SESSION:
             log(session, key, None, "пропуск: окно сессии в фокусе", level=level,
-                title=title, body=body)
+                title=title, body=body, task=task, project=project)
             return 0
         if state == FOCUS_UNKNOWN:
             # Тишина тут хуже лишнего баннера: она неотличима от штатной работы,
             # а разрешение на управление компьютером выдают не на всякой машине.
             log(session, key, None, "фокус %s, зовём" % FOCUS_UNKNOWN, level=level,
-                title=title, body=body)
+                title=title, body=body, task=task, project=project)
     if not allow(session, key):
         log(session, key, None,
             "пропуск: повтор в окне %dс" % throttle(key)[1], level=level,
-            title=title, body=body)
+            title=title, body=body, task=task, project=project)
         return 0
-    backend, _ = deliver(title, body, session, key, click_target(cwd=root), level)
+    backend, _ = deliver(title, body, session, key, click_target(cwd=root), level,
+                         task, project)
     if not backend:
         # Системного бэкенда нет, остаётся сам терминал: харнес выдаст
         # последовательность за нас.
@@ -676,7 +737,9 @@ def self_test():
         return 1
     title = "%s: самопроверка" % session_label(os.getcwd())
     target = click_target(cwd=os.getcwd())
-    backend, code = deliver(title, "канал уведомлений devkit", "-", "self-test", target)
+    task, project = event_target(os.getcwd())
+    backend, code = deliver(title, "канал уведомлений devkit", "-", "self-test",
+                            target, task=task, project=project)
     if not backend:
         print("бэкенда уведомлений нет: на macOS ждём terminal-notifier или "
               "osascript, на Linux notify-send")
@@ -723,14 +786,26 @@ def main(argv):
     # нет: строка журнала тогда встаёт с прочерком, как раньше, а назвавший
     # повод словом получает его в журнале и в ленте дашборда.
     level, key = LOUD, "-"
-    while argv and argv[0] in ("--quiet", "--reason"):
+    # Задачу и проект зовущий называет сам: taskctl знает строку доски, дашборд
+    # знает проект, а по рабочей директории видно не всё (доску двигают из
+    # основного чекаута, где ветка это main). Не назвал, значит поля собираются
+    # по рабочей директории, как в хук-режиме.
+    task, project = None, None
+    while argv and argv[0] in ("--quiet", "--reason", "--task", "--project"):
         if argv[0] == "--quiet":
             level, argv = QUIET, argv[1:]
             continue
+        flag = argv[0]
         if len(argv) < 2 or not argv[1].strip():
-            sys.stderr.write("notify: --reason ждёт повод словом\n")
+            sys.stderr.write("notify: %s ждёт %s словом\n" % (flag, FLAG_WORD[flag]))
             return 2
-        key, argv = argv[1].strip(), argv[2:]
+        value, argv = argv[1].strip(), argv[2:]
+        if flag == "--reason":
+            key = value
+        elif flag == "--task":
+            task = value
+        else:
+            project = value
     if not argv:
         sys.stderr.write(__doc__)
         return 2
@@ -738,6 +813,9 @@ def main(argv):
         return 0
     title = short(argv[0])
     body = short(argv[1]) if len(argv) > 1 else ""
+    guess_task, guess_project = event_target(os.getcwd())
+    task = task_id(task) if task else guess_task
+    project = project or guess_project
     sandbox = sandbox_reason(os.getcwd())
     if sandbox:
         # Молчать про пропуск нельзя: строка уходит и в журнал, и в stdout,
@@ -745,13 +823,14 @@ def main(argv):
         # строке остаются: пропущенный баннер это про доставку, а не про то,
         # что события не было.
         log("-", key, None, "пропуск: песочница, %s" % sandbox, level=level,
-            title=title, body=body)
+            title=title, body=body, task=task, project=project)
         print("уведомление пропущено: %s, звать некого" % sandbox)
         return 0
     # Троттлинга тут нет: позвал скрипт, значит шлём. Окно держит поток событий
     # харнеса, а не осознанный вызов.
     backend, code = deliver(title, body, key=key,
-                            target=click_target(cwd=os.getcwd()), level=level)
+                            target=click_target(cwd=os.getcwd()), level=level,
+                            task=task, project=project)
     return 0 if backend and code == 0 else 1
 
 

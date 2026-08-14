@@ -686,6 +686,56 @@ if (liveTalks().length) {
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
 
+// Вкладка по умолчанию на телефоне (DK-305): у живой работы это «Журнал», а
+// у законченной «Лог витка». Журнал законченной работы пуст, а разговор ради
+// него и приходят смотреть на узкий экран: второе касание экрану больше не
+// нужно.
+slowSessions = false;
+sessions = [mine, alien];
+await go("#demo/agent/XR-1");
+let livePanes = find(groups, "agent-panes-XR-1");
+if (!livePanes) fail("экран агента живой работы не собрался");
+let tabSeg = byClass(livePanes, "seg");
+if (!tabSeg) fail("на экране агента нет переключателя вкладок телефона");
+if (tabSeg.children[0].className !== "on" || tabSeg.children[1].className === "on") {
+  fail("у живой работы вкладкой по умолчанию встал не «Журнал»: " + dump(tabSeg));
+}
+let grid = livePanes.children[1];
+if (!String(grid.children[0].className).includes("onpane")) {
+  fail("у живой работы панель «Журнал» не открыта вкладкой: " + grid.children[0].className);
+}
+
+// Обновление ленты не перебивает ручной выбор человека: панели собираются
+// один раз на заход и обновлением по фокусу окна не пересобираются.
+tabSeg.children[1].handlers.click();
+await settle();
+if (tabSeg.children[1].className !== "on" || tabSeg.children[0].className === "on") {
+  fail("нажатие на вкладку «Лог витка» её не выбрало: " + dump(tabSeg));
+}
+await sandbox.refresh();
+await settle();
+if (byClass(find(groups, "agent-panes-XR-1"), "seg").children[1].className !== "on") {
+  fail("обновление ленты сбросило выбранную человеком вкладку");
+}
+
+// Работа кончилась: тот же id больше не встречается среди works, экран агента
+// открывается вкладкой «Лог витка» по умолчанию.
+const wasChatId = chatWork[0].id;
+chatWork[0].id = "XR-9";
+await go("#demo");
+await go("#demo/agent/XR-1");
+chatWork[0].id = wasChatId;
+const donePanes = find(groups, "agent-panes-XR-1");
+if (!donePanes) fail("экран агента законченной работы не собрался");
+tabSeg = byClass(donePanes, "seg");
+if (tabSeg.children[1].className !== "on" || tabSeg.children[0].className === "on") {
+  fail("у законченной работы вкладкой по умолчанию встал не «Лог витка»: " + dump(tabSeg));
+}
+grid = donePanes.children[1];
+if (!String(grid.children[1].className).includes("onpane")) {
+  fail("у законченной работы панель «Лог витка» не открыта вкладкой: " + grid.children[1].className);
+}
+
 // Ответ на нажатие: он приходит карточкой поверх экрана и не двигает
 // раскладку. Строкой над списком он стоял в потоке документа, и появление слов
 // («конвейер задачи DK-136 поднят в tmux-сессии task-DK-136») уводило доску

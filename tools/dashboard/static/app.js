@@ -1852,9 +1852,9 @@ function renderAgent(project, works, id, board) {
     make: () => {
       const wrap = el("div");
       const jp = pane("Журнал агента", "источник назовёт сервер");
-      // Живой хвост назван без одушевления: обновляется журнал сам, а не
+      // Живой хвост назван без одушевления: журнал дописывается сам, а не
       // «живёт».
-      jp.head.append(el("span", "chip c-run", "хвост обновляется"));
+      jp.head.append(el("span", "chip c-run", "хвост дописывается"));
       const tp = pane("Лог витка", "");
       const grid = el("div", "agrid");
       grid.append(jp.card, tp.card);
@@ -1865,18 +1865,25 @@ function renderAgent(project, works, id, board) {
       tmHead.append(tmSub);
       tm.append(tmHead);
 
-      // Телефон: те же панели табами, переключение классом onpane.
+      // Телефон: те же панели табами, переключение классом onpane. Вкладка по
+      // умолчанию у живой работы «Журнал», у законченной «Лог витка»: журнал
+      // законченной работы пуст, а разговор ради него на телефон и приходят
+      // (DK-280, DK-305); прежде за ним вело второе касание, никак не
+      // обозначенное на экране. Дальше выбор человека держит закрытость
+      // панелей (sign выше пуст, панели собираются один раз на заход), и
+      // обновление ленты его не перебивает.
       const seg = el("div", "seg");
       const tabs = [jp.card, tp.card, tm];
+      const startTab = work ? 0 : 1;
       ["Журнал", "Лог витка", "tmux"].forEach((name, i) => {
-        const d = el("div", i === 0 ? "on" : "", name);
+        const d = el("div", i === startTab ? "on" : "", name);
         d.addEventListener("click", () => {
           Array.from(seg.children).forEach((x, j) => { x.className = j === i ? "on" : ""; });
           tabs.forEach((p, j) => p.classList.toggle("onpane", j === i));
         });
         seg.append(d);
       });
-      tabs[0].classList.add("onpane");
+      tabs[startTab].classList.add("onpane");
 
       wrap.append(seg, grid, tm);
       wireJournal(project, id, jp.body, jp.sub);

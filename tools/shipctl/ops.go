@@ -656,9 +656,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if !p.Train {
 		if busy, err := checkQueue(root, main, b); err != nil {
 			return "", err
+		} else if len(busy) > 0 && failReason != "" {
+			// Форвард-фикс проваленной задачи чинится выкатом, а выкат
+			// очередь не проходит: копить поезд при сломанном проде значит
+			// запереть починку навсегда (ship отбит признаком провала,
+			// merge отбит занятой очередью), поэтому здесь честный отказ
+			// с путём починки, а не молчаливое слияние в поезд.
+			return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом, а %s провалена и чинится только выкатом форвард-фикса: сначала проверка занявшей очередь (taskctl close) либо откат своей задачи (shipctl revert %s), поезд при сломанном проде не копится", strings.Join(busy, ", "), p.ID, p.ID)
 		} else if len(busy) > 0 {
 			p.Train = true
-			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкаченным кодом, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship)", strings.Join(busy, ", "))
+			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкаченным кодом, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship)\n", strings.Join(busy, ", "))
 		}
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
@@ -1473,7 +1480,15 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 			}
 			note := ""
 			if cleared {
-				note = ", очередь выката свободна"
+				// Признак погашен, но занявшая очередь задача могла остаться
+				// в Check: выкат за ней проверен, очередь держит она. «Свободна»
+				// рядом с занятой очередью врала бы, поэтому свободна только
+				// при честном пустом checkQueue.
+				if busy, err := checkQueue(root, main, b); err == nil && len(busy) == 0 {
+					note = ", очередь выката свободна"
+				} else {
+					note = fmt.Sprintf(", очередь держит %s (проверен выкат за откаченной задачей, признак провала больше её не держит)", strings.Join(busy, ", "))
+				}
 			}
 			out = append(out, fmt.Sprintf("доска: %s %s%s, коммит %s", p.ID, joined, note, hash))
 		}

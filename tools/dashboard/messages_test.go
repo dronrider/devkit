@@ -90,10 +90,18 @@ func postMessage(t *testing.T, c *http.Client, e *testEnv, id, text string) *htt
 
 var inboxLineRe = regexp.MustCompile(`- \d{4}-\d{2}-\d{2} \d{2}:\d{2}, из дашборда: привет виток`)
 
+// liveCycle поднимает цели tmux-сессию оболочки: с ней работа видна живой, и
+// ответ ручки говорит про следующий виток, а не про стоящий цикл.
+func liveCycle(t *testing.T, e *testEnv) {
+	t.Helper()
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "goal-XR-100\\n")
+}
+
 // Сообщение ложится строкой во «Входящие» файла цели, раздел встаёт перед
 // «Журналом», а правка уезжает git-ом: add, commit с ID в subject, push.
 func TestMessageLandsInInbox(t *testing.T) {
 	e, c, gitLog := messagesEnv(t, "")
+	liveCycle(t, e)
 
 	resp := postMessage(t, c, e, "XR-100", "привет виток")
 	text := body(t, resp)
@@ -350,6 +358,58 @@ func TestMessageRepeatKeepsOneLine(t *testing.T) {
 	postMessage(t, c, e, "XR-100", "проверь ленту").Body.Close()
 	if got := len(inboxLines(readFile(t, path))); got != 1 {
 		t.Errorf("после подхвата сообщение не легло заново:\n%s", readFile(t, path))
+	}
+}
+
+// idleFlag достаёт из ответа признак стоящего цикла: клиент разводит плашку по
+// нему, а не по разбору русской фразы.
+func idleFlag(t *testing.T, resp string) bool {
+	t.Helper()
+	var v struct {
+		Idle bool `json:"idle"`
+	}
+	if err := json.Unmarshal([]byte(resp), &v); err != nil {
+		t.Fatalf("ответ не разобрался: %v (%s)", err, resp)
+	}
+	return v.Idle
+}
+
+// Стоящий цикл назван словами в ответе ручки, и молчаливого «ждёт витка» при
+// нём больше нет: до DK-319 ответ обещал следующий виток и законченной работе,
+// а человек писал завершившемуся агенту и ждал ответа, которого не будет.
+// Строка при этом ложится во «Входящие» как прежде: поднятый виток её
+// прочитает.
+func TestMessageAtIdleCycleSaysSo(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-100.md")
+
+	text := body(t, postMessage(t, c, e, "XR-100", "закрывай задачу"))
+	if !strings.Contains(text, "цикл цели XR-100 не идёт") || !idleFlag(t, text) {
+		t.Errorf("ответ при стоящем цикле не назвал его стоящим: %s", text)
+	}
+	if strings.Contains(text, "следующий виток") {
+		t.Errorf("ответ обещает виток там, где поднимать его некому: %s", text)
+	}
+	if got := len(inboxLines(readFile(t, path))); got != 1 {
+		t.Errorf("строка не легла во «Входящие»:\n%s", readFile(t, path))
+	}
+
+	// Повтор той же реплики тоже не молчит: человек жмёт «Отправить» второй раз
+	// как раз потому, что ответа не дождался.
+	again := body(t, postMessage(t, c, e, "XR-100", "закрывай задачу"))
+	if !strings.Contains(again, "не идёт") || !strings.Contains(again, "уже лежит") || !idleFlag(t, again) {
+		t.Errorf("повтор при стоящем цикле не назвал стоящий цикл: %s", again)
+	}
+	if got := len(inboxLines(readFile(t, path))); got != 1 {
+		t.Errorf("повтор при стоящем цикле завёл вторую строку:\n%s", readFile(t, path))
+	}
+
+	// Поднятый цикл возвращает прежний ответ: обещание следующего витка при
+	// живой работе честно, и путать его с отказом нельзя.
+	liveCycle(t, e)
+	live := body(t, postMessage(t, c, e, "XR-100", "и журнал тоже"))
+	if !strings.Contains(live, "следующий виток") || idleFlag(t, live) {
+		t.Errorf("ответ при идущем цикле назвал цикл стоящим: %s", live)
 	}
 }
 
@@ -927,11 +987,13 @@ func TestMarkdownBlocks(t *testing.T) {
 
 // Плашка про судьбу сообщения закрывается крестиком, а лента чата прижата к
 // полю ввода: свежие реплики стоят внизу, у самого поля, а пустота короткой
-// переписки остаётся сверху (макет «04 Переписка»).
+// переписки остаётся сверху (макет «04 Переписка»). Крестик прячет плашку, а не
+// снимает её с дерева: при вставшем цикле она возвращается словами отказа
+// (DK-319), и снятую возвращать было бы нечем.
 func TestStaticChatNoteAndAnchor(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "function renderChat(")
-	for _, want := range []string{`el("button", "nx")`, `icon("close")`, "note.remove()", "Закрыть"} {
+	for _, want := range []string{`el("button", "nx")`, `icon("close")`, "note.hidden = true", "Закрыть"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в плашке чата нет %q: закрыть её нечем", want)
 		}

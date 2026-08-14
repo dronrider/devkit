@@ -446,6 +446,20 @@ if (groups.scrollTop !== 120) {
 await go("#demo/chat/XR-1");
 const thread = find(groups, "chat-thread-XR-1");
 if (!thread) fail("экран чата не собрался: " + dump(groups).slice(0, 200));
+// Цикл цели не идёт: чат говорит это словами и держит ту же ручку подъёма
+// витка, что кнопка в ленте (DK-319). Молчаливое «ждёт витка» здесь и было
+// бедой: человек писал завершившемуся агенту и ждал ответа.
+const note = find(thread, "chat-note");
+if (!dump(note).includes("Цикл цели не идёт")) {
+  fail("чат молчит о стоящем цикле: " + dump(note));
+}
+const raise = button(note, "Поднять виток");
+if (!raise || raise.hidden) fail("при стоящем цикле в чате нет ручки подъёма витка");
+raise.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (!running) fail("кнопка «Поднять виток» не позвала ручку запуска работы");
+running = false;
+
 const feed = thread.children[0];
 const list = feed.children[1];
 const first = find(list, "seq-1");
@@ -505,6 +519,12 @@ if (find(groups, "chat-thread-XR-1") !== thread) {
 }
 const stop = find(thread, "chat-stop");
 if (!stop || stop.hidden) fail("кнопка стопа не появилась при работающем агенте");
+if (raise !== button(find(thread, "chat-note"), "Поднять виток") || !raise.hidden) {
+  fail("плашка чата не узнала о поднявшейся работе: ручка подъёма витка осталась на месте");
+}
+if (!dump(find(thread, "chat-note")).includes("Сообщение уйдёт агенту")) {
+  fail("при работающем агенте плашка чата не обещает доставку витку: " + dump(find(thread, "chat-note")));
+}
 if (!dump(find(groups, "chat-head")).includes("агент работает")) {
   fail("шапка чата не узнала о работе агента: " + dump(find(groups, "chat-head")));
 }

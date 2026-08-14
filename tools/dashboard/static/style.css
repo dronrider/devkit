@@ -365,6 +365,11 @@ a:hover{text-decoration:underline}
 .cnote .nx{margin-left:auto;flex:none;width:24px;height:24px;border-radius:6px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
 .cnote .nx svg{width:11px;height:11px;display:block}
 .cnote .nx:hover{color:var(--tx);background:var(--bg2)}
+/* та же плашка про стоящий цикл: цвет стопа, а рядом с отказом ручка подъёма
+   витка (DK-319) */
+.cnote.idle{background:color-mix(in oklab,var(--block) 9%,var(--bg1));border-color:color-mix(in oklab,var(--block) 25%,transparent)}
+.cnote.idle b{color:var(--block)}
+.cnote .btn{flex:none;margin-left:auto;height:28px;min-height:28px;padding:0 12px;font-size:12px}
 .cbox{background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}

@@ -182,6 +182,44 @@ func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Projec
 	return found, id, doc.path, doc.rel, true
 }
 
+// goalIdle отвечает, стоит ли цикл цели: среди живых работ проекта (сессия
+// оболочки, запись реестра целей, живое окно человека) работы с этим ID нет,
+// и поднимать лежащее во «Входящих» некому. Ответ «стоит» дороже ошибки в
+// другую сторону, поэтому непрочитанная доска считается идущим циклом: сказать
+// «цикл стоит» там, где он идёт, значит послать человека жать «Поднять виток»
+// поверх живой сессии.
+func (s *server) goalIdle(projPath, id string) bool {
+	raw, err := s.projectBoard(projPath)
+	if err != nil {
+		return false
+	}
+	view, err := parseBoardView(raw)
+	if err != nil {
+		return false
+	}
+	for _, w := range s.liveWorks(projPath, view.Prefix, raw) {
+		if w.ID == id {
+			return false
+		}
+	}
+	return true
+}
+
+// idlePut и idleDup это отказ от обещания доставки при стоящем цикле: строка
+// во «Входящих» ждёт витка, а витка не будет, пока его не поднимут. Молчаливое
+// «ждёт витка» тут неотличимо от штатной работы, и человек ждёт ответа,
+// которого не будет (DK-319). Доставку идущей сессии дашборд не обещает и
+// здесь: механики для неё в devkit нет, её проектирует DK-136.
+func idlePut(id string) string {
+	return fmt.Sprintf("цикл цели %s не идёт: строка легла во «Входящие» файла цели, "+
+		"но прочитать её некому, пока не поднят виток", id)
+}
+
+func idleDup(id string) string {
+	return fmt.Sprintf("цикл цели %s не идёт, а такое сообщение уже лежит во «Входящих»: "+
+		"второй строки не завожу, и прочитает её только поднятый виток", id)
+}
+
 func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -214,6 +252,9 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	// Живые работы спрашиваются до замка: обход tmux и транскриптов упирается в
+	// диск, и держать на нём отправку из соседней вкладки незачем.
+	idle := s.goalIdle(found.Path, id)
 	// Чтение, сверка с лежащим и запись идут под одним замком: пара запросов с
 	// одним текстом приходит не только от двойного нажатия, но и от двух
 	// вкладок одного чата, где очередь исходящих дожимает сообщение своим
@@ -238,10 +279,15 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 	// клиенту повтор различать незачем.
 	if same, dup := pendingSame(string(doc), text); dup {
 		s.logf("повтор сообщения для %s в %s: строка уже лежит во «Входящих»", id, found.Name)
-		writeJSON(w, http.StatusOK, map[string]string{
+		resp := map[string]any{
 			"id": id, "line": same,
 			"message": fmt.Sprintf("такое сообщение уже лежит во «Входящих» файла цели %s: второй строки не завожу, виток прочитает одну", id),
-		})
+		}
+		if idle {
+			resp["idle"] = true
+			resp["message"] = idleDup(id)
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	if s.inboxProbe != nil {
@@ -252,9 +298,16 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не записался: %v", err)})
 		return
 	}
-	resp := map[string]string{
+	resp := map[string]any{
 		"id": id, "line": line,
 		"message": fmt.Sprintf("сообщение легло во «Входящие» файла цели %s: его прочитает следующий виток, идущий не увидит", id),
+	}
+	// Стоящий цикл называется словами в том же ответе: строка легла, но
+	// поднимать её некому, и человек узнаёт это сразу, а не через день
+	// молчания.
+	if idle {
+		resp["idle"] = true
+		resp["message"] = idlePut(id)
 	}
 	if note := commitDocs(found.Path,
 		fmt.Sprintf("docs(tasks): %s сообщение с дашборда во «Входящие»", id), rel); note != "" {

@@ -2285,6 +2285,34 @@ async function sendMessage(project, id, ta, out) {
   await out.send(text);
 }
 
+// Плашка над полем ввода. При идущем цикле она говорит, когда агент прочитает
+// сообщение, и закрывается крестиком: прочитав её однажды, держать её над
+// полем незачем. При стоящем цикле она говорит прямо, что читать сообщение
+// некому, и держит ту же ручку подъёма витка, что кнопка в ленте: до DK-319
+// строка ложилась во «Входящие» с молчаливым «ждёт витка», и человек ждал
+// ответа от закончившего работу агента. Отказ крестиком не закрывается,
+// спрятанный отказ это то же молчание. Доставку идущей сессии дашборд не
+// обещает и здесь: механики для неё в devkit нет, её проектирует DK-136.
+function fillChatNote(note, live) {
+  const said = findKey(note, "chat-said");
+  const start = findKey(note, "chat-start");
+  const close = findKey(note, "chat-close");
+  if (!said || !start || !close) return;
+  said.replaceChildren();
+  if (live) {
+    said.append(el("b", "", "Сообщение уйдёт агенту."));
+    said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
+  } else {
+    said.append(el("b", "", "Цикл цели не идёт."));
+    said.append(document.createTextNode(
+      " Сообщение ляжет во «Входящие» файла цели и будет лежать там, пока виток не поднят."));
+  }
+  note.className = live ? "cnote" : "cnote idle";
+  start.hidden = live;
+  close.hidden = !live;
+  if (!live) note.hidden = false;
+}
+
 function renderChat(project, works, id, board) {
   const groups = document.getElementById("groups");
   const crumb = {
@@ -2347,18 +2375,18 @@ function renderChat(project, works, id, board) {
     const pendbox = el("div", "msgs");
     thread.append(feed, pendbox);
 
-    // Плашка про судьбу сообщения закрывается крестиком: прочитав её однажды,
-    // держать её над полем ввода незачем.
     const note = el("div", "cnote");
-    const said = el("span");
-    said.append(el("b", "", "Сообщение уйдёт агенту."));
-    said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
-    const close = el("button", "nx");
+    const said = keyed(el("span"), "chat-said", "");
+    const start = keyed(el("button", "btn btn-acc", "Поднять виток"), "chat-start", "");
+    start.addEventListener("click", () => { startRun(project, id).catch(console.error); });
+    const close = keyed(el("button", "nx"), "chat-close", "");
     close.setAttribute("aria-label", "Закрыть");
     close.title = "Закрыть";
     close.append(icon("close"));
-    close.addEventListener("click", () => { note.remove(); });
-    note.append(said, close);
+    close.addEventListener("click", () => { note.hidden = true; });
+    note.append(said, start, close);
+    keyed(note, "chat-note", "");
+    fillChatNote(note, live);
     thread.append(note);
 
     const box = el("div", "cbox");
@@ -2400,8 +2428,9 @@ function renderChat(project, works, id, board) {
 
   // Разговор собирается один раз на заход: лента с потоком событий, очередь
   // исходящих и набранное в поле ввода перерисовку переживают целиком.
-  // Перечитанная по фокусу окна доска меняет на нём только кнопку стопа
-  // (DK-316), а раньше рвала поток и собирала ленту заново.
+  // Перечитанная по фокусу окна доска меняет на нём только кнопку стопа и
+  // плашку над полем ввода (DK-316), а раньше рвала поток и собирала ленту
+  // заново.
   sync(groups, [crumb, head, {
     key: "chat-thread-" + id,
     sign: String(live),
@@ -2409,6 +2438,8 @@ function renderChat(project, works, id, board) {
     fill: (node) => {
       const stop = findKey(node, "chat-stop");
       if (stop) stop.hidden = !live;
+      const note = findKey(node, "chat-note");
+      if (note) fillChatNote(note, live);
     },
   }]);
 }

@@ -766,6 +766,39 @@ func (s *smoke) stepFeedStop() (string, error) {
 	}
 }
 
+const smokeIdleMessage = "прогон smoke: пишу уже остановленному циклу"
+
+// stepIdleMessage: сообщение при стоящем цикле не притворяется доставленным.
+// Шаг идёт после стопа, и в этом вся его суть: работы нет, поднимать
+// «Входящие» некому, и ручка обязана сказать это словами, а не положить строку
+// молча, как она делала до DK-319.
+func (s *smoke) stepIdleMessage() (string, error) {
+	var v struct {
+		Line    string `json:"line"`
+		Message string `json:"message"`
+		Idle    bool   `json:"idle"`
+	}
+	if err := s.call("POST", "/api/projects/demo/goals/"+smokeGoal+"/message",
+		fmt.Sprintf(`{"text": %q}`, smokeIdleMessage), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if !v.Idle || !strings.Contains(v.Message, "не идёт") {
+		return "", fmt.Errorf("ответ при стоящем цикле не назвал его стоящим: idle=%v, «%s»", v.Idle, v.Message)
+	}
+	// Строка при этом ложится во «Входящие»: отказ от записи был бы потерей
+	// сообщения, а поднятый виток прочитает её первым шагом.
+	doc, err := os.ReadFile(s.goalPath())
+	if err != nil {
+		return "", err
+	}
+	for _, ln := range inboxLines(string(doc)) {
+		if strings.Contains(ln, smokeIdleMessage) {
+			return v.Message, nil
+		}
+	}
+	return "", fmt.Errorf("строки сообщения нет во «Входящих» файла цели: %v", inboxLines(string(doc)))
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -817,6 +850,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"живая лента открыта", s.stepFeedOpen},
 		{"стоп работы", s.stepStop},
 		{"уведомление о стопе в ленте", s.stepFeedStop},
+		{"сообщение при стоящем цикле", s.stepIdleMessage},
 	}
 	for i, st := range steps {
 		note, err := st.run()

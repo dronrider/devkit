@@ -310,8 +310,14 @@ func TestRunStopNotifies(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(got), "--reason\trun_stop\t") {
 		t.Fatalf("уведомитель позван без повода стопа: %q", got)
 	}
-	// В заголовке стоит проект и ID: по ним лента даёт кнопку «Поднять виток»,
-	// своего поля с работой у журнала уведомителя нет.
+	// Задача и проект едут своими ключами (DK-323): лента ведёт от события к
+	// строке доски по полю, а «Поднять виток» поднимает работу того проекта,
+	// где стоп случился, а не открытого на экране.
+	for _, want := range []string{"--task\tXR-100\t", "--project\tdemo\t"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("уведомитель позван без поля %q: %q", want, got)
+		}
+	}
 	for _, want := range []string{"demo", "XR-100", "стоп из дашборда"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("в уведомлении о стопе нет %q: %q", want, got)

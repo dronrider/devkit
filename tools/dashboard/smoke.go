@@ -743,6 +743,12 @@ func (s *smoke) stepFeedStop() (string, error) {
 			if n.Kind != "stop" || n.ID != smokeGoal {
 				continue
 			}
+			// Задача и проект приехали полями события, а не разбором текста
+			// баннера (DK-323): проекта в тексте нет вовсе, и пустое поле тут
+			// значит, что поля до ленты не доехали.
+			if n.Project != "demo" {
+				return "", fmt.Errorf("событие пришло без проекта в поле: %+v", n)
+			}
 			delivered := "баннер ушёл бэкендом " + n.Backend
 			if !n.Sent {
 				// Прогон живёт в песочнице, и уведомитель туда баннера не
@@ -750,7 +756,8 @@ func (s *smoke) stepFeedStop() (string, error) {
 				// стоит рядом с ним.
 				delivered = "баннера не было: " + n.Result
 			}
-			return fmt.Sprintf("«%s» (повод %s, %s)", n.Title, n.Reason, delivered), nil
+			return fmt.Sprintf("«%s» (задача %s проекта %s, повод %s, %s)",
+				n.Title, n.ID, n.Project, n.Reason, delivered), nil
 		case err := <-s.feedErr:
 			return "", fmt.Errorf("поток оборвался до уведомления: %v", err)
 		case <-deadline:

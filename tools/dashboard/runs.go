@@ -93,7 +93,11 @@ func (s *server) sayStop(root, project, id, kind string) string {
 	}
 	title := fmt.Sprintf("%s: %s стоп из дашборда", project, id)
 	body := fmt.Sprintf("%s снят из дашборда; возобновление это новый запуск, состояние он прочтёт с диска", what)
-	cmd := exec.Command("python3", np, "--reason", "run_stop", title, body)
+	// Задача и проект едут своими ключами: лента ведёт от события к строке
+	// доски по полю, а не по разбору заголовка (DK-323), и «Поднять виток»
+	// поднимает работу того проекта, где стоп случился.
+	cmd := exec.Command("python3", np, "--reason", "run_stop",
+		"--task", id, "--project", project, title, body)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Sprintf("уведомление о стопе не отправлено: %v (%s)", err, strings.TrimSpace(string(out)))

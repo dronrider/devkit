@@ -104,6 +104,103 @@ func TestParseNotifyLineWithoutText(t *testing.T) {
 	}
 }
 
+// Строки уведомителя с полями задачи и проекта (DK-323): по ним лента ведёт
+// от события к строке доски, и ID в тексте баннера ей больше не нужен.
+var notifyTargetFixture = []string{
+	// Конец хода в дереве задачи: ID в тексте не написан вовсе, и до полей
+	// такое событие висело в ленте оторванным.
+	"2026-08-14T10:01:02 сессия f07df579 повод turn_done уровень громкий бэкенд terminal-notifier цель - задача DK-323 проект devkit код возврата: 0 текст «devkit (dk-323): ход закончен» «правка уехала»",
+	// Событие без задачи: самопроверка канала, вести от неё некуда, и поле
+	// стоит прочерком честно.
+	"2026-08-14T10:03:04 сессия - повод self-test уровень громкий бэкенд terminal-notifier цель - задача - проект devkit код возврата: 0 текст «devkit: самопроверка» «канал уведомлений devkit»",
+	// Стоп чужого проекта: «Поднять виток» обязан бить в его проект, а не в
+	// открытый на экране.
+	"2026-08-14T10:05:06 сессия - повод run_stop уровень громкий бэкенд terminal-notifier цель - задача IRC-75 проект it-road-course код возврата: 0 текст «it-road-course: IRC-75 стоп из дашборда» «конвейер задачи снят из дашборда»",
+}
+
+// Задача и проект берутся из полей строки, а не из слов баннера: событие в
+// дереве задачи ID в тексте не несёт, и раньше лента вела от него никуда.
+func TestParseNotifyLineTakesTargetFromFields(t *testing.T) {
+	n, ok := parseNotifyLine(notifyTargetFixture[0])
+	if !ok {
+		t.Fatal("строка с полями задачи и проекта не разобралась")
+	}
+	if n.ID != "DK-323" || n.Project != "devkit" {
+		t.Errorf("задача и проект события: %q / %q", n.ID, n.Project)
+	}
+	if n.Title != "devkit (dk-323): ход закончен" || n.Body != "правка уехала" {
+		t.Errorf("текст уведомления: %q / %q", n.Title, n.Body)
+	}
+	// Результат стоит за новыми полями, и разбор обязан начинать его с кода
+	// возврата, а не со слова «задача».
+	if n.Result != "код возврата: 0" || !n.Sent {
+		t.Errorf("результат строки с полями: %q (доставка %v)", n.Result, n.Sent)
+	}
+	stop, ok := parseNotifyLine(notifyTargetFixture[2])
+	if !ok {
+		t.Fatal("строка стопа с полями не разобралась")
+	}
+	if stop.ID != "IRC-75" || stop.Project != "it-road-course" || stop.Kind != "stop" {
+		t.Errorf("стоп чужого проекта: %q / %q, тип %q", stop.ID, stop.Project, stop.Kind)
+	}
+}
+
+// Прочерк в поле задачи это честная пустота: ID из текста поверх него не
+// вылавливается, иначе самопроверка вела бы на строку доски, которой у неё нет.
+func TestParseNotifyLineKeepsEventWithoutTask(t *testing.T) {
+	n, ok := parseNotifyLine(notifyTargetFixture[1])
+	if !ok {
+		t.Fatal("строка без задачи не разобралась")
+	}
+	if n.ID != "" {
+		t.Errorf("задача выдумалась из текста: %q", n.ID)
+	}
+	if n.Project != "devkit" {
+		t.Errorf("проект события: %q", n.Project)
+	}
+	withID := strings.Replace(notifyTargetFixture[1],
+		"текст «devkit: самопроверка»", "текст «devkit: самопроверка XR-9»", 1)
+	if n, _ := parseNotifyLine(withID); n.ID != "" {
+		t.Errorf("ID из слов баннера победил поле с прочерком: %q", n.ID)
+	}
+}
+
+// Строки, писанные до полей, читаются по-прежнему: задача берётся из текста,
+// проекта у них нет, и ленту они не ломают.
+func TestParseNotifyLineOldLinesStillRead(t *testing.T) {
+	n, ok := parseNotifyLine(notifyFixture[2])
+	if !ok {
+		t.Fatal("строка без полей не разобралась")
+	}
+	if n.ID != "XR-213" || n.Project != "" {
+		t.Errorf("старая строка: задача %q, проект %q", n.ID, n.Project)
+	}
+	if n.Result != "код возврата: 0" {
+		t.Errorf("результат старой строки: %q", n.Result)
+	}
+}
+
+// Лента отдаёт поля наружу: клиент строит переход по ним, и в JSON ручки они
+// обязаны быть.
+func TestNotificationsGiveTargetFields(t *testing.T) {
+	e := newTestEnv(t)
+	writeNotifyLog(t, e.home, notifyTargetFixture)
+	out := getFeed(t, e, "")
+	if len(out.Items) != len(notifyTargetFixture) {
+		t.Fatalf("лента отдала %d событий из %d (note %q)", len(out.Items),
+			len(notifyTargetFixture), out.Note)
+	}
+	want := []struct{ id, project string }{
+		{"DK-323", "devkit"}, {"", "devkit"}, {"IRC-75", "it-road-course"},
+	}
+	for i, w := range want {
+		if out.Items[i].ID != w.id || out.Items[i].Project != w.project {
+			t.Errorf("событие %d: задача %q проект %q, ждал %q / %q", i,
+				out.Items[i].ID, out.Items[i].Project, w.id, w.project)
+		}
+	}
+}
+
 // Битая строка пропускается без обрушения ленты, как битая строка
 // транскрипта: журнал пишут и чужие руки.
 func TestParseNotifyLineBroken(t *testing.T) {
@@ -270,6 +367,27 @@ func TestStaticFeedScreen(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет стиля ленты %q", want)
 		}
+	}
+}
+
+// Переход от события клиент строит по полям события (DK-323): проект берётся
+// из события, а не с открытого экрана, к задаче и к журналу агента ведёт любое
+// событие с задачей, а событие без задачи помечено словами.
+func TestStaticFeedGoesByEventFields(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		"const to = n.project || project;",
+		"startRun(to, n.id)",
+		`location.hash = to + "/" + n.id;`,
+		`jrn.href = "#" + to + "/agent/" + n.id;`,
+		"задачи у события нет",
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет перехода по полям события %q", want)
+		}
+	}
+	if strings.Contains(app, "startRun(project, n.id)") {
+		t.Error("«Поднять виток» бьёт в открытый на экране проект, а не в проект события")
 	}
 }
 

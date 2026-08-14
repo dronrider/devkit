@@ -57,10 +57,33 @@ var notifyLabels = map[string]string{
 	"self-test":          "самопроверка уведомителя",
 }
 
-// notifyIDRe вылавливает ID доски из текста уведомления: по нему у стопа есть
-// кнопка «Поднять виток», а у задачи переход на её экран. Своего поля с ID у
-// журнала нет, и брать его больше неоткуда.
+// Поля задачи и проекта стоят в строке журнала после цели перехода
+// (hooks/notify.py, log). По ним лента ведёт от события к строке доски и к
+// журналу агента, а «Поднять виток» бьёт в проект события, а не в открытый на
+// экране.
+const (
+	notifyTaskKey    = "задача"
+	notifyProjectKey = "проект"
+	// notifyHeadOld это позиция результата в строке без полей задачи и
+	// проекта, notifyHeadNew в строке с полями.
+	notifyHeadOld = 11
+	notifyHeadNew = 15
+)
+
+// notifyIDRe вылавливает ID доски из текста уведомления. Путь этот старый: так
+// лента брала задачу, пока своего поля у события не было (DK-323), и держится
+// он ради строк, написанных до полей. У строки с полями текст не разбирается.
 var notifyIDRe = regexp.MustCompile(`\b[A-Z][A-Z0-9]*-[0-9]+\b`)
+
+// notifyTarget читает поля задачи и проекта и говорит, с какого поля начинается
+// результат. Строка без полей узнаётся по ключевому слову: событие тогда
+// разбирается по-старому и ленту не роняет.
+func notifyTarget(f []string) (id, project string, head int) {
+	if len(f) > notifyHeadNew && f[notifyHeadOld] == notifyTaskKey && f[notifyHeadOld+2] == notifyProjectKey {
+		return dashless(f[notifyHeadOld+1]), dashless(f[notifyHeadOld+3]), notifyHeadNew
+	}
+	return "", "", notifyHeadOld
+}
 
 // Notification это строка ленты: время и повод от уведомителя, текст баннера
 // и признак того, дошёл ли баннер. Молчание тут различимо не хуже пустоты:
@@ -77,6 +100,7 @@ type Notification struct {
 	Result  string `json:"result,omitempty"`
 	Sent    bool   `json:"sent"`
 	ID      string `json:"id,omitempty"`
+	Project string `json:"project,omitempty"`
 }
 
 // splitNotifyText отрезает хвост с текстом баннера: заголовок и тело в
@@ -110,10 +134,11 @@ func parseNotifyLine(line string) (Notification, bool) {
 	if _, err := time.Parse("2006-01-02T15:04:05", f[0]); err != nil {
 		return Notification{}, false
 	}
+	id, project, at := notifyTarget(f)
 	n := Notification{
 		Time: f[0], Reason: f[4], Level: dashless(f[6]), Session: dashless(f[2]),
-		Backend: dashless(f[8]), Result: strings.Join(f[11:], " "),
-		Title: title, Body: body,
+		Backend: dashless(f[8]), Result: strings.Join(f[at:], " "),
+		Title: title, Body: body, ID: id, Project: project,
 	}
 	n.Kind = notifyKinds[n.Reason]
 	if n.Kind == "" {
@@ -128,7 +153,13 @@ func parseNotifyLine(line string) (Notification, bool) {
 	// Дошёл баннер или нет, видно по коду возврата бэкенда; пропуски по окну,
 	// по фокусу и по песочнице событие не отменяют, но и доставкой не были.
 	n.Sent = n.Result == "код возврата: 0"
-	n.ID = notifyIDRe.FindString(n.Title + " " + n.Body)
+	if at == notifyHeadOld {
+		// Строка написана до полей: задача берётся из текста, как бралась
+		// раньше. У строки с полями пустая задача это честная пустота
+		// (самопроверка, авария контура), и вылавливать ID из слов баннера
+		// поверх неё было бы враньём.
+		n.ID = notifyIDRe.FindString(n.Title + " " + n.Body)
+	}
 	return n, true
 }
 

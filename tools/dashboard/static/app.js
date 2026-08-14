@@ -219,7 +219,7 @@ function currentProject(projects) {
 
 // Состояние проекта одним кружком (макет «00 Главная»): серый работы нет,
 // зелёный идёт работа, красный требуется внимание. Внимание берётся с доски, а
-// не из ленты: запись уведомителя машинная и проекта в себе не несёт, а
+// не из ленты: лента говорит о случившемся, а кружок о том, что ждёт сейчас, и
 // задача в Check ждёт ровно человека. Цветом одним такое не сказать, поэтому
 // рядом с зелёным и красным стоит причина словами, а у серого её нет: сказать
 // о нём нечего.
@@ -2720,20 +2720,29 @@ function feedItemEl(project, n) {
   // Событие было, а баннера человек не видел: причина стоит рядом, иначе
   // молчащий канал неотличим от исправного.
   if (!n.sent && n.result) b.append(el("div", "t2", "баннера не было: " + n.result));
+  // Задачу и проект событие несёт своими полями (DK-323), и переход идёт по
+  // ним: работа поднимается там, где событие случилось, а не в открытом на
+  // экране проекте. Поля у события нет только у старых строк журнала, и тогда
+  // проектом остаётся открытый.
+  const to = n.project || project;
   if (n.id) {
     const acts = el("div", "acts");
     if (n.kind === "stop") {
       const up = el("button", "btn btn-acc", "Поднять виток");
-      up.addEventListener("click", () => { startRun(project, n.id).catch(console.error); });
-      const jrn = el("a", "", "Журнал агента");
-      jrn.href = "#" + project + "/agent/" + n.id;
-      acts.append(up, jrn);
-    } else {
-      const open = el("button", "btn", "Открыть " + n.id);
-      open.addEventListener("click", () => { location.hash = project + "/" + n.id; });
-      acts.append(open);
+      up.addEventListener("click", () => { startRun(to, n.id).catch(console.error); });
+      acts.append(up);
     }
+    const open = el("button", "btn", "Открыть " + n.id);
+    open.addEventListener("click", () => { location.hash = to + "/" + n.id; });
+    const jrn = el("a", "", "Журнал агента");
+    jrn.href = "#" + to + "/agent/" + n.id;
+    acts.append(open, jrn);
     b.append(acts);
+  } else {
+    // Событие без задачи бывает честно: самопроверка канала, авария контура,
+    // строка журнала старше полей. Сказать про это словами дешевле, чем
+    // оставить событие выглядеть оторванным.
+    b.append(el("div", "t2", "задачи у события нет: вести к строке доски не от чего"));
   }
   item.append(b);
   item.append(el("div", "ntime", (n.time || "").slice(11, 16)));
@@ -2955,8 +2964,8 @@ function renderFeed(project) {
   const list = el("div", "ngroups");
   groups.append(head, chips, list);
   groups.append(el("div", "chan",
-    "Лента машинная: в ней события всех досок сразу, а «Поднять виток» поднимает работу в проекте " +
-    project + "."));
+    "Лента машинная: в ней события всех досок сразу, а действие у события ведёт в тот проект, " +
+    "где оно случилось."));
 
   let kind = "";
   let items = [];

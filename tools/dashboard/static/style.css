@@ -325,12 +325,16 @@ a:hover{text-decoration:underline}
 .snap{margin:0;padding:12px 18px;border-top:1px solid var(--line);font:400 11.5px/1.6 var(--mono);color:var(--tx2);max-height:34vh;overflow:auto}
 .snap:empty{display:none}
 .seg{display:none}
-/* переключатель разговоров задачи над лентой транскрипта (DK-280): собран
+/* список разговоров задачи над лентой транскрипта (DK-280): собран
    отдельным классом, потому что .seg переключает панели телефона и на
-   ноутбуке спрятан, а разговоры переключают на обеих ширинах */
+   ноутбуке спрятан, а разговоры переключают на обеих ширинах. Вторая строка
+   пункта это первая реплика разговора (DK-290): длинную она обрывает
+   многоточием, чтобы заказ работы не растягивал список на пол-панели */
 .tseg{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px;padding:3px;background:var(--bg2);border:1px solid var(--line);border-radius:10px}
-.tseg div{padding:6px 10px;border-radius:8px;font:500 12px var(--sans);color:var(--tx3);cursor:pointer}
+.tseg div{padding:6px 10px;border-radius:8px;font:500 12px var(--sans);color:var(--tx3);cursor:pointer;max-width:300px}
 .tseg .on{background:var(--bg3);color:var(--tx)}
+.tseg .ts{display:block;margin-top:2px;font:400 11px var(--mono);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tseg .on .ts{color:var(--tx2)}
 
 /* экран переписки (макет «04 Переписка»): пузыри реплик, свои справа,
    ожидающие витка тем же тоном; поле ввода с честной надписью */

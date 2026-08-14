@@ -61,9 +61,9 @@ func TestClaudeDirName(t *testing.T) {
 	}
 }
 
-// Список сессий: свежие сверху по mtime, ветка и первая человеческая реплика
-// из шапки, служебная вставка в угловых скобках репликой не считается,
-// сессия из каталога бокового дерева попадает в список.
+// Список сессий: свежие сверху по mtime, ветка, боковое дерево и первая
+// человеческая реплика из шапки, служебная вставка в угловых скобках репликой
+// не считается, сессия из каталога бокового дерева попадает в список.
 func TestSessionsList(t *testing.T) {
 	e := newTestEnv(t)
 	older := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
@@ -81,8 +81,8 @@ func TestSessionsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []sessionInfo{
-		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", First: "Выполни XR-007",
-			Task: "DK-5", TaskNote: "по дереву задачи"},
+		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", Tree: "dk-5",
+			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи"},
 		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу",
 			Task: "XR-005", TaskNote: "по первой реплике"},
 	}
@@ -169,6 +169,36 @@ func TestSessionsByTaskOnlyOwn(t *testing.T) {
 	_, list, _ = getSessions(t, e, c, "?task=XR-103")
 	if len(list) != 1 || list[0].ID != "ccc-3" || list[0].TaskNote != "по дереву задачи" {
 		t.Errorf("сессия бокового дерева XR-103: %+v", list)
+	}
+}
+
+// Разговоры одной задачи различимы и тогда, когда идут по одной ветке: разбор
+// ведут в главном дереве, исполнение в боковом, ветка у обоих остаётся своей
+// прежней, и подписи в списке выходили одинаковыми. Дерево называет сервер, у
+// главного оно пусто (DK-290).
+func TestSessionsNameTheirTree(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("разбери задачу XR-101", "main"),
+		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	writeSession(t, e.home, e.proj, "-xr-101", "bbb-2",
+		sessionLine("продолжай, я подожду", "main"),
+		time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 2 {
+		t.Fatalf("разговоры задачи XR-101: %+v, %q", list, note)
+	}
+	tree := map[string]string{}
+	for _, s := range list {
+		tree[s.ID] = s.Tree
+	}
+	if tree["bbb-2"] != "xr-101" {
+		t.Errorf("разговор бокового дерева не назвал дерева: %+v", list)
+	}
+	if tree["aaa-1"] != "" {
+		t.Errorf("разговор главного дерева назвал деревом %q", tree["aaa-1"])
 	}
 }
 

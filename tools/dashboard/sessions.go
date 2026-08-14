@@ -56,13 +56,17 @@ func sessionDirs(home, projPath string) []string {
 }
 
 // sessionInfo это строка списка сессий: id, время последней записи, ветка и
-// первая реплика человека, по ней сессию узнают в списке. Task с подписью
-// TaskNote говорят, чью работу сессия ведёт и чем она узнана; нераспознанная
-// сессия остаётся в списке с подписью, а в ленту задачи не идёт (DK-252).
+// первая реплика человека, по ней сессию узнают в списке. Tree это боковое
+// дерево, в котором шёл разговор (у главного дерева пусто): двух разговоров
+// одной задачи ветка не разводит, груминг и исполнение идут по одной, а
+// деревья у них разные (DK-290). Task с подписью TaskNote говорят, чью работу
+// сессия ведёт и чем она узнана; нераспознанная сессия остаётся в списке с
+// подписью, а в ленту задачи не идёт (DK-252).
 type sessionInfo struct {
 	ID       string `json:"id"`
 	Mtime    string `json:"mtime"`
 	Branch   string `json:"branch,omitempty"`
+	Tree     string `json:"tree,omitempty"`
 	First    string `json:"first,omitempty"`
 	Task     string `json:"task,omitempty"`
 	TaskNote string `json:"taskNote,omitempty"`
@@ -486,6 +490,7 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		scanned++
 		head := s.sessionHeadCached(f.path, f.stamp)
 		f.Branch, f.First = head.Branch, head.First
+		f.Tree = f.suffix
 		f.Task, f.TaskNote = sessionTask(f.suffix, head)
 		if f.Task == "" {
 			unknown++

@@ -202,6 +202,18 @@ function button(node, label) {
   return null;
 }
 
+// Узел с таким классом где-нибудь в поддереве: списки разговоров ключей
+// перерисовки не носят, и ищутся они классом.
+function byClass(node, cls) {
+  if (!node) return null;
+  if (String(node.className || "").split(" ").includes(cls)) return node;
+  for (const kid of node.children || []) {
+    const hit = byClass(kid, cls);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function tag(node, name) {
   if (!node) return null;
   if (node.tagName === name) return node;
@@ -268,6 +280,29 @@ function reply(body) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 }
 
+// Медленный ответ: обещание, разрешающееся через десяток оборотов очереди
+// микрозадач. Им ловится щель между запросом списка сессий и подъёмом потока
+// ленты: уход с экрана попадает как раз в неё.
+function slowReply(body) {
+  let p = Promise.resolve();
+  for (let i = 0; i < 20; i += 1) p = p.then(() => {});
+  return p.then(() => ({ ok: true, status: 200, json: () => Promise.resolve(body) }));
+}
+
+// Разговоры задачи: у одной задачи их бывает несколько (взяли, спросили из
+// соседнего окна, доделали другим деревом), и список стоит по времени
+// последней записи, а не по выбору человека.
+const mine = {
+  id: "aaaa1111-1111", mtime: "2026-08-13T10:02:00+03:00", branch: "main",
+  first: "Выполни XR-1", task: "XR-1", taskNote: "по первой реплике",
+};
+const alien = {
+  id: "bbbb2222-2222", mtime: "2026-08-13T09:30:00+03:00", branch: "main", tree: "xr-1",
+  first: "А какой агент делает XR-1?", task: "XR-1", taskNote: "по дереву задачи",
+};
+let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
+let slowSessions = false;
+
 const sandbox = {
   console: { log: () => {}, error: () => {}, warn: () => {} },
   setTimeout: () => 0,
@@ -310,7 +345,7 @@ const sandbox = {
     if (path.endsWith("/drafts")) return reply({ drafts });
     if (path.includes("/drafts/")) return reply({ file: "docs/tasks/drafts/x.md", text: "текст записи" });
     if (path.includes("/sessions?task=")) {
-      return reply({ sessions: [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }] });
+      return slowSessions ? slowReply({ sessions }) : reply({ sessions });
     }
     if (path.includes("/sessions/")) return reply({ items: talk });
     if (path === "/api/notifications") return reply({ items: [] });
@@ -476,4 +511,108 @@ if (!dump(find(groups, "chat-head")).includes("агент работает")) {
 if (doc.activeElement !== ta) fail("обновление шапки отобрало фокус у поля ввода");
 if (wasWorks !== works) fail("стенд подменил источник работ мимо ручек");
 
-console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус");
+// Экран агента: у задачи два разговора, и в одну ленту они не смешиваются
+// (DK-290). Экран перечитывается по фокусу окна, а список сессий стоит по
+// времени последней записи: соседняя работа, дописавшая свой транскрипт,
+// выходит наверх, и собранная заново лента открывалась по нулевому элементу,
+// то есть меняла разговор под читающим.
+const talkStreams = () => streams.filter((s) => String(s.url).includes("/sessions/"));
+const liveTalks = () => talkStreams().filter((s) => !s.closed);
+const talkReply = (es, seq, text) => {
+  es.onmessage({ data: JSON.stringify({ seq, role: "assistant", text, time: "2026-08-13T10:05:00+03:00" }) });
+};
+
+sessions = [mine, alien];
+await go("#demo/agent/XR-1");
+const panes = find(groups, "agent-panes-XR-1");
+if (!panes) fail("экран агента не собрался: " + dump(groups).slice(0, 300));
+const seg = byClass(panes, "tseg");
+if (!seg || seg.children.length !== 2) {
+  fail("разговоров задачи на экране агента не видно списком: " + dump(panes).slice(0, 300));
+}
+// Подпись разговора: время последней записи, дерево или ветка, первая реплика.
+// Время берётся тем же переводом, что и на экране, иначе стенд держал бы пояс
+// машины, на которой его гоняют.
+for (const want of [sandbox.localTime(alien.mtime), alien.tree, alien.first, mine.first]) {
+  if (!dump(seg).includes(want)) {
+    fail("в списке разговоров нет подписи " + JSON.stringify(want) + ": " + dump(seg));
+  }
+}
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
+  fail("открыт не свежий разговор: " + JSON.stringify(liveTalks().map((s) => s.url)));
+}
+const ours = liveTalks()[0];
+talkReply(ours, 1, "ход первого разговора");
+await settle();
+if (!dump(panes).includes("ход первого разговора")) {
+  fail("реплика открытого разговора не встала в ленту: " + dump(panes).slice(0, 300));
+}
+
+// Соседняя работа дописала транскрипт и вышла в списке наверх, а окно вернуло
+// себе фокус.
+sessions = [alien, mine];
+await sandbox.refresh();
+await settle();
+
+if (find(groups, "agent-panes-XR-1") !== panes) {
+  fail("обновление по фокусу окна пересобрало панели экрана агента");
+}
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
+  fail("обновление сменило открытый разговор на соседний: " +
+    JSON.stringify(liveTalks().map((s) => s.url)));
+}
+if (!dump(panes).includes(mine.id.slice(0, 8))) {
+  fail("подпись ленты не называет открытый разговор: " + dump(panes).slice(0, 300));
+}
+if (!dump(panes).includes("ход первого разговора")) {
+  fail("обновление собрало ленту заново: прежние реплики пропали");
+}
+talkReply(ours, 2, "ещё реплика первого");
+await settle();
+if (!dump(panes).includes("ещё реплика первого")) {
+  fail("после обновления лента дописывается мимо экрана");
+}
+
+// Переключение на соседний разговор: лента собирается заново им одним,
+// дострение прежнего снимается, и реплики двух разговоров рядом не стоят.
+seg.children[1].handlers.click();
+await settle();
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(alien.id)) {
+  fail("переключатель не открыл соседний разговор: " +
+    JSON.stringify(liveTalks().map((s) => s.url)));
+}
+talkReply(liveTalks()[0], 1, "ход соседнего разговора");
+await settle();
+if (!dump(panes).includes("ход соседнего разговора")) {
+  fail("реплика соседнего разговора не встала в ленту после переключения");
+}
+if (dump(panes).includes("ход первого разговора")) {
+  fail("лента склеила разговоры: реплики прежнего остались под репликами соседнего");
+}
+
+// Уход с экрана и возврат: список опять стоит свежим разговором сверху, а
+// открывается выбранный человеком.
+sessions = [mine, alien];
+await go("#demo");
+await go("#demo/agent/XR-1");
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(alien.id)) {
+  fail("возврат на экран открыл не выбранный разговор: " +
+    JSON.stringify(liveTalks().map((s) => s.url)));
+}
+
+// Уход с экрана на середине запроса за сессиями: запоздавший ответ поднимал
+// поток уже после того, как остальные закрыли, и закрывать его было некому.
+slowSessions = true;
+await go("#demo");
+sandbox.location.hash = "#demo/agent/XR-1";
+await sandbox.refresh();
+sandbox.location.hash = "#demo";
+await sandbox.refresh();
+await settle();
+if (liveTalks().length) {
+  fail("уход с экрана оставил поток разговора живым: " +
+    JSON.stringify(liveTalks().map((s) => s.url)));
+}
+
+console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус, " +
+  "экран агента держит выбранный разговор");

@@ -963,6 +963,18 @@ function wireDrag(project, tr, row) {
   tr.addEventListener("pointermove", (ev) => { dragMove(ev); });
   tr.addEventListener("pointerup", (ev) => { dragDrop(ev); });
   tr.addEventListener("pointercancel", () => { dragQuit(); });
+  // Прокрутку под взятой строкой отменяет обработчик, а не стили. Судьбу
+  // касания браузер решает по первому движению пальца и смотрит при этом на
+  // touch-action, каким он был в момент касания: класс, приезжающий через
+  // 400 мс удержания, ему уже не указ. Не отменив это движение, касание уезжает
+  // прокруткой, указатель отменяется (pointercancel), и жест умирает, не
+  // начавшись: браузерная приёмка нашла ровно это. Слушатель нарочно не
+  // passive, только такому браузер разрешает отменить прокрутку, а до взятия
+  // строки он ничего не отменяет, и список листается пальцем как прежде.
+  tr.addEventListener("touchmove", (ev) => {
+    if (!dragOn()) return;
+    if (ev.cancelable) ev.preventDefault();
+  }, { passive: false });
 }
 
 function dragTake(project, tr, row, ev) {

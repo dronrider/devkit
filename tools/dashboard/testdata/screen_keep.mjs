@@ -76,6 +76,7 @@ function makeNode(tag) {
     style: {},
     dataset: {},
     handlers: {},
+    listenOpts: {},
   };
   // Список классов настоящий, со снятием и переключением: перетаскивание им и
   // приглушает зону за коридором, и подсвечивает щель под пальцем, а
@@ -165,7 +166,13 @@ function makeNode(tag) {
     if (attached(node)) doc.activeElement = node;
   };
   node.scrollIntoView = () => {};
-  node.addEventListener = (name, fn) => { node.handlers[name] = fn; };
+  // Условия подписки лежат рядом с самим обработчиком: отменить прокрутку
+  // браузер разрешает только слушателю, объявленному не passive, и проверять
+  // это надо по подписке, а не по тому, звался ли preventDefault в стенде.
+  node.addEventListener = (name, fn, opts) => {
+    node.handlers[name] = fn;
+    node.listenOpts[name] = opts;
+  };
   node.removeEventListener = () => {};
   node.querySelector = () => null;
   node.querySelectorAll = () => [];
@@ -1686,6 +1693,28 @@ const holdFire = () => {
   wait.fn();
 };
 
+// Судьбу касания браузер решает по первому движению пальца: не отменил его
+// никто, значит это прокрутка, и указатель отменяется (pointercancel). Стенд
+// повторяет тут правило браузера, а не проверяет сам себя: touch-action браузер
+// читает в момент касания, и класс, приезжающий через долгое нажатие, ему уже
+// не указ, поэтому взятая строка срывалась на первом же движении пальца
+// (браузерная приёмка DK-324). Отдаёт true, когда движение перехвачено и жест
+// дожил.
+const swipe = (node, y) => {
+  let stopped = false;
+  if (node.handlers.touchmove) {
+    node.handlers.touchmove({
+      cancelable: true, target: node, touches: [{ clientY: y }],
+      preventDefault: () => { stopped = true; },
+    });
+  }
+  if (stopped) return true;
+  if (node.handlers.pointercancel) {
+    node.handlers.pointercancel({ pointerId: 1, pointerType: "touch" });
+  }
+  return false;
+};
+
 // Жест живёт только в очереди: строка из другой секции пальцем не берётся.
 if (find(groups, "XR-1").handlers.pointerdown) {
   fail("строка вне Backlog отвечает на нажатие пальцем: там порядок ручной, и жест обещал бы лишнее");
@@ -1700,6 +1729,25 @@ touch("pointermove", midOf("XR-6") + 40);
 for (const t of timers.splice(0)) t.fn();
 if (byClass(bcard, "gslot")) fail("пролистывание списка подняло щели перетаскивания");
 if (held.classList.contains("dragrow")) fail("пролистывание списка взяло строку");
+touch("pointerup", midOf("XR-6") + 40);
+
+// Пока строку не взяли, палец принадлежит списку: движение никто не
+// перехватывает, и прокрутка жива. Слушает его строка сама, и подписка не
+// passive: отменить прокрутку браузер разрешает только такой.
+timers.length = 0;
+touch("pointerdown", midOf("XR-6"));
+if (typeof held.handlers.touchmove !== "function") {
+  fail("строка не слушает движение пальца: отменить прокрутку под взятой строкой нечем");
+}
+const swipeOpts = held.listenOpts.touchmove;
+if (!swipeOpts || swipeOpts.passive !== false) {
+  fail("подписка на движение пальца объявлена passive, такой браузер прокрутку отменить не даст: " +
+    JSON.stringify(swipeOpts));
+}
+if (swipe(held, midOf("XR-6") + 40)) {
+  fail("палец перехвачен до взятия строки: список перестал прокручиваться пальцем");
+}
+for (const t of timers.splice(0)) t.fn();
 touch("pointerup", midOf("XR-6") + 40);
 
 // Короткое касание по-прежнему открывает задачу.
@@ -1729,6 +1777,12 @@ timers.length = 0;
 grab("pointerdown", mid2("XR-6"));
 holdFire();
 if (!row6.classList.contains("dragrow")) fail("долгое нажатие не взяло строку: " + row6.className);
+// Первое движение пальца после удержания: браузер обязан получить отказ от
+// прокрутки, иначе он отменит указатель и взятая строка сорвётся.
+if (!swipe(row6, mid2("XR-6") + 12)) {
+  fail("первое движение пальца ушло прокруткой: браузер отменил указатель, и взятая строка сорвалась");
+}
+if (!row6.classList.contains("dragrow")) fail("жест не пережил первого движения пальца");
 if (!find(card2, "XR-2").classList.contains("dimrow") ||
     !find(card2, "XR-9").classList.contains("dimrow")) {
   fail("зона за коридором не приглушена: строки, до которых жест не дотягивается, выглядят живыми");

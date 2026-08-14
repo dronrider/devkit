@@ -247,10 +247,11 @@ a:hover{text-decoration:underline}
 .trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
 /* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
-   приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Пока строку
-   держат, палец двигает её, а не список, поэтому у взятой строки снят
-   touch-action */
-.trow.dragrow{background:var(--bg3);touch-action:none;position:relative;z-index:1}
+   приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Прокрутку
+   под взятой строкой стили не держат: touch-action браузер читает в момент
+   касания, а строка берётся долгим нажатием, и класс приезжает уже после. Палец
+   отбирает у списка обработчик touchmove в app.js */
+.trow.dragrow{background:var(--bg3);position:relative;z-index:1}
 .trow.dimrow{opacity:0.4}
 .trow.litrow .rank,.trow.litrow .c-p1{background:color-mix(in oklab,var(--acc) 24%,transparent);border-radius:6px}
 .dtag{grid-column:1/-1;font:600 12px var(--mono);color:var(--acc);padding-top:4px}

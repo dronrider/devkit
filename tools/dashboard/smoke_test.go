@@ -30,6 +30,7 @@ func TestSmokePassesTheChain(t *testing.T) {
 		"подхват сообщения витком",
 		"стоп работы",
 		"уведомление о стопе в ленте",
+		"пересчёт ранга перетаскиванием доехал до доски",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в ходе прогона нет шага %q:\n%s", want, text)

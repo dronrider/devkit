@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -481,10 +482,22 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		RParts []*int `json:"r_parts"`
 		Cost   string `json:"cost"`
 		Link   string `json:"link"`
+		// Expect это разбивка, которую отправитель считает сегодняшней. С ней
+		// едет откат жеста перетаскивания: пока человек читал строку
+		// результата, строку могли поправить из соседней сессии, и молча
+		// затирать чужую правку прежними слагаемыми нельзя (LLD DK-328,
+		// решение 1).
+		Expect []int `json:"expect_r_parts"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "жду JSON с полями title, type, r_parts (или rank), cost, link"})
+		return
+	}
+	if body.Expect != nil && !slices.Equal(body.Expect, row.RParts) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("строку поправили, ранг сейчас %d (%s), откат не применён",
+				row.R, rankText(row.RParts))})
 		return
 	}
 	rank := body.Rank
@@ -540,7 +553,13 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	resp := map[string]string{"id": id, "message": out}
+	resp := map[string]any{"id": id, "message": out}
+	// Фактическое место строки едет тем же ответом: клиент считает ранг щели
+	// сам, но это превью по той доске, которую видел экран, а порядок строк
+	// правит утилита по свежей доске.
+	if spot := s.rowSpot(found.Path, id); spot != nil {
+		resp["place"] = spot
+	}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "правка строки с дашборда"),
 		filepath.ToSlash(filepath.Join("docs", "TASKS.md"))); note != "" {
 		resp["note"] = note
@@ -548,6 +567,73 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logf("правка строки %s в %s: %s", id, found.Name, out)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// rankText собирает разбивку ранга словами отказа: та же запись «а+б+в+г+д»,
+// какой её знают taskctl и форма задачи.
+func rankText(parts []int) string {
+	out := make([]string, len(parts))
+	for i, v := range parts {
+		out[i] = strconv.Itoa(v)
+	}
+	return strings.Join(out, "+")
+}
+
+// rowNear это сосед строки на доске: ID с заголовком и рангом. Заголовок едет
+// рядом, чтобы «строка встала между DK-319 и DK-326» читалось без второго
+// запроса за доской.
+type rowNear struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	R     int    `json:"r"`
+}
+
+// rowSpot это место строки после правки: свежие слагаемые с суммой, бакет и
+// соседи по секции сверху и снизу. Порядок Backlog выводится из ранга, считает
+// его taskctl, и место тут читается с уже переписанной доски, а не
+// предсказывается.
+type rowSpot struct {
+	Sect   string   `json:"sect"`
+	R      int      `json:"r"`
+	RParts []int    `json:"r_parts"`
+	P      string   `json:"p"`
+	Above  *rowNear `json:"above,omitempty"`
+	Below  *rowNear `json:"below,omitempty"`
+}
+
+func near(row boardRow) *rowNear {
+	return &rowNear{ID: row.ID, Title: row.Title, R: row.R}
+}
+
+// rowSpot читает место строки заново: доска уже переписана утилитой, отпечаток
+// файла сменился, и память процесса отдаёт свежий ответ сама. Место не
+// прочиталось, значит его в ответе нет вовсе: правка при этом прошла, и
+// выдуманные соседи хуже их отсутствия.
+func (s *server) rowSpot(dir, id string) *rowSpot {
+	raw, err := s.projectBoard(dir)
+	if err != nil {
+		return nil
+	}
+	sects, err := parseBoardSects(raw)
+	if err != nil {
+		return nil
+	}
+	for _, sec := range sects {
+		for i, row := range sec.Rows {
+			if row.ID != id {
+				continue
+			}
+			spot := &rowSpot{Sect: sec.Key, R: row.R, RParts: row.RParts, P: row.P}
+			if i > 0 {
+				spot.Above = near(sec.Rows[i-1])
+			}
+			if i+1 < len(sec.Rows) {
+				spot.Below = near(sec.Rows[i+1])
+			}
+			return spot
+		}
+	}
+	return nil
 }
 
 // handleTaskFilePost заводит файл задачи руками утилиты: taskctl file и

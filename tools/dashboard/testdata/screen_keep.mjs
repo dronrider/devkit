@@ -22,11 +22,17 @@
 // запроса: нарисованный список без доехавшего имени это ровно та поломка, от
 // которой задача и заведена.
 //
-// Последним шагом стенд смотрит ответ на нажатие: он приходит карточкой поверх
-// экрана и не трогает ни одного узла из потока документа, поэтому раскладка от
-// него не едет. Поток стенд берёт из настоящего index.html, а «поверх экрана»
-// сверяет с настоящим style.css, чтобы проверка не выродилась в пересказ самой
-// себя.
+// Смотрит стенд и ответ на нажатие: он приходит карточкой поверх экрана и не
+// трогает ни одного узла из потока документа, поэтому раскладка от него не
+// едет. Поток стенд берёт из настоящего index.html, а «поверх экрана» сверяет с
+// настоящим style.css, чтобы проверка не выродилась в пересказ самой себя.
+//
+// Последним разделом идёт перетаскивание строки очереди (DK-324): расчёт
+// коридора и щелей проверяется прямыми вызовами по краевым случаям, а сам жест
+// игрушечными событиями указателя. Предмет тут это нарисованный на живом списке
+// коридор, тело запроса, слова после броска и откат с ожидаемой разбивкой.
+// Игрушечный DOM ради этого считает вертикаль списка: щель под пальцем берётся
+// из неё, как в браузере.
 //
 // Зовётся из go-теста (board_test.go), путь к статике приходит аргументом.
 
@@ -71,11 +77,24 @@ function makeNode(tag) {
     dataset: {},
     handlers: {},
   };
+  // Список классов настоящий, со снятием и переключением: перетаскивание им и
+  // приглушает зону за коридором, и подсвечивает щель под пальцем, а
+  // заглушка-пустышка показывала бы, что снятое так и висит.
+  const classes = () => String(node.className).split(" ").filter(Boolean);
   node.classList = {
-    add: (...cls) => { node.className = (node.className + " " + cls.join(" ")).trim(); },
-    remove: () => {},
-    contains: (cls) => node.className.split(" ").includes(cls),
-    toggle: () => {},
+    add: (...cls) => {
+      const list = classes();
+      for (const cl of cls) if (!list.includes(cl)) list.push(cl);
+      node.className = list.join(" ");
+    },
+    remove: (...cls) => { node.className = classes().filter((cl) => !cls.includes(cl)).join(" "); },
+    contains: (cls) => classes().includes(cls),
+    toggle: (cls, on) => {
+      const want = on === undefined ? !classes().includes(cls) : Boolean(on);
+      if (want) node.classList.add(cls);
+      else node.classList.remove(cls);
+      return want;
+    },
   };
   const detach = (kid) => {
     if (!kid || !kid.parentElement) return;
@@ -122,7 +141,22 @@ function makeNode(tag) {
   node.after = () => {};
   node.setAttribute = () => {};
   node.removeAttribute = () => {};
-  node.getBoundingClientRect = () => ({ top: 0, bottom: 0, height: 0, width: 0 });
+  // Вертикаль узла: настоящих размеров у стенда нет, и по умолчанию их нет ни
+  // у кого. Раскладка включается коробке отдельно (layout ниже), и тогда её
+  // дети лежат сверху вниз: жест берёт из этих чисел щель под пальцем.
+  node.getBoundingClientRect = () => {
+    const par = node.parentElement;
+    if (!par || !par.laid) return { top: 0, bottom: 0, height: 0, width: 0 };
+    let top = 0;
+    for (const kid of par.children) {
+      if (kid === node) break;
+      top += height(kid);
+    }
+    const own = height(node);
+    return { top, bottom: top + own, height: own, width: 0 };
+  };
+  node.setPointerCapture = () => {};
+  node.releasePointerCapture = () => {};
   // Фокус берёт только прикреплённый к документу узел: собранный, но ещё не
   // вставленный узел браузер не фокусирует вовсе, и вызов на нём проходит
   // молча. Приёмка нашла ровно это: поле поиска фокусировалось внутри make(),
@@ -262,6 +296,14 @@ function byClass(node, cls) {
     if (hit) return hit;
   }
   return null;
+}
+
+// Раскладка коробки: её дети получают вертикаль, всем прочим узлам дерева
+// по-прежнему нечего отдать. Считается она на каждый запрос, поэтому вставшая
+// между строками щель двигает всё, что ниже, как в браузере.
+function layout(box) {
+  box.laid = true;
+  return box;
 }
 
 function tag(node, name) {
@@ -404,6 +446,66 @@ function reply(body) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
 }
 
+function refuse(status, body) {
+  return Promise.resolve({ ok: false, status, json: () => Promise.resolve(body) });
+}
+
+// Игрушечный taskctl под ручкой PATCH (DK-324): правка слагаемых пересчитывает
+// сумму с полосой и переставляет очередь по паре ключей «ранг убыванием, номер
+// возрастанием» (insertIdx в tools/taskctl/board.go), а ответ называет
+// фактическое место строки соседями сверху и снизу. Порядок тут не выдумка
+// стенда: считать его на клиенте как раз и нельзя, клиентский расчёт это
+// превью.
+const patched = [];
+
+// Чужая правка, приехавшая вместе с ответом: соседи в ответе не те, что
+// насчитал экран, пока шёл жест.
+let boardAhead = null;
+
+function idNum(id) {
+  return Number(String(id).replace(/\D+/g, ""));
+}
+
+function sortBoard() {
+  const tail = rows.slice(1).sort((a, b) => (b.r - a.r) || (idNum(a.id) - idNum(b.id)));
+  rows.length = 1;
+  for (const r of tail) rows.push(r);
+}
+
+function nearRow(row) {
+  return row ? { id: row.id, title: row.title, r: row.r } : null;
+}
+
+function patchRow(id, body) {
+  const row = rows.find((r) => r.id === id);
+  if (!row) return refuse(404, { error: "на доске demo нет строки " + id });
+  if (body.expect_r_parts && String(body.expect_r_parts) !== String(row.r_parts)) {
+    return refuse(409, {
+      error: "строку поправили, ранг сейчас " + row.r + " (" + row.r_parts.join("+") +
+        "), откат не применён",
+    });
+  }
+  row.r_parts = row.r_parts.map((was, i) => {
+    const v = (body.r_parts || [])[i];
+    return v === null || v === undefined ? was : v;
+  });
+  row.r = row.r_parts.reduce((sum, v) => sum + v, 0);
+  row.p = row.r >= 75 ? "P0" : row.r >= 50 ? "P1" : row.r >= 25 ? "P2" : "P3";
+  sortBoard();
+  const back = rows.slice(1);
+  const at = back.findIndex((r) => r.id === id);
+  const place = { sect: "backlog", r: row.r, r_parts: row.r_parts, p: row.p };
+  const above = nearRow(back[at - 1]);
+  const below = nearRow(back[at + 1]);
+  if (above) place.above = above;
+  if (below) place.below = below;
+  if (boardAhead) {
+    Object.assign(place, boardAhead);
+    boardAhead = null;
+  }
+  return reply({ id, message: id + ": R -> " + row.r, place });
+}
+
 // Медленный ответ: обещание, разрешающееся через десяток оборотов очереди
 // микрозадач. Им ловится щель между запросом списка сессий и подъёмом потока
 // ленты: уход с экрана попадает как раз в неё.
@@ -525,6 +627,11 @@ const sandbox = {
       running = true;
       started.push(init && init.body ? JSON.parse(init.body) : {});
       return reply({ message: "сессия поднята" });
+    }
+    if (path.includes("/tasks/") && init && init.method === "PATCH") {
+      const sent = JSON.parse(init.body);
+      patched.push(sent);
+      return patchRow(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)), sent);
     }
     if (path === "/api/harnesses") return reply(harnessBody());
     if (path.endsWith("/board")) return reply(boardBody());
@@ -1471,10 +1578,321 @@ sandbox.sayResult("запуск DK-136...");
 sandbox.sayResult("");
 if (flashes.children.length) fail("пустой ответ не снял карточку: " + dump(flashes));
 
+// Перетаскивание строки очереди (DK-324, LLD DK-328, решение 1). Считать
+// разбором исходника тут нечего: предмет проверки это коридор со щелями,
+// который жест рисует на живом списке, тело запроса и слова после броска.
+// Расчёт щели проверяется отдельно, прямыми вызовами: краевые случаи (верх,
+// низ, равные ранги, глухая щель, единственная строка) пальцем не набрать.
+
+for (const name of ["dragCorridor", "gapAim", "dragTagText"]) {
+  if (typeof sandbox[name] !== "function") {
+    fail("в статике нет расчёта коридора и щелей (" + name + "): перетаскивать строку нечем");
+  }
+}
+
+// Коридор строки: серьёзность плюс прочие мягкие слагаемые дают пол, ценность
+// добирает до потолка. Полосу серьёзности такой коридор не переезжает никогда.
+const cor = sandbox.dragCorridor({ r_parts: [25, 3, 1, 0, 1] });
+if (!cor || cor.low !== 27 || cor.high !== 37 || cor.value !== 3 || cor.r !== 30) {
+  fail("коридор строки посчитан не по слагаемым: " + JSON.stringify(cor));
+}
+if (sandbox.dragCorridor({ r_parts: [25, 3] })) {
+  fail("у строки с неполной разбивкой ранга взялся коридор: жест такую строку брать не должен");
+}
+
+// Щели считаются по паре ключей сортировки. Список тут выдуманный, зато
+// краевые случаи в нём стоят рядом: верх, низ, общий ранг соседей и
+// единственная строка.
+const aimRow = (id, r, parts) => ({ id, r, r_parts: parts });
+const line = [
+  aimRow("XR-2", 86, [75, 9, 1, 0, 1]),
+  aimRow("XR-3", 36, [25, 9, 1, 0, 1]),
+  aimRow("XR-4", 34, [25, 7, 1, 0, 1]),
+  aimRow("XR-5", 34, [25, 7, 1, 0, 1]),
+  aimRow("XR-6", 30, [25, 3, 1, 0, 1]),
+  aimRow("XR-7", 29, [25, 2, 1, 0, 1]),
+  aimRow("XR-8", 28, [25, 1, 1, 0, 1]),
+  aimRow("XR-9", 3, [0, 1, 1, 0, 1]),
+];
+const aimAt = (gap) => sandbox.gapAim(line, "XR-6", gap);
+// Щель ноль это самый верх списка: туда ценностью не дотянуться, и причина
+// названа потолком коридора.
+if (aimAt(0).r !== null || !aimAt(0).why.includes("выше не поднять")) {
+  fail("верхняя щель взялась мимо коридора: " + JSON.stringify(aimAt(0)));
+}
+if (!aimAt(0).why.includes("ранг 37")) {
+  fail("причина у верхнего края не называет потолка коридора: " + aimAt(0).why);
+}
+// Под самой нижней строкой то же самое, только полом.
+const bottom = aimAt(7);
+if (bottom.r !== null || !bottom.why.includes("ниже не опустить") || !bottom.why.includes("ранг 27")) {
+  fail("нижняя щель взялась мимо коридора: " + JSON.stringify(bottom));
+}
+// Живая щель: ранг ближайший к сегодняшнему из тех, что ставят строку на место.
+if (aimAt(1).r !== 37 || aimAt(1).value !== 10) fail("щель под первой строкой: " + JSON.stringify(aimAt(1)));
+if (aimAt(2).r !== 35 || aimAt(2).value !== 8) fail("щель между XR-3 и XR-4: " + JSON.stringify(aimAt(2)));
+// Место, откуда строку взяли: ранг тот же, и жест его не раздувает.
+if (aimAt(4).r !== 30 || aimAt(4).value !== 3) fail("своя щель строки: " + JSON.stringify(aimAt(4)));
+// Равные ранги и номер строки: XR-6 старше обоих номером, и между двумя
+// строками с рангом 34 ей места нет ни при каком ранге.
+const dead = aimAt(3);
+if (dead.r !== null) fail("глухая щель между равными рангами приняла строку: " + JSON.stringify(dead));
+for (const want of ["места нет", "выше XR-4 ставит ранг 35", "ниже XR-5 ранг 34"]) {
+  if (!dead.why.includes(want)) fail("глухая щель не сказала " + JSON.stringify(want) + ": " + dead.why);
+}
+// Номер решает при равном ранге: XR-6 встаёт выше XR-8 с общим рангом 28.
+if (aimAt(5).r !== 28 || aimAt(5).value !== 1) {
+  fail("щель под XR-7 не взяла ранг соседа по номеру: " + JSON.stringify(aimAt(5)));
+}
+// Единственная строка: щель у неё одна, и это её же место.
+const alone = [aimRow("XR-6", 30, [25, 3, 1, 0, 1])];
+if (sandbox.gapAim(alone, "XR-6", 0).r !== 30 || sandbox.gapAim(alone, "XR-6", 1).r !== 30) {
+  fail("у единственной строки щель не приняла её собственный ранг");
+}
+// Полоса P считается из суммы, и у верхнего края коридора жест перетаскивает
+// строку через порог: молчать об этом нельзя.
+const jump = sandbox.dragTagText({ low: 40, high: 50, value: 9, r: 49 },
+  { r: 50, value: 10, above: null, below: null });
+if (jump !== "ранг 49 -> 50, ценность 9 -> 10, полоса P2 -> P1") {
+  fail("ярлык у края коридора не назвал переезда полосы: " + jump);
+}
+
+// Жест на живом списке. Доска стенда получает разные ранги: до сих пор строки
+// стояли с общим, и щели на ней были бы все глухие.
+for (const row of line) {
+  const at = rows.find((r) => r.id === row.id);
+  if (!at) continue;
+  at.r = row.r;
+  at.r_parts = row.r_parts.slice();
+  at.p = row.r >= 50 ? "P1" : "P2";
+}
+sortBoard();
+running = false;
+await go("#demo");
+const bcard = layout(find(groups, "card-backlog"));
+const held = find(bcard, "XR-6");
+if (!held) fail("строки XR-6 в очереди нет: " + dump(bcard).slice(0, 200));
+const midOf = (id) => {
+  const box = find(bcard, id).getBoundingClientRect();
+  return box.top + box.height / 2;
+};
+const touch = (name, y, extra) => held.handlers[name](Object.assign({
+  pointerId: 1, pointerType: "touch", clientY: y, cancelable: true,
+  target: held, preventDefault: () => {}, stopPropagation: () => {},
+}, extra || {}));
+const holdFire = () => {
+  const wait = timers.pop();
+  if (!wait) fail("долгое нажатие не завело таймера удержания");
+  wait.fn();
+};
+
+// Жест живёт только в очереди: строка из другой секции пальцем не берётся.
+if (find(groups, "XR-1").handlers.pointerdown) {
+  fail("строка вне Backlog отвечает на нажатие пальцем: там порядок ручной, и жест обещал бы лишнее");
+}
+
+// Пролистывание остаётся пролистыванием: палец поехал раньше, чем сработало
+// удержание, и жест снимается вовсе.
+timers.length = 0;
+touch("pointerdown", midOf("XR-6"));
+if (!timers.length) fail("долгое нажатие не завело таймера удержания");
+touch("pointermove", midOf("XR-6") + 40);
+for (const t of timers.splice(0)) t.fn();
+if (byClass(bcard, "gslot")) fail("пролистывание списка подняло щели перетаскивания");
+if (held.classList.contains("dragrow")) fail("пролистывание списка взяло строку");
+touch("pointerup", midOf("XR-6") + 40);
+
+// Короткое касание по-прежнему открывает задачу.
+timers.length = 0;
+sandbox.location.hash = "#demo";
+touch("pointerdown", midOf("XR-6"));
+touch("pointerup", midOf("XR-6"));
+held.handlers.click({ target: held, stopPropagation: () => {} });
+if (sandbox.location.hash !== "demo/XR-6") {
+  fail("короткое касание перестало открывать задачу: " + sandbox.location.hash);
+}
+timers.length = 0;
+await go("#demo");
+
+// Долгое нажатие: строка взялась, коридор нарисован прямо на списке.
+const card2 = layout(find(groups, "card-backlog"));
+const row6 = find(card2, "XR-6");
+const grab = (name, y, extra) => row6.handlers[name](Object.assign({
+  pointerId: 1, pointerType: "touch", clientY: y, cancelable: true,
+  target: row6, preventDefault: () => {}, stopPropagation: () => {},
+}, extra || {}));
+const mid2 = (id) => {
+  const box = find(card2, id).getBoundingClientRect();
+  return box.top + box.height / 2;
+};
+timers.length = 0;
+grab("pointerdown", mid2("XR-6"));
+holdFire();
+if (!row6.classList.contains("dragrow")) fail("долгое нажатие не взяло строку: " + row6.className);
+if (!find(card2, "XR-2").classList.contains("dimrow") ||
+    !find(card2, "XR-9").classList.contains("dimrow")) {
+  fail("зона за коридором не приглушена: строки, до которых жест не дотягивается, выглядят живыми");
+}
+if (find(card2, "XR-3").classList.contains("dimrow")) {
+  fail("строка внутри коридора приглушена вместе с чужими");
+}
+const slots = card2.children.filter((kid) => String(kid.className).includes("gslot"));
+if (!slots.length) fail("щели на списке не нарисованы: целиться некуда");
+const slotText = slots.map(dump).join(" | ");
+for (const want of ["ранг 37", "ранг 35", "места нет", "выше не поднять", "ниже не опустить"]) {
+  if (!slotText.includes(want)) {
+    fail("среди щелей нет " + JSON.stringify(want) + ": " + slotText);
+  }
+}
+
+// Обновление по фокусу окна взятую строку не трогает: пересобранный список увёл
+// бы её из-под пальца вместе с коридором.
+await sandbox.refresh();
+await settle();
+if (find(groups, "card-backlog") !== card2 || !row6.classList.contains("dragrow")) {
+  fail("обновление пересобрало список под пальцем");
+}
+if (!card2.children.filter((kid) => String(kid.className).includes("gslot")).length) {
+  fail("обновление стёрло щели у взятой строки");
+}
+
+// Целимся в щель между XR-3 и XR-4: ярлык называет и ранг, и ценность.
+grab("pointermove", (mid2("XR-3") + mid2("XR-4")) / 2);
+const tagged = dump(row6);
+if (!tagged.includes("ранг 30 -> 35, ценность 3 -> 8")) {
+  fail("ярлык взятой строки не назвал пересчёта: " + tagged);
+}
+// Глухая щель говорит причину тем же ярлыком, а не молчит.
+grab("pointermove", (mid2("XR-4") + mid2("XR-5")) / 2);
+if (!dump(row6).includes("места нет")) {
+  fail("на глухой щели ярлык замолчал: " + dump(row6));
+}
+
+// Бросок: правка уезжает ручкой одной ценностью, а строка результата пишется
+// по ответу сервера.
+grab("pointermove", (mid2("XR-3") + mid2("XR-4")) / 2);
+const sentWas = patched.length;
+grab("pointerup", (mid2("XR-3") + mid2("XR-4")) / 2);
+await settle();
+if (patched.length !== sentWas + 1) {
+  fail("бросок не отправил правки: запросов " + (patched.length - sentWas));
+}
+const sent = patched[patched.length - 1];
+if (String(sent.r_parts) !== String([null, 8, null, null, null])) {
+  fail("жест правит не одну ценность: " + JSON.stringify(sent));
+}
+const drop = byId.get("flashes");
+if (!dump(drop).includes("XR-6: ценность 3 -> 8, ранг 30 -> 35")) {
+  fail("строка результата не назвала пересчёта: " + dump(drop));
+}
+if (!dump(drop).includes("Строка встала между XR-3 и XR-4")) {
+  fail("строка результата не назвала места по ответу сервера: " + dump(drop));
+}
+// Клик, оставшийся от броска, внутрь задачи не уводит.
+sandbox.location.hash = "#demo";
+row6.handlers.click({ target: row6, stopPropagation: () => {} });
+if (sandbox.location.hash !== "#demo") {
+  fail("бросок строки увёл на экран задачи: " + sandbox.location.hash);
+}
+// Строка после броска подсвечена: слагаемые с полосой видно в самой строке.
+if (!find(groups, "XR-6").classList.contains("litrow")) {
+  fail("после броска строка ничем не помечена: найти её глазами на новом месте нечем");
+}
+
+// «Вернуть» кладёт обратно слагаемые и едет с ожидаемой разбивкой.
+const undoBtn = button(drop, "Вернуть");
+if (!undoBtn) fail("у строки результата нет кнопки «Вернуть»: " + dump(drop));
+undoBtn.handlers.click({ stopPropagation: () => {} });
+await settle();
+const undo = patched[patched.length - 1];
+if (String(undo.r_parts) !== String([null, 3, null, null, null])) {
+  fail("откат вернул не прежнюю ценность: " + JSON.stringify(undo));
+}
+if (String(undo.expect_r_parts) !== String([25, 8, 1, 0, 1])) {
+  fail("откат уехал без ожидаемой разбивки: " + JSON.stringify(undo));
+}
+if (rows.find((r) => r.id === "XR-6").r !== 30) {
+  fail("откат не вернул ранга строки: " + rows.find((r) => r.id === "XR-6").r);
+}
+
+// Мышью строка берётся сразу, но с порогом: дрожание руки на нажатии обязано
+// остаться кликом. Отпущенная там же, откуда взята, строка правкой не считается
+// и запроса за собой не тянет.
+for (const t of timers.splice(0)) t.fn();
+await go("#demo");
+const cardM = layout(find(groups, "card-backlog"));
+const rowM = find(cardM, "XR-6");
+const midM = (id) => {
+  const box = find(cardM, id).getBoundingClientRect();
+  return box.top + box.height / 2;
+};
+const mouse = (name, y) => rowM.handlers[name]({
+  pointerId: 2, pointerType: "mouse", button: 0, clientY: y, cancelable: true,
+  target: rowM, preventDefault: () => {}, stopPropagation: () => {},
+});
+const homeY = midM("XR-6");
+mouse("pointerdown", homeY);
+mouse("pointermove", homeY + 2);
+if (rowM.classList.contains("dragrow")) {
+  fail("мышь взяла строку от дрожания в пару пикселей: клик перестал быть кликом");
+}
+mouse("pointermove", homeY + 20);
+if (!rowM.classList.contains("dragrow")) fail("мышью строка за порогом не взялась");
+const idleWas = patched.length;
+mouse("pointermove", midM("XR-6"));
+mouse("pointerup", midM("XR-6"));
+await settle();
+if (patched.length !== idleWas) {
+  fail("строка, отпущенная на своём месте, ушла правкой: " + JSON.stringify(patched[patched.length - 1]));
+}
+
+// Строку успели поправить с другой стороны: откат отбит словами с сегодняшним
+// рангом, и человек решает сам.
+for (const t of timers.splice(0)) t.fn();
+byId.get("flashes").replaceChildren();
+await go("#demo");
+const card3 = layout(find(groups, "card-backlog"));
+const row6b = find(card3, "XR-6");
+const mid3 = (id) => {
+  const box = find(card3, id).getBoundingClientRect();
+  return box.top + box.height / 2;
+};
+const hold3 = (name, y) => row6b.handlers[name]({
+  pointerId: 1, pointerType: "touch", clientY: y, cancelable: true,
+  target: row6b, preventDefault: () => {}, stopPropagation: () => {},
+});
+timers.length = 0;
+hold3("pointerdown", mid3("XR-6"));
+holdFire();
+// Соседняя сессия успела переставить доску, пока шёл жест: соседи в ответе не
+// те, что насчитал экран.
+boardAhead = { above: { id: "XR-2", r: 86 }, below: { id: "XR-3", r: 36 } };
+hold3("pointermove", (mid3("XR-3") + mid3("XR-4")) / 2);
+hold3("pointerup", (mid3("XR-3") + mid3("XR-4")) / 2);
+await settle();
+if (!dump(byId.get("flashes")).includes("Доска успела уехать")) {
+  fail("разошедшееся с превью место названо превью: " + dump(byId.get("flashes")));
+}
+// Чужая правка под откатом: ожидаемая разбивка разошлась, и ручка отвечает
+// словами.
+rows.find((r) => r.id === "XR-6").r_parts = [25, 4, 1, 0, 1];
+rows.find((r) => r.id === "XR-6").r = 31;
+button(byId.get("flashes"), "Вернуть").handlers.click({ stopPropagation: () => {} });
+await settle();
+if (!dump(byId.get("flashes")).includes("строку поправили")) {
+  fail("откат поверх чужой правки прошёл молча: " + dump(byId.get("flashes")));
+}
+if (rows.find((r) => r.id === "XR-6").r !== 31) {
+  fail("отбитый откат всё равно переписал строку: " + rows.find((r) => r.id === "XR-6").r);
+}
+for (const t of timers.splice(0)) t.fn();
+
 console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус, " +
   "экран агента держит выбранный разговор, разговор нераспознанной сессии " +
   "открывается с полосы работ по id сессии, ответ на нажатие не двигает раскладку; " +
   "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
   "косая черта и лупа ведут в поиск; подписки: широкая часть кнопки идёт на " +
   "подписку по умолчанию, строка списка на свою, без выбора стрелки нет; " +
-  "экран черновика: три состояния груминга, уточнение новой ходкой, удаление с причиной");
+  "экран черновика: три состояния груминга, уточнение новой ходкой, удаление с причиной; " +
+  "перетаскивание: коридор со щелями на живом списке, долгое нажатие против " +
+  "пролистывания, правка одной ценностью и откат с ожидаемой разбивкой");

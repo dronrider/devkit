@@ -98,6 +98,10 @@ const smokeBoardDoc = `# Синтетическая доска smoke (префи
 
 ## Backlog
 
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+| XR-002 | Соседка по доске | task | P2 | 30 (25+2+1+0+2) | S | - |
+
 ## Blocked
 `
 
@@ -259,6 +263,29 @@ case "$1 $2" in
   ;;
 esac
 case "$1" in
+set)
+  # Правка ранга: сумма считается из разбивки, новая строка ложится и в ответ
+  # утилиты, и в файл доски. Файл тут не для красоты, по его отпечатку сервер
+  # узнаёт, что помнить прежний ответ больше нельзя.
+  id=$2
+  rank=""
+  prev=""
+  for a in "$@"; do
+    [ "$prev" = "--rank" ] && rank="$a"
+    prev="$a"
+  done
+  if [ -z "$rank" ]; then
+    printf 'нечего менять, жду --rank\n' >&2
+    exit 1
+  fi
+  sum=$(printf '%%s' "$rank" | awk -F+ '{s=0; for (i=1;i<=NF;i++) s+=$i; print s}')
+  parts=$(printf '%%s' "$rank" | tr '+' ',')
+  sed "s/\(\"id\":\"$id\"[^}]*\)\"r\":[0-9]*,\"r_parts\":\[[0-9,]*\]/\1\"r\":$sum,\"r_parts\":[$parts]/" "$board" > "$board.new"
+  mv "$board.new" "$board"
+  sed "/^| $id /s/| [0-9]* ([0-9+]*) |/| $sum ($rank) |/" "$doc" > "$doc.new"
+  mv "$doc.new" "$doc"
+  printf '%%s: R -> %%s\n' "$id" "$sum"
+  ;;
 close)
   cp "$board.closed" "$board"
   grep -v -F "$2" "$doc" > "$doc.new"
@@ -528,6 +555,7 @@ type smokeBoard struct {
 			Rows []struct {
 				ID    string `json:"id"`
 				Title string `json:"title"`
+				R     int    `json:"r"`
 				// Run это признак идущей работы в самой строке: по нему строка
 				// рисует «Стоп» и отличает оборванную работу от очереди.
 				Run string `json:"run"`
@@ -1238,6 +1266,66 @@ func (s *smoke) stepDropDraft() (string, error) {
 		v.Message, refusal.Error, git, out.Note), nil
 }
 
+// stepDragRank: перетаскивание строки очереди, девятый сценарий цели DK-327.
+// Пальца у прогона нет, и проверяет он не жест, а его исход: пересчитанная
+// ценность уезжает той же ручкой, что и форма задачи, новый ранг доезжает до
+// синтетической доски и читается с неё обратно, а ответ называет фактическое
+// место строки. Тут же откат: с разошедшейся ожидаемой разбивкой ручка отвечает
+// словами и доску не трогает.
+func (s *smoke) stepDragRank() (string, error) {
+	path := "/api/projects/demo/tasks/" + smokeTask
+	var v struct {
+		Message string `json:"message"`
+		Place   struct {
+			Sect   string `json:"sect"`
+			R      int    `json:"r"`
+			P      string `json:"p"`
+			RParts []int  `json:"r_parts"`
+		} `json:"place"`
+	}
+	if err := s.call("PATCH", path, `{"r_parts": [null, 6, null, null, null]}`, http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if v.Place.Sect != "backlog" || v.Place.R != 34 || v.Place.P != "P2" {
+		return "", fmt.Errorf("ответ на правку ценности назвал место %+v, ждал ранг 34 в backlog", v.Place)
+	}
+	calls, err := os.ReadFile(s.callsFile())
+	if err != nil {
+		return "", err
+	}
+	if want := "set " + smokeTask + " --rank 25+6+1+0+2"; !strings.Contains(string(calls), want) {
+		return "", fmt.Errorf("taskctl set позван не так, вызовы утилиты: %s", strings.TrimSpace(string(calls)))
+	}
+	board, err := s.board()
+	if err != nil {
+		return "", err
+	}
+	got := 0
+	for _, sec := range board.Board.Sections {
+		for _, row := range sec.Rows {
+			if row.ID == smokeTask {
+				got = row.R
+			}
+		}
+	}
+	if got != 34 {
+		return "", fmt.Errorf("на доске у %s ранг %d, ждал доехавшие 34", smokeTask, got)
+	}
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("PATCH", path,
+		`{"r_parts": [null, 2, null, null, null], "expect_r_parts": [25, 2, 1, 0, 2]}`,
+		http.StatusConflict, &refusal); err != nil {
+		return "", err
+	}
+	if !strings.Contains(refusal.Error, "откат не применён") {
+		return "", fmt.Errorf("откат поверх чужой правки отбит не теми словами: %s", refusal.Error)
+	}
+	return fmt.Sprintf("%s; на доске ранг %d, место в %s; откат поверх чужой правки: %s",
+		v.Message, got, v.Place.Sect, refusal.Error), nil
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -1294,6 +1382,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 		{"выбор подписки доезжает до команды", s.stepHarnessRun},
 		{"удаление черновика с причиной", s.stepDropDraft},
+		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 	}
 	for i, st := range steps {
 		note, err := st.run()

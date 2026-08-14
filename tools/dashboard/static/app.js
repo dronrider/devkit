@@ -648,7 +648,15 @@ function renderRow(project, row, sect) {
   }
   meta.append(rowAction(project, row, sect));
   tr.append(meta);
-  tr.addEventListener("click", () => { location.hash = project + "/" + row.id; });
+  tr.addEventListener("click", () => {
+    // После броска строки браузер шлёт клик тем же нажатием: перетаскивание не
+    // уводит внутрь задачи.
+    if (dragAteClick()) return;
+    location.hash = project + "/" + row.id;
+  });
+  // Двигается перетаскиванием только очередь: в остальных секциях порядок
+  // ручной и от ранга не зависит, там жест обещал бы то, чего не делает.
+  if (sect === "backlog") wireDrag(project, tr, row);
   return tr;
 }
 
@@ -763,6 +771,9 @@ function renderBoard(project, board) {
   }];
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
+  // Снимок нарисованной очереди: по нему жест считает коридор и щели, и берётся
+  // он с той же доски, которой нарисован список.
+  backlogView = { project, rows: (byKey.backlog && byKey.backlog.rows) || [] };
   for (const key of SECTION_ORDER) {
     const sec = byKey[key];
     if (!sec) continue;
@@ -802,6 +813,405 @@ function renderBoard(project, board) {
   }
   items.push({ key: "board-fab", sign: project, make: () => newTaskFab(project) });
   sync(groups, items);
+}
+
+// Перетаскивание строки в очереди (LLD DK-328, решение 1). Порядок Backlog
+// выводится из ранга, класть строку в позицию нечем, и жест правит ровно одно
+// слагаемое, ценность: серьёзность это суждение об ущербе и полоса, её
+// перетаскиванием не двигают вовсе; неопределённость снимается разбором, а не
+// желанием; поправка на баг привязана к типу строки; рычаг проверяется, а не
+// назначается.
+//
+// Отсюда коридор строки: при серьёзности S и сумме прочих мягких слагаемых M
+// доступны ранги от S+M до S+M+10, и полосу серьёзности такой коридор не
+// переезжает никогда, десять меньше двадцати пяти. Считает целевой ранг щели
+// клиент, но это превью по той доске, которую видел экран: доску правят
+// соседние сессии и цикл цели, а фактическое место называет ответ ручки.
+const DRAG_HOLD = 400;
+const DRAG_SLOP = 6;
+const DRAG_LIT = 2400;
+
+// Строки очереди в том порядке, в каком они нарисованы: жест считает по ним, а
+// не по разметке, потому что ранг с номером в разметке не лежат.
+let backlogView = { project: "", rows: [] };
+
+// Живой жест: от нажатия до броска. Между обновлениями экрана состояния клиент
+// не держит нигде, и это не исключение: строку либо держат прямо сейчас, либо
+// жеста нет.
+let drag = null;
+
+function dragOn() {
+  return Boolean(drag && drag.on);
+}
+
+// Клик, который остался от броска: браузер шлёт его тем же нажатием, и без
+// этого каждый жест кончался бы заходом внутрь задачи.
+let dragClick = false;
+
+function dragAteClick() {
+  if (!dragClick) return false;
+  dragClick = false;
+  return true;
+}
+
+// Номер строки: вторым ключом сортировки очереди идёт он, возрастанием
+// (insertIdx в tools/taskctl/board.go).
+function rowNum(id) {
+  const hit = /(\d+)\s*$/.exec(String(id || ""));
+  return hit ? Number(hit[1]) : 0;
+}
+
+// Коридор строки: пол, потолок, сегодняшняя ценность и сегодняшний ранг.
+// Слагаемых не пять, значит и коридора нет: такую строку жест не берёт.
+function dragCorridor(row) {
+  const parts = (row && row.r_parts) || [];
+  if (parts.length !== RANK_PARTS.length) return null;
+  const low = parts[0] + parts[2] + parts[3] + parts[4];
+  return { low, high: low + 10, value: parts[1], r: low + parts[1] };
+}
+
+// Полоса P считается из суммы ранга (bucket в tools/taskctl/board.go), рукой
+// не ставится. У верхнего края коридора мягкие слагаемые под потолок как раз
+// перетаскивают строку через порог, и молчать об этом нельзя: полоса
+// единственное, что видно на доске без разворота ранга.
+function rankBand(r) {
+  if (r >= 75) return "P0";
+  if (r >= 50) return "P1";
+  if (r >= 25) return "P2";
+  return "P3";
+}
+
+// Какие ранги вообще ставят строку в эту щель, без оглядки на коридор: ниже
+// соседа сверху и выше соседа снизу по паре ключей «ранг убыванием, номер
+// возрастанием». Пустой промежуток (low больше high) значит щель, в которую
+// строка не встаёт никаким рангом: так выходит у соседей с общим рангом и у
+// соседей с соседними рангами, когда номер строки не попадает между их
+// номерами.
+function gapNeed(above, below, num) {
+  const low = below ? below.r + (num < rowNum(below.id) ? 0 : 1) : 0;
+  const high = above ? above.r - (num > rowNum(above.id) ? 0 : 1) : 100;
+  return { low, high };
+}
+
+// Причина, по которой щель мертва. Слов тут два случая: строка не встаёт между
+// этими соседями ни одним рангом, и щель просит ранг за краем коридора.
+function gapWhy(cor, above, below, num, id) {
+  const need = gapNeed(above, below, num);
+  if (need.low > need.high) {
+    const up = num < rowNum(above.id) ? above.r : above.r + 1;
+    const down = num > rowNum(below.id) ? below.r : below.r - 1;
+    return "места нет: между " + above.id + " и " + below.id + " строка " + id +
+      " не встаёт ни одним рангом, выше " + above.id + " ставит ранг " + up +
+      ", ниже " + below.id + " ранг " + down;
+  }
+  return need.low > cor.high ? dragCeil(cor, id) : dragFloor(cor, id);
+}
+
+function dragCeil(cor, id) {
+  return "выше не поднять: жест правит только ценность, и её потолок даёт " +
+    id + " ранг " + cor.high;
+}
+
+function dragFloor(cor, id) {
+  return "ниже не опустить: жест правит только ценность, и её пол даёт " +
+    id + " ранг " + cor.low;
+}
+
+// Куда целится щель под номером gap: щель ноль это место над первой чужой
+// строкой, щель N это место под последней. Из подходящих рангов берётся
+// ближайший к сегодняшнему, а на равном расстоянии меньший: жест меняет
+// ценность ровно настолько, насколько нужно, чтобы встать на выбранное место,
+// и не раздувает её впрок.
+function gapAim(list, id, gap) {
+  const rows = list || [];
+  const cor = dragCorridor(rows.find((row) => row.id === id));
+  if (!cor) return null;
+  const rest = rows.filter((row) => row.id !== id);
+  const above = gap > 0 ? rest[gap - 1] : null;
+  const below = gap < rest.length ? rest[gap] : null;
+  const num = rowNum(id);
+  const aim = { above, below, r: null, value: null, why: "" };
+  for (let r = cor.low; r <= cor.high; r += 1) {
+    if (above && !(r < above.r || (r === above.r && num > rowNum(above.id)))) continue;
+    if (below && !(r > below.r || (r === below.r && num < rowNum(below.id)))) continue;
+    if (aim.r === null || Math.abs(r - cor.r) < Math.abs(aim.r - cor.r)) aim.r = r;
+  }
+  if (aim.r === null) {
+    aim.why = gapWhy(cor, above, below, num, id);
+    return aim;
+  }
+  aim.value = aim.r - cor.low;
+  return aim;
+}
+
+// Ярлык, который едет со строкой, пока её держат: что станет с рангом, с
+// ценностью и с полосой. Мёртвая щель говорит свою причину тем же ярлыком:
+// молчащий под пальцем жест неотличим от сломанного.
+function dragTagText(cor, aim) {
+  if (!aim || aim.r === null) return (aim && aim.why) || "";
+  if (aim.r === cor.r) return "ранг " + cor.r + ", ценность " + cor.value + ": место то же";
+  let text = "ранг " + cor.r + " -> " + aim.r +
+    ", ценность " + cor.value + " -> " + aim.value;
+  if (rankBand(aim.r) !== rankBand(cor.r)) {
+    text += ", полоса " + rankBand(cor.r) + " -> " + rankBand(aim.r);
+  }
+  return text;
+}
+
+function wireDrag(project, tr, row) {
+  tr.addEventListener("pointerdown", (ev) => { dragTake(project, tr, row, ev); });
+  tr.addEventListener("pointermove", (ev) => { dragMove(ev); });
+  tr.addEventListener("pointerup", (ev) => { dragDrop(ev); });
+  tr.addEventListener("pointercancel", () => { dragQuit(); });
+}
+
+function dragTake(project, tr, row, ev) {
+  if (drag || (ev.button !== undefined && ev.button !== 0)) return;
+  // Нажатие на кнопку строки жестом не становится: у кнопки запуска, суммы
+  // ранга и выбора подписки свои дела.
+  if (ev.target && ev.target.closest && ev.target.closest("button, select, a")) return;
+  if (!tr.parentElement || !dragCorridor(row)) return;
+  drag = {
+    project, row, tr, id: row.id, card: tr.parentElement,
+    y: ev.clientY, on: false, hold: 0, gap: -1, aim: null, marks: [], slots: [],
+  };
+  if (ev.pointerType === "touch") {
+    // Пальцем строка берётся долгим нажатием: короткое касание по-прежнему
+    // открывает задачу, а пролистывание списка остаётся пролистыванием
+    // (телефонная доска DK-285).
+    drag.hold = setTimeout(() => { dragStart(ev.pointerId); }, DRAG_HOLD);
+  }
+}
+
+function dragMove(ev) {
+  if (!drag) return;
+  const dy = ev.clientY - drag.y;
+  if (!drag.on) {
+    // Палец поехал раньше, чем строка взялась: это пролистывание, и жест
+    // снимается вовсе. Мышью строка берётся сразу, порог тут только затем,
+    // чтобы клик остался кликом.
+    if (ev.pointerType === "touch") {
+      if (Math.abs(dy) > DRAG_SLOP) dragQuit();
+      return;
+    }
+    if (Math.abs(dy) < DRAG_SLOP) return;
+    dragStart(ev.pointerId);
+  }
+  // Пока строку держат, список под ней не прокручивается: жест и прокрутка
+  // спорят за одно движение пальца.
+  if (ev.cancelable && ev.preventDefault) ev.preventDefault();
+  dragAim(ev.clientY);
+}
+
+function dragStart(pointerId) {
+  if (!drag || drag.on) return;
+  clearTimeout(drag.hold);
+  drag.on = true;
+  drag.tr.classList.add("dragrow");
+  if (drag.tr.setPointerCapture && pointerId !== undefined) {
+    drag.tr.setPointerCapture(pointerId);
+  }
+  dragDraw();
+  dragAim(drag.y);
+}
+
+// Коридор рисуется прямо на списке: за его краем строки приглушены, у самого
+// края стоит причина, а живые щели подписаны рангом, который в них нужен.
+// Мёртвая щель внутри коридора подписана словами: там места нет ни одному
+// рангу, и молчащая щель выглядела бы промахом руки.
+function dragDraw() {
+  const list = backlogView.rows || [];
+  const cor = dragCorridor(drag.row);
+  drag.list = list;
+  drag.cor = cor;
+  const rest = list.filter((row) => row.id !== drag.id);
+  for (const row of rest) {
+    const node = findKey(drag.card, row.id);
+    if (node && (row.r > cor.high || row.r < cor.low)) node.classList.add("dimrow");
+  }
+  drag.aims = [];
+  for (let gap = 0; gap <= rest.length; gap += 1) {
+    drag.aims.push(gapAim(list, drag.id, gap));
+  }
+  let first = -1;
+  let last = -1;
+  drag.aims.forEach((aim, gap) => {
+    if (!aim || aim.r === null) return;
+    if (first < 0) first = gap;
+    last = gap;
+  });
+  drag.aims.forEach((aim, gap) => {
+    let cls = "gslot";
+    let text = "";
+    if (aim && aim.r !== null) {
+      cls += " glive";
+      text = "ранг " + aim.r;
+    } else if (gap > first && gap < last) {
+      cls += " gdead";
+      text = aim.why;
+    } else if (gap === first - 1) {
+      cls += " gedge";
+      text = dragCeil(cor, drag.id);
+    } else if (gap === last + 1) {
+      cls += " gedge";
+      text = dragFloor(cor, drag.id);
+    } else {
+      // Дальше края коридора подписывать нечего: там уже приглушено.
+      return;
+    }
+    const mark = el("div", cls, text);
+    const at = gap < rest.length ? findKey(drag.card, rest[gap].id) : null;
+    drag.card.insertBefore(mark, at);
+    drag.slots[gap] = mark;
+    drag.marks.push(mark);
+  });
+  // Середины строк снимаются один раз, после расстановки щелей: дальше картинка
+  // стоит на месте, и щель под пальцем считается по снимку, а не по едущей
+  // раскладке.
+  drag.mids = rest.map((row) => {
+    const node = findKey(drag.card, row.id);
+    if (!node) return 0;
+    const box = node.getBoundingClientRect();
+    return box.top + box.height / 2;
+  });
+  drag.tag = el("span", "dtag", "");
+  drag.tr.append(drag.tag);
+}
+
+function dragAim(y) {
+  if (!drag || !drag.on) return;
+  let gap = 0;
+  while (gap < drag.mids.length && drag.mids[gap] < y) gap += 1;
+  if (gap === drag.gap) return;
+  if (drag.slots[drag.gap]) drag.slots[drag.gap].classList.remove("gnow");
+  if (drag.slots[gap]) drag.slots[gap].classList.add("gnow");
+  drag.gap = gap;
+  drag.aim = drag.aims[gap];
+  drag.tag.textContent = dragTagText(drag.cor, drag.aim);
+}
+
+// Строка отпущена: щели, приглушение и ярлык снимаются, а правка уезжает
+// ручкой. Место, откуда строку взяли, правкой не считается, и запроса за ним
+// не уходит.
+function dragDrop() {
+  if (!drag) return;
+  if (!drag.on) {
+    dragQuit();
+    return;
+  }
+  const { project, id, cor, aim } = drag;
+  dragQuit();
+  if (!aim || aim.r === null) {
+    sayResult(aim ? aim.why : "", true);
+    return;
+  }
+  if (aim.r === cor.r) return;
+  dragSend(project, id, cor, aim).catch(console.error);
+}
+
+function dragQuit() {
+  if (!drag) return;
+  clearTimeout(drag.hold);
+  if (drag.on) dragClick = true;
+  for (const mark of drag.marks) mark.remove();
+  if (drag.tag) drag.tag.remove();
+  drag.tr.classList.remove("dragrow");
+  for (const row of drag.list || []) {
+    const node = findKey(drag.card, row.id);
+    if (node) node.classList.remove("dimrow");
+  }
+  drag = null;
+}
+
+// Правка уезжает тем же путём, что и от формы задачи: PATCH со слагаемыми, а
+// дальше taskctl set --rank. Своей записи в docs/TASKS.md дашборд не заводит,
+// порядок строк переставляет утилита.
+async function dragSend(project, id, cor, aim) {
+  sayResult(id + ": ценность " + cor.value + " -> " + aim.value + "...");
+  const r = await api(taskPath(project, id), {
+    method: "PATCH", body: { r_parts: [null, aim.value, null, null, null] },
+  });
+  if (!r.ok) {
+    sayResult(r.body.error || "", true);
+    return;
+  }
+  await refresh();
+  const place = r.body.place || null;
+  dragLit(id);
+  sayDrop(dropText(id, cor, aim, place), () => { dragBack(project, id, cor, place); });
+}
+
+// Строка результата пишется по факту записи, а не по превью: в ответе ручки
+// стоит свежая разбивка и соседи по доске. Разошёлся факт с превью, значит так
+// и сказано: уехать могли соседи, а не решение человека.
+function dropText(id, cor, aim, place) {
+  const r = place ? place.r : aim.r;
+  const parts = (place && place.r_parts) || [];
+  const value = parts.length ? parts[1] : aim.value;
+  let text = id + ": ценность " + cor.value + " -> " + value +
+    ", ранг " + cor.r + " -> " + r;
+  const band = (place && place.p) || rankBand(r);
+  if (band !== rankBand(cor.r)) text += ", полоса " + rankBand(cor.r) + " -> " + band;
+  return text + ". " + dropWhere(aim, place);
+}
+
+function dropWhere(aim, place) {
+  if (!place) return "Место строки в очереди сервер не назвал";
+  const above = place.above ? place.above.id : "";
+  const below = place.below ? place.below.id : "";
+  const same = above === (aim.above ? aim.above.id : "") &&
+    below === (aim.below ? aim.below.id : "");
+  const head = same ? "Строка встала " : "Доска успела уехать, строка встала ";
+  if (above && below) return head + "между " + above + " и " + below;
+  if (below) return head + "первой в очереди, перед " + below;
+  if (above) return head + "последней в очереди, после " + above;
+  return head + "единственной строкой в очереди";
+}
+
+// «Вернуть» кладёт обратно слагаемые, а не место: пока человек читал строку
+// результата, соседи могли переехать сами. Ожидаемая разбивка едет вместе с
+// правкой, и чужую руку ручка отбивает словами, а не затирает молча.
+async function dragBack(project, id, cor, place) {
+  sayResult("возврат ценности " + id + "...");
+  const body = { r_parts: [null, cor.value, null, null, null] };
+  if (place && place.r_parts) body.expect_r_parts = place.r_parts;
+  const r = await api(taskPath(project, id), { method: "PATCH", body });
+  if (!r.ok) {
+    sayResult(r.body.error || "", true);
+    return;
+  }
+  await refresh();
+  dragLit(id);
+  sayResult(id + ": ценность вернулась на " + cor.value + ", ранг " + cor.r);
+}
+
+// Что изменилось, видно в самой строке: слагаемые ранга и чип полосы
+// подсвечиваются на пару секунд после броска. Строка при этом переехала на
+// новое место, и найти её глазами иначе нечем.
+function dragLit(id) {
+  const node = findKey(document.getElementById("groups"), id);
+  if (!node) return;
+  node.classList.add("litrow");
+  setTimeout(() => { node.classList.remove("litrow"); }, DRAG_LIT);
+}
+
+// Строка результата с кнопкой «Вернуть»: она живёт дольше обычного ответа на
+// нажатие, потому что её читают и по ней решают, а не просто замечают.
+const DROP_LIFE = 12000;
+
+function sayDrop(text, undo) {
+  if (resultToast) resultToast.dismiss();
+  resultToast = null;
+  const body = el("div", "ft");
+  body.append(el("b", "", text));
+  const back = el("button", "btn btn-sm", "Вернуть");
+  back.type = "button";
+  back.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    back.disabled = true;
+    undo();
+  });
+  resultToast = toast({ parts: [body, back], body, life: DROP_LIFE, cls: "res" });
 }
 
 // Кнопка заведения: стоит и на доске проекта, и на главной, потому что мысль
@@ -4425,6 +4835,11 @@ function screenKey(rt) {
 // она возвращается снимком. Переход это другой экран, ему прежнее место не
 // принадлежит.
 async function refresh() {
+  // Пока строку держат, экран не перерисовывается вовсе: перерисовка увела бы
+  // из-под пальца и саму строку, и щели с коридором, нарисованные по той
+  // доске, с которой жест считает. Обновление вернётся сразу после броска, его
+  // зовёт и сама правка.
+  if (dragOn()) return;
   const was = shownScreen;
   const snap = viewSnap();
   try {

@@ -246,6 +246,19 @@ a:hover{text-decoration:underline}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
 .trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
+/* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
+   приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Пока строку
+   держат, палец двигает её, а не список, поэтому у взятой строки снят
+   touch-action */
+.trow.dragrow{background:var(--bg3);touch-action:none;position:relative;z-index:1}
+.trow.dimrow{opacity:0.4}
+.trow.litrow .rank,.trow.litrow .c-p1{background:color-mix(in oklab,var(--acc) 24%,transparent);border-radius:6px}
+.dtag{grid-column:1/-1;font:600 12px var(--mono);color:var(--acc);padding-top:4px}
+.gslot{display:flex;align-items:center;min-height:22px;padding:2px 16px;font:500 11.5px var(--mono);color:var(--tx3)}
+.gslot.glive{border-top:1px dashed var(--line2)}
+.gslot.gnow{color:var(--acc);border-top:1px solid var(--acc);background:color-mix(in oklab,var(--acc) 10%,transparent)}
+.gslot.gdead,.gslot.gedge{font-family:var(--sans);color:var(--tx3);border-top:1px solid var(--line)}
+
 /* ранг строки: сумма всегда, слагаемые разворотом (подсказка при наведении
    работает только на ноутбуке) */
 .rsum{background:none;border:none;padding:0;cursor:pointer;font:600 13px var(--mono);color:var(--tx)}

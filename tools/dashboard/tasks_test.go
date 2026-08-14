@@ -297,6 +297,105 @@ func TestTaskPatchRowAndRank(t *testing.T) {
 	}
 }
 
+// Ответ на правку ранга называет фактическое место строки: свежую разбивку с
+// суммой и бакетом и соседей по Backlog сверху и снизу. Клиент считает ранг
+// щели сам, пока держит строку пальцем, но это превью по той доске, которую
+// видел экран: пока шёл жест, доску мог переписать сосед, и строку результата
+// экран пишет по факту записи (LLD DK-328, решение 1).
+func TestTaskPatchTellsPlace(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+
+	// XR-003 (25+0+0+0+0) поднимается ценностью выше XR-002 (R 30) и встаёт
+	// между XR-001 и XR-002: правится одна ценность, как это делает жест.
+	resp := doReq(t, c, "PATCH", taskURL(e, "XR-003", ""), `{"r_parts": [null, 6, null, null, null]}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("правка ценности: %d %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Place struct {
+			Sect   string `json:"sect"`
+			R      int    `json:"r"`
+			RParts []int  `json:"r_parts"`
+			P      string `json:"p"`
+			Above  struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+				R     int    `json:"r"`
+			} `json:"above"`
+			Below struct {
+				ID string `json:"id"`
+				R  int    `json:"r"`
+			} `json:"below"`
+		} `json:"place"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ правки не разобрался: %v\n%s", err, text)
+	}
+	place := got.Place
+	if place.Sect != "backlog" || place.R != 31 || place.P != "P2" {
+		t.Errorf("место строки: секция %q, R %d, P %q, ожидал backlog, 31, P2", place.Sect, place.R, place.P)
+	}
+	if fmt.Sprint(place.RParts) != "[25 6 0 0 0]" {
+		t.Errorf("свежая разбивка в ответе %v, ожидал [25 6 0 0 0]", place.RParts)
+	}
+	// Соседи те же, что и в самой доске: место читается с переписанного файла,
+	// а не предсказывается по прежнему порядку.
+	if place.Above.ID != "XR-001" || place.Above.R != 55 || place.Above.Title == "" {
+		t.Errorf("сосед сверху %+v, ожидал XR-001 с заголовком и рангом 55", place.Above)
+	}
+	if place.Below.ID != "XR-002" || place.Below.R != 30 {
+		t.Errorf("сосед снизу %+v, ожидал XR-002 с рангом 30", place.Below)
+	}
+	order := boardSectionIDs(t, body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")), "backlog")
+	if len(order) < 3 || order[0] != "XR-001" || order[1] != "XR-003" || order[2] != "XR-002" {
+		t.Errorf("порядок Backlog %v разошёлся с местом в ответе ручки", order)
+	}
+}
+
+// Откат жеста едет с ожидаемой разбивкой и чужую правку молча не затирает:
+// разошлась разбивка, значит строку успели поправить с другой стороны, и
+// ручка отвечает словами с сегодняшним рангом, а доску не трогает.
+func TestTaskPatchExpectGuardsUndo(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	boardPath := filepath.Join(e.proj, "docs", "TASKS.md")
+
+	// Жест: ценность XR-002 с 2 на 9.
+	resp := doReq(t, c, "PATCH", taskURL(e, "XR-002", ""), `{"r_parts": [null, 9, null, null, null]}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("правка ценности: %d %s", resp.StatusCode, text)
+	}
+	// Соседняя сессия поправила ту же строку, пока человек читал результат.
+	runTaskctl(t, e.proj, "set", "XR-002", "--rank", "25+4+1+0+2")
+
+	resp = doReq(t, c, "PATCH", taskURL(e, "XR-002", ""),
+		`{"r_parts": [null, 2, null, null, null], "expect_r_parts": [25, 9, 1, 0, 2]}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("откат поверх чужой правки: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{"строку поправили", "ранг сейчас 32", "откат не применён"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в отказе отката нет %q: %s", want, text)
+		}
+	}
+	before := readFile(t, boardPath)
+	if !strings.Contains(before, "32 (25+4+1+0+2)") {
+		t.Errorf("отбитый откат тронул доску:\n%s", before)
+	}
+
+	// Совпавшая разбивка отката не мешает: ценность возвращается на место.
+	resp = doReq(t, c, "PATCH", taskURL(e, "XR-002", ""),
+		`{"r_parts": [null, 2, null, null, null], "expect_r_parts": [25, 4, 1, 0, 2]}`)
+	if text = body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("откат при совпавшей разбивке: %d %s", resp.StatusCode, text)
+	}
+	task := getTask(t, c, e, "XR-002")
+	if got := fmt.Sprint(taskRowField(t, task, "r_parts")); got != "[25 2 1 0 2]" {
+		t.Errorf("разбивка после отката %v, ожидал [25 2 1 0 2]", got)
+	}
+}
+
 // Зависимости видны в обе стороны: XR-002 ждёт XR-001 и держит XR-003,
 // соседи названы заголовками, а не голыми ID.
 func TestTaskDepsBothSides(t *testing.T) {

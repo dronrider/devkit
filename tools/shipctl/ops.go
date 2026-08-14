@@ -894,7 +894,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
 			outSummary := cmdoutFrame(root, "deploy", out)
-			note := notify(root, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+outSummary)
+			note := notify(root, p.ID, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+outSummary)
 			return "", fmt.Errorf("слито, но выкат %s, задача остаётся в In progress:\n%s%s", full, outSummary, note)
 		}
 		msg = append(msg, "выкат прошёл")
@@ -1021,7 +1021,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
 			outSummary := cmdoutFrame(root, "deploy", out)
-			note := notify(root, fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+outSummary)
+			note := notify(root, train[0], fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+outSummary)
 			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
@@ -1420,7 +1420,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		if o, timedOut, err := runShellLimit(root, plan.run, plan.timeout); err != nil {
 			short, full := deployProblem(plan.run, timedOut, plan.timeout)
 			oSummary := cmdoutFrame(root, "deploy", o)
-			note := notify(root, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+oSummary)
+			note := notify(root, p.ID, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+oSummary)
 			return "", fmt.Errorf("откат закоммичен, но повторный выкат %s:\n%s%s", full, oSummary, note)
 		}
 		out = append(out, "повторный выкат прошёл")

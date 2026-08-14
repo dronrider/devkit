@@ -38,12 +38,15 @@ func notifyScript(root string) (string, error) {
 // и деплой» п. 8). Ошибка отправки не должна прятать саму ошибку выката,
 // поэтому возвращается строкой-припиской к сообщению об ошибке, а не
 // отдельным error: молчать про непосланное уведомление нельзя.
-func notify(root, title, body string) string {
+// Задача едет своим ключом: лента дашборда ведёт от события к строке доски по
+// полю, а не по разбору заголовка (DK-323). У поезда задач несколько, и полем
+// идёт головная: ведёт лента в одно место, а весь состав назван в тексте.
+func notify(root, id, title, body string) string {
 	script, err := notifyScript(root)
 	if err != nil {
 		return "\nуведомление не отправлено: " + err.Error()
 	}
-	cmd := exec.Command("python3", script, title, body)
+	cmd := exec.Command("python3", script, "--task", id, title, body)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

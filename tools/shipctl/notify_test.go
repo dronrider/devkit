@@ -62,6 +62,11 @@ func TestMergeDeployFailureNotifies(t *testing.T) {
 	if !strings.Contains(line, "прод сломан") {
 		t.Fatalf("в теле нет вывода упавшей команды: %q", line)
 	}
+	// Задача едет своим ключом (DK-323): по полю события лента дашборда ведёт
+	// от упавшего выката к строке доски, а заголовок она не разбирает.
+	if !strings.Contains(line, "--task\tXR-001\t") {
+		t.Fatalf("уведомление ушло без поля задачи: %q", line)
+	}
 	// Доска не переведена: задача остаётся в In progress, а не в Check.
 	if b, berr := loadBoard(root); berr != nil || b.sectOf("XR-001") != "in-progress" {
 		t.Fatalf("XR-001 должна остаться в In progress: %v %v", berr, b)
@@ -88,6 +93,11 @@ func TestShipDeployFailureNotifies(t *testing.T) {
 	line := strings.TrimSpace(string(got))
 	if !strings.Contains(line, "XR-001") || !strings.Contains(line, "поезда") || !strings.Contains(line, "упал") {
 		t.Fatalf("заголовок уведомления не про упавший выкат поезда: %q", line)
+	}
+	// У поезда полем идёт головная задача: лента ведёт в одно место, а весь
+	// состав назван в тексте.
+	if !strings.Contains(line, "--task\tXR-001\t") {
+		t.Fatalf("уведомление о поезде ушло без поля задачи: %q", line)
 	}
 }
 

@@ -237,3 +237,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-324 | dashboard: движение задачи в бэклоге перетаскиванием с пересчётом ранга [приёмка: mixed] | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-324.md](tasks/archive/2026/DK-324.md) |
 | DK-286 | dashboard: непонятно, что сделают кнопки запуска и оформления | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-286.md](tasks/archive/2026/DK-286.md) |
 | DK-071 | doctor проверяет полноту доки: компонент без описания в карте архитектуры это находка | task | P2 | 2026-08-14 | [tasks/archive/2026/DK-071.md](tasks/archive/2026/DK-071.md), `970caab8`, `c048e62b`, `1db6c0ee`, `aa2f59bf`, `db0dcd2c`, `fef9b73a`, `3c44f49a`, `86558a1b`, `fd372ecf`, `55df00a5` |
+| DK-336 | dashboard: составная кнопка запуска не по макету подписок | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-336.md](tasks/archive/2026/DK-336.md) |

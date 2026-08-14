@@ -183,6 +183,7 @@ async function api(path, opts) {
 
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
 // "#проект/DK-NNN" задача, "#проект/agent/DK-NNN" живой статус агента,
+// "#проект/session/<id сессии>" тот же экран, открытый по разговору,
 // "#проект/chat/DK-NNN" переписка с агентом цели, "#проект/draft/DK-NNN"
 // запись накопителя с грумингом и его исходом, "#проект/feed" лента
 // уведомлений. Экран «Агенты» проекту не принадлежит и стоит за "#/agents":
@@ -212,6 +213,14 @@ function route() {
   }
   if (parts.length >= 3 && parts[1] === "agent") {
     return { proj: parts[0], id: parts[2], agent: true };
+  }
+  // Второй вход на экран агента, по id сессии (DK-294): у сессии, чью задачу
+  // узнать не удалось, ID нет вовсе, и вести на "agent/" её нечем. Вход стоит
+  // своим куском адреса, а не подсунутым вместо ID: сессию от задачи пришлось
+  // бы отличать по форме строки, а экран и без того ведёт себя иначе, журнал с
+  // tmux у него не ищутся.
+  if (parts.length >= 3 && parts[1] === "session") {
+    return { proj: parts[0], id: parts[2], agent: true, session: true };
   }
   if (parts.length >= 3 && parts[1] === "chat") {
     return { proj: parts[0], id: parts[2], chat: true };
@@ -324,14 +333,17 @@ function renderLive(project, works) {
   const liveCard = (w) => {
     const card = el("div", "lcard");
     card.append(el("span", "dot pulse"));
-    // Интерактивную сессию без узнанной задачи вести некуда: экран агента
-    // открывается по ID, и вместо имени работы карточка называет её видом.
+    // Интерактивная сессия без узнанной задачи названа своим видом: имени
+    // работы у неё нет. Ведёт она на тот же экран агента, только по id сессии:
+    // разговор лежит на диске, и до DK-294 карточка стояла мёртвой.
     const name = w.id || "интерактивная сессия";
+    const to = w.id ? project + "/agent/" + w.id
+      : w.session ? project + "/session/" + w.session : "";
     // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
     // в подписи нет, о занятии агента оно не говорит ничего.
-    const label = el("b", w.id ? "" : "flat", name);
-    if (w.id) {
-      label.addEventListener("click", () => { location.hash = project + "/agent/" + w.id; });
+    const label = el("b", to ? "" : "flat", name);
+    if (to) {
+      label.addEventListener("click", () => { location.hash = to; });
     }
     card.append(label);
     if (w.title) card.append(el("span", "wname wtitle", w.title));
@@ -349,8 +361,8 @@ function renderLive(project, works) {
   // Полоса живых работ перерисовывается по месту: она стоит над списком, и
   // пересобранная целиком дёргала бы его при каждом обновлении.
   sync(live, (works || []).map((w, i) => ({
-    key: w.id || ("live-" + i),
-    sign: [w.id, w.title, w.via, w.note].join("|"),
+    key: w.id || w.session || ("live-" + i),
+    sign: [w.id, w.title, w.via, w.note, w.session].join("|"),
     make: () => liveCard(w),
   })));
 }
@@ -1962,17 +1974,44 @@ function isGoalRow(board, id) {
   return !!(row && /^Цель:/.test(row.title));
 }
 
-// Экран живого статуса агента по макету DK-216 («03 Агент»): на ноутбуке
-// журнал и транскрипт рядом, tmux полосой внизу; на телефоне те же панели
-// табами. Перерисовка идёт по месту тем же слоем, что и доска (DK-316):
-// панели собираются один раз на заход, а перечитанная по фокусу окна доска
-// меняет на экране только шапку. Пересборка рвала поток ленты и открывала
-// разговор заново, а список сессий к тому времени успевал переставиться, и
-// человек дочитывал уже соседнюю работу (DK-290).
-function renderAgent(project, works, id, board) {
-  const groups = document.getElementById("groups");
+// Три панели экрана агента: журнал, лента разговора и полоса tmux. На ноутбуке
+// журнал с лентой стоят рядом, tmux внизу; на телефоне те же панели
+// переключаются табами, и вкладка по умолчанию приходит вызовом. Чем панели
+// наполнить, решает вход: заход по задаче поднимает в них живые потоки, заход
+// по сессии показывает разговор, а журнал с tmux у него названы отсутствующими.
+function agentPanes(startTab) {
+  const wrap = el("div");
+  const jp = pane("Журнал агента", "источник назовёт сервер");
+  const tp = pane("Лог витка", "");
+  const grid = el("div", "agrid");
+  grid.append(jp.card, tp.card);
+  const tm = el("div", "card tmuxbar");
+  const tmHead = el("div", "phd");
+  tmHead.append(el("b", "", "tmux"));
+  const tmSub = el("span", "", "");
+  tmHead.append(tmSub);
+  tm.append(tmHead);
 
-  const crumb = {
+  const seg = el("div", "seg");
+  const tabs = [jp.card, tp.card, tm];
+  ["Журнал", "Лог витка", "tmux"].forEach((name, i) => {
+    const d = el("div", i === startTab ? "on" : "", name);
+    d.addEventListener("click", () => {
+      Array.from(seg.children).forEach((x, j) => { x.className = j === i ? "on" : ""; });
+      tabs.forEach((p, j) => p.classList.toggle("onpane", j === i));
+    });
+    seg.append(d);
+  });
+  tabs[startTab].classList.add("onpane");
+
+  wrap.append(seg, grid, tm);
+  return { wrap, jp, tp, tm, tmSub };
+}
+
+// Путь назад с экрана агента: доска проекта. Отпечаток тут имя проекта, и
+// обновление по фокусу окна крошку не трогает.
+function agentCrumb(project) {
+  return {
     key: "agent-crumb",
     sign: project,
     make: () => {
@@ -1983,6 +2022,19 @@ function renderAgent(project, works, id, board) {
       return crumb;
     },
   };
+}
+
+// Экран живого статуса агента по макету DK-216 («03 Агент»): на ноутбуке
+// журнал и транскрипт рядом, tmux полосой внизу; на телефоне те же панели
+// табами. Перерисовка идёт по месту тем же слоем, что и доска (DK-316):
+// панели собираются один раз на заход, а перечитанная по фокусу окна доска
+// меняет на экране только шапку. Пересборка рвала поток ленты и открывала
+// разговор заново, а список сессий к тому времени успевал переставиться, и
+// человек дочитывал уже соседнюю работу (DK-290).
+function renderAgent(project, works, id, board) {
+  const groups = document.getElementById("groups");
+
+  const crumb = agentCrumb(project);
 
   const work = (works || []).find((w) => w.id === id);
   const head = {
@@ -2037,50 +2089,112 @@ function renderAgent(project, works, id, board) {
     key: "agent-panes-" + id,
     sign: "",
     make: () => {
-      const wrap = el("div");
-      const jp = pane("Журнал агента", "источник назовёт сервер");
+      // Вкладка по умолчанию на телефоне: у живой работы «Журнал», у
+      // законченной «Лог витка». Журнал законченной работы пуст, а разговор
+      // ради него на телефон и приходят (DK-280, DK-305); прежде за ним вело
+      // второе касание, никак не обозначенное на экране. Дальше выбор человека
+      // держит закрытость панелей (sign выше пуст, панели собираются один раз
+      // на заход), и обновление ленты его не перебивает.
+      const p = agentPanes(work ? 0 : 1);
       // Живой хвост назван без одушевления: журнал дописывается сам, а не
       // «живёт».
-      jp.head.append(el("span", "chip c-run", "хвост дописывается"));
-      const tp = pane("Лог витка", "");
-      const grid = el("div", "agrid");
-      grid.append(jp.card, tp.card);
-      const tm = el("div", "card tmuxbar");
-      const tmHead = el("div", "phd");
-      tmHead.append(el("b", "", "tmux"));
-      const tmSub = el("span", "", "");
-      tmHead.append(tmSub);
-      tm.append(tmHead);
-
-      // Телефон: те же панели табами, переключение классом onpane. Вкладка по
-      // умолчанию у живой работы «Журнал», у законченной «Лог витка»: журнал
-      // законченной работы пуст, а разговор ради него на телефон и приходят
-      // (DK-280, DK-305); прежде за ним вело второе касание, никак не
-      // обозначенное на экране. Дальше выбор человека держит закрытость
-      // панелей (sign выше пуст, панели собираются один раз на заход), и
-      // обновление ленты его не перебивает.
-      const seg = el("div", "seg");
-      const tabs = [jp.card, tp.card, tm];
-      const startTab = work ? 0 : 1;
-      ["Журнал", "Лог витка", "tmux"].forEach((name, i) => {
-        const d = el("div", i === startTab ? "on" : "", name);
-        d.addEventListener("click", () => {
-          Array.from(seg.children).forEach((x, j) => { x.className = j === i ? "on" : ""; });
-          tabs.forEach((p, j) => p.classList.toggle("onpane", j === i));
-        });
-        seg.append(d);
-      });
-      tabs[startTab].classList.add("onpane");
-
-      wrap.append(seg, grid, tm);
-      wireJournal(project, id, jp.body, jp.sub);
-      wireTranscript(project, tp, id).catch(console.error);
-      wireTmux(id, tm, tmSub);
-      return wrap;
+      p.jp.head.append(el("span", "chip c-run", "хвост дописывается"));
+      wireJournal(project, id, p.jp.body, p.jp.sub);
+      wireTranscript(project, p.tp, id).catch(console.error);
+      wireTmux(id, p.tm, p.tmSub);
+      return p.wrap;
     },
   };
 
   sync(groups, [crumb, head, panes]);
+}
+
+// Журнал и tmux у экрана, открытого по id сессии: и то, и другое ищется по ID
+// задачи, а его тут нет. Пустая панель читалась бы поломкой, поэтому нехватка
+// названа словами и разведена по причине: задача разговора не узнана вовсе
+// либо узнана, и смотреть её работу надо на своём экране.
+function sessionMiss(what, task) {
+  return what + " ищется по ID задачи: " + (task
+    ? "разговор узнан задачей " + task + ", и работу её видно на экране задачи"
+    : "задачу этого разговора узнать не удалось, и брать его неоткуда");
+}
+
+// Экран агента, открытый по id сессии (DK-294). Сессия без узнанной задачи со
+// строкой доски не связана ничем, и с полосы живых работ в разговор не было
+// хода вовсе, при том что транскрипт лежит на диске и сервер про него знает.
+// Заголовок такой экран берёт из первой реплики, а журнал с tmux у него
+// названы отсутствующими: оба ищутся по ID задачи. Узнанная задача разговора
+// видна прямо на экране, ход на её экран стоит кнопкой.
+async function renderSession(project, works, sid, board) {
+  const groups = document.getElementById("groups");
+  const gen = liveGen;
+  // Шапка приходит той же ручкой, что и лента: задача с подписью, чем она
+  // узнана, ветка, дерево и первая реплика. Реплик тут просят одну, лента
+  // поднимется своим потоком.
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/sessions/" + encodeURIComponent(sid) + "?n=1");
+  // Уход с экрана на середине запроса: своей коробки у ответа больше нет.
+  if (gen !== liveGen) return;
+  if (!r.ok) {
+    sync(groups, [agentCrumb(project), {
+      key: "session-error",
+      sign: r.body.error || "",
+      make: () => {
+        const card = el("div", "card");
+        card.append(el("div", "empty", r.body.error || "разговор не прочитался"));
+        return card;
+      },
+    }]);
+    return;
+  }
+  const s = r.body.head || { id: sid };
+  const live = (works || []).find((w) => w.session === sid);
+  const task = s.task && boardRow(board, s.task) ? s.task : "";
+
+  const head = {
+    key: "agent-head",
+    sign: [sid, s.first, s.task, s.taskNote, Boolean(live)].join("|"),
+    make: () => {
+      const box = el("div", "ahead");
+      if (live) box.append(el("span", "dot pulse"));
+      // Заголовок это первая реплика: по заказу работы видно всё, что известно
+      // о занятии агента, а строки доски у такого захода нет.
+      box.append(el("h2", "wtitle", s.first || "разговор без первой реплики"));
+      box.append(el("span", "wname", sid.slice(0, 8) + ".jsonl" +
+        (s.branch ? ", " + s.branch : "")));
+      box.append(live
+        ? el("span", "chip c-check", "интерактивная сессия")
+        : el("span", "chip", "работа не идёт"));
+      box.append(el("span", "chip", s.task
+        ? "задача " + s.task + ", " + (s.taskNote || "узнана")
+        : (s.taskNote || "задача не распознана")));
+      if (task) {
+        const go = el("button", "btn", "Экран задачи");
+        go.addEventListener("click", () => { location.hash = project + "/agent/" + task; });
+        box.append(go);
+      }
+      return box;
+    },
+  };
+
+  const panes = {
+    key: "agent-panes-session-" + sid,
+    sign: "",
+    make: () => {
+      // Вкладка по умолчанию «Лог витка»: разговор тут единственное, что есть.
+      const p = agentPanes(1);
+      p.jp.sub.textContent = "журнала нет";
+      say(p.jp.body, "empty", sessionMiss("Журнал агента", s.task));
+      p.tmSub.textContent = "снимка нет";
+      p.tm.append(el("div", "empty", sessionMiss("tmux-сессия", s.task)));
+      const box = el("div");
+      p.tp.body.append(box);
+      openTranscript(project, p.tp, s, box);
+      return p.wrap;
+    },
+  };
+
+  sync(groups, [agentCrumb(project), head, panes]);
 }
 
 // Экран чата с агентом по макету DK-216 («04 Переписка»). Ход и ответы
@@ -4183,6 +4297,10 @@ function agentRow(project, w, now) {
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
       acts.append(stop);
     }
+  } else if (w.session) {
+    // Задачу сессии узнать не удалось, и вести на экран агента по ID нечем:
+    // разговор открывается по id сессии (DK-294).
+    acts.append(goButton("Разговор", project + "/session/" + w.session));
   }
   row.append(acts);
   return row;
@@ -4299,7 +4417,7 @@ function screenKey(rt) {
   // Запрос в ключ не входит: набор буквы это не переход на другой экран, и
   // выдача обязана перерисоваться по месту, а не собраться заново под пальцем.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
-    rt.agent, rt.chat, rt.find, rt.draft].join("|");
+    rt.agent, rt.session, rt.chat, rt.find, rt.draft].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те
@@ -4417,6 +4535,11 @@ async function paint() {
   if (rt.feed) {
     document.getElementById("psub").textContent = "лента уведомлений";
     renderFeed(current.name);
+    return;
+  }
+  if (rt.id && rt.agent && rt.session) {
+    document.getElementById("psub").textContent = "разговор сессии " + rt.id.slice(0, 8);
+    await renderSession(current.name, r.body.works, rt.id, board);
     return;
   }
   if (rt.id && rt.agent) {

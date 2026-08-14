@@ -531,15 +531,27 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,80}$`)
 
-// sessionPath находит файл транскрипта по id среди каталогов проекта.
-func sessionPath(home, projPath, sid string) string {
+// findSession находит транскрипт по id среди каталогов проекта и собирает про
+// него ту же строку, что стоит в списке сессий: путь с отпечатком для памяти
+// процесса и хвост имени каталога, которым задача подписана в боковом дереве.
+// Полный обход каталогов ради одной сессии не нужен, имя файла известно.
+func findSession(home, projPath, sid string) (sessionInfo, bool) {
+	base := claudeDirName(projPath)
 	for _, dir := range sessionDirs(home, projPath) {
 		p := filepath.Join(dir, sid+".jsonl")
-		if isFile(p) {
-			return p
+		fi, err := os.Stat(p)
+		if err != nil || fi.IsDir() {
+			continue
 		}
+		return sessionInfo{
+			ID: sid, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
+			path:   p,
+			suffix: strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir), base), "-"),
+			stamp:  fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size()),
+			mod:    fi.ModTime(),
+		}, true
 	}
-	return ""
+	return sessionInfo{}, false
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -552,12 +564,13 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	path := sessionPath(s.cfg.Home, found.Path, sid)
-	if path == "" {
+	info, ok := findSession(s.cfg.Home, found.Path, sid)
+	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("транскрипта %s нет среди сессий проекта %s", sid, found.Name)})
 		return
 	}
+	path := info.path
 	if r.URL.Query().Get("stream") == "1" {
 		s.streamSession(w, r, path)
 		return
@@ -580,7 +593,15 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []reply{}
 	}
-	resp := map[string]any{"session": sid, "total": total, "items": items}
+	// Шапка едет вместе с лентой: экран агента открывается и по id сессии, а
+	// строки доски у такого захода нет, и заголовок ему брать больше неоткуда
+	// (DK-294). Задача тут названа так же, как в списке: узнанная с подписью,
+	// чем узнана, либо пустая с подписью «задача не распознана».
+	head := s.sessionHeadCached(path, info.stamp)
+	info.Branch, info.First = head.Branch, head.First
+	info.Tree = info.suffix
+	info.Task, info.TaskNote = sessionTask(info.suffix, head)
+	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote
 	}

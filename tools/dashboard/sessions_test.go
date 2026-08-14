@@ -435,7 +435,7 @@ func TestStaticTranscriptSegVisible(t *testing.T) {
 		t.Fatal("переключатель разговоров собран не классом tseg: класс телефонных панелей " +
 			"прячет его на ноутбуке")
 	}
-	if !strings.Contains(funcBody(t, app, "function renderAgent("), `el("div", "seg")`) {
+	if !strings.Contains(funcBody(t, app, "function agentPanes("), `el("div", "seg")`) {
 		t.Error("переключатель панелей собран не классом seg: телефонные вкладки остались без стилей")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
@@ -528,6 +528,56 @@ func TestSessionRepliesFieldByField(t *testing.T) {
 	}
 }
 
+// Разговор по id сессии отдаёт вместе с лентой шапку: ветку, боковое дерево,
+// первую реплику и задачу с подписью, чем она узнана. Экран агента открывается
+// и по id сессии, строки доски у такого захода нет, и заголовок ему брать
+// больше неоткуда (DK-294).
+func TestSessionHeadNamesTask(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "-xr-5", "aaa-1", transcriptFixture, time.Now())
+	writeSession(t, e.home, e.proj, "", "bbb-2",
+		sessionLine("почини роутер, доступы в local-docs", "main"), time.Now())
+	c := e.loggedClient(t)
+
+	head := func(sid string) sessionInfo {
+		t.Helper()
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("разговор %s: %d %s", sid, resp.StatusCode, text)
+		}
+		var got struct {
+			Head sessionInfo `json:"head"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Head
+	}
+
+	// Узнанная сессия: боковое дерево называет задачу, ветка и первая реплика
+	// собирают заголовок экрана. Время последней записи в ожидание не пишется,
+	// его ставит файловая система при записи фикстуры.
+	one := head("aaa-1")
+	want := sessionInfo{ID: "aaa-1", Mtime: one.Mtime, Branch: "main", Tree: "xr-5",
+		First: "возьми задачу XR-005 в работу", Task: "XR-5", TaskNote: "по дереву задачи"}
+	if !reflect.DeepEqual(one, want) {
+		t.Errorf("шапка узнанной сессии:\n%+v\nожидал:\n%+v", one, want)
+	}
+	if one.Mtime == "" {
+		t.Error("шапка узнанной сессии без времени последней записи")
+	}
+	// Неузнанная сессия: задача пуста, но подпись стоит словами, и экран по ней
+	// говорит, что узнать её не удалось.
+	got := head("bbb-2")
+	if got.Task != "" || got.TaskNote != unknownTaskNote {
+		t.Errorf("шапка неузнанной сессии называет задачу: %+v", got)
+	}
+	if got.First != "почини роутер, доступы в local-docs" || got.Branch != "main" {
+		t.Errorf("шапка неузнанной сессии без первой реплики и ветки: %+v", got)
+	}
+}
+
 // Пагинация назад: ?n= режет хвост, ?before= отдаёт реплики до курсора, до
 // начала ленты доходит без дыр.
 func TestSessionPagination(t *testing.T) {
@@ -573,7 +623,7 @@ func TestSessionMissingNamed(t *testing.T) {
 
 // Обход путей через sid отбивается до склейки пути: {sid} приходит из URL с
 // раскодированными %2F, мультиплексор их пропускает, и без сита sessionIDRe
-// склейка sessionPath отдала бы чужой файл с диска (замечание ревью DK-219).
+// склейка findSession отдала бы чужой файл с диска (замечание ревью DK-219).
 func TestSessionTraversalBlocked(t *testing.T) {
 	e := newTestEnv(t)
 	secret := `{"type":"user","message":{"role":"user","content":"секретное содержимое"},"timestamp":"2026-08-10T10:00:01.000Z"}` + "\n"
@@ -876,7 +926,9 @@ func TestStaticJournalSource(t *testing.T) {
 // «строки» и «запуска» с экранов ушёл.
 func TestStaticAgentPaneWords(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "function renderAgent(")
+	// Панели собирает общий кусок обоих входов экрана, по задаче и по сессии
+	// (DK-294): называет он их там же, где и раньше.
+	body := funcBody(t, app, "function agentPanes(")
 	for _, want := range []string{`pane("Журнал агента"`, `pane("Лог витка"`,
 		`["Журнал", "Лог витка", "tmux"]`} {
 		if !strings.Contains(body, want) {

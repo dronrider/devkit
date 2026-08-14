@@ -424,6 +424,13 @@ const alien = {
   id: "bbbb2222-2222", mtime: "2026-08-13T09:30:00+03:00", branch: "main", tree: "xr-1",
   first: "А какой агент делает XR-1?", task: "XR-1", taskNote: "по дереву задачи",
 };
+// Разговор, чью задачу узнать не удалось: в полосе живых работ он стоит
+// карточкой без номера, и открывается она по id сессии, а не по ID задачи
+// (DK-294).
+const loose = {
+  id: "cccc3333-3333", mtime: "2026-08-13T10:04:00+03:00", branch: "main",
+  first: "почини роутер, доступы в local-docs", taskNote: "задача не распознана",
+};
 let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
 let slowSessions = false;
 
@@ -541,7 +548,13 @@ const sandbox = {
     if (path.includes("/sessions?task=")) {
       return slowSessions ? slowReply({ sessions }) : reply({ sessions });
     }
-    if (path.includes("/sessions/")) return reply({ items: talk });
+    // Разговор по id сессии: сервер отдаёт вместе с лентой шапку, из неё экран
+    // и собирает заголовок, когда задача разговора не узнана.
+    if (path.includes("/sessions/")) {
+      const sid = path.slice(path.indexOf("/sessions/") + "/sessions/".length).split("?")[0];
+      const head = [mine, alien, loose].find((s) => s.id === sid) || { id: sid };
+      return reply({ session: sid, head, items: talk });
+    }
     if (path.includes("/search?q=")) {
       const q = decodeURIComponent(path.slice(path.indexOf("?q=") + 3));
       searchAsked.push(q);
@@ -1336,6 +1349,58 @@ if (!String(grid.children[1].className).includes("onpane")) {
   fail("у законченной работы панель «Лог витка» не открыта вкладкой: " + grid.children[1].className);
 }
 
+// Разговор живой сессии, чью задачу узнать не удалось (DK-294). Карточка такой
+// сессии в полосе живых работ стояла мёртвой: экран агента открывался по ID
+// задачи, а его-то у неё и нет, при том что транскрипт лежит на диске. Теперь
+// карточка ведёт на тот же экран вторым входом, по id сессии.
+chatWork.push({ kind: "session", via: "session", session: loose.id, note: "задача не распознана" });
+await go("#demo");
+const band = byId.get("live");
+const looseCard = band.children[band.children.length - 1];
+if (!dump(looseCard).includes("интерактивная сессия")) {
+  fail("в полосе живых работ нет карточки нераспознанной сессии: " + dump(band));
+}
+const looseLabel = tag(looseCard, "B");
+if (!looseLabel || !looseLabel.handlers.click) {
+  fail("карточка нераспознанной сессии никуда не ведёт: разговор с полосы не открыть");
+}
+looseLabel.handlers.click();
+if (!String(sandbox.location.hash).endsWith("demo/session/" + loose.id)) {
+  fail("карточка ведёт не на разговор по id сессии: " + sandbox.location.hash);
+}
+
+await go("#demo/session/" + loose.id);
+const sessPanes = find(groups, "agent-panes-session-" + loose.id);
+if (!sessPanes) fail("экран разговора по id сессии не собрался: " + dump(groups).slice(0, 300));
+const sessHead = find(groups, "agent-head");
+if (!dump(sessHead).includes(loose.first)) {
+  fail("шапка разговора взята не из первой реплики: " + dump(sessHead));
+}
+if (!dump(sessHead).includes("задача не распознана")) {
+  fail("шапка разговора молчит о том, что задача не узнана: " + dump(sessHead));
+}
+// Журнал и tmux названы отсутствующими, а не нарисованы пустыми: оба ищутся по
+// ID задачи, и брать их у такого разговора неоткуда.
+for (const want of ["Журнал агента ищется по ID задачи", "tmux-сессия ищется по ID задачи"]) {
+  if (!dump(sessPanes).includes(want)) {
+    fail("на экране разговора нет слов о нехватке (" + want + "): " + dump(sessPanes).slice(0, 300));
+  }
+}
+if (streams.some((s) => !s.closed && String(s.url).includes("/log?stream=1"))) {
+  fail("экран разговора поднял поток журнала, которого у сессии нет");
+}
+// Лента дострачивается потоком этой самой сессии.
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(loose.id)) {
+  fail("на экране разговора открыт не поток этой сессии: " +
+    JSON.stringify(liveTalks().map((s) => s.url)));
+}
+talkReply(liveTalks()[0], 1, "ход нераспознанного разговора");
+await settle();
+if (!dump(sessPanes).includes("ход нераспознанного разговора")) {
+  fail("реплика не встала в ленту экрана, открытого по id сессии");
+}
+chatWork.pop();
+
 // Ответ на нажатие: он приходит карточкой поверх экрана и не двигает
 // раскладку. Строкой над списком он стоял в потоке документа, и появление слов
 // («конвейер задачи DK-136 поднят в tmux-сессии task-DK-136») уводило доску
@@ -1407,7 +1472,8 @@ sandbox.sayResult("");
 if (flashes.children.length) fail("пустой ответ не снял карточку: " + dump(flashes));
 
 console.log("частичная перерисовка: доска, черновики и лента чата держат место и фокус, " +
-  "экран агента держит выбранный разговор, ответ на нажатие не двигает раскладку; " +
+  "экран агента держит выбранный разговор, разговор нераспознанной сессии " +
+  "открывается с полосы работ по id сессии, ответ на нажатие не двигает раскладку; " +
   "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
   "косая черта и лупа ведут в поиск; подписки: широкая часть кнопки идёт на " +
   "подписку по умолчанию, строка списка на свою, без выбора стрелки нет; " +

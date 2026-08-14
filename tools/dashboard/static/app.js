@@ -509,44 +509,59 @@ function harnessDefault() {
   return ((list.find((h) => h.default) || list[0] || {}).name) || "";
 }
 
-// Почему выбора нет. Молчания тут нет ни в одном случае: подписка на машине
-// одна, список не прочитан вовсе или его читать нечем.
+// Куда поедет работа и есть ли из чего выбирать. Молчания тут нет ни в одном
+// случае: и подписка на машине одна, и непрочитанный список, и живой выбор
+// названы словами, потому что нажимают кнопку не глядя в список (макет «11
+// Подписка при запуске», фрейм состояний).
 function harnessWhy() {
   const list = harnesses();
-  if (list.length === 1) return "поедет на " + list[0].name + ", подписка на машине одна";
   if (!list.length) {
     return (harnessView && harnessView.note) || "список подписок не прочитан: запуск идёт как раньше";
   }
-  return "";
+  if (list.length === 1) return "поедет на " + list[0].name + ", подписка на машине одна";
+  return "поедет на " + harnessDefault() + ", подписок на машине " + numWord(list.length);
+}
+
+// Число подписок словом: «подписок на машине две» читается как речь, а цифра в
+// подписи рядом с кнопкой смотрится счётчиком.
+const NUM_WORDS = ["ноль", "одна", "две", "три", "четыре", "пять"];
+
+function numWord(n) {
+  return NUM_WORDS[n] || String(n);
 }
 
 // У цели выбора нет: виток поднимает оболочка цикла своей сессией, и передать
 // ей подписку нечем. Сервер отвечает на такой запрос тем же отказом.
 const GOAL_HARNESS_TIP = "виток цели поднимает оболочка цикла: он идёт на подписке по умолчанию";
 
-// Строка списка подписок: имя, признак «по умолчанию» и остаток квоты. Остаток
-// тут не для красоты, подписку выбирают ровно из-за него, а снимок берётся из
-// того же ответа, которым нарисован блок квоты в колонке. Снимка нет, значит
-// так и написано, а не нарисован ноль.
+// Строка списка подписок (макет «11 Подписка при запуске»): имя, чип «по
+// умолчанию» и остаток квоты. Остаток тут не для красоты, подписку выбирают
+// ровно из-за него, а снимок берётся из того же ответа, которым нарисован блок
+// квоты в колонке. Снимка нет, значит так и написано, а не нарисован ноль.
+// Подписка по умолчанию подсвечена: широкая часть кнопки поднимает работу
+// именно на ней, и в списке это видно без чтения подписи.
 function harnessRow(h) {
-  const row = el("button", "hrow");
+  const row = el("button", "hrow" + (h.default ? " on" : ""));
   row.type = "button";
-  const head = el("span", "hhead");
+  const head = el("span", "h1");
   head.append(el("b", "", h.name));
-  if (h.default) head.append(el("span", "hdef", "по умолчанию"));
+  if (h.default) head.append(el("span", "chip", "по умолчанию"));
   row.append(head);
   const snap = (quotaView && (quotaView.harnesses || []).find((q) => q.name === h.name)) || null;
   const buckets = snap ? (snap.buckets || []) : [];
   if (!snap) {
-    row.append(el("span", "qnote", "снимка квоты нет"));
-  } else if (!buckets.length) {
-    row.append(el("span", "qnote", snap.note || "бакетов в снимке нет"));
-  } else {
-    // Две полоски: столько же, сколько стоит в блоке квоты, и больше в строку
-    // выбора не влезает даже на ноутбуке.
-    for (const b of buckets.slice(0, 2)) row.append(quotaRow(b));
-    if (snap.stale) row.append(el("span", "qnote stale", "снимок протух" + (snap.age ? ", " + snap.age + " назад" : "")));
+    row.append(el("span", "hnote", "снимка квоты нет, остаток неизвестен"));
+    return row;
   }
+  // Две полоски: столько же, сколько стоит в блоке квоты, и больше в строку
+  // выбора не влезает даже на ноутбуке.
+  for (const b of buckets.slice(0, 2)) row.append(quotaRow(b));
+  if (!buckets.length) row.append(el("span", "hnote", snap.note || "бакетов в снимке нет"));
+  // Возраст снимка стоит у каждой строки, а не у одной протухшей: остаток,
+  // снятый час назад, и остаток, снятый минуту назад, это разные ответы на
+  // вопрос «хватит ли квоты».
+  else if (snap.stale) row.append(el("span", "hnote stale", "снимок протух" + (snap.age ? ", " + snap.age + " назад" : "")));
+  else if (snap.age) row.append(el("span", "hnote", "снимок " + snap.age + " назад"));
   return row;
 }
 
@@ -575,37 +590,63 @@ function runControl(project, id, make, label, isGoal, tip, afterOk) {
     fire(wide, harnessDefault());
   });
   const list = harnesses();
-  const grp = el("span", "rungrp");
+  const grp = el("span", "split");
   grp.append(wide);
   if (isGoal || list.length < 2) {
     const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
     return grp;
   }
-  const menu = el("div", "hmenu");
-  menu.hidden = true;
+  const pop = el("div", "hpop");
+  pop.hidden = true;
+  pop.append(el("span", "hph", "На какой подписке запустить"));
   for (const h of list) {
     const row = harnessRow(h);
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      menu.hidden = true;
+      pop.hidden = true;
       fire(wide, h.name);
     });
-    menu.append(row);
+    pop.append(row);
   }
-  const more = el("button", wide.className + " harrow");
-  more.append(icon("i-more"));
+  // Подвал говорит, откуда список и насколько выбор действует: без этих двух
+  // строк человек не знает, чем список пополнить и не запомнил ли дашборд его
+  // выбор на будущее.
+  pop.append(el("span", "hfoot",
+    "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."));
+  const more = el("button", wide.className + " more2");
+  more.append(el("span", "car"));
   more.setAttribute("aria-label", "Выбрать подписку");
   more.setAttribute("aria-expanded", "false");
   withTip(more, "Выбрать подписку: " + list.map((h) => h.name).join(", "));
   more.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    menu.hidden = !menu.hidden;
-    more.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+    pop.hidden = !pop.hidden;
+    more.setAttribute("aria-expanded", pop.hidden ? "false" : "true");
+    // Вверх список раскрывается там, где под кнопкой не хватает места: на
+    // телефоне кнопка стоит низко, и раскрытый вниз список уезжает под нижние
+    // вкладки. Считается это по месту кнопки на экране, а не по ширине окна:
+    // низко она стоит и на ноутбуке, если доска прокручена до конца.
+    if (!pop.hidden) pop.classList.toggle("up", noRoomBelow(more));
   });
-  grp.append(more, menu);
+  grp.append(more, pop);
   return grp;
 }
+
+// Хватает ли под узлом места на раскрытый список. Мерить нечем (стенд, старый
+// браузер), значит раскрываем вниз, как было: догадка тут хуже прежнего
+// поведения.
+function noRoomBelow(node) {
+  if (!node.getBoundingClientRect || !window.innerHeight) return false;
+  const box = node.getBoundingClientRect();
+  if (!box || !box.bottom) return false;
+  return box.bottom + HPOP_ROOM > window.innerHeight;
+}
+
+// Сколько места просит раскрытый список: шапка, две строки с полосками и
+// подвал. Точная высота известна только после вставки, а решение о стороне
+// принимается до неё, поэтому тут запас по макету.
+const HPOP_ROOM = 260;
 
 // Действие прямо со строки: поднять конвейер или снять живую сессию, не заходя
 // внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
@@ -644,7 +685,7 @@ function rowAction(project, row, sect) {
   // Стоп живёт в той же обёртке, что и запуск, хотя выбирать ему нечего: фокус
   // возвращается после перерисовки путём от строки, и кнопка, лежащая на
   // строку выше своей соседки, теряла бы его на каждом нажатии.
-  const grp = el("span", "rungrp");
+  const grp = el("span", "split");
   grp.append(btn);
   return grp;
 }

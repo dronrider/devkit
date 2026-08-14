@@ -20,7 +20,10 @@
 // идёт на подписку по умолчанию, строка списка на свою, а там, где выбирать не
 // из чего, стрелки нет и причина стоит подсказкой. Смотрит стенд тело
 // запроса: нарисованный список без доехавшего имени это ровно та поломка, от
-// которой задача и заведена.
+// которой задача и заведена. Вид кнопки стенд держит по принятому макету «11
+// Подписка при запуске» (DK-336): половины одного цвета со стыком без зазора,
+// галочка рамкой, а в списке шапка, подсветка подписки по умолчанию, чип,
+// остаток квоты полосками и подвал с источником списка.
 //
 // Смотрит стенд и ответ на нажатие: он приходит карточкой поверх экрана и не
 // трогает ни одного узла из потока документа, поэтому раскладка от него не
@@ -456,6 +459,24 @@ function harnessBody() {
   return { harnesses: harnessList, note: harnessNote };
 }
 
+// Снимки квоты: у первой подписки свежий с двумя бакетами, у второй его нет
+// вовсе. Строка списка рисует остаток из этого же ответа, и «снимка нет» в ней
+// обязано быть написано словами, а не нарисовано нулевой полоской.
+function quotaBody() {
+  return {
+    dir: "/home/.devkit/quota",
+    harnesses: [{
+      name: harnessOne.name,
+      age: "3м",
+      stale: false,
+      buckets: [
+        { name: "week_all", used_pct: 52 },
+        { name: "week_max", used_pct: 50 },
+      ],
+    }],
+  };
+}
+
 // Заказ дословно, тем же способом, каким его собирает сервер (groomPrompt,
 // tools/dashboard/drafts.go): подсказка кнопки читает готовое поле.
 const drafts = [
@@ -729,7 +750,7 @@ const sandbox = {
       return reply(answer);
     }
     if (path === "/api/notifications") return reply({ items: [] });
-    if (path === "/api/quota") return reply({ buckets: [] });
+    if (path === "/api/quota") return reply(quotaBody());
     return reply({});
   },
 };
@@ -833,25 +854,61 @@ running = false;
 await sandbox.refresh();
 await settle();
 const pickRow = find(groups, "XR-5");
-const grp = byClass(pickRow, "rungrp");
+const grp = byClass(pickRow, "split");
 if (!grp) fail("у строки нет составной кнопки запуска: " + dump(pickRow));
-const menu = byClass(grp, "hmenu");
-if (!menu || !menu.hidden) fail("список подписок открыт до нажатия на стрелку");
-grp.children[1].handlers.click({ stopPropagation: () => {} });
-if (menu.hidden) fail("стрелка не открыла список подписок");
-if (menu.children.length !== 2) {
-  fail("в списке подписок " + menu.children.length + " строк, ждал две: " + dump(menu));
+// Вид кнопки держит макет «11 Подписка при запуске»: половины одного цвета,
+// узкая часть с галочкой-рамкой, стык без зазора. До DK-336 узкая часть была
+// отдельной кнопкой со значком и отступом.
+const more = grp.children[1];
+if (!String(more.className).includes("more2") || !String(more.className).includes("btn-acc")) {
+  fail("узкая часть кнопки не по макету: " + more.className);
 }
-if (!dump(menu).includes(harnessTwo.name) || !dump(menu).includes("по умолчанию")) {
-  fail("список подписок не называет ни имён, ни подписки по умолчанию: " + dump(menu));
+if (!byClass(more, "car")) fail("в узкой части нет галочки-рамки: " + dump(more));
+const pop = byClass(grp, "hpop");
+if (!pop || !pop.hidden) fail("список подписок открыт до нажатия на стрелку");
+more.handlers.click({ stopPropagation: () => {} });
+if (pop.hidden) fail("стрелка не открыла список подписок");
+// Шапка, две подписки и подвал: макет держит все три части, и без шапки с
+// подвалом список не говорит ни что выбирают, ни откуда он взялся.
+if (!dump(byClass(pop, "hph")).includes("На какой подписке запустить")) {
+  fail("у списка подписок нет шапки: " + dump(pop));
 }
-menu.children[1].handlers.click({ stopPropagation: () => {} });
+if (!dump(byClass(pop, "hfoot")).includes("agentctl harness")) {
+  fail("подвал списка не называет источник и срок выбора: " + dump(pop));
+}
+const hrows = pop.children.filter((kid) => String(kid.className).includes("hrow"));
+if (hrows.length !== 2) {
+  fail("в списке подписок " + hrows.length + " строк, ждал две: " + dump(pop));
+}
+if (!String(hrows[0].className).includes("on") || String(hrows[1].className).includes("on")) {
+  fail("подписка по умолчанию в списке не подсвечена: " + hrows.map((r) => r.className).join(" | "));
+}
+if (!byClass(hrows[0], "chip") || !dump(hrows[0]).includes("по умолчанию")) {
+  fail("признак «по умолчанию» стоит не чипом: " + dump(hrows[0]));
+}
+// Остаток квоты в строке: подписку выбирают ровно из-за него. Полоски идут те
+// же, что в блоке квоты, а возраст снимка стоит у каждой строки, не только у
+// протухшей.
+const meters = (hrows[0].children || []).filter((kid) => String(kid.className).includes("qrow"));
+if (meters.length !== 2) {
+  fail("в строке подписки не две полоски остатка: " + dump(hrows[0]));
+}
+if (!dump(hrows[0]).includes("52%") || !dump(hrows[0]).includes("снимок 3м назад")) {
+  fail("строка подписки молчит про остаток или возраст снимка: " + dump(hrows[0]));
+}
+if (!dump(hrows[1]).includes("снимка квоты нет")) {
+  fail("строка без снимка квоты об этом молчит: " + dump(hrows[1]));
+}
+if (!dump(pop).includes(harnessTwo.name)) {
+  fail("список подписок не называет имён: " + dump(pop));
+}
+hrows[1].handlers.click({ stopPropagation: () => {} });
 await settle();
 if (started[started.length - 1].harness !== harnessTwo.name) {
   fail("строка списка подняла работу не на своей подписке: " +
     JSON.stringify(started[started.length - 1]));
 }
-if (!menu.hidden) fail("список подписок остался открытым после выбора");
+if (!pop.hidden) fail("список подписок остался открытым после выбора");
 
 // Подписка на машине одна: стрелки нет вовсе, а причина висит подсказкой.
 // Список не прочитан: то же самое, и запуск идёт как до этой задачи, без имени.
@@ -865,7 +922,7 @@ for (const [list, note, why] of [
   await sandbox.refresh();
   await settle();
   const one = find(groups, "XR-6");
-  if (byClass(one, "harrow")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
+  if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
   const only = button(one, "Выполнить");
   if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
   if (!String(only.title).includes(why)) {
@@ -921,6 +978,14 @@ if (!String(taskRun.title).includes("Выполни XR-6")) {
 }
 if (!dump(groups).includes("Выполни XR-6")) {
   fail("надпись под кнопкой не называет заказ дословно: " + dump(groups).slice(0, 400));
+}
+// Там же сказано, куда поедет работа: при двух подписках надпись называет ту,
+// на которой поднимет широкая часть кнопки (макет, фрейм состояний). До
+// DK-336 подпись появлялась только там, где выбирать не из чего, и человек
+// жал кнопку, не зная, чью квоту он тратит.
+if (!dump(groups).includes("Поедет на " + harnessOne.name + ", подписок на машине две")) {
+  fail("надпись под полосой действий не называет подписку по умолчанию: " +
+    dump(groups).slice(0, 400));
 }
 timers.length = 0;
 byId.get("flashes").replaceChildren();
@@ -2058,7 +2123,8 @@ console.log("частичная перерисовка: доска, чернов
   "открывается с полосы работ по id сессии, ответ на нажатие не двигает раскладку; " +
   "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
   "косая черта и лупа ведут в поиск; подписки: широкая часть кнопки идёт на " +
-  "подписку по умолчанию, строка списка на свою, без выбора стрелки нет; " +
+  "подписку по умолчанию, строка списка на свою, без выбора стрелки нет, " +
+  "вид кнопки и списка по макету; " +
   "экран черновика: три состояния груминга, уточнение новой ходкой, удаление с причиной; " +
   "перетаскивание: коридор со щелями на живом списке, долгое нажатие против " +
   "пролистывания, правка одной ценностью и откат с ожидаемой разбивкой");

@@ -858,3 +858,91 @@ func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
 		}
 	}
 }
+
+// Составная кнопка запуска меряется настоящим движком (DK-336). Приёмка
+// пользователя нашла её распавшейся на две кнопки, а такое не берётся разбором
+// правил: зазор рисует не одна строка стилей, а сложение флекса с радиусами и
+// границей. Стенд открывает страницу дашборда с той же разметкой, что собирает
+// runControl, и снимает края. Без chrome шаг пропускается: это узел стенда, а
+// не рабочей части.
+func TestStaticRunSplitLayout(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер составной кнопки пропущен")
+	}
+	// Разметка стенда повторяет runControl руками и разъехаться с ним может
+	// молча: замер на своей вёрстке зеленел бы и после того, как кнопку
+	// перестали собирать этими классами.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "function runControl(")
+	for _, want := range []string{`el("span", "split")`, `el("div", "hpop")`,
+		`el("span", "hph", "На какой подписке запустить")`, `wide.className + " more2"`,
+		`el("span", "car")`, `el("span", "hfoot"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("кнопка собрана не тем блоком (нет %q): замер на стендовой разметке "+
+				"перестал говорить о рабочей кнопке", want)
+		}
+	}
+	row := funcBody(t, app, "function harnessRow(")
+	for _, want := range []string{`"hrow" + (h.default ? " on" : "")`, `el("span", "h1")`,
+		`el("span", "chip", "по умолчанию")`, `el("span", "hnote"`, "quotaRow(b)"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("строка списка подписок собрана не тем блоком (нет %q)", want)
+		}
+	}
+	dir, page := chromeStand(t, "split_run.js")
+
+	laptop := chromeMeasure(t, chrome, dir, page, "1280,900", "down")
+	// Стык без зазора: половины читаются одной кнопкой, а не двумя кубиками
+	// рядом, и делит их полоска внутри узкой части.
+	if laptop["seam"] != 0 {
+		t.Errorf("между половинами кнопки зазор в %d пикселей: приёмка нашла её "+
+			"распавшейся на две кнопки", laptop["seam"])
+	}
+	if laptop["arrow-w"] != 30 {
+		t.Errorf("узкая часть шириной %d, макет держит 30", laptop["arrow-w"])
+	}
+	if laptop["arrow-h"] != laptop["wide-h"] {
+		t.Errorf("половины кнопки разной высоты: %d и %d", laptop["wide-h"], laptop["arrow-h"])
+	}
+	if laptop["car"] < 5 || laptop["car"] > 12 {
+		t.Errorf("галочка в узкой части шириной %d: макет рисует её рамкой на 7 пикселей",
+			laptop["car"])
+	}
+	if laptop["pop-w"] != 340 {
+		t.Errorf("список подписок шириной %d, макет держит 340", laptop["pop-w"])
+	}
+	if laptop["pop-right"] != 0 {
+		t.Errorf("список подписок съехал от правого края кнопки на %d пикселей", laptop["pop-right"])
+	}
+	if laptop["hrow-h"] < 44 {
+		t.Errorf("строка списка высотой %d: по ней жмут пальцем, и макет держит 44",
+			laptop["hrow-h"])
+	}
+
+	narrow := chromeMeasure(t, chrome, dir, page, "390,844", "down")
+	if narrow["screen"] != 390 {
+		t.Fatalf("окно стенда не 390 пикселей: %v", narrow)
+	}
+	if narrow["arrow-w"] < 44 {
+		t.Errorf("на телефоне узкая часть шириной %d: по ней жмут пальцем, и он просит 44",
+			narrow["arrow-w"])
+	}
+	if narrow["pop-over"] != 0 {
+		t.Errorf("список подписок вылез за край телефона: ширина %d при экране %d",
+			narrow["pop-w"], narrow["screen"])
+	}
+	if narrow["seam"] != 0 {
+		t.Errorf("на телефоне между половинами кнопки зазор в %d пикселей", narrow["seam"])
+	}
+
+	// Раскрытие вверх: под кнопкой у телефона нижние вкладки, и список,
+	// раскрытый вниз, уезжает под них целиком.
+	upward := chromeMeasure(t, chrome, dir, page, "390,844", "up")
+	if upward["pop-above"] != 1 {
+		t.Error("список подписок не раскрылся вверх от кнопки: класс up не поднимает его")
+	}
+	if upward["pop-under-tabs"] != 0 {
+		t.Error("раскрытый вверх список всё равно достаёт до нижних вкладок")
+	}
+}

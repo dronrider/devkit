@@ -224,13 +224,33 @@ func codeCommit(t *testing.T, root, id, file string) {
 	gitT(t, root, "commit", "-qm", "feat: "+id+" фича")
 }
 
+// TestMergeQueueBusy: занятая очередь держит прод, а не main, поэтому
+// одиночный merge не отказывает, а переводит себя в поездной режим (DK-306,
+// решение 3): ветка льётся в main, задача остаётся в In progress и ждёт
+// свободной очереди в поезде. Сессии исполнителя к этому моменту обычно уже
+// нет, и получателя у события освобождения очереди не будет.
 func TestMergeQueueBusy(t *testing.T) {
-	root, _ := setup(t, rowInProg, rowCheck)
+	root, callLog := setup(t, rowInProg, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	branchWithFix(t, root)
-	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
-	if err == nil || !strings.Contains(err.Error(), "очередь занята") {
-		t.Fatalf("ожидал отказ по очереди, получил: %v", err)
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatalf("занятая очередь держит выкат, а не слияние: %v", err)
+	}
+	if !strings.Contains(msg, "очередь занята: XR-009") ||
+		!strings.Contains(msg, "слияние поездное") {
+		t.Fatalf("отчёт обязан объяснить отказ от выката: %q", msg)
+	}
+	if !strings.Contains(msg, "в поезде: XR-001") {
+		t.Fatalf("задача должна попасть в поезд: %q", msg)
+	}
+	if calls, _ := os.ReadFile(callLog); strings.Contains(string(calls), "move") {
+		t.Fatalf("занятая очередь не двигает доску: %q", calls)
+	}
+	// Выкат остаётся запертым, пока XR-009 не прошла Check.
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "очередь занята: XR-009") {
+		t.Fatalf("ship при занятой очереди должен отбиваться: %v", err)
 	}
 
 	// Боевой путь с поездами: код задачи под тегом deployed (уехал через
@@ -239,9 +259,12 @@ func TestMergeQueueBusy(t *testing.T) {
 	codeCommit(t, root, "XR-009", "nine.txt")
 	gitT(t, root, "tag", "deployed")
 	branchWithFix(t, root)
-	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
-		!strings.Contains(err.Error(), "очередь занята") {
-		t.Fatalf("ожидал отказ по очереди с тегом: %v", err)
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatalf("с тегом очередь тоже держит выкат, а не слияние: %v", err)
+	}
+	if !strings.Contains(msg, "в поезде: XR-001") {
+		t.Fatalf("с тегом задача должна попасть в поезд: %q", msg)
 	}
 }
 
@@ -613,11 +636,19 @@ func TestMergeTrainQueueBusy(t *testing.T) {
 		t.Fatalf("ship при занятой очереди должен отбиваться: %v", err)
 	}
 
-	// Одиночный merge выкатывает сам, ему занятая очередь по-прежнему отказ.
+	// Одиночный merge при занятой очереди переводит себя в поезд: событие
+	// освобождения очереди может застать уже без сессии, ветке нечего ждать
+	// в своём дереве. Ворота сценария действуют и тут: ship повезёт задачу
+	// в Check, проверять выкат будет нечем.
+	taskWithScenario(t, root, "XR-003")
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
-	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
-		!strings.Contains(err.Error(), "очередь занята: XR-009") {
-		t.Fatalf("одиночный merge при занятой очереди должен отбиваться: %v", err)
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"})
+	if err != nil {
+		t.Fatalf("одиночный merge при занятой очереди должен литься в поезд: %v", err)
+	}
+	if !strings.Contains(msg, "очередь занята: XR-009") ||
+		!strings.Contains(msg, "в поезде: XR-001, XR-003") {
+		t.Fatalf("состав поезда после второго слияния: %q", msg)
 	}
 }
 

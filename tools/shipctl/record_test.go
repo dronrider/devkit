@@ -66,10 +66,19 @@ func TestMergeRecordsCommits(t *testing.T) {
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 в Check")
 
+	taskWithScenario(t, root, "XR-003")
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
-	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
-		!strings.Contains(err.Error(), "очередь занята: XR-001") {
-		t.Fatalf("очередь должна держаться записью, а не ID в subject: %v", err)
+	msg, err = cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Очередь держится записью, а не ID в subject: без записи XR-001 не
+	// нашлась бы выкаченной, и слияние прошло бы обычным одиночным выкатом.
+	if !strings.Contains(msg, "очередь занята: XR-001") {
+		t.Fatalf("очередь должна держаться записью, а не ID в subject: %q", msg)
+	}
+	if !strings.Contains(msg, "слияние поездное") {
+		t.Fatalf("при занятой очереди слияние должно стать поездным: %q", msg)
 	}
 }
 

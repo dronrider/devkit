@@ -537,6 +537,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
+	// Перевод в поездной режим при занятой очереди помнит, откуда он: отчёт
+	// обязан объяснить отказ от выката, иначе тихое отсутствие выката
+	// неотличимо от забытья.
+	queueFallback := ""
 	test, testFromConfig, err := resolveTest(root, p.Test)
 	if err != nil {
 		return "", err
@@ -643,16 +647,18 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		}
 	}
 	// Занятая очередь держит выкат, а не main: инвариант «непроверенный выкат
-	// один» сказан про прод. Поездное слияние на прод ничего не везёт, оно
-	// возвращается до блока выката, и очередь его не касается; одиночный merge
-	// выкатывает сам, ему отказ остаётся.
+	// один» сказан про прод. Слияние на прод ничего не везёт, оно
+	// возвращается до блока выката, и очередь его не касается. Одиночный merge
+	// выкатывает сам, поэтому при занятой очереди он не отказывает, а
+	// переводит себя в поездной режим: ветка льётся в main и ждёт свободной
+	// очереди вместе с накопленным поездом (DK-306, решение 3), сессии к тому
+	// моменту может уже не быть, и получателя у события освобождения нет.
 	if !p.Train {
-		busy, err := checkQueue(root, main, b)
-		if err != nil {
+		if busy, err := checkQueue(root, main, b); err != nil {
 			return "", err
-		}
-		if len(busy) > 0 {
-			return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
+		} else if len(busy) > 0 {
+			p.Train = true
+			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкаченным кодом, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship)", strings.Join(busy, ", "))
 		}
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
@@ -804,7 +810,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			}
 		}
 	}
-	msg := []string{warn + fmt.Sprintf("%s слита в %s fast-forward", p.ID, main)}
+	msg := []string{warn + queueFallback + fmt.Sprintf("%s слита в %s fast-forward", p.ID, main)}
 	if testFromConfig {
 		msg = append(msg, "тесты гнались командой из "+deployConfigPath+": "+test)
 	}

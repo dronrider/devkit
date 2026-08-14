@@ -125,7 +125,11 @@ def _collect_stream(path, data):
     """
     pending = {}
     reads_here = Counter()
-    for rec in sessions.records(path):
+    for rec, bad in sessions.parsed(path):
+        if bad:
+            data["lines_bad"] += 1
+        if rec is None:
+            continue
         msg = rec.get("message")
         if not isinstance(msg, dict):
             continue
@@ -242,8 +246,8 @@ def report(directory, out):
         return False
     total_out = sum(data["out_chars"].values())
     total_calls = sum(data["calls"].values())
-    out.write("сессий: %d, вызовов инструментов: %d\n"
-              % (data["sessions"], total_calls))
+    out.write("сессий: %d, вызовов инструментов: %d, битых строк: %d\n"
+              % (data["sessions"], total_calls, data["lines_bad"]))
     out.write("суммарный вывод инструментов: %s символов (~%s токенов)\n\n"
               % (_human(total_out), _human(total_out / 3.5)))
 

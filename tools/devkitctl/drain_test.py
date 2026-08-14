@@ -22,7 +22,7 @@ from testenv import SandboxCase, context, drain, write
 #   Read /a.txt целиком          -> 10 символов
 #   Read /a.txt целиком (повтор) -> 10 символов, повторное чтение
 #   Read /b.txt limit=5 (кусок)  -> 5 символов
-#   Bash ls (отказ разрешения)   -> 1 символ, is_error с permission
+#   Bash ls (отказ разрешения)   -> 17 символов, is_error с permission
 CALLS = [
     ("b1", "Bash", {"command": "grep -rn foo src"}, "foo:1\n"),
     ("b2", "Bash", {"command": "sed -i 's/a/b/' f.txt"}, ""),
@@ -113,8 +113,8 @@ class DrainReportTest(SandboxCase):
 
     def test_exit_code_and_header(self):
         self.assertEqual(self.rc, 0, "drain упал с ошибкой: %s" % self.out)
-        self.assertIn_("сессий: 1, вызовов инструментов: 8", self.out,
-                       "одна сессия и восемь вызовов")
+        self.assertIn_("сессий: 1, вызовов инструментов: 8, битых строк: 1",
+                       self.out, "одна сессия, восемь вызовов, одна битая строка")
 
     def test_tool_table(self):
         # Bash: 5 вызовов, Read: 3 вызова; всего 8.

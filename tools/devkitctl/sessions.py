@@ -15,11 +15,16 @@ tool_pairs -- связки вызов-результат, records -- сырые 
 import json
 
 
-def records(path):
-    """Записи одного потока как словари, по порядку, без пустых и битых строк.
+def parsed(path):
+    """Записи одного потока как (record, is_bad), по порядку.
 
+    Один разбор jsonl на поток: records, tool_pairs и подсчёт битых строк
+    ходят через него, второго парсера рядом нет. record это словарь или None
+    (битая строка), is_bad True для строк, которые не разобрать как json.
+    Пустые строки пропускаются молча: это не данные, а хвост переноса строк.
     Битая строка в журнале это норма: харнес пишет поток в реальном времени, и
-    обрыв записи при отмене сессии не должен валить разбор.
+    обрыв записи при отмене сессии не должен валить разбор, но замер считает
+    их и печатает в шапке, чтобы потеря данных стала видна.
     """
     for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
         ln = ln.strip()
@@ -28,8 +33,15 @@ def records(path):
         try:
             rec = json.loads(ln)
         except ValueError:
+            yield (None, True)
             continue
-        if isinstance(rec, dict):
+        yield (rec if isinstance(rec, dict) else None, False)
+
+
+def records(path):
+    """Словари-записи потока по порядку, без пустых и битых строк."""
+    for rec, bad in parsed(path):
+        if rec is not None:
             yield rec
 
 

@@ -158,11 +158,23 @@ func taskFailClear(root, id string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func commitBoard(root, msg string) (string, error) {
-	if _, err := git(root, "add", "--", "docs/TASKS.md"); err != nil {
+// commitBoard коммитит доску вместе с файлами задач, которых коснулся перевод
+// статуса. Файл задачи тут не для красоты: на смене статуса taskctl уносит в
+// раздел «Ход работы» пакет отмеченных этапов (DK-338), и оставленная
+// незакоммиченной правка отбила бы следующий же merge своим же предполётом,
+// ровно тем случаем, из-за которого этапы и уехали из рабочего дерева.
+func commitBoard(root, msg string, ids ...string) (string, error) {
+	paths := []string{"docs/TASKS.md"}
+	for _, id := range ids {
+		rel := "docs/tasks/" + id + ".md"
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			paths = append(paths, rel)
+		}
+	}
+	if _, err := git(root, append([]string{"add", "--"}, paths...)...); err != nil {
 		return "", err
 	}
-	if _, err := git(root, "commit", "-m", msg, "--", "docs/TASKS.md"); err != nil {
+	if _, err := git(root, append([]string{"commit", "-m", msg, "--"}, paths...)...); err != nil {
 		return "", err
 	}
 	return git(root, "rev-parse", "--short", "HEAD")
@@ -867,7 +879,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			if _, err := taskMove(root, p.ID, "check"); err != nil {
 				return "", fmt.Errorf("слито, но доска не переведена: %v", err)
 			}
-			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check", p.ID))
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check", p.ID), p.ID)
 			if err != nil {
 				return "", err
 			}
@@ -927,7 +939,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if _, err := taskMove(root, p.ID, "check"); err != nil {
 		return "", fmt.Errorf("слито, но доска не переведена: %v", err)
 	}
-	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check", p.ID))
+	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check", p.ID), p.ID)
 	if err != nil {
 		return "", err
 	}
@@ -1065,7 +1077,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 			return "", fmt.Errorf("выкат прошёл, но доска не переведена: %v", err)
 		}
 	}
-	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check поездом", list))
+	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check поездом", list), train...)
 	if err != nil {
 		return "", err
 	}
@@ -1474,7 +1486,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		}
 		if len(done) > 0 {
 			joined := strings.Join(done, ", ")
-			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s %s", p.ID, joined))
+			hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s %s", p.ID, joined), p.ID)
 			if err != nil {
 				return "", err
 			}

@@ -132,8 +132,8 @@ class SelfcheckTest(SandboxCase):
         planted = {}
 
         def plant_extra_branch(args, cwd):
-            # Ветка подкладывается один раз, когда слияние уже прошло и
-            # репозиторий проекта ещё жив: раньше его ещё нет, позже
+            # Ветка подкладывается один раз, на перехвате вызова слияния, до
+            # его прогона: раньше репозитория проекта ещё нет, позже
             # круг снесёт проект.
             if args[:2] == ["shipctl", "-C"] and args[-1] == selfcheck.TASK \
                     and "merge" in args and "planted" not in planted:

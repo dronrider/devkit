@@ -19,6 +19,13 @@ RULES_BACKLINK_RE = re.compile(r"RULES\.(board\.)?md")
 # Граница слова отсекает «асинхронный»: этим словом правило не сказано, а
 # отменено.
 SYNC_SPAWN_RE = re.compile(r"\bсинхронн")
+# Три разряда реакции на живую реплику и находка на каждый пропавший: в
+# находку берётся то слово, без которого разряда не сказать.
+LIVE_REPLY_GRADES = (
+    ("сразу", "ответ и поправка не названы действующими сразу, а быстрая реакция это и есть повод канала"),
+    ("wait-human", "стоп не выходит маркером wait-human, виток бросит пачку на середине"),
+    ("конвейер", "смена направления не ждёт конца задачи в конвейере, разворот оставит мусор в деревьях"),
+)
 
 
 def meta(path, key):  # значение ключа frontmatter
@@ -338,6 +345,37 @@ def check_sync_spawn(root):
     return fails
 
 
+def check_live_reply(here):
+    # DK-343 по LLD DK-136: виток получает реплику человека теперь и посреди
+    # работы, добавкой контекста от почтальона. Правило реакции живёт одним
+    # текстом скилла, и пропажа любого его разряда тихая: без немедленного
+    # ответ на вопрос витка ждёт конца пачки, без границы шага стоп бросает
+    # пачку на середине, без конца задачи в конвейере разворот оставляет
+    # исполнителей в чужих деревьях и непроверенный выкат в очереди. Сюда же
+    # зов оболочки: путь без `python3` держится на бите исполнимости и на
+    # shebang, а на второй машине они есть не во всяком чекауте.
+    fails = []
+    text = read(os.path.join(here, "goal-loop", "SKILL.md"))
+    if text is None:
+        return fails  # отдельно ловится check_goal_split
+    body = section(text, "## Живая реплика")
+    if not body:
+        fails.append("goal-loop: нет раздела про живую реплику, доставленная посреди витка строка останется без правила")
+    else:
+        if "почтальон" not in body or "контекст" not in body:
+            fails.append("goal-loop: не сказано, что реплику вносит в контекст витка почтальон, виток станет ждать шага 1")
+        for word, why in LIVE_REPLY_GRADES:
+            if word not in body:
+                fails.append("goal-loop: %s" % why)
+        if "Журнал" not in body:
+            fails.append("goal-loop: живая реплика не оседает записью «Журнала», поворот работы останется без причины")
+    for line in text.split("\n"):
+        if "goal-run.py" in line and "/" in line and "python3" not in line:
+            fails.append("goal-loop: оболочка зовётся путём без python3, без бита исполнимости такой зов падает")
+            break
+    return fails
+
+
 def run(here, root):
     """Все проверки разом. Возврат (находки, число скиллов)."""
     fails = []
@@ -346,6 +384,7 @@ def run(here, root):
     fails += check_procedural_rules(here, root)
     fails += check_goal_split(here)
     fails += check_goal_cut(here)
+    fails += check_live_reply(here)
     fails += check_groom(here)
     fails += check_team(here)
     fails += check_proofread(here)

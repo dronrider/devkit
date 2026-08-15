@@ -584,5 +584,95 @@ class TestSyncSpawn(SkillTree):
         self.assertTrue(any("спавн субагента не назван синхронным" in f for f in fails), fails)
 
 
+class TestLiveReply(SkillTree):
+    """DK-343: реплика человека доезжает до идущего витка, и правило реакции на
+    неё тремя разрядами держится текстом goal-loop. Тут же зов оболочки: путь
+    без python3 падает на чекауте без бита исполнимости."""
+
+    LOOP = ("## Живая реплика\n\n"
+            "Лежащую во «Входящих» строку вносит витку в контекст почтальон hooks/inbox.py.\n"
+            "Убирает её запись «Журнала», разрядов у реплики три:\n\n"
+            "- ответ и поправка действуют сразу;\n"
+            "- стоп действует на границе шага, маркером wait-human;\n"
+            "- смена направления ждёт конца задачи в конвейере.\n\n"
+            "## Оболочка goal-run\n\n"
+            "```bash\npython3 ~/projects/devkit/kit/skills/goal-loop/goal-run.py DK-100\n```\n")
+
+    def write_loop(self, body=None):
+        d = os.path.join(self.here, "goal-loop")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: goal-loop\ndescription: Звать, всегда.\n---\n\n%s"
+                    % (self.LOOP if body is None else body))
+
+    def test_full_rule_passes(self):
+        self.write_loop()
+        self.assertEqual(check_skills.check_live_reply(self.here), [])
+
+    def test_section_lost(self):
+        # Текст до правки DK-343: про живую реплику в скилле нет ни слова.
+        self.write_loop(self.LOOP.replace("## Живая реплика", "## Прочее"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertIn("нет раздела про живую реплику", fails[0])
+
+    def test_reply_without_postman(self):
+        self.write_loop(self.LOOP.replace(
+            "Лежащую во «Входящих» строку вносит витку в контекст почтальон hooks/inbox.py.",
+            "Реплика лежит во «Входящих» до следующего витка."))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertTrue(any("вносит в контекст витка почтальон" in f for f in fails), fails)
+
+    def test_immediate_grade_lost(self):
+        self.write_loop(self.LOOP.replace("действуют сразу", "виток разберёт по месту"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertEqual(len(fails), 1, fails)
+        self.assertIn("не названы действующими сразу", fails[0])
+
+    def test_stop_grade_lost(self):
+        self.write_loop(self.LOOP.replace("маркером wait-human", "как решит виток"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertEqual(len(fails), 1, fails)
+        self.assertIn("стоп не выходит маркером wait-human", fails[0])
+
+    def test_turn_grade_lost(self):
+        self.write_loop(self.LOOP.replace("конца задачи в конвейере", "удобного момента"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertEqual(len(fails), 1, fails)
+        self.assertIn("не ждёт конца задачи в конвейере", fails[0])
+
+    def test_reply_without_journal(self):
+        self.write_loop(self.LOOP.replace("запись «Журнала»", "запись витка"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertTrue(any("не оседает записью «Журнала»" in f for f in fails), fails)
+
+    def test_shell_called_without_python3(self):
+        # Текст до правки DK-343: оболочка звалась прямо путём из чекаута.
+        self.write_loop(self.LOOP.replace(
+            "python3 ~/projects/devkit", "~/projects/devkit"))
+        fails = check_skills.check_live_reply(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertIn("зовётся путём без python3", fails[0])
+
+    def test_shell_named_without_path_is_not_a_call(self):
+        # Оболочка названа в прозе, а не позвана: находки тут нет.
+        self.write_loop(self.LOOP + "\nВитки поднимает оболочка goal-run.py рядом.\n")
+        self.assertEqual(check_skills.check_live_reply(self.here), [])
+
+    def test_two_calls_give_one_finding(self):
+        self.write_loop(self.LOOP.replace("python3 ~/projects/devkit", "~/projects/devkit")
+                        + "\n```bash\n~/projects/devkit/kit/skills/goal-loop/goal-run.py DK-100 --say x\n```\n")
+        self.assertEqual(len(check_skills.check_live_reply(self.here)), 1)
+
+    def test_skill_missing_is_not_double_reported(self):
+        # Пропажу goal-loop отдельно ловит check_goal_split, здесь молчание.
+        self.assertEqual(check_skills.check_live_reply(self.here), [])
+
+    def test_run_reports_live_reply(self):
+        self.write_loop(self.LOOP.replace("## Живая реплика", "## Прочее"))
+        fails, _ = check_skills.run(self.here, self.root)
+        self.assertTrue(any("нет раздела про живую реплику" in f for f in fails), fails)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

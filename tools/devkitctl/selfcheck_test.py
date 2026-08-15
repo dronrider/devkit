@@ -37,12 +37,17 @@ class SelfcheckTest(SandboxCase):
             assert rc == 0, "%s не собрался: %s" % (tool, out)
         cls.path = "%s:%s:%s:%s" % (cls.bin, cls.box.dkbin, cls.box.bin, cls.box.sys)
 
-    def run_selfcheck(self, where, path=None):
+    def run_selfcheck(self, where, path=None, sabotage=None):
         import selfcheck
         lines = []
-        rc = selfcheck.main(cmd_run=lambda args, cwd=None: testenv.run(
-            args, cwd=cwd, path=path or self.path, home=self.box.home),
-            where=where, log=lines.append)
+
+        def cmd_run(args, cwd=None):
+            if sabotage:
+                sabotage(args, cwd)
+            return testenv.run(args, cwd=cwd, path=path or self.path,
+                               home=self.box.home)
+
+        rc = selfcheck.main(cmd_run=cmd_run, where=where, log=lines.append)
         return rc, "\n".join(lines)
 
     def test_live_circle_passes_and_cleans_up(self):
@@ -116,6 +121,29 @@ class SelfcheckTest(SandboxCase):
                       "обман слияния не назван шагом")
         self.assertIn("выкат не оставил метку", out, "провал не назвал причину")
         self.assertNotIn("связка жива", out, "несработавший выкат назван живым")
+
+    def test_leftover_branch_reported(self):
+        # Уборка судится веткам задачи в репозитории проекта, и смерть этой
+        # проверки (вопрос не тому пути, пустой список на любом отказе) не
+        # роняла бы ни один тест: саботаж оставляет лишнюю ветку и требует,
+        # чтобы круг её назвал, а не молчал о чистоте.
+        where = self.box.root / "circle-leftover-branch"
+        where.mkdir()
+        planted = {}
+
+        def plant_extra_branch(args, cwd):
+            # Ветка подкладывается один раз, когда слияние уже прошло и
+            # репозиторий проекта ещё жив: раньше его ещё нет, позже
+            # круг снесёт проект.
+            if args[:2] == ["shipctl", "-C"] and args[-1] == selfcheck.TASK \
+                    and "merge" in args and "planted" not in planted:
+                planted["planted"] = True
+                testenv.run(["git", "-C", str(where / "proj"), "branch", "sc-002"],
+                            path=self.path, home=self.box.home)
+
+        rc, out = self.run_selfcheck(where, sabotage=plant_extra_branch)
+        self.assertIn("за кругом осталась ветка задачи", out,
+                      "лишняя ветка не названа в отчёте: %s" % out)
 
 
 if __name__ == "__main__":

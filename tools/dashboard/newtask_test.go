@@ -379,6 +379,18 @@ func TestStaticNewTaskForm(t *testing.T) {
 			t.Errorf("в static/app.js нет надписи %q", want)
 		}
 	}
+	// Список барьера начинается пустой заглушкой: pickField выбирает первый
+	// пункт сам, и без заглушки не переключенный список молча уезжал бы
+	// барьером «глаза», которого человек не называл. Заглушка стоит в списке
+	// значений, а не приписывается к первому option текстом, и отбивается
+	// рубежом формы до отправки (замечание ревью DK-301).
+	barriers := funcBody(t, text, "const BARRIER_VALUES")
+	if !strings.Contains(barriers, `"", "глаза"`) {
+		t.Error("список барьера не начинается пустой заглушкой: выбор по умолчанию уезжает первым настоящим ключом")
+	}
+	if strings.Contains(text, "ACCEPT_NAMES") || strings.Contains(text, "BARRIER_HINTS") {
+		t.Error("в static/app.js есть неиспользуемые константы ACCEPT_NAMES или BARRIER_HINTS")
+	}
 	// Кнопка на обоих экранах: на доске и на главной, иначе с телефона до
 	// заведения надо сначала дойти до нужного проекта.
 	for _, fn := range []string{"function renderBoard(", "function renderHome("} {

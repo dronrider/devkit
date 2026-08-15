@@ -15,11 +15,9 @@ func recordCommitSubject(id, label string) string {
 }
 
 // taskRecordGit это git-обёртка для коммита строки вердикта. Отдельна от
-// corpGit: corp-редирект читается без окружения, а пушу здесь нужен рубёж
-// хука pre-push, и окружение с nil значит наследовать родительское целиком.
+// corpGit: той ошибка нужна как есть, а здесь удобна сводка с выводом git.
 func taskRecordGit(root string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	cmd.Env = pushEnv(args)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
@@ -27,25 +25,12 @@ func taskRecordGit(root string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// pushEnv выдаёт разрешение на пуш хуку pre-push. Пуш коммита доски разрешён
-// правилами и из сессии агента, и путь у него один, через утилиты devkit:
-// рубеж отличает этот пуш от самовольного только по переменной. Нулевое
-// окружение это наследование родительского, поэтому обычным командам git оно
-// и остаётся.
-func pushEnv(args []string) []string {
-	if len(args) == 0 || args[0] != "push" {
-		return nil
-	}
-	return append(os.Environ(), "DEVKIT_PUSH_OK=1")
-}
-
 // commitTaskRecord коммитит файл задачи после записи строки вердикта и
 // запускает пуш. Приём тот же, что у taskctl -m --push: git -C корня
 // репозитория, в add и commit идут ровно тронутые пути (коммит по pathspec
-// не задевает чужой индекс), пуш идёт с DEVKIT_PUSH_OK=1 и бессеточным
-// credential.helper, иначе неинтерактивная сессия висит на osxkeychain,
-// ждя разблокировки связки, которой некому показать диалог. Вне git-дерева
-// всё молчит: запись в файле уже лежит, и коммит остаётся за тем, кто звал.
+// не задевает чужой индекс), пуш идёт с DEVKIT_PUSH_OK=1, без него хук
+// pre-push отобьёт пуш из сессии агента как самовольный. Вне git-дерева всё
+// молчит: запись в файле уже лежит, и коммит остаётся за тем, кто звал.
 func commitTaskRecord(root, path, subject string) {
 	if _, err := taskRecordGit(root, "rev-parse", "--git-dir"); err != nil {
 		return
@@ -56,5 +41,16 @@ func commitTaskRecord(root, path, subject string) {
 	if _, err := taskRecordGit(root, "commit", "-m", subject, "--", path); err != nil {
 		return
 	}
-	taskRecordGit(root, "-c", "credential.helper=", "push")
+	taskRecordPush(root)
+}
+
+// taskRecordPush пушит коммит строки вердикта. Отдельно от taskRecordGit:
+// разрешение хука pre-push ставится только этому вызову, а не любой команде
+// git. Сверх приёма taskctl пуш идёт с credential.helper= с пустым значением:
+// push из неинтерактивной сессии виснет на osxkeychain, который ожидает
+// разблокировки связки, а диалог показать некому (DK-120).
+func taskRecordPush(root string) {
+	cmd := exec.Command("git", "-C", root, "-c", "credential.helper=", "push")
+	cmd.Env = append(os.Environ(), "DEVKIT_PUSH_OK=1")
+	cmd.Run()
 }

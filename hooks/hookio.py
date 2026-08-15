@@ -10,6 +10,7 @@
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
+  hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
 
 Имя протокола приходит аргументом `--hook <протокол>`; голый `--hook` это
 claude-code, иначе команды, прописанные в settings.json на машинах, сломались
@@ -23,6 +24,12 @@ import os
 import sys
 
 DEFAULT = "claude-code"
+
+# Машинный журнал хука (~/.devkit/notify.log у уведомителя, ~/.devkit/inbox.log
+# у почтальона) растёт от каждой сессии на машине, и обрезка у него одна на
+# всех: файл больше предела режется до последних строк.
+LOG_LIMIT = 100 * 1024
+LOG_KEEP = 500
 
 # Оси событий сессии, имена те же, что в `[hooks] events` профиля.
 NOTIFY = "notify"
@@ -225,6 +232,23 @@ def tool_event(name, stream=None):
         return parse_tool(name, load(stream))
     except BadEvent:
         return None
+
+
+def append_capped(path, line, limit=LOG_LIMIT, keep=LOG_KEEP):
+    """Дописать строку в журнал хука, обрезав разросшийся файл до последних
+    строк. Провал записи тихий: журнал это след работы, и ронять из-за него
+    сессию нельзя."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and os.path.getsize(path) > limit:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                tail = f.readlines()[-keep:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(tail)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
 
 
 def harness_dir():

@@ -87,8 +87,6 @@ RUN_DEPTH = "DEVKIT_RUN_DEPTH"
 TRANSCRIPT_SCAN = 20 # сколько записей транскрипта смотрим ради cwd сессии
 STALE = 24 * 3600    # брошенное состояние троттлинга старше суток убирается
 BODY_LIMIT = 200
-LOG_LIMIT = 100 * 1024
-LOG_KEEP = 500
 
 # Уровень повода. Он же слово журнала: жалоба «важное не отличается от
 # фонового» разбирается по строке, а не на глаз.
@@ -612,24 +610,13 @@ def log_text(title, body):
 
 def log(session, key, backend, result, target=None, level=None,
         title=None, body=None, task=None, project=None):
-    d = os.path.join(os.path.expanduser("~"), ".devkit")
-    path = os.path.join(d, "notify.log")
+    path = os.path.join(os.path.expanduser("~"), ".devkit", "notify.log")
     line = ("%s сессия %s повод %s уровень %s бэкенд %s цель %s "
             "задача %s проект %s %s%s\n") % (
         time.strftime("%Y-%m-%dT%H:%M:%S"), session or "-", key or "-",
         level or "-", backend or "-", target[1] if target else "-",
         task or "-", project or "-", result, log_text(title, body))
-    try:
-        os.makedirs(d, exist_ok=True)
-        if os.path.exists(path) and os.path.getsize(path) > LOG_LIMIT:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                tail = f.readlines()[-LOG_KEEP:]
-            with open(path, "w", encoding="utf-8") as f:
-                f.writelines(tail)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line)
-    except OSError:
-        pass
+    hookio.append_capped(path, line)
 
 
 def terminal_sequence(title, body):

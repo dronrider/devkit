@@ -1,0 +1,365 @@
+// Package stage держит живое состояние этапа работы над задачей: чем занята
+// задача прямо сейчас и с какого момента. Запись лежит вне репозитория, в
+// ~/.devkit/runs, там же где реестр целей: правка рабочего дерева на каждом
+// переходе стоила задаче DK-120, где незакоммиченная строка вердикта отбивала
+// merge. Пишут запись точки конвейера (agentctl pick, taskctl move), читает её
+// дашборд, а при смене статуса накопленные этапы уезжают пакетом в раздел «Ход
+// работы» файла задачи. Разбор в docs/tasks/DK-338.md.
+package stage
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Словарь видов деятельности. Четыре слова и ни одним больше: их рисуют экраны
+// доски и задачи (DK-355, DK-356), и пятое слово там негде показать.
+const (
+	// Dev это работа исполнителя над кодом задачи, включая грумминговый вердикт:
+	// разбирают задачу тем же заходом, что и делают.
+	Dev = "разработка"
+	// Review это чтение диффа ревьювером.
+	Review = "ревью"
+	// Outside это ожидание не нас: проверка на проде, блокер, чужая работа.
+	Outside = "снаружи"
+	// Ask это вопрос пользователю, на который ждут ответа.
+	Ask = "уточнение"
+)
+
+// Kinds это словарь целиком, в порядке типичного хода задачи.
+var Kinds = []string{Dev, Review, Outside, Ask}
+
+// Known отвечает, знаком ли вид деятельности. Незнакомое слово отбивается на
+// входе: запись с ним доехала бы до экрана пустой колонкой, и разбираться
+// пришлось бы уже там.
+func Known(kind string) bool {
+	for _, k := range Kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsSession отвечает, обязана ли за этапом стоять живая сессия агента.
+// Разработка, ревью и уточнение ведутся сессией, и запись без неё это
+// оборванный этап, тот же случай, что gone у признака Run. Ожидание снаружи
+// сессии не требует по смыслу: там ждут человека, и требовать живого агента
+// значило бы гасить единственный честный этап.
+func NeedsSession(kind string) bool { return kind != Outside }
+
+// Stamp это формат времени в записи: секунды без зоны, как у реестра целей.
+const Stamp = "2006-01-02T15:04:05"
+
+// Stage это один этап: вид деятельности, момент начала и текст записи, который
+// уедет в «Ход работы». Текст собирает тот, кто этап открыл: pick знает про
+// модель, маппинг и квоту, а taskctl про статус.
+type Stage struct {
+	Kind  string
+	Start time.Time
+	Note  string
+}
+
+// Record это запись задачи целиком: шапка и накопленные этапы в порядке
+// открытия. Живой этап последний.
+type Record struct {
+	ID     string
+	Root   string
+	Stages []Stage
+}
+
+// Live отдаёт живой этап записи.
+func (r Record) Live() (Stage, bool) {
+	if len(r.Stages) == 0 {
+		return Stage{}, false
+	}
+	return r.Stages[len(r.Stages)-1], true
+}
+
+// dirName это каталог записей внутри ~/.devkit.
+const dirName = "runs"
+
+// Home отдаёт домашнюю директорию. Отдельной функцией, чтобы вызывающие не
+// разбирались с ошибкой os.UserHomeDir каждый по-своему: без дома записи не
+// ведутся, и это не повод ронять команду.
+func Home() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+// Dir это каталог записей: ~/.devkit/runs.
+func Dir(home string) string { return filepath.Join(home, ".devkit", dirName) }
+
+// Slug делает из пути корня имя, годное в имя файла: два проекта с одинаковым
+// именем директории не должны занимать одну запись, как и в реестре целей.
+func Slug(root string) string {
+	var b strings.Builder
+	for _, r := range root {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteRune('-')
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// Path это путь записи задачи.
+func Path(home, root, id string) string {
+	return filepath.Join(Dir(home), id+"-"+Slug(root)+".run")
+}
+
+// MainRoot приводит корень к основному чекауту. Этап разработки открывают из
+// дерева задачи (pick зовут с -C <worktree>), а закрывает его смена статуса из
+// основного чекаута, и без приведения это были бы две разные записи: имя файла
+// и поле root считаются от пути, а у линкованного дерева путь свой. Приведение
+// идёт через git-common-dir, как linkedWorktree в taskctl. Вне git-дерева и при
+// недоступном git возвращается то, что дали: временные корни тестов и проекты
+// без git обязаны работать по-прежнему.
+func MainRoot(root string) string {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return root
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return root
+	}
+	main := filepath.Dir(common)
+	if main == "" || main == "." {
+		return root
+	}
+	return main
+}
+
+// Open открывает этап: дописывает его в запись задачи, заводя её при первом
+// этапе. Открытый этап закрывает следующий за ним, а весь пакет закрывает
+// смена статуса. Провал записи не роняет вызывающую команду, как и провал
+// журнала запусков: без отметки конвейер работает, просто молча.
+func Open(home, root, id, kind, note string, now time.Time) error {
+	if home == "" {
+		return fmt.Errorf("домашней директории не видно, этап записывать некуда")
+	}
+	if !Known(kind) {
+		return fmt.Errorf("неизвестный вид деятельности %q, жду один из: %s", kind, strings.Join(Kinds, ", "))
+	}
+	if err := os.MkdirAll(Dir(home), 0o755); err != nil {
+		return err
+	}
+	path := Path(home, root, id)
+	rec, err := Load(path)
+	if err != nil {
+		return err
+	}
+	rec.ID, rec.Root = id, root
+	rec.Stages = append(rec.Stages, Stage{Kind: kind, Start: now, Note: note})
+	return os.WriteFile(path, []byte(body(rec)), 0o644)
+}
+
+// body собирает запись в текст. Формат тот же, что у остальных локальных файлов
+// devkit: строки «ключ = значение», решётка комментарий. Этапов в записи много,
+// поэтому ключ «этап» повторяется, а поля этапа разделены вертикальной чертой.
+func body(rec Record) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# этапы задачи %s: пишет конвейер devkit, читает дашборд\n", rec.ID)
+	fmt.Fprintf(&b, "id = %s\n", rec.ID)
+	fmt.Fprintf(&b, "root = %s\n", rec.Root)
+	for _, s := range rec.Stages {
+		fmt.Fprintf(&b, "этап = %s | %s | %s\n", s.Kind, s.Start.Format(Stamp), clean(s.Note))
+	}
+	return b.String()
+}
+
+// clean убирает из текста записи то, что развалило бы разбор: разделитель полей
+// и перевод строки. Текст сюда приезжает собранным (вердикт pick несёт и
+// причину сдвига, и снимок квоты), и молча резать его на первой же черте хуже,
+// чем заменить её пробелом.
+func clean(s string) string {
+	s = strings.ReplaceAll(s, "|", "/")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.TrimSpace(s)
+}
+
+// Load разбирает запись. Отсутствие файла это пустая запись без ошибки: этап
+// открывают и по задаче, которой ещё не касались.
+func Load(path string) (Record, error) {
+	rec := Record{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return rec, nil
+		}
+		return rec, err
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(ln, "=")
+		if !ok {
+			continue
+		}
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
+		switch key {
+		case "id":
+			rec.ID = val
+		case "root":
+			rec.Root = val
+		case "этап":
+			if s, ok := parseStage(val); ok {
+				rec.Stages = append(rec.Stages, s)
+			}
+		}
+	}
+	return rec, nil
+}
+
+// parseStage разбирает строку этапа. Строка с неизвестным видом или битым
+// временем пропускается: запись правил не только текущий инструмент, и ронять
+// из-за одной строки чтение всей задачи незачем.
+func parseStage(val string) (Stage, bool) {
+	parts := strings.SplitN(val, "|", 3)
+	if len(parts) < 2 {
+		return Stage{}, false
+	}
+	kind := strings.TrimSpace(parts[0])
+	if !Known(kind) {
+		return Stage{}, false
+	}
+	start, err := time.ParseInLocation(Stamp, strings.TrimSpace(parts[1]), time.Local)
+	if err != nil {
+		return Stage{}, false
+	}
+	note := ""
+	if len(parts) == 3 {
+		note = strings.TrimSpace(parts[2])
+	}
+	return Stage{Kind: kind, Start: start, Note: note}, true
+}
+
+// Flush забирает накопленные этапы и убирает запись: пакет уезжает в файл
+// задачи, и оставленная запись выдавала бы уже закрытый этап за живой. Пустой
+// возврат значит, что записывать нечего.
+func Flush(home, root, id string) ([]Stage, error) {
+	if home == "" {
+		return nil, nil
+	}
+	path := Path(home, root, id)
+	rec, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(rec.Stages) == 0 {
+		os.Remove(path)
+		return nil, nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return rec.Stages, nil
+}
+
+// List собирает записи всех задач проекта: дашборду нужна карта «задача ->
+// живой этап», а записи на машине общие для всех проектов и разделены полем
+// root. Нечитаемый каталог это пустой список, экран доски из-за него не пустеет.
+func List(home, root string) []Record {
+	paths, err := filepath.Glob(filepath.Join(Dir(home), "*.run"))
+	if err != nil {
+		return nil
+	}
+	sort.Strings(paths)
+	var out []Record
+	for _, p := range paths {
+		rec, err := Load(p)
+		if err != nil || rec.ID == "" {
+			continue
+		}
+		if filepath.Clean(rec.Root) != filepath.Clean(root) {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+// Lines разворачивает пакет этапов в строки раздела «Ход работы». Вид
+// деятельности идёт с заглавной ярлыком строки, следом текст записи, дальше
+// дата и часы этапа: по ним видно не только чем задача занималась, но и сколько
+// это заняло. Конец этапа это начало следующего, у последнего это момент
+// записи пакета.
+func Lines(stages []Stage, end time.Time) []string {
+	out := make([]string, 0, len(stages))
+	for i, s := range stages {
+		fin := end
+		if i+1 < len(stages) {
+			fin = stages[i+1].Start
+		}
+		label := s.Kind
+		if r := []rune(s.Kind); len(r) > 0 {
+			label = strings.ToUpper(string(r[0])) + string(r[1:])
+		}
+		span := s.Start.Format("15:04")
+		if fin.After(s.Start) {
+			span += "-" + fin.Format("15:04")
+		}
+		note := ""
+		if s.Note != "" {
+			note = s.Note + ", "
+		}
+		out = append(out, fmt.Sprintf("- %s: %s%s %s.", label, note, s.Start.Format("2006-01-02"), span))
+	}
+	return out
+}
+
+// InsertIntoSection дописывает строки в конец названного раздела: перед
+// хвостовыми пустыми строками, чтобы записи не оторвались от остальных, и не
+// задевая следующий раздел. Раздела нет, значит он добавляется в конец файла.
+// Общая для пакета этапов в «Ход работы» файла задачи и снимка витка в «Журнал»
+// файла цели: разделы разные, а место записи ищется одинаково, и две копии
+// разошлись бы на первой правке.
+func InsertIntoSection(content, heading string, lines ...string) string {
+	if len(lines) == 0 {
+		return content
+	}
+	content = strings.TrimRight(content, "\n") + "\n"
+	body := strings.Join(lines, "\n")
+	rows := strings.Split(content, "\n")
+	head := -1
+	for i, ln := range rows {
+		if strings.HasPrefix(ln, heading) {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
+		return content + "\n" + heading + "\n\n" + body + "\n"
+	}
+	end := len(rows)
+	for i := head + 1; i < len(rows); i++ {
+		if strings.HasPrefix(rows[i], "## ") {
+			end = i
+			break
+		}
+	}
+	for end > head+1 && strings.TrimSpace(rows[end-1]) == "" {
+		end--
+	}
+	ins := []string{body}
+	if end == head+1 { // раздел был пуст, отбить запись от заголовка
+		ins = []string{"", body}
+	}
+	out := make([]string, 0, len(rows)+len(ins))
+	out = append(out, rows[:end]...)
+	out = append(out, ins...)
+	out = append(out, rows[end:]...)
+	return strings.Join(out, "\n")
+}

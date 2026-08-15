@@ -248,3 +248,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-342 | dashboard: состояние «доставлено агенту» в очереди исходящих и честная плашка чата | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-342.md](tasks/archive/2026/DK-342.md) |
 | DK-358 | dashboard: завершённый груминг висит живой работой до 12 минут | bug | P2 | 2026-08-15 | [tasks/archive/2026/DK-358.md](tasks/archive/2026/DK-358.md) |
 | DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-343.md](tasks/archive/2026/DK-343.md) |
+| DK-120 | Строка вердикта ревью от pick --record остаётся незакоммиченной и валит merge | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-120.md](tasks/archive/2026/DK-120.md) |
+| DK-346 | devkitctl: параллельный раннер питоновой сюиты, классы отдельными процессами | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-346.md](tasks/archive/2026/DK-346.md) |

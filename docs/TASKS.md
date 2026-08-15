@@ -71,7 +71,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-307 | Цикл цели в одном окне, исполнители на любом операторе | task | P3 | 15 (0+8+3+0+4) | L | [tasks/DK-307.md](tasks/DK-307.md) |
 | DK-042 | devkitctl setup: мастер машинного конфига с файлом ответов, поглощает DK-032 | task | P3 | 14 (0+9+1+0+4) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование [после DK-042] | task | P3 | 12 (0+8+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
-| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |
+| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-181.md](tasks/DK-181.md) |
 | DK-198 | goal-run через Agent SDK вместо разбора вывода claude -p | task | P3 | 12 (0+6+3+0+3) | M | [tasks/DK-198.md](tasks/DK-198.md) |
 | DK-044 | профиль OpenCode: детект, instructions, определения агентов [после DK-042] | task | P3 | 11 (0+7+2+0+2) | M | [lld/DK-033-universal-kit.md](lld/DK-033-universal-kit.md) |
 | DK-182 | Корректор считает ступень по её подписке [после DK-181] | task | P3 | 11 (0+7+2+0+2) | M | [tasks/archive/2026/DK-171.md](tasks/archive/2026/DK-171.md) |

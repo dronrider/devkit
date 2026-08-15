@@ -434,7 +434,8 @@ regcheck на багфиксах (последнее подсказывает `s
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
 гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
 в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
-из `hooks/`, `tools/devkitctl/`, `kit/skills/` и `kit/skills/goal-loop/`,
+из `hooks/`, `kit/skills/` и `kit/skills/goal-loop/`, `python3 suite.py` из
+`tools/devkitctl/` (раннер гонит классы отдельными процессами),
 `python3 kit/skills/check-skills.py`, `python3 hooks/check-exec-bit.py` (бит
 исполнения у каждого `test.sh` репозитория) и
 `python3 tools/devkitctl/devkitctl.py doctor --layout` (раскладка).

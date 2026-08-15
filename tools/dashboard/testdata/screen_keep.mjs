@@ -818,6 +818,8 @@ const goalRow = find(groups, "XR-1");
 if (!dump(goalRow).includes("сессии нет")) {
   fail("строка в работе без живой сессии ничем не помечена: " + dump(goalRow));
 }
+// Кнопка запуска цели (isGoal) это одиночная кнопка, не обёрнута в split (DK-349).
+if (byClass(goalRow, "split")) fail("кнопка запуска цели обёрнута в split: " + dump(goalRow));
 
 // Нажатие кнопки: строка обновляется на месте, экран не уезжает, а фокус
 // остаётся на той же строке.
@@ -843,6 +845,8 @@ if (!button(now, "Стоп")) {
 if (!String(button(now, "Стоп").className).includes("btn-danger")) {
   fail("стоп в строке нарисован не красной кнопкой: " + button(now, "Стоп").className);
 }
+// Стоп это одиночная кнопка без узкой части, не обёрнута в split (DK-349).
+if (byClass(now, "split")) fail("стоп в строке обёрнут в split: " + dump(now));
 if (!dump(now).includes("работает")) {
   fail("у идущей работы в строке нет признака выполнения: " + dump(now));
 }
@@ -932,9 +936,6 @@ for (const [list, note, why] of [
   await settle();
   const one = find(groups, "XR-6");
   if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
-  // Вырожденная кнопка запуска (без узкой части) не обёрнута в split, иначе
-  // правые углы обрезаны CSS правилом .split .btn:not(.more2) (DK-349).
-  if (byClass(one, "split")) fail("при одной подписке или пустом списке кнопка обёрнута в split: " + dump(one));
   const only = button(one, "Выполнить");
   if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
   if (!String(only.title).includes(why)) {

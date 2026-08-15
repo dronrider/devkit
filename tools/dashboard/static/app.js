@@ -682,10 +682,9 @@ function rowAction(project, row, sect) {
     btn.disabled = true;
     stopRun(project, row.id).catch(console.error).finally(() => { btn.disabled = false; });
   });
-  // Стоп живёт в той же обёртке, что и запуск, хотя выбирать ему нечего: фокус
-  // возвращается после перерисовки путём от строки, и кнопка, лежащая на
-  // строку выше своей соседки, теряла бы его на каждом нажатии.
-  const grp = el("span", "split");
+  // Стоп это всегда одиночная кнопка без стрелки: обёртка без класса split ради
+  // фокуса, но не обрезает правые углы CSS правилом .split .btn:not(.more2) (DK-349).
+  const grp = el("span");
   grp.append(btn);
   return grp;
 }

@@ -476,11 +476,21 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	case SectBlocked:
 		note = notify(root, reasonBlocked, id, fmt.Sprintf("%s: %s на блокере", filepath.Base(root), id), reason)
 	}
-	tail, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")})
+	// Пакет этапов уезжает в файл задачи до открытия нового: смена статуса
+	// закрывает всё, что накопил конвейер, и ожидание снаружи начинается уже
+	// новым пакетом.
+	now := time.Now()
+	doc, stages := flushStages(root, id, now)
+	openOutside(root, id, target, reason, now)
+	paths := []string{filepath.Join("docs", "TASKS.md")}
+	if doc != "" {
+		paths = append(paths, doc)
+	}
+	tail, err := c.apply(root, paths)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s%s%s%s\n%s", id, row.Sect, target, quenched, tail, note, nextAfterMove(root, id, target)), nil
+	return fmt.Sprintf("%s: %s -> %s%s%s%s%s\n%s", id, row.Sect, target, quenched, stages, tail, note, nextAfterMove(root, id, target)), nil
 }
 
 // relocate вырезает строку из её секции и вставляет line в секцию target,
@@ -711,6 +721,10 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			commits = append(commits, c)
 		}
 	}
+	// Пакет этапов уезжает в файл задачи до архивации: после git mv писать в
+	// него уже некуда, а ожидание снаружи, открытое переводом в Check, иначе
+	// пропало бы вместе с записью.
+	_, stagesTail := flushStages(root, p.ID, time.Now())
 	year := date[:4]
 	moved := ""
 	var changedFiles []string
@@ -797,7 +811,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	msg := fmt.Sprintf("%s закрыта %s, строка в архиве", p.ID, date)
+	msg := fmt.Sprintf("%s закрыта %s, строка в архиве%s", p.ID, date, stagesTail)
 	if moved != "" {
 		msg += ", файл задачи в " + moved
 	}

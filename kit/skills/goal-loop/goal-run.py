@@ -7,6 +7,7 @@ headless-сессиями, пока виток отвечает маркером
 
   goal-run.py <ID> [-C <корень проекта>] [--foreground]
   goal-run.py <ID> [-C <корень проекта>] --say <строка хода>
+  goal-run.py <ID> [-C <корень проекта>] --ask <вопрос человеку>
 
 Без --foreground цикл уходит в свою tmux-сессию goal-<ID>, как съёмщик панели
 /usage поднимает клиента в одноразовой сессии, и оболочка возвращается сразу.
@@ -16,6 +17,11 @@ headless-сессиями, пока виток отвечает маркером
 Ключ --say цикла не поднимает вовсе: он дописывает строку хода в тот же журнал
 и возвращается. Пишет её сам виток, пока работает, и по этим строкам видно
 живой виток, чей вывод сессии буферизуется до конца.
+
+Ключ --ask цикла не поднимает тоже: он зовёт человека уведомлением и ждёт
+ответа во «Входящих» файла цели, до срока. Дождавшись, он отмечает съеденную
+строку в ящике цели и печатает её витку, не дождавшись, печатает «ответа
+нет»; истёкшее ожидание это не авария, а обычный возврат.
 
 Коды возврата: 0 штатный стоп по маркеру витка, 1 цикл остановила сама
 оболочка (исчерпанные попытки поднять вставший виток, воронка), 2 ошибка вызова
@@ -34,7 +40,8 @@ import uuid
 AUTONOMOUS_RE = re.compile(r"^\s*autonomous\s*=\s*true")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NOTIFIER = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks", "notify.py"))
+HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
+NOTIFIER = os.path.join(HOOKS, "notify.py")
 PERMS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl", "perms.py"))
 FUNNEL_LIMIT = 3  # витков подряд без записи в «Журнале», после которых стоп
 # Стоп без вердикта (упавшая сессия, обрыв соединения, ответ без маркера) это
@@ -50,9 +57,26 @@ MARKERS = ("continue", "done", "over", "wait-human", "stuck")
 # стопы без вердикта идут общим поводом, разбор стоит в самом заголовке.
 STOP_KEY = "goal_stop"
 STOP_REASONS = {"wait-human": "wait_human"}
+# Вопрос человеку зовётся тем же поводом, что и маркер wait-human: лента
+# дашборда отбирает по нему зов человека, а вопрос витка это он и есть.
+ASK_KEY = "wait_human"
+# Срок ожидания ответа. Потолок хода Bash у харнеса 600 секунд, и упираться в
+# него нельзя: ход, убитый потолком, не снимет за собой признак ожидания сам, и
+# ящик цели простоит запертым до его срока.
+ASK_WAIT = 300
+ASK_WAIT_ENV = "DEVKIT_GOAL_ASK_WAIT"
+# Секунда между опросами «Входящих»: чтение файла цели против ожидания
+# человека это ничто, а опрос пореже добавляет задержку ответа к минутам, что
+# человек и так провёл за клавиатурой.
+ASK_POLL = 1
+# Сколько ключ ждёт замок отметок. Почтальон под чужим замком уходит тихим
+# нолём, а тут молчание это потерянный ответ на прямой вопрос, поэтому ключ
+# ждёт, и ждёт коротко: замок держат на одну запись файла.
+ASK_LOCK_WAIT = 5
+STAMP = "%Y-%m-%dT%H:%M:%S"
 
 USAGE = """\
-goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка>]
+goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка> | --ask <вопрос>]
 
 Витки цели <ID> одноразовыми сессиями, пока виток отвечает marker: continue.
 Любой другой маркер завершает цикл и зовёт уведомитель громким поводом.
@@ -60,6 +84,20 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
   -C <корень>    проект с доской, по умолчанию текущая директория
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
   --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
+  --ask <вопрос> задать вопрос человеку и ждать ответа во «Входящих» цели
+
+Вопрос уезжает громким уведомлением и ложится строкой хода в журнал цели, а
+ключ ждёт ответа 300 секунд (перебивает DEVKIT_GOAL_ASK_WAIT, это для стендов).
+Ответом считается первая строка «Входящих» без отметки доставки: ключ пишет
+отметку в <корень>/.devkit/goal-<ID>.mail и печатает строку витку как есть,
+вместе со временем, которое в ней стоит. Не дождавшись, он печатает «ответа
+нет» и выходит нолём: срок вышел это обычный возврат, дальше виток решает сам.
+
+Пока ключ ждёт, ящик цели принадлежит ему: срок ожидания лежит в файле
+<корень>/.devkit/goal-<ID>.ask, и почтальон hooks/inbox.py при непротухшем
+сроке не доставляет витку ничего, чтобы ответ на вопрос не уехал мимо ключа
+чужим ходом инструмента. Файл снимается на любом выходе, а срок внутри держит
+канал открытым, если ход ожидания убили.
 
 Виток, вставший без вердикта (упал, оборвался, ответил без маркера),
 поднимается заново, попыток подряд не больше трёх. Паузу между ними (20 секунд)
@@ -84,6 +122,7 @@ def parse_args(argv):
     proj = os.getcwd()
     fg = False
     note = None
+    question = None
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -102,6 +141,13 @@ def parse_args(argv):
             if note.strip() == "":
                 die("строка хода пустая, в журнале от неё толку нет")
             i += 2
+        elif arg == "--ask":
+            if i + 1 >= len(argv):
+                die("у --ask нет значения: вопрос человеку это его аргумент")
+            question = argv[i + 1]
+            if question.strip() == "":
+                die("вопрос пустой, отвечать человеку не на что")
+            i += 2
         elif arg in ("-h", "--help"):
             sys.stdout.write(USAGE)
             sys.exit(0)
@@ -118,7 +164,11 @@ def parse_args(argv):
         die("не назван ID цели")
     if fg and note is not None:
         die("--say и --foreground вместе не ходят: строка хода цикла не поднимает")
-    return goal_id, proj, fg, note
+    if fg and question is not None:
+        die("--ask и --foreground вместе не ходят: вопрос человеку цикла не поднимает")
+    if note is not None and question is not None:
+        die("--say и --ask вместе не ходят: вопрос и так пишет свою строку хода")
+    return goal_id, proj, fg, note, question
 
 
 def resolve_proj(proj):
@@ -142,6 +192,10 @@ class Loop:
         self.goal = os.path.join(proj, "docs", "tasks", "%s.md" % goal_id)
         self.log = os.path.join(self.devdir, "goal-%s.log" % goal_id)
         self.lock = os.path.join(self.devdir, "goal-%s.lock" % goal_id)
+        # Ящик цели и признак ожидания: имена общие с почтальоном, он читает те
+        # же файлы (hooks/inbox.py, ask_until и serve).
+        self.mailfile = os.path.join(self.devdir, "goal-%s.mail" % goal_id)
+        self.askfile = os.path.join(self.devdir, "goal-%s.ask" % goal_id)
         self.pidfile = os.path.join(self.lock, "pid")
         # Имя текущего витка: по нему почтальон (hooks/inbox.py) отличает виток
         # цели от соседнего окна того же корня. Имя заводится на виток, а не на
@@ -296,6 +350,123 @@ class Loop:
         self.shout(STOP_REASONS.get(reason, STOP_KEY), "цель %s: %s" % (self.id, reason), text)
         sys.exit(code)
 
+    # -- ключ --ask: вопрос человеку -----------------------------------------
+
+    def postman(self):
+        """Модуль почтальона hooks/inbox.py. Ящик у ключа с ним общий, поэтому
+        разбор «Входящих», формат отметки доставки и замок берутся у него
+        готовыми: свой второй разбор тех же файлов разъехался бы с первым на
+        первой же правке формата, а платит за такой разъезд человек, чей ответ
+        приехал витку дважды."""
+        sys.path.insert(0, HOOKS)
+        try:
+            import inbox
+            return inbox
+        except ImportError as e:
+            die("почтальона в %s не прочитать: %s; ящик цели у ключа с ним общий" % (HOOKS, e))
+        finally:
+            sys.path.pop(0)
+
+    def hold(self, until):
+        """Признак ожидания: срок, до которого ящик цели принадлежит вопросу.
+        Кладётся до первого опроса, иначе окно между зовом человека и первым
+        чтением ящика остаётся почтальону. Срок лежит внутри файла затем, чтобы
+        убитый ход ожидания не запер канал навсегда: признак с прошедшим сроком
+        почтальон читает как его отсутствие."""
+        os.makedirs(self.devdir, exist_ok=True)
+        tmp = self.askfile + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(time.strftime(STAMP, time.localtime(until)) + "\n")
+        os.replace(tmp, self.askfile)
+
+    def drop_hold(self):
+        try:
+            os.remove(self.askfile)
+        except OSError:
+            pass
+
+    def mail_lock(self, inbox, until):
+        """Замок отметок, взятый с ожиданием. Ключ держит его на один опрос
+        ящика, а не на всё ожидание: замок про то, идёт ли прямо сейчас запись
+        файла отметок, а признак ожидания про то, занят ли ящик вопросом."""
+        while True:
+            fd = inbox.take_mail_lock(self.mailfile + ".lock")
+            if fd is not None:
+                return fd
+            if time.time() >= until:
+                return None
+            time.sleep(min(0.2, max(0.0, until - time.time())))
+
+    def reply(self, inbox):
+        """Первая строка «Входящих» без отметки доставки либо None. Отметка
+        встаёт до печати и по тем же правилам, по каким её ставит почтальон:
+        отмечает строку тот, кто отдал её витку, иначе съеденная вопросом
+        реплика приедет витку вторым экземпляром на первом же ходе."""
+        fd = self.mail_lock(inbox, time.time() + ASK_LOCK_WAIT)
+        if fd is None:
+            return None
+        try:
+            with open(self.goal, encoding="utf-8", errors="replace") as f:
+                lines = inbox.inbox_lines(f.read())
+            marks = inbox.read_marks(self.mailfile)
+            # «Входящие» читаются раньше отметок: отметка, чьей строки там
+            # больше нет, не считается и в новый файл не переносится.
+            lying = set(lines)
+            kept = [m for m in marks if m.line in lying]
+            known = {m.line for m in kept}
+            fresh = [line for line in lines if line not in known]
+            if not fresh:
+                return None
+            stamp = time.strftime(STAMP)
+            inbox.write_marks(self.mailfile, kept
+                              + [inbox.Mark(stamp, self.turn_name() or "-", fresh[0])])
+            return fresh[0]
+        except OSError as e:
+            self.say("ответ не прочитать: %s" % e)
+            return None
+        finally:
+            os.close(fd)
+
+    def turn_name(self):
+        """Имя витка из замка оболочки. У витка живого чата, где замка нет
+        вовсе, оно пустое, и дашборд читает пустое поле отметки именно так."""
+        try:
+            with open(self.sessfile, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def ask(self, question, wait):
+        """Вопрос человеку с ожиданием ответа. Ключ цикла не поднимает: его
+        зовёт идущий виток, которому ответ нужен сейчас, а не через виток."""
+        if not os.path.isfile(self.goal):
+            die("файла цели %s нет: вопрос задаётся по своей цели" % self.goal)
+        inbox = self.postman()
+        try:
+            self.append("вопрос человеку: %s" % question)
+        except OSError as e:
+            die("вопрос не записать в %s: %s" % (self.log, e))
+        self.shout(ASK_KEY, "цель %s: вопрос человеку" % self.id, question)
+        until = time.time() + wait
+        self.hold(until)
+        try:
+            while True:
+                line = self.reply(inbox)
+                if line is not None:
+                    self.say("ответ человека получен")
+                    print(line)
+                    return 0
+                if time.time() + ASK_POLL >= until:
+                    break
+                time.sleep(ASK_POLL)
+            self.say("ответа нет: срок ожидания %d с вышел" % wait)
+            return 0
+        finally:
+            # Признак снимается на любом выходе, ответом, сроком и падением:
+            # оставленный признак запирает ящик цели до своего срока, и человек
+            # всё это время пишет витку в пустоту.
+            self.drop_hold()
+
     # -- «Журнал» файла цели -------------------------------------------------
 
     def journal_entries(self):
@@ -448,10 +619,29 @@ class Loop:
             self.release()
 
 
+def ask_wait():
+    """Срок ожидания ответа в секундах. Перебивает его окружение, и это для
+    стендов: живой ключ ждёт минутами, а тесту столько ждать незачем."""
+    raw = (os.environ.get(ASK_WAIT_ENV) or "").strip()
+    if not raw:
+        return ASK_WAIT
+    try:
+        wait = float(raw)
+    except ValueError:
+        die("%s=%s это не число секунд" % (ASK_WAIT_ENV, raw))
+    if wait <= 0:
+        die("%s=%s: ждать ответа надо хоть сколько-то" % (ASK_WAIT_ENV, raw))
+    return wait
+
+
 def main(argv):
-    goal_id, proj, fg, note = parse_args(argv)
+    goal_id, proj, fg, note, question = parse_args(argv)
     proj = resolve_proj(proj)
     loop = Loop(goal_id, proj)
+    if question is not None:
+        # Предполётной проверки вопросу не нужно по той же причине, что и
+        # строке хода: его задаёт уже идущий виток, в том числе виток чата.
+        return loop.ask(question, ask_wait())
     if note is not None:
         # Предполётной проверки строке хода не нужно: её пишет уже идущий
         # виток, в том числе виток живого чата, где ни autonomous, ни claude в

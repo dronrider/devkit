@@ -17,6 +17,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "goal-run.py")
+HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
+sys.path.insert(0, HOOKS)
+import inbox  # noqa: E402  ящик цели у ключа --ask общий с почтальоном
 
 GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
 
@@ -180,7 +183,10 @@ def write_exec(path, content):
     os.chmod(path, 0o755)
 
 
-class GoalRunTests(unittest.TestCase):
+class Stand:
+    """Синтетический проект с доской, целью и своим HOME. Живёт отдельным
+    классом, потому что стенд нужен двум наборам, циклу и ключу --ask."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
@@ -213,12 +219,7 @@ class GoalRunTests(unittest.TestCase):
         write_exec(os.path.join(root, "bin", "claude"), CLAUDE_STUB)
         return root
 
-    def goal_run(self, root, *args, pause="0"):
-        # -C всегда назван явно, как в реальном вызове из SKILL.md: без него
-        # оболочка берёт корень из pwd процесса, а голый os.getcwd() в python
-        # разворачивает симлинк /var -> /private/var на macOS там, где
-        # логический pwd шелла этого не делает, и путь в сообщении разошёлся
-        # бы с тем, что ушло в -C у стенда.
+    def env(self, root, pause="0"):
         env = dict(os.environ)
         env["PATH"] = os.path.join(root, "bin") + os.pathsep + env.get("PATH", "")
         env["HOME"] = os.path.join(root, "home")
@@ -228,6 +229,15 @@ class GoalRunTests(unittest.TestCase):
         # (обрыв на стороне API немедленный повтор встретит тем же обрывом),
         # стенду она только добавляет секунд, поэтому по умолчанию ноль.
         env["DEVKIT_GOAL_RETRY_PAUSE"] = pause
+        return env
+
+    def goal_run(self, root, *args, pause="0"):
+        # -C всегда назван явно, как в реальном вызове из SKILL.md: без него
+        # оболочка берёт корень из pwd процесса, а голый os.getcwd() в python
+        # разворачивает симлинк /var -> /private/var на macOS там, где
+        # логический pwd шелла этого не делает, и путь в сообщении разошёлся
+        # бы с тем, что ушло в -C у стенда.
+        env = self.env(root, pause)
         proj = os.path.join(root, "proj")
         return subprocess.run([RUN, "-C", proj] + list(args), cwd=proj, env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -253,6 +263,8 @@ class GoalRunTests(unittest.TestCase):
         except OSError:
             return ""
 
+
+class GoalRunTests(Stand, unittest.TestCase):
     # -- цикл до маркера done -------------------------------------------------
 
     def test_continue_advances_turns_until_done(self):
@@ -693,6 +705,219 @@ class GoalRunTests(unittest.TestCase):
             pass
         p = self.goal_run(root, "DK-100")
         self.assertEqual(p.returncode, 3, "оболочка полезла в цель с уже поднятой tmux-сессией")
+
+
+class GoalAskTests(Stand, unittest.TestCase):
+    """Ключ --ask: вопрос человеку с ожиданием ответа. Стенд тот же, что у
+    цикла, но витков тут не поднимается ни одного: ключ зовёт уведомитель и
+    читает «Входящие» файла цели, а отвечает за человека сам тест, дописывая
+    строку в раздел.
+
+    Форматы ящика проверяются против почтальона, а не против самих себя: файл
+    отметок и признак ожидания читает hooks/inbox.py, и разъехавшийся формат
+    оборачивается тем, что ответ приезжает витку дважды или что почтальон
+    съедает ответ на прямой вопрос."""
+
+    MAIL = "goal-DK-100.mail"
+    ASKFILE = "goal-DK-100.ask"
+
+    def devfile(self, root, name):
+        return os.path.join(root, "proj", ".devkit", name)
+
+    def answer(self, root, *lines):
+        """Ответ человека: строка ложится в «Входящие» файла цели ровно так,
+        как её кладёт туда дашборд (addInboxLine, tools/dashboard/messages.go)."""
+        path = os.path.join(root, "proj", "docs", "tasks", "DK-100.md")
+        with open(path, encoding="utf-8") as f:
+            doc = f.read()
+        block = "## Входящие\n\n" + "".join("- %s\n" % line for line in lines) + "\n"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doc.replace("## Журнал", block + "## Журнал", 1))
+
+    def ask_bg(self, root, question, wait="20"):
+        env = self.env(root)
+        env["DEVKIT_GOAL_ASK_WAIT"] = wait
+        proj = os.path.join(root, "proj")
+        p = subprocess.Popen([RUN, "-C", proj, "DK-100", "--ask", question], cwd=proj, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(self.reap, p)
+        return p
+
+    def reap(self, p):
+        if p.poll() is None:
+            p.kill()
+            p.wait(timeout=10)
+
+    def wait_hold(self, root, p):
+        """Дождаться признака ожидания: до него ключ ещё зовёт уведомитель, и
+        ответ, положенный раньше, ловился бы гонкой самого теста."""
+        path = self.devfile(root, self.ASKFILE)
+        for _ in range(200):
+            if os.path.isfile(path):
+                return path
+            if p.poll() is not None:
+                self.fail("ключ вышел, не начав ждать: %s" % p.communicate()[0])
+            time.sleep(0.05)
+        self.fail("признак ожидания %s не лёг" % path)
+
+    def marks(self, root):
+        return inbox.read_marks(self.devfile(root, self.MAIL))
+
+    def test_ask_waits_for_the_answer_and_prints_it(self):
+        # Ответ приходит посреди ожидания, и ключ печатает строку витку целиком,
+        # вместе со временем, которое дашборд поставил в неё сам.
+        root = self.stand("done запись")
+        line = "2026-08-15 12:30, из дашборда: бери sonnet, opus держи на ревью"
+        p = self.ask_bg(root, "какую модель брать на DK-101?")
+        self.wait_hold(root, p)
+        self.answer(root, line)
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn(line, out)
+        self.assertIn("вопрос человеку: какую модель брать на DK-101?", self.shell_log(root))
+        self.assertIn("ответ человека получен", self.shell_log(root))
+        self.assertFalse(os.path.isfile(self.devfile(root, self.ASKFILE)),
+                         "признак ожидания пережил ответ")
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")), "вопрос поднял виток")
+        self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
+                         "вопрос поднял замок цикла")
+
+    def test_ask_calls_the_notifier_loudly(self):
+        # Человека к делу зовёт уведомитель, и повод у зова тот же, каким
+        # зовёт маркер wait-human: по нему лента дашборда отбирает зов человека.
+        root = self.stand("done запись")
+        p = self.ask_bg(root, "чинить DK-102 или отложить?", wait="1")
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        log = self.notify_log(root)
+        self.assertIn("уровень громкий", log)
+        self.assertIn("повод wait_human", log)
+        self.assertIn("текст «цель DK-100: вопрос человеку»", log)
+        self.assertIn("чинить DK-102 или отложить?", log)
+
+    def test_ask_gives_up_by_the_deadline(self):
+        # Никто не ответил: это не авария, а обычный возврат нолём. Отметок
+        # ключ при этом не заводит вовсе, отмечать нечего.
+        root = self.stand("done запись")
+        p = self.ask_bg(root, "ответа не будет", wait="1")
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("ответа нет", out)
+        self.assertFalse(os.path.isfile(self.devfile(root, self.ASKFILE)),
+                         "признак ожидания пережил истёкший срок")
+        self.assertFalse(os.path.isfile(self.devfile(root, self.MAIL)),
+                         "ключ завёл отметку, никого не дождавшись")
+
+    def test_hold_is_read_by_the_postman_as_a_live_wait(self):
+        # Признак ожидания читает почтальон, и читает он его своим кодом: пока
+        # срок не вышел, ящик принадлежит ключу и доставлять он не должен
+        # ничего. Формат тут сверяется литералами, а не на глаз.
+        root = self.stand("done запись")
+        proj = os.path.join(root, "proj")
+        p = self.ask_bg(root, "ящик занят вопросом", wait="20")
+        path = self.wait_hold(root, p)
+        until = inbox.ask_until(proj, "DK-100")
+        self.assertIsNotNone(until, "почтальон не разобрал срок в признаке ожидания")
+        self.assertGreater(until, time.time(), "срок в признаке ожидания уже прошёл")
+        self.assertLessEqual(until, time.time() + 25, "срок в признаке ожидания взят с потолка")
+        with open(path, encoding="utf-8") as f:
+            self.assertRegex(f.read(), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\n$")
+        self.answer(root, "2026-08-15 12:31, из дашборда: ответ")
+        p.communicate(timeout=60)
+        self.assertIsNone(inbox.ask_until(proj, "DK-100"),
+                          "снятый признак ожидания почтальон всё ещё видит")
+
+    def test_eaten_line_is_marked_in_the_postman_format(self):
+        # Отметку съеденной строки ставит тот, кто отдал её витку, и формат у
+        # неё общий с почтальоном: две строки, «время сессия» и строка целиком.
+        root = self.stand("done запись")
+        line = "2026-08-15 12:32, из дашборда: сливай как есть"
+        p = self.ask_bg(root, "сливать?")
+        self.wait_hold(root, p)
+        self.answer(root, line)
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        marks = self.marks(root)
+        self.assertEqual([m.line for m in marks], [line])
+        self.assertRegex(marks[0].stamp, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+        with open(self.devfile(root, self.MAIL), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "%s -\n%s\n" % (marks[0].stamp, line),
+                             "файл отметок разъехался с разбором почтальона")
+
+    def test_mark_names_the_turn_from_the_lock(self):
+        # Имя витка ключ берёт из замка оболочки: под циклом отметка названа
+        # тем витком, который вопрос задал, а в живом чате замка нет и поле
+        # остаётся прочерком (случай выше).
+        root = self.stand("done запись")
+        lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
+        os.makedirs(lock)
+        with open(os.path.join(lock, "session"), "w", encoding="utf-8") as f:
+            f.write("11111111-2222-3333-4444-555555555555\n")
+        line = "2026-08-15 12:33, из дашборда: годится"
+        p = self.ask_bg(root, "годится?")
+        self.wait_hold(root, p)
+        self.answer(root, line)
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertEqual([m.session for m in self.marks(root)],
+                         ["11111111-2222-3333-4444-555555555555"])
+
+    def test_already_marked_line_is_not_taken_for_an_answer(self):
+        # Лежащая строка с отметкой доставки это не ответ: её уже отдал витку
+        # почтальон, и вторым экземпляром она приезжать не должна.
+        root = self.stand("done запись")
+        line = "2026-08-15 11:00, из дашборда: реплика прошлого часа"
+        self.answer(root, line)
+        inbox.write_marks(self.devfile(root, self.MAIL),
+                          [inbox.Mark("2026-08-15T11:00:05", "-", line)])
+        p = self.ask_bg(root, "ждём нового ответа", wait="1")
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertIn("ответа нет", out)
+        self.assertNotIn(line, out, "ключ принял за ответ уже доставленную строку")
+
+    def test_mark_is_written_before_the_line_is_printed(self):
+        # Отметка встаёт до печати: не записав её, ключ строку не отдаёт вовсе.
+        # Иначе реплика, чья отметка не легла, ездила бы витку по кругу.
+        root = self.stand("done запись")
+        os.mkdir(self.devfile(root, self.MAIL))  # каталог на месте файла: запись отметки не пройдёт
+        line = "2026-08-15 12:34, из дашборда: ответ, который не отметить"
+        self.answer(root, line)
+        p = self.ask_bg(root, "отметка не запишется", wait="2")
+        out = p.communicate(timeout=60)[0]
+        self.assertEqual(p.returncode, 0, out)
+        self.assertNotIn(line, out, "строка напечатана витку без отметки доставки")
+        self.assertIn("ответа нет", out)
+
+    def test_answered_line_is_not_served_twice(self):
+        # Отметка живёт на диске, поэтому следующий вопрос ту же строку за
+        # ответ не берёт: она уже съедена.
+        root = self.stand("done запись")
+        line = "2026-08-15 12:35, из дашборда: первый ответ"
+        self.answer(root, line)
+        first = self.ask_bg(root, "первый вопрос", wait="20").communicate(timeout=60)[0]
+        self.assertIn(line, first)
+        second = self.ask_bg(root, "второй вопрос", wait="1").communicate(timeout=60)[0]
+        self.assertNotIn(line, second, "съеденная строка приехала витку вторым экземпляром")
+        self.assertIn("ответа нет", second)
+
+    def test_ask_refusals(self):
+        # Вопрос без текста, вместе с циклом, вместе со строкой хода и по цели
+        # без файла это ошибка вызова: ждать ответа некуда и не от кого.
+        root = self.stand("done запись")
+        p = self.goal_run(root, "DK-100", "--ask")
+        self.assertEqual(p.returncode, 2, "оболочка приняла --ask без текста")
+        p = self.goal_run(root, "DK-100", "--ask", "   ")
+        self.assertEqual(p.returncode, 2, "оболочка приняла пустой вопрос")
+        p = self.goal_run(root, "DK-100", "--foreground", "--ask", "и то и другое")
+        self.assertEqual(p.returncode, 2, "оболочка приняла --ask вместе с --foreground")
+        p = self.goal_run(root, "DK-100", "--say", "ход", "--ask", "вопрос")
+        self.assertEqual(p.returncode, 2, "оболочка приняла --ask вместе с --say")
+        p = self.goal_run(root, "DK-101", "--ask", "вопрос не той цели")
+        self.assertEqual(p.returncode, 2, "оболочка задала вопрос по цели, файла которой нет")
+        self.assertEqual(self.shell_log(root), "", "отказавший вызов всё же тронул журнал")
+        self.assertFalse(os.path.isfile(self.devfile(root, self.ASKFILE)),
+                         "отказавший вызов оставил признак ожидания")
 
 
 class SkillInboxTests(unittest.TestCase):

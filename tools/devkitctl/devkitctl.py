@@ -134,6 +134,17 @@
       idle = <минуты> в ~/.devkit/watch.local и флагом. Выход 1 значит, что
       нашёлся вставший цикл
 
+  devkitctl selfcheck
+      живой круг связки после установки, одной командой (DK-158): во временном
+      каталоге заводится проект (new), в нём строка доски (taskctl add), вердикт
+      pick, ветка задачи в своём дереве (shipctl start), слияние с тестами и
+      подставным выкатом (shipctl merge) и закрытие (taskctl close). Отчёт по
+      шагам, каждый со своим исходом; провал шага называет шаг и печатает его
+      вывод. Настоящие проекты и HOME не трогаются: утилиты зовутся по имени
+      из PATH, как их видит человек, круг работает в своём временном каталоге
+      и убирает его за собой. Находки доктора по машине это не провал круга:
+      доктор тут отдельный шаг, его отчёт печатается, а судится сам шаг
+
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
@@ -153,6 +164,7 @@ import perms
 import re
 import rules
 import say
+import selfcheck
 import shutil
 import subprocess
 import sys
@@ -2389,6 +2401,8 @@ def main(argv):
                    help="потолок резидента в токенах, выше него код 1 (по умолчанию %d)" % weigh.LIMIT)
     w.add_argument("--model", default="", help="модель прогона, по умолчанию модель клиента")
     w.add_argument("--prompt", default=weigh.PROMPT, help="запрос прогона, у обоих он один")
+    sub.add_parser("selfcheck",
+                   help="живой круг связки во временном проекте, с уборкой за собой")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         rc = layout_only(a.dir) if a.layout else doctor(a.dir, a.fix)
@@ -2405,6 +2419,8 @@ def main(argv):
         rc = update_devkit(a.pin, a.check, a.restarted)
     elif a.cmd == "watch":
         rc = watch.run(idle=a.idle * 60 if a.idle else None)
+    elif a.cmd == "selfcheck":
+        rc = selfcheck.main()
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
     else:
@@ -2414,7 +2430,9 @@ def main(argv):
     # -C нет, он собирает чекаут devkit, и запуск ложится в его же журнал.
     # Сторожок в журнал не пишет: по нему он и меряет движение цикла, и своя
     # строка раз в пять минут выглядела бы движением там, где всё стоит.
-    if a.cmd != "watch":
+    # Самопроверка тоже: её круг сам зовёт утилиты, и их строки в журнале
+    # живого проекта читались бы как работа человека, а не как прогон.
+    if a.cmd not in ("watch", "selfcheck"):
         root = project_root(getattr(a, "dir", str(DEVKIT)))[0]
         log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
     return rc

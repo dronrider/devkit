@@ -352,8 +352,10 @@ def check_live_reply(here):
     # ответ на вопрос витка ждёт конца пачки, без границы шага стоп бросает
     # пачку на середине, без конца задачи в конвейере разворот оставляет
     # исполнителей в чужих деревьях и непроверенный выкат в очереди. Сюда же
-    # зов оболочки: путь без `python3` держится на бите исполнимости и на
-    # shebang, а на второй машине они есть не во всяком чекауте.
+    # зов оболочки: права машинного контура дают `Bash(python3:*)`
+    # (MACHINE_ALLOW в tools/devkitctl/perms.py), правила под голый путь там
+    # нет, и headless-виток встанет на запросе разрешения, который некому
+    # одобрить.
     fails = []
     text = read(os.path.join(here, "goal-loop", "SKILL.md"))
     if text is None:
@@ -371,7 +373,7 @@ def check_live_reply(here):
             fails.append("goal-loop: живая реплика не оседает записью «Журнала», поворот работы останется без причины")
     for line in text.split("\n"):
         if "goal-run.py" in line and "/" in line and "python3" not in line:
-            fails.append("goal-loop: оболочка зовётся путём без python3, без бита исполнимости такой зов падает")
+            fails.append("goal-loop: оболочка зовётся путём без python3, а машинный контур даёт только Bash(python3:*)")
             break
     return fails
 

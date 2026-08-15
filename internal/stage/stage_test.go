@@ -2,6 +2,7 @@ package stage
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +41,66 @@ func TestSlugSplitsSameNamedProjects(t *testing.T) {
 	}
 	if strings.ContainsAny(a, "/. ") {
 		t.Fatalf("slug %q не годится в имя файла", a)
+	}
+}
+
+// gitT гоняет git в директории и валит тест на отказе: разбирать провал сетапа
+// по красноте самой проверки пришлось бы дольше, чем прочитать вывод git.
+func gitT(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// TestMainRootFoldsWorktreeToCheckout: запись задачи сходится к одному файлу что
+// из основного чекаута, что из дерева задачи. Этап разработки открывают из
+// дерева (pick зовут с -C <worktree>), а пакет уносит смена статуса из основного
+// чекаута, и без приведения через git-common-dir это были бы две разные записи:
+// имя файла и поле root считаются от пути, а у линкованного дерева путь свой.
+// Тесту поэтому нужен настоящий git с линкованным деревом: на временной
+// директории без git отрабатывает только запасной путь, где приведения нет вовсе.
+func TestMainRootFoldsWorktreeToCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git не найден, приведение корня проверять нечем")
+	}
+	main := t.TempDir()
+	gitT(t, main, "init", "-q", "-b", "main")
+	gitT(t, main, "config", "user.email", "test@test")
+	gitT(t, main, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(main, "README.md"), []byte("# стенд\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, main, "add", ".")
+	gitT(t, main, "commit", "-qm", "seed")
+	tree := filepath.Join(t.TempDir(), "task")
+	gitT(t, main, "worktree", "add", "-q", "-b", "t-001", tree)
+
+	if got := MainRoot(tree); got == tree {
+		t.Fatalf("линкованное дерево не приведено к чекауту: %s", got)
+	}
+	home := t.TempDir()
+	// Открываем этап из дерева задачи, забираем пакет из основного чекаута.
+	if err := Open(home, MainRoot(tree), "T-001", Dev, "субагент opus/high", at(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	stages, err := Flush(home, MainRoot(main), "T-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 1 || stages[0].Kind != Dev {
+		t.Fatalf("пакет из основного чекаута не нашёл этап, открытый из дерева задачи: %+v", stages)
+	}
+}
+
+// TestMainRootKeepsNonGitRoot: вне git-дерева возвращается то, что дали. Проекты
+// без git и временные корни тестов обязаны работать по-прежнему, а не оставаться
+// без записи вовсе.
+func TestMainRootKeepsNonGitRoot(t *testing.T) {
+	dir := t.TempDir()
+	if got := MainRoot(dir); got != dir {
+		t.Fatalf("корень вне git подменён: %s, жду %s", got, dir)
 	}
 }
 

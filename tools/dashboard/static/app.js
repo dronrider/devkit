@@ -593,7 +593,14 @@ function runControl(project, id, make, label, isGoal, tip, afterOk) {
   if (isGoal || list.length < 2) {
     const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
-    return wide;
+    // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
+    // кнопка ниже держит span.split той же глубины, и rowAction для Стопа
+    // (DK-349) обёрнут так же. Разная глубина между вырожденным Run и Стоп на
+    // одной строке промахивала позиционный focusSnap/focusBack мимо кнопки
+    // (app.js:82-113, DK-316).
+    const solo = el("span");
+    solo.append(wide);
+    return solo;
   }
   const grp = el("span", "split");
   grp.append(wide);
@@ -682,8 +689,15 @@ function rowAction(project, row, sect) {
     btn.disabled = true;
     stopRun(project, row.id).catch(console.error).finally(() => { btn.disabled = false; });
   });
-  // Стоп это всегда одиночная кнопка без стрелки: обёртка без класса split ради
-  // фокуса, но не обрезает правые углы CSS правилом .split .btn:not(.more2) (DK-349).
+  // Стоп это всегда одиночная кнопка без стрелки: обёртка без класса split
+  // ради стиля не нужна (CSS достаёт кнопку descendant-селектором, .trow
+  // .meta .btn), но нужна ради глубины. Составная кнопка запуска держит
+  // span.split (widе, more, pop), и позиционный путь focusSnap/focusBack
+  // (строки 82-113, DK-316) считает индексы по глубине от .meta: голая кнопка
+  // тут стояла бы на уровень выше составного Run, и переход между ними
+  // промахивался бы мимо кнопки. Вырожденный Run (runControl, ниже) той же
+  // причины ради тоже обёрнут в такой же пустой span, а не отдаёт голую
+  // кнопку: глубина одна для всех сочетаний Run/Стоп на одной строке.
   const grp = el("span");
   grp.append(btn);
   return grp;

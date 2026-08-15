@@ -389,6 +389,10 @@ function phoneDisplay(css, classes) {
 
 const streams = [];
 let running = false;
+// Чья работа поднята: по умолчанию XR-3, как раньше, а POST /runs переставляет
+// на id из тела запроса, иначе строка с фокусной проверкой (XR-6) не узнает о
+// своей же работе.
+let runningId = "XR-3";
 
 function row(id, title, extra) {
   return Object.assign({
@@ -447,7 +451,7 @@ function boardBody() {
 }
 
 function works() {
-  return running ? [{ id: "XR-3", via: "tmux", title: "строка доски номер 3" }] : [];
+  return running ? [{ id: runningId, via: "tmux", title: "строка доски номер " + runningId.slice(3) }] : [];
 }
 
 // Подписки машины и то, чем их назвали при запуске: выбор в кнопке проверяется
@@ -691,7 +695,9 @@ const sandbox = {
     }
     if (path.endsWith("/runs") && post) {
       running = true;
-      started.push(init && init.body ? JSON.parse(init.body) : {});
+      const sent = init && init.body ? JSON.parse(init.body) : {};
+      if (sent.id) runningId = sent.id;
+      started.push(sent);
       return reply({ message: "сессия поднята" });
     }
     if (path.includes("/tasks/") && init && init.method === "PATCH") {
@@ -936,6 +942,10 @@ for (const [list, note, why] of [
   await settle();
   const one = find(groups, "XR-6");
   if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
+  // Одиночная кнопка запуска без стрелки не обёрнута в split (DK-349): CSS
+  // правило .split .btn:not(.more2) обрезает правые углы, и вырожденный
+  // случай (одна подписка / непрочитанный список) не должен его ловить.
+  if (byClass(one, "split")) fail("кнопка запуска при " + why + " обёрнута в split: " + dump(one));
   const only = button(one, "Выполнить");
   if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
   if (!String(only.title).includes(why)) {
@@ -952,6 +962,48 @@ for (const [list, note, why] of [
   }
   running = false;
 }
+
+// Симметрия глубины между вырожденным Run и Стоп (DK-349, DK-316): обе кнопки
+// без узкой части лежат в .meta на одной глубине, и позиционный путь
+// focusSnap/focusBack (app.js:82-113) при переходе между ними не промахивается
+// мимо кнопки. Проверка идёт на XR-6 (одна подписка), а не на XR-3: там Run
+// составной и обёрнут в .split той же глубины, что раньше был Стоп, и промах
+// такой парой не ловится.
+harnessList = [harnessOne];
+harnessNote = "";
+running = false;
+await sandbox.refresh();
+await settle();
+const degRow = find(groups, "XR-6");
+const degRun = button(degRow, "Выполнить");
+if (!degRun) fail("вырожденная строка осталась без кнопки запуска: " + dump(degRow));
+degRun.focus();
+degRun.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (started[started.length - 1].id !== "XR-6") {
+  fail("кнопка вырожденной строки подняла не ту работу: " + JSON.stringify(started[started.length - 1]));
+}
+await sandbox.refresh();
+await settle();
+const degLive = find(groups, "XR-6");
+const degStop = button(degLive, "Стоп");
+if (!degStop) fail("вырожденная строка не показала Стоп после запуска: " + dump(degLive));
+if (doc.activeElement !== degStop) {
+  fail("переход Run -> Стоп на вырожденной строке промахнулся мимо кнопки: " + dump(doc.activeElement));
+}
+running = false;
+degStop.handlers.click({ stopPropagation: () => {} });
+await settle();
+await sandbox.refresh();
+await settle();
+const degBack = find(groups, "XR-6");
+const degAgain = button(degBack, "Выполнить");
+if (!degAgain) fail("вырожденная строка не вернула кнопку запуска после Стопа: " + dump(degBack));
+if (doc.activeElement !== degAgain) {
+  fail("переход Стоп -> Run на вырожденной строке промахнулся мимо кнопки: " + dump(doc.activeElement));
+}
+running = false;
+
 harnessList = [harnessOne, harnessTwo];
 harnessNote = "";
 await sandbox.refresh();

@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Живой статус агента, сторона транскрипта: сессии проекта из
-// ~/.claude/projects и лента реплик одной сессии с пагинацией назад и живым
+// Живой статус агента, сторона транскрипта: сессии проекта из каталогов
+// журналов (transcriptRoots) и лента реплик одной сессии с пагинацией назад и живым
 // дострением через SSE. Транскрипт весит мегабайты и пишется чужим процессом,
 // поэтому режет его сервер, а клиент получает последние реплики готовым
 // JSON (LLD DK-112, «Граница сервер-клиент»). Разбор реплик держится общим
@@ -36,20 +36,64 @@ func claudeDirName(projPath string) string {
 	return b.String()
 }
 
-// sessionDirs собирает каталоги транскриптов проекта: сам каталог по пути с
-// дефисами плюс те, чьё имя продолжает его дефисом, так в список попадают
-// боковые деревья задач (../<проект>-<id>) и копия окна (LLD).
-func sessionDirs(home, projPath string) []string {
-	base := filepath.Join(home, ".claude", "projects")
-	name := claudeDirName(projPath)
-	dirs := []string{filepath.Join(base, name)}
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return dirs
+// transcriptRoots перечисляет корни, под которыми лежат каталоги транскриптов:
+// свой ~/.claude/projects плюс projects каждой подписки со своим хозяйством.
+// Второй корень появился с выбором подписки на запуске (DK-326): клиент второй
+// подписки поднимается с чужим каталогом конфигурации и журнал разговора пишет
+// туда, поэтому headless-сессия, поднятая с доски, из ~/.claude не видна вовсе
+// (DK-362). Повторы отсеиваются: подписка вправе назвать своим каталогом тот
+// же ~/.claude, и тогда обход прошёл бы по нему дважды.
+func transcriptRoots(home string, harnessHomes []string) []string {
+	roots := []string{filepath.Join(home, ".claude", "projects")}
+	seen := map[string]bool{roots[0]: true}
+	for _, h := range harnessHomes {
+		if h == "" {
+			continue
+		}
+		root := filepath.Join(h, "projects")
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, root)
 	}
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), name+"-") {
-			dirs = append(dirs, filepath.Join(base, e.Name()))
+	return roots
+}
+
+// transcriptHomes отдаёт каталоги хозяйства подписок из раскладки машины.
+func (v HarnessView) transcriptHomes() []string {
+	var out []string
+	for _, h := range v.Harnesses {
+		if h.Home != "" {
+			out = append(out, h.Home)
+		}
+	}
+	return out
+}
+
+// transcriptRoots сервера это те же корни на раскладке подписок из памяти
+// процесса: спрашивается она на каждой сборке экрана, и подпроцесс за ней
+// ходит не чаще срока harnessTTL.
+func (s *server) transcriptRoots() []string {
+	return transcriptRoots(s.cfg.Home, s.harnesses().transcriptHomes())
+}
+
+// sessionDirs собирает каталоги транскриптов проекта: в каждом корне сам
+// каталог по пути с дефисами плюс те, чьё имя продолжает его дефисом, так в
+// список попадают боковые деревья задач (../<проект>-<id>) и копия окна (LLD).
+func sessionDirs(roots []string, projPath string) []string {
+	name := claudeDirName(projPath)
+	var dirs []string
+	for _, base := range roots {
+		dirs = append(dirs, filepath.Join(base, name))
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), name+"-") {
+				dirs = append(dirs, filepath.Join(base, e.Name()))
+			}
 		}
 	}
 	return dirs
@@ -80,10 +124,10 @@ type sessionInfo struct {
 // равном времени по id, чтобы порядок был устойчив. Вместе с файлом берётся
 // хвост имени каталога (боковое дерево задачи называет им задачу) и отпечаток
 // файла для памяти процесса на шапку.
-func sessionFiles(home, projPath string) []sessionInfo {
+func sessionFiles(roots []string, projPath string) []sessionInfo {
 	var out []sessionInfo
 	base := claudeDirName(projPath)
-	for _, dir := range sessionDirs(home, projPath) {
+	for _, dir := range sessionDirs(roots, projPath) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -290,7 +334,7 @@ const groomOrderPrefix = "Проведи груминг "
 func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow, busy map[string]bool) []Work {
 	works := []Work{}
 	cutoff := s.now().Add(-sessionLiveTTL)
-	for _, f := range sessionFiles(s.cfg.Home, projPath) {
+	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.
 		if f.mod.Before(cutoff) {
 			break
@@ -487,7 +531,8 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("%q не похоже на ID задачи", want)})
 		return
 	}
-	files := sessionFiles(s.cfg.Home, found.Path)
+	roots := s.transcriptRoots()
+	files := sessionFiles(roots, found.Path)
 	limit := headScanMax
 	if want != "" {
 		limit = len(files)
@@ -533,7 +578,8 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	// за полный.
 	switch {
 	case len(files) == 0:
-		resp["note"] = fmt.Sprintf("транскриптов нет: в ~/.claude/projects нет сессий с путём %s", found.Path)
+		resp["note"] = fmt.Sprintf("транскриптов нет: с путём %s нет сессий ни в одном каталоге журналов (%s)",
+			found.Path, strings.Join(roots, ", "))
 	case want != "" && cut:
 		resp["note"] = fmt.Sprintf(
 			"обход прерван по времени: просмотрено %d транскриптов из %d, разговор задачи %s мог остаться дальше",
@@ -552,9 +598,9 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,80}$`)
 // него ту же строку, что стоит в списке сессий: путь с отпечатком для памяти
 // процесса и хвост имени каталога, которым задача подписана в боковом дереве.
 // Полный обход каталогов ради одной сессии не нужен, имя файла известно.
-func findSession(home, projPath, sid string) (sessionInfo, bool) {
+func findSession(roots []string, projPath, sid string) (sessionInfo, bool) {
 	base := claudeDirName(projPath)
-	for _, dir := range sessionDirs(home, projPath) {
+	for _, dir := range sessionDirs(roots, projPath) {
 		p := filepath.Join(dir, sid+".jsonl")
 		fi, err := os.Stat(p)
 		if err != nil || fi.IsDir() {
@@ -581,7 +627,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	info, ok := findSession(s.cfg.Home, found.Path, sid)
+	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("транскрипта %s нет среди сессий проекта %s", sid, found.Name)})

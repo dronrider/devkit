@@ -352,12 +352,12 @@ JSON
   ;;
 esac
 exit 0
-`, shQuote(s.runsFile()), smokeHarnessJSON),
+`, shQuote(s.runsFile()), smokeHarnessJSON(s.harnessHome())),
 		// Клиенты подписок: каждый пишет, кем его подняли и с каким заказом.
 		// Разными их держит прогон нарочно, иначе выбор подписки был бы неотличим
 		// от её отсутствия.
-		smokeClientOne: smokeClientBody(s.runsFile(), smokeClientOne),
-		smokeClientTwo: smokeClientBody(s.runsFile(), smokeClientTwo),
+		smokeClientOne: smokeClientBody(s.runsFile(), smokeClientOne, ""),
+		smokeClientTwo: smokeClientBody(s.runsFile(), smokeClientTwo, s.harnessJournal()),
 		// Бэкенд уведомлений: баннер на машине прогона не появляется, а
 		// строка в журнале уведомителя пишется как при живой отправке.
 		"notify-fake": "exit 0\n",
@@ -396,21 +396,52 @@ else:
 }
 
 // smokeHarnessJSON это машинный вид agentctl harness --json: две включённые
-// подписки со своими клиентами, первая по умолчанию.
-var smokeHarnessJSON = fmt.Sprintf(`{
+// подписки со своими клиентами, первая по умолчанию. У второй есть своё
+// хозяйство: журналы разговоров она пишет туда, и без этого поля стенд не
+// увидел бы headless-сессию собственного запуска (DK-362).
+func smokeHarnessJSON(home string) string {
+	return fmt.Sprintf(`{
   "default": %q,
   "source": "машинный слой стенда",
   "harnesses": [
     {"name": %q, "enabled": true, "default": true, "bin": %q},
-    {"name": %q, "enabled": true, "default": false, "bin": %q, "env": ["CONFIG_DIR"]}
+    {"name": %q, "enabled": true, "default": false, "bin": %q, "home": %q, "env": ["CONFIG_DIR"]}
   ]
-}`, smokeHarnessOne, smokeHarnessOne, smokeClientOne, smokeHarnessTwo, smokeClientTwo)
+}`, smokeHarnessOne, smokeHarnessOne, smokeClientOne, smokeHarnessTwo, smokeClientTwo, home)
+}
+
+// smokeHeadlessID это имя транскрипта, который пишет клиент второй подписки:
+// живой клиент назвал бы файл своим session_id, а стенду хватает постоянного
+// имени, по нему шаг и ходит на экран агента.
+const smokeHeadlessID = "smoke-headless-1"
+
+// harnessHome это каталог хозяйства второй подписки стенда, harnessJournal это
+// каталог транскриптов проекта под ним: раскладку имён считает та же функция,
+// что и сервер, иначе стенд проверял бы свою выдумку.
+func (s *smoke) harnessHome() string { return filepath.Join(s.dir, "harness-home") }
+func (s *smoke) harnessJournal() string {
+	return filepath.Join(s.harnessHome(), "projects", claudeDirName(s.proj))
+}
 
 // smokeClientBody это тело фикстуры клиента: имя подписки он берёт из
 // окружения, как настоящий клиент берёт оттуда свой каталог конфигурации.
-func smokeClientBody(runs, name string) string {
-	return fmt.Sprintf("printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$2\" >> %s\nexit 0\n",
+// Названный каталог журнала клиент заполняет транскриптом разговора, как это
+// делает живой клиент в headless-запуске: заказ первой репликой человека,
+// дальше ответ. По нему дашборд и узнаёт, чем занята поднятая работа.
+func smokeClientBody(runs, name, journal string) string {
+	body := fmt.Sprintf("printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$2\" >> %s\n",
 		name, shQuote(runs))
+	if journal == "" {
+		return body + "exit 0\n"
+	}
+	return body + fmt.Sprintf(`dir=%s
+mkdir -p "$dir"
+{
+  printf '{"type":"user","message":{"role":"user","content":"%%s"},"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","gitBranch":"main"}\n' "$2"
+  printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Взял в работу."}]},"timestamp":"2026-08-10T10:00:02.000Z"}\n'
+} > "$dir/%s.jsonl"
+exit 0
+`, shQuote(journal), smokeHeadlessID)
 }
 
 // Файлы стенда, которые правит фикстура taskctl: доска машинным видом, файл
@@ -1248,8 +1279,32 @@ func (s *smoke) stepHarnessRun() (string, error) {
 	if strings.Contains(text, smokeClientOne+":") {
 		return "", fmt.Errorf("сессию поднял клиент чужой подписки:\n%s", text)
 	}
-	return fmt.Sprintf("%s, сессию поднял %s с именем подписки в окружении; незнакомая подписка отбита: %s",
-		v.Message, smokeClientTwo, refusal.Error), nil
+	// Поднятая работа обязана быть видна: клиент второй подписки пишет журнал в
+	// своё хозяйство, и пока список сессий ходил в один ~/.claude, разговор
+	// headless-запуска с доски не показывался нигде (DK-362).
+	var sess struct {
+		Sessions []sessionInfo `json:"sessions"`
+		Note     string        `json:"note"`
+	}
+	if err := s.call("GET", "/api/projects/demo/sessions?task="+smokeTask, "", http.StatusOK, &sess); err != nil {
+		return "", err
+	}
+	if len(sess.Sessions) != 1 || sess.Sessions[0].ID != smokeHeadlessID {
+		return "", fmt.Errorf("разговора headless-запуска нет в списке сессий задачи %s: %+v, приписка: %s",
+			smokeTask, sess.Sessions, sess.Note)
+	}
+	var talk struct {
+		Items []reply `json:"items"`
+	}
+	if err := s.call("GET", "/api/projects/demo/sessions/"+smokeHeadlessID, "", http.StatusOK, &talk); err != nil {
+		return "", err
+	}
+	if len(talk.Items) == 0 || !strings.Contains(talk.Items[0].Text, smokeTask) {
+		return "", fmt.Errorf("экран агента открылся без заказа работы: %+v", talk.Items)
+	}
+	return fmt.Sprintf("%s, сессию поднял %s с именем подписки в окружении, разговор виден в списке задачи (%s); "+
+		"незнакомая подписка отбита: %s",
+		v.Message, smokeClientTwo, sess.Sessions[0].ID, refusal.Error), nil
 }
 
 // stepDropDraft: черновик снимается с экрана, а не из терминала. Причина

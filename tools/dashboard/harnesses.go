@@ -30,10 +30,14 @@ var agentctlBin = "agentctl"
 // agentctl: значений окружения тут нет никогда, только имена, и дальше клиента
 // они не едут вовсе.
 type Harness struct {
-	Name    string   `json:"name"`
-	Default bool     `json:"default"`
-	Bin     string   `json:"bin,omitempty"`
-	Env     []string `json:"env,omitempty"`
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+	Bin     string `json:"bin,omitempty"`
+	// Home это каталог хозяйства подписки. По нему ищутся транскрипты её
+	// разговоров: клиент второй подписки поднимается со своим каталогом
+	// конфигурации, и журнал он пишет туда, а не в ~/.claude (DK-362).
+	Home string   `json:"home,omitempty"`
+	Env  []string `json:"env,omitempty"`
 }
 
 // HarnessView это ответ ручки. Пустой список это не поломка запуска: работа
@@ -53,6 +57,7 @@ type agentctlHarnesses struct {
 		Enabled bool     `json:"enabled"`
 		Default bool     `json:"default"`
 		Bin     string   `json:"bin"`
+		Home    string   `json:"home"`
 		Env     []string `json:"env"`
 	} `json:"harnesses"`
 	Note  string   `json:"note"`
@@ -91,7 +96,7 @@ func readHarnesses() HarnessView {
 		if !h.Enabled || h.Bin == "" {
 			continue
 		}
-		view.Harnesses = append(view.Harnesses, Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Env: h.Env})
+		view.Harnesses = append(view.Harnesses, Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env})
 	}
 	if len(view.Harnesses) == 0 {
 		view.Note = raw.Note

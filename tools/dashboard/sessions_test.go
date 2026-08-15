@@ -38,7 +38,14 @@ var transcriptWant = []reply{
 // Claude Code; dirSuffix изображает каталог бокового дерева задачи.
 func writeSession(t *testing.T, home, projPath, dirSuffix, sid, content string, mtime time.Time) string {
 	t.Helper()
-	dir := filepath.Join(home, ".claude", "projects", claudeDirName(projPath)+dirSuffix)
+	return writeSessionAt(t, filepath.Join(home, ".claude", "projects"), projPath, dirSuffix, sid, content, mtime)
+}
+
+// writeSessionAt кладёт транскрипт в названный корень журналов: у второй
+// подписки это projects её каталога конфигурации, а не ~/.claude (DK-362).
+func writeSessionAt(t *testing.T, root, projPath, dirSuffix, sid, content string, mtime time.Time) string {
+	t.Helper()
+	dir := filepath.Join(root, claudeDirName(projPath)+dirSuffix)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1003,5 +1010,74 @@ func TestStaticAgentChatGoalGate(t *testing.T) {
 	if !strings.Contains(funcBody(t, app, "async function paint("),
 		"renderAgent(current.name, r.body.works, rt.id, board)") {
 		t.Error("экран агента рисуется без доски: строку задачи ему взять неоткуда")
+	}
+}
+
+// harnessJSONHomeFixture это раскладка, где у второй подписки есть своё
+// хозяйство: путь подставляется каталогом теста.
+const harnessJSONHomeFixture = `{
+  "default": "перваяtest",
+  "source": "фикстура",
+  "harnesses": [
+    {"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1"},
+    {"name": "втораяtest", "enabled": true, "default": false, "bin": "клиент-2",
+     "home": %q, "env": ["CLAUDE_CONFIG_DIR"]}
+  ]
+}`
+
+// headlessLine это первая запись транскрипта headless-сессии, поднятой с
+// доски: заказ приезжает в сессию промптом, и разговор начинается им, а не
+// репликой из окна. Поля взяты с живого транскрипта такого запуска.
+func headlessLine(prompt, branch string) string {
+	return fmt.Sprintf(
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-10T10:00:00.000Z","content":%q}`+"\n"+
+			`{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","entrypoint":"sdk-cli","gitBranch":%q}`+"\n",
+		prompt, prompt, branch)
+}
+
+// Запуск с доски идёт на выбранной подписке, а её клиент поднимается со своим
+// каталогом конфигурации и журнал разговора пишет туда. Пока сессии искались
+// в одном ~/.claude, headless-работа с доски была не видна вовсе: строка
+// стояла в In progress, а разговора не было ни в списке задачи, ни на экране
+// агента, и найти его можно было только раскопками по транскриптам (DK-362).
+func TestSessionsSecondHarnessSeen(t *testing.T) {
+	e := newTestEnv(t)
+	home := filepath.Join(e.home, ".devkit", "claude-second")
+	writeAgentctlFake(t, e.bin, fmt.Sprintf(harnessJSONHomeFixture, home))
+	sid := "hls-1"
+	writeSessionAt(t, filepath.Join(home, "projects"), e.proj, "", sid,
+		headlessLine("Выполни XR-101", "main"),
+		time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC))
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 1 || list[0].ID != sid {
+		t.Fatalf("сессии задачи XR-101: %+v, приписка: %s", list, note)
+	}
+	if list[0].Task != "XR-101" || list[0].First != "Выполни XR-101" {
+		t.Errorf("headless-сессия узнана не по заказу: %+v", list[0])
+	}
+	// Экран агента открывается по той же ссылке, что у обычной сессии: без
+	// второго корня ручка отвечала бы «транскрипта нет среди сессий проекта».
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("экран агента по headless-сессии: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "Выполни XR-101") {
+		t.Errorf("в ленте нет заказа работы: %s", text)
+	}
+}
+
+// Каталоги журналов перечисляются без повторов: подписка вправе назвать своим
+// хозяйством тот же ~/.claude, и тогда обход шёл бы по нему дважды, а список
+// сессий выходил бы с двойниками.
+func TestTranscriptRootsNoDoubles(t *testing.T) {
+	home := filepath.Join("/дом")
+	got := transcriptRoots(home, []string{filepath.Join(home, ".claude"), "", "/второй"})
+	want := []string{filepath.Join(home, ".claude", "projects"), filepath.Join("/второй", "projects")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("корни журналов %v, жду %v", got, want)
 	}
 }

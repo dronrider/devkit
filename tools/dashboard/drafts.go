@@ -373,7 +373,7 @@ func draftAttachedTo(projectPath, id string) (task, rel string) {
 // только в транскрипте. Сессия ищется тем же порядком, что у экрана агента
 // (sessionTask), второго способа связать разговор с задачей не заводится.
 func (s *server) draftQuestion(projPath, id string) (text, sid string) {
-	for _, f := range sessionFiles(s.cfg.Home, projPath) {
+	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		task, _ := sessionTask(f.suffix, s.sessionHeadCached(f.path, f.stamp))
 		if task != id {
 			continue

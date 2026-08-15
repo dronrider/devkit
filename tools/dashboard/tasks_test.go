@@ -105,10 +105,10 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	// стенду нужны молчаливые add, commit и push.
 	runTaskctl(t, e.proj, "init", "--prefix", "XR", "--name", "demo")
 	for _, row := range [][]string{
-		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L"},
-		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M"},
-		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0"},
-		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0"},
+		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent"},
+		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M", "--accept", "agent"},
+		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
+		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
 	} {
 		runTaskctl(t, e.proj, append([]string{"add"}, row...)...)
 	}

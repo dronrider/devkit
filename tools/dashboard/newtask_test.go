@@ -244,6 +244,81 @@ func TestTaskCreateRefusals(t *testing.T) {
 	}
 }
 
+// Вид приёмки едет в add с формы (DK-301): умолчание агентское и без суффикса,
+// смешанный и пользовательский несут барьер и причину, и причина ложится в
+// раздел «Приёмка» файла задачи рядом со строкой барьера.
+func TestTaskCreateAcceptKinds(t *testing.T) {
+	e, c, gitLog := tasksEnv(t)
+
+	// Умолчание: без поля accept строка агентская, суффикса и файла нет.
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
+		`{"title": "Пятая, агентская по умолчанию", "r_parts": [25, 1, 1, 0, 0]}`)
+	newResp(t, resp, "заведение агентской строки")
+	if title, _ := taskRowField(t, getTask(t, c, e, "XR-005"), "title").(string); strings.Contains(title, "[приёмка:") {
+		t.Errorf("агентское умолчание повесило суффикс: %v", title)
+	}
+
+	// Смешанный вид: суффикс на доске, барьер и причина в разделе приёмки.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
+		`{"title": "Шестая, смешанная", "r_parts": [25, 1, 1, 0, 0], "accept": "mixed", "barrier": "глаза", "reason": "вид экрана на телефоне"}`)
+	newResp(t, resp, "заведение смешанной строки")
+	if kind := taskRowField(t, getTask(t, c, e, "XR-006"), "accept"); kind != "mixed" {
+		t.Errorf("вид смешанной строки не доехал: %v", kind)
+	}
+	if board := readFile(t, filepath.Join(e.proj, "docs", "TASKS.md")); !strings.Contains(board, "Шестая, смешанная [приёмка: mixed]") {
+		t.Errorf("суффикс приёмки не встал в строку доски:\n%s", board)
+	}
+	doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "XR-006.md"))
+	for _, want := range []string{"- вид: mixed", "- барьер «глаза»: вид экрана на телефоне"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("в разделе «Приёмка» нет %q:\n%s", want, doc)
+		}
+	}
+
+	// Пользовательский вид с барьером «согласие» и пустой причиной: строка
+	// заводится, скелет приёмки без причины.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
+		`{"title": "Седьмая, согласие", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "согласие"}`)
+	newResp(t, resp, "заведение пользовательской строки")
+	if kind := taskRowField(t, getTask(t, c, e, "XR-007"), "accept"); kind != "user" {
+		t.Errorf("вид пользовательской строки не доехал: %v", kind)
+	}
+	doc = readFile(t, filepath.Join(e.proj, "docs", "tasks", "XR-007.md"))
+	if !strings.Contains(doc, "- барьер «согласие»") {
+		t.Errorf("в файле задачи нет барьера «согласие»:\n%s", doc)
+	}
+
+	// Коммит дашборда берёт и файл приёмки, а не только доску.
+	if git := readFile(t, gitLog); !strings.Contains(git, "docs/TASKS.md docs/tasks/XR-006.md") {
+		t.Errorf("коммит смешанной строки не взял файл приёмки: %s", git)
+	}
+}
+
+// Отказы вида у ручки те же, что у воротов add: пустой барьер у не агентского
+// вида и чужой ключ отбиваются словами утилиты, доска не трогается.
+func TestTaskCreateAcceptRefusals(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	boardPath := filepath.Join(e.proj, "docs", "TASKS.md")
+	before := readFile(t, boardPath)
+	cases := []struct {
+		name, body, want string
+	}{
+		{"без барьера", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user"}`, "нужен --barrier"},
+		{"чужой барьер", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "чего"}`, "закрытого списка"},
+		{"чужой вид", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "robot"}`, "не из {agent, mixed, user}"},
+	}
+	for _, tc := range cases {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks", tc.body)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, tc.want) {
+			t.Errorf("%s: %d %s, ожидал 400 со словами %q", tc.name, resp.StatusCode, text, tc.want)
+		}
+	}
+	if after := readFile(t, boardPath); after != before {
+		t.Errorf("отбитое заведение тронуло доску:\n%s", after)
+	}
+}
+
 // Без входа не заводится ничего, чужой Origin отбивается до всякой записи.
 func TestNewTaskAuthAndOrigin(t *testing.T) {
 	e, c, _ := tasksEnv(t)
@@ -293,6 +368,12 @@ func TestStaticNewTaskForm(t *testing.T) {
 		"docs/tasks/drafts/",
 		"function renderNew(",
 		"function newTaskButton(",
+		// Вид приёмки на форме (DK-301): закрытые списки вида и барьера, поле
+		// причины и рубеж у не агентского вида без барьера.
+		"const ACCEPT_VALUES",
+		"const BARRIER_VALUES",
+		"Почему обход не годится",
+		"приёмка повисает без причины",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет надписи %q", want)

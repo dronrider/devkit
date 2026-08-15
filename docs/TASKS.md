@@ -37,7 +37,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-194 | LLD: карта проекта уровня модулей из кода в контекст сессий | LLD | P2 | 40 (25+8+3+0+4) | M | [tasks/DK-194.md](tasks/DK-194.md) |
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 39 (25+8+2+0+4) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
 | DK-308 | Цель: вид приёмки задачи назначается критериями и виден с доски | task | P2 | 39 (25+8+1+0+5) | XL | [tasks/DK-308.md](tasks/DK-308.md) |
-| DK-346 | devkitctl: параллельный раннер питоновой сюиты, классы отдельными процессами | task | P2 | 39 (25+7+3+0+4) | M | [docs/tasks/DK-166.md](docs/tasks/DK-166.md) |
+| DK-346 | devkitctl: параллельный раннер питоновой сюиты, классы отдельными процессами | task | P2 | 39 (25+7+3+0+4) | M | [tasks/DK-346.md](tasks/DK-346.md) |
 | DK-133 | LLD: единые ворота заведения строки доски при любом входе | LLD | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-133.md](tasks/DK-133.md) |
 | DK-158 | devkitctl selfcheck: живость связки после установки проверяется одной командой | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-158.md](tasks/DK-158.md) |
 | DK-161 | Цель: цикл цели ловит дефекты до выката, а человека спрашивает до старта | task | P2 | 38 (25+6+3+0+4) | XL | [tasks/DK-161.md](tasks/DK-161.md) |
@@ -46,12 +46,12 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-342 | dashboard: состояние «доставлено агенту» в очереди исходящих и честная плашка чата | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-327.md](tasks/DK-327.md) |
 | DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-327.md](tasks/DK-327.md) |
-| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 38 (25+6+3+0+4) | M | [docs/tasks/DK-166.md](docs/tasks/DK-166.md) |
+| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test [после DK-346, DK-347] | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |
 | DK-145 | Прогресс цели одной командой: закрытый вес против сожжённого бюджета | task | P2 | 37 (25+7+2+0+3) | M | [tasks/DK-145.md](tasks/DK-145.md) |
 | DK-168 | Цель: доска сама называет, что брать сейчас | task | P2 | 37 (25+6+2+0+4) | XL | [tasks/DK-168.md](tasks/DK-168.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
-| DK-347 | deploy.local: компоненты команды test идут параллельно с потолком воркеров | task | P2 | 37 (25+6+2+0+4) | M | [docs/tasks/DK-166.md](docs/tasks/DK-166.md) |
+| DK-347 | deploy.local: компоненты команды test идут параллельно с потолком воркеров [после DK-346] | task | P2 | 37 (25+6+2+0+4) | M | [tasks/DK-347.md](tasks/DK-347.md) |
 | DK-114 | Тропа к live-core с яруса исполнителей: board-batch и exec-агенты скилла не знают | task | P2 | 36 (25+4+3+0+4) | S | [tasks/DK-114.md](tasks/DK-114.md) |
 | DK-120 | Строка вердикта ревью от pick --record остаётся незакоммиченной и валит merge | task | P2 | 36 (25+5+2+0+4) | S | [tasks/DK-120.md](tasks/DK-120.md) |
 | DK-301 | Дашборд заводит задачу с видом приёмки, флаг add становится обязательным | task | P2 | 36 (25+6+2+0+3) | M | [tasks/DK-301.md](tasks/DK-301.md) |

@@ -23,7 +23,7 @@ const mailStamp = "2006-01-02T15:04:05"
 // mailMoved это порог метки движения цели, и он обязан совпадать с MOVED
 // почтальона: разъедься они, дашборд обещал бы доставку там, где почтальон её
 // уже не делает. Сведёнными их держат разбор в hooks/README.md и тест
-// TestGoalLiveThresholdMatchesPostman.
+// TestGoalLiveRuleMatchesPostman.
 const mailMoved = 3 * time.Hour
 
 // mailSayWord это начало строки доставки в журнале цикла. Свои строки

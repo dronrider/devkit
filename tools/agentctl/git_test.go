@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,9 @@ func TestRecordCommitsVerdictLine(t *testing.T) {
 		t.Fatalf("после pick --record дерево не чистое:\n%s", out)
 	}
 	subject := recordCommitSubject("T-001", "Ревью")
+	if subject != "docs(tasks): T-001 строка ревью в ход работы" {
+		t.Fatalf("ярлык в subject не строчный: %q", subject)
+	}
 	if subj := gitOut(t, root, "log", "-1", "--pretty=%s"); subj != subject {
 		t.Fatalf("тема коммита %q, жду %q", subj, subject)
 	}
@@ -92,6 +96,23 @@ func TestRecordCommitLeavesIndexAlone(t *testing.T) {
 	}
 	if files := gitOut(t, root, "show", "--name-only", "--pretty="); files != "docs/tasks/T-002.md" {
 		t.Fatalf("в коммит ушёл чужой файл: %q", files)
+	}
+}
+
+// TestRecordCommitFailureSpeaks: провал коммита строки печатается в stderr, а
+// не молчит. Молчание вернуло бы исходный баг DK-120 в тихом виде: строка
+// лежит, коммита нет, и узнаёт об этом только shipctl merge.
+func TestRecordCommitFailureSpeaks(t *testing.T) {
+	root := t.TempDir()
+	gitOut(t, root, "init", "-q", "-b", "main")
+	var warn bytes.Buffer
+	prev := recordWarn
+	recordWarn = &warn
+	t.Cleanup(func() { recordWarn = prev })
+	// В свежем пустом репозитории git add по несуществующему пути провалится.
+	commitTaskRecord(root, filepath.Join("docs", "tasks", "X-001.md"), "subject")
+	if !strings.Contains(warn.String(), "не закоммичена") {
+		t.Fatalf("провал коммита молчит, stderr: %q", warn.String())
 	}
 }
 

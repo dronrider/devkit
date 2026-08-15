@@ -58,6 +58,38 @@ BINARY_STUB = '#!/bin/sh\n[ "$1" = "--version" ] && echo "%s"\nexit 0\n'
 # Момент сборки релиза в тарболле: 2001 год.
 RELEASE_MTIME = 1000000000
 
+# Первый exec свежего скрипта на macOS платит проверку подписи кода, повторный
+# того же файла уже почти ничего. Стенд кладёт десяток заглушек отдельными
+# файлами, и первый доктор класса платил бы по трети секунды на каждую.
+# Поэтому заглушки бинарей это симлинки на один диспетчер: у него разбор по
+# собственному имени (basename $0), и каждое имя отвечает своей строкой
+# --version. Диспетчер прогревается одним холостым запуском при создании
+# стенда, а симлинки исполняются уже без проверки подписи. Заглушки, чьё тело
+# это целый скрипт (GO_STUB, BREW_STUB, обёртка devkitctl, taskctl с доской),
+# остаются отдельными файлами: их запускают считанные разы за прогон.
+DISPATCHER_HEAD = "#!/bin/sh\ncase \"$0\" in\n"
+DISPATCHER_CASE = "*%s) [ \"$1\" = \"--version\" ] && echo \"%s\"; exit 0 ;;\n"
+DISPATCHER_TAIL = "esac\nexit 0\n"
+
+
+def dispatcher_script(bodies):
+    """Скрипт диспетчера заглушек: имя -> строка --version."""
+    lines = [DISPATCHER_HEAD]
+    for name, line in bodies.items():
+        lines.append(DISPATCHER_CASE % (name, line))
+    lines.append(DISPATCHER_TAIL)
+    return "".join(lines)
+
+# Первый exec свежего скрипта на macOS платит проверку подписи кода, повторный
+# того же файла уже нет. Стенд кладёт заглушки отдельными файлами, и первый
+# доктор класса платил бы по трети секунды на каждую. Поэтому заглушка это
+# тело в переменной DEVKIT_STUB_BODY, а файл в стендовом bin это симлинк на
+# один прогретый диспетчер, читающий её и запускающий тело. Диспетчер
+# запускается при создании стенда единожды, симлинки на него исполняются без
+# проверки. Заглушки, чьё тело живёт файлом (GO_STUB, BREW_STUB, обёртка
+# devkitctl), остаются скриптами: их запускают считанные разы за прогон.
+DISPATCHER = "#!/bin/sh\nexec sh -c \"$DEVKIT_STUB_BODY\"\n"
+
 # Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист.
 # Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
 # и после реза он обязан оставаться разбираемым.
@@ -408,11 +440,18 @@ class Sandbox:
         # Машинный контур подставной: бинари devkit и tmux заглушками в своём
         # PATH. Иначе проверки цеплялись бы за настоящую машину. Заглушки
         # называют версию копии devkit: без неё доктор считает их разошедшимися.
+        # Лежат они симлинками на один диспетчер (см. DISPATCHER_HEAD): первый
+        # exec свежего скрипта платит проверку подписи кода, и десяток
+        # отдельных файлов собирал бы секунды на каждом первом докторе класса.
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for t in build.tools(self.dk):
-            executable(self.bin / t, BINARY_STUB % self.version_line(t))
-        executable(self.bin / "tmux")
+        bodies = {t: self.version_line(t) for t in build.tools(self.dk)}
+        bodies["tmux"] = ""
+        dispatcher = executable(self.bin / ".stub-dispatcher",
+                                dispatcher_script(bodies))
+        subprocess.run([str(dispatcher)], env=sandbox_env(), capture_output=True)
+        for t in list(bodies):
+            os.symlink(".stub-dispatcher", str(self.bin / t))
         self.sys = self.root / "sys"
         self.sys.mkdir()
         self.missing_tools = []

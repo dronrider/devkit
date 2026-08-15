@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -88,6 +91,39 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// writeAcceptReason вписывает причину непригодности обхода в строку барьера
+// раздела «Приёмка» файла задачи: «- барьер «глаза»:» получает текст причины.
+// Файл с разделом заводит taskctl add для не агентского вида, и без него
+// вписывать нечего.
+func writeAcceptReason(proj, id, reason string) error {
+	path := filepath.Join(proj, "docs", "tasks", id+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("файл задачи не читается, причина приёмки не записана: %w", err)
+	}
+	at := bytes.Index(data, []byte("## Приёмка"))
+	if at < 0 {
+		return errors.New("в файле задачи нет раздела «Приёмка»: причина не записана")
+	}
+	// Ищется строка барьера после заголовка раздела, а не с начала файла:
+	// слово «барьер» в постановке задачи встречается и раньше приёмки.
+	lineAt := bytes.Index(data[at:], []byte("- барьер «"))
+	if lineAt < 0 {
+		return errors.New("в разделе «Приёмка» нет строки барьера: причина не записана")
+	}
+	line := at + lineAt
+	rest := data[line:]
+	end := bytes.IndexByte(rest, '\n')
+	if end < 0 {
+		end = len(rest)
+	}
+	updated := append([]byte{}, data[:line]...)
+	updated = append(updated, rest[:end]...)
+	updated = append(updated, []byte(" "+reason)...)
+	updated = append(updated, data[line+end:]...)
+	return os.WriteFile(path, updated, 0o644)
+}
+
 // handleTaskCreate заводит полную строку доски: заголовок, тип, цена и
 // слагаемые ранга уезжают в taskctl add, а ранг, бакет P и место строки в
 // Backlog утилита считает сама. Файл задачи заводится тут же по флагу, той же
@@ -102,12 +138,15 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title  string `json:"title"`
-		Type   string `json:"type"`
-		Rank   string `json:"rank"`
-		RParts []*int `json:"r_parts"`
-		Cost   string `json:"cost"`
-		File   bool   `json:"file"`
+		Title   string `json:"title"`
+		Type    string `json:"type"`
+		Rank    string `json:"rank"`
+		RParts  []*int `json:"r_parts"`
+		Cost    string `json:"cost"`
+		File    bool   `json:"file"`
+		Accept  string `json:"accept"`
+		Barrier string `json:"barrier"`
+		Reason  string `json:"reason"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -138,7 +177,17 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": refusal})
 		return
 	}
-	args := []string{"add", "--title", strings.TrimSpace(body.Title), "--type", typ, "--rank", rank}
+	// Вид приёмки обязателен (DK-301), и умолчание агентское стоит на ручке:
+	// форма шлёт его сама, а кривой вид отбивает утилита своими словами.
+	accept := body.Accept
+	if accept == "" {
+		accept = "agent"
+	}
+	args := []string{"add", "--title", strings.TrimSpace(body.Title), "--type", typ,
+		"--rank", rank, "--accept", accept}
+	if accept != "agent" {
+		args = append(args, "--barrier", body.Barrier)
+	}
 	if body.Cost != "" {
 		args = append(args, "--cost", body.Cost)
 	}
@@ -170,6 +219,24 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 			resp["file"] = taskFileRel(id)
 			paths = append(paths, taskFileRel(id))
 			s.logf("файл задачи %s в %s: %s", id, found.Name, fileOut)
+		}
+	}
+	// Причина непригодности обхода стоит в разделе «Приёмка» рядом с барьером
+	// (LLD DK-292, решение 1): перебор обходов допишет исполнитель, а эту
+	// строку уже на месте читает ревьювер. У агентского вида барьера нет, и
+	// причина не пишется.
+	if reason := strings.TrimSpace(body.Reason); reason != "" && accept != "agent" {
+		if ferr := writeAcceptReason(found.Path, id, reason); ferr != nil {
+			if had := resp["note"]; had != "" {
+				resp["note"] = had + "; " + ferr.Error()
+			} else {
+				resp["note"] = ferr.Error()
+			}
+			s.logf("причина приёмки %s в %s не записалась: %v", id, found.Name, ferr)
+		} else if !slices.Contains(paths, taskFileRel(id)) {
+			// Файл с разделом заводит сам add у не агентского вида, и он едет в
+			// коммит доски вместе с причиной.
+			paths = append(paths, taskFileRel(id))
 		}
 	}
 	what := "строка заведена с дашборда"

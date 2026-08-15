@@ -450,7 +450,7 @@ func TestDraftOutcomeTraces(t *testing.T) {
 
 	// Оформлен: у черновика появилась строка на доске, и в ответе едет она сама.
 	promoted := makeDraft(t, c, e, "мысль, из которой вышла задача")
-	runTaskctl(t, e.proj, "add", "--id", promoted, "--title", "Из черновика", "--rank", "25+1+0+0+0")
+	runTaskctl(t, e.proj, "add", "--id", promoted, "--title", "Из черновика", "--rank", "25+1+0+0+0", "--accept", "agent")
 	got = draftOutcomeResp(t, c, e, promoted)
 	if got["state"] != "row" {
 		t.Fatalf("оформленная запись приехала с исходом %v: %v", got["state"], got)

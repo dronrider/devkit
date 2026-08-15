@@ -88,7 +88,7 @@ const goalDocBody = `# XR-100: Цель: пробный цикл
 func TestGoalTasksFromDoc(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	runTaskctl(t, e.proj, "add", "--id", "XR-100", "--title", "Цель: пробный цикл",
-		"--rank", "25+9+3+0+4", "--cost", "XL")
+		"--rank", "25+9+3+0+4", "--cost", "XL", "--accept", "agent")
 	goalDoc(t, e, "XR-100", goalDocBody)
 	runTaskctl(t, e.proj, "move", "XR-001", "in-progress")
 	// Закрытая задача уезжает в архив руками утилиты: в Check её пускают со
@@ -157,10 +157,10 @@ func TestGoalTasksFromDoc(t *testing.T) {
 // экрана.
 func TestGoalTasksEmptyDistinct(t *testing.T) {
 	e, c, _ := tasksEnv(t)
-	runTaskctl(t, e.proj, "add", "--id", "XR-101", "--title", "Цель: без файла", "--rank", "25+5+1+0+1")
-	runTaskctl(t, e.proj, "add", "--id", "XR-102", "--title", "Цель: без раздела", "--rank", "25+5+1+0+1")
+	runTaskctl(t, e.proj, "add", "--id", "XR-101", "--title", "Цель: без файла", "--rank", "25+5+1+0+1", "--accept", "agent")
+	runTaskctl(t, e.proj, "add", "--id", "XR-102", "--title", "Цель: без раздела", "--rank", "25+5+1+0+1", "--accept", "agent")
 	goalDoc(t, e, "XR-102", "# XR-102: Цель: без раздела\n\n## Цель\n\nПока только слова.\n")
-	runTaskctl(t, e.proj, "add", "--id", "XR-103", "--title", "Цель: раздел пуст", "--rank", "25+5+1+0+1")
+	runTaskctl(t, e.proj, "add", "--id", "XR-103", "--title", "Цель: раздел пуст", "--rank", "25+5+1+0+1", "--accept", "agent")
 	goalDoc(t, e, "XR-103", "# XR-103: Цель: раздел пуст\n\n## Задачи цели\n\nНарезки ещё не было.\n")
 
 	for _, tc := range []struct{ id, want string }{

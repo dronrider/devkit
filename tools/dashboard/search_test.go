@@ -23,7 +23,7 @@ func searchEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
 	e, c, _ := tasksEnv(t)
 	runTaskctl(t, e.proj, "add", "--id", "XR-010", "--title", "Поиск задач по доске и архиву",
-		"--rank", "25+7+3+0+2", "--cost", "M")
+		"--rank", "25+7+3+0+2", "--cost", "M", "--accept", "agent")
 	runTaskctl(t, e.proj, "draft", "поиск с телефона: лупа рядом с колокольчиком")
 	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
 		"|--------|--------|-----|---|---------|--------|\n" +
@@ -233,7 +233,7 @@ func TestSearchLimits(t *testing.T) {
 	for i := 1; i <= searchRowsMax+3; i++ {
 		id := fmt.Sprintf("XR-1%02d", i)
 		runTaskctl(t, e.proj, "add", "--id", id, "--title", "Широкая строка доски",
-			"--rank", "25+1+0+0+0")
+			"--rank", "25+1+0+0+0", "--accept", "agent")
 	}
 	for i := 1; i <= searchTextMax+2; i++ {
 		writeAt(t, filepath.Join(e.proj, "docs", "tasks", fmt.Sprintf("XR-2%02d.md", i)),

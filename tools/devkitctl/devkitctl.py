@@ -848,7 +848,7 @@ def code_commit(main, name):
     """
     where = "tools/%s/" % name
     rc, out = update.git(main, "log", "-1", "--format=%H", "--",
-                        where + "*.go", where + "go.mod", where + "go.sum")
+                         where + "*.go", where + "go.mod", where + "go.sum")
     return out.strip().splitlines()[0] if rc == 0 and out.strip() else ""
 
 

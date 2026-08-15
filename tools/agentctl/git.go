@@ -17,7 +17,15 @@ func recordCommitSubject(id, label string) string {
 // taskRecordGit это git-обёртка для коммита строки вердикта. Отдельна от
 // corpGit: той ошибка нужна как есть, а здесь удобна сводка с выводом git.
 func taskRecordGit(root string, args ...string) (string, error) {
+	return taskRecordGitCmd(root, nil, args...)
+}
+
+// taskRecordGitCmd запускает git с явным окружением и служит точкой перехвата
+// в тесте: пуш обязан уйти ровно «git -C <корень> push» с DEVKIT_PUSH_OK=1,
+// без открутки credential.helper и прочих -c.
+var taskRecordGitCmd = func(root string, env []string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
@@ -46,11 +54,9 @@ func commitTaskRecord(root, path, subject string) {
 
 // taskRecordPush пушит коммит строки вердикта. Отдельно от taskRecordGit:
 // разрешение хука pre-push ставится только этому вызову, а не любой команде
-// git. Сверх приёма taskctl пуш идёт с credential.helper= с пустым значением:
-// push из неинтерактивной сессии виснет на osxkeychain, который ожидает
-// разблокировки связки, а диалог показать некому (DK-120).
+// git. Приём тот же, что у taskctl -m --push: пустой credential.helper тут
+// не лечит виснущий на залоченной связке osxkeychain, а отрезает рабочую
+// учётку, из-за чего пуш падает даже на разблокированной связке.
 func taskRecordPush(root string) {
-	cmd := exec.Command("git", "-C", root, "-c", "credential.helper=", "push")
-	cmd.Env = append(os.Environ(), "DEVKIT_PUSH_OK=1")
-	cmd.Run()
+	taskRecordGitCmd(root, append(os.Environ(), "DEVKIT_PUSH_OK=1"), "push")
 }

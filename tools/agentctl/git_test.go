@@ -137,3 +137,30 @@ func TestRecordPushSeenByHook(t *testing.T) {
 		t.Fatalf("хук не увидел разрешение: %q", string(data))
 	}
 }
+
+// TestRecordPushArgv: пуш уходит ровно «git -C <корень> push», как у taskctl
+// -m --push. Открутка credential.helper в этом пуше не лечит виснущий на
+// залоченной связке osxkeychain, а отрезает рабочую учётку на разблокированной.
+func TestRecordPushArgv(t *testing.T) {
+	prev := taskRecordGitCmd
+	var gotArgs []string
+	var gotEnv []string
+	taskRecordGitCmd = func(root string, env []string, args ...string) (string, error) {
+		gotArgs, gotEnv = args, env
+		return "", nil
+	}
+	t.Cleanup(func() { taskRecordGitCmd = prev })
+	taskRecordPush("/tmp/root")
+	if strings.Join(gotArgs, " ") != "push" {
+		t.Fatalf("пуш ушёл не тем argv: %v", gotArgs)
+	}
+	ok := false
+	for _, e := range gotEnv {
+		if e == "DEVKIT_PUSH_OK=1" {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Fatalf("у пуша нет DEVKIT_PUSH_OK=1: %v", gotEnv)
+	}
+}

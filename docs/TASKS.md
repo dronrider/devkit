@@ -26,6 +26,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-354 | LLD: черновик на дашборде правится и грумится одним процессом [приёмка: user] | LLD | P2 | 40 (25+8+3+0+4) | M | [tasks/DK-354.md](tasks/DK-354.md) |
 | DK-158 | devkitctl selfcheck: живость связки после установки проверяется одной командой | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-158.md](tasks/DK-158.md) |
 | DK-304 | taskctl kinds: сводка по видам приёмки, расхождениям назначения и пересмотрам | task | P3 | 7 (0+5+1+0+1) | S | [tasks/DK-304.md](tasks/DK-304.md) |
+| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -46,7 +47,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P2 | 38 (25+7+3+0+3) | M | [tasks/DK-172.md](tasks/DK-172.md) |
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
-| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
 | DK-365 | Цель: квота второй подписки под контролем конвейера | task | P2 | 38 (25+8+1+0+4) | XL | [tasks/DK-365.md](tasks/DK-365.md) |
 | DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 38 (25+3+2+5+3) | S | [tasks/DK-367.md](tasks/DK-367.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |

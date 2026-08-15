@@ -431,9 +431,15 @@ func pickVerdict(root, id string, record bool, role, goal string) (pickResult, e
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		if err := recordExecution(root, id, v, c, cp, qf, tm, now, role); err != nil {
+		subject, err := recordExecution(root, id, v, c, cp, qf, tm, now, role)
+		if err != nil {
 			return res, err
 		}
+		// Строка вердикта это запись в файле задачи, и ревью её не ждёт: она
+		// коммитится тем же движением, каким пишется, иначе она держится на
+		// памяти диспетчера, забывается молча и ловится только отказом
+		// shipctl merge на незакоммиченном дереве (DK-120).
+		commitTaskRecord(root, filepath.Join("docs", "tasks", id+".md"), subject)
 	}
 	res.V, res.HC = v, hc
 	res.Text = fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
@@ -451,15 +457,17 @@ func pickVerdict(root, id string, record bool, role, goal string) (pickResult, e
 // тогда видно не только кто исполнял, но и кто читал дифф. Состояние квоты
 // идёт в строку всегда: без него запись про несдвинутый вердикт не отличает
 // выключенный корректор от снимка в норме, а по закрытой задаче потом не
-// восстановить, на каких данных модель выбиралась.
-func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) error {
+// восстановить, на каких данных модель выбиралась. Возврат это subject
+// коммита строки: он собирается здесь же, где известен ярлык записи, а
+// коммитит строку вызывающий код.
+func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) (string, error) {
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
+			return "", fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
 		}
-		return err
+		return "", err
 	}
 	content := strings.TrimRight(string(data), "\n") + "\n"
 	label := "Исполнение"
@@ -500,7 +508,10 @@ func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf qu
 	}
 	line := fmt.Sprintf("- %s: %s %s/%s по вердикту pick%s, %s.",
 		label, tm.word(v.Tier), name, v.Effort, tail, now.Format("2006-01-02"))
-	return os.WriteFile(path, []byte(insertIntoSection(content, "## Ход работы", line)), 0o644)
+	if err := os.WriteFile(path, []byte(insertIntoSection(content, "## Ход работы", line)), 0o644); err != nil {
+		return "", err
+	}
+	return recordCommitSubject(id, label), nil
 }
 
 // insertIntoSection дописывает строку в конец названного раздела: перед

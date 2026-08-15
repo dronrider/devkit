@@ -247,3 +247,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-194 | LLD: карта проекта уровня модулей из кода в контекст сессий | LLD | P2 | 2026-08-15 | [tasks/archive/2026/DK-194.md](tasks/archive/2026/DK-194.md) |
 | DK-342 | dashboard: состояние «доставлено агенту» в очереди исходящих и честная плашка чата | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-342.md](tasks/archive/2026/DK-342.md) |
 | DK-358 | dashboard: завершённый груминг висит живой работой до 12 минут | bug | P2 | 2026-08-15 | [tasks/archive/2026/DK-358.md](tasks/archive/2026/DK-358.md) |
+| DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-343.md](tasks/archive/2026/DK-343.md) |

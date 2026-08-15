@@ -14,7 +14,7 @@
 а не дорожка на компонент: два go-инструмента рядом прогоняют общую сборку
 пакетов, а освободившийся воркер забирает следующий компонент, не простаивая.
 
-Потолок по умолчанию ограничен восемью воркерами при четырнадцати компонентах:
+Потолок по умолчанию ограничен восемью воркерами при пятнадцати компонентах:
 за сюитой devkitctl стоят её собственные воркеры с подпроцессами, и общее
 число процессов обязано оставаться в плато, за которым сюита упирается в
 файловую систему, а не в CPU. Слишком малый потолок складывает go-инструменты
@@ -33,6 +33,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 # Корень чекаута: раннер лежит в tools/devkitctl на две ступени глубже.
@@ -57,6 +58,8 @@ def components(root=ROOT):
         ("skills", "kit/skills",
          [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"]),
         ("check-skills", "kit/skills", [sys.executable, "check-skills.py"]),
+        ("check-exec-bit", "hooks",
+         [sys.executable, "check-exec-bit.py"]),
         ("goal-loop", "kit/skills/goal-loop",
          [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"]),
         ("doctor", ".", [sys.executable, "tools/devkitctl/devkitctl.py",
@@ -98,14 +101,31 @@ def run_all(comps, workers, root=ROOT):
             except queue.Empty:
                 return
             started = time.monotonic()
-            # Группа процессов нужна ради стопа: у компонента свои подпроцессы
-            # (раннер сюиты, подпроцессы доктора), и terminate самого питона
-            # оставил бы их сиротами докручивать уже решённый прогон.
-            proc = subprocess.Popen(
-                argv, cwd=str(root / rel), env=command_env(argv),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                start_new_session=True)
+            # Старт и провал одного правила: компонент, который не смог
+            # запуститься (несуществующий cwd или бинарник), обязан красить
+            # прогон, а не молча выпадать из итога зелёным числом меньше.
+            # Поэтому исключение старта ловится здесь и гонится через тот же
+            # путь, что и неуспешный код возврата, с трейсбеком в выводе.
+            try:
+                # Группа процессов нужна ради стопа: у компонента свои
+                # подпроцессы (раннер сюиты, подпроцессы доктора), и
+                # terminate самого питона оставил бы их сиротами докручивать
+                # уже решённый прогон.
+                proc = subprocess.Popen(
+                    argv, cwd=str(root / rel), env=command_env(argv),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    start_new_session=True)
+            except Exception as exc:
+                out = "старт компонента не удался: %r\n%s" % (
+                    exc, traceback.format_exc())
+                with lock:
+                    if first_fail[0] is None:
+                        first_fail[0] = name
+                        stop.set()
+                    outcomes.append((name, None,
+                                     time.monotonic() - started, out))
+                continue
             kills = 0
             while True:
                 try:

@@ -41,9 +41,19 @@ class ComponentsTest(unittest.TestCase):
         names = [name for name, _, _ in parallel.components()]
         self.assertEqual(names[:8], ["go:" + t for t in parallel.GO_TOOLS])
         for name in ("hooks", "devkitctl", "skills", "check-skills",
-                     "goal-loop", "doctor"):
+                     "check-exec-bit", "goal-loop", "doctor"):
             self.assertIn(name, names)
-        self.assertEqual(len(names), 14)
+        self.assertEqual(len(names), 15)
+
+    def test_exec_bit_checker_is_in_the_chain(self):
+        # Чекер бита выполнения шёл отдельным шагом старой цепочки test и
+        # обязан переехать в раннер, иначе замена цепочки тихо теряла его
+        # локальный прогон (замечание ревью DK-347).
+        comp = {name: (rel, argv) for name, rel, argv in parallel.components()}
+        self.assertIn("check-exec-bit", comp)
+        rel, argv = comp["check-exec-bit"]
+        self.assertEqual(rel, "hooks")
+        self.assertEqual(argv[-1], "check-exec-bit.py")
 
     def test_go_stays_with_count_one(self):
         # -count=1 это требование DoD цели: кэш тестового прогона go обязан
@@ -128,6 +138,28 @@ class RunAllTest(Stand):
         self.assertFalse(marker.exists(),
                          "субпроцесс пережил стоп: SIGTERM ушёл только питону компонента")
 
+    def test_unstartable_component_fails_the_run(self):
+        # Компонент с несуществующим cwd не может стартовать, и провал старта
+        # обязан красить прогон, а не молча выпадать из итога: зелёное
+        # «Ran N of M» без одного компонента неотличимо от полного прогона
+        # (замечание ревью DK-347). Прогон в один воркер, чтобы зелёный
+        # компонент успел попасть в итог до провала соседа.
+        comps = [self.grow("a.sh", "exit 0"),
+                 ("lost.sh", "no-such-dir", [str(self.dir / "a.sh")])]
+        outcomes, first = parallel.run_all(comps, 1, root=self.dir)
+        self.assertEqual(first, "lost.sh")
+        self.assertEqual([o[0] for o in outcomes], ["a.sh", "lost.sh"])
+        self.assertIn("старт компонента не удался", outcomes[1][3],
+                      "трейсбек старта обязан доходить до итога")
+
+    def test_missing_binary_fails_the_run(self):
+        # Несуществующий бинарник это тот же провал старта: переименованный
+        # каталог утилиты или убранный скрипт обязаны валить прогон.
+        comps = [("ghost.sh", ".", [str(self.dir / "ghost.sh")])]
+        outcomes, first = parallel.run_all(comps, 1, root=self.dir)
+        self.assertEqual(first, "ghost.sh")
+        self.assertIn("FileNotFoundError", outcomes[0][3])
+
     def test_term_proof_component_is_killed_harder(self):
         # Компонент с игнорирующим TERM лидером группы обязан умереть по KILL:
         # стоп по первому провалу иначе виснет на упрямом подпроцессе.
@@ -177,7 +209,15 @@ class MainTest(Stand):
             rc = parallel.main(["--list"])
         self.assertEqual(rc, 0)
         self.assertIn("go:taskctl", out.getvalue())
-        self.assertIn("компонентов: 14", out.getvalue())
+        self.assertIn("компонентов: 15", out.getvalue())
+
+    def test_unstartable_component_exits_nonzero(self):
+        # Полный проход через main: провал старта валит прогон кодом 1, а не
+        # зелёным итогом с числом меньше полного.
+        rc, out = self.run_main([("lost.sh", "no-such-dir", ["./a.sh"])])
+        self.assertEqual(rc, 1)
+        self.assertIn("FAILED (first=lost.sh)", out)
+        self.assertIn("Ran 1 of 1 components", out)
 
 
 if __name__ == "__main__":

@@ -67,7 +67,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-122 | Отказ «конвейер занят» не говорит, кто держит замок | task | P2 | 32 (25+4+1+0+2) | S | [tasks/DK-122.md](tasks/DK-122.md) |
 | DK-185 | Точки вызова вычитки и короткий формат служебных записей | task | P2 | 32 (25+5+1+0+1) | S | [lld/DK-173-agent-prose.md](lld/DK-173-agent-prose.md) |
 | DK-339 | dashboard: таб черновиков на телефоне уводит с доски на отдельный экран | task | P2 | 32 (25+4+2+0+1) | S | [tasks/DK-339.md](tasks/DK-339.md) |
-| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 32 (25+4+1+0+2) | S | - |
+| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 32 (25+4+1+0+2) | S | [tasks/DK-357.md](tasks/DK-357.md) |
 | DK-123 | shipctl start в корп-контуре зовёт merge, которого там нет | bug | P2 | 31 (25+3+0+0+3) | S | [tasks/DK-123.md](tasks/DK-123.md) |
 | DK-353 | dashboard: черновики свежими вниз, выбора сортировки нет | task | P2 | 31 (25+4+2+0+0) | S | [tasks/DK-353.md](tasks/DK-353.md) |
 | DK-186 | Заголовки открытых строк доски и замена «след» на «лог хода» в DK-112, DK-153, DK-156 | task | P2 | 30 (25+4+0+0+1) | S | [lld/DK-173-agent-prose.md](lld/DK-173-agent-prose.md) |

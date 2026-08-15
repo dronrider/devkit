@@ -64,6 +64,13 @@ type boardRow struct {
 	// списка работ он отвечал ровно на один вопрос, «есть ли сейчас работа с
 	// таким же ID», и оборванный конвейер в нём был неотличим от очереди.
 	Run string `json:"run,omitempty"`
+	// Stage это вид деятельности строки словом (разработка, ревью, снаружи,
+	// уточнение), а StageSince момент начала этапа в unix-секундах. Отмечает
+	// этап конвейер записью за пределами репозитория (DK-338), дашборд её
+	// только читает. Пусто у строки без отмеченного этапа и у оборванного
+	// этапа, за которым живой сессии нет.
+	Stage      string `json:"stage,omitempty"`
+	StageSince int64  `json:"stage_since,omitempty"`
 }
 
 // Признак идущей работы словами: tmux это сессия дашборда, её и снимает
@@ -108,7 +115,7 @@ func rowRun(live map[string]string, id, key string) string {
 // правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
-func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
+func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -130,12 +137,24 @@ func boardRuns(raw json.RawMessage, works []Work) json.RawMessage {
 			json.Unmarshal(row["id"], &id)
 			json.Unmarshal(row["title"], &title)
 			json.Unmarshal(row["accept"], &accept)
-			if run := rowRun(live, id, key); run != "" {
+			run := rowRun(live, id, key)
+			if run != "" {
 				mark, err := json.Marshal(run)
 				if err != nil {
 					return raw
 				}
 				row["run"] = mark
+			}
+			if kind, since := rowStage(stages, run, id); kind != "" {
+				mark, err := json.Marshal(kind)
+				if err != nil {
+					return raw
+				}
+				row["stage"] = mark
+				if mark, err = json.Marshal(since); err != nil {
+					return raw
+				}
+				row["stage_since"] = mark
 			}
 			if order := rowOrder(key, id, accept, title); order != "" {
 				mark, err := json.Marshal(order)
@@ -350,6 +369,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	if raw, err := s.projectBoard(found.Path); err == nil {
 		view, _ := parseBoardView(raw)
 		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), id, row.Sect)
+		row.Stage, row.StageSince = rowStage(s.liveStages(found.Path), row.Run, id)
 	}
 	row.Order = rowOrder(row.Sect, id, row.Accept, row.Title)
 	resp := map[string]any{

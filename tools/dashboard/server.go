@@ -388,7 +388,7 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
-		"board":   boardRuns(raw, works),
+		"board":   boardRuns(raw, works, s.liveStages(found.Path)),
 		"works":   works,
 		"errors":  []string{},
 	}

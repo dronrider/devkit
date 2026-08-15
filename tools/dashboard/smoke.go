@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Сквозной прогон агентской части DoD цели DK-112: dashboard smoke поднимает
@@ -590,6 +592,10 @@ type smokeBoard struct {
 				// Run это признак идущей работы в самой строке: по нему строка
 				// рисует «Стоп» и отличает оборванную работу от очереди.
 				Run string `json:"run"`
+				// Stage и StageSince это вид деятельности и начало этапа: их
+				// кладёт в запись конвейер, а ручка доски отдаёт строкой (DK-338).
+				Stage      string `json:"stage"`
+				StageSince int64  `json:"stage_since"`
 			} `json:"rows"`
 		} `json:"sections"`
 	} `json:"board"`
@@ -655,6 +661,61 @@ func (s *smoke) stepBoard() (string, error) {
 	}
 	return fmt.Sprintf("секции %v, строк %d, работ нет, строка цели помечена «сессии нет»",
 		list.Projects[0].Sections, len(rows)), nil
+}
+
+// boardStage достаёт вид деятельности и начало этапа из строки доски.
+func boardStage(v smokeBoard, id string) (string, int64) {
+	for _, sec := range v.Board.Sections {
+		for _, row := range sec.Rows {
+			if row.ID == id {
+				return row.Stage, row.StageSince
+			}
+		}
+	}
+	return "", 0
+}
+
+// stepStage: вид деятельности едет полем строки доски. Запись этапа кладёт
+// конвейер, а не дашборд, поэтому шаг пишет её тем же вызовом, каким её пишет
+// agentctl pick --record, и смотрит, что ручка доски отдала вид и время начала
+// рядом с готовым признаком Run. Тут же проверяется оборванный этап: за строкой
+// в Backlog живой сессии нет, и запись за неё выдавать работу не должна.
+func (s *smoke) stepStage() (string, error) {
+	since := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
+	if err := stage.Open(s.home, s.proj, smokeGoal, stage.Dev, "субагент opus/high по вердикту pick", since); err != nil {
+		return "", err
+	}
+	if err := stage.Open(s.home, s.proj, smokeTask, stage.Review, "субагент sonnet/high по вердикту pick", since); err != nil {
+		return "", err
+	}
+	v, err := s.board()
+	if err != nil {
+		return "", err
+	}
+	kind, at := boardStage(v, smokeGoal)
+	if kind != stage.Dev {
+		return "", fmt.Errorf("вид деятельности строки %s %q, ждал %q", smokeGoal, kind, stage.Dev)
+	}
+	if at != since.Unix() {
+		return "", fmt.Errorf("начало этапа строки %s %d, ждал %d", smokeGoal, at, since.Unix())
+	}
+	if kind, _ := boardStage(v, smokeTask); kind != "" {
+		return "", fmt.Errorf("оборванный этап строки %s выдан за работу словом %q", smokeTask, kind)
+	}
+	// Ожидание снаружи живой сессии не требует по смыслу, и та же строка обязана
+	// его показать.
+	if err := stage.Open(s.home, s.proj, smokeTask, stage.Outside, "проверка после выката", since); err != nil {
+		return "", err
+	}
+	v, err = s.board()
+	if err != nil {
+		return "", err
+	}
+	if kind, _ := boardStage(v, smokeTask); kind != stage.Outside {
+		return "", fmt.Errorf("ожидание снаружи строки %s пришло как %q", smokeTask, kind)
+	}
+	return fmt.Sprintf("строка %s несёт «%s» с %s, оборванный этап %s не выдан за работу",
+		smokeGoal, stage.Dev, since.Format("15:04"), smokeTask), nil
 }
 
 // boardRun достаёт признак идущей работы из строки доски.
@@ -1473,6 +1534,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"состав цели сабтасками", s.stepComposition},
 		{"запуск работы", s.stepStart},
 		{"работа видна живой", s.stepWorks},
+		{"вид деятельности в строке доски", s.stepStage},
 		{"сообщение цели", s.stepMessage},
 		{"доставка реплики витку", s.stepDelivered},
 		{"подхват сообщения витком", s.stepTurn},

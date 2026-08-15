@@ -47,7 +47,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-338 | Конвейер отмечает этап работы: живое состояние за gitignore и история пакетом | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-338.md](tasks/DK-338.md) |
-| DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-327.md](tasks/DK-327.md) |
+| DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-343.md](tasks/DK-343.md) |
 | DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test [после DK-346, DK-347] | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |
 | DK-145 | Прогресс цели одной командой: закрытый вес против сожжённого бюджета | task | P2 | 37 (25+7+2+0+3) | M | [tasks/DK-145.md](tasks/DK-145.md) |

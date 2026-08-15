@@ -21,7 +21,7 @@ const ROW = `
       <span class="tt"><span class="ttl">Строка доски</span></span>
       <span class="meta">
         <span class="rank"><button class="rsum">40</button></span>
-        <span class="split"><button class="btn btn-sm btn-acc" id="m-run">Выполнить</button></span>
+        <button class="btn btn-sm btn-acc" id="m-run">Выполнить</button>
       </span>
     </div>
     <div class="trow">
@@ -29,7 +29,7 @@ const ROW = `
       <span class="tt"><span class="ttl">Строка в работе</span></span>
       <span class="meta">
         <span class="rank"><button class="rsum">66</button></span>
-        <span class="split"><button class="btn btn-sm btn-danger" id="m-stop">Стоп</button></span>
+        <button class="btn btn-sm btn-danger" id="m-stop">Стоп</button>
       </span>
     </div>
     <div class="trow">
@@ -37,7 +37,7 @@ const ROW = `
       <span class="tt"><span class="ttl">Заблокированная маркером</span></span>
       <span class="meta">
         <span class="rank"><button class="rsum">34</button></span>
-        <span class="split"><button class="btn btn-sm btn-acc" id="m-wait" disabled>Выполнить</button></span>
+        <button class="btn btn-sm btn-acc" id="m-wait" disabled>Выполнить</button>
       </span>
     </div>
   </div>`;
@@ -46,6 +46,14 @@ const ABAR = `
   <div class="card abar">
     <button class="btn" id="m-live">Живой статус</button>
     <span class="split"><button class="btn btn-acc" id="m-bar">Выполнить</button><button class="btn btn-acc more2" id="m-more"><span class="car"></span></button></span>
+    <button class="btn btn-danger" id="m-kill">Остановить агента</button>
+    <span class="hint">заказ агенту</span>
+  </div>`;
+
+const SINGLE = `
+  <div class="card abar">
+    <button class="btn" id="m-live">Живой статус</button>
+    <button class="btn btn-acc" id="m-bar">Выполнить</button>
     <button class="btn btn-danger" id="m-kill">Остановить агента</button>
     <span class="hint">заказ агенту</span>
   </div>`;
@@ -87,7 +95,7 @@ const RUN = `
     </div>
   </div>`;
 
-const MARKUP = { row: ROW, bar: ABAR, drop: DROP, ask: ASK, run: RUN };
+const MARKUP = { row: ROW, bar: ABAR, single: SINGLE, drop: DROP, ask: ASK, run: RUN };
 document.getElementById("groups").innerHTML = MARKUP[what] || ROW;
 
 function box(sel) {
@@ -108,6 +116,7 @@ function shape(id) {
     id + "-h=" + Math.round(rect.height),
     id + "-w=" + Math.round(rect.width),
     id + "-r=" + Math.round(parseFloat(cs.borderTopLeftRadius) || 0),
+    id + "-rr=" + Math.round(parseFloat(cs.borderTopRightRadius) || 0),
     id + "-pad=" + Math.round(parseFloat(cs.paddingLeft) || 0),
     id + "-fs=" + Math.round(parseFloat(cs.fontSize) || 0),
     id + "-dim=" + Math.round((parseFloat(cs.opacity) || 1) * 100),
@@ -119,6 +128,8 @@ if (what === "row") {
   out = out.concat(shape("m-run"), shape("m-stop"), shape("m-wait"));
 } else if (what === "bar") {
   out = out.concat(shape("m-live"), shape("m-bar"), shape("m-more"));
+} else if (what === "single") {
+  out = out.concat(shape("m-live"), shape("m-bar"));
 } else if (what === "drop") {
   // Меряется всё внутри самой коробки подтверждения: у карточки свои поля, и
   // считать от её края значило бы мерить их, а не раскладку кнопок.

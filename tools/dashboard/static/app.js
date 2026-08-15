@@ -590,13 +590,13 @@ function runControl(project, id, make, label, isGoal, tip, afterOk) {
     fire(wide, harnessDefault());
   });
   const list = harnesses();
-  const grp = el("span", "split");
-  grp.append(wide);
   if (isGoal || list.length < 2) {
     const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
-    return grp;
+    return wide;
   }
+  const grp = el("span", "split");
+  grp.append(wide);
   const pop = el("div", "hpop");
   pop.hidden = true;
   pop.append(el("span", "hph", "На какой подписке запустить"));

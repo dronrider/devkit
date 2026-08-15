@@ -58,6 +58,10 @@ func (e *testEnv) advance(d time.Duration) {
 // памяти процесса, пока её файл не тронут.
 func TestBoardReadOnceForRepeatedScreens(t *testing.T) {
 	e := newTestEnv(t)
+	// Часы заморожены по той же причине, что и в тесте обхода корней ниже:
+	// проверяется память, а не скорость цепочки запросов.
+	now := time.Now()
+	e.s.now = func() time.Time { return now }
 	log := filepath.Join(e.home, "taskctl.log")
 	writeScript(t, e.bin, "taskctl", countingScript(log, fmt.Sprintf("echo '%s'", boardFixtureJSON)))
 	c := e.loggedClient(t)
@@ -134,6 +138,11 @@ func TestBoardErrorNotRemembered(t *testing.T) {
 // запроса подряд, и каждый гонял git по всем кандидатам заново.
 func TestScanReadOnceForRepeatedRequests(t *testing.T) {
 	e := newTestEnv(t)
+	// Часы заморожены: тест проверяет саму память, а не скорость цепочки, а
+	// под параллельным прогоном репозитория запросы растягиваются за срок
+	// памяти, и обход честно пошёл бы в git заново.
+	now := time.Now()
+	e.s.now = func() time.Time { return now }
 	log := filepath.Join(e.home, "git.log")
 	writeScript(t, e.bin, "git", countingScript(log, "printf '.git\\n.git\\n'"))
 	c := e.loggedClient(t)

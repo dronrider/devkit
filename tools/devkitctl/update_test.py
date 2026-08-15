@@ -100,7 +100,11 @@ class UpdateCase(unittest.TestCase):
         stub_release(self.releases, "v0.10.0", self.tag_commit, self.NAMES)
         Requests.seen = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        # poll_interval меньше секунды по умолчанию: shutdown ждёт конца цикла
+        # опроса, и полсекунды на каждый из полусотни tearDown собирались в
+        # десятки секунд сюиты, хотя запросов у теста единицы.
+        threading.Thread(target=self.server.serve_forever,
+                         kwargs={"poll_interval": 0.02}, daemon=True).start()
         self.saved = {k: os.environ.get(k) for k in
                       (update.BIN_ENV, update.RELEASE_ENV, "PATH")}
         os.environ[update.BIN_ENV] = str(self.dest)
@@ -257,6 +261,39 @@ class SumsTest(unittest.TestCase):
         # Ассет есть, строки про него в SHA256SUMS нет: сверять нечем, и молча
         # ставить нельзя.
         self.assertIn("нет строки", update.verify(self.asset, {"чужой.tar.gz": "0"}))
+
+
+class GitReadCacheTest(UpdateCase):
+    """Кеш git-чтений на прогон команды: доктор спрашивает одно и то же по
+    многу раз, и каждый git это свой процесс. Проверяется всё водораздела:
+    включённый кеш отвечает из памяти, выключенный ходит в git каждый раз, а
+    меняющая команду кеш переживать не имеет права."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(update.git_cache, False)
+
+    def test_read_is_answered_from_the_cache(self):
+        update.git_cache(True)
+        update.git(self.dk, "symbolic-ref", "--quiet", "--short", "HEAD")
+        # Чтение мимо git: репозиторий меняется, а ответ остаётся прежним.
+        git(self.dk, "checkout", "-q", "-b", "другая")
+        self.assertEqual(update.current_branch(self.dk), "main")
+
+    def test_disabled_cache_reads_fresh(self):
+        update.git_cache(True)
+        update.git(self.dk, "symbolic-ref", "--quiet", "--short", "HEAD")
+        update.git_cache(False)
+        git(self.dk, "checkout", "-q", "-b", "другая")
+        self.assertEqual(update.current_branch(self.dk), "другая")
+
+    def test_mutating_command_drops_the_cache(self):
+        update.git_cache(True)
+        update.git(self.dk, "tag", "--list", "v*", "--sort=-v:refname")
+        # Fetch меняет известные клону теги, и ответ на «какой тег новее»
+        # обязан читаться заново, а не из снимка до похода в origin.
+        update.git(self.dk, "tag", "v0.11.0")
+        self.assertEqual(update.latest_tag(self.dk), "v0.11.0")
 
 
 class CheckoutModeTest(UpdateCase):

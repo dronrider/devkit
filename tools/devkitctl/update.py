@@ -64,10 +64,58 @@ UTILS = ("утилита", "утилиты", "утилит")
 FETCH_MAX_AGE = 14 * 24 * 3600
 
 
+# Доктор спрашивает у git одно и то же по многу раз за прогон: режим чекаута,
+# теги и коммиты читаются и в сводке, и в проверке бинарей, и в находке про
+# релиз. Каждый git это свой процесс, поэтому ответы чтений запоминаются, пока
+# кеш включён, а любая меняющая команда его чистит: fetch и checkout меняют
+# репозиторий, и теги после fetch читаются заново. Кеш не включён по умолчанию:
+# прямые вызовы из тестов ходят в git между собственными мутациями мимо этого
+# шлюза, и обязанность включать лежит на команде, у которой повторы внутри.
+# «tag <имя>» и «symbolic-ref <имя> <цель>» меняют репозиторий так же, как
+# fetch и checkout, а первым словом от чтений не отличаются, поэтому чтение
+# опознаётся по первому аргументу после подкоманды: у чтений это флаг или rev,
+# у мутации имя.
+GIT_MUTATIONS = frozenset(("fetch", "checkout", "commit", "push", "reset",
+                           "pull", "clone", "add", "rebase", "merge",
+                           "cherry-pick", "revert", "stash"))
+_git_cache = {}
+_git_cached = False
+
+
+def _is_read(args):
+    """Читает ли команда репозиторий, не меняя его."""
+    if not args:
+        return False
+    head = str(args[0])
+    if head in GIT_MUTATIONS:
+        return False
+    if head in ("tag", "symbolic-ref") and len(args) > 1 \
+            and not str(args[1]).startswith("-"):
+        return False
+    return True
+
+
+def git_cache(on):
+    """Включить или выключить кеш git-чтений и вычистить его."""
+    global _git_cached
+    _git_cached = on
+    _git_cache.clear()
+
+
 def git(devkit, *args):
+    key = (str(devkit),) + tuple(str(a) for a in args)
+    read = _is_read(args)
+    if read and _git_cached and key in _git_cache:
+        return _git_cache[key]
     p = subprocess.run(["git", "-C", str(devkit)] + [str(a) for a in args],
                        capture_output=True, text=True)
-    return p.returncode, (p.stdout + p.stderr).strip()
+    res = (p.returncode, (p.stdout + p.stderr).strip())
+    if _git_cached:
+        if read:
+            _git_cache[key] = res
+        else:
+            _git_cache.clear()
+    return res
 
 
 def bin_dir():

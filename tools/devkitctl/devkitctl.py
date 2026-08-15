@@ -734,7 +734,7 @@ def devkit_checkout():
     # бинарей сверяется с HEAD основного чекаута, а сборка из worktree ветки
     # задачи не запускается вовсе: машинный бинарь с непроверенной ветки уехал
     # бы во все проекты сразу.
-    rc, out = run(["git", "-C", str(DEVKIT), "rev-parse", "--git-common-dir"])
+    rc, out = update.git(DEVKIT, "rev-parse", "--git-common-dir")
     if rc != 0:
         return DEVKIT, True
     common = Path(out)
@@ -810,7 +810,7 @@ def unsaved_go(main):
     равен HEAD, а исходники уже другие, и сравнивать нечего. Только тут доктор
     досравнивает mtime, как делал до сверки по коммиту.
     """
-    rc, out = run(["git", "-C", str(main), "status", "--porcelain", "--", "*.go"])
+    rc, out = update.git(main, "status", "--porcelain", "--", "*.go")
     dirty = set()
     if rc != 0:
         return {}
@@ -833,8 +833,8 @@ def code_commit(main, name):
     рядом в каталоге утилиты лежит ещё и README, и по нему сверяться нельзя.
     """
     where = "tools/%s/" % name
-    rc, out = run(["git", "-C", str(main), "log", "-1", "--format=%H", "--",
-                   where + "*.go", where + "go.mod", where + "go.sum"])
+    rc, out = update.git(main, "log", "-1", "--format=%H", "--",
+                        where + "*.go", where + "go.mod", where + "go.sum")
     return out.strip().splitlines()[0] if rc == 0 and out.strip() else ""
 
 
@@ -847,11 +847,11 @@ def version_gap(main, code, commit):
     """
     if not code:
         return None
-    rc, _ = run(["git", "-C", str(main), "rev-parse", "--verify", "--quiet",
-                 "%s^{commit}" % commit])
+    rc, _ = update.git(main, "rev-parse", "--verify", "--quiet",
+                       "%s^{commit}" % commit)
     if rc != 0:
         return "этого коммита в клоне devkit нет"
-    rc, _ = run(["git", "-C", str(main), "merge-base", "--is-ancestor", code, commit])
+    rc, _ = update.git(main, "merge-base", "--is-ancestor", code, commit)
     if rc != 0:
         return "а код утилиты правился позже, в %s" % code[:12]
     return None
@@ -2391,6 +2391,11 @@ def main(argv):
     w.add_argument("--prompt", default=weigh.PROMPT, help="запрос прогона, у обоих он один")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
+        # Один прогон спрашивает у git одно и то же по многу раз (сводка режима,
+        # проверка бинарей, находка про релиз), поэтому чтения кешатся. Меняют
+        # репозиторий devkit только fetch и checkout в update.run, а их доктор
+        # не зовёт: установка бинарей из его --fix идёт без git-команд вовсе.
+        update.git_cache(True)
         rc = layout_only(a.dir) if a.layout else doctor(a.dir, a.fix)
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)

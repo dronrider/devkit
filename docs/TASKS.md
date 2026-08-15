@@ -31,7 +31,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| DK-347 | deploy.local: компоненты команды test идут параллельно с потолком воркеров | task | P2 | 37 (25+6+2+0+4) | M | [tasks/DK-347.md](tasks/DK-347.md) |
 
 ## Backlog
 
@@ -47,7 +46,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P2 | 38 (25+7+3+0+3) | M | [tasks/DK-172.md](tasks/DK-172.md) |
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
-| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test [после DK-347] | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
+| DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
 | DK-365 | Цель: квота второй подписки под контролем конвейера | task | P2 | 38 (25+8+1+0+4) | XL | [tasks/DK-365.md](tasks/DK-365.md) |
 | DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 38 (25+3+2+5+3) | S | [tasks/DK-367.md](tasks/DK-367.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |

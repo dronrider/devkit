@@ -45,6 +45,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P2 | 38 (25+7+3+0+3) | M | [tasks/DK-172.md](tasks/DK-172.md) |
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
+| DK-338 | Конвейер отмечает этап работы: живое состояние за gitignore и история пакетом | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-338.md](tasks/DK-338.md) |
 | DK-342 | dashboard: состояние «доставлено агенту» в очереди исходящих и честная плашка чата | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-327.md](tasks/DK-327.md) |
 | DK-343 | goal-loop: живая реплика в витке и зов оболочки через python3 | task | P2 | 38 (25+8+2+0+3) | M | [tasks/DK-327.md](tasks/DK-327.md) |
 | DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test [после DK-346, DK-347] | task | P2 | 38 (25+6+3+0+4) | M | [tasks/DK-348.md](tasks/DK-348.md) |
@@ -61,6 +62,8 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 35 (25+4+1+5+0) | - | [tasks/DK-315.md](tasks/DK-315.md) |
 | DK-344 | goal-run.py --ask: вопрос человеку с ожиданием ответа и отметкой в ящике | task | P2 | 35 (25+6+2+0+2) | M | [tasks/DK-327.md](tasks/DK-327.md) |
 | DK-303 | Открытые строки доски получают вид приёмки по критериям | task | P2 | 34 (25+6+0+0+3) | S | [tasks/DK-303.md](tasks/DK-303.md) |
+| DK-355 | dashboard: кружок статуса и колонка хода в строке доски [после DK-338] [приёмка: mixed] | task | P2 | 34 (25+7+1+0+1) | M | [tasks/DK-355.md](tasks/DK-355.md) |
+| DK-356 | dashboard: карта «Ход работы» на экране задачи [после DK-338] [приёмка: mixed] | task | P2 | 34 (25+6+2+0+1) | M | [tasks/DK-356.md](tasks/DK-356.md) |
 | DK-234 | Цель в Backlog при идущих витках это находка | task | P2 | 33 (25+4+2+0+2) | S | [tasks/DK-234.md](tasks/DK-234.md) |
 | DK-122 | Отказ «конвейер занят» не говорит, кто держит замок | task | P2 | 32 (25+4+1+0+2) | S | [tasks/DK-122.md](tasks/DK-122.md) |
 | DK-185 | Точки вызова вычитки и короткий формат служебных записей | task | P2 | 32 (25+5+1+0+1) | S | [lld/DK-173-agent-prose.md](lld/DK-173-agent-prose.md) |

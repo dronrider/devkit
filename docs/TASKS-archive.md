@@ -242,3 +242,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-337 | dashboard: кнопки действий не сверены с макетами экранов 11 и 12 целиком | bug | P2 | 2026-08-14 | [tasks/archive/2026/DK-337.md](tasks/archive/2026/DK-337.md) |
 | DK-136 | LLD: двусторонний чат с идущей сессией агента | LLD | P2 | 2026-08-15 | [tasks/archive/2026/DK-136.md](tasks/archive/2026/DK-136.md) |
 | DK-340 | hookio: ось события инструмента и второй канал ответа протокола | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-340.md](tasks/archive/2026/DK-340.md) |
+| DK-341 | hooks/inbox.py: почтальон доставляет реплики идущему витку на событии инструмента | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-341.md](tasks/archive/2026/DK-341.md) |

@@ -73,34 +73,24 @@ func TestAcceptSuffix(t *testing.T) {
 	}
 }
 
-// TestAddAcceptRequired: до DK-301 (дашборд шлёт вид) add без --accept
-// проходит с предупреждением в выводе, а не отказом: обязательным флаг
-// становится, когда его научились слать все три входа заведения (LLD DK-292,
-// «Входы заведения строки»). Молчаливого умолчания при этом нет, отсутствие
-// предупреждения роняет тест. Агентский вид заводится без суффикса и без
-// --barrier, --barrier у агентского и --barrier без --accept лишние.
+// TestAddAcceptRequired: add без --accept отказывает (DK-301 включил
+// обязательность: все три входа заведения слают флаг, LLD DK-292, «Входы
+// заведения строки»). Агентский вид заводится без суффикса и без --barrier,
+// --barrier у агентского и --barrier без --accept лишние.
 func TestAddAcceptRequired(t *testing.T) {
 	root := setup(t)
-	out, err := cmdAdd(root, AddParams{Title: "Без вида", Type: "task", Rank: "0+1+1+0+1", Link: "x"})
-	if err != nil {
-		t.Fatalf("add без --accept до DK-301 проходит: %v", err)
-	}
-	if !strings.Contains(out, "вид приёмки не назначен") {
-		t.Fatalf("add без --accept обязан предупреждать, вывод: %q", out)
+	if _, err := cmdAdd(root, AddParams{Title: "Без вида", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err == nil {
+		t.Fatal("add без --accept должен отбиваться")
 	}
 	if _, err := cmdAdd(root, AddParams{Title: "Барьер без вида", Type: "task", Rank: "0+1+1+0+1", Barrier: "глаза"}); err == nil {
 		t.Fatal("--barrier без --accept должен отбиваться")
 	}
-	// Агентский без барьера проходит, суффикса в заголовке нет; нет его и у
-	// строки без вида.
+	// Агентский без барьера проходит, суффикса в заголовке нет.
 	if _, err := cmdAdd(root, AddParams{Title: "Агентская", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatalf("agent add: %v", err)
 	}
 	b, _ := LoadBoard(boardPath(root))
-	if got := b.find("XR-008").Title; got != "Без вида" {
-		t.Fatalf("строка без вида не вешает суффикс: %q", got)
-	}
-	if got := b.find("XR-009").Title; got != "Агентская" {
+	if got := b.find("XR-008").Title; got != "Агентская" {
 		t.Fatalf("агентский вид не вешает суффикс: %q", got)
 	}
 	// --barrier у агентского лишний.

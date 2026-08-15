@@ -242,21 +242,21 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := checkCell("заголовок", p.Title); err != nil {
 		return "", err
 	}
-	// Вид приёмки при заведении (LLD DK-292, решение 3): без пометки
-	// отсутствие суффикса значило бы «не думали вовсе», а не «решили, что
-	// агентский». Обязательным флаг становится не раньше, чем его научились
-	// слать все три входа («Входы заведения строки»), а форму дашборда учит
-	// DK-301: до неё add без --accept заводит строку с предупреждением,
-	// молчаливого умолчания в переходный период не остаётся.
-	warn := ""
+	// Вид приёмки при заведении обязателен (LLD DK-292, решение 3): без
+	// пометки отсутствие суффикса значило бы «не думали вовсе», а не «решили,
+	// что агентский». Переходный период, когда add без --accept проходил с
+	// предупреждением, кончился: форму дашборда научил слать флаг DK-301, и
+	// молчаливого умолчания больше нет.
 	if p.Accept == "" {
 		if p.Barrier != "" {
 			return "", fmt.Errorf("--barrier без --accept не имеет смысла: барьер называют вместе с видом")
 		}
-		warn = "\nвнимание: вид приёмки не назначен, строка читается агентской; --accept станет обязательным с DK-301"
-	} else if !validAccept(p.Accept) {
+		return "", fmt.Errorf("нужен --accept agent|mixed|user: вид приёмки обязателен, agent это агентский вид")
+	}
+	if !validAccept(p.Accept) {
 		return "", fmt.Errorf("--accept %q не из {agent, mixed, user}", p.Accept)
-	} else if p.Accept == acceptAgent {
+	}
+	if p.Accept == acceptAgent {
 		if p.Barrier != "" {
 			return "", fmt.Errorf("--barrier не имеет смысла у агентского вида: барьер называют там, где вида нет")
 		}
@@ -369,7 +369,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if promoted {
 		msg += ", черновик перенесён в docs/tasks/" + id + ".md"
 	}
-	return msg + tail + warn, nil
+	return msg + tail, nil
 }
 
 func mustNum(id string) int {

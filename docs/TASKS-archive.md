@@ -252,3 +252,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-346 | devkitctl: параллельный раннер питоновой сюиты, классы отдельными процессами | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-346.md](tasks/archive/2026/DK-346.md) |
 | DK-344 | goal-run.py --ask: вопрос человеку с ожиданием ответа и отметкой в ящике | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-344.md](tasks/archive/2026/DK-344.md) |
 | DK-362 | dashboard: headless-запуск с доски не наблюдаем, чата нет в сессиях | bug | P2 | 2026-08-15 | [tasks/archive/2026/DK-362.md](tasks/archive/2026/DK-362.md) |
+| DK-303 | Открытые строки доски получают вид приёмки по критериям | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-303.md](tasks/archive/2026/DK-303.md) |

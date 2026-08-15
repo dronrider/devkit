@@ -29,6 +29,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 
 AUTONOMOUS_RE = re.compile(r"^\s*autonomous\s*=\s*true")
 
@@ -66,6 +67,10 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
 
 Ход цикла пишется в <корень>/.devkit/goal-<ID>.log: время, номер витка,
 маркер, код выхода, а строками --say туда же ложится ход самого витка.
+
+Каждый виток поднимается со своим именем сессии (--session-id), и оно лежит
+файлом session в каталоге замка рядом с pid: по нему почтальон hooks/inbox.py
+находит идущий виток и доносит до него реплику человека из чата.
 """
 
 
@@ -138,6 +143,12 @@ class Loop:
         self.log = os.path.join(self.devdir, "goal-%s.log" % goal_id)
         self.lock = os.path.join(self.devdir, "goal-%s.lock" % goal_id)
         self.pidfile = os.path.join(self.lock, "pid")
+        # Имя текущего витка: по нему почтальон (hooks/inbox.py) отличает виток
+        # цели от соседнего окна того же корня. Имя заводится на виток, а не на
+        # замок: одно имя на весь прогон второй виток поднимал бы уже занятым,
+        # и клиент либо отбил бы его кодом, либо поднял виток поверх чужого
+        # контекста.
+        self.sessfile = os.path.join(self.lock, "session")
         self.sess = "goal-%s" % goal_id
         self.prompt = "продолжай цель %s по скиллу goal-loop" % goal_id
         self.turn = 0
@@ -214,15 +225,11 @@ class Loop:
             # Замок без живого владельца остался от убитой оболочки:
             # перезагрузка, kill -9, закрытое окно tmux. Снимаем и берём себе,
             # иначе цикл не поднять до ручной уборки, а обрыв оболочки чинится
-            # повторным запуском.
-            try:
-                os.remove(self.pidfile)
-            except OSError:
-                pass
-            try:
-                os.rmdir(self.lock)
-            except OSError:
-                pass
+            # повторным запуском. Каталог снимается целиком, а не перечнем
+            # известных имён: содержимое замка это его частное дело, и рядом с
+            # pid там живёт имя витка, из-за которого rmdir ушёл бы в
+            # ENOTEMPTY, а брошенный цикл чинился бы с клавиатуры.
+            shutil.rmtree(self.lock, ignore_errors=True)
             try:
                 os.mkdir(self.lock)
             except OSError:
@@ -232,14 +239,10 @@ class Loop:
         return True
 
     def release(self):
-        try:
-            os.remove(self.pidfile)
-        except OSError:
-            pass
-        try:
-            os.rmdir(self.lock)
-        except OSError:
-            pass
+        # Каталог уходит целиком, вместе с именем витка: ни одно имя не должно
+        # пережить оболочку, иначе почтальон адресовал бы почту сессии, которой
+        # давно нет.
+        shutil.rmtree(self.lock, ignore_errors=True)
 
     # -- журнал оболочки и уведомитель --------------------------------------
 
@@ -350,7 +353,19 @@ class Loop:
         # работы, а молчание неотличимо от вставшего цикла. Дальше журнал
         # наполняет сам виток строками --say.
         self.say("виток %d поднят, ход витка ниже" % self.turn)
-        p = subprocess.run(["claude", "-p", self.prompt], cwd=self.proj,
+        # Своё имя витку выдаётся до подъёма клиента и кладётся в замок: почта
+        # человека едет в идущий виток по этому имени, и файл переписывается
+        # целиком, чтобы имя прошлого витка не осталось хвостом. Между витками
+        # в файле лежит имя того, кто уже кончился, и читается это правильно:
+        # почта тогда никому не уезжает и её прочитает шаг 1 следующего витка.
+        sid = str(uuid.uuid4())
+        try:
+            with open(self.sessfile, "w", encoding="utf-8") as f:
+                f.write(sid + "\n")
+        except OSError as e:
+            self.say("имя витка %d не записано в замок (%s): живая реплика доедет "
+                      "не раньше следующего витка" % (self.turn, e))
+        p = subprocess.run(["claude", "-p", "--session-id", sid, self.prompt], cwd=self.proj,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         after = self.journal_entries()
         code = p.returncode

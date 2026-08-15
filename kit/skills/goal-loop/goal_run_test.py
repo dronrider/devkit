@@ -62,6 +62,16 @@ goal = os.path.join(root, "proj", "docs", "tasks", "DK-100.md")
 
 with open(os.path.join(root, "calls"), "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
+# Имя витка снимается прямо во время витка: после цикла замка уже нет, а
+# вопрос теста именно в том, чьё имя лежало в замке, пока виток шёл.
+try:
+    with open(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock", "session"),
+              encoding="utf-8") as f:
+        named = f.read().strip()
+except OSError:
+    named = "-"
+with open(os.path.join(root, "sessions"), "a", encoding="utf-8") as f:
+    f.write(named + "\n")
 with open(os.path.join(root, "calls"), encoding="utf-8") as f:
     turn = sum(1 for _ in f)
 with open(os.path.join(root, "turns"), encoding="utf-8") as f:
@@ -255,7 +265,7 @@ class GoalRunTests(unittest.TestCase):
         self.assertEqual(self.turns_done(root), 3)
         with open(os.path.join(root, "calls"), encoding="utf-8") as f:
             first_call = f.readline()
-        self.assertIn("-p продолжай цель DK-100 по скиллу goal-loop", first_call)
+        self.assertIn("продолжай цель DK-100 по скиллу goal-loop", first_call)
         log = self.shell_log(root)
         self.assertIn("виток 1 маркер continue код 0", log)
         self.assertIn("виток 3 маркер done код 0", log)
@@ -346,6 +356,53 @@ class GoalRunTests(unittest.TestCase):
             f.write("%d\n" % alive.pid)
         p = self.goal_run(root, "DK-100", "--foreground")
         self.assertEqual(p.returncode, 0, "брошенный замок не снялся: %s" % p.stdout)
+        self.assertEqual(self.turns_done(root), 1, "цикл после брошенного замка не пошёл")
+
+    def test_each_turn_is_raised_with_its_own_name_in_the_lock(self):
+        # Имя витка это третий шаг адреса почтальона: он сверяет session_id
+        # события с файлом session в замке. Имя выдаётся на виток, а не на
+        # замок, иначе второй виток поднимался бы с занятым именем, а почта
+        # после первого витка молча не доезжала бы никуда.
+        root = self.stand("continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        with open(os.path.join(root, "calls"), encoding="utf-8") as f:
+            calls = [l.split() for l in f.read().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        for c in calls:
+            self.assertIn("--session-id", c, "виток поднят без имени сессии: %s" % c)
+        ids = [c[c.index("--session-id") + 1] for c in calls]
+        self.assertEqual(len(set(ids)), 2, "оба витка подняты одним именем: %s" % ids)
+        with open(os.path.join(root, "sessions"), encoding="utf-8") as f:
+            named = f.read().split()
+        self.assertEqual(ids, named, "в файле session лежит имя не того витка, что идёт")
+
+    def test_release_takes_the_whole_lock_directory(self):
+        # Замок снимается целиком, вместе с именем витка: перечень известных
+        # имён оставил бы каталог непустым, а rmdir ушёл бы в ENOTEMPTY.
+        root = self.stand("done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertFalse(os.path.exists(os.path.join(root, "proj", ".devkit",
+                                                     "goal-DK-100.lock")),
+                         "каталог замка пережил цикл")
+
+    def test_stale_lock_with_a_session_file_is_reclaimed(self):
+        # Оболочка, убитая kill -9 или закрытым окном tmux, оставляет в замке и
+        # pid, и имя витка. Следующий запуск снимает такой замок целиком, иначе
+        # брошенный цикл чинился бы с клавиатуры ровно в том режиме, ради
+        # которого заведён живой канал.
+        root = self.stand("done запись")
+        lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
+        os.makedirs(lock)
+        dead = subprocess.Popen(["sleep", "0"])
+        dead.wait()
+        with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
+            f.write("%d\n" % dead.pid)
+        with open(os.path.join(lock, "session"), "w", encoding="utf-8") as f:
+            f.write("имя витка прошлой оболочки\n")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, "брошенный замок с именем витка не снялся: %s" % p.stdout)
         self.assertEqual(self.turns_done(root), 1, "цикл после брошенного замка не пошёл")
 
     # -- стоп без вердикта и попытки ----------------------------------------

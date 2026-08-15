@@ -6,7 +6,9 @@ devkit: заглушки доску и ветку не двигают, а про
 на класс.
 """
 import unittest
+from pathlib import Path
 
+import selfcheck
 import testenv
 from testenv import SandboxCase, go_cache_env, run, write
 
@@ -48,7 +50,7 @@ class SelfcheckTest(SandboxCase):
         where.mkdir()
         rc, out = self.run_selfcheck(where)
         self.assertEqual(rc, 0, "живой круг не прошёл:\n%s" % out)
-        # Доктор в стендовом окружении всегда назвает находки раскладки
+        # Доктор в стендовом окружении всегда называет находки раскладки
         # (rc=1), и круг их провалом не считает: проверяется, что шаг был и
         # находки перечислены в конце, а не строка «доктор: ок», которая на
         # реальной машине после установки одна и есть.
@@ -88,6 +90,32 @@ class SelfcheckTest(SandboxCase):
         self.assertEqual(rc, 1, "круг со сломанным PATH прошёл:\n%s" % out)
         self.assertIn("доктор: не прошёл", out, "провал не назван первым шагом")
         self.assertIn("devkitctl", out, "вывод провала пуст")
+
+    def test_silent_deploy_fails_merge_step(self):
+        # Обман слияния, единственное место честности отчёта на перепроверке:
+        # слияние отвечает «ок», а выкат метки не оставил. Такой круг обязан
+        # ронять шаг слияния, а не называть связку живой. Выкат подменяется
+        # пустой командой после того, как круг заполнил болванку deploy.local.
+        where = self.box.root / "circle-silent-deploy"
+        where.mkdir()
+        real_stub = selfcheck.deploy_stub
+
+        def silent_stub(root):
+            real_stub(root)
+            dep = Path(root) / ".devkit" / "deploy.local"
+            dep.write_text("deploy = python3 -c pass\ntest = %s\nautonomous = true\n"
+                           % selfcheck.TEST_CMD, encoding="utf-8")
+
+        selfcheck.deploy_stub = silent_stub
+        try:
+            rc, out = self.run_selfcheck(where)
+        finally:
+            selfcheck.deploy_stub = real_stub
+        self.assertEqual(rc, 1, "тихий выкат прошёл круг живым:\n%s" % out)
+        self.assertIn("слияние с выкатом: не прошёл", out,
+                      "обман слияния не назван шагом")
+        self.assertIn("выкат не оставил метку", out, "провал не назвал причину")
+        self.assertNotIn("связка жива", out, "несработавший выкат назван живым")
 
 
 if __name__ == "__main__":

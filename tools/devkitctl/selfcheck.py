@@ -10,8 +10,10 @@
 selfcheck зовётся после неё, поверх установленных бинарей. Проверяется не код,
 а собранное и разложенное: тот PATH, что достанется человеку, и те утилиты,
 что стоят на машине. Поэтому все утилиты зовутся по имени из PATH, а не путём
-в чекаут devkit, и настоящий HOME в прогоне не меняется: круг работает в
-своём временном каталоге, автор коммитов задаётся переменными окружения
+в чекаут devkit. Своего HOME у круга нет: утилиты devkit пишут в дом и без
+ведома вызвавшего (taskctl ведёт записи ~/.devkit/runs, уведомитель пишет
+~/.devkit/notify.log), поэтому сабпроцессы круга получают вместо настоящего
+дома свой каталог, а автор коммитов задаётся переменными окружения
 GIT_AUTHOR_* и GIT_COMMITTER_*, а не записью в ~/.gitconfig.
 
 Временный проект устраивается как живой: рядом с ним заводится голый
@@ -36,14 +38,10 @@ from pathlib import Path
 
 PREFIX = "SC"
 TASK = "SC-001"
-# Выкат временного проекта подставной: файл-метка внутри того же каталога.
-# Пишется самим python3, без внешних утилит: выкат идёт через sh -c в том же
-# PATH, что и круг, и barebone-окружение не обязано знать touch(1).
+# Выкат и тесты временного проекта подставные, обе команды на самом python3
+# без внешних утилит: слияние гоняет их через sh -c в том же PATH, и
+# минимальному окружению вроде CI-контейнера незачем знать touch(1) и true(1).
 DEPLOY_CMD = "python3 -c \"open('.devkit/selfcheck-deployed','w').close()\""
-# Тесты временного проекта тоже подставные: у синтетического проекта нет
-# тестового набора, а слияние по правилам идёт только зелёным. Ставится сам
-# python3, без внешних утилит: прогон идёт через sh -c, и barebone-окружение
-# вроде CI-контейнера не обязано знать true(1).
 TEST_CMD = "python3 -c pass"
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "selfcheck",
@@ -56,10 +54,19 @@ VERIFY_HEADER = "## Проверка"
 TIMEOUT = 900
 
 
-def run(args, cwd=None, env=None, timeout=TIMEOUT):
-    """Прогон команды в окружении круга. Отдаёт код и слитый вывод."""
+def run(args, cwd=None, env=None, timeout=TIMEOUT, home=None):
+    """Прогон команды в окружении круга. Отдаёт код и слитый вывод.
+
+    home подставляет сабпроцессам вместо настоящего дома временный каталог:
+    утилиты devkit пишут в ~/.devkit и без ведома вызвавшего (taskctl ведёт
+    записи runs, уведомитель журнал notify.log), и без подмены круг оставлял
+    бы след в машине, которую проверяет. Без home наследуется окружение
+    родителя: так круг зовётся из тестов со своим стендовым домом.
+    """
     e = dict(os.environ)
     e.update(GIT_ENV)
+    if home is not None:
+        e["HOME"] = str(home)
     if env:
         e.update(env)
     p = subprocess.run([str(a) for a in args], cwd=cwd and str(cwd), env=e,
@@ -74,26 +81,23 @@ def tail(text, limit=15):
     return "\n".join(lines[-limit:])
 
 
-def snapshot(where):
-    """Слепок места круга: имена сиблингов и ветки репозитория.
+def leftover_branches(proj, cmd_run=None):
+    """Ветки задачи, оставшиеся в репозитории проекта после круга.
 
-    Дерево задачи shipctl заводит сиблингом проекта (treePath), а ветку в
-    репозитории самого проекта, и уборка судится по составу каталога и списку
-    веток: после круга на месте не остаётся ни дерева, ни ветки, ни метки
-    выката. where это каталог, в котором лежит проект; ветки спрашиваются у
-    него самого, если он уже git-репозиторий.
+    Слияние уносит ветку задачи с собой (merge удаляет её), и оставшаяся
+    ветка это след за кругом. Основная ветка следом не считается: она была у
+    проекта до круга. Слепок снимается до сноса проекта, снесённый
+    репозиторий уже ничего не расскажет.
     """
-    where = Path(where)
-    if not where.exists():
-        return "каталога нет"
-    names = sorted(p.name for p in where.iterdir())
-    branches = []
-    if (where / ".git").is_dir():
-        rc, out = run(["git", "-C", str(where), "for-each-ref",
-                       "--format=%(refname:short)", "refs/heads"])
-        if rc == 0:
-            branches = [ln.strip() for ln in out.split("\n") if ln.strip()]
-    return "записи: %s; ветки: %s" % (", ".join(names), ", ".join(branches) or "-")
+    runner = cmd_run or run
+    rc, out = runner(["git", "-C", str(proj), "for-each-ref",
+                      "--format=%(refname:short)", "refs/heads"])
+    if rc != 0:
+        return []
+    branches = [ln.strip() for ln in out.split("\n") if ln.strip()]
+    rc, out = runner(["git", "-C", str(proj), "symbolic-ref", "--short", "HEAD"])
+    trunk = out.strip().split("\n")[-1].strip() if rc == 0 and out.strip() else ""
+    return [b for b in branches if b != trunk]
 
 
 def deploy_stub(root):
@@ -261,17 +265,29 @@ def main(argv=None, cmd_run=None, where=None, log=print):
         mine = False
     where = Path(where)
     proj = where / "proj"
+    home = where / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    if cmd_run is run:
+        # Боевой прогон работает с подменённым домом: утилиты devkit пишут в
+        # ~/.devkit без ведома вызвавшего, и круг обязан оставить машину
+        # нетронутой. Тесты приносят свой прогонщик со стендовым домом.
+        cmd_run = lambda args, cwd=None: run(args, cwd=cwd, home=home)
     log("самопроверка связки devkit: временный проект в %s" % proj)
     try:
-        before = snapshot(where)
         steps = circle(cmd_run, proj, log)
-        # Собственные каталоги круга сносятся сразу: слепок «после» судит об
-        # оставшемся от связки, а не о самом круге.
+        # Уборка судится двумя слепками: ветки репозитория проекта до и после
+        # круга (слияние обязано унести ветку задачи с собой) и пустота места
+        # после сноса собственных каталогов круга.
+        branches = leftover_branches(proj, cmd_run)
         shutil.rmtree(str(proj), ignore_errors=True)
         shutil.rmtree(str(where / "origin.git"), ignore_errors=True)
-        after = snapshot(where)
-        if after != before:
-            log("за кругом осталось (до: %s; после: %s)" % (before, after))
+        shutil.rmtree(str(home), ignore_errors=True)
+        residue = sorted(p.name for p in where.iterdir())
+        if branches:
+            log("за кругом осталась ветка задачи в репозитории проекта: %s"
+                % ", ".join(branches))
+        if residue:
+            log("за кругом осталось в месте круга: %s" % ", ".join(residue))
         doctor = next((s for s in steps if s["name"] == "доктор"), None)
         failed = next((s for s in steps if s["rc"] != 0
                        and not (s is doctor and s["rc"] == 1)), None)

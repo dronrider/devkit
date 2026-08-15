@@ -932,6 +932,9 @@ for (const [list, note, why] of [
   await settle();
   const one = find(groups, "XR-6");
   if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
+  // Вырожденная кнопка запуска (без узкой части) не обёрнута в split, иначе
+  // правые углы обрезаны CSS правилом .split .btn:not(.more2) (DK-349).
+  if (byClass(one, "split")) fail("при одной подписке или пустом списке кнопка обёрнута в split: " + dump(one));
   const only = button(one, "Выполнить");
   if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
   if (!String(only.title).includes(why)) {

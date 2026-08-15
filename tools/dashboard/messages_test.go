@@ -658,6 +658,7 @@ func TestStaticChatHonesty(t *testing.T) {
 	for _, want := range []string{
 		"Сообщение уйдёт агенту.",
 		"Он отреагирует на него на следующей рабочей итерации.",
+		"Идущий виток получит его за минуты",
 		"ждёт витка",
 		"Написать агенту...",
 		"Остановить агента",
@@ -675,7 +676,7 @@ func TestStaticChatHonesty(t *testing.T) {
 // подхваченная витком не исчезает, а подписывается прочитанной.
 func TestStaticChatMessageStates(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{"в очереди", "ждёт витка", "прочитано агентом"} {
+	for _, want := range []string{"в очереди", "ждёт витка", "доставлено агенту", "прочитано агентом"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет состояния реплики %q", want)
 		}

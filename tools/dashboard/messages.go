@@ -319,7 +319,7 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGoalMessageGet(w http.ResponseWriter, r *http.Request) {
-	_, id, path, _, ok := s.goalFile(w, r)
+	found, id, path, _, ok := s.goalFile(w, r)
 	if !ok {
 		return
 	}
@@ -329,7 +329,14 @@ func (s *server) handleGoalMessageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pending := inboxLines(string(doc))
-	resp := map[string]any{"id": id, "pending": pending}
+	// Доставка идущему витку приходит той же ручкой (LLD DK-136, «Что видит
+	// человек»): отметки почтальона лежат в .devkit/goal-<ID>.mail, своей
+	// ручки каналу не нужно. Отметку ставит и почтальон, и ключ --ask
+	// оболочки, и различать их клиенту незачем: состояние у строки одно.
+	// Рядом идёт живость витка, по которой пишется плашка чата.
+	resp := map[string]any{"id": id, "pending": pending,
+		"delivered": delivered(pending, readMarks(mailPath(found.Path, id))),
+		"live":      s.goalLive(found.Path, id)}
 	// Пустота различима: «витку нечего ждать» это слова, а не пустой список
 	// без причины.
 	if len(pending) == 0 {

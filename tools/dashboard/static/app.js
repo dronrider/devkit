@@ -2874,8 +2874,25 @@ async function wireChatFeed(project, feed, id) {
 const SENT_META = {
   queued: "в очереди",
   waiting: "ждёт витка",
+  delivered: "доставлено агенту",
   read: "прочитано агентом",
 };
+
+// Доставка приходит без человека: почтальон (hooks/inbox.py) вносит лежащую
+// строку прямо в идущий виток, и узнать об этом дашборд может только
+// перечитыванием «Входящих». Шаг короткий, чтение дешёвое, а без него
+// доставленная реплика выглядела бы ждущей до следующего открытия чата.
+const OUTBOX_POLL = 15000;
+
+// Подпись доставленной реплики. Время у отметки есть всегда, а сессия не
+// всегда: строку, съеденную вопросом витка (--ask), не называл никакой виток,
+// и пустая скобка там была бы вопросом без ответа.
+function deliveredMeta(mark) {
+  if (!mark) return SENT_META.delivered;
+  const at = mark.at ? localTime(mark.at) : "";
+  return SENT_META.delivered + (at ? " в " + at : "") +
+    (mark.session ? ", сессия " + String(mark.session).slice(0, 8) : "");
+}
 
 // Шаг повтора: первая задержка короткая, дальше удвоение до потолка, чтобы
 // сутки без связи не превратились в тысячи запросов. Через OUTBOX_STUCK
@@ -2931,11 +2948,13 @@ function sentWrite(project, id, list) {
 // Отправленное человеком под лентой чата: свои реплики со своими состояниями
 // плюс чужие строки «Входящих» (их мог положить другой браузер или рука).
 // Пустота говорит словами: пустая коробка неотличима от неотрисованной.
-function makeOutbox(project, id, box) {
+function makeOutbox(project, id, box, onLive) {
   const url = "/api/projects/" + encodeURIComponent(project) +
     "/goals/" + encodeURIComponent(id) + "/message";
   const mine = sentRead(project, id);
   let others = [];
+  // Отметки доставки лежащих строк, ключ это строка «Входящих» целиком.
+  let marks = new Map();
   let empty = "во «Входящих» пусто: непрочитанных сообщений нет";
   let failed = "";
   // Заход очереди идёт по одному: два параллельных дожима слали бы один и тот
@@ -2951,6 +2970,7 @@ function makeOutbox(project, id, box) {
   // называет причину и считает минуты, а до того «в очереди» одинаково
   // подходит и идущему запросу, и первым неудачным попыткам.
   const label = (m) => {
+    if (m.state === "delivered") return deliveredMeta(m.mark);
     if (m.state !== "queued") return SENT_META[m.state];
     const held = m.since ? Date.now() - m.since : 0;
     if (held < OUTBOX_STUCK) return SENT_META.queued;
@@ -2966,15 +2986,21 @@ function makeOutbox(project, id, box) {
 
   const draw = () => {
     box.replaceChildren();
-    for (const line of others) box.append(chatBubble("вы", line, "ждёт витка"));
+    // Чужая строка тоже несёт своё состояние: положить её мог другой браузер
+    // или рука, а доставка у неё та же самая.
+    for (const line of others) {
+      box.append(chatBubble("вы", line,
+        marks.has(line) ? deliveredMeta(marks.get(line)) : "ждёт витка"));
+    }
     for (const m of mine) box.append(bubble(m));
     if (!others.length && !mine.length) box.append(el("div", "empty", empty));
     if (failed) box.append(el("div", "error", failed));
   };
 
-  // Сверка с «Входящими»: своя строка на месте значит «ждёт витка», пропавшая
+  // Сверка с «Входящими»: своя строка на месте и с отметкой значит
+  // «доставлено агенту», на месте без отметки значит «ждёт витка», пропавшая
   // значит подхваченная, и след её остаётся в ленте прочитанным.
-  const load = async () => {
+  const read = async () => {
     let r;
     try {
       r = await api(url);
@@ -2993,14 +3019,41 @@ function makeOutbox(project, id, box) {
     failed = "";
     const pending = r.body.pending || [];
     if (r.body.note) empty = r.body.note;
+    marks = new Map((r.body.delivered || []).map((mark) => [mark.line, mark]));
+    // Живость витка сервер судит правилом почтальона, а не списком работ
+    // экрана, и плашка чата берёт ответ отсюда. Ответ без поля живости
+    // (старый сервер) плашку не трогает: выдуманное «доставим за минуты»
+    // хуже прежних слов про следующий виток.
+    if (onLive && typeof r.body.live === "boolean") onLive(r.body.live);
     const known = new Set(mine.map((m) => m.line).filter(Boolean));
     others = pending.filter((line) => !known.has("- " + line));
     for (const m of mine) {
       if (m.state === "queued") continue;
-      m.state = pending.includes(String(m.line).replace(/^- /, "")) ? "waiting" : "read";
+      const line = String(m.line).replace(/^- /, "");
+      if (!pending.includes(line)) {
+        m.state = "read";
+        m.mark = null;
+        continue;
+      }
+      m.mark = marks.get(line) || null;
+      m.state = m.mark ? "delivered" : "waiting";
     }
     sentWrite(project, id, mine);
     draw();
+  };
+
+  // Перечитывание идёт по кругу, пока чат открыт: доставку делает не человек,
+  // и без своего отсчёта состояние реплики менялось бы только следующей
+  // отправкой. Заход один: таймер заводится в конце чтения, а не рядом с ним.
+  let poll = null;
+  const load = async () => {
+    try {
+      await read();
+    } finally {
+      if (!stopped && poll === null) {
+        poll = setTimeout(() => { poll = null; load().catch(console.error); }, OUTBOX_POLL);
+      }
+    }
   };
 
   // Неудача оставляет реплику в очереди: дожимать её будет pump, а человеку
@@ -3099,6 +3152,8 @@ function makeOutbox(project, id, box) {
     stopped = true;
     if (timer) clearTimeout(timer);
     timer = null;
+    if (poll) clearTimeout(poll);
+    poll = null;
     window.removeEventListener("online", wake);
   };
 
@@ -3140,15 +3195,29 @@ async function sendMessage(project, id, ta, out) {
 // закрывается, спрятанный отказ это то же молчание. Признак running приходит
 // той же работой цели, какую сервер считает живой (goalIdle в messages.go):
 // цикл в чужом окне и цель из реестра для плашки живые, хотя кнопка стопа их и
-// не берёт. Доставку идущей сессии дашборд не обещает и здесь: механики для
-// неё в devkit нет, её проектирует DK-136.
-function fillChatNote(note, running) {
+// не берёт.
+//
+// Минуты до доставки плашка обещает не по этому признаку, а по живости витка
+// с ручки сообщения (goalLive в mail.go, DK-136): убитая оболочка запись
+// реестра не снимает, и цель с мёртвым циклом держит на экране работу, до
+// которой доставлять некому. Живость приходит перечитыванием «Входящих» и
+// живёт на самой плашке, поэтому перерисовка по доске её не теряет. Плашка
+// называет доставку, а не действие: до идущего витка реплика доходит за
+// минуты, а развернуть работу он может и позже, на границе шага.
+function fillChatNote(note, running, live) {
   const said = findKey(note, "chat-said");
   const start = findKey(note, "chat-start");
   const close = findKey(note, "chat-close");
   if (!said || !start || !close) return;
+  if (live !== undefined) note.dataset.live = live ? "1" : "0";
+  note.dataset.running = running ? "1" : "";
   said.replaceChildren();
-  if (running) {
+  if (running && note.dataset.live === "1") {
+    said.append(el("b", "", "Сообщение уйдёт агенту."));
+    said.append(document.createTextNode(
+      " Идущий виток получит его за минуты, на ближайшем законченном ходе, " +
+      "а развернуть работу может и позже, на границе шага."));
+  } else if (running) {
     said.append(el("b", "", "Сообщение уйдёт агенту."));
     said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
   } else {
@@ -3257,7 +3326,11 @@ function renderChat(project, works, id, board) {
     stop.hidden = !live;
     keyed(stop, "chat-stop", "");
     row.append(stop);
-    const out = makeOutbox(project, id, pendbox);
+    // Живость витка приходит ответом ручки сообщения, и плашка перерисовывается
+    // на месте: страницу ради этого человек не перезагружает.
+    const out = makeOutbox(project, id, pendbox, (live) => {
+      fillChatNote(note, note.dataset.running === "1", live);
+    });
     agentLive.push(out.stop);
     const send = el("button", "btn btn-acc", "Отправить");
     // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи

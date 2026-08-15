@@ -644,6 +644,11 @@ function searchReply(q) {
   return resp;
 }
 
+// Почта цели: лежащие строки «Входящих», отметки доставки и живость витка.
+// Стенд правит её как правит файлы живая машина, а дашборд узнаёт о правке
+// своим перечитыванием, без перезагрузки страницы.
+const mail = { pending: [], delivered: [], live: false };
+
 // Игрушечные таймеры: карточка ответа гаснет по времени, и ждать его
 // по-честному стенду нечем. Заказанное складывается в список, а срабатывает по
 // команде стенда.
@@ -758,6 +763,18 @@ const sandbox = {
         return slowReply(answer);
       }
       return reply(answer);
+    }
+    // Чат цели: «Входящие» файла цели, отметки доставки почтальона
+    // (.devkit/goal-<ID>.mail) и живость витка, которую сервер судит правилом
+    // почтальона (goalLive, tools/dashboard/mail.go).
+    if (path.includes("/message")) {
+      if (post) {
+        const line = "2026-08-15 10:00, из дашборда: " + JSON.parse(init.body).text;
+        mail.pending.push(line);
+        return reply({ id: "XR-1", line: "- " + line,
+          message: "сообщение легло во «Входящие» файла цели XR-1" });
+      }
+      return reply({ id: "XR-1", pending: mail.pending, delivered: mail.delivered, live: mail.live });
     }
     if (path === "/api/notifications") return reply({ items: [] });
     if (path === "/api/quota") return reply(quotaBody());
@@ -1576,6 +1593,85 @@ for (const via of ["registry", "session"]) {
 // Признак возвращается к tmux-сессии: дальше стенд идёт разделом экрана
 // агента, писанным поверх работающей tmux-сессии.
 chatWork[0].via = "tmux";
+
+// Почта цели (DK-342): реплика доезжает до идущего витка почтальоном, и знать
+// об этом человек обязан на самой реплике, а плашка обязана обещать минуты
+// только там, где доставлять есть кому. Перерисовки страницы тут нет вовсе:
+// состояние меняют файлы на машине, а дашборд их перечитывает сам.
+const tick = async () => {
+  for (const t of timers.splice(0)) t.fn();
+  await settle();
+};
+const pendbox = thread.children[1];
+ta.value = "стой, не туда";
+button(thread, "Отправить").handlers.click({ stopPropagation: () => {} });
+await settle();
+if (!dump(pendbox).includes("стой, не туда") || !dump(pendbox).includes("ждёт витка")) {
+  fail("отправленная реплика не встала в очередь исходящих: " + dump(pendbox));
+}
+
+// Плашка при живом витке зовёт минуты до доставки, а не следующую итерацию:
+// живость приходит с ручки сообщения, и списком работ экрана она не берётся.
+mail.live = true;
+await tick();
+if (!dump(find(thread, "chat-note")).includes("за минуты")) {
+  fail("при живом витке плашка не обещает доставку за минуты: " + dump(find(thread, "chat-note")));
+}
+if (dump(pendbox).includes("доставлено агенту")) {
+  fail("реплика без отметки записана в доставленные: " + dump(pendbox));
+}
+
+// Почтальон внёс строку в идущий виток и отметил её: реплика подписывается
+// доставленной со временем и сессией, страница при этом та же самая.
+mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:03:00", session: "8f2a1c30-1111-2222" }];
+await tick();
+if (find(groups, "chat-thread-XR-1") !== thread) {
+  fail("отметка доставки пересобрала разговор целиком");
+}
+if (!dump(pendbox).includes("доставлено агенту")) {
+  fail("доставленная реплика осталась ждущей витка: " + dump(pendbox));
+}
+if (!dump(pendbox).includes("10:03") || !dump(pendbox).includes("8f2a1c30")) {
+  fail("подпись доставки без времени или без сессии: " + dump(pendbox));
+}
+
+// Строку съел вопрос витка (--ask), и сессии у отметки нет: состояние то же,
+// а пустой скобки под ним не появляется.
+mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:03:00" }];
+await tick();
+if (!dump(pendbox).includes("доставлено агенту") || dump(pendbox).includes("сессия")) {
+  fail("отметка без сессии нарисована не как доставка: " + dump(pendbox));
+}
+
+// Цель встала: замок мёртв, метки протухли, и плашка возвращается к прежним
+// словам про следующую итерацию, хотя работа на экране осталась.
+mail.live = false;
+await tick();
+const idleNote = dump(find(thread, "chat-note"));
+if (idleNote.includes("за минуты") || !idleNote.includes("следующей рабочей итерации")) {
+  fail("плашка обещает минуты цели, до которой доставлять некому: " + idleNote);
+}
+
+// Виток убрал строку записью витка: доставленное становится прочитанным.
+mail.pending.length = 0;
+mail.delivered = [];
+await tick();
+if (!dump(pendbox).includes("прочитано агентом")) {
+  fail("подхваченная витком реплика осталась доставленной: " + dump(pendbox));
+}
+
+// Строку положили из другого браузера или рукой: своей памяти о ней у этого
+// дашборда нет, а доставку она несёт ту же самую.
+mail.pending.push("2026-08-15 10:10, из дашборда: и ленту проверь");
+await tick();
+if (!dump(pendbox).includes("и ленту проверь") || !dump(pendbox).includes("ждёт витка")) {
+  fail("чужая строка «Входящих» не встала в очередь исходящих: " + dump(pendbox));
+}
+mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:11:00", session: "8f2a1c30-1111-2222" }];
+await tick();
+if (!dump(pendbox).includes("доставлено агенту") || !dump(pendbox).includes("10:11")) {
+  fail("чужая строка осталась ждущей после отметки доставки: " + dump(pendbox));
+}
 
 // Экран агента: у задачи два разговора, и в одну ленту они не смешиваются
 // (DK-290). Экран перечитывается по фокусу окна, а список сессий стоит по

@@ -853,6 +853,45 @@ func (s *smoke) goalPath() string {
 	return filepath.Join(s.proj, "docs", "tasks", smokeGoal+".md")
 }
 
+// stepDelivered: доставка реплики идущему витку. Живого почтальона в прогоне
+// нет, его изображает та же отметка в .devkit/goal-<ID>.mail, какую на живой
+// машине кладёт hooks/inbox.py перед доставкой. Проверяется этим стык дашборда
+// с почтальоном: отметка лежит там, откуда сервер её читает, и лежащая строка
+// перестаёт числиться ждущей витка.
+func (s *smoke) stepDelivered() (string, error) {
+	doc, err := os.ReadFile(s.goalPath())
+	if err != nil {
+		return "", err
+	}
+	lines := inboxLines(string(doc))
+	if len(lines) != 1 {
+		return "", fmt.Errorf("доставлять нечего: во «Входящих» %d строк", len(lines))
+	}
+	session := "8f2a1c30-1111-2222-3333-444455556666"
+	mark := time.Now().Format(mailStamp) + " " + session + "\n" + lines[0] + "\n"
+	if err := smokeWrite(mailPath(s.proj, smokeGoal), mark, 0o644); err != nil {
+		return "", err
+	}
+	var v struct {
+		Pending   []string   `json:"pending"`
+		Delivered []mailMark `json:"delivered"`
+	}
+	if err := s.call("GET", "/api/projects/demo/goals/"+smokeGoal+"/message", "",
+		http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	if len(v.Delivered) != 1 || v.Delivered[0].Line != lines[0] {
+		return "", fmt.Errorf("отметка доставки не доехала до ручки чата: %+v", v.Delivered)
+	}
+	if v.Delivered[0].Session != session || v.Delivered[0].At == "" {
+		return "", fmt.Errorf("доставка приехала без сессии или без времени: %+v", v.Delivered[0])
+	}
+	if len(v.Pending) != 1 {
+		return "", fmt.Errorf("доставленная строка ушла из «Входящих»: %v", v.Pending)
+	}
+	return "строка доставлена витку " + session[:8] + ", во «Входящих» она по-прежнему лежит", nil
+}
+
 // stepTurn: подхват сообщения витком, четвёртый пункт DoD. Живого витка тут
 // нет, его изображает та же правка файла цели, которую делает шаг 5 скилла
 // goal-loop: строка уходит из «Входящих», а в «Журнал» встаёт запись про
@@ -881,8 +920,9 @@ func (s *smoke) stepTurn() (string, error) {
 		return "", err
 	}
 	var pending struct {
-		Pending []string `json:"pending"`
-		Note    string   `json:"note"`
+		Pending   []string   `json:"pending"`
+		Delivered []mailMark `json:"delivered"`
+		Note      string     `json:"note"`
 	}
 	if err := s.call("GET", "/api/projects/demo/goals/"+smokeGoal+"/message", "",
 		http.StatusOK, &pending); err != nil {
@@ -893,6 +933,11 @@ func (s *smoke) stepTurn() (string, error) {
 	}
 	if pending.Note == "" {
 		return "", fmt.Errorf("опустевшие «Входящие» остались без слов: пустота неотличима от поломки")
+	}
+	// Отметка доставки шага 8 осталась на месте, а строки под ней уже нет:
+	// подхваченное витком не должно возвращаться доставленным.
+	if len(pending.Delivered) != 0 {
+		return "", fmt.Errorf("отставшая отметка выдала подхваченную строку за доставленную: %+v", pending.Delivered)
 	}
 	return "сообщение подхвачено записью витка, дашборд говорит: " + pending.Note, nil
 }
@@ -1374,6 +1419,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"запуск работы", s.stepStart},
 		{"работа видна живой", s.stepWorks},
 		{"сообщение цели", s.stepMessage},
+		{"доставка реплики витку", s.stepDelivered},
 		{"подхват сообщения витком", s.stepTurn},
 		{"живая лента открыта", s.stepFeedOpen},
 		{"стоп работы", s.stepStop},

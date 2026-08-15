@@ -1187,8 +1187,13 @@ type harnessJSON struct {
 	Default bool   `json:"default"`
 	// Bin это чем поднимается клиент инструмента: путь из машинного слоя, иначе
 	// [detect] bin профиля, иначе первое слово [delegate] command.
-	Bin string   `json:"bin,omitempty"`
-	Env []string `json:"env,omitempty"`
+	Bin string `json:"bin,omitempty"`
+	// Home это каталог хозяйства подписки (ключ home машинного слоя): под ним
+	// лежат и настройки клиента, и журналы его разговоров. Секрета в пути нет,
+	// а без него читателю не найти транскрипты второй подписки: они уезжают в
+	// свой каталог вместе с CLAUDE_CONFIG_DIR, а не в ~/.claude (DK-362).
+	Home string   `json:"home,omitempty"`
+	Env  []string `json:"env,omitempty"`
 }
 
 // harnessesJSON это ответ команды: машинная раскладка подписок целиком.
@@ -1252,6 +1257,7 @@ func cmdHarnessJSON(start string) (string, error) {
 	for _, name := range names {
 		h := harnessJSON{Name: name, Enabled: inList(l.Enabled, name), Default: name == l.Default}
 		h.Bin = clientBin(l.Profiles[name], l.Setup[name])
+		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
 		v.Harnesses = append(v.Harnesses, h)
 	}
@@ -1272,6 +1278,13 @@ func (s *setup) envOf() []envPair {
 		return nil
 	}
 	return s.Env
+}
+
+func (s *setup) homeOf() string {
+	if s == nil {
+		return ""
+	}
+	return s.Home
 }
 
 // cmdHarness это окно в резолв: любой сдвиг поведения между машинами

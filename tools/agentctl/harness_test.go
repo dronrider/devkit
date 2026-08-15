@@ -538,6 +538,15 @@ env = ["CLAUDE_CONFIG_DIR={home}"]
 	if names := strings.Join(got["secondcli"].Env, ","); names != "CLAUDE_CONFIG_DIR,SECOND_TOKEN" {
 		t.Fatalf("имена пар окружения %q", names)
 	}
+	// Каталог хозяйства второй подписки едет наружу развёрнутым: по нему читатель
+	// раскладки находит журналы её разговоров, а с тильдой внутри пришлось бы
+	// разворачивать её самому (DK-362).
+	if home, want := got["secondcli"].Home, filepath.Join(kit, ".claude-second"); home != want {
+		t.Fatalf("каталог второй подписки %q, жду %q", home, want)
+	}
+	if home := got["homecli"].Home; home != "" {
+		t.Fatalf("у подписки без своего каталога он назван как %q", home)
+	}
 }
 
 // TestCmdHarnessJSONEmpty: пустой включённый список говорит о себе словами, а

@@ -135,12 +135,13 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-002")
 		if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
-		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Исполнение: субагент pro/medium по вердикту pick") {
-			t.Fatalf("в записи не осталось исполнителя:\n%s", data)
+		text := stageText(t, root, "T-002")
+		if !strings.Contains(text, "- Разработка: субагент pro/medium по вердикту pick") {
+			t.Fatalf("в записи не осталось исполнителя:\n%s", text)
 		}
 	})
 

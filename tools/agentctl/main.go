@@ -15,9 +15,10 @@ const usageText = `agentctl: выбор исполнителя под задач
        [--role exec|      машинные строки model (модель активного харнеса),
         review]           effort: low|medium|high|xhigh|max и tier:
        [--goal <файл>]    mini|base|pro|max, четвёртая строка задачи и причина;
-                          --record дописывает строку исполнения в раздел «Ход
-                          работы» файла задачи и коммитит её (вне git-дерева
-                          правка лежит без коммита), --role review отдаёт вердикт
+                          --record отмечает этап работы в записи ~/.devkit/runs
+                          (разработка либо ревью), откуда её читает дашборд, а
+                          taskctl на смене статуса уносит пакетом в раздел «Ход
+                          работы» файла задачи, --role review отдаёт вердикт
                           для агента-ревьювера (ярус ниже исполнителя, пол base),
                           --goal режет вердикт потолком яруса из раздела
                           «Бюджет» файла цели
@@ -31,6 +32,13 @@ const usageText = `agentctl: выбор исполнителя под задач
                           DEVKIT_HARNESS харнеса назначения и ограничитель
                           вложенности DEVKIT_RUN_DEPTH=1; --workdir это дерево
                           задачи (по умолчанию корень проекта)
+  stage <ID> [<вид>]      этап работы над задачей: без вида печатает живой этап
+        [--note <текст>]  и накопленный пакет, с видом отмечает начало нового.
+                          Виды: разработка, ревью, снаружи, уточнение. Первые два
+                          ставит pick --record сам, ожидание снаружи ставит
+                          taskctl на смене статуса, руками отмечают уточнение:
+                          вопрос пользователю задаёт сессия, и своей команды у
+                          неё нет
   spend --goal <файл>     гейт бюджета цели: первая строка машинная (gate: ok
        [--record]         либо gate: over), вторая называет потраченное по
                           каждому бакету против потолка из раздела «Бюджет»
@@ -200,6 +208,21 @@ func main() {
 		}
 		logRun(code)
 		os.Exit(code)
+	case "stage":
+		fs := flag.NewFlagSet("stage", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		note := fs.String("note", "", "текст записи, он уедет в «Ход работы» файла задачи")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 2, "stage <ID> [<вид>] [--note <текст>]")
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		kind := ""
+		if len(pos) == 2 {
+			kind = pos[1]
+		}
+		msg, err = cmdStage(root, pos[0], kind, *note, timeNow())
 	case "spend":
 		fs := flag.NewFlagSet("spend", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

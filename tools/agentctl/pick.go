@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 type verdict struct {
@@ -431,15 +433,9 @@ func pickVerdict(root, id string, record bool, role, goal string) (pickResult, e
 		unc = fmt.Sprint(n)
 	}
 	if record {
-		subject, err := recordExecution(root, id, v, c, cp, qf, tm, now, role)
-		if err != nil {
+		if err := recordStage(root, id, v, c, cp, qf, tm, now, role); err != nil {
 			return res, err
 		}
-		// Строка вердикта это запись в файле задачи, и ревью её не ждёт: она
-		// коммитится тем же движением, каким пишется, иначе она держится на
-		// памяти диспетчера, забывается молча и ловится только отказом
-		// shipctl merge на незакоммиченном дереве (DK-120).
-		commitTaskRecord(root, filepath.Join("docs", "tasks", id+".md"), subject)
 	}
 	res.V, res.HC = v, hc
 	res.Text = fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
@@ -447,35 +443,30 @@ func pickVerdict(root, id string, record bool, role, goal string) (pickResult, e
 	return res, nil
 }
 
-// recordExecution дописывает строку исполнения в конец раздела «Ход работы»
-// файла задачи (перед хвостовыми пустыми строками, чтобы не оторваться от
-// остальных записей); без раздела он добавляется в конец файла. Грумминговый
-// вердикт пишется словом «Грумминг»: исполнение по нему не начинается, и
-// строка не должна обещать то, чего не было. Сдвинутый вердикт несёт и
-// маппинг, и причину сдвига: иначе по файлу задачи не понять, почему модель
-// разошлась с таблицей. Роль ревью пишется словом «Ревью»: по «Ходу работы»
-// тогда видно не только кто исполнял, но и кто читал дифф. Состояние квоты
-// идёт в строку всегда: без него запись про несдвинутый вердикт не отличает
-// выключенный корректор от снимка в норме, а по закрытой задаче потом не
-// восстановить, на каких данных модель выбиралась. Возврат это subject
-// коммита строки: он собирается здесь же, где известен ярлык записи, а
-// коммитит строку вызывающий код.
-func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) (string, error) {
-	path := filepath.Join(root, "docs", "tasks", id+".md")
-	data, err := os.ReadFile(path)
-	if err != nil {
+// recordStage открывает этап работы над задачей: вид деятельности и время
+// начала уезжают в запись за пределами репозитория (internal/stage), а в файл
+// задачи весь пакет этапов кладёт taskctl на смене статуса. Рабочего дерева
+// вердикт при этом не касается вовсе, и правки, которую ревьювер обязан был
+// коммитить за собой, больше нет (DK-120). Вид деятельности у ревью «ревью», у
+// исполнения и грумминга «разработка»: словарь экранов знает четыре слова, а
+// грумминговый вердикт это тот же заход в задачу, только разбирающий. Что
+// вердикт был грумминговым, говорит текст записи: исполнение по нему не
+// начинается, и запись не должна обещать то, чего не было. Сдвинутый вердикт
+// несёт и маппинг, и причину сдвига: иначе по файлу задачи не понять, почему
+// модель разошлась с таблицей. Состояние квоты идёт в текст всегда: без него
+// запись про несдвинутый вердикт не отличает выключенный корректор от снимка в
+// норме, а по закрытой задаче потом не восстановить, на каких данных модель
+// выбиралась.
+func recordStage(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) error {
+	if _, err := os.Stat(filepath.Join(root, "docs", "tasks", id+".md")); err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
+			return fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
 		}
-		return "", err
+		return err
 	}
-	content := strings.TrimRight(string(data), "\n") + "\n"
-	label := "Исполнение"
-	switch {
-	case role == roleReview:
-		label = "Ревью"
-	case v.Groom:
-		label = "Грумминг"
+	kind := stage.Dev
+	if role == roleReview {
+		kind = stage.Review
 	}
 	var parts []string
 	if c.shifted() {
@@ -506,46 +497,13 @@ func recordExecution(root, id string, v verdict, c correction, cp goalCap, qf qu
 	if name == unmappedModel {
 		name = v.Tier
 	}
-	line := fmt.Sprintf("- %s: %s %s/%s по вердикту pick%s, %s.",
-		label, tm.word(v.Tier), name, v.Effort, tail, now.Format("2006-01-02"))
-	if err := os.WriteFile(path, []byte(insertIntoSection(content, "## Ход работы", line)), 0o644); err != nil {
-		return "", err
+	groom := ""
+	if v.Groom {
+		groom = "грумминговый вердикт, "
 	}
-	return recordCommitSubject(id, label), nil
-}
-
-// insertIntoSection дописывает строку в конец названного раздела: перед
-// хвостовыми пустыми строками, чтобы запись не оторвалась от остальных, и не
-// задевая следующий раздел. Раздела нет, значит он добавляется в конец файла.
-// Тем же способом пишут строку исполнения в «Ход работы» и снимок витка в
-// «Журнал» файла цели: разделы разные, а место записи ищется одинаково.
-func insertIntoSection(content, heading, line string) string {
-	content = strings.TrimRight(content, "\n") + "\n"
-	lines := strings.Split(content, "\n")
-	head := -1
-	for i, l := range lines {
-		if strings.HasPrefix(l, heading) {
-			head = i
-			break
-		}
-	}
-	if head < 0 {
-		return content + "\n" + heading + "\n\n" + line + "\n"
-	}
-	end := len(lines)
-	for i := head + 1; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "## ") {
-			end = i
-			break
-		}
-	}
-	for end > head+1 && strings.TrimSpace(lines[end-1]) == "" {
-		end--
-	}
-	ins := []string{line}
-	if end == head+1 { // раздел был пуст, отбить запись от заголовка
-		ins = []string{"", line}
-	}
-	lines = append(lines[:end], append(ins, lines[end:]...)...)
-	return strings.Join(lines, "\n")
+	note := fmt.Sprintf("%s%s %s/%s по вердикту pick%s", groom, tm.word(v.Tier), name, v.Effort, tail)
+	// Этап открывается по основному чекауту, а не по дереву задачи: pick зовут
+	// с -C <worktree>, а закрывает пакет taskctl из основного чекаута, и без
+	// приведения это были бы две разные записи.
+	return stage.Open(stage.Home(), stage.MainRoot(root), id, kind, note, now)
 }

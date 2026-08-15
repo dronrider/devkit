@@ -331,8 +331,8 @@ func TestRecordAssignment(t *testing.T) {
 	cases := []struct {
 		name, machine, want string
 	}{
-		{"домашняя ступень", homeMachine, "- Исполнение: субагент sonnet/high по вердикту pick"},
-		{"уехавшая ступень", ladderMachine, "- Исполнение: подпроцесс glm-code:glm-5.2/high по вердикту pick"},
+		{"домашняя ступень", homeMachine, "- Разработка: субагент sonnet/high по вердикту pick"},
+		{"уехавшая ступень", ladderMachine, "- Разработка: подпроцесс glm-code:glm-5.2/high по вердикту pick"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -340,15 +340,13 @@ func TestRecordAssignment(t *testing.T) {
 			if err := os.WriteFile(path, []byte("# T-005\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			clearStages(t, root, "T-005")
 			if _, err := cmdPick(root, "T-005", true, roleExec, ""); err != nil {
 				t.Fatalf("pick --record: %v", err)
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(data), c.want) {
-				t.Fatalf("запись не называет исполнителя как надо:\n%s", data)
+			text := stageText(t, root, "T-005")
+			if !strings.Contains(text, c.want) {
+				t.Fatalf("запись не называет исполнителя как надо:\n%s", text)
 			}
 		})
 	}

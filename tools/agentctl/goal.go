@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Разделы файла цели, которые читает гейт. Формат самого файла держит скилл
@@ -247,7 +249,7 @@ func recordGoalSnap(path string, s goalSnap) error {
 		parts = append(parts, fmt.Sprintf("%s %d%%", name, s.Pct[name]))
 	}
 	line := fmt.Sprintf("- %s%s: %s", goalSnapPrefix, s.Taken.Format(quotaTimeLayout), strings.Join(parts, ", "))
-	return os.WriteFile(path, []byte(insertIntoSection(string(data), goalJournalSection, line)), 0o644)
+	return os.WriteFile(path, []byte(stage.InsertIntoSection(string(data), goalJournalSection, line)), 0o644)
 }
 
 const (

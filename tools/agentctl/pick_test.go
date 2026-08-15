@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 func TestPick(t *testing.T) {
@@ -199,6 +201,31 @@ func isolateQuota(t *testing.T) string {
 	t.Setenv("DEVKIT_HOME", repoRoot(t))
 	return quotaPath("claude-code")
 }
+
+// stageText отдаёт отмеченные этапы задачи теми же строками, какими пакет уедет
+// в раздел «Ход работы» файла задачи: pick рабочего дерева больше не касается
+// (DK-338), и проверять запись надо там, где она теперь лежит.
+func stageText(t *testing.T, root, id string) string {
+	t.Helper()
+	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(stage.Lines(rec.Stages, timeNow()), "\n")
+}
+
+// clearStages убирает запись этапов задачи. Подтесты одного теста делят
+// временный HOME, и накопленное соседом иначе доезжало бы до следующей проверки.
+func clearStages(t *testing.T, root, id string) {
+	t.Helper()
+	if _, err := stage.Flush(stage.Home(), stage.MainRoot(root), id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stageStamp это хвост строки пакета при замороженных часах: этап начат и закрыт
+// одним моментом, и длительности в строке тогда нет.
+func stageStamp() string { return timeNow().Format("2006-01-02 15:04") }
 
 // repoRoot это корень devkit: тесты гоняются в agentctl, профили лежат этажом
 // выше.
@@ -483,6 +510,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-002")
 		out, err := cmdPick(root, "T-002", true, roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
@@ -495,11 +523,11 @@ func TestCmdPickQuota(t *testing.T) {
 		if !strings.Contains(out, "корректор: дефицит week_all, pro -> base") {
 			t.Fatalf("в человеческой строке нет хвоста корректора: %q", out)
 		}
-		data, _ := os.ReadFile(taskFile)
-		want := "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
-			"квота: week_all 95% дефицит, week_max 50%, снимок 23м назад), " + testNow.Format("2006-01-02") + "."
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("строка записи разошлась с ожидаемой:\n%s", data)
+		text := stageText(t, root, "T-002")
+		want := "- Разработка: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
+			"квота: week_all 95% дефицит, week_max 50%, снимок 23м назад), " + stageStamp() + "."
+		if !strings.Contains(text, want) {
+			t.Fatalf("строка записи разошлась с ожидаемой:\n%s", text)
 		}
 	})
 
@@ -861,13 +889,18 @@ func TestCmdPickReview(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-002")
 		if _, err := cmdPick(root, "T-002", true, roleReview, ""); err != nil {
 			t.Fatalf("pick --role review --record: %v", err)
 		}
+		text := stageText(t, root, "T-002")
+		want := "- Ревью: субагент sonnet/high по вердикту pick" + noQuotaNote + ", " + stageStamp() + "."
+		if !strings.Contains(text, want) {
+			t.Fatalf("строка ревью разошлась с ожидаемой:\n%s", text)
+		}
 		data, _ := os.ReadFile(taskFile)
-		want := "- Ревью: субагент sonnet/high по вердикту pick" + noQuotaNote + ", " + testNow.Format("2006-01-02") + "."
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("строка ревью разошлась с ожидаемой:\n%s", data)
+		if strings.Contains(string(data), "Ревью: субагент") {
+			t.Fatalf("вердикт ревью правил файл задачи, а этого больше не бывает:\n%s", data)
 		}
 	})
 
@@ -963,7 +996,7 @@ func TestRecordQuotaState(t *testing.T) {
 		{
 			name: "снимка нет",
 			id:   "T-002",
-			want: "- Исполнение: субагент opus/medium по вердикту pick (квота: снимка нет, корректор выключен), ",
+			want: "- Разработка: субагент opus/medium по вердикту pick (квота: снимка нет, корректор выключен), ",
 		},
 		{
 			name: "снимок в норме, сдвига нет",
@@ -971,7 +1004,7 @@ func TestRecordQuotaState(t *testing.T) {
 				"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
 				"week_max = 50% сброс " + at(testNow.Add(halfWindow)) + "\n",
 			id:   "T-002",
-			want: "- Исполнение: субагент opus/medium по вердикту pick (квота: week_all 50%, week_max 50%, снимок 23м назад, сдвига нет), ",
+			want: "- Разработка: субагент opus/medium по вердикту pick (квота: week_all 50%, week_max 50%, снимок 23м назад, сдвига нет), ",
 		},
 		{
 			name: "дефицит сдвинул вердикт вниз",
@@ -979,7 +1012,7 @@ func TestRecordQuotaState(t *testing.T) {
 				"week_all = 95% сброс " + at(testNow.Add(halfWindow)) + "\n" +
 				"week_max = 50% сброс " + at(testNow.Add(halfWindow)) + "\n",
 			id: "T-002",
-			want: "- Исполнение: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
+			want: "- Разработка: субагент sonnet/high по вердикту pick (маппинг opus, корректор: дефицит week_all; " +
 				"квота: week_all 95% дефицит, week_max 50%, снимок 1м назад), ",
 		},
 		{
@@ -990,7 +1023,7 @@ func TestRecordQuotaState(t *testing.T) {
 			snap: "taken = " + at(testNow.Add(-3*time.Hour)) + "\n" +
 				"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n",
 			id:   "T-005",
-			want: "- Исполнение: субагент sonnet/high по вердикту pick (квота: week_all 5% профицит, снимок 3ч 0м назад, протух, сдвига нет), ",
+			want: "- Разработка: субагент sonnet/high по вердикту pick (квота: week_all 5% профицит, снимок 3ч 0м назад, протух, сдвига нет), ",
 		},
 		{
 			// Подъём на max платит уже из двух бакетов, и в записи обязаны быть оба:
@@ -1000,7 +1033,7 @@ func TestRecordQuotaState(t *testing.T) {
 				"week_all = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n" +
 				"week_max = 5% сброс " + at(testNow.Add(24*time.Hour)) + "\n",
 			id: "T-003",
-			want: "- Исполнение: субагент fable/xhigh по вердикту pick (маппинг opus, корректор: профицит week_all, week_max; " +
+			want: "- Разработка: субагент fable/xhigh по вердикту pick (маппинг opus, корректор: профицит week_all, week_max; " +
 				"квота: week_all 5% профицит, week_max 5% профицит, снимок 1м назад), ",
 		},
 	}
@@ -1017,13 +1050,14 @@ func TestRecordQuotaState(t *testing.T) {
 			if err := os.WriteFile(taskFile, []byte("# "+c.id+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			clearStages(t, root, c.id)
 			if _, err := cmdPick(root, c.id, true, roleExec, ""); err != nil {
 				t.Fatalf("pick --record: %v", err)
 			}
-			data, _ := os.ReadFile(taskFile)
-			want := c.want + testNow.Format("2006-01-02") + "."
-			if !strings.Contains(string(data), want) {
-				t.Fatalf("строка записи разошлась с ожидаемой\nжду: %s\nвижу:\n%s", want, data)
+			text := stageText(t, root, c.id)
+			want := c.want + stageStamp() + "."
+			if !strings.Contains(text, want) {
+				t.Fatalf("строка записи разошлась с ожидаемой\nжду: %s\nвижу:\n%s", want, text)
 			}
 		})
 	}
@@ -1038,75 +1072,80 @@ func TestRecordQuotaState(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-002")
 		for i := 0; i < 2; i++ {
 			if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
 				t.Fatalf("pick --record, вызов %d: %v", i+1, err)
 			}
 		}
-		data, _ := os.ReadFile(taskFile)
-		for _, line := range strings.Split(string(data), "\n") {
+		text := stageText(t, root, "T-002")
+		for _, line := range strings.Split(text, "\n") {
 			if n := strings.Count(line, "квота:"); n > 1 {
 				t.Fatalf("состояние квоты в строке названо %d раза: %q", n, line)
 			}
 		}
-		if n := strings.Count(string(data), "квота: week_all 50%, week_max 50%, снимок 1м назад, сдвига нет"); n != 2 {
-			t.Fatalf("жду по одному состоянию на каждую из двух записей, вижу %d:\n%s", n, data)
+		if n := strings.Count(text, "квота: week_all 50%, week_max 50%, снимок 1м назад, сдвига нет"); n != 2 {
+			t.Fatalf("жду по одному состоянию на каждую из двух записей, вижу %d:\n%s", n, text)
 		}
 	})
 }
 
-func TestRecordExecution(t *testing.T) {
+func TestRecordStage(t *testing.T) {
 	isolateQuota(t)
+	fixNow(t, testNow)
 	root := writeBoard(t)
 	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("создание раздела в файле без него", func(t *testing.T) {
+	t.Run("этап разработки отмечен видом и временем", func(t *testing.T) {
 		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
 		content := "# T-001\n\nОписание задачи.\n"
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		_, err := cmdPick(root, "T-001", true, roleExec, "")
-		if err != nil {
+		clearStages(t, root, "T-001")
+		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
-
-		data, _ := os.ReadFile(taskFile)
-		result := string(data)
-		if !strings.Contains(result, "## Ход работы") {
-			t.Fatal("раздел \"Ход работы\" не создан")
+		rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(result, "- Исполнение: субагент haiku/low") {
-			t.Fatalf("строка исполнения не добавлена в файл:\n%s", result)
+		live, ok := rec.Live()
+		if !ok {
+			t.Fatal("этап не отмечен вовсе")
+		}
+		if live.Kind != stage.Dev {
+			t.Fatalf("вид деятельности %q, жду %q", live.Kind, stage.Dev)
+		}
+		if !live.Start.Equal(testNow) {
+			t.Fatalf("время начала %s, жду %s", live.Start, testNow)
+		}
+		if !strings.Contains(live.Note, "субагент haiku/low по вердикту pick") {
+			t.Fatalf("в тексте записи нет исполнителя: %q", live.Note)
 		}
 	})
 
-	t.Run("дозапись в существующий раздел", func(t *testing.T) {
+	t.Run("файл задачи вердикт не трогает", func(t *testing.T) {
+		// Исходный баг DK-120: строка вердикта ложилась правкой рабочего дерева,
+		// ревьювер её не коммитил, и merge отказывал на незакоммиченном. Правки
+		// больше нет вовсе, поэтому и коммитить нечего.
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
-		content := "# T-002\n\nОписание задачи.\n\n## Ход работы\n\n- Исполнение: субагент sonnet/medium по вердикту pick, 2026-07-27.\n"
+		content := "# T-002\n\n## Ход работы\n\n- Разработка: было.\n"
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		_, err := cmdPick(root, "T-002", true, roleExec, "")
-		if err != nil {
+		clearStages(t, root, "T-002")
+		if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
-
-		data, _ := os.ReadFile(taskFile)
-		result := string(data)
-		lines := strings.Split(result, "\n")
-		executionLines := []string{}
-		for _, line := range lines {
-			if strings.HasPrefix(line, "- Исполнение:") {
-				executionLines = append(executionLines, line)
-			}
+		data, err := os.ReadFile(taskFile)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if len(executionLines) != 2 {
-			t.Fatalf("жду две строки исполнения, получил %d:\n%s", len(executionLines), result)
+		if string(data) != content {
+			t.Fatalf("вердикт правил файл задачи:\n%s", data)
 		}
 	})
 
@@ -1120,103 +1159,62 @@ func TestRecordExecution(t *testing.T) {
 		}
 	})
 
-	t.Run("вставка в конец раздела, а не файла", func(t *testing.T) {
-		// Самая содержательная граница: за «Ход работы» идёт «Ревью», строка
-		// обязана лечь в конец первого раздела, не оторвавшись от записей.
-		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
-		content := "# T-001\n\n## Ход работы\n\n- Начало.\n\n## Ревью\n\n- замечание: исправлено\n"
-		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		data, _ := os.ReadFile(taskFile)
-		want := "- Начало.\n- Исполнение: субагент haiku/low по вердикту pick" + noQuotaNote + ", " +
-			time.Now().Format("2006-01-02") + ".\n\n## Ревью"
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("строка не в конце раздела:\n%s", data)
-		}
-	})
-
-	t.Run("пустой раздел в середине файла", func(t *testing.T) {
-		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
-		content := "# T-001\n\n## Ход работы\n\n## Ревью\n\nНет.\n"
-		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "## Ход работы\n\n- Исполнение: субагент haiku/low") {
-			t.Fatalf("запись не отбита от заголовка пустого раздела:\n%s", data)
-		}
-	})
-
-	t.Run("повторный вызов дописывает вторую строку", func(t *testing.T) {
+	t.Run("повторный вызов копит этапы в пакете", func(t *testing.T) {
 		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
 		if err := os.WriteFile(taskFile, []byte("# T-001\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < 2; i++ {
-			if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-				t.Fatalf("pick --record, вызов %d: %v", i+1, err)
-			}
+		clearStages(t, root, "T-001")
+		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
+			t.Fatalf("вердикт исполнителя: %v", err)
 		}
-		data, _ := os.ReadFile(taskFile)
-		if n := strings.Count(string(data), "- Исполнение: субагент haiku/low"); n != 2 {
-			t.Fatalf("жду две строки исполнения после двух вызовов, вижу %d:\n%s", n, data)
+		if _, err := cmdPick(root, "T-001", true, roleReview, ""); err != nil {
+			t.Fatalf("вердикт ревьювера: %v", err)
 		}
-	})
-
-	t.Run("файл без завершающего перевода строки", func(t *testing.T) {
-		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
-		if err := os.WriteFile(taskFile, []byte("# T-001\n\n## Ход работы\n\n- Начало."), 0o644); err != nil {
+		rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
+		if len(rec.Stages) != 2 {
+			t.Fatalf("жду два этапа в пакете, вижу %d: %+v", len(rec.Stages), rec.Stages)
 		}
-		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Начало.\n- Исполнение: субагент haiku/low") {
-			t.Fatalf("строка не приклеилась к записи без перевода строки:\n%s", data)
+		if rec.Stages[0].Kind != stage.Dev || rec.Stages[1].Kind != stage.Review {
+			t.Fatalf("порядок этапов разошёлся с порядком вердиктов: %+v", rec.Stages)
 		}
 	})
 
-	t.Run("грумминговый вердикт пишется груммингом", func(t *testing.T) {
+	t.Run("грумминговый вердикт это разработка со словом в тексте", func(t *testing.T) {
 		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
 		if err := os.WriteFile(taskFile, []byte("# T-004\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-004")
 		if _, err := cmdPick(root, "T-004", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
-		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Грумминг: субагент opus/xhigh") {
-			t.Fatalf("жду строку про грумминг, а не исполнение:\n%s", data)
-		}
-		if strings.Contains(string(data), "- Исполнение:") {
-			t.Fatalf("грумминговый вердикт записан исполнением:\n%s", data)
+		text := stageText(t, root, "T-004")
+		if !strings.Contains(text, "- Разработка: грумминговый вердикт, субагент opus/xhigh") {
+			t.Fatalf("жду разработку со словом про грумминг:\n%s", text)
 		}
 	})
 
-	t.Run("override снимает грумминг, пишется исполнением", func(t *testing.T) {
+	t.Run("override снимает грумминг, и слова про него в записи нет", func(t *testing.T) {
 		// T-004 без override уходит в грумминг (неопределённость 5, см. тест
 		// выше); override-строка перебивает маппинг целиком, включая Groom.
 		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
 		if err := os.WriteFile(taskFile, []byte("# T-004\n\nМодель: sonnet\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		clearStages(t, root, "T-004")
 		if _, err := cmdPick(root, "T-004", true, roleExec, ""); err != nil {
 			t.Fatalf("pick --record: %v", err)
 		}
-		data, _ := os.ReadFile(taskFile)
-		if !strings.Contains(string(data), "- Исполнение: субагент sonnet/xhigh") {
-			t.Fatalf("жду строку исполнения по override, а не грумминг:\n%s", data)
+		text := stageText(t, root, "T-004")
+		if !strings.Contains(text, "- Разработка: субагент sonnet/xhigh") {
+			t.Fatalf("жду запись по override:\n%s", text)
 		}
-		if strings.Contains(string(data), "- Грумминг:") {
-			t.Fatalf("override записан как грумминг:\n%s", data)
+		if strings.Contains(text, "грумминговый вердикт") {
+			t.Fatalf("override записан груммингом:\n%s", text)
 		}
 	})
 }

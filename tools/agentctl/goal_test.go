@@ -605,11 +605,7 @@ func TestCmdPickGoalCapRecord(t *testing.T) {
 	if _, err := cmdPick(root, "T-002", true, roleExec, "docs/tasks/T-100.md"); err != nil {
 		t.Fatalf("pick --record: %v", err)
 	}
-	data, err := os.ReadFile(taskFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
+	text := stageText(t, root, "T-002")
 	if !strings.Contains(text, "субагент sonnet/high") {
 		t.Fatalf("в записи не тот исполнитель:\n%s", text)
 	}

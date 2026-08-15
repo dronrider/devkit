@@ -273,6 +273,14 @@ const sessionLiveTTL = 12 * time.Minute
 // остаётся.
 const foreignTaskNote = "задача не с доски проекта"
 
+// groomOrderPrefix это начало заказа headless-сессии, поднимаемой самим
+// дашбордом (groomPrompt в drafts.go). Транскрипт такой сессии узнаётся им:
+// первая реплика там не разговор человека, а заказ, и жить этим транскриптом
+// работа не может. Узнавание держится парой признаков, заказа и живой
+// tmux-сессии, поэтому интерактивному окну с теми же словами на чужой машине
+// (два человека, один накопитель) вера не отнимается.
+const groomOrderPrefix = "Проведи груминг "
+
 // sessionWorks собирает работы из транскриптов: интерактивное окно агента не
 // заводит ни tmux-сессии, ни записи в реестре, и единственный его след это
 // свежий транскрипт. Доска приходит уже разобранной: строка ищется на каждую
@@ -287,7 +295,16 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if f.mod.Before(cutoff) {
 			break
 		}
-		task, note := sessionTask(f.suffix, s.sessionHeadCached(f.path, f.stamp))
+		head := s.sessionHeadCached(f.path, f.stamp)
+		// Транскрипт с заказом дашборда в первой реплике жив, пока жива его
+		// tmux-сессия: claude -p умирает вместе с ней, а транскрипт остаётся
+		// свежим, и без этой проверки законченный разбор висел бы работой до
+		// порога протухания (DK-358). Живость здесь не сверяется: живую
+		// сессию уже забрал список tmux меткой busy, до сюда она не доходит.
+		if strings.HasPrefix(head.First, groomOrderPrefix) {
+			continue
+		}
+		task, note := sessionTask(f.suffix, head)
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
 		}

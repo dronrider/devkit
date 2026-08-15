@@ -831,6 +831,51 @@ func TestLiveWorksSessionForeignTask(t *testing.T) {
 	}
 }
 
+// Транскрипт, поднятый самим дашбордом: первая реплика это заказ headless-сеанса,
+// словами groomPrompt (DK-358).
+const groomOrderFixture = `{"type":"user","message":{"role":"user","content":"Проведи груминг XR-007"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"main"}
+`
+
+// Законченный headless-разбор не висит живой работой до порога протухания:
+// транскрипт сессии, поднятой самим дашбордом, узнаётся по заказу первой
+// реплики и жив ровно столько, сколько жива его tmux-сессия. Интерактивное окно
+// с тем же заказом на чужой машине живости не теряет: узнавание требует обоих
+// признаков сразу, свежего транскрипта и живой tmux-сессии с именем работы.
+func TestLiveWorksGroomOrderFollowsTmux(t *testing.T) {
+	e, _, _ := runsEnv(t, "")
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "", "groom-live", groomOrderFixture, now.Add(-time.Minute))
+	writeSession(t, e.home, e.proj, "", "groom-done", groomOrderFixture, now.Add(-2*time.Minute))
+
+	// Обе сессии мертвы для tmux: фикстура отвечает пустым списком, как
+	// сервер tmux без единой сессии. Живым окнам груминг не встречается, а
+	// мёртвым нечего занимать карточку работы.
+	var sessions []Work
+	for _, w := range boardWorks(t, e) {
+		if w.Via == "session" {
+			sessions = append(sessions, w)
+		}
+	}
+	if len(sessions) != 0 {
+		t.Errorf("законченные headless-разборы висят работами: %+v", sessions)
+	}
+
+	// Живая tmux-сессия груминга держит работу карточкой tmux, как и раньше:
+	// транскрипт не дублирует её второй карточкой, а по смерти сессии работа
+	// падает целиком, что и проверяет первая половина.
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "task-XR-007\n")
+	var ids []string
+	for _, w := range boardWorks(t, e) {
+		if w.ID == "XR-007" {
+			ids = append(ids, w.Via)
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"tmux"}) {
+		t.Errorf("живой headless-разбор даёт карточки %+v, ожидал одну tmux", ids)
+	}
+}
+
 // boardWorks читает живые работы проекта из ответа доски.
 func boardWorks(t *testing.T, e *testEnv) []Work {
 	t.Helper()

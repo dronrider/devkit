@@ -440,8 +440,7 @@ devkitctl уходит в свой раннер классов, первый п�
 в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
 из `hooks/`, `kit/skills/` и `kit/skills/goal-loop/`, `python3 suite.py` из
 `tools/devkitctl/` (раннер гонит классы отдельными процессами),
-`python3 kit/skills/check-skills.py`, `python3 hooks/check-exec-bit.py` (бит
-исполнения у каждого `test.sh` репозитория) и
+`python3 kit/skills/check-skills.py` и
 `python3 tools/devkitctl/devkitctl.py doctor --layout` (раскладка). Ключ `test`
 в гитигнорнутом `.devkit/deploy.local` зовёт раннер строкой
 `export GOWORK=off; python3 tools/devkitctl/parallel.py`.

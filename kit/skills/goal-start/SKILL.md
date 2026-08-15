@@ -45,7 +45,7 @@ devkit.
 5. Завести строку и файл:
 
    ```bash
-   taskctl add --title "Цель: ..." --type task --rank "а+б+в+г+д" --cost XL
+   taskctl add --title "Цель: ..." --type task --rank "а+б+в+г+д" --cost XL --accept agent
    taskctl file <ID>
    ```
 

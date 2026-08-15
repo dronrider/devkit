@@ -88,13 +88,21 @@ const acceptanceHeading = "## Приёмка"
 // считаются тем же разделом.
 const verificationHeading = "## Проверка"
 
-// readTaskSection читает тело раздела файла задачи (без строки заголовка) с
-// учётом ограждений блоков кода тем же порядком, что taskDocSections: заголовок
-// внутри ``` это чужой вывод, а не раздел этого файла. ok=false значит, что
-// файла нет; found=false что раздела в нём нет. Раздел кончается следующим
-// заголовком уровня «## ».
+// readTaskSection читает тело раздела файла живой задачи (без строки
+// заголовка). ok=false значит, что файла нет; found=false что раздела в нём нет.
 func readTaskSection(root, id, heading string) (text string, found, ok bool) {
-	data, err := os.ReadFile(taskFilePath(root, id))
+	return readSectionFromPath(taskFilePath(root, id), heading)
+}
+
+// readSectionFromPath читает тело раздела файла задачи по точному пути (без
+// строки заголовка) с учётом ограждений блоков кода тем же порядком, что
+// taskDocSections: заголовок внутри ``` это чужой вывод, а не раздел этого
+// файла. Помимо живых файлов зовётся и на архивных: файл закрытой задачи лежит
+// в tasks/archive/<год>/, а разделы «Приёмка» и «Выкат» переживают close.
+// ok=false значит, что файла нет; found=false что раздела в нём нет. Раздел
+// кончается следующим заголовком уровня «## ».
+func readSectionFromPath(path, heading string) (text string, found, ok bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false, false
 	}

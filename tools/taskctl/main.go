@@ -28,6 +28,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               строка, возраст, пометка «отложен»
   batch [--limit N]                           кандидаты в поезд выката и причина
                                               отказа по каждой остальной строке
+  kinds                                       сводка по видам приёмки: счёт,
+                                              ошибки назначения, пересмотры
 
 Менять доску:
   draft ["текст"]                             записать сырую идею мимо доски:
@@ -476,6 +478,11 @@ func main() {
 		limit := fs.Int("limit", batchDefaultLimit, "сколько задач берём в пачку")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "batch [--limit N]")
 		msg, err = cmdBatch(root(*dir), *limit)
+	case "kinds":
+		fs := flag.NewFlagSet("kinds", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "kinds")
+		msg, err = cmdKinds(root(*dir))
 	case "id":
 		fs := flag.NewFlagSet("id", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

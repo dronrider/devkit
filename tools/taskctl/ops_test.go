@@ -97,11 +97,11 @@ func TestAddSorted(t *testing.T) {
 func TestAddValidation(t *testing.T) {
 	root := setup(t)
 	cases := []AddParams{
-		{Title: "Дубль", Type: "task", Rank: "0+1+1+0+1", Link: "x", ID: "XR-007"},
-		{Title: "С|пайпом", Type: "task", Rank: "0+1+1+0+1", Link: "x"},
-		{Title: "Плохой тип", Type: "feature", Rank: "0+1+1+0+1", Link: "x"},
-		{Title: "Плохой статус", Type: "task", Rank: "0+1+1+0+1", Link: "x", Status: "done"},
-		{Title: "Цена вне шкалы", Type: "task", Rank: "0+1+1+0+1", Link: "x", Cost: "XXL"},
+		{Title: "Дубль", Type: "task", Rank: "0+1+1+0+1", Link: "x", ID: "XR-007", Accept: "agent"},
+		{Title: "С|пайпом", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"},
+		{Title: "Плохой тип", Type: "feature", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"},
+		{Title: "Плохой статус", Type: "task", Rank: "0+1+1+0+1", Link: "x", Status: "done", Accept: "agent"},
+		{Title: "Цена вне шкалы", Type: "task", Rank: "0+1+1+0+1", Link: "x", Cost: "XXL", Accept: "agent"},
 	}
 	for _, p := range cases {
 		if _, err := cmdAdd(root, p); err == nil {

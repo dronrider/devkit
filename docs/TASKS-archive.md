@@ -258,3 +258,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-338 | Конвейер отмечает этап работы: живое состояние за gitignore и история пакетом | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-338.md](tasks/archive/2026/DK-338.md) |
 | DK-347 | deploy.local: компоненты команды test идут параллельно с потолком воркеров | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-347.md](tasks/archive/2026/DK-347.md) |
 | DK-304 | taskctl kinds: сводка по видам приёмки, расхождениям назначения и пересмотрам | task | P3 | 2026-08-15 | [tasks/archive/2026/DK-304.md](tasks/archive/2026/DK-304.md) |
+| DK-308 | Цель: вид приёмки задачи назначается критериями и виден с доски | task | P2 | 2026-08-15 | [tasks/archive/2026/DK-308.md](tasks/archive/2026/DK-308.md) |

@@ -432,10 +432,16 @@ regcheck на багфиксах (последнее подсказывает `s
 
 Задачи по развитию самого devkit ведутся на его же доске `docs/TASKS.md`
 (префикс DK), теми же правилами, что у проектов. Тесты всех инструментов
-гоняет CI (GitHub Actions) на каждый push, локальный прогон: `go test ./...`
+гоняет CI (GitHub Actions) на каждый push, локальный прогон целиком это
+`python3 tools/devkitctl/parallel.py` из корня (раннер гонит компоненты
+одновременно с потолком воркеров: go-утилиты остаются с `-count=1`, сюита
+devkitctl уходит в свой раннер классов, первый провал валит прогон, вывод
+провалившегося печатается целиком). По одному компонент зовётся руками: `go test ./...`
 в директории каждой Go-утилиты, `python3 -m unittest discover -p '*_test.py'`
 из `hooks/`, `kit/skills/` и `kit/skills/goal-loop/`, `python3 suite.py` из
 `tools/devkitctl/` (раннер гонит классы отдельными процессами),
 `python3 kit/skills/check-skills.py`, `python3 hooks/check-exec-bit.py` (бит
 исполнения у каждого `test.sh` репозитория) и
-`python3 tools/devkitctl/devkitctl.py doctor --layout` (раскладка).
+`python3 tools/devkitctl/devkitctl.py doctor --layout` (раскладка). Ключ `test`
+в гитигнорнутом `.devkit/deploy.local` зовёт раннер строкой
+`export GOWORK=off; python3 tools/devkitctl/parallel.py`.

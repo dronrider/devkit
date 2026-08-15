@@ -205,6 +205,53 @@ func TestInsertIntoEmptyAndMissingSection(t *testing.T) {
 	}
 }
 
+// TestInsertSkipsHeadingInsideFence: заголовок раздела, процитированный в блоке
+// кода, за настоящий не считается. Случай не гипотетический: в файле задачи
+// DK-338 раздел «Проверка» цитирует вывод прогона со строкой «## Ход работы», и
+// поиск по strings.HasPrefix ловил цитату раньше настоящего заголовка, отчего
+// пакет этапов ложился в «Проверку» посреди чужого транскрипта.
+func TestInsertSkipsHeadingInsideFence(t *testing.T) {
+	doc := "# T-011\n\n## Проверка\n\n```text\n## Ход работы\n\n- Разработка: цитата вывода.\n```\n\n" +
+		"## Ранг\n\n`25+6+3+0+4 = 38`, P2.\n\n## Ход работы\n\n- Разработка: настоящая запись.\n"
+	got := InsertIntoSection(doc, "## Ход работы", "- Ревью: пакет ревьювера.")
+	want := "# T-011\n\n## Проверка\n\n```text\n## Ход работы\n\n- Разработка: цитата вывода.\n```\n\n" +
+		"## Ранг\n\n`25+6+3+0+4 = 38`, P2.\n\n## Ход работы\n\n- Разработка: настоящая запись.\n- Ревью: пакет ревьювера.\n"
+	if got != want {
+		t.Fatalf("запись ушла не в тот раздел:\n%s", got)
+	}
+}
+
+// TestInsertSkipsSectionEndInsideFence: граница следующего раздела внутри блока
+// кода тоже не граница. Иначе запись обрывалась бы на цитате «## ...» и вставала
+// посреди своего же раздела.
+func TestInsertSkipsSectionEndInsideFence(t *testing.T) {
+	doc := "# T-012\n\n## Ход работы\n\n- Разработка: было.\n\n```text\n## Ранг\n```\n\n## Приёмка\n\n- вид: agent\n"
+	got := InsertIntoSection(doc, "## Ход работы", "- Ревью: стало.")
+	want := "# T-012\n\n## Ход работы\n\n- Разработка: было.\n\n```text\n## Ранг\n```\n- Ревью: стало.\n\n## Приёмка\n\n- вид: agent\n"
+	if got != want {
+		t.Fatalf("граница раздела найдена в блоке кода:\n%s", got)
+	}
+}
+
+func TestFenceMask(t *testing.T) {
+	rows := strings.Split("вне\n```text\nвнутри\n```\nснова вне\n", "\n")
+	mask, at := FenceMask(rows)
+	if at != 0 {
+		t.Fatalf("закрытый блок объявлен незакрытым на строке %d", at)
+	}
+	for i, want := range []bool{false, true, true, true, false, false} {
+		if mask[i] != want {
+			t.Fatalf("строка %d (%q): маска %v, жду %v", i, rows[i], mask[i], want)
+		}
+	}
+	// Ограждение другого знака чужой блок не закрывает, а незакрытый уводит в
+	// блок весь остаток файла.
+	_, open := FenceMask(strings.Split("~~~\n```\nхвост\n", "\n"))
+	if open != 1 {
+		t.Fatalf("незакрытое ограждение названо строкой %d, жду 1", open)
+	}
+}
+
 func TestInsertNothingKeepsFile(t *testing.T) {
 	doc := "# T-010\n\n## Ход работы\n\n- Разработка: было.\n"
 	if got := InsertIntoSection(doc, "## Ход работы"); got != doc {

@@ -1691,6 +1691,11 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук длинных чтений")
+        # Почтальон говорит своей категорией: без неё --fix хук положит, а
+        # doctor без ключа промолчит, и неподключённый канал чата останется
+        # неотличим от штатной тишины.
+        self.assertRegex(out, r"почтальон inbox\.py не подключён на событии PostToolUse",
+                         "доктор не заметил неподключённого почтальона")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
@@ -1700,13 +1705,23 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-longfile\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук длинных чтений")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*inbox\.py на PostToolUse",
+                         "--fix не разложил почтальона")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
         post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
+        self.assertEqual(len([c for c in post if "inbox.py" in c]), 1, post)
+        # PostToolUse: две группы, проверки текстов на своём матчере и почтальон
+        # на пустом. Матчер у него пустой не по недосмотру: реплику надо
+        # доставлять на любом ходе идущего витка, а не на записи файла.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit"], hooks["PostToolUse"])
+                         ["Edit|Write|NotebookEdit", None], hooks["PostToolUse"])
+        inbox = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
+                 for h in g["hooks"]]
+        self.assertEqual(len(inbox), 1, inbox)
+        self.assertIn("inbox.py", inbox[0])
         # PreToolUse: две группы на двух матчерах, Bash (чтение секретов) и Read
         # (два рубежа: повторные чтения и длинные чтения). Каждая своим скриптом,
         # порядок как в HOOK_LAYOUT.
@@ -1725,7 +1740,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("хук харнеса на", out, "повторный --fix разложил хуки второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 3, post)
+        self.assertEqual(len(post), 4, post)
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.

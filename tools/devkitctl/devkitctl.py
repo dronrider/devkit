@@ -184,6 +184,11 @@ PRE_READ_GAPS = {
 }
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
+# Почтальон (DK-341): PostToolUse на пустом матчере, потому что почту надо
+# доставлять на любом ходе идущего витка, а не на записи файла. Категория
+# сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
+# так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
+INBOX_HOOK = "inbox.py"
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
@@ -199,6 +204,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
+    ("PostToolUse", "", "python3 %s/hooks/inbox.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1176,6 +1182,10 @@ def hook_gaps(text, settings):
             missing_pre.append(script)
         elif script in PRE_READ_SCRIPTS:
             missing_pre_read.append(script)
+        elif script == INBOX_HOOK:
+            findings.append("почтальон %s не подключён на событии PostToolUse в %s: реплика "
+                            "человека из чата цели ждёт следующего витка вместо идущего "
+                            "(hooks/README.md)" % (INBOX_HOOK, settings))
         elif script == SESSION_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "

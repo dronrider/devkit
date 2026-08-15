@@ -1647,7 +1647,8 @@ class FreshConnectTest(SandboxCase):
                           home=self.box.home, path=realpath)
             self.assertEqual(rc, 0, "после new у проекта нет ни одного коммита (%s): %s" % (case, out))
             rc, out = run(["taskctl", "-C", str(root), "add", "--title", "первая задача",
-                           "--type", "task", "--rank", "25+5+1+0+0", "--cost", "S"],
+                           "--type", "task", "--rank", "25+5+1+0+0", "--cost", "S",
+                           "--accept", "agent"],
                           home=self.box.home, path=realpath)
             self.assertEqual(rc, 0, "taskctl add после new не прошёл (%s): %s" % (case, out))
             task = "%s-001" % prefix

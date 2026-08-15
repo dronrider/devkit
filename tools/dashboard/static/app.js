@@ -4118,18 +4118,12 @@ const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 // Вид приёмки выбирается закрытым списком, а не текстом: свободный ввод на
 // телефоне дороже двух тапов, а значения всего три (DK-301).
 const ACCEPT_VALUES = ["agent", "mixed", "user"];
-const ACCEPT_NAMES = { agent: "агентский", mixed: "смешанный", user: "пользовательский" };
 // Шесть барьеров закрыты LLD DK-292 (решение 1): ключ едет в --barrier как
-// есть, подпись в скобках помогает вспомнить смысл без подсказки.
-const BARRIER_VALUES = ["глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
-const BARRIER_HINTS = {
-  "глаза": "итог виден только на экране",
-  "доступ": "нужен физический доступ",
-  "необратимость": "шаг нельзя откатить",
-  "секрет": "нет учётки или секрета",
-  "согласие": "приёмка это согласие человека",
-  "событие": "видно только на настоящем событии",
-};
+// есть. Первый пункт списка остаётся пустым: pickField выбирает первый пункт
+// сам, и без пустого «выбрать барьер» неотправленная форма уезжала бы
+// барьером «глаза», которого человек не называл.
+const BARRIER_PLACEHOLDER = "выбрать барьер";
+const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
 const ACCEPT_HINT = "Вид приёмки решает, кто проверяет задачу: агентский вид " +
   "закрывается прогоном, у остальных часть шагов остаётся человеку.";
 const ACCEPT_BARRIER_HINT = "Барьер называется из шести, и у каждого своя причина: " +
@@ -4312,9 +4306,9 @@ function renderNew(project) {
     newForm.barrier = v;
     touch();
   });
-  const barrierOpt = barrierPick.querySelector("select").firstElementChild;
-  if (barrierOpt) barrierOpt.textContent = "выбрать барьер";
-  barrierPick.querySelector("select").setAttribute("aria-label", "барьер приёмки");
+  const barrierSel = barrierPick.querySelector("select");
+  barrierSel.firstElementChild.textContent = BARRIER_PLACEHOLDER;
+  barrierSel.setAttribute("aria-label", "барьер приёмки");
   acceptBox.append(barrierPick);
   box.append(acceptBox);
   box.append(el("div", "hint", ACCEPT_HINT));

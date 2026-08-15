@@ -117,9 +117,9 @@ func TestRecordCommitFailureSpeaks(t *testing.T) {
 }
 
 // TestRecordPushSeenByHook: пуш коммита строки разрешён хуку pre-push
-// переменной DEVKIT_PUSH_OK, и в отличие от taskctl пуш зовётся с -c впереди,
-// поэтому проверка «первый аргумент это push» здесь не годится. Хук на голом
-// remote пишет значение переменной в файл, и тест читает его после прогона.
+// переменной DEVKIT_PUSH_OK. Разрешение ставится окружением именно пуша, и
+// единственный способ это увидеть - хук на живом пуше: он пишет значение
+// переменной в файл, тест читает файл после прогона.
 func TestRecordPushSeenByHook(t *testing.T) {
 	isolateQuota(t)
 	root := writeBoard(t)

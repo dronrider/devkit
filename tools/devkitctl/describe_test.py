@@ -187,6 +187,9 @@ class DoctorTest(SandboxCase):
     def test_doctor_passes_when_described(self):
         write(self.proj / "xr-hub" / "README.md", "# xr-hub\n\nControl plane.\n")
         try:
+            # Описанный проект чист целиком, включая карту: у описанных
+            # компонентов она должна быть, и doctor сгенерит её той же починкой.
+            self.box.doctor(self.proj, "--fix")
             rc, out = self.box.doctor(self.proj)
             self.assertEqual(rc, 0, "doctor нашёл находки на описанном: %s" % out)
         finally:

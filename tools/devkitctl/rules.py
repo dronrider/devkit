@@ -502,7 +502,7 @@ def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=Non
                   for p in (rule_sources(devkit, root, board, depth)
                             if sources is None else sources)]
         # Карта проекта последним импортом, только когда файл существует
-        map_path = root / "docs" / "map.md"
+        map_path = Path(root) / "docs" / "map.md"
         if map_path.is_file():
             paths.append(import_path(root, map_path, links))
     body = "".join(tpl.replace("{path}", p) + "\n" for p in paths)

@@ -1746,11 +1746,11 @@ def check_map_freshness(root, fix=False):
     full_text, hash_val = codemap.render_map(root)
     _, body, _ = codemap.generate_map(root)  # Тело для сравнения
 
-    # 1. Нет файла при живых компонентах
+    # 1. Нет файла при живых компонентах. Индекс решений телом считается, а
+    # компонентом не является: без строк карты файл не заводится.
+    components = body.split("# Решения по docs/lld", 1)[0].strip()
     if not map_path.is_file():
-        # Проверяем, есть ли компоненты вообще (получаем только тело для проверки)
-        _, body, _ = codemap.generate_map(root)
-        if body.strip() and not body.startswith("# Решения по docs/lld"):
+        if components:
             if fix:
                 map_path.parent.mkdir(parents=True, exist_ok=True)
                 map_path.write_text(full_text, encoding="utf-8")
@@ -1843,6 +1843,12 @@ def doctor(start, fix=False):
         # делает. Режим чекаута доктор уже различает и печатает строкой ниже
         # (DK-149, решение 3), а на ветке (машина разработчика) признак ложный
         # и состав проверок не меняется.
+        # Свежесть карты идёт раньше тонких файлов: её импорт входит в тонкий
+        # файл, и сгенерированная в этом же прогоне карта должна попасть в него
+        # сразу, а не со второго прогона doctor.
+        cf, cd = check_map_freshness(root, fix)
+        findings += cf
+        fixed += cd
         rfindings, rfixed = rules.check(root, DEVKIT, fix, SKIP_DIRS)
         findings += rfindings
         fixed += rfixed
@@ -1948,10 +1954,6 @@ def doctor(start, fix=False):
         # (DK-071). Корень без манифеста и не под git молчит: без репозитория
         # проектной половины нет вовсе.
         findings += describe.check(root)
-        # Проверка свежести карты проекта (DK-375)
-        cf, cd = check_map_freshness(root, fix)
-        findings += cf
-        fixed += cd
         cf, cd = check_machine_ignore(root, fix)
         findings += cf
         fixed += cd

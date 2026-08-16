@@ -262,3 +262,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-354 | LLD: черновик на дашборде правится и грумится одним процессом [приёмка: user] | LLD | P2 | 2026-08-15 | [tasks/archive/2026/DK-354.md](tasks/archive/2026/DK-354.md) |
 | DK-158 | devkitctl selfcheck: живость связки после установки проверяется одной командой | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-158.md](tasks/archive/2026/DK-158.md) |
 | DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-348.md](tasks/archive/2026/DK-348.md) |
+| DK-375 | devkitctl map: генератор карты проекта и индекса решений, сторож свежести, импорт в тонкий файл | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-375.md](tasks/archive/2026/DK-375.md) |

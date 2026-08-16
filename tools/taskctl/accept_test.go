@@ -142,6 +142,114 @@ func TestAddNonAgentRequiresBarrier(t *testing.T) {
 	}
 }
 
+// TestAddNonAgentAppendsAcceptance: раздел «Приёмка» не агентского вида
+// дописывается к уже существующему файлу задачи, а не переписывает его (DK-329).
+// Черновик переносится раньше записи, и решение о скелете принималось по
+// taskFile, который заполняет только ветка без --link: add со ссылкой молча
+// клал скелет поверх перенесённого текста. Срабатывание от --link не зависит.
+func TestAddNonAgentAppendsAcceptance(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "текст черновика под нарезку цели", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// Оформление со ссылкой на файл цели: штатный виток нарезки, у LLD-строк
+	// вид user.
+	p := AddParams{
+		ID: "XR-008", Title: "Из черновика со ссылкой", Type: "task",
+		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
+		Link: "tasks/XR-005.md",
+	}
+	msg, err := cmdAdd(root, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "черновик перенесён") {
+		t.Fatalf("add молчит про перенос черновика: %q", msg)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не появился: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "текст черновика под нарезку цели") {
+		t.Fatalf("текст черновика потерян:\n%s", body)
+	}
+	// «Черновик» доказывает, что стоит перенесённый текст, а не скелет.
+	for _, want := range []string{"## Черновик", "## Приёмка", "- вид: user", "- барьер «глаза»:"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в файле задачи нет %q:\n%s", want, body)
+		}
+	}
+	b, _ := LoadBoard(boardPath(root))
+	if row := b.find("XR-008"); row == nil {
+		t.Fatal("строки XR-008 нет на доске")
+	} else if row.Link != "[tasks/XR-005.md](tasks/XR-005.md)" {
+		t.Fatalf("ссылка строки %q, жду на файл цели", row.Link)
+	}
+	// Без --link итог тот же: текст цел, скелет не пишется, раздел дописан.
+	if _, err := cmdDraft(root, "второй черновик без ссылки", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{
+		ID: "XR-009", Title: "Из черновика без ссылки", Type: "task",
+		Rank: "0+1+1+0+1", Accept: "mixed", Barrier: "глаза",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не появился: %v", err)
+	}
+	body = string(data)
+	if !strings.Contains(body, "второй черновик без ссылки") {
+		t.Fatalf("текст черновика потерян:\n%s", body)
+	}
+	for _, want := range []string{"## Черновик", "## Приёмка", "- вид: mixed", "- барьер «глаза»:"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в файле задачи нет %q:\n%s", want, body)
+		}
+	}
+	// Файл без раздела и без замыкающего перевода строки: раздел дописывается
+	// с отделяющей пустой строкой, ожидание выведено руками.
+	manual := "# XR-010: Ручной файл без раздела\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-010.md"), []byte(manual), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{
+		ID: "XR-010", Title: "Ручной файл без раздела", Type: "task",
+		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-010.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# XR-010: Ручной файл без раздела\n\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"
+	if string(data) != want {
+		t.Fatalf("файл после дописывания:\n%s\nожидал:\n%s", data, want)
+	}
+	// Файл с уже стоящим разделом не получает второй: такой файл остаётся от
+	// add, упавшего после записи до правки доски.
+	withSect := "# XR-011: Ручной файл с разделом\n\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-011.md"), []byte(withSect), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{
+		ID: "XR-011", Title: "Ручной файл с разделом", Type: "task",
+		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-011.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != withSect {
+		t.Fatalf("файл с разделом изменён:\n%s", data)
+	}
+}
+
 // TestMoveCheckGateRejectsNonAgentWithoutBypasses: не агентский вид требует
 // раздел «Приёмка» с перебором обходов по числу из закрытого списка. Меньше
 // строк это отказ move check, ровно столько проходит (LLD DK-292, решение 4).

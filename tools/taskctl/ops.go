@@ -320,13 +320,27 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	// Не агентский вид держит причину в файле задачи: add заводит этот файл с
 	// разделом «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
 	// строку обхода исход, имена обходов лежат в ACCEPTANCE.md (задача DK-299).
-	if p.Accept != "" && p.Accept != acceptAgent && taskFile == "" {
+	if p.Accept != "" && p.Accept != acceptAgent {
 		rel := fmt.Sprintf("tasks/%s.md", id)
 		abs := filepath.Join(root, "docs", rel)
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			return "", err
 		}
-		body := fmt.Sprintf("# %s: %s\n\n## Приёмка\n\n- вид: %s\n- барьер «%s»:\n", id, p.Title, p.Accept, p.Barrier)
+		section := fmt.Sprintf("%s\n\n- вид: %s\n- барьер «%s»:\n", acceptanceHeading, p.Accept, p.Barrier)
+		// Файл мог появиться переносом черновика выше, и скелет целиком поверх
+		// него терял бы текст: к имеющемуся файлу раздел дописывается. Наличие
+		// проверяется по самому файлу, а не по taskFile: тот путь заполняет
+		// только ветка без --link, и add со ссылкой молча перезаписывал
+		// перенесённый черновик скелетом (DK-329).
+		body := fmt.Sprintf("# %s: %s\n\n%s", id, p.Title, section)
+		if prev, err := os.ReadFile(abs); err == nil {
+			body = string(prev)
+			if !strings.Contains(body, acceptanceHeading) {
+				body = strings.TrimRight(body, "\n") + "\n\n" + section
+			}
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
 		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 			return "", err
 		}

@@ -9,8 +9,13 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 
 import codemap
+
+# Импортируем check_map_freshness из devkitctl
+sys.path.insert(0, str(Path(__file__).parent))
+import devkitctl
 
 
 class TestFirstSentence(unittest.TestCase):
@@ -390,6 +395,55 @@ class TestLldIndex(unittest.TestCase):
         # Проверяем, что индексируется только обычное решение
         self.assertEqual(len(solutions), 1)
         self.assertEqual(solutions[0], ("DK-100", 1, "Обычное решение"))
+
+
+class TestMapFreshness(unittest.TestCase):
+    """Тесты свежести карты (DK-375)."""
+
+    def setUp(self):
+        """Создаём временный каталог для тестов."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.root = Path(self.temp_dir)
+
+    def tearDown(self):
+        """Удаляем временный каталог."""
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_freshness_cycle(self):
+        """Цикл свежести: генерация -> молчание -> правка -> находка -> фикс -> молчание."""
+        # 1. Создаём компоненты с правильным форматом описания
+        tools_dir = self.root / "tools"
+        tools_dir.mkdir()
+        (tools_dir / "util1.py").write_text('# util1: первая утилита\npass', encoding="utf-8")
+        (tools_dir / "README.md").write_text('# util1: первая утилита\n\nОписание...', encoding="utf-8")
+
+        # 2. Генерируем карту
+        devkitctl.run_map(str(self.root), write=True)
+        map_path = self.root / "docs" / "map.md"
+        self.assertTrue(map_path.exists())
+
+        # 3. Doctor молчит (карта свежая)
+        findings, fixed = devkitctl.check_map_freshness(str(self.root), fix=False)
+        map_findings = [f for f in findings if "карта" in f]
+        self.assertEqual(len(map_findings), 0, "Doctor должен молчать на свежей карте: %s" % map_findings)
+
+        # 4. Правим README компонента (изменяем описание)
+        (tools_dir / "README.md").write_text('# util1: изменённое описание утилиты\n\nНовое описание...', encoding="utf-8")
+
+        # 5. Doctor находит расхождение (хеш разошёлся после правки)
+        findings, fixed = devkitctl.check_map_freshness(str(self.root), fix=False)
+        map_findings = [f for f in findings if "карта" in f]
+        self.assertGreater(len(map_findings), 0, "Doctor должен найти расхождение после правки: %s" % map_findings)
+
+        # 6. Doctor --fix чинит
+        findings, fixed = devkitctl.check_map_freshness(str(self.root), fix=True)
+        self.assertGreater(len(fixed), 0, "Doctor должен зафиксить исправление")
+
+        # 7. Doctor снова молчит
+        findings, fixed = devkitctl.check_map_freshness(str(self.root), fix=False)
+        map_findings = [f for f in findings if "карта" in f]
+        self.assertEqual(len(map_findings), 0, "Doctor должен молчать после исправления")
 
 
 if __name__ == "__main__":

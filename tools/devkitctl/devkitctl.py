@@ -1743,26 +1743,20 @@ def check_map_freshness(root, fix=False):
     map_path = Path(root) / "docs" / "map.md"
 
     # Генерируем карту в памяти
-    marker, body, hash_val = codemap.generate_map(root)
+    full_text, hash_val = codemap.render_map(root)
+    _, body, _ = codemap.generate_map(root)  # Тело для сравнения
 
     # 1. Нет файла при живых компонентах
     if not map_path.is_file():
-        # Проверяем, есть ли компоненты вообще
+        # Проверяем, есть ли компоненты вообще (получаем только тело для проверки)
+        _, body, _ = codemap.generate_map(root)
         if body.strip() and not body.startswith("# Решения по docs/lld"):
-            findings.append("карты нет, компоненты есть; сгенерировать: devkitctl doctor --fix")
             if fix:
                 map_path.parent.mkdir(parents=True, exist_ok=True)
-                lines = []
-                lines.append(marker)
-                lines.append("")
-                lines.append("# Карта проекта")
-                lines.append("")
-                lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-                lines.append("`devkitctl doctor --fix`, руками не править.")
-                lines.append("")
-                lines.append(body)
-                map_path.write_text("\n".join(lines), encoding="utf-8")
+                map_path.write_text(full_text, encoding="utf-8")
                 fixed.append("сгенерирована карта: %s" % map_path)
+                return findings, fixed
+            findings.append("карты нет, компоненты есть; сгенерировать: devkitctl doctor --fix")
         return findings, fixed
 
     # Читаем существующий файл
@@ -1783,16 +1777,7 @@ def check_map_freshness(root, fix=False):
                 findings.append("карта правлена руками, хеш разошёлся; перегенерировать: "
                                "devkitctl doctor --fix")
                 if fix:
-                    lines = []
-                    lines.append(marker)
-                    lines.append("")
-                    lines.append("# Карта проекта")
-                    lines.append("")
-                    lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-                    lines.append("`devkitctl doctor --fix`, руками не править.")
-                    lines.append("")
-                    lines.append(body)
-                    map_path.write_text("\n".join(lines), encoding="utf-8")
+                    map_path.write_text(full_text, encoding="utf-8")
                     fixed.append("перегенерирована карта: %s" % map_path)
                 return findings, fixed
         else:
@@ -1800,38 +1785,19 @@ def check_map_freshness(root, fix=False):
             findings.append("карта без маркера, правлена руками; перегенерировать: "
                            "devkitctl doctor --fix")
             if fix:
-                lines = []
-                lines.append(marker)
-                lines.append("")
-                lines.append("# Карта проекта")
-                lines.append("")
-                lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-                lines.append("`devkitctl doctor --fix`, руками не править.")
-                lines.append("")
-                lines.append(body)
-                map_path.write_text("\n".join(lines), encoding="utf-8")
+                map_path.write_text(full_text, encoding="utf-8")
                 fixed.append("перегенерирована карта: %s" % map_path)
             return findings, fixed
 
-    # 3. Тело разошлось с деревом (сравниваем тело без маркера)
-    current_body = "\n".join(current_lines[1:]) if len(current_lines) > 1 else ""
-    # Нормализуем для сравнения (убираем пустые строки в конце)
-    current_body = current_body.strip()
-    body_normalized = body.strip()
+    # 3. Тело разошлось с деревом
+    # Сравниваем полный файл (без первой строки-маркера) с ожидаемым полным текстом (без маркера)
+    current_full = "\n".join(current_lines[1:]) if len(current_lines) > 1 else ""
+    expected_full = "\n".join(full_text.split("\n")[1:])  # Без маркера
 
-    if current_body != body_normalized:
+    if current_full != expected_full:
         findings.append("карта разошлась с деревом; перегенерировать: devkitctl doctor --fix")
         if fix:
-            lines = []
-            lines.append(marker)
-            lines.append("")
-            lines.append("# Карта проекта")
-            lines.append("")
-            lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-            lines.append("`devkitctl doctor --fix`, руками не править.")
-            lines.append("")
-            lines.append(body)
-            map_path.write_text("\n".join(lines), encoding="utf-8")
+            map_path.write_text(full_text, encoding="utf-8")
             fixed.append("перегенерирована карта: %s" % map_path)
 
     return findings, fixed
@@ -2067,36 +2033,17 @@ def update_devkit(pin, check, restarted):
 def run_map(start, write=False):
     """Генератор карты проекта: печатать в stdout либо писать в файл."""
     root, _ = project_root(start)
-    marker, body, hash_val = codemap.generate_map(root)
+    full_text, hash_val = codemap.render_map(root)
 
     if write:
         map_path = root / "docs" / "map.md"
         map_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Формируем полное содержимое файла
-        lines = []
-        lines.append(marker)
-        lines.append("")
-        lines.append("# Карта проекта")
-        lines.append("")
-        lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-        lines.append("`devkitctl doctor --fix`, руками не править.")
-        lines.append("")
-        lines.append(body)
-
-        map_path.write_text("\n".join(lines), encoding="utf-8")
+        map_path.write_text(full_text, encoding="utf-8")
         print("Карта записана: %s" % map_path)
         return 0
     else:
         # Сухой прогон в stdout
-        print(marker)
-        print("")
-        print("# Карта проекта")
-        print("")
-        print("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
-        print("`devkitctl doctor --fix`, руками не править.")
-        print("")
-        print(body)
+        print(full_text)
         return 0
 
 

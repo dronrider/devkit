@@ -285,6 +285,30 @@ def generate_map(root):
     return marker, body, hash_val
 
 
+def render_map(root):
+    """Сгенерировать полный текст карты с маркером и шапкой.
+
+    Возвращает (полный текст с маркером и шапкой, hash_val).
+    """
+    marker, body, hash_val = generate_map(root)
+
+    lines = []
+    lines.append(marker)
+    lines.append("")
+    lines.append("# Карта проекта")
+    lines.append("")
+    lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+    lines.append("`devkitctl doctor --fix`, руками не править.")
+    lines.append("")
+    lines.append(body)
+
+    full_text = "\n".join(lines)
+    # Убеждаемся, что файл заканчивается переводом строки
+    if not full_text.endswith("\n"):
+        full_text += "\n"
+    return full_text, hash_val
+
+
 def parse_lld_index(root):
     """Собрать индекс решений из docs/lld/*.md.
 

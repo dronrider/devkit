@@ -331,11 +331,14 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		// него терял бы текст: к имеющемуся файлу раздел дописывается. Наличие
 		// проверяется по самому файлу, а не по taskFile: тот путь заполняет
 		// только ветка без --link, и add со ссылкой молча перезаписывал
-		// перенесённый черновик скелетом (DK-329).
+		// перенесённый черновик скелетом (DK-329). Есть ли раздел, спрашивается
+		// у readSectionFromPath тем же порядком, что у gate и lint: заголовок
+		// «## Приёмка» внутри блока кода это цитата, и поиск подстрокой
+		// считал её разделом, оставляя такой черновик без настоящего.
 		body := fmt.Sprintf("# %s: %s\n\n%s", id, p.Title, section)
 		if prev, err := os.ReadFile(abs); err == nil {
 			body = string(prev)
-			if !strings.Contains(body, acceptanceHeading) {
+			if _, found, _ := readSectionFromPath(abs, acceptanceHeading); !found {
 				body = strings.TrimRight(body, "\n") + "\n\n" + section
 			}
 		} else if !os.IsNotExist(err) {

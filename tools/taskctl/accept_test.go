@@ -250,6 +250,45 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	}
 }
 
+// TestAddAppendsAcceptancePastFencedQuote: наличие раздела решает тот же
+// читатель, что gate и lint (readSectionFromPath), а не подстрока. Черновик
+// про поведение taskctl цитирует «## Приёмка» внутри блока кода: подстрока
+// считала цитату разделом, настоящий не дописывался, и move check отказывал
+// громко с «раздела нет». На коде до правки тест падал на первом же шаге:
+// дописанного суффикса в файле нет.
+func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
+	root := setup(t)
+	quote := "```md\n## Приёмка\n\n- вид: user\n```\n"
+	if _, err := cmdDraft(root, "черновик про taskctl цитирует раздел:\n\n"+quote, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{
+		ID: "XR-008", Title: "Цитата в блоке кода", Type: "task",
+		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не появился: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, quote) {
+		t.Fatalf("цитата внутри блока кода изменена:\n%s", body)
+	}
+	if want := "## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"; !strings.HasSuffix(body, want) {
+		t.Fatalf("настоящий раздел не дописан:\n%s", body)
+	}
+	// Дописанный раздел обязан быть виден читателю move check целиком.
+	text, found, ok := acceptanceSection(root, "XR-008")
+	if !ok || !found {
+		t.Fatalf("раздел не виден читателю gate: ok=%v found=%v", ok, found)
+	}
+	if bar, _ := parseAcceptance(text); bar != "глаза" {
+		t.Errorf("барьер раздела %q, жду «глаза»", bar)
+	}
+}
+
 // TestMoveCheckGateRejectsNonAgentWithoutBypasses: не агентский вид требует
 // раздел «Приёмка» с перебором обходов по числу из закрытого списка. Меньше
 // строк это отказ move check, ровно столько проходит (LLD DK-292, решение 4).

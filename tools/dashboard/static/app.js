@@ -3404,6 +3404,11 @@ async function groomDraft(project, id, ask, afterOk) {
   return r.ok;
 }
 
+// DRAFT_PRIO переводит уровень разбора в слово чипа: имя уровня латиницей
+// живёт в поле prio ответа taskctl, а экран накопителя говорит по-русски, тем
+// же словом, каким уровень стоит в файле черновика и в draft list.
+const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низкий" };
+
 // Строка накопителя ведёт на экран записи, а кнопка груминга остаётся и в ней:
 // накопитель разбирают пачкой, не заходя внутрь каждой записи (LLD DK-328).
 function draftRow(project, d) {
@@ -3412,6 +3417,7 @@ function draftRow(project, d) {
   row.append(el("span", "st", d.title || ""));
   const meta = el("span", "sm");
   meta.append(el("span", "stale", d.age_words || ""));
+  if (d.prio) meta.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
   const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
   if (d.order) withTip(groom, "Заказ агенту: «" + d.order + "».");

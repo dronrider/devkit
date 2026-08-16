@@ -117,6 +117,39 @@ func TestDraftsCarryOrder(t *testing.T) {
 	}
 }
 
+// Накопитель приезжает в порядке разбора taskctl (DK-383): высокий уровень
+// первым, немаркированный последним, и поле prio доезжает до строки как есть,
+// чип уровня собирает его словами на клиенте.
+func TestDraftsSortedByPrio(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	for _, text := range []string{"первая идея", "вторая идея", "третья идея"} {
+		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			`{"text": `+strconv.Quote(text)+`}`).Body.Close()
+	}
+	runTaskctl(t, e.proj, "draft", "prio", "XR-005", "high")
+	runTaskctl(t, e.proj, "draft", "prio", "XR-007", "low")
+
+	list := draftsResp(t, c, e)
+	drafts, _ := list["drafts"].([]any)
+	if len(drafts) != 3 {
+		t.Fatalf("в накопителе %d черновиков, жду 3: %v", len(drafts), list)
+	}
+	for i, id := range []string{"XR-005", "XR-007", "XR-006"} {
+		item, _ := drafts[i].(map[string]any)
+		if got, _ := item["id"].(string); got != id {
+			t.Errorf("место %d занимает %s, жду %s: %v", i, got, id, item)
+		}
+	}
+	first, _ := drafts[0].(map[string]any)
+	if prio, _ := first["prio"].(string); prio != "high" {
+		t.Errorf("поле prio первого черновика %q, жду high: %v", prio, first)
+	}
+	plain, _ := drafts[2].(map[string]any)
+	if prio, _ := plain["prio"].(string); prio != "" {
+		t.Errorf("у немаркированного черновика оказалось имя уровня %q", prio)
+	}
+}
+
 // «Провести груминг» поднимает сессию разбора той же механикой, что и конвейер
 // задачи: tmux-сессия с headless-сессией конвейера и заказом теми же словами,
 // какими груминг просят в чате.
@@ -199,6 +232,16 @@ func TestStaticDraftsSection(t *testing.T) {
 	}
 	if !strings.Contains(text, "renderDraft(current.name, current.works, rt.id)") {
 		t.Error("экран черновика не подключён к разбору хэша")
+	}
+	// Уровень разбора рисуется чипом в строке накопителя: список отсортирован
+	// taskctl, и перемена порядка должна быть видна на экране (DK-383).
+	if !strings.Contains(text, "DRAFT_PRIO") || !strings.Contains(text, "d.prio") {
+		t.Error("в static/app.js нет чипа уровня разбора")
+	}
+	for _, word := range []string{"высокий", "средний", "низкий"} {
+		if !strings.Contains(text, word) {
+			t.Errorf("в static/app.js нет русского слова уровня %q", word)
+		}
 	}
 }
 

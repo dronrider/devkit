@@ -264,3 +264,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-348 | devkitctl: разгрузка тяжёлых юнитов devkitctl_test, update_test, rules_test | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-348.md](tasks/archive/2026/DK-348.md) |
 | DK-375 | devkitctl map: генератор карты проекта и индекса решений, сторож свежести, импорт в тонкий файл | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-375.md](tasks/archive/2026/DK-375.md) |
 | DK-376 | POC-замер карты на xr-proxy: пара типовых задач с картой и без, цифры расхода | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-376.md](tasks/archive/2026/DK-376.md) |
+| DK-297 | Цель: сессия начинает с готовой карты проекта, а не собирает её грепами | task | P2 | 2026-08-16 | [tasks/archive/2026/DK-297.md](tasks/archive/2026/DK-297.md) |

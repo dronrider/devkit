@@ -501,6 +501,10 @@ def thin_text(profile, root, devkit, board, embed, depth=DEPTH_FULL, sources=Non
         paths += [import_path(root, p, links)
                   for p in (rule_sources(devkit, root, board, depth)
                             if sources is None else sources)]
+        # Карта проекта последним импортом, только когда файл существует
+        map_path = root / "docs" / "map.md"
+        if map_path.is_file():
+            paths.append(import_path(root, map_path, links))
     body = "".join(tpl.replace("{path}", p) + "\n" for p in paths)
     if not embed and depth == DEPTH_POINTERS:
         ptr = pointers_text(devkit, root)

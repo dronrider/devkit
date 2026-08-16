@@ -151,6 +151,7 @@
 """
 import argparse
 import build
+import codemap
 import context
 import corp
 import dashboard
@@ -1733,6 +1734,109 @@ def check_cmdout(root, fix):
             % len(stale)], []
 
 
+def check_map_freshness(root, fix=False):
+    """Проверка свежести карты проекта (DK-375).
+
+    Возвращает (findings, fixed): три находки из решения 7.
+    """
+    findings, fixed = [], []
+    map_path = Path(root) / "docs" / "map.md"
+
+    # Генерируем карту в памяти
+    marker, body, hash_val = codemap.generate_map(root)
+
+    # 1. Нет файла при живых компонентах
+    if not map_path.is_file():
+        # Проверяем, есть ли компоненты вообще
+        if body.strip() and not body.startswith("# Решения по docs/lld"):
+            findings.append("карты нет, компоненты есть; сгенерировать: devkitctl doctor --fix")
+            if fix:
+                map_path.parent.mkdir(parents=True, exist_ok=True)
+                lines = []
+                lines.append(marker)
+                lines.append("")
+                lines.append("# Карта проекта")
+                lines.append("")
+                lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+                lines.append("`devkitctl doctor --fix`, руками не править.")
+                lines.append("")
+                lines.append(body)
+                map_path.write_text("\n".join(lines), encoding="utf-8")
+                fixed.append("сгенерирована карта: %s" % map_path)
+        return findings, fixed
+
+    # Читаем существующий файл
+    try:
+        current_content = map_path.read_text(encoding="utf-8")
+    except OSError:
+        findings.append("карта не читается: %s" % map_path)
+        return findings, fixed
+
+    # 2. Хеш разошёлся с телом
+    current_lines = current_content.split("\n")
+    if current_lines:
+        first_line = current_lines[0].strip()
+        hash_match = re.match(r'<!--\s*devkit:generated\s+map\s+body=(\w+)\s*-->', first_line)
+        if hash_match:
+            current_hash = hash_match.group(1)
+            if current_hash != hash_val:
+                findings.append("карта правлена руками, хеш разошёлся; перегенерировать: "
+                               "devkitctl doctor --fix")
+                if fix:
+                    lines = []
+                    lines.append(marker)
+                    lines.append("")
+                    lines.append("# Карта проекта")
+                    lines.append("")
+                    lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+                    lines.append("`devkitctl doctor --fix`, руками не править.")
+                    lines.append("")
+                    lines.append(body)
+                    map_path.write_text("\n".join(lines), encoding="utf-8")
+                    fixed.append("перегенерирована карта: %s" % map_path)
+                return findings, fixed
+        else:
+            # Файл есть, но маркера нет - считаем, что он правлен руками
+            findings.append("карта без маркера, правлена руками; перегенерировать: "
+                           "devkitctl doctor --fix")
+            if fix:
+                lines = []
+                lines.append(marker)
+                lines.append("")
+                lines.append("# Карта проекта")
+                lines.append("")
+                lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+                lines.append("`devkitctl doctor --fix`, руками не править.")
+                lines.append("")
+                lines.append(body)
+                map_path.write_text("\n".join(lines), encoding="utf-8")
+                fixed.append("перегенерирована карта: %s" % map_path)
+            return findings, fixed
+
+    # 3. Тело разошлось с деревом (сравниваем тело без маркера)
+    current_body = "\n".join(current_lines[1:]) if len(current_lines) > 1 else ""
+    # Нормализуем для сравнения (убираем пустые строки в конце)
+    current_body = current_body.strip()
+    body_normalized = body.strip()
+
+    if current_body != body_normalized:
+        findings.append("карта разошлась с деревом; перегенерировать: devkitctl doctor --fix")
+        if fix:
+            lines = []
+            lines.append(marker)
+            lines.append("")
+            lines.append("# Карта проекта")
+            lines.append("")
+            lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+            lines.append("`devkitctl doctor --fix`, руками не править.")
+            lines.append("")
+            lines.append(body)
+            map_path.write_text("\n".join(lines), encoding="utf-8")
+            fixed.append("перегенерирована карта: %s" % map_path)
+
+    return findings, fixed
+
+
 def doctor(start, fix=False):
     findings, fixed = [], []
     root, in_git = project_root(start)
@@ -1878,6 +1982,10 @@ def doctor(start, fix=False):
         # (DK-071). Корень без манифеста и не под git молчит: без репозитория
         # проектной половины нет вовсе.
         findings += describe.check(root)
+        # Проверка свежести карты проекта (DK-375)
+        cf, cd = check_map_freshness(root, fix)
+        findings += cf
+        fixed += cd
         cf, cd = check_machine_ignore(root, fix)
         findings += cf
         fixed += cd
@@ -1954,6 +2062,42 @@ def update_devkit(pin, check, restarted):
     main, from_main = devkit_checkout()
     return update.run(main, from_main, pin=pin, check=check, restarted=restarted,
                       machine=lambda: check_machine(True))
+
+
+def run_map(start, write=False):
+    """Генератор карты проекта: печатать в stdout либо писать в файл."""
+    root, _ = project_root(start)
+    marker, body, hash_val = codemap.generate_map(root)
+
+    if write:
+        map_path = root / "docs" / "map.md"
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Формируем полное содержимое файла
+        lines = []
+        lines.append(marker)
+        lines.append("")
+        lines.append("# Карта проекта")
+        lines.append("")
+        lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+        lines.append("`devkitctl doctor --fix`, руками не править.")
+        lines.append("")
+        lines.append(body)
+
+        map_path.write_text("\n".join(lines), encoding="utf-8")
+        print("Карта записана: %s" % map_path)
+        return 0
+    else:
+        # Сухой прогон в stdout
+        print(marker)
+        print("")
+        print("# Карта проекта")
+        print("")
+        print("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
+        print("`devkitctl doctor --fix`, руками не править.")
+        print("")
+        print(body)
+        return 0
 
 
 def weigh_resident(start, runs, limit, model, prompt):
@@ -2403,6 +2547,10 @@ def main(argv):
                    help="потолок резидента в токенах, выше него код 1 (по умолчанию %d)" % weigh.LIMIT)
     w.add_argument("--model", default="", help="модель прогона, по умолчанию модель клиента")
     w.add_argument("--prompt", default=weigh.PROMPT, help="запрос прогона, у обоих он один")
+    m = sub.add_parser("map", help="генератор карты проекта и индекса решений")
+    m.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    m.add_argument("--write", action="store_true",
+                   help="писать docs/map.md, иначе печатать в stdout")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
     a = ap.parse_args(argv)
@@ -2413,6 +2561,8 @@ def main(argv):
         # не зовёт: установка бинарей из его --fix идёт без git-команд вовсе.
         update.git_cache(True)
         rc = layout_only(a.dir) if a.layout else doctor(a.dir, a.fix)
+    elif a.cmd == "map":
+        rc = run_map(a.dir, a.write)
     elif a.cmd == "new":
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
     elif a.cmd == "corp":

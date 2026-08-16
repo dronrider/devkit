@@ -274,6 +274,8 @@ func cmdDraftPrio(root, id, level string, clear bool, c CommitOpts) (string, err
 	switch {
 	case clear && level != "":
 		return "", fmt.Errorf("--clear снимает метку целиком, уровень ему не нужен")
+	case !clear && level == "":
+		return "", fmt.Errorf("жду уровень: taskctl draft prio %s high|mid|low либо taskctl draft prio %s --clear", id, id)
 	case !clear && word == "":
 		return "", fmt.Errorf("уровень %q не из шкалы: taskctl draft prio %s high|mid|low, снимается метка через --clear", level, id)
 	}

@@ -262,8 +262,9 @@ func TestDraftPrioMark(t *testing.T) {
 	if _, err := cmdDraftPrio(root, id, "high", true, CommitOpts{}); err == nil {
 		t.Fatal("--clear с уровнем должен отказывать")
 	}
-	if _, err := cmdDraftPrio(root, id, "", false, CommitOpts{}); err == nil {
-		t.Fatal("prio без уровня должен отказывать")
+	if _, err := cmdDraftPrio(root, id, "", false, CommitOpts{}); err == nil ||
+		!strings.Contains(err.Error(), "жду уровень: taskctl draft prio "+id) {
+		t.Fatalf("отказ без уровня не подсказывает форму команды: %v", err)
 	}
 	if _, err := cmdDraftPrio(root, "XR-404", "high", false, CommitOpts{}); err == nil {
 		t.Fatal("prio по чужому ID должен отказывать")

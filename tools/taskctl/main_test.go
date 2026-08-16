@@ -166,7 +166,7 @@ func TestDraftRefusesSubcommandWord(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v: черновик записан молча:\n%s", args, out)
 		}
-		if !strings.Contains(out, "list, defer, attach, drop") ||
+		if !strings.Contains(out, "list, defer, prio, attach, drop") ||
 			!strings.Contains(out, "taskctl show <ID>") {
 			t.Fatalf("%v: отказ без подсказки:\n%s", args, out)
 		}

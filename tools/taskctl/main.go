@@ -25,7 +25,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               файл задачи (закрытые ищутся в архиве)
   id                                          следующий свободный ID
   draft list [--json]                         накопитель черновиков: ID, первая
-                                              строка, возраст, пометка «отложен»
+                                              строка, возраст, метка уровня
+                                              разбора, пометка «отложен»; список
+                                              идёт от высокого уровня к низкому,
+                                              немаркированные и отложенные
+                                              стоят в конце
   batch [--limit N]                           кандидаты в поезд выката и причина
                                               отказа по каждой остальной строке
   kinds                                       сводка по видам приёмки: счёт,
@@ -41,6 +45,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   draft defer <ID> "причина"                  отложить разобранный черновик:
                                               раздел «Грумминг» в его файле
   draft defer <ID> --clear                    снять пометку об отложенном
+  draft prio <ID> high|mid|low                пометить черновик уровнем разбора:
+                                              строка в шапке файла, сортировка
+                                              накопителя от высокого к низкому
+  draft prio <ID> --clear                     снять метку уровня разбора
   draft attach <ID> <TASK-ID>                 приписать черновик к стоящей
                                               строке: текст разделом в файл
                                               задачи, черновик удаляется
@@ -246,6 +254,19 @@ func main() {
 				reason = pos[1]
 			}
 			msg, err = cmdDraftDefer(root(*dir), pos[0], reason, *clear, c)
+		case "prio":
+			fs := flag.NewFlagSet("draft prio", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			clear := fs.Bool("clear", false, "снять метку уровня разбора")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 2, "draft prio <ID> high|mid|low либо draft prio <ID> --clear")
+			level := ""
+			if len(pos) > 1 {
+				level = pos[1]
+			}
+			msg, err = cmdDraftPrio(root(*dir), pos[0], level, *clear, c)
 		case "attach":
 			fs := flag.NewFlagSet("draft attach", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

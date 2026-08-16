@@ -180,6 +180,7 @@ type jsonDraft struct {
 	AgeDays  int    `json:"age_days"`
 	AgeWords string `json:"age_words"`
 	Deferred string `json:"deferred,omitempty"`
+	Prio     string `json:"prio,omitempty"`
 }
 
 // cmdDraftListJSON печатает накопитель одним объектом JSON. Пустой накопитель
@@ -197,6 +198,7 @@ func cmdDraftListJSON(root string) (string, error) {
 		item := jsonDraft{
 			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
+			Prio: d.Prio,
 		}
 		if !d.Written.IsZero() {
 			item.Written = d.Written.Format(draftDateLayout)

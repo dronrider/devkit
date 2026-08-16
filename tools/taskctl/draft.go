@@ -30,19 +30,29 @@ type Draft struct {
 	Written  time.Time
 	Mod      time.Time
 	Deferred string // дата пометки «отложен», пусто у неотложенного
+	Prio     string // уровень разбора high / mid / low, пусто у немаркированного
 }
 
 const (
 	draftGroomHeading  = "## Грумминг"
 	draftWrittenPrefix = "записан "
+	draftPrioPrefix    = "приоритет: "
 	draftDateLayout    = "2006-01-02"
+)
+
+// draftPrioWords переводит уровень разбора в русское слово файла и печати, а
+// draftPrioKeys обратно. Латинские имена живут в команде и в поле prio json,
+// русские в самом файле черновика и на экране, как у суффикса приёмки.
+var (
+	draftPrioWords = map[string]string{"high": "высокий", "mid": "средний", "low": "низкий"}
+	draftPrioKeys  = map[string]string{"высокий": "high", "средний": "mid", "низкий": "low"}
 )
 
 // draftSubs это слова, которые case "draft" узнаёт за подкоманду, а не за
 // текст черновика. Черновика из одного такого слова не записать, но ограничение
 // это давно действует для list и стоит того: без узнавания «draft defer DK-116
 // причина» молча завёл бы черновик с текстом «defer».
-var draftSubs = map[string]bool{"list": true, "defer": true, "attach": true, "drop": true}
+var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true}
 
 // draftWordRe узнаёт одно слово латиницей: имя подкоманды и ID задачи выглядят
 // ровно так, а записанная на ходу идея так не выглядит никогда.
@@ -59,7 +69,7 @@ func draftTextGuard(text string) error {
 		return nil
 	}
 	return fmt.Errorf("текстом черновика пришло одно слово латиницей (%q), а так выглядит промах мимо подкоманды, а не идея.\n"+
-		"  у draft есть только list, defer, attach, drop; черновик целиком печатает taskctl show <ID>\n"+
+		"  у draft есть только list, defer, prio, attach, drop; черновик целиком печатает taskctl show <ID>\n"+
 		"  записать идею: taskctl draft \"текст идеи\"; если слово и есть весь текст, передай его на stdin", word)
 }
 
@@ -97,7 +107,7 @@ func loadDrafts(root string) ([]Draft, error) {
 			d.Mod = info.ModTime()
 		}
 		meta := parseDraftFile(d.Path)
-		d.Title, d.Written, d.Deferred = meta.Title, meta.Written, meta.Deferred
+		d.Title, d.Written, d.Deferred, d.Prio = meta.Title, meta.Written, meta.Deferred, meta.Prio
 		// Возраст от времени правки сбивает любая запись в файл, начиная с
 		// первой же пометки, а заодно свежий клон и shipctl start со своим
 		// worktree. Строка «записан» этого не боится, и фолбэк остаётся только
@@ -109,8 +119,33 @@ func loadDrafts(root string) ([]Draft, error) {
 		}
 		out = append(out, d)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Num < out[j].Num })
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := draftOrderRank(out[i]), draftOrderRank(out[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].Num < out[j].Num
+	})
 	return out, nil
+}
+
+// draftOrderRank это место черновика в порядке разбора: high, mid, low,
+// немаркированные отдельной группой, отложенные после всех. Ранг строки доски
+// отвечает на вопрос «что исполнять», а черновику нужен «что разбирать
+// следующим», поэтому шкала своя и на RANKING.md не ложится.
+func draftOrderRank(d Draft) int {
+	if d.Deferred != "" {
+		return 4
+	}
+	switch d.Prio {
+	case "high":
+		return 0
+	case "mid":
+		return 1
+	case "low":
+		return 2
+	}
+	return 3
 }
 
 func findDraft(drafts []Draft, id string) *Draft {
@@ -123,23 +158,25 @@ func findDraft(drafts []Draft, id string) *Draft {
 }
 
 // draftMeta это то, что читается из самого файла черновика: заголовок, дата
-// записи и дата пометки об отложенном.
+// записи, дата пометки об отложенном и уровень разбора.
 type draftMeta struct {
 	Title    string
 	Written  time.Time
 	Deferred string
+	Prio     string
 }
 
-// parseDraftFile читает файл черновика одним заходом: три поля из одного и того
-// же файла, и второй его читатель платил бы за то же самое дважды на каждую
-// строку накопителя.
+// parseDraftFile читает файл черновика одним заходом: четыре поля из одного и
+// того же файла, и второй его читатель платил бы за то же самое дважды на
+// каждую строку накопителя. Уровень разбора читается только из шапки до
+// первого «## »: строка «приоритет:» в теле идеи это текст, а не метка.
 func parseDraftFile(path string) draftMeta {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return draftMeta{}
 	}
 	var m draftMeta
-	head, groom := true, false
+	head, intro, groom := true, true, false
 	for _, raw := range strings.Split(string(data), "\n") {
 		ln := strings.TrimSpace(raw)
 		if ln == "" {
@@ -151,6 +188,7 @@ func parseDraftFile(path string) draftMeta {
 			continue
 		}
 		if strings.HasPrefix(ln, "## ") {
+			intro = false
 			groom = ln == draftGroomHeading
 			continue
 		}
@@ -159,6 +197,8 @@ func parseDraftFile(path string) draftMeta {
 			if g := deferRe.FindStringSubmatch(ln); g != nil {
 				m.Deferred = g[1]
 			}
+		case intro && m.Prio == "" && strings.HasPrefix(ln, draftPrioPrefix):
+			m.Prio = draftPrioKeys[strings.TrimSpace(strings.TrimPrefix(ln, draftPrioPrefix))]
 		case m.Written.IsZero() && strings.HasPrefix(ln, draftWrittenPrefix):
 			date := strings.TrimSpace(strings.TrimPrefix(ln, draftWrittenPrefix))
 			if t, err := time.ParseInLocation(draftDateLayout, date, time.Local); err == nil {
@@ -287,13 +327,28 @@ func cmdDraftList(root string) (string, error) {
 	}
 	out := make([]string, 0, len(drafts))
 	for _, d := range drafts {
-		age := ageWords(d.Age)
-		if d.Deferred != "" {
-			age += ", отложен " + d.Deferred
-		}
+		age := draftAgeWords(d, true)
 		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, d.Title))
 	}
 	return strings.Join(out, "\n"), nil
+}
+
+// draftAgeWords собирает пометки в скобках строки накопителя: возраст, уровень
+// разбора и «отложен». Печатают их draft list и хвост list одними и теми же
+// словами, чтобы заход по накопителю не расходился сам с собой; дата у
+// «отложен» едет только в полный список, хвосту хватает слова.
+func draftAgeWords(d Draft, withDate bool) string {
+	age := ageWords(d.Age)
+	if p := draftPrioWords[d.Prio]; p != "" {
+		age += ", " + p
+	}
+	if d.Deferred != "" {
+		age += ", отложен"
+		if withDate {
+			age += " " + d.Deferred
+		}
+	}
+	return age
 }
 
 // draftsLine это хвост taskctl list: черновик не виден на доске, и без такой
@@ -304,11 +359,7 @@ func draftsLine(drafts []Draft) string {
 	}
 	parts := make([]string, 0, len(drafts))
 	for _, d := range drafts {
-		age := ageWords(d.Age)
-		if d.Deferred != "" {
-			age += ", отложен"
-		}
-		parts = append(parts, fmt.Sprintf("%s (%s)", d.ID, age))
+		parts = append(parts, fmt.Sprintf("%s (%s)", d.ID, draftAgeWords(d, false)))
 	}
 	return fmt.Sprintf("Черновики (%d, целиком: taskctl draft list): %s", len(drafts), strings.Join(parts, ", "))
 }
@@ -323,6 +374,18 @@ func promoteDraft(root, id string) (promoted, staged bool, err error) {
 	from := draftPath(root, id)
 	if _, err := os.Stat(from); err != nil {
 		return false, false, nil
+	}
+	// Метка разбора не переживает черновик: метаданные в файле задачи не
+	// дублируются (RULES.board.md, «Трекинг задач» п. 3), и строка метки
+	// выкидывается до переноса, а не правкой нового файла после него.
+	t, err := loadDraftText(from)
+	if err != nil {
+		return false, false, err
+	}
+	if t.clearPrio() {
+		if err := t.save(); err != nil {
+			return false, false, err
+		}
 	}
 	staged, err = gitMv(root, from, filepath.Join(root, "docs", "tasks", id+".md"))
 	if err != nil {

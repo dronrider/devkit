@@ -129,6 +129,56 @@ func (t *draftText) ensureWritten(mod time.Time) bool {
 	return true
 }
 
+// setPrio ставит строку метки разбора в шапку, рядом со строкой «записан», а
+// была метка, значит заменяется: повторная простановка уровень меняет, а не
+// копит вторую строку. Ищется только шапка: строка «приоритет:» в теле идеи
+// это текст, и команда её не трогает.
+func (t *draftText) setPrio(word string) {
+	for i, ln := range t.lines {
+		ln = strings.TrimSpace(ln)
+		if strings.HasPrefix(ln, "## ") {
+			break
+		}
+		if strings.HasPrefix(ln, draftPrioPrefix) {
+			t.lines[i] = draftPrioPrefix + word
+			return
+		}
+	}
+	at := 0
+	for i, ln := range t.lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), draftWrittenPrefix) {
+			at = i + 1
+			break
+		}
+		if at == 0 && strings.TrimSpace(ln) != "" {
+			at = i + 1
+		}
+	}
+	ins := []string{draftPrioPrefix + word}
+	t.lines = append(t.lines[:at], append(ins, t.lines[at:]...)...)
+}
+
+// clearPrio снимает строку метки разбора из шапки и отвечает, была ли она.
+// Пустую строку, оставшуюся на её месте, файл и так носит между шапкой и
+// разделами, отдельной уборки она не требует.
+func (t *draftText) clearPrio() bool {
+	out := t.lines[:0]
+	head, removed := true, false
+	for _, ln := range t.lines {
+		trimmed := strings.TrimSpace(ln)
+		if head && strings.HasPrefix(trimmed, "## ") {
+			head = false
+		}
+		if head && strings.HasPrefix(trimmed, draftPrioPrefix) {
+			removed = true
+			continue
+		}
+		out = append(out, ln)
+	}
+	t.lines = out
+	return removed
+}
+
 // findDraftFor находит черновик по ID и отказывает понятной строкой: команды
 // разбора зовутся по списку draft list, и опечатка в ID там обычное дело.
 func findDraftFor(root, id string) (*Draft, error) {
@@ -200,6 +250,63 @@ func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, e
 	return msg + tail, nil
 }
 
+// cmdDraftPrio помечает черновик уровнем разбора high / mid / low либо снимает
+// метку. Шкала грубая и на глаз: RANKING.md на черновик не ложится, потому что
+// оценивает задачу, которой ещё нет, а накопителю нужен ответ «что разбирать
+// следующим». Метка живёт в шапке файла рядом со строкой «записан» и переживает
+// откладывание, но не оформление.
+func cmdDraftPrio(root, id, level string, clear bool, c CommitOpts) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if err := boardGuard(root, "draft prio"); err != nil {
+		return "", err
+	}
+	word := draftPrioWords[level]
+	switch {
+	case clear && level != "":
+		return "", fmt.Errorf("--clear снимает метку целиком, уровень ему не нужен")
+	case !clear && word == "":
+		return "", fmt.Errorf("уровень %q не из шкалы: taskctl draft prio %s high|mid|low, снимается метка через --clear", level, id)
+	}
+	d, err := findDraftFor(root, id)
+	if err != nil {
+		return "", err
+	}
+	t, err := loadDraftText(d.Path)
+	if err != nil {
+		return "", err
+	}
+	rel := draftRel(id)
+	if clear {
+		if !t.clearPrio() {
+			return fmt.Sprintf("%s: метки разбора не было, файл не тронут", id), nil
+		}
+		if err := t.save(); err != nil {
+			return "", err
+		}
+		tail, err := c.apply(root, []string{rel})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s: метка разбора снята%s", id, tail), nil
+	}
+	stamped := t.ensureWritten(d.Mod)
+	t.setPrio(word)
+	if err := t.save(); err != nil {
+		return "", err
+	}
+	tail, err := c.apply(root, []string{rel})
+	if err != nil {
+		return "", err
+	}
+	msg := fmt.Sprintf("%s: приоритет разбора %s", id, word)
+	if stamped {
+		msg += fmt.Sprintf(", дата записи проставлена (%s)", d.Mod.Format(draftDateLayout))
+	}
+	return msg + tail, nil
+}
+
 // draftSection собирает раздел для файла задачи: текст черновика целиком, без
 // своего заголовка первого уровня и с разделами уровнем ниже, чтобы они не
 // разрывали раздел приписки. Дата записи уезжает в заголовок раздела: в теле
@@ -238,6 +345,11 @@ func draftSection(id, text string) string {
 		}
 		if top && written == "" && strings.HasPrefix(strings.TrimSpace(ln), draftWrittenPrefix) {
 			written = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), draftWrittenPrefix))
+			continue
+		}
+		// Метка разбора уезжает тем же правилом, что дата записи: метаданные в
+		// файле задачи не дублируются, и метка не переживает черновик.
+		if top && strings.HasPrefix(strings.TrimSpace(ln), draftPrioPrefix) {
 			continue
 		}
 		body = append(body, ln)

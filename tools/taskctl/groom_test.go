@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -169,7 +171,7 @@ func TestDraftListShowsDeferMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(list, fmt.Sprintf("%s (3 дня, отложен), %s (сегодня)", first, second)) {
+	if !strings.Contains(list, fmt.Sprintf("%s (сегодня), %s (3 дня, отложен)", second, first)) {
 		t.Fatalf("хвост list:\n%s", list)
 	}
 }
@@ -191,6 +193,310 @@ func TestDraftAgeSurvivesDefer(t *testing.T) {
 	}
 	if !strings.Contains(out, id+" (5 дней, отложен") {
 		t.Fatalf("возраст сбит пометкой:\n%s", out)
+	}
+}
+
+// TestDraftPrioMark: метка уровня разбора живёт строкой в шапке файла, рядом
+// со строкой «записан», повторная простановка уровень меняет, а --clear
+// снимает и на черновике без метки не падает.
+func TestDraftPrioMark(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "уведомитель шумит из песочницы")
+
+	msg, err := cmdDraftPrio(root, id, "high", false, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "приоритет разбора высокий") {
+		t.Fatalf("сообщение команды: %q", msg)
+	}
+	body := draftBody(t, root, id)
+	writtenAt := strings.Index(body, draftWrittenPrefix+today())
+	prioAt := strings.Index(body, "приоритет: высокий")
+	if writtenAt < 0 || prioAt < writtenAt {
+		t.Fatalf("метка стоит не рядом со строкой «записан»:\n%s", body)
+	}
+	if !strings.Contains(body, "## Черновик\n\nуведомитель шумит из песочницы") {
+		t.Fatalf("метка съела текст черновика:\n%s", body)
+	}
+
+	if _, err := cmdDraftPrio(root, id, "mid", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	body = draftBody(t, root, id)
+	if n := strings.Count(body, "приоритет: "); n != 1 {
+		t.Fatalf("повторный prio оставил %d строк метки:\n%s", n, body)
+	}
+	if !strings.Contains(body, "приоритет: средний") || strings.Contains(body, "высокий") {
+		t.Fatalf("уровень не заменился:\n%s", body)
+	}
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, id+" (сегодня, средний): уведомитель шумит из песочницы") {
+		t.Fatalf("draft list молчит про метку:\n%s", out)
+	}
+
+	msg, err = cmdDraftPrio(root, id, "", true, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "метка разбора снята") {
+		t.Fatalf("сообщение --clear: %q", msg)
+	}
+	if body := draftBody(t, root, id); strings.Contains(body, "приоритет:") {
+		t.Fatalf("--clear оставил метку:\n%s", body)
+	}
+	msg, err = cmdDraftPrio(root, id, "", true, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "метки разбора не было") {
+		t.Fatalf("повторный --clear молчит: %q", msg)
+	}
+
+	if _, err := cmdDraftPrio(root, id, "urgent", false, CommitOpts{}); err == nil {
+		t.Fatal("уровень не из шкалы должен отказывать")
+	}
+	if _, err := cmdDraftPrio(root, id, "high", true, CommitOpts{}); err == nil {
+		t.Fatal("--clear с уровнем должен отказывать")
+	}
+	if _, err := cmdDraftPrio(root, id, "", false, CommitOpts{}); err == nil {
+		t.Fatal("prio без уровня должен отказывать")
+	}
+	if _, err := cmdDraftPrio(root, "XR-404", "high", false, CommitOpts{}); err == nil {
+		t.Fatal("prio по чужому ID должен отказывать")
+	}
+}
+
+// TestDraftPrioSortsList: один порядок для печати, json и хвоста list: high,
+// mid, low, немаркированные, отложенные, внутри уровня по возрастанию ID.
+func TestDraftPrioSortsList(t *testing.T) {
+	root := setup(t)
+	low := newDraft(t, root, "низкий уровень")
+	plain := newDraft(t, root, "немаркированная идея")
+	first := newDraft(t, root, "первый высокий")
+	second := newDraft(t, root, "второй высокий")
+	mid := newDraft(t, root, "средний уровень")
+	wait := newDraft(t, root, "отложенная идея")
+	for id, level := range map[string]string{low: "low", first: "high", second: "high", mid: "mid"} {
+		if _, err := cmdDraftPrio(root, id, level, false, CommitOpts{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmdDraftDefer(root, wait, "ждём повода", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, ln := range strings.Split(out, "\n") {
+		id, _, _ := strings.Cut(ln, " ")
+		order = append(order, id)
+	}
+	want := []string{first, second, mid, low, plain, wait}
+	if !slices.Equal(order, want) {
+		t.Fatalf("порядок накопителя %v, жду %v:\n%s", order, want, out)
+	}
+	if !strings.Contains(out, first+" (сегодня, высокий): первый высокий") {
+		t.Fatalf("печать без русского слова уровня:\n%s", out)
+	}
+
+	list, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := fmt.Sprintf("%s (сегодня, высокий), %s (сегодня, высокий), %s (сегодня, средний), "+
+		"%s (сегодня, низкий), %s (сегодня), %s (сегодня, отложен)", first, second, mid, low, plain, wait)
+	if !strings.Contains(list, tail) {
+		t.Fatalf("хвост list:\n%s\nждал: %s", list, tail)
+	}
+
+	jsonOut, err := cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("накопитель не разобрался: %v\n%s", err, jsonOut)
+	}
+	for i, id := range want {
+		if got.Drafts[i].ID != id {
+			t.Fatalf("json-порядок разошёлся с печатью: [%d] %s, жду %s", i, got.Drafts[i].ID, id)
+		}
+	}
+	if got.Drafts[0].Prio != "high" || got.Drafts[3].Prio != "low" {
+		t.Fatalf("поле prio не отдаёт уровень: %+v %+v", got.Drafts[0], got.Drafts[3])
+	}
+	if got.Drafts[4].Prio != "" {
+		t.Fatalf("у немаркированного оказалось имя уровня: %+v", got.Drafts[4])
+	}
+}
+
+// TestDraftPrioAndDefer: откладывание метку не трогает, отложенный стоит после
+// всех независимо от метки, а снятая пометка возвращает черновик на место по
+// метке.
+func TestDraftPrioAndDefer(t *testing.T) {
+	root := setup(t)
+	marked := newDraft(t, root, "важная идея")
+	plain := newDraft(t, root, "прочая идея")
+	if _, err := cmdDraftPrio(root, marked, "high", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftDefer(root, marked, "ждём повода", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	body := draftBody(t, root, marked)
+	if !strings.Contains(body, "приоритет: высокий") || !strings.Contains(body, ", отложен: ждём повода") {
+		t.Fatalf("defer съел метку или метка съела пометку:\n%s", body)
+	}
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, marked+" (сегодня, высокий, отложен "+today()+")") {
+		t.Fatalf("печать не собрала обе пометки:\n%s", out)
+	}
+	if strings.Index(out, marked) < strings.Index(out, plain) {
+		t.Fatalf("отложенный с меткой стоит раньше немаркированного:\n%s", out)
+	}
+
+	if _, err := cmdDraftDefer(root, marked, "", true, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Index(out, marked) > strings.Index(out, plain) {
+		t.Fatalf("после снятия пометки метка не вернула черновик наверх:\n%s", out)
+	}
+}
+
+// TestDraftPrioEnsureWritten: первой записи в старый черновик строка «записан»
+// ставится из времени правки до самой записи, как у defer, иначе пометка
+// сбивала бы ровно тот возраст, ради которого черновик показывают.
+func TestDraftPrioEnsureWritten(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "черновик старого формата")
+	body := "# " + id + ": черновик старого формата\n\n## Черновик\n\nчерновик старого формата\n"
+	if err := os.WriteFile(draftFile(root, id), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -4)
+	if err := os.Chtimes(draftFile(root, id), old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := cmdDraftPrio(root, id, "low", false, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "дата записи проставлена ("+old.Format(draftDateLayout)+")") {
+		t.Fatalf("команда молчит про проставленную дату: %q", msg)
+	}
+	got := draftBody(t, root, id)
+	if !strings.Contains(got, draftWrittenPrefix+old.Format(draftDateLayout)+"\nприоритет: низкий") {
+		t.Fatalf("метка встала не рядом с проставленной строкой «записан»:\n%s", got)
+	}
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, id+" (4 дня, низкий)") {
+		t.Fatalf("возраст сбился меткой:\n%s", out)
+	}
+}
+
+// TestDraftPrioBodyLineIgnored: строка «приоритет:» в теле идеи это текст, а
+// не метка, и правка метки её не трогает.
+func TestDraftPrioBodyLineIgnored(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "идея с строкой в теле")
+	body := "# " + id + ": идея с строкой в теле\n\n" + draftWrittenPrefix + today() +
+		"\n\n## Черновик\n\nприоритет: высокий\nтекст идеи\n"
+	if err := os.WriteFile(draftFile(root, id), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := findDraft(drafts, id); d == nil || d.Prio != "" {
+		t.Fatalf("строка из тела легла меткой: %+v", d)
+	}
+	if _, err := cmdDraftPrio(root, id, "mid", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got := draftBody(t, root, id)
+	if !strings.Contains(got, draftWrittenPrefix+today()+"\nприоритет: средний") {
+		t.Fatalf("метка не встала в шапку:\n%s", got)
+	}
+	if !strings.Contains(got, "## Черновик\n\nприоритет: высокий\n") {
+		t.Fatalf("команда тронула строку в теле идеи:\n%s", got)
+	}
+	drafts, err = loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := findDraft(drafts, id); d == nil || d.Prio != "mid" {
+		t.Fatalf("меткой легла строка из тела: %+v", d)
+	}
+}
+
+// TestAddPromotionDropsPrio: метка не переживает черновик, перенос add --id
+// выкидывает строку метки из файла задачи, потому что метаданные там не
+// дублируются.
+func TestAddPromotionDropsPrio(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "идея с уровнем", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftPrio(root, "XR-008", "high", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "task", Rank: "25+4+2+0+2", Accept: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "приоритет:") {
+		t.Fatalf("метка пережила перенос:\n%s", data)
+	}
+	if !strings.Contains(string(data), "идея с уровнем") {
+		t.Fatalf("текст черновика потерян:\n%s", data)
+	}
+}
+
+// TestDraftAttachDropsPrio: приписка выкидывает строку метки из раздела
+// «Из черновика» тем же правилом, что и дата записи.
+func TestDraftAttachDropsPrio(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "своя репродукция через метку")
+	if _, err := cmdDraftPrio(root, id, "mid", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftAttach(root, id, "XR-002", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-002.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "приоритет:") {
+		t.Fatalf("метка пережила приписку:\n%s", data)
+	}
+	if !strings.Contains(string(data), "своя репродукция через метку") {
+		t.Fatalf("текст черновика потерян:\n%s", data)
 	}
 }
 

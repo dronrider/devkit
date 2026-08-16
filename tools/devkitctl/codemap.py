@@ -34,6 +34,11 @@ MANIFESTS = (
 GRADLE_SETTINGS = ("settings.gradle", "settings.gradle.kts")
 GRADLE_RE = re.compile(r"(?m)^\s*include\b(?P<body>[^\n]+)")
 GRADLE_ITEM_RE = re.compile(r"'([^']+)'")
+
+# Пакетные манифесты для шага 2 каскада (каталоги с собственным манифестом)
+PACKAGE_MANIFESTS = ("go.mod", "Cargo.toml", "pyproject.toml", "setup.py",
+                     "package.json", "build.gradle", "build.gradle.kts")
+
 ARCH_MAPS = ("docs/ARCHITECTURE.md", "ARCHITECTURE.md")
 CODE_SUFFIXES = (".go", ".py", ".rs", ".js", ".ts", ".jsx", ".tsx",
                  ".java", ".kt", ".rb", ".c", ".cc", ".cpp", ".h", ".hpp",
@@ -105,14 +110,99 @@ def has_code(directory):
     return False
 
 
-def members_from_dirs(root):
-    """Запасной путь: каталоги верхнего уровня, внутри которых есть код."""
+def has_code_direct(directory):
+    """Проверить, есть ли файлы с кодом только в самом каталоге (без подкаталогов)."""
+    try:
+        for entry in directory.iterdir():
+            if entry.is_file() and entry.name.endswith(CODE_SUFFIXES):
+                return True
+    except (PermissionError, FileNotFoundError):
+        pass
+    return False
+
+
+def members_from_package_manifests(root):
+    """Шаг 2 каскада: каталоги с собственным пакетным манифестом.
+
+    Обход идёт сверху вниз. Найденный каталог с манифестом становится членом
+    и внутрь не раскрывается. Каталоги без манифеста обходятся дальше.
+    Возвращает None, если пакетных манифестов не найдено.
+    """
+    root = Path(root)
     found = []
+
+    def walk_recursive(current_dir, base_path):
+        """Рекурсивный обход с проверкой манифеста."""
+        try:
+            entries = sorted(current_dir.iterdir(), key=lambda e: e.name)
+        except (PermissionError, FileNotFoundError):
+            return
+
+        for entry in entries:
+            if not entry.is_dir() or entry.name in FALLBACK_SKIP:
+                continue
+
+            rel_path = base_path / entry.name if base_path else Path(entry.name)
+
+            # Проверяем наличие пакетного манифеста
+            has_package = any((entry / m).is_file() for m in PACKAGE_MANIFESTS)
+
+            if has_package:
+                # Нашли пакетный манифест - каталог становится членом
+                found.append(str(rel_path))
+                # Внутрь не раскрываем
+                continue
+
+            # Идём глубже, но только в каталоги, которые не исключены при обходе
+            if entry.name not in FALLBACK_WALK:
+                walk_recursive(entry, rel_path)
+
+    walk_recursive(root, Path(""))
+    return found if found else None
+
+
+def members_from_dirs(root, exclude_packages=None):
+    """Запасной путь: каталоги верхнего уровня, внутри которых есть код.
+
+    Если exclude_packages передан, исключает эти пути из поиска и ищет
+    вложенные каталоги с кодом внутри исключённых пакетов.
+    """
+    if exclude_packages is None:
+        exclude_packages = []
+
+    root = Path(root)
+    found = []
+    exclude_set = set(exclude_packages)
+
+    # Сначала проверяем каталоги верхнего уровня
     for entry in sorted(os.scandir(root), key=lambda e: e.name):
         if not entry.is_dir() or entry.name in FALLBACK_SKIP:
             continue
-        if has_code(Path(entry.path)):
-            found.append(entry.name)
+
+        rel_path = entry.name
+        entry_path = Path(entry.path)
+
+        # Проверяем наличие кода в самом каталоге
+        if has_code_direct(entry_path):
+            # Проверяем, не исключён ли полный путь
+            if rel_path not in exclude_set:
+                found.append(rel_path)
+            continue
+
+        # Проверяем наличие кода в подкаталогах, но не внутри исключённых каталогов
+        # Только если сам родительский каталог не исключён
+        if rel_path not in exclude_set:
+            for sub_entry in sorted(entry_path.iterdir(), key=lambda e: e.name):
+                if not sub_entry.is_dir() or sub_entry.name in FALLBACK_SKIP:
+                    continue
+
+                sub_path = entry_path / sub_entry.name
+                sub_rel = f"{rel_path}/{sub_entry.name}"
+
+                # Проверяем, не исключён ли сам подкаталог
+                if sub_rel not in exclude_set and has_code_direct(sub_path):
+                    found.append(sub_rel)
+
     return found
 
 
@@ -236,22 +326,32 @@ def generate_map(root):
     """
     root = Path(root)
 
-    # Сбор компонентов
-    members = members_from_manifest(root)
+    # Сбор компонентов по каскаду из трёх шагов (решение 1 LLD DK-194)
+    package_members = None
+    members = members_from_manifest(root)  # Шаг 1: workspace-манифест в корне
     if members is None:
-        members = members_from_dirs(root)
+        members = members_from_package_manifests(root)  # Шаг 2: пакетные манифесты на глубине
+        package_members = members  # Сохраняем для шага 3
+    if not members:
+        members = members_from_dirs(root)  # Шаг 3: каталоги с кодом по суффиксам
+    elif package_members is not None:
+        # Если шаг 2 что-то нашёл, дополним шагом 3 для каталогов без манифестов
+        dir_members = members_from_dirs(root, exclude_packages=package_members)
+        members = list(set(members + dir_members))
 
     skip = exceptions(root)
     components = []
 
     for path in members:
         name = Path(path).name
-        if name in skip:
+        # Проверяем исключение по имени (каталог верхнего уровня)
+        # или по полному пути (вложенный каталог)
+        if name in skip or path in skip:
             continue
 
         description = describe_component(root, name, path)
-        if not description:
-            continue  # Компонент без описания в карту не едет
+        if not description or description == "---":
+            continue  # Компонент без описания или с маркером в карту не едет
 
         components.append((path, description))
 

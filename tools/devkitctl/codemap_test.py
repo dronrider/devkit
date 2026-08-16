@@ -122,6 +122,149 @@ class TestComponentDetection(unittest.TestCase):
         exceptions = codemap.exceptions(self.root)
         self.assertEqual(exceptions, {"vendor": "сторонние библиотеки", "build": "сборочные артефакты"})
 
+    def test_package_manifest_at_depth(self):
+        """Пакетный манифест на глубине закрывает каталог, внутрь не раскрывается."""
+        # Создаём структуру tools/<утилита>/go.mod
+        tools_dir = self.root / "tools"
+        tools_dir.mkdir()
+
+        # Создаём несколько Go-утилит с манифестами
+        for util in ["agentctl", "dashboard", "taskctl"]:
+            util_dir = tools_dir / util
+            util_dir.mkdir()
+            (util_dir / "go.mod").write_text(f"module {util}\n\ngo 1.21", encoding="utf-8")
+            (util_dir / "main.go").write_text(f"package main\n\nfunc main() {{}}", encoding="utf-8")
+
+        # Добавляем подкаталог внутри утилиты - он не должен попасть в карту
+        (tools_dir / "agentctl" / "subdir").mkdir()
+        (tools_dir / "agentctl" / "subdir" / "sub.go").write_text("package sub", encoding="utf-8")
+
+        members = codemap.members_from_package_manifests(self.root)
+        self.assertEqual(sorted(members), ["tools/agentctl", "tools/dashboard", "tools/taskctl"])
+
+    def test_mixed_workspace_and_package(self):
+        """Смешанный случай: манифест в корне плюс пакетный на глубине."""
+        # Создаём Cargo workspace с одним членом и отдельный пакет
+        cargo_toml = self.root / "Cargo.toml"
+        cargo_toml.write_text('[workspace]\nmembers = ["crates/core"]', encoding="utf-8")
+
+        # Создаём член workspace
+        core_dir = self.root / "crates" / "core"
+        core_dir.mkdir(parents=True)
+        (core_dir / "Cargo.toml").write_text('[package]\nname = "core"', encoding="utf-8")
+        (core_dir / "src").mkdir()
+        (core_dir / "src" / "lib.rs").write_text("pub fn init() {}", encoding="utf-8")
+
+        # Создаём отдельный пакет вне workspace
+        util_dir = self.root / "tools"
+        util_dir.mkdir()
+        (util_dir / "Cargo.toml").write_text('[package]\nname = "util"', encoding="utf-8")
+        (util_dir / "src").mkdir()
+        (util_dir / "src" / "main.rs").write_text("fn main() {}", encoding="utf-8")
+
+        members = codemap.members_from_package_manifests(self.root)
+        self.assertIn("crates/core", members)
+        self.assertIn("tools", members)
+
+    def test_package_manifest_deeper_than_two_levels(self):
+        """Пакетный манифест глубже двух уровней."""
+        # Создаём структуру src/lib/parser с go.mod
+        parser_dir = self.root / "src" / "lib" / "parser"
+        parser_dir.mkdir(parents=True)
+        (parser_dir / "go.mod").write_text("module parser", encoding="utf-8")
+        (parser_dir / "parser.go").write_text("package parser", encoding="utf-8")
+
+        members = codemap.members_from_package_manifests(self.root)
+        self.assertEqual(members, ["src/lib/parser"])
+
+    def test_fallback_to_dirs_after_package_step(self):
+        """При отсутствии пакетных манифестов используется запасной путь."""
+        # Создаём структуру без пакетных манифестов
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "util1.py").write_text("# code", encoding="utf-8")
+        (self.root / "internal").mkdir()
+        (self.root / "internal" / "util2.go").write_text("// code", encoding="utf-8")
+
+        members = codemap.members_from_package_manifests(self.root)
+        # Должен вернуть None, чтобы следующий шаг каскада использовал dirs
+        self.assertIsNone(members)
+
+    def test_devkit_like_structure(self):
+        """Devkit-подобная структура: tools/<утилита> с go.mod, internal, hooks."""
+        # Создаём структуру как в devkit
+        tools_dir = self.root / "tools"
+        tools_dir.mkdir()
+
+        # Восемь Go-утилит с манифестами
+        go_utils = ["agentctl", "cmdout", "dashboard", "obeycheck", "regcheck",
+                    "secretctl", "shipctl", "taskctl", "trackctl"]
+        for util in go_utils:
+            util_dir = tools_dir / util
+            util_dir.mkdir()
+            (util_dir / "go.mod").write_text(f"module {util}\n\ngo 1.21", encoding="utf-8")
+            (util_dir / "main.go").write_text("package main\n\nfunc main() {}", encoding="utf-8")
+            # README с описанием
+            (util_dir / "README.md").write_text(f"# {util}: тестовая утилита\n\nОписание.", encoding="utf-8")
+
+        # devkitctl на python без манифеста (не должен попасть в этот тест)
+        # devkitctl_dir = tools_dir / "devkitctl"
+        # devkitctl_dir.mkdir()
+        # (devkitctl_dir / "__init__.py").write_text('"""devkitctl: обвязка проекта."""', encoding="utf-8")
+
+        # internal, hooks
+        (self.root / "internal").mkdir()
+        (self.root / "internal" / "frame.go").write_text("package internal", encoding="utf-8")
+        (self.root / "hooks").mkdir()
+        (self.root / "hooks" / "check.sh").write_text("#!/bin/sh", encoding="utf-8")
+
+        # kit/skills и kit/harness с кодом
+        (self.root / "kit").mkdir()
+        skills_dir = self.root / "kit" / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text("# Навык", encoding="utf-8")
+        (skills_dir / "skill.py").write_text("# code", encoding="utf-8")
+
+        harness_dir = self.root / "kit" / "harness"
+        harness_dir.mkdir(parents=True)
+        (harness_dir / "config.toml").write_text("# config", encoding="utf-8")
+
+        # kit/agents и kit/templates без кода - не должны попасть
+        (self.root / "kit" / "agents").mkdir()
+        (self.root / "kit" / "templates").mkdir()
+
+        members_package = codemap.members_from_package_manifests(self.root)
+        package_tools = [f"tools/{util}" for util in go_utils]
+        self.assertEqual(sorted(members_package), sorted(package_tools))
+
+        # Шаг 3 с исключением пакетных манифестов находит internal, hooks, kit/skills
+        members_dirs = codemap.members_from_dirs(self.root, exclude_packages=members_package)
+        expected_dirs = ["internal", "hooks", "kit/skills"]
+        self.assertEqual(sorted(members_dirs), sorted(expected_dirs))
+
+    def test_toplevel_only_mutation_fails(self):
+        """Мутация 'вернуть только каталоги верхнего уровня' падает на devkit-подобной синтетике."""
+        # Создаём devkit-подобную структуру
+        tools_dir = self.root / "tools"
+        tools_dir.mkdir()
+
+        # Go-утилита с манифестом на глубине
+        util_dir = tools_dir / "agentctl"
+        util_dir.mkdir()
+        (util_dir / "go.mod").write_text("module agentctl", encoding="utf-8")
+        (util_dir / "main.go").write_text("package main", encoding="utf-8")
+        (util_dir / "README.md").write_text("# agentctl: утилита", encoding="utf-8")
+
+        # internal с кодом
+        (self.root / "internal").mkdir()
+        (self.root / "internal" / "code.go").write_text("package internal", encoding="utf-8")
+
+        # Правильное поведение: шаг 2 находит tools/agentctl
+        members = codemap.members_from_package_manifests(self.root)
+        self.assertIn("tools/agentctl", members)
+
+        # Мутация: если бы вернулись только каталоги верхнего уровня (tools, internal)
+        # то tools/agentctl был бы потерян, и карта была бы неполной
+
 
 class TestDescriptionExtraction(unittest.TestCase):
     """Тесты извлечения описаний компонентов."""

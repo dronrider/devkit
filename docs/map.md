@@ -1,4 +1,4 @@
-<!-- devkit:generated map body=bcb5199bdee5ad46 -->
+<!-- devkit:generated map body=aaa5d8bb159a329b -->
 
 # Карта проекта
 
@@ -7,7 +7,16 @@
 
 hooks: проверки текстов, уведомления и фоновая работа по расписанию сессии
 internal: общий go-модуль каркаса утилит
-kit: материалы подключения devkit к харнесам
+tools/agentctl: выбор исполнителя под задачу
+tools/cmdout: длинный вывод команд файлом, агенту выжимка
+tools/dashboard: веб-дашборд агентской разработки
+tools/devkitctl: обвязка проекта
+tools/obeycheck: стенд послушания
+tools/regcheck: краснота регрессионного теста
+tools/secretctl: имена агенту, значение в подпроцесс
+tools/shipctl: слияние и откат задач
+tools/taskctl: механика канбан-доски
+tools/trackctl: разговор с трекером задач
 
 # Решения по docs/lld
 

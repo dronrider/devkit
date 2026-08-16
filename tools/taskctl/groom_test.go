@@ -451,6 +451,42 @@ func TestDraftPrioBodyLineIgnored(t *testing.T) {
 	}
 }
 
+// TestDraftPrioWrittenInBody: строка «записан ...» в теле идеи это текст, а не
+// дата записи шапки: точка вставки метки ищется только до первого «## », и
+// строка тела не мешает ни проставить дату, ни поставить метку в шапку.
+func TestDraftPrioWrittenInBody(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "идея со строкой записан в теле")
+	body := "# " + id + ": идея со строкой записан в теле\n\n## Черновик\n\n" +
+		draftWrittenPrefix + "разговор с смежниками во вторник\nтекст идеи\n"
+	if err := os.WriteFile(draftFile(root, id), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := cmdDraftPrio(root, id, "high", false, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "дата записи проставлена") {
+		t.Fatalf("строка тела скрыла отсутствие даты в шапке: %q", msg)
+	}
+	got := draftBody(t, root, id)
+	head := got[:strings.Index(got, "## ")]
+	if !strings.Contains(head, draftWrittenPrefix+today()+"\nприоритет: высокий") {
+		t.Fatalf("метка не встала в шапку рядом с проставленной датой:\n%s", got)
+	}
+	if !strings.Contains(got, draftWrittenPrefix+"разговор с смежниками во вторник\n") {
+		t.Fatalf("команда тронула строку в теле идеи:\n%s", got)
+	}
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := findDraft(drafts, id); d == nil || d.Prio != "high" {
+		t.Fatalf("список читает черновик немаркированным: %+v", d)
+	}
+}
+
 // TestAddPromotionDropsPrio: метка не переживает черновик, перенос add --id
 // выкидывает строку метки из файла задачи, потому что метаданные там не
 // дублируются.

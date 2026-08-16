@@ -105,11 +105,16 @@ func (t *draftText) clearDefer() bool {
 // ensureWritten проставляет дату записи старому черновику, у которого её нет.
 // Зовётся до первой записи в файл, пока время правки ещё то самое: иначе
 // пометка сбивала бы ровно тот возраст, ради которого черновик и показывают.
+// Строка ищется только в шапке: «записан ...» в теле идеи это текст, и он
+// не мешает шапке получить дату.
 func (t *draftText) ensureWritten(mod time.Time) bool {
 	if mod.IsZero() {
 		return false
 	}
 	for _, ln := range t.lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "## ") {
+			break
+		}
 		if strings.HasPrefix(strings.TrimSpace(ln), draftWrittenPrefix) {
 			return false
 		}
@@ -146,6 +151,9 @@ func (t *draftText) setPrio(word string) {
 	}
 	at := 0
 	for i, ln := range t.lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "## ") {
+			break
+		}
 		if strings.HasPrefix(strings.TrimSpace(ln), draftWrittenPrefix) {
 			at = i + 1
 			break

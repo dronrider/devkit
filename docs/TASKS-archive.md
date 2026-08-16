@@ -273,3 +273,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-389 | Строка доски получает файл задачи с DoD при заведении: абзац в п. 5 правил доски | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-389.md](tasks/archive/2026/DK-389.md) |
 | DK-390 | board-groom держит полное описание трёх ворот, прочие входы ссылаются туда | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-390.md](tasks/archive/2026/DK-390.md) |
 | DK-392 | goal-loop и goal-cut: ворота заменяются связью с целью, ссылка на цель уходит в файл задачи нарезки | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-392.md](tasks/archive/2026/DK-392.md) |
+| DK-393 | goal-start: ворота постановки заменяются DoD цели и бюджетом | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-393.md](tasks/archive/2026/DK-393.md) |

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/works"
 )
 
 // Доска берётся подпроцессом taskctl list --json, а не своим разбором
@@ -188,55 +190,44 @@ type Work struct {
 }
 
 // liveWorks собирает работы проекта. tmux-сессии на машине общие, к проекту
-// они привязываются префиксом ID с его доски; доска без префикса работ из
-// tmux не получает. Реестр целей привязан корнем и добирает цели, которые
-// ведёт живой чат без tmux-сессии. Третьим идут интерактивные сессии: окно
-// агента у человека не заводит ни tmux-сессии, ни записи в реестре, и без
-// них половина работы на машине была бы невидима.
+// они привязываются префиксом ID с его доски; разбор имён и записи реестра
+// целей живут в общем каркасе internal/works: тем же признаком занятости
+// пользуется планировщик слота taskctl (LLD DK-400, решение 3), и вторая
+// копия разбора у экрана расползлась бы с утилитой на первой правке.
+// Третьим идут интерактивные сессии: окно агента у человека не заводит ни
+// tmux-сессии, ни записи в реестре, и без них половина работы на машине была
+// бы невидима.
 func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []Work {
 	// Пустой список, а не null: клиент и smoke-сценарий различают «работ нет»
 	// и «поля нет».
-	works := []Work{}
+	list := []Work{}
 	seen := map[string]bool{}
 	busy := map[string]bool{}
 	// Заголовки берутся с доски разом: работа подписывается им, а не именем
 	// сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).
 	// Строки на доске может и не быть, и тогда работа остаётся при своём ID.
 	rows, _ := parseBoardRows(board)
-	if prefix != "" {
-		// Сессии спрашиваются со временем создания (tmuxList): по нему экран
-		// «Агенты» говорит, сколько работа идёт.
-		for _, sess := range tmuxList() {
-			for _, kind := range []string{"goal", "task"} {
-				id, ok := strings.CutPrefix(sess.Name, kind+"-")
-				// Производная сессия конвейера (task-DK-208_1_1786532648) с
-				// prefix-проверкой не отсеивается: у неё тот же префикс доски,
-				// а хвост это номер и unix-момент запуска, а не ID (DK-279).
-				// goalIDRe та же проверка, что у ручек журнала и черновика.
-				if !ok || !strings.HasPrefix(id, prefix+"-") || !goalIDRe.MatchString(id) {
-					continue
-				}
-				works = append(works, Work{ID: id, Kind: kind, Title: rows[id].Title,
-					Sect: rows[id].Sect, Via: "tmux", Started: sess.Created})
-				seen[kind+"-"+id] = true
-				busy[id] = true
-			}
-		}
-	}
-	for _, path := range globSorted(filepath.Join(s.cfg.Home, ".devkit", "goals", "*.watch")) {
-		entry := readEntry(path)
-		goal, root := entry["goal"], entry["root"]
-		if goal == "" || root == "" || filepath.Clean(root) != filepath.Clean(projectPath) {
+	// Сессии спрашиваются со временем создания (tmuxList): по нему экран
+	// «Агенты» говорит, сколько работа идёт.
+	for _, sess := range tmuxList() {
+		id, kind := works.SessionTask(sess.Name, prefix)
+		if id == "" {
 			continue
 		}
+		list = append(list, Work{ID: id, Kind: kind, Title: rows[id].Title,
+			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created})
+		seen[kind+"-"+id] = true
+		busy[id] = true
+	}
+	for _, goal := range works.RegistryGoals(s.cfg.Home, projectPath) {
 		if seen["goal-"+goal] {
 			continue
 		}
-		works = append(works, Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
+		list = append(list, Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
 			Sect: rows[goal].Sect, Via: "registry"})
 		busy[goal] = true
 	}
-	return append(works, s.sessionWorks(projectPath, prefix, rows, busy)...)
+	return append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
 }
 
 // tmuxMissingCheck называет ненайденный tmux: без него живые работы это
@@ -268,23 +259,4 @@ func tmuxSessions() []string {
 func globSorted(pattern string) []string {
 	paths, _ := filepath.Glob(pattern)
 	return paths
-}
-
-// readEntry читает файл «ключ = значение», как записи реестра целей.
-func readEntry(path string) map[string]string {
-	data := map[string]string{}
-	text, err := os.ReadFile(path)
-	if err != nil {
-		return data
-	}
-	for _, ln := range strings.Split(string(text), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" || strings.HasPrefix(ln, "#") {
-			continue
-		}
-		if k, v, ok := strings.Cut(ln, "="); ok {
-			data[strings.TrimSpace(k)] = strings.TrimSpace(v)
-		}
-	}
-	return data
 }

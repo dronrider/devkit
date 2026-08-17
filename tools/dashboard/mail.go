@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/dronrider/devkit/internal/works"
 )
 
 // Почта цели со стороны дашборда (LLD DK-136, «Что видит человек»): отметки
@@ -151,9 +153,11 @@ func journalAt(path string) time.Time {
 // корню, как её ищет liveWorks, а вот отметка stopped не читается вовсе:
 // сторожок меряет ею движение дерева, а не цели, и у живого витка, висящего
 // на ожидании исполнителей, она стоит наравне с брошенным.
+// Список записей реестра читается общим разбором каркаса (internal/works):
+// формат один с занятостью работ, и своя копия жила бы в двух местах.
 func (s *server) goalSeen(projectPath, id string) time.Time {
 	for _, path := range globSorted(filepath.Join(s.cfg.Home, ".devkit", "goals", "*.watch")) {
-		entry := readEntry(path)
+		entry := works.ReadEntry(path)
 		if entry["goal"] != id || entry["root"] == "" {
 			continue
 		}

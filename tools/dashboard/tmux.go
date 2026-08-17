@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
-	"strconv"
-	"strings"
+
+	"github.com/dronrider/devkit/internal/works"
 )
 
 // Живой статус агента, сторона tmux: список сессий машины и снимок пейна
@@ -24,27 +24,13 @@ type tmuxSession struct {
 	Created int64  `json:"created"`
 }
 
-// tmuxList отдаёт сессии; ненулевой код ls это штатное «сессий нет», как в
-// tmuxSessions: без единой сессии tmux не держит сервера.
+// tmuxList отдаёт сессии; разбор вывода живёт в общем каркасе
+// (internal/works), потому что занятость задач по именам сессий читает и
+// планировщик слота taskctl. Ненулевой код ls это штатное «сессий нет».
 func tmuxList() []tmuxSession {
-	out, err := runProc("tmux", "ls", "-F", "#{session_name}\t#{session_windows}\t#{session_created}")
-	if err != nil {
-		return nil
-	}
 	sessions := []tmuxSession{}
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Split(ln, "\t")
-		if fields[0] == "" {
-			continue
-		}
-		s := tmuxSession{Name: fields[0]}
-		if len(fields) > 1 {
-			s.Windows, _ = strconv.Atoi(fields[1])
-		}
-		if len(fields) > 2 {
-			s.Created, _ = strconv.ParseInt(fields[2], 10, 64)
-		}
-		sessions = append(sessions, s)
+	for _, s := range works.Sessions() {
+		sessions = append(sessions, tmuxSession(s))
 	}
 	return sessions
 }

@@ -110,10 +110,28 @@ func taskGoalLink(root, id string) string {
 	return ""
 }
 
+// goalKey приводит запись связи с целью к одному виду: add принимает цель
+// в разных формах (голый ID, путь с docs/tasks/, имя файла с .md), и без
+// приведения одна цель, записанная двумя формами, потолком не узнаётся.
+// Ключом служит имя файла ссылки без каталога и суффикса.
+func goalKey(link string) string {
+	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(link), "Цель:"))
+	if i := strings.Index(s, "["); i >= 0 {
+		if j := strings.Index(s[i:], "]"); j > 0 {
+			s = s[i+1 : i+j]
+		}
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.TrimSuffix(s, ".md")
+}
+
 // parkedQuestions перечисляет висящие вопросы цели: строки в Blocked с
-// причиной «вопрос:» и той же связью с целью, что у спрашивающей. Вышедшие из
-// Blocked к ней не относятся, их будит сторожок.
+// причиной «вопрос:» и той же связью с целью, что у спрашивающей, в любой
+// форме записи. Вышедшие из Blocked к ней не относятся, их будит сторожок.
 func parkedQuestions(b *Board, root, goal string) []string {
+	key := goalKey(goal)
 	var ids []string
 	for _, r := range b.Rows {
 		if r.Sect != SectBlocked {
@@ -123,7 +141,7 @@ func parkedQuestions(b *Board, root, goal string) []string {
 		if !strings.HasPrefix(blockReason(blockSuf), "вопрос:") {
 			continue
 		}
-		if taskGoalLink(root, r.ID) == goal {
+		if goalKey(taskGoalLink(root, r.ID)) == key {
 			ids = append(ids, r.ID)
 		}
 	}

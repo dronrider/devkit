@@ -406,6 +406,49 @@ func TestMoveQuestionCeiling(t *testing.T) {
 	}
 }
 
+// TestMoveQuestionCeilingLinkForms: add принимает цель в разных формах
+// (голый ID, путь с docs/tasks/, имя файла с .md), а потолок висящих
+// вопросов считается на цель, а не на форму записи в файле: две строки с
+// разными формами записи одной цели держат третью, записанную третьей
+// формой.
+func TestMoveQuestionCeilingLinkForms(t *testing.T) {
+	root := setup(t)
+	link := func(id, goal string) {
+		t.Helper()
+		if err := appendUnderHeading(taskFileAbs(root, id), "Цель: "+goal); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("XR-001", "XG-900")
+	link("XR-002", "[docs/tasks/XG-900.md](docs/tasks/XG-900.md)")
+	link("XR-004", "[XG-900.md](XG-900.md)")
+	park := func(id, reason string) error {
+		t.Helper()
+		b, err := LoadBoard(boardPath(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.find(id).Sect != SectInProgress {
+			if _, err := cmdMove(root, id, SectInProgress, "", CommitOpts{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err = cmdMove(root, id, SectBlocked, reason, CommitOpts{})
+		return err
+	}
+	if err := park("XR-001", "вопрос: ждём схему"); err != nil {
+		t.Fatal(err)
+	}
+	if err := park("XR-002", "вопрос: ждём доступ"); err != nil {
+		t.Fatal(err)
+	}
+	err := park("XR-004", "вопрос: третья схема")
+	if err == nil || !strings.Contains(err.Error(), "вопросов висит 2 из 2") ||
+		!strings.Contains(err.Error(), "XR-001, XR-002") {
+		t.Fatalf("вопрос той же цели в другой форме записи прошёл мимо потолка: %v", err)
+	}
+}
+
 func TestSetTypeInPlace(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})

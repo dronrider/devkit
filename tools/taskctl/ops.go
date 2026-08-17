@@ -74,14 +74,15 @@ func checkReason(reason string) error {
 // devkitctl watch, «окружение:» ждёт неготовой среды задачи.
 var parkPrefixes = []string{"вопрос", "окружение"}
 
-// checkParkPrefix отбивает сломанный машинный префикс. «вопрос :» и «вопрос -»
-// разбирались бы как проза, и припаркованная вопросом строка осталась бы в
-// Blocked безнадзорной: сторожок ищет в причине ровно «вопрос:».
+// checkParkPrefix отбивает сломанный машинный префикс. «вопрос :», «вопрос -»
+// и заглавная форма разбирались бы как проза, и припаркованная вопросом строка
+// осталась бы в Blocked безнадзорной: сторожок ищет в причине ровно «вопрос:».
 func checkParkPrefix(reason string) error {
 	first := reason
 	if i := strings.IndexAny(reason, " \t"); i >= 0 {
 		first = reason[:i]
 	}
+	first = strings.ToLower(strings.TrimSuffix(first, ":"))
 	for _, p := range parkPrefixes {
 		if first == p && !strings.HasPrefix(reason, p+":") {
 			return fmt.Errorf("причина начинается со слова «%s», а машинный префикс пишется «%s: ...»: по нему сторожок devkitctl watch отличает строку, ждущую ответа", p, p)

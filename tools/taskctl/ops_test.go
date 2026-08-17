@@ -295,8 +295,9 @@ func TestMoveToBlockedRejectsBracketInReason(t *testing.T) {
 
 // TestMoveToBlockedQuestionPrefix: парковка вопросом (LLD DK-400, решение 2).
 // Префикс «вопрос:» это машинная метка, по которой сторожок devkitctl watch
-// отличает строку, ждущую ответа: сломанная форма «вопрос :» обязана
-// отбиваться сразу, а не спать в Blocked без надзора.
+// отличает строку, ждущую ответа: сломанная форма «вопрос :» и естественное
+// начало предложения «Вопрос:» обязаны отбиваться сразу, а не спать в Blocked
+// без надзора: сторожок матчит префикс в точном регистре.
 func TestMoveToBlockedQuestionPrefix(t *testing.T) {
 	root := setup(t)
 	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
@@ -304,6 +305,9 @@ func TestMoveToBlockedQuestionPrefix(t *testing.T) {
 	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос : ждём схему", CommitOpts{}); err == nil {
 		t.Fatal("сломанный машинный префикс должен падать")
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "Вопрос: нужна схема", CommitOpts{}); err == nil {
+		t.Fatal("заглавная форма машинного префикса должна падать")
 	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос: ждём схему", CommitOpts{}); err != nil {
 		t.Fatal(err)

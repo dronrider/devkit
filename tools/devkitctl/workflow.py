@@ -27,6 +27,7 @@ import layout
 MAP = Path("docs") / "workflow.md"
 BOARD_GO = Path("tools") / "taskctl" / "board.go"
 PROGRESS_GO = Path("tools") / "taskctl" / "progress.go"
+SKILLS_DIR = Path("kit") / "skills"
 
 # Таблица секций доски в taskctl: строки вида {"## Check", SectCheck} внутри
 # sectByPrefix. Имя для человека это текст заголовка после "## ".
@@ -37,6 +38,8 @@ MARK_RE = re.compile(r"\bprogress\w+\s*=\s*([0-9]+\.[0-9]+)\b")
 
 NO_MAP = ("карты переходов %s нет; пишется руками по решению 8 LLD DK-400, "
           "doctor --fix её не генерит" % MAP)
+NO_SKILLS = ("скиллы не читаются из %s: каталог скиллов уехал или SKILL.md "
+             "переименован, обновить сторожа карты переходов" % SKILLS_DIR)
 NO_STATUSES = ("статусы доски не читаются из %s: таблица секций уехала или "
                "переименована, обновить сторожа карты переходов" % BOARD_GO)
 NO_MARKS = ("рубежи не читаются из %s: константы progress* уехали или "
@@ -51,9 +54,12 @@ def _read(path):
 
 
 def skills(devkit):
-    """Скиллы devkit: каталоги kit/skills/* со своим SKILL.md."""
+    """Скиллы devkit: каталоги kit/skills/* со своим SKILL.md.
+
+    Пустой список значит, что источник не разбирается.
+    """
     return sorted(p.parent.name for p in
-                  (Path(devkit) / "kit" / "skills").glob("*/SKILL.md"))
+                  (Path(devkit) / SKILLS_DIR).glob("*/SKILL.md"))
 
 
 def statuses(devkit):
@@ -88,7 +94,10 @@ def check(root):
     if text is None:
         return [NO_MAP]
     findings = []
-    for name in skills(root):
+    kit = skills(root)
+    if not kit:
+        findings.append(NO_SKILLS)
+    for name in kit:
         if name not in text:
             findings.append("карта переходов: скилл %s не упомянут" % name)
     board = statuses(root)

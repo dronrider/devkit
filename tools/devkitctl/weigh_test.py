@@ -663,6 +663,14 @@ class DoctorResidencyTest(SandboxCase):
         write(cls.rdk / "hooks" / "README.md", "# Хуки\n")
         write(cls.rdk / "tools" / "README.md", "# Утилиты\n")
         write(cls.rdk / "AGENTS.md", "# devkit\n\nтестовый проект.\n")
+        # Сторож карты переходов (DK-407) спрашивает docs/workflow.md у любого
+        # чекаута с признаком devkit, а фикстура сама себе devkit: болванка
+        # с единственным скиллом, всеми статусами и рубежами закрывает
+        # проверку, чтобы краснота весов не тонула в находках про карту.
+        write(cls.rdk / "docs" / "workflow.md",
+              "# Карта переходов\n\nПереходы делает скилл `tiny-skill`: "
+              "In progress, Check, Backlog, Blocked.\n\n"
+              "Рубежи: 0.00 0.35 0.56 0.89 1.00.\n")
         git_init(cls.rdk)
         write(cls.rdk / "docs" / "TASKS.md", "# Задачи\n\nПрефикс: RD\n")
         cls.rdkctl = cls.rdk / "tools" / "devkitctl" / "devkitctl.py"

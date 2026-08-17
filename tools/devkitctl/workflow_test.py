@@ -114,12 +114,27 @@ class WorkflowGuardTest(unittest.TestCase):
         root.joinpath("docs", "workflow.md").unlink()
         self.assertEqual(workflow.check(root), [])
 
-    def test_unparseable_sources_are_findings(self):
+    def test_unparseable_board_is_a_finding(self):
         # Источник, который перестал разбираться, не даёт сторожу молчать:
         # молчание неотличимо от согласного.
         root = make_devkit(self.temp / "dk", board_go="package main\n")
         findings = workflow.check(root)
         self.assertIn(workflow.NO_STATUSES, findings)
+
+    def test_unparseable_progress_is_a_finding(self):
+        # Тот же путь для рубежей: константы progress* пропали из файла.
+        root = make_devkit(self.temp / "dk")
+        write(root / "tools" / "taskctl" / "progress.go", "package main\n")
+        findings = workflow.check(root)
+        self.assertIn(workflow.NO_MARKS, findings)
+
+    def test_missing_skills_dir_is_a_finding(self):
+        # И для скиллов: уехавший или опустевший kit/skills не разоружает
+        # проверку скиллов молча.
+        root = make_devkit(self.temp / "dk")
+        shutil.rmtree(root / "kit" / "skills")
+        findings = workflow.check(root)
+        self.assertIn(workflow.NO_SKILLS, findings)
 
     def test_real_checkout_map_is_complete(self):
         # Инвариант живого чекаута: карта упоминает все скиллы, все статусы

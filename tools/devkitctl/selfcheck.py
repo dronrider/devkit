@@ -212,10 +212,14 @@ def circle(cmd_run, proj, log):
         return steps
     bare_origin(cmd_run, proj)
     deploy_stub(proj)
+    # Коммит с -m берёт доску вместе с файлом задачи: без него файл оставался
+    # бы untracked в основном дереве, и слияние отказывалось затирать его
+    # версией из ветки.
     if go("строка на доске", ["taskctl", "-C", str(proj), "add",
                               "--title", "проверка связки", "--type", "task",
                               "--rank", "25+5+1+0+0", "--cost", "S",
-                              "--accept", "agent"]) != 0:
+                              "--accept", "agent",
+                              "-m", "docs(tasks): %s проверка связки заведена" % TASK]) != 0:
         return steps
     if go("вердикт pick", ["agentctl", "-C", str(proj), "pick", TASK]) != 0:
         return steps

@@ -122,6 +122,29 @@ class SelfcheckTest(SandboxCase):
         self.assertIn("выкат не оставил метку", out, "провал не назвал причину")
         self.assertNotIn("связка жива", out, "несработавший выкат назван живым")
 
+    def test_board_step_commits_task_file(self):
+        # Коммит шага доски обязан брать docs/TASKS.md вместе с файлом задачи:
+        # оставленный untracked файл отказывалось затирать слияние, и круг падал
+        # на «слиянии с выкатом». Грязь спрашивается до слияния, на перехвате
+        # вызова pick: строка и файл уже заведены, ветки ещё нет.
+        where = self.box.root / "circle-untracked-file"
+        where.mkdir()
+        dirty = {}
+
+        def watch_task_file(args, cwd):
+            if args[:2] == ["agentctl", "-C"]:
+                rc, out = testenv.run(
+                    ["git", "-C", str(where / "proj"), "status", "--porcelain",
+                     "--", "docs/tasks/%s.md" % selfcheck.TASK],
+                    path=self.path, home=self.box.home)
+                dirty["out"] = out.strip()
+
+        rc, out = self.run_selfcheck(where, sabotage=watch_task_file)
+        self.assertEqual(rc, 0, "живой круг не прошёл:\n%s" % out)
+        self.assertEqual(dirty.get("out", ""), "",
+                         "файл задачи не закоммичен шагом доски: %s"
+                         % dirty.get("out", ""))
+
     def test_leftover_branch_reported(self):
         # Уборка судится веткам задачи в репозитории проекта, и смерть этой
         # проверки (вопрос не тому пути, пустой список на любом отказе) не

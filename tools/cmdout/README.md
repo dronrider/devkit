@@ -10,11 +10,35 @@ RULES.md, раздел «Длинные прогоны под обёрткой»
 разобраны в [LLD DK-137](../../docs/lld/DK-137-cmdout-wrapper.md), модуль
 общего каркаса в [LLD DK-237](../../docs/lld/DK-237-shared-go-module.md).
 
-Ставится в PATH релизом devkit, как taskctl:
+## Первый запуск
+
+Ставится в PATH релизом devkit, как taskctl, ничего кроме этого обёртке не
+нужно:
 
 ```
 python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update
 ```
+
+Дальше команда пишется как обычно, только с `cmdout` впереди. Зовётся она из
+репозитория: полный вывод ложится в `.devkit/cmdout` рядом с рабочим деревом.
+
+```
+$ cmdout git log -n 200 --stat
+exit: 0
+lines_total: 1982
+lines_hidden: 1952
+significant:
+tail:
+
+commit 0ed55c942c7ca3a8ea1011f7a9b0ca56833e8655
+...
+path: /Users/rider/projects/devkit/.devkit/cmdout/20260817T230900-git/out
+```
+
+Последняя строка и есть наблюдаемый результат: по этому пути лежит полный
+вывод, и его читают кусками, когда выжимки не хватило. Тот же вызов на
+коротком выводе (`cmdout git status`) печатает его целиком и ничего никуда не
+пишет: ниже порога обёртка ведёт себя прозрачно.
 
 ## Запуск
 

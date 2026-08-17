@@ -51,6 +51,56 @@ func mergedShas(root, id string) ([]string, error) {
 	return shas, nil
 }
 
+// smokeNote это начало строки отметки прогона smoke в разделе «Выкат»:
+// «smoke прогнан, <дата>». Пишет её cmdSmoke, здесь довольно префикса,
+// чтобы отличить отметку от строк записи слияния и прозы.
+const smokeNote = "smoke прогнан"
+
+// smokeDone говорит, действует ли на последний выкат отметка прогона smoke.
+// Круг доработки после возврата из Check дописывает в раздел новую строку
+// слияния, и отметка прошлого круга новый выкат не прикрывает: считается
+// отметка, стоящая после последней строки с коммитами. Раздела или файла нет
+// значит выкат непроверенный, как и раздел без отметки. Читается мимо
+// ограждённых блоков, как и сама запись: в сценарий проверки вкладывается
+// реальный вывод команд, и процитированная отметка освобождала бы очередь
+// чужой задаче.
+func smokeDone(root, id string) (bool, error) {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	lastMerge, smoke := -1, -1
+	for i, ln := range sectionLines(string(data), mergedSection) {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "- ") {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimPrefix(t, "- "), smokeNote) {
+			smoke = i
+			continue
+		}
+		if _, list, ok := strings.Cut(t, ":"); ok && hasSha(list) {
+			lastMerge = i
+		}
+	}
+	return smoke > lastMerge, nil
+}
+
+// hasSha говорит, есть ли в перечне через запятую хотя бы один коммит:
+// строкой записи слияния считается строка с коммитами, а не любая проза
+// с двоеточием.
+func hasSha(list string) bool {
+	for _, part := range strings.Split(list, ",") {
+		if isSha(strings.TrimSpace(part)) {
+			return true
+		}
+	}
+	return false
+}
+
 // isSha отсеивает прозу в строке записи: коммит это семь и больше знаков
 // шестнадцатеричного числа.
 func isSha(s string) bool {
@@ -140,4 +190,96 @@ func appendToSection(doc, line string) string {
 	out = append(out, line)
 	out = append(out, lines[end:]...)
 	return strings.Join(out, "\n") + "\n"
+}
+
+// SmokeParams это параметры отметки прогона smoke.
+type SmokeParams struct {
+	ID   string
+	Push bool
+}
+
+// cmdSmoke отмечает прогон агентской части сценария после выката: строка
+// «smoke прогнан, <дата>» в разделе «Выкат» файла задачи. Двухступенчатый
+// Check (LLD DK-400, решение 7): с отметкой очередь выката свободна, а
+// приёмка глазами остаётся в Check и закрытия не ждёт. Отметка ставится
+// только задаче в Check с непроверенным выкатом: поставленная до выката или
+// бескодовой задаче, она освобождала бы очередь без причины.
+func cmdSmoke(root string, p SmokeParams) (string, error) {
+	primary, _, err := primaryRoot(root)
+	if err != nil {
+		return "", err
+	}
+	root = primary
+	if corpActive(root) {
+		return "", corpRefused("smoke")
+	}
+	unlock, err := acquireLock(root)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	main, err := preflight(root)
+	if err != nil {
+		return "", err
+	}
+	b, err := loadBoard(root)
+	if err != nil {
+		return "", err
+	}
+	if b.sectOf(p.ID) != "check" {
+		return "", fmt.Errorf("%s не в Check: smoke отмечается после выката, пока задача ждёт приёмки", p.ID)
+	}
+	done, err := smokeDone(root, p.ID)
+	if err != nil {
+		return "", err
+	}
+	if done {
+		return "", fmt.Errorf("smoke за %s уже отмечен, действующей на последний выкат отметки достаточно одной", p.ID)
+	}
+	busy, err := checkQueue(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	holds := false
+	for _, id := range busy {
+		if id == p.ID {
+			holds = true
+		}
+	}
+	if !holds {
+		return "", fmt.Errorf("за %s нет непроверенного выката: очередь она не держит, и отметка ей не нужна", p.ID)
+	}
+	path := taskFilePath(root, p.ID)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		exec.Command("taskctl", "-C", root, "file", p.ID).Run()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		// taskctl file мог не завести файл (одна из его правок доски), и
+		// голый заголовок достаточен: раздел «Выкат» заведёт appendToSection.
+		data = []byte("# " + p.ID + "\n")
+	}
+	line := "- " + smokeNote + ", " + time.Now().Format("2006-01-02")
+	if err := os.WriteFile(path, []byte(appendToSection(string(data), line)), 0o644); err != nil {
+		return "", err
+	}
+	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s smoke прогнан", p.ID), p.ID)
+	if err != nil {
+		return "", err
+	}
+	msg := fmt.Sprintf("smoke за %s отмечен в разделе «Выкат», очередь выката задача больше не держит; приёмка глазами остаётся в Check, коммит %s", p.ID, hash)
+	plan, err := resolveDeploy(root, "")
+	if err != nil {
+		return "", err
+	}
+	if p.Push || plan.autonomous {
+		if _, err := git(root, "push"); err != nil {
+			return "", fmt.Errorf("отметка поставлена (коммит %s), но пуш доски не прошёл, повторить git push руками: %v", hash, err)
+		}
+		msg += ", доска запушена"
+	}
+	return msg, nil
 }

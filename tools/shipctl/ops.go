@@ -259,6 +259,7 @@ func cmdStatus(root string) (string, error) {
 	var train []string
 	var strays []stray
 	var back []string
+	var smoked []string
 	// Без main очередь по коммитам не посчитать, тогда держит вся секция.
 	busy := make([]string, 0, len(b.sects["check"]))
 	for _, r := range b.sects["check"] {
@@ -268,7 +269,7 @@ func cmdStatus(root string) (string, error) {
 		if train, strays, err = trainTasks(root, main, b); err != nil {
 			return "", err
 		}
-		if busy, err = checkQueue(root, main, b); err != nil {
+		if busy, smoked, err = checkQueueParts(root, main, b); err != nil {
 			return "", err
 		}
 		if back, err = returned(root, main, b); err != nil {
@@ -303,12 +304,21 @@ func cmdStatus(root string) (string, error) {
 	case len(fails) > 0:
 		// вердикта нет: прод сломан, и «очередь свободна» рядом с этим врало бы.
 	case len(busy) > 0:
-		out = append(out, fmt.Sprintf("очередь занята: %s в Check, сначала проверка и taskctl close", strings.Join(busy, ", ")))
+		out = append(out, fmt.Sprintf("очередь занята: %s в Check с выкатом без отметки smoke, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0]))
 	case len(strays) > 0:
 		// вердикт не печатается: строка аномалии уже сказала, что merge и
 		// ship будут отказывать, «очередь свободна» рядом с ней врала бы.
 	case len(b.sects["check"]) > 0:
-		out = append(out, "очередь свободна: в Check только задачи без выкаченного кода, подтверждение за пользователем, но выкат они не держат")
+		if len(smoked) > 0 {
+			free := "очередь свободна: smoke прогнан за " + strings.Join(smoked, ", ") +
+				", приёмка глазами за пользователем, выкат очередь не держит"
+			if len(b.sects["check"]) > len(smoked) {
+				free += "; остальные в Check без выкаченного кода"
+			}
+			out = append(out, free)
+		} else {
+			out = append(out, "очередь свободна: в Check только задачи без выкаченного кода, подтверждение за пользователем, но выкат они не держат")
+		}
 	default:
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
 	}
@@ -471,13 +481,41 @@ func trainTasks(root, main string, b *board) (train []string, strays []stray, er
 
 // checkQueue возвращает задачи из Check, держащие очередь выката: те, у кого
 // есть выкаченный код (коммиты под точкой последнего выката; пока тега нет,
-// весь main). LLD, дока и прочие задачи без кода на проде ждут в Check
-// подтверждения пользователя, но следующему выкату не мешают: инвариант
-// «непроверенный выкат один» про прод, а не про секцию доски. Задачу, слитую
-// через shipctl, поиск находит по записи в файле задачи, а по ID в subject
-// ищутся только слитые руками мимо него и до появления записи.
+// весь main) и при этом нет отметки прогона smoke. Двухступенчатый Check
+// (LLD DK-400, решение 7): непроверенным считается выкат без прогнанного
+// smoke, а не незакрытая задача, поэтому выкат с отметкой очередь не держит
+// и приёмка глазами ждёт в Check сколько нужно. LLD, дока и прочие задачи
+// без кода на проде ждут подтверждения пользователя, но следующему выкату
+// не мешают: инвариант «непроверенный выкат один» про прод, а не про секцию
+// доски. Задачу, слитую через shipctl, поиск находит по записи в файле
+// задачи, а по ID в subject ищутся только слитые руками мимо него и до
+// появления записи.
 func checkQueue(root, main string, b *board) ([]string, error) {
-	return deployedIn(root, main, b, "check")
+	hold, _, err := checkQueueParts(root, main, b)
+	return hold, err
+}
+
+// checkQueueParts делит выкаченные задачи из Check на держащих очередь (без
+// отметки smoke) и освободивших её (smoke прогнан): merge и ship судят по
+// первым, status называет вторых, чтобы висящая в Check строка с прогнанным
+// smoke не выглядела забытой.
+func checkQueueParts(root, main string, b *board) (hold, smoked []string, err error) {
+	deployed, err := deployedIn(root, main, b, "check")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, id := range deployed {
+		done, err := smokeDone(root, id)
+		if err != nil {
+			return nil, nil, err
+		}
+		if done {
+			smoked = append(smoked, id)
+		} else {
+			hold = append(hold, id)
+		}
+	}
+	return hold, smoked, nil
 }
 
 // returned возвращает задачи, ушедшие из Check с уже выкаченным кодом: строка
@@ -674,10 +712,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			// запереть починку навсегда (ship отбит признаком провала,
 			// merge отбит занятой очередью), поэтому здесь честный отказ
 			// с путём починки, а не молчаливое слияние в поезд.
-			return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом, а %s провалена и чинится только выкатом форвард-фикса: сначала проверка занявшей очередь (taskctl close) либо откат своей задачи (shipctl revert %s), поезд при сломанном проде не копится", strings.Join(busy, ", "), p.ID, p.ID)
+			return "", fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke, а %s провалена и чинится только выкатом форвард-фикса: сначала smoke (shipctl smoke %s) либо проверка занявшей очередь (taskctl close), либо откат своей задачи (shipctl revert %s), поезд при сломанном проде не копится", strings.Join(busy, ", "), p.ID, busy[0], p.ID)
 		} else if len(busy) > 0 {
 			p.Train = true
-			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкаченным кодом, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship)\n", strings.Join(busy, ", "))
+			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкатом без отметки smoke, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship); отметка прогона сценария (shipctl smoke %s) очередь освобождает\n", strings.Join(busy, ", "), busy[0])
 		}
 	}
 	// Одиночный merge при непустом поезде увёз бы на прод чужие непроверенные
@@ -1000,7 +1038,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	if len(busy) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check с выкаченным кодом; по RULES.board.md непроверенный выкат один, сначала проверка и taskctl close", strings.Join(busy, ", "))
+		return "", fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0])
 	}
 	train, strays, err := trainTasks(root, main, b)
 	if err != nil {

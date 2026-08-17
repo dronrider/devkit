@@ -36,6 +36,11 @@ const usageText = `shipctl: слияние и откат задач по пра�
   ship [--deploy "cmd"] [--push]  выкат поезда: один деплой на все слитые
                                   после прошлого выката задачи, все разом в
                                   Check, тег deployed сдвигается на main
+  smoke <ID> [--push]             отметить прогон агентской части сценария
+                                  после выката: строка «smoke прогнан, <дата>»
+                                  в разделе «Выкат» файла задачи; с отметкой
+                                  очередь выката свободна, приёмка глазами
+                                  остаётся в Check и закрытия не ждёт
   revert <ID> [--test "cmd"]      откат коммитов задачи с main (ищутся по ID
          [-m "..."] [--push]      в subject, коммиты доски не трогаются),
                                   возврат задачи в In progress и снятие
@@ -195,6 +200,15 @@ func main() {
 		fs.BoolVar(&p.Push, "push", false, "запушить main, тег и доску после выката")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "ship [--deploy \"cmd\"] [--push]")
 		msg, err = cmdShip(root(*dir), p)
+	case "smoke":
+		fs := flag.NewFlagSet("smoke", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := SmokeParams{}
+		fs.BoolVar(&p.Push, "push", false, "запушить коммит отметки")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "smoke <ID> [--push]")
+		p.ID = pos[0]
+		msg, err = cmdSmoke(root(*dir), p)
 	case "revert":
 		fs := flag.NewFlagSet("revert", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

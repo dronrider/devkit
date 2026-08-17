@@ -17,10 +17,10 @@ func devkitDir(t *testing.T, root string) {
 	}
 }
 
-// TestLockRefusesSecondRun: пока замок конвейера занят, все четыре команды
+// TestLockRefusesSecondRun: пока замок конвейера занят, все команды
 // отказывают чисто и ничего не делают. Отказ проверяется на каждой: merge
-// двигает main и доску, ship катит выкат, revert чинит прод, а start пишет и
-// коммитит доску в основном дереве.
+// двигает main и доску, ship катит выкат, revert чинит прод, smoke правит
+// файл задачи, а start пишет и коммитит доску в основном дереве.
 func TestLockRefusesSecondRun(t *testing.T) {
 	root, callLog := setup(t, rowInProg, "")
 	devkitDir(t, root)
@@ -38,6 +38,7 @@ func TestLockRefusesSecondRun(t *testing.T) {
 	}{
 		{"merge", func() (string, error) { return cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}) }},
 		{"ship", func() (string, error) { return cmdShip(root, ShipParams{Deploy: "true"}) }},
+		{"smoke", func() (string, error) { return cmdSmoke(root, SmokeParams{ID: "XR-001"}) }},
 		{"revert", func() (string, error) { return cmdRevert(root, RevertParams{ID: "XR-001"}) }},
 		{"start", func() (string, error) { return cmdStart(root, StartParams{ID: "XR-002"}) }},
 	} {

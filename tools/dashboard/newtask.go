@@ -221,8 +221,8 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	what := "строка и файл задачи заведены с дашборда"
 	if note := commitDocs(found.Path, boardCommitMsg(id, what), paths...); note != "" {
-		// Провал коммита не затирает причину, по которой не завёлся файл: обе
-		// беды называются вместе.
+		// Провал коммита не затирает причину непригодности обхода, которая
+		// не записалась в раздел «Приёмка»: обе беды называются вместе.
 		if had := resp["note"]; had != "" {
 			note = had + "; " + note
 		}

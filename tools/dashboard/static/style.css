@@ -364,8 +364,6 @@ a:hover{text-decoration:underline}
 .nfbody .rbig{padding:0}
 .nfbody .error{padding:0}
 .nfbody .error:empty{display:none}
-.nfcheck{display:flex;align-items:center;gap:10px;min-height:36px;font:400 12.5px var(--sans);color:var(--tx2)}
-.nfcheck input{width:18px;height:18px}
 .swch{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:3px;max-width:340px}
 .swch div{flex:1;text-align:center;padding:9px 14px;border-radius:8px;font:500 13px var(--sans);color:var(--tx3);min-height:22px;cursor:pointer}
 .swch .on{background:var(--bg3);color:var(--tx);font-weight:600}
@@ -628,14 +626,11 @@ a:hover{text-decoration:underline}
   .fchip{height:36px;min-height:36px}
   .nitem{padding:13px 14px;gap:12px;min-height:44px}
   .nb2 .acts .btn{height:36px;font-size:12.5px}
-  /* телефон: форма заведения во всю ширину, кнопки и флажок с пальцем в
-     44 пикселя */
+  /* телефон: форма заведения во всю ширину, кнопки с пальцем в 44 пикселя */
   .nform{max-width:none;margin-top:12px}
   .nbar .btn{width:100%}
   .nfbody>input{height:44px}
   .nfbody .tbtns .btn{flex:1;height:44px}
-  .nfcheck{min-height:44px}
-  .nfcheck input{width:22px;height:22px}
   .swch{max-width:none}
   .swch div{min-height:44px;display:flex;align-items:center;justify-content:center}
   /* телефон: строка состава в две колонки, статус переносится под заголовок */

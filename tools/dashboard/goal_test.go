@@ -154,10 +154,14 @@ func TestGoalTasksFromDoc(t *testing.T) {
 
 // Пустота состава различима словами: файла цели нет вовсе, раздела в нём нет,
 // раздел заведён и пуст. Пустой список без слов неотличим от неотрисованного
-// экрана.
+// экрана. Файл цели кладёт сам add вместе со строкой, и его отсутствие это
+// дыра: файл снят руками, как у XR-101.
 func TestGoalTasksEmptyDistinct(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	runTaskctl(t, e.proj, "add", "--id", "XR-101", "--title", "Цель: без файла", "--rank", "25+5+1+0+1", "--accept", "agent")
+	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "XR-101.md")); err != nil {
+		t.Fatal(err)
+	}
 	runTaskctl(t, e.proj, "add", "--id", "XR-102", "--title", "Цель: без раздела", "--rank", "25+5+1+0+1", "--accept", "agent")
 	goalDoc(t, e, "XR-102", "# XR-102: Цель: без раздела\n\n## Цель\n\nПока только слова.\n")
 	runTaskctl(t, e.proj, "add", "--id", "XR-103", "--title", "Цель: раздел пуст", "--rank", "25+5+1+0+1", "--accept", "agent")

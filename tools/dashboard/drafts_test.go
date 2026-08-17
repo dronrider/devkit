@@ -492,7 +492,13 @@ func TestDraftOutcomeTraces(t *testing.T) {
 	}
 
 	// Оформлен: у черновика появилась строка на доске, и в ответе едет она сама.
+	// Ворота заведения спрашивают «## DoD» (DK-394), и промоутер дописывает
+	// раздел в черновик до add --id.
 	promoted := makeDraft(t, c, e, "мысль, из которой вышла задача")
+	draftPath := filepath.Join(e.proj, "docs", "tasks", "drafts", promoted+".md")
+	if err := os.WriteFile(draftPath, []byte(readFile(t, draftPath)+"\n## DoD\n\nЗадача сделана.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runTaskctl(t, e.proj, "add", "--id", promoted, "--title", "Из черновика", "--rank", "25+1+0+0+0", "--accept", "agent")
 	got = draftOutcomeResp(t, c, e, promoted)
 	if got["state"] != "row" {

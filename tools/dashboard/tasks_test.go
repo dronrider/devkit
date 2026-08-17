@@ -481,13 +481,19 @@ func TestTaskDepAddAndRemove(t *testing.T) {
 	}
 }
 
-// Файл задачи заводит утилита (она же чинит ссылку в строке), а текст правится
-// целиком и виден повторным чтением.
+// Файл задачи заводит add вместе со строкой, а экран задачи чинит им дыру:
+// снятый руками файл называется словами, кнопка «Завести файл» ставит его на
+// место (она же чинит ссылку в строке), а текст правится целиком и виден
+// повторным чтением.
 func TestTaskFileCreateAndEdit(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 	path := filepath.Join(e.proj, "docs", "tasks", "XR-002.md")
 
-	// Пока файла нет, ответ говорит это словами и не притворяется пустым.
+	// Дыра: файл снят руками, и ответ говорит это словами, а не притворяется
+	// пустым текстом. Правка в дыру не пишет.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	task := getTask(t, c, e, "XR-002")
 	if note, _ := task["note"].(string); !strings.Contains(note, "taskctl file") {
 		t.Errorf("отсутствие файла не названо словами: %v", task["note"])
@@ -605,6 +611,9 @@ func TestTaskEditAuthAndOrigin(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	boardPath := filepath.Join(e.proj, "docs", "TASKS.md")
 	before := readFile(t, boardPath)
+	// Файл задачи стоит со дня заведения строки, и отбитый запрос его не трогает.
+	docPath := filepath.Join(e.proj, "docs", "tasks", "XR-002.md")
+	docBefore := readFile(t, docPath)
 	plain := plainClient()
 
 	calls := []struct{ method, url, body string }{
@@ -643,8 +652,8 @@ func TestTaskEditAuthAndOrigin(t *testing.T) {
 	if after := readFile(t, boardPath); after != before {
 		t.Errorf("отбитый запрос тронул доску:\n%s", after)
 	}
-	if isFile(filepath.Join(e.proj, "docs", "tasks", "XR-002.md")) {
-		t.Errorf("отбитый запрос завёл файл задачи")
+	if after := readFile(t, docPath); after != docBefore {
+		t.Errorf("отбитый запрос тронул файл задачи:\n%s", after)
 	}
 }
 

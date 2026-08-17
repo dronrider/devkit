@@ -1532,8 +1532,9 @@ function depsCard(project, id, after, blocks) {
 }
 
 // Панель файла задачи: текст правится прямо в поле, своей кнопки сохранения у
-// панели нет, она одна на всю форму. Заведение файла остаётся за taskctl (та
-// же команда чинит ссылку в строке доски).
+// панели нет, она одна на всю форму. Файл кладёт сам add вместе со строкой, и
+// кнопка «Завести файл» достаётся только дыре: строке до рубежа либо файлу,
+// снятому руками (taskctl file заодно чинит ссылку в строке доски).
 function filePanel(project, id, detail, form, touch) {
   const card = el("div", "card fpanel");
   const head = el("div", "fhead");
@@ -4114,6 +4115,7 @@ const DRAFT_NOTE = "Задачи на доске у него нет, в рабо
 const DRAFT_HINT = "Ляжет в docs/tasks/drafts/, ID выдаст taskctl. " +
   "На доске его не будет, пока груминг не заведёт задачу.";
 const FULL_HINT = "Встанет в Backlog сразу, место выведется из ранга. " +
+  "Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой. " +
   "После заведения откроется карточка задачи.";
 // Взять в работу можно только сохранённое: у ненаписанной строки нет ни ID,
 // ни статуса, по которому конвейер выбирает заказ. Кнопки запуска на этом
@@ -4146,7 +4148,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, text: "", type: "task", cost: "-",
-  parts: [0, 0, 0, 0, 0], file: true, accept: "agent", barrier: "", reason: "" };
+  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "" };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -4155,7 +4157,6 @@ function resetNewForm(project) {
   newForm.type = "task";
   newForm.cost = "-";
   newForm.parts = [0, 0, 0, 0, 0];
-  newForm.file = true;
   newForm.accept = "agent";
   newForm.barrier = "";
   newForm.reason = "";
@@ -4332,14 +4333,6 @@ function renderNew(project) {
   reasonField.append(reason);
   box.append(reasonField);
 
-  const withFile = el("label", "nfcheck");
-  const flag = el("input");
-  flag.type = "checkbox";
-  flag.checked = newForm.file;
-  flag.addEventListener("change", () => { newForm.file = flag.checked; });
-  withFile.append(flag, el("span", "", "завести файл задачи по шаблону (taskctl file)"));
-  box.append(withFile);
-
   const bad = el("div", "error", "");
   const btns = el("div", "tbtns");
   const send = el("button", "btn btn-acc", "Завести задачу");
@@ -4369,7 +4362,6 @@ function renderNew(project) {
     barrierPick.hidden = bare;
     barrierHint.hidden = bare;
     reasonField.hidden = bare;
-    withFile.hidden = draft;
     runHint.hidden = draft;
     for (const pick of picks) pick.hidden = draft;
     sumv.textContent = draft ? "-" : String(newForm.parts.reduce((a, b) => a + Number(b), 0));
@@ -4427,7 +4419,6 @@ function renderNew(project) {
       type: newForm.type,
       cost: newForm.cost,
       r_parts: newForm.parts.map(Number),
-      file: newForm.file,
       accept: newForm.accept,
     };
     if (newForm.accept !== "agent") {

@@ -39,7 +39,7 @@ type boardRow struct {
 	// разобрав суффикс заголовка строки «[приёмка: ...]» (LLD DK-292): вид
 	// назначается на доске, и своего признака дашборд не заводит. Пусто у
 	// агентского вида, он умолчание и суффикса не носит.
-	Accept  string   `json:"accept,omitempty"`
+	Accept string `json:"accept,omitempty"`
 	// Order это заказ headless-сессии дословно, той же строкой, что уйдёт
 	// агенту (rowOrder, tools/dashboard/runs.go): подсказка кнопки читает
 	// готовое поле, а не собирает заказ второй раз. Пусто у строки цели (её
@@ -385,8 +385,9 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		resp["text"] = string(text)
 	} else {
 		// Пустой текст без причины неотличим от пустого файла: сервер говорит,
-		// что файла нет и чем он заводится.
-		resp["note"] = fmt.Sprintf("файла задачи %s нет: заводит его taskctl file, кнопка «Завести файл»", rel)
+		// что файла нет и чем дыра чинится. С минуты заведения файл кладёт сам
+		// add, и дыра это строка до рубежа либо снятый руками файл.
+		resp["note"] = fmt.Sprintf("файла задачи %s нет: строка без файла это дыра, чинит её кнопка «Завести файл» (taskctl file)", rel)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -670,8 +671,10 @@ func (s *server) rowSpot(dir, id string) *rowSpot {
 	return nil
 }
 
-// handleTaskFilePost заводит файл задачи руками утилиты: taskctl file и
-// создаёт docs/tasks/<ID>.md по шаблону, и чинит ссылку в строке доски.
+// handleTaskFilePost чинит строке без файла дыру руками утилиты: taskctl file
+// создаёт docs/tasks/<ID>.md по шаблону и чинит ссылку в строке доски. Со
+// минуты заведения файл кладёт сам add, и ручка достаётся строкам до рубежа
+// либо со снятым руками файлом.
 func (s *server) handleTaskFilePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})

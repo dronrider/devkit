@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -126,8 +125,8 @@ func writeAcceptReason(proj, id, reason string) error {
 
 // handleTaskCreate заводит полную строку доски: заголовок, тип, цена и
 // слагаемые ранга уезжают в taskctl add, а ранг, бакет P и место строки в
-// Backlog утилита считает сама. Файл задачи заводится тут же по флагу, той же
-// командой, что и кнопка «Завести файл»: она чинит и ссылку в строке.
+// Backlog утилита считает сама. Файл задачи заводит тот же add (DK-394):
+// строка без файла это дыра, и ручка не предлагает её заведение без файла.
 func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -143,14 +142,13 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		Rank    string `json:"rank"`
 		RParts  []*int `json:"r_parts"`
 		Cost    string `json:"cost"`
-		File    bool   `json:"file"`
 		Accept  string `json:"accept"`
 		Barrier string `json:"barrier"`
 		Reason  string `json:"reason"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "жду JSON с полями title, type, r_parts (или rank), cost, file"})
+			"error": "жду JSON с полями title, type, r_parts (или rank), cost"})
 		return
 	}
 	rank := body.Rank
@@ -208,41 +206,20 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp["id"] = id
-	paths := []string{filepath.ToSlash(filepath.Join("docs", "TASKS.md"))}
-	if body.File {
-		// Файл заводится после строки: не завёлся он, строка всё равно на
-		// доске, и молчать про это нельзя.
-		if fileOut, _, ferr := taskctlDo(found.Path, "file", id); ferr != nil {
-			resp["note"] = "строка заведена, а файл задачи нет: " + ferr.Error()
-			s.logf("файл задачи %s в %s не завёлся: %v", id, found.Name, ferr)
-		} else {
-			resp["file"] = taskFileRel(id)
-			paths = append(paths, taskFileRel(id))
-			s.logf("файл задачи %s в %s: %s", id, found.Name, fileOut)
-		}
-	}
+	rel := taskFileRel(id)
+	resp["file"] = rel
+	paths := []string{filepath.ToSlash(filepath.Join("docs", "TASKS.md")), rel}
 	// Причина непригодности обхода стоит в разделе «Приёмка» рядом с барьером
 	// (LLD DK-292, решение 1): перебор обходов допишет исполнитель, а эту
 	// строку уже на месте читает ревьювер. У агентского вида барьера нет, и
 	// причина не пишется.
 	if reason := strings.TrimSpace(body.Reason); reason != "" && accept != "agent" {
 		if ferr := writeAcceptReason(found.Path, id, reason); ferr != nil {
-			if had := resp["note"]; had != "" {
-				resp["note"] = had + "; " + ferr.Error()
-			} else {
-				resp["note"] = ferr.Error()
-			}
+			resp["note"] = ferr.Error()
 			s.logf("причина приёмки %s в %s не записалась: %v", id, found.Name, ferr)
-		} else if !slices.Contains(paths, taskFileRel(id)) {
-			// Файл с разделом заводит сам add у не агентского вида, и он едет в
-			// коммит доски вместе с причиной.
-			paths = append(paths, taskFileRel(id))
 		}
 	}
-	what := "строка заведена с дашборда"
-	if _, hit := resp["file"]; hit {
-		what = "строка и файл задачи заведены с дашборда"
-	}
+	what := "строка и файл задачи заведены с дашборда"
 	if note := commitDocs(found.Path, boardCommitMsg(id, what), paths...); note != "" {
 		// Провал коммита не затирает причину, по которой не завёлся файл: обе
 		// беды называются вместе.

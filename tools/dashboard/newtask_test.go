@@ -126,12 +126,12 @@ func TestDraftTextLimit(t *testing.T) {
 }
 
 // Полная строка встаёт на доску руками утилиты: ранг, бакет P и место в
-// Backlog считает она, файл задачи заводится тем же заходом по флагу.
+// Backlog считает она, файл задачи заводится тем же заходом.
 func TestTaskCreateRow(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Пятая, с дашборда", "type": "task", "cost": "S", "r_parts": [50, 4, 2, 0, 1], "file": true}`)
+		`{"title": "Пятая, с дашборда", "type": "task", "cost": "S", "r_parts": [50, 4, 2, 0, 1]}`)
 	got := newResp(t, resp, "заведение строки")
 	id, _ := got["id"].(string)
 	if id != "XR-005" {
@@ -172,26 +172,31 @@ func TestTaskCreateRow(t *testing.T) {
 	}
 }
 
-// Без флага файла заводится одна строка: файл дописывается позже кнопкой
-// экрана задачи, и коммит доски называет ровно то, что случилось.
-func TestTaskCreateRowWithoutFile(t *testing.T) {
+// Файл задачи заводится вместе со строкой всегда (DK-394): ручка не предлагает
+// строку без файла, и коммит создания берёт оба пути, а не только доску.
+func TestTaskCreateRowAlwaysWithFile(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
 		`{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0]}`)
-	got := newResp(t, resp, "заведение строки без файла")
-	if _, hit := got["file"]; hit {
-		t.Errorf("файл задачи завёлся без просьбы: %v", got)
+	got := newResp(t, resp, "заведение строки с файлом")
+	if file, _ := got["file"].(string); file != "docs/tasks/XR-005.md" {
+		t.Errorf("файл задачи не назван в ответе: %v", got)
 	}
-	if isFile(filepath.Join(e.proj, "docs", "tasks", "XR-005.md")) {
-		t.Errorf("файл docs/tasks/XR-005.md завёлся без просьбы")
+	if !isFile(filepath.Join(e.proj, "docs", "tasks", "XR-005.md")) {
+		t.Errorf("файла docs/tasks/XR-005.md нет после заведения")
 	}
 	// Тип по умолчанию task: строка без него всё равно полная.
 	if typ := taskRowField(t, getTask(t, c, e, "XR-005"), "type"); typ != "task" {
 		t.Errorf("тип по умолчанию не task: %v", typ)
 	}
-	if git := readFile(t, gitLog); !strings.Contains(git, "docs(tasks): XR-005 строка заведена с дашборда") {
-		t.Errorf("коммит доски не назвал заведение строки: %s", git)
+	// Файл едет в коммит создания строки безусловно: без него запушенная доска
+	// ссылалась бы ячейкой на файл, которого в origin нет.
+	if git := readFile(t, gitLog); !strings.Contains(git, "docs(tasks): XR-005 строка и файл задачи заведены с дашборда") {
+		t.Errorf("коммит доски не назвал заведение строки и файла: %s", git)
+	}
+	if git := readFile(t, gitLog); !strings.Contains(git, "add -- docs/TASKS.md docs/tasks/XR-005.md") {
+		t.Errorf("коммит создания не взял файл задачи: %s", git)
 	}
 }
 
@@ -250,7 +255,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 func TestTaskCreateAcceptKinds(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 
-	// Умолчание: без поля accept строка агентская, суффикса и файла нет.
+	// Умолчание: без поля accept строка агентская, суффикса вида нет.
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
 		`{"title": "Пятая, агентская по умолчанию", "r_parts": [25, 1, 1, 0, 0]}`)
 	newResp(t, resp, "заведение агентской строки")
@@ -364,7 +369,7 @@ func TestStaticNewTaskForm(t *testing.T) {
 		"Записать черновик",
 		"Что нужно сделать и зачем",
 		"Завести задачу",
-		"завести файл задачи по шаблону (taskctl file)",
+		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
 		"docs/tasks/drafts/",
 		"function renderNew(",
 		"function newTaskButton(",
@@ -390,6 +395,11 @@ func TestStaticNewTaskForm(t *testing.T) {
 	}
 	if strings.Contains(text, "ACCEPT_NAMES") || strings.Contains(text, "BARRIER_HINTS") {
 		t.Error("в static/app.js есть неиспользуемые константы ACCEPT_NAMES или BARRIER_HINTS")
+	}
+	// Чекбокса файла на форме нет: строка без файла это дыра, и заведение не
+	// предлагает её (DK-394).
+	if strings.Contains(text, "nfcheck") || strings.Contains(text, "newForm.file") {
+		t.Error("в static/app.js остался чекбокс заведения файла задачи")
 	}
 	// Кнопка на обоих экранах: на доске и на главной, иначе с телефона до
 	// заведения надо сначала дойти до нужного проекта.

@@ -174,6 +174,7 @@ import sys
 import update
 import watch
 import weigh
+import workflow
 from datetime import datetime
 from say import human_age
 from pathlib import Path
@@ -1889,6 +1890,10 @@ def doctor(start, fix=False):
         findings += rules.check_project_imports(root, DEVKIT)
     # Раскладка проверяется только на самом devkit: в чужом проекте она своя.
     findings += ["раскладка: %s" % m for m in layout.check(root)]
+    # Карта переходов работы тоже документ самого devkit (DK-400, решение 8):
+    # сторож проверяет полноту упоминаний скиллов, статусов доски и рубежей,
+    # а сам текст пишется руками и автоматике не принадлежит.
+    findings += workflow.check(root)
     # Режим чекаута называется всегда, а не только рядом с находкой: на машине
     # разработчика бинарь впереди последнего релиза это норма, на машине
     # потребителя поломка, и по одному номеру версии одно от другого не отличить.

@@ -250,6 +250,157 @@ class RunTest(Stand):
         self.assertEqual(rc, 0, "порог из ~/.devkit/watch.local не подхвачен: %s" % out)
 
 
+TASKCTL = "/bin/подставной-taskctl"
+
+PARK_HEAD = """# Задачи стенда
+
+## In progress
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+%s
+
+## Check (готово, ждёт проверки пользователем)
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Backlog
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Blocked
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+%s
+"""
+
+PARK_ROW = "| %s | %s | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%s.md) |"
+
+
+class WakeTest(Stand):
+    """Тик будит припаркованные вопросом строки по лежащему в ящике ответу."""
+
+    def setUp(self):
+        super().setUp()
+        self.call = Fake()
+        # Цель жива и движется: тик не кричит о простое, будить ему не мешает.
+        self.entry(seen_minutes=1)
+        self.runlog(1)
+
+    def board_with(self, parked, candidates=()):
+        """Доска с припаркованными вопросом строками и кандидатами в работе."""
+        progress = [ROW % (GOAL, GOAL, GOAL)] + [
+            PARK_ROW % (tid, "Кандидат %s" % tid, tid, tid) for tid in candidates]
+        (self.proj / "docs" / "TASKS.md").write_text(
+            PARK_HEAD % ("\n".join(progress), "\n".join(parked)), encoding="utf-8")
+
+    def letter(self, tree, tid, text="вот схема, продолжай"):
+        """Лежащая строка-ответ в ящике задачи tid дерева tree."""
+        d = Path(tree) / ".devkit" / "mail"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("task-%s.inbox" % tid)).write_text(
+            "2026-08-07 12:00, из дашборда: %s\n" % text, encoding="utf-8")
+
+    def ask(self, tree, tid, when):
+        """Признак ожидания .ask у ящика задачи tid: снимок ожидания инструмента."""
+        d = Path(tree) / ".devkit" / "mail"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("task-%s.ask" % tid)).write_text(when + "\n", encoding="utf-8")
+
+    def wake(self, taskctl=TASKCTL, call=None):
+        call = self.call if call is None else call
+        return watch.wake(str(self.proj), self.now, call, taskctl)
+
+    def moved(self):
+        return self.call.argv_with("move")
+
+    def test_answer_wakes_only_its_row(self):
+        # DoD: на доске три задачи, ответ будит припаркованную вопросом и
+        # только её, остальные кандидаты не тронуты.
+        self.board_with(
+            parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]", "DK-901", "DK-901"),
+                    PARK_ROW % ("DK-902", "Ждёт среду [блок: окружение: нет железа]", "DK-902", "DK-902")],
+            candidates=["DK-903"])
+        self.letter(self.proj, "DK-901")
+        self.letter(self.proj, "DK-902")
+        lines = self.wake()
+        moved = self.moved()
+        self.assertEqual(len(moved), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
+        self.assertEqual(moved[0][moved[0].index("move"):], ["move", "DK-901", "in-progress"])
+        self.assertIn("-C", moved[0])
+        self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 1"), lines[-1])
+        self.assertIn("DK-901", lines[0])
+        self.assertNotIn("DK-903", " ".join(lines))
+
+    def test_silent_without_letter(self):
+        # Нет лежащего ответа, значит будить нечего: ни вызова, ни крика.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        lines = self.wake()
+        self.assertEqual(self.call.calls, [])
+        self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 0"), lines[-1])
+
+    def test_fresh_ask_holds_the_box(self):
+        # Свежий признак ожидания отдаёт ящик инструменту ожидания: ответ
+        # заберёт сам ждущий заход, будить рано. Протухший признак будить
+        # не мешает.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.proj, "DK-901")
+        self.ask(self.proj, "DK-901", stamp(self.now + timedelta(minutes=2)))
+        self.assertEqual(self.wake()[-1].endswith("разбужено 0"), True)
+        self.ask(self.proj, "DK-901", stamp(self.now - timedelta(minutes=2)))
+        self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+
+    def test_letter_in_task_tree_wakes(self):
+        # Ящик задачи лежит в её дереве ../<проект>-<id>, а не только в корне:
+        # исполнитель спрашивает из своего дерева, и ответ кладётся туда же.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.dir / "proj-dk-901", "DK-901")
+        self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+
+    def test_missing_taskctl_is_reported(self):
+        # Бинаря нет: строка остаётся в Blocked, тик говорит об этом, а не
+        # молчит, и следующий тик повторит.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.proj, "DK-901")
+        lines = self.wake(taskctl="")
+        self.assertEqual(self.call.calls, [])
+        self.assertIn("taskctl", lines[0])
+
+    def test_taskctl_failure_is_reported(self):
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.proj, "DK-901")
+        lines = self.wake(call=Fake(code=1, out="зависимость не закрыта"))
+        self.assertIn("с кодом 1", lines[0])
+        self.assertIn("зависимость не закрыта", lines[0])
+
+    def test_run_wakes_through_the_tick(self):
+        # Будит сам тик сторожка, без отдельного процесса на задачу: цель
+        # жива, крика о простое нет, а припаркованная всё равно встаёт в
+        # кандидаты.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.proj, "DK-901")
+        out = io.StringIO()
+        rc = watch.run(now=self.now, idle=45 * 60, home=self.home, out=out,
+                       call=self.call, taskctl=TASKCTL)
+        text = out.getvalue()
+        self.assertEqual(rc, 0, text)
+        self.assertIn("разбужена", text)
+        beat = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
+        self.assertIn("разбужена", beat)
+
+    def test_taskctl_bin_prefers_path(self):
+        self.assertEqual(watch.taskctl_bin(which=lambda name: "/x/%s" % name), "/x/taskctl")
+
+
 class ConfigTest(Stand):
 
     def test_default_and_overrides(self):

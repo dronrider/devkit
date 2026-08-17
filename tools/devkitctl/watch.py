@@ -29,11 +29,19 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 Порог простоя берётся из `~/.devkit/watch.local` (строка `idle = <минуты>`), а
 без файла считается умолчанием в 45 минут: виток режет работу вызовами утилит
 чаще, чем раз в час, а короче десятка минут порог ловил бы долгую сборку.
+
+Тем же тиком сторожок будит припаркованные вопросом задачи (LLD DK-400,
+решение 2): строка в Blocked с причиной «вопрос:» и лежащим ответом в ящике
+задачи возвращается в In progress вызовом `taskctl -C <корень> move <ID>
+in-progress`. Будит сторожок и только он, а будить значит вернуть строку в
+кандидаты планировщика, сессию поверх доски он не поднимает.
 """
 import os
+import shutil
 import say
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -57,6 +65,12 @@ STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S")
 RUN_LOG = ".devkit/log"
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
+# Причина блока с машинным префиксом «вопрос:» паркует задачу вопросом человека
+# (LLD DK-400, решение 2): только такую строку будит лежащий в ящике ответ,
+# «окружение:» и проза ждут своего без писем.
+PARKED = "[блок: вопрос:"
+MAIL_BOX = "task-%s.inbox"
+MAIL_ASK = "task-%s.ask"
 # Хвост журнала запусков, из которого берётся последняя метка времени: файл
 # растёт всю жизнь проекта, и читать его целиком каждые пять минут незачем.
 TAIL = 4096
@@ -176,6 +190,133 @@ def board_section(root, goal_id):
 
 def board_present(root):
     return Path(root, BOARD).is_file()
+
+
+# -- пробуждение припаркованных вопросом --------------------------------------
+
+def postman():
+    """Модуль почтальона hooks/inbox.py либо None. Признак ожидания .ask у
+    ящика задачи читается тем же разбором, каким его читает почтальон, иначе
+    вторая копия формата разъехалась бы с первой на первой же правке."""
+    sys.path.insert(0, str(DEVKIT / "hooks"))
+    try:
+        import inbox
+        return inbox
+    except ImportError:
+        return None
+    finally:
+        sys.path.pop(0)
+
+
+def task_tree(root, task_id):
+    """Дерево задачи по правилу shipctl (treePath): ../<проект>-<id нижним
+    регистром>. Дерево переживает парковку, и ящик задачи с ответом лежит
+    в нём, а спрашивающий из основного чекаута оставляет ящик там же."""
+    top = os.path.normpath(root.rstrip(os.sep))
+    return os.path.join(os.path.dirname(top), os.path.basename(top) + "-" + task_id.lower())
+
+
+def parked_rows(root):
+    """Задачи корня, припаркованные вопросом: список ID. Доска читается
+    напрямую, как и для раздела цели: сторожок работает и там, где бинари
+    devkit сломаны."""
+    try:
+        text = Path(root, BOARD).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rows, in_blocked = [], False
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            in_blocked = ln[3:].strip() == "Blocked"
+            continue
+        if not in_blocked or not ln.startswith("|") or PARKED not in ln:
+            continue
+        cell = ln.split("|")[1].strip() if ln.count("|") > 1 else ""
+        if cell and cell != "ID" and not set(cell) <= set("-: "):
+            rows.append(cell)
+    return rows
+
+
+def lying_answer(root, task_id, now):
+    """Первая лежащая строка ящика задачи либо None. Ящик ищется в двух
+    деревьях, основном и дерева задачи: исполнитель спрашивает из своего
+    дерева, диспетчер из основного. Свежий признак ожидания .ask отдаёт ящик
+    инструменту ожидания, и будить рано: ответ заберёт сам ждущий заход,
+    паркуется только вопрос, оставшийся без ответа."""
+    inbox = postman()
+    until_now = time.mktime(now.timetuple())
+    boxes = []
+    for base in (root, task_tree(root, task_id)):
+        d = os.path.join(base, ".devkit", "mail")
+        if inbox is not None:
+            until = inbox.ask_stamp(os.path.join(d, MAIL_ASK % task_id))
+            if until is not None and until > until_now:
+                return None
+        boxes.append(os.path.join(d, MAIL_BOX % task_id))
+    for box in boxes:
+        try:
+            with open(box, encoding="utf-8", errors="replace") as f:
+                lines = [l.strip() for l in f.read().split("\n") if l.strip()]
+        except OSError:
+            continue
+        if lines:
+            return lines[0]
+    return None
+
+
+def taskctl_bin(which=None):
+    """Путь бинаря taskctl для пробуждения. launchd даёт сторожку системный
+    PATH без каталога бинарей, поэтому за PATH стоят каталоги установки
+    релиза, те же, что перебирает update."""
+    which = shutil.which if which is None else which
+    found = which("taskctl")
+    if found:
+        return found
+    import update
+    for d in update.BIN_DIRS:
+        cand = os.path.expanduser(os.path.join(d, "taskctl"))
+        if os.access(cand, os.X_OK):
+            return cand
+    return ""
+
+
+def wake(root, now, call=None, taskctl=None):
+    """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
+    это строки отчёта, по одной на будимость и итог на корень: тик молчит о
+    корне только там, где парковок нет вовсе.
+
+    Возврат строки идёт тем же `taskctl -C <корень> move <ID> in-progress`,
+    каким её парковали: причина блока снимается им же, а строка становится
+    кандидатом планировщика на общих основаниях. Отказ taskctl не поднимает
+    сторожок: строка стоит в Blocked, и следующий тик повторит."""
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    lines, woke = [], 0
+    parked = parked_rows(root)
+    for tid in parked:
+        answer = lying_answer(root, tid, now)
+        if not answer:
+            continue
+        if not bin:
+            lines.append("задача %s в %s: ответ лежит, а бинаря taskctl нет ни в "
+                         "PATH, ни в каталогах релиза: строка стоит в Blocked" % (tid, root))
+            continue
+        try:
+            p = call([bin, "-C", root, "move", tid, "in-progress"],
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            lines.append("задача %s в %s: разбудить не вышло, %s" % (tid, root, e))
+            continue
+        if p.returncode != 0:
+            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
+                         % (tid, root, p.returncode, (p.stdout or "").strip()))
+            continue
+        woke += 1
+        lines.append("задача %s в %s разбужена: ответ в ящике, строка вернулась в In progress" % (tid, root))
+    if parked:
+        lines.append("корень %s: припаркованных вопросом %d, разбужено %d"
+                     % (os.path.basename(root.rstrip("/")), len(parked), woke))
+    return lines
 
 
 def shout(title, body, root, call=None, task=None):
@@ -304,20 +445,29 @@ def heartbeat(home=None):
     return None
 
 
-def run(now=None, idle=None, home=None, out=None, call=None):
+def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
     idle = conf_idle(home) if idle is None else idle
     out = sys.stdout if out is None else out
     found, watched = 0, 0
+    swept = set()
     for path in entries(home):
         watched += 1
+        root = read_entry(path).get("root")
         called, line = look(path, now, idle, call)
         found += 1 if called else 0
         out.write(line + "\n")
         if called:
             log_line(line, home)
+        # Пробуждение идёт по корню, а не по записи: целей на одной доске
+        # бывает несколько, и ящик припаркованной задачи один на всех.
+        if root and root not in swept and os.path.isdir(root):
+            swept.add(root)
+            for wline in wake(root, now, call, taskctl):
+                out.write(wline + "\n")
+                log_line(wline, home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

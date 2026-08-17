@@ -39,6 +39,12 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               стоят в конце
   batch [--limit N]                           кандидаты в поезд выката и причина
                                               отказа по каждой остальной строке
+  slot [--limit N] [--resource slot|quota]    планировщик слота: порядок
+                                              кандидатов внутри полосы P со
+                                              слагаемыми R, C, F, V и причиной
+                                              отказа по каждому отсеянному
+                                              воротами; лимит приходит из
+                                              agentctl budget, как у batch
   kinds                                       сводка по видам приёмки: счёт,
                                               ошибки назначения, пересмотры
 
@@ -517,6 +523,13 @@ func main() {
 		limit := fs.Int("limit", batchDefaultLimit, "сколько задач берём в пачку")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "batch [--limit N]")
 		msg, err = cmdBatch(root(*dir), *limit)
+	case "slot":
+		fs := flag.NewFlagSet("slot", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		limit := fs.Int("limit", batchDefaultLimit, "потолок пачки из agentctl budget")
+		resource := fs.String("resource", "slot", "дефицитный ресурс: slot или quota")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "slot [--limit N] [--resource slot|quota]")
+		msg, err = cmdSlot(root(*dir), *limit, *resource)
 	case "kinds":
 		fs := flag.NewFlagSet("kinds", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

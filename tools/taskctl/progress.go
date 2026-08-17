@@ -27,17 +27,29 @@ type taskProgress struct {
 	Sign string  `json:"sign"`
 }
 
-// progressOf считает рубеж задачи по признакам от старшего к младшему.
-// Порядок проверок и есть монотонность: возврат из Check в работу оставляет
-// разделы файла на месте, и 0.89 у задачи на втором круге остаётся честной
-// правдой о сделанном. Признак «коммит сверх main» взят у ворот Check
-// (unmergedTaskBranch): живая ветка с неслитыми коммитами значит, что код
-// задачи уже написан; после слияния раздел «Выкат» закрывает рубеж старше.
+// progressOf считает рубеж одной задачи, загрузив доску и архив сама.
 func progressOf(root, id string) (*taskProgress, error) {
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return nil, err
 	}
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return nil, err
+	}
+	return progressOfBoard(root, id, b, arch)
+}
+
+// progressOfBoard считает рубеж по уже загруженной доске и архиву: команде
+// progress они нужны на один вызов, а планировщику слота (DK-404) на каждый
+// кандидат, и вторая загрузка на строку это сотня чтений файла на живой доске.
+// Считает по признакам от старшего к младшему. Порядок проверок и есть
+// монотонность: возврат из Check в работу оставляет разделы файла на месте,
+// и 0.89 у задачи на втором круге остаётся честной правдой о сделанном.
+// Признак «коммит сверх main» взят у ворот Check (unmergedTaskBranch): живая
+// ветка с неслитыми коммитами значит, что код задачи уже написан; после
+// слияния раздел «Выкат» закрывает рубеж старше.
+func progressOfBoard(root, id string, b *Board, arch *Archive) (*taskProgress, error) {
 	rel := "docs/tasks/" + id + ".md"
 	if b.find(id) == nil {
 		arch, err := LoadArchive(archivePath(root))

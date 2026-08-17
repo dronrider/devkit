@@ -44,7 +44,9 @@ DoD: стенд отработал.
 
 # Стаб клиента стенда: играет очередную строку сценария. Строка сценария это
 # «маркер что-делает-с-журналом»: «запись» дописывает содержательную строку в
-# «Журнал» цели, «снимок» строку снимка квоты, всё остальное молчит. Особые
+# «Журнал» цели, «снимок» строку снимка квоты, «парковка» уводит строку
+# доски в Blocked с причиной-вопросом и пишет ход, «выбор» пишет ход о взятой
+# новой работе, всё остальное молчит. Особые
 # маркеры: none (ответ без маркера), fenced (маркер в ограде), crash (ненулевой
 # код возврата), trailing (текст после маркера на той же строке), leading
 # (текст перед маркером на той же строке), dotted (точка после маркера),
@@ -134,6 +136,26 @@ if "ход" in parts:
         f.write(during)
     subprocess.run([os.environ["GOAL_RUN"], "DK-100", "-C", os.path.join(root, "proj"),
                     "--say", "стаб: ход витка %d" % turn],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+# Слово «парковка» в строке сценария: виток паркует задачу вопросом по
+# правилу DK-402 (строка уходит в Blocked с машинным префиксом причины) и
+# пишет ход о парковке, слово «выбор» следующим витком берёт новую работу и
+# тоже пишет ход. Так стенд играет отвязку стопа от задачного повода (DK-403):
+# оболочка на парковке не останавливается, и видно это по строкам хода.
+if "парковка" in parts:
+    board = os.path.join(root, "proj", "docs", "TASKS.md")
+    with open(board, encoding="utf-8") as f:
+        b = f.read()
+    if "## Blocked" not in b:
+        b += "\n## Blocked\n"
+    with open(board, "w", encoding="utf-8") as f:
+        f.write(b + "- DK-101 [блок: вопрос: ждём схемы]\n")
+if "парковка" in parts or "выбор" in parts:
+    note = "задача припаркована вопросом" if "парковка" in parts \
+        else "взята новая задача DK-102"
+    subprocess.run([os.environ["GOAL_RUN"], "DK-100", "-C", os.path.join(root, "proj"),
+                    "--say", "стаб витка %d: %s" % (turn, note)],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 print("виток стаба %d" % turn)
@@ -305,6 +327,31 @@ class GoalRunTests(Stand, unittest.TestCase):
             # Цель едет полем строки, а не одним заголовком (DK-323): по нему
             # лента дашборда ведёт от стопа к строке цели и к журналу агента.
             self.assertIn("задача DK-100 проект", self.notify_log(root))
+
+    def test_task_question_parks_and_goal_question_stops(self):
+        # Отвязка стопа от задачного повода (DK-403, решение 6 LLD DK-400).
+        # Вопрос, адресованный задаче, паркует её по механике DK-402, а цикл
+        # не останавливается: следующий виток печатает выбор новой работы, и
+        # остановлен цикл только своим финальным маркером. Вопрос уровня цели
+        # стоп держит: wait-human завершает цикл первым же витком и зовёт
+        # человека поводом wait_human.
+        root = self.stand("continue парковка запись", "continue выбор запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 3, "цикл остановился на парковке задачи")
+        log = self.shell_log(root)
+        self.assertIn("задача припаркована вопросом", log, "ход о парковке не доехал до журнала")
+        self.assertIn("взята новая задача", log, "выбор новой работы не напечатан")
+        self.assertIn("остановлен: done", log)
+        self.assertNotIn("wait-human", log, "задачный повод остановил цикл, это ошибка витка")
+        with open(os.path.join(root, "proj", "docs", "TASKS.md"), encoding="utf-8") as f:
+            self.assertIn("[блок: вопрос:", f.read(), "задача не припаркована на доске стенда")
+        goal = self.stand("wait-human запись")
+        p = self.goal_run(goal, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(goal), 1, "вопрос уровня цели не остановил цикл")
+        self.assertIn("остановлен: wait-human", self.shell_log(goal))
+        self.assertIn("повод wait_human", self.notify_log(goal))
 
     # -- воронка --------------------------------------------------------------
 
@@ -957,6 +1004,46 @@ class SkillInboxTests(unittest.TestCase):
         record = self.skill[self.skill.index("5. Запись витка"):self.skill.index("6. Выход маркером")]
         self.assertIn("убирает из «Входящих»", record)
         self.assertIn("ждёт витка", record, "надпись дашборда не привязана к лежащей строке")
+
+
+class SkillMarkerTests(unittest.TestCase):
+    """Поводы wait-human после DK-403 (решение 6 LLD DK-400): стоп держат
+    только поводы уровня цели, задачный повод паркует задачу и закрывается
+    ответом continue. Формулировки держит тест по образцу SkillInboxTests:
+    уехавшая строка вернула бы всегдашний стоп цикла молча, и человек, чей
+    ответ просто лежит в ящике припаркованной задачи, выглядел бы виноватым
+    в простое всего конвейера."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
+            cls.skill = f.read()
+
+    def markers(self):
+        return self.skill[self.skill.index("## Маркеры выхода"):self.skill.index("## Живая реплика")]
+
+    def test_wait_human_names_goal_level_reasons_only(self):
+        # У маркера три повода уровня цели: сверка бюджета, вопрос постановки,
+        # недоступное окружение. Задачные поводы старого списка (задача ждёт
+        # проверки, окружение задачи) сюда не возвращаются: их виток закрывает
+        # парковкой и continue.
+        bullet = self.markers()
+        bullet = bullet[bullet.index("- `wait-human`"):]
+        bullet = bullet[:bullet.index("- `stuck`")]
+        self.assertIn("сама цель", bullet, "граница повода не названа")
+        self.assertIn("`goal-cut`", bullet, "сверка бюджета не названа")
+        for gone in ("задача цели ждёт", "харнес отказал"):
+            self.assertNotIn(gone, bullet, "задачный повод вернулся в wait-human: %s" % gone)
+
+    def test_task_reason_parks_the_task_and_answers_continue(self):
+        # Задачный повод описан парковкой (DK-402) с ответом continue, а
+        # задачный повод, поставивший wait-human, назван ошибкой витка: без
+        # запрета виток прикрывал бы стопом любую трудность одной задачи.
+        section = self.markers()
+        self.assertIn("move <ID> blocked", section, "парковка задачи не названа командой")
+        self.assertIn("вопрос:", section, "машинный префикс причины парковки не назван")
+        self.assertIn("«окружение:", section, "парковка окружения задачи не названа")
+        self.assertIn("ошибка витка", section, "запрет задачного повода у маркера пропал")
 
 
 if __name__ == "__main__":

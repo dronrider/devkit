@@ -329,7 +329,8 @@ class WakeTest(Stand):
         lines = self.wake()
         moved = self.moved()
         self.assertEqual(len(moved), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
-        self.assertEqual(moved[0][moved[0].index("move"):], ["move", "DK-901", "in-progress"])
+        self.assertEqual(moved[0][moved[0].index("move"):moved[0].index("-m")],
+                         ["move", "DK-901", "in-progress"])
         self.assertIn("-C", moved[0])
         self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 1"), lines[-1])
         self.assertIn("DK-901", lines[0])
@@ -397,8 +398,40 @@ class WakeTest(Stand):
         beat = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
         self.assertIn("разбужена", beat)
 
+    def test_wake_commits_and_pushes_the_board(self):
+        # Будящий move не оставляет правку доски грязной: за будящим никого
+        # нет, и коммит с пушем доски обязаны случиться тем же вызовом
+        # taskctl, иначе предполёт следующего merge отбился бы о чекаут.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.letter(self.proj, "DK-901")
+        self.wake()
+        moved = self.moved()
+        self.assertEqual(len(moved), 1, self.call.calls)
+        self.assertIn("docs(tasks): DK-901 разбуждена ответом", moved[0])
+        self.assertIn("--push", moved[0])
+
     def test_taskctl_bin_prefers_path(self):
         self.assertEqual(watch.taskctl_bin(which=lambda name: "/x/%s" % name), "/x/taskctl")
+
+    def test_taskctl_bin_falls_back_to_release_dirs(self):
+        # launchd даёт агенту системный PATH без каталога бинарей: без
+        # запасного перебора каталогов релиза припаркованная стояла бы до
+        # ручного прогона.
+        import update
+        d = self.dir / "bin"
+        d.mkdir()
+        exe = d / "taskctl"
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+        exe.chmod(0o755)
+        old = update.BIN_DIRS
+        update.BIN_DIRS = (str(d),)
+        self.addCleanup(setattr, update, "BIN_DIRS", old)
+        self.assertEqual(watch.taskctl_bin(which=lambda name: None), str(exe))
+        # Пустой каталог установки не выдаёт пути: тик обязан сказать о ней,
+        # а не помолчать за отсутствием бинаря.
+        update.BIN_DIRS = (str(self.dir / "nowhere"),)
+        self.assertEqual(watch.taskctl_bin(which=lambda name: None), "")
 
 
 class ConfigTest(Stand):

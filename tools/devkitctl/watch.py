@@ -287,8 +287,12 @@ def wake(root, now, call=None, taskctl=None):
 
     Возврат строки идёт тем же `taskctl -C <корень> move <ID> in-progress`,
     каким её парковали: причина блока снимается им же, а строка становится
-    кандидатом планировщика на общих основаниях. Отказ taskctl не поднимает
-    сторожок: строка стоит в Blocked, и следующий тик повторит."""
+    кандидатом планировщика на общих основаниях. Move идёт с -m и --push:
+    за будящим никого нет, и правка доски, оставленная грязной в основном
+    чекауте, отбила бы следующий merge предполётом и подмелась бы чужим
+    коммитом, поэтому она коммитится и пушится тут же, по правилу доски
+    (ровно то, что делает shipctl своим commitBoard). Отказ taskctl не
+    поднимает сторожок: строка стоит в Blocked, и следующий тик повторит."""
     call = subprocess.run if call is None else call
     bin = taskctl_bin() if taskctl is None else taskctl
     lines, woke = [], 0
@@ -302,7 +306,8 @@ def wake(root, now, call=None, taskctl=None):
                          "PATH, ни в каталогах релиза: строка стоит в Blocked" % (tid, root))
             continue
         try:
-            p = call([bin, "-C", root, "move", tid, "in-progress"],
+            p = call([bin, "-C", root, "move", tid, "in-progress",
+                      "-m", "docs(tasks): %s разбуждена ответом" % tid, "--push"],
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         except OSError as e:
             lines.append("задача %s в %s: разбудить не вышло, %s" % (tid, root, e))

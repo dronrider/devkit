@@ -42,6 +42,26 @@ const (
 	slotTreesEnv = "DEVKIT_SLOT_TREES"
 )
 
+// slotQuestionHead это потолок висящих вопросов на цель (LLD DK-400, решение 5):
+// два вопроса закрываются одним коротким заходом человека, три это уже простыня,
+// ради которой потолок и заводится. Держит его парковка вопросом (move в
+// blocked с причиной «вопрос:»), перебивается окружением для стендов.
+const (
+	slotQuestionHead = 2
+	slotQuestionsEnv = "DEVKIT_SLOT_QUESTIONS"
+)
+
+// questionCeiling отдаёт потолок висящих вопросов на цель. Окружение
+// перебивает число для стендов.
+func questionCeiling() int {
+	if v := os.Getenv(slotQuestionsEnv); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return slotQuestionHead
+}
+
 // slotAwayGate это порог «человек недоступен» (LLD DK-400, решение 3):
 // машинный признак недоступности это припаркованный вопрос старше часа без
 // ответа. Моложе часа вопрос ещё не повод считать человека ушедшим.
@@ -113,6 +133,32 @@ func taskHasTree(root, id string) bool {
 		}
 	}
 	return false
+}
+
+// waitingTrees называет ждущие деревья: припаркованные строки с живой веткой.
+// Отказ по потолку деревьев обязан печатать не только число, но и то, что
+// разобрать (LLD DK-400, решение 5): разбор это ответ на ждущую строку, а не
+// отказ от свежих стартов навсегда. Осиротевшая строка здесь не ждёт: без
+// живой работы она сама кандидат слота, и возврат к ней дерево не заводит.
+// Строки в Check тоже не ждут, их деревья съедает слияние.
+func waitingTrees(root string, b *Board) []string {
+	var waiters []string
+	for _, r := range b.Rows {
+		if r.Sect != SectBlocked || !taskHasTree(root, r.ID) {
+			continue
+		}
+		_, _, _, _, blockSuf := splitTitle(r.Title)
+		reason := blockReason(blockSuf)
+		switch {
+		case strings.HasPrefix(reason, "вопрос:"):
+			waiters = append(waiters, r.ID+" (вопрос)")
+		case strings.HasPrefix(reason, "окружение:"):
+			waiters = append(waiters, r.ID+" (окружение)")
+		default:
+			waiters = append(waiters, r.ID+" (блокер)")
+		}
+	}
+	return waiters
 }
 
 // branchTipTime отдаёт время последнего коммита ветки в unix-секундах: возраст
@@ -211,6 +257,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	g := &batchGroups{}
 	byLink := map[string]string{}
 	var picks []slotPick
+	treeFull := false
 	for _, r := range b.Rows {
 		_, _, _, _, blockSuf := splitTitle(r.Title)
 		reason := blockReason(blockSuf)
@@ -240,6 +287,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 		case (r.Sect == SectBacklog || r.Sect == SectInProgress) &&
 			!taskHasTree(root, r.ID) && live >= ceiling:
 			g.add(fmt.Sprintf("потолок деревьев %d исчерпан", ceiling), r.ID)
+			treeFull = true
 		case acceptOf(r.Title) == acceptUser && humanAway:
 			g.add("человек недоступен, приёмка вида user", r.ID)
 		default:
@@ -301,6 +349,13 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 		out = append(out, "отказы:")
 		for _, label := range g.order {
 			out = append(out, "  "+label+": "+strings.Join(g.items[label], ", "))
+		}
+	}
+	// Сработавший потолок деревьев называет и то, что разобрать: без этого
+	// отказ жмёт старты, не показывая, чем их освободить.
+	if treeFull {
+		if waiters := waitingTrees(root, b); len(waiters) > 0 {
+			out = append(out, "ждут разбора: "+strings.Join(waiters, ", "))
 		}
 	}
 	return strings.Join(out, "\n"), nil

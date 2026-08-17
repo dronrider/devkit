@@ -92,6 +92,62 @@ func checkParkPrefix(reason string) error {
 	return nil
 }
 
+// taskGoalLink достаёт из файла задачи строку связи с целью: add кладёт её
+// первой строкой под заголовком («Цель: [tasks/XR-900.md](tasks/XR-900.md)»).
+// Потолок висящих вопросов считается на цель (LLD DK-400, решение 5), и цель
+// строки узнаётся по этой строке. Пустая ссылка значит задачу вне цели,
+// потолок её не держит.
+func taskGoalLink(root, id string) string {
+	body, err := os.ReadFile(taskFileAbs(root, id))
+	if err != nil {
+		return ""
+	}
+	for _, ln := range strings.Split(string(body), "\n") {
+		if s := strings.TrimSpace(ln); strings.HasPrefix(s, "Цель:") {
+			return s
+		}
+	}
+	return ""
+}
+
+// parkedQuestions перечисляет висящие вопросы цели: строки в Blocked с
+// причиной «вопрос:» и той же связью с целью, что у спрашивающей. Вышедшие из
+// Blocked к ней не относятся, их будит сторожок.
+func parkedQuestions(b *Board, root, goal string) []string {
+	var ids []string
+	for _, r := range b.Rows {
+		if r.Sect != SectBlocked {
+			continue
+		}
+		_, _, _, _, blockSuf := splitTitle(r.Title)
+		if !strings.HasPrefix(blockReason(blockSuf), "вопрос:") {
+			continue
+		}
+		if taskGoalLink(root, r.ID) == goal {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
+}
+
+// checkQuestionCeiling держит потолок висящих вопросов на цель (LLD DK-400,
+// решение 5): при двух припаркованных вопросах новый не принимается, иначе
+// человек вернётся к простыне вместо пачки. Отказавшему исполнителю остаётся
+// правило доезжать до рубежа: вопрос пишется строкой в файл задачи, заход
+// кончается, задача разбирается планировщиком на общих основаниях.
+func checkQuestionCeiling(b *Board, root, id string) error {
+	goal := taskGoalLink(root, id)
+	if goal == "" {
+		return nil
+	}
+	hanging := parkedQuestions(b, root, goal)
+	if len(hanging) < questionCeiling() {
+		return nil
+	}
+	return fmt.Errorf("вопросов висит %d из %d (%s): новый вопрос не принимается, доехать до ближайшего рубежа и записать вопрос строкой в файл задачи, ответ разберёт следующий заход",
+		len(hanging), questionCeiling(), strings.Join(hanging, ", "))
+}
+
 // nextID берёт префикс из существующих строк, а на пустой доске из шапки
 // «(префикс XX)», чтобы первая задача заводилась без --id. Черновики считаются
 // наравне с доской и архивом: ID выдаётся им при заведении, чтобы на черновик
@@ -475,6 +531,11 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		}
 		if err := checkParkPrefix(reason); err != nil {
 			return "", err
+		}
+		if strings.HasPrefix(reason, "вопрос:") {
+			if err := checkQuestionCeiling(b, root, id); err != nil {
+				return "", err
+			}
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"
 	case row.Sect == SectBlocked:

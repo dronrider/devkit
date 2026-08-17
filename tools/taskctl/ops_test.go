@@ -341,6 +341,71 @@ func TestMoveToBlockedQuestionPrefix(t *testing.T) {
 	}
 }
 
+// TestMoveQuestionCeiling: потолок висящих вопросов на цель (LLD DK-400,
+// решение 5). Два припаркованных вопроса одной цели закрываются одним
+// коротким заходом, третий не паркуется: отказ печатает число потолка и
+// висящие строки, а исполнителю остаётся доезжать до рубежа. Вопрос соседней
+// цели и вопрос задачи вне цели потолком не держатся: число считается на
+// цель, а не на доску. Окружение перебивает число для стендов.
+func TestMoveQuestionCeiling(t *testing.T) {
+	root := setup(t)
+	link := func(id, goal string) {
+		t.Helper()
+		if err := appendUnderHeading(taskFileAbs(root, id), "Цель: "+goal); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("XR-001", "[tasks/XG-900.md](tasks/XG-900.md)")
+	link("XR-002", "[tasks/XG-900.md](tasks/XG-900.md)")
+	link("XR-004", "[tasks/XG-900.md](tasks/XG-900.md)")
+	link("XR-003", "[tasks/XG-901.md](tasks/XG-901.md)")
+	park := func(id, reason string) error {
+		t.Helper()
+		b, err := LoadBoard(boardPath(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.find(id).Sect != SectInProgress {
+			if _, err := cmdMove(root, id, SectInProgress, "", CommitOpts{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err = cmdMove(root, id, SectBlocked, reason, CommitOpts{})
+		return err
+	}
+	if err := park("XR-001", "вопрос: ждём схему"); err != nil {
+		t.Fatal(err)
+	}
+	if err := park("XR-002", "вопрос: ждём доступ"); err != nil {
+		t.Fatal(err)
+	}
+	err := park("XR-004", "вопрос: третья схема")
+	if err == nil || !strings.Contains(err.Error(), "вопросов висит 2 из 2") ||
+		!strings.Contains(err.Error(), "XR-001, XR-002") {
+		t.Fatalf("третий вопрос цели прошёл: %v", err)
+	}
+	// Стенд поднимает потолок окружением, и третий вопрос паркуется.
+	t.Setenv(slotQuestionsEnv, "3")
+	if err := park("XR-004", "вопрос: третья схема"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(slotQuestionsEnv, "")
+	// Соседняя цель и задача вне цели потолком не держатся.
+	if err := park("XR-003", "вопрос: чужая цель"); err != nil {
+		t.Fatalf("вопрос другой цели отвергнут: %v", err)
+	}
+	if err := park("XR-005", "вопрос: вне цели"); err != nil {
+		t.Fatalf("вопрос вне цели отвергнут: %v", err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(b.Sects[SectBlocked].Rows); n != 5 {
+		t.Fatalf("в Blocked ждут ответа %d строк, ожидалось 5", n)
+	}
+}
+
 func TestSetTypeInPlace(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})

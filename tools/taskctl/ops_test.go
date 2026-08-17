@@ -293,6 +293,46 @@ func TestMoveToBlockedRejectsBracketInReason(t *testing.T) {
 	}
 }
 
+// TestMoveToBlockedQuestionPrefix: парковка вопросом (LLD DK-400, решение 2).
+// Префикс «вопрос:» это машинная метка, по которой сторожок devkitctl watch
+// отличает строку, ждущую ответа: сломанная форма «вопрос :» обязана
+// отбиваться сразу, а не спать в Blocked без надзора.
+func TestMoveToBlockedQuestionPrefix(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос : ждём схему", CommitOpts{}); err == nil {
+		t.Fatal("сломанный машинный префикс должен падать")
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос: ждём схему", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := b.Sects[SectBlocked].Rows
+	if len(rows) != 1 || !strings.Contains(rows[0].Title, "[блок: вопрос: ждём схему]") {
+		t.Fatalf("Blocked после парковки вопросом: %+v", rows)
+	}
+	// Проза с похожим первым словом, но не префиксом остаётся прозой:
+	// «вопросительный» это не «вопрос», и отвергать её нельзя.
+	if _, err := cmdMove(root, "XR-005", SectBlocked, "вопросительный поиск", CommitOpts{}); err != nil {
+		t.Fatalf("проза с похожим первым словом отвергнута: %v", err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err = LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.find("XR-004").Title; strings.Contains(got, "[блок:") {
+		t.Fatalf("причина вопроса не снята при выходе из blocked: %q", got)
+	}
+}
+
 func TestSetTypeInPlace(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Type: "bug"})

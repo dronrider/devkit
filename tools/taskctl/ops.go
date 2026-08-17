@@ -69,6 +69,27 @@ func checkReason(reason string) error {
 	return nil
 }
 
+// parkPrefixes это первые слова машинных причин blocked (LLD DK-400, решение 2):
+// «вопрос:» паркует задачу вопросом человека, и по ней строку будит сторожок
+// devkitctl watch, «окружение:» ждёт неготовой среды задачи.
+var parkPrefixes = []string{"вопрос", "окружение"}
+
+// checkParkPrefix отбивает сломанный машинный префикс. «вопрос :» и «вопрос -»
+// разбирались бы как проза, и припаркованная вопросом строка осталась бы в
+// Blocked безнадзорной: сторожок ищет в причине ровно «вопрос:».
+func checkParkPrefix(reason string) error {
+	first := reason
+	if i := strings.IndexAny(reason, " \t"); i >= 0 {
+		first = reason[:i]
+	}
+	for _, p := range parkPrefixes {
+		if first == p && !strings.HasPrefix(reason, p+":") {
+			return fmt.Errorf("причина начинается со слова «%s», а машинный префикс пишется «%s: ...»: по нему сторожок devkitctl watch отличает строку, ждущую ответа", p, p)
+		}
+	}
+	return nil
+}
+
 // nextID берёт префикс из существующих строк, а на пустой доске из шапки
 // «(префикс XX)», чтобы первая задача заводилась без --id. Черновики считаются
 // наравне с доской и архивом: ID выдаётся им при заведении, чтобы на черновик
@@ -448,6 +469,9 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			return "", fmt.Errorf("для blocked обязателен --reason, одна строка почему")
 		}
 		if err := checkReason(reason); err != nil {
+			return "", err
+		}
+		if err := checkParkPrefix(reason); err != nil {
 			return "", err
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"

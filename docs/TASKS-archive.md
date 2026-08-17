@@ -275,3 +275,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-392 | goal-loop и goal-cut: ворота заменяются связью с целью, ссылка на цель уходит в файл задачи нарезки | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-392.md](tasks/archive/2026/DK-392.md) |
 | DK-393 | goal-start: ворота постановки заменяются DoD цели и бюджетом | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-393.md](tasks/archive/2026/DK-393.md) |
 | DK-394 | taskctl add заводит файл задачи с пустым DoD, изменяющие команды без файла отказывают | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-394.md](tasks/archive/2026/DK-394.md) |
+| DK-391 | board-task: что идёт строкой сразу и что в черновик, файл задачи при заведении, а не при взятии в работу | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-391.md](tasks/archive/2026/DK-391.md) |

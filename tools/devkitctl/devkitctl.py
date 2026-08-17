@@ -157,6 +157,7 @@ import corp
 import dashboard
 import describe
 import drain
+import entry
 import harness
 import importlib.util
 import json
@@ -1959,6 +1960,11 @@ def doctor(start, fix=False):
         # (DK-071). Корень без манифеста и не под git молчит: без репозитория
         # проектной половины нет вовсе.
         findings += describe.check(root)
+        # Дока есть, но начинается не с того: у README утилиты первым разделом
+        # идёт вход, иначе читатель, впервые видящий фичу, до запуска не
+        # доходит (DK-421). Порядок разделов машиноразличим, вид текста нет,
+        # и `--fix` эту находку не чинит: вход пишется руками.
+        findings += entry.check(root)
         cf, cd = check_machine_ignore(root, fix)
         findings += cf
         fixed += cd

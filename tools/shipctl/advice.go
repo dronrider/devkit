@@ -328,7 +328,7 @@ func trainOverlap(root, main, branch string, train []string) ([]string, error) {
 		var hit []string
 		for _, ln := range strings.Split(log, "\n") {
 			sha, subj, ok := strings.Cut(ln, "\t")
-			if !ok || isRevertSubject(subj) || (!containsWord(subj, id) && !inRecord(rec, sha)) {
+			if !ok || isRevertSubject(subj) || (!ownsSubject(subj, id) && !inRecord(rec, sha)) {
 				continue
 			}
 			files, err := git(root, "show", "--name-only", "--pretty=", sha)

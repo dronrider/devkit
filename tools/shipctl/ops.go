@@ -417,8 +417,8 @@ func strayList(ss []stray) string {
 }
 
 // codeCommits проверяет по строкам лога (формат %H\t%s, новые первыми), есть
-// ли у задачи коммиты кода: записанные разделом «Выкат» либо с ID в subject,
-// трогающие что-то кроме docs/.
+// ли у задачи коммиты кода: записанные разделом «Выкат» либо с её ID первым в
+// subject, трогающие что-то кроме docs/.
 // Правки только под docs/ (доска, файлы задач, LLD) едут с выкатом, но прод
 // не меняют, поэтому кодом не считаются. Прошлый откат это граница, как в
 // taskCommits: всё, что старше него, уже откачено или относится к прошлым
@@ -426,7 +426,7 @@ func strayList(ss []stray) string {
 func codeCommits(root string, lines []string, id string, rec []string) (bool, error) {
 	for _, ln := range lines {
 		sha, subj, ok := strings.Cut(ln, "\t")
-		if !ok || (!containsWord(subj, id) && !inRecord(rec, sha)) {
+		if !ok || (!ownsSubject(subj, id) && !inRecord(rec, sha)) {
 			continue
 		}
 		if isRevertSubject(subj) {
@@ -1156,7 +1156,7 @@ type RevertParams struct {
 }
 
 // taskCommits собирает коммиты задачи, новые первыми: записанные разделом
-// «Выкат» и найденные по ID в subject.
+// «Выкат» и найденные по её ID, стоящему в subject первым.
 // Коммиты, трогающие только доску и файлы задач, не откатываются: состояние
 // доски двигает taskctl, а не git revert.
 func taskCommits(root, main, id string) ([]string, error) {
@@ -1171,7 +1171,7 @@ func taskCommits(root, main, id string) ([]string, error) {
 	var shas []string
 	for _, ln := range strings.Split(log, "\n") {
 		sha, subj, ok := strings.Cut(ln, "\t")
-		if !ok || (!containsWord(subj, id) && !inRecord(rec, sha)) {
+		if !ok || (!ownsSubject(subj, id) && !inRecord(rec, sha)) {
 			continue
 		}
 		// Прошлый откат задачи это граница: всё старше него либо уже
@@ -1193,19 +1193,42 @@ func taskCommits(root, main, id string) ([]string, error) {
 	return shas, nil
 }
 
-func containsWord(s, w string) bool {
+// ownsSubject отвечает, принадлежит ли коммит задаче id: владельцем считается
+// первый ID в subject, прочие упоминания дальше по тексту чужие. Упомянуть
+// соседнюю задачу в сообщении законно («пробел DoD цели XR-002 снят»), и по
+// поиску ID словом такой коммит записывался в чужой код, а задача-соседка
+// приходила осиротевшей и отбивала merge.
+// Ищется только ID с префиксом самой задачи: ключ внешнего трекера или «UTF-8»
+// в тексте иначе занял бы место первого ID и владельца отобрал.
+func ownsSubject(subj, id string) bool {
+	pref, _, ok := strings.Cut(id, "-")
+	if !ok || pref == "" {
+		return false
+	}
+	return firstID(subj, pref) == id
+}
+
+// firstID возвращает первый ID вида «<pref>-<число>», стоящий в s отдельным
+// словом. Пустая строка значит, что задач этого префикса в тексте нет.
+func firstID(s, pref string) string {
 	for i := 0; ; {
-		j := strings.Index(s[i:], w)
+		j := strings.Index(s[i:], pref+"-")
 		if j < 0 {
-			return false
+			return ""
 		}
 		j += i
-		before := j == 0 || !isWordByte(s[j-1])
-		after := j+len(w) == len(s) || !isWordByte(s[j+len(w)])
-		if before && after {
-			return true
+		i = j + len(pref) + 1
+		if j > 0 && isWordByte(s[j-1]) {
+			continue
 		}
-		i = j + len(w)
+		k := i
+		for k < len(s) && s[k] >= '0' && s[k] <= '9' {
+			k++
+		}
+		if k == i || (k < len(s) && isWordByte(s[k])) {
+			continue
+		}
+		return s[j:k]
 	}
 }
 

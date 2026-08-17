@@ -231,3 +231,65 @@ func TestTrainPipelineThreeTasks(t *testing.T) {
 		t.Fatal("тег deployed не сдвинут на выкаченный main")
 	}
 }
+
+// TestTrainNeighbourMentionIsNotOwnership: упомянуть соседнюю задачу в subject
+// законно, и владельцем коммита такое упоминание её не делает. По прежнему
+// правилу «ID словом где угодно» коммит записывался в код соседки, та приходила
+// осиротевшей и наглухо отбивала слияние чужой задачи.
+func TestTrainNeighbourMentionIsNotOwnership(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
+	write(t, root, "a.txt", "новое\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка, пробел DoD цели XR-002 снят")
+
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
+	if err != nil {
+		t.Fatalf("упоминание соседки в subject отбило слияние: %v", err)
+	}
+	if strings.Contains(msg, "XR-002") {
+		t.Fatalf("соседка попала в отчёт слияния: %q", msg)
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(st, "аномалия") || strings.Contains(st, "XR-002") {
+		t.Fatalf("соседка из Backlog пришла осиротевшей:\n%s", st)
+	}
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err != nil {
+		t.Fatalf("выкат поезда с упоминанием соседки не прошёл: %v", err)
+	}
+}
+
+// TestRevertSkipsNeighbourMention: цена той же ошибки на откате выше, чем на
+// слиянии. Коммит соседки, упомянувшей задачу в тексте subject, в состав отката
+// не берётся: revert вернул бы чужую правку.
+func TestRevertSkipsNeighbourMention(t *testing.T) {
+	root, _ := setup(t, "", rowInProg) // XR-001 уже в Check
+	write(t, root, "code.txt", "broken\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: XR-001 фича")
+	own := gitT(t, root, "rev-parse", "HEAD")
+	write(t, root, "neighbour.txt", "чужая правка\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-002 своя правка, пробел DoD цели XR-001 снят")
+
+	shas, err := taskCommits(root, "main", "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shas) != 1 || shas[0] != own {
+		t.Fatalf("в откат XR-001 попал чужой коммит: %v, свой %s", shas, own)
+	}
+	if _, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "neighbour.txt")); err != nil {
+		t.Fatal("откат XR-001 снёс правку соседки")
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "code.txt")); string(got) != "old\n" {
+		t.Fatalf("свой код не откатился: %q", got)
+	}
+}

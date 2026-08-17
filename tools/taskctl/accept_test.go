@@ -135,9 +135,11 @@ func TestAddNonAgentRequiresBarrier(t *testing.T) {
 		t.Fatalf("файл задачи не создан: %v", err)
 	}
 	body := string(data)
-	for _, want := range []string{"## Приёмка", "- вид: user", "- барьер «глаза»:"} {
+	// DoD болванки и «Приёмка» неагентского вида соседствуют в одном файле:
+	// разделы дополняют друг друга, а не перезаписывают (LLD DK-133).
+	for _, want := range []string{"## DoD", "## Приёмка", "- вид: user", "- барьер «глаза»:"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("в скелете «Приёмка» нет %q:\n%s", want, body)
+			t.Errorf("в скелете нет %q:\n%s", want, body)
 		}
 	}
 }
@@ -152,6 +154,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	if _, err := cmdDraft(root, "текст черновика под нарезку цели", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, "XR-008")
 	// Оформление со ссылкой на файл цели: штатный виток нарезки, у LLD-строк
 	// вид user.
 	p := AddParams{
@@ -180,16 +183,20 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 			t.Errorf("в файле задачи нет %q:\n%s", want, body)
 		}
 	}
+	if !strings.Contains(body, "Цель: [tasks/XR-005.md](tasks/XR-005.md)") {
+		t.Errorf("ссылка на файл цели не уехала в болванку:\n%s", body)
+	}
 	b, _ := LoadBoard(boardPath(root))
 	if row := b.find("XR-008"); row == nil {
 		t.Fatal("строки XR-008 нет на доске")
-	} else if row.Link != "[tasks/XR-005.md](tasks/XR-005.md)" {
-		t.Fatalf("ссылка строки %q, жду на файл цели", row.Link)
+	} else if row.Link != "[tasks/XR-008.md](tasks/XR-008.md)" {
+		t.Fatalf("ссылка строки %q, жду на файл задачи: при --link ячейку занимает он", row.Link)
 	}
 	// Без --link итог тот же: текст цел, скелет не пишется, раздел дописан.
 	if _, err := cmdDraft(root, "второй черновик без ссылки", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, "XR-009")
 	if _, err := cmdAdd(root, AddParams{
 		ID: "XR-009", Title: "Из черновика без ссылки", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "mixed", Barrier: "глаза",
@@ -262,6 +269,7 @@ func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
 	if _, err := cmdDraft(root, "черновик про taskctl цитирует раздел:\n\n"+quote, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, "XR-008")
 	if _, err := cmdAdd(root, AddParams{
 		ID: "XR-008", Title: "Цитата в блоке кода", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",

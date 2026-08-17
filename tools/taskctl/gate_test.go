@@ -59,12 +59,12 @@ func TestMoveToCheckNeedsScenarioSection(t *testing.T) {
 
 func TestMoveToCheckNeedsTaskFile(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := cmdMove(root, "XR-004", SectCheck, "", CommitOpts{})
+	// Строка старого запаса: без файла задачи изменяющий move отказывает
+	// раньше ворот Check и называет taskctl file (DK-394).
+	dropTaskFile(t, root, "XR-004")
+	_, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{})
 	if err == nil {
-		t.Fatal("move в Check без файла задачи должен падать")
+		t.Fatal("move строке без файла задачи должен падать")
 	}
 	if !strings.Contains(err.Error(), "taskctl file XR-004") {
 		t.Fatalf("отказ не называет следующий шаг: %v", err)

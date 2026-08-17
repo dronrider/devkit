@@ -115,6 +115,7 @@ func TestDraftPromotedByAdd(t *testing.T) {
 	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, "XR-008")
 	msg, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"})
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +171,7 @@ func TestAddPromotesUntrackedDraft(t *testing.T) {
 	if out := gitOut(t, root, "status", "--porcelain"); !strings.Contains(out, "?? docs/tasks/drafts/") {
 		t.Fatalf("черновик не untracked, статус:\n%s", out)
 	}
+	giveDraftDoD(t, root, "XR-008")
 	p := AddParams{
 		ID: "XR-008", Title: "Оформленная", Type: "bug",
 		Rank: "25+4+2+5+2", Cost: "S",

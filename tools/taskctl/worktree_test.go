@@ -183,7 +183,8 @@ func TestReviewAddFromWorktreeWritesOnlyTaskFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// У XR-001 в fixtureBoard нет файла задачи: review add заведёт его сам.
+	// Файл задачи снимаем в самом worktree: review add заведёт его сам.
+	dropTaskFile(t, wt, "XR-001")
 	msg, err := cmdReviewAdd(wt, "XR-001", "замечание из worktree", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)

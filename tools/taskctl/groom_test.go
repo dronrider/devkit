@@ -499,6 +499,7 @@ func TestAddPromotionDropsPrio(t *testing.T) {
 	if _, err := cmdDraftPrio(root, "XR-008", "high", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, "XR-008")
 	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "task", Rank: "25+4+2+0+2", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
@@ -658,6 +659,7 @@ func TestDraftAttachCreatesTaskFile(t *testing.T) {
 	if _, err := cmdSet(root, SetParams{ID: "XR-004", Link: "[tasks/XR-005.md](tasks/XR-005.md)"}); err != nil {
 		t.Fatal(err)
 	}
+	dropTaskFile(t, root, "XR-004")
 	id := newDraft(t, root, "то же семейство, что у хвоста")
 	gitOut(t, root, "add", ".")
 	gitOut(t, root, "commit", "-q", "-m", "черновик")
@@ -815,6 +817,7 @@ func TestDraftPromoteKeepsGroom(t *testing.T) {
 	if _, err := cmdDraftDefer(root, id, "ждём повторного случая", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	giveDraftDoD(t, root, id)
 	if _, err := cmdAdd(root, AddParams{ID: id, Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}

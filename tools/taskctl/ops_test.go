@@ -21,6 +21,13 @@ func setup(t *testing.T) string {
 		archivePath(root):                 fixtureArchive,
 		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureScenario + fixtureVerification,
 		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureScenario + fixtureVerification,
+		// Файлы остальных строк фикстуры: с DK-394 изменяющие команды
+		// отказывают строке без файла задачи, а большинству тестов нужна
+		// живая доска, а не переход на старом запасе. Тесты, которым нужна
+		// строка без файла, снимают его сами.
+		filepath.Join(tasks, "XR-001.md"): "# XR-001\n" + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-003.md"): "# XR-003\n" + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-004.md"): "# XR-004\n" + fixtureScenario + fixtureVerification,
 	}
 	for p, content := range files {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -46,6 +53,28 @@ func giveScenario(t *testing.T, root, id string) {
 	t.Helper()
 	p := filepath.Join(root, "docs", "tasks", id+".md")
 	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dropTaskFile снимает задаче файл задачи: так выглядит строка старого запаса,
+// заведённая до того, как add начал класть файл сам (DK-394).
+func dropTaskFile(t *testing.T, root, id string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(root, "docs", "tasks", id+".md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// giveDraftDoD дописывает черновику пустой «## DoD»: с DK-394 оформление
+// черновика task/bug через add --id требует раздела в переносимом файле.
+func giveDraftDoD(t *testing.T, root, id string) {
+	t.Helper()
+	body, err := os.ReadFile(draftPath(root, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(draftPath(root, id), appendSection(body, dodHeading+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -110,33 +139,69 @@ func TestAddValidation(t *testing.T) {
 	}
 }
 
-func TestAddWithoutFileAndBareLink(t *testing.T) {
+// TestAddCreatesTaskFile: add заводит файл задачи вместе со строкой (LLD DK-133,
+// решение 4): ячейка ссылки ведёт на файл, болванка task/bug несёт пустой
+// «## DoD», а голый путь из --link оборачивается в ссылку и уходит в болванку
+// под заголовок, потому что ячейку занимает файл задачи.
+func TestAddCreatesTaskFile(t *testing.T) {
 	root := setup(t)
-	// Файла задачи нет: в ячейке ссылки плейсхолдер, add не падает.
 	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-008 | Однострочник | task | P3 | 3 (0+1+1+0+1) | - | - |") {
-		t.Fatalf("нет строки с плейсхолдером:\n%s", board)
+	if !strings.Contains(string(board), "| XR-008 | Однострочник | task | P3 | 3 (0+1+1+0+1) | - | [tasks/XR-008.md](tasks/XR-008.md) |") {
+		t.Fatalf("ячейку ссылки занял не файл задачи:\n%s", board)
 	}
-	// Голый путь в --link оборачивается в markdown-ссылку.
-	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "task", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md", Accept: "agent"}); err != nil {
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не создан: %v", err)
+	}
+	if got := string(data); got != "# XR-008: Однострочник\n\n## DoD\n" {
+		t.Fatalf("болванка без пустого DoD: %q", got)
+	}
+	// Голый путь в --link оборачивается в markdown-ссылку и уезжает в болванку
+	// файла, ячейку занимает файл задачи.
+	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "bug", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ = os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-009 | Голый путь | task | P3 | 3 (0+1+1+0+1) | - | [tasks/XR-002.md](tasks/XR-002.md) |") {
-		t.Fatalf("голый путь не обёрнут:\n%s", board)
+	if !strings.Contains(string(board), "| XR-009 | Голый путь | bug | P3 | 3 (0+1+1+0+1) | - | [tasks/XR-009.md](tasks/XR-009.md) |") {
+		t.Fatalf("при --link ячейку занял не файл задачи:\n%s", board)
+	}
+	data, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не создан: %v", err)
+	}
+	for _, want := range []string{"Цель: [tasks/XR-002.md](tasks/XR-002.md)", "## DoD"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("в болванке нет %q:\n%s", want, data)
+		}
+	}
+}
+
+// TestAddGoalRowSkipsDoD: строка-цель узнаётся по заголовку от слова «Цель:»,
+// DoD цели живёт в разделе «Цель» её файла, и болванка заголовок не получает.
+func TestAddGoalRowSkipsDoD(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{Title: "Цель: навести порядок в накопителе", Type: "task", Rank: "0+1+1+0+1", Cost: "XL", Accept: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
+	if err != nil {
+		t.Fatalf("файл цели не создан: %v", err)
+	}
+	if strings.Contains(string(data), "## DoD") {
+		t.Fatalf("болванка цели несёт DoD:\n%s", data)
 	}
 }
 
 func TestAddWithCost(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-008 | Оценённая | task | P3 | 3 (0+1+1+0+1) | M | x |") {
+	if !strings.Contains(string(board), "| XR-008 | Оценённая | task | P3 | 3 (0+1+1+0+1) | M | [tasks/XR-008.md](tasks/XR-008.md) |") {
 		t.Fatalf("нет строки с ценой:\n%s", board)
 	}
 }
@@ -342,8 +407,62 @@ func TestSetTitleKeepsBlockSuffix(t *testing.T) {
 	}
 }
 
+// TestAddDraftWithoutDoDRefused: оформление черновика task/bug без «## DoD»
+// отбивается с причиной, а LLD-черновик проходит: конец работы у него описан
+// в дизайн-документе (LLD DK-133, решение 4).
+func TestAddDraftWithoutDoDRefused(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "разобрать, но не до конца", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформляемая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})
+	if err == nil || !strings.Contains(err.Error(), "## DoD") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+	// У LLD-заголовка требования нет: файл завёлся, DoD болванка не несёт.
+	if _, err := cmdAdd(root, AddParams{ID: "XR-009", Title: "Дизайн", Type: "LLD", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
+	if err != nil || strings.Contains(string(data), "## DoD") {
+		t.Fatalf("LLD-болванка с DoD: %q, %v", data, err)
+	}
+}
+
+// TestMutatingCommandsNeedTaskFile: у строки старого запаса без файла задачи
+// изменяющие команды отказывают и называют taskctl file (LLD DK-133,
+// решение 4). taskctl file заводит файл с DoD по типу строки, и после него
+// команды проходят.
+func TestMutatingCommandsNeedTaskFile(t *testing.T) {
+	root := setup(t)
+	dropTaskFile(t, root, "XR-004")
+	_, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{})
+	if err == nil || !strings.Contains(err.Error(), "taskctl file XR-004") {
+		t.Fatalf("move не назвал следующий шаг: %v", err)
+	}
+	_, err = cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-002"})
+	if err == nil || !strings.Contains(err.Error(), "taskctl file XR-004") {
+		t.Fatalf("dep add не назвал следующий шаг: %v", err)
+	}
+	_, err = cmdSet(root, SetParams{ID: "XR-004", Cost: "S"})
+	if err == nil || !strings.Contains(err.Error(), "taskctl file XR-004") {
+		t.Fatalf("set не назвал следующий шаг: %v", err)
+	}
+	if _, err := cmdFile(root, "XR-004", CommitOpts{}); err != nil {
+		t.Fatalf("file не завёл файл старой строке: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-004.md"))
+	if err != nil || !strings.Contains(string(data), "## DoD") {
+		t.Fatalf("болванка перехода без DoD: %q, %v", data, err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatalf("move после файла не прошёл: %v", err)
+	}
+}
+
 func TestFileCreatesAndRelinks(t *testing.T) {
 	root := setup(t)
+	dropTaskFile(t, root, "XR-001")
 	msg, err := cmdFile(root, "XR-001", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +471,7 @@ func TestFileCreatesAndRelinks(t *testing.T) {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-001.md"))
-	if err != nil || string(data) != "# XR-001: Средняя\n" {
+	if err != nil || string(data) != "# XR-001: Средняя\n\n## DoD\n" {
 		t.Fatalf("скелет файла: %q, %v", data, err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -420,6 +539,11 @@ func TestShow(t *testing.T) {
 		}
 	}
 	out, err = cmdShow(root, "XR-001")
+	if err != nil || !strings.Contains(out, "файл задачи: docs/tasks/XR-001.md") {
+		t.Fatalf("show по строке с файлом: %q, %v", out, err)
+	}
+	dropTaskFile(t, root, "XR-001")
+	out, err = cmdShow(root, "XR-001")
 	if err != nil || !strings.Contains(out, "файла задачи нет") {
 		t.Fatalf("show без файла: %q, %v", out, err)
 	}
@@ -484,6 +608,7 @@ func TestClose(t *testing.T) {
 
 func TestCloseWithoutFileKeepsLink(t *testing.T) {
 	root := setup(t)
+	dropTaskFile(t, root, "XR-001")
 	if _, err := cmdClose(root, CloseParams{ID: "XR-001", Date: "2026-07-08"}); err != nil {
 		t.Fatal(err)
 	}
@@ -616,9 +741,19 @@ func TestLintTaskFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte("# XR-005\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Строка в Check без файла и со ссылкой-прочерк теперь заводится только
+	// правкой доски: add кладёт файл сам, а set без файла отказывает. Так
+	// выглядит старый запас, и lint его находит.
 	if _, err := cmdAdd(root, AddParams{Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
+	board, _ := os.ReadFile(boardPath(root))
+	row := "| XR-008 | Готова, некуда смотреть | task | P3 | 3 (0+3+0+0+0) | - | [tasks/XR-008.md](tasks/XR-008.md) |"
+	if err := os.WriteFile(boardPath(root), []byte(strings.Replace(string(board), row,
+		"| XR-008 | Готова, некуда смотреть | task | P3 | 3 (0+3+0+0+0) | - | - |", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dropTaskFile(t, root, "XR-008")
 	finds, err = cmdLint(root)
 	if err != nil {
 		t.Fatal(err)
@@ -628,7 +763,10 @@ func TestLintTaskFiles(t *testing.T) {
 	}
 
 	// Ссылка на сценарий (существующий файл) снимает находку.
-	if _, err := cmdSet(root, SetParams{ID: "XR-008", Link: "tasks/XR-002.md"}); err != nil {
+	board, _ = os.ReadFile(boardPath(root))
+	if err := os.WriteFile(boardPath(root), []byte(strings.Replace(string(board),
+		"| XR-008 | Готова, некуда смотреть | task | P3 | 3 (0+3+0+0+0) | - | - |",
+		"| XR-008 | Готова, некуда смотреть | task | P3 | 3 (0+3+0+0+0) | - | [tasks/XR-002.md](tasks/XR-002.md) |", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	finds, err = cmdLint(root)
@@ -658,7 +796,11 @@ func TestLintFlagsLegacyBoard(t *testing.T) {
 // байтам, задача остаётся только в архиве.
 func TestCycle(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-008.md"),
+		[]byte("# XR-008: Временная\n"+fixtureScenario+fixtureVerification), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-008", SectInProgress, "", CommitOpts{}); err != nil {
@@ -672,7 +814,7 @@ func TestCycle(t *testing.T) {
 		t.Fatalf("доска после цикла не вернулась к исходной:\n%s", board)
 	}
 	arch, _ := os.ReadFile(archivePath(root))
-	if !strings.HasSuffix(string(arch), "| XR-008 | Временная | task | P3 | 2026-07-08 | x |\n") {
+	if !strings.HasSuffix(string(arch), "| XR-008 | Временная | task | P3 | 2026-07-08 | [tasks/archive/2026/XR-008.md](tasks/archive/2026/XR-008.md) |\n") {
 		t.Fatalf("хвост архива: %s", arch)
 	}
 }

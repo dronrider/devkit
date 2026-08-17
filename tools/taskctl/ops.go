@@ -298,85 +298,74 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		// отсюда ушла вместе со статусом, скобки в ней проверяет move.
 		return "", fmt.Errorf("новую задачу в blocked не заводят: блокировать нечего, пока её не взяли в работу; строка ждёт в Backlog, а зависимость от своей задачи ставится через taskctl dep add")
 	}
-	// Перенос черновика идёт после всех проверок: упавшая на кривом ранге
-	// команда не должна оставлять файл на новом месте без строки на доске.
+	// Отказ по DoD стоит до переноса: черновик task/bug обязан нести «## DoD»
+	// к моменту оформления (LLD DK-133, решение 4), и упавшая на кривом ранге
+	// или без DoD команда не оставляет файл на новом месте без строки на доске.
+	if p.ID != "" && needsDoD(p.Type, p.Title) {
+		if _, found, ok := readSectionFromPath(draftPath(root, p.ID), dodHeading); ok && !found {
+			return "", fmt.Errorf("у черновика %s нет заголовка «## DoD»: ворота заведения спрашивают, чем кончается работа, допишите раздел в черновик", p.ID)
+		}
+	}
 	promoted, staged, err := promoteDraft(root, id)
 	if err != nil {
 		return "", err
 	}
-	link := wrapLink(p.Link)
-	taskFile := ""
-	if link == "" {
-		// Без --link ссылка ведёт на файл задачи, а пока файла нет, в ячейке
-		// плейсхолдер: однострочному бэклогу файл не положен.
-		rel := fmt.Sprintf("tasks/%s.md", id)
-		if _, err := os.Stat(filepath.Join(root, "docs", rel)); err == nil {
-			link = fmt.Sprintf("[%s](%s)", rel, rel)
-			taskFile = filepath.Join("docs", rel)
-		} else {
-			link = "-"
+	// Файл задачи заводит сам add (LLD DK-133, решение 4): однострочного
+	// бэклога не остаётся, ячейка строки ссылается на файл с минуты заведения.
+	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost}
+	if _, err := ensureTaskFile(root, id, row); err != nil {
+		return "", err
+	}
+	rel := fmt.Sprintf("tasks/%s.md", id)
+	taskFile := filepath.Join("docs", rel)
+	link := fmt.Sprintf("[%s](%s)", rel, rel)
+	// При --link связь с целью живёт в файле задачи, а не в ячейке: ссылка на
+	// файл цели уходит в болванку под заголовок, ячейку занимает файл задачи.
+	// Состав цели и сегодня читается из «Задачи цели» файла цели, так что
+	// переезд ссылки ничего не ломает, а связь читается одним местом раньше.
+	if gl := wrapLink(p.Link); gl != "" {
+		if err := appendUnderHeading(taskFileAbs(root, id), "Цель: "+gl); err != nil {
+			return "", err
 		}
 	}
-	// Не агентский вид держит причину в файле задачи: add заводит этот файл с
-	// разделом «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
+	// Не агентский вид держит причину в файле задачи: add дописывает в него
+	// раздел «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
 	// строку обхода исход, имена обходов лежат в ACCEPTANCE.md (задача DK-299).
+	// Раздел соседствует с «## DoD» болванки: разделы дополняют друг друга,
+	// а не перезаписывают. Есть ли раздел, спрашивается у readSectionFromPath
+	// тем же порядком, что у gate и lint: заголовок «## Приёмка» внутри блока
+	// кода это цитата, а не раздел, и поиск подстрокой считал её разделом (DK-329).
 	if p.Accept != "" && p.Accept != acceptAgent {
-		rel := fmt.Sprintf("tasks/%s.md", id)
-		abs := filepath.Join(root, "docs", rel)
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return "", err
-		}
+		abs := taskFileAbs(root, id)
 		section := fmt.Sprintf("%s\n\n- вид: %s\n- барьер «%s»:\n", acceptanceHeading, p.Accept, p.Barrier)
-		// Файл мог появиться переносом черновика выше, и скелет целиком поверх
-		// него терял бы текст: к имеющемуся файлу раздел дописывается. Наличие
-		// проверяется по самому файлу, а не по taskFile: тот путь заполняет
-		// только ветка без --link, и add со ссылкой молча перезаписывал
-		// перенесённый черновик скелетом (DK-329). Есть ли раздел, спрашивается
-		// у readSectionFromPath тем же порядком, что у gate и lint: заголовок
-		// «## Приёмка» внутри блока кода это цитата, и поиск подстрокой
-		// считал её разделом, оставляя такой черновик без настоящего.
-		body := fmt.Sprintf("# %s: %s\n\n%s", id, p.Title, section)
-		if prev, err := os.ReadFile(abs); err == nil {
-			body = string(prev)
-			if _, found, _ := readSectionFromPath(abs, acceptanceHeading); !found {
-				body = strings.TrimRight(body, "\n") + "\n\n" + section
+		if _, found, _ := readSectionFromPath(abs, acceptanceHeading); !found {
+			body, err := os.ReadFile(abs)
+			if err != nil {
+				return "", err
 			}
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
-			return "", err
-		}
-		taskFile = filepath.Join("docs", rel)
-		if link == "-" {
-			link = fmt.Sprintf("[%s](%s)", rel, rel)
+			body = appendSection(body, section)
+			if err := os.WriteFile(abs, body, 0o644); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err := checkCell("ссылка", link); err != nil {
 		return "", err
 	}
-	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost, Link: link}
+	row.Link = link
 	if err := insertRowLine(b, sec, row, formatRow(row)); err != nil {
 		return "", err
 	}
 	if err := b.Save(); err != nil {
 		return "", err
 	}
-	paths := []string{filepath.Join("docs", "TASKS.md")}
-	if promoted {
+	paths := []string{filepath.Join("docs", "TASKS.md"), taskFile}
+	if promoted && staged {
 		// Обе стороны переноса едят pathspec, только когда перенос шёл через
 		// git mv: неотслеживаемый черновик git не знает, и pathspec по
 		// исчезнувшему пути drafts/ ронял бы коммит. Сам файл уже на новом
 		// месте через rename, и в коммит попадает как вновь добавленный.
-		if staged {
-			paths = append(paths, filepath.Join("docs", "tasks", "drafts", id+".md"))
-		}
-		if taskFile == "" {
-			taskFile = filepath.Join("docs", "tasks", id+".md")
-		}
-	}
-	if taskFile != "" {
-		paths = append(paths, taskFile)
+		paths = append(paths, filepath.Join("docs", "tasks", "drafts", id+".md"))
 	}
 	tail, err := p.Commit.apply(root, paths)
 	if err != nil {
@@ -420,6 +409,9 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	row := b.find(id)
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", id)
+	}
+	if err := needTaskFile(root, id); err != nil {
+		return "", err
 	}
 	if row.Sect == target {
 		return "", fmt.Errorf("%s уже в %s", id, target)
@@ -547,6 +539,9 @@ func cmdSet(root string, p SetParams) (string, error) {
 	row := b.find(p.ID)
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
+	}
+	if err := needTaskFile(root, p.ID); err != nil {
+		return "", err
 	}
 	var changes []string
 	if p.Title != "" {

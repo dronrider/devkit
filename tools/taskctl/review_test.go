@@ -85,7 +85,8 @@ func TestReviewResolveValidation(t *testing.T) {
 
 func TestReviewAddCreatesFileAndLink(t *testing.T) {
 	root := setup(t)
-	// У XR-001 нет ни файла, ни ссылки на него: add заводит и то, и другое.
+	// У XR-001 снимаем файл: review add заводит и файл, и ссылку в строке.
+	dropTaskFile(t, root, "XR-001")
 	msg, err := cmdReviewAdd(root, "XR-001", "первое замечание", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)

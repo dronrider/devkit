@@ -118,6 +118,9 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	}
+	if err := needTaskFile(root, p.ID); err != nil {
+		return "", err
+	}
 	if p.DepID == p.ID {
 		return "", fmt.Errorf("%s не может зависеть сам от себя", p.ID)
 	}

@@ -19,11 +19,14 @@ var sectTitles = map[string]string{
 }
 
 // ensureTaskFile создаёт файл задачи docs/tasks/<ID>.md со строкой-заголовком,
-// если его ещё нет, и отвечает, был ли он создан. Общая часть между cmdFile и
-// cmdReviewAdd: там файл заводится сам, не будь у задачи файла, но ссылку в
-// строке доски эти две команды чинят по-разному (см. cmdReviewAdd).
+// если его ещё нет, и отвечает, был ли он создан. Общая часть между cmdAdd,
+// cmdFile и cmdReviewAdd (LLD DK-133, решение 4): файл обязан стоять у строки
+// с минуты заведения, а ссылке в ячейке эти команды находят своё место
+// по-разному (см. cmdReviewAdd). Болванка несёт пустой «## DoD» у task/bug:
+// наполняет раздел тот, кто заводит строку, и раздел уживается с «Приёмкой»,
+// которую add дописывает неагентскому виду отдельным заголовком.
 func ensureTaskFile(root, id string, row *Row) (bool, error) {
-	abs := filepath.Join(root, "docs", "tasks", id+".md")
+	abs := taskFileAbs(root, id)
 	if _, err := os.Stat(abs); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
@@ -31,13 +34,78 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	}
 	base, deps, _, _, _ := splitTitle(row.Title)
 	title := joinTitle(base, deps, "", "", "")
+	body := fmt.Sprintf("# %s: %s\n", id, title)
+	if needsDoD(row.Type, row.Title) {
+		body += "\n" + dodHeading + "\n"
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(abs, []byte(fmt.Sprintf("# %s: %s\n", id, title)), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// dodHeading это пустой заголовок болванки файла задачи: пометка «конец работы
+// назван», которую наполняет тот, кто заводит строку (LLD DK-133, решение 4).
+const dodHeading = "## DoD"
+
+// goalRow узнаёт строку цели по заголовку от слова «Цель:» (goal-start, п. 3):
+// признак цели в доске один, и DoD такой строке не положен, он живёт в разделе
+// «Цель» файла цели.
+func goalRow(title string) bool {
+	base, _, _, _, _ := splitTitle(title)
+	return strings.HasPrefix(base, "Цель:")
+}
+
+// needsDoD говорит, просит ли строка заголовок DoD: типам task и bug ворота
+// заведения спрашивают, чем кончается работа, а LLD описывает конец работы
+// в дизайн-документе, на который ссылается файл.
+func needsDoD(typ, title string) bool {
+	if goalRow(title) {
+		return false
+	}
+	for _, part := range strings.Split(typ, "/") {
+		if part == "task" || part == "bug" {
+			return true
+		}
+	}
+	return false
+}
+
+// needTaskFile это машинная опора перехода для строк, заведённых до рубежа
+// (LLD DK-133, решение 4): изменяющая команда отказывает, пока у строки нет
+// файла задачи, и отказ называет команду, которая его заведёт. У строк,
+// заведённых после рубежа, отказ мёртв: файл кладёт сам add.
+func needTaskFile(root, id string) error {
+	if _, err := os.Stat(taskFileAbs(root, id)); err == nil {
+		return nil
+	}
+	return fmt.Errorf("у %s нет файла задачи, заведите его: taskctl file %s", id, id)
+}
+
+// appendUnderHeading вписывает строку в файл задачи сразу под заголовок
+// «# <ID>: ...»: ссылку на файл цели add кладёт туда через --link, чтобы связь
+// читалась с первой строки файла, а не из глубины текста.
+func appendUnderHeading(abs, line string) error {
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return err
+	}
+	text := string(body)
+	nl := strings.IndexByte(text, '\n')
+	if nl < 0 {
+		return fmt.Errorf("%s без строки заголовка", abs)
+	}
+	text = text[:nl+1] + "\n" + line + "\n" + text[nl+1:]
+	return os.WriteFile(abs, []byte(text), 0o644)
+}
+
+// appendSection дописывает раздел в конец файла задачи через пустую строку:
+// к ненулевому телу раздел иначе приклеился бы вплотную к последней строке.
+func appendSection(body []byte, section string) []byte {
+	return []byte(strings.TrimRight(string(body), "\n") + "\n\n" + section)
 }
 
 // cmdFile создаёт файл задачи docs/tasks/<ID>.md со строкой-заголовком и

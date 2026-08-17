@@ -214,7 +214,7 @@ func main() {
 		fs.StringVar(&p.Type, "type", "task", "тип: bug / task / LLD")
 		fs.StringVar(&p.Rank, "rank", "", "разбивка ранга «а+б+в+г+д»")
 		fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
-		fs.StringVar(&p.Link, "link", "", "ячейка ссылки, по умолчанию файл задачи")
+		fs.StringVar(&p.Link, "link", "", "ссылка на файл цели: уходит в болванку файла задачи, ячейку занимает сам файл")
 		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
 		fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
 		fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")

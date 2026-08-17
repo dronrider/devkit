@@ -52,6 +52,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-365 | Цель: квота второй подписки под контролем конвейера | task | P2 | 38 (25+8+1+0+4) | XL | [tasks/DK-365.md](tasks/DK-365.md) |
 | DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 38 (25+3+2+5+3) | S | [tasks/DK-367.md](tasks/DK-367.md) |
 | DK-374 | Реплика в работающий заход: почтальон получает адрес черновика [после DK-373] | task | P2 | 38 (25+8+2+0+3) | M | [lld/DK-354-draft-screen.md](lld/DK-354-draft-screen.md) |
+| DK-428 | taskctl: бонус за цену и наследование ранга по цели считаются из строки, видны в list | task | P2 | 38 (25+7+2+0+4) | M | [tasks/DK-428.md](tasks/DK-428.md) |
 | DK-098 | Выкат devkit не раскладывает скиллы и агентов на машину | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-098.md](tasks/DK-098.md) |
 | DK-145 | Прогресс цели одной командой: закрытый вес против сожжённого бюджета | task | P2 | 37 (25+7+2+0+3) | M | [tasks/DK-145.md](tasks/DK-145.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |

@@ -23,6 +23,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               посчитать; нет данных, нет и строки
   show <ID>                                   строка задачи, секция, те же пометки,
                                               файл задачи (закрытые ищутся в архиве)
+  progress <ID> [--json]                      рубеж задачи числом F (0.00 строка
+                                              заведена, 0.35 первый коммит кода,
+                                              0.56 код и тесты готовы, 0.89 слито
+                                              и выкачено, 1.00 приёмка пройдена)
+                                              с признаком, по которому получен;
+                                              считается по меткам доски, git и
+                                              файла задачи, смену статуса переживает
   id                                          следующий свободный ID
   draft list [--json]                         накопитель черновиков: ID, первая
                                               строка, возраст, метка уровня
@@ -85,7 +92,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review show <ID>                            замечания с номерами и исходами
   review stats                                свод по живым задачам и архиву
 
-У list, show, dep list и draft list есть флаг --json: машинный вывод для дашборда и
+У list, show, progress, dep list и draft list есть флаг --json: машинный вывод для дашборда и
 прочей автоматики, печатный вывод не меняется; list --json отдаёт Backlog
 целиком, без обрезки.
 У изменяющих команд флаги -m "docs(tasks): ..." и --push: закоммитить ровно
@@ -379,6 +386,17 @@ func main() {
 			msg, err = cmdShowJSON(root(*dir), pos[0])
 		} else {
 			msg, err = cmdShow(root(*dir), pos[0])
+		}
+	case "progress":
+		fs := flag.NewFlagSet("progress", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		jsonOut := fs.Bool("json", false, "машинный вывод JSON")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "progress <ID> [--json]")
+		if *jsonOut {
+			msg, err = cmdProgressJSON(root(*dir), pos[0])
+		} else {
+			msg, err = cmdProgress(root(*dir), pos[0])
 		}
 	case "review":
 		if len(args) < 2 {

@@ -285,3 +285,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-288 | shipctl записывает коммит в задачу по упоминанию её ID в чужом subject, merge встаёт | bug | P1 | 2026-08-17 | [tasks/archive/2026/DK-288.md](tasks/archive/2026/DK-288.md) |
 | DK-419 | одноразовая строка сценария DK-402 | task | P3 | 2026-08-17 | [tasks/archive/2026/DK-419.md](tasks/archive/2026/DK-419.md) |
 | DK-402 | Парковка задачи по вопросу и пробуждение тиком watch | task | P1 | 2026-08-17 | [tasks/archive/2026/DK-402.md](tasks/archive/2026/DK-402.md) |
+| DK-403 | Отвязка wait-human от стопа цикла цели | task | P1 | 2026-08-17 | [tasks/archive/2026/DK-403.md](tasks/archive/2026/DK-403.md) |

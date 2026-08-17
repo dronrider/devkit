@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -154,5 +155,40 @@ func TestSessionMessageRefusals(t *testing.T) {
 	resp = postSessionMessage(t, c, e, "eeee-5555", "привет")
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(body(t, resp), "дерево сессии") {
 		t.Errorf("удалённое дерево: %d %s", resp.StatusCode, body(t, resp))
+	}
+}
+
+// Замок ящика общий с почтальоном (take_mail_lock в hooks/inbox.py), и замок,
+// занятый соседним прогоном, отдаёт 503 словами: реплика, написанная поверх
+// чужой руки под замком, терялась бы. Замок ушёл, и реплика ложится следующим
+// запросом, как у почтальона лежащую строку доезжает соседний прогон.
+func TestSessionMessageRefusesBusyBox(t *testing.T) {
+	e, c := mailboxEnv(t)
+	writeSession(t, e.home, e.proj, "", "ffff-6666", plainTalk, time.Now())
+	dir := filepath.Join(e.proj, ".devkit", "mail")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := os.OpenFile(filepath.Join(dir, "sess-ffff-6666.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(hold.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	resp := postSessionMessage(t, c, e, "ffff-6666", "под замком")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		hold.Close()
+		t.Fatalf("ожидался отказ 503 по занятому замку: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "соседний прогон") {
+		t.Errorf("отказ не называет соседний прогон: %s", text)
+	}
+	hold.Close()
+	// Замок ушёл, та же реплика ложится без повторной попытки руками.
+	resp = postSessionMessage(t, c, e, "ffff-6666", "под замком")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("после освобождения замка: %d %s", resp.StatusCode, body(t, resp))
 	}
 }

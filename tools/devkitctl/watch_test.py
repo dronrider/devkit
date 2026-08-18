@@ -416,6 +416,20 @@ class WakeTest(Stand):
         self.said_to(self.dir / "proj-dk-901", "DK-901", "bbbb-2222")
         self.assertTrue(self.wake()[-1].endswith("разбужено 0"))
 
+    def test_broken_chat_hook_stops_waking(self):
+        # Подхват не загрузился, разбирать адресата нечем: тик не будит ни одной
+        # строки корня и называет причину словами. Молчаливый пропуск был бы
+        # неотличим от «ответа никто не писал», а пробуждение вслепую погнало бы
+        # в origin правку доски по реплике, написанной чужой сессии.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        lines = watch.wake(str(self.proj), self.now, self.call, TASKCTL, hook=None)
+        self.assertEqual(self.call.calls, [], "будили без разбора адресата")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("подхват реплики", lines[0])
+        self.assertIn("не загрузился", lines[0])
+
     def test_missing_taskctl_is_reported(self):
         # Бинаря нет: строка остаётся в Blocked, тик говорит об этом, а не
         # молчит, и следующий тик повторит.

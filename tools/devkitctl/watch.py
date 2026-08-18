@@ -301,7 +301,13 @@ def taskctl_bin(which=None):
     return ""
 
 
-def wake(root, now, call=None, taskctl=None):
+# Умолчание ключа hook у wake: подхват грузится самим тиком. Отдельная метка
+# вместо None тут потому, что None это законное значение «подхват не
+# загрузился», и стенд обязан уметь его передать.
+LOAD_HOOK = object()
+
+
+def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
     корне только там, где парковок нет вовсе.
@@ -313,12 +319,18 @@ def wake(root, now, call=None, taskctl=None):
     чекауте, отбила бы следующий merge предполётом и подмелась бы чужим
     коммитом, поэтому она коммитится и пушится тут же, по правилу доски
     (ровно то, что делает shipctl своим commitBoard). Отказ taskctl не
-    поднимает сторожок: строка стоит в Blocked, и следующий тик повторит."""
+    поднимает сторожок: строка стоит в Blocked, и следующий тик повторит.
+
+    Не загрузившийся подхват останавливает пробуждение всего корня, и тик
+    говорит об этом строкой отчёта: разбирать адресата своей копией формата
+    нельзя, а будить не разбирая значит гнать в origin правку доски по чужой
+    реплике."""
     call = subprocess.run if call is None else call
     bin = taskctl_bin() if taskctl is None else taskctl
     lines, woke = [], 0
     parked = parked_rows(root)
-    hook = chat_hook() if parked else None
+    if hook is LOAD_HOOK:
+        hook = chat_hook() if parked else None
     if parked and hook is None:
         lines.append("корень %s: подхват реплики hooks/chat-in.py не загрузился, "
                      "разбирать адресата нечем: припаркованные строки стоят" % root)

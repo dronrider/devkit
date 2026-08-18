@@ -790,38 +790,49 @@ func TestStaticChatRefusesNonGoal(t *testing.T) {
 	}
 }
 
-// Чат открывается хвостом: читается последняя порция реплик, лента сразу
-// стоит внизу, а история подаётся кнопкой «раньше» через ?before=.
+// Лента открывается хвостом: читается последняя порция реплик, лента сразу
+// стоит внизу, а история подаётся кнопкой «раньше» через ?before=. Кусок с
+// DK-371 общий, и чат берёт его вызовом: своей копии этой механики у него
+// больше нет.
 func TestStaticChatOpensAtTail(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, text, "async function wireChatFeed(")
-	for _, want := range []string{`"?n=" + CHAT_TAIL`, `"?before=" + firstSeq`, "more.hidden"} {
+	body := funcBody(t, text, "async function wireFeed(")
+	for _, want := range []string{`"?n=" + tail`, `"?before=" + firstSeq`, "more.hidden"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("в ленте чата нет %q: хвост и история подаются не так", want)
+			t.Errorf("в ленте разговора нет %q: хвост и история подаются не так", want)
 		}
 	}
 	draw := strings.Index(body, "\n  draw();")
-	bottom := strings.Index(body, "feed.scrollTop = feed.scrollHeight;")
+	bottom := strings.Index(body, "scroll.scrollTop = scroll.scrollHeight;")
 	if draw < 0 || bottom < 0 || draw > bottom {
-		t.Error("чат прокручивается вниз не после первой отрисовки: открытие хвостом не сработает")
+		t.Error("лента прокручивается вниз не после первой отрисовки: открытие хвостом не сработает")
+	}
+	chat := funcBody(t, text, "async function wireChatFeed(")
+	if !strings.Contains(chat, "await wireFeed(project, list[0].id, {") {
+		t.Error("чат цели поднимает ленту не общим куском: вторая копия вернулась")
+	}
+	if !strings.Contains(chat, "tail: CHAT_TAIL") {
+		t.Error("чат открывается не хвостом: размер хвоста ленте не назван")
 	}
 }
 
 // Якорь ленты: перед перерисовкой меряется, стоит ли лента внизу, и низ
-// держится только тогда; из истории прокрутку вниз не бросает.
+// держится только тогда; из истории прокрутку вниз не бросает. Коробка
+// прокрутки приходит параметром: у чата прокручивается сама лента, у
+// транскрипта вся панель.
 func TestStaticChatKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, text, "async function wireChatFeed(")
-	measure := strings.Index(body, "const bottom = atBottom(feed);")
+	body := funcBody(t, text, "async function wireFeed(")
+	measure := strings.Index(body, "const bottom = atBottom(scroll);")
 	rebuild := strings.Index(body, "sync(box, items);")
 	if measure < 0 || rebuild < 0 || measure > rebuild {
 		t.Error("положение ленты мерится после перерисовки: якорь взят с уже сброшенной прокрутки")
 	}
-	if !strings.Contains(body, "keepPlace(feed, tail)") {
-		t.Error("лента чата не возвращается на прежнее место: взгляд в историю сорвёт дострение")
+	if !strings.Contains(body, "keepPlace(scroll, rest)") {
+		t.Error("лента не возвращается на прежнее место: взгляд в историю сорвёт дострение")
 	}
-	if strings.Contains(body, "es.onmessage") && strings.Contains(body, "feed.scrollTop = feed.scrollHeight;\n    ") {
-		t.Error("дострение чата прокручивает вниз мимо якоря")
+	if strings.Contains(body, "es.onmessage") && strings.Contains(body, "scroll.scrollTop = scroll.scrollHeight;\n    ") {
+		t.Error("дострение прокручивает вниз мимо якоря")
 	}
 }
 
@@ -837,7 +848,8 @@ func TestStaticChatTimeIsLocal(t *testing.T) {
 	if !strings.Contains(funcBody(t, text, "function localTime("), "toLocaleTimeString") {
 		t.Error("localTime не спрашивает пояс клиента")
 	}
-	for _, head := range []string{"async function wireChatFeed(", "function replyEl("} {
+	for _, head := range []string{"async function wireChatFeed(", "async function wireFeed(",
+		"function replyEl("} {
 		if strings.Contains(funcBody(t, text, head), ".slice(11, 16)") {
 			t.Errorf("%s режет время строкой вместо пояса клиента", head)
 		}

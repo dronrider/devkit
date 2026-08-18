@@ -2403,6 +2403,147 @@ async function wireTranscript(project, tp, id) {
   open(pickedSession(key, list));
 }
 
+// Сколько реплик читается при открытии: разговор открывается концом, и тянуть
+// всю сессию ради последних слов незачем. Столько же подаёт «раньше», столько
+// же шлёт первым делом поток (repliesDefault в sessions.go). Остальное подаёт
+// «раньше».
+const CHAT_TAIL = 40;
+
+// Пустая лента называется словами и на клиенте: молчащая коробка неотличима
+// от оборвавшегося потока. Те же слова шлёт сервер (emptyTranscriptNote), и
+// приехавшие с ответа заменяют эти.
+const EMPTY_TALK = "в транскрипте пока нет реплик";
+
+function sessionURL(project, sid) {
+  return "/api/projects/" + encodeURIComponent(project) +
+    "/sessions/" + encodeURIComponent(sid);
+}
+
+// Лента разговора одним куском на оба экрана (DK-371). До неё экран агента и
+// чат цели держали по своей копии разбора реплик, стрима и пагинации, и всякая
+// правка ленты делалась дважды. Параметры называют разницу: адрес источника
+// (проект и сессия), размер хвоста, отбор и разметка реплики, коробка ленты и
+// коробка прокрутки, когда лента лежит внутри чужой.
+//
+// Устройство одно на оба экрана: хвост приезжает обычным ответом, дальше
+// дострение потоком с отсевом по seq (свой хвост поток шлёт заново), а
+// «раньше» тянет историю через ?before= и пересобирает ленту. Лента считается
+// целиком, а перерисовывается по месту: разделители дней зависят от соседей, и
+// догруженная история переставляет их сама собой, но реплика с прежним ключом
+// и отпечатком остаётся тем же узлом, поэтому приход снизу разговор не дёргает.
+// Взгляд держится якорем: у нижнего края лента остаётся у нижнего края, а из
+// истории её вниз не бросает, потому что мерится расстояние до низа.
+async function wireFeed(project, sid, opts) {
+  const gen = liveGen;
+  const scroll = opts.scroll;
+  const keep = opts.talk || (() => true);
+  const tail = opts.tail || CHAT_TAIL;
+  const more = el("div", "more", "раньше");
+  const box = el("div", opts.list || "");
+  opts.box.replaceChildren(more, box);
+
+  // Своя отметка снятия рядом с общим списком остановок: поток поднимается
+  // после ответа сервера, и уход с ленты застаёт кусок на await. Без отметки
+  // переключение на соседний разговор оставляло бы позади ленту, которая
+  // откроет поток уже после того, как её закрыли.
+  const live = { closed: false, es: null };
+  opts.live.push(() => {
+    live.closed = true;
+    if (live.es) live.es.close();
+  });
+  const gone = () => live.closed || gen !== liveGen;
+
+  const talk = [];
+  let lastSeq = -1;
+  let firstSeq = null;
+  let empty = opts.empty || EMPTY_TALK;
+  // Кнопка «раньше» горит, только когда раньше есть что показать: пока лента
+  // пуста или упёрлась в начало разговора, кнопка гаснет, а не живёт мёртвой.
+  const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
+  updateMore();
+
+  const draw = () => {
+    const bottom = atBottom(scroll);
+    const rest = scroll.scrollHeight - scroll.scrollTop;
+    if (!talk.length) {
+      sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
+      return;
+    }
+    const items = [];
+    let day = "";
+    for (const item of talk) {
+      if (opts.days) {
+        const key = localDayKey(item.time);
+        if (key && key !== day) {
+          items.push({ key: "day-" + key, sign: key, make: () => dayEl(localDay(item.time)) });
+          day = key;
+        }
+      }
+      items.push({
+        key: "seq-" + item.seq,
+        sign: [item.role, item.time, item.text].join("|"),
+        make: () => opts.item(item),
+      });
+    }
+    sync(box, items);
+    if (bottom) keepBottom(scroll, true);
+    else keepPlace(scroll, rest);
+  };
+
+  more.addEventListener("click", async () => {
+    if (firstSeq === null || firstSeq === 0) return;
+    const older = await api(sessionURL(project, sid) +
+      "?before=" + firstSeq + "&n=" + tail);
+    if (gone() || !older.ok) return;
+    const items = older.body.items || [];
+    if (items.length) firstSeq = items[0].seq;
+    talk.unshift(...items.filter(keep));
+    draw();
+    updateMore();
+  });
+
+  const first = await api(sessionURL(project, sid) + "?n=" + tail);
+  if (gone()) return;
+  if (first.ok) {
+    const items = first.body.items || [];
+    if (items.length) firstSeq = items[0].seq;
+    for (const item of items) {
+      lastSeq = item.seq;
+      if (keep(item)) talk.push(item);
+    }
+    if (first.body.note) empty = first.body.note;
+  }
+  // Открытие хвостом: последние слова разговора видны сразу, листать вниз от
+  // начала сессии не приходится.
+  draw();
+  scroll.scrollTop = scroll.scrollHeight;
+  updateMore();
+
+  const es = new EventSource(sessionURL(project, sid) + "?stream=1");
+  live.es = es;
+  // Пустая лента приходит и событием note: разговор, поднятый при пустом
+  // транскрипте, называет пустоту словами, не дожидаясь первой реплики.
+  es.addEventListener("note", (ev) => {
+    if (talk.length) return;
+    empty = ev.data;
+    draw();
+  });
+  es.onmessage = (ev) => {
+    const item = JSON.parse(ev.data);
+    // Свой хвост поток шлёт заново, и без отсева по seq те же реплики легли бы
+    // в ленту вторым разом.
+    if (item.seq <= lastSeq) return;
+    lastSeq = item.seq;
+    if (firstSeq === null) {
+      firstSeq = item.seq;
+      updateMore();
+    }
+    if (!keep(item)) return;
+    talk.push(item);
+    draw();
+  };
+}
+
 // Одна лента разговора: переключение на соседний разговор собирает ленту
 // заново в той же коробке, поэтому дострение прежней ленты снимается, а
 // переключатель и слова над ним остаются на месте.
@@ -2411,46 +2552,15 @@ function openTranscript(project, tp, s, box) {
   transcriptLive = [];
   tp.sub.textContent = s.id.slice(0, 8) + ".jsonl" + (s.branch ? ", " + s.branch : "") +
     " (" + sessionSign(s) + ")";
-  const more = el("div", "more", "раньше");
-  const feed = el("div");
-  box.replaceChildren(more, feed);
-  let firstSeq = null;
-  // Кнопка «раньше» горит только когда раньше есть что показать: пока лента
-  // пуста или упёрлась в начало, кнопка гаснет, а не живёт мёртвой.
-  const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
-  updateMore();
-  more.addEventListener("click", async () => {
-    if (firstSeq === null || firstSeq === 0) return;
-    const older = await api("/api/projects/" + encodeURIComponent(project) +
-      "/sessions/" + encodeURIComponent(s.id) + "?before=" + firstSeq);
-    if (!older.ok) return;
-    const tail = tp.body.scrollHeight - tp.body.scrollTop;
-    for (const item of (older.body.items || []).reverse()) {
-      feed.prepend(replyEl(item));
-      firstSeq = item.seq;
-    }
-    keepPlace(tp.body, tail);
-    updateMore();
-  });
-  const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
-    "/sessions/" + encodeURIComponent(s.id) + "?stream=1");
-  transcriptLive.push(() => es.close());
-  // Пустая лента приходит событием note: слова вместо пустой коробки,
-  // неотличимой от оборвавшегося потока.
-  es.addEventListener("note", (ev) => {
-    if (!feed.childElementCount) say(feed, "empty", ev.data);
-  });
-  es.onmessage = (ev) => {
-    const item = JSON.parse(ev.data);
-    const was = atBottom(tp.body);
-    if (feed.firstChild && feed.firstChild.className === "empty") feed.replaceChildren();
-    if (firstSeq === null) {
-      firstSeq = item.seq;
-      updateMore();
-    }
-    feed.append(replyEl(item));
-    keepBottom(tp.body, was);
-  };
+  // Транскрипт показывает разговор целиком, вместе с инструментами и
+  // размышлениями, и прокручивается вся панель, а не одна лента.
+  wireFeed(project, s.id, {
+    box,
+    scroll: tp.body,
+    tail: CHAT_TAIL,
+    item: replyEl,
+    live: transcriptLive,
+  }).catch(console.error);
 }
 
 // tmux: сессия работы и снимок пейна через capture-pane; событийного
@@ -2775,15 +2885,13 @@ function chatTalk(item) {
   return (item.role === "user" || item.role === "assistant") && Boolean(item.text);
 }
 
-// Сколько реплик читается при открытии: чат открывается концом разговора, и
-// тянуть всю сессию ради последних слов незачем. Остальное подаёт «раньше».
-const CHAT_TAIL = 40;
-
 // Лента чата: последние реплики и поле ввода видны сразу, история
 // подгружается кнопкой «раньше» вверх. Сессия берётся узнанная этой целью
 // (?task=), чужая в чат не попадает (DK-252). Пустоты различимы: «сессий этой
 // цели нет», «транскриптов нет вовсе» и «в транскрипте нет реплик» это разные
-// слова.
+// слова. Сама лента приезжает общим куском (wireFeed): чату она достаётся
+// отобранной по текстовым репликам, с пузырями и разделителями дней, и
+// прокручивается вместе с полем ввода.
 async function wireChatFeed(project, feed, id) {
   const gen = liveGen;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
@@ -2801,99 +2909,20 @@ async function wireChatFeed(project, feed, id) {
     await listOtherSessions(project, feed);
     return;
   }
-  const sid = list[0].id;
-  const more = el("div", "more", "раньше");
-  const box = el("div", "mlist");
-  feed.replaceChildren(more, box);
-
-  const talk = [];
-  let lastSeq = -1;
-  let firstSeq = null;
-  let empty = "переписки пока нет: в транскрипте нет текстовых реплик";
-  // Кнопка «раньше» горит, только когда раньше есть что показать: упёршись в
-  // начало разговора, она гаснет, а не живёт мёртвой.
-  const updateMore = () => { more.hidden = firstSeq === null || firstSeq === 0; };
-  // Лента пересчитывается целиком, а перерисовывается по месту: разделители
-  // дней зависят от соседей, и догруженная история переставляет их сама
-  // собой, но реплика с прежним ключом и отпечатком остаётся тем же узлом.
-  // Пришедшая снизу реплика не трогает ни одной прежней, и разговор на приходе
-  // события больше не дёргается. Взгляд держится якорем: у нижнего края лента
-  // остаётся у нижнего края, а из истории её вниз не бросает, потому что
-  // мерится расстояние до низа.
-  const draw = () => {
-    const bottom = atBottom(feed);
-    const tail = feed.scrollHeight - feed.scrollTop;
-    if (!talk.length) {
-      sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
-      return;
-    }
-    const items = [];
-    let day = "";
-    for (const item of talk) {
-      const key = localDayKey(item.time);
-      if (key && key !== day) {
-        items.push({ key: "day-" + key, sign: key, make: () => dayEl(localDay(item.time)) });
-        day = key;
-      }
-      const when = item.time ? localTime(item.time) + ", " : "";
-      items.push({
-        key: "seq-" + item.seq,
-        sign: [item.role, item.time, item.text].join("|"),
-        make: () => chatBubble(item.role === "user" ? "вы" : "агент", item.text,
-          when + "из транскрипта"),
-      });
-    }
-    sync(box, items);
-    if (bottom) keepBottom(feed, true);
-    else keepPlace(feed, tail);
-  };
-
-  const first = await api("/api/projects/" + encodeURIComponent(project) +
-    "/sessions/" + encodeURIComponent(sid) + "?n=" + CHAT_TAIL);
-  if (gen !== liveGen) return;
-  if (first.ok) {
-    const items = first.body.items || [];
-    if (items.length) firstSeq = items[0].seq;
-    for (const item of items) {
-      lastSeq = item.seq;
-      if (chatTalk(item)) talk.push(item);
-    }
-    if (first.body.note) empty = first.body.note;
-  }
-  // Открытие хвостом: последние слова разговора видны сразу, листать вниз от
-  // начала сессии не приходится.
-  draw();
-  feed.scrollTop = feed.scrollHeight;
-  updateMore();
-
-  more.addEventListener("click", async () => {
-    if (firstSeq === null || firstSeq === 0) return;
-    const older = await api("/api/projects/" + encodeURIComponent(project) +
-      "/sessions/" + encodeURIComponent(sid) + "?before=" + firstSeq + "&n=" + CHAT_TAIL);
-    if (!older.ok) return;
-    const items = older.body.items || [];
-    if (items.length) firstSeq = items[0].seq;
-    talk.unshift(...items.filter(chatTalk));
-    draw();
-    updateMore();
+  await wireFeed(project, list[0].id, {
+    box: feed,
+    scroll: feed,
+    list: "mlist",
+    tail: CHAT_TAIL,
+    days: true,
+    talk: chatTalk,
+    item: (item) => chatBubble(item.role === "user" ? "вы" : "агент", item.text,
+      (item.time ? localTime(item.time) + ", " : "") + "из транскрипта"),
+    empty: "переписки пока нет: в транскрипте нет текстовых реплик",
+    live: agentLive,
   });
-
-  const es = new EventSource("/api/projects/" + encodeURIComponent(project) +
-    "/sessions/" + encodeURIComponent(sid) + "?stream=1");
-  agentLive.push(() => es.close());
-  es.onmessage = (ev) => {
-    const item = JSON.parse(ev.data);
-    if (item.seq <= lastSeq) return;
-    lastSeq = item.seq;
-    if (firstSeq === null) {
-      firstSeq = item.seq;
-      updateMore();
-    }
-    if (!chatTalk(item)) return;
-    talk.push(item);
-    draw();
-  };
 }
+
 
 // Состояния своей реплики. Строка встаёт в ленту сразу, ещё до ответа
 // сервера, и сама говорит, что с ней: на слабой связи молчание с надписью в
@@ -2974,12 +3003,18 @@ function sentWrite(project, id, list) {
   }
 }
 
+// Ручка сообщения цели: реплика ложится в раздел «Входящие» файла цели, и
+// адрес этот у очереди исходящих параметром, а не в её теле. Панель разговора
+// (DK-435) поднимает ту же очередь над другой ручкой.
+function goalMessageURL(project, id) {
+  return "/api/projects/" + encodeURIComponent(project) +
+    "/goals/" + encodeURIComponent(id) + "/message";
+}
+
 // Отправленное человеком под лентой чата: свои реплики со своими состояниями
 // плюс чужие строки «Входящих» (их мог положить другой браузер или рука).
 // Пустота говорит словами: пустая коробка неотличима от неотрисованной.
-function makeOutbox(project, id, box, onLive) {
-  const url = "/api/projects/" + encodeURIComponent(project) +
-    "/goals/" + encodeURIComponent(id) + "/message";
+function makeOutbox(project, id, box, url, onLive) {
   const mine = sentRead(project, id);
   let others = [];
   // Отметки доставки лежащих строк, ключ это строка «Входящих» целиком.
@@ -3357,7 +3392,7 @@ function renderChat(project, works, id, board) {
     row.append(stop);
     // Живость витка приходит ответом ручки сообщения, и плашка перерисовывается
     // на месте: страницу ради этого человек не перезагружает.
-    const out = makeOutbox(project, id, pendbox, (live) => {
+    const out = makeOutbox(project, id, pendbox, goalMessageURL(project, id), (live) => {
       fillChatNote(note, note.dataset.running === "1", live);
     });
     agentLive.push(out.stop);

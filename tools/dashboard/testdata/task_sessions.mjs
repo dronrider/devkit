@@ -44,6 +44,19 @@ function makeNode(tag) {
   node.appendChild = (kid) => { node.children.push(kid); return kid; };
   node.prepend = (...kids) => { node.children.unshift(...kids); };
   node.replaceChildren = (...kids) => { node.children = kids; };
+  // Перерисовка по месту (sync) правит порядок детей, а не собирает коробку
+  // заново: без этих двух ручек лента разговора падала бы прямо в стенде.
+  node.insertBefore = (kid, ref) => {
+    const at = ref ? node.children.indexOf(ref) : -1;
+    if (at < 0) node.children.push(kid);
+    else node.children.splice(at, 0, kid);
+    return kid;
+  };
+  node.removeChild = (kid) => {
+    const at = node.children.indexOf(kid);
+    if (at >= 0) node.children.splice(at, 1);
+    return kid;
+  };
   node.remove = () => {};
   node.setAttribute = (name, value) => { node.attrs[name] = String(value); };
   node.removeAttribute = (name) => { delete node.attrs[name]; };

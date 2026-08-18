@@ -1680,6 +1680,10 @@ if (!dump(pendbox).includes("доставлено агенту") || !dump(pendbo
 // то есть меняла разговор под читающим.
 const talkStreams = () => streams.filter((s) => String(s.url).includes("/sessions/"));
 const liveTalks = () => talkStreams().filter((s) => !s.closed);
+// Дострение продолжает нумерацию хвоста: лента открывается им (?n=), и
+// реплика с прежним номером это та же реплика, которую поток шлёт заново.
+// Первый свободный номер идёт за последней репликой заготовки.
+const nextSeq = talk[talk.length - 1].seq + 1;
 const talkReply = (es, seq, text) => {
   es.onmessage({ data: JSON.stringify({ seq, role: "assistant", text, time: "2026-08-13T10:05:00+03:00" }) });
 };
@@ -1704,7 +1708,7 @@ if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
   fail("открыт не свежий разговор: " + JSON.stringify(liveTalks().map((s) => s.url)));
 }
 const ours = liveTalks()[0];
-talkReply(ours, 1, "ход первого разговора");
+talkReply(ours, nextSeq, "ход первого разговора");
 await settle();
 if (!dump(panes).includes("ход первого разговора")) {
   fail("реплика открытого разговора не встала в ленту: " + dump(panes).slice(0, 300));
@@ -1729,7 +1733,7 @@ if (!dump(panes).includes(mine.id.slice(0, 8))) {
 if (!dump(panes).includes("ход первого разговора")) {
   fail("обновление собрало ленту заново: прежние реплики пропали");
 }
-talkReply(ours, 2, "ещё реплика первого");
+talkReply(ours, nextSeq + 1, "ещё реплика первого");
 await settle();
 if (!dump(panes).includes("ещё реплика первого")) {
   fail("после обновления лента дописывается мимо экрана");
@@ -1743,7 +1747,7 @@ if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(alien.id)) {
   fail("переключатель не открыл соседний разговор: " +
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
-talkReply(liveTalks()[0], 1, "ход соседнего разговора");
+talkReply(liveTalks()[0], nextSeq, "ход соседнего разговора");
 await settle();
 if (!dump(panes).includes("ход соседнего разговора")) {
   fail("реплика соседнего разговора не встала в ленту после переключения");
@@ -1871,7 +1875,7 @@ if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(loose.id)) {
   fail("на экране разговора открыт не поток этой сессии: " +
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
-talkReply(liveTalks()[0], 1, "ход нераспознанного разговора");
+talkReply(liveTalks()[0], nextSeq, "ход нераспознанного разговора");
 await settle();
 if (!dump(sessPanes).includes("ход нераспознанного разговора")) {
   fail("реплика не встала в ленту экрана, открытого по id сессии");

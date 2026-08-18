@@ -740,20 +740,68 @@ func TestSessionStreamAppends(t *testing.T) {
 	}
 }
 
-// Транскрипт держит взгляд теми же якорями, что чат: дострение прокручивает
-// вниз, только когда лента и так стоит внизу, а догрузка истории возвращает
-// прежнее место, а не бросает к последней реплике.
+// Транскрипт держит взгляд теми же якорями, что чат, и держит их одним куском
+// (DK-371): экран агента передаёт ленте свою коробку прокрутки, а разбор
+// реплик, стрим и пагинацию берёт общие.
 func TestStaticTranscriptKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function openTranscript(")
-	for _, want := range []string{"const was = atBottom(tp.body)", "keepBottom(tp.body, was)", "keepPlace(tp.body, tail)"} {
+	for _, want := range []string{"wireFeed(project, s.id, {", "scroll: tp.body", "item: replyEl"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("в транскрипте нет %q: прокрутка сорвётся при дострении", want)
+			t.Errorf("в транскрипте нет %q: лента поднимается не общим куском", want)
 		}
 	}
-	if strings.Contains(body, "tp.body.scrollTop = tp.body.scrollHeight") {
-		t.Error("транскрипт прокручивается вниз мимо якоря")
+	for _, gone := range []string{"EventSource", "?before=", "keepBottom("} {
+		if strings.Contains(body, gone) {
+			t.Errorf("в транскрипте осталась своя механика ленты (%s): правка ленты снова делается дважды", gone)
+		}
 	}
+	feed := funcBody(t, text, "async function wireFeed(")
+	for _, want := range []string{"const bottom = atBottom(scroll)", "keepBottom(scroll, true)", "keepPlace(scroll, rest)"} {
+		if !strings.Contains(feed, want) {
+			t.Errorf("в ленте нет %q: прокрутка сорвётся при дострении", want)
+		}
+	}
+}
+
+// Лента разговора написана один раз: стрим и пагинация лежат в общем куске, и
+// второго их набора в статике нет. До DK-371 копий было две, и всякая правка
+// ленты делалась дважды.
+func TestStaticFeedIsOneCopy(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	if n := strings.Count(text, `sessionURL(project, sid) + "?stream=1"`); n != 1 {
+		t.Errorf("поток разговора поднимается %d раз, ожидал один", n)
+	}
+	if n := strings.Count(text, `"?before=" + firstSeq`); n != 1 {
+		t.Errorf("пагинация ленты написана %d раз, ожидал один", n)
+	}
+	if n := strings.Count(text, `sessionURL(project, sid) +`); n != 3 {
+		t.Errorf("адрес разговора собирается %d раз, ожидал три (хвост, история, поток)", n)
+	}
+	chat := funcBody(t, text, "async function wireChatFeed(")
+	for _, gone := range []string{"EventSource", "?before=", "es.onmessage"} {
+		if strings.Contains(chat, gone) {
+			t.Errorf("в ленте чата осталась своя механика (%s): вынос не закрыт", gone)
+		}
+	}
+}
+
+// Механика общей ленты проверяется исполнением, а не текстом исходника:
+// предмет тут это отсев повторов потока, «раньше» вверх и отбор реплики,
+// которым и различаются экраны. Стенд поднимает статику в node с заглушкой DOM
+// (testdata/feed_shared.mjs) и гоняет по одному разговору оба экрана. Без node
+// шаг пропускается: узел стенда, а не рабочей части.
+func TestFeedSharedByBothScreens(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд общей ленты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "feed_shared.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("общая лента разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }
 
 // Транскрипт без ID задачи в шапке: окно человека, о котором известно только

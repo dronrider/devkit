@@ -241,7 +241,7 @@ const saved = () => JSON.parse(store.get(key) || "[]");
 // Сценарий 1: связь оборвана, сообщение отправлено, связь вернулась,
 // сообщение ушло само, во «Входящих» одна строка.
 const box = sandbox.document.createElement("div");
-const out = sandbox.makeOutbox("demo", "XR-100", box);
+const out = sandbox.makeOutbox("demo", "XR-100", box, sandbox.goalMessageURL("demo", "XR-100"));
 
 let thrown = null;
 try {
@@ -309,7 +309,7 @@ if (saved().length !== 1 || saved()[0].state !== "waiting") {
 // список из того же хранилища и дожимает оставшееся.
 link = "down";
 const box2 = sandbox.document.createElement("div");
-const out2 = sandbox.makeOutbox("demo", "XR-100", box2);
+const out2 = sandbox.makeOutbox("demo", "XR-100", box2, sandbox.goalMessageURL("demo", "XR-100"));
 await out2.send("второе сообщение");
 await settle();
 if (saved().length !== 2 || saved()[1].state !== "queued") {
@@ -318,7 +318,7 @@ if (saved().length !== 2 || saved()[1].state !== "queued") {
 out2.stop();
 
 const box3 = sandbox.document.createElement("div");
-const out3 = sandbox.makeOutbox("demo", "XR-100", box3);
+const out3 = sandbox.makeOutbox("demo", "XR-100", box3, sandbox.goalMessageURL("demo", "XR-100"));
 out3.draw();
 shown = dump(box3);
 if (!shown.includes("второе сообщение") || !shown.includes("в очереди")) {
@@ -346,7 +346,7 @@ out.stop();
 // текст слали бы два цикла разом.
 link = "hang";
 const box4 = sandbox.document.createElement("div");
-const out4 = sandbox.makeOutbox("demo", "XR-101", box4);
+const out4 = sandbox.makeOutbox("demo", "XR-101", box4, sandbox.goalMessageURL("demo", "XR-101"));
 const sending = out4.send("третье сообщение");
 await settle();
 if (!held) fail("стенд не застал отправку на полпути");
@@ -373,7 +373,7 @@ if (timers.length || held) {
 // держит границу принятого, чтобы смена поведения не прошла молча.
 link = "lost";
 const box5 = sandbox.document.createElement("div");
-const out5 = sandbox.makeOutbox("demo", "XR-102", box5);
+const out5 = sandbox.makeOutbox("demo", "XR-102", box5, sandbox.goalMessageURL("demo", "XR-102"));
 await out5.send("четвёртое сообщение");
 await settle();
 if (count("четвёртое сообщение") !== 1) {

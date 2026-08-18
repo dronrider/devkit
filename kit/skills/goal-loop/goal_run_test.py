@@ -863,7 +863,7 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.assertFalse(os.path.isfile(self.devfile(root, self.MAIL)),
                          "ключ завёл отметку, никого не дождавшись")
 
-    def test_hold_is_read_by_the_postman_as_a_live_wait(self):
+    def test_hold_is_read_by_the_chat_hook_as_a_live_wait(self):
         # Признак ожидания читает подхват, и читает он его своим кодом: пока
         # срок не вышел, вход принадлежит ключу и доставлять он не должен
         # ничего. Формат тут сверяется литералами, а не на глаз.
@@ -882,7 +882,7 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.assertIsNone(chat_in.ask_until(proj, "DK-100"),
                           "снятый признак ожидания подхват всё ещё видит")
 
-    def test_eaten_line_is_marked_in_the_postman_format(self):
+    def test_eaten_line_is_marked_in_the_chat_hook_format(self):
         # Отметку съеденной строки ставит тот, кто отдал её витку, и формат у
         # неё общий с подхватом: две строки, «время сессия» и строка целиком.
         root = self.stand("done запись")

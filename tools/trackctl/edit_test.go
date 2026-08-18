@@ -309,12 +309,12 @@ func TestEditJiraStatusCarriesSectionFields(t *testing.T) {
 }
 
 // Отказ трекера доносится текстом трекера и работа останавливается: оси
-// после отказавшей не уезжают вовсе.
+// после отказавшей не уезжают, а уехавшие до неё видны в выводе команды.
 func TestEditJiraRefusalStops(t *testing.T) {
 	root, st := setupJiraCmdEnv(t, "")
-	st.on(http.MethodPut, "/rest/api/3/issue/ABC-12/assignee", jiraResp{code: http.StatusBadRequest, file: "error-required-field.json"})
+	st.on(http.MethodPut, "/rest/api/3/issue/ABC-12", jiraResp{code: http.StatusBadRequest, file: "error-required-field.json"})
 	ax := editAxes{assignee: "5b10ac8d82e05b22cc7d4ef5", estimate: "6h", title: "новый"}
-	_, err := cmdEdit(root, "ABC-12", ax)
+	msg, err := cmdEdit(root, "ABC-12", ax)
 	if err == nil {
 		t.Fatal("жду отказ трекера")
 	}
@@ -323,8 +323,16 @@ func TestEditJiraRefusalStops(t *testing.T) {
 			t.Fatalf("в отказе нет %q: %s", want, err)
 		}
 	}
-	if len(st.reqs) != 1 {
+	if len(st.reqs) != 2 {
 		t.Fatalf("после отказа работа не останавливается: %d запросов", len(st.reqs))
+	}
+	if !strings.Contains(msg, "исполнитель: 5b10ac8d82e05b22cc7d4ef5") {
+		t.Fatalf("уехавшая до отказа ось не видна в выводе:\n%s", msg)
+	}
+	for _, gone := range []string{"оценка:", "поля:"} {
+		if strings.Contains(msg, gone) {
+			t.Fatalf("ось после отказа отмечена сделанной:\n%s", msg)
+		}
 	}
 }
 

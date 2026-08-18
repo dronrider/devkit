@@ -75,19 +75,19 @@ func cmdEdit(root, arg string, ax editAxes) (string, error) {
 	var lines []string
 	if ax.assignee != "" {
 		if err := tr.adapter.assign(key, ax.assignee); err != nil {
-			return "", err
+			return partial(lines, err)
 		}
 		lines = append(lines, fmt.Sprintf("исполнитель: %s", ax.assignee))
 	}
 	if ax.estimate != "" {
 		if err := tr.adapter.estimate(key, ax.estimate); err != nil {
-			return "", err
+			return partial(lines, err)
 		}
 		lines = append(lines, fmt.Sprintf("оценка: %s", ax.estimate))
 	}
 	if len(updates) > 0 {
 		if err := upd.update(key, updates); err != nil {
-			return "", err
+			return partial(lines, err)
 		}
 		lines = append(lines, fmt.Sprintf("поля: %s", strings.Join(sortedPairs(updates), ", ")))
 	}
@@ -102,7 +102,7 @@ func cmdEdit(root, arg string, ax editAxes) (string, error) {
 			fields = tr.contour.fieldsFor(sect)
 		}
 		if err := tr.adapter.transition(key, ax.status, fields); err != nil {
-			return "", err
+			return partial(lines, err)
 		}
 		switch {
 		case known && sect == sectDone:
@@ -115,11 +115,17 @@ func cmdEdit(root, arg string, ax editAxes) (string, error) {
 	}
 	if ax.comment != "" {
 		if err := com.comment(key, ax.comment); err != nil {
-			return "", err
+			return partial(lines, err)
 		}
 		lines = append(lines, "комментарий: написан")
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// partial отдаёт накопленные строки вместе с отказом: что до отказа успело
+// уехать, видно по выводу команды, а не додумывается.
+func partial(lines []string, err error) (string, error) {
+	return strings.Join(lines, "\n"), err
 }
 
 func sortedPairs(m map[string]string) []string {

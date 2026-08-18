@@ -541,6 +541,10 @@ func TestSessionRepliesFieldByField(t *testing.T) {
 // больше неоткуда (DK-294).
 func TestSessionHeadNamesTask(t *testing.T) {
 	e := newTestEnv(t)
+	// Боковое дерево задачи на месте: без него шапка честно назвала бы разговор
+	// кончившимся, а тут проверяется именование задачи (мера кончившегося
+	// разговора стоит своими стендами в chat_test.go).
+	sideTree(t, e.proj, "xr-5")
 	writeSession(t, e.home, e.proj, "-xr-5", "aaa-1", transcriptFixture, time.Now())
 	writeSession(t, e.home, e.proj, "", "bbb-2",
 		sessionLine("почини роутер, доступы в local-docs", "main"), time.Now())
@@ -568,7 +572,7 @@ func TestSessionHeadNamesTask(t *testing.T) {
 	one := head("aaa-1")
 	want := sessionInfo{ID: "aaa-1", Mtime: one.Mtime, Branch: "main", Tree: "xr-5",
 		First: "возьми задачу XR-005 в работу", Task: "XR-5", TaskNote: "по дереву задачи",
-		Bound: boundLead}
+		Bound: boundLead, Reply: replyToSession}
 	if !reflect.DeepEqual(one, want) {
 		t.Errorf("шапка узнанной сессии:\n%+v\nожидал:\n%+v", one, want)
 	}

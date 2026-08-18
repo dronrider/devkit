@@ -91,6 +91,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /api/projects/{p}/tasks/{id}", s.auth(s.handleTaskPatch))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePost))
 	mux.HandleFunc("PUT /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePut))
+	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/message", s.auth(s.handleTaskMessagePost))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/deps", s.auth(s.handleTaskDepAdd))
 	mux.HandleFunc("DELETE /api/projects/{p}/tasks/{id}/deps/{dep}", s.auth(s.handleTaskDepRm))
 	mux.HandleFunc("POST /api/projects/{p}/runs", s.auth(s.handleRunStart))

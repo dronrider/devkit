@@ -878,6 +878,49 @@ func (s *smoke) stepMessage() (string, error) {
 	return fmt.Sprintf("строка «%s» ждёт витка, %s", v.Line, note), nil
 }
 
+// stepTaskMessage: ответ задаче ложится безадресной строкой во вход задачи
+// основного чекаута (LLD DK-430, решение 2). Шаг идёт до файла, а не до ответа
+// API: читают этот вход подхват и сторожок, и важно, что строка лежит там, где
+// они её ищут, и без адресата, иначе сторожок не счёл бы её ответом задаче.
+func (s *smoke) stepTaskMessage() (string, error) {
+	const said = "прогон smoke: отвечаю задаче с карточки"
+	var v struct {
+		Chat    string `json:"chat"`
+		Line    string `json:"line"`
+		Tree    string `json:"tree"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeTask+"/message",
+		fmt.Sprintf(`{"text": %q}`, said), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	src := filepath.Join(s.proj, ".devkit", "chat", "task-"+smokeTask+".in")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", fmt.Errorf("вход задачи не записался: %v", err)
+	}
+	if !strings.Contains(string(data), said) {
+		return "", fmt.Errorf("реплики нет во входе %s:\n%s", src, data)
+	}
+	if strings.Contains(string(data), ", сессии ") {
+		return "", fmt.Errorf("реплика задаче ушла с адресатом, и ответом задаче сторожок её не сочтёт:\n%s", data)
+	}
+	// Повтор с устаревшего экрана второй строки не заводит: сторожок разбудил
+	// бы строку дважды.
+	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeTask+"/message",
+		fmt.Sprintf(`{"text": %q}`, said), http.StatusOK, &v); err != nil {
+		return "", err
+	}
+	again, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	if n := strings.Count(string(again), said); n != 1 {
+		return "", fmt.Errorf("повтор завёл вторую строку: во входе %d реплик", n)
+	}
+	return fmt.Sprintf("строка «%s» лежит в разговоре %s чекаута без адресата", v.Line, v.Chat), nil
+}
+
 // stepJournal: журнал цели читается из раздела «Журнал» её файла. Шаг идёт до
 // запуска работы: пока цель не гонялась оболочкой, файла .devkit/goal-XR-100.log
 // у неё нет, и строки обязаны прийти из файла цели, найденного по живой ссылке
@@ -1536,6 +1579,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"работа видна живой", s.stepWorks},
 		{"вид деятельности в строке доски", s.stepStage},
 		{"сообщение цели", s.stepMessage},
+		{"ответ задаче безадресной строкой", s.stepTaskMessage},
 		{"доставка реплики витку", s.stepDelivered},
 		{"подхват сообщения витком", s.stepTurn},
 		{"живая лента открыта", s.stepFeedOpen},

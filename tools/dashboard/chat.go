@@ -35,6 +35,16 @@ func chatLine(at time.Time, sid, text string) string {
 	return at.Format("2006-01-02 15:04") + ", сессии " + sid + ", из дашборда: " + text
 }
 
+// taskChatLine это безадресная строка разговора задачи. Адрес у реплики это
+// адресат разговора, а не состояние собеседника (LLD DK-430, решение 2):
+// реплика сессии всегда идёт с адресатом, реплика задаче всегда без него, и
+// выбирает это ручка, а не догадка о живости. Безадресную строку берёт любая
+// сессия дерева, поэтому ответ припаркованной задаче достаётся той, что задачу
+// продолжит, а сторожок считает ответом только такую строку.
+func taskChatLine(at time.Time, text string) string {
+	return at.Format("2006-01-02 15:04") + ", из дашборда: " + text
+}
+
 // Каталог входов разговора и расширение файла (DK-440). Пишет дашборд только
 // новую пару, а прежнюю (.devkit/mail, <имя>.inbox) один выпуск дочитывает
 // подхват: строка, легшая до выката, доезжает его ходом, а не пропадает.
@@ -121,6 +131,40 @@ func (s *server) sessionChatName(projPath string, info sessionInfo, head session
 	return "task-" + task, note
 }
 
+// putChat кладёт готовую строку во вход разговора name дерева tree под тем же
+// замком, каким собирается подхват. Непустой возврат lying это лежащая копия
+// той же реплики: второй строки повтор не заводит, иначе сессия прочитала бы
+// сказанное дважды. Писатель тут один на обе ручки: правило адресности живёт в
+// строке, а не в записи файла, и разойтись двум записям нельзя.
+func putChat(tree, name, text, line string) (lying string, code int, err error) {
+	dir := filepath.Join(tree, ".devkit", chatDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", http.StatusBadGateway, fmt.Errorf("каталог разговоров не создался: %v", err)
+	}
+	lock, err := takeChatLock(filepath.Join(dir, name+".lock"))
+	if err != nil {
+		return "", http.StatusServiceUnavailable, errors.New(
+			"разговор держит соседний прогон: строки расходятся под замком, попробуйте ещё раз")
+	}
+	defer lock.Close()
+	src := filepath.Join(dir, name+chatSuffix)
+	for _, l := range readChatLines(src) {
+		if strings.HasSuffix(l, ": "+text) || l == text {
+			return l, 0, nil
+		}
+	}
+	f, err := os.OpenFile(src, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", http.StatusBadGateway, fmt.Errorf("вход разговора не записался: %v", err)
+	}
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		f.Close()
+		return "", http.StatusBadGateway, fmt.Errorf("вход разговора не записался: %v", err)
+	}
+	f.Close()
+	return "", 0, nil
+}
+
 // handleSessionMessagePost кладёт реплику человека во вход живой сессии.
 func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
@@ -174,40 +218,19 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	dir := filepath.Join(tree, ".devkit", chatDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("каталог разговоров не создался: %v", err)})
-		return
-	}
-	lock, err := takeChatLock(filepath.Join(dir, name+".lock"))
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "разговор держит соседний прогон: строки расходятся под замком, попробуйте ещё раз"})
-		return
-	}
-	defer lock.Close()
-	src := filepath.Join(dir, name+chatSuffix)
-	for _, lying := range readChatLines(src) {
-		if strings.HasSuffix(lying, ": "+text) || lying == text {
-			s.logf("повтор сообщения сессии %s в %s: строка уже лежит в разговоре %s", sid, found.Name, name)
-			writeJSON(w, http.StatusOK, map[string]any{
-				"session": sid, "chat": name, "line": lying,
-				"message": fmt.Sprintf("такая реплика уже лежит в разговоре %s: второй не завожу, сессия %s прочитает одну", name, sid)})
-			return
-		}
-	}
 	line := chatLine(s.now(), sid, text)
-	f, err := os.OpenFile(src, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	lying, code, err := putChat(tree, name, text, line)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("вход разговора не записался: %v", err)})
+		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("вход разговора не записался: %v", err)})
+	if lying != "" {
+		s.logf("повтор сообщения сессии %s в %s: строка уже лежит в разговоре %s", sid, found.Name, name)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"session": sid, "chat": name, "line": lying,
+			"message": fmt.Sprintf("такая реплика уже лежит в разговоре %s: второй не завожу, сессия %s прочитает одну", name, sid)})
 		return
 	}
-	f.Close()
 	resp := map[string]any{
 		"session": sid, "chat": name, "tree": tree, "line": line,
 		"message": fmt.Sprintf("реплика легла в разговор %s дерева сессии %s: подхват доставит её в идущий ход", name, sid),
@@ -222,5 +245,138 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 			name, sid, stale.Truncate(time.Minute))
 	}
 	s.logf("реплика для сессии %s в %s легла в разговор %s", sid, found.Name, name)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// parkedByAsk узнаёт строку, припаркованную вопросом: секция Blocked с машинным
+// разрядом причины «вопрос:». Тот же разбор ведёт сторожок, паркуя и будя
+// строку (parked_rows в tools/devkitctl/watch.py), и разряд тут читается
+// машинно, а не по словам причины.
+func parkedByAsk(row boardRow) bool {
+	return row.Sect == "blocked" && strings.HasPrefix(strings.TrimSpace(row.Block), askBlockWord)
+}
+
+// askBlockWord это машинный разряд причины блока у парковки вопросом.
+const askBlockWord = "вопрос:"
+
+// Куда класть реплику разговора: «session» это живой разговор и ручка сессии,
+// «task» это кончившийся разговор с живой задачей, и реплику берёт ручка
+// задачи, а пустое значение это кончившийся разговор без задачи, у которого
+// ввод гаснет (LLD DK-430, решения 2 и 6).
+const (
+	replyToSession = "session"
+	replyToTask    = "task"
+)
+
+// chatReply называет ручку для реплики и причину словами. Кончившийся разговор
+// мерится жёстко и машинно, порог живости транскрипта тут не работает вовсе:
+// под него попадает окно человека, отошедшего от стола, а ошибка стоит реплики,
+// ушедшей мимо адресата. Признаков три, и хватает любого: дерева сессии больше
+// нет, задача припаркована вопросом, сессия поднята дашбордом, а tmux-сессии с
+// её именем в списке уже нет. Не сошлось ничего, значит разговор живой, и
+// реплика идёт адресно, даже когда транскрипт молчит час.
+func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]boardRow) (reply, note string) {
+	rec := s.binds()[info.ID]
+	over := ""
+	switch {
+	case !treeAlive(projPath, info.suffix):
+		over = "дерева сессии больше нет"
+	case info.Task != "" && parkedByAsk(rows[info.Task]):
+		over = "задача " + info.Task + " припаркована вопросом"
+	case rec.Source == bindOrder && rec.Tmux != "" && tmuxMissingCheck() == "" && !tmuxAlive(rec.Tmux):
+		over = "сессию поднимал дашборд, а tmux-сессии " + rec.Tmux + " в списке уже нет"
+	}
+	if over == "" {
+		return replyToSession, ""
+	}
+	_, onBoard := rows[info.Task]
+	if info.Task == "" || info.Bound != boundLead || (rows != nil && !onBoard) {
+		return "", over + ": разговор кончился, и продолжить его некому"
+	}
+	return replyToTask, over + ": реплика уйдёт задаче " + info.Task + ", её возьмёт тот, кто её продолжит"
+}
+
+// treeAlive это первый признак кончившегося разговора: дерево, в котором шла
+// сессия, снесено слиянием задачи.
+func treeAlive(projPath, suffix string) bool {
+	_, ok := sessionTree(projPath, suffix)
+	return ok
+}
+
+// tmuxAlive ищет имя среди живых tmux-сессий машины.
+func tmuxAlive(name string) bool {
+	for _, t := range tmuxList() {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// handleTaskMessagePost кладёт реплику человека во вход задачи основного
+// чекаута безадресной строкой. Это ответ там, где живой сессии нет вовсе:
+// припаркованная вопросом строка ждёт ответа, сторожок будит её по лежащей
+// безадресной строке, а адресованную мёртвой сессии реплику не взял бы никто.
+// Дерево тут не выбирается: чекаут переживает дерево задачи, которое сносится
+// слиянием, и сторожок читает оба места (LLD DK-430, решение 2).
+func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, row, _, ok := s.taskRow(w, r)
+	if !ok {
+		return
+	}
+	if isGoalTitle(row.Title) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+			"%s это цель: переписка с целью идёт её ручкой, POST /api/projects/%s/goals/%s/message",
+			id, found.Name, id)})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во вход разговора кладётся короткая строка", msgBodyLimit/1024)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	text := strings.Join(strings.Fields(body.Text), " ")
+	if text == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	name := "task-" + id
+	line := taskChatLine(s.now(), text)
+	lying, code, err := putChat(found.Path, name, text, line)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	if lying != "" {
+		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в разговоре %s", id, found.Name, name)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"task": id, "chat": name, "line": lying,
+			"message": fmt.Sprintf("такая реплика уже лежит в разговоре %s: второй не завожу, задача прочитает одну", name)})
+		return
+	}
+	resp := map[string]any{
+		"task": id, "chat": name, "tree": found.Path, "line": line,
+		"message": fmt.Sprintf(
+			"реплика легла в разговор %s основного чекаута без адресата: её возьмёт первый же ход сессии задачи", name),
+	}
+	if parkedByAsk(row) {
+		resp["parked"] = true
+		resp["message"] = fmt.Sprintf(
+			"реплика легла в разговор %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
+			name, id)
+	}
+	s.logf("реплика задаче %s в %s легла в разговор %s", id, found.Name, name)
 	writeJSON(w, http.StatusOK, resp)
 }

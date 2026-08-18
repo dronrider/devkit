@@ -118,11 +118,19 @@ type sessionInfo struct {
 	// реестра, about значит «говорит о» по угадыванию. Пусто у сессии без
 	// задачи. Слова подписи для человека, разряд для кода: разбирать подпись
 	// на экране значило бы держать её словарь в двух местах.
-	Bound  string `json:"bound,omitempty"`
-	path   string
-	suffix string
-	stamp  string
-	mod    time.Time
+	Bound string `json:"bound,omitempty"`
+	// Reply называет ручку для реплики этого разговора, а ReplyNote причину
+	// словами: session это живой разговор, task это кончившийся разговор с
+	// живой задачей (реплику берёт ручка задачи), пусто это кончившийся
+	// разговор без задачи, у которого отвечать некому. Меру считает chatReply
+	// (LLD DK-430, решение 2), и выбирает ручку она, а не экран: ошибка в
+	// адресате стоит потерянной реплики.
+	Reply     string `json:"reply,omitempty"`
+	ReplyNote string `json:"replyNote,omitempty"`
+	path      string
+	suffix    string
+	stamp     string
+	mod       time.Time
 }
 
 // sessionFiles обходит каталоги транскриптов; сортировка свежие сверху, при
@@ -670,6 +678,16 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	info.Branch, info.First = head.Branch, head.First
 	info.Tree = info.suffix
 	info.Task, info.TaskNote, info.Bound = s.binds().task(info.ID, info.suffix, head)
+	// Ручка для реплики едет в шапке разговора: панель не считает её сама,
+	// иначе мера кончившегося разговора разошлась бы с той, по которой
+	// сторожок будит строку. Доска тут читается из памяти процесса, а не
+	// вызовом taskctl на каждый заход; не прочиталась, значит признака
+	// парковки нет, а два остальных работают.
+	var rows map[string]boardRow
+	if raw, err := s.projectBoard(found.Path); err == nil {
+		rows, _ = parseBoardRows(raw)
+	}
+	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows)
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote

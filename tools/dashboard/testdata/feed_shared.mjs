@@ -126,6 +126,12 @@ const shortTalk = [
 const shortSession = { id: "ccc-11112222", mtime: "2026-08-14T09:00:30+03:00", branch: "dk-371",
   task: "XR-100", taskNote: "по дереву задачи", first: "Короткий вопрос" };
 
+// Свой id для сценария памяти позиции: session к этому месту стенда уже
+// прошёл подгрузки в сценарии транскрипта и гонки запросов, и его feedPlace
+// не пустой, а сценарий позиции проверяет заход именно с чистой памяти.
+const deepSession = { id: "eee-99998888", mtime: "2026-08-14T10:00:00+03:00", branch: "dk-371",
+  task: "XR-100", taskNote: "по дереву задачи", first: "Глубокий разговор" };
+
 // Задержанный ответ сервера: пока id разговора лежит здесь, запрос его хвоста
 // висит без ответа, и стенд отвечает на него сам, явным вызовом. Такой случай
 // не берётся мгновенно разрешённым обещанием: щель между запросом хвоста и
@@ -137,6 +143,13 @@ let release = null;
 // и первым событием потока.
 const emptyNote = "в транскрипте пока нет реплик";
 let empty = false;
+
+// Рост коробки прокрутки от подгруженной страницы истории: настоящий браузер
+// пересчитывает scrollHeight сам, когда в дерево встают старые реплики, а
+// заглушка DOM этого не делает, и тест обязан подать рост явно, иначе высота
+// после досбора глубины (restorePlace в app.js) осталась бы той же, что и у
+// одного хвоста, и не поймала бы клампинг к нулю (замечание ревью DK-434).
+let growScroll = null;
 
 function reply(body) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
@@ -202,7 +215,10 @@ const sandbox = {
       if (sid === shortSession.id) {
         return reply({ session: sid, head: shortSession, total: shortTalk.length, items: shortTalk });
       }
-      if (path.includes("before=")) return reply({ session: sid, head, items: older });
+      if (path.includes("before=")) {
+        if (growScroll) growScroll();
+        return reply({ session: sid, head, items: older });
+      }
       return reply({ session: sid, head, total: talk.length + older.length, items: talk });
     }
     return reply({ sessions: [] });
@@ -429,9 +445,21 @@ release = null;
 // Позиция ленты держится при уходе с экрана и возврате, у каждого разговора
 // своя (DK-434). raceTp.body это та же коробка прокрутки, что и у соседней
 // вкладки, ровно как в настоящей панели: переключение меняет ленту внутри
-// неё, а не саму коробку.
-sandbox.openTranscript("demo", raceTp, session, raceBox);
+// неё, а не саму коробку. Разговор свой, deepSession: у session к этому месту
+// стенда уже накопилась память из сценария транскрипта и гонки запросов, и
+// для захода с чистой памятью нужен свежий id. Реалистичный случай сложнее
+// простого «запомнил scrollTop»: до ухода была подгрузка вверх, и высота
+// коробки на момент записи места (rest) больше, чем у одного свежего хвоста
+// после возврата.
+sandbox.openTranscript("demo", raceTp, deepSession, raceBox);
 await settle();
+// Подгрузка вверх до ухода: лента уже не хвост, а хвост плюс страница
+// истории, и firstSeq сдвинут с 5 на 3.
+scrollUp(raceTp.body, 1000);
+await settle();
+if (!asked.some((p) => p.includes("before=5&n=40"))) {
+  fail("перед уходом история не подгрузилась: " + JSON.stringify(asked));
+}
 raceTp.body.scrollHeight = 1000;
 raceTp.body.clientHeight = 300;
 raceTp.body.scrollTop = 200;
@@ -439,21 +467,35 @@ raceTp.body.handlers.scroll();
 
 // Уход с разговора: переключение на соседа снимает ленту и открывает ленту
 // neighbour, у которой памяти о месте ещё нет, и она встаёт вниз, как при
-// первом заходе.
+// первом заходе. Высота коробки сброшена к размеру одного хвоста: свежий
+// заход соседа его и приносит, старая большая высота ему не принадлежит.
+raceTp.body.scrollHeight = 150;
 sandbox.openTranscript("demo", raceTp, neighbour, raceBox);
 await settle();
 if (raceTp.body.scrollTop !== raceTp.body.scrollHeight) {
   fail("разговор без памяти о месте встал не вниз: " + raceTp.body.scrollTop);
 }
 
-// Возврат на прежний разговор: место читается из памяти вкладки, а не
-// сбрасывается вниз, хотя коробка прокрутки та же самая, что и у соседа.
-sandbox.openTranscript("demo", raceTp, session, raceBox);
+// Возврат на прежний разговор: свежий заход снова приносит только хвост (та
+// же высота одного хвоста, 150, а не хвоста с подгруженной историей), и
+// честное восстановление обязано сначала дособрать историю до прежней
+// глубины (firstSeq 5 -> 3, тот же запрос, что и до ухода) и только потом
+// встать на прежнее место, а не клампиться к нулю против чужой, куда меньшей
+// высоты (замечание ревью DK-434). growScroll подаёт рост коробки от
+// подгруженной страницы, который в настоящем браузере посчитал бы сам layout.
+raceTp.body.scrollHeight = 150;
+asked.length = 0;
+growScroll = () => { raceTp.body.scrollHeight = 1000; };
+sandbox.openTranscript("demo", raceTp, deepSession, raceBox);
 await settle();
+if (!asked.some((p) => p.includes("before=5&n=40"))) {
+  fail("возврат не дособрал историю до прежней глубины: " + JSON.stringify(asked));
+}
 if (raceTp.body.scrollTop !== 200) {
   fail("позиция разговора не вернулась на прежнее место: " + raceTp.body.scrollTop +
-    ", ожидал 200");
+    ", ожидал 200 (хвост короче прежней ленты, а восстановление не дособрало историю)");
 }
+growScroll = null;
 
 // Пустой разговор говорит словами на обоих экранах: молчащая коробка
 // неотличима от оборвавшегося потока.

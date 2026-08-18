@@ -1147,3 +1147,99 @@ func TestTranscriptRootsNoDoubles(t *testing.T) {
 		t.Fatalf("корни журналов %v, жду %v", got, want)
 	}
 }
+
+// Панель разговора замеряется настоящим движком (DK-435): ширина, которую ей
+// даёт хват, граница 1100 точек и узкий экран. Проверкой текста стилей такое не
+// берётся, поломка тут даёт сложение правил из разных мест файла с раскладкой
+// .screen: строки про ширину и медиазапросы стоят на месте, а панель при этом
+// либо режет доску пополам на ноутбуке, либо схлопывается в полосу на телефоне.
+// Ровно так это ловилось у экрана задачи (DK-284). Зажим ширины числом (320..640)
+// живёт в статике и меряется стендом node (chat_panel.mjs, там гоняется сама
+// chatWidth); браузер меряет то, что видно только браузеру, как переменная --cw
+// доезжает до раскладки. Браузер стенду называет DASHBOARD_CHROME, без него шаг
+// пропускается.
+func TestStaticChatPanelMeasured(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер панели разговора пропущен")
+	}
+	// Разметка стенда повторяет панель руками и разъехаться с рабочей может
+	// молча: замер на своей вёрстке зеленел бы и после того, как панель
+	// перестали собирать этими узлами.
+	page := readFile(t, filepath.Join("static", "index.html"))
+	for _, want := range []string{`<aside class="cpanel" id="cpanel" hidden`,
+		`id="cgrab"`, `id="cpin"`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("панели нет в разметке страницы (нет %q): замер говорил бы о своей вёрстке", want)
+		}
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`document.documentElement.style.setProperty("--cw"`,
+		`panel.hidden = false`} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("панель показывается и меряется не тем способом, что в замере (нет %q)", want)
+		}
+	}
+	dir, stand := chromeStand(t, "chat_panel_widths.js")
+
+	// Ноутбук: панель стоит колонкой экрана и сжимает доску рядом. Ширина
+	// приходит переменной, той же, какую двигает хват.
+	narrow := chromeMeasure(t, chrome, dir, stand, "1400,900", "w320")
+	wide := chromeMeasure(t, chrome, dir, stand, "1400,900", "w640")
+	if narrow["panel-w"] != 320 || wide["panel-w"] != 640 {
+		t.Fatalf("панель не берёт ширину переменной --cw: %d и %d при 320 и 640",
+			narrow["panel-w"], wide["panel-w"])
+	}
+	for _, vals := range []map[string]int{narrow, wide} {
+		if vals["board-cut"] != 1 || vals["fixed"] != 0 {
+			t.Errorf("на 1400 точках панель легла поверх доски вместо колонки экрана: %v", vals)
+		}
+	}
+	// Доска сжимается ровно на прибавку панели: иначе она уезжает под панель
+	// либо оставляет полосу пустоты.
+	if got := narrow["main-w"] - wide["main-w"]; got != 320 {
+		t.Errorf("доска сжалась на %d точек при прибавке панели в 320: %v / %v",
+			got, narrow, wide)
+	}
+	if def := chromeMeasure(t, chrome, dir, stand, "1400,900", "none"); def["panel-w"] != 420 {
+		t.Errorf("панель без запомненной ширины встала на %d точек, ожидал умолчание стилей 420",
+			def["panel-w"])
+	}
+
+	// Ниже 1100 точек места на две колонки нет: панель ложится поверх доски, а
+	// доска остаётся той же ширины, что и без панели.
+	bare := chromeMeasure(t, chrome, dir, stand, "1000,900", "hidden")
+	over := chromeMeasure(t, chrome, dir, stand, "1000,900", "w320")
+	if over["fixed"] != 1 || over["board-cut"] != 0 {
+		t.Errorf("на 1000 точках панель режет доску вместо того, чтобы лечь поверх: %v", over)
+	}
+	if over["main-w"] != bare["main-w"] {
+		t.Errorf("панель поверх доски всё равно сжала её: %d против %d без панели",
+			over["main-w"], bare["main-w"])
+	}
+	if over["panel-w"] != 320 {
+		t.Errorf("панель поверх доски потеряла запомненную ширину: %d", over["panel-w"])
+	}
+	// Рубеж проверяется с обеих сторон: на 1120 точках панель ещё колонка.
+	if edge := chromeMeasure(t, chrome, dir, stand, "1120,900", "w320"); edge["board-cut"] != 1 {
+		t.Errorf("на 1120 точках панель уже лежит поверх доски: рубеж 1100 съехал (%v)", edge)
+	}
+
+	// Узкий экран отдаёт панели весь экран тем же адресом, а хват там не нужен:
+	// тянуть панель на телефоне некуда.
+	phone := chromeMeasure(t, chrome, dir, stand, "390,844", "w320")
+	if phone["panel-w"] != phone["screen"] || phone["panel-left"] != 0 {
+		t.Errorf("на 390 точках панель не заняла экран целиком: %v", phone)
+	}
+	if phone["grab-w"] != 0 {
+		t.Errorf("на телефоне остался хват ширины шириной %d точек", phone["grab-w"])
+	}
+	// Панель на любой ширине остаётся пригодной для чтения и набора: поле ввода
+	// и лента занимают её, а не полосу в углу.
+	for name, vals := range map[string]map[string]int{"ноутбук": narrow, "поверх доски": over, "телефон": phone} {
+		if vals["input-w"] < 240 || vals["feed-w"] < 240 {
+			t.Errorf("на раскладке %q панель ужалась: поле ввода %d, лента %d",
+				name, vals["input-w"], vals["feed-w"])
+		}
+	}
+}

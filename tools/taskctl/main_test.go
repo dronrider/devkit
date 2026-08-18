@@ -192,3 +192,83 @@ func TestGlobalDirBeforeCommand(t *testing.T) {
 		t.Fatalf("неожиданный вывод: %s", out)
 	}
 }
+
+// TestUsageTextAcceptBarrier: регрессионный тест на то, что шапка содержит
+// флаги --accept и --barrier с перечислением ключей барьера.
+func TestUsageTextAcceptBarrier(t *testing.T) {
+	cases := []struct {
+		name     string
+		subcmd   string
+		contains []string
+	}{
+		{
+			name:   "add",
+			subcmd: "add",
+			contains: []string{
+				"--accept agent|mixed|user",
+				"--barrier глаза|доступ|необратимость|секрет|согласие|событие",
+			},
+		},
+		{
+			name:   "set",
+			subcmd: "set",
+			contains: []string{
+				"--accept agent|mixed|user",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, expected := range c.contains {
+				if !strings.Contains(usageText, expected) {
+					t.Errorf("%s: usageText не содержит %q", c.subcmd, expected)
+				}
+			}
+		})
+	}
+}
+
+// TestAddCommandFlags: проверяет, что все специфичные флаги подкоманды add
+// упомянуты в usageText.
+func TestAddCommandFlags(t *testing.T) {
+	// Флаги подкоманды add, специфичные для этой команды.
+	expectedFlags := []string{
+		"--title",
+		"--type",
+		"--rank",
+		"--cost",
+		"--link",
+		"--status",
+		"--id",
+		"--reason",
+		"--accept",
+		"--barrier",
+	}
+
+	for _, flag := range expectedFlags {
+		if !strings.Contains(usageText, flag) {
+			t.Errorf("add: флаг %s не упомянут в usageText", flag)
+		}
+	}
+}
+
+// TestSetCommandFlags: проверяет, что все специфичные флаги подкоманды set
+// упомянуты в usageText.
+func TestSetCommandFlags(t *testing.T) {
+	// Флаги подкоманды set, специфичные для этой команды.
+	expectedFlags := []string{
+		"--title",
+		"--type",
+		"--rank",
+		"--cost",
+		"--link",
+		"--accept",
+	}
+
+	for _, flag := range expectedFlags {
+		if !strings.Contains(usageText, flag) {
+			t.Errorf("set: флаг %s не упомянут в usageText", flag)
+		}
+	}
+}

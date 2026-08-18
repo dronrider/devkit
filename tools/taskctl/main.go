@@ -67,8 +67,9 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               задачи, черновик удаляется
   draft drop <ID> --reason "..."              удалить протухший черновик,
                                               причина уезжает в коммит
-  add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
+  add --title "..." --type bug|task|LLD --rank "а+б+в+г+д" --accept agent|mixed|user
       [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
+      [--barrier глаза|доступ|необратимость|секрет|согласие|событие]
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
@@ -78,7 +79,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
-                                              поправить ячейки строки
+           [--accept agent|mixed|user]           поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/,

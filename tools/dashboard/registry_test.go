@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Реестр чатов задачи (DK-431): строки ~/.devkit/sessions.log пишет
@@ -25,7 +27,7 @@ const bindFixture = "2026-08-18T12:03:11 сессия 0f2c-e91 задача DK-4
 // writeBinds кладёт реестр в дом стенда.
 func writeBinds(t *testing.T, home string, lines ...string) string {
 	t.Helper()
-	path := filepath.Join(home, ".devkit", sessionsRel)
+	path := sessions.Path(home)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +142,7 @@ func TestBindTaskRanks(t *testing.T) {
 		{"ничего", "нет", "", sessionHead{}, "", unknownTaskNote, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			task, note, bound := binds.task(tc.sid, tc.suffix, tc.head)
+			task, note, bound := bindTask(binds, tc.sid, tc.suffix, tc.head)
 			if task != tc.task || note != tc.note || bound != tc.bound {
 				t.Errorf("привязка: %q %q %q, ожидал %q %q %q", task, note, bound, tc.task, tc.note, tc.bound)
 			}
@@ -153,7 +155,7 @@ func TestBindTaskRanks(t *testing.T) {
 // бы у сессии в боковом дереве.
 func TestBindTaskRecordBeatsTheTree(t *testing.T) {
 	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "DK-2", bindHand)))
-	task, note, _ := binds.task("aaa-1", "dk-5", sessionHead{})
+	task, note, _ := bindTask(binds, "aaa-1", "dk-5", sessionHead{})
 	if task != "DK-2" || note != handNote {
 		t.Fatalf("рука не перебила дерево: %q %q", task, note)
 	}
@@ -163,7 +165,7 @@ func TestBindTaskRecordBeatsTheTree(t *testing.T) {
 // возвращать её первой репликой значило бы не слышать сказанного.
 func TestBindTaskUnbindStopsGuessing(t *testing.T) {
 	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", bindOff)))
-	task, note, bound := binds.task("aaa-1", "dk-5", sessionHead{Named: "DK-88", Branch: "dk-77"})
+	task, note, bound := bindTask(binds, "aaa-1", "dk-5", sessionHead{Named: "DK-88", Branch: "dk-77"})
 	if task != "" || bound != "" || note != offNote {
 		t.Fatalf("снятая привязка вернулась: %q %q %q", task, note, bound)
 	}
@@ -174,7 +176,7 @@ func TestBindTaskUnbindStopsGuessing(t *testing.T) {
 // обязан остаться в списке её чатов.
 func TestBindTaskEmptyRecordKeepsGuessing(t *testing.T) {
 	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", "-")))
-	task, note, bound := binds.task("aaa-1", "", sessionHead{Named: "DK-88"})
+	task, note, bound := bindTask(binds, "aaa-1", "", sessionHead{Named: "DK-88"})
 	if task != "DK-88" || note != replyNote || bound != boundAbout {
 		t.Fatalf("разговор доски потерял задачу: %q %q %q", task, note, bound)
 	}
@@ -265,7 +267,7 @@ func TestSessionTaskPostUnbinds(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "привязка сессии aaa-1 снята") {
 		t.Fatalf("отвязка: %d %s", resp.StatusCode, text)
 	}
-	lines := strings.Split(strings.TrimRight(readFile(t, filepath.Join(e.home, ".devkit", sessionsRel)), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(readFile(t, sessions.Path(e.home)), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("отвязка не легла строкой: %q", lines)
 	}
@@ -310,7 +312,7 @@ func TestSessionTaskPostRefusals(t *testing.T) {
 			if resp.StatusCode != tc.code || !strings.Contains(text, tc.want) {
 				t.Fatalf("отказ: %d %s", resp.StatusCode, text)
 			}
-			if _, err := os.Stat(filepath.Join(e.home, ".devkit", sessionsRel)); err == nil {
+			if _, err := os.Stat(sessions.Path(e.home)); err == nil {
 				t.Errorf("отказ всё равно написал строку в реестр")
 			}
 		})
@@ -330,7 +332,7 @@ func TestBindsWithoutTheLog(t *testing.T) {
 // python-писателя: два писателя с разными берегами оставили бы файл, растущий
 // до диска.
 func TestAppendBindCapsTheLog(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".devkit", sessionsRel)
+	path := sessions.Path(t.TempDir())
 	long := strings.Repeat(bindRecord("2026-08-18T12:00:00", "old", "DK-1", bindTree), 900)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

@@ -377,7 +377,7 @@ func draftAttachedTo(projectPath, id string) (task, rel string) {
 func (s *server) draftQuestion(projPath, id string) (text, sid string) {
 	binds := s.binds()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
-		task, _, _ := binds.task(f.ID, f.suffix, s.sessionHeadCached(f.path, f.stamp))
+		task, _, _ := bindTask(binds, f.ID, f.suffix, s.sessionHeadCached(f.path, f.stamp))
 		if task != id {
 			continue
 		}

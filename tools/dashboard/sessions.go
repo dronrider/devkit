@@ -354,7 +354,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if strings.HasPrefix(head.First, groomOrderPrefix) {
 			continue
 		}
-		task, note, bound := binds.task(f.ID, f.suffix, head)
+		task, note, bound := bindTask(binds, f.ID, f.suffix, head)
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
 		} else if bound == boundAbout {
@@ -567,7 +567,7 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		head := s.sessionHeadCached(f.path, f.stamp)
 		f.Branch, f.First = head.Branch, head.First
 		f.Tree = f.suffix
-		f.Task, f.TaskNote, f.Bound = binds.task(f.ID, f.suffix, head)
+		f.Task, f.TaskNote, f.Bound = bindTask(binds, f.ID, f.suffix, head)
 		if f.Task == "" {
 			unknown++
 		} else if want != "" && f.Task != want {
@@ -677,7 +677,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	head := s.sessionHeadCached(path, info.stamp)
 	info.Branch, info.First = head.Branch, head.First
 	info.Tree = info.suffix
-	info.Task, info.TaskNote, info.Bound = s.binds().task(info.ID, info.suffix, head)
+	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
 	// Ручка для реплики едет в шапке разговора: панель не считает её сама,
 	// иначе мера кончившегося разговора разошлась бы с той, по которой
 	// сторожок будит строку. Доска тут читается из памяти процесса, а не

@@ -8,8 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
 )
 
 // Разговор с любой живой сессией (DK-345, пункт 3 цели DK-397). Реплика с
@@ -27,31 +28,10 @@ import (
 // разговор сессии без задачи. Вход не коммитится: дерево работы локально, а
 // говорят тут с живой сессией, а не с доской.
 
-// chatLine это строка разговора: тот же формат, что у «Входящих» цели, с
-// адресатом перед подписью дашборда. Разбор адресата и подписи один у дашборда
-// и подхвата (addressee/said в hooks/chat-in.py), и менять его можно только
-// обеими сторонами разом.
-func chatLine(at time.Time, sid, text string) string {
-	return at.Format("2006-01-02 15:04") + ", сессии " + sid + ", из дашборда: " + text
-}
-
-// taskChatLine это безадресная строка разговора задачи. Адрес у реплики это
-// адресат разговора, а не состояние собеседника (LLD DK-430, решение 2):
-// реплика сессии всегда идёт с адресатом, реплика задаче всегда без него, и
-// выбирает это ручка, а не догадка о живости. Безадресную строку берёт любая
-// сессия дерева, поэтому ответ припаркованной задаче достаётся той, что задачу
-// продолжит, а сторожок считает ответом только такую строку.
-func taskChatLine(at time.Time, text string) string {
-	return at.Format("2006-01-02 15:04") + ", из дашборда: " + text
-}
-
-// Каталог входов разговора и расширение файла (DK-440). Пишет дашборд только
-// новую пару, а прежнюю (.devkit/mail, <имя>.inbox) один выпуск дочитывает
-// подхват: строка, легшая до выката, доезжает его ходом, а не пропадает.
-const (
-	chatDir    = "chat"
-	chatSuffix = ".in"
-)
+// Механика носителя живёт в общем пакете internal/chat: строка с адресатом и
+// без него, замок, вход и признак ожидания там одни на всех, потому что реплики
+// пишет дашборд, а ждёт их taskctl ask (LLD DK-430, решение 3). Тут остаётся
+// выбор ручки и ответ человеку словами.
 
 // sessionTree называет дерево, в котором работает сессия. Пустой хвост
 // каталога транскриптов это главное дерево проекта, непустой назвает боковое
@@ -68,48 +48,6 @@ func sessionTree(projPath, suffix string) (string, bool) {
 	return tree, true
 }
 
-// chatLockWait это срок ожидания замка разговора. Замок держит подхват или
-// соседняя отправка на секунды, и подождать их дешевле, чем отбить реплику.
-const chatLockWait = 2 * time.Second
-
-// takeChatLock берёт flock файла замка разговора, тот же замок, каким
-// собирается подхват (take_chat_lock в hooks/chat-in.py): без него отправка на
-// пустом месте и доставка, убирающая вход, теряли бы строки друг друга.
-func takeChatLock(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	deadline := time.Now().Add(chatLockWait)
-	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return f, nil
-		}
-		if time.Now().After(deadline) {
-			f.Close()
-			return nil, err
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// readChatLines читает лежащие реплики; пустой файл и отсутствие входа это
-// одно и то же «сказать нечего».
-func readChatLines(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			out = append(out, line)
-		}
-	}
-	return out
-}
-
 // sessionChatName называет разговор сессии. Задача берётся из реестра чатов
 // тем же порядком, что на экране сессий (sessionBinds.task), и разговор задачи
 // предпочитается личному: вопрос и ответ задачи живут в одном месте. Разговор о
@@ -117,7 +55,7 @@ func readChatLines(path string) []string {
 // вход чужой работы, и ей остаётся свой личный вход. Цель тоже не попадает: у
 // неё своя ручка и свой носитель, «Входящие» файла цели.
 func (s *server) sessionChatName(projPath string, info sessionInfo, head sessionHead) (string, string) {
-	task, note, bound := s.binds().task(info.ID, info.suffix, head)
+	task, note, bound := bindTask(s.binds(), info.ID, info.suffix, head)
 	if task == "" || bound != boundLead {
 		return "sess-" + info.ID, note
 	}
@@ -131,38 +69,18 @@ func (s *server) sessionChatName(projPath string, info sessionInfo, head session
 	return "task-" + task, note
 }
 
-// putChat кладёт готовую строку во вход разговора name дерева tree под тем же
-// замком, каким собирается подхват. Непустой возврат lying это лежащая копия
-// той же реплики: второй строки повтор не заводит, иначе сессия прочитала бы
-// сказанное дважды. Писатель тут один на обе ручки: правило адресности живёт в
-// строке, а не в записи файла, и разойтись двум записям нельзя.
+// putChat кладёт строку во вход разговора и переводит отказ носителя в код
+// ответа: занятый замок это «попробуйте ещё раз», остальное отказ носителя.
 func putChat(tree, name, text, line string) (lying string, code int, err error) {
-	dir := filepath.Join(tree, ".devkit", chatDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", http.StatusBadGateway, fmt.Errorf("каталог разговоров не создался: %v", err)
-	}
-	lock, err := takeChatLock(filepath.Join(dir, name+".lock"))
-	if err != nil {
+	lying, err = chat.Put(tree, name, text, line)
+	switch {
+	case errors.Is(err, chat.ErrLocked):
 		return "", http.StatusServiceUnavailable, errors.New(
 			"разговор держит соседний прогон: строки расходятся под замком, попробуйте ещё раз")
+	case err != nil:
+		return "", http.StatusBadGateway, err
 	}
-	defer lock.Close()
-	src := filepath.Join(dir, name+chatSuffix)
-	for _, l := range readChatLines(src) {
-		if strings.HasSuffix(l, ": "+text) || l == text {
-			return l, 0, nil
-		}
-	}
-	f, err := os.OpenFile(src, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return "", http.StatusBadGateway, fmt.Errorf("вход разговора не записался: %v", err)
-	}
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		f.Close()
-		return "", http.StatusBadGateway, fmt.Errorf("вход разговора не записался: %v", err)
-	}
-	f.Close()
-	return "", 0, nil
+	return lying, 0, nil
 }
 
 // handleSessionMessagePost кладёт реплику человека во вход живой сессии.
@@ -218,7 +136,7 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	line := chatLine(s.now(), sid, text)
+	line := chat.Line(s.now(), sid, text)
 	lying, code, err := putChat(tree, name, text, line)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -352,8 +270,8 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	name := "task-" + id
-	line := taskChatLine(s.now(), text)
+	name := chat.TaskName(id)
+	line := chat.TaskLine(s.now(), text)
 	lying, code, err := putChat(found.Path, name, text, line)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})

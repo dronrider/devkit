@@ -37,9 +37,13 @@ var notifyKeys = [...]string{1: "сессия", 3: "повод", 5: "урове�
 // и параметр ?kind=. Поводы хуков сессии (конец хода, запрос разрешения,
 // отработавший субагент) в три типа DoD не входят и остаются прочими.
 var notifyKinds = map[string]string{
-	"goal_stop":    "stop",
-	"run_stop":     "stop",
-	"wait_human":   "wait",
+	"goal_stop":  "stop",
+	"run_stop":   "stop",
+	"wait_human": "wait",
+	// task_ask шлёт инструмент ожидания taskctl ask: вопрос задан, и заход
+	// стоит с ним прямо сейчас. Тип тот же, что у стопа с вопросом, потому что
+	// ждут тут человека, а не машину.
+	"task_ask":     "wait",
 	"task_check":   "task",
 	"task_blocked": "task",
 	"task_fail":    "task",

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Реестр чатов задачи: машинный журнал ~/.devkit/sessions.log говорит, какую
@@ -17,10 +19,6 @@ import (
 // это обычные записи, а не правка файла (LLD DK-430, решение 1). Формат тот же,
 // что у журнала уведомителя: время, дальше именованные поля, и разбор держится
 // за ключевые слова, а не за одни позиции.
-
-// sessionsRel это путь реестра от дома. Журнал машинный, а не проектный: сессии
-// на машине общие, и доска у них не одна.
-const sessionsRel = "sessions.log"
 
 // Слова источника привязки в строке журнала. Первые два пишет хук старта,
 // вторые два ручка привязки: «снята» это отвязка, и задача у неё пустая.
@@ -64,91 +62,21 @@ var bindNotes = map[string]string{
 	bindHand:  handNote,
 }
 
-// sessionBind это свёрнутая запись реестра про одну сессию: чью задачу она
-// ведёт, чем привязана, где идёт и где лежит её транскрипт. Tmux это имя
-// tmux-сессии от того, кто её поднял: вывести chat-<ID>-<n> из записи нечем, а
-// живость этого имени и есть мера кончившегося разговора (развилка DK-431).
-type sessionBind struct {
-	Task       string
-	Source     string
-	Project    string
-	Tree       string
-	Transcript string
-	Tmux       string
-	Time       string
-}
+// Разбор реестра и его свёртка живут в общем пакете internal/sessions: читают
+// журнал трое (дашборд, taskctl ask и сторожок), и разошедшиеся копии формата
+// оставили бы каждого со своей половиной записей.
+type sessionBind = sessions.Bind
 
-// bindKeys это ключевые слова полей строки реестра в порядке записи
-// (hooks/session-task.py, record).
-var bindKeys = map[string]bool{
-	"сессия": true, "задача": true, "проект": true, "дерево": true,
-	"транскрипт": true, "источник": true, "повод": true, "tmux": true,
-}
+type sessionBinds = sessions.Binds
 
-// bindStamp это формат времени в строке реестра, тот же, что у уведомителя.
-const bindStamp = "2006-01-02T15:04:05"
+const bindStamp = sessions.Stamp
 
-// parseBindLine разбирает строку реестра. Непонятая строка пропускается без
-// обрушения разбора, как битая строка ленты уведомлений: журнал общий, и
-// чужая строка в нём дороже стоила бы, чем пустая привязка. Значение поля
-// собирается до следующего ключевого слова, поэтому пробел в пути дерева
-// строку не рассыпает.
-func parseBindLine(line string) (string, sessionBind, bool) {
-	var b sessionBind
-	f := strings.Fields(strings.TrimSpace(line))
-	if len(f) < 3 {
-		return "", b, false
-	}
-	if _, err := time.Parse(bindStamp, f[0]); err != nil {
-		return "", b, false
-	}
-	if f[1] != "сессия" {
-		return "", b, false
-	}
-	vals := map[string]string{}
-	key := ""
-	for _, tok := range f[1:] {
-		if bindKeys[tok] && vals[key] != "" {
-			key = tok
-			continue
-		}
-		if key == "" {
-			key = tok
-			continue
-		}
-		vals[key] = strings.TrimSpace(vals[key] + " " + tok)
-	}
-	sid := dashless(vals["сессия"])
-	if sid == "" {
-		return "", b, false
-	}
-	b = sessionBind{
-		Task:       strings.ToUpper(dashless(vals["задача"])),
-		Source:     dashless(vals["источник"]),
-		Project:    dashless(vals["проект"]),
-		Tree:       dashless(vals["дерево"]),
-		Transcript: dashless(vals["транскрипт"]),
-		Tmux:       dashless(vals["tmux"]),
-		Time:       f[0],
-	}
-	return sid, b, true
-}
+func parseBindLine(line string) (string, sessionBind, bool) { return sessions.ParseLine(line) }
 
-// sessionBinds это свёрнутый реестр: сессия и её последняя запись.
-type sessionBinds map[string]sessionBind
-
-func parseBinds(data []byte) sessionBinds {
-	binds := sessionBinds{}
-	for _, ln := range strings.Split(string(data), "\n") {
-		if sid, b, ok := parseBindLine(ln); ok {
-			binds[sid] = b
-		}
-	}
-	return binds
-}
+func parseBinds(data []byte) sessionBinds { return sessions.Parse(data) }
 
 func (s *server) bindsPath() string {
-	return filepath.Join(s.cfg.Home, ".devkit", sessionsRel)
+	return sessions.Path(s.cfg.Home)
 }
 
 // binds читает реестр целиком. Файл капается по длине самим писателем
@@ -156,11 +84,7 @@ func (s *server) bindsPath() string {
 // на каждом старте сессии, а устаревшая привязка врёт дороже, чем стоит чтение
 // сотни килобайт.
 func (s *server) binds() sessionBinds {
-	data, err := os.ReadFile(s.bindsPath())
-	if err != nil {
-		return sessionBinds{}
-	}
-	return parseBinds(data)
+	return sessions.Load(s.cfg.Home)
 }
 
 // task называет задачу сессии, подпись источника и разряд привязки. Запись
@@ -170,7 +94,7 @@ func (s *server) binds() sessionBinds {
 // разный: боковое дерево заводится ровно под одну задачу и врать не умеет, а
 // первая реплика и ветка называют задачу, о которой говорят, а не ту, которую
 // ведут.
-func (b sessionBinds) task(sid, dirSuffix string, head sessionHead) (task, note, bound string) {
+func bindTask(b sessionBinds, sid, dirSuffix string, head sessionHead) (task, note, bound string) {
 	if rec, ok := b[sid]; ok {
 		if rec.Task != "" {
 			note := bindNotes[rec.Source]

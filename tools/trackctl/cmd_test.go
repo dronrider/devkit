@@ -168,7 +168,7 @@ func TestStatusNamesMissingOptional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"corp", "fake", "ivanov", "ABC", "нет операции:\trank", "нет операции:\tcomment", "не гонялся ни разу", "токен:\tна месте"} {
+	for _, want := range []string{"corp", "fake", "ivanov", "ABC", "нет операции:\trank", "нет операции:\tcomment", "нет операции:\tupdate", "не гонялся ни разу", "токен:\tна месте"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("в выводе нет %q:\n%s", want, msg)
 		}
@@ -203,7 +203,7 @@ func TestCommandsDoNotTouchOptional(t *testing.T) {
 	if _, err := cmdIssue(root, "ABC-12"); err != nil {
 		t.Fatal(err)
 	}
-	for _, op := range []string{"rank", "comment", "estimate", "worklog"} {
+	for _, op := range []string{"rank", "comment", "update", "estimate", "worklog"} {
 		if hasCall(fakeState, op) {
 			t.Fatalf("команда сходила в %s: %v", op, fakeState.calls)
 		}

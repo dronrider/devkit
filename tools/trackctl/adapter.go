@@ -44,6 +44,13 @@ type commenter interface {
 	comment(key, text string) error
 }
 
+// updater это правка полей тикета: заголовок, тип и произвольные поля по
+// имени. Значения приезжают строками, а в объекты их сворачивает адаптер:
+// форма значения это знание трекера, а не команды.
+type updater interface {
+	update(key string, fields map[string]string) error
+}
+
 // optionalOps перечисляет необязательные операции контракта в порядке вывода.
 var optionalOps = []struct {
 	name string
@@ -52,6 +59,7 @@ var optionalOps = []struct {
 }{
 	{"rank", func(a adapter) bool { _, ok := a.(ranker); return ok }, "числовое поле приоритета не проставляется"},
 	{"comment", func(a adapter) bool { _, ok := a.(commenter); return ok }, "комментарии в тикет не пишутся"},
+	{"update", func(a adapter) bool { _, ok := a.(updater); return ok }, "поля тикета (заголовок, тип, произвольные) не правятся"},
 }
 
 // missingOptional отдаёт операции, которых у адаптера нет, каждую с тем, чего

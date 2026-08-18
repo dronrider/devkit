@@ -318,6 +318,20 @@ func (j *jiraAdapter) worklog(key, date, spent string) error {
 	return j.do(http.MethodPost, j.api+"/issue/"+key+"/worklog", body, nil)
 }
 
+// update правит поля тикета: заголовок, тип и произвольные поля команды
+// edit. Значения уезжают как есть с оговоркой jiraValue: валидный JSON
+// отправляется разобранным. issuetype исключение вдвойне: Jira ждёт объект
+// с именем типа, поэтому строка («Bug») сворачивается в {"name": "Bug"},
+// а явный JSON уезжает как записан.
+func (j *jiraAdapter) update(key string, fields map[string]string) error {
+	sent := jiraFields(fields)
+	if raw, ok := sent["issuetype"].(string); ok {
+		sent["issuetype"] = map[string]string{"name": raw}
+	}
+	body := map[string]any{"fields": sent}
+	return j.do(http.MethodPut, j.api+"/issue/"+key, body, nil)
+}
+
 // rank пишет числовое поле приоритета. Имя поля приезжает из контура и в коде
 // не прошито: у каждой компании свои customfield, и это чувствительное.
 func (j *jiraAdapter) rank(key, field string, value int) error {

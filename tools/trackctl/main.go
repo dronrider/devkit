@@ -21,11 +21,19 @@ const usageText = `trackctl: разговор с трекером задач к�
                                   пользователя контура и оценка из цены
                                   зеркальной строки доски
   submit <KEY> [--log-only]       сдать тикет: ворклоги по фактам работы и
-                                  переход в целевой статус секции Check;
-                                  --log-only пишет время и статус не трогает
+                                   переход в целевой статус секции Check;
+                                   --log-only пишет время и статус не трогает
+  edit <KEY> [ключи]              правка тикета по названным осям: оценка
+      --estimate V                (4h), исполнитель, статус, заголовок, тип,
+      --assignee U                произвольное поле (--field имя=значение,
+      --status S                  повторяем) и комментарий; без ключей тикет
+      --title T                   не трогается вовсе
+      --type T
+      --field имя=значение
+      --comment текст
   sync [--if-stale]               pull статусов: доска догоняет тикеты,
-                                  в трекер прогон не пишет; --if-stale
-                                  гоняет только по протухшей отметке
+                                   в трекер прогон не пишет; --if-stale
+                                   гоняет только по протухшей отметке
 
 Ключ пишется целиком (ABC-12) либо одним номером, префикс тогда берётся из
 привязки. Всё, что ходит в трекер, живёт здесь: taskctl остаётся чистой
@@ -151,6 +159,29 @@ func main() {
 		needArgs(pos, 1, 1, "submit <KEY> [--log-only]")
 		logStart = *dir
 		msg, err = cmdSubmit(root(*dir), pos[0], *logOnly)
+	case "edit":
+		fs := flag.NewFlagSet("edit", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		estimate := fs.String("estimate", "", "оценка трекера, например 4h")
+		assignee := fs.String("assignee", "", "исполнитель: accountId на v3, name на v2")
+		status := fs.String("status", "", "перевод в статус трекера одним шагом")
+		title := fs.String("title", "", "заголовок тикета")
+		kind := fs.String("type", "", "тип тикета")
+		var fields fieldList
+		fs.Var(&fields, "field", "произвольное поле имя=значение, повторяем")
+		comment := fs.String("comment", "", "комментарий в тикет")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "edit <KEY> [--estimate V] [--assignee U] [--status S] [--title T] [--type T] [--field имя=значение] [--comment текст]")
+		logStart = *dir
+		msg, err = cmdEdit(root(*dir), pos[0], editAxes{
+			estimate: *estimate,
+			assignee: *assignee,
+			status:   *status,
+			title:    *title,
+			kind:     *kind,
+			fields:   fields,
+			comment:  *comment,
+		})
 	case "sync":
 		fs := flag.NewFlagSet("sync", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

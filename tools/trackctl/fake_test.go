@@ -44,12 +44,7 @@ func (f *fake) fetch(key string) (ticket, error) {
 }
 
 func (f *fake) transition(key, status string, fields map[string]string) error {
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k+"="+fields[k])
-	}
-	sort.Strings(keys)
-	f.log("transition %s %s [%s]", key, status, strings.Join(keys, " "))
+	f.log("transition %s %s [%s]", key, status, strings.Join(fieldPairs(fields), " "))
 	if len(f.available) > 0 {
 		return &transitionRefused{Key: key, Target: status, Available: f.available}
 	}
@@ -77,6 +72,17 @@ func (f *fake) worklog(key, date, spent string) error {
 	return nil
 }
 
+// fieldPairs сворачивает поля в сортированный след «ключ=значение»: у
+// перехода так же, и след правки сравнивается со списком целиком.
+func fieldPairs(fields map[string]string) []string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k+"="+fields[k])
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // fakeFull это тот же адаптер, но с необязательными операциями: им проверяется
 // вторая половина оси, когда операция есть, а команда всё равно по ней не
 // ходит.
@@ -89,6 +95,11 @@ func (f fakeFull) rank(key, field string, value int) error {
 
 func (f fakeFull) comment(key, text string) error {
 	f.log("comment %s %s", key, text)
+	return nil
+}
+
+func (f fakeFull) update(key string, fields map[string]string) error {
+	f.log("update %s [%s]", key, strings.Join(fieldPairs(fields), " "))
 	return nil
 }
 

@@ -591,7 +591,7 @@ class TestLiveReply(SkillTree):
     headless-виток встаёт на запросе разрешения (LLD DK-136)."""
 
     LOOP = ("## Живая реплика\n\n"
-            "Лежащую во «Входящих» строку вносит витку в контекст почтальон hooks/inbox.py.\n"
+            "Лежащую во «Входящих» строку вносит витку в контекст подхват hooks/chat-in.py.\n"
             "Убирает её запись «Журнала», разрядов у реплики три:\n\n"
             "- ответ и поправка действуют сразу;\n"
             "- стоп действует на границе шага, маркером wait-human;\n"
@@ -617,12 +617,12 @@ class TestLiveReply(SkillTree):
         self.assertEqual(len(fails), 1)
         self.assertIn("нет раздела про живую реплику", fails[0])
 
-    def test_reply_without_postman(self):
+    def test_reply_without_the_chat_hook(self):
         self.write_loop(self.LOOP.replace(
-            "Лежащую во «Входящих» строку вносит витку в контекст почтальон hooks/inbox.py.",
+            "Лежащую во «Входящих» строку вносит витку в контекст подхват hooks/chat-in.py.",
             "Реплика лежит во «Входящих» до следующего витка."))
         fails = check_skills.check_live_reply(self.here)
-        self.assertTrue(any("вносит в контекст витка почтальон" in f for f in fails), fails)
+        self.assertTrue(any("вносит в контекст витка подхват" in f for f in fails), fails)
 
     def test_immediate_grade_lost(self):
         self.write_loop(self.LOOP.replace("действуют сразу", "виток разберёт по месту"))

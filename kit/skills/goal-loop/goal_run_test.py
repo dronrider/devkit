@@ -7,6 +7,7 @@
 директории теста: файлами репозитория они не становятся, как и любая другая
 фикстура, изображающая чужую программу.
 """
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -19,7 +20,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "goal-run.py")
 HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
 sys.path.insert(0, HOOKS)
-import inbox  # noqa: E402  ящик цели у ключа --ask общий с почтальоном
+# Носитель цели у ключа --ask общий с подхватом реплики, и форматы сверяются с
+# ним самим. Дефис в имени файла хука не годится для import, поэтому модуль
+# грузится по пути, как его грузит и сама оболочка.
+_spec = importlib.util.spec_from_file_location(
+    "devkit_chat_in", os.path.join(HOOKS, "chat-in.py"))
+chat_in = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(chat_in)
 
 GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
 
@@ -418,9 +425,9 @@ class GoalRunTests(Stand, unittest.TestCase):
         self.assertEqual(self.turns_done(root), 1, "цикл после брошенного замка не пошёл")
 
     def test_each_turn_is_raised_with_its_own_name_in_the_lock(self):
-        # Имя витка это третий шаг адреса почтальона: он сверяет session_id
+        # Имя витка это третий шаг адреса подхвата реплики: он сверяет session_id
         # события с файлом session в замке. Имя выдаётся на виток, а не на
-        # замок, иначе второй виток поднимался бы с занятым именем, а почта
+        # замок, иначе второй виток поднимался бы с занятым именем, а реплика
         # после первого витка молча не доезжала бы никуда.
         root = self.stand("continue запись", "done запись")
         p = self.goal_run(root, "DK-100", "--foreground")
@@ -760,9 +767,10 @@ class GoalAskTests(Stand, unittest.TestCase):
     читает «Входящие» файла цели, а отвечает за человека сам тест, дописывая
     строку в раздел.
 
-    Форматы ящика проверяются против почтальона, а не против самих себя: файл
-    отметок и признак ожидания читает hooks/inbox.py, и разъехавшийся формат
-    оборачивается тем, что ответ приезжает витку дважды или что почтальон
+    Форматы носителя проверяются против подхвата реплики, а не против самих
+    себя: файл отметок и признак ожидания читает hooks/chat-in.py, и
+    разъехавшийся формат оборачивается тем, что ответ приезжает витку дважды или
+    что подхват
     съедает ответ на прямой вопрос."""
 
     MAIL = "goal-DK-100.mail"
@@ -808,7 +816,7 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.fail("признак ожидания %s не лёг" % path)
 
     def marks(self, root):
-        return inbox.read_marks(self.devfile(root, self.MAIL))
+        return chat_in.read_marks(self.devfile(root, self.MAIL))
 
     def test_ask_waits_for_the_answer_and_prints_it(self):
         # Ответ приходит посреди ожидания, и ключ печатает строку витку целиком,
@@ -856,27 +864,27 @@ class GoalAskTests(Stand, unittest.TestCase):
                          "ключ завёл отметку, никого не дождавшись")
 
     def test_hold_is_read_by_the_postman_as_a_live_wait(self):
-        # Признак ожидания читает почтальон, и читает он его своим кодом: пока
-        # срок не вышел, ящик принадлежит ключу и доставлять он не должен
+        # Признак ожидания читает подхват, и читает он его своим кодом: пока
+        # срок не вышел, вход принадлежит ключу и доставлять он не должен
         # ничего. Формат тут сверяется литералами, а не на глаз.
         root = self.stand("done запись")
         proj = os.path.join(root, "proj")
-        p = self.ask_bg(root, "ящик занят вопросом", wait="20")
+        p = self.ask_bg(root, "вход занят вопросом", wait="20")
         path = self.wait_hold(root, p)
-        until = inbox.ask_until(proj, "DK-100")
-        self.assertIsNotNone(until, "почтальон не разобрал срок в признаке ожидания")
+        until = chat_in.ask_until(proj, "DK-100")
+        self.assertIsNotNone(until, "подхват не разобрал срок в признаке ожидания")
         self.assertGreater(until, time.time(), "срок в признаке ожидания уже прошёл")
         self.assertLessEqual(until, time.time() + 25, "срок в признаке ожидания взят с потолка")
         with open(path, encoding="utf-8") as f:
             self.assertRegex(f.read(), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\n$")
         self.answer(root, "2026-08-15 12:31, из дашборда: ответ")
         p.communicate(timeout=60)
-        self.assertIsNone(inbox.ask_until(proj, "DK-100"),
-                          "снятый признак ожидания почтальон всё ещё видит")
+        self.assertIsNone(chat_in.ask_until(proj, "DK-100"),
+                          "снятый признак ожидания подхват всё ещё видит")
 
     def test_eaten_line_is_marked_in_the_postman_format(self):
         # Отметку съеденной строки ставит тот, кто отдал её витку, и формат у
-        # неё общий с почтальоном: две строки, «время сессия» и строка целиком.
+        # неё общий с подхватом: две строки, «время сессия» и строка целиком.
         root = self.stand("done запись")
         line = "2026-08-15 12:32, из дашборда: сливай как есть"
         p = self.ask_bg(root, "сливать?")
@@ -889,7 +897,7 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.assertRegex(marks[0].stamp, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
         with open(self.devfile(root, self.MAIL), encoding="utf-8") as f:
             self.assertEqual(f.read(), "%s -\n%s\n" % (marks[0].stamp, line),
-                             "файл отметок разъехался с разбором почтальона")
+                             "файл отметок разъехался с разбором подхвата")
 
     def test_mark_names_the_turn_from_the_lock(self):
         # Имя витка ключ берёт из замка оболочки: под циклом отметка названа
@@ -911,12 +919,12 @@ class GoalAskTests(Stand, unittest.TestCase):
 
     def test_already_marked_line_is_not_taken_for_an_answer(self):
         # Лежащая строка с отметкой доставки это не ответ: её уже отдал витку
-        # почтальон, и вторым экземпляром она приезжать не должна.
+        # подхват, и вторым экземпляром она приезжать не должна.
         root = self.stand("done запись")
         line = "2026-08-15 11:00, из дашборда: реплика прошлого часа"
         self.answer(root, line)
-        inbox.write_marks(self.devfile(root, self.MAIL),
-                          [inbox.Mark("2026-08-15T11:00:05", "-", line)])
+        chat_in.write_marks(self.devfile(root, self.MAIL),
+                          [chat_in.Mark("2026-08-15T11:00:05", "-", line)])
         p = self.ask_bg(root, "ждём нового ответа", wait="1")
         out = p.communicate(timeout=60)[0]
         self.assertEqual(p.returncode, 0, out)
@@ -972,7 +980,7 @@ class SkillInboxTests(unittest.TestCase):
     сообщения человека в этот раздел и рассчитывает, что виток читает их на
     шаге состояния и убирает записью витка: уехавшая формулировка оборвала бы
     канал переписки молча, поэтому её держит тест. С DK-343 у строки есть и
-    вторая дорога, посреди витка от почтальона, и шаг состояния обязан на неё
+    вторая дорога, посреди витка от подхвата реплики, и шаг состояния обязан на неё
     показывать: правило реакции лежит своим разделом, а его слова держит
     check-skills.py."""
 
@@ -1011,7 +1019,7 @@ class SkillMarkerTests(unittest.TestCase):
     только поводы уровня цели, задачный повод паркует задачу и закрывается
     ответом continue. Формулировки держит тест по образцу SkillInboxTests:
     уехавшая строка вернула бы всегдашний стоп цикла молча, и человек, чей
-    ответ просто лежит в ящике припаркованной задачи, выглядел бы виноватым
+    ответ просто лежит в разговоре припаркованной задачи, выглядел бы виноватым
     в простое всего конвейера."""
 
     @classmethod

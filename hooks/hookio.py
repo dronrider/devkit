@@ -7,10 +7,12 @@
   hookio.write_event(protocol)     фрагменты записи: путь и записанные куски
   hookio.session_event(protocol)   событие сессии для уведомителя
   hookio.tool_event(protocol)      завершённый ход инструмента для подхвата реплики
+  hookio.start_event(protocol)     старт сессии для реестра чатов
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
   hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
+  hookio.tree_root(cwd)            дерево работы: ближайший предок с .git
 
 Имя протокола приходит аргументом `--hook <протокол>`; голый `--hook` это
 claude-code, иначе команды, прописанные в settings.json на машинах, сломались
@@ -38,6 +40,8 @@ SUBAGENT_DONE = "subagent-done"
 PROMPT_SUBMIT = "prompt-submit"
 # Ось завершённого хода инструмента, ею живёт доставка реплики в идущий виток.
 TOOL_DONE = "tool-done"
+# Ось рождения сессии, ею живёт реестр чатов задачи.
+SESSION_START = "session-start"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,6 +57,10 @@ Session = collections.namedtuple("Session", "kind reason session cwd transcript 
 # отличие от события сессии: уведомителю он нужен подписью в баннере, а
 # подхвату сверкой с именем витка, и половина UUID такой сверки не выдержит.
 Tool = collections.namedtuple("Tool", "session cwd tool agent")
+# Рождение сессии: ID целиком, дерево старта, транскрипт и повод старта
+# (startup, resume, clear, compact). ID тут тоже не режется: реестр чатов
+# сводит запись с файлом транскрипта, а тот назван полным ID.
+Start = collections.namedtuple("Start", "session cwd transcript source")
 
 
 class Unknown(Exception):
@@ -151,14 +159,27 @@ def claude_code_tool(event):
                 agent=event.get("agent_type"))
 
 
+def claude_code_start(event):
+    """Рождение сессии. None значит, что событие не про старт: хук реестра
+    стоит на своём событии, но чужой JSON до него всё равно доходит на стенде
+    и в ручной проверке."""
+    if text_of(event.get("hook_event_name")) != "SessionStart":
+        return None
+    return Start(session=text_of(event.get("session_id")),
+                 cwd=text_of(event.get("cwd")),
+                 transcript=text_of(event.get("transcript_path")),
+                 source=text_of(event.get("source")))
+
+
 # Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор
-# хода инструмента и два канала ответа. Новый инструмент добавляется строкой
-# сюда и директорией образцов.
-Protocol = collections.namedtuple("Protocol", "write session tool reply context")
+# хода инструмента, разбор старта сессии и два канала ответа. Новый инструмент
+# добавляется строкой сюда и директорией образцов.
+Protocol = collections.namedtuple("Protocol", "write session tool start reply context")
 
 PROTOCOLS = {
     "claude-code": Protocol(claude_code_write, claude_code_session,
-                            claude_code_tool, Reply(2), Context("PostToolUse")),
+                            claude_code_tool, claude_code_start,
+                            Reply(2), Context("PostToolUse")),
 }
 
 
@@ -211,6 +232,10 @@ def parse_tool(name, event):
     return entry(name).tool(event)
 
 
+def parse_start(name, event):
+    return entry(name).start(event)
+
+
 def write_event(name, stream=None):
     """Фрагменты записи из события на stdin. None значит смотреть нечего."""
     try:
@@ -223,6 +248,15 @@ def session_event(name, stream=None):
     """Событие сессии со stdin. None значит ось не наша (BadEvent зовущий ловит
     сам: уведомителю причина нужна для журнала)."""
     return parse_session(name, load(stream))
+
+
+def start_event(name, stream=None):
+    """Старт сессии со stdin. None значит, что событие не про старт: реестр на
+    таком входе молчит и уходит нулём."""
+    try:
+        return parse_start(name, load(stream))
+    except BadEvent:
+        return None
 
 
 def tool_event(name, stream=None):
@@ -249,6 +283,23 @@ def append_capped(path, line, limit=LOG_LIMIT, keep=LOG_KEEP):
             f.write(line)
     except OSError:
         pass
+
+
+def tree_root(cwd):
+    """Дерево работы: ближайший предок cwd с .git. У бокового дерева задачи это
+    файл со ссылкой на общий каталог, и граница git здесь не мелочь: по .devkit
+    сессия дерева задачи поднялась бы к основному чекауту и взяла чужой
+    разговор. None значит, что ход идёт вне git-дерева: разговоров таким
+    деревьям не заводят, и в реестре чатов у такой сессии пустое дерево."""
+    cur = (cwd or "").rstrip(os.sep)
+    while cur:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+    return None
 
 
 def harness_dir():

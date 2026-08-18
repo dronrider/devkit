@@ -355,21 +355,9 @@ def ask_until(root, goal):
     return ask_stamp(os.path.join(root, ".devkit", "goal-%s.ask" % goal))
 
 
-def tree_root(cwd):
-    """Дерево работы: ближайший предок cwd с .git. У бокового дерева задачи
-    это файл со ссылкой на общий каталог, и граница git здесь не мелочь: по
-    .devkit сессия дерева задачи поднялась бы к основному чекауту и взяла
-    чужой разговор. None значит, что ход идёт вне git-дерева, разговоров таким
-    деревьям не заводят."""
-    cur = (cwd or "").rstrip(os.sep)
-    while cur:
-        if os.path.exists(os.path.join(cur, ".git")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            return None
-        cur = parent
-    return None
+# Дерево работы ищет hookio: тем же предком с .git живёт реестр чатов, и две
+# копии этого поиска разошлись бы на первой же особенности бокового дерева.
+tree_root = hookio.tree_root
 
 
 def chat_names(root):

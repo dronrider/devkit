@@ -111,6 +111,18 @@ const older = [
 const session = { id: "abc-12345678", mtime: "2026-08-13T10:01:00+03:00", branch: "dk-371",
   task: "XR-100", taskNote: "по дереву задачи", first: "Выполни XR-100" };
 
+// Соседний разговор той же задачи: на него переключаются с переключателя, и на
+// нём же проверяется уход с ленты посреди запроса.
+const neighbour = { id: "def-87654321", mtime: "2026-08-12T09:01:00+03:00", branch: "dk-371",
+  task: "XR-100", taskNote: "по дереву задачи", first: "Верни XR-100 на доработку" };
+
+// Задержанный ответ сервера: пока id разговора лежит здесь, запрос его хвоста
+// висит без ответа, и стенд отвечает на него сам, явным вызовом. Такой случай
+// не берётся мгновенно разрешённым обещанием: щель между запросом хвоста и
+// подъёмом потока в нём просто не открывается.
+let heldSession = "";
+let release = null;
+
 // Пустой разговор: реплик нет вовсе, и сервер называет это словами и в ответе,
 // и первым событием потока.
 const emptyNote = "в транскрипте пока нет реплик";
@@ -166,11 +178,19 @@ const sandbox = {
   },
   fetch: (path) => {
     asked.push(path);
-    if (path.includes("/sessions?task=")) return reply({ sessions: [session] });
+    if (path.includes("/sessions?task=")) return reply({ sessions: [session, neighbour] });
     if (path.includes("/sessions/")) {
-      if (empty) return reply({ session: session.id, head: session, total: 0, items: [], note: emptyNote });
-      if (path.includes("before=")) return reply({ session: session.id, head: session, items: older });
-      return reply({ session: session.id, head: session, total: talk.length + older.length, items: talk });
+      const sid = path.slice(path.indexOf("/sessions/") + "/sessions/".length).split("?")[0];
+      const head = sid === neighbour.id ? neighbour : session;
+      if (heldSession && sid === heldSession) {
+        return new Promise((res) => {
+          release = () => res({ ok: true, status: 200,
+            json: () => Promise.resolve({ session: sid, head, total: talk.length, items: talk }) });
+        });
+      }
+      if (empty) return reply({ session: sid, head, total: 0, items: [], note: emptyNote });
+      if (path.includes("before=")) return reply({ session: sid, head, items: older });
+      return reply({ session: sid, head, total: talk.length + older.length, items: talk });
     }
     return reply({ sessions: [] });
   },
@@ -286,6 +306,53 @@ if (!dump(feed).includes(sandbox.localDay(older[0].time))) {
   fail("день истории не назван разделителем: " + dump(feed));
 }
 
+// Уход с ленты, пока висит ответ сервера. Поток поднимается после ответа, и
+// между запросом хвоста и подъёмом потока открыта щель: переключение на
+// соседний разговор в неё попадает. Запоздавший ответ не должен идти дальше,
+// иначе за спиной у открытой ленты поднимется второй поток и станет дописывать
+// реплики прежнего разговора в снятую с экрана коробку. До выноса ленты (DK-371)
+// не было щели вовсе: поток открывался тем же ходом, что и лента.
+asked.length = 0;
+streams.length = 0;
+const raceTp = { sub: makeNode("span"), body: makeNode("div") };
+const raceBox = makeNode("div");
+raceTp.body.append(raceBox);
+
+heldSession = session.id;
+sandbox.openTranscript("demo", raceTp, session, raceBox);
+await settle();
+if (streams.length !== 0) {
+  fail("поток поднят до ответа сервера: " + JSON.stringify(streams.map((s) => s.url)));
+}
+if (!release) fail("стенд не поймал запрос хвоста первого разговора");
+const releaseFirst = release;
+
+// Переключение на соседний разговор: прежняя лента снимается, её поток
+// закрывается, и открывается лента соседа.
+sandbox.openTranscript("demo", raceTp, neighbour, raceBox);
+await settle();
+if (streams.length !== 1 || !streams[0].url.includes(neighbour.id)) {
+  fail("после переключения открыт не разговор соседа: " +
+    JSON.stringify(streams.map((s) => s.url)));
+}
+
+// Запоздавший ответ первого разговора: поток по нему не поднимается, и лента
+// соседа остаётся на экране одна.
+releaseFirst();
+await settle();
+if (streams.length !== 1) {
+  fail("запоздавший ответ поднял второй поток: " + JSON.stringify(streams.map((s) => s.url)));
+}
+if (streams.some((s) => !s.closed && s.url.includes(session.id))) {
+  fail("после ухода с ленты остался живой поток прежнего разговора: " +
+    JSON.stringify(streams.filter((s) => !s.closed).map((s) => s.url)));
+}
+if (!dump(raceTp.sub).includes(neighbour.id.slice(0, 8))) {
+  fail("подпись ленты называет не открытый разговор: " + dump(raceTp.sub));
+}
+heldSession = "";
+release = null;
+
 // Пустой разговор говорит словами на обоих экранах: молчащая коробка
 // неотличима от оборвавшегося потока.
 empty = true;
@@ -306,4 +373,4 @@ if (!dump(quietBox).includes(emptyNote)) {
 
 console.log("общая лента: оба экрана открываются хвостом, повтор потока отсеивается," +
   " «раньше» тянет историю тем же адресом, отбор и разметка реплики приходят параметром," +
-  " пустота названа словами");
+  " уход с ленты посреди запроса потока не поднимает, пустота названа словами");

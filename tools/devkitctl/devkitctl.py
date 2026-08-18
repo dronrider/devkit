@@ -285,7 +285,8 @@ RUN_LOG = ".devkit/log"
 # .gitignore, а отсутствие доктор помечает находкой и чинит по --fix, как журнал
 # запусков. Путь path уходит в git check-ignore (для cmdout завершающий слэш
 # обязателен: без него при отсутствующем на диске каталоге git игнор не
-# подтверждает и выйдет ложная находка), comment встаёт в .gitignore строкой
+# подтверждает и выйдет ложная находка; путь с шаблоном проверяется как есть,
+# звёздочку git сверяет с самим паттерном), comment встаёт в .gitignore строкой
 # выше паттерна, а why поясняет находку. Список общий для
 # scaffold_machine_gitignore (new, corp) и check_machine_ignore (doctor), иначе
 # две копии разойдутся в первый же раз.
@@ -296,6 +297,9 @@ MACHINE_IGNORE_ENTRIES = (
     (".devkit/ship.lock",
      "# Замок конвейера shipctl, живёт только на машине.",
      "замок конвейера замусорит status"),
+    (".devkit/goal-*",
+     "# Рабочее состояние цикла цели: журнал витков, ящик почты и замки, живут только на машине.",
+     "журнал витков и ящик цели замусорят status"),
 )
 # Ключи болванки выката: имя, комментарий (со своим завершающим \n) и значение
 # для файла, заводимого с нуля. Один источник для DEPLOY_TEMPLATE (новый файл)
@@ -504,9 +508,10 @@ def scaffold_deploy(root):
 
 
 def scaffold_machine_gitignore(root):
-    # Машинные гитигнор-записи .devkit (cmdout/, ship.lock) раскладываются при
-    # любом подключении проекта, в том числе без доски: cmdout и shipctl работают
-    # и в проекте без доски, и doctor проверяет их в блоке in_git, а не доски.
+    # Машинные гитигнор-записи .devkit (cmdout/, ship.lock, goal-*)
+    # раскладываются при любом подключении проекта, в том числе без доски: cmdout
+    # и shipctl работают и в проекте без доски, а цель ведут не все, и doctor
+    # проверяет их в блоке in_git, а не доски.
     # Список MACHINE_IGNORE_ENTRIES общий с check_machine_ignore, иначе две
     # копии разойдутся в первый же раз.
     done = []
@@ -1687,7 +1692,7 @@ def corp_thin(clone, local, imports, fix):
 
 
 def check_machine_ignore(root, fix):
-    """Машинные записи .devkit в .gitignore (cmdout/, ship.lock).
+    """Машинные записи .devkit в .gitignore (cmdout/, ship.lock, goal-*).
 
     Список MACHINE_IGNORE_ENTRIES общий с scaffold_machine_gitignore:
     подключение нового проекта (new, corp) раскладывает записи тем же списком, а

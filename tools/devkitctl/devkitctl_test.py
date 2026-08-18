@@ -542,10 +542,11 @@ class DeployTest(SandboxCase):
         self.assertIn_("пустой test=", out, "после дописывания нет находки про пустой test=")
 
     def test_16_machine_ignore_paths(self):
-        # Машинные записи .devkit (cmdout/, ship.lock) раскладывает автоматика
-        # подключения (new), а отсутствие доктор помечает находкой и чинит по
-        # --fix, как журнал запусков (DK-278). Проверка идёт в блоке in_git, а не
-        # блока доски: cmdout и shipctl работают и в проекте без доски.
+        # Машинные записи .devkit (cmdout/, ship.lock, goal-*) раскладывает
+        # автоматика подключения (new), а отсутствие доктор помечает находкой и
+        # чинит по --fix, как журнал запусков (DK-278). Проверка идёт в блоке
+        # in_git, а не блока доски: cmdout и shipctl работают и в проекте без
+        # доски, а цель ведут не все проекты.
         proj = self.box.project("mproj")
         self.box.dkctl_run("new", "--prefix", "MP", "-C", str(proj), path=self.boardpath)
         # Каталога .devkit/cmdout на диске ещё нет: проверка через путь со слэшом
@@ -558,10 +559,18 @@ class DeployTest(SandboxCase):
                          "new не гитигнорнул .devkit/cmdout/")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
                          "new не гитигнорнул .devkit/ship.lock")
+        # Рабочее состояние цикла цели сверяется не только шаблоном, но и живым
+        # именем файла (DK-443): в статусе висели именно журнал витков, ящик
+        # почты и его замок, а шаблон без них подтвердил бы сам себя.
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/goal-*")[0], 0,
+                         "new не гитигнорнул .devkit/goal-*")
+        for name in ("goal-MP-001.log", "goal-MP-001.mail", "goal-MP-001.mail.lock"):
+            self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/" + name)[0], 0,
+                             "new не гитигнорнул .devkit/%s" % name)
         # Старый проект, подключённый до появления записей: стёрли их из .gitignore.
         gi = proj / ".gitignore"
         kept = [ln for ln in gi.read_text(encoding="utf-8").splitlines()
-                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock")]
+                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock", ".devkit/goal-*")]
         gi.write_text("\n".join(kept) + "\n", encoding="utf-8")
         rc, out = self.box.doctor(proj)
         self.assertEqual(rc, 1, "doctor не вернул 1 при отсутствующих машинных гитигнор-записях")
@@ -569,20 +578,28 @@ class DeployTest(SandboxCase):
                        "doctor не нашёл отсутствующий гитигнор cmdout")
         self.assertIn_(".devkit/ship.lock не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор ship.lock")
+        self.assertIn_(".devkit/goal-* не гитигнорнут", out,
+                       "doctor не нашёл отсутствующий гитигнор рабочего состояния цели")
         # doctor --fix дописывает обе записи со своим комментарием.
         _, out = self.box.doctor(proj, "--fix")
         self.assertIn_("починено: .gitignore: добавлен .devkit/cmdout/", out,
                        "doctor --fix не дописал cmdout")
         self.assertIn_("починено: .gitignore: добавлен .devkit/ship.lock", out,
                        "doctor --fix не дописал ship.lock")
+        self.assertIn_("починено: .gitignore: добавлен .devkit/goal-*", out,
+                       "doctor --fix не дописал рабочее состояние цели")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/cmdout/")[0], 0,
                          "после --fix cmdout не гитигнорнут")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
                          "после --fix ship.lock не гитигнорнут")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/goal-MP-001.log")[0], 0,
+                         "после --fix журнал витков цели не гитигнорнут")
         # Повторный доктор находок по машинным путям не даёт.
         _, out = self.box.doctor(proj)
         self.assertNotIn_(".devkit/cmdout/", out, "повторный doctor всё ещё видит cmdout")
         self.assertNotIn_(".devkit/ship.lock", out, "повторный doctor всё ещё видит ship.lock")
+        self.assertNotIn_(".devkit/goal-*", out,
+                          "повторный doctor всё ещё видит рабочее состояние цели")
 
 
 class MachineContourTest(SandboxCase):

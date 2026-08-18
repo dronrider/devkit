@@ -53,9 +53,18 @@ class ChatStand:
         with open(os.path.join(self.chat, name + self.SUFFIX), "w", encoding="utf-8") as f:
             f.write("".join(line + "\n" for line in lines))
 
-    def hold(self, name, until):
+    def hold(self, name, until, session="", task=""):
+        """Признак ожидания: срок первой строкой, ниже ждущая сессия и задача.
+        Так его пишет инструмент ожидания taskctl ask (internal/chat), а
+        однострочный признак цели остаётся законным."""
+        body = [until]
+        if session:
+            body.append("сессия " + session)
+        if task:
+            body.append("задача " + task)
+            body.append('{"questions": [{"text": "поле или чип"}]}')
         with open(os.path.join(self.chat, name + ".ask"), "w", encoding="utf-8") as f:
-            f.write(until + "\n")
+            f.write("\n".join(body) + "\n")
 
     def read(self, name):
         try:
@@ -183,6 +192,35 @@ class ChatDeliveryTest(ChatCase):
         self.silent(s.run())
         self.assertIn("разговор держит вопрос", s.journal())
         self.assertIn("ответ пришёл", s.read("task-DK-1"))
+
+    def test_ask_flag_holds_only_what_the_waiter_takes(self):
+        # Живой признак запирает не весь вход: реплика чужой сессии доезжает
+        # ходом как обычно, а безадресную и адресованную ждущему забирает сам
+        # ждущий (LLD DK-430, решение 2). Два живых чата по одной задаче лежат
+        # в одном входе и не глушат друг друга.
+        s = self.stand()
+        s.said("task-DK-1",
+               "2026-08-17 12:00, из дашборда: ответ задаче",
+               "2026-08-17 12:01, сессии %s, из дашборда: это ждущему" % OTHER,
+               "2026-08-17 12:02, сессии %s, из дашборда: это окну человека" % SID)
+        s.hold("task-DK-1", stamp(300), session=OTHER, task="DK-1")
+        text = self.added(s.run())
+        self.assertIn("это окну человека", text)
+        self.assertNotIn("ответ задаче", text)
+        self.assertNotIn("это ждущему", text)
+        left = s.read("task-DK-1")
+        self.assertIn("ответ задаче", left)
+        self.assertIn("это ждущему", left)
+        self.assertIn("частичный отказ", s.journal())
+
+    def test_ask_flag_of_the_same_session_holds_its_lines(self):
+        # Ждущий и ход это одна внешняя сессия: у субагента своего ID нет.
+        # Реплику, которую заберёт ожидание, подхват не крадёт себе.
+        s = self.stand()
+        s.said("task-DK-1", "2026-08-17 12:00, сессии %s, из дашборда: ответ ждущему" % SID)
+        s.hold("task-DK-1", stamp(300), session=SID, task="DK-1")
+        self.silent(s.run())
+        self.assertIn("ответ ждущему", s.read("task-DK-1"))
 
     def test_stale_ask_does_not_hold(self):
         s = self.stand()

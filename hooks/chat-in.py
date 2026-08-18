@@ -69,6 +69,7 @@ flock соседнего файла .devkit/goal-<ID>.mail.lock: не взявш
 """
 import collections
 import fcntl
+import json
 import os
 import subprocess
 import sys
@@ -94,6 +95,10 @@ FROM_DASHBOARD = ", из дашборда: "
 # дефисов, поэтому граница читается по первой запятой после адресата.
 TO_SESSION = ", сессии "
 # Каталог разговоров любой сессии в дереве работы: .devkit/chat/<имя>.in.
+# Поля признака ожидания ниже срока: кто ждёт и по какой задаче. Пишет их
+# инструмент ожидания taskctl ask (internal/chat), читают подхват и сторожок.
+ASK_SESSION = "сессия "
+ASK_TASK = "задача "
 CHAT_DIR = "chat"
 CHAT_SUFFIX = ".in"
 # Прежние имена того же носителя (DK-440). Каталог читается наравне с новым один
@@ -348,6 +353,41 @@ def ask_stamp(path):
         return None
 
 
+def ask_fields(path):
+    """Признак ожидания разбором: срок, ждущая сессия, задача и пачка вопросов
+    JSON. Первой строкой в файле стоит срок, поэтому однострочный признак цели
+    читается тем же разбором, а поля ниже приезжают от инструмента ожидания
+    (internal/chat, LLD DK-430, решение 2). Возврат словарём: читателей у
+    признака трое, и каждому нужны свои поля."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().split("\n")
+    except OSError:
+        return None
+    until = stamp_at(lines[0] if lines else "")
+    if until is None:
+        return None
+    out = {"until": until, "session": "", "task": "", "questions": []}
+    body = []
+    for ln in lines[1:]:
+        ln = ln.strip()
+        if ln.startswith(ASK_SESSION):
+            out["session"] = ln[len(ASK_SESSION):].strip()
+        elif ln.startswith(ASK_TASK):
+            out["task"] = ln[len(ASK_TASK):].strip()
+        elif ln:
+            body.append(ln)
+    if body:
+        try:
+            pack = json.loads("\n".join(body))
+        except ValueError:
+            pack = {}
+        if isinstance(pack, dict):
+            out["questions"] = [q.get("text", "") for q in pack.get("questions", [])
+                                if isinstance(q, dict)]
+    return out
+
+
 def ask_until(root, goal):
     """Срок признака ожидания .devkit/goal-<ID>.ask. Пока он не вышел, вход
     читает ключ --ask оболочки: виток задал человеку прямой вопрос и ждёт
@@ -411,11 +451,16 @@ def serve_chat(d, name, suffix, turn, now):
     отметок ему не нужна. Отметкой служит отсутствие строки, и любые читатели,
     подхват и будущий инструмент ожидания, расходят реплики одним замком."""
     src = os.path.join(d, name + suffix)
-    until = ask_stamp(os.path.join(d, name + ".ask"))
-    if until is not None and until > now:
-        log(turn.session, name, "отказ: разговор держит вопрос до %s, ждёт инструмент ожидания"
-            % time.strftime(STAMP, time.localtime(until)))
-        return None
+    # Живой признак ожидания запирает не весь вход, а только те строки, которые
+    # заберёт ждущий: безадресные и адресованные ему самому (LLD DK-430,
+    # решение 2). Реплики другим сессиям идут как обычно, и два живых чата по
+    # одной задаче лежат в одном входе, не глуша друг друга.
+    ask = ask_fields(os.path.join(d, name + ".ask"))
+    waiting = None
+    if ask is not None and ask["until"] > now:
+        waiting = ask["session"]
+        log(turn.session, name, "частичный отказ: разговор держит вопрос до %s, ждёт инструмент ожидания"
+            % time.strftime(STAMP, time.localtime(ask["until"])))
     fd = take_chat_lock(os.path.join(d, name + ".lock"))
     if fd is None:
         return None
@@ -426,6 +471,8 @@ def serve_chat(d, name, suffix, turn, now):
         except OSError:
             return None
         taken = [l for l in lines if for_me(l, turn.session)]
+        if waiting is not None:
+            taken = [l for l in taken if addressee(l) and addressee(l) != waiting]
         if not taken:
             if tracing() and lines:
                 other = next((addressee(l) for l in lines if addressee(l)), "-")

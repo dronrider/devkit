@@ -259,3 +259,15 @@ func TestAppendToSectionKeepsTail(t *testing.T) {
 		t.Fatalf("строка ушла из раздела:\n%s", got)
 	}
 }
+
+// TestAppendToSectionGoesByForm: раздела «Выкат» нет, и он встаёт по форме
+// TASKFORM.md перед «Проверкой», а не в хвост файла. Файл, где «Проверка»
+// написана до слияния, иначе получал переставленный раздел и находку lint.
+func TestAppendToSectionGoesByForm(t *testing.T) {
+	doc := "# XR-001: задача\n\n## Сценарий проверки\n\n1. шаг\n\n## Проверка\n\nвывод прогона\n"
+	got := appendToSection(doc, "- 2026-08-02 слито: 2222222")
+	want := "# XR-001: задача\n\n## Сценарий проверки\n\n1. шаг\n\n## Выкат\n\n- 2026-08-02 слито: 2222222\n\n## Проверка\n\nвывод прогона\n"
+	if got != want {
+		t.Fatalf("«Выкат» не по форме:\n%s", got)
+	}
+}

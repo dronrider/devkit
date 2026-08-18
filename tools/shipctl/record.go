@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Раздел «Выкат» в файле задачи держит коммиты, которые shipctl слил под этим
@@ -15,7 +17,7 @@ import (
 // разом из очереди, из состава поезда и из отката. Пропадала молча: пустой
 // ответ там неотличим от честного «кода нет». Запись эту связь фиксирует,
 // поиск по subject остаётся для задач, слитых до неё или руками мимо shipctl.
-const mergedSection = "## Выкат"
+const mergedSection = taskform.Merged
 
 func taskFilePath(root, id string) string {
 	return filepath.Join(root, "docs", "tasks", id+".md")
@@ -160,36 +162,12 @@ func recordMerge(root, id string, shas []string) (string, error) {
 }
 
 // appendToSection дописывает строку в конец раздела «Выкат», заводя сам
-// раздел, если его нет. Круг доработки после возврата из Check это второе
-// слияние той же задачи, и его коммиты встают следующей строкой, а не
-// затирают прежние.
+// раздел, если его нет: место ему выбирает форма TASKFORM.md, а не хвост
+// файла, иначе «Выкат» вставал бы после «Проверки», написанной до слияния.
+// Круг доработки после возврата из Check это второе слияние той же задачи, и
+// его коммиты встают следующей строкой, а не затирают прежние.
 func appendToSection(doc, line string) string {
-	lines := strings.Split(strings.TrimRight(doc, "\n"), "\n")
-	mask, _ := fenceMask(lines)
-	start := -1
-	for i, ln := range lines {
-		if !mask[i] && strings.HasPrefix(ln, mergedSection) {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return strings.Join(lines, "\n") + "\n\n" + mergedSection + "\n\n" + line + "\n"
-	}
-	end := len(lines)
-	for i := start + 1; i < len(lines); i++ {
-		if !mask[i] && strings.HasPrefix(lines[i], "## ") {
-			end = i
-			break
-		}
-	}
-	for end > start+1 && strings.TrimSpace(lines[end-1]) == "" {
-		end--
-	}
-	out := append([]string{}, lines[:end]...)
-	out = append(out, line)
-	out = append(out, lines[end:]...)
-	return strings.Join(out, "\n") + "\n"
+	return taskform.InsertIntoSection(doc, mergedSection, line)
 }
 
 // SmokeParams это параметры отметки прогона smoke.

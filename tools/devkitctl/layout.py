@@ -16,8 +16,8 @@ import re
 import subprocess
 from pathlib import Path
 
-# Белый список верхнего уровня, четырнадцать записей: пять каталогов раскладки,
-# два служебных, пять корневых файлов по имени, шаблон правил и .gitignore. Тот
+# Белый список верхнего уровня, шестнадцать записей: пять каталогов раскладки,
+# два служебных, семь корневых файлов по имени, шаблон правил и .gitignore. Тот
 # же состав стоит в разделе «Раскладка» README.md, и сверяет их сторож
 # (readme_gaps ниже): разъехавшиеся списки это правило, которого нет ни в тексте,
 # ни в проверке. Пятый каталог раскладки, internal/, завёл DK-237: это общий
@@ -25,7 +25,7 @@ from pathlib import Path
 TOP_LEVEL = ("tools", "kit", "hooks", "docs", "internal",
              ".github", ".devkit",
              "README.md", "CONNECT.md", "AGENTS.md", "CLAUDE.md", "RANKING.md",
-             "ACCEPTANCE.md", "RULES*.md", ".gitignore")
+             "ACCEPTANCE.md", "TASKFORM.md", "RULES*.md", ".gitignore")
 # Места, где sh допустим сверх оболочки скилла: обёртка хука, съёмщик остатка
 # квоты и одноразовый сценарий проверки задачи.
 SH_PLACES = ("hooks/", "kit/harness/snap/", "docs/tasks/")

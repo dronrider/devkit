@@ -194,6 +194,17 @@ func TestGlobalDirBeforeCommand(t *testing.T) {
 	}
 }
 
+// TestUsageTextDraftForm: шапка draft называет порог первой строки и страницу
+// формы. Порог виден пользователю только оттуда и из отказа команды, а
+// молчаливая подсказка снова разводит черновики простынями.
+func TestUsageTextDraftForm(t *testing.T) {
+	for _, want := range []string{"72 символа", formDoc} {
+		if !strings.Contains(usageText, want) {
+			t.Errorf("в шапке draft нет %q", want)
+		}
+	}
+}
+
 // TestUsageTextAcceptBarrier: регрессионный тест на то, что шапка содержит
 // флаги --accept и --barrier с перечислением ключей барьера.
 func TestUsageTextAcceptBarrier(t *testing.T) {

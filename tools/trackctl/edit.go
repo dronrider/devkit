@@ -55,6 +55,18 @@ func cmdEdit(root, arg string, ax editAxes) (string, error) {
 		if !ok || name == "" {
 			return "", fmt.Errorf("--field %q: жду имя=значение, значение может быть пустым, имя нет", raw)
 		}
+		// Коллизия это потерянная ось: --field summary затёр бы --title, а
+		// повтор --field молча выбрал бы последнее значение. Отказ до
+		// первого запроса честнее, чем тихо сделать не то, что назвали.
+		if name == "summary" && ax.title != "" {
+			return "", fmt.Errorf("ось \"summary\" названа дважды: --title и --field summary; оставьте одну")
+		}
+		if name == "issuetype" && ax.kind != "" {
+			return "", fmt.Errorf("ось \"issuetype\" названа дважды: --type и --field issuetype; оставьте одну")
+		}
+		if _, seen := updates[name]; seen {
+			return "", fmt.Errorf("--field %q назван дважды; оставьте одно значение", name)
+		}
 		updates[name] = value
 	}
 	if ax.estimate == "" && ax.assignee == "" && ax.status == "" && ax.comment == "" && len(updates) == 0 {

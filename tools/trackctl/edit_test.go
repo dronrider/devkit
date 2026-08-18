@@ -181,6 +181,27 @@ func TestEditFieldParsing(t *testing.T) {
 	}
 }
 
+// Коллизия осей отказывает до первого запроса: --field summary затирал бы
+// --title, --field issuetype тип, повтор --field молча выбирал бы последнее.
+func TestEditFieldCollisionRefused(t *testing.T) {
+	for name, ax := range map[string]editAxes{
+		"заголовок дважды": {title: "т", fields: fieldList{"summary=иначе"}},
+		"тип дважды":       {kind: "Bug", fields: fieldList{"issuetype=Task"}},
+		"поле дважды":      {fields: fieldList{"labels=a", "labels=b"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := setupEnv(t, contourFullFile, bindingFile)
+			_, err := cmdEdit(root, "ABC-12", ax)
+			if err == nil || !strings.Contains(err.Error(), "дважды") {
+				t.Fatalf("жду отказ коллизии, имею %v", err)
+			}
+			if len(fakeState.calls) != 0 {
+				t.Fatalf("коллизия обязана прийти до первого вызова: %v", fakeState.calls)
+			}
+		})
+	}
+}
+
 // setupJiraCmdEnv поднимает стенд jira и раскладывает на нём окружение
 // команды: контур в файле, привязка, таблица статусов и поле секции check.
 func setupJiraCmdEnv(t *testing.T, api string) (string, *jiraStub) {

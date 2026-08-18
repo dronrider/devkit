@@ -280,9 +280,12 @@ func askPark(main string, p AskParams, d askDeps, qs []chat.Question, out []stri
 	}
 	msg, err := d.Park(p.ID, "вопрос: "+askReason(text))
 	if err != nil {
-		// Парковка отбита (потолок висящих вопросов, чужой статус строки):
-		// молчать про это нельзя, но и ронять заход нечем, вопрос уже задан.
-		out = append(out, fmt.Sprintf("%s: %s, а припарковать не вышло: %v", p.ID, why, err))
+		// Парковка ответила отказом: потолок висящих вопросов, чужой статус
+		// строки, неуехавшая в origin доска. Ронять заход нечем, вопрос уже
+		// задан, но и молчать нельзя: где именно встала парковка, видно по
+		// самой строке, и агент смотрит её сам.
+		out = append(out, fmt.Sprintf("%s: %s, парковка ответила отказом: %v", p.ID, why, err))
+		out = append(out, fmt.Sprintf("строку проверить самому: taskctl show %s", p.ID))
 		return strings.Join(out, "\n"), nil
 	}
 	out = append(out, strings.TrimSpace(msg))

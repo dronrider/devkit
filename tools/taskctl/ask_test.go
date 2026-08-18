@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,6 +270,24 @@ func TestAskDraftLeavesTheQuestionFile(t *testing.T) {
 	}
 	if !strings.Contains(out, "файлом исхода") {
 		t.Fatalf("агенту не сказали, где остался вопрос:\n%s", out)
+	}
+}
+
+// Парковка ответила отказом (потолок висящих вопросов, неуехавшая доска):
+// заход от этого не падает, вопрос уже задан, но отказ назван, и агента
+// отправляют смотреть строку.
+func TestAskSurvivesTheRefusedParking(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	st.deps.Park = func(id, reason string) (string, error) {
+		return "", errors.New("вопросов висит 2 из 2")
+	}
+	out, err := st.run(root, AskParams{ID: "XR-005", Question: "как быть", Wait: 0})
+	if err != nil {
+		t.Fatalf("отказ парковки уронил заход: %v", err)
+	}
+	if !strings.Contains(out, "вопросов висит 2 из 2") || !strings.Contains(out, "taskctl show XR-005") {
+		t.Fatalf("отказ парковки не назван:\n%s", out)
 	}
 }
 

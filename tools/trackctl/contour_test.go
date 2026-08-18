@@ -78,6 +78,23 @@ func TestContourRejectsUnknownSections(t *testing.T) {
 	}
 }
 
+// Версия API выглядит числом и так её легко записать без кавычек: молчаливое
+// умолчание тогда вернуло бы Server-контуру исходный баг, поэтому расхождение
+// типов отбивается на чтении контура.
+func TestContourAPIVersionQuoted(t *testing.T) {
+	bad := strings.Replace(contourFile, `adapter = "fake"`, "api_version = 2\nadapter = \"fake\"", 1)
+	setupEnv(t, bad, bindingFile)
+	_, err := loadContour("corp")
+	if err == nil {
+		t.Fatal("числовая версия принята молча")
+	}
+	for _, want := range []string{"api_version", "кавычках"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %s", want, err)
+		}
+	}
+}
+
 func TestContourMissingFile(t *testing.T) {
 	setupEnv(t, contourFile, bindingFile)
 	_, err := loadContour("other")

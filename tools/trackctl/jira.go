@@ -154,7 +154,7 @@ func (j *jiraAdapter) do(method, path string, body, out any) error {
 		if where == "" {
 			where = "не названо"
 		}
-		return fmt.Errorf("Jira ответила %d на %s %s, перенаправление в %s: у сервера нет этого пути API, сверьте api_version контура %s", resp.StatusCode, method, path, where, j.contour.Name)
+		return fmt.Errorf("Jira ответила %d на %s %s, перенаправление в %s: у сервера нет этого пути, и если это про версию API, сверьте api_version контура %s", resp.StatusCode, method, path, where, j.contour.Name)
 	}
 	if resp.StatusCode >= 400 {
 		return jiraFail(method, path, resp.StatusCode, data)

@@ -424,8 +424,11 @@ func TestJiraV2Axes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Key != "ED-1" {
-		t.Fatalf("чтение по v2 не собралось: %+v", got)
+	// Ключ сверяется по полям образца, а не по запрошенному: fetch молча
+	// подставляет запрошенный ключ в пустой ответ, и проверка по нему
+	// срабатывала бы всегда.
+	if got.Status != "In Progress" || got.Title != "My first example issue" {
+		t.Fatalf("чтение по v2 не собралось из образца: %+v", got)
 	}
 
 	st.on(http.MethodGet, "/rest/api/2/issue/ED-1/transitions", jiraResp{file: "transitions.json"})

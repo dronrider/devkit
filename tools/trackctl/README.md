@@ -128,23 +128,32 @@ sync [--if-stale]   pull статусов: доска догоняет тике�
 
 ### Адаптер jira
 
-REST API v3 поверх stdlib, обе необязательные операции на месте. Из контура он
-читает `base_url` (адрес инстанса), `token_env` либо `token_file` (откуда взять
-токен), `user` (кого ставить исполнителем), `rank_field` (числовое поле
-приоритета) и секции `[fields_*]`. Токен уезжает заголовком
-`Authorization: Bearer`, в тело запроса, в путь и в текст ошибки он не попадает
-никогда, и читается он на каждом запросе: `status` обязан называть адаптер и на
-машине, где токена нет вовсе.
+REST API v2 и v3 поверх stdlib, обе необязательные операции на месте. Из контура
+он читает `base_url` (адрес инстанса), `api_version` (версия API: `3` по
+умолчанию для Cloud, `2` для Server и Data Center), `token_env` либо
+`token_file` (откуда взять токен), `user` (кого ставить исполнителем),
+`rank_field` (числовое поле приоритета) и секции `[fields_*]`. Токен уезжает
+заголовком `Authorization: Bearer`, в тело запроса, в путь и в текст ошибки он
+не попадает никогда, и читается он на каждом запросе: `status` обязан называть
+адаптер и на машине, где токена нет вовсе.
 
 | Операция | Запрос |
 |---|---|
-| `fetch` | `GET /rest/api/3/issue/{key}?fields=summary,status,issuetype,timetracking` |
+| `fetch` | `GET /rest/api/<v>/issue/{key}?fields=summary,status,issuetype,timetracking` |
 | `transition` | `GET .../transitions`, затем `POST .../transitions` с найденным id |
-| `assign` | `PUT /rest/api/3/issue/{key}/assignee` |
-| `estimate` | `PUT /rest/api/3/issue/{key}`, поле `timetracking.originalEstimate` |
-| `worklog` | `POST /rest/api/3/issue/{key}/worklog` |
-| `rank` | `PUT /rest/api/3/issue/{key}`, поле из `rank_field` |
-| `comment` | `POST /rest/api/3/issue/{key}/comment`, тело в Atlassian Document Format |
+| `assign` | `PUT /rest/api/<v>/issue/{key}/assignee` |
+| `estimate` | `PUT /rest/api/<v>/issue/{key}`, поле `timetracking.originalEstimate` |
+| `worklog` | `POST /rest/api/<v>/issue/{key}/worklog` |
+| `rank` | `PUT /rest/api/<v>/issue/{key}`, поле из `rank_field` |
+| `comment` | `POST /rest/api/<v>/issue/{key}/comment` |
+
+`<v>` это версия из `api_version`, и у двух осей она меняет не только путь,
+но и тело: исполнитель на v3 ставится по `accountId`, на v2 по `name` (и `user`
+контура для адаптера `jira` означает то из них, что named версией), а
+комментарий на v3 уезжает документом Atlassian Document Format, на v2 обычной
+строкой wiki-разметки. Остальные тела совпадают. Неизвестное значение ключа
+отбивается на сборке адаптера, до первого запроса, с текстом про допустимые
+значения.
 
 Целевой переход ищется по имени статуса, в который он ведёт (`to.name`); не
 нашёлся, значит отказ перечисляет доступные, и пути через промежуточные статусы
@@ -166,13 +175,14 @@ REST API v3 поверх stdlib, обе необязательные опера�
 `testdata/jira/` собраны из публичной документации Jira Cloud REST API v3
 (построчно, с ссылками, в `testdata/jira/SOURCES.md`), а не сняты с живого
 инстанса: так решено намеренно, чтобы в devkit не приехало ничего корпоративного.
-Живьём формат тем самым не проверен, и первое расхождение покажется на настоящем
-инстансе, а не в тестах. Двух расхождений можно ждать уже сейчас: у Jira Server
-и Data Center путь API это `/rest/api/2`, а исполнитель в `assign` называется
-ключом `name`, тогда как v3 ждёт `accountId` (и `user` контура для адаптера
-`jira` это, стало быть, accountId). Схема авторизации одна, `Bearer`: у Cloud
-это OAuth 2.0, у Data Center personal access token, а basic-авторизации
-Cloud (`email:api_token`) контур места не даёт.
+Живьём проверено чтение по v2 на настоящем Server (см. DK-413), пишущие оси по
+образцам документации; первое расхождение письма покажется на настоящем
+инстансе, а не в тестах. Схема авторизации одна, `Bearer`: у Cloud это OAuth
+2.0, у Data Center personal access token, а basic-авторизации Cloud
+(`email:api_token`) контур места не даёт. Перенаправления адаптер не проходит:
+живой Server на путь отсутствующей версии API отвечает 302 на веб-логин, и
+такой ответ отдаётся отказом с адресом перенаправления и ключом `api_version`,
+а не следует за ним молча.
 
 ## Конфиг: контур и привязка
 
@@ -191,6 +201,8 @@ Cloud (`email:api_token`) контур места не даёт.
 ```toml
 adapter = "jira"
 base_url = "https://tracker.example"
+# версия API: 3 по умолчанию (Cloud), 2 для Server и Data Center
+api_version = "2"
 token_env = "JIRA_TOKEN"
 user = "имя в трекере"
 cost_s = "4h"

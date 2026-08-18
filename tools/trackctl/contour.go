@@ -47,6 +47,10 @@ type contour struct {
 	CostM     string
 	CostL     string
 	RankField string
+	// API это версия API трекера ключом api_version: пустая значит умолчание
+	// адаптера (у jira это v3). Проверяет значение адаптер: что значит версия
+	// и какие допустимы, знает он, а не контур.
+	API string
 	// Status это секции статусов: секция доски -> её статусы в трекере.
 	// Первый элемент списка целевой для записи, остальные синонимы чтения.
 	Status map[string][]string
@@ -104,6 +108,7 @@ func loadContour(name string) (*contour, error) {
 	c.CostM = top.str("cost_m")
 	c.CostL = top.str("cost_l")
 	c.RankField = top.str("rank_field")
+	c.API = top.str("api_version")
 	if c.Adapter == "" {
 		return nil, fmt.Errorf("%s: не задан adapter", path)
 	}

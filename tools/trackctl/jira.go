@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// Адаптер Jira: REST API v3 поверх stdlib, как соседние утилиты. Токен в код и
+// Адаптер Jira: REST API v2 и v3 поверх stdlib, как соседние утилиты. Версия
+// называется контуром ключом api_version и без него это v3. Токен в код и
 // в конфиг не попадает, его называет контур (token_env либо token_file) и
 // читается он на каждом запросе: команда status обязана работать и там, где
 // токена на машине нет, иначе про адаптер она не скажет ничего.
 const (
-	jiraAPI     = "/rest/api/3"
 	jiraTimeout = 30 * time.Second
 	// Время ворклога внутри дня. Факты работы дают дату, а Jira ждёт момент;
 	// полдень по UTC ложится в тот же календарный день в любой зоне.
@@ -28,17 +28,52 @@ func init() {
 }
 
 type jiraAdapter struct {
-	base    string
+	base string
+	// api это префикс пути, /rest/api/2 или /rest/api/3: у Cloud его нет в
+	// выборе, а Server и Data Center третьей версии не имеют вовсе. v2
+	// переворачивает и формат тел: исполнитель зовётся name, а не accountId,
+	// комментарий строкой, а не документом ADF.
+	api     string
+	v2      bool
 	contour *contour
 	client  *http.Client
 }
 
 func newJiraAdapter(c *contour) (adapter, error) {
+	api, v2, err := jiraAPIVersion(c)
+	if err != nil {
+		return nil, err
+	}
 	return &jiraAdapter{
 		base:    strings.TrimRight(c.BaseURL, "/"),
+		api:     api,
+		v2:      v2,
 		contour: c,
-		client:  &http.Client{Timeout: jiraTimeout},
+		client: &http.Client{
+			Timeout: jiraTimeout,
+			// Перенаправления не проходят вовсе: живой Server на путь
+			// отсутствующей версии API отвечает 302 на веб-логин, и тихое
+			// следование за ним превращало бы запись в молчаливый успех
+			// (GET с HTML-страницей в ответ), а чтение в панику разбора.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
+}
+
+// jiraAPIVersion сворачивает ключ контура api_version в префикс пути.
+// Пустой ключ это v3, сегодняшнее поведение стоящих контуров Cloud.
+func jiraAPIVersion(c *contour) (string, bool, error) {
+	raw := strings.ToLower(strings.TrimSpace(c.API))
+	raw = strings.TrimPrefix(raw, "v")
+	switch raw {
+	case "", "3":
+		return "/rest/api/3", false, nil
+	case "2":
+		return "/rest/api/2", true, nil
+	}
+	return "", false, fmt.Errorf("%s: api_version %q не понимаю, жду 2 или 3: у Cloud это 3, у Server и Data Center 2", c.Path, c.API)
 }
 
 // jiraError доносит отказ трекера как есть: код ответа и текст Jira. Своего
@@ -111,6 +146,16 @@ func (j *jiraAdapter) do(method, path string, body, out any) error {
 	if err != nil {
 		return err
 	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// До сюда доходит только ответ без следования за ним (CheckRedirect
+		// стоит в клиенте): живой Server именно так отвечает на путь версии,
+		// которой у него нет, отсылая в веб-логин.
+		where := strings.TrimSpace(resp.Header.Get("Location"))
+		if where == "" {
+			where = "не названо"
+		}
+		return fmt.Errorf("Jira ответила %d на %s %s, перенаправление в %s: у сервера нет этого пути API, сверьте api_version контура %s", resp.StatusCode, method, path, where, j.contour.Name)
+	}
 	if resp.StatusCode >= 400 {
 		return jiraFail(method, path, resp.StatusCode, data)
 	}
@@ -165,7 +210,7 @@ type jiraIssue struct {
 
 func (j *jiraAdapter) fetch(key string) (ticket, error) {
 	var issue jiraIssue
-	path := jiraAPI + "/issue/" + key + "?fields=summary,status,issuetype,timetracking"
+	path := j.api + "/issue/" + key + "?fields=summary,status,issuetype,timetracking"
 	if err := j.do(http.MethodGet, path, nil, &issue); err != nil {
 		return ticket{}, err
 	}
@@ -197,7 +242,7 @@ type jiraTransitions struct {
 // перечисляет доступные, а разруливает это человек строчкой в таблице контура.
 func (j *jiraAdapter) transition(key, status string, fields map[string]string) error {
 	var list jiraTransitions
-	if err := j.do(http.MethodGet, jiraAPI+"/issue/"+key+"/transitions", nil, &list); err != nil {
+	if err := j.do(http.MethodGet, j.api+"/issue/"+key+"/transitions", nil, &list); err != nil {
 		return err
 	}
 	id := ""
@@ -215,7 +260,7 @@ func (j *jiraAdapter) transition(key, status string, fields map[string]string) e
 	if len(fields) > 0 {
 		body["fields"] = jiraFields(fields)
 	}
-	return j.do(http.MethodPost, jiraAPI+"/issue/"+key+"/transitions", body, nil)
+	return j.do(http.MethodPost, j.api+"/issue/"+key+"/transitions", body, nil)
 }
 
 // jiraFields перекладывает поля секции [fields_*] в тело перехода. Значение
@@ -245,15 +290,21 @@ func jiraValue(v string) any {
 	return v
 }
 
+// assign ставит исполнителя. Ключ тела зависит от версии: v3 Cloud ждёт
+// accountId, v2 Server и DC зовут пользователя по name.
 func (j *jiraAdapter) assign(key, user string) error {
-	return j.do(http.MethodPut, jiraAPI+"/issue/"+key+"/assignee", map[string]string{"accountId": user}, nil)
+	who := "accountId"
+	if j.v2 {
+		who = "name"
+	}
+	return j.do(http.MethodPut, j.api+"/issue/"+key+"/assignee", map[string]string{who: user}, nil)
 }
 
 func (j *jiraAdapter) estimate(key, value string) error {
 	body := map[string]any{"fields": map[string]any{
 		"timetracking": map[string]string{"originalEstimate": value},
 	}}
-	return j.do(http.MethodPut, jiraAPI+"/issue/"+key, body, nil)
+	return j.do(http.MethodPut, j.api+"/issue/"+key, body, nil)
 }
 
 func (j *jiraAdapter) worklog(key, date, spent string) error {
@@ -264,7 +315,7 @@ func (j *jiraAdapter) worklog(key, date, spent string) error {
 		"started":   date + jiraWorklogTime,
 		"timeSpent": spent,
 	}
-	return j.do(http.MethodPost, jiraAPI+"/issue/"+key+"/worklog", body, nil)
+	return j.do(http.MethodPost, j.api+"/issue/"+key+"/worklog", body, nil)
 }
 
 // rank пишет числовое поле приоритета. Имя поля приезжает из контура и в коде
@@ -274,19 +325,24 @@ func (j *jiraAdapter) rank(key, field string, value int) error {
 		return fmt.Errorf("приоритет тикета %s: контур не назвал rank_field, писать некуда", key)
 	}
 	body := map[string]any{"fields": map[string]any{field: value}}
-	return j.do(http.MethodPut, jiraAPI+"/issue/"+key, body, nil)
+	return j.do(http.MethodPut, j.api+"/issue/"+key, body, nil)
 }
 
-// comment пишет комментарий телом Atlassian Document Format: обычной строки
-// API v3 не принимает.
+// comment пишет комментарий: v3 принимает только тело Atlassian Document
+// Format, v2 ждёт обычную строку wiki-разметки.
 func (j *jiraAdapter) comment(key, text string) error {
-	body := map[string]any{"body": map[string]any{
-		"type":    "doc",
-		"version": 1,
-		"content": []any{map[string]any{
-			"type":    "paragraph",
-			"content": []any{map[string]any{"type": "text", "text": text}},
-		}},
-	}}
-	return j.do(http.MethodPost, jiraAPI+"/issue/"+key+"/comment", body, nil)
+	var body map[string]any
+	if j.v2 {
+		body = map[string]any{"body": text}
+	} else {
+		body = map[string]any{"body": map[string]any{
+			"type":    "doc",
+			"version": 1,
+			"content": []any{map[string]any{
+				"type":    "paragraph",
+				"content": []any{map[string]any{"type": "text", "text": text}},
+			}},
+		}}
+	}
+	return j.do(http.MethodPost, j.api+"/issue/"+key+"/comment", body, nil)
 }

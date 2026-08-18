@@ -26,9 +26,10 @@ type jiraReq struct {
 }
 
 type jiraResp struct {
-	code int
-	file string
-	body string
+	code     int
+	file     string
+	body     string
+	redirect string
 }
 
 type jiraStub struct {
@@ -55,6 +56,14 @@ func (g *hostGuard) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func newJiraStub(t *testing.T) (*jiraStub, *jiraAdapter) {
 	t.Helper()
+	return newJiraStubVer(t, "")
+}
+
+// newJiraStubVer собирает стенд на контуре с названной версией API: пустая
+// это умолчание v3, «2» это контур Server/DC. Хост-страж стоит тот же: мимо
+// стенда адаптеру ходить нечем при любой версии.
+func newJiraStubVer(t *testing.T, api string) (*jiraStub, *jiraAdapter) {
+	t.Helper()
 	st := &jiraStub{t: t, resp: map[string]jiraResp{}}
 	st.srv = httptest.NewServer(http.HandlerFunc(st.serve))
 	t.Cleanup(st.srv.Close)
@@ -66,6 +75,7 @@ func newJiraStub(t *testing.T) (*jiraStub, *jiraAdapter) {
 		TokenEnv:  "JIRA_TOKEN",
 		User:      "5b10ac8d82e05b22cc7d4ef5",
 		RankField: "customfield_100",
+		API:       api,
 	}
 	a, err := newAdapter(c)
 	if err != nil {
@@ -96,6 +106,9 @@ func (s *jiraStub) serve(w http.ResponseWriter, r *http.Request) {
 	code := resp.code
 	if code == 0 {
 		code = http.StatusOK
+	}
+	if resp.redirect != "" {
+		w.Header().Set("Location", resp.redirect)
 	}
 	data := []byte(resp.body)
 	if resp.file != "" {
@@ -381,5 +394,131 @@ func TestJiraStatusWithoutToken(t *testing.T) {
 	}
 	if !strings.Contains(out, "JIRA_NO_SUCH_TOKEN") {
 		t.Fatalf("status промолчал про отсутствующий токен: %s", out)
+	}
+}
+
+// Версия API приезжает из контура, а не из кода. Неизвестное значение
+// отбивается на сборке адаптера, до первого запроса: превратившись в путь,
+// оно умерло бы посреди работы 404 или перенаправлением в веб-логин.
+func TestJiraAPIVersionFromContour(t *testing.T) {
+	for _, bad := range []string{"4", "v9", "cloud"} {
+		c := &contour{Name: "corp", Adapter: "jira", BaseURL: "https://tracker.example", User: "u", API: bad, Path: "/конфиг/корп.local"}
+		_, err := newAdapter(c)
+		if err == nil {
+			t.Fatalf("версия %q принята молча", bad)
+		}
+		for _, want := range []string{"api_version", bad, "2 или 3"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("в отказе по версии %q нет %q: %s", bad, want, err)
+			}
+		}
+	}
+}
+
+// Контур Server/DC на v2: все оси адаптера ходят путями второй версии, а
+// тела расходятся с v3 ровно в двух местах, исполнителе и комментарии.
+func TestJiraV2Axes(t *testing.T) {
+	st, j := newJiraStubVer(t, "2")
+	st.on(http.MethodGet, "/rest/api/2/issue/ED-1", jiraResp{file: "issue.json"})
+	got, err := j.fetch("ED-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Key != "ED-1" {
+		t.Fatalf("чтение по v2 не собралось: %+v", got)
+	}
+
+	st.on(http.MethodGet, "/rest/api/2/issue/ED-1/transitions", jiraResp{file: "transitions.json"})
+	if err := j.transition("ED-1", "In Progress", nil); err != nil {
+		t.Fatal(err)
+	}
+	if req := st.last(); req.Path != "/rest/api/2/issue/ED-1/transitions" {
+		t.Fatalf("переход ушёл не путём v2: %s %s", req.Method, req.Path)
+	}
+
+	if err := j.assign("ED-1", "elena.vnukova"); err != nil {
+		t.Fatal(err)
+	}
+	if req := st.last(); req.Path != "/rest/api/2/issue/ED-1/assignee" {
+		t.Fatalf("assign ушёл не путём v2: %s %s", req.Method, req.Path)
+	}
+	body := bodyMap(t, st.last())
+	if got := body["name"]; got != "elena.vnukova" {
+		t.Fatalf("исполнитель на v2 зовётся name, а не accountId: %s", st.last().Body)
+	}
+	if _, has := body["accountId"]; has {
+		t.Fatalf("ключ accountId уехал на v2: %s", st.last().Body)
+	}
+
+	st.on(http.MethodPost, "/rest/api/2/issue/ED-1/comment", jiraResp{code: http.StatusCreated})
+	if err := j.comment("ED-1", "текст"); err != nil {
+		t.Fatal(err)
+	}
+	if got := bodyMap(t, st.last())["body"]; got != "текст" {
+		t.Fatalf("комментарий на v2 уехал не строкой: %s", st.last().Body)
+	}
+
+	if err := j.estimate("ED-1", "4h"); err != nil {
+		t.Fatal(err)
+	}
+	if req := st.last(); req.Path != "/rest/api/2/issue/ED-1" {
+		t.Fatalf("оценка ушла не путём v2: %s %s", req.Method, req.Path)
+	}
+
+	st.on(http.MethodPost, "/rest/api/2/issue/ED-1/worklog", jiraResp{code: http.StatusCreated, file: "worklog-created.json"})
+	if err := j.worklog("ED-1", "2026-08-04", "3h"); err != nil {
+		t.Fatal(err)
+	}
+	if req := st.last(); req.Path != "/rest/api/2/issue/ED-1/worklog" {
+		t.Fatalf("ворклог ушёл не путём v2: %s %s", req.Method, req.Path)
+	}
+
+	if err := j.rank("ED-1", "customfield_100", 42); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range st.reqs {
+		if strings.HasPrefix(req.Path, "/rest/api/3") {
+			t.Fatalf("на контуре v2 уехал путь третьей версии: %s %s", req.Method, req.Path)
+		}
+	}
+}
+
+// v3 без контурного ключа остаётся на ADF и accountId: умолчание не меняет
+// поведения стоящих контуров Cloud.
+func TestJiraV3DefaultBodies(t *testing.T) {
+	st, j := newJiraStub(t)
+	st.on(http.MethodPost, "/rest/api/3/issue/ED-1/comment", jiraResp{code: http.StatusCreated})
+	if err := j.comment("ED-1", "текст"); err != nil {
+		t.Fatal(err)
+	}
+	if _, isDoc := bodyMap(t, st.last())["body"].(map[string]any); !isDoc {
+		t.Fatalf("комментарий умолчания уехал не документом ADF: %s", st.last().Body)
+	}
+	if err := j.assign("ED-1", "5b10ac8d82e05b22cc7d4ef5"); err != nil {
+		t.Fatal(err)
+	}
+	if got := bodyMap(t, st.last())["accountId"]; got != "5b10ac8d82e05b22cc7d4ef5" {
+		t.Fatalf("исполнитель умолчания уехал не по accountId: %s", st.last().Body)
+	}
+}
+
+// Живой Server на путь отсутствующей версии API отвечает 302 на веб-логин:
+// тихое следование за ним превращало запись в молчаливый успех, потому
+// перенаправление не проходят, а отдаются отказом с адресом и ключом контура.
+func TestJiraRedirectRefused(t *testing.T) {
+	st, j := newJiraStub(t)
+	login := st.srv.URL + "/login.jsp?permissionViolation=true"
+	st.on(http.MethodPut, "/rest/api/3/issue/ED-1/assignee", jiraResp{code: http.StatusFound, redirect: login})
+	err := j.assign("ED-1", "5b10ac8d82e05b22cc7d4ef5")
+	if err == nil {
+		t.Fatal("перенаправление в веб-логин сошло за успех")
+	}
+	for _, want := range []string{"302", "login.jsp", "api_version"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе по перенаправлению нет %q: %s", want, err)
+		}
+	}
+	if len(st.reqs) != 1 {
+		t.Fatalf("адаптер пошёл дальше за перенаправлением: %d запросов", len(st.reqs))
 	}
 }

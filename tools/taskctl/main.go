@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dronrider/devkit/internal/frame"
 )
@@ -69,12 +70,28 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               задачи, черновик удаляется
   draft drop <ID> --reason "..."              удалить протухший черновик,
                                               причина уезжает в коммит
+  draft ask <ID> [--question "..."] [--wait N] [--session SID]
+                                              то же ожидание для черновика:
+                                              не дождавшись, вопрос ложится
+                                              файлом исхода, а не паркует доску
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д" --accept agent|mixed|user
       [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
       [--barrier глаза|доступ|необратимость|секрет|согласие|событие]
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
+  ask <ID> [--question "..."] [--wait N] [--session SID]
+                                              спросить человека посреди захода:
+                                              вопрос уходит уведомлением и в
+                                              панель чата, команда ждёт ответа
+                                              во входе разговора и печатает его
+                                              агенту; пачка вопросов с
+                                              вариантами читается JSON со stdin,
+                                              срок по умолчанию 480 секунд (ход
+                                              зовётся с timeout 540000),
+                                              --wait 0 паркует сразу; не
+                                              дождавшись, команда сама паркует
+                                              задачу причиной «вопрос: ...»
   fail <ID> --reason "..."                    провал проверки: прод сломан,
                                               задача обратно в In progress,
                                               очередь выката встаёт
@@ -137,6 +154,14 @@ func addFlags(fs *flag.FlagSet, p *AddParams) {
 	fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
 	fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")
 	commitFlags(fs, &p.Commit)
+}
+
+// askFlags объявляет флаги ожидания отдельно от разбора: вход у команды два,
+// задача и черновик, а набор ключей у них один.
+func askFlags(fs *flag.FlagSet, p *AskParams) *int {
+	fs.StringVar(&p.Question, "question", "", "текст вопроса; без него пачка вопросов JSON читается со stdin")
+	fs.StringVar(&p.Session, "session", "", "ID сессии, чьи реплики считать своими; по умолчанию из окружения хода и реестра чатов")
+	return fs.Int("wait", int(AskWait/time.Second), "сколько секунд ждать ответа; 0 значит «не жду, паркуй сразу»")
 }
 
 func setFlags(fs *flag.FlagSet, p *SetParams) {
@@ -307,6 +332,16 @@ func main() {
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 2, 2, "draft attach <ID> <TASK-ID>")
 			msg, err = cmdDraftAttach(root(*dir), pos[0], pos[1], c)
+		case "ask":
+			fs := flag.NewFlagSet("draft ask", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var p AskParams
+			wait := askFlags(fs, &p)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "draft ask <ID> [--question \"...\"] [--wait N] [--session SID]")
+			p.ID, p.Draft, p.Stdin = pos[0], true, os.Stdin
+			p.Wait = time.Duration(*wait) * time.Second
+			msg, err = cmdAsk(root(*dir), p)
 		case "drop":
 			fs := flag.NewFlagSet("draft drop", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -353,6 +388,15 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 2, 2, "move <ID> <статус> [--reason ...]")
 		msg, err = cmdMove(root(*dir), pos[0], pos[1], *reason, c)
+	case "ask":
+		fs := flag.NewFlagSet("ask", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p AskParams
+		wait := askFlags(fs, &p)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "ask <ID> [--question \"...\"] [--wait N] [--session SID]")
+		p.ID, p.Wait, p.Stdin = pos[0], time.Duration(*wait)*time.Second, os.Stdin
+		msg, err = cmdAsk(root(*dir), p)
 	case "fail":
 		fs := flag.NewFlagSet("fail", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

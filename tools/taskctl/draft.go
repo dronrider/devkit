@@ -52,7 +52,7 @@ var (
 // текст черновика. Черновика из одного такого слова не записать, но ограничение
 // это давно действует для list и стоит того: без узнавания «draft defer DK-116
 // причина» молча завёл бы черновик с текстом «defer».
-var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true}
+var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true, "ask": true}
 
 // draftWordRe узнаёт одно слово латиницей: имя подкоманды и ID задачи выглядят
 // ровно так, а записанная на ходу идея так не выглядит никогда.

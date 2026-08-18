@@ -2293,9 +2293,24 @@ function keepPlace(box, tail) {
 }
 
 // Подпись сессии в списке: узнанная задача с источником узнавания либо
-// честное «задача не распознана» (DK-252).
+// честное «задача не распознана» (DK-252). Разряд привязки виден словами:
+// «ведёт» стоит на записи реестра чатов, «говорит о» на угадывании по
+// транскрипту, и работой задачи считается только первое (DK-431).
 function sessionSign(s) {
-  return s.task ? s.task + ", " + (s.taskNote || "узнана") : (s.taskNote || "задача не распознана");
+  if (!s.task) return s.taskNote || "задача не распознана";
+  const rank = s.bound === "about" ? "говорит о " : "ведёт ";
+  return rank + s.task + ", " + (s.taskNote || "узнана");
+}
+
+// Привязка разговора к задаче рукой: ответ на сессию, чью задачу угадать
+// нечем. Пустое значение снимает привязку, и сессия перестаёт считаться
+// работой задачи (ручка DK-431).
+async function bindSession(project, sid, task) {
+  sayResult(task ? "привязка сессии к " + task + "..." : "снятие привязки...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/sessions/" + encodeURIComponent(sid) + "/task", { method: "POST", body: { task } });
+  sayResult(r.body.message || r.body.error || "", !r.ok);
+  if (r.ok) await refresh();
 }
 
 // Прочие сессии под словами о пустоте: работа рядом идёт, её видно списком, но
@@ -2677,7 +2692,7 @@ async function renderSession(project, works, sid, board) {
 
   const head = {
     key: "agent-head",
-    sign: [sid, s.first, s.task, s.taskNote, Boolean(live)].join("|"),
+    sign: [sid, s.first, s.task, s.taskNote, s.bound, Boolean(live)].join("|"),
     make: () => {
       const box = el("div", "ahead");
       if (live) box.append(el("span", "dot pulse"));
@@ -2689,13 +2704,26 @@ async function renderSession(project, works, sid, board) {
       box.append(live
         ? el("span", "chip c-check", "интерактивная сессия")
         : el("span", "chip", "работа не идёт"));
-      box.append(el("span", "chip", s.task
-        ? "задача " + s.task + ", " + (s.taskNote || "узнана")
-        : (s.taskNote || "задача не распознана")));
+      box.append(el("span", "chip", sessionSign(s)));
       if (task) {
         const go = el("button", "btn", "Экран задачи");
         go.addEventListener("click", () => { location.hash = project + "/agent/" + task; });
         box.append(go);
+      }
+      // Кнопка привязки стоит у любой сессии, а не только у нераспознанной:
+      // угаданная задача бывает не той, и перебить угадывание рукой нужно ровно
+      // там, где видно, что оно соврало.
+      const bind = el("button", "btn", s.task ? "Перепривязать" : "Привязать к задаче");
+      bind.addEventListener("click", async () => {
+        const said = window.prompt("ID задачи, которую ведёт этот разговор:", s.task || "");
+        if (said === null) return;
+        await bindSession(project, sid, said.trim());
+      });
+      box.append(bind);
+      if (s.bound === "lead") {
+        const off = el("button", "btn", "Отвязать");
+        off.addEventListener("click", () => bindSession(project, sid, ""));
+        box.append(off);
       }
       return box;
     },

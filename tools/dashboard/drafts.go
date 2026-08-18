@@ -371,10 +371,13 @@ func draftAttachedTo(projectPath, id string) (task, rel string) {
 // draftQuestion отдаёт последнее слово агента из свежего разговора черновика:
 // груминг, кончившийся вопросом, следа на диске не оставляет, и вопрос лежит
 // только в транскрипте. Сессия ищется тем же порядком, что у экрана агента
-// (sessionTask), второго способа связать разговор с задачей не заводится.
+// (sessionBinds.task), второго способа связать разговор с задачей не заводится.
+// Разряд привязки тут не смотрится: груминг узнаётся по заказу в первой
+// реплике, и разговором о задаче он считается по праву.
 func (s *server) draftQuestion(projPath, id string) (text, sid string) {
+	binds := s.binds()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
-		task, _ := sessionTask(f.suffix, s.sessionHeadCached(f.path, f.stamp))
+		task, _, _ := binds.task(f.ID, f.suffix, s.sessionHeadCached(f.path, f.stamp))
 		if task != id {
 			continue
 		}

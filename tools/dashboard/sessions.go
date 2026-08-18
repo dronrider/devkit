@@ -114,10 +114,15 @@ type sessionInfo struct {
 	First    string `json:"first,omitempty"`
 	Task     string `json:"task,omitempty"`
 	TaskNote string `json:"taskNote,omitempty"`
-	path     string
-	suffix   string
-	stamp    string
-	mod      time.Time
+	// Bound это разряд привязки для экрана: lead значит «ведёт» по записи
+	// реестра, about значит «говорит о» по угадыванию. Пусто у сессии без
+	// задачи. Слова подписи для человека, разряд для кода: разбирать подпись
+	// на экране значило бы держать её словарь в двух местах.
+	Bound  string `json:"bound,omitempty"`
+	path   string
+	suffix string
+	stamp  string
+	mod    time.Time
 }
 
 // sessionFiles обходит каталоги транскриптов; сортировка свежие сверху, при
@@ -283,25 +288,10 @@ func upperID(m []string) string {
 // такую сессию из списка нельзя: пропавшая работа неотличима от несделанной.
 const unknownTaskNote = "задача не распознана"
 
-// sessionTask называет задачу сессии и говорит, чем она узнана. Связи
-// «сессия -> задача» в транскриптах нет, поэтому источника три, и порядок их
-// не случаен: боковое дерево заводится ровно под одну задачу и врать не
-// умеет; первая реплика это заказ работы («Выполни цель DK-112», «возьми
-// задачу DK-207 в работу») и узнаёт сессию в главном дереве; ветка идёт
-// последней, потому что окно главного дерева часто стоит на ветке, оставшейся
-// от прошлой работы (решение DK-252).
-func sessionTask(dirSuffix string, head sessionHead) (task, note string) {
-	if id := taskIDInName(dirSuffix); id != "" {
-		return id, "по дереву задачи"
-	}
-	if head.Named != "" {
-		return head.Named, "по первой реплике"
-	}
-	if id := taskIDInName(head.Branch); id != "" {
-		return id, "по ветке"
-	}
-	return "", unknownTaskNote
-}
+// Задачу сессии называет реестр чатов (registry.go): запись журнала старше
+// угадывания по транскрипту, а сами три способа угадывания («Выполни цель
+// DK-112» в первой реплике, хвост каталога бокового дерева, имя ветки) остались
+// запасным разрядом и живут там же, в sessionBinds.task.
 
 // sessionLiveTTL это порог живости интерактивной сессии. Транскрипт
 // дописывается каждым ходом, но ход бывает долгим: одиночный прогон в
@@ -316,6 +306,13 @@ const sessionLiveTTL = 12 * time.Minute
 // доске: ходить по ней на экран задачи некуда, а сама работа идёт и в списке
 // остаётся.
 const foreignTaskNote = "задача не с доски проекта"
+
+// aboutTaskNote подписывает разговор о задаче: работой он не считается, но
+// сказать, о чём он, надо. Молчаливое «интерактивная сессия» тут читалось бы
+// как окно ни о чём.
+func aboutTaskNote(task, note string) string {
+	return fmt.Sprintf("разговор о %s (%s)", task, note)
+}
 
 // groomOrderPrefix это начало заказа headless-сессии, поднимаемой самим
 // дашбордом (groomPrompt в drafts.go). Транскрипт такой сессии узнаётся им:
@@ -334,6 +331,7 @@ const groomOrderPrefix = "Проведи груминг "
 func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow, busy map[string]bool) []Work {
 	works := []Work{}
 	cutoff := s.now().Add(-sessionLiveTTL)
+	binds := s.binds()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.
 		if f.mod.Before(cutoff) {
@@ -348,9 +346,16 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if strings.HasPrefix(head.First, groomOrderPrefix) {
 			continue
 		}
-		task, note := sessionTask(f.suffix, head)
+		task, note, bound := binds.task(f.ID, f.suffix, head)
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote
+		} else if bound == boundAbout {
+			// Разговор про задачу это не работа над ней: карточка живой работы
+			// стоит на записи реестра, а угаданная по первой реплике сессия
+			// конкурировала бы с настоящим исполнителем (DK-360). Чужая доска
+			// разбирается раньше: там о задаче сказать нечего вовсе, ни строки,
+			// ни экрана.
+			task, note = "", aboutTaskNote(task, note)
 		}
 		kind, title, sect := "session", "", ""
 		if task != "" {
@@ -537,6 +542,7 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if want != "" {
 		limit = len(files)
 	}
+	binds := s.binds()
 	deadline := s.now().Add(taskScanBudget)
 	sessions := []sessionInfo{}
 	var scanned, others, unknown int
@@ -553,7 +559,7 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		head := s.sessionHeadCached(f.path, f.stamp)
 		f.Branch, f.First = head.Branch, head.First
 		f.Tree = f.suffix
-		f.Task, f.TaskNote = sessionTask(f.suffix, head)
+		f.Task, f.TaskNote, f.Bound = binds.task(f.ID, f.suffix, head)
 		if f.Task == "" {
 			unknown++
 		} else if want != "" && f.Task != want {
@@ -663,7 +669,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	head := s.sessionHeadCached(path, info.stamp)
 	info.Branch, info.First = head.Branch, head.First
 	info.Tree = info.suffix
-	info.Task, info.TaskNote = sessionTask(info.suffix, head)
+	info.Task, info.TaskNote, info.Bound = s.binds().task(info.ID, info.suffix, head)
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote

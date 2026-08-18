@@ -209,9 +209,21 @@ func harnessTail(h *Harness) string {
 	return ", подписка " + h.Name
 }
 
-func sessionCommand(agentctl string, h *Harness, prompt string) string {
+// sessionEnv это пары окружения, которыми поднятая сессия сама себя называет в
+// реестре чатов: задачу и имя своей tmux-сессии SessionStart-хук
+// hooks/session-task.py берёт отсюда. Без задачи конвейер узнавался бы только
+// по ID в первой реплике: стартует он в главном чекауте, и дерево про него
+// молчит. Имя tmux-сессии из записи не вывести вовсе, а на нём стоит мера
+// кончившегося разговора, и знает его только тот, кто сессию поднял. Пары
+// уходят в начало команды, `-e` у tmux для этого не нужен, значит и версия
+// tmux ни при чём.
+func sessionEnv(id, sess string) string {
+	return "DEVKIT_TASK=" + shQuote(id) + " DEVKIT_TMUX=" + shQuote(sess) + " "
+}
+
+func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string {
 	if h == nil {
-		return defaultClient + " -p " + shQuote(prompt)
+		return sessionEnv(id, sess) + defaultClient + " -p " + shQuote(prompt)
 	}
 	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
@@ -219,7 +231,7 @@ func sessionCommand(agentctl string, h *Harness, prompt string) string {
 	// claude до этой задачи, и проверка «не нашёлся» идёт по нему же.
 	// Имя, путь и клиент квотятся наравне с заказом: строка уходит шеллу сессии,
 	// и пробел в пути рассыпал бы команду на слова.
-	return shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
+	return sessionEnv(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
 		shQuote(h.Bin) + " -p " + shQuote(prompt)
 }
 
@@ -355,7 +367,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id))); err != nil {
+		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id), id, sess)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

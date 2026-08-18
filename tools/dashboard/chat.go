@@ -100,13 +100,15 @@ func readChatLines(path string) []string {
 	return out
 }
 
-// sessionChatName называет разговор сессии. Задача узнаётся теми же тремя
-// источниками, что и на экране сессий (sessionTask), и её разговор
-// предпочитается личному: вопрос и ответ задачи живут в одном месте. Цель сюда
-// не попадает: у неё своя ручка и свой носитель, «Входящие» файла цели.
+// sessionChatName называет разговор сессии. Задача берётся из реестра чатов
+// тем же порядком, что на экране сессий (sessionBinds.task), и разговор задачи
+// предпочитается личному: вопрос и ответ задачи живут в одном месте. Разговор о
+// задаче сюда не попадает: сессия, угаданная по первой реплике, писала бы во
+// вход чужой работы, и ей остаётся свой личный вход. Цель тоже не попадает: у
+// неё своя ручка и свой носитель, «Входящие» файла цели.
 func (s *server) sessionChatName(projPath string, info sessionInfo, head sessionHead) (string, string) {
-	task, note := sessionTask(info.suffix, head)
-	if task == "" {
+	task, note, bound := s.binds().task(info.ID, info.suffix, head)
+	if task == "" || bound != boundLead {
 		return "sess-" + info.ID, note
 	}
 	if raw, err := s.projectBoard(projPath); err == nil {

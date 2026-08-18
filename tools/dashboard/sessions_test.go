@@ -89,9 +89,9 @@ func TestSessionsList(t *testing.T) {
 	}
 	want := []sessionInfo{
 		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", Tree: "dk-5",
-			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи"},
+			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи", Bound: boundLead},
 		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу",
-			Task: "XR-005", TaskNote: "по первой реплике"},
+			Task: "XR-005", TaskNote: "по первой реплике", Bound: boundAbout},
 	}
 	if !reflect.DeepEqual(got.Sessions, want) {
 		t.Errorf("список сессий:\n%+v\nожидал:\n%+v", got.Sessions, want)
@@ -161,7 +161,7 @@ func TestSessionsByTaskOnlyOwn(t *testing.T) {
 	text, list, _ := getSessions(t, e, c, "?task=XR-101")
 	want := []sessionInfo{{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main",
 		First: "возьми задачу XR-101 в работу и доведи её конвейером",
-		Task:  "XR-101", TaskNote: "по первой реплике"}}
+		Task:  "XR-101", TaskNote: "по первой реплике", Bound: boundAbout}}
 	if !reflect.DeepEqual(list, want) {
 		t.Errorf("сессии задачи XR-101:\n%+v\nожидал:\n%+v", list, want)
 	}
@@ -567,7 +567,8 @@ func TestSessionHeadNamesTask(t *testing.T) {
 	// его ставит файловая система при записи фикстуры.
 	one := head("aaa-1")
 	want := sessionInfo{ID: "aaa-1", Mtime: one.Mtime, Branch: "main", Tree: "xr-5",
-		First: "возьми задачу XR-005 в работу", Task: "XR-5", TaskNote: "по дереву задачи"}
+		First: "возьми задачу XR-005 в работу", Task: "XR-5", TaskNote: "по дереву задачи",
+		Bound: boundLead}
 	if !reflect.DeepEqual(one, want) {
 		t.Errorf("шапка узнанной сессии:\n%+v\nожидал:\n%+v", one, want)
 	}

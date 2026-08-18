@@ -141,7 +141,10 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 			got := readFile(t, tmuxLog)
 			// Промпт уходит одной заквоченной строкой: tmux склеивает хвост
 			// new-session пробелами и отдаёт шеллу.
+			// Пары окружения едут в начале команды: ими поднятая сессия
+			// называет себя в реестре чатов (hooks/session-task.py).
 			want := "new-session -d -s task-" + tc.id + " -c " + e.proj +
+				" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'" +
 				" claude -p '" + tc.prompt + "'"
 			if !strings.Contains(got, want) {
 				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
@@ -193,7 +196,8 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	}
 	// agentctl зовётся полным путём: tmux-сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилит devkit в нём может не быть.
-	want := "new-session -d -s task-XR-002 -c " + e.proj + " '" + filepath.Join(e.bin, "agentctl") +
+	want := "new-session -d -s task-XR-002 -c " + e.proj +
+		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
 		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)

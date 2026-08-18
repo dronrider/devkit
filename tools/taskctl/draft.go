@@ -267,6 +267,12 @@ func readStdin() (string, error) {
 // спрашиваются вовсе: грумминг в момент, когда мысль только проявилась, стоит
 // дороже самой мысли, и на этом она теряется.
 func cmdDraft(root, text string, c CommitOpts) (string, error) {
+	return cmdDraftFrom(root, text, false, c)
+}
+
+// cmdDraftFrom это cmdDraft со знанием, откуда пришёл текст: отказ по первой
+// строке советует stdin только тому, кто пришёл аргументом.
+func cmdDraftFrom(root, text string, viaStdin bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -280,7 +286,7 @@ func cmdDraft(root, text string, c CommitOpts) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("пустой черновик: текст передаётся аргументом либо на stdin")
 	}
-	if err := draftTitleGuard(text); err != nil {
+	if err := draftTitleGuard(text, viaStdin); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -299,15 +305,15 @@ func cmdDraft(root, text string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	title, _, _ := strings.Cut(text, "\n")
+	title, rest, _ := strings.Cut(text, "\n")
 	title = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(title), "# "))
 	rel := filepath.Join("docs", "tasks", "drafts", id+".md")
 	abs := filepath.Join(root, rel)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
-	body := fmt.Sprintf("# %s: %s\n\n%s%s\n\n## Черновик\n\n%s\n",
-		id, title, draftWrittenPrefix, time.Now().Format(draftDateLayout), text)
+	body := fmt.Sprintf("# %s: %s\n\n%s%s\n\n%s",
+		id, title, draftWrittenPrefix, time.Now().Format(draftDateLayout), draftBodySection(rest))
 	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return "", err
 	}
@@ -376,25 +382,26 @@ func draftsLine(drafts []Draft) string {
 // staged=true значит, что перенос шёл через git mv (git знал исходный путь):
 // только тогда исходный путь уместен в pathspec коммита. На неотслеживаемом
 // черновике git mv отбивается, срабатывает rename, и возвращается staged=false.
-func promoteDraft(root, id string) (promoted, staged bool, err error) {
+func promoteDraft(root, id, title string) (promoted, staged bool, err error) {
 	from := draftPath(root, id)
-	if _, err := os.Stat(from); err != nil {
-		return false, false, nil
+	data, err := os.ReadFile(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, false, nil
+		}
+		return false, false, err
 	}
-	// Метка разбора не переживает черновик: метаданные в файле задачи не
-	// дублируются (RULES.board.md, «Трекинг задач» п. 3), и строка метки
-	// выкидывается до переноса, а не правкой нового файла после него.
-	t, err := loadDraftText(from)
+	to := filepath.Join(root, "docs", "tasks", id+".md")
+	staged, err = gitMv(root, from, to)
 	if err != nil {
 		return false, false, err
 	}
-	if t.clearPrio() {
-		if err := t.save(); err != nil {
-			return false, false, err
-		}
-	}
-	staged, err = gitMv(root, from, filepath.Join(root, "docs", "tasks", id+".md"))
-	if err != nil {
+	// Файл задачи собирается по форме, а не переезжает как есть: шапка
+	// черновика (метка разбора, дата записи) и подразделы SCQA раскладываются
+	// по разделам TASKFORM.md, а метаданные в файле задачи не дублируются
+	// (RULES.board.md, «Трекинг задач» п. 3).
+	body := renderTaskFromDraft(id, title, string(data), time.Now().Format(draftDateLayout))
+	if err := os.WriteFile(to, []byte(body), 0o644); err != nil {
 		return false, false, err
 	}
 	return true, staged, nil

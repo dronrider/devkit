@@ -403,7 +403,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 			return "", fmt.Errorf("у черновика %s нет заголовка «## DoD»: ворота заведения спрашивают, чем кончается работа, допишите раздел в черновик", p.ID)
 		}
 	}
-	promoted, staged, err := promoteDraft(root, id)
+	promoted, staged, err := promoteDraft(root, id, p.Title)
 	if err != nil {
 		return "", err
 	}

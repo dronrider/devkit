@@ -46,7 +46,7 @@ func draftBody(t *testing.T, root, id string) string {
 // черновика, повторный вызов причину заменяет, а не копит вторую строку.
 func TestDraftDeferWritesMark(t *testing.T) {
 	root := setup(t)
-	id := newDraft(t, root, "уведомитель шумит из песочницы")
+	id := newDraft(t, root, "уведомитель шумит из песочницы\n\nхук берёт адрес из окружения")
 
 	msg, err := cmdDraftDefer(root, id, "ждём повторного случая с git status", false, CommitOpts{})
 	if err != nil {
@@ -60,7 +60,7 @@ func TestDraftDeferWritesMark(t *testing.T) {
 	if !strings.HasSuffix(body, want) {
 		t.Fatalf("файл черновика:\n%s\nждал в хвосте:\n%s", body, want)
 	}
-	if !strings.Contains(body, "## Черновик\n\nуведомитель шумит из песочницы") {
+	if !strings.Contains(body, "## Черновик\n\n### Ситуация\n\nхук берёт адрес из окружения") {
 		t.Fatalf("пометка съела текст черновика:\n%s", body)
 	}
 
@@ -201,7 +201,7 @@ func TestDraftAgeSurvivesDefer(t *testing.T) {
 // снимает и на черновике без метки не падает.
 func TestDraftPrioMark(t *testing.T) {
 	root := setup(t)
-	id := newDraft(t, root, "уведомитель шумит из песочницы")
+	id := newDraft(t, root, "уведомитель шумит из песочницы\n\nхук берёт адрес из окружения")
 
 	msg, err := cmdDraftPrio(root, id, "high", false, CommitOpts{})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestDraftPrioMark(t *testing.T) {
 	if writtenAt < 0 || prioAt < writtenAt {
 		t.Fatalf("метка стоит не рядом со строкой «записан»:\n%s", body)
 	}
-	if !strings.Contains(body, "## Черновик\n\nуведомитель шумит из песочницы") {
+	if !strings.Contains(body, "## Черновик\n\n### Ситуация\n\nхук берёт адрес из окружения") {
 		t.Fatalf("метка съела текст черновика:\n%s", body)
 	}
 
@@ -608,8 +608,8 @@ func TestDraftAttachToTaskWithFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := fmt.Sprintf("## Из черновика %s (%s%s)", id, draftWrittenPrefix, today())
-	for _, want := range []string{head, "своя репродукция через -m", "### Черновик", "отложен: ждём разбора"} {
+	head := fmt.Sprintf("## Из черновика %s «своя репродукция через -m» (%s%s)", id, draftWrittenPrefix, today())
+	for _, want := range []string{head, "### Черновик", "#### Ситуация", "отложен: ждём разбора"} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("в файле задачи нет %q:\n%s", want, data)
 		}
@@ -754,7 +754,7 @@ func TestDraftSectionDemotesAllHeadings(t *testing.T) {
 	text := "# XR-008: заголовок\n\nзаписан 2026-08-05\n\n## Черновик\n\nтело\n\n### Подробности\n\n```\n## это пример, а не заголовок\n```\n"
 	got := draftSection("XR-008", text)
 	for _, want := range []string{
-		"## Из черновика XR-008 (записан 2026-08-05)",
+		"## Из черновика XR-008 «заголовок» (записан 2026-08-05)",
 		"\n### Черновик\n",
 		"\n#### Подробности\n",
 		"\n## это пример, а не заголовок\n",
@@ -809,8 +809,8 @@ func TestDraftUncommittedRemoved(t *testing.T) {
 }
 
 // TestDraftPromoteKeepsGroom: оформление отложенного черновика через add --id
-// перевозит раздел «Грумминг» в файл задачи вместе с остальным текстом, и
-// история разбора не теряется.
+// перевозит пометки «Грумминга» в «Ход работы» файла задачи под строкой о
+// черновике, и история разбора не теряется.
 func TestDraftPromoteKeepsGroom(t *testing.T) {
 	root := setup(t)
 	id := newDraft(t, root, "уведомитель шумит из песочницы")
@@ -825,8 +825,12 @@ func TestDraftPromoteKeepsGroom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), draftGroomHeading) || !strings.Contains(string(data), "ждём повторного случая") {
-		t.Fatalf("пометка не переехала в файл задачи:\n%s", data)
+	if strings.Contains(string(data), draftGroomHeading) {
+		t.Fatalf("раздел «Грумминг» переехал в файл задачи как есть:\n%s", data)
+	}
+	want := "## Ход работы\n\n- Из черновика " + id + " «уведомитель шумит из песочницы»: записан " + today() + ", оформлен " + today() + ".\n- " + today() + ", отложен: ждём повторного случая\n"
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("пометка не переехала в «Ход работы»:\n%s\nждал:\n%s", data, want)
 	}
 }
 

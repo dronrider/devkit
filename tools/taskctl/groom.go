@@ -319,13 +319,14 @@ func cmdDraftPrio(root, id, level string, clear bool, c CommitOpts) (string, err
 
 // draftSection собирает раздел для файла задачи: текст черновика целиком, без
 // своего заголовка первого уровня и с разделами уровнем ниже, чтобы они не
-// разрывали раздел приписки. Дата записи уезжает в заголовок раздела: в теле
-// она повисла бы голой строкой без всякого контекста, а знать, когда мысль
-// записана, по ней потом и нужно.
+// разрывали раздел приписки. Заголовок черновика и дата записи уезжают в
+// заголовок раздела: в теле первой строки нет (форма кладёт её только в H1),
+// а дата повисла бы голой строкой без всякого контекста, тогда как знать,
+// о чём и когда мысль записана, по ней потом и нужно.
 func draftSection(id, text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	var body []string
-	head, written, top, fence := true, "", true, ""
+	head, written, draftTitle, top, fence := true, "", "", true, ""
 	for _, ln := range lines {
 		if head {
 			if strings.TrimSpace(ln) == "" {
@@ -333,6 +334,7 @@ func draftSection(id, text string) string {
 			}
 			head = false
 			if strings.HasPrefix(strings.TrimSpace(ln), "# ") {
+				draftTitle = draftTitleLine(strings.TrimSpace(ln))
 				continue
 			}
 		}
@@ -368,6 +370,9 @@ func draftSection(id, text string) string {
 		body = body[1:]
 	}
 	title := fmt.Sprintf("## Из черновика %s", id)
+	if draftTitle != "" {
+		title += " «" + draftTitle + "»"
+	}
 	if written != "" {
 		title += fmt.Sprintf(" (%s%s)", draftWrittenPrefix, written)
 	}

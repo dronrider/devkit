@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Сколько строк Backlog показывает list без аргумента. Верх отсортирован по R,
@@ -138,6 +140,21 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 	}
 	if created {
 		done = append(done, fmt.Sprintf("docs/%s создан", rel))
+	} else if needsDoD(row.Type, row.Title) {
+		// Файл, заведённый до формы или из черновика без болванки, получает
+		// недостающий «Ход работы» на месте по форме: иначе пакет этапов от
+		// первого перехода вставал бы за разделами, которые по форме идут
+		// позже. Другие контрактные разделы заводят их утилиты сами.
+		if _, found, ok := readSectionFromPath(taskFileAbs(root, id), stageSection); ok && !found {
+			data, err := os.ReadFile(taskFileAbs(root, id))
+			if err != nil {
+				return "", err
+			}
+			if err := os.WriteFile(taskFileAbs(root, id), []byte(taskform.InsertSection(string(data), stageSection, "")), 0o644); err != nil {
+				return "", err
+			}
+			done = append(done, "раздел «Ход работы» дописан по форме")
+		}
 	}
 	if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
 		row.Link = want

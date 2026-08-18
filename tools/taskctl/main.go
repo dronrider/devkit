@@ -331,7 +331,7 @@ func main() {
 				}
 			}
 			needArgs(pos, 0, 1, "draft [\"текст\"]")
-			text := ""
+			text, viaStdin := "", false
 			if len(pos) == 1 {
 				text = pos[0]
 			}
@@ -340,8 +340,9 @@ func main() {
 				if err != nil {
 					fail(err)
 				}
+				viaStdin = true
 			}
-			msg, err = cmdDraft(root(*dir), text, c)
+			msg, err = cmdDraftFrom(root(*dir), text, viaStdin, c)
 		}
 	case "move":
 		fs := flag.NewFlagSet("move", flag.ExitOnError)

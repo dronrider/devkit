@@ -151,7 +151,7 @@ func TestAddNonAgentRequiresBarrier(t *testing.T) {
 // клал скелет поверх перенесённого текста. Срабатывание от --link не зависит.
 func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "текст черновика под нарезку цели", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "текст черновика под нарезку цели\n\nситуация из черновика", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
@@ -177,8 +177,8 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	if !strings.Contains(body, "текст черновика под нарезку цели") {
 		t.Fatalf("текст черновика потерян:\n%s", body)
 	}
-	// «Черновик» доказывает, что стоит перенесённый текст, а не скелет.
-	for _, want := range []string{"## Черновик", "## Приёмка", "- вид: user", "- барьер «глаза»:"} {
+	// Ситуация из черновика доказывает, что стоит перенесённый текст, а не скелет.
+	for _, want := range []string{"## Что происходит\n\nситуация из черновика", "## Приёмка", "- вид: user", "- барьер «глаза»:"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в файле задачи нет %q:\n%s", want, body)
 		}
@@ -193,7 +193,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 		t.Fatalf("ссылка строки %q, жду на файл задачи: при --link ячейку занимает он", row.Link)
 	}
 	// Без --link итог тот же: текст цел, скелет не пишется, раздел дописан.
-	if _, err := cmdDraft(root, "второй черновик без ссылки", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "второй черновик без ссылки\n\nситуация второго черновика", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-009")
@@ -211,7 +211,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	if !strings.Contains(body, "второй черновик без ссылки") {
 		t.Fatalf("текст черновика потерян:\n%s", body)
 	}
-	for _, want := range []string{"## Черновик", "## Приёмка", "- вид: mixed", "- барьер «глаза»:"} {
+	for _, want := range []string{"## Что происходит\n\nситуация второго черновика", "## Приёмка", "- вид: mixed", "- барьер «глаза»:"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в файле задачи нет %q:\n%s", want, body)
 		}
@@ -284,7 +284,7 @@ func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
 	if !strings.Contains(body, quote) {
 		t.Fatalf("цитата внутри блока кода изменена:\n%s", body)
 	}
-	if want := "## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"; !strings.HasSuffix(body, want) {
+	if want := "## Приёмка\n\n- вид: user\n- барьер «глаза»:\n\n## Ход работы\n"; !strings.Contains(body, want) {
 		t.Fatalf("настоящий раздел не дописан:\n%s", body)
 	}
 	// Дописанный раздел обязан быть виден читателю move check целиком.

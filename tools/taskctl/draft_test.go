@@ -57,7 +57,7 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл черновика не создан: %v", err)
 	}
-	want := fmt.Sprintf("# XR-008: уведомитель шумит из песочницы\n\nзаписан %s\n\n## Черновик\n\nуведомитель шумит из песочницы\nвторой строкой подробности\n",
+	want := fmt.Sprintf("# XR-008: уведомитель шумит из песочницы\n\nзаписан %s\n\n## Черновик\n\n### Ситуация\n\nвторой строкой подробности\n\n### Осложнение\n\n### Вопрос\n\n### Гипотеза\n",
 		time.Now().Format(draftDateLayout))
 	if string(data) != want {
 		t.Fatalf("содержимое черновика:\n%s\nожидал:\n%s", data, want)
@@ -433,5 +433,34 @@ func TestDraftListShowsTitleNotBody(t *testing.T) {
 	}
 	if !strings.Contains(out, "старая простыня") || !strings.HasSuffix(lines[1], "...") {
 		t.Errorf("длинный заголовок не обрезан:\n%s", out)
+	}
+}
+
+// TestDraftListJSONKeepsFullTitle: машинный список отдаёт заголовок целиком,
+// обрезка clipTitle касается только печати накопителя на экран.
+func TestDraftListJSONKeepsFullTitle(t *testing.T) {
+	root := setup(t)
+	long := "старая простыня на весь экран, записанная до порога первой строки, с подробностями внутри той же строки"
+	if err := os.MkdirAll(draftsDir(root), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(draftFile(root, "XR-009"), []byte("# XR-009: "+long+"\n\nзаписан 2026-08-01\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Drafts) != 1 || got.Drafts[0].Title != long {
+		t.Fatalf("заголовок в JSON обрезан или потерян: %s", out)
+	}
+	if text, _ := cmdDraftList(root); strings.Contains(text, long) {
+		t.Fatalf("печатный список не обрезал заголовок: %s", text)
 	}
 }

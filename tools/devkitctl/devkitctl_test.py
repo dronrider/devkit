@@ -142,6 +142,15 @@ class ProjectFindingsTest(SandboxCase):
         self.assertIn_("SessionStart-хук quota-refresh.sh", out,
                        "нет находки про хук освежения квоты")
 
+    def test_4b_session_task_hook(self):
+        # Реестр чатов стоит на том же событии, что освежение квоты, и находка
+        # про него своя: без записи дашборд угадывает задачу по транскрипту.
+        drop_lines(self.settings, "session-task")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("SessionStart-хук session-task.py", out,
+                       "нет находки про хук реестра чатов")
+        self.assertIn_("реестр чатов", out, "находка не говорит, что ломается без хука")
+
     def test_5_notifier_events(self):
         # Уведомитель висит на четырёх событиях сразу, и пропажа любого это
         # находка: без SubagentStop сессия молчит про отработавшего субагента, а
@@ -1783,7 +1792,9 @@ class HarnessHooksTest(SandboxCase):
         for event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))
-        self.assertIn("quota-refresh.sh", str(hooks["SessionStart"]))
+        start = [h["command"] for g in hooks["SessionStart"] for h in g["hooks"]]
+        self.assertEqual(len([c for c in start if "quota-refresh.sh" in c]), 1, start)
+        self.assertEqual(len([c for c in start if "session-task.py" in c]), 1, start)
         # Повторный --fix хуки второй раз не раскладывает.
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertNotIn_("хук харнеса на", out, "повторный --fix разложил хуки второй раз")

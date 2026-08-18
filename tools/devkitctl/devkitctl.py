@@ -200,6 +200,12 @@ PRE_READ_GAPS = {
                          "съедает разовый большой вывод Read",
 }
 SESSION_HOOK = "quota-refresh.sh"
+# Реестр чатов задачи (DK-431): SessionStart на пустом матчере, потому что
+# записать «эта сессия ведёт задачу» можно только в момент её рождения, когда ID
+# сессии уже есть. Категория сообщения в hook_gaps своя: без записи дашборд
+# возвращается к угадыванию по транскрипту, а это не то же самое, что протухший
+# снимок квоты.
+TASK_HOOK = "session-task.py"
 NOTIFY_HOOK = "notify.py"
 # Подхват реплики (DK-341): PostToolUse на пустом матчере, потому что реплику
 # надо доставлять на любом ходе идущего витка, а не на записи файла. Категория
@@ -228,6 +234,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
+    ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1217,6 +1224,10 @@ def hook_gaps(text, settings):
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
                             "(hooks/README.md)" % (CHAT_HOOK, settings))
+        elif script == TASK_HOOK:
+            findings.append("SessionStart-хук %s не подключён в %s: реестр чатов пуст, и дашборд "
+                            "возвращается к угадыванию задачи по транскрипту, а разговор о задаче "
+                            "горит её живой работой (hooks/README.md)" % (TASK_HOOK, settings))
         elif script == SESSION_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "

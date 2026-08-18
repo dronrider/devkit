@@ -35,6 +35,15 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 задачи возвращается в In progress вызовом `taskctl -C <корень> move <ID>
 in-progress`. Будит сторожок и только он, а будить значит вернуть строку в
 кандидаты планировщика, сессию поверх доски он не поднимает.
+
+Тем же тиком идёт страховка ожидания (LLD DK-430, решение 3). Инструмент
+`taskctl ask` паркует задачу сам, не дождавшись ответа, но SIGKILL от харнеса
+не перехватывается ничем: убитый ход оставляет признак ожидания со своим сроком
+и не паркует ничего, и строка молча стоит в In progress. Протухший признак
+сторожок паркует сам, причиной из того же признака, где вопрос лежит текстом.
+Живость решает реестр чатов `~/.devkit/sessions.log`: убитый ход ожидания не
+значит убитой сессии, окно в vscode работает дальше, и парковка встала бы под
+руками исполнителя. Живая сессия значит страховка молчит.
 """
 import importlib.util
 import os
@@ -75,6 +84,16 @@ PARKED = "[блок: вопрос:"
 # написанный до выката, обязан разбудить задачу так же, как написанный после.
 CHAT_DIRS = (("chat", "task-%s.in"), ("mail", "task-%s.inbox"))
 CHAT_ASK = "task-%s.ask"
+# Реестр чатов задачи (LLD DK-430, решение 1): по нему страховка узнаёт сессию,
+# ведущую задачу, и путь её транскрипта.
+SESSIONS_LOG = "~/.devkit/sessions.log"
+# Порог живости сессии, тот же, что на экране дашборда: молчащий дольше
+# транскрипт считается неидущей сессией.
+SESSION_LIVE = 12 * 60
+# Ключевые слова полей строки реестра, те же, что у писателя hooks/session-task.py
+# и у го-читателя internal/sessions: значение поля идёт до следующего слова,
+# поэтому пробел в пути транскрипта строку не рассыпает.
+REG_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник", "повод", "tmux")
 # Хвост журнала запусков, из которого берётся последняя метка времени: файл
 # растёт всю жизнь проекта, и читать его целиком каждые пять минут незачем.
 TAIL = 4096
@@ -307,6 +326,133 @@ def taskctl_bin(which=None):
 LOAD_HOOK = object()
 
 
+def progress_rows(root):
+    """ID задач корня, стоящих в In progress. Доска читается напрямую, как и
+    для раздела цели: сторожок работает и там, где бинари devkit сломаны."""
+    try:
+        text = Path(root, BOARD).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    rows, here = [], False
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            here = ln[3:].strip() == IN_PROGRESS
+            continue
+        if not here or not ln.startswith("|"):
+            continue
+        cell = ln.split("|")[1].strip() if ln.count("|") > 1 else ""
+        if cell and cell != "ID" and not set(cell) <= set("-: "):
+            rows.append(cell)
+    return rows
+
+
+def session_alive(sid, now, home=None):
+    """Идёт ли сессия sid прямо сейчас. Мера одна на дашборд и на сторожок:
+    свежесть транскрипта, путь к которому лежит готовым полем в реестре чатов.
+    Незнакомая сессия и пустое поле это «не идёт»: страховке нужен живой
+    собеседник, а не запись о нём."""
+    if not sid:
+        return False
+    home = default_home() if home is None else home
+    try:
+        text = home_path(home, SESSIONS_LOG).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    path = ""
+    for ln in text.splitlines():
+        f = ln.split()
+        if len(f) < 3 or f[1] != "сессия":
+            continue
+        vals, key = {}, ""
+        for tok in f[1:]:
+            if tok in REG_KEYS and vals.get(key):
+                key = tok
+                continue
+            if not key:
+                key = tok
+                continue
+            vals[key] = (vals[key] + " " + tok).strip() if vals.get(key) else tok
+        if vals.get("сессия") == sid:
+            path = vals.get("транскрипт", "")
+    if not path or path == "-":
+        return False
+    try:
+        mod = os.path.getmtime(path)
+    except OSError:
+        return False
+    return time.mktime(now.timetuple()) - mod < SESSION_LIVE
+
+
+def stale_ask(root, task_id, now, hook):
+    """Протухший признак ожидания задачи: путь, ждущая сессия и суть вопроса.
+    Свежий признак значит, что заход ждёт ответа сам, и трогать его нечем.
+    Ищется в обоих деревьях, основном и дереве задачи: инструмент пишет признак
+    в чекаут, а брошенный ход бывает и в дереве задачи."""
+    until_now = time.mktime(now.timetuple())
+    for base in (root, task_tree(root, task_id)):
+        for sub, _ in CHAT_DIRS:
+            path = os.path.join(base, ".devkit", sub, CHAT_ASK % task_id)
+            ask = hook.ask_fields(path)
+            if ask is None:
+                continue
+            if ask["until"] > until_now:
+                return None
+            return {"path": path, "session": ask["session"],
+                    "question": "; ".join(q for q in ask["questions"] if q)}
+    return None
+
+
+def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
+    """Страховка ожидания: паркует строку, за которой остался протухший признак
+    и не осталось живой сессии. Возврат это строки отчёта, как у пробуждения.
+
+    Норма это парковка самим инструментом, страховка идёт тем же тиком, что и
+    пробуждение, и повторный проход ничего не меняет: припаркованная строка из
+    In progress уже ушла. Признак снимается вместе с парковкой, иначе следующий
+    тик считал бы его брошенным заново."""
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    lines = []
+    rows = progress_rows(root)
+    if hook is LOAD_HOOK:
+        hook = chat_hook() if rows else None
+    if rows and hook is None:
+        lines.append("корень %s: подхват реплики hooks/chat-in.py не загрузился, "
+                     "признак ожидания разбирать нечем: брошенные вопросы стоят" % root)
+        return lines
+    for tid in rows:
+        ask = stale_ask(root, tid, now, hook)
+        if ask is None:
+            continue
+        if session_alive(ask["session"], now, home):
+            lines.append("задача %s в %s: ожидание брошено, но сессия %s жива: "
+                         "с вопросом разбирается сам заход" % (tid, root, ask["session"]))
+            continue
+        if not bin:
+            lines.append("задача %s в %s: ожидание брошено, а бинаря taskctl нет ни в "
+                         "PATH, ни в каталогах релиза: строка стоит в In progress" % (tid, root))
+            continue
+        reason = "вопрос: " + (ask["question"] or "заход спросил человека и не дождался ответа")
+        try:
+            p = call([bin, "-C", root, "move", tid, "blocked", "--reason", reason,
+                      "-m", "docs(tasks): %s припаркована брошенным вопросом" % tid, "--push"],
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            lines.append("задача %s в %s: припарковать не вышло, %s" % (tid, root, e))
+            continue
+        if p.returncode != 0:
+            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
+                         % (tid, root, p.returncode, (p.stdout or "").strip()))
+            continue
+        try:
+            os.remove(ask["path"])
+        except OSError:
+            pass
+        lines.append("задача %s в %s припаркована страховкой: ход ожидания убит, живой сессии за строкой нет"
+                     % (tid, root))
+    return lines
+
+
 def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
@@ -515,6 +661,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
             for wline in wake(root, now, call, taskctl):
                 out.write(wline + "\n")
                 log_line(wline, home)
+            for pline in park_stale(root, now, call, taskctl, home=home):
+                out.write(pline + "\n")
+                log_line(pline, home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

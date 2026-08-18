@@ -500,6 +500,101 @@ class WakeTest(Stand):
         self.assertEqual(watch.taskctl_bin(which=lambda name: None), "")
 
 
+
+class ParkStaleTest(Stand):
+    """Страховка ожидания: брошенный ход паркует сторожок, живую сессию не
+    трогает."""
+
+    def setUp(self):
+        super().setUp()
+        self.call = Fake()
+        self.entry(seen_minutes=1)
+        self.runlog(1)
+
+    def board_progress(self, rows):
+        (self.proj / "docs" / "TASKS.md").write_text(
+            BOARD % ("\n".join([ROW % (GOAL, GOAL, GOAL)] + rows), ""), encoding="utf-8")
+
+    def ask(self, tid, shift, session="", question="нужна схема"):
+        """Признак ожидания задачи: срок со сдвигом от «сейчас» стенда, ждущая
+        сессия и вопрос текстом, ровно как его пишет taskctl ask."""
+        d = self.proj / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        body = [stamp(self.now + timedelta(seconds=shift))]
+        if session:
+            body.append("сессия " + session)
+        body.append("задача " + tid)
+        body.append('{"questions": [{"text": "%s"}]}' % question)
+        (d / ("task-%s.ask" % tid)).write_text("\n".join(body) + "\n", encoding="utf-8")
+        return d / ("task-%s.ask" % tid)
+
+    def registry(self, sid, transcript_age_minutes):
+        """Запись реестра чатов со свежим или протухшим транскриптом: по ней
+        страховка меряет живость сессии."""
+        tr = self.dir / ("%s.jsonl" % sid)
+        tr.write_text("{}\n", encoding="utf-8")
+        when = (self.now - timedelta(minutes=transcript_age_minutes)).timestamp()
+        os.utime(str(tr), (when, when))
+        log = self.home / ".devkit" / "sessions.log"
+        log.write_text("%s сессия %s задача DK-901 проект стенд дерево %s транскрипт %s "
+                       "источник заказ повод startup tmux task-DK-901\n"
+                       % (stamp(self.now), sid, self.proj, tr), encoding="utf-8")
+
+    def park(self, taskctl=TASKCTL):
+        return watch.park_stale(str(self.proj), self.now, self.call, taskctl, home=self.home)
+
+    def test_dead_turn_gets_parked_with_the_question(self):
+        # Ход ожидания убит SIGKILL: признак лежит протухший, строка стоит в
+        # In progress, а живой сессии за ней нет. Паркует страховка, причиной из
+        # того же признака.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        path = self.ask("DK-901", -60, session="aaa-1")
+        self.registry("aaa-1", 30)
+        lines = self.park()
+        moved = self.call.argv_with("move")
+        self.assertEqual(len(moved), 1, "брошенный вопрос не припаркован: %s" % self.call.calls)
+        self.assertEqual(moved[0][moved[0].index("move"):moved[0].index("--reason")],
+                         ["move", "DK-901", "blocked"])
+        self.assertIn("вопрос: нужна схема", moved[0])
+        self.assertIn("--push", moved[0], "правка доски обязана уехать в origin")
+        self.assertFalse(path.exists(), "признак остался лежать: следующий тик паркует повторно")
+        self.assertIn("страховкой", lines[0])
+
+    def test_live_session_keeps_the_row(self):
+        # Убитый ход ожидания не значит убитой сессии: окно человека работает
+        # дальше, и парковка встала бы под руками исполнителя.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        self.ask("DK-901", -60, session="aaa-1")
+        self.registry("aaa-1", 2)
+        lines = self.park()
+        self.assertEqual(self.call.calls, [])
+        self.assertIn("сессия aaa-1 жива", lines[0])
+
+    def test_fresh_ask_is_not_touched(self):
+        # Срок не вышел: ответа ждёт сам заход, и страховке тут делать нечего.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        self.ask("DK-901", 300, session="aaa-1")
+        self.assertEqual(self.park(), [])
+        self.assertEqual(self.call.calls, [])
+
+    def test_row_without_ask_is_silent(self):
+        # Обычная работа в In progress страховку не касается вовсе.
+        self.board_progress([PARK_ROW % ("DK-901", "Работает", "DK-901", "DK-901")])
+        self.assertEqual(self.park(), [])
+        self.assertEqual(self.call.calls, [])
+
+    def test_ask_in_the_task_tree_counts_too(self):
+        # Признак бывает и в дереве задачи: брошенный ход шёл оттуда.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        tree = Path(watch.task_tree(str(self.proj), "DK-901")) / ".devkit" / "chat"
+        tree.mkdir(parents=True, exist_ok=True)
+        (tree / "task-DK-901.ask").write_text(
+            stamp(self.now - timedelta(minutes=1)) + "\nзадача DK-901\n", encoding="utf-8")
+        self.park()
+        self.assertEqual(len(self.call.argv_with("move")), 1,
+                         "признак в дереве задачи пропущен: %s" % self.call.calls)
+
+
 class ConfigTest(Stand):
 
     def test_default_and_overrides(self):

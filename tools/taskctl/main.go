@@ -79,7 +79,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
-           [--accept agent|mixed|user]           поправить ячейки строки
+      [--accept agent|mixed|user]             поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/,
@@ -120,6 +120,31 @@ RANKING.md), в ранг не входит; «-» значит «не оцене
 func commitFlags(fs *flag.FlagSet, c *CommitOpts) {
 	fs.StringVar(&c.Msg, "m", "", "закоммитить тронутые файлы с этим сообщением")
 	fs.BoolVar(&c.Push, "push", false, "после коммита сделать git push (только с -m)")
+}
+
+// addFlags и setFlags объявляют флаги подкоманд отдельно от разбора, чтобы
+// тест мог сверить шапку usageText с тем же набором, что видит команда.
+func addFlags(fs *flag.FlagSet, p *AddParams) {
+	fs.StringVar(&p.ID, "id", "", "ID задачи, по умолчанию следующий свободный")
+	fs.StringVar(&p.Title, "title", "", "заголовок строки")
+	fs.StringVar(&p.Type, "type", "task", "тип: bug / task / LLD")
+	fs.StringVar(&p.Rank, "rank", "", "разбивка ранга «а+б+в+г+д»")
+	fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
+	fs.StringVar(&p.Link, "link", "", "ссылка на файл цели: уходит в болванку файла задачи, ячейку занимает сам файл")
+	fs.StringVar(&p.Status, "status", "backlog", "секция доски")
+	fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
+	fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")
+	commitFlags(fs, &p.Commit)
+}
+
+func setFlags(fs *flag.FlagSet, p *SetParams) {
+	fs.StringVar(&p.Title, "title", "", "новый заголовок строки")
+	fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
+	fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
+	fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
+	fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
+	fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
+	commitFlags(fs, &p.Commit)
 }
 
 // Справка обещает общий флаг, значит -C обязан работать и перед подкомандой,
@@ -223,16 +248,7 @@ func main() {
 		fs := flag.NewFlagSet("add", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p AddParams
-		fs.StringVar(&p.ID, "id", "", "ID задачи, по умолчанию следующий свободный")
-		fs.StringVar(&p.Title, "title", "", "заголовок строки")
-		fs.StringVar(&p.Type, "type", "task", "тип: bug / task / LLD")
-		fs.StringVar(&p.Rank, "rank", "", "разбивка ранга «а+б+в+г+д»")
-		fs.StringVar(&p.Cost, "cost", "", "цена исполнения S / M / L / XL, по умолчанию «-»")
-		fs.StringVar(&p.Link, "link", "", "ссылка на файл цели: уходит в болванку файла задачи, ячейку занимает сам файл")
-		fs.StringVar(&p.Status, "status", "backlog", "секция доски")
-		fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
-		fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")
-		commitFlags(fs, &p.Commit)
+		addFlags(fs, &p)
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "add --title \"...\" --type bug|task|LLD --rank \"а+б+в+г+д\" --accept agent|mixed|user")
 		msg, err = cmdAdd(root(*dir), p)
 	case "draft":
@@ -349,13 +365,7 @@ func main() {
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p SetParams
-		fs.StringVar(&p.Title, "title", "", "новый заголовок строки")
-		fs.StringVar(&p.Type, "type", "", "новый тип: bug / task / LLD")
-		fs.StringVar(&p.Rank, "rank", "", "новая разбивка ранга «а+б+в+г+д»")
-		fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
-		fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
-		fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
-		commitFlags(fs, &p.Commit)
+		setFlags(fs, &p)
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...]")
 		p.ID = pos[0]

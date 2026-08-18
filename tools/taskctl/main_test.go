@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,46 +230,51 @@ func TestUsageTextAcceptBarrier(t *testing.T) {
 	}
 }
 
-// TestAddCommandFlags: проверяет, что все специфичные флаги подкоманды add
-// упомянуты в usageText.
-func TestAddCommandFlags(t *testing.T) {
-	// Флаги подкоманды add, специфичные для этой команды.
-	expectedFlags := []string{
-		"--title",
-		"--type",
-		"--rank",
-		"--cost",
-		"--link",
-		"--status",
-		"--id",
-		"--reason",
-		"--accept",
-		"--barrier",
-	}
-
-	for _, flag := range expectedFlags {
-		if !strings.Contains(usageText, flag) {
-			t.Errorf("add: флаг %s не упомянут в usageText", flag)
+// usageEntry вырезает из шапки блок одной подкоманды: от строки, начатой
+// её именем с двойным отступом, до следующей строки с таким же отступом и
+// именем другой команды. Продолжения блока начинаются глубже.
+func usageEntry(t *testing.T, name string) string {
+	t.Helper()
+	lines := strings.Split(usageText, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "  "+name+" ") {
+			start = i
+			break
 		}
 	}
+	if start < 0 {
+		t.Fatalf("в usageText нет строки подкоманды %s", name)
+	}
+	end := start + 1
+	for end < len(lines) && (strings.HasPrefix(lines[end], "   ") || lines[end] == "") {
+		end++
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
-// TestSetCommandFlags: проверяет, что все специфичные флаги подкоманды set
-// упомянуты в usageText.
-func TestSetCommandFlags(t *testing.T) {
-	// Флаги подкоманды set, специфичные для этой команды.
-	expectedFlags := []string{
-		"--title",
-		"--type",
-		"--rank",
-		"--cost",
-		"--link",
-		"--accept",
+// TestUsageMatchesFlagSet: каждый флаг, объявленный у подкоманды add и set,
+// назван в её блоке шапки. Общие -C, -m и --push описаны абзацем ниже,
+// в блок команды они не входят.
+func TestUsageMatchesFlagSet(t *testing.T) {
+	common := map[string]bool{"C": true, "m": true, "push": true}
+	sets := map[string]func(*flag.FlagSet){
+		"add": func(fs *flag.FlagSet) { addFlags(fs, &AddParams{}) },
+		"set": func(fs *flag.FlagSet) { setFlags(fs, &SetParams{}) },
 	}
-
-	for _, flag := range expectedFlags {
-		if !strings.Contains(usageText, flag) {
-			t.Errorf("set: флаг %s не упомянут в usageText", flag)
-		}
+	for name, declare := range sets {
+		t.Run(name, func(t *testing.T) {
+			fs := flag.NewFlagSet(name, flag.ContinueOnError)
+			declare(fs)
+			entry := usageEntry(t, name)
+			fs.VisitAll(func(f *flag.Flag) {
+				if common[f.Name] {
+					return
+				}
+				if !strings.Contains(entry, "--"+f.Name) {
+					t.Errorf("%s: флаг --%s объявлен, но в блоке шапки его нет:\n%s", name, f.Name, entry)
+				}
+			})
+		})
 	}
 }

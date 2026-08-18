@@ -1,0 +1,183 @@
+// Package taskform держит машинную часть формы файла задачи из TASKFORM.md:
+// имена и порядок разделов, а с ними вставку раздела на его место. Форму
+// читают три писателя файла задачи (taskctl кладёт болванку и «Приёмку»,
+// пакет этапов уходит в «Ход работы» через stage, shipctl ведёт «Выкат»), и
+// у каждого своя копия порядка разошлась бы с остальными на первой правке.
+// Текст формы и разбор решений в самом TASKFORM.md.
+package taskform
+
+import (
+	"regexp"
+	"strings"
+)
+
+// Doc это имя страницы формы: его называют отказы и находки, чтобы читатель
+// шёл за разбором в одно место, а не собирал форму по подсказкам команд.
+const Doc = "TASKFORM.md"
+
+// Заголовки разделов файла задачи. Совпадение везде по префиксу строки:
+// «## Проверка после выката» это тот же раздел, что «## Проверка».
+const (
+	Situation    = "## Что происходит"
+	Want         = "## Чего хотим"
+	Bounds       = "## Границы"
+	Forks        = "## Развилки"
+	DoD          = "## DoD"
+	Rank         = "## Ранг"
+	Acceptance   = "## Приёмка"
+	Stages       = "## Ход работы"
+	Review       = "## Ревью"
+	Scenario     = "## Сценарий проверки"
+	Merged       = "## Выкат"
+	Verification = "## Проверка"
+)
+
+// Sections это порядок разделов файла задачи: сначала то, что пишет человек,
+// дальше контрактные разделы в порядке жизни задачи. «Выкат» стоит перед
+// «Проверкой» потому, что раздел выката пишет слияние, а вывод прогона
+// вкладывается уже после выката.
+var Sections = []string{
+	Situation, Want, Bounds, Forks, DoD, Rank,
+	Acceptance, Stages, Review, Scenario, Merged, Verification,
+}
+
+// Order говорит, каким по счёту идёт раздел формы в строке заголовка, и
+// отвечает -1 на заголовке не из формы.
+func Order(line string) int {
+	for i, h := range Sections {
+		if strings.HasPrefix(line, h) {
+			return i
+		}
+	}
+	return -1
+}
+
+// fenceRe это открывающее и закрывающее ограждение блока кода.
+var fenceRe = regexp.MustCompile("^(`{3,}|~{3,})")
+
+// FenceMask помечает строки, лежащие внутри ограждённого блока, вместе с самими
+// строками ограждения. Блок закрывается ограждением того же знака не короче
+// открывающего и без хвоста, поэтому ``` внутри блока на ~~~ его не закроет.
+// Незакрытое ограждение уводит в блок весь остаток файла, как это делает и
+// разметка при отрисовке, и вторым значением возвращается номер его строки
+// (нумерация с единицы, ноль значит «файл цел»).
+//
+// Маска тут одна на весь devkit не для красоты: в файл задачи по RULES.board.md
+// вкладывается реальный вывод команд, а вывод сплошь и рядом содержит куски
+// чужих файлов задач, вместе с заголовками разделов и строками записей. Читатель
+// по строкам принял бы такую цитату за собственную разметку файла, и вторая
+// копия разбора разошлась бы с первой на первой же правке.
+func FenceMask(lines []string) ([]bool, int) {
+	mask := make([]bool, len(lines))
+	open, at := "", 0
+	for i, ln := range lines {
+		t := strings.TrimLeft(ln, " \t")
+		m := fenceRe.FindString(t)
+		if open == "" {
+			if m != "" {
+				open, at, mask[i] = m, i+1, true
+			}
+			continue
+		}
+		mask[i] = true
+		if m != "" && m[0] == open[0] && len(m) >= len(open) && strings.TrimSpace(t[len(m):]) == "" {
+			open, at = "", 0
+		}
+	}
+	return mask, at
+}
+
+// SectionAt отвечает, перед какой строкой встаёт раздел по форме: это первый
+// заголовок вне ограждений, который по порядку идёт позже. Ответ -1 значит,
+// что позже ничего нет (или заголовок не из формы) и место разделу в конце
+// файла.
+func SectionAt(lines []string, heading string) int {
+	rank := Order(heading)
+	if rank < 0 {
+		return -1
+	}
+	mask, _ := FenceMask(lines)
+	for i, ln := range lines {
+		if mask[i] || !strings.HasPrefix(ln, "## ") {
+			continue
+		}
+		if r := Order(ln); r > rank {
+			return i
+		}
+	}
+	return -1
+}
+
+// InsertSection вписывает готовый раздел (заголовок и тело) на его место по
+// форме. Так «Приёмка» от add встаёт выше «Хода работы» из болванки, а «Ход
+// работы» на файле, заведённом из черновика, выше «Сценария проверки», а не
+// приклеивается за ним последней строкой.
+func InsertSection(content, heading, body string) string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	block := []string{heading}
+	if body = strings.TrimSpace(body); body != "" {
+		block = append(block, "", body)
+	}
+	at := SectionAt(lines, heading)
+	if at < 0 {
+		out := append(lines, "")
+		out = append(out, block...)
+		return strings.Join(out, "\n") + "\n"
+	}
+	out := append([]string{}, lines[:at]...)
+	out = append(out, block...)
+	out = append(out, "")
+	out = append(out, lines[at:]...)
+	return strings.Join(out, "\n") + "\n"
+}
+
+// InsertIntoSection дописывает строки в конец названного раздела: перед
+// хвостовыми пустыми строками, чтобы записи не оторвались от остальных, и не
+// задевая следующий раздел. Раздела нет, значит он заводится на своём месте по
+// форме, а раздел не из формы (например, «Журнал» файла цели) в конце файла.
+// Общая для пакета этапов в «Ход работы» файла задачи, снимка витка в «Журнал»
+// файла цели и строк «Выката» от shipctl: разделы разные, а место записи
+// ищется одинаково, и копии разошлись бы на первой правке.
+//
+// Заголовок и граница следующего раздела ищутся вне ограждённых блоков. Иначе
+// процитированный в сценарии проверки вывод с «## Ход работы» перехватывал бы
+// поиск, и пакет этапов ложился бы в раздел «Проверка» посреди чужого
+// транскрипта: на самом docs/tasks/DK-338.md это уже случилось.
+func InsertIntoSection(content, heading string, lines ...string) string {
+	if len(lines) == 0 {
+		return content
+	}
+	content = strings.TrimRight(content, "\n") + "\n"
+	body := strings.Join(lines, "\n")
+	rows := strings.Split(content, "\n")
+	mask, _ := FenceMask(rows)
+	head := -1
+	for i, ln := range rows {
+		if !mask[i] && strings.HasPrefix(ln, heading) {
+			head = i
+			break
+		}
+	}
+	if head < 0 {
+		return InsertSection(content, heading, body)
+	}
+	end := len(rows)
+	for i := head + 1; i < len(rows); i++ {
+		if !mask[i] && strings.HasPrefix(rows[i], "## ") {
+			end = i
+			break
+		}
+	}
+	for end > head+1 && strings.TrimSpace(rows[end-1]) == "" {
+		end--
+	}
+	ins := []string{body}
+	if end == head+1 { // раздел был пуст, отбить запись от заголовка
+		ins = []string{"", body}
+	}
+	out := make([]string, 0, len(rows)+len(ins))
+	out = append(out, rows[:end]...)
+	out = append(out, ins...)
+	out = append(out, rows[end:]...)
+	return strings.Join(out, "\n")
+}

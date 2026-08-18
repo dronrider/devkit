@@ -12,10 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Словарь видов деятельности. Четыре слова и ни одним больше: их рисуют экраны
@@ -321,87 +322,13 @@ func Lines(stages []Stage, end time.Time) []string {
 	return out
 }
 
-// fenceRe это открывающее и закрывающее ограждение блока кода.
-var fenceRe = regexp.MustCompile("^(`{3,}|~{3,})")
+// FenceMask и InsertIntoSection живут в пакете taskform вместе с порядком
+// разделов формы; здесь остались обёртки под прежние имена, чтобы читатели
+// файла задачи звали одно место.
+func FenceMask(lines []string) ([]bool, int) { return taskform.FenceMask(lines) }
 
-// FenceMask помечает строки, лежащие внутри ограждённого блока, вместе с самими
-// строками ограждения. Блок закрывается ограждением того же знака не короче
-// открывающего и без хвоста, поэтому ``` внутри блока на ~~~ его не закроет.
-// Незакрытое ограждение уводит в блок весь остаток файла, как это делает и
-// разметка при отрисовке, и вторым значением возвращается номер его строки
-// (нумерация с единицы, ноль значит «файл цел»).
-//
-// Маска тут одна на весь devkit не для красоты: в файл задачи по RULES.board.md
-// вкладывается реальный вывод команд, а вывод сплошь и рядом содержит куски
-// чужих файлов задач, вместе с заголовками разделов и строками записей. Читатель
-// по строкам принял бы такую цитату за собственную разметку файла, и вторая
-// копия разбора разошлась бы с первой на первой же правке.
-func FenceMask(lines []string) ([]bool, int) {
-	mask := make([]bool, len(lines))
-	open, at := "", 0
-	for i, ln := range lines {
-		t := strings.TrimLeft(ln, " \t")
-		m := fenceRe.FindString(t)
-		if open == "" {
-			if m != "" {
-				open, at, mask[i] = m, i+1, true
-			}
-			continue
-		}
-		mask[i] = true
-		if m != "" && m[0] == open[0] && len(m) >= len(open) && strings.TrimSpace(t[len(m):]) == "" {
-			open, at = "", 0
-		}
-	}
-	return mask, at
-}
-
-// InsertIntoSection дописывает строки в конец названного раздела: перед
-// хвостовыми пустыми строками, чтобы записи не оторвались от остальных, и не
-// задевая следующий раздел. Раздела нет, значит он добавляется в конец файла.
-// Общая для пакета этапов в «Ход работы» файла задачи и снимка витка в «Журнал»
-// файла цели: разделы разные, а место записи ищется одинаково, и две копии
-// разошлись бы на первой правке.
-//
-// Заголовок и граница следующего раздела ищутся вне ограждённых блоков. Иначе
-// процитированный в сценарии проверки вывод с «## Ход работы» перехватывал бы
-// поиск, и пакет этапов ложился бы в раздел «Проверка» посреди чужого
-// транскрипта: на самом docs/tasks/DK-338.md это уже случилось.
+// InsertIntoSection дописывает строки в конец названного раздела файла задачи
+// или цели, а отсутствующий раздел заводит на месте по форме TASKFORM.md.
 func InsertIntoSection(content, heading string, lines ...string) string {
-	if len(lines) == 0 {
-		return content
-	}
-	content = strings.TrimRight(content, "\n") + "\n"
-	body := strings.Join(lines, "\n")
-	rows := strings.Split(content, "\n")
-	mask, _ := FenceMask(rows)
-	head := -1
-	for i, ln := range rows {
-		if !mask[i] && strings.HasPrefix(ln, heading) {
-			head = i
-			break
-		}
-	}
-	if head < 0 {
-		return content + "\n" + heading + "\n\n" + body + "\n"
-	}
-	end := len(rows)
-	for i := head + 1; i < len(rows); i++ {
-		if !mask[i] && strings.HasPrefix(rows[i], "## ") {
-			end = i
-			break
-		}
-	}
-	for end > head+1 && strings.TrimSpace(rows[end-1]) == "" {
-		end--
-	}
-	ins := []string{body}
-	if end == head+1 { // раздел был пуст, отбить запись от заголовка
-		ins = []string{"", body}
-	}
-	out := make([]string, 0, len(rows)+len(ins))
-	out = append(out, rows[:end]...)
-	out = append(out, ins...)
-	out = append(out, rows[end:]...)
-	return strings.Join(out, "\n")
+	return taskform.InsertIntoSection(content, heading, lines...)
 }

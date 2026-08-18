@@ -307,6 +307,14 @@ class WakeTest(Stand):
         (d / (name % tid)).write_text(
             "2026-08-07 12:00, из дашборда: %s\n" % text, encoding="utf-8")
 
+    def said_to(self, tree, tid, sid, text="это тебе, окно"):
+        """Лежащая строка с адресатом сессии: реплика живому окну человека в
+        дереве задачи, а не ответ самой задаче."""
+        d = Path(tree) / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        with (d / ("task-%s.in" % tid)).open("a", encoding="utf-8") as f:
+            f.write("2026-08-07 12:00, сессии %s, из дашборда: %s\n" % (sid, text))
+
     def ask(self, tree, tid, when):
         """Признак ожидания .ask у разговора задачи tid: снимок ожидания
         инструмента."""
@@ -377,6 +385,36 @@ class WakeTest(Stand):
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901", old=True)
         self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+
+    def test_addressed_line_does_not_wake(self):
+        # Ответом задаче считается только безадресная строка: реплика, написанная
+        # живому окну человека в дереве задачи, будила бы припаркованную строку
+        # впустую, и правка доски уезжала бы в origin ни за чем.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said_to(self.proj, "DK-901", "aaaa-1111")
+        lines = self.wake()
+        self.assertEqual(self.call.calls, [], "адресная реплика разбудила задачу")
+        self.assertTrue(lines[-1].endswith("разбужено 0"), lines[-1])
+        self.assertIn("с адресатом сессии", " ".join(lines))
+
+    def test_unaddressed_line_wakes_past_addressed(self):
+        # Во входе лежат обе строки: адресная реплика окну и безадресный ответ
+        # задаче. Будит вторая, и адресная её не заслоняет.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said_to(self.proj, "DK-901", "aaaa-1111")
+        with (self.proj / ".devkit" / "chat" / "task-DK-901.in").open("a", encoding="utf-8") as f:
+            f.write("2026-08-07 12:01, из дашборда: вот схема, продолжай\n")
+        self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+
+    def test_addressed_line_in_task_tree_does_not_wake(self):
+        # Дерево задачи то же правило: адресная реплика лежит там, где идёт
+        # сессия-адресат, и ответом задаче она не становится от места.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said_to(self.dir / "proj-dk-901", "DK-901", "bbbb-2222")
+        self.assertTrue(self.wake()[-1].endswith("разбужено 0"))
 
     def test_missing_taskctl_is_reported(self):
         # Бинаря нет: строка остаётся в Blocked, тик говорит об этом, а не

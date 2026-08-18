@@ -247,32 +247,42 @@ def parked_rows(root):
     return rows
 
 
-def lying_answer(root, task_id, now):
-    """Первая лежащая строка разговора задачи либо None. Разговор ищется в двух
-    деревьях, основном и дереве задачи: исполнитель спрашивает из своего дерева,
-    диспетчер из основного. Свежий признак ожидания .ask отдаёт разговор
-    инструменту ожидания, и будить рано: ответ заберёт сам ждущий заход,
-    паркуется только вопрос, оставшийся без ответа."""
-    hook = chat_hook()
+def lying_answer(root, task_id, now, hook=None):
+    """Ответ задаче, лежащий в её разговоре, и счёт пропущенных адресных строк.
+    Ответом задаче считается только безадресная строка: адрес у реплики это
+    адресат разговора, и строка «..., сессии <ID>: ...» написана живому окну, а
+    не задаче (LLD DK-430, решение 2). Разбор адресата берётся у подхвата тем же
+    импортом, каким берётся срок ожидания: вторая копия формата разъехалась бы с
+    первой на первой же правке.
+
+    Разговор ищется в двух деревьях, основном и дереве задачи: исполнитель
+    спрашивает из своего дерева, диспетчер из основного. Свежий признак ожидания
+    .ask отдаёт разговор инструменту ожидания, и будить рано: ответ заберёт сам
+    ждущий заход, паркуется только вопрос, оставшийся без ответа."""
+    hook = chat_hook() if hook is None else hook
+    if hook is None:
+        return None, 0
     until_now = time.mktime(now.timetuple())
     lying = []
     for base in (root, task_tree(root, task_id)):
         for sub, pattern in CHAT_DIRS:
             d = os.path.join(base, ".devkit", sub)
-            if hook is not None:
-                until = hook.ask_stamp(os.path.join(d, CHAT_ASK % task_id))
-                if until is not None and until > until_now:
-                    return None
+            until = hook.ask_stamp(os.path.join(d, CHAT_ASK % task_id))
+            if until is not None and until > until_now:
+                return None, 0
             lying.append(os.path.join(d, pattern % task_id))
+    addressed = 0
     for src in lying:
         try:
             with open(src, encoding="utf-8", errors="replace") as f:
                 lines = [l.strip() for l in f.read().split("\n") if l.strip()]
         except OSError:
             continue
-        if lines:
-            return lines[0]
-    return None
+        for line in lines:
+            if not hook.addressee(line):
+                return line, addressed
+            addressed += 1
+    return None, addressed
 
 
 def taskctl_bin(which=None):
@@ -308,9 +318,18 @@ def wake(root, now, call=None, taskctl=None):
     bin = taskctl_bin() if taskctl is None else taskctl
     lines, woke = [], 0
     parked = parked_rows(root)
+    hook = chat_hook() if parked else None
+    if parked and hook is None:
+        lines.append("корень %s: подхват реплики hooks/chat-in.py не загрузился, "
+                     "разбирать адресата нечем: припаркованные строки стоят" % root)
+        return lines
     for tid in parked:
-        answer = lying_answer(root, tid, now)
+        answer, addressed = lying_answer(root, tid, now, hook)
         if not answer:
+            if addressed:
+                lines.append("задача %s в %s: во входе лежат реплики с адресатом сессии (%d), "
+                             "ответом задаче они не считаются: строка стоит в Blocked"
+                             % (tid, root, addressed))
             continue
         if not bin:
             lines.append("задача %s в %s: ответ лежит, а бинаря taskctl нет ни в "

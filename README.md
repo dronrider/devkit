@@ -119,6 +119,8 @@ flowchart TD
   ведётся, и не ест контекст остальных проектов.
 - `RANKING.md` - система приоритизации: Ranking 1..100 из пяти слагаемых,
   раскладка в приоритеты P0..P3.
+- `TASKFORM.md` - форма черновика и файла задачи: заголовок первой строкой,
+  разделы по порядку и то, какие из них ведёт машина и какой утилитой.
 - `tools/taskctl/` - Go-утилита канбан-доски `docs/TASKS.md`
   (init/add/move/close/sort/lint/id), см. [tools/taskctl/README.md](tools/taskctl/README.md).
 - `tools/shipctl/` - Go-утилита слияния и отката задач по правилам доски
@@ -281,7 +283,8 @@ git-репозиторием, а в клоне оставляет обвязку
   одноразовые сценарии проверки задач.
 
 В корне лежит текст, который читают на входе (`README.md`, `CONNECT.md`,
-`AGENTS.md`, `CLAUDE.md`), правила (`RULES*.md`, `RANKING.md`, `ACCEPTANCE.md`)
+`AGENTS.md`, `CLAUDE.md`), правила (`RULES*.md`, `RANKING.md`, `ACCEPTANCE.md`,
+`TASKFORM.md`)
 и `.gitignore`.
 Правила остаются в корне по той же причине, что и хуки: на `RULES.core.md`
 ссылается глобальный `~/.claude/CLAUDE.md` и тонкий файл каждого подключённого

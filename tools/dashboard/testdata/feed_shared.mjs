@@ -1,11 +1,12 @@
-// Стенд общей ленты разговора (DK-371). Экран агента и чат цели держали по
-// своей копии разбора реплик, стрима и пагинации; после выноса лента у них
-// одна, и предмет проверки тут это её механика, а не написанное в исходнике:
+// Стенд ленты разговора (DK-371, панель DK-435). Экран агента и чат цели
+// держали по своей копии разбора реплик, стрима и пагинации; после выноса лента
+// стала одна, а после слияния экранов она и рисуется одна: пузыри разговора и
+// строки инструментов идут вперемешку, потому что живой статус и чат это теперь
+// один элемент. Предмет проверки тут её механика, а не написанное в исходнике:
 // хвост при открытии, отсев повторов потока, подгрузка от прокрутки вверх без
-// кнопки, надпись начала разговора, память позиции при уходе и возврате
-// (DK-434) и отбор реплик, которым экраны и различаются. Стенд поднимает
-// static/app.js в песочнице node с заглушкой DOM, зовёт openTranscript и
-// wireChatFeed на одном и том же разговоре и сравнивает, что вышло.
+// кнопки, надпись начала разговора и память позиции при уходе и возврате
+// (DK-434). Стенд поднимает static/app.js в песочнице node с заглушкой DOM и
+// гоняет ленту панели по одному и тому же разговору.
 //
 // Зовётся из go-теста (sessions_test.go), путь к статике приходит аргументом.
 
@@ -180,6 +181,7 @@ const sandbox = {
     },
     addEventListener: () => {},
     body: makeNode("body"),
+    documentElement: { style: { setProperty: () => {} } },
   },
   window: {
     addEventListener: () => {},
@@ -255,25 +257,24 @@ const scrollUp = (scroll, height) => {
   scroll.handlers.scroll();
 };
 
-// Экран агента. Лента лежит внутри панели, прокручивается панель, а реплики
-// показываются все, вместе с инструментом и размышлениями.
-const tp = { sub: makeNode("span"), body: makeNode("div") };
+// Панель разговора: лента открывается хвостом и прокручивается сама, реплики
+// человека и агента идут пузырями, а вызов инструмента и размышления строкой
+// между ними.
 const box = makeNode("div");
-tp.body.append(box);
-sandbox.openTranscript("demo", tp, session, box);
+sandbox.wireChatFeed("demo", box, session.id);
 await settle();
 
 if (!asked.some((p) => p.includes("/sessions/" + session.id + "?n=40"))) {
-  fail("транскрипт открылся не хвостом: " + JSON.stringify(asked));
+  fail("панель открылась не хвостом: " + JSON.stringify(asked));
 }
 if (streams.length !== 1) {
   fail("на один разговор поднято потоков: " + streams.length);
 }
 if (!dump(box).includes("как дела с витком") || !dump(box).includes("виток идёт")) {
-  fail("хвост разговора не встал в ленту транскрипта: " + dump(box));
+  fail("хвост разговора не встал в ленту панели: " + dump(box));
 }
 if (!dump(box).includes("размышления свёрнуты") || !dump(box).includes("Bash")) {
-  fail("транскрипт потерял инструмент или размышления: " + dump(box));
+  fail("лента потеряла инструмент или размышления: чем занят агент, снова не видно");
 }
 restream(streams[0], talk);
 await settle();
@@ -284,7 +285,7 @@ restream(streams[0], [{ seq: 9, role: "assistant", text: "нарезал три 
   time: "2026-08-13T10:05:00+03:00" }]);
 await settle();
 if (!dump(box).includes("нарезал три штуки")) {
-  fail("живое дострение не дошло до ленты транскрипта: " + dump(box));
+  fail("живое дострение не дошло до ленты панели: " + dump(box));
 }
 if (!startOf(box).hidden) {
   fail("надпись начала разговора видна при непрочитанной истории");
@@ -293,18 +294,18 @@ if (startOf(box).handlers.click) {
   fail("на надписи начала остался обработчик клика: кнопка «раньше» не убрана");
 }
 if (dump(box).includes("раньше")) {
-  fail("в ленте транскрипта осталось слово «раньше»: кнопка не убрана до конца");
+  fail("в ленте панели осталось слово «раньше»: кнопка не убрана до конца");
 }
 // Подгрузка идёт от одной прокрутки, без клика: коробка панели встаёт у
 // самого верха, и слушатель тянет историю сам, незаметно для взгляда.
-scrollUp(tp.body, 500);
+scrollUp(box, 500);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
   fail("подгрузка от прокрутки просит историю не от первой показанной реплики: " +
     JSON.stringify(asked));
 }
 if (!dump(box).includes("подними виток")) {
-  fail("история не встала над лентой транскрипта: " + dump(box));
+  fail("история не встала над лентой панели: " + dump(box));
 }
 if (dump(listOf(box)).indexOf("подними виток") > dump(listOf(box)).indexOf("как дела с витком")) {
   fail("история встала под хвостом, а не над ним: " + dump(listOf(box)));
@@ -314,9 +315,9 @@ if (dump(listOf(box)).indexOf("подними виток") > dump(listOf(box)).i
 // без защиты вторая подгрузка ушла бы вторым запросом, пока висит первый.
 asked.length = 0;
 heldSession = session.id;
-scrollUp(tp.body, 500);
-scrollUp(tp.body, 500);
-scrollUp(tp.body, 500);
+scrollUp(box, 500);
+scrollUp(box, 500);
+scrollUp(box, 500);
 if (asked.filter((p) => p.includes("before=")).length !== 1) {
   fail("подряд подгрузки ушли не одним запросом: " + JSON.stringify(asked));
 }
@@ -330,10 +331,9 @@ release = null;
 // разговора весь хвост уже вся история, и надпись видна сразу, без единой
 // подгрузки (DK-434).
 asked.length = 0;
-const shortTp = { sub: makeNode("span"), body: makeNode("div") };
+sandbox.closeChatLive();
 const shortBox = makeNode("div");
-shortTp.body.append(shortBox);
-sandbox.openTranscript("demo", shortTp, shortSession, shortBox);
+sandbox.wireChatFeed("demo", shortBox, shortSession.id);
 await settle();
 if (startOf(shortBox).hidden) {
   fail("надпись начала разговора не встала у короткой истории: " + dump(shortBox));
@@ -341,53 +341,48 @@ if (startOf(shortBox).hidden) {
 if (!dump(shortBox).includes("это начало разговора")) {
   fail("конец истории не назван словами: " + dump(shortBox));
 }
-scrollUp(shortTp.body, 300);
+scrollUp(shortBox, 300);
 await settle();
 if (asked.some((p) => p.includes("before="))) {
   fail("у начала разговора всё равно ушёл запрос подгрузки: " + JSON.stringify(asked));
 }
 
-// Чат цели. Лента та же, но реплика в ней это пузырь, инструменты и
-// размышления в переписку не идут, а прокручивается сама лента.
+// Вторая лента в той же вкладке: своя коробка, свой поток, и открывается она
+// тем же куском.
+sandbox.closeChatLive();
 asked.length = 0;
 streams.length = 0;
 const feed = makeNode("div");
-await sandbox.wireChatFeed("demo", feed, "XR-100");
+await sandbox.wireChatFeed("demo", feed, session.id);
 await settle();
 
-if (!asked.some((p) => p.includes("/sessions?task=XR-100"))) {
-  fail("чат искал сессию не по задаче: " + JSON.stringify(asked));
-}
 if (!asked.some((p) => p.includes("/sessions/" + session.id + "?n=40"))) {
-  fail("чат открылся не хвостом: " + JSON.stringify(asked));
+  fail("вторая лента открылась не хвостом: " + JSON.stringify(asked));
 }
 if (streams.length !== 1) {
-  fail("на ленту чата поднято потоков: " + streams.length);
+  fail("на ленту панели поднято потоков: " + streams.length);
 }
 if (listOf(feed).className !== "mlist") {
-  fail("лента чата собрана мимо своей коробки: " + listOf(feed).className);
+  fail("лента панели собрана мимо своей коробки: " + listOf(feed).className);
 }
 if (!dump(feed).includes("как дела с витком") || !dump(feed).includes("виток идёт")) {
-  fail("хвост разговора не встал в ленту чата: " + dump(feed));
-}
-if (dump(feed).includes("размышления свёрнуты") || dump(feed).includes("Bash")) {
-  fail("в переписку попали инструменты и размышления: " + dump(feed));
+  fail("хвост разговора не встал во вторую ленту: " + dump(feed));
 }
 restream(streams[0], talk);
 await settle();
 if (times(feed, "как дела с витком") !== 1) {
-  fail("хвост чата встал дважды: отсев повторов потока пропал");
+  fail("хвост встал дважды: отсев повторов потока пропал");
 }
 if (dump(feed).includes("раньше")) {
-  fail("в ленте чата осталось слово «раньше»: кнопка не убрана до конца");
+  fail("во второй ленте осталось слово «раньше»: кнопка не убрана до конца");
 }
 scrollUp(feed, 500);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
-  fail("подгрузка от прокрутки в чате просит историю не тем адресом: " + JSON.stringify(asked));
+  fail("подгрузка от прокрутки просит историю не тем адресом: " + JSON.stringify(asked));
 }
 if (!dump(feed).includes("подними виток")) {
-  fail("история не встала над лентой чата: " + dump(feed));
+  fail("история не встала над второй лентой: " + dump(feed));
 }
 // Разделитель дня приезжает вместе с историей: реплики разных дней разведены
 // им, и пересчёт ленты ставит его сам.
@@ -403,12 +398,11 @@ if (!dump(feed).includes(sandbox.localDay(older[0].time))) {
 // не было щели вовсе: поток открывался тем же ходом, что и лента.
 asked.length = 0;
 streams.length = 0;
-const raceTp = { sub: makeNode("span"), body: makeNode("div") };
+sandbox.closeChatLive();
 const raceBox = makeNode("div");
-raceTp.body.append(raceBox);
 
 heldSession = session.id;
-sandbox.openTranscript("demo", raceTp, session, raceBox);
+sandbox.wireChatFeed("demo", raceBox, session.id);
 await settle();
 if (streams.length !== 0) {
   fail("поток поднят до ответа сервера: " + JSON.stringify(streams.map((s) => s.url)));
@@ -418,7 +412,8 @@ const releaseFirst = release;
 
 // Переключение на соседний разговор: прежняя лента снимается, её поток
 // закрывается, и открывается лента соседа.
-sandbox.openTranscript("demo", raceTp, neighbour, raceBox);
+sandbox.closeChatLive();
+sandbox.wireChatFeed("demo", raceBox, neighbour.id);
 await settle();
 if (streams.length !== 1 || !streams[0].url.includes(neighbour.id)) {
   fail("после переключения открыт не разговор соседа: " +
@@ -436,44 +431,43 @@ if (streams.some((s) => !s.closed && s.url.includes(session.id))) {
   fail("после ухода с ленты остался живой поток прежнего разговора: " +
     JSON.stringify(streams.filter((s) => !s.closed).map((s) => s.url)));
 }
-if (!dump(raceTp.sub).includes(neighbour.id.slice(0, 8))) {
-  fail("подпись ленты называет не открытый разговор: " + dump(raceTp.sub));
-}
 heldSession = "";
 release = null;
 
 // Позиция ленты держится при уходе с экрана и возврате, у каждого разговора
-// своя (DK-434). raceTp.body это та же коробка прокрутки, что и у соседней
-// вкладки, ровно как в настоящей панели: переключение меняет ленту внутри
+// своя (DK-434). raceBox это та же коробка прокрутки, что и у соседнего
+// разговора, ровно как в настоящей панели: смена разговора меняет ленту внутри
 // неё, а не саму коробку. Разговор свой, deepSession: у session к этому месту
 // стенда уже накопилась память из сценария транскрипта и гонки запросов, и
 // для захода с чистой памятью нужен свежий id. Реалистичный случай сложнее
 // простого «запомнил scrollTop»: до ухода была подгрузка вверх, и высота
 // коробки на момент записи места (rest) больше, чем у одного свежего хвоста
 // после возврата.
-sandbox.openTranscript("demo", raceTp, deepSession, raceBox);
+sandbox.closeChatLive();
+sandbox.wireChatFeed("demo", raceBox, deepSession.id);
 await settle();
 // Подгрузка вверх до ухода: лента уже не хвост, а хвост плюс страница
 // истории, и firstSeq сдвинут с 5 на 3.
-scrollUp(raceTp.body, 1000);
+scrollUp(raceBox, 1000);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
   fail("перед уходом история не подгрузилась: " + JSON.stringify(asked));
 }
-raceTp.body.scrollHeight = 1000;
-raceTp.body.clientHeight = 300;
-raceTp.body.scrollTop = 200;
-raceTp.body.handlers.scroll();
+raceBox.scrollHeight = 1000;
+raceBox.clientHeight = 300;
+raceBox.scrollTop = 200;
+raceBox.handlers.scroll();
 
 // Уход с разговора: переключение на соседа снимает ленту и открывает ленту
 // neighbour, у которой памяти о месте ещё нет, и она встаёт вниз, как при
 // первом заходе. Высота коробки сброшена к размеру одного хвоста: свежий
 // заход соседа его и приносит, старая большая высота ему не принадлежит.
-raceTp.body.scrollHeight = 150;
-sandbox.openTranscript("demo", raceTp, neighbour, raceBox);
+raceBox.scrollHeight = 150;
+sandbox.closeChatLive();
+sandbox.wireChatFeed("demo", raceBox, neighbour.id);
 await settle();
-if (raceTp.body.scrollTop !== raceTp.body.scrollHeight) {
-  fail("разговор без памяти о месте встал не вниз: " + raceTp.body.scrollTop);
+if (raceBox.scrollTop !== raceBox.scrollHeight) {
+  fail("разговор без памяти о месте встал не вниз: " + raceBox.scrollTop);
 }
 
 // Возврат на прежний разговор: свежий заход снова приносит только хвост (та
@@ -483,40 +477,34 @@ if (raceTp.body.scrollTop !== raceTp.body.scrollHeight) {
 // встать на прежнее место, а не клампиться к нулю против чужой, куда меньшей
 // высоты (замечание ревью DK-434). growScroll подаёт рост коробки от
 // подгруженной страницы, который в настоящем браузере посчитал бы сам layout.
-raceTp.body.scrollHeight = 150;
+raceBox.scrollHeight = 150;
 asked.length = 0;
-growScroll = () => { raceTp.body.scrollHeight = 1000; };
-sandbox.openTranscript("demo", raceTp, deepSession, raceBox);
+growScroll = () => { raceBox.scrollHeight = 1000; };
+sandbox.closeChatLive();
+sandbox.wireChatFeed("demo", raceBox, deepSession.id);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
   fail("возврат не дособрал историю до прежней глубины: " + JSON.stringify(asked));
 }
-if (raceTp.body.scrollTop !== 200) {
-  fail("позиция разговора не вернулась на прежнее место: " + raceTp.body.scrollTop +
+if (raceBox.scrollTop !== 200) {
+  fail("позиция разговора не вернулась на прежнее место: " + raceBox.scrollTop +
     ", ожидал 200 (хвост короче прежней ленты, а восстановление не дособрало историю)");
 }
 growScroll = null;
 
-// Пустой разговор говорит словами на обоих экранах: молчащая коробка
-// неотличима от оборвавшегося потока.
+// Пустой разговор говорит словами: молчащая коробка неотличима от
+// оборвавшегося потока.
+sandbox.closeChatLive();
 empty = true;
 const quiet = makeNode("div");
-await sandbox.wireChatFeed("demo", quiet, "XR-100");
+await sandbox.wireChatFeed("demo", quiet, session.id);
 await settle();
 if (!dump(quiet).includes(emptyNote)) {
-  fail("пустая лента чата молчит: " + dump(quiet));
-}
-const quietBox = makeNode("div");
-const quietTp = { sub: makeNode("span"), body: makeNode("div") };
-quietTp.body.append(quietBox);
-sandbox.openTranscript("demo", quietTp, session, quietBox);
-await settle();
-if (!dump(quietBox).includes(emptyNote)) {
-  fail("пустой транскрипт молчит: " + dump(quietBox));
+  fail("пустая лента молчит: " + dump(quiet));
 }
 
-console.log("общая лента: оба экрана открываются хвостом, повтор потока отсеивается," +
+console.log("лента панели: разговор открывается хвостом, повтор потока отсеивается," +
   " история подгружается от прокрутки вверх без кнопки и без повторных запросов," +
   " начало разговора названо словами, позиция ленты держится при уходе и возврате," +
-  " отбор и разметка реплики приходят параметром," +
+  " пузыри и строки инструментов стоят одной лентой," +
   " уход с ленты посреди запроса потока не поднимает, пустота названа словами");

@@ -379,13 +379,12 @@ a:hover{text-decoration:underline}
    закрытые, и перенос не рвёт выбор */
 .accbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
-/* экран агента (макет «03 Агент»): журнал и транскрипт рядом, tmux полосой
-   внизу; на телефоне те же панели табами через .seg */
+/* карточки с хвостом: журнал витка на экране задачи, ход груминга на экране
+   черновика */
 .ahead{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
 .ahead h2{margin:0;font:600 19px var(--mono)}
 .ahead h2.wtitle{font-family:var(--sans)}
 .ahead .wname{font:400 12px var(--mono);color:var(--tx3)}
-.agrid{display:grid;grid-template-columns:1fr 1.25fr;gap:18px;margin-top:18px}
 .pane{display:flex;flex-direction:column;overflow:hidden}
 .phd{display:flex;align-items:center;gap:9px;padding:12px 18px;border-bottom:1px solid var(--line)}
 .phd b{font:600 13px var(--sans)}
@@ -407,23 +406,10 @@ a:hover{text-decoration:underline}
 .think{font:400 12px var(--sans);color:var(--tx3);font-style:italic;margin:8px 0}
 .more{padding:2px 0 12px;font:500 12px var(--sans);color:var(--acc);cursor:pointer}
 .feed-start{padding:2px 0 12px;font:500 12px var(--sans);color:var(--tx3);text-align:center}
-.tmuxbar{margin-top:18px}
 .tmuxrow{display:flex;align-items:center;gap:16px;padding:11px 18px;font:400 12.5px var(--mono);color:var(--tx2);flex-wrap:wrap}
 .tmuxrow b{font-weight:600;color:var(--tx)}
 .snap{margin:0;padding:12px 18px;border-top:1px solid var(--line);font:400 11.5px/1.6 var(--mono);color:var(--tx2);max-height:34vh;overflow:auto}
 .snap:empty{display:none}
-.seg{display:none}
-/* список разговоров задачи над лентой транскрипта (DK-280): собран
-   отдельным классом, потому что .seg переключает панели телефона и на
-   ноутбуке спрятан, а разговоры переключают на обеих ширинах. Вторая строка
-   пункта это первая реплика разговора (DK-290): длинную она обрывает
-   многоточием, чтобы заказ работы не растягивал список на пол-панели */
-.tseg{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px;padding:3px;background:var(--bg2);border:1px solid var(--line);border-radius:10px}
-.tseg div{padding:6px 10px;border-radius:8px;font:500 12px var(--sans);color:var(--tx3);cursor:pointer;max-width:300px}
-.tseg .on{background:var(--bg3);color:var(--tx)}
-.tseg .ts{display:block;margin-top:2px;font:400 11px var(--mono);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tseg .on .ts{color:var(--tx2)}
-
 /* экран переписки (макет «04 Переписка»): пузыри реплик, свои справа,
    ожидающие витка тем же тоном; поле ввода с честной надписью */
 .chatwrap{max-width:760px;margin-top:16px;padding-bottom:8px}
@@ -462,6 +448,34 @@ a:hover{text-decoration:underline}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
 .stopnote{font:400 11.5px/1.5 var(--sans);color:var(--tx3);margin-top:9px}
+
+
+/* панель разговора справа (LLD DK-430, решение 5). Шире 1100 точек панель
+   стоит колонкой экрана и сжимает доску рядом: она флекс-ребёнок .screen, и
+   ширину ей даёт переменная --cw, которую двигает хват за левый край. Ниже
+   1100 точек места на две колонки нет, и панель ложится поверх доски, а не
+   режет её. На узком экране она занимает его целиком тем же адресом:
+   отдельного маршрута для телефона нет, ужимать чат в колонку на 375 точках
+   незачем, там он нечитаем. */
+.cpanel{position:relative;flex:none;width:var(--cw,420px);display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--bg1);overflow:hidden}
+.cpanel[hidden]{display:none}
+.cgrab{position:absolute;left:0;top:0;bottom:0;width:8px;cursor:col-resize;background:none;touch-action:none;z-index:2}
+.cgrab:hover{background:color-mix(in oklab,var(--acc) 30%,transparent)}
+.cpin{flex:1;display:flex;flex-direction:column;min-height:0;padding:16px 18px 18px;overflow-y:auto}
+.chead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
+.chead .ct{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.chead .ct b{font:600 14px var(--sans);color:var(--tx);overflow-wrap:anywhere}
+.chead .cts{font:400 11.5px var(--mono);color:var(--tx3);overflow-wrap:anywhere}
+.chead .nx{flex:none;width:28px;height:28px;border-radius:7px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.chead .nx svg{width:12px;height:12px;display:block}
+.chead .nx:hover{color:var(--tx);background:var(--bg2)}
+.crow2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px}
+.cpanel .chatwrap{max-width:none;margin-top:12px;flex:1;display:flex;flex-direction:column;min-height:0}
+.cpanel .chatfeed{flex:1;max-height:none;min-height:120px}
+.cpanel .cbox textarea:disabled{color:var(--tx3);cursor:not-allowed}
+@media (max-width:1100px){
+  .cpanel{position:fixed;top:0;right:0;bottom:0;z-index:40;box-shadow:-18px 0 40px -22px rgba(0,0,0,0.7)}
+}
 
 /* экран ленты (макет «05 Лента»): фильтры чипами, дни группами, у стопа
    действие «Поднять виток» */
@@ -571,12 +585,6 @@ a:hover{text-decoration:underline}
   .qrow{font-size:12px;min-height:22px}
   .qrow em{width:78px}
   .qnote{font-size:11.5px}
-  .agrid{grid-template-columns:1fr;gap:0;margin-top:12px}
-  .seg{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:3px;margin-top:14px}
-  .seg div{flex:1;text-align:center;padding:8px 0;border-radius:8px;font:500 13px var(--sans);color:var(--tx3);cursor:pointer}
-  .seg .on{background:var(--bg3);color:var(--tx)}
-  .agrid .pane{display:none}
-  .agrid .pane.onpane{display:flex}
   /* телефон: с записи чаще смотрят, чем читают её, поэтому исход груминга идёт
      сверху, за ним ход разбора, а текст записи последним */
   .dgrid{grid-template-columns:1fr;grid-template-areas:"out" "run" "text";gap:14px;margin-top:12px}
@@ -656,10 +664,12 @@ a:hover{text-decoration:underline}
   .aacts{width:100%;flex-wrap:wrap}
   .aacts .btn{flex:1;min-height:44px}
   .aacts .stale{max-width:none;text-align:left}
-  .tmuxbar{display:none;margin-top:12px}
-  .tmuxbar.onpane{display:block}
   .pbd{max-height:60vh}
   .chatfeed{max-height:46vh}
+  /* узкий экран отдаёт панели весь экран тем же адресом: доска остаётся под
+     ней в истории, и «назад» возвращает на прежнее место */
+  .cpanel{width:auto;left:0;border-left:none}
+  .cgrab{display:none}
 }
 
 /* markdown реплик: свой минимальный рендер без внешних библиотек, разметка из

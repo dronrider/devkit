@@ -386,17 +386,17 @@ func TestStaticAgentsScreen(t *testing.T) {
 	}
 }
 
-// Переходы строки те же, что на экране агента: чат открыт одной цели, стоп
-// стоит только у работы, чьей tmux-сессией дашборд распоряжается, а поднятой
-// мимо него остаётся переход на задачу.
+// Переходы строки те же, что на экране задачи: разговор открывается панелью,
+// стоп стоит только у работы, чьей tmux-сессией дашборд распоряжается, а
+// поднятой мимо него остаётся переход на задачу.
 func TestStaticAgentsRowGates(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	row := funcBody(t, app, "function agentRow(")
-	if !strings.Contains(row, `goButton("Живой статус", project + "/agent/" + w.id)`) {
-		t.Error("перехода в живой статус нет")
+	if !strings.Contains(row, `goButton("Разговор агента", taskChatHash(project, w.id))`) {
+		t.Error("перехода в разговор агента нет")
 	}
-	if !strings.Contains(row, `if (w.kind === "goal") acts.append(goButton("Чат с агентом"`) {
-		t.Error("чат открыт не одной целью: у обычной задачи он ведёт в тупик")
+	if strings.Contains(row, `goButton("Чат с агентом"`) {
+		t.Error("у цели два входа в один и тот же разговор: после DK-435 панель одна")
 	}
 	if !strings.Contains(row, `if (w.via === "tmux") {`) || !strings.Contains(row, `"Остановить"`) {
 		t.Error("кнопка стопа стоит не у tmux-работы")

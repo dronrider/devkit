@@ -388,86 +388,51 @@ func TestSessionsFoundBeyondHeadScan(t *testing.T) {
 	}
 }
 
-// Экран задачи ведёт к разговору агента и тогда, когда работа кончилась, а
-// разговоров у задачи бывает несколько. Предмет проверки это набор кнопок и
-// собранная лента, а не написанное в исходнике, поэтому статика поднимается в
-// node с заглушкой DOM (стенд testdata/task_sessions.mjs). Без node шаг
+// Панель разговора: разбор адреса, выбор ручки для реплики, четыре причины
+// гашения ввода и память о ширине. Предмет проверки это собранная панель и
+// разобранный адрес, а не написанное в исходнике, поэтому статика поднимается в
+// node с заглушкой DOM (стенд testdata/chat_panel.mjs). Без node шаг
 // пропускается: узел стенда, а не рабочей части.
-func TestTaskScreenOpensAgentTalk(t *testing.T) {
+func TestChatPanelAddressAndWay(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node не найден: стенд перехода к разговору пропущен")
+		t.Skip("node не найден: стенд панели разговора пропущен")
 	}
-	out, err := exec.Command(node, filepath.Join("testdata", "task_sessions.mjs"),
+	out, err := exec.Command(node, filepath.Join("testdata", "chat_panel.mjs"),
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
-		t.Fatalf("переход к разговору с экрана задачи: %v\n%s", err, out)
+		t.Fatalf("панель разговора: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// cssDisplay считает, каким показом кончает элемент класса cls: правила той же
-// специфичности перебиваются по порядку, и действует последнее, а не первое.
-// Правила приходят разобранными (cssRules) и отобранными по подлежащему
-// (cssSubject): у «.seg div» подлежащее это div, и к самому переключателю
-// правило не относится.
-func cssDisplay(rules [][2]string, cls string) string {
-	out := ""
-	for _, rule := range rules {
-		if !cssSubject(rule[0], cls) {
-			continue
-		}
-		for _, decl := range strings.Split(rule[1], ";") {
-			if v, ok := strings.CutPrefix(strings.TrimSpace(decl), "display:"); ok {
-				out = strings.TrimSpace(v)
-			}
-		}
-	}
-	return out
-}
-
-// Переключатель разговоров задачи виден на обеих ширинах, а переключатель
-// панелей остаётся телефонным. Первым заходом разговоры собрались классом
-// телефонных панелей, и на ноутбуке экран их не показывал: у того класса
-// display:none по умолчанию, а display:flex он получает только внутри
-// медиазапроса телефона (замечание ревью DK-280). Заглушка DOM такое не
-// ловит, каскада она не считает, поэтому предмет проверки тут сами правила:
-// чем переключатель разговоров собран в статике и каким показом класс кончает
-// по умолчанию и на телефоне. Разбор идёт тем же cssRules, каким по DK-284
-// ловится спор hidden с display: считать каскад дважды незачем, и своя
-// половина разбора отдавала первое правило вместо последнего.
-func TestStaticTranscriptSegVisible(t *testing.T) {
-	app := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(funcBody(t, app, "async function wireTranscript("), `el("div", "tseg")`) {
-		t.Fatal("переключатель разговоров собран не классом tseg: класс телефонных панелей " +
-			"прячет его на ноутбуке")
-	}
-	if !strings.Contains(funcBody(t, app, "function agentPanes("), `el("div", "seg")`) {
-		t.Error("переключатель панелей собран не классом seg: телефонные вкладки остались без стилей")
-	}
+// Панель разговора живёт своим показом: по умолчанию она колонка экрана и
+// сжимает доску рядом, ниже 1100 точек ложится поверх неё, а на узком экране
+// занимает его целиком. Предмет проверки тут сами правила: сложение
+// медиазапросов проверкой одного узла не берётся, а поломка тут ровно такая,
+// как была у переключателя разговоров (DK-280), и ловится тем же разбором
+// правил, что спор hidden с display (DK-284).
+func TestStaticChatPanelWidths(t *testing.T) {
 	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".cpanel{position:relative;flex:none;width:var(--cw,420px)") {
+		t.Error("панель не берёт ширину переменной --cw: хват не сдвинет её, а доска рядом не сожмётся")
+	}
+	over := funcBody(t, css, "@media (max-width:1100px){")
+	if !strings.Contains(over, ".cpanel{position:fixed") {
+		t.Error("ниже 1100 точек панель не ложится поверх доски: доска режется на две узкие колонки")
+	}
 	narrow := funcBody(t, css, "@media (max-width:900px){")
-	wide := cssRules(strings.Replace(css, narrow, "", 1))
-	// На телефоне медиазапрос ложится поверх правил по умолчанию, поэтому
-	// считается он вместе с ними, а не отдельно.
-	phone := append(append([][2]string{}, wide...), cssRules(narrow)...)
-
-	// Разговоры переключают на обеих ширинах: по умолчанию показ стоит, и
-	// телефонный медиазапрос его не отнимает.
-	if got := cssDisplay(wide, "tseg"); got != "flex" {
-		t.Errorf("на ноутбуке переключатель разговоров кончает показом %q: соседний разговор "+
-			"задачи открыть нечем, хотя в разметке он есть", got)
+	if !strings.Contains(narrow, ".cpanel{width:auto") || !strings.Contains(narrow, ".cgrab{display:none}") {
+		t.Error("на узком экране панель не занимает его целиком: чат рядом с доской там нечитаем")
 	}
-	if got := cssDisplay(phone, "tseg"); got == "none" {
-		t.Error("на телефоне переключатель разговоров спрятан")
+	// Полосы tmux нет ни в разметке, ни в стилях: снимок она брала только у
+	// сессий дашборда и у работы из чужого окна всегда пустовала (DK-435).
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if strings.Contains(css, ".tmuxbar") {
+		t.Error("в стилях осталась полоса tmux: панель убрана не совсем")
 	}
-	// Панели переключают только на телефоне, и это остаётся как было: на
-	// ноутбуке они стоят рядом, и вкладки там лишние.
-	if got := cssDisplay(wide, "seg"); got != "none" {
-		t.Errorf("на ноутбуке вкладки панелей кончают показом %q: панели там стоят рядом", got)
-	}
-	if got := cssDisplay(phone, "seg"); got != "flex" {
-		t.Errorf("на телефоне вкладки панелей кончают показом %q", got)
+	if strings.Contains(app, `"card tmuxbar"`) {
+		t.Error("панель tmux осталась на экране дашборда")
 	}
 }
 
@@ -498,13 +463,12 @@ func TestSessionsScanBudgetNamed(t *testing.T) {
 	}
 }
 
-// Экраны агента и переписки обязаны спрашивать сессии своей задачи и
-// показывать подпись сессии: держится грепом по статике, как слова про паузу
-// в тесте стопа.
+// Панель разговора обязана спрашивать сессии своей задачи и показывать подпись
+// сессии: держится грепом по статике, как слова про паузу в тесте стопа.
 func TestStaticSessionsAskedByTask(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	if strings.Count(text, `"/sessions?task="`) < 2 {
-		t.Error("в static/app.js меньше двух запросов сессий с ?task=: экран возьмёт чужую сессию по mtime")
+	if !strings.Contains(funcBody(t, text, "async function chatState("), `"/sessions?task="`) {
+		t.Error("панель берёт разговор не по ?task=: под заголовком задачи пойдёт чужая сессия")
 	}
 	if !strings.Contains(text, "function sessionSign") {
 		t.Error("в static/app.js нет подписи сессии: нераспознанная работа пропадёт молча")
@@ -744,20 +708,21 @@ func TestSessionStreamAppends(t *testing.T) {
 	}
 }
 
-// Транскрипт держит взгляд теми же якорями, что чат, и держит их одним куском
-// (DK-371): экран агента передаёт ленте свою коробку прокрутки, а разбор
-// реплик, стрим и пагинацию берёт общие.
-func TestStaticTranscriptKeepsPlace(t *testing.T) {
+// Панель держит взгляд якорями общего куска (DK-371): своей механики ленты у
+// неё нет, а поколение живых потоков приходит своё, чтобы перерисованный рядом
+// экран ленту не гасил.
+func TestStaticChatFeedKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, text, "function openTranscript(")
-	for _, want := range []string{"wireFeed(project, s.id, {", "scroll: tp.body", "item: replyEl"} {
+	body := funcBody(t, text, "function wireChatFeed(")
+	for _, want := range []string{"return wireFeed(project, sid, {", "scroll: feed",
+		"item: chatItem", "live: chatLive", "era: () => chatGen"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("в транскрипте нет %q: лента поднимается не общим куском", want)
+			t.Errorf("в ленте панели нет %q: лента поднимается не общим куском", want)
 		}
 	}
 	for _, gone := range []string{"EventSource", "?before=", "keepBottom("} {
 		if strings.Contains(body, gone) {
-			t.Errorf("в транскрипте осталась своя механика ленты (%s): правка ленты снова делается дважды", gone)
+			t.Errorf("в ленте панели осталась своя механика ленты (%s): правка ленты снова делается дважды", gone)
 		}
 	}
 	feed := funcBody(t, text, "async function wireFeed(")
@@ -779,10 +744,11 @@ func TestStaticFeedIsOneCopy(t *testing.T) {
 	if n := strings.Count(text, `"?before=" + firstSeq`); n != 1 {
 		t.Errorf("пагинация ленты написана %d раз, ожидал один", n)
 	}
-	if n := strings.Count(text, `sessionURL(project, sid) +`); n != 3 {
-		t.Errorf("адрес разговора собирается %d раз, ожидал три (хвост, история, поток)", n)
+	if n := strings.Count(text, `sessionURL(project, sid) +`); n != 4 {
+		t.Errorf("адрес разговора собирается %d раз, ожидал четыре "+
+			"(хвост, история, поток, ручка реплики)", n)
 	}
-	chat := funcBody(t, text, "async function wireChatFeed(")
+	chat := funcBody(t, text, "function wireChatFeed(")
 	for _, gone := range []string{"EventSource", "?before=", "es.onmessage"} {
 		if strings.Contains(chat, gone) {
 			t.Errorf("в ленте чата осталась своя механика (%s): вынос не закрыт", gone)
@@ -979,17 +945,19 @@ func TestStaticInteractiveWork(t *testing.T) {
 	if strings.Index(live, `w.via === "session"`) < strings.Index(live, `"btn btn-sm", "Стоп"`) {
 		t.Error("ветка интерактивной сессии стоит до кнопки стопа: кнопка достанется и ей")
 	}
-	agent := funcBody(t, text, "function renderAgent(")
-	if !strings.Contains(agent, `work.via === "session"`) || !strings.Contains(agent, "интерактивная сессия") {
-		t.Error("экран агента не подписывает интерактивную сессию")
+	// Признак живости переехал на экран задачи (DK-435): чип называет вид
+	// работы теми же словами, что и полоса.
+	chip := funcBody(t, text, "function liveChip(")
+	if !strings.Contains(chip, `work.via === "session"`) || !strings.Contains(chip, "интерактивная сессия") {
+		t.Error("экран задачи не подписывает интерактивную сессию")
 	}
-	if !strings.Contains(agent, "if (isGoalRow(board, id)) {") {
-		t.Error("кнопка чата открыта не одной целью: у обычной задачи она ведёт в тупик")
+	if !strings.Contains(funcBody(t, text, "async function renderTask("), "liveChip(work)") {
+		t.Error("признак живости не встал на экран задачи: работа видна только полосой")
 	}
 }
 
-// Работа зовётся заголовком с доски и на полосе живых работ, и в шапке экрана
-// агента, а имя сессии остаётся мелкой подписью рядом.
+// Работа зовётся заголовком с доски и на полосе живых работ, и в шапке панели
+// разговора, а служебное имя сессии в подписи не стоит.
 func TestStaticWorkTitle(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	live := funcBody(t, text, "function renderLive(")
@@ -999,70 +967,115 @@ func TestStaticWorkTitle(t *testing.T) {
 	if strings.Contains(live, `"goal-"`) {
 		t.Error("в полосе живых работ осталось служебное имя сессии goal-<ID>: о занятии агента оно не говорит")
 	}
-	agent := funcBody(t, text, "function renderAgent(")
-	if !strings.Contains(agent, "work.title") || !strings.Contains(agent, "title || name") {
-		t.Error("шапка экрана агента подписана именем сессии, а не заголовком задачи")
-	}
-	if !strings.Contains(agent, `if (title) head.append(el("span", "wname", name));`) {
-		t.Error("имя сессии не осталось подписью в шапке экрана агента")
+	head := funcBody(t, text, "function chatHead(")
+	if !strings.Contains(head, "st.title || (st.head && st.head.first)") {
+		t.Error("шапка панели подписана не заголовком задачи: имя сессии о занятии агента не говорит")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname", ".ahead .wname"} {
+	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname", ".chead .cts"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в стилях нет %s: заголовок и подпись рисуются одним кеглем", want)
 		}
 	}
 }
 
-// Экран агента называет источник журнала подписью панели: строки приходят либо
-// из журнала оболочки, либо из раздела «Журнал» файла цели, и путать их нельзя.
+// Журнал витка называет источник подписью панели: строки приходят либо из
+// журнала оболочки, либо из раздела «Журнал» файла цели, и путать их нельзя.
 func TestStaticJournalSource(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function wireJournal(")
 	if !strings.Contains(body, `es.addEventListener("source"`) || !strings.Contains(body, "sub.textContent") {
 		t.Error("подпись источника журнала не приходит с сервера")
 	}
-	if strings.Contains(funcBody(t, text, "function renderAgent("), `".devkit/goal-" + id + ".log"`) {
-		t.Error("экран агента называет журнал goal-<ID>.log до ответа сервера: у цели живого чата такого файла нет")
+	if strings.Contains(funcBody(t, text, "async function renderTask("), `".devkit/goal-" + id + ".log"`) {
+		t.Error("экран задачи называет журнал goal-<ID>.log до ответа сервера: у цели живого чата такого файла нет")
 	}
 }
 
-// Язык экрана агента взят из макета «03 Агент»: панель хода витка называется
-// логом витка, а не транскриптом, журнал зовётся журналом агента, и жаргон
-// «строки» и «запуска» с экранов ушёл.
+// Язык экранов взят из макетов: журнал витка зовётся журналом витка, а жаргон
+// «строки» и «запуска» с экранов ушёл. Слияние живого статуса с чатом (DK-435)
+// унесло с экранов и «Лог витка» отдельной панелью, и полосу tmux.
 func TestStaticAgentPaneWords(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	// Панели собирает общий кусок обоих входов экрана, по задаче и по сессии
-	// (DK-294): называет он их там же, где и раньше.
-	body := funcBody(t, app, "function agentPanes(")
-	for _, want := range []string{`pane("Журнал агента"`, `pane("Лог витка"`,
-		`["Журнал", "Лог витка", "tmux"]`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("в экране агента нет %q", want)
-		}
+	if !strings.Contains(funcBody(t, app, "async function renderTask("), `pane("Журнал витка"`) {
+		t.Error("на экране задачи нет журнала витка")
 	}
 	for _, gone := range []string{`"Транскрипт"`, `"Журнал цикла"`, `"Стоп цикла"`, "грумминг",
-		`"строка обновилась`} {
+		`"строка обновилась`, `pane("Лог витка"`} {
 		if strings.Contains(app, gone) {
 			t.Errorf("в static/app.js осталось слово %q: экраны говорят с пользователем иначе", gone)
 		}
 	}
 }
 
-// Кнопка чата на экране агента стоит у цели, а не у отсутствия работы: у
-// обычной задачи DK-208 живой работы нет, но чат от этого целью её не
-// делает, и без гейта по строке доски кнопка вела бы в тупик (DK-296).
-func TestStaticAgentChatGoalGate(t *testing.T) {
+// Панель разговора открывается хвостом адреса, а старые адреса ведут в неё же
+// (DK-435, решение 5 LLD DK-430): ссылка на «живой статус» и на разговор
+// сессии, посланная себе в заметки полгода назад, обязана открываться.
+func TestStaticChatRouteTail(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(funcBody(t, app, "function renderAgent("), "if (isGoalRow(board, id)) {") {
-		t.Error("кнопка чата на экране агента гейтится не по строке доски")
+	rt := funcBody(t, app, "function route(")
+	for _, want := range []string{`h.indexOf("/chat/")`,
+		`h.match(/^([^/]+)\/(agent|session)\/(.+)$/)`, "rt.chat = "} {
+		if !strings.Contains(rt, want) {
+			t.Errorf("разбор адреса без %q: панель не откроется хвостом либо старая ссылка умрёт", want)
+		}
 	}
-	if strings.Contains(funcBody(t, app, "function renderAgent("), `!work || work.kind === "goal"`) {
-		t.Error("кнопка чата снова появляется у любой задачи без живой работы")
+	if strings.Contains(funcBody(t, app, "function screenKey("), "rt.chat") {
+		t.Error("разговор попал в ключ экрана: открытие панели пересоберёт доску под ней")
 	}
-	if !strings.Contains(funcBody(t, app, "async function paint("),
-		"renderAgent(current.name, r.body.works, rt.id, board)") {
-		t.Error("экран агента рисуется без доски: строку задачи ему взять неоткуда")
+	open := funcBody(t, app, "function openChat(")
+	if !strings.Contains(open, "history.pushState(") {
+		t.Error("панель открывается не pushState: «назад» перестанет её закрывать")
+	}
+	if !strings.Contains(funcBody(t, app, "function closeChat("), "history.back()") {
+		t.Error("крестик панели не возвращает доску на прежнее место")
+	}
+}
+
+// Ширина панели тянется хватом и помнится одним числом на весь дашборд, а не
+// на задачу: человек ставит её под свой экран, а не под предмет разговора.
+func TestStaticChatWidthRemembered(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, `const CHAT_W_KEY = "devkit.chat.width"`) {
+		t.Error("ширина панели не помнится в localStorage: каждый заход начинается с умолчания")
+	}
+	for _, want := range []string{"const CHAT_W_MIN = 320", "const CHAT_W_MAX = 640"} {
+		if !strings.Contains(app, want) {
+			t.Errorf("нет предела ширины %q: панель схлопнется или съест доску", want)
+		}
+	}
+	grab := funcBody(t, app, "function wireChatGrab(")
+	for _, want := range []string{"pointerdown", "pointermove", "window.innerWidth - ev.clientX",
+		"saveChatWidth("} {
+		if !strings.Contains(grab, want) {
+			t.Errorf("в хвате панели нет %q: ширина не потянется или не запомнится", want)
+		}
+	}
+}
+
+// Четыре названные причины гашения ввода (решение 6 LLD DK-430). Молчаливое
+// гашение неотличимо от поломки: человек трижды нажмёт «Отправить», прежде чем
+// поймёт, что писать некуда.
+func TestStaticChatInputReasons(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`const CHAT_OFF_TREE = "дерева сессии больше нет"`,
+		`const CHAT_OFF_OVER = "разговор кончился, и продолжить его некому"`,
+		`const CHAT_OFF_ARCHIVE = "задача закрыта, и живых сессий у неё нет"`,
+		`const CHAT_OFF_GOAL = "разговор ведёт цель"`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("причина гашения не названа словами: нет %q", want)
+		}
+	}
+	panel := funcBody(t, app, "function chatPanel(")
+	for _, want := range []string{"ta.disabled = Boolean(way.off)", "said.textContent = way.why",
+		`send.disabled = Boolean(way.off)`} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("поле ввода гаснет без названной причины: нет %q", want)
+		}
+	}
+	if !strings.Contains(panel, `el("button", "btn", "Привязать к задаче")`) {
+		t.Error("у погашенного ввода нет дороги: привязать разговор к задаче нечем")
 	}
 }
 

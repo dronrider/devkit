@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-<div class="screen">
+<div class="screen" id="screen">
   <aside class="side">
     <div class="brand">
       <span class="logo" id="logo-side" title="На главную">dk</span>
@@ -40,6 +40,13 @@
     <div class="live" id="live"></div>
     <div class="groups" id="groups"></div>
   </main>
+  <!-- панель разговора (LLD DK-430, решение 5): узел стоит в разметке всегда, а
+       показан бывает по хвосту адреса; на широком экране она сжимает доску
+       рядом, ниже 1100 точек ложится поверх неё, на узком занимает его целиком -->
+  <aside class="cpanel" id="cpanel" hidden aria-label="Разговор с агентом">
+    <i class="cgrab" id="cgrab" role="separator" aria-orientation="vertical" aria-label="Ширина панели разговора"></i>
+    <div class="cpin" id="cpin"></div>
+  </aside>
   <nav class="ptabs">
     <div class="ptab" id="tab-home"><s></s>Главная</div>
     <div class="ptab" id="tab-board"><s></s>Доска</div>

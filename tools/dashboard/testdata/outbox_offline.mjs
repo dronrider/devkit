@@ -172,6 +172,7 @@ const sandbox = {
     },
     addEventListener: () => {},
     body: makeNode("body"),
+    documentElement: { style: { setProperty: () => {} } },
   },
   window: {
     listeners: {},

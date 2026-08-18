@@ -926,9 +926,10 @@ func TestStaticTaskTips(t *testing.T) {
 			t.Errorf("в static/app.js осталась надпись-указка %q", gone)
 		}
 	}
-	// Стоп называется одинаково везде: на задаче, на экране агента и в чате.
-	if n := strings.Count(app, `"Остановить агента"`); n < 3 {
-		t.Errorf("кнопок «Остановить агента» %d, жду три экрана: задача, агент, чат", n)
+	// Стоп живёт на экране задачи и называется там одними словами: после
+	// DK-435 разговор ушёл в панель, и второй кнопки стопа рядом с ним нет.
+	if !strings.Contains(funcBody(t, app, "function taskActions("), `"Остановить агента"`) {
+		t.Error("на полосе действий задачи нет кнопки «Остановить агента»")
 	}
 }
 
@@ -1051,7 +1052,6 @@ func TestStaticTaskBarIcons(t *testing.T) {
 	acts := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{`work ? "Живой статус" : "Разговор агента"`,
 		`work ? "i-live" : "i-talk"`,
-		`barBtn("btn", "Чат с агентом", "i-chat")`,
 		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
 		`barBtn("btn btn-acc", name, "i-play")`} {
 		if !strings.Contains(acts, want) {

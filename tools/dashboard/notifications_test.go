@@ -353,7 +353,7 @@ func TestStaticFeedScreen(t *testing.T) {
 		`{ kind: "wait", name: "Ожидание пользователя" }`,
 		`{ kind: "task", name: "Задачи" }`,
 		"Поднять виток",
-		"Журнал агента",
+		"Разговор агента",
 		"/api/notifications?stream=1",
 		"dayLabel",
 		"баннера не было",
@@ -379,7 +379,7 @@ func TestStaticFeedGoesByEventFields(t *testing.T) {
 		"const to = n.project || project;",
 		"startRun(to, n.id)",
 		`location.hash = to + "/" + n.id;`,
-		`jrn.href = "#" + to + "/agent/" + n.id;`,
+		`jrn.href = "#" + taskChatHash(to, n.id);`,
 		"задачи у события нет",
 	} {
 		if !strings.Contains(app, want) {

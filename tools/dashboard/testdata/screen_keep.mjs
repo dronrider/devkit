@@ -155,8 +155,11 @@ function makeNode(tag) {
     const ref = par.children[par.children.indexOf(node) + 1] || null;
     for (const kid of kids) par.insertBefore(kid, ref);
   };
-  node.setAttribute = () => {};
-  node.removeAttribute = () => {};
+  // Атрибуты запоминаются: подпись кнопки полосы действий живёт в aria-label, и
+  // по нему стенд её и находит.
+  node.attrs = {};
+  node.setAttribute = (name, value) => { node.attrs[name] = String(value); };
+  node.removeAttribute = (name) => { delete node.attrs[name]; };
   // Вертикаль узла: настоящих размеров у стенда нет, и по умолчанию их нет ни
   // у кого. Раскладка включается коробке отдельно (layout ниже), и тогда её
   // дети лежат сверху вниз: жест берёт из этих чисел щель под пальцем.
@@ -250,6 +253,7 @@ function blur(node) {
   }
 }
 
+const store = new Map();
 const byId = new Map();
 const doc = {
   createElement: makeNode,
@@ -276,6 +280,10 @@ const doc = {
   handlers: {},
   addEventListener: (name, fn) => { doc.handlers[name] = fn; },
 };
+// Корневой узел нужен ширине панели разговора: она уезжает переменной стиля,
+// а не размером самого узла.
+doc.documentElement = makeNode("html");
+doc.documentElement.style.setProperty = () => {};
 doc.body = makeNode("body");
 doc.activeElement = doc.body;
 
@@ -295,6 +303,18 @@ function dump(node) {
   if (!node) return "";
   const own = typeof node.textContent === "string" ? node.textContent : "";
   return [own, ...(node.children || []).map(dump)].join(" ");
+}
+
+// Кнопка полосы действий: подпись у неё лежит в отдельном узле, зато уезжает в
+// aria-label, по нему кнопка и ищется.
+function barButton(node, label) {
+  if (!node) return null;
+  if (node.tagName === "BUTTON" && node.attrs && node.attrs["aria-label"] === label) return node;
+  for (const kid of node.children || []) {
+    const hit = barButton(kid, label);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 // Кнопка с такой подписью где-нибудь в поддереве.
@@ -409,7 +429,10 @@ function row(id, title, extra) {
   }, extra || {});
 }
 
-const rows = [row("XR-1", "Цель: дашборд без дёрганья", { type: "goal", cost: "XL" })];
+const rows = [row("XR-1", "Цель: дашборд без дёрганья",
+  // Этап работы приезжает полем строки: пишут его конвейер и taskctl, а дашборд
+  // только читает (stage.go). После DK-435 его показывает экран задачи.
+  { type: "goal", cost: "XL", stage: "разработка", stage_since: Math.floor(Date.now() / 1000) - 900 })];
 for (let i = 2; i <= 9; i += 1) {
   rows.push(row("XR-" + i, "строка доски номер " + i));
 }
@@ -528,6 +551,10 @@ function refuse(status, body) {
 // превью.
 const patched = [];
 
+// Куда уходили POST-запросы: по ним видно, какой ручкой панель отправила
+// реплику, ручкой цели, разговора или задачи.
+const posted = [];
+
 // Чужая правка, приехавшая вместе с ответом: соседи в ответе не те, что
 // насчитал экран, пока шёл жест.
 let boardAhead = null;
@@ -603,6 +630,9 @@ const loose = {
   id: "cccc3333-3333", mtime: "2026-08-13T10:04:00+03:00", branch: "main",
   first: "почини роутер, доступы в local-docs", taskNote: "задача не распознана",
 };
+// Ручка для реплики и причина словами приезжают в шапке разговора (DK-438):
+// панель по ним и решает, куда слать и когда гасить ввод.
+const headExtra = { reply: "session", replyNote: "" };
 let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
 let slowSessions = false;
 
@@ -679,10 +709,27 @@ const sandbox = {
   // Замена адреса без записи в историю: ею уезжает в адрес набранный запрос
   // поиска, и экран после неё собирается тем же путём, что и по ссылке.
   location: { hash: "#demo", href: "", replace: (hash) => { sandbox.location.hash = hash; } },
+  // История: панель разговора открывается pushState, поэтому «назад» её
+  // закрывает и возвращает доску на прежнее место. Стенд помнит стопку сам,
+  // hashchange по ней зовётся тем же ходом, что и в браузере.
+  history: {
+    stack: [],
+    pushState: (state, title, url) => {
+      sandbox.history.stack.push(sandbox.location.hash);
+      sandbox.location.hash = String(url).replace(/^#/, "");
+    },
+    back: () => {
+      const was = sandbox.history.stack.pop();
+      sandbox.location.hash = was === undefined ? "" : was;
+      for (const fn of sandbox.window.listeners.hashchange || []) fn();
+    },
+  },
+  // Хранилище настоящее: в нём живёт ширина панели разговора и очередь
+  // исходящих, и заглушка с вечным null проверяла бы не то.
   localStorage: {
-    getItem: () => null,
-    setItem: () => {},
-    removeItem: () => {},
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: (key) => { store.delete(key); },
   },
   EventSource: class {
     constructor(url) {
@@ -695,6 +742,7 @@ const sandbox = {
   },
   fetch: (path, init) => {
     const post = Boolean(init && init.method === "POST");
+    if (post) posted.push(path);
     if (path === "/api/projects") {
       return reply({ projects: [{ name: "demo", works: groomWorks(), sections: { check: 1 } }] });
     }
@@ -751,8 +799,8 @@ const sandbox = {
     // и собирает заголовок, когда задача разговора не узнана.
     if (path.includes("/sessions/")) {
       const sid = path.slice(path.indexOf("/sessions/") + "/sessions/".length).split("?")[0];
-      const head = [mine, alien, loose].find((s) => s.id === sid) || { id: sid };
-      return reply({ session: sid, head, items: talk });
+      const found = [mine, alien, loose].find((s) => s.id === sid) || { id: sid };
+      return reply({ session: sid, head: Object.assign({}, found, headExtra), items: talk });
     }
     if (path.includes("/search?q=")) {
       const q = decodeURIComponent(path.slice(path.indexOf("?q=") + 3));
@@ -767,6 +815,10 @@ const sandbox = {
     // Чат цели: «Входящие» файла цели, отметки доставки подхвата реплики
     // (.devkit/goal-<ID>.mail) и живость витка, которую сервер судит правилом
     // подхвата (goalLive, tools/dashboard/mail.go).
+    if (path.includes("/sessions/") && path.endsWith("/message")) {
+      return reply({ session: "aaaa1111-1111", chat: "task-XR-1",
+        message: "реплика легла в разговор task-XR-1 дерева сессии" });
+    }
     if (path.includes("/message")) {
       if (post) {
         const line = "2026-08-15 10:00, из дашборда: " + JSON.parse(init.body).text;
@@ -1073,11 +1125,8 @@ timers.length = 0;
 byId.get("flashes").replaceChildren();
 taskRun.handlers.click({ stopPropagation: () => {} });
 await settle();
-if (sandbox.location.hash !== "demo/agent/XR-6") {
-  fail("удачный запуск с экрана задачи не увёл на экран этой работы: " + sandbox.location.hash);
-}
-if (!find(groups, "agent-panes-XR-6")) {
-  fail("после перехода экран агента не собрался: " + dump(groups).slice(0, 300));
+if (sandbox.location.hash !== "demo/XR-6/chat/XR-6") {
+  fail("удачный запуск с экрана задачи не увёл на её экран с разговором: " + sandbox.location.hash);
 }
 if (!dump(byId.get("flashes")).includes("сессия поднята")) {
   fail("переход на экран работы стёр карточку ответа на нажатие: " + dump(byId.get("flashes")));
@@ -1332,12 +1381,11 @@ if (button(dhead, "Остановить груминг")) {
   fail("стоп груминга остался и в шапке экрана: " + dump(dhead));
 }
 
-// Колонка хода видна и на телефоне. Класс tmuxbar на ней гасил её целиком:
-// правило `.tmuxbar{display:none}` заведено для вкладок экрана агента, а на
-// экране черновика вкладок нет, и onpane ей никто не ставит. С телефона за
-// идущим грумингом было не посмотреть, хотя шапка звала его идущим (браузерная
-// приёмка DK-321). Классы берутся с нарисованного узла, а правила из
-// настоящего style.css: своих представлений о стилях у стенда нет.
+// Колонка хода видна и на телефоне. Однажды её гасил чужой класс полосы tmux
+// экрана агента: вкладок на экране черновика нет, и onpane ей никто не ставил,
+// поэтому с телефона за идущим грумингом было не посмотреть, хотя шапка звала
+// его идущим (браузерная приёмка DK-321). Классы берутся с нарисованного узла,
+// а правила из настоящего style.css: своих представлений о стилях у стенда нет.
 const phoneCSS = mediaBlock(findCSS, "@media (max-width:900px)");
 if (!phoneCSS) fail("в style.css нет телефонной части: правило про колонку хода искать негде");
 const runClasses = String(runCol.className).split(" ").filter(Boolean);
@@ -1479,31 +1527,40 @@ if (dropped !== "мусор из одного слова show") {
 }
 for (const t of timers.splice(0)) t.fn();
 byId.get("flashes").replaceChildren();
-// Чат: лента, поле ввода и поток событий переживают обновление, а пришедшая
-// реплика не трогает соседних.
+// Панель разговора (DK-435): она стоит справа поверх любого экрана проекта и
+// живёт хвостом адреса. Лента, поле ввода и поток событий переживают
+// обновление экрана под ней, а пришедшая реплика не трогает соседних.
+const cpin = byId.get("cpin");
+const panelNode = byId.get("cpanel");
 await go("#demo/chat/XR-1");
-const thread = find(groups, "chat-thread-XR-1");
-if (!thread) fail("экран чата не собрался: " + dump(groups).slice(0, 200));
-// Цикл цели не идёт: чат говорит это словами и держит ту же ручку подъёма
+if (panelNode.hidden) fail("панель разговора не открылась по адресу с хвостом");
+const talkBox = byClass(cpin, "chatwrap");
+if (!talkBox) fail("тело панели не собралось: " + dump(cpin).slice(0, 300));
+// Экран под панелью остался доской: панель это хвост адреса, а не свой экран.
+if (!find(groups, "card-backlog")) {
+  fail("открытие панели пересобрало экран под ней: доски больше нет");
+}
+// Цикл цели не идёт: панель говорит это словами и держит ту же ручку подъёма
 // витка, что кнопка в ленте (DK-319). Молчаливое «ждёт витка» здесь и было
 // бедой: человек писал завершившемуся агенту и ждал ответа.
-const note = find(thread, "chat-note");
+const note = find(talkBox, "chat-note");
 if (!dump(note).includes("Цикл цели не идёт")) {
-  fail("чат молчит о стоящем цикле: " + dump(note));
+  fail("панель молчит о стоящем цикле: " + dump(note));
 }
 const raise = button(note, "Поднять виток");
-if (!raise || raise.hidden) fail("при стоящем цикле в чате нет ручки подъёма витка");
+if (!raise || raise.hidden) fail("при стоящем цикле в панели нет ручки подъёма витка");
 raise.handlers.click({ stopPropagation: () => {} });
 await settle();
 if (!running) fail("кнопка «Поднять виток» не позвала ручку запуска работы");
 running = false;
 
-const feed = thread.children[0];
+const feed = talkBox.children[0];
 const list = feed.children[1];
 const first = find(list, "seq-1");
-if (!first) fail("лента чата пуста: " + dump(feed));
-const ta = tag(thread, "TEXTAREA");
-if (!ta) fail("в чате нет поля ввода");
+if (!first) fail("лента панели пуста: " + dump(feed));
+const ta = tag(talkBox, "TEXTAREA");
+if (!ta) fail("в панели нет поля ввода");
+if (ta.disabled) fail("поле ввода погашено без причины: " + dump(note));
 ta.value = "набранный ответ";
 ta.selectionStart = 7;
 ta.selectionEnd = 7;
@@ -1513,13 +1570,13 @@ const opened = streams.length;
 await sandbox.refresh();
 await settle();
 
-if (find(groups, "chat-thread-XR-1") !== thread) {
-  fail("обновление пересобрало разговор целиком");
+if (byClass(cpin, "chatwrap") !== talkBox) {
+  fail("обновление экрана пересобрало панель целиком");
 }
-if (tag(thread, "TEXTAREA") !== ta || ta.value !== "набранный ответ") {
+if (tag(talkBox, "TEXTAREA") !== ta || ta.value !== "набранный ответ") {
   fail("обновление стёрло набранное в поле ввода: " + ta.value);
 }
-if (doc.activeElement !== ta) fail("обновление отобрало фокус у поля ввода чата");
+if (doc.activeElement !== ta) fail("обновление отобрало фокус у поля ввода панели");
 if (streams.length !== opened) {
   fail("обновление переоткрыло поток событий: было " + opened + ", стало " + streams.length);
 }
@@ -1535,8 +1592,9 @@ if (find(list, "seq-1") !== first) fail("приход реплики перес�
 if (!find(list, "seq-4")) fail("пришедшая реплика не встала в ленту");
 if (doc.activeElement !== ta) fail("приход реплики отобрал фокус у поля ввода");
 
-// Работа агента поднялась: в шапке появляется фишка, кнопка стопа зажигается,
-// а разговор остаётся тем же.
+// Работа агента поднялась: плашка перестаёт звать цикл стоящим, а разговор
+// остаётся тем же. Панель собрана один раз на разговор, и правится в ней от
+// перерисовки ровно эта плашка.
 running = true;
 rows[0].id = "XR-1";
 const chatWork = [{ id: "XR-1", via: "tmux", title: "Цель: дашборд без дёрганья" }];
@@ -1552,21 +1610,16 @@ sandbox.fetch = ((prev) => (path, init) => {
 await sandbox.refresh();
 await settle();
 
-if (find(groups, "chat-thread-XR-1") !== thread) {
-  fail("поднявшаяся работа пересобрала разговор");
+if (byClass(cpin, "chatwrap") !== talkBox) {
+  fail("поднявшаяся работа пересобрала панель");
 }
-const stop = find(thread, "chat-stop");
-if (!stop || stop.hidden) fail("кнопка стопа не появилась при работающем агенте");
-if (raise !== button(find(thread, "chat-note"), "Поднять виток") || !raise.hidden) {
-  fail("плашка чата не узнала о поднявшейся работе: ручка подъёма витка осталась на месте");
+if (raise !== button(find(talkBox, "chat-note"), "Поднять виток") || !raise.hidden) {
+  fail("плашка панели не узнала о поднявшейся работе: ручка подъёма витка осталась на месте");
 }
-if (!dump(find(thread, "chat-note")).includes("Сообщение уйдёт агенту")) {
-  fail("при работающем агенте плашка чата не обещает доставку витку: " + dump(find(thread, "chat-note")));
+if (!dump(find(talkBox, "chat-note")).includes("Сообщение уйдёт агенту")) {
+  fail("при работающем агенте плашка не обещает доставку витку: " + dump(find(talkBox, "chat-note")));
 }
-if (!dump(find(groups, "chat-head")).includes("агент работает")) {
-  fail("шапка чата не узнала о работе агента: " + dump(find(groups, "chat-head")));
-}
-if (doc.activeElement !== ta) fail("обновление шапки отобрало фокус у поля ввода");
+if (doc.activeElement !== ta) fail("обновление плашки отобрало фокус у поля ввода");
 if (wasWorks !== works) fail("стенд подменил источник работ мимо ручек");
 
 // Цикл цели ведёт не только tmux-сессия дашборда: цель из реестра и живое окно
@@ -1578,20 +1631,16 @@ for (const via of ["registry", "session"]) {
   chatWork[0].via = via;
   await sandbox.refresh();
   await settle();
-  const shown = find(thread, "chat-note");
+  const shown = find(talkBox, "chat-note");
   if (dump(shown).includes("Цикл цели не идёт")) {
-    fail("плашка чата зовёт стоящим цикл, который ведёт " + via + ": " + dump(shown));
+    fail("плашка зовёт стоящим цикл, который ведёт " + via + ": " + dump(shown));
   }
   if (!dump(shown).includes("Сообщение уйдёт агенту")) {
-    fail("плашка чата при работе via " + via + " не обещает доставку витку: " + dump(shown));
+    fail("плашка при работе via " + via + " не обещает доставку витку: " + dump(shown));
   }
   const up = button(shown, "Поднять виток");
-  if (!up || !up.hidden) fail("при работе via " + via + " в чате осталась кнопка подъёма витка");
-  const kill = find(thread, "chat-stop");
-  if (!kill || !kill.hidden) fail("кнопка стопа зажглась у работы via " + via + ", которую стоп не берёт");
+  if (!up || !up.hidden) fail("при работе via " + via + " в панели осталась кнопка подъёма витка");
 }
-// Признак возвращается к tmux-сессии: дальше стенд идёт разделом экрана
-// агента, писанным поверх работающей tmux-сессии.
 chatWork[0].via = "tmux";
 
 // Разговор с целью (DK-342): реплика доезжает до идущего витка подхватом, и знать
@@ -1602,9 +1651,9 @@ const tick = async () => {
   for (const t of timers.splice(0)) t.fn();
   await settle();
 };
-const pendbox = thread.children[1];
+const pendbox = talkBox.children[1];
 ta.value = "стой, не туда";
-button(thread, "Отправить").handlers.click({ stopPropagation: () => {} });
+button(talkBox, "Отправить").handlers.click({ stopPropagation: () => {} });
 await settle();
 if (!dump(pendbox).includes("стой, не туда") || !dump(pendbox).includes("ждёт витка")) {
   fail("отправленная реплика не встала в очередь исходящих: " + dump(pendbox));
@@ -1614,8 +1663,8 @@ if (!dump(pendbox).includes("стой, не туда") || !dump(pendbox).include
 // живость приходит с ручки сообщения, и списком работ экрана она не берётся.
 mail.live = true;
 await tick();
-if (!dump(find(thread, "chat-note")).includes("за минуты")) {
-  fail("при живом витке плашка не обещает доставку за минуты: " + dump(find(thread, "chat-note")));
+if (!dump(find(talkBox, "chat-note")).includes("за минуты")) {
+  fail("при живом витке плашка не обещает доставку за минуты: " + dump(find(talkBox, "chat-note")));
 }
 if (dump(pendbox).includes("доставлено агенту")) {
   fail("реплика без отметки записана в доставленные: " + dump(pendbox));
@@ -1625,8 +1674,8 @@ if (dump(pendbox).includes("доставлено агенту")) {
 // доставленной со временем и сессией, страница при этом та же самая.
 mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:03:00", session: "8f2a1c30-1111-2222" }];
 await tick();
-if (find(groups, "chat-thread-XR-1") !== thread) {
-  fail("отметка доставки пересобрала разговор целиком");
+if (byClass(cpin, "chatwrap") !== talkBox) {
+  fail("отметка доставки пересобрала панель целиком");
 }
 if (!dump(pendbox).includes("доставлено агенту")) {
   fail("доставленная реплика осталась ждущей витка: " + dump(pendbox));
@@ -1647,7 +1696,7 @@ if (!dump(pendbox).includes("доставлено агенту") || dump(pendbox
 // словам про следующую итерацию, хотя работа на экране осталась.
 mail.live = false;
 await tick();
-const idleNote = dump(find(thread, "chat-note"));
+const idleNote = dump(find(talkBox, "chat-note"));
 if (idleNote.includes("за минуты") || !idleNote.includes("следующей рабочей итерации")) {
   fail("плашка обещает минуты цели, до которой доставлять некому: " + idleNote);
 }
@@ -1673,214 +1722,161 @@ if (!dump(pendbox).includes("доставлено агенту") || !dump(pendbo
   fail("чужая строка осталась ждущей после отметки доставки: " + dump(pendbox));
 }
 
-// Экран агента: у задачи два разговора, и в одну ленту они не смешиваются
-// (DK-290). Экран перечитывается по фокусу окна, а список сессий стоит по
-// времени последней записи: соседняя работа, дописавшая свой транскрипт,
-// выходит наверх, и собранная заново лента открывалась по нулевому элементу,
-// то есть меняла разговор под читающим.
+// Панель над экраном задачи: тот же хвост адреса, и «назад» закрывает её,
+// возвращая экран под ней на прежнее место. Открывает панель кнопка полосы
+// действий, отдельного экрана разговора больше нет.
 const talkStreams = () => streams.filter((s) => String(s.url).includes("/sessions/"));
 const liveTalks = () => talkStreams().filter((s) => !s.closed);
-// Дострение продолжает нумерацию хвоста: лента открывается им (?n=), и
-// реплика с прежним номером это та же реплика, которую поток шлёт заново.
-// Первый свободный номер идёт за последней репликой заготовки.
 const nextSeq = talk[talk.length - 1].seq + 1;
-const talkReply = (es, seq, text) => {
-  es.onmessage({ data: JSON.stringify({ seq, role: "assistant", text, time: "2026-08-13T10:05:00+03:00" }) });
+const talkReply = (es2, seq, text) => {
+  es2.onmessage({ data: JSON.stringify({ seq, role: "assistant", text, time: "2026-08-13T10:05:00+03:00" }) });
 };
 
 sessions = [mine, alien];
-await go("#demo/agent/XR-1");
-const panes = find(groups, "agent-panes-XR-1");
-if (!panes) fail("экран агента не собрался: " + dump(groups).slice(0, 300));
-const seg = byClass(panes, "tseg");
-if (!seg || seg.children.length !== 2) {
-  fail("разговоров задачи на экране агента не видно списком: " + dump(panes).slice(0, 300));
-}
-// Подпись разговора: время последней записи, дерево или ветка, первая реплика.
-// Время берётся тем же переводом, что и на экране, иначе стенд держал бы пояс
-// машины, на которой его гоняют.
-for (const want of [sandbox.localTime(alien.mtime), alien.tree, alien.first, mine.first]) {
-  if (!dump(seg).includes(want)) {
-    fail("в списке разговоров нет подписи " + JSON.stringify(want) + ": " + dump(seg));
-  }
-}
-if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
-  fail("открыт не свежий разговор: " + JSON.stringify(liveTalks().map((s) => s.url)));
-}
-const ours = liveTalks()[0];
-talkReply(ours, nextSeq, "ход первого разговора");
-await settle();
-if (!dump(panes).includes("ход первого разговора")) {
-  fail("реплика открытого разговора не встала в ленту: " + dump(panes).slice(0, 300));
-}
-
-// Соседняя работа дописала транскрипт и вышла в списке наверх, а окно вернуло
-// себе фокус.
-sessions = [alien, mine];
-await sandbox.refresh();
-await settle();
-
-if (find(groups, "agent-panes-XR-1") !== panes) {
-  fail("обновление по фокусу окна пересобрало панели экрана агента");
-}
-if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
-  fail("обновление сменило открытый разговор на соседний: " +
-    JSON.stringify(liveTalks().map((s) => s.url)));
-}
-if (!dump(panes).includes(mine.id.slice(0, 8))) {
-  fail("подпись ленты не называет открытый разговор: " + dump(panes).slice(0, 300));
-}
-if (!dump(panes).includes("ход первого разговора")) {
-  fail("обновление собрало ленту заново: прежние реплики пропали");
-}
-talkReply(ours, nextSeq + 1, "ещё реплика первого");
-await settle();
-if (!dump(panes).includes("ещё реплика первого")) {
-  fail("после обновления лента дописывается мимо экрана");
-}
-
-// Переключение на соседний разговор: лента собирается заново им одним,
-// дострение прежнего снимается, и реплики двух разговоров рядом не стоят.
-seg.children[1].handlers.click();
-await settle();
-if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(alien.id)) {
-  fail("переключатель не открыл соседний разговор: " +
-    JSON.stringify(liveTalks().map((s) => s.url)));
-}
-talkReply(liveTalks()[0], nextSeq, "ход соседнего разговора");
-await settle();
-if (!dump(panes).includes("ход соседнего разговора")) {
-  fail("реплика соседнего разговора не встала в ленту после переключения");
-}
-if (dump(panes).includes("ход первого разговора")) {
-  fail("лента склеила разговоры: реплики прежнего остались под репликами соседнего");
-}
-
-// Уход с экрана и возврат: список опять стоит свежим разговором сверху, а
-// открывается выбранный человеком.
-sessions = [mine, alien];
 await go("#demo");
-await go("#demo/agent/XR-1");
-if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(alien.id)) {
-  fail("возврат на экран открыл не выбранный разговор: " +
+await go("#demo/XR-1");
+const talkBtn = barButton(groups, "Живой статус") || barButton(groups, "Разговор агента");
+if (!talkBtn) fail("на экране задачи нет входа в разговор: " + dump(groups).slice(0, 300));
+talkBtn.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (sandbox.location.hash.replace(/^#/, "") !== "demo/XR-1/chat/XR-1") {
+  fail("разговор с экрана задачи открылся не хвостом адреса: " + sandbox.location.hash);
+}
+if (panelNode.hidden) fail("панель не открылась с экрана задачи");
+if (!find(groups, "tpage") && !dump(groups).includes("XR-1")) {
+  fail("экран задачи ушёл из-под панели: " + dump(groups).slice(0, 200));
+}
+// Лента панели поднята по свежему разговору задачи: их у неё два, и открывается
+// последний (вкладка чатов это отдельная строка DK-436).
+if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(mine.id)) {
+  fail("панель открыла не свежий разговор задачи: " +
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
-
-// Уход с экрана на середине запроса за сессиями: запоздавший ответ поднимал
-// поток уже после того, как остальные закрыли, и закрывать его было некому.
-slowSessions = true;
-await go("#demo");
-sandbox.location.hash = "#demo/agent/XR-1";
-await sandbox.refresh();
-sandbox.location.hash = "#demo";
-await sandbox.refresh();
+talkReply(liveTalks()[0], nextSeq, "ход открытого разговора");
 await settle();
+if (!dump(cpin).includes("ход открытого разговора")) {
+  fail("реплика открытого разговора не встала в ленту: " + dump(cpin).slice(0, 300));
+}
+// Крестик работает кнопкой «назад»: панель закрывается, а экран задачи под ней
+// остаётся тем же самым.
+const shut = tag(byClass(cpin, "chead"), "BUTTON");
+if (!shut) fail("в шапке панели нет крестика: закрыть её нечем");
+shut.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (sandbox.location.hash.replace(/^#/, "") !== "demo/XR-1") {
+  fail("крестик панели увёл не на экран под ней: " + sandbox.location.hash);
+}
+if (!panelNode.hidden) fail("панель осталась открытой после крестика");
 if (liveTalks().length) {
-  fail("уход с экрана оставил поток разговора живым: " +
+  fail("закрытая панель оставила живой поток ленты: " +
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
 
-// Вкладка по умолчанию на телефоне (DK-305): у живой работы это «Журнал», а
-// у законченной «Лог витка». Журнал законченной работы пуст, а разговор ради
-// него и приходят смотреть на узкий экран: второе касание экрану больше не
-// нужно.
-slowSessions = false;
-sessions = [mine, alien];
+// Старые адреса ведут в ту же панель: ссылка на живой статус открывает экран
+// задачи с разговором, ссылка на сессию открывает доску с ним же.
 await go("#demo/agent/XR-1");
-let livePanes = find(groups, "agent-panes-XR-1");
-if (!livePanes) fail("экран агента живой работы не собрался");
-let tabSeg = byClass(livePanes, "seg");
-if (!tabSeg) fail("на экране агента нет переключателя вкладок телефона");
-if (tabSeg.children[0].className !== "on" || tabSeg.children[1].className === "on") {
-  fail("у живой работы вкладкой по умолчанию встал не «Журнал»: " + dump(tabSeg));
+if (panelNode.hidden) fail("старый адрес живого статуса не открыл панель");
+if (!dump(groups).includes("XR-1")) {
+  fail("старый адрес живого статуса открыл не экран задачи: " + dump(groups).slice(0, 200));
 }
-let grid = livePanes.children[1];
-if (!String(grid.children[0].className).includes("onpane")) {
-  fail("у живой работы панель «Журнал» не открыта вкладкой: " + grid.children[0].className);
-}
-
-// Обновление ленты не перебивает ручной выбор человека: панели собираются
-// один раз на заход и обновлением по фокусу окна не пересобираются.
-tabSeg.children[1].handlers.click();
-await settle();
-if (tabSeg.children[1].className !== "on" || tabSeg.children[0].className === "on") {
-  fail("нажатие на вкладку «Лог витка» её не выбрало: " + dump(tabSeg));
-}
-await sandbox.refresh();
-await settle();
-if (byClass(find(groups, "agent-panes-XR-1"), "seg").children[1].className !== "on") {
-  fail("обновление ленты сбросило выбранную человеком вкладку");
-}
-
-// Работа кончилась: тот же id больше не встречается среди works, экран агента
-// открывается вкладкой «Лог витка» по умолчанию.
-const wasChatId = chatWork[0].id;
-chatWork[0].id = "XR-9";
-await go("#demo");
-await go("#demo/agent/XR-1");
-chatWork[0].id = wasChatId;
-const donePanes = find(groups, "agent-panes-XR-1");
-if (!donePanes) fail("экран агента законченной работы не собрался");
-tabSeg = byClass(donePanes, "seg");
-if (tabSeg.children[1].className !== "on" || tabSeg.children[0].className === "on") {
-  fail("у законченной работы вкладкой по умолчанию встал не «Лог витка»: " + dump(tabSeg));
-}
-grid = donePanes.children[1];
-if (!String(grid.children[1].className).includes("onpane")) {
-  fail("у законченной работы панель «Лог витка» не открыта вкладкой: " + grid.children[1].className);
-}
-
-// Разговор живой сессии, чью задачу узнать не удалось (DK-294). Карточка такой
-// сессии в полосе живых работ стояла мёртвой: экран агента открывался по ID
-// задачи, а его-то у неё и нет, при том что транскрипт лежит на диске. Теперь
-// карточка ведёт на тот же экран вторым входом, по id сессии.
-chatWork.push({ kind: "session", via: "session", session: loose.id, note: "задача не распознана" });
-await go("#demo");
-const band = byId.get("live");
-const looseCard = band.children[band.children.length - 1];
-if (!dump(looseCard).includes("интерактивная сессия")) {
-  fail("в полосе живых работ нет карточки нераспознанной сессии: " + dump(band));
-}
-const looseLabel = tag(looseCard, "B");
-if (!looseLabel || !looseLabel.handlers.click) {
-  fail("карточка нераспознанной сессии никуда не ведёт: разговор с полосы не открыть");
-}
-looseLabel.handlers.click();
-if (!String(sandbox.location.hash).endsWith("demo/session/" + loose.id)) {
-  fail("карточка ведёт не на разговор по id сессии: " + sandbox.location.hash);
-}
-
 await go("#demo/session/" + loose.id);
-const sessPanes = find(groups, "agent-panes-session-" + loose.id);
-if (!sessPanes) fail("экран разговора по id сессии не собрался: " + dump(groups).slice(0, 300));
-const sessHead = find(groups, "agent-head");
-if (!dump(sessHead).includes(loose.first)) {
-  fail("шапка разговора взята не из первой реплики: " + dump(sessHead));
+if (panelNode.hidden) fail("старый адрес разговора сессии не открыл панель");
+if (!find(groups, "card-backlog")) {
+  fail("старый адрес разговора сессии открыл не доску: " + dump(groups).slice(0, 200));
 }
-if (!dump(sessHead).includes("задача не распознана")) {
-  fail("шапка разговора молчит о том, что задача не узнана: " + dump(sessHead));
+// Разговор без узнанной задачи: заголовок берётся из первой реплики, подпись
+// говорит, что задача не распознана, и рядом стоит привязка рукой (DK-294,
+// DK-431).
+const looseHead = byClass(cpin, "chead");
+if (!dump(looseHead).includes(loose.first)) {
+  fail("шапка панели взята не из первой реплики: " + dump(looseHead));
 }
-// Журнал и tmux названы отсутствующими, а не нарисованы пустыми: оба ищутся по
-// ID задачи, и брать их у такого разговора неоткуда.
-for (const want of ["Журнал агента ищется по ID задачи", "tmux-сессия ищется по ID задачи"]) {
-  if (!dump(sessPanes).includes(want)) {
-    fail("на экране разговора нет слов о нехватке (" + want + "): " + dump(sessPanes).slice(0, 300));
-  }
+if (!dump(looseHead).includes("задача не распознана")) {
+  fail("шапка панели молчит о том, что задача не узнана: " + dump(looseHead));
+}
+if (!button(looseHead, "Привязать к задаче")) {
+  fail("в шапке панели нет привязки разговора к задаче: " + dump(looseHead));
 }
 if (streams.some((s) => !s.closed && String(s.url).includes("/log?stream=1"))) {
-  fail("экран разговора поднял поток журнала, которого у сессии нет");
+  fail("панель разговора подняла поток журнала, который живёт на экране задачи");
 }
-// Лента дострачивается потоком этой самой сессии.
 if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(loose.id)) {
-  fail("на экране разговора открыт не поток этой сессии: " +
+  fail("в панели открыт не поток этой сессии: " +
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
-talkReply(liveTalks()[0], nextSeq, "ход нераспознанного разговора");
+
+// Ввод гаснет только с названной причиной, и причин ровно четыре (решение 6
+// LLD DK-430). Сервер называет свою: кончившийся разговор ручки не получает, и
+// панель повторяет его слова, а рядом ставит дорогу, привязку к задаче.
+headExtra.reply = "";
+headExtra.replyNote = "дерева сессии больше нет: разговор кончился, и продолжить его некому";
+await go("#demo");
+await go("#demo/chat/" + loose.id);
+const offWrap = byClass(cpin, "chatwrap");
+const offTa = tag(offWrap, "TEXTAREA");
+if (!offTa || !offTa.disabled) fail("кончившийся разговор оставил поле ввода живым");
+if (!dump(find(offWrap, "chat-note")).toLowerCase().includes("дерева сессии больше нет")) {
+  fail("гашение ввода без названной причины: " + dump(find(offWrap, "chat-note")));
+}
+if (!button(offWrap, "Привязать к задаче")) {
+  fail("у погашенного ввода нет дороги: привязать разговор к задаче нечем");
+}
+if (!button(offWrap, "Отправить").disabled) {
+  fail("кнопка отправки жива у погашенного ввода: реплике уйти некуда");
+}
+headExtra.reply = "session";
+headExtra.replyNote = "";
+
+// Живая сессия задачи, которой цель не является: ввод стоит, а реплика уходит
+// ручкой разговора, не ручкой цели.
+sessions = [mine];
+rows[0].title = "Живая задача без цели";
+await go("#demo");
+await go("#demo/chat/XR-1");
+const taskWrap = byClass(cpin, "chatwrap");
+const taskTa = tag(taskWrap, "TEXTAREA");
+if (!taskTa || taskTa.disabled) {
+  fail("у живого разговора обычной задачи погашено поле ввода: " + dump(find(taskWrap, "chat-note")));
+}
+taskTa.value = "проверь тесты";
+button(taskWrap, "Отправить").handlers.click({ stopPropagation: () => {} });
 await settle();
-if (!dump(sessPanes).includes("ход нераспознанного разговора")) {
-  fail("реплика не встала в ленту экрана, открытого по id сессии");
+if (!posted.some((p) => p.includes("/sessions/" + mine.id + "/message"))) {
+  fail("реплика живого разговора ушла не ручкой сессии: " + JSON.stringify(posted));
+}
+rows[0].title = "Цель: дашборд без дёрганья";
+sessions = [mine, alien];
+
+// Ширина панели помнится одним числом на весь дашборд и не выходит за пределы:
+// схлопнутая до нуля и разъехавшаяся на весь экран панель одинаково бесполезны.
+if (sandbox.chatWidth() !== 420) fail("ширина по умолчанию не та: " + sandbox.chatWidth());
+store.set("devkit.chat.width", "900");
+if (sandbox.chatWidth() !== 640) fail("ширина не прижата к потолку: " + sandbox.chatWidth());
+store.set("devkit.chat.width", "100");
+if (sandbox.chatWidth() !== 320) fail("ширина не прижата к полу: " + sandbox.chatWidth());
+sandbox.saveChatWidth(505);
+if (store.get("devkit.chat.width") !== "505") {
+  fail("ширина не запомнилась между заходами: " + store.get("devkit.chat.width"));
+}
+
+// Экран задачи забрал себе то, что ушло из разговора: журнал витка, признак
+// живости, этап работы и кнопку стопа (DK-435).
+await go("#demo");
+await go("#demo/XR-1");
+if (!dump(groups).includes("Журнал витка")) {
+  fail("журнал витка не переехал на экран задачи: " + dump(groups).slice(0, 300));
+}
+if (!dump(groups).includes("tmux-сессия активна")) {
+  fail("признака живости на экране задачи нет: " + dump(groups).slice(0, 300));
+}
+if (!barButton(groups, "Остановить агента")) {
+  fail("кнопки стопа на экране задачи нет: " + dump(groups).slice(0, 300));
+}
+if (!dump(groups).includes("разработка")) {
+  fail("этап работы не встал на экран задачи: " + dump(groups).slice(0, 300));
 }
 chatWork.pop();
+await go("#demo");
 
 // Ответ на нажатие: он приходит карточкой поверх экрана и не двигает
 // раскладку. Строкой над списком он стоял в потоке документа, и появление слов

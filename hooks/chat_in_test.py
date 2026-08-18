@@ -461,7 +461,7 @@ class AskTest(GoalCase):
         with open(os.path.join(s.dev, "goal-DK-100.ask"), "w", encoding="utf-8") as f:
             f.write(until + "\n")
 
-    def test_live_wait_holds_the_postman(self):
+    def test_live_wait_holds_the_chat_hook(self):
         s = self.stand()
         s.incoming("2026-08-15 14:03, из дашборда: да")
         self.wait_flag(s, stamp(600))

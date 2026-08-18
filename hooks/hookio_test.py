@@ -147,7 +147,7 @@ class TestBadEvent(unittest.TestCase):
         # Проверке текста причина ни к чему: смотреть нечего, и хук уходит нулём.
         self.assertIsNone(hookio.write_event(hookio.DEFAULT, io.StringIO("не json")))
 
-    def test_the_postman_sees_nothing_to_deliver_to(self):
+    def test_the_chat_hook_sees_nothing_to_deliver_to(self):
         # Подхват реплики стоит на каждом ходе чужой работы: кривой вход это тихий
         # ноль, а не traceback посреди витка.
         self.assertIsNone(hookio.tool_event(hookio.DEFAULT, io.StringIO("не json")))

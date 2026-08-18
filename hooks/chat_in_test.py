@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Самопроверка почтальона inbox.py. Хук гоняется процессом с подсунутым stdin,
-как гоняются остальные хуки: код возврата и stdout это ровно то, что видит
-харнес, а разбор внутри проверяется через них. Стенд у каждого теста свой:
-временный HOME с реестром целей и временный корень цели с файлом цели, доской и
-каталогом .devkit, так что ни чужой цели, ни настоящего ~/.devkit прогон не
-касается.
+"""Самопроверка подхвата реплики chat-in.py на носителе цели. Хук гоняется
+процессом с подсунутым stdin, как гоняются остальные хуки: код возврата и stdout
+это ровно то, что видит харнес, а разбор внутри проверяется через них. Стенд у
+каждого теста свой: временный HOME с реестром целей и временный корень цели с
+файлом цели, доской и каталогом .devkit, так что ни чужой цели, ни настоящего
+~/.devkit прогон не касается.
 
 Корень стенда лежит под tempfile.mkdtemp, то есть на macOS под /var/folders, и
-это не мелочь фикстуры: своего правила про песочницу у почтальона нет нарочно,
-и цель с корнем под временным каталогом получает почту наравне с любой другой.
+это не мелочь фикстуры: своего правила про песочницу у подхвата нет нарочно, и
+цель с корнем под временным каталогом получает реплики наравне с любой другой.
 Правило песочницы, заведённое заново, красит тут каждый тест доставки.
 """
 import fcntl
@@ -22,7 +22,7 @@ import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-INBOX = os.path.join(HERE, "inbox.py")
+HOOK = os.path.join(HERE, "chat-in.py")
 STAMP = "%Y-%m-%dT%H:%M:%S"
 
 GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
@@ -54,17 +54,17 @@ def stamp(shift=0.0):
 class Stand:
     """Один стенд: HOME с реестром целей и корень цели со своим .devkit."""
 
-    def __init__(self, box, name):
-        self.home = os.path.join(box, name, "home")
-        self.root = os.path.join(box, name, "proj")
+    def __init__(self, tmp, name):
+        self.home = os.path.join(tmp, name, "home")
+        self.root = os.path.join(tmp, name, "proj")
         self.goal = os.path.join(self.root, "docs", "tasks", "DK-100.md")
         self.dev = os.path.join(self.root, ".devkit")
-        self.mail = os.path.join(self.dev, "goal-DK-100.mail")
+        self.markfile = os.path.join(self.dev, "goal-DK-100.mail")
         self.lock = os.path.join(self.dev, "goal-DK-100.lock")
         os.makedirs(os.path.dirname(self.goal))
         os.makedirs(self.dev)
         os.makedirs(os.path.join(self.home, ".devkit", "goals"))
-        self.inbox()
+        self.incoming()
         self.register()
 
     def register(self, goal="DK-100", file=None, **fields):
@@ -77,7 +77,7 @@ class Stand:
                                "%s-stand.watch" % goal), "w", encoding="utf-8") as f:
             f.write(body)
 
-    def inbox(self, *lines, section=True):
+    def incoming(self, *lines, section=True):
         """Файл цели с разделом «Входящие» из этих строк."""
         block = ""
         if section:
@@ -99,7 +99,7 @@ class Stand:
 
     def marks(self, *rows):
         """Отметки доставки: пары «время сессия» и строка «Входящих»."""
-        with open(self.mail, "w", encoding="utf-8") as f:
+        with open(self.markfile, "w", encoding="utf-8") as f:
             for session, line in rows:
                 f.write("%s %s\n%s\n" % (stamp(), session, line))
 
@@ -114,10 +114,10 @@ class Stand:
             event["agent_type"] = agent
             event["agent_id"] = "a1b2c3"
         env = dict(os.environ, HOME=self.home)
-        env.pop("DEVKIT_INBOX_TRACE", None)
+        env.pop("DEVKIT_CHAT_TRACE", None)
         if trace:
-            env["DEVKIT_INBOX_TRACE"] = "1"
-        argv = [sys.executable, INBOX, "--hook"] + ([protocol] if protocol else [])
+            env["DEVKIT_CHAT_TRACE"] = "1"
+        argv = [sys.executable, HOOK, "--hook"] + ([protocol] if protocol else [])
         return subprocess.run(argv, input=json.dumps(event) if raw is None else raw,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, env=env)
@@ -130,24 +130,24 @@ class Stand:
             return ""
 
     def journal(self):
-        return self.read(os.path.join(self.home, ".devkit", "inbox.log"))
+        return self.read(os.path.join(self.home, ".devkit", "chat-in.log"))
 
     def marks_text(self):
-        return self.read(self.mail)
+        return self.read(self.markfile)
 
     def cycle_text(self):
         return self.read(os.path.join(self.dev, "goal-DK-100.log"))
 
 
-class InboxCase(unittest.TestCase):
+class GoalCase(unittest.TestCase):
     def setUp(self):
-        self.box = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.box, ignore_errors=True)
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.n = 0
 
     def stand(self):
         self.n += 1
-        return Stand(self.box, "s%d" % self.n)
+        return Stand(self.tmp, "s%d" % self.n)
 
     def dead_pid(self):
         p = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -175,10 +175,10 @@ class InboxCase(unittest.TestCase):
         self.assertEqual(p.stdout.strip(), "", "хук ответил там, где доставлять нечего")
 
 
-class DeliveryTest(InboxCase):
+class DeliveryTest(GoalCase):
     def test_lying_line_goes_into_the_turn(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: посмотри ещё на DK-1")
+        s.incoming("2026-08-15 14:03, из дашборда: посмотри ещё на DK-1")
         text = self.added(s.run())
         self.assertIn("DK-100", text)
         self.assertIn("посмотри ещё на DK-1", text)
@@ -186,32 +186,32 @@ class DeliveryTest(InboxCase):
         self.assertIn("2026-08-15 14:03, из дашборда: посмотри ещё на DK-1", s.marks_text())
         self.assertIn("c0ffee-1111-2222-3333-444455556666", s.marks_text())
         # Доставку видно снаружи: строка в журнале цикла и строка в своём журнале.
-        self.assertIn("почта: витку доставлена реплика", s.cycle_text())
+        self.assertIn("разговор: витку доставлена реплика", s.cycle_text())
         self.assertIn("доставлено строк 1", s.journal())
 
-    def test_empty_inbox_says_nothing(self):
+    def test_empty_incoming_says_nothing(self):
         s = self.stand()
         self.silent(s.run())
         self.assertEqual(s.journal(), "")
-        s.inbox()
+        s.incoming()
         self.silent(s.run())
         self.assertEqual(s.journal(), "")
 
     def test_second_tool_turn_does_not_repeat_the_line(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.added(s.run())
         self.silent(s.run())
-        self.assertEqual(s.cycle_text().count("почта:"), 1)
+        self.assertEqual(s.cycle_text().count("разговор:"), 1)
 
     def test_same_text_sent_again_after_the_turn_took_it(self):
         # Повтор той же реплики через час: строка «Входящих» другая (в ней
         # время), а старая отметка ей не мешает, потому что своей строки во
         # «Входящих» у неё уже нет.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.added(s.run())
-        s.inbox("2026-08-15 15:10, из дашборда: да")
+        s.incoming("2026-08-15 15:10, из дашборда: да")
         text = self.added(s.run())
         self.assertIn("15:10", text)
         self.assertNotIn("14:03", s.marks_text())
@@ -219,31 +219,31 @@ class DeliveryTest(InboxCase):
     def test_mark_without_its_line_is_not_carried_over(self):
         s = self.stand()
         s.marks(("s-old", "2026-08-15 12:00, из дашборда: подхваченная витком"))
-        s.inbox("2026-08-15 14:03, из дашборда: новая")
+        s.incoming("2026-08-15 14:03, из дашборда: новая")
         self.added(s.run())
         self.assertNotIn("подхваченная витком", s.marks_text())
         self.assertIn("новая", s.marks_text())
 
     def test_line_marked_by_ask_is_left_alone(self):
-        # Ящик общий: строку, съеденную ключом --ask, отметил он сам, и второй
+        # Вход общий: строку, съеденную ключом --ask, отметил он сам, и второй
         # раз витку она не едет. Сессии у такой отметки нет, и это не битая
         # запись, а виток живого чата, у которого замка нет.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: ответ на вопрос витка")
+        s.incoming("2026-08-15 14:03, из дашборда: ответ на вопрос витка")
         s.marks(("-", "2026-08-15 14:03, из дашборда: ответ на вопрос витка"))
         self.silent(s.run())
         self.assertEqual(s.cycle_text(), "")
 
     def test_two_goals_in_one_root_both_deliver_one_record(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: одна почта на два ящика")
+        s.incoming("2026-08-15 14:03, из дашборда: одна реплика на две цели")
         s.register(goal="DK-200")
         text = self.added(s.run())
-        self.assertEqual(text.count("одна почта на два ящика"), 2, text)
+        self.assertEqual(text.count("одна реплика на две цели"), 2, text)
 
     def test_broken_input_is_a_quiet_zero(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run(raw="это не json"))
         self.silent(s.run(raw='"json не объектом"'))
         self.assertEqual(s.marks_text(), "")
@@ -255,21 +255,21 @@ class DeliveryTest(InboxCase):
         self.assertIn("нет-такого", p.stderr)
 
 
-class MarksTest(InboxCase):
+class MarksTest(GoalCase):
     def test_failed_mark_cancels_the_delivery(self):
         # Файл отметок подменён директорией: запись падает, и доставки не
         # происходит вовсе. Порядок тут и проверяется, отметка до доставки.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
-        os.makedirs(s.mail)
+        s.incoming("2026-08-15 14:03, из дашборда: да")
+        os.makedirs(s.markfile)
         self.silent(s.run())
         self.assertEqual(s.cycle_text(), "")
         self.assertIn("отметку доставки не записать", s.journal())
 
     def test_foreign_flock_stops_the_delivery(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
-        fd = os.open(s.mail + ".lock", os.O_CREAT | os.O_RDWR, 0o644)
+        s.incoming("2026-08-15 14:03, из дашборда: да")
+        fd = os.open(s.markfile + ".lock", os.O_CREAT | os.O_RDWR, 0o644)
         self.addCleanup(os.close, fd)
         fcntl.flock(fd, fcntl.LOCK_EX)
         self.silent(s.run())
@@ -280,33 +280,33 @@ class MarksTest(InboxCase):
         # Замок стоит на соседнем файле, а не на самом файле отметок: тот
         # пересоздаётся на каждой записи, и замок на нём разъезжался бы с путём.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.added(s.run())
-        self.assertTrue(os.path.isfile(s.mail + ".lock"), "замка отметок нет")
+        self.assertTrue(os.path.isfile(s.markfile + ".lock"), "замка отметок нет")
 
 
-class AddressTest(InboxCase):
+class AddressTest(GoalCase):
     def test_task_tree_gets_no_mail(self):
         # Дерево задачи стоит рядом с корнем цели и начинается с его имени:
         # сверка подстрокой пустила бы ход исполнителя под адрес цели.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run(cwd=s.root + "-dk-101"))
         self.assertEqual(s.marks_text(), "")
         self.assertEqual(s.journal(), "")
 
     def test_transcript_does_not_replace_the_tree(self):
         # Дерево берётся из cwd события, а не из транскрипта: у хода в дереве
-        # задачи транскрипт называет корень цели, и почта уехала бы исполнителю.
+        # задачи транскрипт называет корень цели, и реплика уехала бы исполнителю.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         p = s.run(cwd=os.path.join(s.root + "-dk-101"))
         self.silent(p)
         self.assertEqual(s.cycle_text(), "")
 
     def test_sandbox_path_leaves_quietly_and_names_itself_under_trace(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         sand = "/private/tmp/claude-501/-Users-rider-projects-devkit/abc/scratchpad/cap/work"
         self.silent(s.run(cwd=sand))
         self.assertEqual(s.journal(), "", "чужой путь написал строку без ключа трассировки")
@@ -314,12 +314,12 @@ class AddressTest(InboxCase):
         self.assertIn(sand, s.journal())
 
     def test_goal_under_a_temporary_root_gets_mail_as_any_other(self):
-        # Стенд целиком лежит под временным каталогом, и почта до него доезжает:
+        # Стенд целиком лежит под временным каталогом, и реплика до него доезжает:
         # правило песочницы, заведённое заново, красит этот тест.
         s = self.stand()
         self.assertTrue(s.root.startswith(tempfile.gettempdir()) or "/var/folders" in s.root
                         or "/private/var" in s.root, "стенд не под временным корнем: %s" % s.root)
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run()))
 
     def test_symlinked_temporary_root_still_matches(self):
@@ -331,17 +331,17 @@ class AddressTest(InboxCase):
         real = os.path.realpath(s.root)
         if real == s.root:
             self.skipTest("на этой машине корень стенда без симлинка")
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run(cwd=real)))
         # Граница пути при этом остаётся границей, а не подстрокой.
-        s.inbox("2026-08-15 15:03, из дашборда: второе")
+        s.incoming("2026-08-15 15:03, из дашборда: второе")
         self.silent(s.run(cwd=real + "-dk-101"))
 
     def test_subagent_turn_gets_no_mail(self):
         # Роль в событии хода субагента есть, и отсев ею жёстче географии:
         # Explore и proofread виток зовёт по своему же дереву.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run(agent="general-purpose"))
         self.assertEqual(s.marks_text(), "")
 
@@ -350,18 +350,18 @@ class AddressTest(InboxCase):
         # всё равно сходится.
         s = self.stand()
         s.register(root="..")
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run()))
 
 
-class ShellSessionTest(InboxCase):
+class ShellSessionTest(GoalCase):
     def test_live_lock_delivers_only_to_the_named_turn(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         s.shell_lock(self.live_pid(), "turn-1111")
         self.silent(s.run(session="соседнее-окно"))
         self.assertEqual(s.marks_text(), "")
-        self.assertIn("почта адресована витку turn-1111", s.journal())
+        self.assertIn("реплика адресована витку turn-1111", s.journal())
         self.assertIn("соседнее-окно", s.journal())
         self.assertIn("да", self.added(s.run(session="turn-1111")))
 
@@ -371,44 +371,44 @@ class ShellSessionTest(InboxCase):
         self.silent(s.run(session="соседнее-окно"))
         self.assertEqual(s.journal(), "", "промах имени написал строку при пустых «Входящих»")
         self.silent(s.run(session="соседнее-окно", trace=True))
-        self.assertIn("почта адресована витку turn-1111", s.journal())
+        self.assertIn("реплика адресована витку turn-1111", s.journal())
 
     def test_dead_lock_reads_as_the_chat_mode(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         s.shell_lock(self.dead_pid(), "turn-1111")
         self.assertIn("да", self.added(s.run(session="окно-человека")))
 
     def test_live_lock_without_a_name_delivers_to_nobody(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         s.shell_lock(self.live_pid())
         self.silent(s.run())
         self.assertEqual(s.marks_text(), "")
 
 
-class LivenessTest(InboxCase):
+class LivenessTest(GoalCase):
     def test_live_lock_ignores_every_movement_mark(self):
         # Под живым замком метки не смотрятся вовсе: точный признак не должна
         # перебивать мерка грубее его, и отметка stopped ему тоже не указ.
         s = self.stand()
         s.register(seen=stamp(-10 * 3600), stopped=stamp(-9 * 3600))
         s.cycle_log("%s виток 1 поднят" % stamp(-10 * 3600))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         s.shell_lock(self.live_pid(), "turn-1111")
         self.assertIn("да", self.added(s.run(session="turn-1111")))
 
     def test_fresh_mark_lets_the_chat_turn_through(self):
         s = self.stand()
         s.register(seen=stamp(-60), stopped=stamp(-30))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run()))
 
     def test_both_marks_older_than_the_threshold_stop_the_mail(self):
         s = self.stand()
         s.register(seen=stamp(-4 * 3600))
         s.cycle_log("%s виток 7 маркер continue код 0" % stamp(-4 * 3600))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run())
         self.assertEqual(s.marks_text(), "")
 
@@ -416,7 +416,7 @@ class LivenessTest(InboxCase):
         # Цель ведут в чате впервые: журнала цикла нет вовсе, живость держит seen.
         s = self.stand()
         s.register(seen=stamp(-60))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertFalse(os.path.exists(os.path.join(s.dev, "goal-DK-100.log")))
         self.assertIn("да", self.added(s.run()))
 
@@ -425,24 +425,24 @@ class LivenessTest(InboxCase):
         s = self.stand()
         s.register(seen=stamp(-4 * 3600))
         s.cycle_log("%s виток 7 поднят, ход витка ниже" % stamp(-10 * 60))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run()))
 
     def test_own_delivery_line_is_not_a_movement_of_the_goal(self):
-        # Строку доставки кладёт сам почтальон, и держать ею цель живой он не
+        # Строку доставки кладёт сам подхват, и держать ею цель живой он не
         # вправе: иначе одна доставка продлевала бы канал ещё на три часа.
         s = self.stand()
         s.register(seen=stamp(-4 * 3600))
         s.cycle_log("%s виток 7 маркер continue код 0" % stamp(-4 * 3600),
-                    "%s почта: витку доставлена реплика «раньше»" % stamp(-60))
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+                    "%s разговор: витку доставлена реплика «раньше»" % stamp(-60))
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run())
         self.assertEqual(s.marks_text(), "")
 
     def test_entry_without_any_mark_is_a_refusal_with_a_line(self):
         s = self.stand()
         s.register(seen=None)
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.silent(s.run())
         self.assertIn("нет ни одной метки движения", s.journal())
 
@@ -452,18 +452,18 @@ class LivenessTest(InboxCase):
         s = self.stand()
         s.register(seen=stamp(-60))
         s.cycle_log()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.assertIn("да", self.added(s.run()))
 
 
-class AskTest(InboxCase):
+class AskTest(GoalCase):
     def wait_flag(self, s, until):
         with open(os.path.join(s.dev, "goal-DK-100.ask"), "w", encoding="utf-8") as f:
             f.write(until + "\n")
 
     def test_live_wait_holds_the_postman(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.wait_flag(s, stamp(600))
         self.silent(s.run())
         self.assertEqual(s.marks_text(), "")
@@ -471,19 +471,19 @@ class AskTest(InboxCase):
 
     def test_stale_wait_does_not_hold(self):
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.wait_flag(s, stamp(-600))
         self.assertIn("да", self.added(s.run()))
 
 
-class JournalTest(InboxCase):
+class JournalTest(GoalCase):
     def test_journal_is_trimmed_over_the_limit(self):
         s = self.stand()
-        path = os.path.join(s.home, ".devkit", "inbox.log")
+        path = os.path.join(s.home, ".devkit", "chat-in.log")
         with open(path, "w", encoding="utf-8") as f:
             f.write(("%s сессия старьё цель DK-100 доставлено строк 1\n" % stamp()) * 4000)
         self.assertGreater(os.path.getsize(path), 100 * 1024)
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         self.added(s.run())
         with open(path, encoding="utf-8") as f:
             rows = f.readlines()
@@ -491,11 +491,11 @@ class JournalTest(InboxCase):
         self.assertIn("доставлено строк 1", rows[-1])
 
     def test_shell_failure_leaves_a_line(self):
-        # Ненулевой код --say это беда почтальона: тихий ноль и строка в журнал.
+        # Ненулевой код --say это беда подхвата: тихий ноль и строка в журнал.
         # Оболочка отказывает, когда файла цели нет, а до неё дело доходит
         # только после снятой отметки.
         s = self.stand()
-        s.inbox("2026-08-15 14:03, из дашборда: да")
+        s.incoming("2026-08-15 14:03, из дашборда: да")
         # Оболочка зовётся с ID цели из реестра, а файл ей нужен свой: запись
         # называет цель DK-777, чьего docs/tasks/DK-777.md в стенде нет, и
         # --say отказывает ненулевым кодом.
@@ -505,7 +505,7 @@ class JournalTest(InboxCase):
         self.assertIn("не записала строку доставки", s.journal())
 
 
-class CostTest(InboxCase):
+class CostTest(GoalCase):
     """Цена холостого хода. Хук стоит на каждом ходе инструмента в каждой
     сессии машины, и его цена это цена самого запуска интерпретатора: всё, что
     сверх, платится на чужой работе. Мерка тут относительная, к запуску голого
@@ -521,18 +521,18 @@ class CostTest(InboxCase):
         return best
 
     def test_idle_turn_costs_about_the_interpreter_start(self):
-        empty = os.path.join(self.box, "no-goals")
+        empty = os.path.join(self.tmp, "no-goals")
         os.makedirs(os.path.join(empty, ".devkit"))
         env = dict(os.environ, HOME=empty)
-        env.pop("DEVKIT_INBOX_TRACE", None)
+        env.pop("DEVKIT_CHAT_TRACE", None)
         bare = self.clock([sys.executable, "-c", "pass"], env, "")
-        idle = self.clock([sys.executable, INBOX, "--hook"], env, "{}")
+        idle = self.clock([sys.executable, HOOK, "--hook"], env, "{}")
         self.assertLess(idle, bare * 3 + 0.05,
                         "холостой ход хука дороже трёх запусков интерпретатора: %.3f против %.3f"
                         % (idle, bare))
         # Целей под надзором нет, значит и следов от хука не остаётся: ранний
         # выход стоит на реестре и до разбора события не доходит.
-        self.assertFalse(os.path.exists(os.path.join(empty, ".devkit", "inbox.log")),
+        self.assertFalse(os.path.exists(os.path.join(empty, ".devkit", "chat-in.log")),
                          "холостой ход написал строку в журнал")
 
 

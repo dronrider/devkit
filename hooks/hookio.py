@@ -6,7 +6,7 @@
 
   hookio.write_event(protocol)     фрагменты записи: путь и записанные куски
   hookio.session_event(protocol)   событие сессии для уведомителя
-  hookio.tool_event(protocol)      завершённый ход инструмента для почтальона
+  hookio.tool_event(protocol)      завершённый ход инструмента для подхвата реплики
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
@@ -25,8 +25,8 @@ import sys
 
 DEFAULT = "claude-code"
 
-# Машинный журнал хука (~/.devkit/notify.log у уведомителя, ~/.devkit/inbox.log
-# у почтальона) растёт от каждой сессии на машине, и обрезка у него одна на
+# Машинный журнал хука (~/.devkit/notify.log у уведомителя, ~/.devkit/chat-in.log
+# у подхвата) растёт от каждой сессии на машине, и обрезка у него одна на
 # всех: файл больше предела режется до последних строк.
 LOG_LIMIT = 100 * 1024
 LOG_KEEP = 500
@@ -36,7 +36,7 @@ NOTIFY = "notify"
 TURN_DONE = "turn-done"
 SUBAGENT_DONE = "subagent-done"
 PROMPT_SUBMIT = "prompt-submit"
-# Ось завершённого хода инструмента, ею живёт доставка почты в идущий виток.
+# Ось завершённого хода инструмента, ею живёт доставка реплики в идущий виток.
 TOOL_DONE = "tool-done"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,7 +51,7 @@ Session = collections.namedtuple("Session", "kind reason session cwd transcript 
 # Завершённый ход инструмента: сессия целиком, дерево хода, имя инструмента и
 # роль субагента, если ход шёл под ним. ID тут не режется до восьми символов, в
 # отличие от события сессии: уведомителю он нужен подписью в баннере, а
-# почтальону сверкой с именем витка, и половина UUID такой сверки не выдержит.
+# подхвату сверкой с именем витка, и половина UUID такой сверки не выдержит.
 Tool = collections.namedtuple("Tool", "session cwd tool agent")
 
 
@@ -227,7 +227,7 @@ def session_event(name, stream=None):
 
 def tool_event(name, stream=None):
     """Ход инструмента со stdin. None значит, что событие не про ход, и хук на
-    нём уходит нулём: почтальон стоит в чужой работе и ронять её не вправе."""
+    нём уходит нулём: подхват стоит в чужой работе и ронять её не вправе."""
     try:
         return parse_tool(name, load(stream))
     except BadEvent:

@@ -86,7 +86,7 @@ class TestSamples(unittest.TestCase):
             event = sample(name)
             got = hookio.parse_tool(hookio.DEFAULT, event)
             self.assertEqual((got.tool, got.agent), (tool, agent), name)
-            # Сессия целиком: почтальон сверяет её с именем витка, и обрезанный
+            # Сессия целиком: подхват сверяет её с именем витка, и обрезанный
             # ID такой сверки не выдержит.
             self.assertEqual(got.session, event["session_id"], name)
             self.assertEqual(len(got.session), 36, name)
@@ -96,7 +96,7 @@ class TestSamples(unittest.TestCase):
             self.assertNotIn("/scratchpad/", got.cwd, name)
 
     def test_write_turn_is_a_tool_turn(self):
-        # Запись файла это такой же завершённый ход, и почта на нём доставляется
+        # Запись файла это такой же завершённый ход, и реплика на нём доставляется
         # наравне с ходом Bash.
         for name in WRITES:
             got = hookio.parse_tool(hookio.DEFAULT, sample(name))
@@ -104,7 +104,7 @@ class TestSamples(unittest.TestCase):
             self.assertIsNone(got.agent, name)
 
     def test_unfinished_and_sessionwide_events_are_not_tool_turns(self):
-        # Ход, который ещё не случился, и события сессии почтой не будят: у
+        # Ход, который ещё не случился, и события сессии репликой не будят: у
         # первого нет результата, у вторых нет хода вовсе.
         for name in list(SESSIONS) + ["pre-tool-use-bash.json", "pre-tool-use-read.json"]:
             self.assertIsNone(hookio.parse_tool(hookio.DEFAULT, sample(name)), name)
@@ -148,7 +148,7 @@ class TestBadEvent(unittest.TestCase):
         self.assertIsNone(hookio.write_event(hookio.DEFAULT, io.StringIO("не json")))
 
     def test_the_postman_sees_nothing_to_deliver_to(self):
-        # Почтальон стоит на каждом ходе чужой работы: кривой вход это тихий
+        # Подхват реплики стоит на каждом ходе чужой работы: кривой вход это тихий
         # ноль, а не traceback посреди витка.
         self.assertIsNone(hookio.tool_event(hookio.DEFAULT, io.StringIO("не json")))
 

@@ -114,7 +114,8 @@ func TestDraftTextLimit(t *testing.T) {
 	// вложении, а не на длинной записи. Первая строка идёт заголовком, и
 	// длинное тело едет под ней: простыню одной строкой утилита отбивает сама
 	// (TASKFORM.md, форма черновика).
-	fits := "мысль с телефона\n\n" + strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
+	tail := strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
+	fits := "мысль с телефона\n\n" + tail
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"text": `+strconv.Quote(fits)+`}`)
 	got := newResp(t, resp, "запись длинного черновика в пределе")
@@ -122,7 +123,16 @@ func TestDraftTextLimit(t *testing.T) {
 	if id == "" {
 		t.Fatalf("черновик в пределе не завёлся: %v", got)
 	}
-	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")); !strings.Contains(doc, fits) {
+	// Простыня одной строкой отбивается порогом первой строки утилиты, и отказ
+	// приходит без совета про stdin: с дашборда текст и так идёт на stdin.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`}`)
+	text = body(t, resp)
+	if resp.StatusCode == http.StatusOK || !strings.Contains(text, "72") || strings.Contains(text, "stdin") {
+		t.Fatalf("отказ по первой строке: %d %s, ожидал отказ с порогом и без совета про stdin", resp.StatusCode, text)
+	}
+	// Тело без разметки утилита кладёт в подраздел «Ситуация» под заголовком.
+	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")); !strings.HasPrefix(doc, "# "+id+": мысль с телефона\n") || !strings.Contains(doc, "### Ситуация\n\n"+tail+"\n") {
 		t.Errorf("текст в пределе не доехал до файла целиком:\n%s", doc)
 	}
 }

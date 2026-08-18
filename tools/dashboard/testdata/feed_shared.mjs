@@ -1,10 +1,11 @@
 // Стенд общей ленты разговора (DK-371). Экран агента и чат цели держали по
 // своей копии разбора реплик, стрима и пагинации; после выноса лента у них
 // одна, и предмет проверки тут это её механика, а не написанное в исходнике:
-// хвост при открытии, отсев повторов потока, «раньше» вверх, слова о пустоте и
-// отбор реплик, которым экраны и различаются. Стенд поднимает static/app.js в
-// песочнице node с заглушкой DOM, зовёт openTranscript и wireChatFeed на одном
-// и том же разговоре и сравнивает, что вышло.
+// хвост при открытии, отсев повторов потока, подгрузка от прокрутки вверх без
+// кнопки, надпись начала разговора, память позиции при уходе и возврате
+// (DK-434) и отбор реплик, которым экраны и различаются. Стенд поднимает
+// static/app.js в песочнице node с заглушкой DOM, зовёт openTranscript и
+// wireChatFeed на одном и том же разговоре и сравнивает, что вышло.
 //
 // Зовётся из go-теста (sessions_test.go), путь к статике приходит аргументом.
 
@@ -102,7 +103,7 @@ const talk = [
   { seq: 7, role: "thinking", text: "" },
   { seq: 8, role: "assistant", text: "виток идёт, задачи режу", time: "2026-08-13T10:01:00+03:00" },
 ];
-// История до хвоста: её подаёт «раньше» через ?before=.
+// История до хвоста: её тянет прокрутка вверх через ?before=.
 const older = [
   { seq: 3, role: "user", text: "подними виток", time: "2026-08-12T09:00:00+03:00" },
   { seq: 4, role: "assistant", text: "поднял", time: "2026-08-12T09:01:00+03:00" },
@@ -115,6 +116,15 @@ const session = { id: "abc-12345678", mtime: "2026-08-13T10:01:00+03:00", branch
 // нём же проверяется уход с ленты посреди запроса.
 const neighbour = { id: "def-87654321", mtime: "2026-08-12T09:01:00+03:00", branch: "dk-371",
   task: "XR-100", taskNote: "по дереву задачи", first: "Верни XR-100 на доработку" };
+
+// Короткий разговор: вся история умещается в хвост, и открытие сразу
+// упирается в начало (firstSeq === 0), без единой подгрузки (DK-434).
+const shortTalk = [
+  { seq: 0, role: "user", text: "быстрый вопрос", time: "2026-08-14T09:00:00+03:00" },
+  { seq: 1, role: "assistant", text: "быстрый ответ", time: "2026-08-14T09:00:30+03:00" },
+];
+const shortSession = { id: "ccc-11112222", mtime: "2026-08-14T09:00:30+03:00", branch: "dk-371",
+  task: "XR-100", taskNote: "по дереву задачи", first: "Короткий вопрос" };
 
 // Задержанный ответ сервера: пока id разговора лежит здесь, запрос его хвоста
 // висит без ответа, и стенд отвечает на него сам, явным вызовом. Такой случай
@@ -189,6 +199,9 @@ const sandbox = {
         });
       }
       if (empty) return reply({ session: sid, head, total: 0, items: [], note: emptyNote });
+      if (sid === shortSession.id) {
+        return reply({ session: sid, head: shortSession, total: shortTalk.length, items: shortTalk });
+      }
       if (path.includes("before=")) return reply({ session: sid, head, items: older });
       return reply({ session: sid, head, total: talk.length + older.length, items: talk });
     }
@@ -211,9 +224,20 @@ const restream = (es, items) => {
   for (const item of items) es.onmessage({ data: JSON.stringify(item) });
 };
 
-// Кнопка «раньше» и коробка реплик: обе лежат в коробке ленты, первой кнопка.
-const moreOf = (box) => box.children[0];
+// Надпись начала разговора и коробка реплик: обе лежат в коробке ленты,
+// первой надпись (DK-434: кнопки «раньше» больше нет, подгрузка сама встаёт
+// от прокрутки вверх).
+const startOf = (box) => box.children[0];
 const listOf = (box) => box.children[1];
+
+// Подгрузка от прокрутки вверх: коробка ставится у самого верха, и слушатель
+// прокрутки на ней получает событие, как от настоящего скролла в браузере.
+const scrollUp = (scroll, height) => {
+  scroll.scrollHeight = height;
+  scroll.clientHeight = 300;
+  scroll.scrollTop = 0;
+  scroll.handlers.scroll();
+};
 
 // Экран агента. Лента лежит внутри панели, прокручивается панель, а реплики
 // показываются все, вместе с инструментом и размышлениями.
@@ -246,19 +270,65 @@ await settle();
 if (!dump(box).includes("нарезал три штуки")) {
   fail("живое дострение не дошло до ленты транскрипта: " + dump(box));
 }
-if (moreOf(box).hidden) {
-  fail("кнопка «раньше» погасла при непрочитанной истории");
+if (!startOf(box).hidden) {
+  fail("надпись начала разговора видна при непрочитанной истории");
 }
-moreOf(box).handlers.click();
+if (startOf(box).handlers.click) {
+  fail("на надписи начала остался обработчик клика: кнопка «раньше» не убрана");
+}
+if (dump(box).includes("раньше")) {
+  fail("в ленте транскрипта осталось слово «раньше»: кнопка не убрана до конца");
+}
+// Подгрузка идёт от одной прокрутки, без клика: коробка панели встаёт у
+// самого верха, и слушатель тянет историю сам, незаметно для взгляда.
+scrollUp(tp.body, 500);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
-  fail("«раньше» просит историю не от первой показанной реплики: " + JSON.stringify(asked));
+  fail("подгрузка от прокрутки просит историю не от первой показанной реплики: " +
+    JSON.stringify(asked));
 }
 if (!dump(box).includes("подними виток")) {
   fail("история не встала над лентой транскрипта: " + dump(box));
 }
 if (dump(listOf(box)).indexOf("подними виток") > dump(listOf(box)).indexOf("как дела с витком")) {
   fail("история встала под хвостом, а не над ним: " + dump(listOf(box)));
+}
+
+// Гонка запросов: прокрутка у самого верха шлёт событие на каждый пиксель, и
+// без защиты вторая подгрузка ушла бы вторым запросом, пока висит первый.
+asked.length = 0;
+heldSession = session.id;
+scrollUp(tp.body, 500);
+scrollUp(tp.body, 500);
+scrollUp(tp.body, 500);
+if (asked.filter((p) => p.includes("before=")).length !== 1) {
+  fail("подряд подгрузки ушли не одним запросом: " + JSON.stringify(asked));
+}
+if (!release) fail("стенд не поймал запрос подгрузки, вставший на паузу");
+release();
+await settle();
+heldSession = "";
+release = null;
+
+// Конец истории назван словами, а не бесконечным ожиданием: у короткого
+// разговора весь хвост уже вся история, и надпись видна сразу, без единой
+// подгрузки (DK-434).
+asked.length = 0;
+const shortTp = { sub: makeNode("span"), body: makeNode("div") };
+const shortBox = makeNode("div");
+shortTp.body.append(shortBox);
+sandbox.openTranscript("demo", shortTp, shortSession, shortBox);
+await settle();
+if (startOf(shortBox).hidden) {
+  fail("надпись начала разговора не встала у короткой истории: " + dump(shortBox));
+}
+if (!dump(shortBox).includes("это начало разговора")) {
+  fail("конец истории не назван словами: " + dump(shortBox));
+}
+scrollUp(shortTp.body, 300);
+await settle();
+if (asked.some((p) => p.includes("before="))) {
+  fail("у начала разговора всё равно ушёл запрос подгрузки: " + JSON.stringify(asked));
 }
 
 // Чат цели. Лента та же, но реплика в ней это пузырь, инструменты и
@@ -292,10 +362,13 @@ await settle();
 if (times(feed, "как дела с витком") !== 1) {
   fail("хвост чата встал дважды: отсев повторов потока пропал");
 }
-moreOf(feed).handlers.click();
+if (dump(feed).includes("раньше")) {
+  fail("в ленте чата осталось слово «раньше»: кнопка не убрана до конца");
+}
+scrollUp(feed, 500);
 await settle();
 if (!asked.some((p) => p.includes("before=5&n=40"))) {
-  fail("«раньше» в чате просит историю не тем адресом: " + JSON.stringify(asked));
+  fail("подгрузка от прокрутки в чате просит историю не тем адресом: " + JSON.stringify(asked));
 }
 if (!dump(feed).includes("подними виток")) {
   fail("история не встала над лентой чата: " + dump(feed));
@@ -353,6 +426,35 @@ if (!dump(raceTp.sub).includes(neighbour.id.slice(0, 8))) {
 heldSession = "";
 release = null;
 
+// Позиция ленты держится при уходе с экрана и возврате, у каждого разговора
+// своя (DK-434). raceTp.body это та же коробка прокрутки, что и у соседней
+// вкладки, ровно как в настоящей панели: переключение меняет ленту внутри
+// неё, а не саму коробку.
+sandbox.openTranscript("demo", raceTp, session, raceBox);
+await settle();
+raceTp.body.scrollHeight = 1000;
+raceTp.body.clientHeight = 300;
+raceTp.body.scrollTop = 200;
+raceTp.body.handlers.scroll();
+
+// Уход с разговора: переключение на соседа снимает ленту и открывает ленту
+// neighbour, у которой памяти о месте ещё нет, и она встаёт вниз, как при
+// первом заходе.
+sandbox.openTranscript("demo", raceTp, neighbour, raceBox);
+await settle();
+if (raceTp.body.scrollTop !== raceTp.body.scrollHeight) {
+  fail("разговор без памяти о месте встал не вниз: " + raceTp.body.scrollTop);
+}
+
+// Возврат на прежний разговор: место читается из памяти вкладки, а не
+// сбрасывается вниз, хотя коробка прокрутки та же самая, что и у соседа.
+sandbox.openTranscript("demo", raceTp, session, raceBox);
+await settle();
+if (raceTp.body.scrollTop !== 200) {
+  fail("позиция разговора не вернулась на прежнее место: " + raceTp.body.scrollTop +
+    ", ожидал 200");
+}
+
 // Пустой разговор говорит словами на обоих экранах: молчащая коробка
 // неотличима от оборвавшегося потока.
 empty = true;
@@ -372,5 +474,7 @@ if (!dump(quietBox).includes(emptyNote)) {
 }
 
 console.log("общая лента: оба экрана открываются хвостом, повтор потока отсеивается," +
-  " «раньше» тянет историю тем же адресом, отбор и разметка реплики приходят параметром," +
+  " история подгружается от прокрутки вверх без кнопки и без повторных запросов," +
+  " начало разговора названо словами, позиция ленты держится при уходе и возврате," +
+  " отбор и разметка реплики приходят параметром," +
   " уход с ленты посреди запроса потока не поднимает, пустота названа словами");

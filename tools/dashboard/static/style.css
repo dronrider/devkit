@@ -406,6 +406,7 @@ a:hover{text-decoration:underline}
 .tool span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .think{font:400 12px var(--sans);color:var(--tx3);font-style:italic;margin:8px 0}
 .more{padding:2px 0 12px;font:500 12px var(--sans);color:var(--acc);cursor:pointer}
+.feed-start{padding:2px 0 12px;font:500 12px var(--sans);color:var(--tx3);text-align:center}
 .tmuxbar{margin-top:18px}
 .tmuxrow{display:flex;align-items:center;gap:16px;padding:11px 18px;font:400 12.5px var(--mono);color:var(--tx2);flex-wrap:wrap}
 .tmuxrow b{font-weight:600;color:var(--tx)}

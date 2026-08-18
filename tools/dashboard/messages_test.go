@@ -791,13 +791,13 @@ func TestStaticChatRefusesNonGoal(t *testing.T) {
 }
 
 // Лента открывается хвостом: читается последняя порция реплик, лента сразу
-// стоит внизу, а история подаётся кнопкой «раньше» через ?before=. Кусок с
-// DK-371 общий, и чат берёт его вызовом: своей копии этой механики у него
-// больше нет.
+// стоит внизу, а история подгружается сама от прокрутки вверх через ?before=
+// (DK-434). Кусок с DK-371 общий, и чат берёт его вызовом: своей копии этой
+// механики у него больше нет.
 func TestStaticChatOpensAtTail(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "async function wireFeed(")
-	for _, want := range []string{`"?n=" + tail`, `"?before=" + firstSeq`, "more.hidden"} {
+	for _, want := range []string{`"?n=" + tail`, `"?before=" + firstSeq`, "atStart.hidden"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в ленте разговора нет %q: хвост и история подаются не так", want)
 		}

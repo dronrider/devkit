@@ -560,17 +560,20 @@ class DeployTest(SandboxCase):
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
                          "new не гитигнорнул .devkit/ship.lock")
         # Рабочее состояние цикла цели сверяется не только шаблоном, но и живым
-        # именем файла (DK-443): в статусе висели именно журнал витков, ящик
-        # почты и его замок, а шаблон без них подтвердил бы сам себя.
+        # именем файла (DK-443): в статусе висели именно журнал витков, файл
+        # отметок и его замок, а шаблон без них подтвердил бы сам себя.
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/goal-*")[0], 0,
                          "new не гитигнорнул .devkit/goal-*")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/chat/")[0], 0,
+                         "new не гитигнорнул .devkit/chat/")
         for name in ("goal-MP-001.log", "goal-MP-001.mail", "goal-MP-001.mail.lock"):
             self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/" + name)[0], 0,
                              "new не гитигнорнул .devkit/%s" % name)
         # Старый проект, подключённый до появления записей: стёрли их из .gitignore.
         gi = proj / ".gitignore"
         kept = [ln for ln in gi.read_text(encoding="utf-8").splitlines()
-                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock", ".devkit/goal-*")]
+                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock", ".devkit/goal-*",
+                                      ".devkit/chat/")]
         gi.write_text("\n".join(kept) + "\n", encoding="utf-8")
         rc, out = self.box.doctor(proj)
         self.assertEqual(rc, 1, "doctor не вернул 1 при отсутствующих машинных гитигнор-записях")
@@ -580,6 +583,8 @@ class DeployTest(SandboxCase):
                        "doctor не нашёл отсутствующий гитигнор ship.lock")
         self.assertIn_(".devkit/goal-* не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор рабочего состояния цели")
+        self.assertIn_(".devkit/chat/ не гитигнорнут", out,
+                       "doctor не нашёл отсутствующий гитигнор входов разговора")
         # doctor --fix дописывает обе записи со своим комментарием.
         _, out = self.box.doctor(proj, "--fix")
         self.assertIn_("починено: .gitignore: добавлен .devkit/cmdout/", out,
@@ -588,6 +593,8 @@ class DeployTest(SandboxCase):
                        "doctor --fix не дописал ship.lock")
         self.assertIn_("починено: .gitignore: добавлен .devkit/goal-*", out,
                        "doctor --fix не дописал рабочее состояние цели")
+        self.assertIn_("починено: .gitignore: добавлен .devkit/chat/", out,
+                       "doctor --fix не дописал входы разговора")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/cmdout/")[0], 0,
                          "после --fix cmdout не гитигнорнут")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
@@ -1699,6 +1706,30 @@ class HarnessHooksTest(SandboxCase):
         write(cls.home2 / ".claude" / "settings.json", '{\n  "model": "opus"\n}\n')
         cls.settings = cls.home2 / ".claude" / "settings.json"
 
+    def test_renamed_hook_is_retired(self):
+        # Прежнее имя хука в настройках зовёт файл, которого в чекауте больше нет
+        # (DK-440), и харнес спотыкается на нём каждым ходом. Поэтому доктор не
+        # дописывает новую строку рядом со старой, а сперва убирает старую.
+        home = self.box.root / "home-retired"
+        write(home / ".claude" / "settings.json", json.dumps({"hooks": {"PostToolUse": [
+            {"hooks": [{"type": "command",
+                        "command": "python3 ~/projects/devkit/hooks/inbox.py --hook claude-code"}]}]}},
+            ensure_ascii=False, indent=2) + "\n")
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertIn_("inbox.py", out, "доктор не заметил отставное имя хука")
+        self.assertIn_("переименован в chat-in.py", out,
+                       "находка не называет нынешнее имя хука")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("убрано из", out, "--fix не убрал отставную строку")
+        hooks = json.loads(read(home / ".claude" / "settings.json"))["hooks"]
+        post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
+        self.assertEqual([c for c in post if "inbox.py" in c], [],
+                         "отставная строка осталась в настройках: %s" % post)
+        self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
+        # Повторный доктор про отставное имя молчит: чинить больше нечего.
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertNotIn_("inbox.py", out, "повторный доктор всё ещё видит отставное имя")
+
     def test_hooks_are_laid_out_once(self):
         _, out = self.box.doctor(self.proj, home=self.home2)
         self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",
@@ -1709,11 +1740,11 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук длинных чтений")
-        # Почтальон говорит своей категорией: без неё --fix хук положит, а
+        # Подхват реплики говорит своей категорией: без неё --fix хук положит, а
         # doctor без ключа промолчит, и неподключённый канал чата останется
         # неотличим от штатной тишины.
-        self.assertRegex(out, r"почтальон inbox\.py не подключён на событии PostToolUse",
-                         "доктор не заметил неподключённого почтальона")
+        self.assertRegex(out, r"подхват реплики chat-in\.py не подключён на событии PostToolUse",
+                         "доктор не заметил неподключённый подхват реплики")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
@@ -1723,23 +1754,23 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-longfile\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук длинных чтений")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*inbox\.py на PostToolUse",
-                         "--fix не разложил почтальона")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*chat-in\.py на PostToolUse",
+                         "--fix не разложил подхват реплики")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
         post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
-        self.assertEqual(len([c for c in post if "inbox.py" in c]), 1, post)
-        # PostToolUse: две группы, проверки текстов на своём матчере и почтальон
-        # на пустом. Матчер у него пустой не по недосмотру: реплику надо
+        self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
+        # PostToolUse: две группы, проверки текстов на своём матчере и подхват
+        # реплики на пустом. Матчер у него пустой не по недосмотру: реплику надо
         # доставлять на любом ходе идущего витка, а не на записи файла.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
                          ["Edit|Write|NotebookEdit", None], hooks["PostToolUse"])
-        inbox = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
-                 for h in g["hooks"]]
-        self.assertEqual(len(inbox), 1, inbox)
-        self.assertIn("inbox.py", inbox[0])
+        chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
+                for h in g["hooks"]]
+        self.assertEqual(len(chat), 1, chat)
+        self.assertIn("chat-in.py", chat[0])
         # PreToolUse: две группы на двух матчерах, Bash (чтение секретов) и Read
         # (два рубежа: повторные чтения и длинные чтения). Каждая своим скриптом,
         # порядок как в HOOK_LAYOUT.

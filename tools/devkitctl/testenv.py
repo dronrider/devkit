@@ -90,7 +90,7 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
 ]}, {"hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/inbox.py --hook claude-code"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"}
 ]}, {"matcher": "Read", "hooks": [

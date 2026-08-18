@@ -281,7 +281,7 @@ PARK_ROW = "| %s | %s | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%
 
 
 class WakeTest(Stand):
-    """Тик будит припаркованные вопросом строки по лежащему в ящике ответу."""
+    """Тик будит припаркованные вопросом строки по ответу, лежащему в разговоре."""
 
     def setUp(self):
         super().setUp()
@@ -297,16 +297,20 @@ class WakeTest(Stand):
         (self.proj / "docs" / "TASKS.md").write_text(
             PARK_HEAD % ("\n".join(progress), "\n".join(parked)), encoding="utf-8")
 
-    def letter(self, tree, tid, text="вот схема, продолжай"):
-        """Лежащая строка-ответ в ящике задачи tid дерева tree."""
-        d = Path(tree) / ".devkit" / "mail"
+    def said(self, tree, tid, text="вот схема, продолжай", old=False):
+        """Лежащая строка-ответ во входе разговора задачи tid дерева tree.
+        Ключ old кладёт её прежними именами DK-440: ответ, написанный до
+        выката, обязан будить задачу так же, как написанный после."""
+        sub, name = ("mail", "task-%s.inbox") if old else ("chat", "task-%s.in")
+        d = Path(tree) / ".devkit" / sub
         d.mkdir(parents=True, exist_ok=True)
-        (d / ("task-%s.inbox" % tid)).write_text(
+        (d / (name % tid)).write_text(
             "2026-08-07 12:00, из дашборда: %s\n" % text, encoding="utf-8")
 
     def ask(self, tree, tid, when):
-        """Признак ожидания .ask у ящика задачи tid: снимок ожидания инструмента."""
-        d = Path(tree) / ".devkit" / "mail"
+        """Признак ожидания .ask у разговора задачи tid: снимок ожидания
+        инструмента."""
+        d = Path(tree) / ".devkit" / "chat"
         d.mkdir(parents=True, exist_ok=True)
         (d / ("task-%s.ask" % tid)).write_text(when + "\n", encoding="utf-8")
 
@@ -324,8 +328,8 @@ class WakeTest(Stand):
             parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]", "DK-901", "DK-901"),
                     PARK_ROW % ("DK-902", "Ждёт среду [блок: окружение: нет железа]", "DK-902", "DK-902")],
             candidates=["DK-903"])
-        self.letter(self.proj, "DK-901")
-        self.letter(self.proj, "DK-902")
+        self.said(self.proj, "DK-901")
+        self.said(self.proj, "DK-902")
         lines = self.wake()
         moved = self.moved()
         self.assertEqual(len(moved), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
@@ -336,7 +340,7 @@ class WakeTest(Stand):
         self.assertIn("DK-901", lines[0])
         self.assertNotIn("DK-903", " ".join(lines))
 
-    def test_silent_without_letter(self):
+    def test_silent_without_answer(self):
         # Нет лежащего ответа, значит будить нечего: ни вызова, ни крика.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
@@ -344,24 +348,34 @@ class WakeTest(Stand):
         self.assertEqual(self.call.calls, [])
         self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 0"), lines[-1])
 
-    def test_fresh_ask_holds_the_box(self):
-        # Свежий признак ожидания отдаёт ящик инструменту ожидания: ответ
+    def test_fresh_ask_holds_the_chat(self):
+        # Свежий признак ожидания отдаёт разговор инструменту ожидания: ответ
         # заберёт сам ждущий заход, будить рано. Протухший признак будить
         # не мешает.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.proj, "DK-901")
+        self.said(self.proj, "DK-901")
         self.ask(self.proj, "DK-901", stamp(self.now + timedelta(minutes=2)))
         self.assertEqual(self.wake()[-1].endswith("разбужено 0"), True)
         self.ask(self.proj, "DK-901", stamp(self.now - timedelta(minutes=2)))
         self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
 
-    def test_letter_in_task_tree_wakes(self):
-        # Ящик задачи лежит в её дереве ../<проект>-<id>, а не только в корне:
-        # исполнитель спрашивает из своего дерева, и ответ кладётся туда же.
+    def test_answer_in_task_tree_wakes(self):
+        # Разговор задачи лежит в её дереве ../<проект>-<id>, а не только в
+        # корне: исполнитель спрашивает из своего дерева, и ответ кладётся туда
+        # же.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.dir / "proj-dk-901", "DK-901")
+        self.said(self.dir / "proj-dk-901", "DK-901")
+        self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+
+    def test_answer_by_old_names_wakes(self):
+        # Ответ, легший прежними именами DK-440 (.devkit/mail, task-<ID>.inbox)
+        # до выката, будит задачу наравне с новым: иначе переезд имён оставил бы
+        # припаркованную строку спать до руки человека.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901", old=True)
         self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
 
     def test_missing_taskctl_is_reported(self):
@@ -369,7 +383,7 @@ class WakeTest(Stand):
         # молчит, и следующий тик повторит.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.proj, "DK-901")
+        self.said(self.proj, "DK-901")
         lines = self.wake(taskctl="")
         self.assertEqual(self.call.calls, [])
         self.assertIn("taskctl", lines[0])
@@ -377,7 +391,7 @@ class WakeTest(Stand):
     def test_taskctl_failure_is_reported(self):
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.proj, "DK-901")
+        self.said(self.proj, "DK-901")
         lines = self.wake(call=Fake(code=1, out="зависимость не закрыта"))
         self.assertIn("с кодом 1", lines[0])
         self.assertIn("зависимость не закрыта", lines[0])
@@ -388,7 +402,7 @@ class WakeTest(Stand):
         # кандидаты.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.proj, "DK-901")
+        self.said(self.proj, "DK-901")
         out = io.StringIO()
         rc = watch.run(now=self.now, idle=45 * 60, home=self.home, out=out,
                        call=self.call, taskctl=TASKCTL)
@@ -404,7 +418,7 @@ class WakeTest(Stand):
         # taskctl, иначе предполёт следующего merge отбился бы о чекаут.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
-        self.letter(self.proj, "DK-901")
+        self.said(self.proj, "DK-901")
         self.wake()
         moved = self.moved()
         self.assertEqual(len(moved), 1, self.call.calls)

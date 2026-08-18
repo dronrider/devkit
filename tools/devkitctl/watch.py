@@ -31,11 +31,12 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 чаще, чем раз в час, а короче десятка минут порог ловил бы долгую сборку.
 
 Тем же тиком сторожок будит припаркованные вопросом задачи (LLD DK-400,
-решение 2): строка в Blocked с причиной «вопрос:» и лежащим ответом в ящике
+решение 2): строка в Blocked с причиной «вопрос:» и лежащим ответом в разговоре
 задачи возвращается в In progress вызовом `taskctl -C <корень> move <ID>
 in-progress`. Будит сторожок и только он, а будить значит вернуть строку в
 кандидаты планировщика, сессию поверх доски он не поднимает.
 """
+import importlib.util
 import os
 import shutil
 import say
@@ -66,11 +67,14 @@ RUN_LOG = ".devkit/log"
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
 # Причина блока с машинным префиксом «вопрос:» паркует задачу вопросом человека
-# (LLD DK-400, решение 2): только такую строку будит лежащий в ящике ответ,
-# «окружение:» и проза ждут своего без писем.
+# (LLD DK-400, решение 2): только такую строку будит лежащий в разговоре ответ,
+# «окружение:» и проза ждут своего молча.
 PARKED = "[блок: вопрос:"
-MAIL_BOX = "task-%s.inbox"
-MAIL_ASK = "task-%s.ask"
+# Вход разговора задачи и признак ожидания рядом с ним. Прежняя пара DK-440
+# (.devkit/mail, task-<ID>.inbox) читается наравне с новой один выпуск: ответ,
+# написанный до выката, обязан разбудить задачу так же, как написанный после.
+CHAT_DIRS = (("chat", "task-%s.in"), ("mail", "task-%s.inbox"))
+CHAT_ASK = "task-%s.ask"
 # Хвост журнала запусков, из которого берётся последняя метка времени: файл
 # растёт всю жизнь проекта, и читать его целиком каждые пять минут незачем.
 TAIL = 4096
@@ -194,15 +198,21 @@ def board_present(root):
 
 # -- пробуждение припаркованных вопросом --------------------------------------
 
-def postman():
-    """Модуль почтальона hooks/inbox.py либо None. Признак ожидания .ask у
-    ящика задачи читается тем же разбором, каким его читает почтальон, иначе
-    вторая копия формата разъехалась бы с первой на первой же правке."""
+def chat_hook():
+    """Модуль подхвата реплики hooks/chat-in.py либо None. Признак ожидания .ask
+    у разговора задачи читается тем же разбором, каким его читает подхват, иначе
+    вторая копия формата разъехалась бы с первой на первой же правке. Дефис в
+    имени файла не годится для import, поэтому модуль грузится по пути."""
     sys.path.insert(0, str(DEVKIT / "hooks"))
     try:
-        import inbox
-        return inbox
-    except ImportError:
+        spec = importlib.util.spec_from_file_location(
+            "devkit_chat_in", str(DEVKIT / "hooks" / "chat-in.py"))
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except (OSError, ImportError, SyntaxError):
         return None
     finally:
         sys.path.pop(0)
@@ -210,8 +220,8 @@ def postman():
 
 def task_tree(root, task_id):
     """Дерево задачи по правилу shipctl (treePath): ../<проект>-<id нижним
-    регистром>. Дерево переживает парковку, и ящик задачи с ответом лежит
-    в нём, а спрашивающий из основного чекаута оставляет ящик там же."""
+    регистром>. Дерево переживает парковку, и разговор задачи с ответом лежит
+    в нём, а спрашивающий из основного чекаута оставляет его там же."""
     top = os.path.normpath(root.rstrip(os.sep))
     return os.path.join(os.path.dirname(top), os.path.basename(top) + "-" + task_id.lower())
 
@@ -238,24 +248,25 @@ def parked_rows(root):
 
 
 def lying_answer(root, task_id, now):
-    """Первая лежащая строка ящика задачи либо None. Ящик ищется в двух
-    деревьях, основном и дерева задачи: исполнитель спрашивает из своего
-    дерева, диспетчер из основного. Свежий признак ожидания .ask отдаёт ящик
+    """Первая лежащая строка разговора задачи либо None. Разговор ищется в двух
+    деревьях, основном и дереве задачи: исполнитель спрашивает из своего дерева,
+    диспетчер из основного. Свежий признак ожидания .ask отдаёт разговор
     инструменту ожидания, и будить рано: ответ заберёт сам ждущий заход,
     паркуется только вопрос, оставшийся без ответа."""
-    inbox = postman()
+    hook = chat_hook()
     until_now = time.mktime(now.timetuple())
-    boxes = []
+    lying = []
     for base in (root, task_tree(root, task_id)):
-        d = os.path.join(base, ".devkit", "mail")
-        if inbox is not None:
-            until = inbox.ask_stamp(os.path.join(d, MAIL_ASK % task_id))
-            if until is not None and until > until_now:
-                return None
-        boxes.append(os.path.join(d, MAIL_BOX % task_id))
-    for box in boxes:
+        for sub, pattern in CHAT_DIRS:
+            d = os.path.join(base, ".devkit", sub)
+            if hook is not None:
+                until = hook.ask_stamp(os.path.join(d, CHAT_ASK % task_id))
+                if until is not None and until > until_now:
+                    return None
+            lying.append(os.path.join(d, pattern % task_id))
+    for src in lying:
         try:
-            with open(box, encoding="utf-8", errors="replace") as f:
+            with open(src, encoding="utf-8", errors="replace") as f:
                 lines = [l.strip() for l in f.read().split("\n") if l.strip()]
         except OSError:
             continue
@@ -317,7 +328,7 @@ def wake(root, now, call=None, taskctl=None):
                          % (tid, root, p.returncode, (p.stdout or "").strip()))
             continue
         woke += 1
-        lines.append("задача %s в %s разбужена: ответ в ящике, строка вернулась в In progress" % (tid, root))
+        lines.append("задача %s в %s разбужена: ответ в разговоре, строка вернулась в In progress" % (tid, root))
     if parked:
         lines.append("корень %s: припаркованных вопросом %d, разбужено %d"
                      % (os.path.basename(root.rstrip("/")), len(parked), woke))
@@ -467,7 +478,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
         if called:
             log_line(line, home)
         # Пробуждение идёт по корню, а не по записи: целей на одной доске
-        # бывает несколько, и ящик припаркованной задачи один на всех.
+        # бывает несколько, и разговор припаркованной задачи один на всех.
         if root and root not in swept and os.path.isdir(root):
             swept.add(root)
             for wline in wake(root, now, call, taskctl):

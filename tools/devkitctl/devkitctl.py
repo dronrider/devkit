@@ -201,11 +201,16 @@ PRE_READ_GAPS = {
 }
 SESSION_HOOK = "quota-refresh.sh"
 NOTIFY_HOOK = "notify.py"
-# Почтальон (DK-341): PostToolUse на пустом матчере, потому что почту надо
-# доставлять на любом ходе идущего витка, а не на записи файла. Категория
+# Подхват реплики (DK-341): PostToolUse на пустом матчере, потому что реплику
+# надо доставлять на любом ходе идущего витка, а не на записи файла. Категория
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
 # так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
-INBOX_HOOK = "inbox.py"
+CHAT_HOOK = "chat-in.py"
+# Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
+# с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
+# на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
+# сперва убирает старую.
+RETIRED_HOOKS = {"inbox.py": CHAT_HOOK}
 NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
@@ -221,7 +226,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
-    ("PostToolUse", "", "python3 %s/hooks/inbox.py --hook claude-code"),
+    ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -298,8 +303,11 @@ MACHINE_IGNORE_ENTRIES = (
      "# Замок конвейера shipctl, живёт только на машине.",
      "замок конвейера замусорит status"),
     (".devkit/goal-*",
-     "# Рабочее состояние цикла цели: журнал витков, ящик почты и замки, живут только на машине.",
-     "журнал витков и ящик цели замусорят status"),
+     "# Рабочее состояние цикла цели: журнал витков, отметки доставки и замки, живут только на машине.",
+     "журнал витков и отметки цели замусорят status"),
+    (".devkit/chat/",
+     "# Реплики человека живой сессии (DK-345): ждут свою сессию в дереве работы, живут только на машине.",
+     "лежащие реплики замусорят status"),
 )
 # Ключи болванки выката: имя, комментарий (со своим завершающим \n) и значение
 # для файла, заводимого с нуля. Один источник для DEPLOY_TEMPLATE (новый файл)
@@ -1165,10 +1173,11 @@ def hook_events(text, script):
 
 
 def hook_gaps(text, settings):
-    """Чего не хватает в хуках харнеса. Возврат (пробелы, находки): пробел это
-    строка HOOK_LAYOUT, которую кладёт --fix, находка это тот же пробел словами
-    для человека."""
-    gaps, findings = [], []
+    """Чего не хватает в хуках харнеса. Возврат (пробелы, находки, отставные):
+    пробел это строка HOOK_LAYOUT, которую кладёт --fix, находка это тот же
+    пробел словами для человека, отставной это имя переименованного хука,
+    строку про который --fix из настроек убирает."""
+    gaps, findings, stale = [], [], []
     try:
         data = json.loads(text or "{}")
     except ValueError:
@@ -1180,7 +1189,7 @@ def hook_gaps(text, settings):
         findings.append("структура hooks в %s необычна: элемент группы не словарь, "
                         "группа не список или сам hooks не объект; сверка раскладки "
                         "хуков пропущена, править по hooks/README.md" % settings)
-        return gaps, findings
+        return gaps, findings, stale
     notify_events = hook_events(text, NOTIFY_HOOK)
     if notify_events is None:
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
@@ -1204,10 +1213,10 @@ def hook_gaps(text, settings):
             missing_pre.append(script)
         elif script in PRE_READ_SCRIPTS:
             missing_pre_read.append(script)
-        elif script == INBOX_HOOK:
-            findings.append("почтальон %s не подключён на событии PostToolUse в %s: реплика "
+        elif script == CHAT_HOOK:
+            findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
-                            "(hooks/README.md)" % (INBOX_HOOK, settings))
+                            "(hooks/README.md)" % (CHAT_HOOK, settings))
         elif script == SESSION_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
@@ -1234,13 +1243,50 @@ def hook_gaps(text, settings):
                         "разрешения, и не говорит, что закончила ход или что субагент "
                         "отработал (hooks/README.md)"
                         % (NOTIFY_HOOK, ", ".join(missing_notify), settings))
-    return gaps, findings
+    for old in sorted(n for n in RETIRED_HOOKS if n in text):
+        stale.append(old)
+        findings.append("хук %s в %s переименован в %s: строка зовёт файл, которого в чекауте "
+                        "уже нет, и харнес спотыкается на ней каждым ходом (hooks/README.md)"
+                        % (old, settings, RETIRED_HOOKS[old]))
+    return gaps, findings, stale
 
 
-def install_hooks(settings, gaps, devkit):
-    """Дописать недостающие хуки в настройки харнеса. Правка additive, как у
-    прав: чужие группы и порядок остаются, команда встаёт в группу со своим
-    матчером либо заводит её. Отдаёт строки о сделанном."""
+def hook_script(command):
+    """Имя файла хука из команды раскладки: «python3 <путь> --hook ...». Пустая
+    строка значит, что команда на хук devkit не похожа вовсе."""
+    parts = (command or "").split()
+    return os.path.basename(parts[1]) if len(parts) > 1 else ""
+
+
+def drop_hooks(hooks, names):
+    """Убрать из раскладки строки переименованных хуков. Отставная строка зовёт
+    файл, которого в чекауте нет, и оставить её рядом с новой значит поменять
+    молчание канала на ругань харнеса каждым ходом. Пустая группа после уборки
+    уходит следом: матчер без команд ничего не значит, а в файле мозолит глаз."""
+    done = []
+    for event, groups in list(hooks.items()):
+        if not isinstance(groups, list):
+            continue
+        for group in list(groups):
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                continue
+            kept = [h for h in group["hooks"]
+                    if not (isinstance(h, dict) and hook_script(h.get("command")) in names)]
+            if len(kept) == len(group["hooks"]):
+                continue
+            done.append(event)
+            group["hooks"] = kept
+            if not kept:
+                groups.remove(group)
+        if event in done and not groups:
+            hooks.pop(event, None)
+    return done
+
+
+def install_hooks(settings, gaps, devkit, stale=()):
+    """Дописать недостающие хуки в настройки харнеса и убрать отставные. Правка
+    additive, как у прав: чужие группы и порядок остаются, команда встаёт в
+    группу со своим матчером либо заводит её. Отдаёт строки о сделанном."""
     data, bad = perms.load(settings)
     if bad is not None:
         return []
@@ -1268,12 +1314,18 @@ def install_hooks(settings, gaps, devkit):
             groups.append(group)
         group.setdefault("hooks", []).append({"type": "command", "command": cmd})
         done.append((os.path.basename(tpl.split()[1]), event))
+    retired = drop_hooks(hooks, set(stale))
     settings.parent.mkdir(parents=True, exist_ok=True)
     tmp = settings.with_name(settings.name + ".devkit-tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(str(tmp), str(settings))
+    said = []
+    if retired:
+        said.append("убрано из %s: %s, хук переименован в %s"
+                    % (settings, ", ".join(sorted(set(stale))),
+                       ", ".join(RETIRED_HOOKS[n] for n in sorted(set(stale)))))
     if not done:
-        return []
+        return said
     # Уведомитель висит на четырёх событиях сразу, и четыре строки про него это
     # одна и та же новость: хуки подключены. Поэтому события собираются к своему
     # скрипту, а строка остаётся одна на всю раскладку.
@@ -1282,9 +1334,9 @@ def install_hooks(settings, gaps, devkit):
         events.setdefault(script, []).append(event)
     what = "; ".join("%s на %s" % (s, ", ".join(e)) for s, e in events.items())
     n = len(done)
-    return ["%s %s в %s: %s" % ("включён" if n == 1 else "включено",
-                                HOOK_WORD[0] if n == 1 else say.counted(n, HOOK_WORD),
-                                settings, what)]
+    return said + ["%s %s в %s: %s" % ("включён" if n == 1 else "включено",
+                                       HOOK_WORD[0] if n == 1 else say.counted(n, HOOK_WORD),
+                                       settings, what)]
 
 
 def check_notify_hook(fix=False):
@@ -1361,9 +1413,9 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
         text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         # Хуки харнеса раскладываются тем же рубежом, что права и скиллы: с ветки
         # задачи на машину они не едут, там их сверяют и чинят из основного чекаута.
-        gaps, gap_findings = hook_gaps(text, settings)
-        if gaps and fix and from_main:
-            fixed += install_hooks(settings, gaps, main)
+        gaps, gap_findings, stale = hook_gaps(text, settings)
+        if (gaps or stale) and fix and from_main:
+            fixed += install_hooks(settings, gaps, main, stale)
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         else:
             findings += gap_findings

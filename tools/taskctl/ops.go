@@ -403,7 +403,8 @@ func cmdAdd(root string, p AddParams) (string, error) {
 			return "", fmt.Errorf("у черновика %s нет заголовка «## DoD»: ворота заведения спрашивают, чем кончается работа, допишите раздел в черновик", p.ID)
 		}
 	}
-	promoted, staged, err := promoteDraft(root, id, p.Title)
+	rankLine := fmt.Sprintf("`%d+%d+%d+%d+%d = %d`, %s.", parts[0], parts[1], parts[2], parts[3], parts[4], total, bucket(total))
+	promoted, staged, err := promoteDraft(root, id, p.Title, rankLine)
 	if err != nil {
 		return "", err
 	}

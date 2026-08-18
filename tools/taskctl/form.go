@@ -106,12 +106,29 @@ func draftBodySection(rest string) string {
 		b.WriteString("\n" + rest + "\n")
 		return b.String()
 	}
+	// Разделы второго уровня в тексте («## DoD» от автора) остаются своими
+	// разделами после подразделов: иначе пустые подразделы вставали бы за
+	// «## DoD», и оформление уносило бы их в раздел DoD файла задачи.
+	body, others := rest, ""
+	if secs := splitSections(rest, "## "); len(secs) > 1 {
+		body = strings.Join(secs[0].body, "\n")
+		var tail []string
+		for _, sec := range secs[1:] {
+			tail = append(tail, "", sec.heading)
+			if len(sec.body) > 0 {
+				tail = append(tail, "")
+				tail = append(tail, sec.body...)
+			}
+		}
+		others = strings.Join(tail, "\n") + "\n"
+	}
 	for _, h := range draftSubsections {
 		b.WriteString("\n" + h + "\n")
-		if h == draftSituation && rest != "" {
-			b.WriteString("\n" + rest + "\n")
+		if h == draftSituation && body != "" {
+			b.WriteString("\n" + body + "\n")
 		}
 	}
+	b.WriteString(others)
 	return b.String()
 }
 
@@ -168,14 +185,15 @@ func trimBlank(lines []string) []string {
 }
 
 // renderTaskFromDraft собирает файл задачи из черновика по форме TASKFORM.md.
-// Заголовок H1 берётся из строки доски, а не из черновика; ситуация и
+// Заголовок H1 и первая строка «Ранга» (формула и бакет) берутся из строки
+// доски, а не из черновика; ситуация и
 // осложнение едут в «Что происходит», гипотеза в «Чего хотим», вопрос в
 // «Развилки», «## DoD» и другие разделы формы, дописанные грумером, встают на
 // свои места; черновик без подразделов ложится в «Что происходит» целиком.
 // Шапка черновика и «## Грумминг» в файл как есть не переезжают: от них
 // остаётся строка в «Ходе работы» с заголовком черновика и датами записи и
 // оформления, а под ней пометки грумминга.
-func renderTaskFromDraft(id, title, draft, today string) string {
+func renderTaskFromDraft(id, title, rank, draft, today string) string {
 	top := splitSections(draft, "## ")
 	written, draftTitle := "", ""
 	for _, ln := range top[0].body {
@@ -199,10 +217,19 @@ func renderTaskFromDraft(id, title, draft, today string) string {
 		}
 		form[h] = append(form[h], body...)
 	}
+	if rank != "" {
+		add("## Ранг", []string{rank})
+	}
 	for _, s := range top[1:] {
 		switch {
 		case s.heading == draftBodyHeading:
-			subs := splitSections(strings.Join(s.body, "\n"), "### ")
+			// Черновик, записанный до формы, открывает тело копией
+			// заголовка; повторять её в «Что происходит» незачем.
+			body := s.body
+			if len(body) > 0 && strings.TrimSpace(body[0]) == draftTitle {
+				body = trimBlank(body[1:])
+			}
+			subs := splitSections(strings.Join(body, "\n"), "### ")
 			add(taskform.Situation, subs[0].body)
 			for _, sub := range subs[1:] {
 				switch sub.heading {

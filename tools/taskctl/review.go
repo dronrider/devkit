@@ -102,15 +102,31 @@ func loadReview(path string) (*reviewFile, error) {
 	return rf, nil
 }
 
+// ensureSection заводит раздел «Ревью», когда первое замечание пришло на файл
+// без него. Место разделу выбирает форма (TASKFORM.md), а не конец файла:
+// сценарий проверки к первому замечанию обычно уже написан, и приклеенный за
+// ним раздел ловил бы сторож порядка на каждой отревьюенной задаче.
 func (rf *reviewFile) ensureSection() {
 	if rf.hasSection {
 		return
 	}
+	rf.hasSection = true
+	if at := formSectionAt(rf.lines, reviewHeading); at >= 0 {
+		head := []string{reviewHeading, "", ""}
+		if at > 0 && strings.TrimSpace(rf.lines[at-1]) != "" {
+			head = append([]string{""}, head...)
+		}
+		tail := append([]string{}, rf.lines[at:]...)
+		rf.lines = append(rf.lines[:at], append(head, tail...)...)
+		rf.insertAt = at + len(head) - 1
+		return
+	}
+	// Разделов формы ниже «Ревью» в файле нет, значит место ему в конце, и
+	// хвостовые пустые строки перед ним лишние.
 	for len(rf.lines) > 0 && strings.TrimSpace(rf.lines[len(rf.lines)-1]) == "" {
 		rf.lines = rf.lines[:len(rf.lines)-1]
 	}
 	rf.lines = append(rf.lines, "", reviewHeading, "", "")
-	rf.hasSection = true
 	rf.insertAt = len(rf.lines) - 1
 }
 

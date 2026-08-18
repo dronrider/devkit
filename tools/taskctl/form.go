@@ -77,17 +77,7 @@ func insertFormSection(body []byte, heading, section string) []byte {
 		return appendSection(body, section)
 	}
 	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
-	mask, _ := stage.FenceMask(lines)
-	at := -1
-	for i, ln := range lines {
-		if mask[i] || !strings.HasPrefix(ln, "## ") {
-			continue
-		}
-		if r := formRank(ln); r > rank {
-			at = i
-			break
-		}
-	}
+	at := formSectionAt(lines, heading)
 	if at < 0 {
 		return appendSection(body, section)
 	}
@@ -96,6 +86,26 @@ func insertFormSection(body []byte, heading, section string) []byte {
 	out = append(out, "")
 	out = append(out, lines[at:]...)
 	return []byte(strings.Join(out, "\n") + "\n")
+}
+
+// formSectionAt отвечает, перед какой строкой встаёт раздел по форме: это
+// первый заголовок, который по порядку идёт позже. Ответ -1 значит, что позже
+// ничего нет и место разделу в конце файла.
+func formSectionAt(lines []string, heading string) int {
+	rank := formRank(heading)
+	if rank < 0 {
+		return -1
+	}
+	mask, _ := stage.FenceMask(lines)
+	for i, ln := range lines {
+		if mask[i] || !strings.HasPrefix(ln, "## ") {
+			continue
+		}
+		if r := formRank(ln); r > rank {
+			return i
+		}
+	}
+	return -1
 }
 
 // draftTitleGuard отбивает черновик, у которого первая строка не заголовок, а

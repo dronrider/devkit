@@ -78,3 +78,38 @@ func TestLintFindsFormOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewSectionGoesByForm: первое замечание на файл со сценарием проверки
+// заводит раздел «Ревью» выше сценария, а не в хвосте файла. Хвост давал бы
+// находку сторожа порядка на каждой отревьюенной задаче.
+func TestReviewSectionGoesByForm(t *testing.T) {
+	root := setup(t)
+	path := filepath.Join(root, "docs", "tasks", "XR-001.md")
+	body := "# XR-001: Средняя\n\n## DoD\n\nСделано.\n" + fixtureScenario + fixtureVerification
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewAdd(root, "XR-001", "порядок разделов проверен", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, "- порядок разделов проверен") {
+		t.Fatalf("замечание не записано:\n%s", text)
+	}
+	if strings.Index(text, reviewHeading) > strings.Index(text, scenarioSection) {
+		t.Fatalf("раздел «Ревью» встал после сценария:\n%s", text)
+	}
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range finds {
+		if strings.Contains(f, "XR-001.md") && strings.Contains(f, "порядок разделов") {
+			t.Fatalf("сторож порядка краснеет после review add: %s", f)
+		}
+	}
+}

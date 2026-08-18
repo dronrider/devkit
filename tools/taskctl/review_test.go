@@ -28,7 +28,9 @@ func TestReviewAddAndResolve(t *testing.T) {
 	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	want := "# XR-005\n" + fixtureScenario + fixtureVerification + "\n## Ревью\n\n- гонка в close\n- нейминг\n"
+	// Раздел встаёт на своё место по форме (TASKFORM.md), выше сценария
+	// проверки, а не в хвост файла.
+	want := "# XR-005\n\n## Ревью\n\n- гонка в close\n- нейминг\n" + fixtureScenario + fixtureVerification
 	if got := readTaskFile(t, root, "XR-005"); got != want {
 		t.Fatalf("файл задачи:\n%q\nожидал:\n%q", got, want)
 	}

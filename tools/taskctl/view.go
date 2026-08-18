@@ -22,9 +22,10 @@ var sectTitles = map[string]string{
 // если его ещё нет, и отвечает, был ли он создан. Общая часть между cmdAdd,
 // cmdFile и cmdReviewAdd (LLD DK-133, решение 4): файл обязан стоять у строки
 // с минуты заведения, а ссылке в ячейке эти команды находят своё место
-// по-разному (см. cmdReviewAdd). Болванка несёт пустой «## DoD» у task/bug:
-// наполняет раздел тот, кто заводит строку, и раздел уживается с «Приёмкой»,
-// которую add дописывает неагентскому виду отдельным заголовком.
+// по-разному (см. cmdReviewAdd). Болванка несёт заголовки формы у task/bug
+// (TASKFORM.md, taskFormSkeleton): наполняет их тот, кто заводит строку, и они
+// уживаются с «Приёмкой», которую add дописывает неагентскому виду своим
+// заголовком на его место по форме.
 func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	abs := taskFileAbs(root, id)
 	if _, err := os.Stat(abs); err == nil {
@@ -36,7 +37,7 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	title := joinTitle(base, deps, "", "", "")
 	body := fmt.Sprintf("# %s: %s\n", id, title)
 	if needsDoD(row.Type, row.Title) {
-		body += "\n" + dodHeading + "\n"
+		body += taskFormSkeleton()
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return false, err

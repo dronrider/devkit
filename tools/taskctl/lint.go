@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 var linkRe = regexp.MustCompile(`\]\(([^)]+)\)`)
@@ -96,6 +98,7 @@ func cmdLint(root string) ([]string, error) {
 	finds = append(finds, lintDeps(b, arch, bp)...)
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
+	finds = append(finds, lintFormOrder(root, b)...)
 	return finds, nil
 }
 
@@ -132,6 +135,42 @@ func lintAcceptance(root string, b *Board, bp string) []string {
 		if _, known := acceptBarriers[barrier]; !known {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s барьер «%s» не из шести",
 				bp, r.LineIdx+1, r.ID, barrier))
+		}
+	}
+	return finds
+}
+
+// lintFormOrder ловит разделы файла задачи, вставшие не в том порядке
+// (TASKFORM.md): читатель со свежим контекстом ищет разбор корня в начале, а
+// вывод прогона в конце, и переставленный раздел он находит чтением файла
+// целиком. Считаются только разделы формы, свои заголовки задачи проверка не
+// трогает и порядок между ними не судит.
+func lintFormOrder(root string, b *Board) []string {
+	var finds []string
+	for _, r := range b.Rows {
+		path := taskFilePath(root, r.ID)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		mask, _ := stage.FenceMask(lines)
+		prev, prevLine := -1, ""
+		for i, ln := range lines {
+			if mask[i] || !strings.HasPrefix(ln, "## ") {
+				continue
+			}
+			rank := formRank(ln)
+			if rank < 0 {
+				continue
+			}
+			if rank < prev {
+				finds = append(finds, fmt.Sprintf("%s:%d: раздел «%s» стоит после «%s», порядок разделов в %s",
+					filepath.Join("docs", "tasks", r.ID+".md"), i+1,
+					strings.TrimPrefix(ln, "## "), strings.TrimPrefix(prevLine, "## "), formDoc))
+				break
+			}
+			prev, prevLine = rank, ln
 		}
 	}
 	return finds

@@ -372,3 +372,66 @@ func TestAgeWords(t *testing.T) {
 		}
 	}
 }
+
+// TestDraftLongFirstLineRefused: черновик, записанный одним абзацем, отбивается
+// на записи, а отказ называет страницу формы. Тот же текст с заголовком в
+// первой строке ложится черновиком (так и приходит текст со stdin).
+func TestDraftLongFirstLineRefused(t *testing.T) {
+	root := setup(t)
+	long := "уведомитель шумит из песочницы, потому что хук старта берёт адрес из окружения, а не из реестра чатов, и вторая сессия перебивает первую"
+	_, err := cmdDraft(root, long, CommitOpts{})
+	if err == nil {
+		t.Fatal("простыня записалась черновиком")
+	}
+	for _, want := range []string{"TASKFORM.md", "72"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в отказе нет %q: %v", want, err)
+		}
+	}
+	if _, serr := os.Stat(draftFile(root, "XR-008")); serr == nil {
+		t.Fatal("отбитый черновик всё равно лёг файлом")
+	}
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\n"+long, CommitOpts{}); err != nil {
+		t.Fatalf("черновик с заголовком не записался: %v", err)
+	}
+	data, err := os.ReadFile(draftFile(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), "# XR-008: уведомитель шумит из песочницы\n") {
+		t.Fatalf("заголовок черновика: %q", data)
+	}
+}
+
+// TestDraftListShowsTitleNotBody: накопитель печатает заголовок черновика, а не
+// его тело; заголовок черновика, записанного до порога, режется по тому же
+// порогу.
+func TestDraftListShowsTitleNotBody(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\nтело идеи с подробностями", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	long := "старая простыня на весь экран, записанная до порога первой строки, с подробностями внутри той же строки"
+	if err := os.WriteFile(draftFile(root, "XR-009"), []byte("# XR-009: "+long+"\n\nзаписан 2026-08-01\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("на два черновика строк %d:\n%s", len(lines), out)
+	}
+	if strings.Contains(out, "тело идеи") {
+		t.Errorf("накопитель печатает тело:\n%s", out)
+	}
+	for _, ln := range lines {
+		if n := len([]rune(ln)); n > 112 {
+			t.Errorf("строка накопителя в %d символов:\n%s", n, ln)
+		}
+	}
+	if !strings.Contains(out, "старая простыня") || !strings.HasSuffix(lines[1], "...") {
+		t.Errorf("длинный заголовок не обрезан:\n%s", out)
+	}
+}

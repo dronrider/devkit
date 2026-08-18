@@ -140,9 +140,9 @@ func TestAddValidation(t *testing.T) {
 }
 
 // TestAddCreatesTaskFile: add заводит файл задачи вместе со строкой (LLD DK-133,
-// решение 4): ячейка ссылки ведёт на файл, болванка task/bug несёт пустой
-// «## DoD», а голый путь из --link оборачивается в ссылку и уходит в болванку
-// под заголовок, потому что ячейку занимает файл задачи.
+// решение 4): ячейка ссылки ведёт на файл, болванка task/bug несёт заголовки
+// формы (TASKFORM.md), а голый путь из --link оборачивается в ссылку и уходит
+// в болванку под заголовок, потому что ячейку занимает файл задачи.
 func TestAddCreatesTaskFile(t *testing.T) {
 	root := setup(t)
 	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
@@ -156,8 +156,8 @@ func TestAddCreatesTaskFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл задачи не создан: %v", err)
 	}
-	if got := string(data); got != "# XR-008: Однострочник\n\n## DoD\n" {
-		t.Fatalf("болванка без пустого DoD: %q", got)
+	if got := string(data); got != "# XR-008: Однострочник"+"\n"+taskFormSkeleton() {
+		t.Fatalf("болванка не по форме: %q", got)
 	}
 	// Голый путь в --link оборачивается в markdown-ссылку и уезжает в болванку
 	// файла, ячейку занимает файл задачи.
@@ -627,7 +627,7 @@ func TestFileCreatesAndRelinks(t *testing.T) {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-001.md"))
-	if err != nil || string(data) != "# XR-001: Средняя\n\n## DoD\n" {
+	if err != nil || string(data) != "# XR-001: Средняя"+"\n"+taskFormSkeleton() {
 		t.Fatalf("скелет файла: %q, %v", data, err)
 	}
 	board, _ := os.ReadFile(boardPath(root))

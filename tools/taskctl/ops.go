@@ -428,8 +428,9 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	// Не агентский вид держит причину в файле задачи: add дописывает в него
 	// раздел «Приёмка» (LLD DK-292, решение 3). Исполнитель дописывает per
 	// строку обхода исход, имена обходов лежат в ACCEPTANCE.md (задача DK-299).
-	// Раздел соседствует с «## DoD» болванки: разделы дополняют друг друга,
-	// а не перезаписывают. Есть ли раздел, спрашивается у readSectionFromPath
+	// Раздел соседствует с заголовками болванки: разделы дополняют друг друга,
+	// а не перезаписывают, а место ему выбирает форма (TASKFORM.md), иначе он
+	// встал бы за «Ходом работы», который по форме идёт позже. Есть ли раздел, спрашивается у readSectionFromPath
 	// тем же порядком, что у gate и lint: заголовок «## Приёмка» внутри блока
 	// кода это цитата, а не раздел, и поиск подстрокой считал её разделом (DK-329).
 	if p.Accept != "" && p.Accept != acceptAgent {
@@ -440,7 +441,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			body = appendSection(body, section)
+			body = insertFormSection(body, acceptanceHeading, section)
 			if err := os.WriteFile(abs, body, 0o644); err != nil {
 				return "", err
 			}

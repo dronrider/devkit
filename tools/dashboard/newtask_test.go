@@ -111,8 +111,10 @@ func TestDraftTextLimit(t *testing.T) {
 	}
 
 	// Мысль в предел укладывается и записывается тем же полем: рубеж стоит на
-	// вложении, а не на длинной записи.
-	fits := strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
+	// вложении, а не на длинной записи. Первая строка идёт заголовком, и
+	// длинное тело едет под ней: простыню одной строкой утилита отбивает сама
+	// (TASKFORM.md, форма черновика).
+	fits := "мысль с телефона\n\n" + strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"text": `+strconv.Quote(fits)+`}`)
 	got := newResp(t, resp, "запись длинного черновика в пределе")

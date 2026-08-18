@@ -280,6 +280,9 @@ func cmdDraft(root, text string, c CommitOpts) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("пустой черновик: текст передаётся аргументом либо на stdin")
 	}
+	if err := draftTitleGuard(text); err != nil {
+		return "", err
+	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -316,7 +319,10 @@ func cmdDraft(root, text string, c CommitOpts) (string, error) {
 		id, filepath.ToSlash(rel), id, tail), nil
 }
 
-// cmdDraftList печатает накопитель: что записано, о чём и как давно.
+// cmdDraftList печатает накопитель: что записано, о чём и как давно. Строка
+// это заголовок черновика, тело остаётся в файле и читается через
+// taskctl show <ID>: накопитель просматривают целиком, и разбор десятка
+// черновиков телами стоит дороже самого разбора.
 func cmdDraftList(root string) (string, error) {
 	drafts, err := loadDrafts(root)
 	if err != nil {
@@ -328,7 +334,7 @@ func cmdDraftList(root string) (string, error) {
 	out := make([]string, 0, len(drafts))
 	for _, d := range drafts {
 		age := draftAgeWords(d, true)
-		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, d.Title))
+		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, clipTitle(d.Title)))
 	}
 	return strings.Join(out, "\n"), nil
 }

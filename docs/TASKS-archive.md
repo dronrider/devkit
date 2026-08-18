@@ -294,3 +294,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-443 | Рабочее состояние целей в .devkit не гитигнорнуто и висит в статусе | bug | P2 | 2026-08-18 | [tasks/archive/2026/DK-443.md](tasks/archive/2026/DK-443.md), `837be8c3` |
 | DK-330 | Подсказка taskctl add и set не называет --accept и --barrier | bug | P2 | 2026-08-18 | [tasks/archive/2026/DK-330.md](tasks/archive/2026/DK-330.md) |
 | DK-440 | Словарь канала с почты на разговор: .devkit/chat, hooks/chat-in.py, имена в коде и слова доки | task | P3 | 2026-08-18 | [tasks/archive/2026/DK-440.md](tasks/archive/2026/DK-440.md), `20586879` |
+| DK-413 | trackctl: адаптер Jira ходит только в API v3, на v2 не работает | task | P2 | 2026-08-18 | [tasks/archive/2026/DK-413.md](tasks/archive/2026/DK-413.md) |

@@ -80,18 +80,29 @@ func TestContourRejectsUnknownSections(t *testing.T) {
 
 // Версия API выглядит числом и так её легко записать без кавычек: молчаливое
 // умолчание тогда вернуло бы Server-контуру исходный баг, поэтому расхождение
-// типов отбивается на чтении контура.
+// типов отбивается на чтении контура, и текст называет настоящий вид значения.
 func TestContourAPIVersionQuoted(t *testing.T) {
-	bad := strings.Replace(contourFile, `adapter = "fake"`, "api_version = 2\nadapter = \"fake\"", 1)
-	setupEnv(t, bad, bindingFile)
-	_, err := loadContour("corp")
-	if err == nil {
-		t.Fatal("числовая версия принята молча")
+	cases := []struct {
+		name, repl, want string
+	}{
+		{"числом", "api_version = 2", "целое"},
+		{"массивом", `api_version = ["2"]`, "массив"},
+		{"булевым", "api_version = true", "true/false"},
 	}
-	for _, want := range []string{"api_version", "кавычках"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("в отказе нет %q: %s", want, err)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := strings.Replace(contourFile, `adapter = "fake"`, tc.repl+"\nadapter = \"fake\"", 1)
+			setupEnv(t, bad, bindingFile)
+			_, err := loadContour("corp")
+			if err == nil {
+				t.Fatal("не-строковая версия принята молча")
+			}
+			for _, want := range []string{"api_version", "кавычках", tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("в отказе нет %q: %s", want, err)
+				}
+			}
+		})
 	}
 }
 

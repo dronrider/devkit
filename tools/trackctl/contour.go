@@ -114,7 +114,8 @@ func loadContour(name string) (*contour, error) {
 	// Версия в записи выглядит числом, поэтому расхождение типов ловится
 	// на чтении, а не игнорируется.
 	if v, ok := top.get("api_version"); ok && v.Kind != tomlStr {
-		return nil, fmt.Errorf("%s: api_version = %d записан числом, а жду строку в кавычках: \"2\" либо \"3\"", path, v.Int)
+		return nil, fmt.Errorf("%s: api_version записан как %s, а жду строку в кавычках: \"2\" либо \"3\"",
+			path, tomlKindNames[v.Kind])
 	}
 	if c.Adapter == "" {
 		return nil, fmt.Errorf("%s: не задан adapter", path)

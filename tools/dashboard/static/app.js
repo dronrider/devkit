@@ -2939,6 +2939,11 @@ async function wireFeed(project, sid, opts) {
           key: "sub-" + talk[from].seq,
           sign: [label, inner.length, last && last.text, liveTail].join("|"),
           make: () => safeItem(() => subBlock(label, inner, opts, liveTail), null),
+          // Пришедшая запись дописывается в стоящий блок, а не пересобирает
+          // его целиком: у живого субагента запись приходит каждые секунды, и
+          // пересборка сотен карточек дёргала прокрутку ленты и сбрасывала
+          // свою прокрутку внутри блока (замечание про прыжки истории).
+          fill: (node) => { if (node.subFill) node.subFill(inner, liveTail); },
         });
         continue;
       }
@@ -3286,6 +3291,16 @@ function toolPair(call, out) {
   return box;
 }
 
+// Подпись блока субагента: заказ, счёт записей и последнее действие. Считается
+// отдельно, чтобы дописывание правило только её, не трогая нарисованного.
+function headText(inner, live) {
+  const tail = inner[inner.length - 1] || {};
+  const peek = tail.tool ? tail.tool + (tail.note ? ": " + tail.note : "")
+    : foldPeek(tail.text || "", 60);
+  return inner.length + " " + plural(inner.length, "запись", "записи", "записей") +
+    (peek ? ", " + peek : "");
+}
+
 // Приложенное выделение свёрнутым блоком при пузыре: развернуть по клику.
 // Простыня постановки в ленте закрыла бы собой сам разговор.
 function selFold(file, text) {
@@ -3321,26 +3336,34 @@ function subBlock(label, inner, opts, open) {
   const box = el("div", "subblk fold" + (open ? " open" : ""));
   const top = el("div", "foldh");
   top.append(el("b", "", open ? "субагент работает" : "субагент"));
-  const tail = inner[inner.length - 1] || {};
-  const peek = tail.tool ? tail.tool + (tail.note ? ": " + tail.note : "")
-    : foldPeek(tail.text || "", 60);
-  top.append(el("span", "", label + ", " + inner.length + " " +
-    plural(inner.length, "запись", "записи", "записей") + (peek ? ", " + peek : "")));
+  const said = el("span", "", label + ", " + headText(inner, open));
+  top.append(said);
   const car = el("button", "foldcp foldar");
   car.append(icon("i-unfold"));
   top.append(car);
   const body = el("div", "subbody");
-  for (let j = 0; j < inner.length; j++) {
-    const it = inner[j];
-    const nx = inner[j + 1];
-    if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
-      body.append(safePair(opts.pair, it, nx));
-      j++;
-      continue;
+  // done это сколько записей уже нарисовано: дописывание идёт с этого места,
+  // и заново собирать нарисованное незачем.
+  let done = 0;
+  const grow = (list) => {
+    const bottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    for (let j = done; j < list.length; j++) {
+      const it = list[j];
+      const nx = list[j + 1];
+      if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
+        body.append(safePair(opts.pair, it, nx));
+        j++;
+        continue;
+      }
+      if (it.role === "toolout" && !it.text) continue;
+      body.append(safeItem(opts.item, it));
     }
-    if (it.role === "toolout" && !it.text) continue;
-    body.append(safeItem(opts.item, it));
-  }
+    done = list.length;
+    // Внутренняя прокрутка держится у низа, только если и так там стояла:
+    // человек, читающий середину работы, не должен уезжать от неё.
+    if (bottom) body.scrollTop = body.scrollHeight;
+  };
+  grow(inner);
   body.hidden = !open;
   car.replaceChildren(icon(open ? "i-fold" : "i-unfold"));
   const flip = () => {
@@ -3351,6 +3374,12 @@ function subBlock(label, inner, opts, open) {
   car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
   top.addEventListener("click", flip);
   box.append(top, body);
+  // Ручка дописывания: sync зовёт её вместо пересборки узла, и блок живого
+  // субагента перестаёт дёргать прокрутку на каждой пришедшей записи.
+  box.subFill = (list, live) => {
+    grow(list);
+    said.textContent = label + ", " + headText(list, live);
+  };
   return box;
 }
 
@@ -3375,9 +3404,12 @@ function chatItem(item) {
     if (item.shot) {
       // Картинка лежит файлом на машине, и браузеру её отдаёт ручка вложений.
       const thumb = el("img", "mshot");
-      thumb.src = chatsURL(chatShotProject) + "/" + encodeURIComponent(chatShotSid) +
-        "/shot?name=" + encodeURIComponent(String(item.shot).split("/").pop());
       thumb.alt = "вложенный снимок";
+      thumb.addEventListener("error", () => {
+        thumb.hidden = true;
+        wrap.append(el("div", "svcline", "картинка не открылась: " + item.shot));
+      });
+      thumb.src = shotURL(item.shot);
       wrap.append(thumb);
     }
     return wrap;
@@ -3394,6 +3426,18 @@ function chatItem(item) {
 // картинки живёт при чате, и её надо чем-то назвать.
 let chatShotProject = "";
 let chatShotSid = "";
+
+// Адрес картинки собирается из её же пути: там стоит сессия-владелец, а лента
+// бывает открыта другой (разговор продолжили резюмом, реплику принесло из
+// чужой сессии). Взятая с открытой сессии, ручка отвечала 404, и в ленте
+// оставался значок битого изображения (замечание тринадцатого круга POC).
+function shotURL(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  const name = parts[parts.length - 1] || "";
+  const owner = parts.length > 1 ? parts[parts.length - 2] : chatShotSid;
+  return chatsURL(chatShotProject) + "/" + encodeURIComponent(owner) +
+    "/shot?name=" + encodeURIComponent(name);
+}
 
 function wireChatFeed(project, feed, sid, onItem) {
   chatShotProject = project;
@@ -4779,6 +4823,13 @@ function chatPanel(project, st) {
     if (shot) {
       const chip = el("div", "cclip");
       const thumb = el("img", "cshot");
+      // Не загрузившаяся картинка называет себя словами: значок битого
+      // изображения от браузера человеку ничего не объясняет, и ровно на нём
+      // спор о «кривой вставке» и стоял (замечание тринадцатого круга POC).
+      thumb.addEventListener("error", () => {
+        thumb.hidden = true;
+        chip.append(el("span", "bad", "картинка не показалась"));
+      });
       thumb.src = shot.data;
       chip.append(thumb);
       chip.append(el("span", "", shot.name));

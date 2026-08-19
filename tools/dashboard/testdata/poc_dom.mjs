@@ -213,6 +213,15 @@ export function makeSandbox(appPath, reply) {
       addEventListener(name, fn) { this.listeners[name] = fn; }
       close() { this.closed = true; this.readyState = 2; }
     },
+    // Чтение вставленного файла: мок отдаёт готовый dataURL сразу, потому что
+    // предмет стенда это то, что попадёт в src, а не сама расшифровка.
+    FileReader: class {
+      readAsDataURL(file) {
+        this.result = (file && file.dataURL) ||
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        if (this.onload) this.onload();
+      }
+    },
     fetch: (path, init) => {
       asked.push(path);
       if (init && init.method === "POST") posted.push(path);

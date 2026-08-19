@@ -136,8 +136,13 @@ func (s *server) handler() http.Handler {
 func headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		// Картинке разрешён ещё и data:. Вставленный из буфера снимок панель
+		// показывает до отправки прямо из dataURL, файла на диске тогда ещё
+		// нет вовсе, и под default-src 'self' браузер такую картинку не грузил:
+		// в блоке превью оставался значок битого изображения (замечание
+		// тринадцатого круга POC). Остальным источникам ничего не добавлено.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+			"default-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})

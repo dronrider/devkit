@@ -267,6 +267,35 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   }
 }
 
+// --- вставка картинки: превью в строке отправки и адрес миниатюры ---
+{
+  const stP = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  const panel = sandbox.chatPanel("demo", stP);
+  const ta = tag(panel, "TEXTAREA");
+  if (!ta || !ta.handlers.paste) fail("поле ввода не слушает вставку");
+  // Настоящий PNG одним пикселем: важно, что в src ляжет целый dataURL с
+  // префиксом, иначе браузер покажет значок битого изображения.
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  ta.handlers.paste({
+    preventDefault: () => {},
+    clipboardData: { items: [{ type: "image/png", getAsFile: () => ({ name: "снимок.png" }) }] },
+  });
+  // FileReader в моке синхронный: отдаём dataURL сразу.
+  await settle();
+  const clip = byClass(panel, "cclip");
+  if (!clip) fail("блок превью не встал в строку отправки");
+  const img = tag(clip, "IMG");
+  if (!img) fail("в блоке превью нет картинки");
+  if (!String(img.src).startsWith("data:image/")) {
+    fail("в превью не целый dataURL: " + String(img.src).slice(0, 40));
+  }
+  // Миниатюра в ленте просит картинку у сессии-владельца из самого пути, а не
+  // у открытой: иначе ручка отвечает 404 и остаётся битый значок.
+  const url = sandbox.shotURL("/Users/rider/.devkit/uploads/zzzz9999-9999/снимок.png");
+  if (!url.includes("zzzz9999-9999")) fail("адрес миниатюры бьёт мимо владельца: " + url);
+  if (!url.includes("/shot?name=")) fail("адрес миниатюры собран не так: " + url);
+}
+
 // --- хват высоты стоит НАД полем: проверяется порядок узлов, а не стили ---
 {
   const stG = await sandbox.chatState("demo", "aaaa1111-1111", board);

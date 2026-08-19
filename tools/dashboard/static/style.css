@@ -1027,3 +1027,6 @@ a:hover{text-decoration:underline}
 .subblk>.foldh{padding:5px 9px;gap:7px}
 .subblk>.foldh b{color:var(--acc);font:600 11px var(--sans)}
 .subbody{padding:4px 8px 8px;border-top:1px solid var(--line);max-height:420px;overflow-y:auto}
+
+/* не загрузившееся вложение называет себя словами, а не значком браузера */
+.cclip .bad{font:400 11px var(--sans);color:var(--block)}

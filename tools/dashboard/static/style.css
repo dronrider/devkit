@@ -880,3 +880,9 @@ a:hover{text-decoration:underline}
 .m-local.m-bad .bb{border-color:color-mix(in oklab,var(--block) 55%,transparent)}
 .m-local.m-bad .mm{color:var(--block)}
 .m-local .linkish{margin-left:8px;font-size:11px}
+
+/* уголок растягивания поля ввода сверху (замечание 5): коробка отражена по
+   вертикали, поле отражено обратно, поэтому текст читается как обычно, а
+   уголок оказывается у верхнего края, где полю и надо расти */
+.taflip{transform:scaleY(-1)}
+.taflip textarea{transform:scaleY(-1);display:block;width:100%}

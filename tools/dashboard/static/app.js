@@ -4151,10 +4151,17 @@ function chatPanel(project, st) {
 
   const busy = makeBusy(project, wrap);
   const box = el("div", "cbox");
+  // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
+  // отправки, и уголок растягивания стоял поверх неё, а расти полю надо вверх,
+  // в сторону ленты (замечание 5 шестого круга POC). Переворот делается парой
+  // отражений: коробка отражена по вертикали, само поле отражено обратно,
+  // поэтому текст читается как обычно, а уголок оказывается сверху.
+  const taflip = el("div", "taflip");
   const ta = el("textarea");
   ta.placeholder = way.off ? "разговор идёт в vscode, пишите там" : "Написать агенту...";
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в разговор");
+  taflip.append(ta);
   const row = el("div", "crow");
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
@@ -4214,7 +4221,7 @@ function chatPanel(project, st) {
   });
   send.addEventListener("click", fire);
   row.append(send);
-  box.append(ta, row);
+  box.append(taflip, row);
   wrap.append(box);
 
   chatLive.push(busy.off);
@@ -4262,6 +4269,9 @@ async function paintChat(project, addr, board, works) {
       chatOpen = "";
       pin.replaceChildren();
     }
+    // Закрытая панель никого не заглушает: молчат уведомления только того
+    // разговора, который человек видит.
+    chatShown = { project: "", sid: "", task: "" };
     panel.hidden = true;
     return;
   }
@@ -4277,6 +4287,7 @@ async function paintChat(project, addr, board, works) {
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;
+  chatShown = { project, sid: st.sid || "", task: st.task || "" };
   pin.replaceChildren(chatHead(project, st), chatPanel(project, st));
 }
 
@@ -5626,8 +5637,22 @@ function showFlash(n) {
 // Всплывать ли уведомлению: событие старше подключения это хвост журнала,
 // который сервер отдаёт сразу, и всплывать ему незачем; на открытой ленте
 // событие и так дописывается строкой, второй раз его показывать не надо.
+// Какой разговор сейчас открыт в панели: по нему уведомления молчат. Событие
+// про диалог, который человек и так читает, всплывать баннером не должно, он
+// смотрит прямо на него (замечание 4 шестого круга POC).
+let chatShown = { project: "", sid: "", task: "" };
+
+// Уведомление про открытый разговор: своя сессия либо своя задача в том же
+// проекте. Про чужую работу баннер остаётся, там человек ничего не видит.
+function flashMuted(n) {
+  if (!n || !chatShown.project) return false;
+  if (n.project && n.project !== chatShown.project) return false;
+  if (chatShown.sid && n.session && n.session === chatShown.sid) return true;
+  return Boolean(chatShown.task && n.id && n.id === chatShown.task);
+}
+
 function flashWorthy(n, since, onFeed) {
-  return Boolean(n && n.time) && n.time > since && !onFeed;
+  return Boolean(n && n.time) && n.time > since && !onFeed && !flashMuted(n);
 }
 
 // Событие уведомителя это и повод перечитать открытый список задач: статус

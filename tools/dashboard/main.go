@@ -176,6 +176,11 @@ func cmdServe(home, staticDir string) error {
 		return err
 	}
 	httpSrv := httpServer(srv.handler())
+	// Снимок квоты держит свежим сам демон: без этого он обновлялся только
+	// стартом сессии, и на экране почти всегда стоял часовой давности.
+	quotaStop := make(chan struct{})
+	defer close(quotaStop)
+	go srv.quotaKeeper(quotaStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

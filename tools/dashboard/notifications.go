@@ -116,6 +116,9 @@ type Notification struct {
 	// обрезанный ID сессии носят две записи реестра чатов, и выбирать между
 	// ними наугад лента не берётся (nameWaitTasks в waiting.go).
 	Note string `json:"note,omitempty"`
+	// Chat это полный ID сессии, если событие удалось свести с чатом: по
+	// короткому ID из журнала панель чат не откроет, а вести туда надо.
+	Chat string `json:"chat,omitempty"`
 }
 
 // waitKind это тип события «ждут человека»: по нему идёт фильтр экрана
@@ -206,7 +209,13 @@ func (s *server) bindNotifyTasks(list []Notification) {
 	}
 	for i := range list {
 		n := &list[i]
-		if n.ID != "" || n.Session == "" {
+		if n.Session == "" {
+			continue
+		}
+		if full := short[n.Session]; len(full) == 1 {
+			n.Chat = full[0]
+		}
+		if n.ID != "" {
 			continue
 		}
 		hits := short[n.Session]
@@ -307,6 +316,7 @@ func (s *server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	s.nameWaitTasks(items)
 	s.bindNotifyTasks(items)
 	items = s.dropTitleNoise(items)
+	s.waitTitles(items)
 	resp := map[string]any{"exists": true, "items": items}
 	if len(items) == 0 {
 		// Пустоты различимы: журнал без событий, фильтр без попаданий и
@@ -336,6 +346,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 		s.nameWaitTasks(items)
 		s.bindNotifyTasks(items)
 		items = s.dropTitleNoise(items)
+		s.waitTitles(items)
 		for _, n := range items {
 			sseEvent(w, f, "", marshalNotification(n))
 		}
@@ -363,6 +374,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 			s.nameWaitTasks(items)
 			s.bindNotifyTasks(items)
 			items = s.dropTitleNoise(items)
+			s.waitTitles(items)
 			for _, n := range items {
 				sseEvent(w, f, "", marshalNotification(n))
 			}
@@ -432,4 +444,39 @@ func (s *server) dropTitleNoise(list []Notification) []Notification {
 		out = append(out, n)
 	}
 	return out
+}
+
+// waitTitle переписывает событие ожидания на человеческий язык. Харнес шлёт
+// сырое английское «Claude is waiting for your input», и в ленте это стояло
+// строкой ни о чём: непонятно, какой чат ждёт и куда идти (замечание 19
+// двенадцатого круга POC). Заголовок берётся той же лестницей, что у списка
+// чатов, поэтому подпись у события и у чата одна.
+func (s *server) waitTitles(list []Notification) {
+	paths := map[string]string{}
+	projects, _ := s.projects()
+	for _, p := range projects {
+		paths[p.Name] = p.Path
+	}
+	for i := range list {
+		n := &list[i]
+		if n.Reason != "idle_prompt" || n.Chat == "" {
+			continue
+		}
+		projPath := paths[n.Project]
+		if projPath == "" {
+			n.Body = "чат ждёт вашего ответа"
+			continue
+		}
+		info, ok := findSession(s.transcriptRoots(), projPath, n.Chat)
+		if !ok {
+			n.Body = "чат ждёт вашего ответа"
+			continue
+		}
+		head := s.sessionHeadCached(info.path, info.stamp)
+		said, _ := s.titleFor(n.Chat, head.Summary, head.First, false)
+		if said == "" {
+			said = "без заголовка"
+		}
+		n.Body = "Чат «" + said + "» ждёт вашего ответа"
+	}
 }

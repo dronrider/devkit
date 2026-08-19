@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -132,6 +133,9 @@ type chatStore struct {
 	// всякому транскрипту, а первая реплика заголовком не годится. Считается он
 	// один раз и живёт тут навсегда.
 	Title string `json:"title,omitempty"`
+	// Hidden убирает чат из списков насовсем: им помечены пробные чаты, поднятые
+	// ради проверки дашборда, у которых метки в промпте не было.
+	Hidden bool `json:"hidden,omitempty"`
 	// From называет диалог, продолжением которого поднят этот: `claude --resume`
 	// заводит новую сессию со своим транскриптом, и без этой ссылки история
 	// разговора рвалась бы на две строки списка.
@@ -200,7 +204,7 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		head := s.sessionHeadCached(f.path, f.stamp)
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
-		if titleSession(head.First) {
+		if titleSession(head.First) || s.chatStoreRead(f.ID).Hidden {
 			continue
 		}
 		last := sessions.Last(recs[f.ID])
@@ -223,7 +227,12 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		// осталась запасной: реестр появился не во всякой версии клиента.
 		if p, ok := live[f.ID]; ok {
 			e.Sock, e.PID, e.Where = p.Sock, p.PID, peerWord(p)
-			e.Idle = p.Status == "idle"
+			// Простой мерится транскриптом: поле реестра у сессий vscode
+			// пустое всегда, и по нему работающий агент выходил простаивающим.
+			e.Idle = !sessionBusy(f.path, s.now())
+			if p.Status == "busy" {
+				e.Idle = false
+			}
 			if p.Tmux != "" && e.Tmux == "" {
 				e.Tmux = strings.SplitN(p.Tmux, ":", 2)[0]
 			}
@@ -745,8 +754,19 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// Пустой status это клиент, который его не пишет: занятость тогда неизвестна,
 	// и врать про неё нечем. Индикатор в таком случае живёт лентой, а не опросом.
+	busy := false
+	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
+		busy = sessionBusy(info.path, s.now())
+	}
+	if p.Status == "busy" {
+		busy = true
+	}
+	said := p.Status
+	if said == "" {
+		said = "по транскрипту"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": true,
-		"busy": p.Status == "busy", "status": p.Status, "where": peerWord(p)})
+		"busy": busy, "status": said, "where": peerWord(p)})
 }
 
 // Заголовок диалога (замечание 4 четвёртого круга POC). Первая реплика целиком
@@ -811,10 +831,16 @@ const titleMark = "[devkit-title]"
 // удаления файлов.
 const titleLegacy = "Назови диалог заголовком"
 
+// probeMark помечает пробный чат, поднятый ради проверки самого дашборда.
+// Такие чаты не разговор человека, и в списках им делать нечего ровно по той же
+// причине, по которой там нет сессий суммаризации (замечание 20).
+const probeMark = "[devkit-probe]"
+
 // titleSession узнаёт служебную сессию по первой реплике.
 func titleSession(first string) bool {
 	first = strings.TrimSpace(first)
-	return strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy)
+	return strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy) ||
+		strings.HasPrefix(first, probeMark)
 }
 
 // titleDir это рабочая директория служебного вызова: каталог вне всех проектов,
@@ -948,4 +974,105 @@ func (s *server) titleFill(list []chatEntry) {
 			asked++
 		}
 	}
+}
+
+// Вставка картинки в чат (замечание 4 двенадцатого круга POC). Бинарной
+// передачи через сокет тут не заводится нарочно: канал живых сессий носит
+// текст, а картинку агент читает сам, своим Read. Дашборд кладёт файл в свой
+// каталог и дописывает к реплике ссылку на путь, то есть делает ровно то же,
+// что человек, перетащивший файл в окно клиента.
+
+// shotDir это каталог вложений чата: свой на сессию, чтобы файлы не смешивались
+// и чтобы чат можно было вычистить целиком.
+func (s *server) shotDir(sid string) string {
+	return filepath.Join(s.cfg.Home, ".devkit", "uploads", sid)
+}
+
+// shotLimit держит вложение в берегах: скриншот экрана это единицы мегабайт, а
+// всё, что больше, в реплику по ошибке.
+const shotLimit = 12 << 20
+
+var shotKind = map[string]string{
+	"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
+}
+
+func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "вложение чата")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id чата", sid)})
+		return
+	}
+	var body struct {
+		Kind string `json:"kind"`
+		Data string `json:"data"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, shotLimit+(shotLimit/3))).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "жду JSON {\"kind\": \"image/png\", \"data\": \"<base64>\"}"})
+		return
+	}
+	ext, ok := shotKind[strings.TrimSpace(body.Kind)]
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("вид %q не картинка: беру png, jpeg, gif, webp", body.Kind)})
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(body.Data)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "данные не разобрались как base64"})
+		return
+	}
+	if len(raw) == 0 || len(raw) > shotLimit {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("картинка пустая или длиннее предела %d МБ", shotLimit>>20)})
+		return
+	}
+	dir := s.shotDir(sid)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("каталог вложений не создался: %v", err)})
+		return
+	}
+	name := fmt.Sprintf("%s%s", s.now().Format("20060102T150405"), ext)
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("вложение не записалось: %v", err)})
+		return
+	}
+	s.logf("вложение чата %s легло в %s (%d КБ)", sid, path, len(raw)/1024)
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "name": name, "bytes": len(raw)})
+}
+
+// handleChatShotGet отдаёт вложение чата картинкой: лента показывает миниатюру,
+// а браузеру файл с диска иначе не достать. Путь проверяется по каталогу
+// вложений, чтобы ручка не превратилась в чтение произвольного файла.
+func (s *server) handleChatShotGet(w http.ResponseWriter, r *http.Request) {
+	if s.findProject(w, r, "картинка чата") == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "битый id чата"})
+		return
+	}
+	name := filepath.Base(r.URL.Query().Get("name"))
+	if name == "." || name == string(filepath.Separator) || strings.Contains(name, "..") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "битое имя вложения"})
+		return
+	}
+	path := filepath.Join(s.shotDir(sid), name)
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "вложения нет"})
+		return
+	}
+	http.ServeFile(w, r, path)
 }

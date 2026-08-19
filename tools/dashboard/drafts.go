@@ -181,8 +181,12 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
+	// Груминг идёт живым чатом, а не headless-ходом (замечание 15
+	// двенадцатого круга POC): человек смотрит на разбор в той же панели, где
+	// разговаривает со всеми, а сессия называет себя в реестре записью
+	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		"claude -p "+shQuote(groomPrompt(id, ask))); err != nil {
+		chatVars(id, sess)+defaultClient+" "+shQuote(groomPrompt(id, ask))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

@@ -513,6 +513,9 @@ type reply struct {
 	// Code носит открытый файл (замечание 3 девятого круга POC).
 	Sel     string `json:"sel,omitempty"`
 	SelFile string `json:"selFile,omitempty"`
+	// Shot это путь картинки, приложенной к реплике: агент читает её сам, а
+	// лента показывает миниатюру.
+	Shot string `json:"shot,omitempty"`
 	// Spent это длительность размышлений в миллисекундах, посчитанная по
 	// меткам времени соседних записей транскрипта. Модель отдаёт размышления
 	// запечатанными чаще, чем текстом, и тогда сказать про них можно только
@@ -694,8 +697,11 @@ var peerFromRe = regexp.MustCompile(`from-name="([^"]*)"`)
 // человека: пишет её он, а дашборд только несёт. Чужая сессия называется своим
 // именем, иначе непонятно, кто вмешался в разговор.
 func peerSource(name string) string {
+	// Реплика с дашборда это реплика человека, и подписывать её источником
+	// незачем: он и так видит, где написал. Подпись остаётся только у чужой
+	// сессии, вмешавшейся в разговор (замечание 17 двенадцатого круга POC).
 	if name == "dashboard" {
-		return "с дашборда"
+		return ""
 	}
 	if name == "" {
 		return "из другой сессии"
@@ -796,10 +802,15 @@ func svcNote(tag svcTag, body string) string {
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string) {
 	if inner, name, wrapped := unwrapPeer(text); wrapped {
-		text = inner
-		sel, file, rest := cutSelection(text)
+		shot, rest0 := cutShot(inner)
+		sel, file, rest := cutSelection(rest0)
 		add(reply{Role: role, Time: at, Text: rest, Note: peerSource(name),
-			Sel: sel, SelFile: file})
+			Sel: sel, SelFile: file, Shot: shot})
+		return
+	}
+	if shot, rest0 := cutShot(text); shot != "" {
+		sel, file, rest := cutSelection(rest0)
+		add(reply{Role: role, Time: at, Text: rest, Sel: sel, SelFile: file, Shot: shot})
 		return
 	}
 	if sel, file, rest := cutSelection(text); sel != "" {
@@ -822,6 +833,20 @@ func addUser(add func(reply), role, at, text string) {
 // текст внутри едет как есть: кавычки, переносы и разметка человека сохраняются
 // целиком, потому что править их некому и незачем.
 var selWrapRe = regexp.MustCompile(`(?s)\A<selection file="([^"]*)">\n(.*?)\n</selection>\n?`)
+
+// shotWrapRe ловит приложенную картинку. Стоит она первым префиксом, перед
+// выделением: так реплика читается сверху вниз, сначала что показали, потом что
+// выделили, потом слова.
+var shotWrapRe = regexp.MustCompile(`(?s)\A<screenshot file="([^"]*)">\n.*?\n</screenshot>\n?`)
+
+// cutShot отрезает префикс картинки от остального.
+func cutShot(text string) (string, string) {
+	m := shotWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", text
+	}
+	return m[1], strings.TrimSpace(text[len(m[0]):])
+}
 
 // cutSelection отрезает префикс выделения от слов человека. Пустое выделение
 // значит, что реплика приехала без него, и это обычный случай.
@@ -1217,4 +1242,80 @@ func modelShort(id string) string {
 	// Чужой поставщик называет модели по-своему (glm-5.3), и резать их нечем:
 	// имя показывается как есть.
 	return id
+}
+
+// busyFresh это порог свежести транскрипта, за которым сессия считается
+// работающей: запись падает в журнал на каждом куске ответа.
+const busyFresh = 20 * time.Second
+
+// sessionBusy решает по транскрипту, работает ли сессия. Поле status реестра
+// тут не годится: у сессий vscode харнес его не пишет вовсе (пусто у всех до
+// единой), и мера по нему объявляла работающего агента простаивающим. Признаков
+// два, хватает любого: журнал писался только что, либо в хвосте висит вызов
+// инструмента без ответа, то есть агент сейчас в ходе (долгий ход не пишет в
+// журнал минутами).
+func sessionBusy(path string, now time.Time) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	from := int64(0)
+	if fi.Size() > modelTailLimit {
+		from = fi.Size() - modelTailLimit
+	}
+	if _, err := f.Seek(from, 0); err != nil {
+		return false
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false
+	}
+	open := map[string]bool{}
+	last := time.Time{}
+	for _, ln := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		var rec struct {
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(ln), &rec) != nil {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil && at.After(last) {
+			last = at
+		}
+		var blocks []struct {
+			Type      string `json:"type"`
+			ID        string `json:"id"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			switch b.Type {
+			case "tool_use":
+				if b.ID != "" {
+					open[b.ID] = true
+				}
+			case "tool_result":
+				delete(open, b.ToolUseID)
+			}
+		}
+	}
+	if !last.IsZero() && now.Sub(last) < busyFresh {
+		return true
+	}
+	// Незакрытый вызов старше получаса это брошенный хвост закрытого окна, а не
+	// работа.
+	return len(open) > 0 && !last.IsZero() && now.Sub(last) < 30*time.Minute
 }

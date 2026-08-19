@@ -937,3 +937,84 @@ a:hover{text-decoration:underline}
 /* приложенное к реплике выделение */
 .selq.fold{margin:7px 0 0;background:var(--bg2)}
 .selq.fold .foldh b{color:var(--acc)}
+
+/* ---- двенадцатый круг POC ---- */
+
+/* 14: строка черновика кликается целиком, и курсор обязан это показывать */
+.dlist .srow,.srow.clicky{cursor:pointer}
+.dlist .srow:hover{background:var(--bg2)}
+
+/* 9: номер задачи и название на одной горизонтали. Поле заголовка растёт по
+   содержимому, поэтому равняются они по первой строке, а не по центру блока */
+.thead{display:flex;align-items:flex-start;gap:10px}
+.thead .idbig{line-height:30px;flex:none}
+.thead .tedit{line-height:30px;padding-top:0;padding-bottom:0}
+
+/* 2: кнопки режимов в строке статуса справа */
+.tmodes{display:flex;align-items:center;gap:6px;flex:none}
+.tchips .gap{flex:1}
+.tchips{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* 8: у блока ранга не было отступа сверху, он слипался с полосой над ним */
+.rcard{margin-top:14px}
+
+/* 11: слева итог крупно, справа показатели в две строки */
+.rtop{display:flex;align-items:center;gap:14px;padding:10px 14px}
+.rbig{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+.rbig .v{font:600 26px var(--mono);color:var(--tx);flex:none;line-height:1}
+.rterms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:auto;gap:3px 12px;flex:1;min-width:0}
+.rterm{display:flex;align-items:baseline;gap:6px;min-width:0}
+.rterm i{font:400 10.5px var(--sans);font-style:normal;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rterm b{font:600 12px var(--mono);color:var(--tx2);flex:none}
+
+/* 7: карточка скрипта компактнее, кнопки иконками, вход и выход стрелками */
+.tool.fold.pair .foldh{padding:4px 8px;gap:6px}
+.foldcp{width:22px;height:22px;display:flex;align-items:center;justify-content:center;padding:0}
+.foldcp svg{width:13px;height:13px;display:block}
+.foldcp.ok{border-color:var(--run);color:var(--run)}
+.foldcp.bad{border-color:var(--block);color:var(--block)}
+.foldar svg{width:14px;height:14px;display:block}
+.pairb{padding:0;border-top:1px solid var(--line)}
+.pline{display:flex;align-items:flex-start;gap:7px;padding:5px 8px}
+.pline+.pline{border-top:1px solid var(--line)}
+.pico{flex:none;width:14px;height:14px;color:var(--tx3);margin-top:2px}
+.pico svg{width:14px;height:14px;display:block}
+.pline.pin .pico{color:var(--acc)}
+.ptext{margin:0;flex:1;min-width:0;font:400 11.5px/1.45 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow-y:auto}
+
+/* 6: подпись сообщения внутри пузыря, справа внизу */
+.msg .bb{position:relative;padding-bottom:6px}
+.msg .bb .mm{margin-top:4px;text-align:right;font:400 10.5px var(--mono);color:var(--tx3)}
+.msg.me .bb .mm{color:var(--tx3)}
+
+/* 3 и 4: блоки вложений слева в строке отправки */
+.crow{display:flex;align-items:center;gap:8px}
+.cclips{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap}
+.cclip{display:flex;align-items:center;gap:6px;max-width:230px;padding:3px 6px;border:1px solid var(--line2);border-radius:8px;background:var(--bg2)}
+.cclip b{font:600 10.5px var(--sans);color:var(--acc);flex:none}
+.cclip span{font:400 11px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cclipx{flex:none;width:16px;height:16px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.cclipx svg{width:9px;height:9px;display:block}
+.cclipx:hover{color:var(--tx)}
+.cshot{width:26px;height:26px;object-fit:cover;border-radius:5px;flex:none}
+.mshot{display:block;max-width:100%;max-height:260px;margin-top:8px;border-radius:9px;border:1px solid var(--line)}
+
+/* 10: продолжение работы иконкой рядом с отправкой */
+.cgo{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.cgo svg{width:15px;height:15px;display:block}
+.cgo:hover{border-color:var(--acc);color:var(--tx)}
+.cgo:disabled{opacity:0.5;cursor:default}
+
+/* 13: меню видов нового чата у кнопки «+» */
+.cdmenu{top:38px;max-height:none}
+.cdmenu .cdrow{font:400 12.5px var(--sans);color:var(--tx)}
+
+/* 15: экран записи накопителя по образцу экрана задачи */
+.dtitle{font:400 14px/30px var(--sans);color:var(--tx);border:none;background:none;padding:0}
+.crumb-sep{color:var(--tx3);margin:0 6px}
+
+/* 21: возраст снимка квоты цветом, а не словом «протух» */
+.qage{font-weight:600}
+.q-fresh{color:var(--run)}
+.q-warm{color:var(--wait)}
+.q-old{color:var(--block)}

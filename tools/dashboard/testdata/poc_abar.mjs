@@ -61,13 +61,15 @@ const fpanel = byClass(groups, "fpanel");
 const ta0 = tag(fpanel, "TEXTAREA");
 if (ta0 && !ta0.hidden) fail("в просмотре осталось открытое поле правки");
 
-// --- разворот блока на всю колонку и обратно ---
-const wide = deepBtn(fpanel, "fwide");
-if (!wide) fail("кнопки разворота нет");
-wide.handlers.click({ stopPropagation: () => {} });
-if (!String(fpanel.className).includes("wide")) fail("разворот не включился");
-wide.handlers.click({ stopPropagation: () => {} });
-if (String(fpanel.className).includes("wide")) fail("обратная кнопка не свернула блок");
+// --- режим чтения: кнопка переехала в строку статуса к карандашу ---
+const read = deepBtn(byClass(groups, "tmodes"), "tpen");
+if (!read) fail("кнопок режимов в строке статуса нет");
+const reads = (byClass(groups, "tmodes").children || []).filter((k) => k.tagName === "BUTTON");
+if (reads.length !== 2) fail("в строке статуса не две кнопки режимов: " + reads.length);
+reads[1].handlers.click({ stopPropagation: () => {} });
+if (!String(fpanel.className).includes("wide")) fail("режим чтения не включился");
+reads[1].handlers.click({ stopPropagation: () => {} });
+if (String(fpanel.className).includes("wide")) fail("режим чтения не выключился");
 
 // --- правка формы приводит полосу вместе с кнопками ---
 const title = byClass(groups, "tedit");
@@ -84,7 +86,7 @@ if (save.disabled) fail("«Сохранить» погашено на честн
 // --- карандаш переключает режим и над тронутой формой ---
 // Перерисовка экрана над тронутой формой запрещена (она стёрла бы
 // несохранённое), поэтому режим меняется по месту; раньше кнопка тут молчала.
-const pen = deepBtn(groups, "tpen");
+const pen = (byClass(groups, "tmodes").children || []).filter((k) => k.tagName === "BUTTON")[0];
 if (!pen) fail("карандаша правки нет");
 pen.handlers.click({ stopPropagation: () => {} });
 const panelNow = byClass(groups, "fpanel");
@@ -98,12 +100,17 @@ if (!taNow.hidden || viewNow.hidden) fail("возврат в просмотр н
 // --- колонок на экране задачи нет: ранг и зависимости своими строками ---
 if (byClass(groups, "rrail")) fail("правая колонка осталась на экране задачи");
 
-// --- у задачи со своими действиями полоса стоит и без правки ---
+// --- у задачи в бэклоге полоса стоит и без правки: там своё действие ---
+// Правку сперва отменяем: над тронутой формой перерисовка экрана запрещена, и
+// следующий renderTask вернулся бы ни с чем.
+const drop = deepBtn(bar(), "Отменить правку");
+if (drop) drop.handlers.click({ stopPropagation: () => {} });
+await settle();
 works = [];
-await sandbox.renderTask("demo", works, "XR-1");
+await sandbox.renderTask("demo", works, "XR-2");
 await settle();
 if (!bar()) fail("полоса действий пропала там, где действия есть");
-if (!deepBtn(bar(), "Продолжить")) fail("в полосе нет кнопки действия: " + dump(bar()));
+if (!deepBtn(bar(), "Выполнить")) fail("в полосе нет кнопки действия: " + dump(bar()));
 
 console.log("экран задачи: пустая полоса действий не рисуется, постановка открывается " +
   "разметкой, разворот на колонку и обратно, правка приводит кнопки, карандаш работает " +

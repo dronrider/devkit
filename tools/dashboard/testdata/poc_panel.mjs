@@ -146,9 +146,9 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
 // --- лента: размышления, вывод инструмента, служебные вставки ---
 {
   const spent = sandbox.replyEl({ role: "thinking", text: "", spent: 9377 });
-  if (!dump(spent).includes("Думал 9 с")) fail("длительность размышлений не названа");
+  if (!dump(spent).includes("Размышлял 9 с")) fail("длительность размышлений не названа");
   const quiet = sandbox.replyEl({ role: "thinking", text: "", spent: 0 });
-  if (!dump(quiet).includes("Размышления")) fail("подпись размышлений не та: " + dump(quiet));
+  if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
   const card = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la" },
     { role: "toolout", text: "итого 42" });
@@ -156,7 +156,11 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!said.includes("Bash") || !said.includes("ls -la") || !said.includes("итого 42")) {
     fail("вызов и вывод не в одной карточке: " + said);
   }
-  if (!said.includes("копировать")) fail("кнопки копирования нет");
+  if (!deepBtn(card, "foldcp")) fail("кнопки копирования нет");
+  // Вход и выход стоят отдельными строками со стрелками (замечание 7).
+  if (!byClass(card, "pin") || !byClass(card, "pout")) {
+    fail("вход и выход не разведены строками: " + said);
+  }
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
 }
@@ -177,6 +181,23 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!tag(md, "BLOCKQUOTE")) fail("цитата не собралась");
   if (!tag(md, "PRE")) fail("код-блок не собрался");
   if (tag(md, "НЕ")) fail("текст просочился разметкой");
+  // Нумерованные списки: вложенность, продолжение пункта и начало не с единицы
+  // (замечание 1 двенадцатого круга POC).
+  const num = sandbox.mdRender([
+    "1. первый", "2. второй", "   продолжение второго",
+    "   1. вложенный", "3. третий", "", "4. новый список",
+  ].join("\n"));
+  const lists = [];
+  const walk = (n, d) => {
+    if (n.tagName === "OL" || n.tagName === "UL") lists.push([n.tagName, d, n.children.length, n.attrs.start]);
+    for (const k of n.children || []) walk(k, d + 1);
+  };
+  walk(num, 0);
+  if (lists.length !== 3) fail("нумерованные списки собрались не так: " + JSON.stringify(lists));
+  if (lists[0][2] !== 3) fail("во внешнем списке не три пункта: " + JSON.stringify(lists[0]));
+  if (lists[1][1] <= lists[0][1]) fail("вложенный список не вложен: " + JSON.stringify(lists));
+  if (lists[2][3] !== "4") fail("список не продолжил нумерацию с четвёртого: " + JSON.stringify(lists[2]));
+  if (!dump(num).includes("продолжение второго")) fail("продолжение пункта потерялось");
 }
 
 // --- выделение уезжает агенту префиксом, в ленте видно компактно ---

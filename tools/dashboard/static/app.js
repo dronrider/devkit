@@ -1628,7 +1628,9 @@ function depsCard(project, id, after, blocks) {
 function filePanel(project, id, detail, form, touch, edit) {
   const card = el("div", "card fpanel");
   const head = el("div", "fhead");
-  head.append(el("b", "", detail.file || "docs/tasks/" + id + ".md"));
+  // Путь файла постановки в шапке блока не нужен: человек читает описание, а
+  // не разбирается, где оно лежит (замечание 12). Шапка остаётся ради кнопки
+  // «Завести файл» у задачи без постановки.
   head.append(el("span", "gap"));
   const body = el("div", "fbody");
   card.append(head, body);
@@ -1640,20 +1642,10 @@ function filePanel(project, id, detail, form, touch, edit) {
     body.append(el("div", "empty", detail.note || "файла задачи нет"));
     return card;
   }
-  // Разворот на всю среднюю колонку: кнопка висит в правом верхнем углу блока,
-  // обратная сворачивает назад. Состояние живёт до ухода с экрана, между
-  // заходами его не держим (замечание 2).
-  const wide = el("button", "fwide");
-  wide.setAttribute("aria-label", "Развернуть описание");
-  wide.title = "Развернуть на всю колонку";
-  wide.append(icon("i-wide"));
-  wide.addEventListener("click", () => {
-    const on = card.classList.toggle("wide");
-    wide.replaceChildren(icon(on ? "i-narrow" : "i-wide"));
-    wide.title = on ? "Свернуть обратно" : "Развернуть на всю колонку";
-    wide.setAttribute("aria-label", wide.title);
-  });
-  card.append(wide);
+  // Разворот стал режимом чтения задачи, и кнопка его переехала к карандашу в
+  // строку статуса: два переключателя вида стоят рядом, а не по разным углам
+  // экрана (замечание 2). Сама ручка отдаётся наружу, кнопку рисует экран.
+  card.setWide = (on) => card.classList.toggle("wide", on);
 
   const ta = el("textarea");
   ta.value = form.text;
@@ -1768,23 +1760,6 @@ function barBtn(cls, label, ico) {
   return btn;
 }
 
-// Куда уедет продолжение: приписка рядом с кнопкой, и в ней ссылка на тот
-// самый разговор. Диалог задачи ищется тем же списком, каким живёт окно чатов,
-// поэтому приписка приезжает позже кнопки и правит себя на месте (замечание 10).
-function continueHint(project, id, works) {
-  const hint = el("span", "hint", "Выполнение продолжится в чате.");
-  const open = el("button", "linkish", "открыть");
-  open.addEventListener("click", () => { openChat(id); });
-  hint.append(document.createTextNode(" "), open);
-  api(chatsURL(project) + "?task=" + encodeURIComponent(id)).then((r) => {
-    const list = (r.ok && r.body.chats) || [];
-    if (!list.length) {
-      hint.replaceChildren(document.createTextNode("Выполнение продолжится в новом чате."));
-    }
-  }).catch(console.error);
-  return hint;
-}
-
 // Продолжение работы задачи: сервер сам решает, будить живой разговор каналом
 // или поднимать резюм, а не нашедший разговора откатывается на прежний запуск
 // конвейера. Экран после удачи уходит в чат: смотреть за продолжением надо там.
@@ -1843,17 +1818,9 @@ function taskActions(project, id, row, works) {
   const closesWithoutSession = row.sect === "check" && row.accept === "user";
   const afterOk = closesWithoutSession ? "" : taskChatHash(project, id);
   if (label === ACTION_BY_SECT["in-progress"] && !isGoal) {
-    // «Продолжить» продолжает последнюю сессию задачи, а не поднимает нового
-    // агента: у прежнего разговора есть контекст работы, и бросать его, чтобы
-    // завести второго исполнителя на том же дереве, было прямой потерей
-    // (замечание 9 второго круга POC).
-    const go = barBtn("btn btn-acc", label, "i-play");
-    go.addEventListener("click", () => {
-      go.disabled = true;
-      continueTask(project, id).catch(console.error).finally(() => { go.disabled = false; });
-    });
-    out.push(go);
-    out.push(continueHint(project, id, works));
+    // Продолжение работы переехало в чат отдельной кнопкой рядом с отправкой
+    // (замечание 10 двенадцатого круга POC): продолжают её оттуда же, откуда
+    // разговаривают, а полоса с одной кнопкой на экране задачи не нужна.
     return out;
   }
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
@@ -2072,10 +2039,25 @@ async function renderTask(project, works, id) {
     pencil.setAttribute("aria-label", pencil.title);
     if (file.setEdit) file.setEdit(editNow);
   });
-  head.append(pencil);
+  // Кнопки режимов живут в строке статуса справа, а не при заголовке: там для
+  // них есть свободное место, а заголовок остаётся заголовком (замечание 2).
+  const modes = el("div", "tmodes");
+  modes.append(pencil);
   page.append(head);
 
   const chips = el("div", "tchips");
+  // Режим чтения: постановка занимает всю колонку, остальное уходит с глаз.
+  const read = el("button", "tpen");
+  read.title = "Режим чтения";
+  read.setAttribute("aria-label", read.title);
+  read.append(icon("i-read"));
+  read.addEventListener("click", () => {
+    const on = read.classList.toggle("on");
+    read.title = on ? "Выйти из режима чтения" : "Режим чтения";
+    read.setAttribute("aria-label", read.title);
+    if (file.setWide) file.setWide(on);
+  });
+  modes.append(read);
   // Тот же признак работы, что и в строке списка, и теми же словами: решение
   // «продолжить или не трогать» принимают чаще всего на этом экране.
   const run = runChip(row);
@@ -2100,6 +2082,8 @@ async function renderTask(project, works, id) {
   for (const note of row.notes || []) {
     if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
   }
+  // Кнопки режимов прижимаются к правому краю строки статуса.
+  chips.append(el("span", "gap"), modes);
   page.append(chips);
 
   // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
@@ -2218,9 +2202,18 @@ async function renderTask(project, works, id) {
   const rtop = el("div", "rtop");
   const rhead = el("div", "rhead");
   rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
+  // Слева итог крупно, справа от него слагаемые в две строки: показателей
+  // шесть, и одной строкой они переносились как попало (замечание 11).
   const big = el("div", "rbig");
   big.append(el("span", "v", String(row.r)));
-  big.append(el("span", "f", "= " + (row.r_parts || []).join("+")));
+  const terms = el("div", "rterms");
+  RANK_PARTS.forEach((part, i) => {
+    const cell = el("span", "rterm");
+    cell.append(el("i", "", part.name));
+    cell.append(el("b", "", String((row.r_parts || [])[i] === undefined ? "-" : row.r_parts[i])));
+    terms.append(cell);
+  });
+  big.append(terms);
   // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
   // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
   // стили (.rfold на ноутбуке display:none), а спрятанная кнопка ни в обход
@@ -2480,6 +2473,10 @@ function wrapScroll(node) {
 function mdRender(text) {
   const box = el("div", "md");
   const lines = String(text || "").split("\n");
+  // stack это открытые списки по уровням вложенности: у каждого свой отступ,
+  // вид (нумерованный или маркерами) и последний пункт, к которому цепляется
+  // продолжение строки.
+  const stack = [];
   let list = null;
   let para = null;
   for (let i = 0; i < lines.length; i++) {
@@ -2487,6 +2484,7 @@ function mdRender(text) {
     if (/^\s*```/.test(line)) {
       const buf = [];
       for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) buf.push(lines[i]);
+      stack.length = 0;
       list = null;
       para = null;
       box.append(el("pre", "", buf.join("\n")));
@@ -2494,6 +2492,7 @@ function mdRender(text) {
     }
     const head = line.match(/^(#{1,6})\s+(.*)$/);
     if (head) {
+      stack.length = 0;
       list = null;
       para = null;
       const h = el("div", "mdh mdh" + head[1].length);
@@ -2544,20 +2543,54 @@ function mdRender(text) {
       box.append(q);
       continue;
     }
-    const item = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
-    if (item) {
+    // Список: маркер или номер. Разбор помнит отступ и номер начала, потому
+    // что от них зависит и вложенность, и с какой цифры список продолжится.
+    // До этого нумерация всегда начиналась с единицы, вложенный список
+    // сливался с внешним, а строка продолжения пункта («висячий» отступ)
+    // становилась отдельным абзацем и рвала список надвое (замечание 1
+    // двенадцатого круга POC).
+    const item = line.match(/^(\s*)([-*+]|\d+)([.)]?)\s+(.*)$/);
+    if (item && (item[3] || /[-*+]/.test(item[2]))) {
       para = null;
-      const tag = /\d/.test(item[1]) ? "ol" : "ul";
-      if (!list || list.tagName.toLowerCase() !== tag) {
-        list = el(tag);
-        box.append(list);
+      const pad = item[1].replace(/\t/g, "    ").length;
+      const ordered = /\d/.test(item[2]);
+      const kind = ordered ? "ol" : "ul";
+      // Уровень вложенности идёт по отступу: свой список на каждый новый
+      // отступ, возврат к меньшему закрывает вложенные.
+      while (stack.length && stack[stack.length - 1].pad > pad) stack.pop();
+      let top = stack[stack.length - 1];
+      if (!top || top.pad < pad || top.kind !== kind) {
+        const box2 = el(kind);
+        if (ordered) {
+          // Нумерация продолжается с той цифры, которую написал человек:
+          // список, начатый с четвёртого пункта, так и читается.
+          const from = Number(item[2]);
+          if (from > 1) box2.setAttribute("start", String(from));
+        }
+        if (top && top.pad < pad) top.li.append(box2);
+        else box.append(box2);
+        top = { pad, kind, box: box2, li: null };
+        stack.push(top);
       }
       const li = el("li");
-      mdInline(item[2], li);
-      list.append(li);
+      mdInline(item[4], li);
+      top.box.append(li);
+      top.li = li;
+      list = top.box;
+      continue;
+    }
+    // Продолжение пункта: строка с отступом под открытым списком принадлежит
+    // последнему пункту, а не начинает абзац.
+    if (stack.length && /^\s+\S/.test(line) && stack[stack.length - 1].li) {
+      const li = stack[stack.length - 1].li;
+      li.append(document.createTextNode(" "));
+      mdInline(line.trim(), li);
       continue;
     }
     if (!line.trim()) {
+      // Пустая строка закрывает списки: следующий список начнётся заново, и
+      // нумерация в нём пойдёт со своей цифры.
+      stack.length = 0;
       list = null;
       para = null;
       continue;
@@ -2567,6 +2600,7 @@ function mdRender(text) {
       mdInline(line, para);
       continue;
     }
+    stack.length = 0;
     list = null;
     para = el("p");
     mdInline(line, para);
@@ -2602,21 +2636,22 @@ function foldEl(cls, head, text, sub, copy) {
 // целиком, и выделять их мышью из ленты неудобно. Ответ виден на самой кнопке:
 // молчаливое копирование неотличимо от несработавшего.
 function copyBtn(text) {
-  const btn = el("button", "foldcp", "копировать");
+  const btn = el("button", "foldcp");
+  btn.title = "Копировать";
+  btn.setAttribute("aria-label", "Копировать");
+  btn.append(icon("i-copy"));
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     const done = () => {
-      btn.textContent = "скопировано";
-      setTimeout(() => { btn.textContent = "копировать"; }, 1500);
+      btn.classList.add("ok");
+      setTimeout(() => { btn.classList.remove("ok"); }, 1500);
     };
     const nav = window.navigator;
     if (nav && nav.clipboard && nav.clipboard.writeText) {
-      nav.clipboard.writeText(text).then(done).catch(() => {
-        btn.textContent = "не вышло";
-      });
+      nav.clipboard.writeText(text).then(done).catch(() => { btn.classList.add("bad"); });
       return;
     }
-    btn.textContent = "не вышло";
+    btn.classList.add("bad");
   });
   return btn;
 }
@@ -2649,7 +2684,7 @@ function replyEl(item) {
     // чего ничего не следовало. Текста может не быть вовсе (модель отдаёт
     // размышления запечатанными), и тогда в ленте стоит длительность, как
     // «Thought for 5s» в vscode: сколько агент думал, видно всегда.
-    const spent = item.spent ? "Думал " + thinkWord(item.spent) : "Размышления...";
+    const spent = item.spent ? "Размышлял " + thinkWord(item.spent) : "Размышление...";
     if (!item.text) return el("div", "think", spent);
     return foldEl("think", spent, item.text, foldPeek(item.text, 90));
   }
@@ -3153,12 +3188,16 @@ function dayEl(date) {
   return day;
 }
 
+// Подпись сидит внутри пузыря, справа внизу: снаружи она занимала свою строку
+// на каждое сообщение и растягивала ленту вдвое (замечание 6 двенадцатого
+// круга POC). Пустая подпись не рисуется вовсе.
 function chatBubble(who, text, meta) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   const bb = el("div", "bb");
   bb.append(mdRender(text));
+  const said = meta ? who + ", " + meta : who;
+  bb.append(el("div", "mm", said));
   wrap.append(bb);
-  wrap.append(el("div", "mm", who + ", " + meta));
   return wrap;
 }
 
@@ -3175,9 +3214,39 @@ function toolPair(call, out) {
   const name = call.tool || "инструмент";
   const cmd = call.text || "";
   const said = out && out.text ? out.text : "";
-  const body = said ? (cmd ? cmd + "\n\n--- вывод ---\n" + said : said) : cmd;
-  const sub = call.note || foldPeek(said, 80);
-  return foldEl("tool", name, body, sub, body);
+  const box = el("div", "tool fold pair");
+  const top = el("div", "foldh");
+  top.append(el("b", "", name));
+  top.append(el("span", "", call.note || foldPeek(said, 80)));
+  // Копирование и сворачивание стоят иконками справа вверху: подписи словами
+  // занимали в карточке больше места, чем сама команда (замечание 7).
+  const both = (cmd ? cmd : "") + (cmd && said ? "\n" : "") + said;
+  top.append(copyBtn(both));
+  const car = el("button", "foldcp foldar");
+  car.append(icon("i-unfold"));
+  top.append(car);
+  // Вход и выход строками с иконками-стрелками: вправо ушло в инструмент,
+  // влево вернулось из него.
+  const body = el("div", "foldb pairb");
+  const row = (ico, text, cls) => {
+    const line = el("div", "pline " + cls);
+    const mark = el("span", "pico");
+    mark.append(icon(ico));
+    line.append(mark, el("pre", "ptext", text));
+    return line;
+  };
+  if (cmd) body.append(row("i-in", cmd, "pin"));
+  if (said) body.append(row("i-out", said, "pout"));
+  body.hidden = true;
+  const flip = () => {
+    body.hidden = !body.hidden;
+    car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));
+    box.classList.toggle("open", !body.hidden);
+  };
+  car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
+  top.addEventListener("click", flip);
+  box.append(top, body);
+  return box;
 }
 
 // Приложенное выделение свёрнутым блоком при пузыре: развернуть по клику.
@@ -3193,10 +3262,22 @@ function chatItem(item) {
     // дашборда» это реплика самого человека, он её и написал, а дашборд только
     // донёс. Обёртку канала сервер уже снял, тут остаётся чистый текст.
     const who = item.role === "user" ? "вы" : "агент";
-    const from = item.note || "из транскрипта";
-    const tail = item.sel ? from + ", с выделением" : from;
-    const wrap = chatBubble(who, item.text, (item.time ? localTime(item.time) + ", " : "") + tail);
+    // «из транскрипта» человеку не говорит ничего: он и так читает ленту
+    // разговора. Остаётся время, а при нём источник, если он не обычный.
+    const bits = [];
+    if (item.time) bits.push(localTime(item.time));
+    if (item.note) bits.push(item.note);
+    if (item.sel) bits.push("с выделением");
+    const wrap = chatBubble(who, item.text, bits.join(", "));
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
+    if (item.shot) {
+      // Картинка лежит файлом на машине, и браузеру её отдаёт ручка вложений.
+      const thumb = el("img", "mshot");
+      thumb.src = chatsURL(chatShotProject) + "/" + encodeURIComponent(chatShotSid) +
+        "/shot?name=" + encodeURIComponent(String(item.shot).split("/").pop());
+      thumb.alt = "вложенный снимок";
+      wrap.append(thumb);
+    }
     return wrap;
   }
   return replyEl(item);
@@ -3207,7 +3288,14 @@ function chatItem(item) {
 // chatState), и сама лента приезжает общим куском (wireFeed): панели она
 // достаётся с разделителями дней и своим поколением живых потоков, чтобы
 // перерисованный рядом экран её не гасил.
+// Адрес ленты для миниатюр вложений: chatItem рисуется без контекста, а ручка
+// картинки живёт при чате, и её надо чем-то назвать.
+let chatShotProject = "";
+let chatShotSid = "";
+
 function wireChatFeed(project, feed, sid, onItem) {
+  chatShotProject = project;
+  chatShotSid = sid;
   return wireFeed(project, sid, {
     onItem,
     box: feed,
@@ -4050,7 +4138,7 @@ function chatVisible(st) {
 // репликой: живому агенту она уйдёт в процесс, кончившемуся поднимет резюм, а
 // в окно vscode дашборду писать нечем.
 const CHAT_STATE_WORD = {
-  live: "идёт",
+  live: "ждёт реплики",
   vscode: "в vscode",
   dead: "процесса нет",
 };
@@ -4075,7 +4163,10 @@ function chatOption(project, c, current) {
   const row = el("div", "cdrow" + (c.id === current ? " on" : ""));
   row.append(el("b", "", chatTitle(c)));
   const chips = el("div", "cchips");
-  chips.append(el("span", "chip", CHAT_STATE_WORD[c.state] || c.state));
+  // Живой чат различается занятостью: работает агент или ждёт реплики.
+  const busyNow = c.state === "live" && !c.idle;
+  chips.append(el("span", "chip" + (busyNow ? " c-run" : ""),
+    busyNow ? "работает" : CHAT_STATE_WORD[c.state] || c.state));
   if (c.model) chips.append(el("span", "chip", c.model));
   for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
   if (c.harness) chips.append(el("span", "chip", c.harness));
@@ -4176,8 +4267,27 @@ function chatHead(project, st) {
   add.append(icon("i-plus"));
   add.title = "Новый чат";
   add.setAttribute("aria-label", "Новый чат");
-  add.addEventListener("click", () => {
-    switchChat(st.task ? CHAT_NEW + ":" + st.task : CHAT_NEW);
+  add.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // Из контекста задачи новый чат бывает двух видов: про задачу (агент
+    // получит её контекст хуком старта) и свободный, ни к чему не привязанный
+    // (замечание 13). Без задачи выбирать не из чего, и меню не открывается.
+    if (!st.task) {
+      switchChat(CHAT_NEW);
+      return;
+    }
+    chatDropShut();
+    const menu = el("div", "cdrop cdmenu");
+    for (const [label, addr] of [
+      ["Чат задачи " + st.task, CHAT_NEW + ":" + st.task],
+      ["Произвольный чат", CHAT_NEW],
+    ]) {
+      const opt = el("div", "cdrow", label);
+      opt.addEventListener("click", () => { chatDropShut(); switchChat(addr); });
+      menu.append(opt);
+    }
+    line.append(menu);
+    chatDrop = menu;
   });
   line.append(add);
 
@@ -4331,10 +4441,12 @@ function makeBusy(project, box) {
     if (Date.now() > stop) return off();
     try {
       const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/status");
-      // Занятость знает только клиент, который её пишет; пустое поле статуса
-      // это «неизвестно», и гасить по нему индикатор нельзя, он погаснет от
-      // первой записи ленты.
-      if (r.ok && r.body.live && r.body.status && !r.body.busy) return off();
+      // Занятость сервер считает по транскрипту, а не по полю реестра: у
+      // сессий vscode оно пустое всегда. Тишина в журнале в первые секунды
+      // после реплики это не «агент закончил», а «агент ещё не начал писать»,
+      // и гасить по ней нельзя (замечание 18).
+      const young = shown && Date.now() - shown < 6000;
+      if (r.ok && r.body.live && !r.body.busy && !young) return off();
     } catch (err) {
       // Обрыв связи не гасит индикатор: работа идёт, видно её просто нечем.
     }
@@ -4392,6 +4504,12 @@ function grabSelection() {
 // править чужой текст по дороге нельзя, агент должен увидеть ровно то, что
 // человек выделил. Разделитель это закрывающий тег на своей строке, поэтому
 // внутри выделения он не встретится случайно.
+// Префикс картинки: агент читает файл сам, поэтому ему нужен путь, а не байты.
+// Форма та же, что у выделения: строка перед репликой, разбирает её сервер.
+function shotPrefix(path) {
+  return '<screenshot file="' + path + '">\nвставлен снимок экрана\n</screenshot>\n';
+}
+
 function selPrefix(sel) {
   return '<selection file="' + sel.file + '">\n' + sel.text + "\n</selection>\n";
 }
@@ -4410,6 +4528,11 @@ function makeEcho(project, box, feedBox) {
       const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
+      if (m.pic) {
+        const thumb = el("img", "mshot");
+        thumb.src = m.pic.data;
+        wrap.append(thumb);
+      }
       if (m.state === "bad") {
         const again = el("button", "linkish", "повторить");
         again.addEventListener("click", () => {
@@ -4437,9 +4560,9 @@ function makeEcho(project, box, feedBox) {
     // wire это то, что ушло агенту (с префиксом выделения), и сверка эха идёт
     // по нему: в транскрипте лежит именно он. text это слова человека, их и
     // видно в пузыре.
-    add(text, retry, wire, sel) {
+    add(text, retry, wire, sel, pic) {
       seq += 1;
-      const m = { key: "local-" + seq, text, wire: wire || text, sel,
+      const m = { key: "local-" + seq, text, wire: wire || text, sel, pic,
         state: "wait", born: Date.now(), retry };
       mine.push(m);
       draw();
@@ -4530,28 +4653,103 @@ function chatPanel(project, st) {
     chatDraftWrite(st.addr, ta.value);
   });
   const row = el("div", "crow");
+  // Приложенное к реплике видно до отправки, а не только после: слева от края
+  // формы стоят блоки вложений, первым выделение, вторым картинка (замечания
+  // 3 и 4). Раньше человек нажимал «отправить» и только в ленте узнавал, уехало
+  // ли выделение.
+  const clips = el("div", "cclips");
+  row.append(clips);
+  let pinnedSel = null;
+  let shot = null;
+  const drawClips = () => {
+    clips.replaceChildren();
+    if (pinnedSel) {
+      const chip = el("div", "cclip");
+      chip.append(el("b", "", "выделение"));
+      chip.append(el("span", "", foldPeek(pinnedSel.text, 40)));
+      const off = el("button", "cclipx");
+      off.append(icon("close"));
+      off.title = "Убрать выделение";
+      off.addEventListener("click", () => { pinnedSel = null; drawClips(); });
+      chip.append(off);
+      clips.append(chip);
+    }
+    if (shot) {
+      const chip = el("div", "cclip");
+      const thumb = el("img", "cshot");
+      thumb.src = shot.data;
+      chip.append(thumb);
+      chip.append(el("span", "", shot.name));
+      const off = el("button", "cclipx");
+      off.append(icon("close"));
+      off.title = "Убрать картинку";
+      off.addEventListener("click", () => { shot = null; drawClips(); });
+      chip.append(off);
+      clips.append(chip);
+    }
+  };
+  // Выделение подхватывается, пока человек его держит: снял выделение и начал
+  // печатать, значит оно уже не при чём.
+  const catchSel = () => {
+    const live = grabSelection();
+    if (live) {
+      pinnedSel = live;
+      drawClips();
+    }
+  };
+  document.addEventListener("selectionchange", catchSel);
+  chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
+  // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
+  // живую сессию каналом или поднимать резюм (ручка /continue).
+  if (st.task && !st.isGoal) {
+    const go = el("button", "cgo");
+    go.title = "Продолжить работу по " + st.task;
+    go.setAttribute("aria-label", go.title);
+    go.append(icon("i-play-sm"));
+    go.addEventListener("click", () => {
+      go.disabled = true;
+      continueTask(project, st.task).catch(console.error).finally(() => { go.disabled = false; });
+    });
+    row.append(go);
+  }
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
-  const post = (text, sel) => {
+  // Вложение уезжает на сервер до самой реплики: агенту нужен путь, а он
+  // рождается только после записи файла.
+  const putShot = async (pic) => {
+    if (!pic || !st.sid) return "";
+    const cut = String(pic.data).indexOf(",");
+    const r = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/shot", {
+      method: "POST",
+      body: { kind: pic.kind, data: cut >= 0 ? pic.data.slice(cut + 1) : pic.data },
+    });
+    if (!r.ok) {
+      sayResult(r.body.error || "картинка не легла", true);
+      return "";
+    }
+    return r.body.path || "";
+  };
+
+  const post = (text, sel, pic) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
     // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
     // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
-    const wire = sel ? selPrefix(sel) + text : text;
-    const m = echo.add(text, (again) => post(again, sel), wire, sel);
+    const wire0 = sel ? selPrefix(sel) + text : text;
+    const m = echo.add(text, (again) => post(again, sel, pic), wire0, sel, pic);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     if (way.kind === "new") {
-      chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref())
+      chatRaise(project, st, wire0, st.entry ? st.entry.model : chatModelPref())
         .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
         .catch((err) => { echo.bad(m); console.error(err); })
         .finally(done);
       return;
     }
     busy.on(st.sid);
-    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-      { method: "POST", body: { text: wire } })
+    putShot(pic).then((path) => api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
+      { method: "POST", body: { text: path ? shotPrefix(path) + wire0 : wire0 } }))
       .then((r) => {
         if (!r.ok) {
           // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
@@ -4584,10 +4782,32 @@ function chatPanel(project, st) {
     // Выделенный в постановке кусок уезжает вместе с репликой: человек
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC).
-    post(text, grabSelection());
+    post(text, pinnedSel || grabSelection(), shot);
+    pinnedSel = null;
+    shot = null;
+    drawClips();
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
   // короткими репликами, и тянуться к кнопке на каждой из них незачем.
+  // Вставка картинки из буфера: скриншот кладётся блоком в строку отправки, а
+  // агенту уезжает ссылкой на файл, который он прочитает своим Read (замечание
+  // 4). Бинарной передачи через канал сессий тут нет и не нужно.
+  ta.addEventListener("paste", (ev) => {
+    const items = (ev.clipboardData && ev.clipboardData.items) || [];
+    for (const it of items) {
+      if (!it.type || it.type.indexOf("image/") !== 0) continue;
+      const file = it.getAsFile && it.getAsFile();
+      if (!file) continue;
+      if (ev.preventDefault) ev.preventDefault();
+      const reader = new FileReader();
+      reader.onload = () => {
+        shot = { data: String(reader.result || ""), kind: it.type, name: "снимок" };
+        drawClips();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  });
   ta.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault();
@@ -4727,7 +4947,7 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 // Строка накопителя ведёт на экран записи, а кнопка груминга остаётся и в ней:
 // накопитель разбирают пачкой, не заходя внутрь каждой записи (LLD DK-328).
 function draftRow(project, d) {
-  const row = el("div", "srow");
+  const row = el("div", "srow clicky");
   row.append(el("span", "id", d.id));
   row.append(el("span", "st", d.title || ""));
   const meta = el("span", "sm");
@@ -5144,15 +5364,6 @@ const DRAFT_PHASES = {
   },
 };
 
-// Состояние экрана: живая работа с тем же ID это идущий груминг, а
-// кончившийся разбор без единого следа на диске, но со словом агента в
-// транскрипте, это вопрос.
-function draftPhase(out, running) {
-  if (running) return "running";
-  const state = (out && out.state) || "open";
-  if (state === "open") return out && out.question ? "question" : "open";
-  return state;
-}
 
 async function dropDraft(project, id, reason) {
   sayResult("удаление черновика " + id + "...");
@@ -5164,207 +5375,69 @@ async function dropDraft(project, id, reason) {
   return r.ok;
 }
 
-// Карточка исхода: заголовок состояния, слова сервера про след, следующий шаг
-// и переход туда, куда груминг увёл запись.
-function draftOutcomeCard(project, id, out, phase) {
-  const card = el("div", "card dcard");
-  const head = el("div", "phd");
-  const said = DRAFT_PHASES[phase] || DRAFT_PHASES.open;
-  head.append(el("b", "", said.head));
-  card.append(head);
-  const body = el("div", "dbd");
-  // След на диске это про прошлое: у идущего разбора он говорил бы «груминга
-  // не было» ровно в тот момент, когда груминг идёт.
-  if (out.note && phase !== "running") {
-    body.append(el("div", phase === "error" ? "error" : "dsay", out.note));
-  }
-  if (phase === "deferred" && out.reason) {
-    body.append(el("div", "dwhy", "Причина: " + out.reason));
-  }
-  body.append(el("div", "hint", said.next));
-  if (phase === "row") {
-    const go = el("button", "btn btn-sm", "Открыть задачу " + id);
-    go.addEventListener("click", () => { goKeepingChat(project + "/" + id); });
-    body.append(go);
-  }
-  if (phase === "attached" && out.task) {
-    const go = el("button", "btn btn-sm", "Открыть " + out.task);
-    go.addEventListener("click", () => { goKeepingChat(project + "/" + out.task); });
-    body.append(go);
-  }
-  card.append(body);
-  return card;
-}
 
-// Карточка вопроса: последнее слово агента разметкой, поле уточнения и
-// повторная ходка. Поле стоит только здесь: изображать ввод в идущую сессию
-// дашборду нечем, и подпись под полем говорит это прямо.
-function draftAskCard(project, id, question) {
-  const card = el("div", "card dcard");
-  const head = el("div", "phd");
-  head.append(el("b", "", "Вопрос груминга"));
-  card.append(head);
-  const body = el("div", "dbd");
-  body.append(mdRender(question));
-  body.append(el("div", "dwhy", "Что ответить грумингу"));
-  const field = el("textarea", "dask");
-  field.placeholder = "Уточнение для новой ходки груминга";
-  body.append(field);
-  body.append(el("div", "hint", DRAFT_ASK_HINT));
-  const again = el("button", "btn btn-acc dend", "Повторить груминг");
-  again.addEventListener("click", () => {
-    again.disabled = true;
-    groomDraft(project, id, field.value.trim()).then((ok) => {
-      again.disabled = false;
-      if (ok) {
-        field.value = "";
-        refresh().catch(console.error);
-      }
-    }).catch((err) => { again.disabled = false; console.error(err); });
-  });
-  body.append(again);
-  card.append(body);
-  return card;
-}
 
-// Удаление с подтверждением на месте: строка с полем причины раскрывается там
-// же, где стояла кнопка. Модальных окон в дашборде нет, а причина обязательна
-// и здесь, и у самой утилиты.
-function draftDropCard(project, id) {
-  const card = el("div", "card dcard");
-  const head = el("div", "phd");
-  head.append(el("b", "", "Удаление записи"));
-  card.append(head);
-  const body = el("div", "dbd");
-  const start = el("button", "btn btn-danger", "Удалить");
-  const box = el("div", "dconfirm");
-  box.hidden = true;
-  const why = el("input", "dwhyin");
-  why.type = "text";
-  why.placeholder = "Чем запись протухла";
-  const go = el("button", "btn btn-danger", "Удалить черновик");
-  const no = el("button", "btn", "Отмена");
-  const row = el("div", "drow");
-  row.append(no, go);
-  box.append(why, row);
-  body.append(start, box, el("div", "hint", DRAFT_DROP_HINT));
-  start.addEventListener("click", () => {
-    box.hidden = false;
-    start.hidden = true;
-    why.focus();
-  });
-  no.addEventListener("click", () => {
-    box.hidden = true;
-    start.hidden = false;
-    why.value = "";
-  });
-  go.addEventListener("click", () => {
-    const reason = why.value.trim();
-    if (!reason) {
-      // Отказ виден там же, где поле: причина уезжает в коммит, и пустой она
-      // не бывает ни здесь, ни у утилиты.
-      sayResult("жду причину: она уезжает в коммит доски, и без неё черновик не удаляется", true);
-      why.focus();
-      return;
-    }
-    go.disabled = true;
-    dropDraft(project, id, reason).then((ok) => {
-      go.disabled = false;
-      if (ok) {
-        box.hidden = true;
-        start.hidden = false;
-        why.value = "";
-        refresh().catch(console.error);
-      }
-    }).catch((err) => { go.disabled = false; console.error(err); });
-  });
-  card.append(body);
-  return card;
-}
 
-// Ход груминга: снимок tmux-сессии, второго механизма живого хвоста не
-// заводится. Карточка собирается один раз на заход и живёт своим опросом:
-// поднявшийся груминг она видит сама, а пересборка оборвала бы хвост на каждом
-// обновлении экрана. Снимок тут остался и после DK-435, снявшей полосу tmux с
-// экранов: сессию груминга поднимает сам дашборд, и пустым этот снимок не
-// бывает, а другого способа видеть ход разбора на экране нет (браузерная
-// приёмка DK-321).
-// Карточка хода: заголовок с именем tmux-сессии и живой хвост под ним. У
-// идущего груминга в шапке стоит стоп (макет «12 Груминг черновика», фрейм
-// состояний): снимает он именно эту сессию, и стоять ему рядом с её именем.
-function draftRunCard(project, id, running) {
-  const card = el("div", "card dcol-run");
-  const head = el("div", "phd");
-  head.append(el("b", "", "Ход груминга"));
-  const sub = el("span", "", "");
-  head.append(sub);
-  if (running) {
-    const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить груминг"), STOP_TIP);
-    stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
-    head.append(stop);
-  }
-  card.append(head);
-  wireTmux(id, card, sub);
-  return card;
-}
 
-function draftTextCard(text) {
-  const card = el("div", "card pane dcol-text");
-  const head = el("div", "phd");
-  head.append(el("b", "", "Текст записи"));
-  const sub = el("span", "", text.ok ? (text.body.file || "") : "");
-  head.append(sub);
-  const body = el("div", "pbd");
-  if (text.ok) {
-    const pre = el("pre", "log");
-    pre.textContent = text.body.text || "";
-    body.append(pre);
-  } else {
-    // Пропавший файл это не поломка экрана, а след исхода: груминг мог увести
-    // запись строкой, припиской или удалением, и сказано это словами сервера.
-    body.append(el("div", "empty", text.body.error || "текст записи не прочитался"));
-  }
-  card.append(head, body);
-  return card;
-}
 
 async function renderDraft(project, works, id) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
-  const [text, outcome] = await Promise.all([api(base), api(base + "/outcome")]);
-  // Неотвеченный исход не выдаётся за «груминга не было»: молчание сервера и
-  // нетронутая запись это разные вещи, и причина отказа видна словами.
-  const out = outcome.ok ? outcome.body : { note: outcome.body.error || "исход груминга не прочитался" };
+  // Экран записи приведён к экрану задачи (замечание 15 двенадцатого круга
+  // POC): та же шапка, та же разметка вместо сырого текста, те же кнопки
+  // режимов справа. Карточки «Груминга не было», «Удаление записи» и «Ход
+  // груминга» сняты: первая говорила о пустоте, вторая дублировала исход, а
+  // третья показывала хвост tmux, которого у живого чата груминга больше нет,
+  // разбор виден в самом чате.
+  const [text, chats] = await Promise.all([
+    api(base),
+    api("/api/projects/" + encodeURIComponent(project) + "/chats?task=" + encodeURIComponent(id)),
+  ]);
   const running = Boolean((works || []).find((w) => w.id === id));
-  const phase = outcome.ok ? draftPhase(out, running) : "error";
-  const kept = phase === "open" || phase === "deferred" || phase === "question";
-  const title = text.ok ? String(text.body.text || "").split("\n").find((ln) => ln.trim()) || "" : "";
+  const said = text.ok ? String(text.body.text || "") : "";
+  const title = said.split("\n").find((ln) => ln.trim()) || "";
+  // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
+  const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
 
   const items = [{
     key: "draft-crumb",
     sign: project,
     make: () => {
+      // Дорога на доску была только через накопитель, и с экрана записи её не
+      // было вовсе.
       const crumb = el("div", "crumb");
-      const back = el("span", "crumb-back", "Черновики " + project);
-      back.addEventListener("click", () => { goKeepingChat(project + "/drafts"); });
-      crumb.append(back);
+      const board = el("span", "crumb-back", "Доска " + project);
+      board.addEventListener("click", () => { goKeepingChat(project); });
+      const list = el("span", "crumb-back", "Черновики");
+      list.addEventListener("click", () => { goKeepingChat(project + "/drafts"); });
+      crumb.append(board, el("span", "crumb-sep", "/"), list);
       return crumb;
     },
   }, {
     key: "draft-head",
-    sign: [id, title, phase].join("|"),
+    sign: [id, title, running, groomChat ? groomChat.id : ""].join("|"),
     make: () => {
-      const head = el("div", "ahead");
-      if (running) head.append(el("span", "dot pulse"));
-      head.append(el("h2", title ? "wtitle" : "", title || id));
-      if (title) head.append(el("span", "wname", id));
-      if (running) {
-        // Стоп груминга стоит в шапке карточки хода, рядом с именем сессии
-        // (макет 12): в шапке экрана он отвечал на вопрос «что делать с этой
-        // записью», хотя снимает он идущую сессию.
-        head.append(el("span", "chip c-check", "груминг идёт в tmux-сессии task-" + id));
-      } else if (kept) {
-        const groom = el("button", "btn btn-acc", "Провести груминг");
+      const head = el("div", "thead");
+      head.append(el("span", "idbig", id));
+      const name = el("div", "tedit ro dtitle", title || id);
+      head.append(name);
+      return head;
+    },
+  }, {
+    key: "draft-chips",
+    sign: [running, groomChat ? groomChat.id : ""].join("|"),
+    make: () => {
+      const chips = el("div", "tchips");
+      chips.append(el("span", "chip", "черновик"));
+      if (running) chips.append(el("span", "chip c-run", "груминг идёт"));
+      chips.append(el("span", "gap"));
+      const modes = el("div", "tmodes");
+      if (groomChat) {
+        const go = el("button", "btn btn-sm", "Чат груминга");
+        go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
+        modes.append(go);
+      } else {
+        const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
         if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
         groom.addEventListener("click", () => {
           groom.disabled = true;
@@ -5373,48 +5446,33 @@ async function renderDraft(project, works, id) {
             if (ok) refresh().catch(console.error);
           }).catch((err) => { groom.disabled = false; console.error(err); });
         });
-        head.append(groom);
+        modes.append(groom);
       }
-      return head;
-    },
-  }];
-
-  // Колонки живут в одной сетке: ход груминга держит живой опрос и на
-  // обновлении не пересобирается, а исход и текст перерисовываются, когда
-  // ответ сервера разошёлся с нарисованным.
-  const columns = [{
-    key: "draft-col-out",
-    sign: [phase, JSON.stringify(out)].join("|"),
-    make: () => {
-      const col = el("div", "dcol-out");
-      col.append(draftOutcomeCard(project, id, out, phase));
-      if (phase === "question") col.append(draftAskCard(project, id, out.question));
-      if (kept) col.append(draftDropCard(project, id));
-      return col;
+      chips.append(modes);
+      return chips;
     },
   }, {
-    key: "draft-col-run",
-    // Отпечаток держит одно: идёт груминг или нет. Обновление по фокусу окна
-    // карточку не пересобирает, и живой хвост его переживает, а вот конец
-    // сессии обязан снять из шапки стоп, которому больше нечего снимать.
-    sign: running ? "run" : "idle",
-    make: () => draftRunCard(project, id, running),
-  }, {
-    key: "draft-col-text",
-    sign: [text.ok, text.ok ? text.body.text : text.body.error].join("|"),
-    make: () => draftTextCard(text),
-  }];
-  const fillGrid = (box) => { sync(box, columns); };
-  items.push({
-    key: "draft-grid-" + id,
-    sign: columns.map((col) => col.key + "=" + col.sign).join("\n"),
+    key: "draft-text",
+    sign: [text.ok, said || text.body.error].join("|"),
     make: () => {
-      const box = el("div", "dgrid");
-      fillGrid(box);
-      return box;
+      const card = el("div", "card fpanel");
+      const body = el("div", "fbody");
+      if (!text.ok) {
+        // Пропавший файл это не поломка экрана, а след исхода: груминг мог
+        // увести запись строкой, припиской или удалением.
+        body.append(el("div", "empty", text.body.error || "текст записи не прочитался"));
+      } else if (said.trim()) {
+        const view = el("div", "fview");
+        view.dataset.file = text.body.file || "";
+        view.append(mdRender(said));
+        body.append(view);
+      } else {
+        body.append(el("div", "empty", "запись пуста"));
+      }
+      card.append(body);
+      return card;
     },
-    fill: fillGrid,
-  });
+  }];
   sync(groups, items);
 }
 
@@ -5839,6 +5897,15 @@ function feedItemEl(project, n) {
     // которую сервер назвал словами (под обрезанный ID сессии попали две
     // записи реестра, и выбирать между ними наугад нельзя).
     if (n.note) b.append(el("div", "t2", n.note));
+  }
+  // Событие про ждущий чат ведёт прямо в него: до этого «ждёт ввода» стояло
+  // строкой без выхода, и человек искал чат руками (замечание 19).
+  if (n.chat) {
+    const acts = el("div", "acts");
+    const go = el("button", "btn", "Открыть чат");
+    go.addEventListener("click", () => { openChat(chatAddr(to, n.chat)); });
+    acts.append(go);
+    b.append(acts);
   }
   item.append(b);
   item.append(el("div", "ntime", (n.time || "").slice(11, 16)));
@@ -6366,6 +6433,18 @@ let quotaView = null;
 
 // quotaWhen сжимает момент сброса до дня и месяца: в колонке шириной с ладонь
 // год и минуты места не стоят, а полный момент остаётся подсказкой.
+// Пороги свежести снимка одной точкой правды: зелёный до пятнадцати минут,
+// жёлтый до сорока пяти, дальше красный.
+const QUOTA_FRESH = 15 * 60;
+const QUOTA_WARM = 45 * 60;
+
+function quotaAgeClass(sec) {
+  if (!sec && sec !== 0) return "";
+  if (sec <= QUOTA_FRESH) return "q-fresh";
+  if (sec <= QUOTA_WARM) return "q-warm";
+  return "q-old";
+}
+
 function quotaWhen(reset) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(reset || "");
   return m ? m[3] + "." + m[2] : "";
@@ -6402,12 +6481,17 @@ function quotaNodes(view) {
   for (const h of view.harnesses || []) {
     out.push(el("div", "qsub", h.name));
     for (const b of h.buckets || []) out.push(quotaRow(b));
-    const parts = [];
-    if (h.age) parts.push("снимок " + h.age + " назад");
-    if (h.stale) parts.push(h.note || "протух");
-    else if (h.note) parts.push(h.note);
-    for (const w of h.warns || []) parts.push(w);
-    out.push(el("div", "qnote" + (h.stale ? " stale" : ""), parts.join(", ")));
+    // Возраст снимка виден цветом, а не словом «протух»: слово ничего не
+    // говорило о том, насколько всё плохо, и стояло почти всегда (замечание 21).
+    const note = el("div", "qnote");
+    if (h.age) note.append(el("span", "qage " + quotaAgeClass(h.age_sec), "снимок " + h.age + " назад"));
+    const rest = [];
+    // Причина остаётся словами там, где возрасту верить нельзя вовсе: часы
+    // разошлись, момента снятия нет.
+    if (h.note) rest.push(h.note);
+    for (const w of h.warns || []) rest.push(w);
+    if (rest.length) note.append(el("span", "", (h.age ? ", " : "") + rest.join(", ")));
+    out.push(note);
   }
   return out;
 }

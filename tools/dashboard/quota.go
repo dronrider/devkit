@@ -60,6 +60,9 @@ type QuotaHarness struct {
 	Taken   string        `json:"taken,omitempty"`
 	Age     string        `json:"age,omitempty"`
 	Stale   bool          `json:"stale"`
+	// AgeSec это возраст снимка секундами: по нему экран красит время снимка
+	// градацией, а слова «протух» человеку ничего не говорили (замечание 21).
+	AgeSec int64 `json:"age_sec,omitempty"`
 	Note    string        `json:"note,omitempty"`
 	Buckets []QuotaBucket `json:"buckets"`
 	Warns   []string      `json:"warns,omitempty"`
@@ -149,6 +152,9 @@ func parseQuotaSnapshot(name, text string, now time.Time) QuotaHarness {
 		h.Taken = taken.Format(quotaTimeLayout)
 	}
 	h.Age, h.Stale, h.Note = quotaAge(taken, now)
+	if !taken.IsZero() && now.After(taken) {
+		h.AgeSec = int64(now.Sub(taken).Seconds())
+	}
 	if len(h.Buckets) == 0 && h.Note == "" {
 		h.Note = "бакетов в снимке нет"
 	}
@@ -226,4 +232,38 @@ func humanAge(d time.Duration) string {
 // показанного остатка, который на минуту отстаёт от снятого.
 func (s *server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, readQuota(s.cfg.Home, s.now()))
+}
+
+// Свежесть снимка квоты держит сам демон (замечание 21 двенадцатого круга
+// POC). Прежде снимок обновлял только хук старта сессии и рука, а переписка в
+// уже живых чатах его не трогала, отчего на экране почти всегда стояло «снимок
+// час назад». Тик редкий и служебный: agentctl сам умеет и замок, и атомарную
+// запись, поверх них тут ничего не строится.
+
+// quotaTick это шаг обновления снимка. Реже порога свежести, но не настолько,
+// чтобы экран успел покраснеть между тиками.
+const quotaTick = 10 * time.Minute
+
+// quotaKeeper обновляет снимок квоты по кругу, пока жив демон. Вызов служебный:
+// хуки devkit на нём молчат, и лента уведомлений от него не наполняется.
+func (s *server) quotaKeeper(stop <-chan struct{}) {
+	bin := binPath(agentctlBin)
+	if bin == "" {
+		s.logf("снимок квоты обновлять нечем: agentctl не нашёлся")
+		return
+	}
+	t := time.NewTicker(quotaTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if _, err := runProcQuiet("", true, bin, "quota", "refresh"); err != nil {
+				s.logf("снимок квоты не обновился: %v", procErr(err))
+				continue
+			}
+			s.logf("снимок квоты обновлён тиком демона")
+		}
+	}
 }

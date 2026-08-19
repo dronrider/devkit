@@ -4136,7 +4136,12 @@ function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
   const feed = el("div", "msgs chatfeed");
-  wrap.append(feed);
+  // Свои реплики, ещё не вернувшиеся из транскрипта, стоят сразу под лентой:
+  // они и есть её продолжение, просто эха у них пока нет.
+  const pend = el("div", "msgs mlocal");
+  wrap.append(feed, pend);
+  const echo = makeEcho(project, pend, feed);
+  chatLive.push(echo.clear);
 
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));

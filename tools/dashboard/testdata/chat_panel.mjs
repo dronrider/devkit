@@ -166,11 +166,13 @@ const sandbox = {
       return byId.get(id);
     },
     addEventListener: () => {},
+    removeEventListener: () => {},
     body: makeNode("body"),
     documentElement: { style: { setProperty: () => {} } },
   },
   window: {
     addEventListener: () => {},
+    removeEventListener: () => {},
     removeEventListener: () => {},
     innerWidth: 1400,
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),

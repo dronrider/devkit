@@ -2566,6 +2566,20 @@ const EMPTY_TALK = "в транскрипте пока нет реплик";
 // историю у самого верха ленты неотличима от зависшего запроса (DK-434).
 const FEED_START = "это начало разговора";
 
+// Пауза перед своим переподключением потока: браузерный ретрай идёт сам, и
+// торопиться впереди него незачем, а упавший сервер не должен получить очередь
+// переподключений со всех вкладок разом.
+const streamRetry = 2000;
+
+// Сколько лента терпит тишину потока, прежде чем дочитать хвост опросом.
+// Полторы минуты длиннее любой паузы между ходами живого агента и короче
+// того, что человек согласен считать зависанием.
+const streamQuiet = 90000;
+
+// Сколько реплик тянет догон: пропуск за время сна ноутбука бывает длиннее
+// хвоста открытия, а лишние реплики отсеются по seq.
+const repliesCatch = 200;
+
 // Порог подгрузки: запрос уходит чуть раньше, чем взгляд дойдёт до верха
 // ленты, и новые реплики успевают встать в дерево до того, как их было бы
 // видно (то же на глаз, что порог низа в atBottom).
@@ -2745,30 +2759,122 @@ async function wireFeed(project, sid, opts) {
   else scroll.scrollTop = scroll.scrollHeight;
   updateStart();
 
-  const es = new EventSource(sessionURL(project, sid) + "?stream=1");
-  live.es = es;
-  // Пустая лента приходит и событием note: разговор, поднятый при пустом
-  // транскрипте, называет пустоту словами, не дожидаясь первой реплики.
-  es.addEventListener("note", (ev) => {
-    if (talk.length) return;
-    empty = ev.data;
-    draw();
-  });
-  es.onmessage = (ev) => {
-    const item = JSON.parse(ev.data);
-    // Свой хвост поток шлёт заново, и без отсева по seq те же реплики легли бы
-    // в ленту вторым разом.
-    if (item.seq <= lastSeq) return;
-    lastSeq = item.seq;
-    if (firstSeq === null) {
-      firstSeq = item.seq;
-      updateStart();
+  // Пропущенное дочитывается запросом, а не потоком: поток шлёт только новое,
+  // и всё, что случилось между обрывом и переподключением, до ленты не доедет
+  // никогда. Ровно это и видел человек после сна ноутбука: вкладку браузер
+  // задушил, поток умер, а вернувшаяся страница показывала ленту такой, какой
+  // она была двадцать минут назад, и лечилось это только F5.
+  let catching = false;
+  const catchUp = async () => {
+    if (catching || gone()) return;
+    catching = true;
+    try {
+      const r = await api(sessionURL(project, sid) + "?n=" + repliesCatch);
+      if (!r.ok || gone()) return;
+      const items = r.body.items || [];
+      let added = false;
+      for (const item of items) {
+        if (item.seq <= lastSeq) continue;
+        lastSeq = item.seq;
+        if (firstSeq === null) firstSeq = item.seq;
+        if (!keep(item)) continue;
+        talk.push(item);
+        added = true;
+        if (opts.onItem) opts.onItem(item);
+      }
+      if (added) {
+        draw();
+        updateStart();
+      }
+    } catch (err) {
+      // Связи нет: догоняться нечем, вернётся она, вернётся и событие online.
+    } finally {
+      catching = false;
     }
-    if (!keep(item)) return;
-    talk.push(item);
-    draw();
-    if (opts.onItem) opts.onItem(item);
   };
+
+  // Поток пересоздаётся сам: EventSource ретраит только пока жив, а
+  // задушенная браузером вкладка возвращается с мёртвым объектом, у которого
+  // readyState навсегда CLOSED. Пересоздание идёт вместе с дочитыванием, и
+  // порядок тут важен: сперва новый поток, потом догон, иначе между ними
+  // осталась бы своя щель.
+  const openStream = () => {
+    if (gone()) return;
+    if (live.es) live.es.close();
+    const es = new EventSource(sessionURL(project, sid) + "?stream=1");
+    live.es = es;
+    // Пустая лента приходит и событием note: разговор, поднятый при пустом
+    // транскрипте, называет пустоту словами, не дожидаясь первой реплики.
+    es.addEventListener("note", (ev) => {
+      if (talk.length) return;
+      empty = ev.data;
+      draw();
+    });
+    es.onmessage = (ev) => {
+      seen = Date.now();
+      const item = JSON.parse(ev.data);
+      // Свой хвост поток шлёт заново, и без отсева по seq те же реплики легли
+      // бы в ленту вторым разом.
+      if (item.seq <= lastSeq) return;
+      lastSeq = item.seq;
+      if (firstSeq === null) {
+        firstSeq = item.seq;
+        updateStart();
+      }
+      if (!keep(item)) return;
+      talk.push(item);
+      draw();
+      if (opts.onItem) opts.onItem(item);
+    };
+    es.onerror = () => {
+      if (gone()) return;
+      // Обрыв это не повод рвать всё: браузер ретраит сам, и второй поток
+      // рядом с его попыткой удвоил бы события. Пересоздание идёт только там,
+      // где ретраить уже некому, и с паузой, чтобы упавший сервер не получил
+      // очередь переподключений со всех открытых вкладок.
+      if (es.readyState !== 2) return;
+      setTimeout(() => {
+        if (gone() || live.es !== es) return;
+        openStream();
+        catchUp();
+      }, streamRetry);
+    };
+  };
+
+  // Метка последнего события потока: по ней видно, молчит он живой тишиной или
+  // умер незаметно.
+  let seen = Date.now();
+  openStream();
+
+  // Возврат к вкладке и вернувшаяся сеть: догоняем хвост и поднимаем поток
+  // заново, если его уже некому ретраить. Спящий ноутбук и заблокированный
+  // экран это ровно этот случай.
+  const wake = () => {
+    if (gone()) return;
+    if (document.visibilityState === "hidden") return;
+    if (!live.es || live.es.readyState === 2) openStream();
+    seen = Date.now();
+    catchUp();
+  };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("online", wake);
+  opts.live.push(() => {
+    document.removeEventListener("visibilitychange", wake);
+    window.removeEventListener("online", wake);
+  });
+
+  // Страховка на молчащий поток: сессия работает, а событий нет дольше срока,
+  // значит поток умер тихо, и хвост дочитывается опросом. Без неё оставался бы
+  // случай, когда вкладка всё время на виду, а связь оборвалась так, что
+  // onerror не пришёл вовсе.
+  const guard = setInterval(() => {
+    if (gone()) return;
+    if (Date.now() - seen < streamQuiet) return;
+    seen = Date.now();
+    if (!live.es || live.es.readyState === 2) openStream();
+    catchUp();
+  }, streamQuiet);
+  opts.live.push(() => clearInterval(guard));
 }
 
 // tmux: сессия работы и снимок пейна через capture-pane; событийного

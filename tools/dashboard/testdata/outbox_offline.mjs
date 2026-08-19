@@ -171,6 +171,7 @@ const sandbox = {
       return byId.get(id);
     },
     addEventListener: () => {},
+    removeEventListener: () => {},
     body: makeNode("body"),
     documentElement: { style: { setProperty: () => {} } },
   },

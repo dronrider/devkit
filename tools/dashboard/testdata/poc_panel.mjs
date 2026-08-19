@@ -284,6 +284,20 @@ async function feedOf(items, sid) {
     fail("направление снова подписано словами: " + said);
   }
   if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
+  // Общей карточки вокруг хода нет: строка заголовка стоит на фоне страницы,
+  // рамку носит только блок ввода-вывода под ней. Класс tool заводил обёртку с
+  // рамкой и подложкой, и заголовок сидел внутри неё.
+  if (String(card.className).split(" ").includes("tool")) {
+    fail("ход снова обёрнут карточкой: " + card.className);
+  }
+  if (card.children.length !== 2) {
+    fail("частей у хода " + card.children.length + ", ожидал две: заголовок и блок");
+  }
+  if (!String(card.children[0].className).includes("thead") ||
+    !String(card.children[1].className).includes("tbox")) {
+    fail("заголовок и блок стоят не двумя частями подряд: " +
+      card.children.map((n) => n.className).join(" | "));
+  }
   // Заголовок над блоком: имя жирным, дальше пояснение хода.
   const head = byClass(card, "thead");
   const nameEl = tag(head, "B");

@@ -971,7 +971,7 @@ a:hover{text-decoration:underline}
    пояснением хода, в блоке две строки в две колонки: слева направление
    стрелкой (вправо ушло в инструмент, влево вернулось), справа команда и
    вывод. Раскрытия нет, копирование стоит только при команде */
-.trow2{margin:6px 0}
+.trow2{margin:8px 0;background:none;border:0;padding:0}
 .thead{display:flex;align-items:baseline;gap:8px;min-width:0}
 .thead b{flex:none;font:600 12px var(--sans);color:var(--tx2)}
 .tabout{flex:1;min-width:0;font:400 12px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

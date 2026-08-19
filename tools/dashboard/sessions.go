@@ -218,6 +218,11 @@ type sessionHead struct {
 	Branch string
 	First  string
 	Named  string
+	// Model это модель, которой сессия работает на самом деле: её пишет харнес
+	// в каждую запись ответа (message.model). Выбор, сохранённый дашбордом,
+	// говорит лишь о том, чем поднимать сессию в следующий раз, а чем она
+	// работает сейчас, знает только транскрипт (замечание 7 седьмого круга POC).
+	Model string
 	// Summary это заголовок разговора, который пишет сам харнес записью
 	// {"type":"summary"} в начале транскрипта. Им подписывает диалоги
 	// расширение Claude Code для vscode и им же зовётся разговор в списке
@@ -1103,4 +1108,78 @@ func marshalReply(item reply) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+// modelTailLimit это сколько байт хвоста транскрипта читается ради модели:
+// запись ответа лежит в конце, а файл весит мегабайты, и тянуть его целиком
+// ради одного поля незачем.
+const modelTailLimit = 256 * 1024
+
+// readSessionModel достаёт модель из последней записи ответа. Пусто значит,
+// что ответов в хвосте нет вовсе (свежая сессия, один вопрос человека) либо
+// харнес поля не пишет.
+func readSessionModel(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	size := fi.Size()
+	from := int64(0)
+	if size > modelTailLimit {
+		from = size - modelTailLimit
+	}
+	if _, err := f.Seek(from, 0); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.Contains(lines[i], "\"model\"") {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &rec) != nil {
+			continue
+		}
+		// <synthetic> это не модель, а пометка харнеса на записях, которых
+		// модель не писала вовсе (служебные вставки, оборванный ход): показывать
+		// её выбором модели было бы враньём, и поиск идёт дальше вглубь.
+		if rec.Type == "assistant" && rec.Message.Model != "" &&
+			!strings.HasPrefix(rec.Message.Model, "<") {
+			return rec.Message.Model
+		}
+	}
+	return ""
+}
+
+// modelShort сводит идентификатор модели к короткому имени лестницы:
+// claude-fable-5 это fable, claude-sonnet-4-5-20250929 это sonnet. Таблица та
+// же, что у agentctl: ярусы там названы этими же словами, и список выбора в
+// панели собран из них.
+func modelShort(id string) string {
+	if id == "" {
+		return ""
+	}
+	low := strings.ToLower(id)
+	for _, name := range []string{"fable", "opus", "sonnet", "haiku"} {
+		if strings.Contains(low, name) {
+			return name
+		}
+	}
+	// Чужой поставщик называет модели по-своему (glm-5.3), и резать их нечем:
+	// имя показывается как есть.
+	return id
 }

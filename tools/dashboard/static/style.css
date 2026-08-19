@@ -884,5 +884,22 @@ a:hover{text-decoration:underline}
 /* уголок растягивания поля ввода сверху (замечание 5): коробка отражена по
    вертикали, поле отражено обратно, поэтому текст читается как обычно, а
    уголок оказывается у верхнего края, где полю и надо расти */
-.taflip{transform:scaleY(-1)}
-.taflip textarea{transform:scaleY(-1);display:block;width:100%}
+/* хват высоты поля ввода стоит НАД полем: родного способа переставить уголок
+   textarea в CSS нет, поэтому родной погашен, а сверху лежит своя полоса
+   (замечание 3 седьмого круга) */
+.cbox textarea{resize:none}
+.tagrip{height:9px;margin:-4px 0 3px;border-radius:4px;cursor:ns-resize;touch-action:none;position:relative}
+.tagrip::before{content:"";position:absolute;left:50%;top:3px;width:34px;height:3px;margin-left:-17px;border-radius:2px;background:var(--line2)}
+.tagrip:hover::before{background:var(--acc)}
+
+/* кнопка копирования при карточке инструмента (замечание 1) */
+.foldcp{flex:none;background:none;border:1px solid var(--line2);border-radius:6px;padding:1px 7px;font:500 10.5px var(--sans);color:var(--tx3);cursor:pointer}
+.foldcp:hover{border-color:var(--acc);color:var(--tx)}
+/* карточка инструмента компактнее: команда и вывод в ней одним телом */
+.tool.fold .foldh{padding:5px 9px;gap:7px}
+.tool.fold .foldh b{font-size:11px}
+.tool.fold .foldb{max-height:300px;padding:7px 9px}
+
+/* номер задачи в строке уведомления (замечание 5) */
+.nid{display:inline-block;margin-top:3px;padding:1px 7px;border-radius:5px;background:var(--bg3);color:var(--tx2);font:600 10.5px var(--mono);cursor:pointer}
+.nid:hover{background:var(--acc);color:var(--bg0)}

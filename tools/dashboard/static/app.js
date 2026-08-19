@@ -2449,13 +2449,15 @@ function mdRender(text) {
 }
 
 // Свёрнутый блок с разворотом по клику: заголовок остаётся строкой ленты, а
-// тело раскрывается на месте. Так показываются размышления и вывод
-// инструментов, которых на экране бывает больше, чем самого разговора.
-function foldEl(cls, head, text, sub) {
+// тело раскрывается на месте. Так показываются размышления и вызовы
+// инструментов, которых на экране бывает больше, чем самого разговора. copy это
+// текст для кнопки копирования; без него кнопки нет.
+function foldEl(cls, head, text, sub, copy) {
   const box = el("div", cls + " fold");
   const top = el("div", "foldh");
   top.append(el("b", "", head));
   if (sub) top.append(el("span", "", sub));
+  if (copy) top.append(copyBtn(copy));
   const car = el("span", "foldc", "+");
   top.append(car);
   const body = el("pre", "foldb", text);
@@ -2467,6 +2469,29 @@ function foldEl(cls, head, text, sub) {
   });
   box.append(top, body);
   return box;
+}
+
+// Кнопка копирования при свёрнутом блоке: команду с выводом уносят в терминал
+// целиком, и выделять их мышью из ленты неудобно. Ответ виден на самой кнопке:
+// молчаливое копирование неотличимо от несработавшего.
+function copyBtn(text) {
+  const btn = el("button", "foldcp", "копировать");
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const done = () => {
+      btn.textContent = "скопировано";
+      setTimeout(() => { btn.textContent = "копировать"; }, 1500);
+    };
+    const nav = window.navigator;
+    if (nav && nav.clipboard && nav.clipboard.writeText) {
+      nav.clipboard.writeText(text).then(done).catch(() => {
+        btn.textContent = "не вышло";
+      });
+      return;
+    }
+    btn.textContent = "не вышло";
+  });
+  return btn;
 }
 
 // Первая строка длинного текста для заголовка свёрнутого блока: по ней видно,
@@ -2497,7 +2522,7 @@ function replyEl(item) {
     // чего ничего не следовало. Текста может не быть вовсе (модель отдаёт
     // размышления запечатанными), и тогда в ленте стоит длительность, как
     // «Thought for 5s» в vscode: сколько агент думал, видно всегда.
-    const spent = item.spent ? "Думал " + thinkWord(item.spent) : "Думал молча";
+    const spent = item.spent ? "Думал " + thinkWord(item.spent) : "Размышления...";
     if (!item.text) return el("div", "think", spent);
     return foldEl("think", spent, item.text, foldPeek(item.text, 90));
   }
@@ -2704,13 +2729,29 @@ async function wireFeed(project, sid, opts) {
     }
     const items = [];
     let day = "";
-    for (const item of talk) {
+    for (let i = 0; i < talk.length; i++) {
+      const item = talk[i];
       if (opts.days) {
         const key = localDayKey(item.time);
         if (key && key !== day) {
           items.push({ key: "day-" + key, sign: key, make: () => dayEl(localDay(item.time)) });
           day = key;
         }
+      }
+      // Вывод инструмента идёт следом за своим вызовом и рисуется вместе с
+      // ним одной карточкой: два блока подряд про один и тот же ход распухали
+      // ленту вдвое (замечание 1). Склейку делает лента, а не разбор: сервер
+      // отдаёт записи как они лежат в транскрипте, и пагинация назад не должна
+      // зависеть от того, попал ли вывод в ту же страницу, что вызов.
+      const next = talk[i + 1];
+      if (item.role === "tool" && next && next.role === "toolout" && opts.pair) {
+        items.push({
+          key: "seq-" + item.seq,
+          sign: [item.role, item.time, item.text, next.text].join("|"),
+          make: () => opts.pair(item, next),
+        });
+        i++;
+        continue;
       }
       items.push({
         key: "seq-" + item.seq,
@@ -2999,6 +3040,19 @@ function chatBubble(who, text, meta) {
 // прежних экрана (решение 6 LLD DK-430): по пузырям читают разговор, по
 // строкам инструментов видят, чем агент занят прямо сейчас. Прежде это
 // показывала полоса tmux, у работы из чужого окна всегда пустая.
+// Вызов инструмента и его вывод рисуются одной карточкой (замечание 1 седьмого
+// круга POC): прежде это были два блока подряд, команда в одном и её вывод в
+// другом, и лента распухала вдвое на ровном месте. Склейка идёт по соседству:
+// вывод инструмента всегда стоит следом за своим вызовом.
+function toolPair(call, out) {
+  const name = call.tool || "инструмент";
+  const cmd = call.text || "";
+  const said = out && out.text ? out.text : "";
+  const body = said ? (cmd ? cmd + "\n\n--- вывод ---\n" + said : said) : cmd;
+  const sub = call.note || foldPeek(said, 80);
+  return foldEl("tool", name, body, sub, body);
+}
+
 function chatItem(item) {
   if (item.role === "note") return replyEl(item);
   if ((item.role === "user" || item.role === "assistant") && item.text) {
@@ -3026,6 +3080,7 @@ function wireChatFeed(project, feed, sid, onItem) {
     tail: CHAT_TAIL,
     days: true,
     item: chatItem,
+    pair: toolPair,
     empty: "разговор пуст: в транскрипте нет ни одной реплики",
     live: chatLive,
     era: () => chatGen,
@@ -3476,6 +3531,49 @@ function saveChatWidth(w) {
 // окна, над чужим фреймом или потеря захвата оставляли флаг поднятым, и панель
 // потом сужалась от одного проведения курсора над полоской, без нажатия вовсе
 // (замечание 7 четвёртого круга POC).
+// Хват высоты поля ввода: тянут за полосу над полем, поле растёт вверх. Мера
+// та же, что у хвата ширины панели: тяга проверяется по зажатой кнопке на
+// каждом движении, а не одним флагом, иначе потерянное отпускание оставляет
+// поле тянущимся за курсором.
+const TA_MIN = 44;
+const TA_MAX = 420;
+
+function wireTaGrip(grip, ta) {
+  let from = 0;
+  let base = 0;
+  let held = false;
+  const height = () => {
+    const box = ta.getBoundingClientRect ? ta.getBoundingClientRect() : null;
+    return box && box.height ? box.height : ta.offsetHeight || TA_MIN;
+  };
+  const set = (h) => {
+    ta.style.height = Math.max(TA_MIN, Math.min(TA_MAX, Math.round(h))) + "px";
+  };
+  grip.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    held = true;
+    from = ev.clientY;
+    base = height();
+    if (grip.setPointerCapture) grip.setPointerCapture(ev.pointerId);
+    if (ev.preventDefault) ev.preventDefault();
+  });
+  grip.addEventListener("pointermove", (ev) => {
+    if (!held) return;
+    if (ev.buttons === 0) {
+      held = false;
+      return;
+    }
+    // Тянут вверх, поле растёт: разница берётся с обратным знаком, потому что
+    // ось экрана считает вниз.
+    set(base + (from - ev.clientY));
+  });
+  const release = () => { held = false; };
+  grip.addEventListener("pointerup", release);
+  grip.addEventListener("pointercancel", release);
+  grip.addEventListener("lostpointercapture", release);
+  window.addEventListener("pointerup", release);
+}
+
 function wireChatGrab(grab) {
   let held = 0;
   const width = (ev) => putChatWidth(window.innerWidth - ev.clientX);
@@ -3519,6 +3617,32 @@ function wireChatGrab(grab) {
 // Последний открытый разговор помнится между заходами: человек возвращается в
 // дашборд к тому же диалогу, а не к пустой панели (замечание 19).
 const CHAT_LAST_KEY = "devkit.chat.last";
+
+// Набранная, но не отправленная реплика живёт в localStorage по ключу диалога:
+// текст бывает длинным и обдуманным, а перезагрузка страницы уносила его
+// целиком (замечание 4 седьмого круга POC). Пишется он с задержкой, чтобы не
+// дёргать хранилище на каждую букву, и стирается удачной отправкой.
+const CHAT_DRAFT_KEY = "devkit.chat.draft.";
+
+function chatDraftRead(addr) {
+  try {
+    return localStorage.getItem(CHAT_DRAFT_KEY + addr) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function chatDraftWrite(addr, text) {
+  try {
+    if (text) localStorage.setItem(CHAT_DRAFT_KEY + addr, text);
+    else localStorage.removeItem(CHAT_DRAFT_KEY + addr);
+  } catch (err) {
+    // приватный режим браузера: черновик живёт до перезагрузки
+  }
+}
+
+// Задержка записи черновика: набор идёт быстрее, чем стоит трогать диск.
+const CHAT_DRAFT_WAIT = 400;
 
 function chatLastSet(addr) {
   try {
@@ -3879,7 +4003,15 @@ function chatHead(project, st) {
 
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
-  const cur = st.entry ? (st.entry.model || chatModelPref()) : chatModelPref();
+  // Показывается то, чем сессия работает на самом деле (модель из транскрипта),
+  // а сохранённый выбор дашборда это лишь заказ на следующий подъём. Разойдись
+  // они, врал бы именно выбор: у чужого окна модель ставят в самом vscode
+  // (замечание 7 седьмого круга POC).
+  const live = st.entry ? st.entry.liveModel : "";
+  const cur = live || (st.entry ? st.entry.model || chatModelPref() : chatModelPref());
+  // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
+  // поднят, и модель у него своя до самого резюма.
+  const alien = Boolean(st.entry && st.entry.state === "live" && !st.entry.own);
   // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
   // она платится. Своего перечня имён у панели нет, иначе новая подписка на
   // машине не появилась бы тут вовсе.
@@ -3891,6 +4023,13 @@ function chatHead(project, st) {
     o.value = m.model;
     if (m.model === cur) o.selected = true;
     model.append(o);
+  }
+  if (alien) {
+    model.disabled = true;
+    model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого разговора.";
+  } else if (st.entry && st.entry.model && live && st.entry.model !== live) {
+    model.title = "Сейчас работает " + live + ", выбранная " + st.entry.model +
+      " возьмётся на следующем подъёме или резюме.";
   }
   model.addEventListener("change", () => {
     chatModelSet(model.value);
@@ -4152,16 +4291,32 @@ function chatPanel(project, st) {
   const busy = makeBusy(project, wrap);
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
-  // отправки, и уголок растягивания стоял поверх неё, а расти полю надо вверх,
-  // в сторону ленты (замечание 5 шестого круга POC). Переворот делается парой
-  // отражений: коробка отражена по вертикали, само поле отражено обратно,
-  // поэтому текст читается как обычно, а уголок оказывается сверху.
-  const taflip = el("div", "taflip");
+  // отправки, и родной уголок стоял поверх неё, а расти полю надо вверх, в
+  // сторону ленты. Прошлая попытка переворачивала коробку и поле встречными
+  // отражениями, и они складывались в тождество, то есть не делали ничего
+  // (замечание 3 седьмого круга POC). Родного способа переставить уголок в CSS
+  // нет вовсе, поэтому он погашен, а сверху стоит своя полоса хвата.
+  const grip = el("div", "tagrip");
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-label", "Высота поля ввода");
   const ta = el("textarea");
   ta.placeholder = way.off ? "разговор идёт в vscode, пишите там" : "Написать агенту...";
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в разговор");
-  taflip.append(ta);
+  wireTaGrip(grip, ta);
+  // Черновик возвращается при открытии разговора и пишется по ходу набора.
+  ta.value = chatDraftRead(st.addr);
+  let draftTimer = null;
+  ta.addEventListener("input", () => {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => { chatDraftWrite(st.addr, ta.value); }, CHAT_DRAFT_WAIT);
+  });
+  chatLive.push(() => {
+    // Уход с разговора дописывает черновик немедленно: отложенная запись до
+    // закрытия вкладки могла не успеть.
+    if (draftTimer) clearTimeout(draftTimer);
+    chatDraftWrite(st.addr, ta.value);
+  });
   const row = el("div", "crow");
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
@@ -4209,6 +4364,8 @@ function chatPanel(project, st) {
     const text = ta.value.trim();
     if (!text || send.disabled) return;
     ta.value = "";
+    if (draftTimer) clearTimeout(draftTimer);
+    chatDraftWrite(st.addr, "");
     post(text);
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
@@ -4221,7 +4378,9 @@ function chatPanel(project, st) {
   });
   send.addEventListener("click", fire);
   row.append(send);
-  box.append(taflip, row);
+  // Порядок узлов и есть положение хвата: полоса стоит первой в коробке, то
+  // есть над полем.
+  box.append(grip, ta, row);
   wrap.append(box);
 
   chatLive.push(busy.off);
@@ -5421,6 +5580,15 @@ function feedItemEl(project, n) {
   // проектом остаётся открытый.
   const to = n.project || project;
   if (n.id) {
+    // Номер задачи виден прямо в строке события: сервер тянет его из реестра
+    // чатов, когда само событие задачу не назвало (замечание 5). Нажатие ведёт
+    // на строку доски.
+    const tag = el("span", "nid", n.id);
+    tag.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      goKeepingChat(to + "/" + n.id);
+    });
+    b.append(tag);
     const acts = el("div", "acts");
     if (n.kind === "stop") {
       const up = el("button", "btn btn-acc", "Поднять виток");

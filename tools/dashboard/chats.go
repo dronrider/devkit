@@ -109,6 +109,14 @@ type chatEntry struct {
 	Idle  bool   `json:"idle,omitempty"`
 	// Summary это заголовок от самого харнеса: он старше и эвристики, и haiku.
 	Summary string `json:"-"`
+	// Live это модель, которой сессия работает на самом деле (из транскрипта).
+	// Model рядом это сохранённый выбор дашборда, то есть чем её поднимать в
+	// следующий раз. Расходятся они у чужого окна: там модель выбрана в самом
+	// клиенте, и выбор дашборда до резюма не действует.
+	LiveModel string `json:"liveModel,omitempty"`
+	// Own говорит, дашбордова ли это сессия: только у своей смена модели
+	// действует сразу следующим подъёмом, чужую до резюма не переубедить.
+	Own bool `json:"own,omitempty"`
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -197,6 +205,8 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		}
 		e := chatEntry{
 			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: f.Mtime, Tasks: tasks,
+			LiveModel: modelShort(readSessionModel(f.path)),
+			Own:       last.Tmux != "",
 			Tmux: last.Tmux, Tree: f.suffix, Branch: head.Branch,
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),

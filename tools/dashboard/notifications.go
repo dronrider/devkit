@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Лента уведомлений: GET /api/notifications отдаёт хвост журнала уведомителя
@@ -180,6 +182,45 @@ func parseNotifyLine(line string) (Notification, bool) {
 	return n, true
 }
 
+// bindNotifyTasks дописывает событиям задачу по реестру чатов. Событие рождается
+// в сессии и несёт её ID, а задачу называет не всегда: ход агента в разговоре
+// про задачу задачей не подписан вовсе. Привязка тут один ко многим, как везде
+// после переделки реестра, и берётся свежайшая: сессия за заход трогает
+// несколько строк, а событию нужна та, над которой она работала последней
+// (замечание 5 седьмого круга POC).
+func (s *server) bindNotifyTasks(list []Notification) {
+	recs := sessions.LoadAll(s.cfg.Home)
+	if len(recs) == 0 {
+		return
+	}
+	// Реестр держит полный ID сессии, а событие обрезанный до восьми знаков:
+	// уведомитель пишет короткий. Сводится это одним проходом, а не поиском по
+	// каждому событию.
+	short := map[string][]string{}
+	for sid := range recs {
+		key := sid
+		if len(key) > 8 {
+			key = key[:8]
+		}
+		short[key] = append(short[key], sid)
+	}
+	for i := range list {
+		n := &list[i]
+		if n.ID != "" || n.Session == "" {
+			continue
+		}
+		hits := short[n.Session]
+		if len(hits) != 1 {
+			// Два разговора под одним обрезанным ID: выбирать наугад нельзя,
+			// и событие остаётся без задачи, как и было.
+			continue
+		}
+		if tasks := sessions.Touched(recs[hits[0]]); len(tasks) > 0 {
+			n.ID = tasks[0]
+		}
+	}
+}
+
 // notifySandboxSkip это префикс результата у строк, которые уведомитель сам
 // пометил пропуском по песочнице (log() в hooks/notify.py, DK-196): корень
 // прогона лежит под TMPDIR, баннер про него ложный, и лента не должна
@@ -264,6 +305,7 @@ func (s *server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	items, seen := parseNotifications(tailLines(data, intParam(r, "n", tailDefault, tailMax)), filter)
 	s.nameWaitTasks(items)
+	s.bindNotifyTasks(items)
 	resp := map[string]any{"exists": true, "items": items}
 	if len(items) == 0 {
 		// Пустоты различимы: журнал без событий, фильтр без попаданий и
@@ -291,6 +333,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 		data = lastComplete(data)
 		items, seen := parseNotifications(tailLines(data, tailDefault), filter)
 		s.nameWaitTasks(items)
+		s.bindNotifyTasks(items)
 		for _, n := range items {
 			sseEvent(w, f, "", marshalNotification(n))
 		}
@@ -316,6 +359,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 			lines, offset = newLines(path, offset)
 			items, _ := parseNotifications(lines, filter)
 			s.nameWaitTasks(items)
+			s.bindNotifyTasks(items)
 			for _, n := range items {
 				sseEvent(w, f, "", marshalNotification(n))
 			}

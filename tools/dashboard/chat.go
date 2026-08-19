@@ -76,7 +76,7 @@ func putChat(tree, name, text, line string) (lying string, code int, err error) 
 	switch {
 	case errors.Is(err, chat.ErrLocked):
 		return "", http.StatusServiceUnavailable, errors.New(
-			"разговор держит соседний прогон: строки расходятся под замком, попробуйте ещё раз")
+			"чат держит соседний прогон: строки расходятся под замком, попробуйте ещё раз")
 	case err != nil:
 		return "", http.StatusBadGateway, err
 	}
@@ -89,7 +89,7 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "разговор сессии")
+	found := s.findProject(w, r, "чат сессии")
 	if found == nil {
 		return
 	}
@@ -125,7 +125,7 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во вход разговора кладётся короткая строка", msgBodyLimit/1024)})
+				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во вход чата кладётся короткая строка", msgBodyLimit/1024)})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
@@ -146,15 +146,15 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if lying != "" {
-		s.logf("повтор сообщения сессии %s в %s: строка уже лежит в разговоре %s", sid, found.Name, name)
+		s.logf("повтор сообщения сессии %s в %s: строка уже лежит в чате %s", sid, found.Name, name)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"session": sid, "chat": name, "line": lying,
-			"message": fmt.Sprintf("такая реплика уже лежит в разговоре %s: второй не завожу, сессия %s прочитает одну", name, sid)})
+			"message": fmt.Sprintf("такая реплика уже лежит в чате %s: второй не завожу, сессия %s прочитает одну", name, sid)})
 		return
 	}
 	resp := map[string]any{
 		"session": sid, "chat": name, "tree": tree, "line": line,
-		"message": fmt.Sprintf("реплика легла в разговор %s дерева сессии %s: подхват доставит её в идущий ход", name, sid),
+		"message": fmt.Sprintf("реплика легла в чат %s дерева сессии %s: подхват доставит её в идущий ход", name, sid),
 	}
 	// Честность о стоящей сессии та же, что у ручки цели (DK-319): строка
 	// ляжет и дождётся хода, но пообещать доставку сейчас нельзя, и человек
@@ -162,10 +162,10 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 	if stale := s.now().Sub(info.mod); stale > sessionLiveTTL {
 		resp["idle"] = true
 		resp["message"] = fmt.Sprintf(
-			"реплика легла в разговор %s, но транскрипт сессии %s молчит уже %s: возможно, она не идёт, и строка дождётся её хода",
+			"реплика легла в чат %s, но транскрипт сессии %s молчит уже %s: возможно, она не идёт, и строка дождётся её хода",
 			name, sid, stale.Truncate(time.Minute))
 	}
-	s.logf("реплика для сессии %s в %s легла в разговор %s", sid, found.Name, name)
+	s.logf("реплика для сессии %s в %s легла в чат %s", sid, found.Name, name)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -219,7 +219,7 @@ func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]bo
 	}
 	_, onBoard := rows[info.Task]
 	if info.Task == "" || info.Bound != boundLead || (rows != nil && !onBoard) {
-		return "", over + ": разговор кончился, и продолжить его некому"
+		return "", over + ": чат кончился, и продолжить его некому"
 	}
 	return replyToTask, over + ": реплика уйдёт задаче " + info.Task + ", её возьмёт тот, кто её продолжит"
 }
@@ -281,7 +281,7 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во вход разговора кладётся короткая строка", msgBodyLimit/1024)})
+				"error": fmt.Sprintf("сообщение длиннее предела %d КБ: во вход чата кладётся короткая строка", msgBodyLimit/1024)})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
@@ -303,23 +303,23 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lying != "" {
-		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в разговоре %s", id, found.Name, name)
+		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в чате %s", id, found.Name, name)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"task": id, "chat": name, "line": lying,
-			"message": fmt.Sprintf("такая реплика уже лежит в разговоре %s: второй не завожу, задача прочитает одну", name)})
+			"message": fmt.Sprintf("такая реплика уже лежит в чате %s: второй не завожу, задача прочитает одну", name)})
 		return
 	}
 	resp := map[string]any{
 		"task": id, "chat": name, "tree": found.Path, "line": line,
 		"message": fmt.Sprintf(
-			"реплика легла в разговор %s основного чекаута без адресата: её возьмёт первый же ход сессии задачи", name),
+			"реплика легла в чат %s основного чекаута без адресата: её возьмёт первый же ход сессии задачи", name),
 	}
 	if parkedByAsk(row) {
 		resp["parked"] = true
 		resp["message"] = fmt.Sprintf(
-			"реплика легла в разговор %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
+			"реплика легла в чат %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
 			name, id)
 	}
-	s.logf("реплика задаче %s в %s легла в разговор %s", id, found.Name, name)
+	s.logf("реплика задаче %s в %s легла в чат %s", id, found.Name, name)
 	writeJSON(w, http.StatusOK, resp)
 }

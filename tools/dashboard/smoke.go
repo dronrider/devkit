@@ -922,7 +922,7 @@ func (s *smoke) stepTaskMessage() (string, error) {
 	if n := strings.Count(string(again), said); n != 1 {
 		return "", fmt.Errorf("повтор завёл вторую строку: во входе %d реплик", n)
 	}
-	return fmt.Sprintf("строка «%s» лежит в разговоре %s чекаута без адресата", v.Line, v.Chat), nil
+	return fmt.Sprintf("строка «%s» лежит в чате %s чекаута без адресата", v.Line, v.Chat), nil
 }
 
 // boardWaiting достаёт состояние ожидания строки из ответа доски.
@@ -1454,7 +1454,7 @@ func (s *smoke) stepHarnessRun() (string, error) {
 		return "", err
 	}
 	if len(sess.Sessions) != 1 || sess.Sessions[0].ID != smokeHeadlessID {
-		return "", fmt.Errorf("разговора headless-запуска нет в списке сессий задачи %s: %+v, приписка: %s",
+		return "", fmt.Errorf("чата headless-запуска нет в списке сессий задачи %s: %+v, приписка: %s",
 			smokeTask, sess.Sessions, sess.Note)
 	}
 	var talk struct {
@@ -1466,7 +1466,7 @@ func (s *smoke) stepHarnessRun() (string, error) {
 	if len(talk.Items) == 0 || !strings.Contains(talk.Items[0].Text, smokeTask) {
 		return "", fmt.Errorf("экран агента открылся без заказа работы: %+v", talk.Items)
 	}
-	return fmt.Sprintf("%s, сессию поднял %s с именем подписки в окружении, разговор виден в списке задачи (%s); "+
+	return fmt.Sprintf("%s, сессию поднял %s с именем подписки в окружении, чат виден в списке задачи (%s); "+
 		"незнакомая подписка отбита: %s",
 		v.Message, smokeClientTwo, sess.Sessions[0].ID, refusal.Error), nil
 }
@@ -1494,7 +1494,7 @@ func (s *smoke) stepChatStart() (string, error) {
 	}
 	if second.Session != "chat-"+smokeTask+"-2" {
 		return "", fmt.Errorf("второй чат задачи поднят сессией %q, ждал chat-%s-2: "+
-			"разговоры отбиваются, как конвейеры", second.Session, smokeTask)
+			"чаты отбиваются, как конвейеры", second.Session, smokeTask)
 	}
 	runs, err := os.ReadFile(s.runsFile())
 	if err != nil {
@@ -1523,14 +1523,14 @@ func (s *smoke) stepChatStart() (string, error) {
 		if w.ID == smokeTask {
 			talks++
 			if w.Via != "tmux" || w.Kind != "task" {
-				return "", fmt.Errorf("работа задачи %s подменена разговором: %+v", smokeTask, w)
+				return "", fmt.Errorf("работа задачи %s подменена чатом: %+v", smokeTask, w)
 			}
 		}
 	}
 	if talks != 1 {
-		return "", fmt.Errorf("живых работ у задачи %s стало %d: разговоры сосчитаны занятостью", smokeTask, talks)
+		return "", fmt.Errorf("живых работ у задачи %s стало %d: чаты сосчитаны занятостью", smokeTask, talks)
 	}
-	return fmt.Sprintf("%s; второй разговор встал рядом (%s), а второй конвейер отбит: %s",
+	return fmt.Sprintf("%s; второй чат встал рядом (%s), а второй конвейер отбит: %s",
 		first.Message, second.Session, refusal.Error), nil
 }
 

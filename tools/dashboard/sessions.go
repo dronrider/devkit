@@ -370,7 +370,7 @@ const foreignTaskNote = "задача не с доски проекта"
 // сказать, о чём он, надо. Молчаливое «интерактивная сессия» тут читалось бы
 // как окно ни о чём.
 func aboutTaskNote(task, note string) string {
-	return fmt.Sprintf("разговор о %s (%s)", task, note)
+	return fmt.Sprintf("чат о %s (%s)", task, note)
 }
 
 // groomOrderPrefix это начало заказа headless-сессии, поднимаемой самим
@@ -437,14 +437,15 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			}
 		}
 		if task == "" {
-			// Работа без узнанной задачи подписывается заголовком разговора, а
-			// не отчётом о том, чего дашборд про неё не узнал: «интерактивная
-			// сессия, задача не распознана» не говорило ни о чём (замечание 21
-			// второго круга POC).
-			if t := head.Summary; t != "" {
-				note = t
-			} else if head.First != "" {
-				note = head.First
+			// Работа без узнанной задачи подписывается заголовком чата, а не
+			// отчётом о том, чего дашборд про неё не узнал: «интерактивная
+			// сессия, задача не распознана» не говорило ни о чём. Лестница
+			// заголовка тут та же, что у списка чатов (titleFor): своего
+			// разбора раздел «Агенты» не заводит, иначе один и тот же чат
+			// назывался бы на соседних экранах по-разному (замечание 1
+			// восьмого круга POC).
+			if said, _ := s.titleFor(f.ID, head.Summary, head.First, false); said != "" {
+				note = said
 			}
 		}
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
@@ -857,7 +858,7 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	free := r.URL.Query().Get("free") == "1"
 	if free && want != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "free=1 и task= вместе не читаются: первый просит разговоры без задачи, второй разговоры одной задачи"})
+			"error": "free=1 и task= вместе не читаются: первый просит чаты без задачи, второй чаты одной задачи"})
 		return
 	}
 	if want != "" && !taskParamRe.MatchString(want) {
@@ -921,11 +922,11 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			found.Path, strings.Join(roots, ", "))
 	case want != "" && cut:
 		resp["note"] = fmt.Sprintf(
-			"обход прерван по времени: просмотрено %d транскриптов из %d, разговор задачи %s мог остаться дальше",
+			"обход прерван по времени: просмотрено %d транскриптов из %d, чат задачи %s мог остаться дальше",
 			scanned, len(files), want)
 	case len(sessions) == 0 && free:
 		resp["note"] = fmt.Sprintf(
-			"разговоров без задачи в проекте %s нет: просмотрено %d транскриптов, у каждого нашлась своя задача",
+			"чатов без задачи в проекте %s нет: просмотрено %d транскриптов, у каждого нашлась своя задача",
 			found.Name, scanned)
 	case len(sessions) == 0 && want != "":
 		resp["note"] = fmt.Sprintf(

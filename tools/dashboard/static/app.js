@@ -370,7 +370,7 @@ function renderLive(project, works) {
     // разговор лежит на диске, и до DK-294 карточка стояла мёртвой.
     // Имя работы: номер задачи, а без него заголовок разговора, который
     // сервер кладёт в note (замечание 21).
-    const name = w.id || w.note || "разговор";
+    const name = w.id || w.note || "чат";
     const to = w.id ? boardChatHash(project, w.id)
       : w.session ? boardChatHash(project, w.session) : "";
     // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
@@ -2577,7 +2577,7 @@ function keepPlace(box, tail) {
 function sessionSign(s) {
   const title = (s.first || "").trim();
   if (s.task) return s.task + (title ? ", " + title : "");
-  return title || "разговор " + String(s.id || "").slice(0, 8);
+  return title || "чат " + String(s.id || "").slice(0, 8);
 }
 
 // Привязка разговора к задаче рукой: ответ на сессию, чью задачу угадать
@@ -2628,7 +2628,7 @@ const EMPTY_TALK = "в транскрипте пока нет реплик";
 
 // Начало разговора тоже названо словами: без надписи попытка подгрузить
 // историю у самого верха ленты неотличима от зависшего запроса (DK-434).
-const FEED_START = "это начало разговора";
+const FEED_START = "это начало чата";
 
 // Пауза перед своим переподключением потока: браузерный ретрай идёт сам, и
 // торопиться впереди него незачем, а упавший сервер не должен получить очередь
@@ -3081,7 +3081,7 @@ function wireChatFeed(project, feed, sid, onItem) {
     days: true,
     item: chatItem,
     pair: toolPair,
-    empty: "разговор пуст: в транскрипте нет ни одной реплики",
+    empty: "чат пуст: в транскрипте нет ни одной реплики",
     live: chatLive,
     era: () => chatGen,
   });
@@ -3100,7 +3100,7 @@ const SENT_META = {
   // Реплика разговора и реплика задачи ложатся строкой во вход, и списка
   // лежащего у этих ручек нет: обещать «доставлено» по ним нечем, а честное
   // состояние это лежащая строка, которую заберёт ближайший ход.
-  lying: "лежит во входе разговора",
+  lying: "лежит во входе чата",
 };
 
 // Доставка приходит без человека: подхват (hooks/chat-in.py) вносит лежащую
@@ -3694,6 +3694,24 @@ function boardChatHash(project, addr) {
   return project + "/chat/" + addr;
 }
 
+// Адрес чата с явным проектом. Раздел «Агенты» показывает работы всех досок
+// разом, и своего проекта у него нет вовсе: панель, открытая оттуда, иначе
+// взяла бы первый попавшийся и открыла чужой чат. Проект едет в самом адресе
+// через «~», потому что хвост /chat/ это одна строка (замечание 3 восьмого
+// круга POC). На экране проекта хвост остаётся коротким, как был.
+const CHAT_PROJ_SEP = "~";
+
+function chatAddr(project, addr) {
+  return route().proj ? addr : project + CHAT_PROJ_SEP + addr;
+}
+
+// Разбор адреса обратно: проект и сам адрес чата.
+function chatAddrParts(project, addr) {
+  const cut = String(addr || "").indexOf(CHAT_PROJ_SEP);
+  if (cut < 0) return { project, addr };
+  return { project: addr.slice(0, cut), addr: addr.slice(cut + 1) };
+}
+
 // Адрес общего чата доски: привязки у него нет вовсе, и слово это не ID ни
 // задачи, ни сессии (решение 7 LLD DK-430). Панель по нему открывает свежий
 // разговор проекта без задачи, а список слева показывает остальные такие же.
@@ -3835,7 +3853,7 @@ async function chatState(project, addr, board) {
   }
   const r = await api(chatsURL(project));
   if (!r.ok) {
-    st.error = r.body.error || "список разговоров не прочитался";
+    st.error = r.body.error || "список чатов не прочитался";
     return st;
   }
   st.chats = r.body.chats || [];
@@ -3878,10 +3896,10 @@ const CHAT_STATE_WORD = {
 // Заголовок диалога: первая реплика человека, обрезанная, как это делает
 // расширение Claude Code для vscode. Имени диалог не требует.
 function chatTitle(c) {
-  if (!c) return "разговора нет";
+  if (!c) return "чата нет";
   const t = (c.title || "").trim();
   if (t) return t.length > 70 ? t.slice(0, 70) + "..." : t;
-  return "разговор " + c.id.slice(0, 8);
+  return "чат " + c.id.slice(0, 8);
 }
 
 function chatWhen(c) {
@@ -3933,8 +3951,8 @@ function chatDropOpen(project, st, anchor) {
   const box = el("div", "cdrop");
   const find = el("input");
   find.type = "text";
-  find.placeholder = "Поиск разговора";
-  find.setAttribute("aria-label", "Поиск разговора");
+  find.placeholder = "Поиск чата";
+  find.setAttribute("aria-label", "Поиск чата");
   const rows = el("div", "cdrows");
   const draw = () => {
     const q = find.value.trim().toLowerCase();
@@ -3948,7 +3966,7 @@ function chatDropOpen(project, st, anchor) {
     for (const c of list) rows.append(chatOption(project, c, st.sid));
     if (!list.length) {
       rows.append(el("div", "hint", q ? "по запросу ничего не нашлось" :
-        (st.note || "разговоров тут нет")));
+        (st.note || "чатов тут нет")));
     }
   };
   find.addEventListener("input", draw);
@@ -3978,7 +3996,7 @@ function chatHead(project, st) {
     });
     pick.append(lab);
   }
-  pick.append(el("b", "", chatTitle(st.entry) + (st.fresh ? " (новый разговор)" : "")));
+  pick.append(el("b", "", chatTitle(st.entry) + (st.fresh ? " (новый чат)" : "")));
   const car = el("span", "cdcar");
   car.append(icon("i-caret"));
   pick.append(car);
@@ -3994,8 +4012,8 @@ function chatHead(project, st) {
 
   const add = el("button", "cdbtn");
   add.append(icon("i-plus"));
-  add.title = "Новый разговор";
-  add.setAttribute("aria-label", "Новый разговор");
+  add.title = "Новый чат";
+  add.setAttribute("aria-label", "Новый чат");
   add.addEventListener("click", () => {
     switchChat(st.task ? CHAT_NEW + ":" + st.task : CHAT_NEW);
   });
@@ -4026,7 +4044,7 @@ function chatHead(project, st) {
   }
   if (alien) {
     model.disabled = true;
-    model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого разговора.";
+    model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
   } else if (st.entry && st.entry.model && live && st.entry.model !== live) {
     model.title = "Сейчас работает " + live + ", выбранная " + st.entry.model +
       " возьмётся на следующем подъёме или резюме.";
@@ -4034,7 +4052,7 @@ function chatHead(project, st) {
   model.addEventListener("change", () => {
     chatModelSet(model.value);
     if (!st.sid) {
-      sayResult("модель нового разговора: " + model.value);
+      sayResult("модель нового чата: " + model.value);
       return;
     }
     api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
@@ -4051,8 +4069,8 @@ function chatHead(project, st) {
     const filt = el("button", "cdbtn" + (chatFilterOn() ? " on" : ""));
     filt.append(icon("i-filter"));
     filt.title = chatFilterOn()
-      ? "Список отфильтрован по " + st.task + ": нажмите, чтобы видеть все разговоры"
-      : "Список показывает все разговоры: нажмите, чтобы оставить только " + st.task;
+      ? "Список отфильтрован по " + st.task + ": нажмите, чтобы видеть все чаты"
+      : "Список показывает все чаты: нажмите, чтобы оставить только " + st.task;
     filt.setAttribute("aria-label", filt.title);
     filt.addEventListener("click", () => {
       chatFilterSet(!chatFilterOn());
@@ -4077,10 +4095,10 @@ function chatHead(project, st) {
     if (st.entry.tmux) bits.push("tmux " + st.entry.tmux);
     sub.textContent = bits.filter(Boolean).join(", ");
   } else if (st.fresh) {
-    sub.textContent = "новый разговор" + (st.task ? " про " + st.task : "") +
+    sub.textContent = "новый чат" + (st.task ? " про " + st.task : "") +
       ": первая реплика поднимет сессию";
   } else {
-    sub.textContent = st.task ? "разговоров задачи " + st.task + " нет" : "разговор не выбран";
+    sub.textContent = st.task ? "чатов задачи " + st.task + " нет" : "чат не выбран";
   }
   head.append(sub);
   return head;
@@ -4107,7 +4125,7 @@ async function chatRaise(project, st, text, model) {
   if (st.task) body.id = st.task;
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
-    sayResult(r.body.error || "разговор не поднялся", true);
+    sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
   const name = r.body.tmux;
@@ -4120,7 +4138,7 @@ async function chatRaise(project, st, text, model) {
       return;
     }
   }
-  sayResult("сессия " + name + " ещё не назвала себя в реестре: разговор встанет в списке сам", true);
+  sayResult("сессия " + name + " ещё не назвала себя в реестре: чат встанет в списке сам", true);
 }
 
 // Индикатор живой работы агента (замечание третьего круга POC). После отправки
@@ -4300,9 +4318,9 @@ function chatPanel(project, st) {
   grip.setAttribute("role", "separator");
   grip.setAttribute("aria-label", "Высота поля ввода");
   const ta = el("textarea");
-  ta.placeholder = way.off ? "разговор идёт в vscode, пишите там" : "Написать агенту...";
+  ta.placeholder = way.off ? "чат идёт в vscode, пишите там" : "Написать агенту...";
   ta.disabled = Boolean(way.off);
-  ta.setAttribute("aria-label", "Реплика в разговор");
+  ta.setAttribute("aria-label", "Реплика в чат");
   wireTaGrip(grip, ta);
   // Черновик возвращается при открытии разговора и пишется по ходу набора.
   ta.value = chatDraftRead(st.addr);
@@ -4388,8 +4406,8 @@ function chatPanel(project, st) {
     say(feed, "error", st.error);
   } else if (!st.sid) {
     say(feed, "empty", st.fresh
-      ? "новый разговор: напишите первую реплику, она и поднимет сессию"
-      : (st.note || "разговоров тут пока нет, заведите новый кнопкой «+»"));
+      ? "новый чат: напишите первую реплику, она и поднимет сессию"
+      : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
   } else {
     wireChatFeed(project, feed, st.sid, (item) => {
       busy.saw(item);
@@ -4410,6 +4428,15 @@ function repaintChat() {
 }
 
 async function paintChat(project, addr, board, works) {
+  // Адрес мог приехать с проектом внутри: так его собирает раздел «Агенты»,
+  // у которого своего проекта нет. Доска тогда чужая, и брать её из кэша
+  // экрана нельзя.
+  if (addr && String(addr).includes(CHAT_PROJ_SEP)) {
+    const parts = chatAddrParts(project, addr);
+    if (parts.project !== project) board = null;
+    project = parts.project;
+    addr = parts.addr;
+  }
   const panel = document.getElementById("cpanel");
   const pin = document.getElementById("cpin");
   const side = document.getElementById("clist");
@@ -4442,7 +4469,7 @@ async function paintChat(project, addr, board, works) {
   chatFill = null;
   chatOpen = key;
   const gen = chatGen;
-  pin.replaceChildren(el("div", "empty", "разговор открывается..."));
+  pin.replaceChildren(el("div", "empty", "чат открывается..."));
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;
@@ -5597,7 +5624,7 @@ function feedItemEl(project, n) {
     }
     const open = el("button", "btn", "Открыть " + n.id);
     open.addEventListener("click", () => { location.hash = to + "/" + n.id; });
-    const jrn = el("a", "", "Разговор агента");
+    const jrn = el("a", "", "Чат агента");
     jrn.href = "#" + taskChatHash(to, n.id);
     acts.append(open, jrn);
     b.append(acts);
@@ -6069,7 +6096,9 @@ function agentRow(project, w, now) {
   const line = el("div", "l1");
   // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
   // говорит ничего, и место ему в подписи.
-  line.append(el("span", "tt", w.title || w.id || "интерактивная сессия"));
+  // Подпись это задача, а у сессии без задачи заголовок чата, который сервер
+  // берёт той же лестницей, что список чатов (замечание 1 восьмого круга).
+  line.append(el("span", "tt", w.title || w.id || w.note || "чат без задачи"));
   for (const chip of workChips(project, w)) line.append(chip);
   box.append(line, el("div", "l2", workSub(w)));
   row.append(box);
@@ -6084,18 +6113,24 @@ function agentRow(project, w, now) {
       "работа поднята мимо дашборда: остановить можно там, где поднята"));
     if (w.id) acts.append(goButton("Открыть задачу", project + "/" + w.id));
   } else if (w.id) {
-    // Вход в разговор один на цель и задачу: после слияния экранов это одна и
-    // та же панель, а ручку для реплики выбирает она сама (DK-435).
-    acts.append(goButton("Разговор агента", taskChatHash(project, w.id)));
+    // Вход в чат один на цель и задачу: после слияния экранов это одна и та же
+    // панель, а ручку для реплики выбирает она сама (DK-435). Панель встаёт
+    // поверх текущего раздела, а не уводит на доску: хвост /chat/ клеится к
+    // адресу раздела, как он клеится к задаче (замечание 3 восьмого круга).
+    const talk = el("button", "btn btn-sm", "Чат агента");
+    talk.addEventListener("click", () => { openChat(chatAddr(project, w.id)); });
+    acts.append(talk);
     if (w.via === "tmux") {
       const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
       acts.append(stop);
     }
   } else if (w.session) {
-    // Задачу сессии узнать не удалось, и адресовать панель по ID нечем:
-    // разговор открывается по id сессии (DK-294).
-    acts.append(goButton("Разговор", boardChatHash(project, w.session)));
+    // Задачу сессии узнать не удалось, и адресовать панель по ID нечем: чат
+    // открывается по id сессии (DK-294).
+    const talk = el("button", "btn btn-sm", "Чат");
+    talk.addEventListener("click", () => { openChat(chatAddr(project, w.session)); });
+    acts.append(talk);
   }
   row.append(acts);
   return row;
@@ -6288,7 +6323,7 @@ async function paint() {
     // Экран собран из того же ответа, что и колонка: живые работы всех
     // проектов приходят одним запросом, и доска ему не нужна.
     document.getElementById("pname").textContent = "Агенты";
-    document.getElementById("psub").textContent = "работы, идущие сейчас по всем доскам";
+    document.getElementById("psub").textContent = "все активные задачи";
     renderLive("", []);
     markNav(rt);
     renderAgents(projects);

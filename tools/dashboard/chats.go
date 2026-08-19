@@ -255,7 +255,7 @@ func hasTask(list []string, id string) bool {
 const chatListLimit = 80
 
 func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r, "разговоры")
+	found := s.findProject(w, r, "чаты")
 	if found == nil {
 		return
 	}
@@ -286,7 +286,7 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	s.titleFill(list)
 	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts()}
 	if len(list) == 0 {
-		resp["note"] = "разговоров тут пока нет: заведите новый кнопкой «+»"
+		resp["note"] = "чатов тут пока нет: заведите новый кнопкой «+»"
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -354,7 +354,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "подъём разговора")
+	found := s.findProject(w, r, "подъём чата")
 	if found == nil {
 		return
 	}
@@ -376,7 +376,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	text := chatText(body.Text)
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "пустая реплика разговора не поднимает: диалог начинается со слов человека"})
+			"error": "пустая реплика чата не поднимает: чат начинается со слов человека"})
 		return
 	}
 	model := strings.TrimSpace(body.Model)
@@ -401,19 +401,19 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := chatNewName(id, tmuxAliveFn())
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model}); err != nil {
-		s.logf("модель разговора %s не записалась: %v", sess, err)
+		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
 		chatCmd(chatVars(id, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
-		s.logf("подъём разговора в %s не удался: %s", found.Name, text)
+		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	s.logf("разговор поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
+	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"tmux": sess, "model": model, "tree": dir,
-		"message": fmt.Sprintf("разговор поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
+		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
 }
 
 // chatText готовит реплику человека к отправке. Переносы строк тут священны:
@@ -469,7 +469,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "реплика разговора")
+	found := s.findProject(w, r, "реплика чата")
 	if found == nil {
 		return
 	}
@@ -503,7 +503,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// vscode отсюда тоже слышно, и отказывать ему больше не за что.
 	if p, ok := s.peers()[sid]; ok {
 		if err := peerSay(p.Sock, text); err == nil {
-			s.logf("реплика ушла в сокет разговора %s (pid %d, %s)", sid, p.PID, peerWord(p))
+			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			writeJSON(w, http.StatusOK, map[string]any{"way": "socket", "pid": p.PID,
 				"where": peerWord(p)})
 			return
@@ -511,7 +511,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			// Сокет есть, а разговора по нему не вышло: сессия могла умереть
 			// между чтением реестра и записью. Дальше идут запасные дороги, и
 			// причина остаётся в журнале, а не пропадает молча.
-			s.logf("сокет разговора %s не взял реплику, иду запасной дорогой: %v", sid, err)
+			s.logf("сокет чата %s не взял реплику, иду запасной дорогой: %v", sid, err)
 		}
 	}
 	alive := tmuxAliveFn()
@@ -525,7 +525,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 				"реплика не подалась в tmux-сессию %s: %s", last.Tmux, procErr(err))})
 			return
 		}
-		s.logf("реплика подана в разговор %s (tmux-сессия %s)", sid, last.Tmux)
+		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, last.Tmux)
 		writeJSON(w, http.StatusOK, map[string]any{"way": "send-keys", "tmux": last.Tmux,
 			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"})
 		return
@@ -552,7 +552,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	model := s.chatModel(sid, last.Tmux)
 	sess := chatNewName(task, alive)
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
-		s.logf("настройки разговора %s не записались: %v", sess, err)
+		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if m := clientMissing(defaultClient); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
@@ -560,7 +560,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
 		chatCmd(chatVars(task, sess), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
-		msg := fmt.Sprintf("tmux не поднял продолжение разговора %s: %s", sid, procErr(err))
+		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
@@ -570,11 +570,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// обязана работать, иначе вторая реплика подряд подняла бы второй резюм.
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
-			Project: found.Name, Tree: dir, Tmux: sess}, "резюм разговора"))
-	s.logf("разговор %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
+			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
+	s.logf("чат %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
 	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
-			"процесса у разговора не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)})
+			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)})
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём
@@ -585,13 +585,13 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "модель разговора")
+	found := s.findProject(w, r, "модель чата")
 	if found == nil {
 		return
 	}
 	sid := r.PathValue("sid")
 	if !chatKeyRe.MatchString(sid) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id разговора", sid)})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id чата", sid)})
 		return
 	}
 	var body struct {
@@ -612,9 +612,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
 		return
 	}
-	s.logf("модель разговора %s в %s теперь %s", sid, found.Name, model)
+	s.logf("модель чата %s в %s теперь %s", sid, found.Name, model)
 	writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model,
-		"message": fmt.Sprintf("модель разговора теперь %s: она возьмётся на следующем подъёме или резюме сессии", model)})
+		"message": fmt.Sprintf("модель чата теперь %s: она возьмётся на следующем подъёме или резюме сессии", model)})
 }
 
 // sortEntries держит список свежими сверху и при равном времени по ID: порядок
@@ -663,13 +663,13 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	e, has := s.taskChat(found.Path, id)
 	if !has {
 		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
-			"message": "разговора у задачи нет: работа поднимется новым"})
+			"message": "чата у задачи нет: работа поднимется новым"})
 		return
 	}
 	text := continuePrompt(id)
 	if e.Sock != "" {
 		if err := peerSay(e.Sock, text); err == nil {
-			s.logf("работа %s продолжена в живом разговоре %s (pid %d)", id, e.ID, e.PID)
+			s.logf("работа %s продолжена в живом чате %s (pid %d)", id, e.ID, e.PID)
 			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "socket",
 				"session": e.ID, "where": e.Where})
 			return
@@ -679,7 +679,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {
 		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
-			"message": "транскрипта прежнего разговора нет: работа поднимется новым"})
+			"message": "транскрипта прежнего чата нет: работа поднимется новым"})
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -702,7 +702,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "продолжение работы"))
-	s.logf("работа %s продолжена резюмом разговора %s в tmux-сессии %s", id, sid, sess)
+	s.logf("работа %s продолжена резюмом чата %s в tmux-сессии %s", id, sid, sess)
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
 		"session": sid, "tmux": sess})
 }
@@ -714,7 +714,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 // обновляет его на каждой смене, отсюда индикатор и берёт правду.
 
 func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r, "состояние разговора")
+	found := s.findProject(w, r, "состояние чата")
 	if found == nil {
 		return
 	}
@@ -840,46 +840,65 @@ var titleJobs = make(chan struct{}, 1)
 // заголовками сами, без единого ожидания на экране.
 const titleAskLimit = 2
 
-// titleFill дописывает заголовки списку: своя запись, эвристика на месте и
-// заказ haiku фоном для тех, у кого харнес summary не написал. Ответ уходит
-// человеку сразу с эвристикой, а haiku правит её к следующему открытию.
+// titleFor это одна лестница заголовка разговора на всех потребителей: список
+// диалогов, раздел «Агенты», всякий следующий. Порядок от дешёвого к дорогому:
+// summary самого харнеса, сохранённый заголовок, эвристика первого предложения
+// на месте. Haiku зовётся фоном и правит эвристику к следующему заходу; ask
+// говорит, можно ли его заказывать, потому что счёт заказов держит вызывающий.
+// Второй такой лестницы заводить нельзя: разойдясь, они дали бы одному
+// разговору два разных имени на соседних экранах (замечание 1 восьмого круга).
+// Второй ответ говорит, ушёл ли заказ haiku: счёт заказов держит вызывающий, а
+// знает про заказ только эта лестница.
+func (s *server) titleFor(sid, summary, first string, ask bool) (string, bool) {
+	if summary != "" {
+		return summary, false
+	}
+	if sid != "" && chatKeyRe.MatchString(sid) {
+		if st := s.chatStoreRead(sid); st.Title != "" {
+			return st.Title, false
+		}
+	}
+	said := titleTrim(first)
+	if ask && first != "" && sid != "" && chatKeyRe.MatchString(sid) {
+		s.titleOrder(sid, first)
+		return said, true
+	}
+	return said, false
+}
+
+// titleOrder заказывает заголовок фоном. Заказ идёт по одному на машину:
+// параллельные вызовы клиента стоят дороже, чем ожидание заголовка до
+// следующего открытия экрана.
+func (s *server) titleOrder(sid, text string) {
+	go func() {
+		select {
+		case titleJobs <- struct{}{}:
+		default:
+			return
+		}
+		defer func() { <-titleJobs }()
+		said := titleAsk(text)
+		if said == "" {
+			return
+		}
+		cur := s.chatStoreRead(sid)
+		cur.Title = said
+		s.chatStoreWrite(sid, cur)
+		s.logf("заголовок чата %s назван haiku: %s", sid, said)
+	}()
+}
+
+// titleFill дописывает заголовки списку диалогов той же лестницей. Счёт заказов
+// держится тут: список приходит на восемьдесят транскриптов, и заказывать
+// заголовок каждому значило бы сжечь квоту на украшение.
 func (s *server) titleFill(list []chatEntry) {
 	asked := 0
 	for i := range list {
 		e := &list[i]
-		if e.Summary != "" {
-			e.Title = e.Summary
-			continue
+		said, ordered := s.titleFor(e.ID, e.Summary, e.Title, asked < titleAskLimit)
+		e.Title = said
+		if ordered {
+			asked++
 		}
-		st := s.chatStoreRead(e.ID)
-		if st.Title != "" {
-			e.Title = st.Title
-			continue
-		}
-		raw := e.Title
-		e.Title = titleTrim(raw)
-		if raw == "" || asked >= titleAskLimit {
-			continue
-		}
-		asked++
-		sid, text := e.ID, raw
-		go func() {
-			// Заказ идёт по одному на машину: параллельные вызовы клиента
-			// стоят дороже, чем ожидание заголовка до следующего открытия.
-			select {
-			case titleJobs <- struct{}{}:
-			default:
-				return
-			}
-			defer func() { <-titleJobs }()
-			said := titleAsk(text)
-			if said == "" {
-				return
-			}
-			cur := s.chatStoreRead(sid)
-			cur.Title = said
-			s.chatStoreWrite(sid, cur)
-			s.logf("заголовок разговора %s назван haiku: %s", sid, said)
-		}()
 	}
 }

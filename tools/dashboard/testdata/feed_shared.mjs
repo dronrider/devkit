@@ -342,7 +342,7 @@ await settle();
 if (startOf(shortBox).hidden) {
   fail("надпись начала разговора не встала у короткой истории: " + dump(shortBox));
 }
-if (!dump(shortBox).includes("это начало разговора")) {
+if (!dump(shortBox).includes("это начало чата")) {
   fail("конец истории не назван словами: " + dump(shortBox));
 }
 scrollUp(shortBox, 300);

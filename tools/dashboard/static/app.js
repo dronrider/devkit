@@ -2170,6 +2170,9 @@ async function renderTask(project, works, id) {
     // состояние, а не сообщение, и строкой текста она занимала место шапки
     // (замечание 11).
     jp.head.append(el("span", "dot pulse"));
+    // Отступ сверху: журнал стоит последним блоком, и без него он слипался с
+    // зависимостями над собой в одну простыню.
+    jp.card.classList.add("jbottom");
     page.append(jp.card);
     wireJournal(project, id, jp.body, jp.sub);
   }

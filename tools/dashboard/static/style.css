@@ -806,3 +806,15 @@ a:hover{text-decoration:underline}
 /* лейбл задачи в названии диалога (замечание 17) */
 .cdtask{flex:none;padding:1px 6px;border-radius:5px;background:var(--bg3);color:var(--tx2);font:600 10.5px var(--mono);cursor:pointer}
 .cdtask:hover{background:var(--acc);color:var(--bg0)}
+
+/* журнал витка последним блоком экрана задачи: без отступа он слипался с тем,
+   что стоит над ним */
+.jbottom{margin-top:22px}
+
+/* колонка ранга и зависимостей занимает треть ширины, а не половину: 392 точек
+   фиксированной ширины при открытой панели разговора съедали у постановки
+   ровно столько же, сколько она сама занимала */
+.tgrid{grid-template-columns:minmax(0,2fr) minmax(200px,1fr)}
+.rrow .nm{width:auto;flex:1;min-width:0}
+.rrow .why{display:none}
+.rrow{padding:6px 12px}

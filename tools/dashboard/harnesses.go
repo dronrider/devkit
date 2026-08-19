@@ -38,6 +38,16 @@ type Harness struct {
 	// конфигурации, и журнал он пишет туда, а не в ~/.claude (DK-362).
 	Home string   `json:"home,omitempty"`
 	Env  []string `json:"env,omitempty"`
+	// Models это лестница ярусов подписки моделями: из неё панель разговора
+	// собирает выбор модели. Имён тут дашборд не сочиняет, всё приезжает
+	// ответом agentctl.
+	Models []HarnessModel `json:"models,omitempty"`
+}
+
+// HarnessModel это ступень лестницы: ярус и модель, в которую он развёрнут.
+type HarnessModel struct {
+	Tier  string `json:"tier"`
+	Model string `json:"model"`
 }
 
 // HarnessView это ответ ручки. Пустой список это не поломка запуска: работа
@@ -59,6 +69,10 @@ type agentctlHarnesses struct {
 		Bin     string   `json:"bin"`
 		Home    string   `json:"home"`
 		Env     []string `json:"env"`
+		Models  []struct {
+			Tier  string `json:"tier"`
+			Model string `json:"model"`
+		} `json:"models"`
 	} `json:"harnesses"`
 	Note  string   `json:"note"`
 	Warns []string `json:"warns"`
@@ -96,7 +110,13 @@ func readHarnesses() HarnessView {
 		if !h.Enabled || h.Bin == "" {
 			continue
 		}
-		view.Harnesses = append(view.Harnesses, Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env})
+		hh := Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env}
+		for _, m := range h.Models {
+			if m.Model != "" {
+				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model})
+			}
+		}
+		view.Harnesses = append(view.Harnesses, hh)
 	}
 	if len(view.Harnesses) == 0 {
 		view.Note = raw.Note

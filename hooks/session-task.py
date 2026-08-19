@@ -46,6 +46,7 @@ tmux-сессия с этим именем, а без поля пришлось 
 """
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -166,6 +167,42 @@ def run_touch(protocol, path=None, now=None):
     return 0
 
 
+# Сколько знаков файла задачи едет в контекст сессии: постановка бывает на
+# сотню килобайт, и вываливать её целиком в первый ход дороже, чем стоит сам
+# разговор. Первых тысяч хватает на заголовок, цель и критерии.
+TASK_CTX_LIMIT = 12000
+
+
+def task_context(task, cwd):
+    """Контекст задачи для родившейся сессии: строка доски и файл постановки.
+
+    Разговор, поднятый из окна с фильтром по задаче, обязан знать её с первой
+    реплики, как Claude Code знает открытый в редакторе файл. Иначе человек
+    первым ходом пишет «прочитай DK-397», и ход уходит впустую.
+    """
+    root = hookio.tree_root(cwd) or cwd
+    if not root:
+        return ""
+    parts = ["Эта сессия открыта разговором про задачу %s." % task]
+    try:
+        out = subprocess.run(["taskctl", "-C", root, "show", task],
+                             capture_output=True, text=True, timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            parts.append("Строка доски:\n" + out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        # taskctl может не стоять в PATH сессии вовсе: контекст тогда беднее, но
+        # рождение сессии из-за этого падать не должно.
+        pass
+    path = os.path.join(root, "docs", "tasks", "%s.md" % task)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read(TASK_CTX_LIMIT)
+        parts.append("Файл задачи %s:\n%s" % (path, text))
+    except OSError:
+        parts.append("Файла задачи %s на диске нет." % path)
+    return "\n\n".join(parts)
+
+
 def run_hook(protocol, path=None, env=None, now=None):
     start = hookio.start_event(protocol)
     if start is None or not start.session:
@@ -173,6 +210,11 @@ def run_hook(protocol, path=None, env=None, now=None):
         # без сессии не сводится ни с транскриптом, ни с ручкой привязки.
         return 0
     hookio.append_capped(path or LOG, record(start, env, now))
+    task = ordered_task(os.environ if env is None else env)
+    if task:
+        said = task_context(task, start.cwd)
+        if said:
+            return hookio.Context("SessionStart").say(said)
     return 0
 
 

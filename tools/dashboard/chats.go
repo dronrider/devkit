@@ -30,10 +30,51 @@ import (
 // chatModelDefault это модель нового диалога, пока человек не выбрал другую.
 const chatModelDefault = "opus"
 
-// chatModels это модели, которые панель предлагает списком. Список короткий
-// нарочно: имена яруса берутся из раскладки подписок (agentctl harness), а тут
-// стоят те три, которыми говорят с агентом руками.
-var chatModels = []string{"opus", "sonnet", "haiku"}
+// chatModel это ступень выбора модели в панели: имя модели, ярус и подписка,
+// чьей квотой она платится. Список собирается из раскладки подписок
+// (agentctl harness --json), а не пишется в коде: имён поставщиков в дашборде
+// нет ни одного, и новая подписка появляется в выборе сама.
+type chatModelOpt struct {
+	Model   string `json:"model"`
+	Tier    string `json:"tier"`
+	Harness string `json:"harness"`
+	Default bool   `json:"default,omitempty"`
+}
+
+// chatModelOpts разворачивает лестницы всех включённых подписок в плоский
+// список выбора. Повторы модели в одной подписке отсеиваются: у второй
+// подписки верхние ярусы сложены одной моделью, и три одинаковых строки в
+// выпадающем списке читались бы как ошибка.
+func (s *server) chatModelOpts() []chatModelOpt {
+	out := []chatModelOpt{}
+	for _, h := range s.harnesses().Harnesses {
+		seen := map[string]bool{}
+		for _, m := range h.Models {
+			if seen[m.Model] {
+				continue
+			}
+			seen[m.Model] = true
+			out = append(out, chatModelOpt{Model: m.Model, Tier: m.Tier,
+				Harness: h.Name, Default: h.Default && m.Tier == "pro"})
+		}
+	}
+	return out
+}
+
+// chatHarnessOf называет подписку, чьей моделью просят поднять разговор: у
+// второй подписки клиент поднимается своим каталогом конфигурации, и без этого
+// сессия ушла бы на чужую квоту.
+func (s *server) chatHarnessOf(model string) *Harness {
+	view := s.harnesses()
+	for i := range view.Harnesses {
+		for _, m := range view.Harnesses[i].Models {
+			if m.Model == model {
+				return &view.Harnesses[i]
+			}
+		}
+	}
+	return nil
+}
 
 // Состояния диалога. live это живой процесс в tmux, которым правит дашборд;
 // vscode это свежий транскрипт без своей tmux-сессии, то есть окно человека, и
@@ -59,6 +100,13 @@ type chatEntry struct {
 	Tree    string   `json:"tree,omitempty"`
 	Branch  string   `json:"branch,omitempty"`
 	Harness string   `json:"harness,omitempty"`
+	// Живая сессия из реестра клиента: сокет канала, pid, слово про то, где она
+	// идёт, и её состояние (idle значит «ждёт ввода»). Пусто значит, что
+	// процесса у диалога нет вовсе.
+	Sock  string `json:"sock,omitempty"`
+	PID   int    `json:"pid,omitempty"`
+	Where string `json:"where,omitempty"`
+	Idle  bool   `json:"idle,omitempty"`
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -128,6 +176,7 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 	recs := sessions.LoadAll(s.cfg.Home)
 	alive := tmuxAliveFn()
 	names := harnessRoots(s.harnesses())
+	live := s.peers()
 	cutoff := s.now().Add(-sessionLiveTTL)
 	out := []chatEntry{}
 	for i, f := range sessionFiles(s.transcriptRoots(), projPath) {
@@ -150,13 +199,21 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),
 		}
-		// Мера состояния: своё имя tmux-сессии старше свежести транскрипта.
-		// Диалог, поднятый дашбордом, кончился ровно тогда, когда его сессии
-		// нет в списке tmux, и свежий транскрипт тут ничего не значит: минуту
-		// назад он писался живым процессом, которого уже нет. Окном vscode
-		// считается только разговор, у которого своей tmux-сессии не было
-		// вовсе, а транскрипт при этом свежий.
+		// Мера состояния: реестр живых сессий клиента старше всего остального.
+		// Есть запись с живым процессом, значит диалог идёт и ему есть куда
+		// писать, чем бы он ни был поднят, окном vscode или tmux-сессией
+		// дашборда. Прежняя мера (своё имя tmux плюс свежесть транскрипта)
+		// осталась запасной: реестр появился не во всякой версии клиента.
+		if p, ok := live[f.ID]; ok {
+			e.Sock, e.PID, e.Where = p.Sock, p.PID, peerWord(p)
+			e.Idle = p.Status == "idle"
+			if p.Tmux != "" && e.Tmux == "" {
+				e.Tmux = strings.SplitN(p.Tmux, ":", 2)[0]
+			}
+		}
 		switch {
+		case e.Sock != "":
+			e.State = chatLive
 		case e.Tmux != "" && alive(e.Tmux):
 			e.State = chatLive
 		case e.Tmux != "":
@@ -214,7 +271,7 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []chatEntry{}
 	}
-	resp := map[string]any{"project": found.Name, "chats": list, "models": chatModels}
+	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts()}
 	if len(list) == 0 {
 		resp["note"] = "разговоров тут пока нет: заведите новый кнопкой «+»"
 	}
@@ -240,8 +297,17 @@ func chatNewName(id string, alive func(string) bool) string {
 // chatCmd собирает команду клиента для tmux. Реплика человека едет первым
 // аргументом: интерактивный клиент берёт её как первый вопрос и остаётся
 // стоять, дальше реплики подаются в тот же процесс через send-keys.
-func chatCmd(env, model, resume, text string) string {
-	cmd := env + defaultClient + " --model " + shQuote(model)
+func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
+	client := defaultClient
+	head := env
+	if h != nil && !h.Default {
+		// Модель чужой подписки поднимается её же обвязкой: пары окружения
+		// (каталог конфигурации, endpoint, токен) кладёт agentctl exec, и
+		// собирать их тут самому нельзя, они поселились бы в процессе, который
+		// раздаёт экраны (LLD DK-328, решение 3).
+		client = shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " + shQuote(h.Bin)
+	}
+	cmd := head + client + " --model " + shQuote(model)
 	if resume != "" {
 		cmd += " --resume " + shQuote(resume)
 	}
@@ -319,7 +385,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель разговора %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, "", text)); err != nil {
+		chatCmd(chatVars(id, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём разговора в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -391,6 +457,22 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := sessions.LoadAll(s.cfg.Home)
 	last := sessions.Last(recs[sid])
+	// Первым делом канал самого клиента: живая сессия принимает реплику прямо в
+	// свой сокет и просыпается за секунды, чем бы она ни была поднята. Окно
+	// vscode отсюда тоже слышно, и отказывать ему больше не за что.
+	if p, ok := s.peers()[sid]; ok {
+		if err := peerSay(p.Sock, text); err == nil {
+			s.logf("реплика ушла в сокет разговора %s (pid %d, %s)", sid, p.PID, peerWord(p))
+			writeJSON(w, http.StatusOK, map[string]any{"way": "socket", "pid": p.PID,
+				"where": peerWord(p)})
+			return
+		} else {
+			// Сокет есть, а разговора по нему не вышло: сессия могла умереть
+			// между чтением реестра и записью. Дальше идут запасные дороги, и
+			// причина остаётся в журнале, а не пропадает молча.
+			s.logf("сокет разговора %s не взял реплику, иду запасной дорогой: %v", sid, err)
+		}
+	}
 	alive := tmuxAliveFn()
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
@@ -407,18 +489,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"})
 		return
 	}
-	// Своей tmux-сессии не было вовсе, а транскрипт свежий: разговор идёт в
-	// чужом окне, и подать туда реплику нечем. Молчаливый резюм тут завёл бы
-	// второго агента на том же дереве. Диалог с известным именем tmux-сессии
-	// сюда не попадает: его сессии нет в списке, значит процесс кончился, и
-	// свежесть транскрипта про это ничего не говорит.
-	if last.Tmux == "" && s.now().Sub(info.mod) < sessionLiveTTL {
-		writeJSON(w, http.StatusConflict, map[string]any{"way": chatVscode,
-			"error": fmt.Sprintf(
-				"разговор идёт в окне vscode (транскрипт писался %s назад, своей tmux-сессии у него нет): пишите там",
-				s.now().Sub(info.mod).Truncate(time.Minute))})
-		return
-	}
+	// Отказа «разговор идёт в vscode» тут больше нет: канал клиента достаёт
+	// любое живое окно, и раз до сюда дошло, живого процесса у диалога нет ни в
+	// реестре, ни в tmux. Свежий транскрипт без сокета значит клиента старой
+	// версии либо сессию, умершую только что, и обоим годится резюм.
 	// Процесса нет: поднимается продолжение той же сессии. История не рвётся,
 	// клиент дочитывает её сам по --resume.
 	task := ""
@@ -444,7 +518,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(task, sess), model, sid, text)); err != nil {
+		chatCmd(chatVars(task, sess), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение разговора %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})

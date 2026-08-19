@@ -1194,6 +1194,19 @@ type harnessJSON struct {
 	// свой каталог вместе с CLAUDE_CONFIG_DIR, а не в ~/.claude (DK-362).
 	Home string   `json:"home,omitempty"`
 	Env  []string `json:"env,omitempty"`
+	// Models это лестница ярусов харнеса моделями: ярус и то, во что он
+	// разворачивается на этой машине. Список нужен всякому, кто даёт человеку
+	// выбрать модель руками (панель разговора дашборда): захардкоженный
+	// перечень имён там разошёлся бы с лестницей на первой же смене поставщика,
+	// а имён харнесов в чужом коде не должно быть вовсе.
+	Models []harnessModelJSON `json:"models,omitempty"`
+}
+
+// harnessModelJSON это одна ступень лестницы: ярус, модель и признак яруса по
+// умолчанию для роли исполнителя.
+type harnessModelJSON struct {
+	Tier  string `json:"tier"`
+	Model string `json:"model"`
 }
 
 // harnessesJSON это ответ команды: машинная раскладка подписок целиком.
@@ -1259,6 +1272,11 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.Bin = clientBin(l.Profiles[name], l.Setup[name])
 		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
+		for _, tier := range tierNames {
+			if m := l.Setup[name].mapOf(tier); m != "" {
+				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m})
+			}
+		}
 		v.Harnesses = append(v.Harnesses, h)
 	}
 	if len(l.Enabled) == 0 {
@@ -1273,6 +1291,19 @@ func cmdHarnessJSON(start string) (string, error) {
 
 // envOf отдаёт пары окружения секции, переживая её отсутствие: харнес бывает
 // включён без единой строки в машинном слое.
+// mapOf отдаёт модель яруса из секции харнеса. Пусто значит ярус не назначен:
+// лестница бывает неполной, и врать про неё нечем.
+func (s *setup) mapOf(tier string) string {
+	if s == nil {
+		return ""
+	}
+	a, ok := s.Map[tier]
+	if !ok {
+		return ""
+	}
+	return a.Model
+}
+
 func (s *setup) envOf() []envPair {
 	if s == nil {
 		return nil

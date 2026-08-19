@@ -143,6 +143,44 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!dump(pend).includes("вторая реплика")) fail("ответ агента съел местный пузырь");
 }
 
+// --- работа субагента: блок собирается, а живой не свёрнут ---
+{
+  const sub = [];
+  for (let i = 0; i < 12; i++) {
+    sub.push(i % 2
+      ? { seq: i, role: "toolout", text: "вывод " + i, sub: "работа", time: "2026-08-13T09:00:00+03:00" }
+      : { seq: i, role: "tool", tool: "Bash", text: "command: ls " + i, note: "ls", sub: "работа", time: "2026-08-13T09:00:00+03:00" });
+  }
+  const box = makeNode("div");
+  const prev = sandbox.fetch;
+  sandbox.fetch = (path, init) => {
+    if (path.includes("/sessions/") && !path.includes("stream=1")) {
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ session: "sub1", head: { id: "sub1" }, items: sub, total: sub.length }) });
+    }
+    return prev(path, init);
+  };
+  sandbox.wireChatFeed("demo", box, "sub1");
+  await settle();
+  sandbox.fetch = prev;
+  const blk = byClass(box, "subblk");
+  if (!blk) fail("блок работы субагента не собрался: " + dump(box).slice(0, 200));
+  // Вся лента из работы субагента: свёрнутый блок читался как пустой чат, и
+  // ровно это пользователь и увидел (регресс тринадцатого круга POC).
+  if (!String(blk.className).includes("open")) fail("живой блок субагента свёрнут");
+  const body = blk.children[1];
+  if (!body || body.hidden) fail("тело живого блока скрыто");
+  if (!body.children.length) fail("в блоке субагента пусто");
+  if (!dump(box).includes("ls")) fail("записи субагента не видны: " + dump(box).slice(0, 200));
+}
+
+// --- сломанная запись не роняет ленту целиком ---
+{
+  const boom = { seq: 0, role: "user", get text() { throw new Error("битая запись"); } };
+  const node = sandbox.safeItem(sandbox.chatItem, boom);
+  if (!dump(node).includes("не отрисовалась")) fail("заглушки на сломанной записи нет: " + dump(node));
+}
+
 // --- лента: размышления, вывод инструмента, служебные вставки ---
 {
   const spent = sandbox.replyEl({ role: "thinking", text: "", spent: 9377 });

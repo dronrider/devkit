@@ -2930,10 +2930,15 @@ async function wireFeed(project, sid, opts) {
         while (i < talk.length && talk[i].sub === label) inner.push(talk[i++]);
         i--;
         const last = inner[inner.length - 1];
+        // Блок в самом хвосте ленты это работа, идущая прямо сейчас, и
+        // сворачивать её нельзя: у диспетчерской сессии субагент занимает всё
+        // окно открытия целиком, и свёрнутый блок читался как пустой чат
+        // (регресс тринадцатого круга POC).
+        const liveTail = i >= talk.length - 1;
         items.push({
           key: "sub-" + talk[from].seq,
-          sign: [label, inner.length, last && last.text].join("|"),
-          make: () => subBlock(label, inner, opts),
+          sign: [label, inner.length, last && last.text, liveTail].join("|"),
+          make: () => safeItem(() => subBlock(label, inner, opts, liveTail), null),
         });
         continue;
       }
@@ -2942,7 +2947,7 @@ async function wireFeed(project, sid, opts) {
         items.push({
           key: "seq-" + item.seq,
           sign: [item.role, item.time, item.text, next.text].join("|"),
-          make: () => opts.pair(item, next),
+          make: () => safePair(opts.pair, item, next),
         });
         i++;
         continue;
@@ -2950,7 +2955,7 @@ async function wireFeed(project, sid, opts) {
       items.push({
         key: "seq-" + item.seq,
         sign: [item.role, item.time, item.text].join("|"),
-        make: () => opts.item(item),
+        make: () => safeItem(opts.item, item),
       });
     }
     sync(box, items);
@@ -3290,10 +3295,32 @@ function selFold(file, text) {
 // Блок работы субагента: заголовок с подписью и счётом ходов, внутри та же
 // лента. Свёрнут по умолчанию, разворачивается кликом; последняя строка видна
 // в заголовке, чтобы по ней было видно, чем субагент занят прямо сейчас.
-function subBlock(label, inner, opts) {
-  const box = el("div", "subblk fold");
+// Пояс безопасности ленты: сборка одной записи не должна ронять всю ленту.
+// Битая или незнакомая запись рисуется заглушкой, остальные встают как ни в чём
+// не бывало, а причина уходит в консоль (регресс тринадцатого круга POC: пустой
+// чат вместо разговора).
+function safeItem(make, item) {
+  try {
+    return make(item);
+  } catch (err) {
+    console.error("запись ленты не отрисовалась", err);
+    return el("div", "svcline", "запись не отрисовалась");
+  }
+}
+
+function safePair(make, call, out) {
+  try {
+    return make(call, out);
+  } catch (err) {
+    console.error("карточка инструмента не отрисовалась", err);
+    return el("div", "svcline", "запись не отрисовалась");
+  }
+}
+
+function subBlock(label, inner, opts, open) {
+  const box = el("div", "subblk fold" + (open ? " open" : ""));
   const top = el("div", "foldh");
-  top.append(el("b", "", "субагент"));
+  top.append(el("b", "", open ? "субагент работает" : "субагент"));
   const tail = inner[inner.length - 1] || {};
   const peek = tail.tool ? tail.tool + (tail.note ? ": " + tail.note : "")
     : foldPeek(tail.text || "", 60);
@@ -3307,14 +3334,15 @@ function subBlock(label, inner, opts) {
     const it = inner[j];
     const nx = inner[j + 1];
     if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
-      body.append(opts.pair(it, nx));
+      body.append(safePair(opts.pair, it, nx));
       j++;
       continue;
     }
     if (it.role === "toolout" && !it.text) continue;
-    body.append(opts.item(it));
+    body.append(safeItem(opts.item, it));
   }
-  body.hidden = true;
+  body.hidden = !open;
+  car.replaceChildren(icon(open ? "i-fold" : "i-unfold"));
   const flip = () => {
     body.hidden = !body.hidden;
     car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));

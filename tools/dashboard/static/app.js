@@ -2084,6 +2084,10 @@ async function renderTask(project, works, id) {
 
   for (const node of taskActions(project, id, row, works)) bar.append(node);
   bar.append(bad);
+  // Полоса действий без единой кнопки в разметку не идёт: у задачи, которую
+  // ведёт чужое окно, действий нет вовсе, и пустая карточка стояла на экране
+  // мусорной рамкой (замечание 5 четвёртого круга POC).
+  const barEmpty = !bar.querySelector("button");
 
   // Журнал витка уехал в самый низ экрана (замечание 13): читают его редко, а
   // места он занимал столько же, сколько сама постановка, и отжимал её вниз.
@@ -2159,7 +2163,7 @@ async function renderTask(project, works, id) {
   // двигает картинку, а обход табом идёт по разметке, и на телефоне таб уводил
   // с заголовка вниз на «Сохранить» и только потом возвращался вверх к
   // описанию (замечание ревью 9).
-  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps });
+  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps, barEmpty });
 
   // Журнал витка стоит последним блоком экрана, под целью и постановкой
   // (замечание 13): туда за ним и идут, а сверху он отжимал вниз то, ради чего
@@ -2205,12 +2209,20 @@ function watchTaskLayout(parts) {
       // Колонка на телефоне не нужна вовсе, а опустевшей она осталась бы в
       // сетке лишним отступом сверху при возврате с ноутбучной ширины.
       parts.rail.remove();
-      parts.page.append(parts.bar);
+      if (!parts.barEmpty) parts.page.append(parts.bar);
+      else parts.bar.remove();
       return;
     }
-    parts.rail.append(parts.rank, parts.deps);
+    // Ранг стоит своей строкой во всю ширину над сеткой, а не в правой колонке
+    // рядом с описанием: показателей у него шесть, и в колонке они вставали
+    // столбиком выше самой постановки, отбирая у неё треть экрана (замечание 3
+    // четвёртого круга POC). В колонке остаются одни зависимости.
+    parts.rank.remove();
+    parts.grid.before(parts.rank);
+    parts.rail.append(parts.deps);
     parts.grid.append(parts.file, parts.rail);
-    parts.chips.after(parts.bar);
+    if (!parts.barEmpty) parts.chips.after(parts.bar);
+    else parts.bar.remove();
   };
   place();
   mq.addEventListener("change", place);
@@ -3431,24 +3443,47 @@ function saveChatWidth(w) {
 // Хват за левый край панели: тянут её к середине экрана, поэтому ширина это
 // расстояние от правого края окна до пальца. Захват указателя нужен затем,
 // чтобы быстрый жест не терял панель, уехав курсором на ленту.
+// Хват ширины панели. Тянуть его можно только с зажатой кнопкой, и это
+// проверяется на каждом движении, а не одним флагом: отпускание за пределами
+// окна, над чужим фреймом или потеря захвата оставляли флаг поднятым, и панель
+// потом сужалась от одного проведения курсора над полоской, без нажатия вовсе
+// (замечание 7 четвёртого круга POC).
 function wireChatGrab(grab) {
-  let held = false;
+  let held = 0;
   const width = (ev) => putChatWidth(window.innerWidth - ev.clientX);
+  const release = (ev) => {
+    if (!held) return;
+    held = 0;
+    saveChatWidth(ev && ev.clientX !== undefined ? width(ev) : chatWidth());
+  };
   grab.addEventListener("pointerdown", (ev) => {
-    held = true;
+    // Тянут левой кнопкой: правая открывает меню, и хват под ней остался бы
+    // зажатым после того, как меню закрыли.
+    if (ev.button !== undefined && ev.button !== 0) return;
+    held = ev.pointerId === undefined ? 1 : ev.pointerId + 1;
     if (grab.setPointerCapture) grab.setPointerCapture(ev.pointerId);
     if (ev.preventDefault) ev.preventDefault();
   });
   grab.addEventListener("pointermove", (ev) => {
-    if (held) width(ev);
-  });
-  const drop = (ev) => {
     if (!held) return;
-    held = false;
-    saveChatWidth(width(ev));
-  };
-  grab.addEventListener("pointerup", drop);
-  grab.addEventListener("pointercancel", drop);
+    // Кнопка отпущена мимо нас: движение с пустым buttons это уже не тяга, и
+    // держаться за флаг тут нельзя. Ровно так терялось отпускание за краем
+    // окна.
+    if (ev.buttons === 0) {
+      release(ev);
+      return;
+    }
+    width(ev);
+  });
+  grab.addEventListener("pointerup", release);
+  grab.addEventListener("pointercancel", release);
+  // Захват теряется и без отпускания: другое окно перехватило указатель,
+  // система показала жест. Без этого слушателя тяга оставалась бы включённой.
+  grab.addEventListener("lostpointercapture", release);
+  // Отпускание за пределами полоски ловится окном: захват его обычно приносит
+  // сам, но на потерянном захвате остаётся только это.
+  window.addEventListener("pointerup", release);
+  window.addEventListener("blur", () => release(null));
 }
 
 // Экран под панелью: адрес без хвоста разговора. Старые адреса ложатся сюда же,
@@ -5508,7 +5543,7 @@ function renderFeed(project) {
   // Заголовок не пересказывает состав ленты: что в неё попадает, говорит
   // значок информации по наведению.
   const head = el("div", "nhead");
-  head.append(el("h2", "", "Лента"));
+  head.append(el("h2", "", "Уведомления"));
   const info = el("span", "tipwrap");
   const knob = el("span", "tipq", "i");
   knob.setAttribute("aria-label", "Что попадает в ленту");
@@ -5994,7 +6029,7 @@ async function paint() {
   renderLive(current.name, r.body.works);
   markNav(rt);
   if (rt.feed) {
-    document.getElementById("psub").textContent = "лента уведомлений";
+    document.getElementById("psub").textContent = "уведомления";
     renderFeed(current.name);
     return;
   }

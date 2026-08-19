@@ -131,6 +131,9 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	// Вход разговора строчный: одна реплика это одна строка файла, и перенос
+	// там рассыпал бы её на несколько. Схлопывание тут нарочное, в отличие от
+	// канала живых сессий, где переносы доезжают как есть (chatText).
 	text := strings.Join(strings.Fields(body.Text), " ")
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})
@@ -284,6 +287,9 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	// Вход разговора строчный: одна реплика это одна строка файла, и перенос
+	// там рассыпал бы её на несколько. Схлопывание тут нарочное, в отличие от
+	// канала живых сессий, где переносы доезжают как есть (chatText).
 	text := strings.Join(strings.Fields(body.Text), " ")
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустое сообщение класть некуда: жду JSON {\"text\": \"...\"}"})

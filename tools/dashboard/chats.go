@@ -107,6 +107,8 @@ type chatEntry struct {
 	PID   int    `json:"pid,omitempty"`
 	Where string `json:"where,omitempty"`
 	Idle  bool   `json:"idle,omitempty"`
+	// Summary это заголовок от самого харнеса: он старше и эвристики, и haiku.
+	Summary string `json:"-"`
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -118,6 +120,10 @@ func chatStoreDir(home string) string {
 
 type chatStore struct {
 	Model string `json:"model,omitempty"`
+	// Title это заголовок разговора, названный haiku: харнес пишет summary не
+	// всякому транскрипту, а первая реплика заголовком не годится. Считается он
+	// один раз и живёт тут навсегда.
+	Title string `json:"title,omitempty"`
 	// From называет диалог, продолжением которого поднят этот: `claude --resume`
 	// заводит новую сессию со своим транскриптом, и без этой ссылки история
 	// разговора рвалась бы на две строки списка.
@@ -189,12 +195,8 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
 			tasks = append([]string{id}, tasks...)
 		}
-		title := head.Summary
-		if title == "" {
-			title = head.First
-		}
 		e := chatEntry{
-			ID: f.ID, Title: title, Mtime: f.Mtime, Tasks: tasks,
+			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: f.Mtime, Tasks: tasks,
 			Tmux: last.Tmux, Tree: f.suffix, Branch: head.Branch,
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),
@@ -271,6 +273,7 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []chatEntry{}
 	}
+	s.titleFill(list)
 	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts()}
 	if len(list) == 0 {
 		resp["note"] = "разговоров тут пока нет: заведите новый кнопкой «+»"
@@ -354,7 +357,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("%q не похоже на ID задачи", body.ID)})
 		return
 	}
-	text := strings.Join(strings.Fields(body.Text), " ")
+	text := chatText(body.Text)
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "пустая реплика разговора не поднимает: диалог начинается со слов человека"})
@@ -397,6 +400,21 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		"message": fmt.Sprintf("разговор поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
 }
 
+// chatText готовит реплику человека к отправке. Переносы строк тут священны:
+// человек пишет списком и абзацами, а прежняя сборка гнала текст через
+// strings.Fields и склеивала всё в одну строку, отчего нумерованный список
+// приезжал агенту кашей. Схлопывается только лишнее: возврат каретки, пробелы
+// по краям строк и хвостовые пустые строки.
+func chatText(raw string) string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	lines := strings.Split(raw, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t")
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n \t")
+}
+
 func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
@@ -410,8 +428,15 @@ var chatSendPause = 250 * time.Millisecond
 
 // chatSend подаёт реплику в живой процесс tmux-сессии. Текст идёт литералом
 // (-l), иначе tmux разобрал бы слова вроде «Enter» и «C-c» как имена клавиш.
+// Многострочная реплика едет в скобках вставки (bracketed paste): без них
+// перенос строки внутри текста клиент читает как нажатие Enter и отправляет
+// первую строку, а остальные разбирает как отдельные реплики.
 func chatSend(name, text string) error {
-	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "-l", text); err != nil {
+	body := text
+	if strings.Contains(text, "\n") {
+		body = "\x1b[200~" + text + "\x1b[201~"
+	}
+	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "-l", body); err != nil {
 		return err
 	}
 	time.Sleep(chatSendPause)
@@ -444,7 +469,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	text := strings.Join(strings.Fields(body.Text), " ")
+	text := chatText(body.Text)
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
@@ -692,4 +717,122 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	// и врать про неё нечем. Индикатор в таком случае живёт лентой, а не опросом.
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": true,
 		"busy": p.Status == "busy", "status": p.Status, "where": peerWord(p)})
+}
+
+// Заголовок диалога (замечание 4 четвёртого круга POC). Первая реплика целиком
+// заголовком не годится: «Привет. Ответь одной строкой: как называется этот
+// проект? Ничего не делай, только скажи.» растягивалось на весь экран. Порядок
+// такой, от дешёвого к дорогому: запись summary самого харнеса (её пишет
+// Claude Code и ею же подписывает разговоры список `claude --resume`),
+// сохранённый ранее заголовок из ~/.devkit/chats/<sid>.json, дальше эвристика
+// первого предложения. Haiku зовётся фоном и только там, где эвристика
+// работает плохо, а результат оседает в том же файле навсегда.
+
+// titleWords это потолок заголовка словами: пять-семь слов читаются глазом
+// целиком, длиннее уже не заголовок, а сама реплика.
+const titleWords = 7
+
+// titleTrim режет реплику до заголовка эвристикой: первое предложение без
+// вежливых зачинов и без вопросительного хвоста. Ошибиться тут дёшево, а
+// стоит она нисколько.
+// Снимается только вежливый зачин: «ответь», «скажи» и родня несут сам заказ,
+// и без них заголовок теряет смысл.
+var titleDropRe = regexp.MustCompile(`^(?i)(привет|здравствуй\S*|слушай|окей|ок)[,!.\s]+`)
+
+func titleTrim(text string) string {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return ""
+	}
+	// Первая строка: многострочная реплика это заказ, и заголовок ему даёт
+	// первая строка, а не вся простыня.
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	for {
+		cut := titleDropRe.ReplaceAllString(t, "")
+		if cut == t {
+			break
+		}
+		t = strings.TrimSpace(cut)
+	}
+	// Первое предложение: дальше идут уточнения вроде «ничего не делай».
+	if i := strings.IndexAny(t, ".?!"); i > 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	words := strings.Fields(t)
+	if len(words) > titleWords {
+		words = words[:titleWords]
+		return strings.Join(words, " ") + "..."
+	}
+	return strings.Join(words, " ")
+}
+
+// titleAsk просит haiku назвать разговор. Модель тут самая дешёвая нарочно:
+// заголовок это украшение списка, и платить за него ярусом выше некому.
+func titleAsk(text string) string {
+	if m := clientMissing(defaultClient); m != "" {
+		return ""
+	}
+	prompt := "Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
+		"Ответь только заголовком, без кавычек и пояснений. Реплика: " + truncate(text, 600)
+	out, err := runProc(defaultClient, "-p", "--model", "haiku", prompt)
+	if err != nil {
+		return ""
+	}
+	return titleTrim(string(out))
+}
+
+// titleJobs держит счёт идущих суммаризаций: заголовок нужен списку, а не
+// человеку прямо сейчас, и очередь на восемьдесят транскриптов сожгла бы
+// квоту на украшение.
+var titleJobs = make(chan struct{}, 1)
+
+// titleAskLimit это сколько заголовков заказывается за один заход списка.
+// Список открывают часто, и за несколько заходов свежие разговоры обрастают
+// заголовками сами, без единого ожидания на экране.
+const titleAskLimit = 2
+
+// titleFill дописывает заголовки списку: своя запись, эвристика на месте и
+// заказ haiku фоном для тех, у кого харнес summary не написал. Ответ уходит
+// человеку сразу с эвристикой, а haiku правит её к следующему открытию.
+func (s *server) titleFill(list []chatEntry) {
+	asked := 0
+	for i := range list {
+		e := &list[i]
+		if e.Summary != "" {
+			e.Title = e.Summary
+			continue
+		}
+		st := s.chatStoreRead(e.ID)
+		if st.Title != "" {
+			e.Title = st.Title
+			continue
+		}
+		raw := e.Title
+		e.Title = titleTrim(raw)
+		if raw == "" || asked >= titleAskLimit {
+			continue
+		}
+		asked++
+		sid, text := e.ID, raw
+		go func() {
+			// Заказ идёт по одному на машину: параллельные вызовы клиента
+			// стоят дороже, чем ожидание заголовка до следующего открытия.
+			select {
+			case titleJobs <- struct{}{}:
+			default:
+				return
+			}
+			defer func() { <-titleJobs }()
+			said := titleAsk(text)
+			if said == "" {
+				return
+			}
+			cur := s.chatStoreRead(sid)
+			cur.Title = said
+			s.chatStoreWrite(sid, cur)
+			s.logf("заголовок разговора %s назван haiku: %s", sid, said)
+		}()
+	}
 }

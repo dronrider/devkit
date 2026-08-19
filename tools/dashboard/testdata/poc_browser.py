@@ -42,6 +42,15 @@ def proxy(base, value):
     с занятыми."""
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            # Поток событий обрывается нарочно: он живёт вечно, страница из-за
+            # него не успокаивается никогда, и chrome с --dump-dom висит до
+            # срока. Лента при этом собирается обычным запросом хвоста, а
+            # предмет стенда именно сборка.
+            if "stream=1" in self.path:
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             req = urllib.request.Request(base + self.path)
             req.add_header("Cookie", "dashboard_session=" + value)
             try:
@@ -61,7 +70,13 @@ def proxy(base, value):
         def log_message(self, *a):
             pass
 
-    srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+    # Многопоточный нарочно: страница шлёт запросы разом, и однопоточный
+    # прокси встаёт на первом же, а браузер висит до срока.
+    class Threaded(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    srv = Threaded(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, "http://127.0.0.1:%d" % srv.server_address[1]
 

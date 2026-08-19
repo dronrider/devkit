@@ -229,11 +229,19 @@ func (s *server) assetStamp() string {
 	if got != "" {
 		return got
 	}
-	sum := version + "-" + commit
-	if fi, err := fs.Stat(s.static, "app.js"); err == nil {
-		sum = fmt.Sprintf("%s-%d", sum, fi.ModTime().Unix())
+	// Отпечаток считается по самому содержимому статики, а не по версии с
+	// временем правки: у вшитой файловой системы время правки нулевое у всех
+	// файлов, а версия у сборки из исходников постоянная, и метка не менялась
+	// между пересборками вовсе. То есть отбойник кеша не отбивал ничего, и
+	// человек продолжал смотреть старый экран (регресс тринадцатого круга POC).
+	h := sha256.New()
+	h.Write([]byte(version + "-" + commit))
+	for _, name := range []string{"app.js", "style.css", "index.html"} {
+		if data, err := fs.ReadFile(s.static, name); err == nil {
+			h.Write(data)
+		}
 	}
-	got = fmt.Sprintf("%x", sha256.Sum256([]byte(sum)))[:12]
+	got = fmt.Sprintf("%x", h.Sum(nil))[:12]
 	s.mu.Lock()
 	s.stamp = got
 	s.mu.Unlock()

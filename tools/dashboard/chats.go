@@ -216,7 +216,7 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: f.Mtime, Tasks: tasks,
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
-			Tmux: last.Tmux, Tree: f.suffix, Branch: head.Branch,
+			Tmux:      last.Tmux, Tree: f.suffix, Branch: head.Branch,
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),
 		}

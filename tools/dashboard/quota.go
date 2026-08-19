@@ -56,13 +56,13 @@ type QuotaBucket struct {
 // в двух местах клиента незачем. Stale отделено от Note, чтобы протухший
 // снимок был подписан честно и без разбора текста.
 type QuotaHarness struct {
-	Name    string        `json:"name"`
-	Taken   string        `json:"taken,omitempty"`
-	Age     string        `json:"age,omitempty"`
-	Stale   bool          `json:"stale"`
+	Name  string `json:"name"`
+	Taken string `json:"taken,omitempty"`
+	Age   string `json:"age,omitempty"`
+	Stale bool   `json:"stale"`
 	// AgeSec это возраст снимка секундами: по нему экран красит время снимка
 	// градацией, а слова «протух» человеку ничего не говорили (замечание 21).
-	AgeSec int64 `json:"age_sec,omitempty"`
+	AgeSec  int64         `json:"age_sec,omitempty"`
 	Note    string        `json:"note,omitempty"`
 	Buckets []QuotaBucket `json:"buckets"`
 	Warns   []string      `json:"warns,omitempty"`

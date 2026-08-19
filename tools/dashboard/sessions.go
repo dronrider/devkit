@@ -158,12 +158,12 @@ type sessionInfo struct {
 	// Live это свежесть транскрипта: разговор, писавший недавно, идёт прямо
 	// сейчас. Мера мягкая и годится только на слово состояния в списке;
 	// кончившийся разговор считает жёстко chatReply, и путать их нельзя.
-	Live      bool `json:"live,omitempty"`
-	path      string
-	suffix    string
-	stamp     string
-	root      string
-	mod       time.Time
+	Live   bool `json:"live,omitempty"`
+	path   string
+	suffix string
+	stamp  string
+	root   string
+	mod    time.Time
 }
 
 // sessionFiles обходит каталоги транскриптов; сортировка свежие сверху, при

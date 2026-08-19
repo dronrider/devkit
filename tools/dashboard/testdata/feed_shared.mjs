@@ -101,7 +101,7 @@ const byId = new Map();
 const talk = [
   { seq: 5, role: "user", text: "как дела с витком", time: "2026-08-13T10:00:00+03:00" },
   { seq: 6, role: "tool", tool: "Bash", note: "go test" },
-  { seq: 7, role: "thinking", text: "" },
+  { seq: 7, role: "thinking", text: "сначала посмотрю строку доски" },
   { seq: 8, role: "assistant", text: "виток идёт, задачи режу", time: "2026-08-13T10:01:00+03:00" },
 ];
 // История до хвоста: её тянет прокрутка вверх через ?before=.
@@ -273,7 +273,9 @@ if (streams.length !== 1) {
 if (!dump(box).includes("как дела с витком") || !dump(box).includes("виток идёт")) {
   fail("хвост разговора не встал в ленту панели: " + dump(box));
 }
-if (!dump(box).includes("размышления свёрнуты") || !dump(box).includes("Bash")) {
+// Размышления теперь едут текстом свёрнутым блоком, а не меткой (POC ветки
+// poc-chat): по метке «размышления свёрнуты» о ходе мысли не сказано ничего.
+if (!dump(box).includes("сначала посмотрю строку доски") || !dump(box).includes("Bash")) {
   fail("лента потеряла инструмент или размышления: чем занят агент, снова не видно");
 }
 restream(streams[0], talk);

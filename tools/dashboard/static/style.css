@@ -967,20 +967,28 @@ a:hover{text-decoration:underline}
 .rterm i{font:400 10.5px var(--sans);font-style:normal;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rterm b{font:600 12px var(--mono);color:var(--tx2);flex:none}
 
-/* 7: карточка скрипта компактнее, кнопки иконками, вход и выход стрелками */
-.tool.fold.pair .foldh{padding:4px 8px;gap:6px}
-.foldcp{width:22px;height:22px;display:flex;align-items:center;justify-content:center;padding:0}
+/* 7: ход инструмента по образцу vscode. Строка «Bash команда», под ней вывод
+   с отступом и отчёркиванием; подписи словами и рамки вокруг кусков сняты,
+   кнопки иконками, вход и выход стрелками */
+.tool.fold.pair{border:0;background:none;border-radius:0;margin:2px 0}
+.tool.fold.pair .foldh{padding:2px 0;gap:7px;background:none}
+.tool.fold.pair .foldh:hover{background:none}
+.tool.fold.pair .foldh b{font:600 11.5px var(--sans);color:var(--tx2)}
+.tcmd{flex:1;min-width:0;font:400 11.5px var(--mono);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.foldcp{width:20px;height:20px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:var(--tx3)}
+.foldcp:hover{color:var(--tx2)}
 .foldcp svg{width:13px;height:13px;display:block}
-.foldcp.ok{border-color:var(--run);color:var(--run)}
-.foldcp.bad{border-color:var(--block);color:var(--block)}
-.foldar svg{width:14px;height:14px;display:block}
-.pairb{padding:0;border-top:1px solid var(--line)}
-.pline{display:flex;align-items:flex-start;gap:7px;padding:5px 8px}
-.pline+.pline{border-top:1px solid var(--line)}
-.pico{flex:none;width:14px;height:14px;color:var(--tx3);margin-top:2px}
-.pico svg{width:14px;height:14px;display:block}
-.pline.pin .pico{color:var(--acc)}
-.ptext{margin:0;flex:1;min-width:0;font:400 11.5px/1.45 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow-y:auto}
+.foldcp.ok{color:var(--run)}
+.foldcp.bad{color:var(--block)}
+.foldar svg{width:13px;height:13px;display:block}
+.pairb{padding:1px 0 3px 3px;border:0;max-height:none}
+.pline{display:flex;align-items:flex-start;gap:6px;padding:1px 0 1px 6px;border-left:2px solid var(--line2)}
+.pline+.pline{border-top:0}
+.pico{flex:none;width:12px;height:12px;color:var(--tx3);margin-top:3px;opacity:.7}
+.pico svg{width:12px;height:12px;display:block}
+.pline.pin .pico{color:var(--acc);opacity:1}
+.ptext{margin:0;flex:1;min-width:0;font:400 11.5px/1.45 var(--mono);color:var(--tx3);white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow-y:auto}
+.pline.pin .ptext{color:var(--tx2)}
 
 /* 6: подпись сообщения внутри пузыря, справа внизу */
 .msg .bb{position:relative;padding-bottom:6px}

@@ -2798,6 +2798,12 @@ function sessionTab(s) {
 // вверх, столько же шлёт первым делом поток (repliesDefault в sessions.go).
 const CHAT_TAIL = 40;
 
+// Страница истории: хвост открытия маленький, чтобы разговор вставал быстро, а
+// назад лента ходит крупными кусками. Сорока записями история кончалась через
+// пол-экрана, и прокрутка упиралась в подгрузку каждые несколько оборотов
+// колеса, а у сессии их тысячи (жалоба «чат плохо листается»).
+const CHAT_PAGE = 250;
+
 // Пустая лента называется словами и на клиенте: молчащая коробка неотличима
 // от оборвавшегося потока. Те же слова шлёт сервер (emptyTranscriptNote), и
 // приехавшие с ответа заменяют эти.
@@ -2825,6 +2831,17 @@ const repliesCatch = 200;
 // ленты, и новые реплики успевают встать в дерево до того, как их было бы
 // видно (то же на глаз, что порог низа в atBottom).
 const LOAD_MARGIN = 80;
+
+// Запас над взглядом: пока сверху меньше полутора экранов истории, лента тянет
+// следующую страницу, не дожидаясь, когда человек упрётся в край. Порог в
+// восемьдесят пикселей срабатывал ровно в тот момент, когда прокрутка уже
+// встала.
+const LOAD_AHEAD = 1.75;
+
+// Сколько страниц лента поднимает за один заход вверх. Быстрое листание
+// съедает страницу раньше, чем приедет следующая, поэтому за упором тянется
+// ещё одна, но не больше: бесконечный цикл на пустом разговоре не нужен.
+const LOAD_BURST = 2;
 
 // Позиция ленты каждого разговора живёт, пока открыта вкладка, а ключом ей
 // служит ID сессии. Уход с экрана и возврат восстанавливают её без похода на
@@ -2871,6 +2888,7 @@ async function wireFeed(project, sid, opts) {
   const scroll = opts.scroll;
   const keep = opts.talk || (() => true);
   const tail = opts.tail || CHAT_TAIL;
+  const page = opts.page || CHAT_PAGE;
   const atStart = el("div", "feed-start", FEED_START);
   atStart.hidden = true;
   const box = el("div", opts.list || "");
@@ -2973,7 +2991,7 @@ async function wireFeed(project, sid, opts) {
     if (loadingOlder || firstKey === null || atFirst) return;
     loadingOlder = true;
     const older = await api(sessionURL(project, sid) +
-      "?before=" + encodeURIComponent(firstKey) + "&n=" + tail);
+      "?before=" + encodeURIComponent(firstKey) + "&n=" + page);
     loadingOlder = false;
     if (gone() || !older.ok) return;
     const items = older.body.items || [];
@@ -3052,10 +3070,32 @@ async function wireFeed(project, sid, opts) {
   // переключение вкладок разговора (тот же tp.body у соседних сессий), поэтому
   // слушатель снимается сам при уходе с ленты, иначе он копился бы с каждым
   // переключением.
+  // Запас над взглядом меряется экранами коробки, а не пикселями: на телефоне
+  // и на широком мониторе «полтора экрана» это разная высота, а ощущение одно.
+  const ahead = () => Math.max(LOAD_MARGIN, Math.round((scroll.clientHeight || 0) * LOAD_AHEAD));
+  // Подъём истории идёт с запасом и в несколько страниц: одна страница на
+  // быстром листании кончается раньше, чем приедет следующая, и прокрутка
+  // упиралась в край. Заход один, повторные вызовы он проглатывает сам.
+  let filling = false;
+  const fillAbove = async () => {
+    if (filling || gone()) return;
+    filling = true;
+    try {
+      for (let i = 0; i < LOAD_BURST; i++) {
+        if (gone() || atFirst || scroll.scrollTop >= ahead()) return;
+        const was = pages;
+        await loadOlder();
+        if (pages === was) return;
+      }
+    } finally {
+      filling = false;
+    }
+  };
+
   const onScroll = () => {
     if (gone()) return;
     feedPlace.set(sid, { bottom: atBottom(scroll), rest: scroll.scrollHeight - scroll.scrollTop, pages });
-    if (scroll.scrollTop < LOAD_MARGIN) loadOlder();
+    if (scroll.scrollTop < ahead()) fillAbove();
   };
   scroll.addEventListener("scroll", onScroll);
   opts.live.push(() => scroll.removeEventListener("scroll", onScroll));
@@ -3301,18 +3341,21 @@ function toolPair(call, out) {
   const cmd = call.text || "";
   const said = out && out.text ? out.text : "";
   const box = el("div", "tool fold pair");
+  // Строка хода собрана по образцу vscode: имя инструмента жирным, рядом одной
+  // строкой с обрезкой команда либо её описание, а вывод отчёркнутым куском
+  // под ней. Крупные плашки с подписями «IN» и «OUT» занимали в карточке
+  // больше места, чем сама команда (замечание 7 и жалоба про вид ленты).
   const top = el("div", "foldh");
   top.append(el("b", "", name));
-  top.append(el("span", "", call.note || foldPeek(said, 80)));
-  // Копирование и сворачивание стоят иконками справа вверху: подписи словами
-  // занимали в карточке больше места, чем сама команда (замечание 7).
+  top.append(el("span", "tcmd", call.note || foldPeek(cmd || said, 90)));
+  // Копирование и сворачивание стоят иконками справа вверху.
   const both = (cmd ? cmd : "") + (cmd && said ? "\n" : "") + said;
   top.append(copyBtn(both));
   const car = el("button", "foldcp foldar");
   car.append(icon("i-unfold"));
   top.append(car);
-  // Вход и выход строками с иконками-стрелками: вправо ушло в инструмент,
-  // влево вернулось из него.
+  // Вход и выход помечены стрелками: вправо ушло в инструмент, влево вернулось
+  // из него. Подписи словами тут не нужны, стрелка говорит то же самое.
   const body = el("div", "foldb pairb");
   const row = (ico, text, cls) => {
     const line = el("div", "pline " + cls);

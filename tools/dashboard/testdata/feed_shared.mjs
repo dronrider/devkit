@@ -148,6 +148,10 @@ for (let p = 0; p < 4; p += 1) {
   }
   growPages.push(page);
 }
+// Тот же набор страниц под своим id: память о месте живёт по id разговора, и
+// сценарий про заранее поднятую историю должен заходить с чистой памятью.
+const aheadSession = { id: "hhh-55554444", mtime: "2026-08-15T10:00:00+03:00", branch: "dk-371",
+  task: "XR-100", taskNote: "по дереву задачи", first: "Разговор с субагентом" };
 let growShift = 0;
 // Страница по ключу: сервер отдаёт три записи, стоящие раньше названной.
 function growPage(before) {
@@ -250,12 +254,12 @@ const sandbox = {
         });
       }
       if (empty) return reply({ session: sid, head, total: 0, items: [], note: emptyNote });
-      if (sid === growSession.id) {
+      if (sid === growSession.id || sid === aheadSession.id) {
         const q = path.includes("before=")
           ? decodeURIComponent(path.split("before=")[1].split("&")[0]) : "";
         const pg = growPage(q);
-        return reply({ session: sid, head: growSession, total: 12,
-          items: pg.items, start: pg.start });
+        return reply({ session: sid, head: sid === growSession.id ? growSession : aheadSession,
+          total: 12, items: pg.items, start: pg.start });
       }
       if (sid === shortSession.id) {
         // Начало разговора называет сервер: считать его по номеру первой
@@ -350,7 +354,7 @@ if (dump(box).includes("раньше")) {
 // самого верха, и слушатель тянет историю сам, незаметно для взгляда.
 scrollUp(box, 500);
 await settle();
-if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=250"))) {
   fail("подгрузка от прокрутки просит историю не от первой показанной реплики: " +
     JSON.stringify(asked));
 }
@@ -427,10 +431,47 @@ if (startOf(growBox).hidden) {
   fail("начало разговора не названо после последней страницы: " + dump(growBox));
 }
 const growAsked = asked.filter((p) => p.includes("before=")).map((p) => p.split("before=")[1]);
-if (growAsked.length !== 3 || growAsked[0] !== "m%3A9&n=40" ||
-  growAsked[1] !== "m%3A6&n=40" || growAsked[2] !== "m%3A3&n=40") {
+if (growAsked.length !== 3 || growAsked[0] !== "m%3A9&n=250" ||
+  growAsked[1] !== "m%3A6&n=250" || growAsked[2] !== "m%3A3&n=250") {
   fail("страницы истории просились не по ключу первой показанной записи: " +
     JSON.stringify(growAsked));
+}
+
+// Безупорное листание: подгрузка стартует не у самого края, а за полтора
+// экрана до него, и тянет две страницы за заход. Порог в восемьдесят пикселей
+// срабатывал ровно тогда, когда прокрутка уже встала, и человек упирался в
+// заглушку каждые пол-экрана («чат плохо листается»).
+sandbox.closeChatLive();
+asked.length = 0;
+growShift = 0;
+const aheadBox = makeNode("div");
+sandbox.wireChatFeed("demo", aheadBox, aheadSession.id);
+await settle();
+aheadBox.scrollHeight = 2000;
+aheadBox.clientHeight = 300;
+// Взгляд ещё далеко от верха: до края больше трёх сотен пикселей, но меньше
+// полутора экранов, и лента обязана начать подъём сама.
+aheadBox.scrollTop = 400;
+aheadBox.handlers.scroll();
+await settle();
+const early = asked.filter((p) => p.includes("before="));
+if (!early.length) {
+  fail("лента ждёт упора в край, вместо того чтобы тянуть историю заранее: " +
+    JSON.stringify(asked));
+}
+if (early.length !== 2) {
+  fail("за один заход поднято страниц " + early.length + ", ожидал две: " + JSON.stringify(early));
+}
+if (!early.every((p) => p.includes("n=250"))) {
+  fail("страница истории осталась мелкой: " + JSON.stringify(early));
+}
+// Взгляд у нижнего края: тянуть нечего, запросов больше не уходит.
+asked.length = 0;
+aheadBox.scrollTop = 1700;
+aheadBox.handlers.scroll();
+await settle();
+if (asked.some((p) => p.includes("before="))) {
+  fail("лента тянет историю, когда взгляд у самого низа: " + JSON.stringify(asked));
 }
 
 // Вторая лента в той же вкладке: своя коробка, свой поток, и открывается она
@@ -464,7 +505,7 @@ if (dump(feed).includes("раньше")) {
 }
 scrollUp(feed, 500);
 await settle();
-if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=250"))) {
   fail("подгрузка от прокрутки просит историю не тем адресом: " + JSON.stringify(asked));
 }
 if (!dump(feed).includes("подними виток")) {
@@ -536,7 +577,7 @@ await settle();
 // истории, и глубина её теперь одна страница.
 scrollUp(raceBox, 1000);
 await settle();
-if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=250"))) {
   fail("перед уходом история не подгрузилась: " + JSON.stringify(asked));
 }
 raceBox.scrollHeight = 1000;
@@ -569,7 +610,7 @@ growScroll = () => { raceBox.scrollHeight = 1000; };
 sandbox.closeChatLive();
 sandbox.wireChatFeed("demo", raceBox, deepSession.id);
 await settle();
-if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=250"))) {
   fail("возврат не дособрал историю до прежней глубины: " + JSON.stringify(asked));
 }
 if (raceBox.scrollTop !== 200) {
@@ -594,4 +635,5 @@ console.log("лента панели: разговор открывается х
   " начало разговора названо словами, позиция ленты держится при уходе и возврате," +
   " пузыри и строки инструментов стоят одной лентой," +
   " уход с ленты посреди запроса потока не поднимает, пустота названа словами," +
-  " три страницы истории при растущем журнале ложатся встык по ключу записи");
+  " три страницы истории при растущем журнале ложатся встык по ключу записи," +
+  " подъём начинается за полтора экрана до края и берёт две страницы за заход");

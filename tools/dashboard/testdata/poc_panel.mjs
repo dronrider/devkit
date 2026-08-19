@@ -281,6 +281,31 @@ async function feedOf(items, sid) {
   if (!byClass(card, "pin") || !byClass(card, "pout")) {
     fail("вход и выход не разведены строками: " + said);
   }
+  // Ход собран по образцу vscode: имя жирным, рядом одной строкой команда или
+  // её описание, кнопки значками без подписей. Слова «IN» и «OUT» подписями
+  // тут стояли, и человек прислал их скриншотом.
+  if (said.includes("IN") || said.includes("OUT")) {
+    fail("вход и выход снова подписаны словами: " + said);
+  }
+  const head = byClass(card, "foldh");
+  const nameEl = tag(head, "B");
+  if (!nameEl || nameEl.textContent !== "Bash") {
+    fail("имя инструмента стоит не жирным первым: " + dump(head));
+  }
+  const line = byClass(head, "tcmd");
+  if (!line || line.textContent !== "ls -la") {
+    fail("команды одной строкой рядом с именем нет: " + dump(head));
+  }
+  if (String(line.textContent).includes("\n")) {
+    fail("строка команды многострочная, обрезки нет: " + line.textContent);
+  }
+  for (const btn of [deepBtn(card, "foldcp"), deepBtn(card, "foldar")]) {
+    if (btn && String(btn.textContent || "").trim()) {
+      fail("кнопка хода подписана словом вместо значка: " + btn.textContent);
+    }
+  }
+  // Стрелки берутся из набора значков, а не рисуются буквами.
+  if (!byClass(card, "pico")) fail("стрелок входа и выхода нет: " + said);
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
 }

@@ -33,7 +33,6 @@ export function makeNode(tag) {
     placeholder: "",
     rows: 0,
     scrollTop: 0,
-    scrollHeight: 0,
     clientHeight: 0,
     offsetHeight: 0,
     children: [],
@@ -87,6 +86,13 @@ export function makeNode(tag) {
   node.querySelectorAll = () => [];
   node.closest = (sel) => (String(sel).replace(/^\./, "") === node.className ? node : null);
   Object.defineProperty(node, "childElementCount", { get: () => node.children.length });
+  // Высота считается по числу узлов внутри: прокрутка это предмет проверки, и
+  // без модели высоты стенд не отличил бы вставшую ленту от съехавшей. Своя
+  // высота (own) задаётся стендом там, где узел изображает картинку.
+  node.own = 0;
+  Object.defineProperty(node, "scrollHeight", {
+    get: () => node.own + (node.children || []).reduce((n, k) => n + (k.scrollHeight || 0) + 20, 0),
+  });
   Object.defineProperty(node, "firstChild", { get: () => node.children[0] || null });
   return node;
 }

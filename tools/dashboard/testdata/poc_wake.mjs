@@ -7,7 +7,7 @@
 //
 // Зовётся: node testdata/poc_wake.mjs static/app.js
 
-import { makeSandbox, makeNode, settle, dump, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, makeNode, settle, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
 
 const session = { id: "aaaa1111-1111", mtime: "2026-08-13T10:02:00+03:00", first: "Выполни XR-1" };
 
@@ -18,7 +18,7 @@ const talk = [
 ];
 
 const app = appPathArg();
-const { sandbox, streams, asked } = makeSandbox(app, (path) => {
+const { sandbox, streams, asked, timers } = makeSandbox(app, (path) => {
   if (path.includes("/sessions/") && !path.includes("stream=1")) {
     return { session: session.id, head: session, items: talk.slice(), total: talk.length };
   }
@@ -76,5 +76,57 @@ if (kept.onerror) kept.onerror();
 await settle();
 if (sess().length !== 0) fail("лента полезла переподключаться поверх браузерного ретрая");
 
+// Холодное открытие: лента встаёт вниз и остаётся там, когда начальный экран
+// дорисовывается асинхронно. Миниатюры вложений догружаются картинками, большой
+// блок работы субагента меряется позже, и всякая дорисовка сдвигает содержимое
+// из-под уже выставленной прокрутки: человек видел прыжок вверх ровно на
+// выросшую высоту (замечание про перезагрузку страницы).
+{
+  const many = [];
+  for (let i = 0; i < 30; i++) {
+    many.push({ seq: i, role: "assistant", text: "шаг " + i, sub: "работа",
+      time: "2026-08-13T09:00:00+03:00" });
+  }
+  const prev = sandbox.fetch;
+  sandbox.fetch = (path, init) => {
+    if (path.includes("/sessions/") && !path.includes("stream=1")) {
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ session: "cold", head: { id: "cold" }, items: many, total: many.length }) });
+    }
+    return prev(path, init);
+  };
+
+  // Открытие в хвост: после дорисовки лента обязана остаться внизу.
+  const box = makeNode("div");
+  box.clientHeight = 300;
+  sandbox.wireChatFeed("demo", box, "cold");
+  await settle();
+  const grown = byClass(box, "subblk");
+  if (!grown) fail("блок работы субагента не собрался");
+  grown.own = 900;
+  for (const t of timers.splice(0)) t.fn();
+  await settle();
+  if (box.scrollTop < box.scrollHeight - box.clientHeight - 5) {
+    fail("после дорисовки лента уехала вверх: top=" + box.scrollTop + " из " + box.scrollHeight);
+  }
+
+  // Жест человека снимает удержание: дальше прокрутка его, а не ленты.
+  const box2 = makeNode("div");
+  box2.clientHeight = 300;
+  sandbox.wireChatFeed("demo", box2, "cold");
+  await settle();
+  if (box2.handlers.wheel) box2.handlers.wheel({});
+  box2.scrollTop = 100;
+  const grown2 = byClass(box2, "subblk");
+  if (grown2) grown2.own = 900;
+  for (const t of timers.splice(0)) t.fn();
+  await settle();
+  if (box2.scrollTop !== 100) {
+    fail("лента отобрала прокрутку после жеста человека: " + box2.scrollTop);
+  }
+  sandbox.fetch = prev;
+}
+
 console.log("пробуждение ленты: возврат к вкладке догоняет пропуск и поднимает мёртвый поток, " +
-  "догон не двоит реплик, живой поток не рвётся, браузерному ретраю лента не мешает");
+  "догон не двоит реплик, живой поток не рвётся, браузерному ретраю лента не мешает, " +
+  "холодное открытие держит место через асинхронные дорисовки и отдаёт прокрутку по жесту");

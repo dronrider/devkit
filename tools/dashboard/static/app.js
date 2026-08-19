@@ -3005,6 +3005,42 @@ async function wireFeed(project, sid, opts) {
     keepPlace(scroll, place.rest);
   };
 
+  // Начальный экран дорисовывается не за один заход: миниатюры вложений
+  // догружаются картинками, большие блоки работы субагента меряются браузером
+  // позже, разметка переставляет высоту. Прокрутка при этом уже выставлена, и
+  // всякая дорисовка сдвигает содержимое из-под неё: визуально лента
+  // «прыгает вверх» ровно на выросшую высоту. Держит её одна точка: пока
+  // человек сам не крутанул, место переставляется заново после каждой
+  // дорисовки (замечание про холодное открытие).
+  let hold = null;
+  const applyHold = () => {
+    if (!hold || gone()) return;
+    if (hold.rest === null) scroll.scrollTop = scroll.scrollHeight;
+    else keepPlace(scroll, hold.rest);
+  };
+  // Удержание кончается либо жестом человека, либо своим сроком: дорисовки
+  // начального экрана укладываются в него с запасом, а держать позицию вечно
+  // значило бы отнять прокрутку.
+  const HOLD_MS = 2500;
+  const dropHold = () => {
+    hold = null;
+    for (const name of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      scroll.removeEventListener(name, dropHold);
+    }
+  };
+  const holdPlace = (rest) => {
+    hold = { rest: rest === undefined ? null : rest };
+    for (const name of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      scroll.addEventListener(name, dropHold);
+    }
+    // Дорисовка картинки события прокрутки не шлёт, поэтому ловится её load;
+    // событие не всплывает, и слушатель ставится на перехвате.
+    scroll.addEventListener("load", applyHold, true);
+    for (const ms of [30, 120, 350, 800, 1600, HOLD_MS]) setTimeout(applyHold, ms);
+    setTimeout(dropHold, HOLD_MS);
+    opts.live.push(dropHold);
+  };
+
   // Место ленты пишется на каждый сдвиг прокрутки: и для будущего возврата к
   // этому разговору, и как повод подгрузить историю, когда взгляд подошёл к
   // верху. Глубина (firstSeq) едет вместе с местом: без неё возврат не знает,
@@ -3042,6 +3078,7 @@ async function wireFeed(project, sid, opts) {
   if (place && !place.bottom) restorePlace(place);
   else scroll.scrollTop = scroll.scrollHeight;
   updateStart();
+  holdPlace(place && !place.bottom ? place.rest : null);
 
   // Пропущенное дочитывается запросом, а не потоком: поток шлёт только новое,
   // и всё, что случилось между обрывом и переподключением, до ленты не доедет

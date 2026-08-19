@@ -129,6 +129,90 @@ func TestSessionsFreeOnly(t *testing.T) {
 	}
 }
 
+// listedBind это строка реестра про сессию, поднятую дашбордом: источник
+// «заказ» и имя tmux-сессии, по которому меряется, жив ли разговор. Только у
+// такой записи мера доходит до tmux, и без неё список разговоров спрашивает его
+// ноль раз (замечание ревью DK-436).
+func listedBind(sid, task, tmux string) string {
+	return "2026-08-18T12:03:11 сессия " + sid + " задача " + task + " проект demo " +
+		"дерево /tmp транскрипт /tmp/t.jsonl источник заказ повод startup tmux " + tmux + "\n"
+}
+
+// Список разговоров спрашивает tmux один раз на заход, сколько бы разговоров в
+// нём ни стояло: мера живости у списка общая (tmuxAliveFn), а не своя на каждую
+// строку. Без кеша десяток разговоров задачи стоил бы десятка подпроцессов на
+// каждое открытие панели, и это стало бы заметно только на живой машине.
+func TestSessionsListAsksTmuxOnce(t *testing.T) {
+	e := newTestEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "task-XR-5\n")
+	sideTree(t, e.proj, "xr-5")
+	base := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	for i, sid := range []string{"aaa-1", "bbb-2", "ccc-3"} {
+		writeSession(t, e.home, e.proj, "-xr-5", sid,
+			sessionLine("поговорим про XR-005", "main"), base.Add(time.Duration(i)*time.Hour))
+	}
+	writeBinds(t, e.home,
+		listedBind("aaa-1", "XR-005", "chat-XR-005-1"),
+		listedBind("bbb-2", "XR-005", "chat-XR-005-2"),
+		listedBind("ccc-3", "XR-005", "task-XR-5"))
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-005")
+	if len(list) != 3 {
+		t.Fatalf("сессии задачи XR-005: %+v, приписка: %s", list, note)
+	}
+	asks := 0
+	for _, ln := range strings.Split(readFile(t, tmuxLog), "\n") {
+		if strings.HasPrefix(ln, "ls") {
+			asks++
+		}
+	}
+	if asks != 1 {
+		t.Errorf("список из трёх разговоров спросил tmux %d раз, ждал один: мера живости считается на каждую строку", asks)
+	}
+	// Мера при этом настоящая: разговор с живым именем пишет своей ручкой, а
+	// два со снятыми названы кончившимися. Иначе один вызов был бы куплен
+	// потерей самой меры.
+	state := map[string]string{}
+	for _, s := range list {
+		state[s.ID] = s.Reply
+	}
+	if state["ccc-3"] != replyToSession {
+		t.Errorf("живая tmux-сессия разговора посчитана мёртвой: %+v", list)
+	}
+	for _, sid := range []string{"aaa-1", "bbb-2"} {
+		if state[sid] != replyToTask {
+			t.Errorf("разговор %s со снятой tmux-сессией не отдал реплику задаче: %+v", sid, list)
+		}
+	}
+}
+
+// На машине без tmux мера живости вовсе не работает: имена там считаются живыми, и
+// список разговоров не хоронит их разом. Обратное поведение погасило бы ввод у
+// всех разговоров сразу, не имея на то ни одного признака.
+func TestSessionsListWithoutTmuxKeepsTalksAlive(t *testing.T) {
+	e := newTestEnv(t)
+	sideTree(t, e.proj, "xr-5")
+	writeSession(t, e.home, e.proj, "-xr-5", "aaa-1",
+		sessionLine("поговорим про XR-005", "main"), time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	writeBinds(t, e.home, listedBind("aaa-1", "XR-005", "chat-XR-005-1"))
+	c := e.loggedClient(t)
+	// PATH без tmux, но с доской: спросить про имя нечем, а всё остальное
+	// работает как раньше.
+	bare := t.TempDir()
+	writeScript(t, bare, "taskctl", fmt.Sprintf("echo '%s'", boardFixtureJSON))
+	t.Setenv("PATH", bare)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-005")
+	if len(list) != 1 {
+		t.Fatalf("сессии задачи XR-005: %+v, приписка: %s", list, note)
+	}
+	if list[0].Reply != replyToSession || list[0].ReplyNote != "" {
+		t.Errorf("без tmux разговор объявлен кончившимся: %+v", list[0])
+	}
+}
+
 // Пустой список разговоров доски называет причину: у всех транскриптов проекта
 // нашлась своя задача, и это не то же самое, что «транскриптов нет».
 func TestSessionsFreeNoneNamed(t *testing.T) {

@@ -263,7 +263,10 @@ func homeEnv(silent bool) []string {
 	home := realHome()
 	out := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "DEVKIT_SILENT=") {
+		// Свои ключи переставляются заново, чтобы унаследованные не спорили с
+		// поставленными тут.
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "DEVKIT_SILENT=") ||
+			strings.HasPrefix(kv, "DEVKIT_NO_FOCUS=") {
 			continue
 		}
 		out = append(out, kv)
@@ -274,10 +277,10 @@ func homeEnv(silent bool) []string {
 	if silent {
 		out = append(out, silentEnv)
 	}
-	if home == "" && !silent {
-		return nil
-	}
-	return out
+	// Опрос фокуса гасится всякому подпроцессу дашборда: он ходит в System
+	// Events, а разрешение на это macOS просит у дашборда и заново после каждой
+	// пересборки (находка одиннадцатого круга POC).
+	return append(out, noFocusEnv)
 }
 
 // runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что

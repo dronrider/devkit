@@ -555,6 +555,20 @@ def window_is_session(title, tree):
     return not head or not (head[-1].isalnum() or head[-1] in "-_.")
 
 
+# Опрос фокуса не для всякой сессии. Он ходит в System Events через osascript,
+# а это скриптование интерфейса, на которое macOS просит разрешение «управление
+# компьютером». Сессию, поднятую дашбордом, TCC приписывает самому дашборду, и
+# запрос приходит от его имени, да ещё заново после каждой пересборки:
+# неподписанный бинарь меняет identity. Сессиям человека это не мешает, у них
+# маркера нет и опрос работает как раньше (находка одиннадцатого круга POC).
+NO_FOCUS_ENV = "DEVKIT_NO_FOCUS"
+
+
+def focus_off(env=None):
+    env = os.environ if env is None else env
+    return bool((env.get(NO_FOCUS_ENV) or "").strip())
+
+
 def focus_state(tree, env=None, ask=None):
     """Куда смотрит человек: FOCUS_SESSION значит на окно этой сессии, и звать
     его некуда; FOCUS_OTHER значит куда-то ещё; FOCUS_UNKNOWN значит спросить
@@ -563,6 +577,11 @@ def focus_state(tree, env=None, ask=None):
     env = os.environ if env is None else env
     if (env.get("DEVKIT_NOTIFY_FOCUS") or "").strip().lower() == "off":
         return FOCUS_OTHER
+    # Маркер стоит: спрашивать нечем и незачем, сразу «неизвестно». Ветка та же,
+    # что у неотвеченного опроса, поэтому звать будем, а служебной строки в
+    # тексте уведомления не появится.
+    if focus_off(env):
+        return FOCUS_UNKNOWN
     # Дерева сессии нет, сравнивать заголовок не с чем: опрос тут только тратил
     # бы свои 180 мс.
     if not tree_name(tree):

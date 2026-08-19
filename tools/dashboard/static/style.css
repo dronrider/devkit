@@ -18,6 +18,7 @@
   --check:oklch(0.76 0.11 85);
   --block:oklch(0.68 0.13 25);
   --goal:oklch(0.75 0.09 300);
+  --wait:oklch(0.78 0.12 60);
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -112,6 +113,9 @@ a:hover{text-decoration:underline}
 .c-check{background:color-mix(in oklab,var(--check) 16%,transparent);color:var(--check)}
 .c-block{background:color-mix(in oklab,var(--block) 16%,transparent);color:var(--block)}
 .c-goal{background:color-mix(in oklab,var(--goal) 16%,transparent);color:var(--goal)}
+/* ожидание человека: свой цвет, а не цвет блока, потому что припаркованная
+   строка носит оба чипа сразу и они не должны сливаться */
+.c-wait{background:color-mix(in oklab,var(--wait) 16%,transparent);color:var(--wait)}
 .c-p1{background:color-mix(in oklab,var(--block) 20%,transparent);color:var(--block);font-weight:600}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--run);flex:none}
 /* кружок состояния проекта: серый работы нет, зелёный идёт работа, красный
@@ -448,6 +452,14 @@ a:hover{text-decoration:underline}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
 .stopnote{font:400 11.5px/1.5 var(--sans);color:var(--tx3);margin-top:9px}
+/* врезка вопроса в панели разговора (LLD DK-430, решение 4): состояние словами,
+   вопрос пачкой столбиком и своё поле ответа. Цвет тот же, что у чипа
+   ожидания, чтобы врезка и строка доски читались одним состоянием */
+.wcard{background:color-mix(in oklab,var(--wait) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--wait) 28%,transparent);border-radius:12px;padding:12px 14px;margin:12px 0}
+.wtop{font:600 12.5px/1.4 var(--sans);color:var(--wait)}
+.wq{font:400 13.5px/1.5 var(--sans);color:var(--tx);margin-top:8px;padding-left:12px;border-left:2px solid color-mix(in oklab,var(--wait) 40%,transparent)}
+.wcard textarea{display:block;width:100%;min-height:40px;margin-top:10px;background:var(--bg1);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
+.wcard .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
 
 
 /* панель разговора справа (LLD DK-430, решение 5). Шире 1100 точек панель

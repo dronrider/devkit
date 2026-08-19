@@ -431,6 +431,38 @@ function stageChip(row) {
   return el("span", "chip", age ? row.stage + ", " + age : row.stage);
 }
 
+// Обратный отсчёт до срока: те же слова, что у возраста работы, только вперёд.
+// Возраст момента, отстоящего назад на остаток, и есть сам остаток, поэтому
+// счёт тут один на оба направления.
+function waitLeft(until, now) {
+  if (!until) return "";
+  const left = until - Math.floor(now / 1000);
+  if (left <= 0) return "срок вышел";
+  return workAge(Math.floor(now / 1000) - left, now);
+}
+
+// Подпись ожидания: состояние словом и обратный отсчёт до срока. Срок знает
+// только первый источник, признак ожидания; у парковки и у повода из журнала
+// его нет вовсе, и приписывать им отсчёт значило бы выдумывать знание.
+function waitWords(w, now) {
+  if (!w || !w.state) return "";
+  const left = waitLeft(w.until, now);
+  return left ? w.state + ", " + left : w.state;
+}
+
+// Чип ожидания человека: поле waiting строки доски (LLD DK-430, решение 4).
+// Источник стоит в подсказке рядом с вопросом: «спросил агент» и «повод из
+// журнала уведомителя» это разной точности знание, и на чипе видно, какое.
+function waitChip(row) {
+  const w = row.waiting;
+  if (!w || !w.state) return null;
+  const chip = el("span", "chip c-wait", waitWords(w, Date.now()));
+  const qs = w.questions || [];
+  const tip = "Ждут человека, источник: " + (w.note || "не назван") + "." +
+    (qs.length ? " Вопрос: " + qs.join("; ") : "");
+  return withTip(chip, tip);
+}
+
 function rowChips(project, row) {
   const chips = [];
   // Признак работы стоит первым чипом: он про то, что происходит со строкой
@@ -457,6 +489,10 @@ function rowChips(project, row) {
     chips.push(el("span", "chip", plural(row.after.length, "заблокирована задачей ",
       "заблокирована задачами ", "заблокирована задачами ") + row.after.join(", ")));
   }
+  // Ожидание стоит раньше блока: припаркованную строку оба чипа описывают с
+  // разных сторон, и первым читается тот, который говорит, чего ждут.
+  const wait = waitChip(row);
+  if (wait) chips.push(wait);
   if (row.fail) chips.push(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) chips.push(el("span", "chip c-block", "блок: " + row.block));
   for (const note of row.notes || []) {
@@ -1919,6 +1955,8 @@ async function renderTask(project, works, id) {
   if (live) chips.append(live);
   const stage = stageChip(row);
   if (stage) chips.append(stage);
+  const wait = waitChip(row);
+  if (wait) chips.append(wait);
   if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
   chips.append(pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); }));
   chips.append(pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); }));
@@ -3338,6 +3376,9 @@ async function chatState(project, addr, board, works) {
     // строки, а не отсутствие живой работы (DK-296).
     st.isGoal = isGoalRow(board, st.task);
     st.title = row ? row.title : "";
+    // Ожидание приезжает той же строкой доски: врезка панели берёт вопрос и
+    // срок из поля waiting, а не разбирает признак ожидания вторым чтением.
+    st.wait = row ? row.waiting : null;
     st.work = (works || []).find((w) => w.id === st.task) || null;
   }
   if (!st.work && st.sid) {
@@ -3391,6 +3432,48 @@ function chatHead(project, st) {
   return head;
 }
 
+// Врезка вопроса: задача ждёт человека, и ответ отсюда уходит ручкой задачи,
+// потому что отвечают тут задаче, а не сессии (LLD DK-430, решения 2 и 4).
+// Вопрос стоит пачкой столбиком, тем же порядком, каким его задал инструмент
+// ожидания; вариантов и флажков у врезки нет, они приедут блоком LLD DK-354, и
+// меняется на него ровно это место. Своё поле ответа тут не роскошь: вопрос
+// виден вместе с полем, и человеку не приходится держать его в голове, пока он
+// ищет глазами общий ввод под лентой.
+function waitCard(project, st) {
+  const w = st.wait;
+  if (!w || !w.state || !st.task) return null;
+  const card = el("div", "card wcard");
+  card.append(el("div", "wtop", waitWords(w, Date.now())));
+  card.append(el("div", "t2", "источник: " + (w.note || "не назван")));
+  const qs = w.questions || [];
+  for (const q of qs) card.append(el("div", "wq", q));
+  if (!qs.length) {
+    // Повод из журнала вопроса не несёт вовсе, и это честная пустота: сессия
+    // ждёт ввода, а о чём она спросила, журналу неизвестно.
+    card.append(el("div", "t2", "текста вопроса нет: источник его не несёт, а придумывать вопрос за агента нечем"));
+  }
+  const ta = el("textarea");
+  ta.placeholder = "Ответить задаче " + st.task + "...";
+  ta.setAttribute("aria-label", "Ответ на вопрос задачи " + st.task);
+  const send = el("button", "btn btn-acc", "Ответить");
+  send.addEventListener("click", () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    send.disabled = true;
+    api(taskPath(project, st.task, "/message"), { method: "POST", body: { text } })
+      .then((r) => {
+        sayResult(r.body.message || r.body.error || "", !r.ok);
+        if (r.ok) ta.value = "";
+      })
+      .catch(console.error)
+      .finally(() => { send.disabled = false; });
+  });
+  const row = el("div", "crow");
+  row.append(send);
+  card.append(ta, row);
+  return card;
+}
+
 // Тело панели: лента, свои отправленные реплики, плашка с причиной и поле
 // ввода. Собирается один раз на разговор: перерисовка экрана под панелью её не
 // трогает вовсе, поэтому набранный текст, очередь исходящих и поток ленты
@@ -3401,6 +3484,10 @@ function chatPanel(project, st) {
   const feed = el("div", "msgs chatfeed");
   const pendbox = el("div", "msgs");
   wrap.append(feed, pendbox);
+  // Врезка стоит под лентой, у самого поля ввода: вопрос читается последним,
+  // прямо перед тем, как на него отвечают.
+  const asked = waitCard(project, st);
+  if (asked) wrap.append(asked);
 
   const note = el("div", "cnote");
   const said = keyed(el("span"), "chat-said", "");
@@ -4672,7 +4759,9 @@ function feedItemEl(project, n) {
     // Событие без задачи бывает честно: самопроверка канала, авария контура,
     // строка журнала старше полей. Сказать про это словами дешевле, чем
     // оставить событие выглядеть оторванным.
-    b.append(el("div", "t2", "задачи у события нет: вести к строке доски не от чего"));
+    // Спорную привязку лента называет словами сервера: под обрезанный ID
+    // сессии попали две записи реестра, и выбирать между ними наугад нельзя.
+    b.append(el("div", "t2", n.note || "задачи у события нет: вести к строке доски не от чего"));
   }
   item.append(b);
   item.append(el("div", "ntime", (n.time || "").slice(11, 16)));

@@ -71,6 +71,10 @@ type boardRow struct {
 	// этапа, за которым живой сессии нет.
 	Stage      string `json:"stage,omitempty"`
 	StageSince int64  `json:"stage_since,omitempty"`
+	// Waiting это состояние «ждёт человека»: кто кого ждёт, с какой точностью
+	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
+	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.
+	Waiting *Waiting `json:"waiting,omitempty"`
 }
 
 // Признак идущей работы словами: tmux это сессия дашборда, её и снимает
@@ -115,7 +119,8 @@ func rowRun(live map[string]string, id, key string) string {
 // правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
-func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark) json.RawMessage {
+func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark,
+	wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -155,6 +160,17 @@ func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark) j
 					return raw
 				}
 				row["stage_since"] = mark
+			}
+			if wait != nil {
+				var block string
+				json.Unmarshal(row["block"], &block)
+				if w, ok := wait(id, key, block); ok {
+					mark, err := json.Marshal(w)
+					if err != nil {
+						return raw
+					}
+					row["waiting"] = mark
+				}
 			}
 			if order := rowOrder(key, id, accept, title); order != "" {
 				mark, err := json.Marshal(order)
@@ -370,6 +386,11 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		view, _ := parseBoardView(raw)
 		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), id, row.Sect)
 		row.Stage, row.StageSince = rowStage(s.liveStages(found.Path), row.Run, id)
+	}
+	// Ожидание человека едет и сюда: врезка панели чата берёт вопрос и срок с
+	// той же строки, что и чип на карточке, а не вторым разбором признака.
+	if w, ok := s.waitLookup(found.Path)(id, row.Sect, row.Block); ok {
+		row.Waiting = &w
 	}
 	row.Order = rowOrder(row.Sect, id, row.Accept, row.Title)
 	resp := map[string]any{

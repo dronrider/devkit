@@ -171,7 +171,14 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 // строку (parked_rows в tools/devkitctl/watch.py), и разряд тут читается
 // машинно, а не по словам причины.
 func parkedByAsk(row boardRow) bool {
-	return row.Sect == "blocked" && strings.HasPrefix(strings.TrimSpace(row.Block), askBlockWord)
+	return parkedBlock(row.Sect, row.Block)
+}
+
+// parkedBlock это тот же разбор по секции и причине врозь: строку доски
+// разметка ответа видит общими картами, а не типом boardRow, и состояние
+// ожидания считается там по тем же двум полям.
+func parkedBlock(sect, block string) bool {
+	return sect == "blocked" && strings.HasPrefix(strings.TrimSpace(block), askBlockWord)
 }
 
 // askBlockWord это машинный разряд причины блока у парковки вопросом.

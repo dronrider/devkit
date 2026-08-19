@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/stage"
 )
 
@@ -596,6 +597,9 @@ type smokeBoard struct {
 				// кладёт в запись конвейер, а ручка доски отдаёт строкой (DK-338).
 				Stage      string `json:"stage"`
 				StageSince int64  `json:"stage_since"`
+				// Waiting это состояние «ждёт человека» (DK-433): признак
+				// ожидания, парковка вопросом либо повод из журнала.
+				Waiting *Waiting `json:"waiting"`
 			} `json:"rows"`
 		} `json:"sections"`
 	} `json:"board"`
@@ -919,6 +923,62 @@ func (s *smoke) stepTaskMessage() (string, error) {
 		return "", fmt.Errorf("повтор завёл вторую строку: во входе %d реплик", n)
 	}
 	return fmt.Sprintf("строка «%s» лежит в разговоре %s чекаута без адресата", v.Line, v.Chat), nil
+}
+
+// boardWaiting достаёт состояние ожидания строки из ответа доски.
+func boardWaiting(v smokeBoard, id string) *Waiting {
+	for _, sec := range v.Board.Sections {
+		for _, row := range sec.Rows {
+			if row.ID == id {
+				return row.Waiting
+			}
+		}
+	}
+	return nil
+}
+
+// stepWaiting: задача, вставшая на вопросе, видна прямо со строки доски. Шаг
+// кладёт признак ожидания тем же internal/chat, каким его пишет taskctl ask, и
+// смотрит, что строка принесла состояние словом, вопрос, срок и подпись
+// источника. Снятый признак ожидание убирает: молчание тут значит «никто
+// никого не ждёт», и отличить его от вечно горящего чипа надо прогоном, а не
+// глазами.
+func (s *smoke) stepWaiting() (string, error) {
+	until := time.Now().Add(6 * time.Minute).Truncate(time.Second)
+	const asked = "прогон smoke: чинить копией или общим модулем?"
+	ask := chat.Ask{Until: until, Session: "smoke-headless-1", Task: smokeTask,
+		Questions: []chat.Question{{Text: asked}}}
+	if err := chat.WriteAsk(s.proj, chat.TaskName(smokeTask), ask); err != nil {
+		return "", err
+	}
+	v, err := s.board()
+	if err != nil {
+		return "", err
+	}
+	w := boardWaiting(v, smokeTask)
+	if w == nil {
+		return "", fmt.Errorf("строка %s не назвалась ждущей, хотя признак ожидания лежит во входе задачи", smokeTask)
+	}
+	if w.Source != waitAsk || w.Note != waitAskNote {
+		return "", fmt.Errorf("источник ожидания %q с подписью %q, ждал %q", w.Source, w.Note, waitAsk)
+	}
+	if w.Until != until.Unix() {
+		return "", fmt.Errorf("срок ожидания %d, ждал %d: обратный отсчёт чипа считается по нему", w.Until, until.Unix())
+	}
+	if len(w.Questions) != 1 || w.Questions[0] != asked {
+		return "", fmt.Errorf("вопрос до строки доски не доехал: %q", w.Questions)
+	}
+	if err := chat.DropAsk(s.proj, chat.TaskName(smokeTask)); err != nil {
+		return "", err
+	}
+	if v, err = s.board(); err != nil {
+		return "", err
+	}
+	if left := boardWaiting(v, smokeTask); left != nil {
+		return "", fmt.Errorf("снятый признак оставил ожидание на строке: %+v", left)
+	}
+	return fmt.Sprintf("строка %s несёт «%s» до %s, источник: %s; снятый признак ожидание убрал",
+		smokeTask, w.State, until.Format("15:04:05"), w.Note), nil
 }
 
 // stepJournal: журнал цели читается из раздела «Журнал» её файла. Шаг идёт до
@@ -1580,6 +1640,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"вид деятельности в строке доски", s.stepStage},
 		{"сообщение цели", s.stepMessage},
 		{"ответ задаче безадресной строкой", s.stepTaskMessage},
+		{"ожидание человека видно строкой доски", s.stepWaiting},
 		{"доставка реплики витку", s.stepDelivered},
 		{"подхват сообщения витком", s.stepTurn},
 		{"живая лента открыта", s.stepFeedOpen},

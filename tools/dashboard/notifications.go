@@ -40,6 +40,11 @@ var notifyKinds = map[string]string{
 	"goal_stop":  "stop",
 	"run_stop":   "stop",
 	"wait_human": "wait",
+	// idle_prompt шлёт харнес: ход кончился, а окно стоит с пустым
+	// приглашением. Это запасной источник состояния «ждёт человека»
+	// (waiting.go), и в прочих событиях он прятал бы ровно тот случай, ради
+	// которого строка доски и загорается ожиданием.
+	"idle_prompt": "wait",
 	// task_ask шлёт инструмент ожидания taskctl ask: вопрос задан, и заход
 	// стоит с ним прямо сейчас. Тип тот же, что у стопа с вопросом, потому что
 	// ждут тут человека, а не машину.
@@ -105,7 +110,15 @@ type Notification struct {
 	Sent    bool   `json:"sent"`
 	ID      string `json:"id,omitempty"`
 	Project string `json:"project,omitempty"`
+	// Note это подпись события, оставшегося без задачи не по своей воле:
+	// обрезанный ID сессии носят две записи реестра чатов, и выбирать между
+	// ними наугад лента не берётся (nameWaitTasks в waiting.go).
+	Note string `json:"note,omitempty"`
 }
+
+// waitKind это тип события «ждут человека»: по нему идёт фильтр экрана
+// «Ожидание пользователя» и параметр ?kind=wait.
+const waitKind = "wait"
 
 // splitNotifyText отрезает хвост с текстом баннера: заголовок и тело в
 // ёлочках. Хвоста нет у строк, писанных до ленты, и это не поломка.
@@ -250,6 +263,7 @@ func (s *server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, seen := parseNotifications(tailLines(data, intParam(r, "n", tailDefault, tailMax)), filter)
+	s.nameWaitTasks(items)
 	resp := map[string]any{"exists": true, "items": items}
 	if len(items) == 0 {
 		// Пустоты различимы: журнал без событий, фильтр без попаданий и
@@ -276,6 +290,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 	if data, err := os.ReadFile(path); err == nil {
 		data = lastComplete(data)
 		items, seen := parseNotifications(tailLines(data, tailDefault), filter)
+		s.nameWaitTasks(items)
 		for _, n := range items {
 			sseEvent(w, f, "", marshalNotification(n))
 		}
@@ -300,6 +315,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 			var lines []string
 			lines, offset = newLines(path, offset)
 			items, _ := parseNotifications(lines, filter)
+			s.nameWaitTasks(items)
 			for _, n := range items {
 				sseEvent(w, f, "", marshalNotification(n))
 			}

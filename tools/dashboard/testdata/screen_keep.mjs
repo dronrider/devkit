@@ -276,9 +276,14 @@ const doc = {
     return byId.get(id);
   },
   // Обработчики документа складываются так же, как узловые: горячей клавише
-  // («/» ставит курсор в поле поиска) больше неоткуда взяться.
+  // («/» ставит курсор в поле поиска) больше неоткуда взяться. Снятие тоже
+  // настоящее: панель разговора вешает на документ слежение за выделением и
+  // снимает его при уходе, и молчащий заглушкой стенд об этом бы не узнал.
   handlers: {},
   addEventListener: (name, fn) => { doc.handlers[name] = fn; },
+  removeEventListener: (name, fn) => {
+    if (doc.handlers[name] === fn) delete doc.handlers[name];
+  },
 };
 // Корневой узел нужен ширине панели разговора: она уезжает переменной стиля,
 // а не размером самого узла.
@@ -522,6 +527,9 @@ const drafts = [
 // tmux-сессии, тем же, что на экране агента.
 let draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md", note: "груминг записи не касался" };
 let grooming = false;
+// Чат груминга: он и есть ход разбора, и по нему экран решает, звать ли
+// разбор кнопкой или вести в стоящий чат.
+let groomChat = null;
 let groomAsk = null;
 let dropped = null;
 
@@ -633,6 +641,16 @@ const loose = {
 // Ручка для реплики и причина словами приезжают в шапке разговора (DK-438):
 // панель по ним и решает, куда слать и когда гасить ввод.
 const headExtra = { reply: "session", replyNote: "" };
+// Реестр разговоров проекта (ручка /chats): панель берёт список отсюда, а не
+// из живых сессий задачи, и открывает по нему свежий разговор. Задачи у
+// разговора списком, а состояние словом, как их отдаёт сервер.
+function chatOf(s, tasks) {
+  return { id: s.id, title: s.first, mtime: s.mtime, tasks: tasks || (s.task ? [s.task] : []),
+    state: "live", tree: s.tree || "", branch: s.branch || "", model: "opus" };
+}
+function chatList() {
+  return [mine, alien, loose].map((s) => chatOf(s));
+}
 let sessions = [{ id: "abcdef1234567890", mtime: "2026-08-13T10:02:00+03:00", task: "XR-1" }];
 let slowSessions = false;
 
@@ -775,6 +793,8 @@ const sandbox = {
     if (path === "/api/harnesses") return reply(harnessBody());
     if (path.endsWith("/board")) return reply(boardBody());
     if (path.endsWith("/drafts")) return reply({ drafts });
+    if (path.includes("/chats?task=")) return reply({ chats: groomChat ? [groomChat] : [] });
+    if (path.includes("/chats")) return reply({ chats: chatList() });
     if (path.endsWith("/outcome")) return reply(draftOut);
     if (path.endsWith("/groom") && post) {
       groomAsk = JSON.parse(init.body).ask || "";
@@ -1353,180 +1373,81 @@ if (sandbox.location.hash !== "demo/draft/XR-D2") {
   fail("нажатие на строку накопителя не открыло экран записи: " + sandbox.location.hash);
 }
 
-// Экран черновика, состояние первое: груминг идёт. Живой хвост берётся снимком
-// tmux-сессии, и рядом стоит стоп; кнопки подъёма второго разбора нет.
+// Экран черновика: шапка с ID, полоса пометок и текст записи разметкой.
+// Карточки хода, исхода и удаления с экрана сняты двенадцатым кругом POC
+// (замечание 15): разбор идёт живым чатом груминга, и смотрят его там же, а не
+// снимком tmux рядом. Стенд держит то, что от экрана осталось, включая
+// перерисовку по фокусу окна.
 grooming = true;
 await go("#demo/draft/XR-D2");
-let dhead = find(groups, "draft-head");
+const dhead = find(groups, "draft-head");
 if (!dhead) fail("экран черновика не собрался: " + dump(groups).slice(0, 200));
-if (!dump(dhead).includes("груминг идёт")) {
-  fail("идущий груминг ничем не помечен: " + dump(dhead));
+if (!dump(dhead).includes("XR-D2")) fail("шапка записи не назвала ID: " + dump(dhead));
+// Пометки и кнопки разбора стоят своей полосой: шапка держит ID с заголовком,
+// и перерисовываются они врозь.
+let dchips = find(groups, "draft-chips");
+if (!dchips) fail("полосы пометок черновика нет: " + dump(groups).slice(0, 200));
+if (!dump(dchips).includes("черновик")) fail("запись не помечена черновиком: " + dump(dchips));
+if (!dump(dchips).includes("груминг идёт")) {
+  fail("идущий груминг ничем не помечен: " + dump(dchips));
 }
-if (button(dhead, "Провести груминг")) {
-  fail("поверх идущего груминга экран предлагает поднять второй: " + dump(dhead));
+if (button(dchips, "Провести груминг")) {
+  fail("поверх идущего груминга экран предлагает поднять второй: " + dump(dchips));
 }
-const runCol = find(groups, "draft-col-run");
-if (!runCol || !dump(runCol).includes("хвост груминга")) {
-  fail("живого хвоста груминга на экране нет: " + dump(runCol));
-}
-// Стоп стоит в шапке карточки хода, рядом с именем сессии, которую он снимает
-// (макет 12), и собран мелкой красной кнопкой. В шапке экрана его больше нет.
-const runStop = button(runCol, "Остановить груминг");
-if (!runStop) fail("у идущего груминга нет стопа в шапке карточки хода: " + dump(runCol));
-if (!String(runStop.className).includes("btn-sm") ||
-  !String(runStop.className).includes("btn-danger")) {
-  fail("стоп груминга собран не мелкой красной кнопкой: " + runStop.className);
-}
-if (button(dhead, "Остановить груминг")) {
-  fail("стоп груминга остался и в шапке экрана: " + dump(dhead));
+// Текст записи стоит разметкой, а не сырым файлом.
+const dtext = find(groups, "draft-text");
+if (!dtext || !dump(dtext).includes("текст записи")) {
+  fail("текста записи на экране нет: " + dump(dtext));
 }
 
-// Колонка хода видна и на телефоне. Однажды её гасил чужой класс полосы tmux
-// экрана агента: вкладок на экране черновика нет, и onpane ей никто не ставил,
-// поэтому с телефона за идущим грумингом было не посмотреть, хотя шапка звала
-// его идущим (браузерная приёмка DK-321). Классы берутся с нарисованного узла,
-// а правила из настоящего style.css: своих представлений о стилях у стенда нет.
-const phoneCSS = mediaBlock(findCSS, "@media (max-width:900px)");
-if (!phoneCSS) fail("в style.css нет телефонной части: правило про колонку хода искать негде");
-const runClasses = String(runCol.className).split(" ").filter(Boolean);
-if (phoneDisplay(phoneCSS, runClasses) === "none") {
-  fail("на телефоне колонка хода груминга погашена стилями (классы " +
-    runClasses.join(", ") + "): живого хвоста с телефона не видно");
-}
-// Место в сетке у неё при этом своё: погашенная колонка и колонка без области
-// это разные поломки, и вторая тут тоже не годится.
-if (!/\.dgrid\{[^}]*grid-template-areas:"out" "run" "text"/.test(phoneCSS)) {
-  fail("телефонная сетка экрана черновика не отводит места ходу груминга");
-}
-
-// Обновление по фокусу окна не рвёт хвост: карточка хода собирается один раз
-// на заход, как панели экрана агента.
-await sandbox.refresh();
-await settle();
-if (find(groups, "draft-col-run") !== runCol) {
-  fail("обновление пересобрало карточку хода груминга: хвост оборвался бы на каждом фокусе окна");
-}
-
-// Состояние второе: груминг кончился исходом. Исходов четыре, и каждый назван
-// вместе со следом, по которому сервер его узнал.
+// Груминг кончился, чата от него не осталось: кнопка разбора возвращается на
+// место, и заказ агенту виден подсказкой.
 grooming = false;
-const outcomes = [
-  [{ state: "row", note: "груминг завёл строку: XR-D2 стоит на доске demo, секция Backlog" },
-    "Черновик оформлен строкой", "Открыть задачу XR-D2"],
-  [{ state: "attached", task: "XR-4", task_file: "docs/tasks/XR-4.md",
-    note: "груминг признал запись частью стоящей работы: текст уехал разделом «Из черновика XR-D2» в docs/tasks/XR-4.md" },
-  "Черновик приписан к стоящей строке", "Открыть XR-4"],
-  [{ state: "deferred", deferred: "2026-08-05", reason: "ждём повторного случая",
-    file: "docs/tasks/drafts/XR-D2.md",
-    note: "груминг отложил запись 2026-08-05: она осталась в накопителе" },
-  "Черновик отложен", ""],
-  [{ state: "dropped", note: "следов груминга нет ни одного: файла docs/tasks/drafts/XR-D2.md не видно" },
-    "Черновик удалён", ""],
-];
-for (const [out, head, go2] of outcomes) {
-  draftOut = out;
-  await go("#demo/draft/XR-D2");
-  const col = find(groups, "draft-col-out");
-  if (!col || !dump(col).includes(head)) {
-    fail("исход " + out.state + " на экране не назван: " + dump(col));
-  }
-  if (!dump(col).includes(out.note)) {
-    fail("экран не сказал, каким следом узнан исход " + out.state + ": " + dump(col));
-  }
-  if (go2 && !button(col, go2)) {
-    fail("у исхода " + out.state + " нет перехода туда, куда груминг увёл запись: " + dump(col));
-  }
-}
-
-// Состояние третье: груминг кончился вопросом. Вопрос стоит карточкой, под ним
-// поле уточнения, и ответ уходит новой ходкой, а не в закрывшуюся сессию.
-draftOut = {
-  state: "open", file: "docs/tasks/drafts/XR-D2.md",
-  question: "Какой из двух дублей оставить, XR-D2 или XR-D3?",
-  session: "abcdef1234567890",
-  note: "груминг вышел, не оставив следа на диске",
-};
 await go("#demo/draft/XR-D2");
-let outCol = find(groups, "draft-col-out");
-if (!dump(outCol).includes("Груминг кончился вопросом")) {
-  fail("кончившийся вопросом груминг назван иначе: " + dump(outCol));
-}
-if (!dump(outCol).includes(draftOut.question)) {
-  fail("вопрос груминга не стоит на экране: " + dump(outCol));
-}
-if (!dump(outCol).includes("новой ходкой")) {
-  fail("экран не говорит, что ответ уходит новой ходкой: " + dump(outCol));
-}
-const ask = tag(outCol, "TEXTAREA");
-if (!ask) fail("поля уточнения на экране нет: " + dump(outCol));
-ask.value = "оставить XR-D2, второй дубль снять";
-ask.focus();
+dchips = find(groups, "draft-chips");
+if (dump(dchips).includes("груминг идёт")) fail("кончившийся груминг помечен идущим: " + dump(dchips));
+const groomBtn = button(dchips, "Провести груминг");
+if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(dchips));
+groomBtn.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (groomAsk === null) fail("кнопка груминга не позвала ручку разбора");
+groomAsk = null;
 
+// Разбор уже был: вместо кнопки ссылка в его чат, второй разбор поверх первого
+// с экрана не поднимается.
+groomChat = { id: "gggg4444-4444", title: "Груминг XR-D2", mtime: "2026-08-13T10:00:00+03:00",
+  tasks: ["XR-D2"], state: "dead" };
+await go("#demo/draft/XR-D2");
+dchips = find(groups, "draft-chips");
+const chatBtn = button(dchips, "Чат груминга");
+if (!chatBtn) fail("ссылки в чат груминга нет: " + dump(dchips));
+if (button(dchips, "Провести груминг")) {
+  fail("рядом с чатом груминга экран зовёт поднять второй: " + dump(dchips));
+}
+chatBtn.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (!sandbox.location.hash.includes(groomChat.id)) {
+  fail("ссылка в чат груминга ведёт мимо: " + sandbox.location.hash);
+}
+// Панель закрывается своим крестиком, а не переходом по адресу: он и
+// раскручивает глубину, которую держит сама панель, и следующий раздел стенда
+// начинает с чистого места.
+const groomShut = barButton(byClass(byId.get("cpin"), "chead"), "Закрыть панель");
+if (!groomShut) fail("в шапке панели груминга нет крестика");
+groomShut.handlers.click({ stopPropagation: () => {} });
+await settle();
+await go("#demo/draft/XR-D2");
+
+// Обновление по фокусу окна экран не пересобирает: ключи те же, и узлы стоят
+// прежние.
+const keptHead = find(groups, "draft-head");
 await sandbox.refresh();
 await settle();
+if (find(groups, "draft-head") !== keptHead) {
+  fail("обновление пересобрало шапку записи, хотя ответ сервера тот же");
+}
+groomChat = null;
 
-outCol = find(groups, "draft-col-out");
-if (tag(outCol, "TEXTAREA") !== ask || ask.value !== "оставить XR-D2, второй дубль снять") {
-  fail("обновление стёрло набранное уточнение: " + ask.value);
-}
-if (doc.activeElement !== ask) fail("обновление отобрало фокус у поля уточнения");
-const againBtn = button(outCol, "Повторить груминг");
-if (!String(againBtn.className).includes("dend")) {
-  fail("«Повторить груминг» стоит не по правому краю поля: " + againBtn.className);
-}
-againBtn.handlers.click({ stopPropagation: () => {} });
-await settle();
-if (groomAsk !== "оставить XR-D2, второй дубль снять") {
-  fail("повторная ходка ушла без уточнения: " + JSON.stringify(groomAsk));
-}
-
-// Удаление: подтверждение раскрывается на месте, без причины запрос не уходит,
-// а набранная причина переживает обновление экрана.
-draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md", note: "груминг записи не касался" };
-await go("#demo/draft/XR-D2");
-outCol = find(groups, "draft-col-out");
-const del = button(outCol, "Удалить");
-if (!del) fail("удаления с экрана записи нет: " + dump(outCol));
-const confirm = byClass(outCol, "dconfirm");
-if (!confirm || !confirm.hidden) fail("подтверждение удаления раскрыто до нажатия");
-del.handlers.click({ stopPropagation: () => {} });
-if (confirm.hidden) fail("нажатие «Удалить» не раскрыло подтверждение с полем причины");
-const why = tag(confirm, "INPUT");
-if (!why) fail("в подтверждении нет поля причины: " + dump(confirm));
-// Раскладка подтверждения по макету 12: причина своей строкой, кнопки под ней
-// одной строкой и полного размера, без мелких btn-sm.
-const drow = byClass(confirm, "drow");
-if (!drow || drow.children.length !== 2) {
-  fail("кнопки подтверждения стоят не своей строкой: " + dump(confirm));
-}
-for (const kid of drow.children) {
-  if (String(kid.className).includes("btn-sm")) {
-    fail("кнопка подтверждения осталась мелкой: " + kid.className);
-  }
-}
-button(confirm, "Удалить черновик").handlers.click({ stopPropagation: () => {} });
-await settle();
-if (dropped !== null) fail("черновик удалился без причины: " + JSON.stringify(dropped));
-if (!dump(byId.get("flashes")).includes("жду причину")) {
-  fail("отказ без причины не сказан словами: " + dump(byId.get("flashes")));
-}
-for (const t of timers.splice(0)) t.fn();
-byId.get("flashes").replaceChildren();
-
-why.value = "мусор из одного слова show";
-await sandbox.refresh();
-await settle();
-if (tag(byClass(find(groups, "draft-col-out"), "dconfirm"), "INPUT") !== why) {
-  fail("обновление закрыло подтверждение удаления вместе с набранной причиной");
-}
-button(byClass(find(groups, "draft-col-out"), "dconfirm"), "Удалить черновик")
-  .handlers.click({ stopPropagation: () => {} });
-await settle();
-if (dropped !== "мусор из одного слова show") {
-  fail("причина удаления не уехала в ручку: " + JSON.stringify(dropped));
-}
-for (const t of timers.splice(0)) t.fn();
-byId.get("flashes").replaceChildren();
 // Панель разговора (DK-435): она стоит справа поверх любого экрана проекта и
 // живёт хвостом адреса. Лента, поле ввода и поток событий переживают
 // обновление экрана под ней, а пришедшая реплика не трогает соседних.
@@ -1540,19 +1461,6 @@ if (!talkBox) fail("тело панели не собралось: " + dump(cpin
 if (!find(groups, "card-backlog")) {
   fail("открытие панели пересобрало экран под ней: доски больше нет");
 }
-// Цикл цели не идёт: панель говорит это словами и держит ту же ручку подъёма
-// витка, что кнопка в ленте (DK-319). Молчаливое «ждёт витка» здесь и было
-// бедой: человек писал завершившемуся агенту и ждал ответа.
-const note = find(talkBox, "chat-note");
-if (!dump(note).includes("Цикл цели не идёт")) {
-  fail("панель молчит о стоящем цикле: " + dump(note));
-}
-const raise = button(note, "Поднять виток");
-if (!raise || raise.hidden) fail("при стоящем цикле в панели нет ручки подъёма витка");
-raise.handlers.click({ stopPropagation: () => {} });
-await settle();
-if (!running) fail("кнопка «Поднять виток» не позвала ручку запуска работы");
-running = false;
 
 const feed = talkBox.children[0];
 const list = feed.children[1];
@@ -1613,113 +1521,65 @@ await settle();
 if (byClass(cpin, "chatwrap") !== talkBox) {
   fail("поднявшаяся работа пересобрала панель");
 }
-if (raise !== button(find(talkBox, "chat-note"), "Поднять виток") || !raise.hidden) {
-  fail("плашка панели не узнала о поднявшейся работе: ручка подъёма витка осталась на месте");
-}
-if (!dump(find(talkBox, "chat-note")).includes("Сообщение уйдёт агенту")) {
-  fail("при работающем агенте плашка не обещает доставку витку: " + dump(find(talkBox, "chat-note")));
-}
-if (doc.activeElement !== ta) fail("обновление плашки отобрало фокус у поля ввода");
+if (doc.activeElement !== ta) fail("обновление отобрало фокус у поля ввода");
 if (wasWorks !== works) fail("стенд подменил источник работ мимо ручек");
 
-// Цикл цели ведёт не только tmux-сессия дашборда: цель из реестра и живое окно
-// человека для сервера та же живая работа (goalIdle в messages.go), и плашка
-// обязана говорить то же, что ответит ручка сообщения. Разойдись признаки,
-// экран показывал бы «Цикл цели не идёт» там, где ручка обещает виток
-// (замечание ревью DK-319).
+// Работа задачи ведётся не только tmux-сессией дашборда: цель из реестра и
+// живое окно человека для сервера та же живая работа (goalIdle в messages.go).
+// Панель на этом не пересобирается ни при одном из признаков: она живёт
+// адресом, а не списком работ.
 for (const via of ["registry", "session"]) {
   chatWork[0].via = via;
   await sandbox.refresh();
   await settle();
-  const shown = find(talkBox, "chat-note");
-  if (dump(shown).includes("Цикл цели не идёт")) {
-    fail("плашка зовёт стоящим цикл, который ведёт " + via + ": " + dump(shown));
+  if (byClass(cpin, "chatwrap") !== talkBox) {
+    fail("работа via " + via + " пересобрала панель разговора");
   }
-  if (!dump(shown).includes("Сообщение уйдёт агенту")) {
-    fail("плашка при работе via " + via + " не обещает доставку витку: " + dump(shown));
-  }
-  const up = button(shown, "Поднять виток");
-  if (!up || !up.hidden) fail("при работе via " + via + " в панели осталась кнопка подъёма витка");
 }
 chatWork[0].via = "tmux";
 
-// Разговор с целью (DK-342): реплика доезжает до идущего витка подхватом, и знать
-// об этом человек обязан на самой реплике, а плашка обязана обещать минуты
-// только там, где доставлять есть кому. Перерисовки страницы тут нет вовсе:
-// состояние меняют файлы на машине, а дашборд их перечитывает сам.
-const tick = async () => {
-  for (const t of timers.splice(0)) t.fn();
-  await settle();
-};
+// Отправленная реплика встаёт местным пузырём сразу под лентой и сама говорит,
+// что с ней: на слабой связи молчание неотличимо от непрошедшей отправки, и
+// человек жмёт «Отправить» второй раз. Очередь «Входящих» цели тут больше не
+// при чём: реплика панели уезжает в саму сессию, а лежащее у цели живёт своим
+// стендом (outbox_offline).
 const pendbox = talkBox.children[1];
 ta.value = "стой, не туда";
 button(talkBox, "Отправить").handlers.click({ stopPropagation: () => {} });
 await settle();
-if (!dump(pendbox).includes("стой, не туда") || !dump(pendbox).includes("ждёт витка")) {
-  fail("отправленная реплика не встала в очередь исходящих: " + dump(pendbox));
+if (!dump(pendbox).includes("стой, не туда")) {
+  fail("отправленная реплика не встала местным пузырём: " + dump(pendbox));
+}
+if (!dump(pendbox).includes("доставлено") && !dump(pendbox).includes("отправляется")) {
+  fail("местный пузырь молчит о судьбе реплики: " + dump(pendbox));
+}
+if (byClass(cpin, "chatwrap") !== talkBox) fail("отправка пересобрала панель целиком");
+if (doc.activeElement !== ta) fail("отправка отобрала фокус у поля ввода");
+// Эхо из транскрипта снимает местный пузырь: реплика уже стоит в ленте, и два
+// одинаковых пузыря подряд читались как отправленная дважды.
+es.onmessage({
+  data: JSON.stringify({ seq: 5, role: "user", text: "стой, не туда",
+    time: "2026-08-13T10:04:00+03:00" }),
+});
+await settle();
+if (dump(pendbox).includes("стой, не туда")) {
+  fail("эхо из ленты не сняло местный пузырь: " + dump(pendbox));
 }
 
-// Плашка при живом витке зовёт минуты до доставки, а не следующую итерацию:
-// живость приходит с ручки сообщения, и списком работ экрана она не берётся.
-mail.live = true;
-await tick();
-if (!dump(find(talkBox, "chat-note")).includes("за минуты")) {
-  fail("при живом витке плашка не обещает доставку за минуты: " + dump(find(talkBox, "chat-note")));
+// Продолжение работы стоит той же кнопкой в панели: сервер сам решает, будить
+// ли живую сессию каналом или поднимать резюм (ручка /continue). Прежде тут
+// стояла плашка «Цикл цели не идёт» с подъёмом витка, и отвечала она только за
+// цели, а с задачей продолжать разговор было нечем.
+const goOn = byClass(cpin, "cgo");
+if (!goOn) fail("в панели нечем продолжить работу задачи: " + dump(cpin).slice(0, 300));
+if (!String(goOn.title).includes("XR-1")) {
+  fail("кнопка продолжения не назвала задачу: " + goOn.title);
 }
-if (dump(pendbox).includes("доставлено агенту")) {
-  fail("реплика без отметки записана в доставленные: " + dump(pendbox));
-}
-
-// Подхват внёс строку в идущий виток и отметил её: реплика подписывается
-// доставленной со временем и сессией, страница при этом та же самая.
-mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:03:00", session: "8f2a1c30-1111-2222" }];
-await tick();
-if (byClass(cpin, "chatwrap") !== talkBox) {
-  fail("отметка доставки пересобрала панель целиком");
-}
-if (!dump(pendbox).includes("доставлено агенту")) {
-  fail("доставленная реплика осталась ждущей витка: " + dump(pendbox));
-}
-if (!dump(pendbox).includes("10:03") || !dump(pendbox).includes("8f2a1c30")) {
-  fail("подпись доставки без времени или без сессии: " + dump(pendbox));
-}
-
-// Строку съел вопрос витка (--ask), и сессии у отметки нет: состояние то же,
-// а пустой скобки под ним не появляется.
-mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:03:00" }];
-await tick();
-if (!dump(pendbox).includes("доставлено агенту") || dump(pendbox).includes("сессия")) {
-  fail("отметка без сессии нарисована не как доставка: " + dump(pendbox));
-}
-
-// Цель встала: замок мёртв, метки протухли, и плашка возвращается к прежним
-// словам про следующую итерацию, хотя работа на экране осталась.
-mail.live = false;
-await tick();
-const idleNote = dump(find(talkBox, "chat-note"));
-if (idleNote.includes("за минуты") || !idleNote.includes("следующей рабочей итерации")) {
-  fail("плашка обещает минуты цели, до которой доставлять некому: " + idleNote);
-}
-
-// Виток убрал строку записью витка: доставленное становится прочитанным.
-mail.pending.length = 0;
-mail.delivered = [];
-await tick();
-if (!dump(pendbox).includes("прочитано агентом")) {
-  fail("подхваченная витком реплика осталась доставленной: " + dump(pendbox));
-}
-
-// Строку положили из другого браузера или рукой: своей памяти о ней у этого
-// дашборда нет, а доставку она несёт ту же самую.
-mail.pending.push("2026-08-15 10:10, из дашборда: и ленту проверь");
-await tick();
-if (!dump(pendbox).includes("и ленту проверь") || !dump(pendbox).includes("ждёт витка")) {
-  fail("чужая строка «Входящих» не встала в очередь исходящих: " + dump(pendbox));
-}
-mail.delivered = [{ line: mail.pending[0], at: "2026-08-15T10:11:00", session: "8f2a1c30-1111-2222" }];
-await tick();
-if (!dump(pendbox).includes("доставлено агенту") || !dump(pendbox).includes("10:11")) {
-  fail("чужая строка осталась ждущей после отметки доставки: " + dump(pendbox));
+posted.length = 0;
+goOn.handlers.click({ stopPropagation: () => {} });
+await settle();
+if (!posted.find((path) => path.includes("/tasks/XR-1/continue"))) {
+  fail("кнопка продолжения не позвала ручку: " + JSON.stringify(posted));
 }
 
 // Панель над экраном задачи: тот же хвост адреса, и «назад» закрывает её,
@@ -1735,12 +1595,16 @@ const talkReply = (es2, seq, text) => {
 sessions = [mine, alien];
 await go("#demo");
 await go("#demo/XR-1");
-const talkBtn = barButton(groups, "Живой статус") || barButton(groups, "Разговор агента");
-if (!talkBtn) fail("на экране задачи нет входа в разговор: " + dump(groups).slice(0, 300));
-talkBtn.handlers.click({ stopPropagation: () => {} });
-await settle();
+// Своей кнопки разговора на полосе действий задачи больше нет (POC ветки
+// poc-chat): разговор открывает значок окна чатов в шапке, и с задачи он
+// приходит тем же хвостом адреса. Полоса при этом обязана остаться про работу,
+// а не про разговор.
+if (barButton(groups, "Живой статус") || barButton(groups, "Разговор агента")) {
+  fail("на полосе действий задачи снова заведён свой вход в разговор");
+}
+await go("#demo/XR-1/chat/XR-1");
 if (sandbox.location.hash.replace(/^#/, "") !== "demo/XR-1/chat/XR-1") {
-  fail("разговор с экрана задачи открылся не хвостом адреса: " + sandbox.location.hash);
+  fail("разговор задачи открылся не хвостом адреса: " + sandbox.location.hash);
 }
 if (panelNode.hidden) fail("панель не открылась с экрана задачи");
 if (!find(groups, "tpage") && !dump(groups).includes("XR-1")) {
@@ -1759,7 +1623,9 @@ if (!dump(cpin).includes("ход открытого разговора")) {
 }
 // Крестик работает кнопкой «назад»: панель закрывается, а экран задачи под ней
 // остаётся тем же самым.
-const shut = tag(byClass(cpin, "chead"), "BUTTON");
+// Крестик ищется подписью, а не первой попавшейся кнопкой шапки: слева от
+// него стоят выбор диалога, новый чат и модель.
+const shut = barButton(byClass(cpin, "chead"), "Закрыть панель");
 if (!shut) fail("в шапке панели нет крестика: закрыть её нечем");
 shut.handlers.click({ stopPropagation: () => {} });
 await settle();
@@ -1784,18 +1650,16 @@ if (panelNode.hidden) fail("старый адрес разговора сесс�
 if (!find(groups, "card-backlog")) {
   fail("старый адрес разговора сессии открыл не доску: " + dump(groups).slice(0, 200));
 }
-// Разговор без узнанной задачи: заголовок берётся из первой реплики, подпись
-// говорит, что задача не распознана, и рядом стоит привязка рукой (DK-294,
-// DK-431).
+// Разговор без узнанной задачи: заголовок берётся из первой реплики. Подписи
+// «задача не распознана» с привязкой рукой в шапке больше нет (замечание 21
+// POC): узнают разговор по первой реплике, а отчёт о том, чего дашборд не
+// узнал, места в шапке не стоил.
 const looseHead = byClass(cpin, "chead");
 if (!dump(looseHead).includes(loose.first)) {
   fail("шапка панели взята не из первой реплики: " + dump(looseHead));
 }
-if (!dump(looseHead).includes("задача не распознана")) {
-  fail("шапка панели молчит о том, что задача не узнана: " + dump(looseHead));
-}
-if (!button(looseHead, "Привязать к задаче")) {
-  fail("в шапке панели нет привязки разговора к задаче: " + dump(looseHead));
+if (dump(looseHead).includes("задача не распознана")) {
+  fail("в шапке снова стоит отчёт о неузнанной задаче: " + dump(looseHead));
 }
 if (streams.some((s) => !s.closed && String(s.url).includes("/log?stream=1"))) {
   fail("панель разговора подняла поток журнала, который живёт на экране задачи");
@@ -1805,24 +1669,20 @@ if (liveTalks().length !== 1 || !liveTalks()[0].url.includes(loose.id)) {
     JSON.stringify(liveTalks().map((s) => s.url)));
 }
 
-// Ввод гаснет только с названной причиной, и причин ровно четыре (решение 6
-// LLD DK-430). Сервер называет свою: кончившийся разговор ручки не получает, и
-// панель повторяет его слова, а рядом ставит дорогу, привязку к задаче.
+// Поле ввода не гаснет и у кончившегося разговора: канал клиента достаёт любую
+// живую сессию, а не нашедший её сервер поднимает резюм, и «пишите там» стало
+// бы отказом без причины (POC ветки poc-chat). Прежде тут гасли ввод и отправка
+// с названной причиной, и причин было четыре.
 headExtra.reply = "";
 headExtra.replyNote = "дерева сессии больше нет: разговор кончился, и продолжить его некому";
 await go("#demo");
 await go("#demo/chat/" + loose.id);
 const offWrap = byClass(cpin, "chatwrap");
 const offTa = tag(offWrap, "TEXTAREA");
-if (!offTa || !offTa.disabled) fail("кончившийся разговор оставил поле ввода живым");
-if (!dump(find(offWrap, "chat-note")).toLowerCase().includes("дерева сессии больше нет")) {
-  fail("гашение ввода без названной причины: " + dump(find(offWrap, "chat-note")));
-}
-if (!button(offWrap, "Привязать к задаче")) {
-  fail("у погашенного ввода нет дороги: привязать разговор к задаче нечем");
-}
-if (!button(offWrap, "Отправить").disabled) {
-  fail("кнопка отправки жива у погашенного ввода: реплике уйти некуда");
+if (!offTa) fail("в панели кончившегося разговора нет поля ввода: " + dump(offWrap).slice(0, 200));
+if (offTa.disabled) fail("поле ввода погашено, хотя реплике есть куда ехать");
+if (button(offWrap, "Отправить").disabled) {
+  fail("кнопка отправки погашена, хотя реплике есть куда ехать");
 }
 headExtra.reply = "session";
 headExtra.replyNote = "";
@@ -1841,8 +1701,11 @@ if (!taskTa || taskTa.disabled) {
 taskTa.value = "проверь тесты";
 button(taskWrap, "Отправить").handlers.click({ stopPropagation: () => {} });
 await settle();
-if (!posted.some((p) => p.includes("/sessions/" + mine.id + "/message"))) {
-  fail("реплика живого разговора ушла не ручкой сессии: " + JSON.stringify(posted));
+// Реплика уходит ручкой разговора (/chats/<id>/say), а не ручкой цели: до
+// слияния экранов сюда же ехали сообщения целям, и живой сессии они доставались
+// через «Входящие».
+if (!posted.some((path) => path.includes("/chats/" + mine.id + "/say"))) {
+  fail("реплика живого разговора ушла не ручкой разговора: " + JSON.stringify(posted));
 }
 rows[0].title = "Цель: дашборд без дёрганья";
 sessions = [mine, alien];
@@ -2306,7 +2169,7 @@ for (const t of timers.splice(0)) t.fn();
 
 console.log("частичная перерисовка: доска, черновики и лента панели держат место и фокус, " +
   "панель разговора открывается хвостом адреса и закрывается крестиком назад, " +
-  "старые адреса ведут в неё же, ввод гаснет с названной причиной, " +
+  "старые адреса ведут в неё же, поле ввода живое, а работу продолжает своя кнопка, " +
   "экран задачи держит журнал витка, этап и стоп, " +
   "ответ на нажатие не двигает раскладку; " +
   "поиск: выдача своим экраном, набор одним запросом, поле держит курсор, " +
@@ -2314,6 +2177,6 @@ console.log("частичная перерисовка: доска, чернов
   "подписку по умолчанию, строка списка на свою, без выбора стрелки нет, " +
   "вид кнопки и списка по макету; кнопки действий: стоп красный, "
   + "подтверждение удаления полноразмерное своей строкой; " +
-  "экран черновика: три состояния груминга, уточнение новой ходкой, удаление с причиной; " +
+  "экран черновика: пометка идущего груминга, кнопка разбора и дорога в его чат; " +
   "перетаскивание: коридор со щелями на живом списке, долгое нажатие против " +
   "пролистывания, правка одной ценностью и откат с ожидаемой разбивкой");

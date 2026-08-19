@@ -5667,7 +5667,9 @@ async function renderDraft(project, works, id) {
         const go = el("button", "btn btn-sm", "Чат груминга");
         go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
         modes.append(go);
-      } else {
+      } else if (!running) {
+        // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
+        // «груминг идёт» звала запустить грумера поверх работающего.
         const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
         if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
         groom.addEventListener("click", () => {

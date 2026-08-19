@@ -90,6 +90,28 @@ function tag(node, name) {
   return null;
 }
 
+// Кнопка по подписи доступности: у значков шапки текста нет вовсе, и найти их
+// можно только так.
+function labelBtn(node, label) {
+  if (!node) return null;
+  if (node.tagName === "BUTTON" && node.attrs && node.attrs["aria-label"] === label) return node;
+  for (const kid of node.children || []) {
+    const hit = labelBtn(kid, label);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function byClass(node, cls) {
+  if (!node) return null;
+  if (String(node.className || "").split(" ").includes(cls)) return node;
+  for (const kid of node.children || []) {
+    const hit = byClass(kid, cls);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function button(node, label) {
   if (!node) return null;
   if (node.tagName === "BUTTON" && node.textContent === label) return node;
@@ -132,6 +154,19 @@ let sessionNote = "";
 // нет (решение 7).
 let free = [loose];
 let freeNote = "";
+// Реестр разговоров проекта (ручка /chats): панель берёт список отсюда целиком
+// и фильтрует его у себя, поэтому задачи у записи списком, а состояние словом.
+function chatOf(s, extra) {
+  return Object.assign({
+    id: s.id, title: s.first, mtime: s.mtime, tasks: s.task ? [s.task] : [],
+    state: s.live ? "live" : "dead", idle: true, tree: s.tree || "",
+    branch: s.branch || "", model: "opus", harness: s.harness || "",
+  }, extra || {});
+}
+let chatsNote = "";
+function chatRegistry() {
+  return [chatOf(mine), chatOf(older), chatOf(loose)];
+}
 const headExtra = { reply: "session", replyNote: "" };
 const board = { sections: [{ key: "in-progress", rows: [
   { id: "XR-1", title: "дашборд без дёрганья", sect: "in-progress" },
@@ -211,6 +246,10 @@ const sandbox = {
       const found = [mine, older, loose].find((s) => s.id === sid) || { id: sid };
       return reply({ session: sid, head: Object.assign({}, found, headExtra), items: [] });
     }
+    if (path.includes("/chats") && !(init && init.method === "POST")) {
+      return reply(chatsNote ? { chats: chatRegistry(), note: chatsNote }
+        : { chats: chatRegistry() });
+    }
     if (path.endsWith("/board")) return reply({ board, works: [] });
     return reply({});
   },
@@ -264,112 +303,69 @@ if (st.sid !== loose.id || st.task) {
   fail("разговор без задачи разобран с задачей: " + JSON.stringify(st));
 }
 
-// Ручка реплики: живой разговор пишет адресно своей ручкой, кончившийся с живой
-// задачей уходит ручкой задачи, цель остаётся на своей.
-const ways = [];
-st = await sandbox.chatState("demo", "XR-1", board, []);
-let way = sandbox.chatWay("demo", st);
-ways.push(way);
-if (!way.url.includes("/sessions/" + mine.id + "/message") || way.off) {
-  fail("живой разговор пишет не ручкой сессии: " + JSON.stringify(way));
+// Куда уйдёт реплика. Живой разговор пишет в саму сессию, кончившийся поднимает
+// резюм, а новый чат рождает сессию первой репликой. Отказов с погашенным вводом
+// тут больше нет: канал клиента достаёт любую живую сессию, а не нашедшему её
+// серверу есть что поднять, и «писать некому» осталось бы отказом без причины.
+st = await sandbox.chatState("demo", "XR-1", board);
+let way = sandbox.chatWay(st);
+if (way.kind !== "say" || way.off) {
+  fail("живой разговор пишет не в сессию: " + JSON.stringify(way));
 }
-headExtra.reply = "task";
-headExtra.replyNote = "сессию поднимал дашборд, а tmux-сессии task-XR-1 в списке уже нет: " +
-  "реплика уйдёт задаче XR-1, её возьмёт тот, кто её продолжит";
-st = await sandbox.chatState("demo", "XR-1", board, []);
-way = sandbox.chatWay("demo", st);
-if (!way.url.includes("/tasks/XR-1/message") || way.off) {
-  fail("кончившийся разговор с живой задачей не берёт ручку задачи: " + JSON.stringify(way));
+st = await sandbox.chatState("demo", older.id, board);
+way = sandbox.chatWay(st);
+if (way.kind !== "resume" || way.off) {
+  fail("кончившийся разговор не поднимает резюм: " + JSON.stringify(way));
 }
-if (!way.why.includes("её возьмёт тот, кто её продолжит")) {
-  fail("смена ручки не названа словами: " + way.why);
-}
-st = await sandbox.chatState("demo", "XR-7", board, []);
-way = sandbox.chatWay("demo", st);
-if (!way.goal || !way.url.includes("/goals/XR-7/message")) {
-  fail("реплика цели уходит не ручкой цели: " + JSON.stringify(way));
-}
-if (way.off) fail("панель отказывает цели вместо того, чтобы назвать её ручку");
-
-// Четыре названные причины: дерева сессии нет, разговор ведёт цель, задача
-// закрыта без живых сессий, разговор кончился без задачи за ним.
-headExtra.reply = "";
-headExtra.replyNote = "дерева сессии больше нет: разговор кончился, и продолжить его некому";
-st = await sandbox.chatState("demo", loose.id, board, []);
-way = sandbox.chatWay("demo", st);
-if (!way.off || way.cause !== OFF_TREE) {
-  fail("снесённое дерево сессии не гасит ввод названной причиной: " + JSON.stringify(way));
-}
-headExtra.replyNote = "задача XR-9 припаркована вопросом: разговор кончился, и продолжить его некому";
-st = await sandbox.chatState("demo", loose.id, board, []);
-way = sandbox.chatWay("demo", st);
-if (!way.off || way.cause !== OFF_OVER || !way.bind) {
-  fail("кончившийся разговор без задачи не даёт дороги привязкой: " + JSON.stringify(way));
-}
-headExtra.reply = "session";
-headExtra.replyNote = "";
-sessions = [];
-sessionNote = "сессий задачи XR-404 нет: просмотрены все 200 транскриптов проекта";
-st = await sandbox.chatState("demo", "XR-404", board, []);
-way = sandbox.chatWay("demo", st);
-if (!way.off || way.cause !== OFF_ARCHIVE) {
-  fail("закрытая задача без сессий не названа архивом: " + JSON.stringify(way));
+st = await sandbox.chatState("demo", "new:XR-1", board);
+way = sandbox.chatWay(st);
+if (way.kind !== "new" || !st.fresh || st.task !== "XR-1") {
+  fail("новый чат задачи разобран иначе: " + JSON.stringify([way, st.fresh, st.task]));
 }
 
-// Живая задача без единого разговора ввода не гасит: строка ляжет во вход
-// задачи и дождётся первого хода.
-st = await sandbox.chatState("demo", "XR-1", board, []);
-way = sandbox.chatWay("demo", st);
-if (way.off || !way.url.includes("/tasks/XR-1/message")) {
-  fail("задача без разговора гасит ввод, хотя реплику ей класть есть куда: " + JSON.stringify(way));
+// Список чатов фильтруется задачей адреса, и переключатель фильтра его
+// расширяет: два чата задачи против всех трёх разговоров проекта.
+st = await sandbox.chatState("demo", "XR-1", board);
+sandbox.chatFilterSet(true);
+if (sandbox.chatVisible(st).length !== 2) {
+  fail("фильтр по задаче пропустил чужие чаты: " +
+    JSON.stringify(sandbox.chatVisible(st).map((c) => c.id)));
 }
-// Слова сервера о пустоте видны в панели, а не проглочены молчанием.
-const emptyPanel = sandbox.chatPanel("demo", st);
-if (!dump(emptyPanel).includes("просмотрены все 200 транскриптов")) {
-  fail("пустой разговор молчит вместо слов сервера: " + dump(emptyPanel));
+sandbox.chatFilterSet(false);
+if (sandbox.chatVisible(st).length !== 3) {
+  fail("снятый фильтр не показал все чаты проекта: " +
+    JSON.stringify(sandbox.chatVisible(st).map((c) => c.id)));
 }
-sessions = [mine, older];
-sessionNote = "";
+sandbox.chatFilterSet(true);
 
-// Погашенный ввод: поле, кнопка отправки и слова причины стоят вместе.
-headExtra.reply = "";
-headExtra.replyNote = "дерева сессии больше нет: разговор кончился, и продолжить его некому";
-st = await sandbox.chatState("demo", loose.id, board, []);
-const offPanel = sandbox.chatPanel("demo", st);
-const offTa = tag(offPanel, "TEXTAREA");
-if (!offTa || !offTa.disabled) fail("погашенный разговор оставил поле ввода живым");
-if (offTa.placeholder !== "писать некому") {
-  fail("погашенное поле молчит о том, что писать некому: " + offTa.placeholder);
-}
-if (!button(offPanel, "Отправить").disabled) fail("кнопка отправки жива у погашенного ввода");
-if (!dump(offPanel).toLowerCase().includes("дерева сессии больше нет")) {
-  fail("причина гашения не названа словами: " + dump(offPanel));
-}
-headExtra.reply = "session";
-headExtra.replyNote = "";
-
-// Отправка живого разговора уходит ручкой сессии, а не цели.
-st = await sandbox.chatState("demo", "XR-1", board, []);
+// Отправка живого разговора уходит ручкой самого разговора, а не задачи и не
+// цели: до слияния экранов реплика цели ехала во «Входящие» файла цели.
+posted.length = 0;
 const panel = sandbox.chatPanel("demo", st);
 const ta = tag(panel, "TEXTAREA");
 if (!ta || ta.disabled) fail("живой разговор погасил поле ввода");
 ta.value = "посмотри тесты";
 button(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
 await settle();
-if (!posted.some((p) => p.includes("/sessions/" + mine.id + "/message"))) {
+if (!posted.some((path) => path.includes("/chats/" + mine.id + "/say"))) {
   fail("реплика ушла не ручкой разговора: " + JSON.stringify(posted));
 }
 
-// Шапка панели: заголовок со строки доски, подпись с разрядом привязки и
-// перепривязка рукой.
+// Шапка панели: название разговора, номер задачи лейблом при нём, состояние
+// подписью и крестик. Заголовок строки доски тут больше не при чём: шапка
+// называет разговор, а не задачу, их у одной задачи бывает несколько.
 const head = sandbox.chatHead("demo", st);
-if (!dump(head).includes("дашборд без дёрганья")) {
-  fail("шапка панели не названа заголовком задачи: " + dump(head));
+if (!dump(head).includes(mine.first)) {
+  fail("шапка панели не названа разговором: " + dump(head));
 }
-if (!dump(head).includes("ведёт XR-1")) {
-  fail("шапка панели не называет разряд привязки: " + dump(head));
+if (!dump(byClass(head, "cdtask")).includes("XR-1")) {
+  fail("номера задачи при названии разговора нет: " + dump(head));
 }
-if (!button(head, "Отвязать")) fail("у ведущего разговора нет отвязки в шапке: " + dump(head));
+if (!dump(head).includes("ждёт реплики")) {
+  fail("шапка не сказала состояние разговора словами: " + dump(head));
+}
+if (!labelBtn(head, "Закрыть панель")) fail("в шапке панели нет крестика: " + dump(head));
+if (!labelBtn(head, "Новый чат")) fail("в шапке панели нечем завести новый чат: " + dump(head));
 
 // Ширина панели помнится одним числом на весь дашборд и не выходит за пределы.
 if (sandbox.chatWidth() !== 420) fail("ширина по умолчанию не та: " + sandbox.chatWidth());
@@ -390,32 +386,46 @@ if (store.get("devkit.chat.width") !== "500") {
   fail("хват не запомнил ширину по правому краю окна: " + store.get("devkit.chat.width"));
 }
 
-// Список разговоров при панели (DK-436): время, подписка, состояние и разряд
-// привязки. Ошибка тут стоит того, что два разговора одной задачи в списке
-// неразличимы, а человек открывает не тот.
-sandbox.location.hash = "#demo/XR-1/chat/XR-1";
-st = await sandbox.chatState("demo", "XR-1", board, []);
-const listBox = sandbox.chatList("demo", st);
-const listText = dump(listBox);
-for (const want of ["Разговоры XR-1", "идёт", "ведёт XR-1", "кончился", "говорит о XR-1",
-  "втораяtest", "Выполни XR-1"]) {
-  if (!listText.includes(want)) fail("в списке разговоров нет " + want + ": " + listText);
-}
-// Открытый разговор отмечен в списке: без отметки не видно, который из двух
-// сейчас в ленте.
-const marked = [];
+// Выбор разговора: список падает из шапки, открытый в нём отмечен, поиск режет
+// его по названию, а переключение заменяет адрес, не копя историю. Ошибка тут
+// стоит того, что два разговора одной задачи неразличимы и человек открывает
+// не тот.
+sandbox.location.hash = "#demo/XR-1/chat/" + mine.id;
+st = await sandbox.chatState("demo", "XR-1", board);
+const anchor = makeNode("div");
+sandbox.chatDropOpen("demo", st, anchor);
+const drop = byClass(anchor, "cdrop");
+if (!drop) fail("список разговоров не открылся: " + dump(anchor));
+const rows = [];
 const walk = (node) => {
-  if ((node.className || "").includes("crow3")) marked.push(node);
+  if (String(node.className || "").split(" ").includes("cdrow")) rows.push(node);
   for (const kid of node.children || []) walk(kid);
 };
-walk(listBox);
-if (marked.length !== 2) fail("строк списка " + marked.length + ", ждал две");
-if (!marked[0].className.includes("on") || marked[1].className.includes("on")) {
-  fail("открытый разговор в списке не отмечен: " + marked.map((n) => n.className).join(" | "));
+walk(drop);
+if (rows.length !== 2) fail("строк списка " + rows.length + ", ждал две");
+if (!rows[0].className.includes("on") || rows[1].className.includes("on")) {
+  fail("открытый разговор в списке не отмечен: " + rows.map((n) => n.className).join(" | "));
 }
-// Переключение разговора остаётся на том же экране и не копит историю.
+const shown = dump(drop);
+for (const want of ["Выполни XR-1", "Верни XR-1 на доработку", "ждёт реплики", "процесса нет",
+  "XR-1", "opus"]) {
+  if (!shown.includes(want)) fail("в списке разговоров нет " + want + ": " + shown);
+}
+const search = tag(drop, "INPUT");
+if (!search) fail("в списке разговоров нет поиска: " + shown);
+search.value = "доработку";
+search.handlers.input({});
+const cut = [];
+const walkCut = (node) => {
+  if (String(node.className || "").split(" ").includes("cdrow")) cut.push(node);
+  for (const kid of node.children || []) walkCut(kid);
+};
+walkCut(drop);
+if (cut.length !== 1 || !dump(cut[0]).includes("Верни XR-1")) {
+  fail("поиск по списку разговоров не сузил его: " + dump(drop));
+}
 moves.length = 0;
-marked[1].handlers.click({ stopPropagation: () => {} });
+cut[0].handlers.click({ stopPropagation: () => {} });
 if (moves.length !== 1 || moves[0][0] !== "replace") {
   fail("переключение разговора ходит по истории не заменой: " + JSON.stringify(moves));
 }
@@ -423,59 +433,22 @@ if (!moves[0][1].includes("#demo/XR-1/chat/" + older.id)) {
   fail("переключение разговора сменило экран под панелью: " + moves[0][1]);
 }
 
-// Новый чат по задаче поднимается отсюда же и уходит своей ручкой: конвейер
-// поднимается ручкой runs, и путать их нельзя.
-posted.length = 0;
-sandbox.window.prompt = () => "почему ранг такой низкий";
-button(listBox, "Новый чат").handlers.click({ stopPropagation: () => {} });
-await settle();
-if (!posted.some((p) => p.endsWith("/projects/demo/chats"))) {
-  fail("новый чат ушёл не своей ручкой: " + JSON.stringify(posted));
+// Разговоров у проекта нет вовсе: слова сервера видны вместо пустой коробки.
+const wasNote = chatsNote;
+chatsNote = "разговоров в проекте demo нет: просмотрено 12 транскриптов";
+const emptyReg = chatRegistry;
+chatRegistry = () => [];
+st = await sandbox.chatState("demo", "XR-404", board);
+const emptyAnchor = makeNode("div");
+sandbox.chatDropOpen("demo", st, emptyAnchor);
+if (!dump(emptyAnchor).includes("просмотрено 12 транскриптов")) {
+  fail("пустой список разговоров молчит вместо слов сервера: " + dump(emptyAnchor));
 }
-sandbox.window.prompt = () => null;
+chatRegistry = emptyReg;
+chatsNote = wasNote;
 
-// У цели кнопки нового чата нет вовсе: разговор с целью идёт её ручкой, и
-// поднятая сессия читала бы чужой вход.
-const goalSt = await sandbox.chatState("demo", "XR-7", board, []);
-if (button(sandbox.chatList("demo", goalSt), "Новый чат")) {
-  fail("у цели предлагается поднять чат, хотя реплики уходят её ручкой");
-}
-
-// Общий чат доски: та же панель с пустой привязкой, список слева это разговоры
-// проекта без задачи, и своего экрана «Чаты» нет.
-sandbox.location.hash = "#demo";
-st = await sandbox.chatState("demo", "board", board, []);
-if (!st.free || st.task) fail("чат доски открылся с привязкой: " + JSON.stringify(st));
-if (st.sid !== loose.id) fail("чат доски открыл не свежий разговор без задачи: " + st.sid);
-const boardList = dump(sandbox.chatList("demo", st));
-if (!boardList.includes("Разговоры доски") || !boardList.includes("без задачи")) {
-  fail("список чата доски не назвал разговоры без задачи: " + boardList);
-}
-if (button(sandbox.chatList("demo", st), "Новый чат")) {
-  fail("дашборд предлагает поднять разговор без задачи, а заказать такой сессии нечего");
-}
-// Шапка чата доски говорит про сам разговор, а привязки не выдумывает: словом
-// «ведёт» тут называть нечего.
-const boardHead = dump(sandbox.chatHead("demo", st));
-if (!boardHead.includes(loose.first) || boardHead.includes("ведёт ")) {
-  fail("шапка чата доски приписала разговору задачу: " + boardHead);
-}
-// Разговоров без задачи нет вовсе: слова сервера видны вместо пустой коробки, а
-// панель называет себя сама.
-free = [];
-freeNote = "разговоров без задачи в проекте demo нет: просмотрено 12 транскриптов";
-st = await sandbox.chatState("demo", "board", board, []);
-if (!dump(sandbox.chatList("demo", st)).includes("просмотрено 12 транскриптов")) {
-  fail("пустой список разговоров доски молчит вместо слов сервера");
-}
-if (!dump(sandbox.chatHead("demo", st)).includes("разговоры доски")) {
-  fail("пустая панель доски осталась без имени: " + dump(sandbox.chatHead("demo", st)));
-}
-free = [loose];
-freeNote = "";
-
-console.log("список разговоров: время, подписка, состояние и разряд видны, переключение" +
-  " заменяет адрес, новый чат уходит ручкой chats, чат доски открывается пустой привязкой");
+console.log("список разговоров: состояние, модель и задачи видны, открытый отмечен, поиск" +
+  " режет список, переключение заменяет адрес, пустота названа словами сервера");
 console.log("панель разговора: адрес хвостом и старые ссылки живы, задачный адрес открывает" +
-  " свежий разговор, ручка реплики приходит с сервера, четыре причины гашения названы словами," +
+  " свежий разговор задачи, реплика уходит ручкой разговора, шапка называет разговор с задачей," +
   " ширина тянется хватом и помнится");

@@ -269,45 +269,48 @@ async function feedOf(items, sid) {
   if (!dump(spent).includes("Размышлял 9 с")) fail("длительность размышлений не названа");
   const quiet = sandbox.replyEl({ role: "thinking", text: "", spent: 0 });
   if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
-  // Ход инструмента виден сразу и стоит двумя строками, как в vscode: сверху
-  // имя с пояснением, снизу вывод. Раскрытия у него нет вовсе, а копирование
-  // осталось.
+  // Ход инструмента виден сразу и стоит двумя строками: сверху сама команда,
+  // снизу её вывод, в первой колонке обеих строк стрелка. Раскрытия нет,
+  // копирование стоит только при команде.
   const card = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la",
       about: "смотрю каталог" },
     { role: "toolout", text: "итого 42" });
   const said = dump(card);
-  if (!said.includes("Bash") || !said.includes("смотрю каталог") || !said.includes("итого 42")) {
+  if (!said.includes("Bash") || !said.includes("ls -la") || !said.includes("итого 42")) {
     fail("ход и вывод не встали одной записью: " + said);
   }
   if (said.includes("IN") || said.includes("OUT")) {
     fail("вход и выход снова подписаны словами: " + said);
   }
   if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
-  if (!deepBtn(card, "foldcp")) fail("кнопки копирования нет");
-  const head = byClass(card, "tline");
-  const nameEl = tag(head, "B");
-  if (!nameEl || nameEl.textContent !== "Bash") {
-    fail("имя инструмента стоит не жирным первым: " + dump(head));
-  }
-  // Пояснение хода это заголовок, а команда при нём остаётся подсказкой.
-  const lead = byClass(head, "tcmd");
-  if (!lead || lead.textContent !== "смотрю каталог") {
-    fail("пояснение хода не встало заголовком: " + dump(head));
-  }
-  if (lead.title !== "ls -la") fail("команда пропала при пояснении: " + lead.title);
+  const inLine = byClass(card, "tin");
   const outLine = byClass(card, "tout");
-  if (!outLine || !dump(outLine).includes("итого 42")) {
-    fail("вывода второй строкой нет: " + said);
+  if (!inLine || !outLine) fail("строк входа и выхода нет: " + said);
+  // Стрелки берутся значками и стоят первыми в своих строках.
+  for (const [line, name] of [[inLine, "команды"], [outLine, "вывода"]]) {
+    const ico = byClass(line, "tico");
+    if (!ico || line.children[0] !== ico) {
+      fail("у строки " + name + " нет стрелки первой колонкой: " + dump(line));
+    }
   }
-  // Пояснения нет: заголовком встаёт сама команда, вывод там же под ней.
+  // Заголовком строки стоит сама команда, а не пояснение хода: пояснение живёт
+  // подсказкой.
+  const lead = byClass(inLine, "tcmd");
+  if (!lead || lead.textContent !== "ls -la") {
+    fail("в строке команды стоит не команда: " + dump(inLine));
+  }
+  if (lead.title !== "смотрю каталог") {
+    fail("пояснение хода не осталось подсказкой: " + lead.title);
+  }
+  if (!dump(outLine).includes("итого 42")) fail("вывода второй строкой нет: " + said);
+  // Копирование одно и стоит при команде.
+  if (!deepBtn(inLine, "foldcp")) fail("кнопки копирования при команде нет: " + dump(inLine));
+  if (deepBtn(outLine, "foldcp")) fail("у вывода завелась своя кнопка копирования");
+  // Пустой вывод строкой не рисуется.
   const bare = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: go build ./...", note: "go build ./..." },
     { role: "toolout", text: "" });
-  const bareLead = byClass(byClass(bare, "tline"), "tcmd");
-  if (!bareLead || bareLead.textContent !== "go build ./...") {
-    fail("без пояснения заголовком встала не команда: " + dump(bare));
-  }
   if (byClass(bare, "tout")) fail("пустой вывод нарисован строкой: " + dump(bare));
   // Одиночный вызов (ответ уехал на другую страницу истории) рисуется так же.
   const lone = sandbox.chatItem({ role: "tool", tool: "Read", note: "docs/map.md" });

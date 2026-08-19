@@ -328,7 +328,7 @@ let keepResult = false;
 
 async function goKeepingResult(hash) {
   keepResult = true;
-  location.hash = hash;
+  goKeepingChat(hash);
   await refresh();
 }
 
@@ -1995,7 +1995,7 @@ async function renderTask(project, works, id) {
 
   const crumb = el("div", "crumb");
   const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { location.hash = project; });
+  back.addEventListener("click", () => { goKeepingChat(project); });
   crumb.append(back);
   page.append(crumb);
 
@@ -3760,6 +3760,28 @@ const CHAT_LAST_KEY = "devkit.chat.last";
 // дёргать хранилище на каждую букву, и стирается удачной отправкой.
 const CHAT_DRAFT_KEY = "devkit.chat.draft.";
 
+// Последний открытый чат задачи. Чатов у задачи бывает несколько, и открывать
+// каждый раз первый из списка значит терять тот, в котором человек только что
+// разговаривал (замечание 1 десятого круга POC). Ключ по задаче, а не общий:
+// у соседней задачи свой последний чат.
+const CHAT_TASK_KEY = "devkit.chat.task.";
+
+function chatTaskLast(task) {
+  try {
+    return localStorage.getItem(CHAT_TASK_KEY + task) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function chatTaskLastSet(task, sid) {
+  try {
+    if (task && sid) localStorage.setItem(CHAT_TASK_KEY + task, sid);
+  } catch (err) {
+    // приватный режим браузера: память живёт до перезагрузки
+  }
+}
+
 function chatDraftRead(addr) {
   try {
     return localStorage.getItem(CHAT_DRAFT_KEY + addr) || "";
@@ -3995,11 +4017,15 @@ async function chatState(project, addr, board) {
   st.chats = r.body.chats || [];
   st.note = r.body.note || "";
   if (r.body.models) st.models = r.body.models;
-  // Задача адреса это фильтр, а не разговор: открытый ею список показывает
-  // диалоги задачи, и первым встаёт свежий из них.
+  // Задача адреса это фильтр, а не сам чат: открытый ею список показывает чаты
+  // задачи. Открывается тот, в котором человек разговаривал последним, а если
+  // такого нет или он пропал из списка, то свежий.
   if (!st.sid && !st.fresh) {
     const list = chatVisible(st);
-    if (list.length) st.sid = list[0].id;
+    const want = st.task ? chatTaskLast(st.task) : "";
+    const kept = want && list.find((c) => c.id === want);
+    if (kept) st.sid = kept.id;
+    else if (list.length) st.sid = list[0].id;
   }
   st.entry = st.chats.find((c) => c.id === st.sid) || null;
   // Задача берётся у самого диалога, когда адрес её не назвал: по ней
@@ -4128,7 +4154,7 @@ function chatHead(project, st) {
     const lab = el("span", "cdtask", st.task);
     lab.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      location.hash = taskChatHash(project, st.task);
+      goKeepingChat(project + "/" + st.task);
     });
     pick.append(lab);
   }
@@ -4648,6 +4674,9 @@ async function paintChat(project, addr, board, works) {
   const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;
   chatShown = { project, sid: st.sid || "", task: st.task || "" };
+  // Открытый чат закрепляется за задачей: следующее открытие панели с её
+  // экрана вернёт этот же чат, а не первый из списка.
+  if (st.task && st.sid) chatTaskLastSet(st.task, st.sid);
   pin.replaceChildren(chatHead(project, st), chatPanel(project, st));
 }
 
@@ -4711,7 +4740,7 @@ function draftRow(project, d) {
   row.append(meta);
   row.addEventListener("click", (ev) => {
     if (ev.target === groom) return;
-    location.hash = project + "/draft/" + d.id;
+    goKeepingChat(project + "/draft/" + d.id);
   });
   groom.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -4737,7 +4766,7 @@ async function renderDrafts(project) {
     make: () => {
       const crumb = el("div", "crumb");
       const back = el("span", "crumb-back", "Доска " + project);
-      back.addEventListener("click", () => { location.hash = project; });
+      back.addEventListener("click", () => { goKeepingChat(project); });
       crumb.append(back);
       return crumb;
     },
@@ -4876,7 +4905,7 @@ function findGo(value) {
   // превратила бы «назад» в перемотку по буквам. Переход на экран выдачи
   // записью остаётся, с него «назад» и возвращает на доску.
   if (route().find) location.replace(hash);
-  else location.hash = hash;
+  else goKeepingChat(hash);
 }
 
 // Курсор в поле поиска по косой черте: руки на клавиатуре, и тянуться мышью к
@@ -4946,7 +4975,7 @@ function findRow(project, key, row, q) {
   // Черновик ведёт в накопитель, остальное на экран задачи: закрытая задача
   // открывается там же и называет свой архив словами.
   tr.addEventListener("click", () => {
-    location.hash = key === "drafts" ? project + "/drafts" : project + "/" + row.id;
+    goKeepingChat(key === "drafts" ? project + "/drafts" : project + "/" + row.id);
   });
   return tr;
 }
@@ -4997,7 +5026,7 @@ async function renderFind(project, q) {
     make: () => {
       const crumb = el("div", "crumb");
       const back = el("span", "crumb-back", "Доска " + project);
-      back.addEventListener("click", () => { location.hash = project; });
+      back.addEventListener("click", () => { goKeepingChat(project); });
       crumb.append(back);
       return crumb;
     },
@@ -5155,12 +5184,12 @@ function draftOutcomeCard(project, id, out, phase) {
   body.append(el("div", "hint", said.next));
   if (phase === "row") {
     const go = el("button", "btn btn-sm", "Открыть задачу " + id);
-    go.addEventListener("click", () => { location.hash = project + "/" + id; });
+    go.addEventListener("click", () => { goKeepingChat(project + "/" + id); });
     body.append(go);
   }
   if (phase === "attached" && out.task) {
     const go = el("button", "btn btn-sm", "Открыть " + out.task);
-    go.addEventListener("click", () => { location.hash = project + "/" + out.task; });
+    go.addEventListener("click", () => { goKeepingChat(project + "/" + out.task); });
     body.append(go);
   }
   card.append(body);
@@ -5317,7 +5346,7 @@ async function renderDraft(project, works, id) {
     make: () => {
       const crumb = el("div", "crumb");
       const back = el("span", "crumb-back", "Черновики " + project);
-      back.addEventListener("click", () => { location.hash = project + "/drafts"; });
+      back.addEventListener("click", () => { goKeepingChat(project + "/drafts"); });
       crumb.append(back);
       return crumb;
     },
@@ -5502,7 +5531,7 @@ function draftDone(project, done) {
     renderNew(project);
   });
   const board = el("button", "btn", "На доску");
-  board.addEventListener("click", () => { location.hash = project; });
+  board.addEventListener("click", () => { goKeepingChat(project); });
   btns.append(again, board);
   box.append(btns);
   card.append(box);
@@ -5516,7 +5545,7 @@ function renderNew(project) {
 
   const crumb = el("div", "crumb");
   const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { location.hash = project; });
+  back.addEventListener("click", () => { goKeepingChat(project); });
   crumb.append(back);
   groups.append(crumb);
 
@@ -5715,7 +5744,7 @@ function renderNew(project) {
       resetNewForm(project);
       // Заведённая строка открывается сразу: с телефона следующий шаг это
       // дописать постановку, а искать её глазами по Backlog неудобно.
-      if (done.id) location.hash = project + "/" + done.id;
+      if (done.id) goKeepingChat(project + "/" + done.id);
       else renderNew(project);
     }).catch(console.error);
   });
@@ -5798,7 +5827,7 @@ function feedItemEl(project, n) {
       acts.append(up);
     }
     const open = el("button", "btn", "Открыть " + n.id);
-    open.addEventListener("click", () => { location.hash = to + "/" + n.id; });
+    open.addEventListener("click", () => { goKeepingChat(to + "/" + n.id); });
     const jrn = el("a", "", "Чат агента");
     jrn.href = "#" + taskChatHash(to, n.id);
     acts.append(open, jrn);
@@ -6260,7 +6289,7 @@ function workAge(started, now) {
 
 function goButton(label, hash) {
   const btn = el("button", "btn btn-sm", label);
-  btn.addEventListener("click", () => { location.hash = hash; });
+  btn.addEventListener("click", () => { goKeepingChat(hash); });
   return btn;
 }
 
@@ -6652,8 +6681,10 @@ for (const id of ["nav-agents", "tab-agents"]) {
 for (const id of ["logo-side", "logo-top", "nav-home", "tab-home"]) {
   document.getElementById(id).addEventListener("click", () => {
     // Пустой хэш это главная. Пустая строка оставила бы в адресе прежний "#x",
-    // поэтому решётка ставится явно.
-    location.hash = "#";
+    // поэтому решётка ставится явно. Открытая панель переезжает вместе с
+    // переходом, как и на всех остальных дорогах.
+    const chat = route().chat;
+    location.hash = chat ? "#/chat/" + chat : "#";
   });
 }
 

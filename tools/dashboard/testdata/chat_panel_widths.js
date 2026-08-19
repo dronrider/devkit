@@ -11,6 +11,16 @@
 // (по ней видно, режет доску панель или лежит поверх).
 const want = new URLSearchParams(location.search).get("bar") || "none";
 
+// Список разговоров слева от ленты (DK-436): своя колонка панели, и мерится он
+// вместе с ней. Без него замер говорил бы о панели, которой на экране больше нет.
+const LIST = `
+  <div class="clhead">Разговоры DK-436</div>
+  <button class="btn btn-sm btn-acc">Новый чат</button>
+  <div class="clist-rows">
+    <div class="crow3 on"><b>19 авг, 10:02</b><div class="cchips"><span class="chip">идёт</span><span class="chip">ведёт DK-436</span></div><span class="cfirst">Поговорим про DK-436</span></div>
+    <div class="crow3"><b>18 авг, 22:40</b><div class="cchips"><span class="chip">кончился</span><span class="chip">говорит о DK-436</span></div></div>
+  </div>`;
+
 const PANEL = `
   <div class="chead">
     <div class="ct"><b>dashboard: панель разговора справа</b><span class="cts">19 авг, 10:02, devkit-dk-435</span></div>
@@ -33,6 +43,7 @@ const panel = document.getElementById("cpanel");
 if (want !== "hidden") {
   panel.hidden = false;
   document.getElementById("cpin").innerHTML = PANEL;
+  document.getElementById("clist").innerHTML = LIST;
 }
 if (want === "w320") document.documentElement.style.setProperty("--cw", "320px");
 if (want === "w640") document.documentElement.style.setProperty("--cw", "640px");
@@ -63,6 +74,11 @@ if (want !== "hidden") {
     "board-cut=" + (main.right <= rect.left + 1 ? "1" : "0"),
     "fixed=" + (getComputedStyle(panel).position === "fixed" ? "1" : "0"),
     "grab-w=" + Math.round(grab.width),
+    "list-w=" + Math.round(box(".clist").width),
+    // Список слева от ленты, а не поверх неё: на телефоне колонки сменяются
+    // строками, и там он стоит над лентой.
+    "list-left=" + Math.round(box(".clist").left),
+    "pin-left=" + Math.round(box(".cpin").left),
     // Поле ввода должно оставаться пригодным к набору на любой ширине: панель,
     // ужатая до полосы, читается как поломка.
     "input-w=" + Math.round(box(".cbox textarea").width),

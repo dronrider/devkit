@@ -78,25 +78,48 @@ func (s *server) transcriptRoots() []string {
 	return transcriptRoots(s.cfg.Home, s.harnesses().transcriptHomes())
 }
 
+// transcriptDir это каталог транскриптов вместе с корнем, из которого он
+// пришёл: по корню разговор называет свою подписку, и вывести его из пути
+// каталога задним числом нельзя, корни бывают вложенными.
+type transcriptDir struct {
+	path string
+	root string
+}
+
 // sessionDirs собирает каталоги транскриптов проекта: в каждом корне сам
 // каталог по пути с дефисами плюс те, чьё имя продолжает его дефисом, так в
 // список попадают боковые деревья задач (../<проект>-<id>) и копия окна (LLD).
-func sessionDirs(roots []string, projPath string) []string {
+func sessionDirs(roots []string, projPath string) []transcriptDir {
 	name := claudeDirName(projPath)
-	var dirs []string
+	var dirs []transcriptDir
 	for _, base := range roots {
-		dirs = append(dirs, filepath.Join(base, name))
+		dirs = append(dirs, transcriptDir{path: filepath.Join(base, name), root: base})
 		entries, err := os.ReadDir(base)
 		if err != nil {
 			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() && strings.HasPrefix(e.Name(), name+"-") {
-				dirs = append(dirs, filepath.Join(base, e.Name()))
+				dirs = append(dirs, transcriptDir{path: filepath.Join(base, e.Name()), root: base})
 			}
 		}
 	}
 	return dirs
+}
+
+// harnessRoots сводит корни журналов к именам подписок: транскрипт лежит под
+// хозяйством той подписки, чьим клиентом он написан, и список разговоров
+// называет её словом. Своё ~/.claude без подписки остаётся безымянным, и это
+// честнее выдуманного имени.
+func harnessRoots(view HarnessView) map[string]string {
+	out := map[string]string{}
+	for _, h := range view.Harnesses {
+		if h.Home == "" {
+			continue
+		}
+		out[filepath.Join(h.Home, "projects")] = h.Name
+	}
+	return out
 }
 
 // sessionInfo это строка списка сессий: id, время последней записи, ветка и
@@ -127,9 +150,19 @@ type sessionInfo struct {
 	// адресате стоит потерянной реплики.
 	Reply     string `json:"reply,omitempty"`
 	ReplyNote string `json:"replyNote,omitempty"`
+	// Harness называет подписку, чьим хозяйством написан транскрипт: у второй
+	// подписки свой каталог журналов (DK-362), и в списке разговоров задачи она
+	// обязана называть себя. Пусто у своего ~/.claude и у подписки, которую
+	// раскладка машины не назвала: выдумывать имя тут нечем.
+	Harness string `json:"harness,omitempty"`
+	// Live это свежесть транскрипта: разговор, писавший недавно, идёт прямо
+	// сейчас. Мера мягкая и годится только на слово состояния в списке;
+	// кончившийся разговор считает жёстко chatReply, и путать их нельзя.
+	Live      bool `json:"live,omitempty"`
 	path      string
 	suffix    string
 	stamp     string
+	root      string
 	mod       time.Time
 }
 
@@ -141,11 +174,11 @@ func sessionFiles(roots []string, projPath string) []sessionInfo {
 	var out []sessionInfo
 	base := claudeDirName(projPath)
 	for _, dir := range sessionDirs(roots, projPath) {
-		entries, err := os.ReadDir(dir)
+		entries, err := os.ReadDir(dir.path)
 		if err != nil {
 			continue
 		}
-		suffix := strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir), base), "-")
+		suffix := strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir.path), base), "-")
 		for _, e := range entries {
 			name, ok := strings.CutSuffix(e.Name(), ".jsonl")
 			if !ok || e.IsDir() {
@@ -157,8 +190,9 @@ func sessionFiles(roots []string, projPath string) []sessionInfo {
 			}
 			out = append(out, sessionInfo{
 				ID: name, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
-				path:   filepath.Join(dir, e.Name()),
+				path:   filepath.Join(dir.path, e.Name()),
 				suffix: suffix,
+				root:   dir.root,
 				stamp:  fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size()),
 				mod:    fi.ModTime(),
 			})
@@ -539,6 +573,16 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	want := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("task")))
+	// free=1 это список разговоров проекта без задачи: им живёт общий чат доски
+	// (LLD DK-430, решение 7), и своего экрана «Чаты» под него не заводится.
+	// Вместе с ?task= ключ не едет: там спрашивают разговоры одной задачи, тут
+	// ровно те, у которых её нет.
+	free := r.URL.Query().Get("free") == "1"
+	if free && want != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "free=1 и task= вместе не читаются: первый просит разговоры без задачи, второй разговоры одной задачи"})
+		return
+	}
 	if want != "" && !taskParamRe.MatchString(want) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("%q не похоже на ID задачи", want)})
@@ -579,11 +623,15 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		if want != "" && f.Task != want {
 			continue
 		}
+		if free && f.Task != "" {
+			continue
+		}
 		sessions = append(sessions, f)
 	}
 	if n := intParam(r, "n", 20, 100); len(sessions) > n {
 		sessions = sessions[:n]
 	}
+	s.fillChatState(found.Path, sessions)
 	resp := map[string]any{"project": found.Name, "sessions": sessions}
 	// Пустоты различимы: транскриптов нет вовсе это слова с адресом, где они
 	// искались, а «сессий этой задачи нет» это счёт по чужим и нераспознанным.
@@ -598,12 +646,39 @@ func (s *server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		resp["note"] = fmt.Sprintf(
 			"обход прерван по времени: просмотрено %d транскриптов из %d, разговор задачи %s мог остаться дальше",
 			scanned, len(files), want)
+	case len(sessions) == 0 && free:
+		resp["note"] = fmt.Sprintf(
+			"разговоров без задачи в проекте %s нет: просмотрено %d транскриптов, у каждого нашлась своя задача",
+			found.Name, scanned)
 	case len(sessions) == 0 && want != "":
 		resp["note"] = fmt.Sprintf(
 			"сессий задачи %s нет: просмотрены все %d транскриптов проекта, %d о других задачах, %d без распознанной задачи",
 			want, scanned, others, unknown)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// fillChatState дописывает списку то, чем разговоры различает список панели:
+// подписку, свежесть транскрипта и ручку реплики с причиной. Считается это на
+// отобранной странице, а не на всех транскриптах проекта: доска и список
+// tmux-сессий спрашиваются по разу на заход, а вот stat дерева идёт на каждую
+// строку, и платить им за сессии, которых человек не увидит, незачем.
+func (s *server) fillChatState(projPath string, list []sessionInfo) {
+	if len(list) == 0 {
+		return
+	}
+	var rows map[string]boardRow
+	if raw, err := s.projectBoard(projPath); err == nil {
+		rows, _ = parseBoardRows(raw)
+	}
+	names := harnessRoots(s.harnesses())
+	alive := tmuxAliveFn()
+	cutoff := s.now().Add(-sessionLiveTTL)
+	for i := range list {
+		list[i].Harness = names[list[i].root]
+		list[i].Live = list[i].mod.After(cutoff)
+		list[i].Reply, list[i].ReplyNote = s.chatReply(projPath, list[i], rows, alive)
+	}
 }
 
 var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,80}$`)
@@ -615,7 +690,7 @@ var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,80}$`)
 func findSession(roots []string, projPath, sid string) (sessionInfo, bool) {
 	base := claudeDirName(projPath)
 	for _, dir := range sessionDirs(roots, projPath) {
-		p := filepath.Join(dir, sid+".jsonl")
+		p := filepath.Join(dir.path, sid+".jsonl")
 		fi, err := os.Stat(p)
 		if err != nil || fi.IsDir() {
 			continue
@@ -623,7 +698,8 @@ func findSession(roots []string, projPath, sid string) (sessionInfo, bool) {
 		return sessionInfo{
 			ID: sid, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
 			path:   p,
-			suffix: strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir), base), "-"),
+			root:   dir.root,
+			suffix: strings.TrimPrefix(strings.TrimPrefix(filepath.Base(dir.path), base), "-"),
 			stamp:  fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size()),
 			mod:    fi.ModTime(),
 		}, true
@@ -687,7 +763,9 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if raw, err := s.projectBoard(found.Path); err == nil {
 		rows, _ = parseBoardRows(raw)
 	}
-	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows)
+	info.Harness = harnessRoots(s.harnesses())[info.root]
+	info.Live = info.mod.After(s.now().Add(-sessionLiveTTL))
+	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows, tmuxAliveFn())
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote

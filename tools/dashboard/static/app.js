@@ -3243,11 +3243,30 @@ function boardChatHash(project, addr) {
   return project + "/chat/" + addr;
 }
 
+// Адрес общего чата доски: привязки у него нет вовсе, и слово это не ID ни
+// задачи, ни сессии (решение 7 LLD DK-430). Панель по нему открывает свежий
+// разговор проекта без задачи, а список слева показывает остальные такие же.
+const CHAT_BOARD = "board";
+
+function chatIsBoard(addr) {
+  return addr === CHAT_BOARD;
+}
+
 function openChat(addr) {
   const to = "#" + chatBase() + "/chat/" + addr;
   if (location.hash === to) return;
   history.pushState({ chat: addr }, "", to);
   chatDepth += 1;
+  refresh().catch(console.error);
+}
+
+// Переключение разговора списком: адрес заменяется, а не толкается в историю.
+// Пять просмотренных разговоров иначе стоили бы пяти нажатий «назад» до доски,
+// а экран под панелью от переключения не меняется вовсе.
+function switchChat(addr) {
+  const to = "#" + chatBase() + "/chat/" + addr;
+  if (location.hash === to) return;
+  history.replaceState({ chat: addr }, "", to);
   refresh().catch(console.error);
 }
 
@@ -3339,24 +3358,38 @@ function chatWay(project, st) {
   };
 }
 
+// Список разговоров панели: сам заход к ручке сессий с готовым хвостом
+// запроса. Собран отдельной функцией, потому что заходов три: разговоры задачи
+// по задачному адресу, они же по адресу сессии и разговоры проекта без задачи у
+// общего чата доски. Слова сервера про пустоту едут вместе со списком: пустая
+// коробка неотличима от оборвавшегося запроса.
+async function chatSessions(project, st, tail, whenBad) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/sessions" + tail);
+  if (!r.ok) {
+    if (!st.error) st.error = r.body.error || whenBad;
+    return;
+  }
+  st.sessions = r.body.sessions || [];
+  st.note = r.body.note || "";
+  if (!st.sid && st.sessions.length) st.sid = st.sessions[0].id;
+}
+
 // Что известно о разговоре по его адресу: сессия, задача, шапка с ручкой
 // ответа и строка доски. Задачный адрес разворачивается в последний разговор
 // задачи, а сессия узнаётся своей ручкой: поля reply и replyNote приходят
 // только у неё.
 async function chatState(project, addr, board, works) {
   const st = { addr, sid: "", task: "", head: null, sessions: [], note: "",
-    isGoal: false, onBoard: false, work: null };
-  if (chatIsTask(addr)) {
+    isGoal: false, onBoard: false, work: null, free: false };
+  if (chatIsBoard(addr)) {
+    // Общий чат доски: привязки нет, и список слева это разговоры проекта без
+    // задачи. Свежий из них и открывается лентой, а нет ни одного, значит
+    // панель стоит с честными словами сервера про пустоту.
+    st.free = true;
+    await chatSessions(project, st, "?free=1", "разговоры доски не прочитались");
+  } else if (chatIsTask(addr)) {
     st.task = addr;
-    const r = await api("/api/projects/" + encodeURIComponent(project) +
-      "/sessions?task=" + encodeURIComponent(addr));
-    if (r.ok) {
-      st.sessions = r.body.sessions || [];
-      st.note = r.body.note || "";
-      if (st.sessions.length) st.sid = st.sessions[0].id;
-    } else {
-      st.error = r.body.error || "сессии не прочитались";
-    }
+    await chatSessions(project, st, "?task=" + encodeURIComponent(addr), "сессии не прочитались");
   } else {
     st.sid = addr;
   }
@@ -3368,6 +3401,11 @@ async function chatState(project, addr, board, works) {
     } else if (!st.error) {
       st.error = r.body.error || "разговор не прочитался";
     }
+  }
+  // Разговор, открытый по id сессии, тоже стоит в списке своих соседей: задача
+  // у него узнаётся шапкой, и список её разговоров едет вторым заходом.
+  if (st.task && !st.sessions.length) {
+    await chatSessions(project, st, "?task=" + encodeURIComponent(st.task), "сессии не прочитались");
   }
   if (st.task) {
     const row = boardRow(board, st.task);
@@ -3398,7 +3436,8 @@ function chatHead(project, st) {
   shut.append(icon("close"));
   shut.addEventListener("click", () => { closeChat(); });
   const box = el("div", "ct");
-  const name = st.title || (st.head && st.head.first) || st.task || st.addr;
+  const name = st.title || (st.head && st.head.first) || st.task ||
+    (st.free ? "разговоры доски" : st.addr);
   box.append(el("b", "", name));
   const sub = el("span", "cts", st.head ? sessionTab(st.head) : "разговора ещё нет");
   box.append(sub);
@@ -3430,6 +3469,90 @@ function chatHead(project, st) {
   }
   head.append(row);
   return head;
+}
+
+// Состояние разговора словом. Кончившийся мерит сервер, и мера у него жёсткая:
+// ручка реплики ушла с сессии, потому что дерева нет, задача припаркована или
+// tmux-сессия дашборда снята (решение 2). «Идёт» против «молчит» это свежесть
+// транскрипта, мера мягкая, и на неё в списке хватает: разговор, молчащий час,
+// открывается тем же нажатием, что и живой.
+function chatStateWord(s) {
+  if (s.reply !== "session") return "кончился";
+  return s.live ? "идёт" : "молчит";
+}
+
+// Разряд привязки словами, теми же, что стоят на карточке сессии: «ведёт» это
+// запись реестра, «говорит о» угадывание по транскрипту (DK-431). Разговор без
+// задачи называет себя так же честно: он и есть чат доски.
+function chatBoundWord(s) {
+  if (!s.task) return "без задачи";
+  return (s.bound === "about" ? "говорит о " : "ведёт ") + s.task;
+}
+
+// Строка списка разговоров: время последней записи, подписка, состояние и
+// разряд привязки. Первая реплика идёт подписью: у двух разговоров одной задачи
+// совпадает всё, кроме неё и времени.
+function chatListRow(project, s, current) {
+  const row = el("div", "crow3" + (s.id === current ? " on" : ""));
+  const when = s.mtime ? localDay(s.mtime) + ", " + localTime(s.mtime) : s.id.slice(0, 8);
+  row.append(el("b", "", when));
+  const chips = el("div", "cchips");
+  chips.append(el("span", "chip", chatStateWord(s)));
+  chips.append(el("span", "chip", chatBoundWord(s)));
+  // Подписка стоит чипом только тогда, когда её назвала раскладка машины: своё
+  // хозяйство имени не имеет, и выдумывать его нечем.
+  if (s.harness) chips.append(el("span", "chip", s.harness));
+  row.append(chips);
+  if (s.first) row.append(el("span", "cfirst", s.first));
+  if (s.tree || s.branch) row.append(el("span", "cwhere", s.tree || s.branch));
+  row.addEventListener("click", () => { switchChat(s.id); });
+  return row;
+}
+
+// Список разговоров при панели (LLD DK-430, решения 1 и 7). Своего экрана
+// «Чаты» тут нет нарочно: он был бы третьим местом с лентой. У задачи список
+// показывает её разговоры, у общего чата доски разговоры проекта без задачи, и
+// нажатие меняет разговор, не уводя с экрана под панелью. Отсюда же поднимается
+// новый чат по задаче: имя ему даёт сервер, chat-<ID>-<n>, и живому конвейеру
+// он не мешает.
+function chatList(project, st) {
+  const box = el("div", "clbox");
+  box.append(el("div", "clhead", st.free ? "Разговоры доски" : "Разговоры " + (st.task || "проекта")));
+  if (st.task && !st.isGoal && !st.free) {
+    const add = el("button", "btn btn-sm btn-acc", "Новый чат");
+    withTip(add, "Поднимет разговор про " + st.task + " своей сессией chat-" + st.task +
+      "-N: конвейеру задачи он не мешает, работу по ней не ведёт.");
+    add.addEventListener("click", () => {
+      const ask = window.prompt("О чём спросить в новом разговоре про " + st.task +
+        "? Можно оставить пустым:", "");
+      if (ask === null) return;
+      add.disabled = true;
+      startChat(project, st.task, ask.trim())
+        .catch(console.error)
+        .finally(() => { add.disabled = false; });
+    });
+    box.append(add);
+  }
+  const list = el("div", "clist-rows");
+  for (const s of st.sessions || []) list.append(chatListRow(project, s, st.sid));
+  if (!(st.sessions || []).length) {
+    // Пустой список называет причину словами сервера: у задачи это «сессий нет,
+    // просмотрено столько-то транскриптов», у доски «разговоров без задачи нет».
+    list.append(el("div", "hint", st.note || "разговоров тут пока нет"));
+  }
+  box.append(list);
+  return box;
+}
+
+// Подъём нового чата по задаче. Ответ виден словами: имя tmux-сессии и то, что
+// в списке разговор встанет первым своим ходом, потому что ID сессии рождается
+// позже команды.
+async function startChat(project, id, ask) {
+  sayResult("подъём разговора про " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/chats",
+    { method: "POST", body: ask ? { id, ask } : { id } });
+  sayResult(r.body.message || r.body.error || "", !r.ok);
+  if (r.ok) await repaintChat();
 }
 
 // Врезка вопроса: задача ждёт человека, и ответ отсюда уходит ручкой задачи,
@@ -3580,9 +3703,19 @@ let chatOpen = "";
 // живой работой, всё остальное собрано один раз на разговор.
 let chatFill = null;
 
+// Пересборка панели после действия, которое меняет сам список разговоров:
+// ключ открытого разговора сбрасывается, и ближайшая перерисовка собирает
+// панель заново вместе со списком. Дешевле было бы дорисовать один список, но
+// тогда список и лента расходились бы в том, какой разговор открыт.
+function repaintChat() {
+  chatOpen = "";
+  return refresh();
+}
+
 async function paintChat(project, addr, board, works) {
   const panel = document.getElementById("cpanel");
   const pin = document.getElementById("cpin");
+  const side = document.getElementById("clist");
   if (!panel || !pin) return;
   const key = project + "|" + (addr || "");
   if (!addr || !project) {
@@ -3590,6 +3723,7 @@ async function paintChat(project, addr, board, works) {
       closeChatLive();
       chatOpen = "";
       pin.replaceChildren();
+      if (side) side.replaceChildren();
     }
     panel.hidden = true;
     return;
@@ -3605,11 +3739,13 @@ async function paintChat(project, addr, board, works) {
   chatOpen = key;
   const gen = chatGen;
   pin.replaceChildren(el("div", "empty", "разговор открывается..."));
+  if (side) side.replaceChildren(el("div", "hint", "список разговоров читается..."));
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows, works);
   // Панель закрыли или сменили разговор, пока шли ответы: своей коробки у этого
   // разбора больше нет.
   if (gen !== chatGen) return;
+  if (side) side.replaceChildren(chatList(project, st));
   pin.replaceChildren(chatHead(project, st), chatPanel(project, st));
 }
 
@@ -5542,6 +5678,20 @@ function markNav(rt) {
     }
   }
 }
+
+// Вход в общий чат доски стоит в шапке рядом с лентой: разговор без задачи
+// открывается той же панелью с пустой привязкой, своего экрана у него нет
+// (LLD DK-430, решение 7).
+document.getElementById("chats").addEventListener("click", () => {
+  // С экрана проекта панель встаёт поверх него и «назад» закрывает её; с
+  // главной экрана под панелью нет вовсе, и адрес собирается от показанного
+  // проекта, как это делают разделы шапки.
+  if (route().proj) {
+    openChat(CHAT_BOARD);
+    return;
+  }
+  if (shownProject) location.hash = shownProject + "/chat/" + CHAT_BOARD;
+});
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
   ["bell", "/feed"], ["find-btn", "/find/"]]) {

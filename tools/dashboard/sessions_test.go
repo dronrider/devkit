@@ -87,14 +87,102 @@ func TestSessionsList(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
 		t.Fatal(err)
 	}
+	// Ручка реплики и свежесть едут в списке вместе с привязкой: по ним список
+	// разговоров панели говорит состояние словом (DK-436). Дерева dk-5 рядом с
+	// проектом нет, и разговор из него честно назван кончившимся.
 	want := []sessionInfo{
 		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", Tree: "dk-5",
-			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи", Bound: boundLead},
+			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи", Bound: boundLead,
+			ReplyNote: "дерева сессии больше нет: разговор кончился, и продолжить его некому"},
 		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу",
-			Task: "XR-005", TaskNote: "по первой реплике", Bound: boundAbout},
+			Task: "XR-005", TaskNote: "по первой реплике", Bound: boundAbout, Reply: replyToSession},
 	}
 	if !reflect.DeepEqual(got.Sessions, want) {
 		t.Errorf("список сессий:\n%+v\nожидал:\n%+v", got.Sessions, want)
+	}
+}
+
+// Список разговоров проекта без задачи (?free=1): им живёт общий чат доски, и
+// разговор с узнанной задачей туда не идёт. Пустота названа словами, как и у
+// списка задачи, а вместе с ?task= ключ отбивается: спрашивают они разное.
+func TestSessionsFreeOnly(t *testing.T) {
+	e := newTestEnv(t)
+	base := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"), base)
+	writeSession(t, e.home, e.proj, "", "bbb-2",
+		sessionLine("почини роутер, доступы в local-docs", "main"), base.Add(time.Hour))
+	c := e.loggedClient(t)
+
+	_, list, _ := getSessions(t, e, c, "?free=1")
+	if len(list) != 1 || list[0].ID != "bbb-2" {
+		t.Fatalf("разговоры доски: %+v", list)
+	}
+	if list[0].Task != "" || list[0].Bound != "" {
+		t.Errorf("в разговоры доски попала сессия с задачей: %+v", list[0])
+	}
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions?free=1&task=XR-101", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "вместе не читаются") {
+		t.Errorf("free и task вместе не отбиты: %d %s", resp.StatusCode, text)
+	}
+}
+
+// Пустой список разговоров доски называет причину: у всех транскриптов проекта
+// нашлась своя задача, и это не то же самое, что «транскриптов нет».
+func TestSessionsFreeNoneNamed(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"),
+		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?free=1")
+	if len(list) != 0 {
+		t.Fatalf("разговоры доски: %+v", list)
+	}
+	if !strings.Contains(note, "разговоров без задачи") {
+		t.Errorf("пустой список разговоров доски молчит о причине: %q", note)
+	}
+}
+
+// Список разговоров задачи говорит то, чем список панели их различает:
+// свежесть транскрипта, подписку и ручку реплики. Без подписки два разговора
+// одной задачи на разных подписках отличались бы только временем, а без
+// свежести идущий разговор был бы неотличим от вчерашнего.
+func TestSessionsListStateFields(t *testing.T) {
+	e := newTestEnv(t)
+	home := filepath.Join(e.home, ".devkit", "claude-second")
+	writeAgentctlFake(t, e.bin, fmt.Sprintf(harnessJSONHomeFixture, home))
+	writeSessionAt(t, filepath.Join(home, "projects"), e.proj, "", "hls-1",
+		headlessLine("Выполни XR-101", "main"), time.Now())
+	writeSession(t, e.home, e.proj, "", "old-1",
+		sessionLine("возьми задачу XR-101 в работу", "main"),
+		time.Now().Add(-2*time.Hour))
+	c := e.loggedClient(t)
+
+	_, list, note := getSessions(t, e, c, "?task=XR-101")
+	if len(list) != 2 {
+		t.Fatalf("сессии задачи XR-101: %+v, приписка: %s", list, note)
+	}
+	fresh, stale := list[0], list[1]
+	if fresh.ID != "hls-1" || stale.ID != "old-1" {
+		t.Fatalf("порядок списка не свежими сверху: %+v", list)
+	}
+	if fresh.Harness != "втораяtest" {
+		t.Errorf("разговор второй подписки не называет её: %+v", fresh)
+	}
+	if stale.Harness != "" {
+		t.Errorf("разговору своего хозяйства приписана подписка: %+v", stale)
+	}
+	if !fresh.Live || stale.Live {
+		t.Errorf("свежесть транскриптов перепутана: свежий %v, двухчасовой %v", fresh.Live, stale.Live)
+	}
+	for _, s := range list {
+		if s.Reply != replyToSession {
+			t.Errorf("живому разговору %s не названа ручка реплики: %+v", s.ID, s)
+		}
 	}
 }
 
@@ -161,7 +249,7 @@ func TestSessionsByTaskOnlyOwn(t *testing.T) {
 	text, list, _ := getSessions(t, e, c, "?task=XR-101")
 	want := []sessionInfo{{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main",
 		First: "возьми задачу XR-101 в работу и доведи её конвейером",
-		Task:  "XR-101", TaskNote: "по первой реплике", Bound: boundAbout}}
+		Task:  "XR-101", TaskNote: "по первой реплике", Bound: boundAbout, Reply: replyToSession}}
 	if !reflect.DeepEqual(list, want) {
 		t.Errorf("сессии задачи XR-101:\n%+v\nожидал:\n%+v", list, want)
 	}
@@ -414,8 +502,13 @@ func TestChatPanelAddressAndWay(t *testing.T) {
 // правил, что спор hidden с display (DK-284).
 func TestStaticChatPanelWidths(t *testing.T) {
 	css := readFile(t, filepath.Join("static", "style.css"))
-	if !strings.Contains(css, ".cpanel{position:relative;flex:none;width:var(--cw,420px)") {
+	if !strings.Contains(css, ".cpanel{position:relative;flex:none;width:calc(var(--cw,420px) + var(--clw))") {
 		t.Error("панель не берёт ширину переменной --cw: хват не сдвинет её, а доска рядом не сожмётся")
+	}
+	// Список разговоров стоит колонкой слева и ленте ширины не отъедает: он
+	// прибавляется к запомненной ширине, а не делит её (DK-436).
+	if !strings.Contains(css, ".clist{flex:none;width:var(--clw)") {
+		t.Error("список разговоров не стоит своей колонкой: он поделит ширину с лентой")
 	}
 	over := funcBody(t, css, "@media (max-width:1100px){")
 	if !strings.Contains(over, ".cpanel{position:fixed") {
@@ -424,6 +517,9 @@ func TestStaticChatPanelWidths(t *testing.T) {
 	narrow := funcBody(t, css, "@media (max-width:900px){")
 	if !strings.Contains(narrow, ".cpanel{width:auto") || !strings.Contains(narrow, ".cgrab{display:none}") {
 		t.Error("на узком экране панель не занимает его целиком: чат рядом с доской там нечитаем")
+	}
+	if !strings.Contains(narrow, ".clist{width:auto") {
+		t.Error("на узком экране список разговоров остался колонкой: ленте там не остаётся ширины")
 	}
 	// Полосы tmux нет ни в разметке, ни в стилях: снимок она брала только у
 	// сессий дашборда и у работы из чужого окна всегда пустовала (DK-435).
@@ -467,8 +563,11 @@ func TestSessionsScanBudgetNamed(t *testing.T) {
 // сессии: держится грепом по статике, как слова про паузу в тесте стопа.
 func TestStaticSessionsAskedByTask(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(funcBody(t, text, "async function chatState("), `"/sessions?task="`) {
+	if !strings.Contains(funcBody(t, text, "async function chatState("), `"?task=" + encodeURIComponent(`) {
 		t.Error("панель берёт разговор не по ?task=: под заголовком задачи пойдёт чужая сессия")
+	}
+	if !strings.Contains(funcBody(t, text, "async function chatSessions("), `"/sessions" + tail`) {
+		t.Error("список разговоров панели идёт мимо ручки сессий: брать его больше неоткуда")
 	}
 	if !strings.Contains(text, "function sessionSign") {
 		t.Error("в static/app.js нет подписи сессии: нераспознанная работа пропадёт молча")
@@ -536,7 +635,7 @@ func TestSessionHeadNamesTask(t *testing.T) {
 	one := head("aaa-1")
 	want := sessionInfo{ID: "aaa-1", Mtime: one.Mtime, Branch: "main", Tree: "xr-5",
 		First: "возьми задачу XR-005 в работу", Task: "XR-5", TaskNote: "по дереву задачи",
-		Bound: boundLead, Reply: replyToSession}
+		Bound: boundLead, Reply: replyToSession, Live: true}
 	if !reflect.DeepEqual(one, want) {
 		t.Errorf("шапка узнанной сессии:\n%+v\nожидал:\n%+v", one, want)
 	}
@@ -1168,7 +1267,7 @@ func TestStaticChatPanelMeasured(t *testing.T) {
 	// перестали собирать этими узлами.
 	page := readFile(t, filepath.Join("static", "index.html"))
 	for _, want := range []string{`<aside class="cpanel" id="cpanel" hidden`,
-		`id="cgrab"`, `id="cpin"`} {
+		`id="cgrab"`, `id="cpin"`, `id="clist"`} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("панели нет в разметке страницы (нет %q): замер говорил бы о своей вёрстке", want)
 		}
@@ -1186,24 +1285,36 @@ func TestStaticChatPanelMeasured(t *testing.T) {
 	// приходит переменной, той же, какую двигает хват.
 	narrow := chromeMeasure(t, chrome, dir, stand, "1400,900", "w320")
 	wide := chromeMeasure(t, chrome, dir, stand, "1400,900", "w640")
-	if narrow["panel-w"] != 320 || wide["panel-w"] != 640 {
-		t.Fatalf("панель не берёт ширину переменной --cw: %d и %d при 320 и 640",
-			narrow["panel-w"], wide["panel-w"])
+	// Запомненная ширина это ширина ленты: список разговоров стоит колонкой
+	// слева и прибавляется к ней, а не делит её (DK-436). Делил бы, и панель на
+	// 320 точках оставила бы чтению полосу.
+	list := narrow["list-w"]
+	if list < 140 {
+		t.Fatalf("список разговоров ужался до %d точек: читать его там нечем", list)
+	}
+	if narrow["panel-w"] != 320+list || wide["panel-w"] != 640+list {
+		t.Fatalf("панель не берёт ширину переменной --cw: %d и %d при 320 и 640 плюс список %d",
+			narrow["panel-w"], wide["panel-w"], list)
+	}
+	for _, vals := range []map[string]int{narrow, wide} {
+		if vals["list-left"] >= vals["pin-left"] {
+			t.Errorf("список разговоров стоит не слева от ленты: %v", vals)
+		}
 	}
 	for _, vals := range []map[string]int{narrow, wide} {
 		if vals["board-cut"] != 1 || vals["fixed"] != 0 {
 			t.Errorf("на 1400 точках панель легла поверх доски вместо колонки экрана: %v", vals)
 		}
 	}
-	// Доска сжимается ровно на прибавку панели: иначе она уезжает под панель
+	// Доска сжимается ровно на прибавку ленты: иначе она уезжает под панель
 	// либо оставляет полосу пустоты.
 	if got := narrow["main-w"] - wide["main-w"]; got != 320 {
 		t.Errorf("доска сжалась на %d точек при прибавке панели в 320: %v / %v",
 			got, narrow, wide)
 	}
-	if def := chromeMeasure(t, chrome, dir, stand, "1400,900", "none"); def["panel-w"] != 420 {
-		t.Errorf("панель без запомненной ширины встала на %d точек, ожидал умолчание стилей 420",
-			def["panel-w"])
+	if def := chromeMeasure(t, chrome, dir, stand, "1400,900", "none"); def["panel-w"] != 420+list {
+		t.Errorf("панель без запомненной ширины встала на %d точек, ожидал умолчание стилей 420 плюс список %d",
+			def["panel-w"], list)
 	}
 
 	// Ниже 1100 точек места на две колонки нет: панель ложится поверх доски, а
@@ -1217,7 +1328,7 @@ func TestStaticChatPanelMeasured(t *testing.T) {
 		t.Errorf("панель поверх доски всё равно сжала её: %d против %d без панели",
 			over["main-w"], bare["main-w"])
 	}
-	if over["panel-w"] != 320 {
+	if over["panel-w"] != 320+list {
 		t.Errorf("панель поверх доски потеряла запомненную ширину: %d", over["panel-w"])
 	}
 	// Рубеж проверяется с обеих сторон: на 1120 точках панель ещё колонка.
@@ -1233,6 +1344,11 @@ func TestStaticChatPanelMeasured(t *testing.T) {
 	}
 	if phone["grab-w"] != 0 {
 		t.Errorf("на телефоне остался хват ширины шириной %d точек", phone["grab-w"])
+	}
+	// На телефоне колонки не помещаются рядом: список ложится полосой над
+	// лентой, отдавая ей всю ширину экрана.
+	if phone["list-w"] != phone["screen"] || phone["list-left"] != phone["pin-left"] {
+		t.Errorf("на 390 точках список разговоров остался колонкой: %v", phone)
 	}
 	// Панель на любой ширине остаётся пригодной для чтения и набора: поле ввода
 	// и лента занимают её, а не полосу в углу.

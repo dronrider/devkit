@@ -1471,6 +1471,69 @@ func (s *smoke) stepHarnessRun() (string, error) {
 		v.Message, smokeClientTwo, sess.Sessions[0].ID, refusal.Error), nil
 }
 
+// stepChatStart: новый чат по задаче поднимается поверх живого конвейера той же
+// задачи и получает своё имя chat-<ID>-<n> (DK-436). Шаг идёт после запуска
+// задачи нарочно: tmux-сессия task-<ID> к этому времени жива, и по ответу
+// видно, что отказ «работа уже идёт» разговор не задевает, а второй конвейер
+// им по-прежнему отбивается. Занятость задачи от чата не меняется: строка
+// доски остаётся с прежним признаком работы.
+func (s *smoke) stepChatStart() (string, error) {
+	var first, second struct {
+		Session string `json:"session"`
+		Message string `json:"message"`
+	}
+	ask := fmt.Sprintf(`{"id": %q}`, smokeTask)
+	if err := s.call("POST", "/api/projects/demo/chats", ask, http.StatusOK, &first); err != nil {
+		return "", err
+	}
+	if first.Session != "chat-"+smokeTask+"-1" {
+		return "", fmt.Errorf("первый чат задачи поднят сессией %q, ждал chat-%s-1", first.Session, smokeTask)
+	}
+	if err := s.call("POST", "/api/projects/demo/chats", ask, http.StatusOK, &second); err != nil {
+		return "", err
+	}
+	if second.Session != "chat-"+smokeTask+"-2" {
+		return "", fmt.Errorf("второй чат задачи поднят сессией %q, ждал chat-%s-2: "+
+			"разговоры отбиваются, как конвейеры", second.Session, smokeTask)
+	}
+	runs, err := os.ReadFile(s.runsFile())
+	if err != nil {
+		return "", fmt.Errorf("журнала поднятых сессий нет: %v", err)
+	}
+	want := "DEVKIT_TMUX='" + second.Session + "'"
+	if !strings.Contains(string(runs), want) {
+		return "", fmt.Errorf("чат не назвал себя реестру, ждал %q:\n%s", want, runs)
+	}
+	// Конвейер поверх живого конвейера по-прежнему отбивается: снимали тут не
+	// его, и потеря этого отказа стоила бы двух исполнителей в одном дереве.
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("POST", "/api/projects/demo/runs", ask, http.StatusConflict, &refusal); err != nil {
+		return "", err
+	}
+	v, err := s.board()
+	if err != nil {
+		return "", err
+	}
+	// Работа у задачи по-прежнему одна, конвейерная: два живых разговора о ней
+	// в занятость не считаются, потому что чат это не конвейер.
+	talks := 0
+	for _, w := range v.Works {
+		if w.ID == smokeTask {
+			talks++
+			if w.Via != "tmux" || w.Kind != "task" {
+				return "", fmt.Errorf("работа задачи %s подменена разговором: %+v", smokeTask, w)
+			}
+		}
+	}
+	if talks != 1 {
+		return "", fmt.Errorf("живых работ у задачи %s стало %d: разговоры сосчитаны занятостью", smokeTask, talks)
+	}
+	return fmt.Sprintf("%s; второй разговор встал рядом (%s), а второй конвейер отбит: %s",
+		first.Message, second.Session, refusal.Error), nil
+}
+
 // stepDropDraft: черновик снимается с экрана, а не из терминала. Причина
 // обязательна и здесь, и у утилиты: файла после команды нет, и живёт причина
 // сообщением коммита доски, поэтому шаг сначала жмёт удаление без причины и
@@ -1649,6 +1712,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"сообщение при стоящем цикле", s.stepIdleMessage},
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 		{"выбор подписки доезжает до команды", s.stepHarnessRun},
+		{"новый чат по задаче поверх живого конвейера", s.stepChatStart},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 	}

@@ -200,7 +200,7 @@ const (
 // нет, задача припаркована вопросом, сессия поднята дашбордом, а tmux-сессии с
 // её именем в списке уже нет. Не сошлось ничего, значит разговор живой, и
 // реплика идёт адресно, даже когда транскрипт молчит час.
-func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]boardRow) (reply, note string) {
+func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]boardRow, alive func(string) bool) (reply, note string) {
 	rec := s.binds()[info.ID]
 	over := ""
 	switch {
@@ -208,7 +208,7 @@ func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]bo
 		over = "дерева сессии больше нет"
 	case info.Task != "" && parkedByAsk(rows[info.Task]):
 		over = "задача " + info.Task + " припаркована вопросом"
-	case rec.Source == bindOrder && rec.Tmux != "" && tmuxMissingCheck() == "" && !tmuxAlive(rec.Tmux):
+	case rec.Source == bindOrder && rec.Tmux != "" && !alive(rec.Tmux):
 		over = "сессию поднимал дашборд, а tmux-сессии " + rec.Tmux + " в списке уже нет"
 	}
 	if over == "" {
@@ -228,14 +228,26 @@ func treeAlive(projPath, suffix string) bool {
 	return ok
 }
 
-// tmuxAlive ищет имя среди живых tmux-сессий машины.
-func tmuxAlive(name string) bool {
-	for _, t := range tmuxList() {
-		if t.Name == name {
-			return true
-		}
+// tmuxAliveFn отдаёт меру живости tmux-сессии на один заход: список машины
+// спрашивается один раз, даже когда мерить надо десяток разговоров списка.
+// Спрашивается он лениво: у разговора из бокового дерева, которого уже нет,
+// дело до tmux не доходит вовсе. Машина без tmux мерой не работает, и все
+// имена там считаются живыми: иначе список разговоров разом объявил бы их
+// кончившимися, не имея на то ни одного признака.
+func tmuxAliveFn() func(string) bool {
+	if tmuxMissingCheck() != "" {
+		return func(string) bool { return true }
 	}
-	return false
+	var names map[string]bool
+	return func(name string) bool {
+		if names == nil {
+			names = map[string]bool{}
+			for _, t := range tmuxList() {
+				names[t.Name] = true
+			}
+		}
+		return names[name]
+	}
 }
 
 // handleTaskMessagePost кладёт реплику человека во вход задачи основного

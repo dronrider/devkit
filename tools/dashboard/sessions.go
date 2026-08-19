@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -519,6 +520,13 @@ type reply struct {
 	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
 	// весь бегущий лог пишется туда, а не в транскрипт сессии.
 	Sub string `json:"sub,omitempty"`
+	// Key это устойчивый ключ записи: «источник:номер в своём файле». Номер в
+	// ленте (Seq) считается местом в слитой ленте и от заезда к заезду плывёт:
+	// боковой журнал растёт, у сессии заводится новый субагент, и запись,
+	// которая была тысячной, становится тысяча первой. Пагинация назад по
+	// такому номеру давала дубли и дыры, поэтому «раньше» режется по этому
+	// ключу, а не по месту (замечание пользователя про подгрузку истории).
+	Key string `json:"key,omitempty"`
 	// ToolID это идентификатор вызова инструмента, по нему боковой журнал
 	// субагента сводится со своим вызовом Task. Наружу не едет: он нужен
 	// только сшивке на сервере.
@@ -1097,14 +1105,18 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	items, _, _, _ := expandSubs(path, parseReplies(data, 0))
 	total := len(items)
-	before := intParam(r, "before", total, total)
-	if before < total {
-		items = items[:before]
-	}
+	// «Раньше» режется по устойчивому ключу записи, а не по её месту в ленте:
+	// место плывёт от роста боковых журналов, и страницы истории налезали друг
+	// на друга. Число тут понимается как место и остаётся ради старых вкладок,
+	// открытых до этой правки.
+	items = beforeCut(items, r.URL.Query().Get("before"))
 	n := intParam(r, "n", repliesDefault, repliesMax)
 	if len(items) > n {
 		items = items[len(items)-n:]
 	}
+	// Начало разговора называет сервер: считать его по номеру первой записи
+	// клиент больше не может, номера у него не свои.
+	start := len(items) > 0 && items[0].Seq == 0
 	if items == nil {
 		items = []reply{}
 	}
@@ -1128,11 +1140,33 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	info.Harness = harnessRoots(s.harnesses())[info.root]
 	info.Live = info.mod.After(s.now().Add(-sessionLiveTTL))
 	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows, tmuxAliveFn())
-	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items}
+	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// beforeCut отрезает всё, что стоит раньше названной записи. Ключ устойчив
+// («источник:номер в файле»), и найденное место не зависит от того, сколько
+// записей приехало в ленту с прошлой страницы. Пустой параметр это хвост
+// ленты, неизвестный ключ тоже: пропавшая запись не повод отдать пустоту.
+func beforeCut(items []reply, before string) []reply {
+	if before == "" {
+		return items
+	}
+	if n, err := strconv.Atoi(before); err == nil {
+		if n >= 0 && n < len(items) {
+			return items[:n]
+		}
+		return items
+	}
+	for i, it := range items {
+		if it.Key == before {
+			return items[:i]
+		}
+	}
+	return items
 }
 
 // emptyTranscriptNote называет пустую ленту словами и в обычном ответе, и
@@ -1155,11 +1189,25 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 	// бы всё время его работы (находка тринадцатого круга POC).
 	subFile, subLabel := "", ""
 	var subOff int64
+	// Устойчивый ключ дописанной записи продолжает счёт своего файла, а не
+	// ленты: mainIdx и subIdx это столько записей, сколько в файле уже
+	// разобрано. Без этого у дописанного потоком ключа не было бы вовсе, и
+	// подгрузка истории после стрима резала бы ленту не там.
+	mainIdx, subIdx := 0, 0
 	if data, err := os.ReadFile(path); err == nil {
 		data = lastComplete(data)
 		var items []reply
 		items, subFile, subLabel, subOff = expandSubs(path, parseReplies(data, 0))
 		seq = len(items)
+		subSrc := srcName(subFile)
+		for _, item := range items {
+			switch {
+			case strings.HasPrefix(item.Key, mainSrc+":"):
+				mainIdx++
+			case subFile != "" && strings.HasPrefix(item.Key, subSrc+":"):
+				subIdx++
+			}
+		}
 		if len(items) > repliesDefault {
 			items = items[len(items)-repliesDefault:]
 		}
@@ -1187,6 +1235,8 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 				subLines, subOff = newLines(subFile, subOff)
 				for _, item := range parseRepliesOpt([]byte(strings.Join(subLines, "\n")), seq, true) {
 					item.Sub = subLabel
+					item.Key = srcName(subFile) + ":" + strconv.Itoa(subIdx)
+					subIdx++
 					seq = item.Seq + 1
 					sseEvent(w, f, "", marshalReply(item))
 				}
@@ -1197,6 +1247,8 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 				continue
 			}
 			for _, item := range parseReplies([]byte(strings.Join(lines, "\n")), seq) {
+				item.Key = mainSrc + ":" + strconv.Itoa(mainIdx)
+				mainIdx++
 				seq = item.Seq + 1
 				sseEvent(w, f, "", marshalReply(item))
 				// Субагент кончился: его вызов закрылся ответом, и дочитывать
@@ -1441,6 +1493,14 @@ func subLogs(path string) map[string]struct {
 	return out
 }
 
+// mainSrc это имя источника для самого транскрипта сессии в ключах записей.
+const mainSrc = "m"
+
+// srcName зовёт боковой журнал по имени файла без расширения: agent-<id>.
+func srcName(file string) string {
+	return strings.TrimSuffix(filepath.Base(file), ".jsonl")
+}
+
 // expandSubs вплетает записи боковых журналов в ленту по меткам времени.
 // Прежде они вставлялись за своим вызовом Task, а журнал, который пишется
 // прямо сейчас, целиком уезжал в хвост, и хвостовое окно ленты состояло из
@@ -1448,32 +1508,40 @@ func subLogs(path string) map[string]struct {
 // день, записей тысячи, а реплики человека и ответы сессии, шедшие с ними
 // вперемешку, оказывались за этой тысячей вверху. Слияние по времени ставит
 // каждый кусок работы туда, где он и шёл, а идущая сейчас работа сама
-// оказывается в хвосте. Нумерация сквозная и присваивается после слияния:
-// лента отсеивает повторы по seq. Второй ответ отдаёт файл и смещение того
-// субагента, который ещё работает: его стрим дальше и дочитывает.
+// оказывается в хвосте.
+//
+// У каждой записи тут появляется устойчивый ключ «источник:номер»: файлы
+// только дописываются, и номер записи в своём файле не меняется никогда, а вот
+// место в слитой ленте плывёт. По ключу и режется «раньше». Второй ответ
+// отдаёт файл и смещение того субагента, который ещё работает: его стрим
+// дальше и дочитывает.
 func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
-	logs := subLogs(path)
-	if len(logs) == 0 {
-		return items, "", "", 0
-	}
-	// Метка времени есть не у каждой записи, поэтому ключ слияния тянется от
-	// предыдущей записи своего же потока: запись без метки остаётся там, где
-	// лежала, а не уезжает в начало ленты.
 	type keyed struct {
-		it reply
-		at time.Time
+		it  reply
+		at  time.Time
+		src string
+		idx int
 	}
 	var all []keyed
-	push := func(list []reply) {
+	// Метка времени есть не у каждой записи, поэтому ключ слияния тянется от
+	// предыдущей записи своего же потока. Назад время внутри источника не
+	// ходит: перескок метки (у боковых журналов он случается) переставил бы
+	// записи одного файла местами, а порядок внутри файла и есть порядок, в
+	// котором агент работал.
+	push := func(src string, list []reply) {
 		var prev time.Time
-		for _, it := range list {
-			if at, err := time.Parse(time.RFC3339, it.Time); err == nil {
-				prev = at
+		for i, it := range list {
+			at := prev
+			if t, err := time.Parse(time.RFC3339, it.Time); err == nil && t.After(prev) {
+				at = t
 			}
-			all = append(all, keyed{it: it, at: prev})
+			prev = at
+			it.Key = src + ":" + strconv.Itoa(i)
+			all = append(all, keyed{it: it, at: at, src: src, idx: i})
 		}
 	}
-	push(items)
+	push(mainSrc, items)
+	logs := subLogs(path)
 	liveFile, liveLabel := "", ""
 	var liveOff int64
 	// newest держит время самой свежей записи среди боковых журналов сессии:
@@ -1502,9 +1570,20 @@ func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 		for i := range side {
 			side[i].Sub = log.Label
 		}
-		push(side)
+		push(srcName(log.File), side)
 	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	// Порядок полный и не зависит от того, что ещё лежит в ленте: время, потом
+	// источник, потом номер в файле. Иначе один и тот же заезд собирал бы ленту
+	// по-разному, и ключ «раньше» указывал бы в разные места.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.Before(all[j].at)
+		}
+		if all[i].src != all[j].src {
+			return all[i].src < all[j].src
+		}
+		return all[i].idx < all[j].idx
+	})
 	out := make([]reply, 0, len(all))
 	for i, k := range all {
 		k.it.Seq = i

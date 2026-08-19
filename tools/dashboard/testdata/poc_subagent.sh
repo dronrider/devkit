@@ -87,20 +87,63 @@ for i in items:
 if back:
     print("записей не по времени: %d" % back)
     raise SystemExit(1)
-# Блок это подряд идущие записи одного бокового журнала: их режет всякая
-# не-sub запись. Одним блоком на всё окно лента быть не должна.
-blocks, prev = 0, ""
+# Кусок работы это подряд идущие записи одного бокового журнала: их режет
+# всякая запись самой сессии. Одним куском на всё окно лента быть не должна.
+runs, prev = 0, ""
 for i in items:
     cur = i.get("sub") or ""
     if cur and cur != prev:
-        blocks += 1
+        runs += 1
     prev = cur
 plain = len(items) - len(sub)
-print("окно: записей %d, из них от субагентов %d, блоков %d, реплик сессии %d"
-      % (len(items), len(sub), blocks, plain))
-if blocks < 2 and not plain:
-    print("всё окно ленты это один блок субагента: хронология не слита")
+print("окно: записей %d, из них от субагентов %d, кусков работы %d, реплик сессии %d"
+      % (len(items), len(sub), runs, plain))
+if runs < 2 and not plain:
+    print("всё окно ленты это одна работа субагента: хронология не слита")
+    raise SystemExit(1)
+# У каждой записи свой устойчивый ключ: по нему лента просит историю, и двух
+# записей с одним ключом быть не может.
+keys = [i.get("key") for i in items]
+if not all(keys):
+    print("записей без ключа: %d" % sum(1 for k in keys if not k))
+    raise SystemExit(1)
+if len(set(keys)) != len(keys):
+    print("ключи записей повторяются: %d на %d записей" % (len(set(keys)), len(keys)))
     raise SystemExit(1)
 print("боковой журнал субагента: все классы записей в ленте, размышления с длительностью, "
-      "окно по времени и разговор виден между блоками")
+      "окно по времени, разговор виден между кусками работы, ключи записей на месте")
 '
+
+# Три страницы истории подряд: «раньше» режется по ключу записи, а не по её
+# месту в ленте, и страницы обязаны лечь встык. По месту они налезали друг на
+# друга, стоило боковому журналу дописаться между запросами.
+python3 - "$BASE" "$JAR" "$PROJ" "$SID" <<'PAGES'
+import json, subprocess, sys
+base, jar, proj, sid = sys.argv[1:5]
+url = base + "/api/projects/" + proj + "/sessions/" + sid
+
+
+def page(before=""):
+    u = url + "?n=40" + ("&before=" + before if before else "")
+    out = subprocess.run(["curl", "-s", "-b", jar, u], capture_output=True, text=True).stdout
+    return json.loads(out).get("items", [])
+
+
+before, pages = "", []
+for step in range(4):
+    got = page(before)
+    if not got:
+        break
+    pages.append([i["key"] for i in got])
+    before = got[0]["key"]
+same = set()
+for i, keys in enumerate(pages):
+    hit = same & set(keys)
+    if hit:
+        print("страница %d налезла на прошлые: %s" % (i + 1, sorted(hit)[:3]))
+        raise SystemExit(1)
+    same |= set(keys)
+print("страниц истории %d, записей %d, пересечений нет" % (len(pages), len(same)))
+if len(pages) < 3:
+    print("истории не хватило на три страницы, проверка неполная")
+PAGES

@@ -162,40 +162,42 @@ async function feedOf(items, sid) {
   return box;
 }
 
-// --- работа субагента: блок собирается, а живой не свёрнут ---
+// --- работа субагента идёт той же лентой, без блока ---
+// Свёрнутый блок с заголовком и счётом ходов был нашей выдумкой: человек
+// просил видеть работу агента так же, как её видно в vscode. Записи стоят в
+// ленте обычными карточками, а принадлежность помечена отступом с точкой.
 {
   const sub = [];
   for (let i = 0; i < 12; i++) {
     sub.push(i % 2
-      ? { seq: i, role: "toolout", text: "вывод " + i, sub: "работа", time: "2026-08-13T09:00:00+03:00" }
-      : { seq: i, role: "tool", tool: "Bash", text: "command: ls " + i, note: "ls", sub: "работа", time: "2026-08-13T09:00:00+03:00" });
+      ? { seq: i, key: "a:" + i, role: "toolout", text: "вывод " + i, sub: "работа", time: "2026-08-13T09:00:00+03:00" }
+      : { seq: i, key: "a:" + i, role: "tool", tool: "Bash", text: "command: ls " + i, note: "ls", sub: "работа", time: "2026-08-13T09:00:00+03:00" });
   }
   const box = await feedOf(sub, "sub1");
-  const blk = byClass(box, "subblk");
-  if (!blk) fail("блок работы субагента не собрался: " + dump(box).slice(0, 200));
-  // Вся лента из работы субагента: свёрнутый блок читался как пустой чат, и
-  // ровно это пользователь и увидел (регресс тринадцатого круга POC).
-  if (!String(blk.className).includes("open")) fail("живой блок субагента свёрнут");
-  const body = byClass(blk, "subbody");
-  if (!body || body.hidden) fail("тело живого блока скрыто");
-  if (!body.children.length) fail("в блоке субагента пусто");
+  if (byClass(box, "subblk")) fail("работа субагента снова собралась в блок: " + dump(box).slice(0, 200));
+  const lines = allByClass(box, "subline");
+  if (lines.length !== 6) fail("строк субагента " + lines.length + ", ожидал шесть карточек");
+  const dot = byClass(box, "subdot");
+  if (!dot || dot.title !== "субагент: работа") {
+    fail("пометка принадлежности не называет заказ: " + (dot && dot.title));
+  }
   if (!dump(box).includes("ls")) fail("записи субагента не видны: " + dump(box).slice(0, 200));
 }
 
-// --- работа субагента вперемешку с разговором: блоков много, реплики видны ---
+// --- работа субагента вперемешку с разговором: всё в одной ленте по порядку ---
 // Прежде сервер сваливал весь боковой журнал в хвост ленты, и разговор,
 // шедший с работой субагента вперемешку, уезжал за тысячу записей вверх: на
 // экране это читалось как один пузырь на весь чат. Записи приходят слитыми по
-// времени, и лента обязана резать их на блоки всякой не-sub записью.
+// времени, и лента ставит их подряд, помечая чужие.
 {
   const mixed = [];
   let seq = 0;
-  const say = (role, text) => mixed.push({ seq: seq++, role, text,
+  const say = (role, text) => mixed.push({ seq: seq, key: "m:" + seq++, role, text,
     time: "2026-08-13T09:00:00+03:00" });
   const work = (n, text) => {
     for (let i = 0; i < n; i++) {
-      mixed.push({ seq: seq++, role: "assistant", text: text + " " + i, sub: "работа",
-        time: "2026-08-13T09:00:00+03:00" });
+      mixed.push({ seq: seq, key: "a:" + seq++, role: "assistant", text: text + " " + i,
+        sub: "работа", time: "2026-08-13T09:00:00+03:00" });
     }
   };
   say("user", "разбери находку");
@@ -204,47 +206,54 @@ async function feedOf(items, sid) {
   say("user", "тогда правь и проверь стендом");
   work(3, "правлю разбор");
   const box = await feedOf(mixed, "mix1");
-  const blocks = allByClass(box, "subblk");
-  if (blocks.length !== 2) fail("блоков субагента " + blocks.length + ", ожидал два");
-  const seen = dump(box);
-  for (const line of ["разбери находку", "нашёл причину", "тогда правь"]) {
-    if (!seen.includes(line)) fail("реплика разговора потерялась между блоками: " + line);
+  if (byClass(box, "subblk")) fail("лента снова свернула работу субагента в блок");
+  if (allByClass(box, "subline").length !== 7) {
+    fail("помечено чужих записей " + allByClass(box, "subline").length + ", ожидал семь");
   }
-  // Хвостовой блок это работа, идущая сейчас, и он один открыт.
-  if (String(blocks[0].className).includes("open")) fail("прошлый блок субагента развёрнут");
-  if (!String(blocks[1].className).includes("open")) fail("хвостовой блок субагента свёрнут");
+  const seen = dump(box);
+  for (const line of ["разбери находку", "нашёл причину", "тогда правь", "смотрю дерево 0",
+    "правлю разбор 2"]) {
+    if (!seen.includes(line)) fail("запись ленты потерялась: " + line);
+  }
+  // Порядок тот же, в каком всё это шло: работа субагента стоит между
+  // репликами, а не собрана в конец.
+  if (seen.indexOf("смотрю дерево 0") > seen.indexOf("нашёл причину")) {
+    fail("работа субагента уехала за реплики: " + seen);
+  }
+  if (seen.indexOf("тогда правь") > seen.indexOf("правлю разбор 0")) {
+    fail("реплика человека уехала за работу субагента: " + seen);
+  }
+  // Реплики самой сессии ничем не помечены: пометка говорит именно о чужом
+  // ходе, а не украшает ленту.
+  const own = allByClass(box, "subline").map((n) => dump(n));
+  if (own.some((t) => t.includes("разбери находку"))) {
+    fail("реплика человека помечена как чужой ход: " + JSON.stringify(own));
+  }
 }
 
-// --- гигантский хвостовой журнал: окно записей и кнопка «показать все» ---
+// --- длинный хвост работы субагента: лента остаётся лентой ---
 // У субагента, которого продолжают через SendMessage не первый день, записей
-// тысячи. Нарисованный целиком блок занимал экран один, и разговор над ним
-// было не достать.
+// тысячи. Блок с окном и кнопкой «показать все» их прятал, а человек просил
+// обратного: пусть стоят в ленте, как в vscode, и листаются вместе со всем.
 {
-  const huge = [{ seq: 0, role: "user", text: "продолжай, я жду отчёта",
+  const huge = [{ seq: 0, key: "m:0", role: "user", text: "продолжай, я жду отчёта",
     time: "2026-08-13T09:00:00+03:00" }];
   for (let i = 0; i < 120; i++) {
-    huge.push({ seq: i + 1, role: "assistant", text: "ход " + i, sub: "разбор",
-      time: "2026-08-13T09:00:00+03:00" });
+    huge.push({ seq: i + 1, key: "a:" + i, role: "assistant", text: "ход " + i + ".",
+      sub: "разбор", time: "2026-08-13T09:00:00+03:00" });
   }
   const box = await feedOf(huge, "huge1");
-  const blk = byClass(box, "subblk");
-  if (!blk) fail("блок гигантского журнала не собрался");
-  const body = byClass(blk, "subbody");
-  if (body.children.length !== 100) {
-    fail("в открытом блоке нарисовано записей " + body.children.length + ", ожидал сотню");
+  if (byClass(box, "subblk") || byClass(box, "submore")) {
+    fail("хвост работы субагента снова спрятан блоком с кнопкой");
   }
-  if (!dump(box).includes("продолжай, я жду отчёта")) fail("реплика человека выше блока пропала");
-  const more = byClass(blk, "submore");
-  if (!more || more.hidden) fail("кнопки «показать все» нет: " + dump(blk).slice(0, 200));
-  if (!String(more.textContent).includes("показать все 120")) {
-    fail("подпись кнопки не называет счёт: " + more.textContent);
+  if (allByClass(box, "subline").length !== 120) {
+    fail("нарисовано чужих записей " + allByClass(box, "subline").length + ", ожидал все 120");
   }
-  more.handlers.click({ stopPropagation: () => {} });
-  if (body.children.length !== 120) {
-    fail("после «показать все» нарисовано " + body.children.length + ", ожидал все 120");
+  const seen = dump(box);
+  if (!seen.includes("продолжай, я жду отчёта")) fail("реплика человека перед работой пропала");
+  if (!seen.includes("ход 0.") || !seen.includes("ход 119.")) {
+    fail("края длинной работы не нарисованы: " + seen.slice(0, 200));
   }
-  if (!more.hidden) fail("кнопка осталась висеть, когда показывать больше нечего");
-  if (!dump(body).includes("ход 0")) fail("начало журнала не доехало: " + dump(body).slice(0, 120));
 }
 
 // --- сломанная запись не роняет ленту целиком ---

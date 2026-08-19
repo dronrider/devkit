@@ -2833,7 +2833,7 @@ const LOAD_MARGIN = 80;
 // сдвиг, а открытие ленты читает её, прежде чем решить, куда встать: вниз
 // или на прежнее место. Расстояние от низа (`rest`) само по себе не годится:
 // свежий заход приносит только хвост, а до ухода лента могла стоять глубже,
-// после подгрузки истории. Без глубины (`firstSeq`) место мерилось бы против
+// после подгрузки истории. Без глубины (числа поднятых страниц) место мерилось бы против
 // чужой, куда меньшей ленты, и клампилось бы к нулю (замечание ревью
 // DK-434).
 const feedPlace = new Map();
@@ -2888,14 +2888,33 @@ async function wireFeed(project, sid, opts) {
   const gone = () => live.closed || gen !== era();
 
   const talk = [];
+  // Своё место в ленте у записи одно и то же от заезда к заезду: ключ
+  // «источник:номер в файле». Номер в слитой ленте (seq) плывёт, потому что
+  // боковые журналы растут, и пагинация по нему давала нахлёсты и дыры.
+  // shown держит уже показанное: и хвост потока, и догон присылают то же самое
+  // по второму разу.
+  const shown = new Set();
   let lastSeq = -1;
-  let firstSeq = null;
+  let firstKey = null;
+  // Сколько страниц истории поднято сверх хвоста: по этому числу лента
+  // возвращается на прежнюю глубину, вернувшись к разговору.
+  let pages = 0;
+  let atFirst = false;
   let empty = opts.empty || EMPTY_TALK;
   let loadingOlder = false;
   // Надпись начала горит, только когда раньше правда нечего показать: пока
   // лента пуста или ещё не упёрлась в начало разговора, надпись не видна.
-  const updateStart = () => { atStart.hidden = firstSeq !== 0; };
+  // Начало называет сервер: своих номеров у клиента больше нет.
+  const updateStart = () => { atStart.hidden = !atFirst; };
   updateStart();
+  // Запись уже в ленте: ключ приходит с сервера, а у старого ответа без ключа
+  // остаётся номер, и тогда отсев идёт по нему.
+  const fresh = (item) => {
+    const key = itemKey(item);
+    if (shown.has(key)) return false;
+    shown.add(key);
+    return true;
+  };
 
   const draw = () => {
     const bottom = atBottom(scroll);
@@ -2920,47 +2939,25 @@ async function wireFeed(project, sid, opts) {
       // ленту вдвое (замечание 1). Склейку делает лента, а не разбор: сервер
       // отдаёт записи как они лежат в транскрипте, и пагинация назад не должна
       // зависеть от того, попал ли вывод в ту же страницу, что вызов.
-      // Записи субагента собираются в один свёрнутый блок: их бывают сотни на
-      // один вызов Task, и вперемешку с разговором они его хоронят (находка
-      // тринадцатого круга POC). Внутри блока разбор тот же самый.
-      if (item.sub) {
-        const from = i;
-        const label = item.sub;
-        const inner = [];
-        while (i < talk.length && talk[i].sub === label) inner.push(talk[i++]);
-        i--;
-        const last = inner[inner.length - 1];
-        // Блок в самом хвосте ленты это работа, идущая прямо сейчас, и
-        // сворачивать её нельзя: у диспетчерской сессии субагент занимает всё
-        // окно открытия целиком, и свёрнутый блок читался как пустой чат
-        // (регресс тринадцатого круга POC).
-        const liveTail = i >= talk.length - 1;
-        items.push({
-          key: "sub-" + talk[from].seq,
-          sign: [label, inner.length, last && last.text, liveTail].join("|"),
-          make: () => safeItem(() => subBlock(label, inner, opts, liveTail), null),
-          // Пришедшая запись дописывается в стоящий блок, а не пересобирает
-          // его целиком: у живого субагента запись приходит каждые секунды, и
-          // пересборка сотен карточек дёргала прокрутку ленты и сбрасывала
-          // свою прокрутку внутри блока (замечание про прыжки истории).
-          fill: (node) => { if (node.subFill) node.subFill(inner, liveTail); },
-        });
-        continue;
-      }
+      // Записи субагента идут той же лентой, что и свои: свёрнутый блок с
+      // заголовком и счётом ходов был нашей выдумкой, а человек просил видеть
+      // работу агента так же, как её видно в vscode. Принадлежность помечена
+      // скромно: отступ с полосой слева и точка с подсказкой, чей это ход.
       const next = talk[i + 1];
-      if (item.role === "tool" && next && next.role === "toolout" && opts.pair) {
+      if (item.role === "tool" && next && next.role === "toolout" && opts.pair &&
+        item.sub === next.sub) {
         items.push({
-          key: "seq-" + item.seq,
-          sign: [item.role, item.time, item.text, next.text].join("|"),
-          make: () => safePair(opts.pair, item, next),
+          key: itemKey(item),
+          sign: [item.role, item.time, item.text, next.text, item.sub || ""].join("|"),
+          make: () => subLine(safePair(opts.pair, item, next), item.sub),
         });
         i++;
         continue;
       }
       items.push({
-        key: "seq-" + item.seq,
-        sign: [item.role, item.time, item.text].join("|"),
-        make: () => safeItem(opts.item, item),
+        key: itemKey(item),
+        sign: [item.role, item.time, item.text, item.sub || ""].join("|"),
+        make: () => subLine(safeItem(opts.item, item), item.sub),
       });
     }
     sync(box, items);
@@ -2973,15 +2970,23 @@ async function wireFeed(project, sid, opts) {
   // запрос, пока висит первый: прокрутка у самого верха шлёт событие на
   // каждый пиксель.
   const loadOlder = async () => {
-    if (loadingOlder || firstSeq === null || firstSeq === 0) return;
+    if (loadingOlder || firstKey === null || atFirst) return;
     loadingOlder = true;
     const older = await api(sessionURL(project, sid) +
-      "?before=" + firstSeq + "&n=" + tail);
+      "?before=" + encodeURIComponent(firstKey) + "&n=" + tail);
     loadingOlder = false;
     if (gone() || !older.ok) return;
     const items = older.body.items || [];
-    if (items.length) firstSeq = items[0].seq;
-    talk.unshift(...items.filter(keep));
+    // Отсев по ключу тут не украшение: страницы истории приходят с сервера,
+    // который каждый раз собирает ленту заново, и запись с края страницы
+    // приезжала вторым разом.
+    const add = items.filter((it) => fresh(it) && keep(it));
+    if (items.length) {
+      firstKey = itemCursor(items[0]);
+      pages += 1;
+    }
+    atFirst = Boolean(older.body.start);
+    talk.unshift(...add);
     draw();
     updateStart();
   };
@@ -2995,11 +3000,10 @@ async function wireFeed(project, sid, opts) {
   // прогресса (сеть отказала, гонка), цикл не крутится вхолостую и встаёт на
   // ту глубину, которую успел набрать.
   const restorePlace = async (place) => {
-    while (!gone() && place.firstSeq !== null && firstSeq !== null &&
-      firstSeq !== 0 && firstSeq > place.firstSeq) {
-      const before = firstSeq;
+    while (!gone() && pages < (place.pages || 0) && !atFirst) {
+      const was = pages;
       await loadOlder();
-      if (firstSeq === before) break;
+      if (pages === was) break;
     }
     if (gone()) return;
     keepPlace(scroll, place.rest);
@@ -3043,14 +3047,14 @@ async function wireFeed(project, sid, opts) {
 
   // Место ленты пишется на каждый сдвиг прокрутки: и для будущего возврата к
   // этому разговору, и как повод подгрузить историю, когда взгляд подошёл к
-  // верху. Глубина (firstSeq) едет вместе с местом: без неё возврат не знает,
+  // верху. Глубина (число поднятых страниц) едет вместе с местом: без неё возврат не знает,
   // сколько истории досбирать до прежней высоты. Коробка прокрутки переживает
   // переключение вкладок разговора (тот же tp.body у соседних сессий), поэтому
   // слушатель снимается сам при уходе с ленты, иначе он копился бы с каждым
   // переключением.
   const onScroll = () => {
     if (gone()) return;
-    feedPlace.set(sid, { bottom: atBottom(scroll), rest: scroll.scrollHeight - scroll.scrollTop, firstSeq });
+    feedPlace.set(sid, { bottom: atBottom(scroll), rest: scroll.scrollHeight - scroll.scrollTop, pages });
     if (scroll.scrollTop < LOAD_MARGIN) loadOlder();
   };
   scroll.addEventListener("scroll", onScroll);
@@ -3060,9 +3064,11 @@ async function wireFeed(project, sid, opts) {
   if (gone()) return;
   if (first.ok) {
     const items = first.body.items || [];
-    if (items.length) firstSeq = items[0].seq;
+    if (items.length) firstKey = itemCursor(items[0]);
+    atFirst = Boolean(first.body.start);
     for (const item of items) {
       lastSeq = item.seq;
+      if (!fresh(item)) continue;
       if (keep(item)) talk.push(item);
     }
     if (first.body.note) empty = first.body.note;
@@ -3095,9 +3101,9 @@ async function wireFeed(project, sid, opts) {
       const items = r.body.items || [];
       let added = false;
       for (const item of items) {
-        if (item.seq <= lastSeq) continue;
-        lastSeq = item.seq;
-        if (firstSeq === null) firstSeq = item.seq;
+        if (item.seq <= lastSeq && !fresh(item)) continue;
+        if (item.seq > lastSeq) lastSeq = item.seq;
+        if (firstKey === null) firstKey = itemCursor(item);
         if (!keep(item)) continue;
         talk.push(item);
         added = true;
@@ -3134,12 +3140,13 @@ async function wireFeed(project, sid, opts) {
     es.onmessage = (ev) => {
       seen = Date.now();
       const item = JSON.parse(ev.data);
-      // Свой хвост поток шлёт заново, и без отсева по seq те же реплики легли
-      // бы в ленту вторым разом.
-      if (item.seq <= lastSeq) return;
-      lastSeq = item.seq;
-      if (firstSeq === null) {
-        firstSeq = item.seq;
+      // Свой хвост поток шлёт заново, и без отсева те же реплики легли бы в
+      // ленту вторым разом. Отсев по ключу, а не по номеру: номер записи
+      // считается местом в слитой ленте и от заезда к заезду плывёт.
+      if (!fresh(item)) return;
+      if (item.seq > lastSeq) lastSeq = item.seq;
+      if (firstKey === null) {
+        firstKey = itemCursor(item);
         updateStart();
       }
       if (!keep(item)) return;
@@ -3328,16 +3335,6 @@ function toolPair(call, out) {
   return box;
 }
 
-// Подпись блока субагента: заказ, счёт записей и последнее действие. Считается
-// отдельно, чтобы дописывание правило только её, не трогая нарисованного.
-function headText(inner, live) {
-  const tail = inner[inner.length - 1] || {};
-  const peek = tail.tool ? tail.tool + (tail.note ? ": " + tail.note : "")
-    : foldPeek(tail.text || "", 60);
-  return inner.length + " " + plural(inner.length, "запись", "записи", "записей") +
-    (peek ? ", " + peek : "");
-}
-
 // Приложенное выделение свёрнутым блоком при пузыре: развернуть по клику.
 // Простыня постановки в ленте закрыла бы собой сам разговор.
 function selFold(file, text) {
@@ -3369,91 +3366,30 @@ function safePair(make, call, out) {
   }
 }
 
-// Сколько записей блока рисуется сразу. Субагента продолжают через
-// SendMessage не первый день, и в боковом журнале их набираются тысячи:
-// нарисованный целиком хвостовой блок занимал экран один и читался как «весь
-// чат в одном пузыре». Остальное достаётся кнопкой.
-const SUB_WINDOW = 100;
+// Ключ записи в ленте: устойчивый ключ сервера («источник:номер в файле»),
+// а у ответа без него старый номер. По этому же ключу лента отсеивает
+// повторы и просит следующую страницу истории.
+function itemKey(item) {
+  return item.key ? "k-" + item.key : "seq-" + item.seq;
+}
 
-function subBlock(label, inner, opts, open) {
-  const box = el("div", "subblk fold" + (open ? " open" : ""));
-  const top = el("div", "foldh");
-  top.append(el("b", "", open ? "субагент работает" : "субагент"));
-  const said = el("span", "", label + ", " + headText(inner, open));
-  top.append(said);
-  const car = el("button", "foldcp foldar");
-  car.append(icon("i-unfold"));
-  top.append(car);
-  const more = el("button", "submore");
-  const body = el("div", "subbody");
-  // from это запись, с которой блок нарисован: начало длинного журнала лежит
-  // за кнопкой. done это докуда нарисовано, дописывание идёт с этого места, и
-  // заново собирать нарисованное незачем.
-  let from = Math.max(0, inner.length - SUB_WINDOW);
-  let done = from;
-  let list = inner;
-  // Записи блока карточками: вывод инструмента склеивается со своим вызовом,
-  // как в самой ленте. За границу куска склейка не лезет, иначе запись с краю
-  // нарисовалась бы дважды.
-  const build = (arr, a, b) => {
-    const out = [];
-    for (let j = a; j < b; j++) {
-      const it = arr[j];
-      const nx = j + 1 < b ? arr[j + 1] : null;
-      if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
-        out.push(safePair(opts.pair, it, nx));
-        j++;
-        continue;
-      }
-      if (it.role === "toolout" && !it.text) continue;
-      out.push(safeItem(opts.item, it));
-    }
-    return out;
-  };
-  const showMore = () => {
-    more.hidden = body.hidden || from === 0;
-    more.textContent = "показать все " + list.length + " " +
-      plural(list.length, "запись", "записи", "записей");
-  };
-  const grow = (l) => {
-    list = l;
-    const bottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-    const add = build(list, done, list.length);
-    if (add.length) body.append(...add);
-    done = list.length;
-    showMore();
-    // Внутренняя прокрутка держится у низа, только если и так там стояла:
-    // человек, читающий середину работы, не должен уезжать от неё.
-    if (bottom) body.scrollTop = body.scrollHeight;
-  };
-  grow(inner);
-  body.hidden = !open;
-  showMore();
-  car.replaceChildren(icon(open ? "i-fold" : "i-unfold"));
-  more.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    if (!from) return;
-    const head = build(list, 0, from);
-    from = 0;
-    if (head.length) body.prepend(...head);
-    showMore();
-  });
-  const flip = () => {
-    body.hidden = !body.hidden;
-    car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));
-    box.classList.toggle("open", !body.hidden);
-    showMore();
-  };
-  car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
-  top.addEventListener("click", flip);
-  box.append(top, more, body);
-  // Ручка дописывания: sync зовёт её вместо пересборки узла, и блок живого
-  // субагента перестаёт дёргать прокрутку на каждой пришедшей записи.
-  box.subFill = (l, live) => {
-    grow(l);
-    said.textContent = label + ", " + headText(l, live);
-  };
-  return box;
+// То же самое, но как его понимает сервер: ключ записи либо старый номер.
+// Этим значением лента и просит следующую страницу истории.
+function itemCursor(item) {
+  return item.key ? String(item.key) : String(item.seq);
+}
+
+// Пометка чужого хода: запись субагента идёт той же лентой, но с отступом и
+// точкой, по которой видно, чья это работа. Так же скромно её метит vscode, и
+// именно этого человек и просил, а не блока с заголовком и счётом ходов.
+function subLine(node, label) {
+  if (!label) return node;
+  const row = el("div", "subline");
+  const dot = el("span", "subdot");
+  dot.title = "субагент: " + label;
+  dot.setAttribute("aria-label", dot.title);
+  row.append(dot, node);
+  return row;
 }
 
 function chatItem(item) {

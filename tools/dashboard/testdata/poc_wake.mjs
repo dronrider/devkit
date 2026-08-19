@@ -84,7 +84,7 @@ if (sess().length !== 0) fail("лента полезла переподключ�
 {
   const many = [];
   for (let i = 0; i < 30; i++) {
-    many.push({ seq: i, role: "assistant", text: "шаг " + i, sub: "работа",
+    many.push({ seq: i, key: "a:" + i, role: "assistant", text: "шаг " + i, sub: "работа",
       time: "2026-08-13T09:00:00+03:00" });
   }
   const prev = sandbox.fetch;
@@ -101,8 +101,10 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   box.clientHeight = 300;
   sandbox.wireChatFeed("demo", box, "cold");
   await settle();
-  const grown = byClass(box, "subblk");
-  if (!grown) fail("блок работы субагента не собрался");
+  // Дорисовка меряется на строке ленты: блока работы субагента больше нет, а
+  // высота её всё так же встаёт позже открытия (разметка, миниатюры).
+  const grown = byClass(box, "subline");
+  if (!grown) fail("строка работы субагента не собралась");
   grown.own = 900;
   for (const t of timers.splice(0)) t.fn();
   await settle();
@@ -117,7 +119,7 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   await settle();
   if (box2.handlers.wheel) box2.handlers.wheel({});
   box2.scrollTop = 100;
-  const grown2 = byClass(box2, "subblk");
+  const grown2 = byClass(box2, "subline");
   if (grown2) grown2.own = 900;
   for (const t of timers.splice(0)) t.fn();
   await settle();

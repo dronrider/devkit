@@ -98,16 +98,19 @@ const byId = new Map();
 // Разговор стенда: текстовые реплики вперемешку с инструментом и
 // размышлениями. Чат берёт из него только текст, транскрипт показывает всё, и
 // разница эта задана параметром отбора, а не второй лентой.
+// Ключ записи («источник:номер в файле») это то, чем лента просит следующую
+// страницу истории: место в ленте плывёт от роста боковых журналов, а номер в
+// своём файле не меняется никогда.
 const talk = [
-  { seq: 5, role: "user", text: "как дела с витком", time: "2026-08-13T10:00:00+03:00" },
-  { seq: 6, role: "tool", tool: "Bash", note: "go test" },
-  { seq: 7, role: "thinking", text: "сначала посмотрю строку доски" },
-  { seq: 8, role: "assistant", text: "виток идёт, задачи режу", time: "2026-08-13T10:01:00+03:00" },
+  { seq: 5, key: "m:5", role: "user", text: "как дела с витком", time: "2026-08-13T10:00:00+03:00" },
+  { seq: 6, key: "m:6", role: "tool", tool: "Bash", note: "go test" },
+  { seq: 7, key: "m:7", role: "thinking", text: "сначала посмотрю строку доски" },
+  { seq: 8, key: "m:8", role: "assistant", text: "виток идёт, задачи режу", time: "2026-08-13T10:01:00+03:00" },
 ];
 // История до хвоста: её тянет прокрутка вверх через ?before=.
 const older = [
-  { seq: 3, role: "user", text: "подними виток", time: "2026-08-12T09:00:00+03:00" },
-  { seq: 4, role: "assistant", text: "поднял", time: "2026-08-12T09:01:00+03:00" },
+  { seq: 3, key: "m:3", role: "user", text: "подними виток", time: "2026-08-12T09:00:00+03:00" },
+  { seq: 4, key: "m:4", role: "assistant", text: "поднял", time: "2026-08-12T09:01:00+03:00" },
 ];
 
 const session = { id: "abc-12345678", mtime: "2026-08-13T10:01:00+03:00", branch: "dk-371",
@@ -121,11 +124,42 @@ const neighbour = { id: "def-87654321", mtime: "2026-08-12T09:01:00+03:00", bran
 // Короткий разговор: вся история умещается в хвост, и открытие сразу
 // упирается в начало (firstSeq === 0), без единой подгрузки (DK-434).
 const shortTalk = [
-  { seq: 0, role: "user", text: "быстрый вопрос", time: "2026-08-14T09:00:00+03:00" },
-  { seq: 1, role: "assistant", text: "быстрый ответ", time: "2026-08-14T09:00:30+03:00" },
+  { seq: 0, key: "m:0", role: "user", text: "быстрый вопрос", time: "2026-08-14T09:00:00+03:00" },
+  { seq: 1, key: "m:1", role: "assistant", text: "быстрый ответ", time: "2026-08-14T09:00:30+03:00" },
 ];
 const shortSession = { id: "ccc-11112222", mtime: "2026-08-14T09:00:30+03:00", branch: "dk-371",
   task: "XR-100", taskNote: "по дереву задачи", first: "Короткий вопрос" };
+
+// Разговор с растущим боковым журналом: сервер сливает ленту по времени на
+// каждый запрос, и место записи в ней плывёт от каждой дописанной субагентом
+// строки. Ключ записи при этом тот же самый, и страницы истории обязаны лечь
+// встык, без дублей и без дыр (жалоба «подгрузка истории работает через
+// жопу»). Стенд подаёт сдвиг номеров прямо: так и выглядит рост журнала со
+// стороны клиента.
+const growSession = { id: "ggg-77776666", mtime: "2026-08-15T10:00:00+03:00", branch: "dk-371",
+  task: "XR-100", taskNote: "по дереву задачи", first: "Разговор с субагентом" };
+const growPages = [];
+for (let p = 0; p < 4; p += 1) {
+  const page = [];
+  for (let i = 0; i < 3; i += 1) {
+    const n = p * 3 + i;
+    page.push({ key: "m:" + n, seq: n, role: "user", text: "запись " + n + ".",
+      time: "2026-08-15T10:0" + p + ":0" + i + "+03:00" });
+  }
+  growPages.push(page);
+}
+let growShift = 0;
+// Страница по ключу: сервер отдаёт три записи, стоящие раньше названной.
+function growPage(before) {
+  growShift += 7;
+  const at = before ? growPages.findIndex((pg) => pg[0].key === before) : growPages.length;
+  const page = at > 0 ? growPages[at - 1] : [];
+  // Начало разговора это первая страница набора: дальше сервер отдавать нечего.
+  return {
+    items: page.map((it) => Object.assign({}, it, { seq: it.seq + growShift })),
+    start: at === 1,
+  };
+}
 
 // Свой id для сценария памяти позиции: session к этому месту стенда уже
 // прошёл подгрузки в сценарии транскрипта и гонки запросов, и его feedPlace
@@ -216,10 +250,22 @@ const sandbox = {
         });
       }
       if (empty) return reply({ session: sid, head, total: 0, items: [], note: emptyNote });
+      if (sid === growSession.id) {
+        const q = path.includes("before=")
+          ? decodeURIComponent(path.split("before=")[1].split("&")[0]) : "";
+        const pg = growPage(q);
+        return reply({ session: sid, head: growSession, total: 12,
+          items: pg.items, start: pg.start });
+      }
       if (sid === shortSession.id) {
-        return reply({ session: sid, head: shortSession, total: shortTalk.length, items: shortTalk });
+        // Начало разговора называет сервер: считать его по номеру первой
+        // записи клиент больше не может, номера в слитой ленте не его.
+        return reply({ session: sid, head: shortSession, total: shortTalk.length,
+          items: shortTalk, start: true });
       }
       if (path.includes("before=")) {
+        // Начала разговора эта страница не достаёт: истории у сессии больше,
+        // чем стенд отдаёт, и лента вправе просить дальше.
         if (growScroll) growScroll();
         return reply({ session: sid, head, items: older });
       }
@@ -304,7 +350,7 @@ if (dump(box).includes("раньше")) {
 // самого верха, и слушатель тянет историю сам, незаметно для взгляда.
 scrollUp(box, 500);
 await settle();
-if (!asked.some((p) => p.includes("before=5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
   fail("подгрузка от прокрутки просит историю не от первой показанной реплики: " +
     JSON.stringify(asked));
 }
@@ -351,6 +397,42 @@ if (asked.some((p) => p.includes("before="))) {
   fail("у начала разговора всё равно ушёл запрос подгрузки: " + JSON.stringify(asked));
 }
 
+// Три страницы истории подряд при растущем журнале: номера записей в ответах
+// сервера едут от запроса к запросу, а ключи стоят на месте. Лента обязана
+// собраться встык: каждая запись по одному разу и в своём порядке.
+sandbox.closeChatLive();
+asked.length = 0;
+growShift = 0;
+const growBox = makeNode("div");
+sandbox.wireChatFeed("demo", growBox, growSession.id);
+await settle();
+for (let i = 0; i < 3; i += 1) {
+  scrollUp(growBox, 500 + i * 100);
+  await settle();
+}
+for (let n = 0; n < 12; n += 1) {
+  const hits = times(growBox, "запись " + n + ".");
+  if (hits !== 1) {
+    fail("запись " + n + " встала в ленту " + hits + " раз(а) при растущем журнале: " +
+      dump(growBox));
+  }
+}
+const growText = dump(listOf(growBox));
+for (let n = 1; n < 12; n += 1) {
+  if (growText.indexOf("запись " + (n - 1) + ".") > growText.indexOf("запись " + n + ".")) {
+    fail("страницы истории легли не по порядку: " + growText);
+  }
+}
+if (startOf(growBox).hidden) {
+  fail("начало разговора не названо после последней страницы: " + dump(growBox));
+}
+const growAsked = asked.filter((p) => p.includes("before=")).map((p) => p.split("before=")[1]);
+if (growAsked.length !== 3 || growAsked[0] !== "m%3A9&n=40" ||
+  growAsked[1] !== "m%3A6&n=40" || growAsked[2] !== "m%3A3&n=40") {
+  fail("страницы истории просились не по ключу первой показанной записи: " +
+    JSON.stringify(growAsked));
+}
+
 // Вторая лента в той же вкладке: своя коробка, свой поток, и открывается она
 // тем же куском.
 sandbox.closeChatLive();
@@ -382,7 +464,7 @@ if (dump(feed).includes("раньше")) {
 }
 scrollUp(feed, 500);
 await settle();
-if (!asked.some((p) => p.includes("before=5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
   fail("подгрузка от прокрутки просит историю не тем адресом: " + JSON.stringify(asked));
 }
 if (!dump(feed).includes("подними виток")) {
@@ -451,10 +533,10 @@ sandbox.closeChatLive();
 sandbox.wireChatFeed("demo", raceBox, deepSession.id);
 await settle();
 // Подгрузка вверх до ухода: лента уже не хвост, а хвост плюс страница
-// истории, и firstSeq сдвинут с 5 на 3.
+// истории, и глубина её теперь одна страница.
 scrollUp(raceBox, 1000);
 await settle();
-if (!asked.some((p) => p.includes("before=5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
   fail("перед уходом история не подгрузилась: " + JSON.stringify(asked));
 }
 raceBox.scrollHeight = 1000;
@@ -477,7 +559,7 @@ if (raceBox.scrollTop !== raceBox.scrollHeight) {
 // Возврат на прежний разговор: свежий заход снова приносит только хвост (та
 // же высота одного хвоста, 150, а не хвоста с подгруженной историей), и
 // честное восстановление обязано сначала дособрать историю до прежней
-// глубины (firstSeq 5 -> 3, тот же запрос, что и до ухода) и только потом
+// глубины (та же одна страница, тот же запрос, что и до ухода) и только потом
 // встать на прежнее место, а не клампиться к нулю против чужой, куда меньшей
 // высоты (замечание ревью DK-434). growScroll подаёт рост коробки от
 // подгруженной страницы, который в настоящем браузере посчитал бы сам layout.
@@ -487,7 +569,7 @@ growScroll = () => { raceBox.scrollHeight = 1000; };
 sandbox.closeChatLive();
 sandbox.wireChatFeed("demo", raceBox, deepSession.id);
 await settle();
-if (!asked.some((p) => p.includes("before=5&n=40"))) {
+if (!asked.some((p) => p.includes("before=m%3A5&n=40"))) {
   fail("возврат не дособрал историю до прежней глубины: " + JSON.stringify(asked));
 }
 if (raceBox.scrollTop !== 200) {
@@ -511,4 +593,5 @@ console.log("лента панели: разговор открывается х
   " история подгружается от прокрутки вверх без кнопки и без повторных запросов," +
   " начало разговора названо словами, позиция ленты держится при уходе и возврате," +
   " пузыри и строки инструментов стоят одной лентой," +
-  " уход с ленты посреди запроса потока не поднимает, пустота названа словами");
+  " уход с ленты посреди запроса потока не поднимает, пустота названа словами," +
+  " три страницы истории при растущем журнале ложатся встык по ключу записи");

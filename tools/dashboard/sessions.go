@@ -405,6 +405,11 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if strings.HasPrefix(head.First, groomOrderPrefix) {
 			continue
 		}
+		// Служебная сессия суммаризации работой не является по той же причине,
+		// по которой её нет в списке чатов: её завёл дашборд ради заголовка.
+		if titleSession(head.First) {
+			continue
+		}
 		task, note, bound := bindTask(binds, f.ID, f.suffix, head)
 		if task != "" && (prefix == "" || !strings.HasPrefix(task, prefix+"-")) {
 			task, note = "", foreignTaskNote

@@ -284,15 +284,21 @@ func homeEnv(silent bool) []string {
 // поднимает клиента харнеса: под чужим домом он не найдёт ни своих хуков, ни
 // своего логина.
 func runProcHome(name string, args ...string) ([]byte, error) {
-	return runProcQuiet(false, name, args...)
+	return runProcQuiet("", false, name, args...)
 }
 
 // runProcQuiet это тот же запуск, помеченный служебным: хуки devkit на нём
 // молчат, и лента уведомлений не наполняется ходами, которых человек не делал.
-func runProcQuiet(silent bool, name string, args ...string) ([]byte, error) {
+// dir задаёт рабочую директорию: клиент кладёт транскрипт в каталог по ней, и
+// служебный вызов из каталога проекта всплыл бы в его списке чатов отдельной
+// сессией. Пустой dir оставляет директорию процесса.
+func runProcQuiet(dir string, silent bool, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	if env := homeEnv(silent); env != nil {
 		cmd.Env = env
 	}

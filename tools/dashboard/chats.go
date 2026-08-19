@@ -198,6 +198,11 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			break
 		}
 		head := s.sessionHeadCached(f.path, f.stamp)
+		// Служебная сессия суммаризации чатом не является: её завёл сам
+		// дашборд ради заголовка, и в списке ей делать нечего.
+		if titleSession(head.First) {
+			continue
+		}
 		last := sessions.Last(recs[f.ID])
 		tasks := sessions.Touched(recs[f.ID])
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
@@ -784,17 +789,48 @@ func titleTrim(text string) string {
 	return strings.Join(words, " ")
 }
 
-// titleAsk просит haiku назвать разговор. Модель тут самая дешёвая нарочно:
+// titleMark это метка служебного вызова в самом начале промпта. По ней
+// транскрипт суммаризации узнаётся в списках и выбрасывается из них: клиент
+// пишет журнал всякому вызову, в том числе одноразовому, и без метки эти
+// сессии всплывали чатами наравне с разговорами человека (баг девятого круга
+// POC). Метка стоит первой строкой, потому что список читает только начало
+// первой реплики.
+const titleMark = "[devkit-title]"
+
+// titleLegacy это начало промпта, каким он был до метки: уже написанные
+// транскрипты узнаются по нему, и старый мусор уходит с экранов сам, без
+// удаления файлов.
+const titleLegacy = "Назови диалог заголовком"
+
+// titleSession узнаёт служебную сессию по первой реплике.
+func titleSession(first string) bool {
+	first = strings.TrimSpace(first)
+	return strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy)
+}
+
+// titleDir это рабочая директория служебного вызова: каталог вне всех проектов,
+// чтобы транскрипт лёг в свой угол и не попал ни в один список. Не создался,
+// значит вызов пойдёт из директории процесса, и его подберёт фильтр по метке.
+func (s *server) titleDir() string {
+	dir := filepath.Join(s.cfg.Home, ".devkit", "titles")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	return dir
+}
+
+// titleAsk просит haiku назвать чат. Модель тут самая дешёвая нарочно:
 // заголовок это украшение списка, и платить за него ярусом выше некому.
-func titleAsk(text string) string {
+func (s *server) titleAsk(text string) string {
 	if m := clientMissing(defaultClient); m != "" {
 		return ""
 	}
-	prompt := "Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
+	prompt := titleMark + " Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
 		"Ответь только заголовком, без кавычек и пояснений. Реплика: " + truncate(text, 600)
-	// Вызов служебный: заголовок это украшение списка, а не работа человека, и
-	// хуки devkit на нём обязаны молчать (баг девятого круга POC).
-	out, err := runProcQuiet(true, defaultClient, "-p", "--model", "haiku", prompt)
+	// Вызов служебный: заголовок это украшение списка, а не работа человека.
+	// Хуки devkit на нём молчат по метке окружения, а транскрипт уезжает в свой
+	// каталог вне проектов, чтобы не всплыть чатом (баг девятого круга POC).
+	out, err := runProcQuiet(s.titleDir(), true, defaultClient, "-p", "--model", "haiku", prompt)
 	if err != nil {
 		return ""
 	}
@@ -879,7 +915,7 @@ func (s *server) titleOrder(sid, text string) {
 			return
 		}
 		defer func() { <-titleJobs }()
-		said := titleAsk(text)
+		said := s.titleAsk(text)
 		if said == "" {
 			return
 		}

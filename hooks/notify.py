@@ -746,7 +746,22 @@ def self_test():
     return 0
 
 
+# Служебный вызов клиента: дашборд зовёт claude одной репликой ради заголовка
+# чата, и такой ход не работа человека, а украшение списка. Без этой отсечки
+# каждая суммаризация писала в ленту «сессия: ход закончен» с заголовком
+# суммаризуемого чата, и лента заваливалась пачками мусора (баг девятого круга
+# POC). Маркер ставит тот, кто зовёт, и уважают его оба хука devkit.
+SILENT_ENV = "DEVKIT_SILENT"
+
+
+def silent(env=None):
+    env = os.environ if env is None else env
+    return bool((env.get(SILENT_ENV) or "").strip())
+
+
 def main(argv):
+    if silent():
+        return 0
     if not argv:
         sys.stderr.write(__doc__)
         return 2

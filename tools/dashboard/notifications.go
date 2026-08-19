@@ -306,6 +306,7 @@ func (s *server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	items, seen := parseNotifications(tailLines(data, intParam(r, "n", tailDefault, tailMax)), filter)
 	s.nameWaitTasks(items)
 	s.bindNotifyTasks(items)
+	items = s.dropTitleNoise(items)
 	resp := map[string]any{"exists": true, "items": items}
 	if len(items) == 0 {
 		// Пустоты различимы: журнал без событий, фильтр без попаданий и
@@ -334,6 +335,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 		items, seen := parseNotifications(tailLines(data, tailDefault), filter)
 		s.nameWaitTasks(items)
 		s.bindNotifyTasks(items)
+		items = s.dropTitleNoise(items)
 		for _, n := range items {
 			sseEvent(w, f, "", marshalNotification(n))
 		}
@@ -360,6 +362,7 @@ func (s *server) streamNotifications(w http.ResponseWriter, r *http.Request, pat
 			items, _ := parseNotifications(lines, filter)
 			s.nameWaitTasks(items)
 			s.bindNotifyTasks(items)
+			items = s.dropTitleNoise(items)
 			for _, n := range items {
 				sseEvent(w, f, "", marshalNotification(n))
 			}
@@ -373,4 +376,60 @@ func marshalNotification(n Notification) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+// Мусор от суммаризации заголовков (баг девятого круга POC). Пока служебный
+// вызов клиента не был помечен молчащим, каждая суммаризация писала в журнал
+// «ход закончен» с заголовком того чата, который она называла. Новых таких
+// строк больше нет, а насыпанные лежат в журнале и лезут в список. Узнаются они
+// дёшево и точно: событие без задачи и без проекта, чей текст дословно совпал с
+// заголовком, лежащим в кеше чатов. Совпасть случайно тут нечему, кеш заполнен
+// ровно ответами haiku на эти же вызовы.
+func (s *server) titleNoise() []string {
+	var out []string
+	entries, err := os.ReadDir(chatStoreDir(s.cfg.Home))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(chatStoreDir(s.cfg.Home), e.Name()))
+		if err != nil {
+			continue
+		}
+		var st chatStore
+		if json.Unmarshal(data, &st) != nil || st.Title == "" {
+			continue
+		}
+		// Заголовок бывает обрезан по числу слов, и в журнале лежит полный
+		// текст той же реплики: сверка идёт по началу, а не по равенству.
+		out = append(out, strings.TrimSuffix(st.Title, "..."))
+	}
+	return out
+}
+
+// dropTitleNoise выбрасывает из выдачи события, оставшиеся от суммаризации.
+func (s *server) dropTitleNoise(list []Notification) []Notification {
+	noise := s.titleNoise()
+	if len(noise) == 0 {
+		return list
+	}
+	junk := func(body string) bool {
+		for _, t := range noise {
+			if t != "" && strings.HasPrefix(body, t) {
+				return true
+			}
+		}
+		return false
+	}
+	out := list[:0]
+	for _, n := range list {
+		if n.Reason == "turn_done" && n.ID == "" && n.Project == "" && junk(n.Body) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }

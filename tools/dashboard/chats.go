@@ -792,7 +792,9 @@ func titleAsk(text string) string {
 	}
 	prompt := "Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
 		"Ответь только заголовком, без кавычек и пояснений. Реплика: " + truncate(text, 600)
-	out, err := runProcHome(defaultClient, "-p", "--model", "haiku", prompt)
+	// Вызов служебный: заголовок это украшение списка, а не работа человека, и
+	// хуки devkit на нём обязаны молчать (баг девятого круга POC).
+	out, err := runProcQuiet(true, defaultClient, "-p", "--model", "haiku", prompt)
 	if err != nil {
 		return ""
 	}

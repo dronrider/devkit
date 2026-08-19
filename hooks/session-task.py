@@ -218,7 +218,20 @@ def run_hook(protocol, path=None, env=None, now=None):
     return 0
 
 
+# Служебный вызов клиента в реестр чатов не пишется: заголовок чата заказывает
+# сам дашборд, и его одноразовая сессия разговором не является (баг девятого
+# круга POC). Маркер тот же, что уважает уведомитель.
+SILENT_ENV = "DEVKIT_SILENT"
+
+
+def silent(env=None):
+    env = os.environ if env is None else env
+    return bool((env.get(SILENT_ENV) or "").strip())
+
+
 def main(argv):
+    if silent():
+        return 0
     if not argv or argv[0] not in ("--hook", "--touch"):
         sys.stderr.write(__doc__)
         return 2

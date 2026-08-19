@@ -249,31 +249,51 @@ func realHome() string {
 	return ""
 }
 
+// silentEnv это маркер служебного вызова клиента: хуки devkit по нему молчат.
+// Без него каждая суммаризация заголовка писала в ленту уведомлений «ход
+// закончен» и строку в реестр чатов, потому что claude -p это полноценная
+// сессия харнеса со всеми хуками (баг девятого круга POC). Флаг --bare клиента
+// тут не годится: он и правда пропускает хуки, но заодно теряет логин, и вызов
+// отвечает «Not logged in».
+const silentEnv = "DEVKIT_SILENT=1"
+
 // homeEnv собирает окружение подпроцесса с настоящим домом: остальное
-// наследуется как было.
-func homeEnv() []string {
+// наследуется как было. silent помечает вызов служебным.
+func homeEnv(silent bool) []string {
 	home := realHome()
-	if home == "" {
-		return nil
-	}
 	out := []string{}
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "HOME=") {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "DEVKIT_SILENT=") {
 			continue
 		}
 		out = append(out, kv)
 	}
-	return append(out, "HOME="+home)
+	if home != "" {
+		out = append(out, "HOME="+home)
+	}
+	if silent {
+		out = append(out, silentEnv)
+	}
+	if home == "" && !silent {
+		return nil
+	}
+	return out
 }
 
 // runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что
 // поднимает клиента харнеса: под чужим домом он не найдёт ни своих хуков, ни
 // своего логина.
 func runProcHome(name string, args ...string) ([]byte, error) {
+	return runProcQuiet(false, name, args...)
+}
+
+// runProcQuiet это тот же запуск, помеченный служебным: хуки devkit на нём
+// молчат, и лента уведомлений не наполняется ходами, которых человек не делал.
+func runProcQuiet(silent bool, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
-	if env := homeEnv(); env != nil {
+	if env := homeEnv(silent); env != nil {
 		cmd.Env = env
 	}
 	cmd.WaitDelay = time.Second

@@ -501,6 +501,48 @@ class WakeTest(Stand):
 
 
 
+class RunRootsTest(Stand):
+    """Тик обходит и корни задач из записей этапов: разговор с задачей идёт и
+    вне цикла цели."""
+
+    def setUp(self):
+        super().setUp()
+        self.call = Fake()
+
+    def stage_record(self, tid, root):
+        d = self.home / ".devkit" / "runs"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("%s-стенд.run" % tid)).write_text(
+            "# этапы задачи %s\nid = %s\nroot = %s\nэтап = уточнение | %s | вопрос: как быть\n"
+            % (tid, tid, root, stamp(self.now)), encoding="utf-8")
+
+    def test_root_without_a_goal_is_swept(self):
+        # DoD: убитый ход не оставляет строку в In progress. Записи цели у
+        # обычной задачи нет вовсе, и без второго источника корней страховка
+        # молчала бы ровно там, где вопрос задан вне цикла.
+        proj = self.dir / "solo"
+        (proj / "docs" / "tasks").mkdir(parents=True)
+        (proj / ".devkit" / "chat").mkdir(parents=True)
+        (proj / "docs" / "TASKS.md").write_text(
+            BOARD % (PARK_ROW % ("DK-902", "Спрашивает", "DK-902", "DK-902"), ""), encoding="utf-8")
+        (proj / ".devkit" / "chat" / "task-DK-902.ask").write_text(
+            stamp(self.now - timedelta(minutes=5)) + "\nзадача DK-902\n"
+            '{"questions": [{"text": "как быть"}]}\n', encoding="utf-8")
+        self.stage_record("DK-902", str(proj))
+        self.assertIn(str(proj), watch.run_roots(self.home))
+        out = io.StringIO()
+        watch.run(self.now, 45 * 60, self.home, out, self.call, TASKCTL)
+        moved = self.call.argv_with("move")
+        self.assertEqual(len(moved), 1, "корень без цели не обошли: %s" % self.call.calls)
+        self.assertIn("DK-902", moved[0])
+        self.assertIn("припаркована страховкой", out.getvalue())
+
+    def test_record_of_a_gone_project_is_skipped(self):
+        # Запись этапа переживает сам проект: корня нет, и обходить нечего.
+        self.stage_record("DK-903", str(self.dir / "снесённый"))
+        self.assertNotIn(str(self.dir / "снесённый"), watch.run_roots(self.home))
+
+
 class ParkStaleTest(Stand):
     """Страховка ожидания: брошенный ход паркует сторожок, живую сессию не
     трогает."""
@@ -582,6 +624,33 @@ class ParkStaleTest(Stand):
         self.board_progress([PARK_ROW % ("DK-901", "Работает", "DK-901", "DK-901")])
         self.assertEqual(self.park(), [])
         self.assertEqual(self.call.calls, [])
+
+    def test_unpushed_board_still_drops_the_stamp(self):
+        # taskctl отбился на хвосте парковки (доска не уехала в origin), а
+        # строка из In progress ушла: признак снимается всё равно, иначе он
+        # лежал бы вечно, а неуехавшая доска называется словами.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        path = self.ask("DK-901", -60, session="aaa-1")
+        call = Fake(code=1, out="git push: exit status 128")
+
+        def moved(argv, **kw):
+            out = call(argv, **kw)
+            self.board_progress([])
+            return out
+
+        lines = watch.park_stale(str(self.proj), self.now, moved, TASKCTL, home=self.home)
+        self.assertFalse(path.exists(), "признак остался лежать после парковки")
+        self.assertIn("доска не уехала в origin", lines[0])
+
+    def test_refused_parking_keeps_the_stamp(self):
+        # Отказ до правки доски это другое дело: строка стоит в In progress,
+        # и признак нужен следующему тику.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        path = self.ask("DK-901", -60, session="aaa-1")
+        lines = watch.park_stale(str(self.proj), self.now, Fake(code=1, out="вопросов висит 2 из 2"),
+                                 TASKCTL, home=self.home)
+        self.assertTrue(path.exists(), "признак снят там, где парковки не было")
+        self.assertIn("taskctl отказал", lines[0])
 
     def test_ask_in_the_task_tree_counts_too(self):
         # Признак бывает и в дереве задачи: брошенный ход шёл оттуда.

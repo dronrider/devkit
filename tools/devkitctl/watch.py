@@ -59,6 +59,11 @@ DEVKIT = Path(__file__).resolve().parent.parent.parent
 NOTIFIER = DEVKIT / "hooks" / "notify.py"
 
 GOALS_DIR = "~/.devkit/goals"
+# Записи этапов работы: ~/.devkit/runs/<ID>-<slug>.run, поле «root» называет
+# основной чекаут задачи. Реестр целей знает только корни живых циклов, а
+# разговор с задачей идёт и вне цикла, поэтому корни на обход берутся из обоих
+# мест (internal/stage пишет запись на каждый вердикт и на каждый вопрос).
+RUNS_DIR = "~/.devkit/runs"
 CONF = "~/.devkit/watch.local"
 LOG = "~/.devkit/goal-watch.log"
 LOG_LIMIT = 100 * 1024
@@ -440,7 +445,7 @@ def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
         except OSError as e:
             lines.append("задача %s в %s: припарковать не вышло, %s" % (tid, root, e))
             continue
-        if p.returncode != 0:
+        if p.returncode != 0 and tid in progress_rows(root):
             lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
                          % (tid, root, p.returncode, (p.stdout or "").strip()))
             continue
@@ -448,6 +453,14 @@ def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
             os.remove(ask["path"])
         except OSError:
             pass
+        if p.returncode != 0:
+            # Строка из In progress ушла, значит парковка отработала, а
+            # споткнулся её хвост: доска не уехала в origin. Признак снимается
+            # всё равно, иначе он лежал бы вечно, а неуехавшая доска называется
+            # в отчёте: чинит её человек; следующий тик к ней не возвращается.
+            lines.append("задача %s в %s припаркована страховкой, но доска не уехала в origin: %s"
+                         % (tid, root, (p.stdout or "").strip()))
+            continue
         lines.append("задача %s в %s припаркована страховкой: ход ожидания убит, живой сессии за строкой нет"
                      % (tid, root))
     return lines
@@ -601,6 +614,27 @@ def drop(path):
         pass
 
 
+def run_roots(home=None):
+    """Корни задач из записей этапов. Реестр целей заводит только гейт бюджета
+    внутри цикла цели, а `taskctl ask` зовут и по задаче, взятой напрямую: без
+    второго источника страховка молчала бы ровно там, где вопрос задан вне
+    цикла. Каждый вердикт pick и каждый вопрос заводят запись этапа, и поле
+    «root» в ней это уже основной чекаут.
+
+    Корень без доски пропускается: она читается напрямую, и её отсутствие
+    значит, что запись пережила сам проект."""
+    home = default_home() if home is None else home
+    d = home_path(home, RUNS_DIR)
+    if not d.is_dir():
+        return []
+    roots = []
+    for path in sorted(d.glob("*.run")):
+        root = read_entry(path).get("root", "")
+        if root and root not in roots and os.path.isdir(root) and board_present(root):
+            roots.append(root)
+    return roots
+
+
 def entries(home=None):
     home = default_home() if home is None else home
     d = home_path(home, GOALS_DIR)
@@ -664,6 +698,16 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
             for pline in park_stale(root, now, call, taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
+    # Разговор задачи живёт и вне цикла цели, поэтому корни задач обходятся
+    # тем же порядком: пробуждение ответом и страховка брошенного ожидания не
+    # спрашивают, ведут ли задачу целью.
+    for root in run_roots(home):
+        if root in swept:
+            continue
+        swept.add(root)
+        for line in wake(root, now, call, taskctl) + park_stale(root, now, call, taskctl, home=home):
+            out.write(line + "\n")
+            log_line(line, home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

@@ -2969,16 +2969,16 @@ async function wireFeed(project, sid, opts) {
         item.sub === next.sub) {
         items.push({
           key: itemKey(item),
-          sign: [item.role, item.time, item.text, next.text, item.sub || ""].join("|"),
-          make: () => subLine(safePair(opts.pair, item, next), item.sub),
+          sign: [item.role, item.time, item.text, next.text, item.sub || "", next.fail].join("|"),
+          make: () => feedRow(safePair(opts.pair, item, next), item, next),
         });
         i++;
         continue;
       }
       items.push({
         key: itemKey(item),
-        sign: [item.role, item.time, item.text, item.sub || ""].join("|"),
-        make: () => subLine(safeItem(opts.item, item), item.sub),
+        sign: [item.role, item.time, item.text, item.sub || "", item.fail].join("|"),
+        make: () => feedRow(safeItem(opts.item, item), item, null),
       });
     }
     sync(box, items);
@@ -3341,15 +3341,29 @@ function chatBubble(who, text, meta) {
 // вывод инструмента всегда стоит следом за своим вызовом.
 function toolPair(call, out) {
   const name = call.tool || "инструмент";
+  const args = call.args || {};
+  // Каждый инструмент рисуется по-своему, как в vscode: чтение файла одной
+  // строкой с диапазоном, правка диффом, команда с её выводом, остальные одной
+  // строкой с главным доводом. До этого всё сводилось к виду команды, и строка
+  // «Read» показывала путь так же, как Bash показывает скрипт.
+  if (name === "Read") return toolOneLine(name, readSign(call, args));
+  if (name === "Edit" || name === "MultiEdit" || name === "NotebookEdit") {
+    return toolDiffCard(name, fileSign(call, args), "Изменено",
+      diffLines(args.old_string || "", args.new_string || args.new_source || ""));
+  }
+  if (name === "Write") {
+    return toolDiffCard(name, fileSign(call, args), "Записано",
+      addedLines(args.content || ""));
+  }
+  if (name !== "Bash") return toolOneLine(name, call.about || call.note || "");
+  return bashCard(name, call, out);
+}
+
+// Ход командой: заголовок с пояснением и блок из двух строк, вход и выход со
+// стрелками. Копирование одно, при команде.
+function bashCard(name, call, out) {
   const cmd = call.note || foldPeek(call.text || "", 200);
   const said = out && out.text ? out.text : "";
-  // Ход стоит заголовком и блоком под ним. В заголовке имя инструмента и
-  // пояснение, которое агент дал ходу сам (поле description); в блоке две
-  // строки в две колонки: слева направление стрелкой, справа команда и её
-  // вывод. Раскрытия нет, ход виден сразу целиком.
-  // Обёртки-карточки вокруг хода нет: строка заголовка стоит прямо на фоне
-  // страницы, а рамку носит только блок ввода-вывода под ней. Класс tool тут
-  // и заводил общую карточку с рамкой и подложкой.
   const box = el("div", "trow2");
   const head = el("div", "thead");
   head.append(el("b", "", name));
@@ -3360,12 +3374,103 @@ function toolPair(call, out) {
   const lead = el("span", "tcmd", cmd);
   lead.title = cmd;
   top.append(lead);
-  // Копирование стоит только при команде: уносят в терминал её, и второй такой
-  // кнопки при выводе не нужно.
   top.append(copyBtn((call.text || "") + (call.text && said ? "\n" : "") + said));
   body.append(top);
   if (said) body.append(toolOutLine(said));
   box.append(body);
+  return box;
+}
+
+// Ход одной строкой: имя инструмента и его главный довод. Блока под ним нет
+// вовсе: у чтения файла и у поиска смотреть в ленте нечего.
+function toolOneLine(name, sign) {
+  const box = el("div", "trow2");
+  const head = el("div", "thead");
+  head.append(el("b", "", name));
+  const lead = el("span", "tcmd", sign);
+  lead.title = sign;
+  head.append(lead);
+  box.append(head);
+  return box;
+}
+
+// Имя файла из пути: в ленте важно, что за файл, а не где он лежит. Полный
+// путь остаётся подсказкой на самой строке.
+function baseName(path) {
+  const parts = String(path || "").split("/");
+  return parts[parts.length - 1] || String(path || "");
+}
+
+function fileSign(call, args) {
+  return baseName(args.file_path || args.path || call.note || "");
+}
+
+// Подпись чтения: файл и прочитанный кусок строками, если он назван.
+function readSign(call, args) {
+  const file = fileSign(call, args);
+  const from = Number(args.offset || 0);
+  const count = Number(args.limit || 0);
+  if (!count && !from) return file;
+  const start = from || 1;
+  const end = count ? start + count - 1 : 0;
+  return file + " (строки " + start + (end ? "-" + end : " и дальше") + ")";
+}
+
+// Дифф правки: общий кусок сверху и снизу остаётся как есть, посередине снятые
+// строки и поставленные. Ничего умнее построчного сравнения тут не нужно: ход
+// правки читается и так, а полный текст всегда лежит в самом файле.
+function diffLines(was, now) {
+  const a = String(was).split("\n");
+  const b = String(now).split("\n");
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const out = [];
+  for (let i = 0; i < head; i++) out.push(["ctx", a[i]]);
+  for (let i = head; i < a.length - tail; i++) out.push(["del", a[i]]);
+  for (let i = head; i < b.length - tail; i++) out.push(["add", b[i]]);
+  for (let i = a.length - tail; i < a.length; i++) out.push(["ctx", a[i]]);
+  return out;
+}
+
+// Запись файла целиком это тот же дифф, где всё поставлено заново.
+function addedLines(text) {
+  return String(text).split("\n").map((ln) => ["add", ln]);
+}
+
+// Сколько строк диффа видно до разворота: длинная правка иначе занимает экран
+// целиком, а по ленте ходят взглядом.
+const DIFF_LINES = 12;
+
+// Карточка правки: строка «инструмент файл», подпись о том, что с файлом
+// сделано, и сам дифф с подсветкой.
+function toolDiffCard(name, file, said, lines) {
+  const box = el("div", "trow2");
+  const head = el("div", "thead");
+  head.append(el("b", "", name));
+  const lead = el("span", "tcmd", file);
+  lead.title = file;
+  head.append(lead);
+  box.append(head);
+  if (!lines.length) return box;
+  box.append(el("div", "tsaid", said));
+  const diff = el("div", "tdiff");
+  for (const [kind, text] of lines) {
+    diff.append(el("div", "dline d-" + kind, text === "" ? " " : text));
+  }
+  box.append(diff);
+  if (lines.length > DIFF_LINES) {
+    diff.classList.add("cut");
+    const more = el("button", "submore", "показать целиком, строк " + lines.length);
+    more.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      diff.classList.remove("cut");
+      more.hidden = true;
+    });
+    box.append(more);
+  }
   return box;
 }
 
@@ -3378,8 +3483,8 @@ function toolLine(ico, cls) {
   return line;
 }
 
-// Вывод хода: вторая строка блока, стрелкой влево. Обрезка до пары строк живёт
-// в стилях, а не в тексте: полный вывод остаётся в разметке, и его по-прежнему
+// Вывод хода: та же строка со стрелкой влево. Обрезка до пары строк живёт в
+// стилях, а не в тексте: полный вывод остаётся в разметке, и его по-прежнему
 // можно выделить и скопировать.
 function toolOutLine(text) {
   const line = toolLine("i-out", "tout");
@@ -3431,17 +3536,31 @@ function itemCursor(item) {
   return item.key ? String(item.key) : String(item.seq);
 }
 
-// Пометка чужого хода: запись субагента идёт той же лентой, но с отступом и
-// точкой, по которой видно, чья это работа. Так же скромно её метит vscode, и
-// именно этого человек и просил, а не блока с заголовком и счётом ходов.
-function subLine(node, label) {
-  if (!label) return node;
-  const row = el("div", "subline");
-  const dot = el("span", "subdot");
-  dot.title = "субагент: " + label;
-  dot.setAttribute("aria-label", dot.title);
-  row.append(dot, node);
+// Строка ленты на общей вертикальной линии: слева тонкая серая нить через весь
+// разговор, на ней кружок против первой строки записи. Так ход работы читается
+// сверху вниз одной колонкой, как в vscode. Цвет кружка говорит об исходе:
+// серый у нейтральных записей, зелёный у сделанного инструментом, красный у
+// упавшего. Запись субагента стоит на той же нити, но глубже: работа чужая, а
+// хронология общая.
+function feedRow(node, item, out) {
+  const row = el("div", "frow" + (item.sub ? " sub" : ""));
+  const dot = el("span", "fdot " + dotKind(item, out));
+  if (item.sub) {
+    dot.title = "субагент: " + item.sub;
+    dot.setAttribute("aria-label", dot.title);
+  }
+  const body = el("div", "fbody");
+  body.append(node);
+  row.append(dot, body);
   return row;
+}
+
+// Исход записи цветом: пока ответа инструмента нет, ход считается идущим и
+// кружок нейтрален, ошибка инструмента приходит признаком fail.
+function dotKind(item, out) {
+  if (item.role !== "tool") return item.role === "toolout" && item.fail ? "bad" : "";
+  if (!out) return "";
+  return out.fail ? "bad" : "ok";
 }
 
 function chatItem(item) {

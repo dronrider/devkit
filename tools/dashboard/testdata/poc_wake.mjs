@@ -103,7 +103,7 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   await settle();
   // Дорисовка меряется на строке ленты: блока работы субагента больше нет, а
   // высота её всё так же встаёт позже открытия (разметка, миниатюры).
-  const grown = byClass(box, "subline");
+  const grown = byClass(box, "frow");
   if (!grown) fail("строка работы субагента не собралась");
   grown.own = 900;
   for (const t of timers.splice(0)) t.fn();
@@ -119,7 +119,7 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   await settle();
   if (box2.handlers.wheel) box2.handlers.wheel({});
   box2.scrollTop = 100;
-  const grown2 = byClass(box2, "subline");
+  const grown2 = byClass(box2, "frow");
   if (grown2) grown2.own = 900;
   for (const t of timers.splice(0)) t.fn();
   await settle();

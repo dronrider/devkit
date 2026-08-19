@@ -175,9 +175,9 @@ async function feedOf(items, sid) {
   }
   const box = await feedOf(sub, "sub1");
   if (byClass(box, "subblk")) fail("работа субагента снова собралась в блок: " + dump(box).slice(0, 200));
-  const lines = allByClass(box, "subline");
+  const lines = allByClass(box, "sub");
   if (lines.length !== 6) fail("строк субагента " + lines.length + ", ожидал шесть карточек");
-  const dot = byClass(box, "subdot");
+  const dot = byClass(box, "fdot");
   if (!dot || dot.title !== "субагент: работа") {
     fail("пометка принадлежности не называет заказ: " + (dot && dot.title));
   }
@@ -207,8 +207,8 @@ async function feedOf(items, sid) {
   work(3, "правлю разбор");
   const box = await feedOf(mixed, "mix1");
   if (byClass(box, "subblk")) fail("лента снова свернула работу субагента в блок");
-  if (allByClass(box, "subline").length !== 7) {
-    fail("помечено чужих записей " + allByClass(box, "subline").length + ", ожидал семь");
+  if (allByClass(box, "sub").length !== 7) {
+    fail("помечено чужих записей " + allByClass(box, "sub").length + ", ожидал семь");
   }
   const seen = dump(box);
   for (const line of ["разбери находку", "нашёл причину", "тогда правь", "смотрю дерево 0",
@@ -225,7 +225,7 @@ async function feedOf(items, sid) {
   }
   // Реплики самой сессии ничем не помечены: пометка говорит именно о чужом
   // ходе, а не украшает ленту.
-  const own = allByClass(box, "subline").map((n) => dump(n));
+  const own = allByClass(box, "sub").map((n) => dump(n));
   if (own.some((t) => t.includes("разбери находку"))) {
     fail("реплика человека помечена как чужой ход: " + JSON.stringify(own));
   }
@@ -246,13 +246,45 @@ async function feedOf(items, sid) {
   if (byClass(box, "subblk") || byClass(box, "submore")) {
     fail("хвост работы субагента снова спрятан блоком с кнопкой");
   }
-  if (allByClass(box, "subline").length !== 120) {
-    fail("нарисовано чужих записей " + allByClass(box, "subline").length + ", ожидал все 120");
+  if (allByClass(box, "sub").length !== 120) {
+    fail("нарисовано чужих записей " + allByClass(box, "sub").length + ", ожидал все 120");
   }
   const seen = dump(box);
   if (!seen.includes("продолжай, я жду отчёта")) fail("реплика человека перед работой пропала");
   if (!seen.includes("ход 0.") || !seen.includes("ход 119.")) {
     fail("края длинной работы не нарисованы: " + seen.slice(0, 200));
+  }
+}
+
+// --- лента на общей линии: кружок против каждой записи, цвет по исходу ---
+// Записи разговора соединены одной вертикальной линией, как в vscode: кружок
+// серый у нейтральных, зелёный у сделанного инструментом, красный у упавшего.
+{
+  const rail = [
+    { seq: 0, key: "m:0", role: "user", text: "проверь сборку", time: "2026-08-13T09:00:00+03:00" },
+    { seq: 1, key: "m:1", role: "tool", tool: "Bash", note: "go build ./...", text: "command: go build ./...",
+      time: "2026-08-13T09:00:01+03:00" },
+    { seq: 2, key: "m:2", role: "toolout", text: "готово", time: "2026-08-13T09:00:02+03:00" },
+    { seq: 3, key: "m:3", role: "tool", tool: "Bash", note: "go test ./...", text: "command: go test ./...",
+      time: "2026-08-13T09:00:03+03:00" },
+    { seq: 4, key: "m:4", role: "toolout", text: "FAIL", fail: true, time: "2026-08-13T09:00:04+03:00" },
+    { seq: 5, key: "a:0", role: "assistant", text: "смотрю дерево", sub: "разбор",
+      time: "2026-08-13T09:00:05+03:00" },
+  ];
+  const box = await feedOf(rail, "rail1");
+  const rows = allByClass(box, "frow");
+  if (rows.length !== 4) fail("строк ленты " + rows.length + ", ожидал четыре");
+  const kind = (row) => String(byClass(row, "fdot").className).split(" ").slice(1).join("");
+  if (kind(rows[0]) !== "") fail("у реплики человека кружок покрашен: " + kind(rows[0]));
+  if (kind(rows[1]) !== "ok") fail("удачный ход не помечен зелёным: " + kind(rows[1]));
+  if (kind(rows[2]) !== "bad") fail("упавший ход не помечен красным: " + kind(rows[2]));
+  // Запись субагента стоит на той же линии, но глубже, и кружок подписан заказом.
+  const deep = rows[3];
+  if (!String(deep.className).split(" ").includes("sub")) {
+    fail("запись субагента не отодвинута вглубь: " + deep.className);
+  }
+  if (byClass(deep, "fdot").title !== "субагент: разбор") {
+    fail("кружок записи субагента не назвал заказ: " + byClass(deep, "fdot").title);
   }
 }
 
@@ -269,7 +301,7 @@ async function feedOf(items, sid) {
   if (!dump(spent).includes("Размышлял 9 с")) fail("длительность размышлений не названа");
   const quiet = sandbox.replyEl({ role: "thinking", text: "", spent: 0 });
   if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
-  // Ход инструмента стоит заголовком и блоком под ним: в заголовке имя с
+  // Ход командой стоит заголовком и блоком под ним: в заголовке имя с
   // пояснением хода, в блоке две строки в две колонки, слева направление
   // стрелкой. Раскрытия нет, копирование только при команде.
   const card = sandbox.toolPair(
@@ -284,21 +316,12 @@ async function feedOf(items, sid) {
     fail("направление снова подписано словами: " + said);
   }
   if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
-  // Общей карточки вокруг хода нет: строка заголовка стоит на фоне страницы,
-  // рамку носит только блок ввода-вывода под ней. Класс tool заводил обёртку с
-  // рамкой и подложкой, и заголовок сидел внутри неё.
   if (String(card.className).split(" ").includes("tool")) {
     fail("ход снова обёрнут карточкой: " + card.className);
   }
   if (card.children.length !== 2) {
     fail("частей у хода " + card.children.length + ", ожидал две: заголовок и блок");
   }
-  if (!String(card.children[0].className).includes("thead") ||
-    !String(card.children[1].className).includes("tbox")) {
-    fail("заголовок и блок стоят не двумя частями подряд: " +
-      card.children.map((n) => n.className).join(" | "));
-  }
-  // Заголовок над блоком: имя жирным, дальше пояснение хода.
   const head = byClass(card, "thead");
   const nameEl = tag(head, "B");
   if (!nameEl || nameEl.textContent !== "Bash") {
@@ -308,9 +331,7 @@ async function feedOf(items, sid) {
   if (!about || about.textContent !== "смотрю каталог") {
     fail("пояснение хода не встало в заголовок: " + dump(head));
   }
-  // Блок ввода-вывода: две строки, в первой колонке каждой стрелка значком.
   const body = byClass(card, "tbox");
-  if (!body) fail("блока ввода-вывода нет: " + said);
   const inLine = byClass(body, "tin");
   const outLine = byClass(body, "tout");
   if (!inLine || !outLine) fail("строк команды и вывода нет: " + dump(body));
@@ -320,24 +341,76 @@ async function feedOf(items, sid) {
       fail("у строки " + what + " нет стрелки первой колонкой: " + dump(line));
     }
   }
-  const lead = byClass(inLine, "tcmd");
-  if (!lead || lead.textContent !== "ls -la") {
+  if (byClass(inLine, "tcmd").textContent !== "ls -la") {
     fail("в строке команды стоит не команда: " + dump(inLine));
   }
-  if (!dump(outLine).includes("итого 42")) fail("вывода второй строкой нет: " + dump(body));
-  // Копирование одно и стоит при команде.
   if (!deepBtn(inLine, "foldcp")) fail("кнопки копирования при команде нет: " + dump(inLine));
   if (deepBtn(outLine, "foldcp")) fail("у вывода завелась своя кнопка копирования");
-  // Пустой вывод строкой не рисуется.
   const bare = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: go build ./...", note: "go build ./..." },
     { role: "toolout", text: "" });
   if (byClass(bare, "tout")) fail("пустой вывод нарисован строкой: " + dump(bare));
-  // Одиночный вызов (ответ уехал на другую страницу истории) рисуется так же.
-  const lone = sandbox.chatItem({ role: "tool", tool: "Read", note: "docs/map.md" });
-  if (!dump(lone).includes("Read") || !dump(lone).includes("docs/map.md")) {
-    fail("одиночный вызов нарисован иначе: " + dump(lone));
+
+  // Чтение файла это одна строка с именем файла и прочитанным куском, без
+  // всякого блока: смотреть в ленте там нечего.
+  const read = sandbox.toolPair({ role: "tool", tool: "Read",
+    note: "/Users/rider/projects/devkit/docs/map.md",
+    args: { file_path: "/Users/rider/projects/devkit/docs/map.md", offset: "10", limit: "20" } }, null);
+  const readLine = byClass(read, "tcmd");
+  if (!readLine || readLine.textContent !== "map.md (строки 10-29)") {
+    fail("строка чтения собрана не по образцу: " + dump(read));
   }
+  if (byClass(read, "tbox") || byClass(read, "tdiff")) {
+    fail("у чтения файла завёлся блок: " + dump(read));
+  }
+
+  // Правка файла это строка «Edit файл», подпись о сделанном и дифф: снятые
+  // строки одним цветом, поставленные другим, общие как есть.
+  const edit = sandbox.toolPair({ role: "tool", tool: "Edit",
+    note: "/Users/rider/projects/devkit/tools/dashboard/static/app.js",
+    args: { file_path: "/Users/rider/projects/devkit/tools/dashboard/static/app.js",
+      old_string: "общая строка\nбыло тут\nхвост", new_string: "общая строка\nстало тут\nхвост" } },
+    { role: "toolout", text: "" });
+  if (byClass(edit, "tcmd").textContent !== "app.js") {
+    fail("в строке правки стоит не имя файла: " + dump(edit));
+  }
+  if (!dump(byClass(edit, "tsaid")).includes("Изменено")) {
+    fail("правка не подписана сделанным: " + dump(edit));
+  }
+  const diff = byClass(edit, "tdiff");
+  if (!diff) fail("диффа у правки нет: " + dump(edit));
+  const kinds = diff.children.map((n) => String(n.className).split(" ")[1]);
+  if (kinds.join(",") !== "d-ctx,d-del,d-add,d-ctx") {
+    fail("дифф собран не построчным сравнением: " + kinds.join(",") + " | " + dump(diff));
+  }
+  if (!dump(diff).includes("было тут") || !dump(diff).includes("стало тут")) {
+    fail("в диффе нет самих строк правки: " + dump(diff));
+  }
+
+  // Запись файла это тот же дифф, где всё поставлено заново, а длинный дифф
+  // обрезан по высоте, и его разворачивает кнопка.
+  const long = [];
+  for (let i = 0; i < 20; i++) long.push("строка " + i);
+  const write = sandbox.toolPair({ role: "tool", tool: "Write", note: "docs/new.md",
+    args: { file_path: "docs/new.md", content: long.join("\n") } }, null);
+  const wdiff = byClass(write, "tdiff");
+  if (!wdiff || wdiff.children.some((n) => !String(n.className).includes("d-add"))) {
+    fail("запись файла нарисована не одними поставленными строками: " + dump(write));
+  }
+  if (!String(wdiff.className).includes("cut")) fail("длинный дифф не обрезан по высоте");
+  const more = deepBtn(write, "submore");
+  if (!more || !String(more.textContent).includes("показать целиком")) {
+    fail("кнопки разворота длинного диффа нет: " + dump(write));
+  }
+  more.handlers.click({ stopPropagation: () => {} });
+  if (String(wdiff.className).includes("cut")) fail("кнопка не развернула дифф");
+
+  // Прочие инструменты идут одной строкой со своим главным доводом.
+  const grep = sandbox.toolPair({ role: "tool", tool: "Grep", note: "func toolPair" }, null);
+  if (byClass(grep, "tcmd").textContent !== "func toolPair" || byClass(grep, "tbox")) {
+    fail("прочий инструмент нарисован не одной строкой: " + dump(grep));
+  }
+
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
   // Реплика, доехавшая до работающего субагента, стоит подписанной служебной

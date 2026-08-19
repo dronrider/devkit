@@ -542,6 +542,15 @@ type reply struct {
 	// это: сколько агент думал. Так же подписывает их расширение для vscode
 	// («Thought for 5s»).
 	Spent int64 `json:"spent,omitempty"`
+	// Fail помечает ответ инструмента, который вернулся ошибкой (is_error у
+	// tool_result). По нему лента красит точку записи: зелёная у сделанного,
+	// красная у упавшего, и провал видно, не читая вывод.
+	Fail bool `json:"fail,omitempty"`
+	// Args это поля вызова инструмента как они есть: по ним лента рисует ход
+	// по-своему у каждого инструмента (файл с диапазоном строк у Read, дифф у
+	// Edit). Text для этого не годится: он собран в одну строку под копирование
+	// и режется по общему потолку.
+	Args map[string]string `json:"args,omitempty"`
 }
 
 // toolNoteKeys это порядок полей ввода, из которых собирается однострочная
@@ -569,6 +578,37 @@ const toolBodyLimit = 4000
 
 // toolBody собирает читаемое тело вызова: команда целиком, а не обрезанная
 // подпись, плюс остальные строковые поля ввода.
+// argLimit это потолок одного поля вызова: дифф правки бывает длинным, и
+// лента показывает его свёрнутым, а остальные поля коротки сами по себе.
+const argLimit = 8000
+
+// toolArgs отдаёт поля вызова строками. Числа и признаки тоже идут в дело:
+// у Read диапазон строк лежит числами, и без них строка хода молчала бы о том,
+// какой кусок файла читали.
+func toolArgs(input map[string]any) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range input {
+		switch t := v.(type) {
+		case string:
+			if strings.TrimSpace(t) == "" {
+				continue
+			}
+			out[k] = truncate(t, argLimit)
+		case bool:
+			out[k] = strconv.FormatBool(t)
+		case float64:
+			out[k] = strconv.FormatFloat(t, 'f', -1, 64)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func toolBody(input map[string]any) string {
 	if len(input) == 0 {
 		return ""
@@ -692,6 +732,7 @@ func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 			Name      string          `json:"name"`
 			ID        string          `json:"id"`
 			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
 			Input     map[string]any  `json:"input"`
 			Content   json.RawMessage `json:"content"`
 		}
@@ -711,17 +752,18 @@ func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 			case "tool_use":
 				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
 					Note: toolNote(b.Input), About: toolAbout(b.Input),
-					Text: toolBody(b.Input), ToolID: b.ID})
+					Text: toolBody(b.Input), Args: toolArgs(b.Input), ToolID: b.ID})
 			case "tool_result":
 				// Вывод инструмента показывается как есть, обрезанным по длине:
 				// по нему видно, что агент делает, а свёрнутая строка «Bash»
 				// про это молчала.
 				if text := resultText(b.Content); text != "" {
-					add(reply{Role: roleToolOut, Time: rec.Timestamp, Text: text, ToolID: b.ToolUseID})
+					add(reply{Role: roleToolOut, Time: rec.Timestamp, Text: text,
+						Fail: b.IsError, ToolID: b.ToolUseID})
 				} else {
 					// Пустой ответ инструмента в ленту не идёт, но закрытие
 					// вызова им отмечается: по нему видно, кончился ли субагент.
-					add(reply{Role: roleToolOut, Time: rec.Timestamp, ToolID: b.ToolUseID})
+					add(reply{Role: roleToolOut, Time: rec.Timestamp, Fail: b.IsError, ToolID: b.ToolUseID})
 				}
 			}
 		}

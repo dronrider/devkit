@@ -35,7 +35,8 @@ var transcriptWant = []reply{
 	{Seq: 2, Key: "m:2", Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
 	{Seq: 3, Key: "m:3", Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash",
 		Note: "taskctl list | head -5", About: "Показать доску",
-		Text: "command: taskctl list | head -5\ndescription: Показать доску"},
+		Text: "command: taskctl list | head -5\ndescription: Показать доску",
+		Args: map[string]string{"command": "taskctl list | head -5", "description": "Показать доску"}},
 	{Seq: 4, Key: "m:4", Role: roleToolOut, Time: "2026-08-10T10:00:04.000Z", Text: "ok"},
 	{Seq: 5, Key: "m:5", Role: "assistant", Time: "2026-08-10T10:00:06.000Z", Text: "Доска прочитана."},
 }
@@ -94,14 +95,16 @@ func TestSessionsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Ручка реплики и свежесть едут в списке вместе с привязкой: по ним список
-	// разговоров панели говорит состояние словом (DK-436). Дерева dk-5 рядом с
-	// проектом нет, и разговор из него честно назван кончившимся.
+	// чатов панели говорит состояние словом (DK-436). Дерева dk-5 рядом с
+	// проектом нет, и чат из него честно назван кончившимся. У сессии главного
+	// дерева задачи нет вовсе: ID, прозвучавший в первой реплике, сессию больше
+	// не привязывает, и подпись у неё честная.
 	want := []sessionInfo{
 		{ID: "bbb-2", Mtime: "2026-08-10T12:00:00Z", Branch: "dk-219", Tree: "dk-5",
 			First: "Выполни XR-007", Task: "DK-5", TaskNote: "по дереву задачи", Bound: boundLead,
-			ReplyNote: "дерева сессии больше нет: разговор кончился, и продолжить его некому"},
+			ReplyNote: "дерева сессии больше нет: чат кончился, и продолжить его некому"},
 		{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main", First: "возьми задачу XR-005 в работу",
-			Task: "XR-005", TaskNote: "по первой реплике", Bound: boundAbout, Reply: replyToSession},
+			TaskNote: unknownTaskNote, Reply: replyToSession},
 	}
 	if !reflect.DeepEqual(got.Sessions, want) {
 		t.Errorf("список сессий:\n%+v\nожидал:\n%+v", got.Sessions, want)
@@ -118,6 +121,10 @@ func TestSessionsFreeOnly(t *testing.T) {
 		sessionLine("возьми задачу XR-101 в работу", "main"), base)
 	writeSession(t, e.home, e.proj, "", "bbb-2",
 		sessionLine("почини роутер, доступы в local-docs", "main"), base.Add(time.Hour))
+	// Задачу первой сессии называет запись реестра: ID из первой реплики
+	// привязкой больше не считается, и без записи оба чата уехали бы в общий
+	// список доски.
+	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, _ := getSessions(t, e, c, "?free=1")
@@ -226,13 +233,14 @@ func TestSessionsFreeNoneNamed(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "aaa-1",
 		sessionLine("возьми задачу XR-101 в работу", "main"),
 		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?free=1")
 	if len(list) != 0 {
 		t.Fatalf("разговоры доски: %+v", list)
 	}
-	if !strings.Contains(note, "разговоров без задачи") {
+	if !strings.Contains(note, "чатов без задачи") {
 		t.Errorf("пустой список разговоров доски молчит о причине: %q", note)
 	}
 }
@@ -250,6 +258,11 @@ func TestSessionsListStateFields(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "old-1",
 		sessionLine("возьми задачу XR-101 в работу", "main"),
 		time.Now().Add(-2*time.Hour))
+	// Задачу обеим сессиям называет реестр: свежей заказом с доски, старой
+	// рукой человека.
+	writeBinds(t, e.home,
+		bindRecord("2026-08-10T09:00:00", "hls-1", "XR-101", bindOrder),
+		bindRecord("2026-08-10T09:00:00", "old-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")
@@ -321,7 +334,7 @@ func getSessions(t *testing.T, e *testEnv, c *http.Client, query string) (string
 
 // Экран задачи отдаёт только свою сессию: соседнее окно того же проекта
 // делает другую задачу и пишет свежее, и до DK-252 экран брал по mtime именно
-// его. Задача узнаётся первой репликой в главном дереве и именем бокового
+// его. Задача узнаётся записью реестра в главном дереве и именем бокового
 // дерева.
 func TestSessionsByTaskOnlyOwn(t *testing.T) {
 	e := newTestEnv(t)
@@ -334,12 +347,15 @@ func TestSessionsByTaskOnlyOwn(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-xr-103", "ccc-3",
 		sessionLine("продолжай, я подожду", "xr-103"),
 		time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC))
+	writeBinds(t, e.home,
+		bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand),
+		bindRecord("2026-08-10T12:00:00", "bbb-2", "XR-102", bindHand))
 	c := e.loggedClient(t)
 
 	text, list, _ := getSessions(t, e, c, "?task=XR-101")
 	want := []sessionInfo{{ID: "aaa-1", Mtime: "2026-08-10T09:00:00Z", Branch: "main",
 		First: "возьми задачу XR-101 в работу и доведи её конвейером",
-		Task:  "XR-101", TaskNote: "по первой реплике", Bound: boundAbout, Reply: replyToSession}}
+		Task:  "XR-101", TaskNote: handNote, Bound: boundLead, Reply: replyToSession}}
 	if !reflect.DeepEqual(list, want) {
 		t.Errorf("сессии задачи XR-101:\n%+v\nожидал:\n%+v", list, want)
 	}
@@ -369,6 +385,7 @@ func TestSessionsNameTheirTree(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-xr-101", "bbb-2",
 		sessionLine("продолжай, я подожду", "main"),
 		time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
+	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")
@@ -424,6 +441,7 @@ func TestSessionsEmptyKindsDiffer(t *testing.T) {
 	}
 	writeSession(t, e.home, e.proj, "", "aaa-1",
 		sessionLine("Выполни цель XR-102", "main"), time.Now())
+	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-102", bindHand))
 	_, _, other := getSessions(t, e, c, "?task=XR-101")
 	if !strings.Contains(other, "сессий задачи XR-101 нет") || !strings.Contains(other, "1 о других задачах") {
 		t.Errorf("чужие сессии названы не своими словами: %q", other)
@@ -457,21 +475,24 @@ func TestSessionsTaskParamSifted(t *testing.T) {
 func TestSessionHeadCached(t *testing.T) {
 	e := newTestEnv(t)
 	stamped := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
-	path := writeSession(t, e.home, e.proj, "", "aaa-1",
-		sessionLine("возьми задачу XR-101 в работу", "main"), stamped)
+	// Память ловится первой репликой шапки: задачу сессии называет реестр, а не
+	// текст, и подменой текста её не сдвинуть. Длина реплики держится прежней,
+	// иначе подмена сменила бы и отпечаток файла.
+	const said, rewritten = "возьми задачу XR-101 в работу", "возьми задачу XR-102 в работу"
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", sessionLine(said, "main"), stamped)
 	c := e.loggedClient(t)
-	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != said {
 		t.Fatalf("первое чтение шапки: %+v", list)
 	}
 
-	same := sessionLine("возьми задачу XR-102 в работу", "main")
+	same := sessionLine(rewritten, "main")
 	if err := os.WriteFile(path, []byte(same), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(path, stamped, stamped); err != nil {
 		t.Fatal(err)
 	}
-	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != said {
 		t.Errorf("шапка перечитана при том же отпечатке: %+v", list)
 	}
 
@@ -479,7 +500,7 @@ func TestSessionHeadCached(t *testing.T) {
 	if err := os.Chtimes(path, moved, moved); err != nil {
 		t.Fatal(err)
 	}
-	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-102" {
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != rewritten {
 		t.Errorf("дописанный транскрипт остался в памяти старым: %+v", list)
 	}
 }
@@ -502,10 +523,10 @@ func bigTranscript(order string) string {
 func TestSessionHeadCachedWhenFull(t *testing.T) {
 	e := newTestEnv(t)
 	stamped := time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC)
-	path := writeSession(t, e.home, e.proj, "", "aaa-1",
-		bigTranscript("возьми задачу XR-101 в работу"), stamped)
+	const said = "возьми задачу XR-101 в работу"
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", bigTranscript(said), stamped)
 	c := e.loggedClient(t)
-	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != said {
 		t.Fatalf("первое чтение большой шапки: %+v", list)
 	}
 
@@ -518,7 +539,7 @@ func TestSessionHeadCachedWhenFull(t *testing.T) {
 	if err := os.Chtimes(path, moved, moved); err != nil {
 		t.Fatal(err)
 	}
-	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].Task != "XR-101" {
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != said {
 		t.Errorf("дочитанная голова перечитана после дописывания: %+v", list)
 	}
 }
@@ -533,6 +554,7 @@ func TestSessionsFoundBeyondHeadScan(t *testing.T) {
 	old := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	writeSession(t, e.home, e.proj, "", "old-1",
 		sessionLine("возьми задачу XR-101 в работу", "main"), old)
+	writeBinds(t, e.home, bindRecord("2026-08-01T09:00:00", "old-1", "XR-101", bindHand))
 	for i := 0; i < headScanMax+10; i++ {
 		writeSession(t, e.home, e.proj, "", fmt.Sprintf("new-%02d", i),
 			sessionLine("посмотри логи", "main"), old.Add(time.Duration(i+1)*time.Hour))
@@ -592,13 +614,15 @@ func TestChatPanelAddressAndWay(t *testing.T) {
 // правил, что спор hidden с display (DK-284).
 func TestStaticChatPanelWidths(t *testing.T) {
 	css := readFile(t, filepath.Join("static", "style.css"))
-	if !strings.Contains(css, ".cpanel{position:relative;flex:none;width:calc(var(--cw,420px) + var(--clw))") {
+	if !strings.Contains(css, ".cpanel{position:relative;flex:none;width:var(--cw,420px)") {
 		t.Error("панель не берёт ширину переменной --cw: хват не сдвинет её, а доска рядом не сожмётся")
 	}
-	// Список разговоров стоит колонкой слева и ленте ширины не отъедает: он
-	// прибавляется к запомненной ширине, а не делит её (DK-436).
-	if !strings.Contains(css, ".clist{flex:none;width:var(--clw)") {
-		t.Error("список разговоров не стоит своей колонкой: он поделит ширину с лентой")
+	// Колонки со списком чатов у панели больше нет: список стоит выпадающим
+	// списком в шапке окна, узел колонки погашен, и запомненную ширину целиком
+	// занимает лента.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, "side.hidden = true") {
+		t.Error("колонка списка чатов не погашена: она отъест у ленты ширину панели")
 	}
 	over := funcBody(t, css, "@media (max-width:1100px){")
 	if !strings.Contains(over, ".cpanel{position:fixed") {
@@ -608,12 +632,8 @@ func TestStaticChatPanelWidths(t *testing.T) {
 	if !strings.Contains(narrow, ".cpanel{width:auto") || !strings.Contains(narrow, ".cgrab{display:none}") {
 		t.Error("на узком экране панель не занимает его целиком: чат рядом с доской там нечитаем")
 	}
-	if !strings.Contains(narrow, ".clist{width:auto") {
-		t.Error("на узком экране список разговоров остался колонкой: ленте там не остаётся ширины")
-	}
 	// Полосы tmux нет ни в разметке, ни в стилях: снимок она брала только у
 	// сессий дашборда и у работы из чужого окна всегда пустовала (DK-435).
-	app := readFile(t, filepath.Join("static", "app.js"))
 	if strings.Contains(css, ".tmuxbar") {
 		t.Error("в стилях осталась полоса tmux: панель убрана не совсем")
 	}
@@ -649,15 +669,20 @@ func TestSessionsScanBudgetNamed(t *testing.T) {
 	}
 }
 
-// Панель разговора обязана спрашивать сессии своей задачи и показывать подпись
-// сессии: держится грепом по статике, как слова про паузу в тесте стопа.
+// Панель обязана показывать под заголовком задачи её чаты и подписывать чат
+// словами. Список приезжает ручкой /chats целиком, а по задаче отбирается на
+// клиенте: переключатель фильтра работает тогда без похода на сервер.
+// Держится грепом по статике, как слова про паузу в тесте стопа.
 func TestStaticSessionsAskedByTask(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(funcBody(t, text, "async function chatState("), `"?task=" + encodeURIComponent(`) {
-		t.Error("панель берёт разговор не по ?task=: под заголовком задачи пойдёт чужая сессия")
+	if !strings.Contains(funcBody(t, text, "function chatsURL("), `"/chats"`) {
+		t.Error("адрес списка чатов собран мимо ручки /chats: брать список больше неоткуда")
 	}
-	if !strings.Contains(funcBody(t, text, "async function chatSessions("), `"/sessions" + tail`) {
-		t.Error("список разговоров панели идёт мимо ручки сессий: брать его больше неоткуда")
+	if !strings.Contains(funcBody(t, text, "async function chatState("), "await api(chatsURL(project))") {
+		t.Error("панель берёт список чатов не ручкой проекта")
+	}
+	if !strings.Contains(funcBody(t, text, "function chatVisible("), "(c.tasks || []).includes(st.task)") {
+		t.Error("список панели не отбирается по задаче: под заголовком задачи пойдёт чужой чат")
 	}
 	if !strings.Contains(text, "function sessionSign") {
 		t.Error("в static/app.js нет подписи сессии: нераспознанная работа пропадёт молча")
@@ -744,7 +769,8 @@ func TestSessionHeadNamesTask(t *testing.T) {
 }
 
 // Пагинация назад: ?n= режет хвост, ?before= отдаёт реплики до курсора, до
-// начала ленты доходит без дыр.
+// начала ленты доходит без дыр. Курсор это устойчивый ключ записи, а не её
+// место в ленте: место плывёт от роста боковых журналов субагентов.
 func TestSessionPagination(t *testing.T) {
 	e := newTestEnv(t)
 	writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
@@ -764,14 +790,14 @@ func TestSessionPagination(t *testing.T) {
 		return got.Total, got.Items
 	}
 	total, items := page("n=2")
-	if total != 5 || !reflect.DeepEqual(items, transcriptWant[3:]) {
+	if total != len(transcriptWant) || !reflect.DeepEqual(items, transcriptWant[4:]) {
 		t.Fatalf("хвост n=2: total=%d %+v", total, items)
 	}
-	if _, items = page("n=2&before=3"); !reflect.DeepEqual(items, transcriptWant[1:3]) {
-		t.Fatalf("страница before=3: %+v", items)
+	if _, items = page("n=2&before=m:3"); !reflect.DeepEqual(items, transcriptWant[1:3]) {
+		t.Fatalf("страница before=m:3: %+v", items)
 	}
-	if _, items = page("n=2&before=1"); !reflect.DeepEqual(items, transcriptWant[:1]) {
-		t.Fatalf("страница before=1: %+v", items)
+	if _, items = page("n=2&before=m:1"); !reflect.DeepEqual(items, transcriptWant[:1]) {
+		t.Fatalf("страница before=m:1: %+v", items)
 	}
 }
 
@@ -930,12 +956,12 @@ func TestStaticFeedIsOneCopy(t *testing.T) {
 	if n := strings.Count(text, `sessionURL(project, sid) + "?stream=1"`); n != 1 {
 		t.Errorf("поток разговора поднимается %d раз, ожидал один", n)
 	}
-	if n := strings.Count(text, `"?before=" + firstSeq`); n != 1 {
+	if n := strings.Count(text, `"?before=" + encodeURIComponent(firstKey)`); n != 1 {
 		t.Errorf("пагинация ленты написана %d раз, ожидал один", n)
 	}
-	if n := strings.Count(text, `sessionURL(project, sid) +`); n != 4 {
-		t.Errorf("адрес разговора собирается %d раз, ожидал четыре "+
-			"(хвост, история, поток, ручка реплики)", n)
+	if n := strings.Count(text, `sessionURL(project, sid) +`); n != 5 {
+		t.Errorf("адрес разговора собирается %d раз, ожидал пять "+
+			"(хвост, история, догон после обрыва, поток, ручка реплики)", n)
 	}
 	chat := funcBody(t, text, "function wireChatFeed(")
 	for _, gone := range []string{"EventSource", "?before=", "es.onmessage"} {
@@ -968,14 +994,10 @@ func TestFeedSharedByBothScreens(t *testing.T) {
 const plainSessionFixture = `{"type":"user","message":{"role":"user","content":"поправь вёрстку карточки"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"main"}
 `
 
-// Транскрипт, чья задача узнаётся веткой чужой доски.
-const foreignSessionFixture = `{"type":"user","message":{"role":"user","content":"поправь вёрстку карточки"},"timestamp":"2026-08-11T11:59:00.000Z","gitBranch":"ab-9"}
-`
-
 // Интерактивные сессии видны живыми работами: свежий транскрипт даёт работу,
-// протухший по порогу не даёт, нераспознанная задача остаётся в списке с
-// подписью, вид работы берётся со строки доски, а сессия задачи, у которой уже
-// идёт tmux-работа, второй карточкой не задваивается.
+// протухший по порогу не даёт, сессия без задачи остаётся в списке и подписана
+// заголовком своего чата, вид работы берётся со строки доски, а сессия задачи,
+// у которой уже идёт tmux-работа, второй карточкой не задваивается.
 func TestLiveWorksSessions(t *testing.T) {
 	e := newTestEnv(t)
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
@@ -989,7 +1011,7 @@ func TestLiveWorksSessions(t *testing.T) {
 		{ID: "XR-9", Kind: "goal", Via: "tmux"},
 		{ID: "XR-5", Kind: "task", Via: "tmux"},
 		{ID: "XR-112", Kind: "goal", Via: "registry"},
-		{Kind: "session", Via: "session", Session: "live-plain", Note: unknownTaskNote},
+		{Kind: "session", Via: "session", Session: "live-plain", Note: "поправь вёрстку карточки"},
 		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session", Session: "live-task"},
 	}
 	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
@@ -1027,14 +1049,20 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 }
 
 // Задача с чужим префиксом проекту не приписывается: ходить по ней на экран
-// задачи некуда, и работа остаётся в списке с подписью.
+// задачи некуда, и работа остаётся в списке. Подписи «задача не с доски
+// проекта» на карточке больше нет: заголовок чата встаёт поверх любой подписи
+// о неузнанной задаче (sessionWorks), и чужая задача видна так же, как её
+// отсутствие.
 func TestLiveWorksSessionForeignTask(t *testing.T) {
 	e, _, _ := runsEnv(t, "")
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	e.s.now = func() time.Time { return now }
-	writeSession(t, e.home, e.proj, "", "win-foreign", foreignSessionFixture, now.Add(-time.Minute))
+	// Чужую задачу называет боковое дерево ab-9: имя ветки задачу больше не
+	// привязывает, и назвать её транскриптом больше нечем.
+	writeSession(t, e.home, e.proj, "-ab-9", "win-foreign", plainSessionFixture, now.Add(-time.Minute))
 
-	want := []Work{{Kind: "session", Via: "session", Session: "win-foreign", Note: foreignTaskNote}}
+	want := []Work{{Kind: "session", Via: "session", Session: "win-foreign",
+		Note: "поправь вёрстку карточки"}}
 	var sessions []Work
 	for _, w := range boardWorks(t, e) {
 		if w.Via == "session" {
@@ -1156,9 +1184,15 @@ func TestStaticWorkTitle(t *testing.T) {
 	if strings.Contains(live, `"goal-"`) {
 		t.Error("в полосе живых работ осталось служебное имя сессии goal-<ID>: о занятии агента оно не говорит")
 	}
+	// Шапка панели зовёт чат его заголовком, а номер задачи стоит при нём
+	// лейблом и ведёт на её экран. Заголовка задачи с доски в шапке больше нет:
+	// место занял заголовок самого чата.
 	head := funcBody(t, text, "function chatHead(")
-	if !strings.Contains(head, "st.title || (st.head && st.head.first)") {
-		t.Error("шапка панели подписана не заголовком задачи: имя сессии о занятии агента не говорит")
+	if !strings.Contains(head, "chatTitle(st.entry)") {
+		t.Error("шапка панели подписана не заголовком чата: служебное имя сессии о занятии агента не говорит")
+	}
+	if !strings.Contains(head, `el("span", "cdtask", st.task)`) {
+		t.Error("в шапке панели нет номера задачи: с чата не уйти на её экран")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname", ".chead .cts"} {
@@ -1242,29 +1276,37 @@ func TestStaticChatWidthRemembered(t *testing.T) {
 	}
 }
 
-// Четыре названные причины гашения ввода (решение 6 LLD DK-430). Молчаливое
-// гашение неотличимо от поломки: человек трижды нажмёт «Отправить», прежде чем
-// поймёт, что писать некуда.
+// Ввод панели не гаснет молча. Четырёх причин гашения (решение 6 LLD DK-430)
+// в POC не осталось вовсе: chatWay называет вид доставки одним из трёх слов и
+// не гасит ввода ни в одном из них, потому что реплике есть куда ехать и у
+// живой сессии, и у кончившейся. Молчаливое же гашение неотличимо от поломки,
+// поэтому механика причины из панели не убрана: пришла причина, она стоит
+// словами над вводом.
+//
+// Кнопки «Привязать к задаче» тут больше нет, и вместе со снятым угадыванием
+// по первой реплике это значит, что чат, заведённый руками вне дерева задачи,
+// привязать к ней с экрана нечем (ручка сессии на месте, звать её некому).
 func TestStaticChatInputReasons(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
+	way := funcBody(t, app, "function chatWay(")
 	for _, want := range []string{
-		`const CHAT_OFF_TREE = "дерева сессии больше нет"`,
-		`const CHAT_OFF_OVER = "разговор кончился, и продолжить его некому"`,
-		`const CHAT_OFF_ARCHIVE = "задача закрыта, и живых сессий у неё нет"`,
-		`const CHAT_OFF_GOAL = "разговор ведёт цель"`} {
-		if !strings.Contains(app, want) {
-			t.Errorf("причина гашения не названа словами: нет %q", want)
+		`return { kind: "new", off: false, why: "" }`,
+		`return { kind: "say", off: false, why: "" }`,
+		`return { kind: "resume", off: false, why: "" }`} {
+		if !strings.Contains(way, want) {
+			t.Errorf("вид доставки не назван словами: нет %q", want)
 		}
 	}
 	panel := funcBody(t, app, "function chatPanel(")
-	for _, want := range []string{"ta.disabled = Boolean(way.off)", "said.textContent = way.why",
-		`send.disabled = Boolean(way.off)`} {
+	for _, want := range []string{"const way = chatWay(st)", `if (way.kind === "new") {`,
+		"ta.disabled = Boolean(way.off)", "send.disabled = Boolean(way.off)"} {
 		if !strings.Contains(panel, want) {
-			t.Errorf("поле ввода гаснет без названной причины: нет %q", want)
+			t.Errorf("панель везёт реплику мимо вида доставки: нет %q", want)
 		}
 	}
-	if !strings.Contains(panel, `el("button", "btn", "Привязать к задаче")`) {
-		t.Error("у погашенного ввода нет дороги: привязать разговор к задаче нечем")
+	if !strings.Contains(panel, "if (way.why) {") ||
+		!strings.Contains(panel, `note.append(el("span", "", way.why))`) {
+		t.Error("причина не встаёт словами над вводом: гашение будет неотличимо от поломки")
 	}
 }
 
@@ -1304,6 +1346,9 @@ func TestSessionsSecondHarnessSeen(t *testing.T) {
 	writeSessionAt(t, filepath.Join(home, "projects"), e.proj, "", sid,
 		headlessLine("Выполни XR-101", "main"),
 		time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC))
+	// Запуск с доски пишет в реестр строку с источником «заказ»: ею и названа
+	// задача, ID из текста заказа сессию не привязывает.
+	writeBinds(t, e.home, bindRecord("2026-08-10T10:00:00", sid, "XR-101", bindOrder))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")
@@ -1311,7 +1356,7 @@ func TestSessionsSecondHarnessSeen(t *testing.T) {
 		t.Fatalf("сессии задачи XR-101: %+v, приписка: %s", list, note)
 	}
 	if list[0].Task != "XR-101" || list[0].First != "Выполни XR-101" {
-		t.Errorf("headless-сессия узнана не по заказу: %+v", list[0])
+		t.Errorf("headless-сессия названа не заказом с доски: %+v", list[0])
 	}
 	// Экран агента открывается по той же ссылке, что у обычной сессии: без
 	// второго корня ручка отвечала бы «транскрипта нет среди сессий проекта».

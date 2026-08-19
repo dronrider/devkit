@@ -214,6 +214,21 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!said.includes("с выделением")) fail("пометки о выделении нет");
 }
 
+// --- кнопка продолжения работы стоит и у задачи, и у цели (замечание 10) ---
+{
+  const stT = await sandbox.chatState("demo", "XR-1", board);
+  if (!deepBtn(sandbox.chatPanel("demo", stT), "cgo")) {
+    fail("у чата задачи нет кнопки продолжения");
+  }
+  // XR-7 это цель: до этого круга кнопку у неё прятали, а полоса «Продолжить»
+  // оставалась стоять на экране.
+  const stG2 = await sandbox.chatState("demo", "XR-7", board);
+  if (!stG2.isGoal) fail("стенд не считает XR-7 целью");
+  if (!deepBtn(sandbox.chatPanel("demo", stG2), "cgo")) {
+    fail("у чата цели нет кнопки продолжения");
+  }
+}
+
 // --- хват высоты стоит НАД полем: проверяется порядок узлов, а не стили ---
 {
   const stG = await sandbox.chatState("demo", "aaaa1111-1111", board);

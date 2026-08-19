@@ -1778,11 +1778,16 @@ async function continueTask(project, id) {
     sayResult(r.body.error || "продолжить не вышло", true);
     return;
   }
-  if (r.body.way === "none") {
-    await startRun(project, id, harnessDefault(), taskChatHash(project, id));
+  // Сервер сам решил, что делать: разбудил живую сессию, поднял резюм или
+  // завёл первый чат. Экрану остаётся сказать это словами и открыть чат.
+  if (r.body.message) sayResult(r.body.message);
+  if (r.body.way === "fresh") {
+    // ID сессии рождается позже команды: чат встанет в списке первым ходом, а
+    // пока открывается список задачи.
+    openChat(chatAddr(project, id));
     return;
   }
-  openChat(r.body.session || id);
+  openChat(chatAddr(project, r.body.session || id));
 }
 
 function taskActions(project, id, row, works) {
@@ -1825,10 +1830,12 @@ function taskActions(project, id, row, works) {
   // сессии агента, и вести после неё некуда.
   const closesWithoutSession = row.sect === "check" && row.accept === "user";
   const afterOk = closesWithoutSession ? "" : taskChatHash(project, id);
-  if (label === ACTION_BY_SECT["in-progress"] && !isGoal) {
+  if (label === ACTION_BY_SECT["in-progress"]) {
     // Продолжение работы переехало в чат отдельной кнопкой рядом с отправкой
-    // (замечание 10 двенадцатого круга POC): продолжают её оттуда же, откуда
-    // разговаривают, а полоса с одной кнопкой на экране задачи не нужна.
+    // (замечание 10): продолжают её оттуда же, откуда разговаривают, а полоса
+    // с одной кнопкой на экране не нужна. Цель тут не исключение: её
+    // диспетчерскую сессию продолжают той же кнопкой, и до этого круга полоса
+    // у цели оставалась стоять.
     return out;
   }
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
@@ -4709,9 +4716,9 @@ function chatPanel(project, st) {
   chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
-  if (st.task && !st.isGoal) {
+  if (st.task) {
     const go = el("button", "cgo");
-    go.title = "Продолжить работу по " + st.task;
+    go.title = st.isGoal ? "Продолжить цель " + st.task : "Продолжить работу по " + st.task;
     go.setAttribute("aria-label", go.title);
     go.append(icon("i-play-sm"));
     go.addEventListener("click", () => {

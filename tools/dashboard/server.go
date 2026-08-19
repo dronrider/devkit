@@ -1,12 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +31,8 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Отпечаток сборки для адресов статики: считается один раз на процесс.
+	stamp string
 	// Раскладка подписок машины (harnesses.go): её спрашивает и экран, и
 	// каждый запуск, а стоит она подпроцесса agentctl.
 	harn     *HarnessView
@@ -195,7 +199,45 @@ func (s *server) serveStatic(w http.ResponseWriter, r *http.Request, name string
 	if ct, ok := contentTypes[path.Ext(name)]; ok {
 		w.Header().Set("Content-Type", ct)
 	}
+	if name == "index.html" {
+		data = stampAssets(data, s.assetStamp())
+	}
 	w.Write(data)
+}
+
+// Отбойник кеша браузера. Статика лежит по вечным адресам /assets/app.js, и
+// браузер честно держит её в кеше: выкаченная правка доезжала только жёсткой
+// перезагрузкой, а до тех пор человек смотрел старый экран и считал правку
+// несделанной. Метка версии дописывается к адресам в самой странице, поэтому
+// новая сборка меняет адрес и кеш промахивается сам.
+var assetRefRe = regexp.MustCompile(`(/assets/[A-Za-z0-9._-]+)`)
+
+func stampAssets(data []byte, stamp string) []byte {
+	if stamp == "" {
+		return data
+	}
+	return assetRefRe.ReplaceAll(data, []byte("$1?v="+stamp))
+}
+
+// assetStamp это отпечаток сборки: версия с коммитом у выпущенного бинаря,
+// а у собранного из исходников время правки самой статики, чтобы правка без
+// пересборки версии тоже доезжала.
+func (s *server) assetStamp() string {
+	s.mu.Lock()
+	got := s.stamp
+	s.mu.Unlock()
+	if got != "" {
+		return got
+	}
+	sum := version + "-" + commit
+	if fi, err := fs.Stat(s.static, "app.js"); err == nil {
+		sum = fmt.Sprintf("%s-%d", sum, fi.ModTime().Unix())
+	}
+	got = fmt.Sprintf("%x", sha256.Sum256([]byte(sum)))[:12]
+	s.mu.Lock()
+	s.stamp = got
+	s.mu.Unlock()
+	return got
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

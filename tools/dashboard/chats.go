@@ -679,18 +679,34 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, _, _, ok := s.taskRow(w, r)
+	found, id, row, _, ok := s.taskRow(w, r)
 	if !ok {
 		return
 	}
+	// Цель продолжается так же, как задача, только правило про живую сессию у
+	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
+	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
+	goal := isGoalTitle(row.Title)
+	text := continuePrompt(id)
+	if goal {
+		text = "Продолжай цель " + id + "."
+	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {
-		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
-			"message": "чата у задачи нет: работа поднимется новым"})
+		// Чата нет ни одного: поднимается новый, с той же репликой. Раньше тут
+		// экран откатывался на подъём конвейера, и у цели это был не тот
+		// механизм вовсе.
+		s.startFresh(w, found, id, text)
 		return
 	}
-	text := continuePrompt(id)
 	if e.Sock != "" {
+		if goal {
+			s.logf("цель %s уже идёт в живом чате %s (pid %d)", id, e.ID, e.PID)
+			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "live",
+				"session": e.ID, "where": e.Where,
+				"message": "цель " + id + " уже идёт: будить её нечем и незачем"})
+			return
+		}
 		if err := peerSay(e.Sock, text); err == nil {
 			s.logf("работа %s продолжена в живом чате %s (pid %d)", id, e.ID, e.PID)
 			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "socket",
@@ -701,8 +717,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sid := e.ID
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {
-		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
-			"message": "транскрипта прежнего чата нет: работа поднимется новым"})
+		s.startFresh(w, found, id, text)
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -1075,4 +1090,34 @@ func (s *server) handleChatShotGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, path)
+}
+
+// startFresh поднимает новый чат работы и отвечает тем же телом, что и
+// продолжение: экрану всё равно, продолжили ему сессию или завели первую, ему
+// нужен адрес, куда идти смотреть.
+func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text string) {
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if m := clientMissing(defaultClient); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	dir := found.Path
+	if tree := filepath.Join(filepath.Dir(found.Path), filepath.Base(found.Path)+"-"+strings.ToLower(id)); isDir(tree) {
+		dir = tree
+	}
+	model := chatModelDefault
+	sess := chatNewName(id, tmuxAliveFn())
+	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
+		chatCmd(chatVars(id, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
+		return
+	}
+	s.logf("работа %s поднята новым чатом в tmux-сессии %s", id, sess)
+	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "fresh", "tmux": sess,
+		"message": "чата не было: поднят новый в tmux-сессии " + sess})
 }

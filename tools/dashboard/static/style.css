@@ -469,7 +469,7 @@ a:hover{text-decoration:underline}
    режет её. На узком экране она занимает его целиком тем же адресом:
    отдельного маршрута для телефона нет, ужимать чат в колонку на 375 точках
    незачем, там он нечитаем. */
-.cpanel{position:relative;flex:none;width:calc(var(--cw,420px) + var(--clw));display:flex;flex-direction:row;border-left:1px solid var(--line);background:var(--bg1);overflow:hidden}
+.cpanel{position:relative;flex:none;width:var(--cw,420px);display:flex;flex-direction:row;border-left:1px solid var(--line);background:var(--bg1);overflow:hidden}
 .cpanel[hidden]{display:none}
 .cgrab{position:absolute;left:0;top:0;bottom:0;width:8px;cursor:col-resize;background:none;touch-action:none;z-index:2}
 .cgrab:hover{background:color-mix(in oklab,var(--acc) 30%,transparent)}
@@ -724,3 +724,44 @@ a:hover{text-decoration:underline}
 .login input{height:48px;padding:0 14px;border-radius:12px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx);font:400 14px var(--mono)}
 .login input:focus{outline:1px solid var(--acc)}
 .login .error{padding:0;min-height:18px}
+
+/* ---- окно чатов, переделка POC (ветка poc-chat) ----
+   Список разговоров это выпадающий список с поиском в шапке окна, отдельной
+   колонки под него больше нет: она отъедала у чтения ленты и повторяла собой
+   то же самое место. Ширина панели теперь только у ленты. */
+.clist{display:none}
+.chline{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
+.cdpick{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx);cursor:pointer;text-align:left}
+.cdpick:hover{border-color:var(--acc)}
+.cdpick b{flex:1;min-width:0;font:600 12.5px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cdcar{flex:none;color:var(--tx3);display:flex;align-items:center}
+.cdcar svg{width:12px;height:12px;display:block}
+.cdbtn svg{width:14px;height:14px;display:block}
+.cdbtn{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;font:600 15px var(--sans);display:flex;align-items:center;justify-content:center;padding:0}
+.cdbtn:hover{border-color:var(--acc);color:var(--tx)}
+.cdbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+.cdsel{flex:none;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);font:500 12px var(--sans);padding:0 6px;cursor:pointer;outline:none}
+/* сам выпадающий список: лежит под шапкой поверх ленты, потому что панель
+   узкая и раздвигать её списком некуда */
+.cdrop{position:absolute;left:0;right:0;top:38px;z-index:5;display:flex;flex-direction:column;gap:6px;max-height:60vh;padding:8px;border:1px solid var(--line2);border-radius:11px;background:var(--bg0);box-shadow:0 12px 32px rgba(0,0,0,0.35);overflow:hidden}
+.chline{position:relative}
+.cdrop input{height:30px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx);font:400 12.5px var(--sans);padding:0 9px;outline:none}
+.cdrop input:focus{border-color:var(--acc)}
+.cdrows{display:flex;flex-direction:column;gap:5px;overflow-y:auto;min-height:0}
+.cdrow{display:flex;flex-direction:column;gap:4px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--bg1);cursor:pointer}
+.cdrow:hover{border-color:var(--line2);background:var(--bg2)}
+.cdrow.on{border-color:var(--acc);background:var(--bg2)}
+.cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere}
+.csub{width:100%;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere;margin-top:6px}
+/* свёрнутый блок размышлений и вывода инструмента: заголовок строкой, тело по
+   клику. Тело моноширинное и с переносами: там лежит вывод команд */
+.fold{margin:8px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg2);overflow:hidden}
+.fold.open{border-color:var(--line2)}
+.foldh{display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;min-width:0}
+.foldh:hover{background:var(--bg3)}
+.foldh b{flex:none;font:600 11.5px var(--mono);color:var(--tx2)}
+.foldh span{flex:1;min-width:0;font:400 11.5px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.foldc{flex:none!important;width:14px;text-align:center;font:600 13px var(--mono);color:var(--tx3)}
+.foldb{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:400 11.5px/1.5 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto}
+.think.fold .foldh b{color:var(--tx3);font-style:italic}
+.toolout.fold{background:var(--bg1)}

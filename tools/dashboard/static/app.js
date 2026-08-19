@@ -1714,15 +1714,10 @@ function taskActions(project, id, row, works) {
   const out = [];
   const isGoal = /^Цель:/.test(row.title);
   const work = (works || []).find((w) => w.id === id);
-  // Разговор открывается панелью справа, а не своим экраном: кнопка стоит у
-  // любой задачи, а не только у живой работы, потому что транскрипт
-  // законченного разговора лежит на диске (DK-280). Кнопка одна на живой статус
-  // и чат: после DK-435 это одно и то же место, и подпись говорит, что там
-  // найдётся, ход прямо сейчас или запись разговора.
-  const live = barBtn("btn", work ? "Живой статус" : "Разговор агента",
-    work ? "i-live" : "i-talk");
-  live.addEventListener("click", () => { openChat(id); });
-  out.push(live);
+  // Входа в разговор с экрана задачи больше нет (POC ветки poc-chat): окно
+  // чатов открывает один значок в шапке дашборда, и открытое с задачи оно
+  // фильтрует список по ней. Кнопка рядом с действиями строки заводила ещё
+  // одну дорогу в то же место и путала разговор с работой.
   if (work && work.via === "tmux") {
     const stop = barBtn("btn btn-danger", "Остановить агента", "i-stop");
     // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
@@ -2346,11 +2341,50 @@ function mdRender(text) {
   return box;
 }
 
+// Свёрнутый блок с разворотом по клику: заголовок остаётся строкой ленты, а
+// тело раскрывается на месте. Так показываются размышления и вывод
+// инструментов, которых на экране бывает больше, чем самого разговора.
+function foldEl(cls, head, text, sub) {
+  const box = el("div", cls + " fold");
+  const top = el("div", "foldh");
+  top.append(el("b", "", head));
+  if (sub) top.append(el("span", "", sub));
+  const car = el("span", "foldc", "+");
+  top.append(car);
+  const body = el("pre", "foldb", text);
+  body.hidden = true;
+  top.addEventListener("click", () => {
+    body.hidden = !body.hidden;
+    car.textContent = body.hidden ? "+" : "-";
+    box.classList.toggle("open", !body.hidden);
+  });
+  box.append(top, body);
+  return box;
+}
+
+// Первая строка длинного текста для заголовка свёрнутого блока: по ней видно,
+// о чём он, не разворачивая.
+function foldPeek(text, n) {
+  const line = String(text || "").split("\n").find((l) => l.trim()) || "";
+  return line.length > n ? line.slice(0, n) + "..." : line;
+}
+
 function replyEl(item) {
-  if (item.role === "thinking") return el("div", "think", "размышления свёрнуты");
+  if (item.role === "thinking") {
+    // Размышления идут текстом, а не меткой (POC ветки poc-chat): прежде
+    // сервер выбрасывал текст, и в ленте стояло «размышления свёрнуты», из
+    // чего ничего не следовало.
+    if (!item.text) return el("div", "think", "размышления без текста");
+    return foldEl("think", "размышления", item.text, foldPeek(item.text, 90));
+  }
+  if (item.role === "toolout") {
+    return foldEl("toolout", "вывод", item.text || "", foldPeek(item.text, 100));
+  }
   if (item.role === "tool") {
+    const name = item.tool || "инструмент";
+    if (item.text) return foldEl("tool", name, item.text, item.note || "");
     const div = el("div", "tool");
-    div.append(el("b", "", item.tool || "инструмент"));
+    div.append(el("b", "", name));
     if (item.note) div.append(el("span", "", item.note));
     return div;
   }
@@ -3295,384 +3329,397 @@ function sessionMessageURL(project, sid) {
   return sessionURL(project, sid) + "/message";
 }
 
-// Четыре названные причины гашения ввода (решение 6 LLD DK-430). Молчаливое
-// гашение неотличимо от поломки: человек трижды нажмёт «Отправить», прежде чем
-// поймёт, что писать некуда.
-const CHAT_OFF_TREE = "дерева сессии больше нет";
-const CHAT_OFF_OVER = "разговор кончился, и продолжить его некому";
-const CHAT_OFF_ARCHIVE = "задача закрыта, и живых сессий у неё нет";
-const CHAT_OFF_GOAL = "разговор ведёт цель";
+// ---- Панель разговора, переделка POC (ветка poc-chat) ----
+//
+// Диалог это сессия харнеса, один к одному с транскриптом. Список диалогов
+// стоит выпадающим списком с поиском в шапке окна, отдельной колонки под него
+// нет. Реплика едет прямо в процесс: живому агенту через tmux send-keys,
+// кончившемуся резюмом той же сессии, новому диалогу первым аргументом
+// клиента. Отложенной доставки и очереди исходящих тут больше нет вовсе.
 
-// Куда уходит реплика и почему, одним разбором на все случаи. Ручку выбирает не
-// эвристика живости, а сервер: у разговора он называет её полем reply, а
-// причину словами в replyNote (решение 2). Цель остаётся на своей ручке и своих
-// «Входящих», и панель это называет, а не отказывает. Гашение всегда с
-// причиной, и причин ровно четыре.
-function chatWay(project, st) {
-  if (st.isGoal) {
-    return {
-      cause: CHAT_OFF_GOAL,
-      url: goalMessageURL(project, st.task),
-      goal: true,
-      why: "Разговор ведёт цель: реплика уйдёт её ручкой, во «Входящие» файла цели.",
-    };
+// Адрес пустого диалога: он заведён кнопкой «+», сессии у него ещё нет, и
+// поднимет её первая реплика человека.
+const CHAT_NEW = "new";
+
+// Состояние переключателя фильтра по задаче живёт в localStorage: человек
+// ставит его один раз под свою привычку, а не на каждое открытие окна.
+const CHAT_FILTER_KEY = "devkit.chat.filter";
+// Последняя выбранная модель: новый диалог заводится ею же, иначе выбор
+// приходилось бы повторять на каждом «+».
+const CHAT_MODEL_KEY = "devkit.chat.model";
+
+function chatFilterOn() {
+  try {
+    return localStorage.getItem(CHAT_FILTER_KEY) !== "0";
+  } catch (err) {
+    return true;
   }
-  const head = st.head;
-  if (head && head.reply === "session") {
-    return {
-      url: sessionMessageURL(project, st.sid),
-      why: "Реплика ляжет во вход разговора и дождётся ближайшего хода сессии.",
-    };
-  }
-  if (head && head.reply === "task") {
-    return {
-      url: taskPath(project, head.task || st.task, "/message"),
-      why: head.replyNote || "Реплика уйдёт задаче: её возьмёт тот, кто продолжит разговор.",
-    };
-  }
-  if (head) {
-    // Сервер отказал: разговор кончился по жёсткой мере решения 2, и причину он
-    // назвал сам. Дорога отсюда одна, привязать разговор к задаче рукой.
-    const why = head.replyNote || CHAT_OFF_OVER;
-    return {
-      cause: why.startsWith(CHAT_OFF_TREE) ? CHAT_OFF_TREE : CHAT_OFF_OVER,
-      url: "",
-      off: true,
-      bind: true,
-      why: why.charAt(0).toUpperCase() + why.slice(1) + ".",
-    };
-  }
-  if (st.task && st.onBoard) {
-    return {
-      url: taskPath(project, st.task, "/message"),
-      why: "Живого разговора у задачи нет: реплика ляжет безадресной строкой во вход задачи, " +
-        "и её возьмёт первый же ход.",
-    };
-  }
-  return {
-    cause: CHAT_OFF_ARCHIVE,
-    url: "",
-    off: true,
-    why: CHAT_OFF_ARCHIVE.charAt(0).toUpperCase() + CHAT_OFF_ARCHIVE.slice(1) +
-      ": разговор лежит в архиве, и писать в него некому.",
-  };
 }
 
-// Список разговоров панели: сам заход к ручке сессий с готовым хвостом
-// запроса. Собран отдельной функцией, потому что заходов три: разговоры задачи
-// по задачному адресу, они же по адресу сессии и разговоры проекта без задачи у
-// общего чата доски. Слова сервера про пустоту едут вместе со списком: пустая
-// коробка неотличима от оборвавшегося запроса.
-async function chatSessions(project, st, tail, whenBad) {
-  const r = await api("/api/projects/" + encodeURIComponent(project) + "/sessions" + tail);
+function chatFilterSet(on) {
+  try {
+    localStorage.setItem(CHAT_FILTER_KEY, on ? "1" : "0");
+  } catch (err) {
+    // Приватный режим браузера запрещает запись: переключатель тогда живёт
+    // до перезагрузки, и это лучше упавшего окна.
+  }
+}
+
+function chatModelPref() {
+  try {
+    return localStorage.getItem(CHAT_MODEL_KEY) || "opus";
+  } catch (err) {
+    return "opus";
+  }
+}
+
+function chatModelSet(m) {
+  try {
+    localStorage.setItem(CHAT_MODEL_KEY, m);
+  } catch (err) {
+    // см. chatFilterSet
+  }
+}
+
+function chatsURL(project) {
+  return "/api/projects/" + encodeURIComponent(project) + "/chats";
+}
+
+// Состояние окна чатов: весь список диалогов проекта, выбранный диалог и
+// задача, по которой список фильтруется. Список приезжает целиком и
+// фильтруется на клиенте: переключатель фильтра тогда работает мгновенно, без
+// похода на сервер.
+async function chatState(project, addr, board) {
+  const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
+    error: "", models: ["opus", "sonnet", "haiku"], fresh: false };
+  if (chatIsTask(addr)) st.task = addr;
+  else if (addr && addr !== CHAT_BOARD && addr !== CHAT_NEW) st.sid = addr;
+  if (addr === CHAT_NEW) st.fresh = true;
+  const r = await api(chatsURL(project));
   if (!r.ok) {
-    if (!st.error) st.error = r.body.error || whenBad;
-    return;
+    st.error = r.body.error || "список разговоров не прочитался";
+    return st;
   }
-  st.sessions = r.body.sessions || [];
+  st.chats = r.body.chats || [];
   st.note = r.body.note || "";
-  if (!st.sid && st.sessions.length) st.sid = st.sessions[0].id;
-}
-
-// Что известно о разговоре по его адресу: сессия, задача, шапка с ручкой
-// ответа и строка доски. Задачный адрес разворачивается в последний разговор
-// задачи, а сессия узнаётся своей ручкой: поля reply и replyNote приходят
-// только у неё.
-async function chatState(project, addr, board, works) {
-  const st = { addr, sid: "", task: "", head: null, sessions: [], note: "",
-    isGoal: false, onBoard: false, work: null, free: false };
-  if (chatIsBoard(addr)) {
-    // Общий чат доски: привязки нет, и список слева это разговоры проекта без
-    // задачи. Свежий из них и открывается лентой, а нет ни одного, значит
-    // панель стоит с честными словами сервера про пустоту.
-    st.free = true;
-    await chatSessions(project, st, "?free=1", "разговоры доски не прочитались");
-  } else if (chatIsTask(addr)) {
-    st.task = addr;
-    await chatSessions(project, st, "?task=" + encodeURIComponent(addr), "сессии не прочитались");
-  } else {
-    st.sid = addr;
+  if (r.body.models) st.models = r.body.models;
+  // Задача адреса это фильтр, а не разговор: открытый ею список показывает
+  // диалоги задачи, и первым встаёт свежий из них.
+  if (!st.sid && !st.fresh) {
+    const list = chatVisible(st);
+    if (list.length) st.sid = list[0].id;
   }
-  if (st.sid) {
-    const r = await api(sessionURL(project, st.sid) + "?n=1");
-    if (r.ok) {
-      st.head = r.body.head || { id: st.sid };
-      st.task = st.task || st.head.task || "";
-    } else if (!st.error) {
-      st.error = r.body.error || "разговор не прочитался";
-    }
-  }
-  // Разговор, открытый по id сессии, тоже стоит в списке своих соседей: задача
-  // у него узнаётся шапкой, и список её разговоров едет вторым заходом.
-  if (st.task && !st.sessions.length) {
-    await chatSessions(project, st, "?task=" + encodeURIComponent(st.task), "сессии не прочитались");
-  }
+  st.entry = st.chats.find((c) => c.id === st.sid) || null;
+  // Задача берётся у самого диалога, когда адрес её не назвал: по ней
+  // подписывается шапка и заводится следующий диалог в том же дереве.
+  if (!st.task && st.entry && (st.entry.tasks || []).length) st.task = st.entry.tasks[0];
   if (st.task) {
-    const row = boardRow(board, st.task);
-    st.onBoard = Boolean(row);
-    // Гейт цели тот же, что на строке доски и на полосе действий: заголовок
-    // строки, а не отсутствие живой работы (DK-296).
     st.isGoal = isGoalRow(board, st.task);
+    const row = boardRow(board, st.task);
     st.title = row ? row.title : "";
-    // Ожидание приезжает той же строкой доски: врезка панели берёт вопрос и
-    // срок из поля waiting, а не разбирает признак ожидания вторым чтением.
-    st.wait = row ? row.waiting : null;
-    st.work = (works || []).find((w) => w.id === st.task) || null;
-  }
-  if (!st.work && st.sid) {
-    st.work = (works || []).find((w) => w.session === st.sid) || null;
   }
   return st;
 }
 
-// Шапка панели: кто говорит, чем узнан разговор и куда с него уйти. Разряд
-// привязки виден словами («ведёт» против «говорит о», DK-431), и перебить
-// угадывание рукой можно прямо тут: угаданная задача бывает не той.
+// Что видно в списке: все диалоги проекта либо только диалоги задачи, если
+// адрес её назвал и фильтр включён.
+function chatVisible(st) {
+  if (!st.task || !chatFilterOn()) return st.chats;
+  return st.chats.filter((c) => (c.tasks || []).includes(st.task));
+}
+
+// Состояние диалога словами. Три штуки, и все три меняют то, что будет с
+// репликой: живому агенту она уйдёт в процесс, кончившемуся поднимет резюм, а
+// в окно vscode дашборду писать нечем.
+const CHAT_STATE_WORD = {
+  live: "идёт",
+  vscode: "в vscode",
+  dead: "процесса нет",
+};
+
+// Заголовок диалога: первая реплика человека, обрезанная, как это делает
+// расширение Claude Code для vscode. Имени диалог не требует.
+function chatTitle(c) {
+  if (!c) return "разговора нет";
+  const t = (c.title || "").trim();
+  if (t) return t.length > 70 ? t.slice(0, 70) + "..." : t;
+  return "разговор " + c.id.slice(0, 8);
+}
+
+function chatWhen(c) {
+  return c.mtime ? localDay(c.mtime) + ", " + localTime(c.mtime) : "";
+}
+
+// Строка выпадающего списка: заголовок, время, состояние и задачи, которых
+// разговор касался. Задач бывает несколько: одна сессия двигает не одну
+// строку, и привязка тут один ко многим.
+function chatOption(project, c, current) {
+  const row = el("div", "cdrow" + (c.id === current ? " on" : ""));
+  row.append(el("b", "", chatTitle(c)));
+  const chips = el("div", "cchips");
+  chips.append(el("span", "chip", CHAT_STATE_WORD[c.state] || c.state));
+  if (c.model) chips.append(el("span", "chip", c.model));
+  for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
+  if (c.harness) chips.append(el("span", "chip", c.harness));
+  row.append(chips);
+  row.append(el("span", "cfirst", chatWhen(c) + (c.tree ? ", " + c.tree : "")));
+  row.addEventListener("click", () => {
+    chatDropShut();
+    switchChat(c.id);
+  });
+  return row;
+}
+
+// Выпадающий список открыт: узел живёт при шапке, а не при документе, чтобы
+// закрытие панели уносило его с собой.
+let chatDrop = null;
+
+function chatDropShut() {
+  if (chatDrop) {
+    chatDrop.remove();
+    chatDrop = null;
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  if (!chatDrop) return;
+  if (chatDrop.contains(ev.target)) return;
+  if (ev.target.closest && ev.target.closest(".cdpick")) return;
+  chatDropShut();
+});
+
+// Список с поиском: поле сверху, дальше строки. Поиск идёт по заголовку, по ID
+// сессии и по задачам, потому что ищут диалог всеми тремя способами.
+function chatDropOpen(project, st, anchor) {
+  chatDropShut();
+  const box = el("div", "cdrop");
+  const find = el("input");
+  find.type = "text";
+  find.placeholder = "Поиск разговора";
+  find.setAttribute("aria-label", "Поиск разговора");
+  const rows = el("div", "cdrows");
+  const draw = () => {
+    const q = find.value.trim().toLowerCase();
+    const list = chatVisible(st).filter((c) => {
+      if (!q) return true;
+      return (c.title || "").toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q) ||
+        (c.tasks || []).join(" ").toLowerCase().includes(q);
+    });
+    rows.replaceChildren();
+    for (const c of list) rows.append(chatOption(project, c, st.sid));
+    if (!list.length) {
+      rows.append(el("div", "hint", q ? "по запросу ничего не нашлось" :
+        (st.note || "разговоров тут нет")));
+    }
+  };
+  find.addEventListener("input", draw);
+  draw();
+  box.append(find, rows);
+  anchor.append(box);
+  chatDrop = box;
+  find.focus();
+}
+
+// Шапка окна: выбор диалога, «+», модель, переключатель фильтра и крестик.
+// Больше входов в разговор нигде нет: с экрана задачи окно открывает тот же
+// значок в шапке дашборда.
 function chatHead(project, st) {
   const head = el("div", "chead");
+  const line = el("div", "chline");
+
+  const pick = el("button", "cdpick");
+  pick.append(el("b", "", chatTitle(st.entry) + (st.fresh ? " (новый разговор)" : "")));
+  const car = el("span", "cdcar");
+  car.append(icon("i-caret"));
+  pick.append(car);
+  pick.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (chatDrop) {
+      chatDropShut();
+      return;
+    }
+    chatDropOpen(project, st, line);
+  });
+  line.append(pick);
+
+  const add = el("button", "cdbtn");
+  add.append(icon("i-plus"));
+  add.title = "Новый разговор";
+  add.setAttribute("aria-label", "Новый разговор");
+  add.addEventListener("click", () => { switchChat(CHAT_NEW); });
+  line.append(add);
+
+  const model = el("select", "cdsel");
+  model.setAttribute("aria-label", "Модель агента");
+  const cur = st.entry ? (st.entry.model || "opus") : chatModelPref();
+  const opts = st.models.includes(cur) ? st.models : st.models.concat([cur]);
+  for (const m of opts) {
+    const o = el("option", "", m);
+    o.value = m;
+    if (m === cur) o.selected = true;
+    model.append(o);
+  }
+  model.addEventListener("change", () => {
+    chatModelSet(model.value);
+    if (!st.sid) {
+      sayResult("модель нового разговора: " + model.value);
+      return;
+    }
+    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
+      { method: "POST", body: { model: model.value } })
+      .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
+      .catch(console.error);
+  });
+  line.append(model);
+
+  // Переключатель фильтра стоит справа и виден только там, где есть что
+  // фильтровать: без задачи в адресе фильтровать нечем, и погашенная кнопка
+  // там обещала бы несуществующее действие.
+  if (st.task) {
+    const filt = el("button", "cdbtn" + (chatFilterOn() ? " on" : ""));
+    filt.append(icon("i-filter"));
+    filt.title = chatFilterOn()
+      ? "Список отфильтрован по " + st.task + ": нажмите, чтобы видеть все разговоры"
+      : "Список показывает все разговоры: нажмите, чтобы оставить только " + st.task;
+    filt.setAttribute("aria-label", filt.title);
+    filt.addEventListener("click", () => {
+      chatFilterSet(!chatFilterOn());
+      repaintChat().catch(console.error);
+    });
+    line.append(filt);
+  }
+
   const shut = el("button", "nx");
   shut.setAttribute("aria-label", "Закрыть панель");
   shut.title = "Закрыть панель";
   shut.append(icon("close"));
-  shut.addEventListener("click", () => { closeChat(); });
-  const box = el("div", "ct");
-  const name = st.title || (st.head && st.head.first) || st.task ||
-    (st.free ? "разговоры доски" : st.addr);
-  box.append(el("b", "", name));
-  const sub = el("span", "cts", st.head ? sessionTab(st.head) : "разговора ещё нет");
-  box.append(sub);
-  head.append(box, shut);
+  shut.addEventListener("click", () => { chatDropShut(); closeChat(); });
+  line.append(shut);
+  head.append(line);
 
-  const row = el("div", "crow2");
-  if (st.work) row.append(el("span", "dot pulse"));
-  if (st.head) row.append(el("span", "chip", sessionSign(st.head)));
+  const sub = el("div", "csub");
+  if (st.entry) {
+    const bits = [CHAT_STATE_WORD[st.entry.state] || st.entry.state, chatWhen(st.entry)];
+    if ((st.entry.tasks || []).length) bits.push(st.entry.tasks.join(", "));
+    if (st.entry.tree) bits.push(st.entry.tree);
+    if (st.entry.tmux) bits.push("tmux " + st.entry.tmux);
+    sub.textContent = bits.filter(Boolean).join(", ");
+  } else if (st.fresh) {
+    sub.textContent = "новый разговор" + (st.task ? " про " + st.task : "") +
+      ": первая реплика поднимет сессию";
+  } else {
+    sub.textContent = st.task ? "разговоров задачи " + st.task + " нет" : "разговор не выбран";
+  }
+  head.append(sub);
   if (st.task) {
-    const go = el("button", "btn btn-sm", "Экран задачи");
+    const go = el("button", "btn btn-sm", "Экран " + st.task);
     go.addEventListener("click", () => { location.hash = taskChatHash(project, st.task); });
-    row.append(go);
+    head.append(go);
   }
-  if (st.sid) {
-    const bind = el("button", "btn btn-sm",
-      st.head && st.head.task ? "Перепривязать" : "Привязать к задаче");
-    bind.addEventListener("click", async () => {
-      const said = window.prompt("ID задачи, которую ведёт этот разговор:",
-        (st.head && st.head.task) || "");
-      if (said === null) return;
-      await bindSession(project, st.sid, said.trim());
-    });
-    row.append(bind);
-    if (st.head && st.head.bound === "lead") {
-      const off = el("button", "btn btn-sm", "Отвязать");
-      off.addEventListener("click", () => bindSession(project, st.sid, ""));
-      row.append(off);
-    }
-  }
-  head.append(row);
   return head;
 }
 
-// Состояние разговора словом. Кончившийся мерит сервер, и мера у него жёсткая:
-// ручка реплики ушла с сессии, потому что дерева нет, задача припаркована или
-// tmux-сессия дашборда снята (решение 2). «Идёт» против «молчит» это свежесть
-// транскрипта, мера мягкая, и на неё в списке хватает: разговор, молчащий час,
-// открывается тем же нажатием, что и живой.
-function chatStateWord(s) {
-  if (s.reply !== "session") return "кончился";
-  return s.live ? "идёт" : "молчит";
-}
-
-// Разряд привязки словами, теми же, что стоят на карточке сессии: «ведёт» это
-// запись реестра, «говорит о» угадывание по транскрипту (DK-431). Разговор без
-// задачи называет себя так же честно: он и есть чат доски.
-function chatBoundWord(s) {
-  if (!s.task) return "без задачи";
-  return (s.bound === "about" ? "говорит о " : "ведёт ") + s.task;
-}
-
-// Строка списка разговоров: время последней записи, подписка, состояние и
-// разряд привязки. Первая реплика идёт подписью: у двух разговоров одной задачи
-// совпадает всё, кроме неё и времени.
-function chatListRow(project, s, current) {
-  const row = el("div", "crow3" + (s.id === current ? " on" : ""));
-  const when = s.mtime ? localDay(s.mtime) + ", " + localTime(s.mtime) : s.id.slice(0, 8);
-  row.append(el("b", "", when));
-  const chips = el("div", "cchips");
-  chips.append(el("span", "chip", chatStateWord(s)));
-  chips.append(el("span", "chip", chatBoundWord(s)));
-  // Подписка стоит чипом только тогда, когда её назвала раскладка машины: своё
-  // хозяйство имени не имеет, и выдумывать его нечем.
-  if (s.harness) chips.append(el("span", "chip", s.harness));
-  row.append(chips);
-  if (s.first) row.append(el("span", "cfirst", s.first));
-  if (s.tree || s.branch) row.append(el("span", "cwhere", s.tree || s.branch));
-  row.addEventListener("click", () => { switchChat(s.id); });
-  return row;
-}
-
-// Список разговоров при панели (LLD DK-430, решения 1 и 7). Своего экрана
-// «Чаты» тут нет нарочно: он был бы третьим местом с лентой. У задачи список
-// показывает её разговоры, у общего чата доски разговоры проекта без задачи, и
-// нажатие меняет разговор, не уводя с экрана под панелью. Отсюда же поднимается
-// новый чат по задаче: имя ему даёт сервер, chat-<ID>-<n>, и живому конвейеру
-// он не мешает.
-function chatList(project, st) {
-  const box = el("div", "clbox");
-  box.append(el("div", "clhead", st.free ? "Разговоры доски" : "Разговоры " + (st.task || "проекта")));
-  if (st.task && !st.isGoal && !st.free) {
-    const add = el("button", "btn btn-sm btn-acc", "Новый чат");
-    withTip(add, "Поднимет разговор про " + st.task + " своей сессией chat-" + st.task +
-      "-N: конвейеру задачи он не мешает, работу по ней не ведёт.");
-    add.addEventListener("click", () => {
-      const ask = window.prompt("О чём спросить в новом разговоре про " + st.task +
-        "? Можно оставить пустым:", "");
-      if (ask === null) return;
-      add.disabled = true;
-      startChat(project, st.task, ask.trim())
-        .catch(console.error)
-        .finally(() => { add.disabled = false; });
-    });
-    box.append(add);
+// Куда уйдёт реплика и почему. Мера приходит с сервера состоянием диалога, а
+// не считается на глаз: ошибка тут стоит реплики, ушедшей мимо адресата.
+function chatWay(st) {
+  if (st.fresh || !st.sid) {
+    return { kind: "new", off: false,
+      why: "Первая реплика поднимет новую сессию" + (st.task ? " в дереве " + st.task : "") + "." };
   }
-  const list = el("div", "clist-rows");
-  for (const s of st.sessions || []) list.append(chatListRow(project, s, st.sid));
-  if (!(st.sessions || []).length) {
-    // Пустой список называет причину словами сервера: у задачи это «сессий нет,
-    // просмотрено столько-то транскриптов», у доски «разговоров без задачи нет».
-    list.append(el("div", "hint", st.note || "разговоров тут пока нет"));
+  const state = st.entry ? st.entry.state : "dead";
+  if (state === "live") {
+    return { kind: "say", off: false,
+      why: "Реплика уйдёт прямо в идущий процесс агента." };
   }
-  box.append(list);
-  return box;
+  if (state === "vscode") {
+    return { kind: "vscode", off: true,
+      why: "Разговор идёт в vscode, пишите там: транскрипт писался меньше 12 минут назад, " +
+        "а своей tmux-сессии у этого разговора нет, и подать реплику в чужое окно нечем." };
+  }
+  return { kind: "resume", off: false,
+    why: "Процесса нет: реплика поднимет продолжение той же сессии (claude --resume), история не порвётся." };
 }
 
-// Подъём нового чата по задаче. Ответ виден словами: имя tmux-сессии и то, что
-// в списке разговор встанет первым своим ходом, потому что ID сессии рождается
-// позже команды.
-async function startChat(project, id, ask) {
-  sayResult("подъём разговора про " + id + "...");
-  const r = await api("/api/projects/" + encodeURIComponent(project) + "/chats",
-    { method: "POST", body: ask ? { id, ask } : { id } });
+// Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и
+// ID приходит из реестра по имени tmux-сессии: дашборд опрашивает список, пока
+// он не встанет, и переключается на живой диалог сам.
+async function chatRaise(project, st, text, model) {
+  const body = { text, model };
+  if (st.task) body.id = st.task;
+  const r = await api(chatsURL(project), { method: "POST", body });
   sayResult(r.body.message || r.body.error || "", !r.ok);
-  if (r.ok) await repaintChat();
-}
-
-// Врезка вопроса: задача ждёт человека, и ответ отсюда уходит ручкой задачи,
-// потому что отвечают тут задаче, а не сессии (LLD DK-430, решения 2 и 4).
-// Вопрос стоит пачкой столбиком, тем же порядком, каким его задал инструмент
-// ожидания; вариантов и флажков у врезки нет, они приедут блоком LLD DK-354, и
-// меняется на него ровно это место. Своё поле ответа тут не роскошь: вопрос
-// виден вместе с полем, и человеку не приходится держать его в голове, пока он
-// ищет глазами общий ввод под лентой.
-function waitCard(project, st) {
-  const w = st.wait;
-  if (!w || !w.state || !st.task) return null;
-  const card = el("div", "card wcard");
-  card.append(el("div", "wtop", waitWords(w, Date.now())));
-  card.append(el("div", "t2", "источник: " + (w.note || "не назван")));
-  const qs = w.questions || [];
-  for (const q of qs) card.append(el("div", "wq", q));
-  if (!qs.length) {
-    // Повод из журнала вопроса не несёт вовсе, и это честная пустота: сессия
-    // ждёт ввода, а о чём она спросила, журналу неизвестно.
-    card.append(el("div", "t2", "текста вопроса нет: источник его не несёт, а придумывать вопрос за агента нечем"));
+  if (!r.ok) return;
+  const name = r.body.tmux;
+  for (let i = 0; i < 40; i += 1) {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
+    const hit = (list.ok && (list.body.chats || [])[0]) || null;
+    if (hit) {
+      sayResult("разговор поднят: " + hit.id.slice(0, 8));
+      switchChat(hit.id);
+      return;
+    }
   }
-  const ta = el("textarea");
-  ta.placeholder = "Ответить задаче " + st.task + "...";
-  ta.setAttribute("aria-label", "Ответ на вопрос задачи " + st.task);
-  const send = el("button", "btn btn-acc", "Ответить");
-  send.addEventListener("click", () => {
-    const text = ta.value.trim();
-    if (!text) return;
-    send.disabled = true;
-    api(taskPath(project, st.task, "/message"), { method: "POST", body: { text } })
-      .then((r) => {
-        sayResult(r.body.message || r.body.error || "", !r.ok);
-        if (r.ok) ta.value = "";
-      })
-      .catch(console.error)
-      .finally(() => { send.disabled = false; });
-  });
-  const row = el("div", "crow");
-  row.append(send);
-  card.append(ta, row);
-  return card;
+  sayResult("сессия " + name + " ещё не назвала себя в реестре: разговор встанет в списке сам", true);
 }
 
-// Тело панели: лента, свои отправленные реплики, плашка с причиной и поле
-// ввода. Собирается один раз на разговор: перерисовка экрана под панелью её не
-// трогает вовсе, поэтому набранный текст, очередь исходящих и поток ленты
-// живут, пока открыт этот разговор.
+// Тело окна: лента, подпись про доставку и поле ввода. Своей очереди
+// исходящих тут нет: реплика уходит в процесс сразу, а в ленте она появляется
+// оттуда же, откуда и ответ, из транскрипта.
 function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
-  const way = chatWay(project, st);
+  const way = chatWay(st);
   const feed = el("div", "msgs chatfeed");
-  const pendbox = el("div", "msgs");
-  wrap.append(feed, pendbox);
-  // Врезка стоит под лентой, у самого поля ввода: вопрос читается последним,
-  // прямо перед тем, как на него отвечают.
-  const asked = waitCard(project, st);
-  if (asked) wrap.append(asked);
+  wrap.append(feed);
 
-  const note = el("div", "cnote");
-  const said = keyed(el("span"), "chat-said", "");
-  const start = keyed(el("button", "btn btn-acc", "Поднять виток"), "chat-start", "");
-  start.addEventListener("click", () => { startRun(project, st.task).catch(console.error); });
-  const shut = keyed(el("button", "nx"), "chat-close", "");
-  shut.setAttribute("aria-label", "Закрыть");
-  shut.title = "Закрыть";
-  shut.append(icon("close"));
-  shut.addEventListener("click", () => { note.hidden = true; });
-  note.append(said, start, shut);
-  keyed(note, "chat-note", "");
-  if (way.goal) {
-    fillChatNote(note, Boolean(st.work));
-    // Плашка цели живёт дальше вместе с доской: цикл поднимают и снимают, пока
-    // панель открыта, а собирается она один раз на разговор. Перерисовка экрана
-    // приносит сюда свежие работы и правит одну эту плашку, не трогая ни ленты,
-    // ни набранного в поле.
-    chatFill = (works) => {
-      fillChatNote(note, Boolean((works || []).some((w) => w.id === st.task)));
-    };
-  } else {
-    start.hidden = true;
-    shut.hidden = way.off;
-    said.textContent = way.why;
-    note.className = way.off ? "cnote idle" : "cnote";
-  }
+  const note = el("div", "cnote" + (way.off ? " idle" : ""));
+  note.append(el("span", "", way.why));
   wrap.append(note);
 
   const box = el("div", "cbox");
   const ta = el("textarea");
-  ta.placeholder = way.off ? "писать некому" : "Написать агенту...";
+  ta.placeholder = way.off ? "разговор идёт в vscode, пишите там" : "Написать агенту...";
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в разговор");
   const row = el("div", "crow");
-  const out = makeOutbox(project, st.addr, pendbox, way.url, (live) => {
-    fillChatNote(note, note.dataset.running === "1", live);
-  }, { read: Boolean(way.goal) });
-  chatLive.push(out.stop);
-  // Дорога из погашенного ввода: разговор, которому некому отвечать, привязывают
-  // к задаче, и реплика уходит уже её ручкой. Без этой кнопки причина названа, а
-  // выхода из неё нет.
-  if (way.off && way.bind && st.sid) {
-    const bind = el("button", "btn", "Привязать к задаче");
-    bind.addEventListener("click", async () => {
-      const askID = window.prompt("ID задачи, которая продолжит этот разговор:",
-        (st.head && st.head.task) || "");
-      if (askID === null) return;
-      await bindSession(project, st.sid, askID.trim());
-    });
-    row.append(bind);
-  }
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
-  // Кнопка на время отправки гаснет: двойное нажатие по неотвечающей связи это
-  // ровно тот случай, из которого росли дубли во «Входящих».
-  send.addEventListener("click", () => {
+  const fire = () => {
+    const text = ta.value.trim();
+    if (!text || send.disabled) return;
+    ta.value = "";
     send.disabled = true;
-    sendMessage(project, st.addr, ta, out)
+    const model = chatModelPref();
+    const done = () => { send.disabled = Boolean(way.off); };
+    if (way.kind === "new") {
+      sayResult("подъём разговора...");
+      chatRaise(project, st, text, st.entry ? st.entry.model : model)
+        .catch(console.error).finally(done);
+      return;
+    }
+    sayResult("реплика уходит агенту...");
+    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
+      { method: "POST", body: { text } })
+      .then((r) => {
+        sayResult(r.body.message || r.body.error || "", !r.ok);
+        // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
+        // список надо перечитать, иначе следующая реплика опять пошла бы
+        // резюмом и завела второго агента.
+        if (r.ok && r.body.way === "resume") repaintChat().catch(console.error);
+      })
       .catch(console.error)
-      .finally(() => { send.disabled = false; });
+      .finally(done);
+  };
+  // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
+  // короткими репликами, и тянуться к кнопке на каждой из них незачем.
+  ta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+      ev.preventDefault();
+      fire();
+    }
   });
+  send.addEventListener("click", fire);
   row.append(send);
   box.append(ta, row);
   wrap.append(box);
@@ -3680,33 +3727,20 @@ function chatPanel(project, st) {
   if (st.error) {
     say(feed, "error", st.error);
   } else if (!st.sid) {
-    // Разговора нет вовсе, а панель есть: слова сервера про обход транскриптов
-    // видны вместо пустой коробки, и писать задаче всё равно можно.
-    say(feed, "empty", st.note || "разговоров у этой задачи ещё нет");
+    say(feed, "empty", st.fresh
+      ? "новый разговор: напишите первую реплику, она и поднимет сессию"
+      : (st.note || "разговоров тут пока нет, заведите новый кнопкой «+»"));
   } else {
     wireChatFeed(project, feed, st.sid).catch(console.error);
   }
-  out.draw();
-  out.load().catch(console.error);
-  // Оставшееся с прошлого раза в очереди уходит при открытии разговора:
-  // закрытая вкладка отправку не отменяет.
-  out.pump().catch(console.error);
   return wrap;
 }
 
-// Какой разговор сейчас стоит в панели: «проект|адрес». Перерисовка экрана под
-// панелью её не пересобирает, а смена адреса пересобирает целиком, вместе с
-// живыми потоками.
+// Какой разговор сейчас стоит в панели: «проект|адрес».
 let chatOpen = "";
 
-// Что в открытой панели правится перерисовкой экрана: плашка цели ходит за
-// живой работой, всё остальное собрано один раз на разговор.
 let chatFill = null;
 
-// Пересборка панели после действия, которое меняет сам список разговоров:
-// ключ открытого разговора сбрасывается, и ближайшая перерисовка собирает
-// панель заново вместе со списком. Дешевле было бы дорисовать один список, но
-// тогда список и лента расходились бы в том, какой разговор открыт.
 function repaintChat() {
   chatOpen = "";
   return refresh();
@@ -3716,36 +3750,36 @@ async function paintChat(project, addr, board, works) {
   const panel = document.getElementById("cpanel");
   const pin = document.getElementById("cpin");
   const side = document.getElementById("clist");
+  if (side) {
+    // Колонки со списком разговоров больше нет: список это выпадающий список в
+    // шапке окна, а узел разметки остаётся пустым, чтобы не трогать её ради POC.
+    side.hidden = true;
+    side.replaceChildren();
+  }
   if (!panel || !pin) return;
   const key = project + "|" + (addr || "");
   if (!addr || !project) {
     if (chatOpen) {
       closeChatLive();
+      chatDropShut();
       chatOpen = "";
       pin.replaceChildren();
-      if (side) side.replaceChildren();
     }
     panel.hidden = true;
     return;
   }
   putChatWidth(chatWidth());
   panel.hidden = false;
-  if (chatOpen === key) {
-    if (chatFill) chatFill(works);
-    return;
-  }
+  if (chatOpen === key) return;
   closeChatLive();
+  chatDropShut();
   chatFill = null;
   chatOpen = key;
   const gen = chatGen;
   pin.replaceChildren(el("div", "empty", "разговор открывается..."));
-  if (side) side.replaceChildren(el("div", "hint", "список разговоров читается..."));
   const rows = board || await chatBoardOf(project);
-  const st = await chatState(project, addr, rows, works);
-  // Панель закрыли или сменили разговор, пока шли ответы: своей коробки у этого
-  // разбора больше нет.
+  const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;
-  if (side) side.replaceChildren(chatList(project, st));
   pin.replaceChildren(chatHead(project, st), chatPanel(project, st));
 }
 
@@ -5683,14 +5717,17 @@ function markNav(rt) {
 // открывается той же панелью с пустой привязкой, своего экрана у него нет
 // (LLD DK-430, решение 7).
 document.getElementById("chats").addEventListener("click", () => {
-  // С экрана проекта панель встаёт поверх него и «назад» закрывает её; с
-  // главной экрана под панелью нет вовсе, и адрес собирается от показанного
-  // проекта, как это делают разделы шапки.
-  if (route().proj) {
-    openChat(CHAT_BOARD);
+  // С экрана задачи окно открывается с её адресом: список тогда отфильтрован по
+  // задаче, а выключает фильтр значок в шапке окна. С экрана проекта список
+  // идёт весь; с главной экрана под панелью нет вовсе, и адрес собирается от
+  // показанного проекта, как это делают разделы шапки.
+  const rt = route();
+  const addr = rt.id && chatIsTask(rt.id) ? rt.id : CHAT_BOARD;
+  if (rt.proj) {
+    openChat(addr);
     return;
   }
-  if (shownProject) location.hash = shownProject + "/chat/" + CHAT_BOARD;
+  if (shownProject) location.hash = shownProject + "/chat/" + addr;
 });
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],

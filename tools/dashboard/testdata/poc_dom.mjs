@@ -124,6 +124,19 @@ export function byClass(node, cls) {
   return null;
 }
 
+// allByClass собирает все узлы с классом, а не первый: блоков субагента в
+// ленте бывает много, и стенду важно их число.
+export function allByClass(node, cls) {
+  const out = [];
+  const walk = (n) => {
+    if (!n) return;
+    if (String(n.className || "").split(" ").includes(cls)) out.push(n);
+    for (const kid of n.children || []) walk(kid);
+  };
+  walk(node);
+  return out;
+}
+
 // deepBtn ищет кнопку по подписи или по классу. Подпись у кнопок дашборда
 // лежит в дочернем узле (barBtn кладёт значок и текст), поэтому по textContent
 // самой кнопки её не найти.

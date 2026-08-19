@@ -1441,25 +1441,39 @@ func subLogs(path string) map[string]struct {
 	return out
 }
 
-// expandSubs вставляет записи боковых журналов сразу за своим вызовом Task.
-// Нумерация сквозная: лента отсеивает повторы по seq, и вставка не должна её
-// путать. Второй ответ отдаёт файл и смещение того субагента, который ещё
-// работает: его стрим дальше и дочитывает.
+// expandSubs вплетает записи боковых журналов в ленту по меткам времени.
+// Прежде они вставлялись за своим вызовом Task, а журнал, который пишется
+// прямо сейчас, целиком уезжал в хвост, и хвостовое окно ленты состояло из
+// него одного: у субагента, которого продолжают через SendMessage не первый
+// день, записей тысячи, а реплики человека и ответы сессии, шедшие с ними
+// вперемешку, оказывались за этой тысячей вверху. Слияние по времени ставит
+// каждый кусок работы туда, где он и шёл, а идущая сейчас работа сама
+// оказывается в хвосте. Нумерация сквозная и присваивается после слияния:
+// лента отсеивает повторы по seq. Второй ответ отдаёт файл и смещение того
+// субагента, который ещё работает: его стрим дальше и дочитывает.
 func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 	logs := subLogs(path)
 	if len(logs) == 0 {
 		return items, "", "", 0
 	}
-	// Закрытые вызовы видно по ответам инструмента: у работающего субагента
-	// ответа ещё нет, и его журнал растёт прямо сейчас.
-	closed := map[string]bool{}
-	for _, it := range items {
-		if it.Role == roleToolOut && it.ToolID != "" {
-			closed[it.ToolID] = true
+	// Метка времени есть не у каждой записи, поэтому ключ слияния тянется от
+	// предыдущей записи своего же потока: запись без метки остаётся там, где
+	// лежала, а не уезжает в начало ленты.
+	type keyed struct {
+		it reply
+		at time.Time
+	}
+	var all []keyed
+	push := func(list []reply) {
+		var prev time.Time
+		for _, it := range list {
+			if at, err := time.Parse(time.RFC3339, it.Time); err == nil {
+				prev = at
+			}
+			all = append(all, keyed{it: it, at: prev})
 		}
 	}
-	out := make([]reply, 0, len(items))
-	seq := 0
+	push(items)
 	liveFile, liveLabel := "", ""
 	var liveOff int64
 	// newest держит время самой свежей записи среди боковых журналов сессии:
@@ -1467,45 +1481,34 @@ func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 	// не закрыт (субагента продолжают и через SendMessage, и тогда вызов давно
 	// закрыт, а журнал растёт).
 	newest := time.Time{}
-	var liveData []byte
-	add := func(it reply) {
-		it.Seq = seq
-		seq++
-		out = append(out, it)
+	// Порядок файлов у os.ReadDir свой, а лента должна собираться одинаково от
+	// захода к заходу, поэтому журналы обходятся по имени файла.
+	ids := make([]string, 0, len(logs))
+	for id := range logs {
+		ids = append(ids, id)
 	}
-	for _, it := range items {
-		add(it)
-		if it.Role != "tool" || it.ToolID == "" {
-			continue
-		}
-		log, ok := logs[it.ToolID]
-		if !ok {
-			continue
-		}
+	sort.Slice(ids, func(i, j int) bool { return logs[ids[i]].File < logs[ids[j]].File })
+	for _, id := range ids {
+		log := logs[id]
 		data, err := os.ReadFile(log.File)
 		if err != nil {
 			continue
 		}
-		// Записи работающего субагента идут не сюда, а в самый конец ленты: они
-		// происходят прямо сейчас и в хвосте им и место. Вставленные по месту
-		// вызова, они оказывались за тысячу реплик от конца, и человек, который
-		// смотрит на хвост, их не видел вовсе.
 		if fi, err := os.Stat(log.File); err == nil && fi.ModTime().After(newest) {
 			newest = fi.ModTime()
 			liveFile, liveLabel, liveOff = log.File, log.Label, int64(len(data))
-			liveData = data
-			continue
 		}
-		for _, sub := range parseRepliesOpt(data, 0, true) {
-			sub.Sub = log.Label
-			add(sub)
+		side := parseRepliesOpt(data, 0, true)
+		for i := range side {
+			side[i].Sub = log.Label
 		}
-		_ = closed
+		push(side)
 	}
-	// Хвост ленты это работа субагента, идущая сейчас.
-	for _, sub := range parseRepliesOpt(liveData, 0, true) {
-		sub.Sub = liveLabel
-		add(sub)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	out := make([]reply, 0, len(all))
+	for i, k := range all {
+		k.it.Seq = i
+		out = append(out, k.it)
 	}
 	return out, liveFile, liveLabel, liveOff
 }

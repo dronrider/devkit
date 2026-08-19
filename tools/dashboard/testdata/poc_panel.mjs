@@ -7,7 +7,7 @@
 //
 // Зовётся: node testdata/poc_panel.mjs static/app.js
 
-import { makeSandbox, makeNode, settle, dump, tag, byClass, deepBtn, fail, appPathArg }
+import { makeSandbox, makeNode, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const chats = [
@@ -143,6 +143,25 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!dump(pend).includes("вторая реплика")) fail("ответ агента съел местный пузырь");
 }
 
+// feedOf поднимает ленту на готовом списке записей: сервер тут не нужен, а
+// предмет проверки это собранные из записей блоки.
+async function feedOf(items, sid) {
+  const box = makeNode("div");
+  const prev = sandbox.fetch;
+  sandbox.fetch = (path, init) => {
+    if (path.includes("/sessions/") && !path.includes("stream=1")) {
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ session: sid, head: { id: sid }, items,
+          total: items.length }) });
+    }
+    return prev(path, init);
+  };
+  sandbox.wireChatFeed("demo", box, sid);
+  await settle();
+  sandbox.fetch = prev;
+  return box;
+}
+
 // --- работа субагента: блок собирается, а живой не свёрнут ---
 {
   const sub = [];
@@ -151,27 +170,81 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
       ? { seq: i, role: "toolout", text: "вывод " + i, sub: "работа", time: "2026-08-13T09:00:00+03:00" }
       : { seq: i, role: "tool", tool: "Bash", text: "command: ls " + i, note: "ls", sub: "работа", time: "2026-08-13T09:00:00+03:00" });
   }
-  const box = makeNode("div");
-  const prev = sandbox.fetch;
-  sandbox.fetch = (path, init) => {
-    if (path.includes("/sessions/") && !path.includes("stream=1")) {
-      return Promise.resolve({ ok: true, status: 200,
-        json: () => Promise.resolve({ session: "sub1", head: { id: "sub1" }, items: sub, total: sub.length }) });
-    }
-    return prev(path, init);
-  };
-  sandbox.wireChatFeed("demo", box, "sub1");
-  await settle();
-  sandbox.fetch = prev;
+  const box = await feedOf(sub, "sub1");
   const blk = byClass(box, "subblk");
   if (!blk) fail("блок работы субагента не собрался: " + dump(box).slice(0, 200));
   // Вся лента из работы субагента: свёрнутый блок читался как пустой чат, и
   // ровно это пользователь и увидел (регресс тринадцатого круга POC).
   if (!String(blk.className).includes("open")) fail("живой блок субагента свёрнут");
-  const body = blk.children[1];
+  const body = byClass(blk, "subbody");
   if (!body || body.hidden) fail("тело живого блока скрыто");
   if (!body.children.length) fail("в блоке субагента пусто");
   if (!dump(box).includes("ls")) fail("записи субагента не видны: " + dump(box).slice(0, 200));
+}
+
+// --- работа субагента вперемешку с разговором: блоков много, реплики видны ---
+// Прежде сервер сваливал весь боковой журнал в хвост ленты, и разговор,
+// шедший с работой субагента вперемешку, уезжал за тысячу записей вверх: на
+// экране это читалось как один пузырь на весь чат. Записи приходят слитыми по
+// времени, и лента обязана резать их на блоки всякой не-sub записью.
+{
+  const mixed = [];
+  let seq = 0;
+  const say = (role, text) => mixed.push({ seq: seq++, role, text,
+    time: "2026-08-13T09:00:00+03:00" });
+  const work = (n, text) => {
+    for (let i = 0; i < n; i++) {
+      mixed.push({ seq: seq++, role: "assistant", text: text + " " + i, sub: "работа",
+        time: "2026-08-13T09:00:00+03:00" });
+    }
+  };
+  say("user", "разбери находку");
+  work(4, "смотрю дерево");
+  say("assistant", "нашёл причину в разборе");
+  say("user", "тогда правь и проверь стендом");
+  work(3, "правлю разбор");
+  const box = await feedOf(mixed, "mix1");
+  const blocks = allByClass(box, "subblk");
+  if (blocks.length !== 2) fail("блоков субагента " + blocks.length + ", ожидал два");
+  const seen = dump(box);
+  for (const line of ["разбери находку", "нашёл причину", "тогда правь"]) {
+    if (!seen.includes(line)) fail("реплика разговора потерялась между блоками: " + line);
+  }
+  // Хвостовой блок это работа, идущая сейчас, и он один открыт.
+  if (String(blocks[0].className).includes("open")) fail("прошлый блок субагента развёрнут");
+  if (!String(blocks[1].className).includes("open")) fail("хвостовой блок субагента свёрнут");
+}
+
+// --- гигантский хвостовой журнал: окно записей и кнопка «показать все» ---
+// У субагента, которого продолжают через SendMessage не первый день, записей
+// тысячи. Нарисованный целиком блок занимал экран один, и разговор над ним
+// было не достать.
+{
+  const huge = [{ seq: 0, role: "user", text: "продолжай, я жду отчёта",
+    time: "2026-08-13T09:00:00+03:00" }];
+  for (let i = 0; i < 120; i++) {
+    huge.push({ seq: i + 1, role: "assistant", text: "ход " + i, sub: "разбор",
+      time: "2026-08-13T09:00:00+03:00" });
+  }
+  const box = await feedOf(huge, "huge1");
+  const blk = byClass(box, "subblk");
+  if (!blk) fail("блок гигантского журнала не собрался");
+  const body = byClass(blk, "subbody");
+  if (body.children.length !== 100) {
+    fail("в открытом блоке нарисовано записей " + body.children.length + ", ожидал сотню");
+  }
+  if (!dump(box).includes("продолжай, я жду отчёта")) fail("реплика человека выше блока пропала");
+  const more = byClass(blk, "submore");
+  if (!more || more.hidden) fail("кнопки «показать все» нет: " + dump(blk).slice(0, 200));
+  if (!String(more.textContent).includes("показать все 120")) {
+    fail("подпись кнопки не называет счёт: " + more.textContent);
+  }
+  more.handlers.click({ stopPropagation: () => {} });
+  if (body.children.length !== 120) {
+    fail("после «показать все» нарисовано " + body.children.length + ", ожидал все 120");
+  }
+  if (!more.hidden) fail("кнопка осталась висеть, когда показывать больше нечего");
+  if (!dump(body).includes("ход 0")) fail("начало журнала не доехало: " + dump(body).slice(0, 120));
 }
 
 // --- сломанная запись не роняет ленту целиком ---

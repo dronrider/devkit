@@ -3369,6 +3369,12 @@ function safePair(make, call, out) {
   }
 }
 
+// Сколько записей блока рисуется сразу. Субагента продолжают через
+// SendMessage не первый день, и в боковом журнале их набираются тысячи:
+// нарисованный целиком хвостовой блок занимал экран один и читался как «весь
+// чат в одном пузыре». Остальное достаётся кнопкой.
+const SUB_WINDOW = 100;
+
 function subBlock(label, inner, opts, open) {
   const box = el("div", "subblk fold" + (open ? " open" : ""));
   const top = el("div", "foldh");
@@ -3378,44 +3384,74 @@ function subBlock(label, inner, opts, open) {
   const car = el("button", "foldcp foldar");
   car.append(icon("i-unfold"));
   top.append(car);
+  const more = el("button", "submore");
   const body = el("div", "subbody");
-  // done это сколько записей уже нарисовано: дописывание идёт с этого места,
-  // и заново собирать нарисованное незачем.
-  let done = 0;
-  const grow = (list) => {
-    const bottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-    for (let j = done; j < list.length; j++) {
-      const it = list[j];
-      const nx = list[j + 1];
+  // from это запись, с которой блок нарисован: начало длинного журнала лежит
+  // за кнопкой. done это докуда нарисовано, дописывание идёт с этого места, и
+  // заново собирать нарисованное незачем.
+  let from = Math.max(0, inner.length - SUB_WINDOW);
+  let done = from;
+  let list = inner;
+  // Записи блока карточками: вывод инструмента склеивается со своим вызовом,
+  // как в самой ленте. За границу куска склейка не лезет, иначе запись с краю
+  // нарисовалась бы дважды.
+  const build = (arr, a, b) => {
+    const out = [];
+    for (let j = a; j < b; j++) {
+      const it = arr[j];
+      const nx = j + 1 < b ? arr[j + 1] : null;
       if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
-        body.append(safePair(opts.pair, it, nx));
+        out.push(safePair(opts.pair, it, nx));
         j++;
         continue;
       }
       if (it.role === "toolout" && !it.text) continue;
-      body.append(safeItem(opts.item, it));
+      out.push(safeItem(opts.item, it));
     }
+    return out;
+  };
+  const showMore = () => {
+    more.hidden = body.hidden || from === 0;
+    more.textContent = "показать все " + list.length + " " +
+      plural(list.length, "запись", "записи", "записей");
+  };
+  const grow = (l) => {
+    list = l;
+    const bottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const add = build(list, done, list.length);
+    if (add.length) body.append(...add);
     done = list.length;
+    showMore();
     // Внутренняя прокрутка держится у низа, только если и так там стояла:
     // человек, читающий середину работы, не должен уезжать от неё.
     if (bottom) body.scrollTop = body.scrollHeight;
   };
   grow(inner);
   body.hidden = !open;
+  showMore();
   car.replaceChildren(icon(open ? "i-fold" : "i-unfold"));
+  more.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!from) return;
+    const head = build(list, 0, from);
+    from = 0;
+    if (head.length) body.prepend(...head);
+    showMore();
+  });
   const flip = () => {
     body.hidden = !body.hidden;
     car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));
     box.classList.toggle("open", !body.hidden);
+    showMore();
   };
   car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
   top.addEventListener("click", flip);
-  box.append(top, body);
+  box.append(top, more, body);
   // Ручка дописывания: sync зовёт её вместо пересборки узла, и блок живого
   // субагента перестаёт дёргать прокрутку на каждой пришедшей записи.
-  box.subFill = (list, live) => {
-    grow(list);
-    said.textContent = label + ", " + headText(list, live);
+  box.subFill = (l, live) => {
+    grow(l);
+    said.textContent = label + ", " + headText(l, live);
   };
   return box;
 }

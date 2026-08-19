@@ -94,6 +94,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/message", s.auth(s.handleTaskMessagePost))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/deps", s.auth(s.handleTaskDepAdd))
 	mux.HandleFunc("DELETE /api/projects/{p}/tasks/{id}/deps/{dep}", s.auth(s.handleTaskDepRm))
+	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/continue", s.auth(s.handleTaskContinue))
 	mux.HandleFunc("POST /api/projects/{p}/runs", s.auth(s.handleRunStart))
 	mux.HandleFunc("POST /api/projects/{p}/chats", s.auth(s.handleChatStart))
 	mux.HandleFunc("GET /api/projects/{p}/chats", s.auth(s.handleChatList))

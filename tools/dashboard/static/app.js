@@ -276,7 +276,7 @@ function renderSidebar(projects, current) {
     item.append(document.createTextNode(p.name));
     const n = el("span", "n", st.short);
     item.append(n);
-    item.addEventListener("click", () => { location.hash = p.name; });
+    item.addEventListener("click", () => { goKeepingChat(p.name); });
     nav.append(item);
 
     const opt = el("option", "", p.name);
@@ -284,7 +284,7 @@ function renderSidebar(projects, current) {
     opt.selected = current && p.name === current.name;
     sel.append(opt);
   }
-  sel.onchange = () => { location.hash = sel.value; };
+  sel.onchange = () => { goKeepingChat(sel.value); };
   // Счётчик у раздела «Агенты» считает тот же список, что рисует экран: два
   // разных числа рядом читались бы как потерянная работа.
   const live = allWorks(projects).length;
@@ -368,7 +368,9 @@ function renderLive(project, works) {
     // Интерактивная сессия без узнанной задачи названа своим видом: имени
     // работы у неё нет. Ведёт она на тот же экран агента, только по id сессии:
     // разговор лежит на диске, и до DK-294 карточка стояла мёртвой.
-    const name = w.id || "интерактивная сессия";
+    // Имя работы: номер задачи, а без него заголовок разговора, который
+    // сервер кладёт в note (замечание 21).
+    const name = w.id || w.note || "разговор";
     const to = w.id ? boardChatHash(project, w.id)
       : w.session ? boardChatHash(project, w.session) : "";
     // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
@@ -384,7 +386,9 @@ function renderLive(project, works) {
       stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
       card.append(stop);
     } else if (w.via === "session") {
-      card.append(el("span", "via", w.note || "интерактивная сессия"));
+      // Подпись вида нужна только там, где есть номер задачи: без него сам
+      // заголовок уже стоит именем, и повторять его второй строкой незачем.
+      if (w.id && w.note) card.append(el("span", "via", w.note));
     } else {
       card.append(el("span", "via", "ведёт другая сессия"));
     }
@@ -405,7 +409,13 @@ function renderLive(project, works) {
 // без сессии выглядела штатной очередью. Слова признака: работа идёт либо
 // сессии за строкой нет.
 function runChip(row) {
-  if (row.run === "gone") return el("span", "chip", "сессии нет");
+  // «Сессии нет» и «сессия ждёт ввода» на одной строке противоречили друг
+  // другу: первое говорит признак работы (row.run), второе поле ожидания, и
+  // источники у них разные. Ждущая строка это и есть строка без хода, поэтому
+  // при живом ожидании про пропавшую сессию сказано чипом ожидания, а второй
+  // чип снимается (POC ветки poc-chat).
+  const waiting = row.waiting && row.waiting.state;
+  if (row.run === "gone") return waiting ? null : el("span", "chip", "сессии нет");
   if (!row.run) return null;
   const chip = el("span", "chip c-run");
   chip.append(el("span", "dot pulse"), el("span", "", "работает"));
@@ -801,7 +811,7 @@ function renderRow(project, row, sect) {
     // После броска строки браузер шлёт клик тем же нажатием: перетаскивание не
     // уводит внутрь задачи.
     if (dragAteClick()) return;
-    location.hash = project + "/" + row.id;
+    goKeepingChat(project + "/" + row.id);
   });
   // Двигается перетаскиванием только очередь: в остальных секциях порядок
   // ручной и от ранга не зависит, там жест обещал бы то, чего не делает.
@@ -867,7 +877,7 @@ function boardTabsBar(project) {
   drafts.type = "button";
   drafts.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    location.hash = project + "/drafts";
+    goKeepingChat(project + "/drafts");
   });
   bar.append(drafts);
   return bar;
@@ -896,7 +906,7 @@ function newTaskFab(project) {
   btn.setAttribute("aria-label", "Новая задача в " + project);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    location.hash = project + "/new";
+    goKeepingChat(project + "/new");
   });
   return btn;
 }
@@ -1381,7 +1391,7 @@ function newTaskButton(project, label) {
   const btn = el("button", "btn btn-acc", label);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    location.hash = project + "/new";
+    goKeepingChat(project + "/new");
   });
   return btn;
 }
@@ -1400,7 +1410,7 @@ function draftsButton(project, label) {
   const btn = el("button", "btn", label || "Черновики");
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    location.hash = project + "/drafts";
+    goKeepingChat(project + "/drafts");
   });
   return btn;
 }
@@ -1563,7 +1573,7 @@ function depRow(project, id, side, dep) {
     call.catch(console.error);
   });
   row.append(drop);
-  row.addEventListener("click", () => { location.hash = project + "/" + dep.id; });
+  row.addEventListener("click", () => { goKeepingChat(project + "/" + dep.id); });
   return row;
 }
 
@@ -1710,6 +1720,40 @@ function barBtn(cls, label, ico) {
   return btn;
 }
 
+// Куда уедет продолжение: приписка рядом с кнопкой, и в ней ссылка на тот
+// самый разговор. Диалог задачи ищется тем же списком, каким живёт окно чатов,
+// поэтому приписка приезжает позже кнопки и правит себя на месте (замечание 10).
+function continueHint(project, id, works) {
+  const hint = el("span", "hint", "Выполнение продолжится в чате.");
+  const open = el("button", "linkish", "открыть");
+  open.addEventListener("click", () => { openChat(id); });
+  hint.append(document.createTextNode(" "), open);
+  api(chatsURL(project) + "?task=" + encodeURIComponent(id)).then((r) => {
+    const list = (r.ok && r.body.chats) || [];
+    if (!list.length) {
+      hint.replaceChildren(document.createTextNode("Выполнение продолжится в новом чате."));
+    }
+  }).catch(console.error);
+  return hint;
+}
+
+// Продолжение работы задачи: сервер сам решает, будить живой разговор каналом
+// или поднимать резюм, а не нашедший разговора откатывается на прежний запуск
+// конвейера. Экран после удачи уходит в чат: смотреть за продолжением надо там.
+async function continueTask(project, id) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/tasks/" + encodeURIComponent(id) + "/continue", { method: "POST", body: {} });
+  if (!r.ok) {
+    sayResult(r.body.error || "продолжить не вышло", true);
+    return;
+  }
+  if (r.body.way === "none") {
+    await startRun(project, id, harnessDefault(), taskChatHash(project, id));
+    return;
+  }
+  openChat(r.body.session || id);
+}
+
 function taskActions(project, id, row, works) {
   const out = [];
   const isGoal = /^Цель:/.test(row.title);
@@ -1727,11 +1771,7 @@ function taskActions(project, id, row, works) {
     out.push(stop);
     return out;
   }
-  if (work && work.via === "session") {
-    out.push(el("span", "hint", "Задачу ведёт интерактивная сессия в окне агента: " +
-      "остановить её из дашборда нечем, окно закрывает человек."));
-    return out;
-  }
+  if (work && work.via === "session") return out;
   if (work) {
     out.push(el("span", "hint", "Задачу ведёт другая сессия (живой чат), tmux-сессии дашборда " +
       "у неё нет: остановить отсюда нечем, снимать там, где она поднята."));
@@ -1754,6 +1794,20 @@ function taskActions(project, id, row, works) {
   // сессии агента, и вести после неё некуда.
   const closesWithoutSession = row.sect === "check" && row.accept === "user";
   const afterOk = closesWithoutSession ? "" : taskChatHash(project, id);
+  if (label === ACTION_BY_SECT["in-progress"] && !isGoal) {
+    // «Продолжить» продолжает последнюю сессию задачи, а не поднимает нового
+    // агента: у прежнего разговора есть контекст работы, и бросать его, чтобы
+    // завести второго исполнителя на том же дереве, было прямой потерей
+    // (замечание 9 второго круга POC).
+    const go = barBtn("btn btn-acc", label, "i-play");
+    go.addEventListener("click", () => {
+      go.disabled = true;
+      continueTask(project, id).catch(console.error).finally(() => { go.disabled = false; });
+    });
+    out.push(go);
+    out.push(continueHint(project, id, works));
+    return out;
+  }
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
     orderHint(row.order, row.accept, row.sect, id), afterOk));
   let hint = taskActionHint(isGoal, row, id);
@@ -1810,7 +1864,7 @@ function goalTaskRow(project, task) {
   // Закрытая задача уехала в архив, и экрана задачи у неё нет: строка доски
   // читается только у живой.
   if (!task.done && task.section) {
-    row.addEventListener("click", () => { location.hash = project + "/" + task.id; });
+    row.addEventListener("click", () => { goKeepingChat(project + "/" + task.id); });
   }
   return row;
 }
@@ -1933,7 +1987,16 @@ async function renderTask(project, works, id) {
   const title = el("textarea", "tedit");
   title.value = form.title;
   title.setAttribute("aria-label", "заголовок задачи " + id);
-  title.addEventListener("input", () => { form.title = title.value; touch(); });
+  title.rows = 1;
+  // Высота по содержимому (замечание 20): заголовок в одну строку держал поле
+  // на три, и место уходило в пустоту. Считается она после вставки в дерево,
+  // потому что до неё scrollHeight равен нулю.
+  const fitTitle = () => {
+    title.style.height = "auto";
+    if (title.scrollHeight) title.style.height = title.scrollHeight + "px";
+  };
+  title.addEventListener("input", () => { form.title = title.value; fitTitle(); touch(); });
+  setTimeout(fitTitle, 0);
   head.append(title);
   page.append(head);
 
@@ -2022,16 +2085,11 @@ async function renderTask(project, works, id) {
   for (const node of taskActions(project, id, row, works)) bar.append(node);
   bar.append(bad);
 
-  // Журнал витка переехал сюда с экрана агента (DK-435): ход цикла это работа
-  // задачи, а не разговор с ней. Панель стоит у цели и у задачи с живой
-  // работой; у остальных её нет, потому что источника у журнала там нет вовсе,
-  // и пустая карточка читалась бы поломкой.
-  if (/^Цель:/.test(row.title || "") || work) {
-    const jp = pane("Журнал витка", "источник назовёт сервер");
-    jp.head.append(el("span", "chip c-run", "хвост дописывается"));
-    page.append(jp.card);
-    wireJournal(project, id, jp.body, jp.sub);
-  }
+  // Журнал витка уехал в самый низ экрана (замечание 13): читают его редко, а
+  // места он занимал столько же, сколько сама постановка, и отжимал её вниз.
+  // Панель по-прежнему стоит только у цели и у задачи с живой работой: у
+  // остальных источника у журнала нет вовсе.
+  const wantJournal = /^Цель:/.test(row.title || "") || Boolean(work);
 
   // Состав цели стоит над содержимым: с экрана цели смотрят прежде всего на
   // него. Ждать его отрисовка задачи не обязана, состав приезжает отдельным
@@ -2102,6 +2160,19 @@ async function renderTask(project, works, id) {
   // с заголовка вниз на «Сохранить» и только потом возвращался вверх к
   // описанию (замечание ревью 9).
   watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps });
+
+  // Журнал витка стоит последним блоком экрана, под целью и постановкой
+  // (замечание 13): туда за ним и идут, а сверху он отжимал вниз то, ради чего
+  // экран открывают.
+  if (wantJournal) {
+    const jp = pane("Журнал витка", "источник назовёт сервер");
+    // Зелёная точка вместо слов «хвост дописывается»: живость журнала это
+    // состояние, а не сообщение, и строкой текста она занимала место шапки
+    // (замечание 11).
+    jp.head.append(el("span", "dot pulse"));
+    page.append(jp.card);
+    wireJournal(project, id, jp.body, jp.sub);
+  }
 
   taskDraft.id = id;
   taskDraft.dirty = false;
@@ -2369,13 +2440,24 @@ function foldPeek(text, n) {
   return line.length > n ? line.slice(0, n) + "..." : line;
 }
 
+// Длительность размышлений словами: секунды до минуты, дальше минуты. Точность
+// тут не нужна вовсе, нужен порядок величины.
+function thinkWord(ms) {
+  const sec = Math.max(1, Math.round(ms / 1000));
+  if (sec < 60) return sec + " с";
+  return Math.round(sec / 60) + " мин";
+}
+
 function replyEl(item) {
   if (item.role === "thinking") {
     // Размышления идут текстом, а не меткой (POC ветки poc-chat): прежде
     // сервер выбрасывал текст, и в ленте стояло «размышления свёрнуты», из
-    // чего ничего не следовало.
-    if (!item.text) return el("div", "think", "размышления без текста");
-    return foldEl("think", "размышления", item.text, foldPeek(item.text, 90));
+    // чего ничего не следовало. Текста может не быть вовсе (модель отдаёт
+    // размышления запечатанными), и тогда в ленте стоит длительность, как
+    // «Thought for 5s» в vscode: сколько агент думал, видно всегда.
+    const spent = item.spent ? "Думал " + thinkWord(item.spent) : "Думал молча";
+    if (!item.text) return el("div", "think", spent);
+    return foldEl("think", spent, item.text, foldPeek(item.text, 90));
   }
   if (item.role === "toolout") {
     return foldEl("toolout", "вывод", item.text || "", foldPeek(item.text, 100));
@@ -2422,10 +2504,13 @@ function keepPlace(box, tail) {
 // честное «задача не распознана» (DK-252). Разряд привязки виден словами:
 // «ведёт» стоит на записи реестра чатов, «говорит о» на угадывании по
 // транскрипту, и работой задачи считается только первое (DK-431).
+// Подпись сессии: заголовок разговора, а не отчёт о том, чего дашборд про неё
+// не узнал. «Задача не распознана» было честно, но бесполезно: узнают сессию по
+// первой реплике, а не по отсутствию привязки (замечание 21).
 function sessionSign(s) {
-  if (!s.task) return s.taskNote || "задача не распознана";
-  const rank = s.bound === "about" ? "говорит о " : "ведёт ";
-  return rank + s.task + ", " + (s.taskNote || "узнана");
+  const title = (s.first || "").trim();
+  if (s.task) return s.task + (title ? ", " + title : "");
+  return title || "разговор " + String(s.id || "").slice(0, 8);
 }
 
 // Привязка разговора к задаче рукой: ответ на сессию, чью задачу угадать
@@ -3253,6 +3338,36 @@ function wireChatGrab(grab) {
 
 // Экран под панелью: адрес без хвоста разговора. Старые адреса ложатся сюда же,
 // поэтому «закрыть» с них ведёт на доску или на экран задачи, а не в пустоту.
+// Последний открытый разговор помнится между заходами: человек возвращается в
+// дашборд к тому же диалогу, а не к пустой панели (замечание 19).
+const CHAT_LAST_KEY = "devkit.chat.last";
+
+function chatLastSet(addr) {
+  try {
+    if (addr) localStorage.setItem(CHAT_LAST_KEY, addr);
+    else localStorage.removeItem(CHAT_LAST_KEY);
+  } catch (err) {
+    // приватный режим браузера: память живёт до перезагрузки
+  }
+}
+
+function chatLast() {
+  try {
+    return localStorage.getItem(CHAT_LAST_KEY) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+// Переход по дашборду при открытой панели: хвост разговора приклеивается к
+// новому адресу, и панель переживает переход, вместо того чтобы закрываться на
+// каждом нажатии раздела (замечания 18 и 19). Панель это хвост, экран под ней
+// меняется сам по себе, и рвать разговор ради смены экрана незачем.
+function goKeepingChat(hash) {
+  const chat = route().chat;
+  location.hash = chat ? hash + "/chat/" + chat : hash;
+}
+
 function chatBase() {
   const h = decodeURIComponent(location.hash.replace(/^#/, ""));
   const cut = h.indexOf("/chat/");
@@ -3288,6 +3403,7 @@ function chatIsBoard(addr) {
 
 function openChat(addr) {
   const to = "#" + chatBase() + "/chat/" + addr;
+  chatLastSet(addr);
   if (location.hash === to) return;
   history.pushState({ chat: addr }, "", to);
   chatDepth += 1;
@@ -3299,12 +3415,16 @@ function openChat(addr) {
 // а экран под панелью от переключения не меняется вовсе.
 function switchChat(addr) {
   const to = "#" + chatBase() + "/chat/" + addr;
+  chatLastSet(addr);
   if (location.hash === to) return;
   history.replaceState({ chat: addr }, "", to);
   refresh().catch(console.error);
 }
 
 function closeChat() {
+  // Закрытие рукой снимает и память: вернувшись, человек видит дашборд, а не
+  // разговор, от которого он ушёл нарочно.
+  chatLastSet("");
   if (chatDepth > 0) {
     chatDepth -= 1;
     history.back();
@@ -3402,7 +3522,7 @@ function chatsURL(project) {
 // похода на сервер.
 async function chatState(project, addr, board) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
-    error: "", models: ["opus", "sonnet", "haiku"], fresh: false };
+    error: "", models: [], fresh: false };
   if (chatIsNew(addr)) {
     st.fresh = true;
     st.task = chatNewTask(addr);
@@ -3545,6 +3665,17 @@ function chatHead(project, st) {
   const line = el("div", "chline");
 
   const pick = el("button", "cdpick");
+  // Номер задачи стоит лейблом при названии диалога, а не отдельной кнопкой
+  // «Экран DK-397» под шапкой: место экономится, а нажатие ведёт туда же
+  // (замечание 17).
+  if (st.task) {
+    const lab = el("span", "cdtask", st.task);
+    lab.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      location.hash = taskChatHash(project, st.task);
+    });
+    pick.append(lab);
+  }
   pick.append(el("b", "", chatTitle(st.entry) + (st.fresh ? " (новый разговор)" : "")));
   const car = el("span", "cdcar");
   car.append(icon("i-caret"));
@@ -3570,12 +3701,17 @@ function chatHead(project, st) {
 
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
-  const cur = st.entry ? (st.entry.model || "opus") : chatModelPref();
-  const opts = st.models.includes(cur) ? st.models : st.models.concat([cur]);
+  const cur = st.entry ? (st.entry.model || chatModelPref()) : chatModelPref();
+  // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
+  // она платится. Своего перечня имён у панели нет, иначе новая подписка на
+  // машине не появилась бы тут вовсе.
+  const opts = (st.models || []).slice();
+  if (cur && !opts.some((m) => m.model === cur)) opts.unshift({ model: cur, tier: "", harness: "" });
   for (const m of opts) {
-    const o = el("option", "", m);
-    o.value = m;
-    if (m === cur) o.selected = true;
+    const label = m.tier ? m.model + " (" + m.tier + ", " + m.harness + ")" : m.model;
+    const o = el("option", "", label);
+    o.value = m.model;
+    if (m.model === cur) o.selected = true;
     model.append(o);
   }
   model.addEventListener("change", () => {
@@ -3630,33 +3766,20 @@ function chatHead(project, st) {
     sub.textContent = st.task ? "разговоров задачи " + st.task + " нет" : "разговор не выбран";
   }
   head.append(sub);
-  if (st.task) {
-    const go = el("button", "btn btn-sm", "Экран " + st.task);
-    go.addEventListener("click", () => { location.hash = taskChatHash(project, st.task); });
-    head.append(go);
-  }
   return head;
 }
 
 // Куда уйдёт реплика и почему. Мера приходит с сервера состоянием диалога, а
 // не считается на глаз: ошибка тут стоит реплики, ушедшей мимо адресата.
 function chatWay(st) {
-  if (st.fresh || !st.sid) {
-    return { kind: "new", off: false,
-      why: "Первая реплика поднимет новую сессию" + (st.task ? " в дереве " + st.task : "") + "." };
-  }
+  if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   const state = st.entry ? st.entry.state : "dead";
-  if (state === "live") {
-    return { kind: "say", off: false,
-      why: "Реплика уйдёт прямо в идущий процесс агента." };
-  }
-  if (state === "vscode") {
-    return { kind: "vscode", off: true,
-      why: "Разговор идёт в vscode, пишите там: транскрипт писался меньше 12 минут назад, " +
-        "а своей tmux-сессии у этого разговора нет, и подать реплику в чужое окно нечем." };
-  }
-  return { kind: "resume", off: false,
-    why: "Процесса нет: реплика поднимет продолжение той же сессии (claude --resume), история не порвётся." };
+  if (state === "live") return { kind: "say", off: false, why: "" };
+  // Окна vscode отдельным случаем больше нет: канал самого клиента достаёт
+  // любую живую сессию, и «пишите там» осталось бы отказом без причины.
+  // Молчание тут честное: реплике есть куда ехать в обоих оставшихся случаях,
+  // и объяснять человеку механику доставки на каждом экране незачем.
+  return { kind: "resume", off: false, why: "" };
 }
 
 // Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и
@@ -3666,15 +3789,16 @@ async function chatRaise(project, st, text, model) {
   const body = { text, model };
   if (st.task) body.id = st.task;
   const r = await api(chatsURL(project), { method: "POST", body });
-  sayResult(r.body.message || r.body.error || "", !r.ok);
-  if (!r.ok) return;
+  if (!r.ok) {
+    sayResult(r.body.error || "разговор не поднялся", true);
+    return;
+  }
   const name = r.body.tmux;
   for (let i = 0; i < 40; i += 1) {
     await new Promise((ok) => setTimeout(ok, 1500));
     const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
     const hit = (list.ok && (list.body.chats || [])[0]) || null;
     if (hit) {
-      sayResult("разговор поднят: " + hit.id.slice(0, 8));
       switchChat(hit.id);
       return;
     }
@@ -3691,9 +3815,11 @@ function chatPanel(project, st) {
   const feed = el("div", "msgs chatfeed");
   wrap.append(feed);
 
-  const note = el("div", "cnote" + (way.off ? " idle" : ""));
-  note.append(el("span", "", way.why));
-  wrap.append(note);
+  if (way.why) {
+    const note = el("div", "cnote" + (way.off ? " idle" : ""));
+    note.append(el("span", "", way.why));
+    wrap.append(note);
+  }
 
   const box = el("div", "cbox");
   const ta = el("textarea");
@@ -3716,11 +3842,12 @@ function chatPanel(project, st) {
         .catch(console.error).finally(done);
       return;
     }
-    sayResult("реплика уходит агенту...");
     api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
       { method: "POST", body: { text } })
       .then((r) => {
-        sayResult(r.body.message || r.body.error || "", !r.ok);
+        // Удача молчит: реплика видна в ленте своим пузырём, и всплывашка
+        // «подано в процесс» на каждое слово была спамом. Говорит только отказ.
+        if (!r.ok) sayResult(r.body.error || "реплика не ушла", true);
         // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
         // список надо перечитать, иначе следующая реплика опять пошла бы
         // резюмом и завела второго агента.
@@ -5140,7 +5267,7 @@ function showFlash(n) {
     // пройденный путь, что и release.
     if (flashSwiped(dx)) return;
     dismiss();
-    location.hash = (shownProject || route().proj) + "/feed";
+    goKeepingChat((shownProject || route().proj) + "/feed");
   });
 }
 
@@ -5322,7 +5449,7 @@ function renderHome(projects) {
     }
     const why = projectWhy(p);
     if (why) row.append(el("span", "stale", why));
-    row.addEventListener("click", () => { location.hash = p.name; });
+    row.addEventListener("click", () => { goKeepingChat(p.name); });
     card.append(row);
   }
   groups.append(card);
@@ -5752,15 +5879,16 @@ for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
   ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
-    // имени увёл бы на "#/feed".
-    location.hash = (shownProject || route().proj) + tail;
+    // имени увёл бы на "#/feed". Открытый разговор переезжает вместе с
+    // переходом: лента уведомлений его больше не закрывает.
+    goKeepingChat((shownProject || route().proj) + tail);
   });
 }
 
 // Раздел «Агенты» имени проекта не просит: он показывает работы всех досок
 // сразу, и хэш у него один на весь дашборд.
 for (const id of ["nav-agents", "tab-agents"]) {
-  document.getElementById(id).addEventListener("click", () => { location.hash = "/agents"; });
+  document.getElementById(id).addEventListener("click", () => { goKeepingChat("/agents"); });
 }
 
 // Переход на главную это логотип в левом верхнем углу: на ноутбуке он стоит
@@ -5805,4 +5933,14 @@ wireFindKey();
 // колонки читалась бы как «подписок нет».
 paintQuota();
 wireFlash();
+// Последний открытый разговор возвращается сам: адрес без хвоста при
+// запомненном диалоге дорисовывается им, и человек застаёт дашборд там же, где
+// оставил (замечание 19). Закрытый рукой диалог память снимает, и восстанавливать
+// тогда нечего.
+(() => {
+  const last = chatLast();
+  if (last && !route().chat) {
+    history.replaceState({ chat: last }, "", "#" + chatBase() + "/chat/" + last);
+  }
+})();
 refresh().catch(console.error);

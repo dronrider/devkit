@@ -142,6 +142,9 @@ func cmdServe(home, staticDir string) error {
 	}
 	logf, closeLog := openLog(home)
 	defer closeLog()
+	// Свой конец канала живых сессий: агент, получивший реплику, отвечает на
+	// адрес отправителя, и без слушателя его ход уходит в ошибку доставки.
+	defer peerListen(logf)()
 	if cfg.Token == "" {
 		// Секрет рождается на машине при первом старте; по сети он не ездит,
 		// печатает его команда dashboard secret.

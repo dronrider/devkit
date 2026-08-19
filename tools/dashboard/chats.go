@@ -586,3 +586,82 @@ func sortEntries(list []chatEntry) {
 		return list[i].ID < list[j].ID
 	})
 }
+
+// Продолжение работы задачи (замечание 9 второго круга POC). Кнопка
+// «Продолжить» на экране задачи поднимала нового агента конвейером, и прежний
+// разговор с его контекстом оставался в стороне. Теперь она продолжает
+// последнюю сессию задачи: живой её будит канал, кончившейся поднимает резюм, и
+// только там, где разговора нет вовсе, заводится новый.
+
+// taskChat находит свежий диалог задачи. Свежесть тут по времени транскрипта:
+// список уже отсортирован, и первый совпавший и есть последний разговор.
+func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
+	for _, e := range s.chatEntries(projPath, chatListLimit) {
+		if hasTask(e.Tasks, id) {
+			return e, true
+		}
+	}
+	return chatEntry{}, false
+}
+
+// continuePrompt это заказ продолжения. Он разговорный: сессия уже знает
+// задачу, и пересказывать ей постановку незачем.
+func continuePrompt(id string) string {
+	return "Продолжай работу по " + id + " с того места, где остановился."
+}
+
+func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, _, _, ok := s.taskRow(w, r)
+	if !ok {
+		return
+	}
+	e, has := s.taskChat(found.Path, id)
+	if !has {
+		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
+			"message": "разговора у задачи нет: работа поднимется новым"})
+		return
+	}
+	text := continuePrompt(id)
+	if e.Sock != "" {
+		if err := peerSay(e.Sock, text); err == nil {
+			s.logf("работа %s продолжена в живом разговоре %s (pid %d)", id, e.ID, e.PID)
+			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "socket",
+				"session": e.ID, "where": e.Where})
+			return
+		}
+	}
+	sid := e.ID
+	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
+	if !okS {
+		writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "none",
+			"message": "транскрипта прежнего разговора нет: работа поднимется новым"})
+		return
+	}
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	dir, okTree := sessionTree(found.Path, info.suffix)
+	if !okTree {
+		dir = found.Path
+	}
+	model := s.chatModel(sid, e.Tmux)
+	sess := chatNewName(id, tmuxAliveFn())
+	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
+		chatCmd(chatVars(id, sess), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
+		return
+	}
+	sessions.Append(sessions.Path(s.cfg.Home),
+		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
+			Project: found.Name, Tree: dir, Tmux: sess}, "продолжение работы"))
+	s.logf("работа %s продолжена резюмом разговора %s в tmux-сессии %s", id, sid, sess)
+	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
+		"session": sid, "tmux": sess})
+}

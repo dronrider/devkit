@@ -431,6 +431,17 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 				}
 			}
 		}
+		if task == "" {
+			// Работа без узнанной задачи подписывается заголовком разговора, а
+			// не отчётом о том, чего дашборд про неё не узнал: «интерактивная
+			// сессия, задача не распознана» не говорило ни о чём (замечание 21
+			// второго круга POC).
+			if t := head.Summary; t != "" {
+				note = t
+			} else if head.First != "" {
+				note = head.First
+			}
+		}
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: "session", Session: f.ID, Note: note})
 	}
@@ -479,11 +490,17 @@ func contentTexts(raw json.RawMessage) []string {
 // сворачиваются в пометку без текста.
 type reply struct {
 	Seq  int    `json:"seq"`
-	Role string `json:"role"` // user | assistant | thinking | tool
+	Role string `json:"role"` // user | assistant | thinking | tool | toolout
 	Time string `json:"time,omitempty"`
 	Text string `json:"text,omitempty"`
 	Tool string `json:"tool,omitempty"`
 	Note string `json:"note,omitempty"`
+	// Spent это длительность размышлений в миллисекундах, посчитанная по
+	// меткам времени соседних записей транскрипта. Модель отдаёт размышления
+	// запечатанными чаще, чем текстом, и тогда сказать про них можно только
+	// это: сколько агент думал. Так же подписывает их расширение для vscode
+	// («Thought for 5s»).
+	Spent int64 `json:"spent,omitempty"`
 }
 
 // toolNoteKeys это порядок полей ввода, из которых собирается однострочная
@@ -562,7 +579,21 @@ func toolNote(input map[string]any) string {
 func parseReplies(data []byte, startSeq int) []reply {
 	var out []reply
 	seq := startSeq
+	// prev это метка предыдущей разобранной записи: длительность размышления
+	// это расстояние от неё до метки самого размышления, потому что думать
+	// агент начинает сразу после того, что было до него.
+	var prev time.Time
 	add := func(item reply) {
+		if item.Role == roleThink {
+			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
+				if d := at.Sub(prev); d > 0 && d < time.Hour {
+					item.Spent = d.Milliseconds()
+				}
+			}
+		}
+		if at, err := time.Parse(time.RFC3339, item.Time); err == nil {
+			prev = at
+		}
 		item.Seq = seq
 		seq++
 		out = append(out, item)
@@ -610,7 +641,7 @@ func parseReplies(data []byte, startSeq int) []reply {
 				// сервер выбрасывал его, и на экране стояла метка «размышления
 				// свёрнуты», из которой ничего не следовало. Свёрнутым блоком
 				// его рисует панель, разворот кликом.
-				add(reply{Role: "thinking", Time: rec.Timestamp, Text: b.Thinking})
+				add(reply{Role: roleThink, Time: rec.Timestamp, Text: b.Thinking})
 			case "tool_use":
 				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
 					Note: toolNote(b.Input), Text: toolBody(b.Input)})
@@ -626,6 +657,9 @@ func parseReplies(data []byte, startSeq int) []reply {
 	}
 	return out
 }
+
+// roleThink это роль размышления в ленте: имя одно на сервер и на панель.
+const roleThink = "thinking"
 
 const repliesDefault = 40
 

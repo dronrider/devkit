@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -71,7 +72,9 @@ func (p peer) alive() bool {
 	if err != nil {
 		return false
 	}
-	return proc.Signal(nil) == nil
+	// Сигнал 0 не трогает процесс, а только спрашивает, есть ли он; nil тут не
+	// годится, пакет os принимает лишь syscall.Signal.
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 // peers читает реестр живых сессий, ключ это ID сессии. Мёртвые записи
@@ -180,4 +183,49 @@ func peerWord(p peer) string {
 		return p.Entrypoint
 	}
 	return "живая сессия"
+}
+
+// peerListen поднимает свой конец канала: сессия, получившая реплику, отвечает
+// на адрес отправителя, и без слушателя её ответ падает с ENOENT, а ход
+// уходит впустую на пересылку. Ответ дашборду не нужен вовсе (он и так придёт
+// в ленту транскриптом), поэтому соединение просто вычитывается досуха.
+// Сокет живёт, пока живёт процесс, и снимается на выходе.
+func peerListen(logf func(string, ...any)) func() {
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
+		logf("свой сокет канала не поднялся: каталог %s не создался: %v", sockDir, err)
+		return func() {}
+	}
+	path := filepath.Join(sockDir, fmt.Sprintf("%d.sock", os.Getpid()))
+	// Остаток от процесса с тем же номером мешает слушать: bind по занятому
+	// пути отказывает, а номера в системе переиспользуются.
+	os.Remove(path)
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		logf("свой сокет канала %s не поднялся: %v", path, err)
+		return func() {}
+	}
+	os.Chmod(path, 0o600)
+	logf("свой конец канала сессий слушает %s", path)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.SetReadDeadline(time.Now().Add(peerSendTimeout))
+				buf := make([]byte, 4096)
+				for {
+					if _, err := conn.Read(buf); err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return func() {
+		ln.Close()
+		os.Remove(path)
+	}
 }

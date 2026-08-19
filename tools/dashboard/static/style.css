@@ -224,7 +224,7 @@ a:hover{text-decoration:underline}
 .pick{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 6px 0 9px;border-radius:7px;background:var(--bg3);color:var(--tx2);font:500 11.5px var(--sans)}
 .pick select{min-height:28px;background:none;border:none;color:var(--tx);font:600 12.5px var(--mono);cursor:pointer;outline:none}
 .pick select option{background:var(--bg2);color:var(--tx)}
-.tedit{flex:1;min-height:60px;padding:9px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx);font:400 14px/1.5 var(--sans);resize:vertical}
+.tedit{flex:1;min-height:0;padding:9px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx);font:400 14px/1.5 var(--sans);resize:vertical}
 .fpanel{display:flex;flex-direction:column;min-width:0}
 .fhead{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line)}
 .fhead b{font:500 12.5px var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -765,3 +765,44 @@ a:hover{text-decoration:underline}
 .foldb{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:400 11.5px/1.5 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto}
 .think.fold .foldh b{color:var(--tx3);font-style:italic}
 .toolout.fold{background:var(--bg1)}
+
+/* ---- компактная раскладка, второй круг POC ----
+   Замечания 14-16 и 20: место уходило в отступы и в колонку ранга, а три шапки
+   (меню, экран, чат) стояли на разной высоте и разъезжались по вертикали. */
+
+/* 15: отступы между колонкой, экраном и панелью ужаты. Ширина колонки тоже:
+   на 248 точках она держала пустое поле справа от каждого пункта. */
+.side{width:208px;padding:12px 10px 12px}
+.brand{padding:0 6px 10px;margin-bottom:10px;gap:9px}
+.bmain{padding:12px 16px 0}
+.live{margin-top:10px;gap:9px}
+.groups{padding-bottom:14px}
+.cpin{padding:12px 12px 12px}
+
+/* 16: три шапки на одной горизонтали и одной высоты. Высота общая переменной,
+   и меняется она в одном месте, а не в трёх. */
+:root{--headh:40px}
+.brand{min-height:var(--headh);box-sizing:content-box}
+.bhead{min-height:var(--headh);gap:10px}
+.cpanel .chead{min-height:var(--headh);justify-content:center}
+.cpanel .chead .chline{min-height:32px}
+
+/* 14: колонка ранга больше не шире описания. Разбор слагаемых свёрнут всегда, и
+   раскрывает его наведение либо нажатие: на широком экране это подсказка, на
+   телефоне нажатие, которое уже было. */
+.trow{grid-template-columns:66px 1fr auto;gap:10px;padding:8px 12px}
+.rank{max-width:none}
+.rank .rfold{display:none}
+.rank:hover .rfold,.rank.on .rfold{display:inline}
+.srow{grid-template-columns:66px 1fr auto;gap:10px;padding:7px 12px}
+
+/* 20: поле названия задачи растёт по содержимому, а не держит пустую высоту */
+.fgrid textarea.oneline,textarea.tname{min-height:0;height:auto;overflow-y:hidden}
+
+/* приписка со ссылкой у кнопки продолжения (замечание 10) */
+.linkish{background:none;border:none;padding:0;margin:0;color:var(--acc);cursor:pointer;font:inherit;text-decoration:underline}
+.linkish:hover{color:var(--tx)}
+
+/* лейбл задачи в названии диалога (замечание 17) */
+.cdtask{flex:none;padding:1px 6px;border-radius:5px;background:var(--bg3);color:var(--tx2);font:600 10.5px var(--mono);cursor:pointer}
+.cdtask:hover{background:var(--acc);color:var(--bg0)}

@@ -2044,6 +2044,9 @@ async function renderTask(project, works, id) {
   sep.hidden = true;
   const bad = el("div", "error", "");
   bar.append(save, drop, sep);
+  // Расстановка полосы объявлена до формы: её зовёт touchForm с первой правки,
+  // а собирается она ниже, когда известны действия задачи.
+  let placeBar = null;
 
   const patchBody = () => {
     const out = {};
@@ -2070,6 +2073,9 @@ async function renderTask(project, works, id) {
     save.hidden = !dirty;
     drop.hidden = !dirty;
     sep.hidden = !dirty;
+    // Первая правка поля приводит полосу вместе с кнопками, отказ от правки
+    // уносит её обратно, если своих действий у задачи нет.
+    if (placeBar) placeBar(false);
   };
   save.addEventListener("click", () => {
     const patch = patchBody();
@@ -2082,12 +2088,36 @@ async function renderTask(project, works, id) {
     renderTask(project, works, id).catch(console.error);
   });
 
-  for (const node of taskActions(project, id, row, works)) bar.append(node);
+  const actionNodes = taskActions(project, id, row, works);
+  for (const node of actionNodes) bar.append(node);
   bar.append(bad);
-  // Полоса действий без единой кнопки в разметку не идёт: у задачи, которую
-  // ведёт чужое окно, действий нет вовсе, и пустая карточка стояла на экране
-  // мусорной рамкой (замечание 5 четвёртого круга POC).
-  const barEmpty = !bar.querySelector("button");
+  // Полоса в разметку не встаёт, пока показывать в ней нечего, и приходит
+  // вместе с кнопками. Прошлая правка мерила пустоту наличием кнопки в полосе и
+  // промахнулась: «Сохранить» с «Отменить» лежат тут всегда, просто скрытыми до
+  // первой правки формы, и полоса выходила непустой всегда. Мера теперь по делу:
+  // есть ли действия у задачи и тронута ли форма. Прятать это стилями нельзя,
+  // рамка карточки осталась бы на экране (замечание 5, второй заход).
+  let barPlaced = false;
+  const barNarrow = window.matchMedia("(max-width:900px)");
+  placeBar = (force) => {
+    if (force) {
+      bar.remove();
+      barPlaced = false;
+    }
+    if (!actionNodes.length && !taskDraft.dirty) {
+      if (barPlaced) {
+        bar.remove();
+        barPlaced = false;
+      }
+      return;
+    }
+    if (barPlaced) return;
+    // На телефоне полоса идёт под содержимым, на ноутбуке над ним, теми же
+    // местами, что держит раскладка экрана.
+    if (barNarrow.matches) page.append(bar);
+    else chips.after(bar);
+    barPlaced = true;
+  };
 
   // Журнал витка уехал в самый низ экрана (замечание 13): читают его редко, а
   // места он занимал столько же, сколько сама постановка, и отжимал её вниз.
@@ -2163,7 +2193,7 @@ async function renderTask(project, works, id) {
   // двигает картинку, а обход табом идёт по разметке, и на телефоне таб уводил
   // с заголовка вниз на «Сохранить» и только потом возвращался вверх к
   // описанию (замечание ревью 9).
-  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps, barEmpty });
+  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps, placeBar });
 
   // Журнал витка стоит последним блоком экрана, под целью и постановкой
   // (замечание 13): туда за ним и идут, а сверху он отжимал вниз то, ради чего
@@ -2204,25 +2234,16 @@ function watchTaskLayout(parts) {
   }
   const mq = window.matchMedia("(max-width:900px)");
   const place = () => {
-    if (mq.matches) {
-      parts.grid.append(parts.rank, parts.file, parts.deps);
-      // Колонка на телефоне не нужна вовсе, а опустевшей она осталась бы в
-      // сетке лишним отступом сверху при возврате с ноутбучной ширины.
-      parts.rail.remove();
-      if (!parts.barEmpty) parts.page.append(parts.bar);
-      else parts.bar.remove();
-      return;
-    }
-    // Ранг стоит своей строкой во всю ширину над сеткой, а не в правой колонке
-    // рядом с описанием: показателей у него шесть, и в колонке они вставали
-    // столбиком выше самой постановки, отбирая у неё треть экрана (замечание 3
-    // четвёртого круга POC). В колонке остаются одни зависимости.
+    // Колонок на экране задачи больше нет ни на какой ширине. Ранг ушёл из
+    // правой колонки строкой во всю ширину (замечание 3 четвёртого круга), и
+    // держать колонку ради одних зависимостей стало не за чем: они встают
+    // своей строкой под описанием, а описание занимает всю ширину. Раскладка
+    // от этого одна на телефон и на ноутбук, и разъезжаться ей негде.
+    parts.rail.remove();
     parts.rank.remove();
-    parts.grid.before(parts.rank);
-    parts.rail.append(parts.deps);
-    parts.grid.append(parts.file, parts.rail);
-    if (!parts.barEmpty) parts.chips.after(parts.bar);
-    else parts.bar.remove();
+    parts.page.insertBefore(parts.rank, parts.grid);
+    parts.grid.append(parts.file, parts.deps);
+    parts.placeBar(true);
   };
   place();
   mq.addEventListener("change", place);
@@ -3948,7 +3969,7 @@ async function chatRaise(project, st, text, model) {
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
     sayResult(r.body.error || "разговор не поднялся", true);
-    return;
+    return false;
   }
   const name = r.body.tmux;
   for (let i = 0; i < 40; i += 1) {
@@ -4027,9 +4048,90 @@ function makeBusy(project, box) {
   };
 }
 
-// Тело окна: лента, подпись про доставку, индикатор работы и поле ввода. Своей
-// очереди исходящих тут нет: реплика уходит в процесс сразу, а в ленте она
-// появляется оттуда же, откуда и ответ, из транскрипта.
+// Свои реплики, ещё не вернувшиеся из транскрипта. Пузырь встаёт в ленту сразу
+// по нажатию, как в мессенджерах: ждать, пока клиент запишет реплику в журнал и
+// её принесёт поток, значит показывать человеку пустоту в ответ на отправку.
+// Дубля от этого нет: пришедшее из потока эхо узнаётся по тексту среди свежих
+// реплик человека и заменяет собой местный пузырь (замечание пятого круга POC).
+function makeEcho(project, box, feedBox) {
+  // Ключ у местной реплики свой и сквозной: sync рисует ленту по ключам, и
+  // без устойчивого ключа пузырь пересобирался бы на каждой перерисовке.
+  let seq = 0;
+  const mine = [];
+
+  const draw = () => {
+    box.replaceChildren();
+    for (const m of mine) {
+      const wrap = chatBubble("вы", m.text, m.state === "bad"
+        ? "не ушло" : m.state === "sent" ? "доставлено" : "отправляется...");
+      wrap.classList.add("m-local", "m-" + m.state);
+      if (m.state === "bad") {
+        const again = el("button", "linkish", "повторить");
+        again.addEventListener("click", () => {
+          const text = m.text;
+          drop(m);
+          if (m.retry) m.retry(text);
+        });
+        wrap.append(again);
+      }
+      box.append(wrap);
+    }
+    // Лента доезжает до своей реплики: человек нажал отправку и обязан увидеть,
+    // что она встала.
+    if (feedBox) feedBox.scrollTop = feedBox.scrollHeight;
+  };
+
+  const drop = (m) => {
+    const at = mine.indexOf(m);
+    if (at >= 0) mine.splice(at, 1);
+    draw();
+  };
+
+  return {
+    // Пузырь встаёт до похода на сервер: отправка видна мгновенно.
+    add(text, retry) {
+      seq += 1;
+      const m = { key: "local-" + seq, text, state: "wait", born: Date.now(), retry };
+      mine.push(m);
+      draw();
+      return m;
+    },
+    // Ручка ответила удачей: реплика ушла, но эха из транскрипта ещё нет.
+    // Пометка снимается по сроку, чтобы часики не висели вечно там, где эхо не
+    // придёт вовсе (клиент старой версии, чужой формат записи).
+    sent(m) {
+      if (!mine.includes(m)) return;
+      m.state = "sent";
+      draw();
+      setTimeout(() => { drop(m); }, ECHO_HOLD);
+    },
+    bad(m) {
+      if (!mine.includes(m)) return;
+      m.state = "bad";
+      draw();
+    },
+    // Эхо из ленты: та же реплика человека, пришедшая из транскрипта. Сверка по
+    // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
+    saw(item) {
+      if (item.role !== "user" || !item.text) return;
+      const said = item.text.trim();
+      const hit = mine.find((m) => m.text.trim() === said);
+      if (hit) drop(hit);
+    },
+    clear() {
+      mine.length = 0;
+      draw();
+    },
+  };
+}
+
+// Сколько местный пузырь держится после удачной отправки, не дождавшись эха.
+// Клиент пишет реплику в транскрипт своим ходом, и десяти секунд на это с
+// запасом хватает; дальше пузырь снимается, чтобы часики не висели вечно.
+const ECHO_HOLD = 10000;
+
+// Тело окна: лента, свои неотражённые реплики, подпись про доставку, индикатор
+// работы и поле ввода.
 function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
@@ -4051,36 +4153,51 @@ function chatPanel(project, st) {
   const row = el("div", "crow");
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
-  const fire = () => {
-    const text = ta.value.trim();
-    if (!text || send.disabled) return;
-    ta.value = "";
+  const post = (text) => {
+    // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
+    // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
+    // человеку пустоту в ответ на нажатие.
+    const m = echo.add(text, post);
     send.disabled = true;
-    const model = chatModelPref();
     const done = () => { send.disabled = Boolean(way.off); };
     if (way.kind === "new") {
-      sayResult("подъём разговора...");
-      chatRaise(project, st, text, st.entry ? st.entry.model : model)
-        .catch(console.error).finally(done);
+      chatRaise(project, st, text, st.entry ? st.entry.model : chatModelPref())
+        .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
+        .catch((err) => { echo.bad(m); console.error(err); })
+        .finally(done);
       return;
     }
     busy.on(st.sid);
     api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
       { method: "POST", body: { text } })
       .then((r) => {
-        // Удача молчит: реплика видна в ленте своим пузырём, и всплывашка
-        // «подано в процесс» на каждое слово была спамом. Говорит только отказ.
         if (!r.ok) {
+          // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
+          // пометкой и кнопкой повтора, а не пропадает молча, унося с собой
+          // набранное. Удача молчит: реплика и так видна в ленте.
           busy.off();
+          echo.bad(m);
           sayResult(r.body.error || "реплика не ушла", true);
+          return;
         }
+        echo.sent(m);
         // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
         // список надо перечитать, иначе следующая реплика опять пошла бы
         // резюмом и завела второго агента.
-        if (r.ok && r.body.way === "resume") repaintChat().catch(console.error);
+        if (r.body.way === "resume") repaintChat().catch(console.error);
       })
-      .catch(console.error)
+      .catch((err) => {
+        busy.off();
+        echo.bad(m);
+        console.error(err);
+      })
       .finally(done);
+  };
+  const fire = () => {
+    const text = ta.value.trim();
+    if (!text || send.disabled) return;
+    ta.value = "";
+    post(text);
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
   // короткими репликами, и тянуться к кнопке на каждой из них незачем.
@@ -4103,7 +4220,10 @@ function chatPanel(project, st) {
       ? "новый разговор: напишите первую реплику, она и поднимет сессию"
       : (st.note || "разговоров тут пока нет, заведите новый кнопкой «+»"));
   } else {
-    wireChatFeed(project, feed, st.sid, (item) => busy.saw(item)).catch(console.error);
+    wireChatFeed(project, feed, st.sid, (item) => {
+      busy.saw(item);
+      echo.saw(item);
+    }).catch(console.error);
   }
   return wrap;
 }

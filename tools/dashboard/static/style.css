@@ -821,7 +821,9 @@ a:hover{text-decoration:underline}
 /* колонка ранга и зависимостей занимает треть ширины, а не половину: 392 точек
    фиксированной ширины при открытой панели разговора съедали у постановки
    ровно столько же, сколько она сама занимала */
-.tgrid{grid-template-columns:minmax(0,2fr) minmax(200px,1fr)}
+/* колонок на экране задачи нет: ранг и зависимости стоят своими строками во всю
+   ширину, описание занимает её целиком (замечания 3 и «заблокировано задачами») */
+.tgrid{grid-template-columns:minmax(0,1fr)}
 .rrow .nm{width:auto;flex:1;min-width:0}
 .rrow .why{display:none}
 .rrow{padding:6px 12px}
@@ -869,3 +871,12 @@ a:hover{text-decoration:underline}
    Серой строкой между репликами, а не пузырём человека: пузырь означает, что
    это сказал человек */
 .svcline{display:block;margin:6px 0;padding:5px 11px;border-left:2px solid var(--line2);font:400 11.5px/1.45 var(--sans);color:var(--tx3);overflow-wrap:anywhere}
+
+/* свои реплики, ещё не вернувшиеся из транскрипта: пузырь встаёт сразу по
+   нажатию, а состояние видно подписью и прозрачностью (замечание пятого круга) */
+.mlocal{margin-top:0}
+.m-local.m-wait{opacity:0.62}
+.m-local.m-sent{opacity:0.8}
+.m-local.m-bad .bb{border-color:color-mix(in oklab,var(--block) 55%,transparent)}
+.m-local.m-bad .mm{color:var(--block)}
+.m-local .linkish{margin-left:8px;font-size:11px}

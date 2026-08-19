@@ -2704,15 +2704,12 @@ function replyEl(item) {
     return foldEl("think", spent, item.text, foldPeek(item.text, 90));
   }
   if (item.role === "toolout") {
-    return foldEl("toolout", "вывод", item.text || "", foldPeek(item.text, 100));
+    // Вывод без своего вызова бывает на стыке страниц истории: рисуется он той
+    // же отчёркнутой строкой, что и вывод при ходе.
+    return toolOutLine(item.text || "");
   }
   if (item.role === "tool") {
-    const name = item.tool || "инструмент";
-    if (item.text) return foldEl("tool", name, item.text, item.note || "");
-    const div = el("div", "tool");
-    div.append(el("b", "", name));
-    if (item.note) div.append(el("span", "", item.note));
-    return div;
+    return toolPair(item, null);
   }
   const turn = el("div", "turn");
   const when = item.time ? ", " + localTime(item.time) : "";
@@ -3340,42 +3337,34 @@ function toolPair(call, out) {
   const name = call.tool || "инструмент";
   const cmd = call.text || "";
   const said = out && out.text ? out.text : "";
-  const box = el("div", "tool fold pair");
-  // Строка хода собрана по образцу vscode: имя инструмента жирным, рядом одной
-  // строкой с обрезкой команда либо её описание, а вывод отчёркнутым куском
-  // под ней. Крупные плашки с подписями «IN» и «OUT» занимали в карточке
-  // больше места, чем сама команда (замечание 7 и жалоба про вид ленты).
-  const top = el("div", "foldh");
+  // Ход инструмента виден сразу и стоит двумя строками, как в vscode: сверху
+  // имя с пояснением, снизу отчёркнутый вывод, обрезанный до пары строк.
+  // Раскрытие убрано вовсе: свёрнутая строка молчала о том, что произошло, а
+  // раскрытая роняла в ленту портянку.
+  const box = el("div", "tool trow2");
+  const top = el("div", "tline");
   top.append(el("b", "", name));
-  top.append(el("span", "tcmd", call.note || foldPeek(cmd || said, 90)));
-  // Копирование и сворачивание стоят иконками справа вверху.
-  const both = (cmd ? cmd : "") + (cmd && said ? "\n" : "") + said;
-  top.append(copyBtn(both));
-  const car = el("button", "foldcp foldar");
-  car.append(icon("i-unfold"));
-  top.append(car);
-  // Вход и выход помечены стрелками: вправо ушло в инструмент, влево вернулось
-  // из него. Подписи словами тут не нужны, стрелка говорит то же самое.
-  const body = el("div", "foldb pairb");
-  const row = (ico, text, cls) => {
-    const line = el("div", "pline " + cls);
-    const mark = el("span", "pico");
-    mark.append(icon(ico));
-    line.append(mark, el("pre", "ptext", text));
-    return line;
-  };
-  if (cmd) body.append(row("i-in", cmd, "pin"));
-  if (said) body.append(row("i-out", said, "pout"));
-  body.hidden = true;
-  const flip = () => {
-    body.hidden = !body.hidden;
-    car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));
-    box.classList.toggle("open", !body.hidden);
-  };
-  car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
-  top.addEventListener("click", flip);
-  box.append(top, body);
+  // Заголовок это пояснение, которое агент дал ходу сам (поле description);
+  // без него в дело идёт сама команда или цель вызова. Команда при пояснении
+  // не пропадает: она стоит подсказкой на строке.
+  const lead = el("span", "tcmd", call.about || call.note || foldPeek(cmd, 90));
+  if (call.about && (call.note || cmd)) lead.title = call.note || foldPeek(cmd, 200);
+  top.append(lead);
+  // Копирование остаётся: команду с выводом уносят в терминал целиком, и
+  // выделять их мышью из ленты неудобно.
+  top.append(copyBtn((cmd ? cmd : "") + (cmd && said ? "\n" : "") + said));
+  box.append(top);
+  if (said) box.append(toolOutLine(said));
   return box;
+}
+
+// Вывод хода: отчёркнутая слева строка под самим ходом. Обрезка до двух строк
+// живёт в стилях, а не в тексте: полный вывод остаётся в разметке, и его
+// по-прежнему можно выделить и скопировать.
+function toolOutLine(text) {
+  const line = el("div", "tout");
+  line.append(el("pre", "ttext", text));
+  return line;
 }
 
 // Приложенное выделение свёрнутым блоком при пузыре: развернуть по клику.

@@ -269,43 +269,51 @@ async function feedOf(items, sid) {
   if (!dump(spent).includes("Размышлял 9 с")) fail("длительность размышлений не названа");
   const quiet = sandbox.replyEl({ role: "thinking", text: "", spent: 0 });
   if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
+  // Ход инструмента виден сразу и стоит двумя строками, как в vscode: сверху
+  // имя с пояснением, снизу вывод. Раскрытия у него нет вовсе, а копирование
+  // осталось.
   const card = sandbox.toolPair(
-    { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la" },
+    { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la",
+      about: "смотрю каталог" },
     { role: "toolout", text: "итого 42" });
   const said = dump(card);
-  if (!said.includes("Bash") || !said.includes("ls -la") || !said.includes("итого 42")) {
-    fail("вызов и вывод не в одной карточке: " + said);
+  if (!said.includes("Bash") || !said.includes("смотрю каталог") || !said.includes("итого 42")) {
+    fail("ход и вывод не встали одной записью: " + said);
   }
-  if (!deepBtn(card, "foldcp")) fail("кнопки копирования нет");
-  // Вход и выход стоят отдельными строками со стрелками (замечание 7).
-  if (!byClass(card, "pin") || !byClass(card, "pout")) {
-    fail("вход и выход не разведены строками: " + said);
-  }
-  // Ход собран по образцу vscode: имя жирным, рядом одной строкой команда или
-  // её описание, кнопки значками без подписей. Слова «IN» и «OUT» подписями
-  // тут стояли, и человек прислал их скриншотом.
   if (said.includes("IN") || said.includes("OUT")) {
     fail("вход и выход снова подписаны словами: " + said);
   }
-  const head = byClass(card, "foldh");
+  if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
+  if (!deepBtn(card, "foldcp")) fail("кнопки копирования нет");
+  const head = byClass(card, "tline");
   const nameEl = tag(head, "B");
   if (!nameEl || nameEl.textContent !== "Bash") {
     fail("имя инструмента стоит не жирным первым: " + dump(head));
   }
-  const line = byClass(head, "tcmd");
-  if (!line || line.textContent !== "ls -la") {
-    fail("команды одной строкой рядом с именем нет: " + dump(head));
+  // Пояснение хода это заголовок, а команда при нём остаётся подсказкой.
+  const lead = byClass(head, "tcmd");
+  if (!lead || lead.textContent !== "смотрю каталог") {
+    fail("пояснение хода не встало заголовком: " + dump(head));
   }
-  if (String(line.textContent).includes("\n")) {
-    fail("строка команды многострочная, обрезки нет: " + line.textContent);
+  if (lead.title !== "ls -la") fail("команда пропала при пояснении: " + lead.title);
+  const outLine = byClass(card, "tout");
+  if (!outLine || !dump(outLine).includes("итого 42")) {
+    fail("вывода второй строкой нет: " + said);
   }
-  for (const btn of [deepBtn(card, "foldcp"), deepBtn(card, "foldar")]) {
-    if (btn && String(btn.textContent || "").trim()) {
-      fail("кнопка хода подписана словом вместо значка: " + btn.textContent);
-    }
+  // Пояснения нет: заголовком встаёт сама команда, вывод там же под ней.
+  const bare = sandbox.toolPair(
+    { role: "tool", tool: "Bash", text: "command: go build ./...", note: "go build ./..." },
+    { role: "toolout", text: "" });
+  const bareLead = byClass(byClass(bare, "tline"), "tcmd");
+  if (!bareLead || bareLead.textContent !== "go build ./...") {
+    fail("без пояснения заголовком встала не команда: " + dump(bare));
   }
-  // Стрелки берутся из набора значков, а не рисуются буквами.
-  if (!byClass(card, "pico")) fail("стрелок входа и выхода нет: " + said);
+  if (byClass(bare, "tout")) fail("пустой вывод нарисован строкой: " + dump(bare));
+  // Одиночный вызов (ответ уехал на другую страницу истории) рисуется так же.
+  const lone = sandbox.chatItem({ role: "tool", tool: "Read", note: "docs/map.md" });
+  if (!dump(lone).includes("Read") || !dump(lone).includes("docs/map.md")) {
+    fail("одиночный вызов нарисован иначе: " + dump(lone));
+  }
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
 }

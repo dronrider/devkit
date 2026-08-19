@@ -520,6 +520,11 @@ type reply struct {
 	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
 	// весь бегущий лог пишется туда, а не в транскрипт сессии.
 	Sub string `json:"sub,omitempty"`
+	// About это пояснение хода словами, как его написал сам агент (поле
+	// description у вызова). Лента ставит его заголовком записи, а команда
+	// остаётся рядом: без пояснения строка Bash говорила только «что
+	// запущено», но не «зачем».
+	About string `json:"about,omitempty"`
 	// Key это устойчивый ключ записи: «источник:номер в своём файле». Номер в
 	// ленте (Seq) считается местом в слитой ленте и от заезда к заезду плывёт:
 	// боковой журнал растёт, у сессии заводится новый субагент, и запись,
@@ -540,8 +545,22 @@ type reply struct {
 }
 
 // toolNoteKeys это порядок полей ввода, из которых собирается однострочная
-// подпись вызова: первое найденное и есть суть вызова.
+// подпись вызова: первое найденное и есть суть вызова. Описание хода тут
+// последнее нарочно: подпись говорит, что именно вызвано (команда, файл,
+// шаблон), а человеческое пояснение едет своим полем.
 var toolNoteKeys = []string{"command", "file_path", "path", "skill", "pattern", "url", "prompt", "id", "query", "description"}
+
+// toolAbout это пояснение хода словами: агент пишет его сам полем description
+// у вызова (Bash, Task и родня). В ленте оно и стоит заголовком, как в vscode,
+// а команда уходит второй частью строки: «у нас нет поясняющих сообщений к
+// командам» человек сказал ровно потому, что дашборд это поле не вёз.
+func toolAbout(input map[string]any) string {
+	v, _ := input["description"].(string)
+	if strings.TrimSpace(v) == "" {
+		return ""
+	}
+	return truncate(strings.Join(strings.Fields(v), " "), 160)
+}
 
 // toolBodyLimit это потолок текста инструмента в ленте: вывод сборки бывает в
 // мегабайт, и тянуть его на телефон незачем, а первых тысяч знаков хватает,
@@ -691,7 +710,8 @@ func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 				add(reply{Role: roleThink, Time: rec.Timestamp, Text: b.Thinking})
 			case "tool_use":
 				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
-					Note: toolNote(b.Input), Text: toolBody(b.Input), ToolID: b.ID})
+					Note: toolNote(b.Input), About: toolAbout(b.Input),
+					Text: toolBody(b.Input), ToolID: b.ID})
 			case "tool_result":
 				// Вывод инструмента показывается как есть, обрезанным по длине:
 				// по нему видно, что агент делает, а свёрнутая строка «Bash»

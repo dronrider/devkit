@@ -849,11 +849,52 @@ func svcNote(tag svcTag, body string) string {
 	return tag.word
 }
 
+// dispatchWrapRe ловит рамку, которой харнес заворачивает реплику, пришедшую
+// работающему субагенту: сверху строка «кто прислал», снизу приписка «разберись
+// с этим до конца работы». Пока боковые журналы в ленту не попадали, рамку
+// никто не видел; со слиянием она полезла в чат человека английской простынёй
+// поверх его же слов.
+var dispatchWrapRe = regexp.MustCompile(`(?s)\A(The coordinator|Another Claude session|The user) sent a message while you were working:\s*\n(.*?)\s*\z`)
+
+// dispatchTailRe это хвостовая приписка той же рамки: она адресована агенту, а
+// не человеку, и в ленте ей делать нечего.
+var dispatchTailRe = regexp.MustCompile(`(?s)\s*\n\s*Address this before completing your current task\.\s*\z`)
+
+// dispatchWord называет отправителя рамки по-русски: в ленте это служебная
+// строка, а не пузырь человека, и по подписи видно, кто вмешался в работу.
+func dispatchWord(who string) string {
+	switch who {
+	case "Another Claude session":
+		return "чужая сессия -> субагенту"
+	case "The user":
+		return "человек -> субагенту"
+	}
+	return "диспетчер -> субагенту"
+}
+
+// unwrapDispatch снимает рамку и отдаёт то, что в ней написано, вместе с
+// подписью отправителя.
+func unwrapDispatch(text string) (string, string, bool) {
+	m := dispatchWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", false
+	}
+	inner := dispatchTailRe.ReplaceAllString(m[2], "")
+	return strings.TrimSpace(inner), dispatchWord(m[1]), true
+}
+
 // addUser кладёт в ленту реплику роли user (и текстовый блок ответа агента тем
 // же путём). Пузырём человека рисуется только то, что человек написал:
 // служебные вставки харнеса уходят отдельными строками, а реплика, кроме них не
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string) {
+	// Реплика, пришедшая субагенту посреди работы, стоит служебной строкой со
+	// своей подписью: сказал это не человек в этом чате, а тот, кто ведёт
+	// работу, и рамка харнеса в ленте не нужна вовсе.
+	if inner, word, wrapped := unwrapDispatch(text); wrapped {
+		add(reply{Role: roleNote, Time: at, Text: inner, Note: word})
+		return
+	}
 	if inner, name, wrapped := unwrapPeer(text); wrapped {
 		shot, rest0 := cutShot(inner)
 		sel, file, rest := cutSelection(rest0)
@@ -1123,7 +1164,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("транскрипт не прочитался: %v", err)})
 		return
 	}
-	items, _, _, _ := expandSubs(path, parseReplies(data, 0))
+	items := expandSubs(path, parseReplies(data, 0))
 	total := len(items)
 	// «Раньше» режется по устойчивому ключу записи, а не по её месту в ленте:
 	// место плывёт от роста боковых журналов, и страницы истории налезали друг
@@ -1197,6 +1238,23 @@ const emptyTranscriptNote = "в транскрипте пока нет репл�
 // streamSession шлёт последние реплики и дальше дострение по мере записи:
 // каждое событие это одна реплика в JSON. Нумерация продолжается с конца
 // файла, разбираются только целые строки.
+// tailSrc это дочитываемый файл ленты: своё смещение в нём и свой счётчик
+// разобранных записей, из которого собирается устойчивый ключ.
+type tailSrc struct {
+	file  string
+	label string
+	src   string
+	off   int64
+	idx   int
+}
+
+// streamSession шлёт последние реплики и дальше дострение по мере записи:
+// каждое событие это одна реплика в JSON. Дочитываются все файлы разговора
+// сразу: и транскрипт сессии, и боковые журналы субагентов. Набор журналов
+// пересматривается на каждом тике, потому что субагента зовут и посреди
+// открытого потока, а прежний стрим цеплял один «живой» файл на открытии и
+// ронял его насовсем, стоило в транскрипте закрыться любому вызову
+// инструмента: после этого лента молчала до перезагрузки страницы.
 func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path string) {
 	f, ok := sseOpen(w)
 	if !ok {
@@ -1204,29 +1262,32 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 	}
 	var offset int64
 	seq := 0
-	// Боковой журнал работающего субагента дочитывается наравне с транскриптом:
-	// пока идёт Task, весь бегущий лог пишется туда, и без этого лента молчала
-	// бы всё время его работы (находка тринадцатого круга POC).
-	subFile, subLabel := "", ""
-	var subOff int64
 	// Устойчивый ключ дописанной записи продолжает счёт своего файла, а не
-	// ленты: mainIdx и subIdx это столько записей, сколько в файле уже
-	// разобрано. Без этого у дописанного потоком ключа не было бы вовсе, и
-	// подгрузка истории после стрима резала бы ленту не там.
-	mainIdx, subIdx := 0, 0
+	// ленты: mainIdx и idx у бокового журнала это столько записей, сколько в
+	// файле уже разобрано.
+	mainIdx := 0
+	subs := map[string]*tailSrc{}
+	// known помнит журналы, заведённые до открытия потока: их хвост уже уехал
+	// в ленту, и дочитывать их надо с текущего конца. Журнал, появившийся
+	// позже, читается с начала: он пуст в момент появления, и всё в нём новое.
 	if data, err := os.ReadFile(path); err == nil {
 		data = lastComplete(data)
-		var items []reply
-		items, subFile, subLabel, subOff = expandSubs(path, parseReplies(data, 0))
+		items := expandSubs(path, parseReplies(data, 0))
 		seq = len(items)
-		subSrc := srcName(subFile)
+		counts := map[string]int{}
 		for _, item := range items {
-			switch {
-			case strings.HasPrefix(item.Key, mainSrc+":"):
-				mainIdx++
-			case subFile != "" && strings.HasPrefix(item.Key, subSrc+":"):
-				subIdx++
+			if i := strings.LastIndex(item.Key, ":"); i > 0 {
+				counts[item.Key[:i]]++
 			}
+		}
+		mainIdx = counts[mainSrc]
+		for _, log := range subLogs(path) {
+			src := srcName(log.File)
+			t := &tailSrc{file: log.File, label: log.Label, src: src, idx: counts[src]}
+			if fi, err := os.Stat(log.File); err == nil {
+				t.off = fi.Size()
+			}
+			subs[log.File] = t
 		}
 		if len(items) > repliesDefault {
 			items = items[len(items)-repliesDefault:]
@@ -1241,6 +1302,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 	if seq == 0 {
 		sseEvent(w, f, "note", emptyTranscriptNote)
 	}
+	stamp := subStamp(path)
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()
 	for {
@@ -1248,15 +1310,38 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 		case <-r.Context().Done():
 			return
 		case <-t.C:
-			// Сперва субагент: пока он работает, транскрипт сессии молчит, и
-			// ждать его записи значило бы держать ленту пустой.
-			if subFile != "" {
-				var subLines []string
-				subLines, subOff = newLines(subFile, subOff)
-				for _, item := range parseRepliesOpt([]byte(strings.Join(subLines, "\n")), seq, true) {
-					item.Sub = subLabel
-					item.Key = srcName(subFile) + ":" + strconv.Itoa(subIdx)
-					subIdx++
+			// Новый субагент заводит свой файл, и каталог журналов меняется:
+			// по этой метке набор и пересматривается, без чтения мета-файлов
+			// на каждом тике.
+			if now := subStamp(path); now != stamp {
+				stamp = now
+				for _, log := range subLogs(path) {
+					if _, ok := subs[log.File]; ok {
+						continue
+					}
+					subs[log.File] = &tailSrc{file: log.File, label: log.Label,
+						src: srcName(log.File)}
+				}
+			}
+			// Сперва субагенты: пока они работают, транскрипт сессии молчит, и
+			// ждать его записи значило бы держать ленту пустой. Обход по имени
+			// файла, чтобы порядок событий не зависел от обхода карты.
+			files := make([]string, 0, len(subs))
+			for file := range subs {
+				files = append(files, file)
+			}
+			sort.Strings(files)
+			for _, file := range files {
+				src := subs[file]
+				var lines []string
+				lines, src.off = newLines(src.file, src.off)
+				if len(lines) == 0 {
+					continue
+				}
+				for _, item := range parseRepliesOpt([]byte(strings.Join(lines, "\n")), seq, true) {
+					item.Sub = src.label
+					item.Key = src.src + ":" + strconv.Itoa(src.idx)
+					src.idx++
 					seq = item.Seq + 1
 					sseEvent(w, f, "", marshalReply(item))
 				}
@@ -1271,15 +1356,25 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 				mainIdx++
 				seq = item.Seq + 1
 				sseEvent(w, f, "", marshalReply(item))
-				// Субагент кончился: его вызов закрылся ответом, и дочитывать
-				// боковой журнал больше незачем. Новый Task подхватится
-				// следующим открытием ленты.
-				if item.Role == roleToolOut && item.ToolID != "" {
-					subFile, subLabel = "", ""
-				}
 			}
 		}
 	}
+}
+
+// subStamp это метка каталога боковых журналов: по ней видно, что у сессии
+// завёлся новый субагент. Дописывание в стоящий файл каталога не трогает, а
+// новый файл трогает, и этого хватает.
+func subStamp(path string) string {
+	dir := subDir(path)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return ""
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fi.ModTime().String()
+	}
+	return fi.ModTime().String() + ":" + strconv.Itoa(len(entries))
 }
 
 func marshalReply(item reply) string {
@@ -1532,10 +1627,10 @@ func srcName(file string) string {
 //
 // У каждой записи тут появляется устойчивый ключ «источник:номер»: файлы
 // только дописываются, и номер записи в своём файле не меняется никогда, а вот
-// место в слитой ленте плывёт. По ключу и режется «раньше». Второй ответ
-// отдаёт файл и смещение того субагента, который ещё работает: его стрим
-// дальше и дочитывает.
-func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
+// место в слитой ленте плывёт. По ключу и режется «раньше». Выбирать «тот
+// самый живой журнал» тут больше нечего: стрим дочитывает все разом и
+// пересматривает их набор на каждом тике.
+func expandSubs(path string, items []reply) []reply {
 	type keyed struct {
 		it  reply
 		at  time.Time
@@ -1562,13 +1657,6 @@ func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 	}
 	push(mainSrc, items)
 	logs := subLogs(path)
-	liveFile, liveLabel := "", ""
-	var liveOff int64
-	// newest держит время самой свежей записи среди боковых журналов сессии:
-	// живым считается тот, что пишется прямо сейчас, а не только тот, чей вызов
-	// не закрыт (субагента продолжают и через SendMessage, и тогда вызов давно
-	// закрыт, а журнал растёт).
-	newest := time.Time{}
 	// Порядок файлов у os.ReadDir свой, а лента должна собираться одинаково от
 	// захода к заходу, поэтому журналы обходятся по имени файла.
 	ids := make([]string, 0, len(logs))
@@ -1581,10 +1669,6 @@ func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 		data, err := os.ReadFile(log.File)
 		if err != nil {
 			continue
-		}
-		if fi, err := os.Stat(log.File); err == nil && fi.ModTime().After(newest) {
-			newest = fi.ModTime()
-			liveFile, liveLabel, liveOff = log.File, log.Label, int64(len(data))
 		}
 		side := parseRepliesOpt(data, 0, true)
 		for i := range side {
@@ -1609,5 +1693,5 @@ func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
 		k.it.Seq = i
 		out = append(out, k.it)
 	}
-	return out, liveFile, liveLabel, liveOff
+	return out
 }

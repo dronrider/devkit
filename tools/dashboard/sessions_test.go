@@ -26,12 +26,18 @@ const transcriptFixture = `{"type":"queue-operation","operation":"enqueue","time
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Доска прочитана."}]},"timestamp":"2026-08-10T10:00:06.000Z"}
 `
 
+// Ожидания ленты по POC ветки poc-chat: текст размышлений едет в ленту
+// (прежде сервер его выбрасывал), ответ инструмента стоит своей записью, а
+// вызов несёт пояснение хода отдельным полем.
 var transcriptWant = []reply{
-	{Seq: 0, Role: "user", Time: "2026-08-10T10:00:01.000Z", Text: "возьми задачу XR-005 в работу"},
-	{Seq: 1, Role: "thinking", Time: "2026-08-10T10:00:02.000Z"},
-	{Seq: 2, Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
-	{Seq: 3, Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash", Note: "taskctl list | head -5"},
-	{Seq: 4, Role: "assistant", Time: "2026-08-10T10:00:06.000Z", Text: "Доска прочитана."},
+	{Seq: 0, Key: "m:0", Role: "user", Time: "2026-08-10T10:00:01.000Z", Text: "возьми задачу XR-005 в работу"},
+	{Seq: 1, Key: "m:1", Role: "thinking", Time: "2026-08-10T10:00:02.000Z", Text: "куда смотреть", Spent: 1000},
+	{Seq: 2, Key: "m:2", Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
+	{Seq: 3, Key: "m:3", Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash",
+		Note: "taskctl list | head -5", About: "Показать доску",
+		Text: "command: taskctl list | head -5\ndescription: Показать доску"},
+	{Seq: 4, Key: "m:4", Role: roleToolOut, Time: "2026-08-10T10:00:04.000Z", Text: "ok"},
+	{Seq: 5, Key: "m:5", Role: "assistant", Time: "2026-08-10T10:00:06.000Z", Text: "Доска прочитана."},
 }
 
 // writeSession кладёт транскрипт в каталог ~/.claude/projects по раскладке
@@ -830,7 +836,7 @@ func TestSessionStreamEmptyNamed(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &item); err != nil {
 		t.Fatal(err)
 	}
-	want := reply{Seq: 0, Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
+	want := reply{Seq: 0, Key: "m:0", Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
 	if !reflect.DeepEqual(item, want) {
 		t.Fatalf("дострение после note: %+v, ожидал %+v", item, want)
 	}
@@ -885,7 +891,7 @@ func TestSessionStreamAppends(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &item); err != nil {
 		t.Fatal(err)
 	}
-	want := reply{Seq: 5, Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
+	want := reply{Seq: 6, Key: "m:6", Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
 	if !reflect.DeepEqual(item, want) {
 		t.Fatalf("живое дострение: %+v, ожидал %+v", item, want)
 	}
@@ -1441,5 +1447,139 @@ func TestStaticChatPanelMeasured(t *testing.T) {
 			t.Errorf("на раскладке %q панель ужалась: поле ввода %d, лента %d",
 				name, vals["input-w"], vals["feed-w"])
 		}
+	}
+}
+
+// writeSubLog кладёт боковой журнал субагента при транскрипте: мета-файл со
+// своим toolUseId и сам журнал. Так их пишет харнес, и по мете дашборд их и
+// находит.
+func writeSubLog(t *testing.T, path, id, about, content string) string {
+	t.Helper()
+	dir := subDir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := filepath.Join(dir, "agent-"+id+".meta.json")
+	body := fmt.Sprintf(`{"agentType":"claude","description":%q,"toolUseId":%q}`, about, "tool-"+id)
+	if err := os.WriteFile(meta, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "agent-"+id+".jsonl")
+	if err := os.WriteFile(log, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return log
+}
+
+func appendLine(t *testing.T, path, line string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// sideLine это запись бокового журнала: текст ответа субагента с меткой
+// isSidechain, как их пишет харнес.
+func sideLine(text, at string) string {
+	return fmt.Sprintf(`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":%q}]},"timestamp":%q}`, text, at) + "\n"
+}
+
+// Субагента зовут и посреди открытого потока: его журнал заводится позже
+// подписки, и стрим обязан заметить новый файл сам. Прежде стрим цеплял один
+// «живой» журнал на открытии и ронял его насовсем, стоило в транскрипте
+// закрыться любому вызову инструмента: после этого лента молчала до
+// перезагрузки страницы, и ровно это человек и увидел.
+func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
+	e := newTestEnv(t)
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	t.Cleanup(func() { tailPoll = old })
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
+	c := e.loggedClient(t)
+
+	r, done := sseClient(t, c, e.srv.URL+"/api/projects/demo/sessions/aaa-1?stream=1")
+	defer done()
+	for range transcriptWant {
+		sseNext(t, r)
+	}
+	// Хвост уехал, поток открыт: теперь работа уходит субагенту, и его журнал
+	// заводится только сейчас.
+	log := writeSubLog(t, path, "new1", "разбор находки",
+		sideLine("смотрю дерево", "2026-08-10T10:00:08.000Z"))
+	var item reply
+	_, data := sseNext(t, r)
+	if err := json.Unmarshal([]byte(data), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.Text != "смотрю дерево" || item.Sub == "" {
+		t.Fatalf("запись нового субагента не доехала: %+v", item)
+	}
+	if item.Key != "agent-new1:0" {
+		t.Fatalf("ключ записи нового журнала: %q, ожидал agent-new1:0", item.Key)
+	}
+	// Вызов в транскрипте закрылся ответом, а журнал субагента пишется дальше:
+	// прежде стрим на этом ответе переставал его читать вовсе.
+	appendLine(t, path, `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-new1","content":"готово"}]},"timestamp":"2026-08-10T10:00:09.000Z"}`+"\n")
+	_, data = sseNext(t, r)
+	if err := json.Unmarshal([]byte(data), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.Role != roleToolOut {
+		t.Fatalf("ответ инструмента не доехал: %+v", item)
+	}
+	appendLine(t, log, sideLine("продолжаю после ответа", "2026-08-10T10:00:10.000Z"))
+	_, data = sseNext(t, r)
+	if err := json.Unmarshal([]byte(data), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.Text != "продолжаю после ответа" {
+		t.Fatalf("после ответа инструмента журнал субагента перестал читаться: %+v", item)
+	}
+	if item.Key != "agent-new1:1" {
+		t.Fatalf("ключ дописанной записи: %q, ожидал agent-new1:1", item.Key)
+	}
+}
+
+// Реплика, пришедшая работающему субагенту, лежит в его журнале в английской
+// рамке харнеса. Со слиянием журналов в ленту рамка полезла человеку в чат
+// сырьём: она стоит служебной строкой со своей подписью, а сама рамка из
+// текста уходит.
+func TestDispatchFrameIsService(t *testing.T) {
+	e := newTestEnv(t)
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
+	frame := "The coordinator sent a message while you were working:\nПочини стрим, он молчит.\n\nAddress this before completing your current task."
+	line := fmt.Sprintf(`{"type":"user","isSidechain":true,"message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:08.000Z"}`, frame) + "\n"
+	writeSubLog(t, path, "disp1", "разбор находки", line)
+	c := e.loggedClient(t)
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaa-1?n=50", "")
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	var note *reply
+	for i, item := range got.Items {
+		if item.Role == roleNote && item.Note != "" {
+			note = &got.Items[i]
+		}
+		if strings.Contains(item.Text, "sent a message while you were working") {
+			t.Fatalf("рамка харнеса доехала в ленту сырьём: %+v", item)
+		}
+	}
+	if note == nil {
+		t.Fatal("реплика диспетчера не стала служебной строкой")
+	}
+	if note.Note != "диспетчер -> субагенту" {
+		t.Fatalf("подпись служебной строки: %q", note.Note)
+	}
+	if note.Text != "Почини стрим, он молчит." {
+		t.Fatalf("текст реплики диспетчера: %q", note.Text)
 	}
 }

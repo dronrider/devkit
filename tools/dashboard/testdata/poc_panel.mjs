@@ -340,6 +340,29 @@ async function feedOf(items, sid) {
   }
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
+  // Реплика, доехавшая до работающего субагента, стоит подписанной служебной
+  // строкой и свёрнута: рамку харнеса сервер уже снял, а пузырём человека это
+  // рисовать нельзя, сказал это не он.
+  const sent = sandbox.chatItem({ role: "note", note: "диспетчер -> субагенту",
+    text: "Почини стрим, он молчит." });
+  const shown = dump(sent);
+  if (!shown.includes("диспетчер -> субагенту")) {
+    fail("реплика диспетчера не подписана: " + shown);
+  }
+  if (shown.includes("sent a message while you were working")) {
+    fail("рамка харнеса доехала в ленту: " + shown);
+  }
+  if (!String(sent.className).includes("fold")) {
+    fail("реплика диспетчера не свёрнута: " + sent.className);
+  }
+  const sentBody = tag(sent, "PRE");
+  if (!sentBody || !sentBody.hidden) fail("текст реплики диспетчера открыт сразу: " + shown);
+  const sentHead = byClass(sent, "foldh");
+  sentHead.handlers.click({ stopPropagation: () => {} });
+  if (sentBody.hidden) fail("клик не развернул реплику диспетчера");
+  if (!dump(sentBody).includes("Почини стрим")) {
+    fail("в развёрнутой реплике нет её текста: " + dump(sentBody));
+  }
 }
 
 // --- разметка постановки: полный набор и никакого сырого HTML ---

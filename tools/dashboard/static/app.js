@@ -2920,6 +2920,23 @@ async function wireFeed(project, sid, opts) {
       // ленту вдвое (замечание 1). Склейку делает лента, а не разбор: сервер
       // отдаёт записи как они лежат в транскрипте, и пагинация назад не должна
       // зависеть от того, попал ли вывод в ту же страницу, что вызов.
+      // Записи субагента собираются в один свёрнутый блок: их бывают сотни на
+      // один вызов Task, и вперемешку с разговором они его хоронят (находка
+      // тринадцатого круга POC). Внутри блока разбор тот же самый.
+      if (item.sub) {
+        const from = i;
+        const label = item.sub;
+        const inner = [];
+        while (i < talk.length && talk[i].sub === label) inner.push(talk[i++]);
+        i--;
+        const last = inner[inner.length - 1];
+        items.push({
+          key: "sub-" + talk[from].seq,
+          sign: [label, inner.length, last && last.text].join("|"),
+          make: () => subBlock(label, inner, opts),
+        });
+        continue;
+      }
       const next = talk[i + 1];
       if (item.role === "tool" && next && next.role === "toolout" && opts.pair) {
         items.push({
@@ -3270,7 +3287,49 @@ function selFold(file, text) {
   return foldEl("selq", "выделение", text, file, text);
 }
 
+// Блок работы субагента: заголовок с подписью и счётом ходов, внутри та же
+// лента. Свёрнут по умолчанию, разворачивается кликом; последняя строка видна
+// в заголовке, чтобы по ней было видно, чем субагент занят прямо сейчас.
+function subBlock(label, inner, opts) {
+  const box = el("div", "subblk fold");
+  const top = el("div", "foldh");
+  top.append(el("b", "", "субагент"));
+  const tail = inner[inner.length - 1] || {};
+  const peek = tail.tool ? tail.tool + (tail.note ? ": " + tail.note : "")
+    : foldPeek(tail.text || "", 60);
+  top.append(el("span", "", label + ", " + inner.length + " " +
+    plural(inner.length, "запись", "записи", "записей") + (peek ? ", " + peek : "")));
+  const car = el("button", "foldcp foldar");
+  car.append(icon("i-unfold"));
+  top.append(car);
+  const body = el("div", "subbody");
+  for (let j = 0; j < inner.length; j++) {
+    const it = inner[j];
+    const nx = inner[j + 1];
+    if (it.role === "tool" && nx && nx.role === "toolout" && opts.pair) {
+      body.append(opts.pair(it, nx));
+      j++;
+      continue;
+    }
+    if (it.role === "toolout" && !it.text) continue;
+    body.append(opts.item(it));
+  }
+  body.hidden = true;
+  const flip = () => {
+    body.hidden = !body.hidden;
+    car.replaceChildren(icon(body.hidden ? "i-unfold" : "i-fold"));
+    box.classList.toggle("open", !body.hidden);
+  };
+  car.addEventListener("click", (ev) => { ev.stopPropagation(); flip(); });
+  top.addEventListener("click", flip);
+  box.append(top, body);
+  return box;
+}
+
 function chatItem(item) {
+  // Пустой ответ инструмента в ленту не идёт: он есть только затем, чтобы
+  // сервер видел закрытый вызов.
+  if (item.role === "toolout" && !item.text) return el("span", "");
   if (item.role === "note") return replyEl(item);
   if ((item.role === "user" || item.role === "assistant") && item.text) {
     // Реплика, пришедшая каналом живых сессий, подписана источником: «с
@@ -4733,10 +4792,15 @@ function chatPanel(project, st) {
   // рождается только после записи файла.
   const putShot = async (pic) => {
     if (!pic || !st.sid) return "";
-    const cut = String(pic.data).indexOf(",");
+    // dataURL это «data:<тип>;base64,<данные>»: режется он по первой запятой,
+    // в самом base64 запятых нет. Тип берётся из dataURL, а не из типа
+    // буфера: буфер иногда называет вид иначе, чем то, что реально пришло.
+    const raw = String(pic.data);
+    const cut = raw.indexOf(",");
+    const kind = (raw.match(/^data:([^;,]+)/) || [])[1] || pic.kind;
     const r = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/shot", {
       method: "POST",
-      body: { kind: pic.kind, data: cut >= 0 ? pic.data.slice(cut + 1) : pic.data },
+      body: { kind, data: cut >= 0 ? raw.slice(cut + 1) : raw },
     });
     if (!r.ok) {
       sayResult(r.body.error || "картинка не легла", true);

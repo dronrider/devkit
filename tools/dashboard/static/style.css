@@ -996,7 +996,10 @@ a:hover{text-decoration:underline}
 .cclipx{flex:none;width:16px;height:16px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
 .cclipx svg{width:9px;height:9px;display:block}
 .cclipx:hover{color:var(--tx)}
-.cshot{width:26px;height:26px;object-fit:cover;border-radius:5px;flex:none}
+/* Превью вложения: снимок экрана широкий, и квадратик 26 точек с object-fit
+   cover резал из него случайную полоску, отчего картинка выглядела битой
+   (замечание тринадцатого круга POC). Показываем целиком и крупнее. */
+.cshot{width:auto;height:40px;max-width:120px;object-fit:contain;border-radius:5px;flex:none;background:var(--bg0);border:1px solid var(--line)}
 .mshot{display:block;max-width:100%;max-height:260px;margin-top:8px;border-radius:9px;border:1px solid var(--line)}
 
 /* 10: продолжение работы иконкой рядом с отправкой */
@@ -1018,3 +1021,9 @@ a:hover{text-decoration:underline}
 .q-fresh{color:var(--run)}
 .q-warm{color:var(--wait)}
 .q-old{color:var(--block)}
+
+/* работа субагента вложенным блоком (находка тринадцатого круга POC) */
+.subblk{margin:8px 0;border:1px solid var(--line2);border-radius:9px;background:var(--bg2);overflow:hidden}
+.subblk>.foldh{padding:5px 9px;gap:7px}
+.subblk>.foldh b{color:var(--acc);font:600 11px var(--sans)}
+.subbody{padding:4px 8px 8px;border-top:1px solid var(--line);max-height:420px;overflow-y:auto}

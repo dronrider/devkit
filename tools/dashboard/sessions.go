@@ -516,6 +516,13 @@ type reply struct {
 	// Shot это путь картинки, приложенной к реплике: агент читает её сам, а
 	// лента показывает миниатюру.
 	Shot string `json:"shot,omitempty"`
+	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
+	// весь бегущий лог пишется туда, а не в транскрипт сессии.
+	Sub string `json:"sub,omitempty"`
+	// ToolID это идентификатор вызова инструмента, по нему боковой журнал
+	// субагента сводится со своим вызовом Task. Наружу не едет: он нужен
+	// только сшивке на сервере.
+	ToolID string `json:"-"`
 	// Spent это длительность размышлений в миллисекундах, посчитанная по
 	// меткам времени соседних записей транскрипта. Модель отдаёт размышления
 	// запечатанными чаще, чем текстом, и тогда сказать про них можно только
@@ -597,7 +604,16 @@ func toolNote(input map[string]any) string {
 // дострение продолжает счёт, и пагинация назад не съезжает. Битая строка
 // пропускается без обрушения ленты, служебные записи (queue-operation,
 // attachment и родня) и ветки субагентов (isSidechain) в ленту не попадают.
+// parseReplies разбирает транскрипт сессии: ветки субагентов (isSidechain)
+// сюда не идут, у них свои боковые журналы.
 func parseReplies(data []byte, startSeq int) []reply {
+	return parseRepliesOpt(data, startSeq, false)
+}
+
+// parseRepliesOpt это тот же разбор с одним отличием: боковой журнал субагента
+// состоит из записей isSidechain целиком, и для него отсев надо снимать, иначе
+// файл читается пустым (находка тринадцатого круга POC).
+func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 	var out []reply
 	seq := startSeq
 	// prev это метка предыдущей разобранной записи: длительность размышления
@@ -634,7 +650,7 @@ func parseReplies(data []byte, startSeq int) []reply {
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
 		}
-		if rec.IsSidechain || (rec.Type != "user" && rec.Type != "assistant") {
+		if (rec.IsSidechain && !side) || (rec.Type != "user" && rec.Type != "assistant") {
 			continue
 		}
 		var s string
@@ -643,12 +659,14 @@ func parseReplies(data []byte, startSeq int) []reply {
 			continue
 		}
 		var blocks []struct {
-			Type     string          `json:"type"`
-			Text     string          `json:"text"`
-			Thinking string          `json:"thinking"`
-			Name     string          `json:"name"`
-			Input    map[string]any  `json:"input"`
-			Content  json.RawMessage `json:"content"`
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Thinking  string          `json:"thinking"`
+			Name      string          `json:"name"`
+			ID        string          `json:"id"`
+			ToolUseID string          `json:"tool_use_id"`
+			Input     map[string]any  `json:"input"`
+			Content   json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
 			continue
@@ -665,13 +683,17 @@ func parseReplies(data []byte, startSeq int) []reply {
 				add(reply{Role: roleThink, Time: rec.Timestamp, Text: b.Thinking})
 			case "tool_use":
 				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
-					Note: toolNote(b.Input), Text: toolBody(b.Input)})
+					Note: toolNote(b.Input), Text: toolBody(b.Input), ToolID: b.ID})
 			case "tool_result":
 				// Вывод инструмента показывается как есть, обрезанным по длине:
 				// по нему видно, что агент делает, а свёрнутая строка «Bash»
 				// про это молчала.
 				if text := resultText(b.Content); text != "" {
-					add(reply{Role: "toolout", Time: rec.Timestamp, Text: text})
+					add(reply{Role: roleToolOut, Time: rec.Timestamp, Text: text, ToolID: b.ToolUseID})
+				} else {
+					// Пустой ответ инструмента в ленту не идёт, но закрытие
+					// вызова им отмечается: по нему видно, кончился ли субагент.
+					add(reply{Role: roleToolOut, Time: rec.Timestamp, ToolID: b.ToolUseID})
 				}
 			}
 		}
@@ -681,6 +703,9 @@ func parseReplies(data []byte, startSeq int) []reply {
 
 // roleThink это роль размышления в ленте: имя одно на сервер и на панель.
 const roleThink = "thinking"
+
+// roleToolOut это роль ответа инструмента: имя одно на сервер и на панель.
+const roleToolOut = "toolout"
 
 // Реплика, пришедшая каналом живых сессий, лежит в транскрипте в служебной
 // обёртке: строка «Another Claude session sent a message:», тег
@@ -1070,7 +1095,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("транскрипт не прочитался: %v", err)})
 		return
 	}
-	items := parseReplies(data, 0)
+	items, _, _, _ := expandSubs(path, parseReplies(data, 0))
 	total := len(items)
 	before := intParam(r, "before", total, total)
 	if before < total {
@@ -1125,9 +1150,15 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 	}
 	var offset int64
 	seq := 0
+	// Боковой журнал работающего субагента дочитывается наравне с транскриптом:
+	// пока идёт Task, весь бегущий лог пишется туда, и без этого лента молчала
+	// бы всё время его работы (находка тринадцатого круга POC).
+	subFile, subLabel := "", ""
+	var subOff int64
 	if data, err := os.ReadFile(path); err == nil {
 		data = lastComplete(data)
-		items := parseReplies(data, 0)
+		var items []reply
+		items, subFile, subLabel, subOff = expandSubs(path, parseReplies(data, 0))
 		seq = len(items)
 		if len(items) > repliesDefault {
 			items = items[len(items)-repliesDefault:]
@@ -1149,6 +1180,17 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 		case <-r.Context().Done():
 			return
 		case <-t.C:
+			// Сперва субагент: пока он работает, транскрипт сессии молчит, и
+			// ждать его записи значило бы держать ленту пустой.
+			if subFile != "" {
+				var subLines []string
+				subLines, subOff = newLines(subFile, subOff)
+				for _, item := range parseRepliesOpt([]byte(strings.Join(subLines, "\n")), seq, true) {
+					item.Sub = subLabel
+					seq = item.Seq + 1
+					sseEvent(w, f, "", marshalReply(item))
+				}
+			}
 			var lines []string
 			lines, offset = newLines(path, offset)
 			if len(lines) == 0 {
@@ -1157,6 +1199,12 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 			for _, item := range parseReplies([]byte(strings.Join(lines, "\n")), seq) {
 				seq = item.Seq + 1
 				sseEvent(w, f, "", marshalReply(item))
+				// Субагент кончился: его вызов закрылся ответом, и дочитывать
+				// боковой журнал больше незачем. Новый Task подхватится
+				// следующим открытием ленты.
+				if item.Role == roleToolOut && item.ToolID != "" {
+					subFile, subLabel = "", ""
+				}
 			}
 		}
 	}
@@ -1318,4 +1366,146 @@ func sessionBusy(path string, now time.Time) bool {
 	// Незакрытый вызов старше получаса это брошенный хвост закрытого окна, а не
 	// работа.
 	return len(open) > 0 && !last.IsZero() && now.Sub(last) < 30*time.Minute
+}
+
+// Боковые журналы субагентов (находка тринадцатого круга POC). Когда сессия
+// отдаёт работу субагенту вызовом Task, её собственный транскрипт держит один
+// незакрытый tool_use и молчит минутами: весь бегущий лог, который человек
+// видит в окне клиента, пишется в боковой файл
+// <транскрипт без .jsonl>/subagents/agent-<id>.jsonl рядом. Дашборд их не
+// читал вовсе, отсюда и «в vscode бежит, на дашборде пусто». Сшиваются они по
+// toolUseId из мета-файла: он же стоит идентификатором вызова Task в
+// транскрипте сессии.
+
+// subDir это каталог боковых журналов при транскрипте.
+func subDir(path string) string {
+	return strings.TrimSuffix(path, ".jsonl") + string(filepath.Separator) + "subagents"
+}
+
+// subMeta это то, что боковой журнал говорит о себе: чей он вызов и как назвать
+// его человеку.
+type subMeta struct {
+	Agent  string `json:"agentType"`
+	About  string `json:"description"`
+	ToolID string `json:"toolUseId"`
+}
+
+// subLabel подписывает субагента в ленте: заказ словами, а при его отсутствии
+// имя определения. Пустая подпись не бывает: блок должен называть себя.
+func (m subMeta) label() string {
+	if m.About != "" {
+		return m.About
+	}
+	if m.Agent != "" {
+		return m.Agent
+	}
+	return "субагент"
+}
+
+// subLogs сводит боковые журналы транскрипта в отображение «id вызова -> файл».
+// Каталога может не быть вовсе, и это обычный случай: сессия без субагентов.
+func subLogs(path string) map[string]struct {
+	File  string
+	Label string
+} {
+	out := map[string]struct {
+		File  string
+		Label string
+	}{}
+	dir := subDir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var m subMeta
+		if json.Unmarshal(data, &m) != nil || m.ToolID == "" {
+			continue
+		}
+		log := filepath.Join(dir, strings.TrimSuffix(e.Name(), ".meta.json")+".jsonl")
+		if _, err := os.Stat(log); err != nil {
+			continue
+		}
+		out[m.ToolID] = struct {
+			File  string
+			Label string
+		}{File: log, Label: m.label()}
+	}
+	return out
+}
+
+// expandSubs вставляет записи боковых журналов сразу за своим вызовом Task.
+// Нумерация сквозная: лента отсеивает повторы по seq, и вставка не должна её
+// путать. Второй ответ отдаёт файл и смещение того субагента, который ещё
+// работает: его стрим дальше и дочитывает.
+func expandSubs(path string, items []reply) ([]reply, string, string, int64) {
+	logs := subLogs(path)
+	if len(logs) == 0 {
+		return items, "", "", 0
+	}
+	// Закрытые вызовы видно по ответам инструмента: у работающего субагента
+	// ответа ещё нет, и его журнал растёт прямо сейчас.
+	closed := map[string]bool{}
+	for _, it := range items {
+		if it.Role == roleToolOut && it.ToolID != "" {
+			closed[it.ToolID] = true
+		}
+	}
+	out := make([]reply, 0, len(items))
+	seq := 0
+	liveFile, liveLabel := "", ""
+	var liveOff int64
+	// newest держит время самой свежей записи среди боковых журналов сессии:
+	// живым считается тот, что пишется прямо сейчас, а не только тот, чей вызов
+	// не закрыт (субагента продолжают и через SendMessage, и тогда вызов давно
+	// закрыт, а журнал растёт).
+	newest := time.Time{}
+	var liveData []byte
+	add := func(it reply) {
+		it.Seq = seq
+		seq++
+		out = append(out, it)
+	}
+	for _, it := range items {
+		add(it)
+		if it.Role != "tool" || it.ToolID == "" {
+			continue
+		}
+		log, ok := logs[it.ToolID]
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(log.File)
+		if err != nil {
+			continue
+		}
+		// Записи работающего субагента идут не сюда, а в самый конец ленты: они
+		// происходят прямо сейчас и в хвосте им и место. Вставленные по месту
+		// вызова, они оказывались за тысячу реплик от конца, и человек, который
+		// смотрит на хвост, их не видел вовсе.
+		if fi, err := os.Stat(log.File); err == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+			liveFile, liveLabel, liveOff = log.File, log.Label, int64(len(data))
+			liveData = data
+			continue
+		}
+		for _, sub := range parseRepliesOpt(data, 0, true) {
+			sub.Sub = log.Label
+			add(sub)
+		}
+		_ = closed
+	}
+	// Хвост ленты это работа субагента, идущая сейчас.
+	for _, sub := range parseRepliesOpt(liveData, 0, true) {
+		sub.Sub = liveLabel
+		add(sub)
+	}
+	return out, liveFile, liveLabel, liveOff
 }

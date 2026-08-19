@@ -864,3 +864,8 @@ a:hover{text-decoration:underline}
 /* ---- заголовок разговора не тянется на весь экран (замечание 4) ---- */
 .lcard b{max-width:min(38ch,32vw);overflow:hidden;text-overflow:ellipsis}
 .cdrow b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal}
+
+/* служебная вставка харнеса в ленте: уведомление о фоновом агенте, слэш-команда.
+   Серой строкой между репликами, а не пузырём человека: пузырь означает, что
+   это сказал человек */
+.svcline{display:block;margin:6px 0;padding:5px 11px;border-left:2px solid var(--line2);font:400 11.5px/1.45 var(--sans);color:var(--tx3);overflow-wrap:anywhere}

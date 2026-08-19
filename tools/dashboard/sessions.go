@@ -618,11 +618,7 @@ func parseReplies(data []byte, startSeq int) []reply {
 		}
 		var s string
 		if json.Unmarshal(rec.Message.Content, &s) == nil {
-			if inner, name, wrapped := unwrapPeer(s); wrapped {
-				add(reply{Role: rec.Type, Time: rec.Timestamp, Text: inner, Note: peerSource(name)})
-				continue
-			}
-			add(reply{Role: rec.Type, Time: rec.Timestamp, Text: s})
+			addUser(add, rec.Type, rec.Timestamp, s)
 			continue
 		}
 		var blocks []struct {
@@ -639,11 +635,7 @@ func parseReplies(data []byte, startSeq int) []reply {
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
-				if inner, name, wrapped := unwrapPeer(b.Text); wrapped {
-					add(reply{Role: rec.Type, Time: rec.Timestamp, Text: inner, Note: peerSource(name)})
-					break
-				}
-				add(reply{Role: rec.Type, Time: rec.Timestamp, Text: b.Text})
+				addUser(add, rec.Type, rec.Timestamp, b.Text)
 			case "thinking":
 				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
 				// сервер выбрасывал его, и на экране стояла метка «размышления
@@ -706,6 +698,123 @@ func unwrapPeer(text string) (string, string, bool) {
 		name = f[1]
 	}
 	return strings.TrimSpace(m[2]), name, true
+}
+
+// Служебные вставки харнеса в репликах роли user. Харнес кладёт их туда же, где
+// лежат слова человека: уведомление о законченном фоновом субагенте, напоминание
+// системы, оговорка про локальную команду и сама команда. Пузырём человека они
+// не являются ни одна, и рисовать их так значит выдавать машинную служебку за
+// сказанное человеком. Правило поэтому общее, а не на каждый тег отдельно:
+// известные вставки вырезаются из текста, часть из них оседает короткой
+// служебной строкой, а что осталось после вырезания и есть слова человека.
+// Разбор живёт на сервере: читателей у ленты двое, и держать его в двух местах
+// значило бы чинить каждый новый тег дважды.
+const roleNote = "note"
+
+// svcTag это одна известная вставка: имя тега, показывать ли её строкой и как
+// её подписать.
+type svcTag struct {
+	name string
+	// show говорит, оставлять ли служебную строку. Оговорка про локальные
+	// команды и напоминание системы адресованы модели, а не человеку, и в
+	// ленте от них нет никакого проку.
+	show bool
+	word string
+}
+
+var svcTags = []svcTag{
+	{name: "task-notification", show: true, word: "фоновый агент"},
+	{name: "system-reminder", show: false},
+	{name: "local-command-caveat", show: false},
+	{name: "command-message", show: false},
+	{name: "command-args", show: false},
+	{name: "command-name", show: true, word: "команда"},
+	{name: "command-contents", show: false},
+}
+
+// svcRe собирает вырезалку на каждый известный тег: тело берётся нежадно до
+// своего закрывающего, поэтому вложенные теги уведомления не рвут разбор.
+var svcRe = func() map[string]*regexp.Regexp {
+	out := map[string]*regexp.Regexp{}
+	for _, t := range svcTags {
+		out[t.name] = regexp.MustCompile(`(?s)<` + t.name + `(?:\s[^>]*)?>(.*?)</` + t.name + `>`)
+	}
+	return out
+}()
+
+// svcSummaryRe достаёт человеческую часть уведомления о фоновом агенте: сводку
+// («Agent "..." finished»), а при её отсутствии итог работы. Идентификаторы
+// задачи, вызова и путь файла вывода человеку не говорят ничего.
+var svcSummaryRe = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
+
+var svcStatusRe = regexp.MustCompile(`(?s)<status>(.*?)</status>`)
+
+// svcNote собирает служебную строку по телу вставки.
+func svcNote(tag svcTag, body string) string {
+	body = strings.TrimSpace(body)
+	switch tag.name {
+	case "task-notification":
+		said := "Фоновый агент завершил работу"
+		if m := svcStatusRe.FindStringSubmatch(body); m != nil {
+			if st := strings.TrimSpace(m[1]); st != "" && st != "completed" {
+				said = "Фоновый агент: " + st
+			}
+		}
+		if m := svcSummaryRe.FindStringSubmatch(body); m != nil {
+			if sum := strings.TrimSpace(m[1]); sum != "" {
+				return said + ": " + truncate(strings.Join(strings.Fields(sum), " "), 300)
+			}
+		}
+		return said
+	case "command-name":
+		return "Команда " + truncate(strings.Join(strings.Fields(body), " "), 80)
+	}
+	return tag.word
+}
+
+// addUser кладёт в ленту реплику роли user (и текстовый блок ответа агента тем
+// же путём). Пузырём человека рисуется только то, что человек написал:
+// служебные вставки харнеса уходят отдельными строками, а реплика, кроме них не
+// несущая ничего, пузыря не заводит вовсе.
+func addUser(add func(reply), role, at, text string) {
+	if inner, name, wrapped := unwrapPeer(text); wrapped {
+		add(reply{Role: role, Time: at, Text: inner, Note: peerSource(name)})
+		return
+	}
+	said, notes := splitService(text)
+	for _, n := range notes {
+		add(reply{Role: roleNote, Time: at, Text: n})
+	}
+	if said == "" {
+		// Одна служебка без единого слова человека: пустой пузырь тут был бы
+		// хуже молчания, а сама служебка уже стоит строкой выше.
+		return
+	}
+	add(reply{Role: role, Time: at, Text: said})
+}
+
+// splitService вырезает из реплики известные служебные вставки. Первый ответ
+// это то, что написал человек, второй это служебные строки в порядке
+// появления. Незнакомая вставка тут не трогается вовсе: выдумывать правило на
+// тег, которого мы не видели, дороже, чем показать его как есть.
+func splitService(text string) (string, []string) {
+	var notes []string
+	out := text
+	for _, tag := range svcTags {
+		re := svcRe[tag.name]
+		for {
+			m := re.FindStringSubmatchIndex(out)
+			if m == nil {
+				break
+			}
+			body := out[m[2]:m[3]]
+			if tag.show {
+				notes = append(notes, svcNote(tag, body))
+			}
+			out = out[:m[0]] + out[m[1]:]
+		}
+	}
+	return strings.TrimSpace(out), notes
 }
 
 const repliesDefault = 40

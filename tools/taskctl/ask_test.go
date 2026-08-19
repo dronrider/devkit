@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,7 +49,13 @@ func newAskStand(t *testing.T) *askStand {
 }
 
 func (st *askStand) run(root string, p AskParams) (string, error) {
-	return runAsk(root, p, st.deps, func(k string) string { return st.env[k] }, nil)
+	return st.runSig(root, p, nil)
+}
+
+// runSig гоняет ожидание с каналом сигналов: харнес шлёт SIGTERM убиваемому
+// ходу, и признак обязан уйти вместе с ним.
+func (st *askStand) runSig(root string, p AskParams, sig <-chan os.Signal) (string, error) {
+	return runAsk(root, p, st.deps, func(k string) string { return st.env[k] }, sig)
 }
 
 // say кладёт во вход разговора реплику, как её кладёт ручка дашборда.
@@ -270,6 +277,29 @@ func TestAskDraftLeavesTheQuestionFile(t *testing.T) {
 	}
 	if !strings.Contains(out, "файлом исхода") {
 		t.Fatalf("агенту не сказали, где остался вопрос:\n%s", out)
+	}
+}
+
+// Сигнал убивает ожидание, а не задачу: признак снимается, доска не трогается,
+// и заход узнаёт причину словами. Это один из трёх способов, которыми признак
+// не переживает смерть хода (LLD DK-430, решение 3).
+func TestAskDropsTheStampOnSignal(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	sig := make(chan os.Signal, 1)
+	sig <- syscall.SIGTERM
+	_, err := st.runSig(root, AskParams{ID: "XR-005", Question: "как быть", Wait: 30 * time.Second}, sig)
+	if err == nil {
+		t.Fatal("сигнал прошёл мимо: ожидание досидело до срока")
+	}
+	if !strings.Contains(err.Error(), "признак снят") {
+		t.Fatalf("причина остановки: %v", err)
+	}
+	if _, statErr := os.Stat(chat.AskPath(root, chat.TaskName("XR-005"))); !os.IsNotExist(statErr) {
+		t.Fatalf("признак пережил сигнал: %v", statErr)
+	}
+	if len(st.parked) != 0 {
+		t.Fatalf("сигнал припарковал задачу: %v", st.parked)
 	}
 }
 

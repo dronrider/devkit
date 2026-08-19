@@ -71,12 +71,11 @@ type askDeps struct {
 	// git-дерева нет вовсе.
 	Main string
 	Home string
-	Sig  <-chan os.Signal
 }
 
 // liveDeps собирает боевой набор: часы машины, настоящий сон, уведомитель
 // taskctl, запись этапа и парковка через тот же cmdMove, каким паркуют руками.
-func liveDeps(root string, sig <-chan os.Signal) askDeps {
+func liveDeps(root string) askDeps {
 	main := stage.MainRoot(root)
 	return askDeps{
 		Now:   time.Now,
@@ -165,7 +164,7 @@ func cmdAsk(root string, p AskParams) (string, error) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sig)
-	return runAsk(root, p, liveDeps(root, sig), os.Getenv, sig)
+	return runAsk(root, p, liveDeps(root), os.Getenv, sig)
 }
 
 // runAsk это ожидание по шагам: признак, зов человека, отметка этапа, опрос

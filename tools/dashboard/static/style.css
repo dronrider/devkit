@@ -818,3 +818,9 @@ a:hover{text-decoration:underline}
 .rrow .nm{width:auto;flex:1;min-width:0}
 .rrow .why{display:none}
 .rrow{padding:6px 12px}
+
+/* индикатор живой работы агента: стоит под лентой у самого поля ввода, где на
+   него и смотрят после отправки реплики */
+.busyrow{display:flex;align-items:center;gap:9px;padding:7px 12px;margin:6px 0 0;border-radius:9px;background:var(--bg2);border:1px solid var(--line)}
+.busyrow[hidden]{display:none}
+.busytext{font:400 12px var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}

@@ -618,6 +618,10 @@ func parseReplies(data []byte, startSeq int) []reply {
 		}
 		var s string
 		if json.Unmarshal(rec.Message.Content, &s) == nil {
+			if inner, name, wrapped := unwrapPeer(s); wrapped {
+				add(reply{Role: rec.Type, Time: rec.Timestamp, Text: inner, Note: peerSource(name)})
+				continue
+			}
 			add(reply{Role: rec.Type, Time: rec.Timestamp, Text: s})
 			continue
 		}
@@ -635,6 +639,10 @@ func parseReplies(data []byte, startSeq int) []reply {
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
+				if inner, name, wrapped := unwrapPeer(b.Text); wrapped {
+					add(reply{Role: rec.Type, Time: rec.Timestamp, Text: inner, Note: peerSource(name)})
+					break
+				}
 				add(reply{Role: rec.Type, Time: rec.Timestamp, Text: b.Text})
 			case "thinking":
 				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
@@ -660,6 +668,45 @@ func parseReplies(data []byte, startSeq int) []reply {
 
 // roleThink это роль размышления в ленте: имя одно на сервер и на панель.
 const roleThink = "thinking"
+
+// Реплика, пришедшая каналом живых сессий, лежит в транскрипте в служебной
+// обёртке: строка «Another Claude session sent a message:», тег
+// cross-session-message с атрибутами отправителя и хвостовое предостережение
+// харнеса про permission laundering. Всё это адресовано агенту, а не человеку,
+// и в ленте оно закрывало собой сам текст: две строки про раскладку показывались
+// простынёй на пятнадцать. Разворачивается обёртка тут, на сервере: читателей у
+// ленты двое, и разбор в клиенте пришлось бы держать в двух местах.
+var peerWrapRe = regexp.MustCompile(`(?s)<cross-session-message\b([^>]*)>(.*?)</cross-session-message>`)
+
+var peerFromRe = regexp.MustCompile(`from-name="([^"]*)"`)
+
+// peerSource подписывает реплику каналом. Своя реплика с дашборда это реплика
+// человека: пишет её он, а дашборд только несёт. Чужая сессия называется своим
+// именем, иначе непонятно, кто вмешался в разговор.
+func peerSource(name string) string {
+	if name == "dashboard" {
+		return "с дашборда"
+	}
+	if name == "" {
+		return "из другой сессии"
+	}
+	return "из сессии " + name
+}
+
+// unwrapPeer достаёт текст реплики из обёртки канала и имя отправителя. Второй
+// ответ говорит, была ли обёртка вообще: обычная реплика человека проходит
+// мимо разбора нетронутой.
+func unwrapPeer(text string) (string, string, bool) {
+	m := peerWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return text, "", false
+	}
+	name := ""
+	if f := peerFromRe.FindStringSubmatch(m[1]); f != nil {
+		name = f[1]
+	}
+	return strings.TrimSpace(m[2]), name, true
+}
 
 const repliesDefault = 40
 

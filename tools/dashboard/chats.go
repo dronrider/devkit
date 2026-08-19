@@ -665,3 +665,31 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
 		"session": sid, "tmux": sess})
 }
+
+// Живая работа агента (замечание третьего круга POC). После отправки реплики в
+// ленте была тишина до готового ответа: агент думает и зовёт инструменты
+// минутами, а панель показывала пустоту, неотличимую от непрошедшей отправки.
+// Реестр клиента держит состояние сессии полем status (busy против idle) и
+// обновляет его на каждой смене, отсюда индикатор и берёт правду.
+
+func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "состояние разговора")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !sessionIDRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return
+	}
+	p, ok := s.peers()[sid]
+	if !ok {
+		// Процесса нет вовсе: работать некому, и это не ошибка, а ответ.
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": false, "busy": false})
+		return
+	}
+	// Пустой status это клиент, который его не пишет: занятость тогда неизвестна,
+	// и врать про неё нечем. Индикатор в таком случае живёт лентой, а не опросом.
+	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": true,
+		"busy": p.Status == "busy", "status": p.Status, "where": peerWord(p)})
+}

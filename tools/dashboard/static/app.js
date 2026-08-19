@@ -2767,6 +2767,7 @@ async function wireFeed(project, sid, opts) {
     if (!keep(item)) return;
     talk.push(item);
     draw();
+    if (opts.onItem) opts.onItem(item);
   };
 }
 
@@ -2855,8 +2856,12 @@ function chatBubble(who, text, meta) {
 // показывала полоса tmux, у работы из чужого окна всегда пустая.
 function chatItem(item) {
   if ((item.role === "user" || item.role === "assistant") && item.text) {
-    return chatBubble(item.role === "user" ? "вы" : "агент", item.text,
-      (item.time ? localTime(item.time) + ", " : "") + "из транскрипта");
+    // Реплика, пришедшая каналом живых сессий, подписана источником: «с
+    // дашборда» это реплика самого человека, он её и написал, а дашборд только
+    // донёс. Обёртку канала сервер уже снял, тут остаётся чистый текст.
+    const who = item.role === "user" ? "вы" : "агент";
+    const from = item.note || "из транскрипта";
+    return chatBubble(who, item.text, (item.time ? localTime(item.time) + ", " : "") + from);
   }
   return replyEl(item);
 }
@@ -2866,8 +2871,9 @@ function chatItem(item) {
 // chatState), и сама лента приезжает общим куском (wireFeed): панели она
 // достаётся с разделителями дней и своим поколением живых потоков, чтобы
 // перерисованный рядом экран её не гасил.
-function wireChatFeed(project, feed, sid) {
+function wireChatFeed(project, feed, sid, onItem) {
   return wireFeed(project, sid, {
+    onItem,
     box: feed,
     scroll: feed,
     list: "mlist",
@@ -3809,9 +3815,73 @@ async function chatRaise(project, st, text, model) {
   sayResult("сессия " + name + " ещё не назвала себя в реестре: разговор встанет в списке сам", true);
 }
 
-// Тело окна: лента, подпись про доставку и поле ввода. Своей очереди
-// исходящих тут нет: реплика уходит в процесс сразу, а в ленте она появляется
-// оттуда же, откуда и ответ, из транскрипта.
+// Индикатор живой работы агента (замечание третьего круга POC). После отправки
+// реплики в ленте была тишина до готового ответа, и отправка была неотличима от
+// непрошедшей. Индикатор встаёт под лентой сразу по нажатию, называет текущее
+// действие словами (думает, имя инструмента) по записям транскрипта и гаснет с
+// первым куском ответа либо когда реестр говорит, что сессия снова idle.
+function makeBusy(project, box) {
+  const row = el("div", "busyrow");
+  row.hidden = true;
+  const dot = el("span", "dot pulse");
+  const what = el("span", "busytext", "агент работает...");
+  row.append(dot, what);
+  box.append(row);
+  let poll = null;
+  let stop = 0;
+  const off = () => {
+    row.hidden = true;
+    if (poll) clearTimeout(poll);
+    poll = null;
+  };
+  // Индикатор не висит вечно ни при какой поломке: через свой срок он гаснет
+  // сам. Молчащий агент бывает и от упавшего клиента, и вечная мигалка врала бы
+  // о работе, которой нет.
+  const LIMIT = 10 * 60 * 1000;
+  const tick = async (sid) => {
+    if (row.hidden) return;
+    if (Date.now() > stop) return off();
+    try {
+      const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/status");
+      // Занятость знает только клиент, который её пишет; пустое поле статуса
+      // это «неизвестно», и гасить по нему индикатор нельзя, он погаснет от
+      // первой записи ленты.
+      if (r.ok && r.body.live && r.body.status && !r.body.busy) return off();
+    } catch (err) {
+      // Обрыв связи не гасит индикатор: работа идёт, видно её просто нечем.
+    }
+    poll = setTimeout(() => tick(sid), 1500);
+  };
+  return {
+    on(sid) {
+      row.hidden = false;
+      what.textContent = "агент работает...";
+      stop = Date.now() + LIMIT;
+      if (poll) clearTimeout(poll);
+      // Первый опрос с задержкой: реестр помечает сессию занятой не мгновенно,
+      // и мгновенный опрос застал бы ещё idle и погасил индикатор сразу.
+      poll = setTimeout(() => tick(sid), 2500);
+    },
+    // Запись транскрипта говорит, чем агент занят прямо сейчас: размышления,
+    // вызов инструмента, и наконец сам ответ, на котором индикатор гаснет.
+    saw(item) {
+      if (row.hidden) return;
+      stop = Date.now() + LIMIT;
+      if (item.role === "assistant" && item.text) return off();
+      if (item.role === "thinking") { what.textContent = "думает..."; return; }
+      if (item.role === "tool") {
+        what.textContent = (item.tool || "инструмент") + (item.note ? ": " + item.note : "");
+        return;
+      }
+      if (item.role === "toolout") { what.textContent = "читает вывод..."; }
+    },
+    off,
+  };
+}
+
+// Тело окна: лента, подпись про доставку, индикатор работы и поле ввода. Своей
+// очереди исходящих тут нет: реплика уходит в процесс сразу, а в ленте она
+// появляется оттуда же, откуда и ответ, из транскрипта.
 function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
@@ -3824,6 +3894,7 @@ function chatPanel(project, st) {
     wrap.append(note);
   }
 
+  const busy = makeBusy(project, wrap);
   const box = el("div", "cbox");
   const ta = el("textarea");
   ta.placeholder = way.off ? "разговор идёт в vscode, пишите там" : "Написать агенту...";
@@ -3845,12 +3916,16 @@ function chatPanel(project, st) {
         .catch(console.error).finally(done);
       return;
     }
+    busy.on(st.sid);
     api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
       { method: "POST", body: { text } })
       .then((r) => {
         // Удача молчит: реплика видна в ленте своим пузырём, и всплывашка
         // «подано в процесс» на каждое слово была спамом. Говорит только отказ.
-        if (!r.ok) sayResult(r.body.error || "реплика не ушла", true);
+        if (!r.ok) {
+          busy.off();
+          sayResult(r.body.error || "реплика не ушла", true);
+        }
         // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
         // список надо перечитать, иначе следующая реплика опять пошла бы
         // резюмом и завела второго агента.
@@ -3872,6 +3947,7 @@ function chatPanel(project, st) {
   box.append(ta, row);
   wrap.append(box);
 
+  chatLive.push(busy.off);
   if (st.error) {
     say(feed, "error", st.error);
   } else if (!st.sid) {
@@ -3879,7 +3955,7 @@ function chatPanel(project, st) {
       ? "новый разговор: напишите первую реплику, она и поднимет сессию"
       : (st.note || "разговоров тут пока нет, заведите новый кнопкой «+»"));
   } else {
-    wireChatFeed(project, feed, st.sid).catch(console.error);
+    wireChatFeed(project, feed, st.sid, (item) => busy.saw(item)).catch(console.error);
   }
   return wrap;
 }

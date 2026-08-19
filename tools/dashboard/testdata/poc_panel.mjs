@@ -269,9 +269,9 @@ async function feedOf(items, sid) {
   if (!dump(spent).includes("Размышлял 9 с")) fail("длительность размышлений не названа");
   const quiet = sandbox.replyEl({ role: "thinking", text: "", spent: 0 });
   if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
-  // Ход инструмента виден сразу и стоит двумя строками: сверху сама команда,
-  // снизу её вывод, в первой колонке обеих строк стрелка. Раскрытия нет,
-  // копирование стоит только при команде.
+  // Ход инструмента стоит заголовком и блоком под ним: в заголовке имя с
+  // пояснением хода, в блоке две строки в две колонки, слева направление
+  // стрелкой. Раскрытия нет, копирование только при команде.
   const card = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la",
       about: "смотрю каталог" },
@@ -281,29 +281,36 @@ async function feedOf(items, sid) {
     fail("ход и вывод не встали одной записью: " + said);
   }
   if (said.includes("IN") || said.includes("OUT")) {
-    fail("вход и выход снова подписаны словами: " + said);
+    fail("направление снова подписано словами: " + said);
   }
   if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
-  const inLine = byClass(card, "tin");
-  const outLine = byClass(card, "tout");
-  if (!inLine || !outLine) fail("строк входа и выхода нет: " + said);
-  // Стрелки берутся значками и стоят первыми в своих строках.
-  for (const [line, name] of [[inLine, "команды"], [outLine, "вывода"]]) {
+  // Заголовок над блоком: имя жирным, дальше пояснение хода.
+  const head = byClass(card, "thead");
+  const nameEl = tag(head, "B");
+  if (!nameEl || nameEl.textContent !== "Bash") {
+    fail("имя инструмента стоит не жирным первым: " + dump(head));
+  }
+  const about = byClass(head, "tabout");
+  if (!about || about.textContent !== "смотрю каталог") {
+    fail("пояснение хода не встало в заголовок: " + dump(head));
+  }
+  // Блок ввода-вывода: две строки, в первой колонке каждой стрелка значком.
+  const body = byClass(card, "tbox");
+  if (!body) fail("блока ввода-вывода нет: " + said);
+  const inLine = byClass(body, "tin");
+  const outLine = byClass(body, "tout");
+  if (!inLine || !outLine) fail("строк команды и вывода нет: " + dump(body));
+  for (const [line, what] of [[inLine, "команды"], [outLine, "вывода"]]) {
     const ico = byClass(line, "tico");
     if (!ico || line.children[0] !== ico) {
-      fail("у строки " + name + " нет стрелки первой колонкой: " + dump(line));
+      fail("у строки " + what + " нет стрелки первой колонкой: " + dump(line));
     }
   }
-  // Заголовком строки стоит сама команда, а не пояснение хода: пояснение живёт
-  // подсказкой.
   const lead = byClass(inLine, "tcmd");
   if (!lead || lead.textContent !== "ls -la") {
     fail("в строке команды стоит не команда: " + dump(inLine));
   }
-  if (lead.title !== "смотрю каталог") {
-    fail("пояснение хода не осталось подсказкой: " + lead.title);
-  }
-  if (!dump(outLine).includes("итого 42")) fail("вывода второй строкой нет: " + said);
+  if (!dump(outLine).includes("итого 42")) fail("вывода второй строкой нет: " + dump(body));
   // Копирование одно и стоит при команде.
   if (!deepBtn(inLine, "foldcp")) fail("кнопки копирования при команде нет: " + dump(inLine));
   if (deepBtn(outLine, "foldcp")) fail("у вывода завелась своя кнопка копирования");

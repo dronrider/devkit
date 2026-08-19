@@ -3337,26 +3337,30 @@ function toolPair(call, out) {
   const name = call.tool || "инструмент";
   const cmd = call.note || foldPeek(call.text || "", 200);
   const said = out && out.text ? out.text : "";
-  // Ход виден сразу и стоит двумя строками: сверху сама команда, снизу её
-  // вывод. В первой колонке обеих строк стрелка: вправо ушло в инструмент,
-  // влево вернулось из него. Рамок, подписей словами и раскрытия нет вовсе.
+  // Ход стоит заголовком и блоком под ним. В заголовке имя инструмента и
+  // пояснение, которое агент дал ходу сам (поле description); в блоке две
+  // строки в две колонки: слева направление стрелкой, справа команда и её
+  // вывод. Раскрытия нет, ход виден сразу целиком.
   const box = el("div", "tool trow2");
+  const head = el("div", "thead");
+  head.append(el("b", "", name));
+  head.append(el("span", "tabout", call.about || ""));
+  box.append(head);
+  const body = el("div", "tbox");
   const top = toolLine("i-in", "tin");
-  top.append(el("b", "", name));
   const lead = el("span", "tcmd", cmd);
-  // Пояснение, которое агент дал ходу сам, остаётся подсказкой: на вид строки
-  // оно не влияет, а по наведению говорит, зачем ход сделан.
-  if (call.about) lead.title = call.about;
+  lead.title = cmd;
   top.append(lead);
   // Копирование стоит только при команде: уносят в терминал её, и второй такой
   // кнопки при выводе не нужно.
   top.append(copyBtn((call.text || "") + (call.text && said ? "\n" : "") + said));
-  box.append(top);
-  if (said) box.append(toolOutLine(said));
+  body.append(top);
+  if (said) body.append(toolOutLine(said));
+  box.append(body);
   return box;
 }
 
-// Строка хода со стрелкой в первой колонке.
+// Строка блока: направление стрелкой в первой колонке, дальше своё содержимое.
 function toolLine(ico, cls) {
   const line = el("div", "tline " + cls);
   const mark = el("span", "tico");
@@ -3365,8 +3369,8 @@ function toolLine(ico, cls) {
   return line;
 }
 
-// Вывод хода: та же строка со стрелкой влево. Обрезка до двух строк живёт в
-// стилях, а не в тексте: полный вывод остаётся в разметке, и его по-прежнему
+// Вывод хода: вторая строка блока, стрелкой влево. Обрезка до пары строк живёт
+// в стилях, а не в тексте: полный вывод остаётся в разметке, и его по-прежнему
 // можно выделить и скопировать.
 function toolOutLine(text) {
   const line = toolLine("i-out", "tout");

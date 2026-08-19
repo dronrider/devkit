@@ -306,3 +306,7 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-438 | Разговор с задачей: правило адресности, выбор дерева, ручка реплики и фильтр адресата у сторожка | task | P1 | 2026-08-19 | [tasks/archive/2026/DK-438.md](tasks/archive/2026/DK-438.md) |
 | DK-432 | Инструмент ожидания у задачи: вопрос задаётся из захода, а не последней репликой | task | P2 | 2026-08-19 | [tasks/archive/2026/DK-432.md](tasks/archive/2026/DK-432.md) |
 | DK-433 | Задача, ждущая человека, видна в API, в ленте и уведомлением | task | P2 | 2026-08-19 | [tasks/archive/2026/DK-433.md](tasks/archive/2026/DK-433.md) |
+| DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-043.md](tasks/archive/2026/DK-043.md) |
+| DK-044 | профиль OpenCode: детект, instructions, определения агентов | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-044.md](tasks/archive/2026/DK-044.md) |
+| DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-045.md](tasks/archive/2026/DK-045.md) |
+| DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-046.md](tasks/archive/2026/DK-046.md) |

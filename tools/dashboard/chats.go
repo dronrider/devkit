@@ -327,6 +327,12 @@ func chatVars(id, sess string) string {
 	if id != "" {
 		env = "DEVKIT_TASK=" + shQuote(id) + " " + env
 	}
+	// Дом ставится явно: tmux-сервер, поднятый самим демоном, наследует его
+	// подложный HOME, и клиент в такой сессии не находит ни хуков, ни логина.
+	// Уже поднятый сервер держит настоящий дом сам, и лишним это не будет.
+	if home := realHome(); home != "" {
+		env = "HOME=" + shQuote(home) + " " + env
+	}
 	return env
 }
 
@@ -776,11 +782,42 @@ func titleAsk(text string) string {
 	}
 	prompt := "Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
 		"Ответь только заголовком, без кавычек и пояснений. Реплика: " + truncate(text, 600)
-	out, err := runProc(defaultClient, "-p", "--model", "haiku", prompt)
+	out, err := runProcHome(defaultClient, "-p", "--model", "haiku", prompt)
 	if err != nil {
 		return ""
 	}
-	return titleTrim(string(out))
+	said := strings.TrimSpace(string(out))
+	if titleJunk(said) {
+		return ""
+	}
+	return titleTrim(said)
+}
+
+// titleJunk узнаёт служебный ответ вместо заголовка. Клиент отвечает своим
+// текстом и на отказ хука, и на несостоявшийся логин, а заголовок из такого
+// ответа оседал в кеше навсегда и вставал в шапку чата («UserPromptSubmit
+// operation blocked by hook»). Признаки грубые нарочно: заголовок это пять-семь
+// слов одной строкой, и всё, что на него не похоже, лучше выбросить, оставшись
+// с эвристикой.
+func titleJunk(said string) bool {
+	if said == "" {
+		return true
+	}
+	if strings.Contains(said, "\n") {
+		return true
+	}
+	low := strings.ToLower(said)
+	for _, mark := range []string{
+		"blocked by hook", "operation blocked", "not logged in", "please run /login",
+		"userpromptsubmit", "pretooluse", "posttooluse", "invalid api key",
+		"execution error", "traceback", "no such file",
+	} {
+		if strings.Contains(low, mark) {
+			return true
+		}
+	}
+	// Заголовок длиннее двух строк текста это уже не заголовок, а рассказ.
+	return len([]rune(said)) > 200
 }
 
 // titleJobs держит счёт идущих суммаризаций: заголовок нужен списку, а не

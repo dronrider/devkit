@@ -41,7 +41,7 @@ func Sessions() []Session {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "tmux", "ls", "-F",
-		"#{session_name}\t#{session_windows}\t#{session_created}")
+		"#{session_name}"+SessionSep+"#{session_windows}"+SessionSep+"#{session_created}")
 	// Без WaitDelay Output ждёт трубу, которую после снятия процесса может
 	// держать его потомок: срок обязан вернуть управление, а не вечное ожидание.
 	cmd.WaitDelay = time.Second
@@ -52,13 +52,28 @@ func Sessions() []Session {
 	return ParseSessions(out)
 }
 
+// SessionSep это разделитель полей в формате tmux ls. Табуляция тут не годится
+// вовсе: без UTF-8 локали в окружении tmux считает её непечатным знаком и
+// подменяет подчёркиванием, отчего вся строка приезжает одним полем, а имя
+// сессии выходит вида «chat-1_1_1787148735». Ловится это только там, где
+// окружение бедное, то есть под launchd, и стоило разбора живьём: планировщик
+// слота и дашборд разом переставали видеть чужие работы. Печатный разделитель
+// от локали не зависит.
+const SessionSep = "|"
+
 // ParseSessions разбирает вывод tmux ls; вынесен из Sessions, чтобы тест
 // гонял разбор без tmux. Пустой список, а не nil: «сессий нет» и «спросить
-// не удалось» здесь неотличимы, а клиент ждёт список всегда.
+// не удалось» здесь неотличимы, а клиент ждёт список всегда. Табуляция
+// понимается по-прежнему: формат сменился, а на диске и в чужих тестах могли
+// остаться старые строки.
 func ParseSessions(out []byte) []Session {
 	sessions := []Session{}
 	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Split(ln, "\t")
+		sep := SessionSep
+		if !strings.Contains(ln, sep) && strings.Contains(ln, "\t") {
+			sep = "\t"
+		}
+		fields := strings.Split(ln, sep)
 		if fields[0] == "" {
 			continue
 		}

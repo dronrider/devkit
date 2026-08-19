@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -228,4 +231,55 @@ func peerListen(logf func(string, ...any)) func() {
 		ln.Close()
 		os.Remove(path)
 	}
+}
+
+// Настоящий дом пользователя, а не дом процесса. Демон дашборда живёт под
+// launchd с подложным HOME (свой каталог конфигурации), и всякий claude,
+// поднятый оттуда, считает домом его: хуки харнеса раскрывают в нём тильду и
+// не находят себя, а состояние логина ищется там же, и клиент отвечает
+// «Not logged in». Дом берётся от uid через getpwuid, поэтому подложный HOME на
+// него не влияет вовсе.
+func realHome() string {
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		return u.HomeDir
+	}
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return ""
+}
+
+// homeEnv собирает окружение подпроцесса с настоящим домом: остальное
+// наследуется как было.
+func homeEnv() []string {
+	home := realHome()
+	if home == "" {
+		return nil
+	}
+	out := []string{}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "HOME="+home)
+}
+
+// runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что
+// поднимает клиента харнеса: под чужим домом он не найдёт ни своих хуков, ни
+// своего логина.
+func runProcHome(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	if env := homeEnv(); env != nil {
+		cmd.Env = env
+	}
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s не ответил за %s и снят по сроку", name, procTimeout)
+	}
+	return out, err
 }

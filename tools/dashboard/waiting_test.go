@@ -372,32 +372,29 @@ func TestStaticWaitWords(t *testing.T) {
 	}
 }
 
-// Чип ожидания стоит и в строке доски, и на карточке задачи, а врезка вопроса
-// в панели разговора: без них поле waiting некуда показать, а отвечать
-// пришлось бы вслепую.
+// Чип ожидания стоит и в строке доски, и на карточке задачи, а сам вопрос
+// приходит подсказкой при нём: без этого поле waiting некуда показать, и
+// простой задачи с доски не виден.
 func TestStaticWaitChipAndCard(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	if !strings.Contains(funcBody(t, text, "function rowChips("), "waitChip(row)") {
 		t.Error("в строке доски нет чипа ожидания: простой задачи с доски не виден")
 	}
-	if !strings.Contains(funcBody(t, text, "function waitChip("), "row.waiting") {
+	if !strings.Contains(funcBody(t, text, "async function renderTask("), "waitChip(row)") {
+		t.Error("на карточке задачи нет чипа ожидания: с её экрана простой не виден")
+	}
+	chip := funcBody(t, text, "function waitChip(")
+	if !strings.Contains(chip, "row.waiting") {
 		t.Error("чип ожидания собирается не из поля waiting строки")
 	}
-	card := funcBody(t, text, "function waitCard(")
-	if !strings.Contains(card, `taskPath(project, st.task, "/message")`) {
-		t.Error("ответ из врезки уходит не ручкой задачи: адресованную строку сторожок ответом не считает")
-	}
-	if !strings.Contains(funcBody(t, text, "function chatPanel("), "waitCard(project, st)") {
-		t.Error("врезки вопроса в панели разговора нет: отвечать пришлось бы вслепую")
-	}
-	if !strings.Contains(funcBody(t, text, "async function chatState("), "row.waiting") {
-		t.Error("панель берёт ожидание не со строки доски")
+	for _, want := range []string{"w.questions", `" Вопрос: "`, "w.note"} {
+		if !strings.Contains(chip, want) {
+			t.Errorf("подсказка чипа не несёт %q: чего от человека ждут, видно только словом «ждёт»", want)
+		}
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".c-wait{", ".wcard{", ".wq{"} {
-		if !strings.Contains(css, want) {
-			t.Errorf("в static/style.css нет стиля ожидания %q", want)
-		}
+	if !strings.Contains(css, ".c-wait{") {
+		t.Error("в static/style.css нет стиля ожидания .c-wait")
 	}
 }
 

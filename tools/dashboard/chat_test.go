@@ -50,7 +50,7 @@ func postSessionMessage(t *testing.T, c *http.Client, e *testEnv, sid, text stri
 		fmt.Sprintf(`{"text": %q}`, text))
 }
 
-// Реплика в сессию задачи ложится в разговор task-<ID> её бокового дерева,
+// Реплика в сессию задачи ложится в чат task-<ID> её бокового дерева,
 // строкой с адресатом сессии и подписью дашборда, тем же форматом, что
 // разбирает подхват.
 func TestSessionMessageLandsInTaskChat(t *testing.T) {
@@ -63,8 +63,8 @@ func TestSessionMessageLandsInTaskChat(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "разговор task-XR-4") || !strings.Contains(text, "подхват доставит") {
-		t.Errorf("ответ не называет разговор и доставку: %s", text)
+	if !strings.Contains(text, "чат task-XR-4") || !strings.Contains(text, "подхват доставит") {
+		t.Errorf("ответ не называет чат и доставку: %s", text)
 	}
 	src := readFile(t, filepath.Join(tree, ".devkit", "chat", "task-XR-4.in"))
 	if !strings.Contains(src, ", сессии aaaa-1111, из дашборда: привет исполнитель") {

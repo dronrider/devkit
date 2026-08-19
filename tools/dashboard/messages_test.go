@@ -737,28 +737,36 @@ func TestChatOutboxQueueSendsItself(t *testing.T) {
 func TestStaticChatSendGuard(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function chatPanel(")
-	if !strings.Contains(body, "send.disabled = true") || !strings.Contains(body, "send.disabled = false") {
+	if !strings.Contains(body, "send.disabled = true") {
 		t.Error("кнопка отправки не гаснет на время запроса: двойное нажатие снова шлёт два запроса")
+	}
+	// Возврат кнопки собран отдельным замыканием: дорог у реплики две (подъём
+	// нового чата и ручка живого), и обе кончаются одним и тем же хвостом.
+	if !strings.Contains(body, "const done = () => { send.disabled") ||
+		!strings.Contains(body, ".finally(done)") {
+		t.Error("кнопка отправки не загорается назад: после первой реплики писать станет нечем")
 	}
 }
 
-// Вход в разговор на всех экранах называется разговором с агентом:
-// «Переписка» ушла из кнопок и подписей вместе с жаргоном витков, а после
-// DK-435 ушёл и «живой статус» отдельным экраном.
+// Вход в разговор на всех экранах называется чатом агента: «Переписка» ушла из
+// кнопок и подписей вместе с жаргоном витков, после DK-435 ушёл и «живой
+// статус» отдельным экраном, а переделка POC свела оба слова к одному, тому,
+// которым разговор зовут и в шапке дашборда.
 func TestStaticChatNamedAgentChat(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(text, `"Разговор агента"`) {
-		t.Error("в static/app.js нет входа «Разговор агента»")
+	if !strings.Contains(text, `"Чат агента"`) {
+		t.Error("в static/app.js нет входа «Чат агента»")
 	}
 	if strings.Contains(text, `"Переписка"`) || strings.Contains(text, `"переписка "`) {
 		t.Error("в static/app.js осталась надпись «Переписка»")
 	}
 }
 
-// Разговор обычной задачи больше не отбивается словами «не цель» (DK-435):
-// панель открыта любой задаче, а цель отличается ручкой, которой уходит
-// реплика. Гейт остался один и тот же, заголовок строки доски, и стоит он там,
-// где панель разбирает адрес.
+// Разговор обычной задачи больше не отбивается словами «не цель» (DK-435), и
+// ручкой цель тоже больше не отличается: переделка POC свела разговор к сессии,
+// и реплика едет её ручкой, что у цели, что у обычной задачи. Дорога называет
+// один из трёх видов, и все три ведут к живому агенту. Строкой доски цель
+// узнаётся всё равно: по ней подписана кнопка продолжения работы.
 func TestStaticChatGoalHandledByWay(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	state := funcBody(t, app, "async function chatState(")
@@ -766,11 +774,17 @@ func TestStaticChatGoalHandledByWay(t *testing.T) {
 		t.Error("панель узнаёт цель не по строке доски: гейт разойдётся с полосой действий")
 	}
 	way := funcBody(t, app, "function chatWay(")
-	if !strings.Contains(way, "if (st.isGoal) {") || !strings.Contains(way, "goalMessageURL(project, st.task)") {
-		t.Error("реплика цели уходит не ручкой цели: у неё «Входящие» файла, а не вход разговора")
+	for _, want := range []string{`kind: "new"`, `kind: "say"`, `kind: "resume"`} {
+		if !strings.Contains(way, want) {
+			t.Errorf("дорога реплики не называет вид %q: панели нечем выбрать ход отправки", want)
+		}
 	}
-	if !strings.Contains(way, `taskPath(project, st.task, "/message")`) {
-		t.Error("реплика задаче уходит не ручкой задачи: безадресную строку класть нечем")
+	panel := funcBody(t, app, "function chatPanel(")
+	if !strings.Contains(panel, `encodeURIComponent(st.sid) + "/say"`) {
+		t.Error("реплика уходит не ручкой разговора: у сессии свой вход, и мимо него она не доедет")
+	}
+	if !strings.Contains(panel, `st.isGoal ? "Продолжить цель "`) {
+		t.Error("кнопка продолжения не отличает цель: у цели виток, у задачи ход работы")
 	}
 	if strings.Contains(app, "не цель: переписка идёт только с циклом цели") {
 		t.Error("панель снова отбивает обычную задачу словами «не цель»")
@@ -779,18 +793,26 @@ func TestStaticChatGoalHandledByWay(t *testing.T) {
 
 // Лента открывается хвостом: читается последняя порция реплик, лента сразу
 // стоит внизу, а история подгружается сама от прокрутки вверх через ?before=
-// (DK-434). Кусок с DK-371 общий, и чат берёт его вызовом: своей копии этой
-// механики у него больше нет.
+// (DK-434). Курсор истории это устойчивый ключ записи, а не её номер в слитой
+// ленте: боковые журналы субагентов растут, номер от заезда к заезду плывёт, и
+// страницы шли с нахлёстами и дырами. Кусок с DK-371 общий, и чат берёт его
+// вызовом: своей копии этой механики у него больше нет.
 func TestStaticChatOpensAtTail(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "async function wireFeed(")
-	for _, want := range []string{`"?n=" + tail`, `"?before=" + firstSeq`, "atStart.hidden"} {
+	for _, want := range []string{`"?n=" + tail`, `"?before=" + encodeURIComponent(firstKey)`,
+		`"&n=" + page`, "atStart.hidden"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в ленте разговора нет %q: хвост и история подаются не так", want)
 		}
 	}
+	if !strings.Contains(body, "firstKey = itemCursor(") {
+		t.Error("курсор истории берётся не ключом записи: страницы пойдут с нахлёстом")
+	}
 	draw := strings.Index(body, "\n  draw();")
-	bottom := strings.Index(body, "scroll.scrollTop = scroll.scrollHeight;")
+	// Прокрутка вниз ищется той строкой, что стоит при открытии: то же
+	// присваивание есть в удержании начального экрана, и оно идёт выше по файлу.
+	bottom := strings.Index(body, "else scroll.scrollTop = scroll.scrollHeight;")
 	if draw < 0 || bottom < 0 || draw > bottom {
 		t.Error("лента прокручивается вниз не после первой отрисовки: открытие хвостом не сработает")
 	}
@@ -818,7 +840,19 @@ func TestStaticChatKeepsPlace(t *testing.T) {
 	if !strings.Contains(body, "keepPlace(scroll, rest)") {
 		t.Error("лента не возвращается на прежнее место: взгляд в историю сорвёт дострение")
 	}
-	if strings.Contains(body, "es.onmessage") && strings.Contains(body, "scroll.scrollTop = scroll.scrollHeight;\n    ") {
+	// Пришедшая потоком реплика идёт тем же путём, что и все: перерисовкой с
+	// якорем. Своей прокрутки у обработчика нет, иначе он бросал бы ленту вниз
+	// из истории, которую человек в этот момент читает.
+	on := strings.Index(body, "es.onmessage = (ev) => {")
+	off := strings.Index(body, "es.onerror")
+	if on < 0 || off < on {
+		t.Fatal("в ленте нет обработчика потока: дострение проверять не на чем")
+	}
+	stream := body[on:off]
+	if !strings.Contains(stream, "draw();") {
+		t.Error("пришедшая потоком реплика не перерисовывает ленту")
+	}
+	if strings.Contains(stream, "scrollTop") {
 		t.Error("дострение прокручивает вниз мимо якоря")
 	}
 }
@@ -990,19 +1024,20 @@ func TestMarkdownBlocks(t *testing.T) {
 	}
 }
 
-// Плашка про судьбу сообщения закрывается крестиком, а лента чата прижата к
+// Панель разговора закрывается крестиком в своей шапке, а лента чата прижата к
 // полю ввода: свежие реплики стоят внизу, у самого поля, а пустота короткой
-// переписки остаётся сверху (макет «04 Переписка»). Крестик прячет плашку, а не
-// снимает её с дерева: при вставшем цикле она возвращается словами отказа
-// (DK-319), и снятую возвращать было бы нечем.
+// переписки остаётся сверху (макет «04 Переписка»). Плашка про судьбу реплики с
+// панели ушла вместе с отложенной доставкой: реплика едет прямо в сессию, и
+// объяснять человеку её дорогу на каждом экране незачем.
 func TestStaticChatNoteAndAnchor(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "function chatPanel(")
-	for _, want := range []string{`el("button", "nx")`, `icon("close")`, "note.hidden = true", "Закрыть"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("в плашке чата нет %q: закрыть её нечем", want)
+	head := funcBody(t, app, "function chatHead(")
+	for _, want := range []string{`el("button", "nx")`, `icon("close")`, "closeChat()", "Закрыть панель"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("в шапке разговора нет %q: закрыть панель нечем", want)
 		}
 	}
+	body := funcBody(t, app, "function chatPanel(")
 	// Стоп переехал на экран задачи (DK-435): в панели остался разговор, а
 	// последствия остановки живут подсказкой у той кнопки, которая снимает
 	// сессию.
@@ -1013,7 +1048,7 @@ func TestStaticChatNoteAndAnchor(t *testing.T) {
 		t.Error("у кнопки остановки на экране задачи нет подсказки о последствиях")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".chatfeed .mlist{margin-top:auto}", ".cnote .nx{"} {
+	for _, want := range []string{".chatfeed .mlist{margin-top:auto}", ".chead .nx{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет %q: лента чата не прижата к полю ввода", want)
 		}

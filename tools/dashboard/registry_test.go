@@ -117,9 +117,10 @@ func TestParseBindsLastWins(t *testing.T) {
 	}
 }
 
-// Разряды привязки: запись реестра это «ведёт», угадывание по первой реплике и
-// по ветке это «говорит о», а хвост бокового дерева врать не умеет и остаётся
-// разрядом «ведёт» и без записи.
+// Разряды привязки: запись реестра это «ведёт», хвост бокового дерева врать не
+// умеет и остаётся разрядом «ведёт» и без записи, а первая реплика и имя ветки
+// задачу больше не называют вовсе: угадывание снято, и сессия без записи
+// уходит в «задача не распознана».
 func TestBindTaskRanks(t *testing.T) {
 	binds := parseBinds([]byte(
 		bindRecord("2026-08-18T12:00:00", "ordered", "DK-1", bindOrder) +
@@ -137,8 +138,8 @@ func TestBindTaskRanks(t *testing.T) {
 		{"дерево записью", "bytree", "", head, "DK-3", treeNote, boundLead},
 		{"незнакомое слово источника", "newword", "", head, "DK-4", recordNote, boundLead},
 		{"дерево без записи", "нет", "dk-5", head, "DK-5", treeNote, boundLead},
-		{"первая реплика", "нет", "", head, "DK-88", replyNote, boundAbout},
-		{"ветка", "нет", "", sessionHead{Branch: "dk-77"}, "DK-77", branchNote, boundAbout},
+		{"первая реплика не привязывает", "нет", "", head, "", unknownTaskNote, ""},
+		{"ветка не привязывает", "нет", "", sessionHead{Branch: "dk-77"}, "", unknownTaskNote, ""},
 		{"ничего", "нет", "", sessionHead{}, "", unknownTaskNote, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,19 +172,20 @@ func TestBindTaskUnbindStopsGuessing(t *testing.T) {
 	}
 }
 
-// Сессия без задачи, записанная хуком (разговор доски), угадывание не гасит:
-// хук уже посмотрел на дерево, а разговор про задачу из главного чекаута
-// обязан остаться в списке её чатов.
-func TestBindTaskEmptyRecordKeepsGuessing(t *testing.T) {
+// Сессия без задачи, записанная хуком (чат доски), это не отвязка: отвязку
+// несёт только слово bindOff, а пустая запись оставляет право назвать задачу
+// хвосту бокового дерева.
+func TestBindTaskEmptyRecordIsNotUnbind(t *testing.T) {
 	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", "-")))
-	task, note, bound := bindTask(binds, "aaa-1", "", sessionHead{Named: "DK-88"})
-	if task != "DK-88" || note != replyNote || bound != boundAbout {
-		t.Fatalf("разговор доски потерял задачу: %q %q %q", task, note, bound)
+	task, note, bound := bindTask(binds, "aaa-1", "dk-5", sessionHead{Named: "DK-88"})
+	if task != "DK-5" || note != treeNote || bound != boundLead {
+		t.Fatalf("пустая запись сошла за отвязку: %q %q %q", task, note, bound)
 	}
 }
 
-// Разговор о задаче живой работой не горит (DK-360): карточка остаётся
-// сессией, а о чём разговор, сказано словами.
+// Чат о задаче живой работой не горит (DK-360): угадывания по первой реплике
+// больше нет, карточка остаётся сессией без задачи, и подписана она заголовком
+// самого чата.
 func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	e := newTestEnv(t)
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
@@ -195,7 +197,7 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 		t.Fatalf("работы: %+v", works)
 	}
 	want := Work{Kind: "session", Via: "session", Session: "talker",
-		Note: "разговор о XR-4 (по первой реплике)"}
+		Note: "а что там с XR-4"}
 	if works[0] != want {
 		t.Errorf("работа:\n%+v\nожидал:\n%+v", works[0], want)
 	}

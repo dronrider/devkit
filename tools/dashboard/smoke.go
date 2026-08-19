@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/stage"
 )
 
@@ -359,8 +360,8 @@ exit 0
 		// Клиенты подписок: каждый пишет, кем его подняли и с каким заказом.
 		// Разными их держит прогон нарочно, иначе выбор подписки был бы неотличим
 		// от её отсутствия.
-		smokeClientOne: smokeClientBody(s.runsFile(), smokeClientOne, ""),
-		smokeClientTwo: smokeClientBody(s.runsFile(), smokeClientTwo, s.harnessJournal()),
+		smokeClientOne: smokeClientBody(s.runsFile(), smokeClientOne, "", ""),
+		smokeClientTwo: smokeClientBody(s.runsFile(), smokeClientTwo, s.harnessJournal(), s.bindsFile()),
 		// Бэкенд уведомлений: баннер на машине прогона не появляется, а
 		// строка в журнале уведомителя пишется как при живой отправке.
 		"notify-fake": "exit 0\n",
@@ -426,12 +427,20 @@ func (s *smoke) harnessJournal() string {
 	return filepath.Join(s.harnessHome(), "projects", claudeDirName(s.proj))
 }
 
+// bindsFile это реестр чатов стенда: тот же путь от дома, по которому его
+// читает сервер.
+func (s *smoke) bindsFile() string { return sessions.Path(s.home) }
+
 // smokeClientBody это тело фикстуры клиента: имя подписки он берёт из
 // окружения, как настоящий клиент берёт оттуда свой каталог конфигурации.
 // Названный каталог журнала клиент заполняет транскриптом разговора, как это
 // делает живой клиент в headless-запуске: заказ первой репликой человека,
 // дальше ответ. По нему дашборд и узнаёт, чем занята поднятая работа.
-func smokeClientBody(runs, name, journal string) string {
+// Строку реестра фикстура кладёт сама, за SessionStart-хук devkit
+// (hooks/session-task.py): на живой машине задачу сессии называет он, из
+// DEVKIT_TASK, а угадывание по первой реплике снято, и без этой строки
+// поднятый разговор задачи не знает вовсе.
+func smokeClientBody(runs, name, journal, binds string) string {
 	body := fmt.Sprintf("printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$2\" >> %s\n",
 		name, shQuote(runs))
 	if journal == "" {
@@ -443,8 +452,14 @@ mkdir -p "$dir"
   printf '{"type":"user","message":{"role":"user","content":"%%s"},"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","gitBranch":"main"}\n' "$2"
   printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Взял в работу."}]},"timestamp":"2026-08-10T10:00:02.000Z"}\n'
 } > "$dir/%s.jsonl"
+if [ -n "$DEVKIT_TASK" ]; then
+  binds=%s
+  mkdir -p "$(dirname "$binds")"
+  printf '%%s сессия %%s задача %%s проект demo дерево - транскрипт %%s источник заказ повод startup tmux %%s\n' \
+    "$(date +%%Y-%%m-%%dT%%H:%%M:%%S)" %s "$DEVKIT_TASK" "$dir/%s.jsonl" "${DEVKIT_TMUX:--}" >> "$binds"
+fi
 exit 0
-`, shQuote(journal), smokeHeadlessID)
+`, shQuote(journal), smokeHeadlessID, shQuote(binds), shQuote(smokeHeadlessID), smokeHeadlessID)
 }
 
 // Файлы стенда, которые правит фикстура taskctl: доска машинным видом, файл
@@ -1479,28 +1494,42 @@ func (s *smoke) stepHarnessRun() (string, error) {
 // доски остаётся с прежним признаком работы.
 func (s *smoke) stepChatStart() (string, error) {
 	var first, second struct {
-		Session string `json:"session"`
+		Tmux    string `json:"tmux"`
 		Message string `json:"message"`
 	}
-	ask := fmt.Sprintf(`{"id": %q}`, smokeTask)
+	// Реплика человека и есть начало чата: пустой заказ ручка отбивает, потому
+	// что заголовок разговора берётся из первых слов (POC ветки poc-chat).
+	ask := fmt.Sprintf(`{"id": %q, "text": "прогон smoke: разговор о задаче"}`, smokeTask)
 	if err := s.call("POST", "/api/projects/demo/chats", ask, http.StatusOK, &first); err != nil {
 		return "", err
 	}
-	if first.Session != "chat-"+smokeTask+"-1" {
-		return "", fmt.Errorf("первый чат задачи поднят сессией %q, ждал chat-%s-1", first.Session, smokeTask)
+	if first.Tmux != "chat-"+smokeTask+"-1" {
+		return "", fmt.Errorf("первый чат задачи поднят сессией %q, ждал chat-%s-1", first.Tmux, smokeTask)
 	}
 	if err := s.call("POST", "/api/projects/demo/chats", ask, http.StatusOK, &second); err != nil {
 		return "", err
 	}
-	if second.Session != "chat-"+smokeTask+"-2" {
+	if second.Tmux != "chat-"+smokeTask+"-2" {
 		return "", fmt.Errorf("второй чат задачи поднят сессией %q, ждал chat-%s-2: "+
-			"чаты отбиваются, как конвейеры", second.Session, smokeTask)
+			"чаты отбиваются, как конвейеры", second.Tmux, smokeTask)
+	}
+	// Пустая реплика чата не поднимает, и отказ на неё виден словами: заведись
+	// разговор без слов человека, в списке он остался бы безымянным.
+	var empty struct {
+		Error string `json:"error"`
+	}
+	if err := s.call("POST", "/api/projects/demo/chats", fmt.Sprintf(`{"id": %q}`, smokeTask),
+		http.StatusBadRequest, &empty); err != nil {
+		return "", err
+	}
+	if !strings.Contains(empty.Error, "чат начинается со слов человека") {
+		return "", fmt.Errorf("пустая реплика отбита выдуманной причиной: %s", empty.Error)
 	}
 	runs, err := os.ReadFile(s.runsFile())
 	if err != nil {
 		return "", fmt.Errorf("журнала поднятых сессий нет: %v", err)
 	}
-	want := "DEVKIT_TMUX='" + second.Session + "'"
+	want := "DEVKIT_TMUX='" + second.Tmux + "'"
 	if !strings.Contains(string(runs), want) {
 		return "", fmt.Errorf("чат не назвал себя реестру, ждал %q:\n%s", want, runs)
 	}
@@ -1531,7 +1560,7 @@ func (s *smoke) stepChatStart() (string, error) {
 		return "", fmt.Errorf("живых работ у задачи %s стало %d: чаты сосчитаны занятостью", smokeTask, talks)
 	}
 	return fmt.Sprintf("%s; второй чат встал рядом (%s), а второй конвейер отбит: %s",
-		first.Message, second.Session, refusal.Error), nil
+		first.Message, second.Tmux, refusal.Error), nil
 }
 
 // stepDropDraft: черновик снимается с экрана, а не из терминала. Причина

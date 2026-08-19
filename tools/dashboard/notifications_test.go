@@ -345,7 +345,9 @@ func TestNotificationsStream(t *testing.T) {
 
 // Экран ленты собран по макету «05 Лента»: три типа DoD чипами фильтров,
 // группировка по дням, действие «Поднять виток» у стопа и живой поток вместо
-// перезагрузки страницы.
+// перезагрузки страницы. Строки про недошедший баннер тут больше нет: человек
+// читает список событий, а не разбирает канал доставки, и причина осталась в
+// журнале уведомителя, где её и разбирают.
 func TestStaticFeedScreen(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
@@ -353,10 +355,9 @@ func TestStaticFeedScreen(t *testing.T) {
 		`{ kind: "wait", name: "Ожидание пользователя" }`,
 		`{ kind: "task", name: "Задачи" }`,
 		"Поднять виток",
-		"Разговор агента",
+		"Чат агента",
 		"/api/notifications?stream=1",
 		"dayLabel",
-		"баннера не было",
 	} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в static/app.js нет части экрана ленты %q", want)
@@ -371,16 +372,18 @@ func TestStaticFeedScreen(t *testing.T) {
 }
 
 // Переход от события клиент строит по полям события (DK-323): проект берётся
-// из события, а не с открытого экрана, к задаче и к журналу агента ведёт любое
-// событие с задачей, а событие без задачи помечено словами.
+// из события, а не с открытого экрана, к задаче и к чату агента ведёт любое
+// событие с задачей, а событие про ждущий разговор открывает сам разговор.
+// Переход к задаче идёт с оглядкой на панель: она стоит хвостом адреса, и
+// голая правка хеша сбрасывала бы открытый рядом чат.
 func TestStaticFeedGoesByEventFields(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		"const to = n.project || project;",
 		"startRun(to, n.id)",
-		`location.hash = to + "/" + n.id;`,
+		`goKeepingChat(to + "/" + n.id)`,
 		`jrn.href = "#" + taskChatHash(to, n.id);`,
-		"задачи у события нет",
+		"openChat(chatAddr(to, n.chat))",
 	} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в static/app.js нет перехода по полям события %q", want)
@@ -480,23 +483,42 @@ func TestNotificationsStreamMissingThenBorn(t *testing.T) {
 }
 
 // Флеш всплывает на то, что случилось при открытом окне: хвост журнала,
-// который сервер отдаёт при подключении, не всплывает, и на открытой ленте
-// событие тоже не дублируется, там оно и так дописывается строкой.
+// который сервер отдаёт при подключении, не всплывает, на открытой ленте
+// событие тоже не дублируется, там оно и так дописывается строкой, а про
+// открытый в панели разговор баннер молчит вовсе: человек смотрит прямо на
+// него.
 func TestStaticFlashWorthy(t *testing.T) {
-	heads := []string{"function flashWorthy("}
+	heads := []string{"function flashMuted(", "function flashWorthy("}
 	cases := []struct {
-		expr string
-		want string
+		shown string
+		expr  string
+		want  string
 	}{
-		{`flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", false)`, "true"},
-		{`flashWorthy({time: "2026-08-11T09:20:00"}, "2026-08-11T10:00:00", false)`, "false"},
-		{`flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", true)`, "false"},
-		{`flashWorthy({}, "2026-08-11T10:00:00", false)`, "false"},
-		{`flashWorthy(null, "", false)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", false)`, "true"},
+		{"", `flashWorthy({time: "2026-08-11T09:20:00"}, "2026-08-11T10:00:00", false)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", true)`, "false"},
+		{"", `flashWorthy({}, "2026-08-11T10:00:00", false)`, "false"},
+		{"", `flashWorthy(null, "", false)`, "false"},
+		{`{project: "demo", sid: "", task: "XR-100"}`,
+			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", id: "XR-100"}, "2026-08-11T10:00:00", false)`,
+			"false"},
+		{`{project: "demo", sid: "s1", task: ""}`,
+			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", session: "s1"}, "2026-08-11T10:00:00", false)`,
+			"false"},
+		{`{project: "demo", sid: "s1", task: ""}`,
+			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", session: "s2"}, "2026-08-11T10:00:00", false)`,
+			"true"},
 	}
 	for _, c := range cases {
-		if got := jsEval(t, heads, c.expr); got != c.want {
-			t.Errorf("%s: %q, жду %q", c.expr, got, c.want)
+		// Открытый разговор это переменная модуля, и в вырезку куска она не
+		// попадает: стенд ставит её сам, ровно тем значением, что стоит в случае.
+		shown := c.shown
+		if shown == "" {
+			shown = `{project: "", sid: "", task: ""}`
+		}
+		expr := "(() => { globalThis.chatShown = " + shown + "; return " + c.expr + "; })()"
+		if got := jsEval(t, heads, expr); got != c.want {
+			t.Errorf("%s при открытом %s: %q, жду %q", c.expr, shown, got, c.want)
 		}
 	}
 }

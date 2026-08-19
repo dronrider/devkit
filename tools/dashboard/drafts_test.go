@@ -150,9 +150,9 @@ func TestDraftsSortedByPrio(t *testing.T) {
 	}
 }
 
-// «Провести груминг» поднимает сессию разбора той же механикой, что и конвейер
-// задачи: tmux-сессия с headless-сессией конвейера и заказом теми же словами,
-// какими груминг просят в чате.
+// «Провести груминг» поднимает сессию разбора живым чатом: tmux-сессия с
+// интерактивным клиентом, заказом теми же словами, какими груминг просят в
+// чате, и парами окружения, которыми поднятая сессия называет себя в реестре.
 func TestDraftGroomPrompt(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	tmuxLog := filepath.Join(e.home, "tmux.log")
@@ -169,9 +169,16 @@ func TestDraftGroomPrompt(t *testing.T) {
 	if !strings.Contains(text, `"session":"task-XR-005"`) {
 		t.Errorf("имя сессии груминга не то: %s", text)
 	}
-	want := "new-session -d -s task-XR-005 -c " + e.proj + " claude -p 'Проведи груминг XR-005'"
-	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
-		t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
+	// Дом в парах окружения зависит от машины, поэтому сверяются два куска:
+	// начало команды с именем сессии и её хвост с задачей и заказом.
+	got := readFile(t, tmuxLog)
+	for _, want := range []string{
+		"new-session -d -s task-XR-005 -c " + e.proj + " ",
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude 'Проведи груминг XR-005'",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
+		}
 	}
 
 	// Поверх живой работы с тем же ID вторая сессия не поднимается: разбирать
@@ -523,8 +530,10 @@ func TestDraftOutcomeTraces(t *testing.T) {
 }
 
 // Груминг, кончившийся вопросом, следа на диске не оставляет, и вопрос лежит
-// только в транскрипте: экран берёт последнее слово агента из разговора той же
-// записи.
+// только в транскрипте: ручка берёт последнее слово агента из чата той же
+// записи. Чат этот находится записью реестра: заказ дашборда ставит поднятой
+// сессии DEVKIT_TASK, хук старта пишет по нему привязку, а первую реплику
+// дашборд больше не разбирает.
 func TestDraftOutcomeQuestion(t *testing.T) {
 	e, c, _ := draftsEnv(t)
 	id := makeDraft(t, c, e, "две записи об одном и том же")
@@ -533,6 +542,7 @@ func TestDraftOutcomeQuestion(t *testing.T) {
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Какой из двух дублей оставить?"}]},"timestamp":"2026-08-13T10:00:02.000Z"}
 `
 	writeSession(t, e.home, e.proj, "", "aaaabbbbcccc1111", transcript, time.Now())
+	writeBinds(t, e.home, bindRecord("2026-08-13T10:00:00", "aaaabbbbcccc1111", id, bindOrder))
 
 	got := draftOutcomeResp(t, c, e, id)
 	if got["state"] != "open" {
@@ -542,7 +552,7 @@ func TestDraftOutcomeQuestion(t *testing.T) {
 		t.Errorf("последнее слово груминга не приехало: %v", got)
 	}
 	if sid, _ := got["session"].(string); sid != "aaaabbbbcccc1111" {
-		t.Errorf("разговор, из которого взят вопрос, не назван: %v", got)
+		t.Errorf("чат, из которого взят вопрос, не назван: %v", got)
 	}
 }
 
@@ -564,7 +574,7 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude -p 'Проведи груминг " + id + ". Человек уточняет: оставить эту, вторую снять'"
+	want := "claude 'Проведи груминг " + id + ". Человек уточняет: оставить эту, вторую снять'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
 	}
@@ -589,11 +599,11 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 		t.Fatalf("груминг с уточнением в кавычках: %d %s", resp.StatusCode, got)
 	}
 	logged := readFile(t, tmuxLog)
-	cut := strings.LastIndex(logged, "claude -p ")
+	cut := strings.LastIndex(logged, "claude ")
 	if cut < 0 {
 		t.Fatalf("сессия с заказом не поднялась:\n%s", logged)
 	}
-	quoted := strings.TrimSpace(logged[cut+len("claude -p "):])
+	quoted := strings.TrimSpace(logged[cut+len("claude "):])
 	// Тот же разбор, что сделает шелл tmux: заказ обязан прийти одной строкой и
 	// ровно тем текстом, который написал человек. Порванная цитата уронила бы
 	// сам shell, а неэкранированные обратные кавычки подставили бы сюда вывод

@@ -569,13 +569,27 @@ func TestStaticNoPauseWord(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		text := strings.ToLower(readFile(t, filepath.Join("static", e.Name())))
+		text := strings.ToLower(dropComments(readFile(t, filepath.Join("static", e.Name()))))
 		for _, bad := range []string{"пауза", "паузу", "паузы", "pause"} {
 			if strings.Contains(text, bad) {
 				t.Errorf("в static/%s есть слово %q, а стоп называется стопом", e.Name(), bad)
 			}
 		}
 	}
+}
+
+// dropComments выбрасывает строки-комментарии статики: обещание тут про слова
+// на экране, а в пояснениях к коду пауза живёт своей жизнью и говорит про
+// задержку перед переподключением потока, а не про остановку агента.
+func dropComments(text string) string {
+	var keep []string
+	for _, ln := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "//") {
+			continue
+		}
+		keep = append(keep, ln)
+	}
+	return strings.Join(keep, "\n")
 }
 
 // Оболочка ищется и в корне, который сам есть чекаут devkit, не только в

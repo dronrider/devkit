@@ -1001,8 +1001,17 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 			t.Errorf("разворот ранга собран не кнопкой: нет %q", want)
 		}
 	}
+	// Ширину меряет только раскладка полосы действий, и смотрит запрет на сам
+	// блок ранга, а не на весь экран: перепутав их, тест ловил бы чужой
+	// matchMedia соседнего блока.
+	from := strings.Index(body, `const rank = el("div", "card rcard rfolded")`)
+	to := strings.Index(body, `const rail = el("div", "rrail")`)
+	if from < 0 || to < from {
+		t.Fatal("блок ранга в отрисовке задачи не нашёлся: смотреть запрет негде")
+	}
+	rank := body[from:to]
 	for _, gone := range []string{"matchMedia", "innerWidth", `setAttribute("tabindex"`} {
-		if strings.Contains(body, gone) {
+		if strings.Contains(rank, gone) {
 			t.Errorf("доступность ранга снова считается статикой (%q): при смене ширины окна "+
 				"без перерисовки она врёт в обе стороны", gone)
 		}
@@ -1049,9 +1058,10 @@ func TestStaticTaskBarIcons(t *testing.T) {
 			t.Errorf("кнопка полосы собрана без %q: значок на телефоне остаётся без имени", want)
 		}
 	}
+	// Входа в разговор на полосе задачи нет: окно чатов открывает значок в
+	// шапке, и вторая дорога туда же с полосы снята нарочно.
 	acts := funcBody(t, app, "function taskActions(")
-	for _, want := range []string{`work ? "Живой статус" : "Разговор агента"`,
-		`work ? "i-live" : "i-talk"`,
+	for _, want := range []string{
 		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
 		`barBtn("btn btn-acc", name, "i-play")`} {
 		if !strings.Contains(acts, want) {
@@ -1059,8 +1069,8 @@ func TestStaticTaskBarIcons(t *testing.T) {
 		}
 	}
 	page := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-chat"`, `data-ico="i-live"`,
-		`data-ico="i-talk"`} {
+	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-stop"`,
+		`data-ico="i-done"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("в static/index.html нет значка %q", want)
 		}

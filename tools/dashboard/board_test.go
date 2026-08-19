@@ -392,7 +392,9 @@ func TestStaticAgentsScreen(t *testing.T) {
 func TestStaticAgentsRowGates(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	row := funcBody(t, app, "function agentRow(")
-	if !strings.Contains(row, `goButton("Разговор агента", taskChatHash(project, w.id))`) {
+	// Разговор открывается панелью поверх экрана: нажатие зовёт openChat, а не
+	// уводит по адресу задачи.
+	if !strings.Contains(row, `openChat(chatAddr(project, w.id))`) {
 		t.Error("перехода в разговор агента нет")
 	}
 	if strings.Contains(row, `goButton("Чат с агентом"`) {

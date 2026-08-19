@@ -146,9 +146,17 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),
 		}
+		// Мера состояния: своё имя tmux-сессии старше свежести транскрипта.
+		// Диалог, поднятый дашбордом, кончился ровно тогда, когда его сессии
+		// нет в списке tmux, и свежий транскрипт тут ничего не значит: минуту
+		// назад он писался живым процессом, которого уже нет. Окном vscode
+		// считается только разговор, у которого своей tmux-сессии не было
+		// вовсе, а транскрипт при этом свежий.
 		switch {
 		case e.Tmux != "" && alive(e.Tmux):
 			e.State = chatLive
+		case e.Tmux != "":
+			e.State = chatDead
 		case f.mod.After(cutoff):
 			e.State = chatVscode
 		default:
@@ -395,10 +403,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"})
 		return
 	}
-	// Своей tmux-сессии нет, а транскрипт свежий: разговор идёт в чужом окне, и
-	// подать туда реплику нечем. Молчаливый резюм тут завёл бы второго агента
-	// на том же дереве.
-	if s.now().Sub(info.mod) < sessionLiveTTL {
+	// Своей tmux-сессии не было вовсе, а транскрипт свежий: разговор идёт в
+	// чужом окне, и подать туда реплику нечем. Молчаливый резюм тут завёл бы
+	// второго агента на том же дереве. Диалог с известным именем tmux-сессии
+	// сюда не попадает: его сессии нет в списке, значит процесс кончился, и
+	// свежесть транскрипта про это ничего не говорит.
+	if last.Tmux == "" && s.now().Sub(info.mod) < sessionLiveTTL {
 		writeJSON(w, http.StatusConflict, map[string]any{"way": chatVscode,
 			"error": fmt.Sprintf(
 				"разговор идёт в окне vscode (транскрипт писался %s назад, своей tmux-сессии у него нет): пишите там",

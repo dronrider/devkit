@@ -3338,8 +3338,19 @@ function sessionMessageURL(project, sid) {
 // клиента. Отложенной доставки и очереди исходящих тут больше нет вовсе.
 
 // Адрес пустого диалога: он заведён кнопкой «+», сессии у него ещё нет, и
-// поднимет её первая реплика человека.
+// поднимет её первая реплика человека. Задача едет хвостом через двоеточие
+// («new:DK-397»): заведённый с экрана задачи диалог поднимается в её дереве и
+// с её же фильтром списка, а без хвоста это разговор ни о чём конкретном.
 const CHAT_NEW = "new";
+
+function chatIsNew(addr) {
+  return addr === CHAT_NEW || String(addr || "").startsWith(CHAT_NEW + ":");
+}
+
+function chatNewTask(addr) {
+  const tail = String(addr || "").slice(CHAT_NEW.length + 1);
+  return chatIsTask(tail) ? tail : "";
+}
 
 // Состояние переключателя фильтра по задаче живёт в localStorage: человек
 // ставит его один раз под свою привычку, а не на каждое открытие окна.
@@ -3392,9 +3403,14 @@ function chatsURL(project) {
 async function chatState(project, addr, board) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
     error: "", models: ["opus", "sonnet", "haiku"], fresh: false };
-  if (chatIsTask(addr)) st.task = addr;
-  else if (addr && addr !== CHAT_BOARD && addr !== CHAT_NEW) st.sid = addr;
-  if (addr === CHAT_NEW) st.fresh = true;
+  if (chatIsNew(addr)) {
+    st.fresh = true;
+    st.task = chatNewTask(addr);
+  } else if (chatIsTask(addr)) {
+    st.task = addr;
+  } else if (addr && addr !== CHAT_BOARD) {
+    st.sid = addr;
+  }
   const r = await api(chatsURL(project));
   if (!r.ok) {
     st.error = r.body.error || "список разговоров не прочитался";
@@ -3547,7 +3563,9 @@ function chatHead(project, st) {
   add.append(icon("i-plus"));
   add.title = "Новый разговор";
   add.setAttribute("aria-label", "Новый разговор");
-  add.addEventListener("click", () => { switchChat(CHAT_NEW); });
+  add.addEventListener("click", () => {
+    switchChat(st.task ? CHAT_NEW + ":" + st.task : CHAT_NEW);
+  });
   line.append(add);
 
   const model = el("select", "cdsel");

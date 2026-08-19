@@ -501,6 +501,13 @@ type reply struct {
 	Text string `json:"text,omitempty"`
 	Tool string `json:"tool,omitempty"`
 	Note string `json:"note,omitempty"`
+	// Sel это выделенный человеком кусок постановки, приложенный к реплике
+	// контекстом, а SelFile называет файл, откуда он взят. В ленте это
+	// свёрнутый блок при пузыре, а агенту оно уезжает префиксом самой реплики:
+	// протокола сложнее префикса тут не нужно, это тот же приём, каким Claude
+	// Code носит открытый файл (замечание 3 девятого круга POC).
+	Sel     string `json:"sel,omitempty"`
+	SelFile string `json:"selFile,omitempty"`
 	// Spent это длительность размышлений в миллисекундах, посчитанная по
 	// меткам времени соседних записей транскрипта. Модель отдаёт размышления
 	// запечатанными чаще, чем текстом, и тогда сказать про них можно только
@@ -784,7 +791,14 @@ func svcNote(tag svcTag, body string) string {
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string) {
 	if inner, name, wrapped := unwrapPeer(text); wrapped {
-		add(reply{Role: role, Time: at, Text: inner, Note: peerSource(name)})
+		text = inner
+		sel, file, rest := cutSelection(text)
+		add(reply{Role: role, Time: at, Text: rest, Note: peerSource(name),
+			Sel: sel, SelFile: file})
+		return
+	}
+	if sel, file, rest := cutSelection(text); sel != "" {
+		add(reply{Role: role, Time: at, Text: rest, Sel: sel, SelFile: file})
 		return
 	}
 	said, notes := splitService(text)
@@ -797,6 +811,21 @@ func addUser(add func(reply), role, at, text string) {
 		return
 	}
 	add(reply{Role: role, Time: at, Text: said})
+}
+
+// selWrapRe ловит приложенное к реплике выделение. Блок стоит префиксом, и
+// текст внутри едет как есть: кавычки, переносы и разметка человека сохраняются
+// целиком, потому что править их некому и незачем.
+var selWrapRe = regexp.MustCompile(`(?s)\A<selection file="([^"]*)">\n(.*?)\n</selection>\n?`)
+
+// cutSelection отрезает префикс выделения от слов человека. Пустое выделение
+// значит, что реплика приехала без него, и это обычный случай.
+func cutSelection(text string) (sel, file, rest string) {
+	m := selWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", text
+	}
+	return m[2], m[1], strings.TrimSpace(text[len(m[0]):])
 }
 
 // splitService вырезает из реплики известные служебные вставки. Первый ответ

@@ -1474,7 +1474,10 @@ function withTip(node, text) {
 
 // Черновик экрана задачи: пока в форме есть правка, живое обновление её не
 // затирает. Экран один, поэтому и черновик один.
-const taskDraft = { id: "", dirty: false, seen: "" };
+// edit это режим правки экрана задачи: по умолчанию задача открывается на
+// просмотр, а карандаш рядом с названием пускает в поля. Признак живёт вместе с
+// черновиком правки и снимается сохранением.
+const taskDraft = { id: "", dirty: false, seen: "", edit: false };
 
 // Правки строки, зависимостей и файла: всё уходит в API, а тот зовёт taskctl.
 // Ответ показывается словами, и удача, и отказ утилиты (кривая разбивка
@@ -1516,6 +1519,9 @@ async function saveTaskDraft(project, id, patch, text) {
   }
   sayResult(said.join("; "));
   taskDraft.dirty = false;
+  // Сохранение возвращает просмотр: правка кончилась, и держать поля открытыми
+  // незачем (замечание 1 девятого круга POC).
+  taskDraft.edit = false;
   await refresh();
   return true;
 }
@@ -1612,7 +1618,14 @@ function depsCard(project, id, after, blocks) {
 // панели нет, она одна на всю форму. Файл кладёт сам add вместе со строкой, и
 // кнопка «Завести файл» достаётся только дыре: строке до рубежа либо файлу,
 // снятому руками (taskctl file заодно чинит ссылку в строке доски).
-function filePanel(project, id, detail, form, touch) {
+// Блок постановки: по умолчанию просмотр разметки, правка по карандашу
+// (замечание 1 девятого круга POC). Сырой текст в поле ввода читается хуже
+// собранного: постановка длинная, со списками и таблицами, и глазами её берут
+// куда чаще, чем правят. Разметчик свой, тот же, что в ленте: внешних скриптов
+// CSP дашборда не пускает, а тащить библиотеку ради шести правил незачем.
+// Текст в дерево кладётся только узлами (createTextNode), никакого innerHTML,
+// поэтому угловые скобки из постановки остаются текстом и разметкой не станут.
+function filePanel(project, id, detail, form, touch, edit) {
   const card = el("div", "card fpanel");
   const head = el("div", "fhead");
   head.append(el("b", "", detail.file || "docs/tasks/" + id + ".md"));
@@ -1627,11 +1640,46 @@ function filePanel(project, id, detail, form, touch) {
     body.append(el("div", "empty", detail.note || "файла задачи нет"));
     return card;
   }
+  // Разворот на всю среднюю колонку: кнопка висит в правом верхнем углу блока,
+  // обратная сворачивает назад. Состояние живёт до ухода с экрана, между
+  // заходами его не держим (замечание 2).
+  const wide = el("button", "fwide");
+  wide.setAttribute("aria-label", "Развернуть описание");
+  wide.title = "Развернуть на всю колонку";
+  wide.append(icon("i-wide"));
+  wide.addEventListener("click", () => {
+    const on = card.classList.toggle("wide");
+    wide.replaceChildren(icon(on ? "i-narrow" : "i-wide"));
+    wide.title = on ? "Свернуть обратно" : "Развернуть на всю колонку";
+    wide.setAttribute("aria-label", wide.title);
+  });
+  card.append(wide);
+
   const ta = el("textarea");
   ta.value = form.text;
   ta.setAttribute("aria-label", "текст файла задачи " + id);
   ta.addEventListener("input", () => { form.text = ta.value; touch(); });
-  body.append(ta);
+  // Просмотр: из этого блока берётся выделение, которое уезжает агенту
+  // контекстом, поэтому у него свой класс и свой признак файла.
+  const view = el("div", "fview");
+  view.dataset.file = detail.file || "docs/tasks/" + id + ".md";
+  const paint = () => {
+    if (String(form.text || "").trim()) view.replaceChildren(mdRender(form.text));
+    else view.replaceChildren(el("div", "empty", "файл задачи пуст"));
+  };
+  paint();
+  body.append(view, ta);
+  // Переключение режима идёт по месту, а не перерисовкой экрана: перерисовка
+  // над тронутой формой запрещена (она стёрла бы несохранённое), и карандаш на
+  // ней молчал бы вовсе, что неотличимо от сломанной кнопки. Заодно так видно
+  // несохранённую правку: просмотр собирается из формы, а не из того, что
+  // лежит на диске.
+  card.setEdit = (on) => {
+    view.hidden = on;
+    ta.hidden = !on;
+    if (!on) paint();
+  };
+  card.setEdit(Boolean(edit));
   return card;
 }
 
@@ -1984,6 +2032,11 @@ async function renderTask(project, works, id) {
 
   const head = el("div", "thead");
   head.append(el("span", "idbig", row.id));
+  // Правка включается карандашом справа от названия: по умолчанию задача
+  // открывается на просмотр, и постановка собрана разметкой, а не лежит сырым
+  // текстом в поле (замечание 1 девятого круга POC). Признак живёт до ухода с
+  // экрана: сохранение возвращает просмотр само.
+  const editing = taskDraft.id === id && taskDraft.edit;
   const title = el("textarea", "tedit");
   title.value = form.title;
   title.setAttribute("aria-label", "заголовок задачи " + id);
@@ -1997,7 +2050,29 @@ async function renderTask(project, works, id) {
   };
   title.addEventListener("input", () => { form.title = title.value; fitTitle(); touch(); });
   setTimeout(fitTitle, 0);
+  title.readOnly = !editing;
+  title.classList.toggle("ro", !editing);
   head.append(title);
+  const pencil = el("button", "tpen" + (editing ? " on" : ""));
+  pencil.title = editing ? "Закончить правку" : "Править задачу";
+  pencil.setAttribute("aria-label", pencil.title);
+  pencil.append(icon(editing ? "close" : "i-pen"));
+  let editNow = editing;
+  pencil.addEventListener("click", () => {
+    editNow = !editNow;
+    taskDraft.id = id;
+    // Признак живёт в черновике: следующая честная перерисовка экрана (она
+    // бывает после сохранения) откроет задачу тем же режимом.
+    taskDraft.edit = editNow;
+    title.readOnly = !editNow;
+    title.classList.toggle("ro", !editNow);
+    pencil.classList.toggle("on", editNow);
+    pencil.replaceChildren(icon(editNow ? "close" : "i-pen"));
+    pencil.title = editNow ? "Закончить правку" : "Править задачу";
+    pencil.setAttribute("aria-label", pencil.title);
+    if (file.setEdit) file.setEdit(editNow);
+  });
+  head.append(pencil);
   page.append(head);
 
   const chips = el("div", "tchips");
@@ -2085,6 +2160,7 @@ async function renderTask(project, works, id) {
   });
   drop.addEventListener("click", () => {
     taskDraft.dirty = false;
+    taskDraft.edit = false;
     renderTask(project, works, id).catch(console.error);
   });
 
@@ -2184,7 +2260,7 @@ async function renderTask(project, works, id) {
 
   const rail = el("div", "rrail");
   const deps = depsCard(project, id, detail.after || [], detail.blocks || []);
-  const file = filePanel(project, id, detail, form, touch);
+  const file = filePanel(project, id, detail, form, touch, editing);
   const grid = el("div", "tgrid");
   page.append(grid);
   // Блоки экрана встают в разметку туда же, где они нарисованы: полоса
@@ -2393,6 +2469,14 @@ function mdInline(text, into) {
 // жирный и курсив, ссылки. Свой разбор без внешней библиотеки, и весь текст
 // кладётся в узлы через textContent, поэтому разметка из реплики остаётся
 // буквами: <script> в ответе агента виден словами, а не исполняется.
+// Широкое содержимое (таблица, код) едет в своей прокрутке: страница от него
+// вбок не разъезжается.
+function wrapScroll(node) {
+  const box = el("div", "mdscroll");
+  box.append(node);
+  return box;
+}
+
 function mdRender(text) {
   const box = el("div", "md");
   const lines = String(text || "").split("\n");
@@ -2415,6 +2499,49 @@ function mdRender(text) {
       const h = el("div", "mdh mdh" + head[1].length);
       mdInline(head[2], h);
       box.append(h);
+      continue;
+    }
+    // Таблица: строка с трубами, под ней разделитель из дефисов. Разбор
+    // нарочно узкий, ровно под то, что встречается в постановках; выравнивание
+    // из разделителя не читается, оно тут ни на что не влияет.
+    if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:-]*-[\s:|-]*$/.test(lines[i + 1])) {
+      list = null;
+      para = null;
+      const cells = (ln) => ln.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|");
+      const table = el("table", "mdt");
+      const thead = el("thead");
+      const hrow = el("tr");
+      for (const c of cells(line)) {
+        const th = el("th");
+        mdInline(c.trim(), th);
+        hrow.append(th);
+      }
+      thead.append(hrow);
+      table.append(thead);
+      const tbody = el("tbody");
+      i += 2;
+      for (; i < lines.length && /\|/.test(lines[i]) && lines[i].trim(); i++) {
+        const tr = el("tr");
+        for (const c of cells(lines[i])) {
+          const td = el("td");
+          mdInline(c.trim(), td);
+          tr.append(td);
+        }
+        tbody.append(tr);
+      }
+      i--;
+      table.append(tbody);
+      box.append(wrapScroll(table));
+      continue;
+    }
+    // Цитата: полоса слева, содержимое разбирается тем же строчным разбором.
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      list = null;
+      para = null;
+      const q = el("blockquote", "mdq");
+      mdInline(quote[1], q);
+      box.append(q);
       continue;
     }
     const item = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
@@ -3053,6 +3180,12 @@ function toolPair(call, out) {
   return foldEl("tool", name, body, sub, body);
 }
 
+// Приложенное выделение свёрнутым блоком при пузыре: развернуть по клику.
+// Простыня постановки в ленте закрыла бы собой сам разговор.
+function selFold(file, text) {
+  return foldEl("selq", "выделение", text, file, text);
+}
+
 function chatItem(item) {
   if (item.role === "note") return replyEl(item);
   if ((item.role === "user" || item.role === "assistant") && item.text) {
@@ -3061,7 +3194,10 @@ function chatItem(item) {
     // донёс. Обёртку канала сервер уже снял, тут остаётся чистый текст.
     const who = item.role === "user" ? "вы" : "агент";
     const from = item.note || "из транскрипта";
-    return chatBubble(who, item.text, (item.time ? localTime(item.time) + ", " : "") + from);
+    const tail = item.sel ? from + ", с выделением" : from;
+    const wrap = chatBubble(who, item.text, (item.time ? localTime(item.time) + ", " : "") + tail);
+    if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
+    return wrap;
   }
   return replyEl(item);
 }
@@ -4210,6 +4346,30 @@ function makeBusy(project, box) {
 // её принесёт поток, значит показывать человеку пустоту в ответ на отправку.
 // Дубля от этого нет: пришедшее из потока эхо узнаётся по тексту среди свежих
 // реплик человека и заменяет собой местный пузырь (замечание пятого круга POC).
+// Живое выделение в блоке постановки. Берётся оно ровно оттуда: выделение в
+// ленте, в чужой карточке или в поле ввода контекстом не считается, иначе к
+// реплике липло бы всё, что человек когда-то подсветил мышью. Файл называется
+// самим блоком (data-file), чтобы агент знал, что именно ему показали.
+function grabSelection() {
+  const sel = window.getSelection ? window.getSelection() : null;
+  if (!sel || sel.isCollapsed) return null;
+  const text = String(sel.toString() || "");
+  if (!text.trim()) return null;
+  const node = sel.anchorNode;
+  const host = node && (node.nodeType === 1 ? node : node.parentNode);
+  const view = host && host.closest ? host.closest(".fview") : null;
+  if (!view) return null;
+  return { file: (view.dataset && view.dataset.file) || "постановка", text };
+}
+
+// Префикс выделения. Текст едет как есть, вместе с кавычками и переносами:
+// править чужой текст по дороге нельзя, агент должен увидеть ровно то, что
+// человек выделил. Разделитель это закрывающий тег на своей строке, поэтому
+// внутри выделения он не встретится случайно.
+function selPrefix(sel) {
+  return '<selection file="' + sel.file + '">\n' + sel.text + "\n</selection>\n";
+}
+
 function makeEcho(project, box, feedBox) {
   // Ключ у местной реплики свой и сквозной: sync рисует ленту по ключам, и
   // без устойчивого ключа пузырь пересобирался бы на каждой перерисовке.
@@ -4219,9 +4379,11 @@ function makeEcho(project, box, feedBox) {
   const draw = () => {
     box.replaceChildren();
     for (const m of mine) {
-      const wrap = chatBubble("вы", m.text, m.state === "bad"
-        ? "не ушло" : m.state === "sent" ? "доставлено" : "отправляется...");
+      const meta = m.state === "bad" ? "не ушло"
+        : m.state === "sent" ? "доставлено" : "отправляется...";
+      const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
       wrap.classList.add("m-local", "m-" + m.state);
+      if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       if (m.state === "bad") {
         const again = el("button", "linkish", "повторить");
         again.addEventListener("click", () => {
@@ -4246,9 +4408,13 @@ function makeEcho(project, box, feedBox) {
 
   return {
     // Пузырь встаёт до похода на сервер: отправка видна мгновенно.
-    add(text, retry) {
+    // wire это то, что ушло агенту (с префиксом выделения), и сверка эха идёт
+    // по нему: в транскрипте лежит именно он. text это слова человека, их и
+    // видно в пузыре.
+    add(text, retry, wire, sel) {
       seq += 1;
-      const m = { key: "local-" + seq, text, state: "wait", born: Date.now(), retry };
+      const m = { key: "local-" + seq, text, wire: wire || text, sel,
+        state: "wait", born: Date.now(), retry };
       mine.push(m);
       draw();
       return m;
@@ -4271,8 +4437,10 @@ function makeEcho(project, box, feedBox) {
     // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
     saw(item) {
       if (item.role !== "user" || !item.text) return;
+      // Сервер отрезал префикс выделения и вернул слова человека отдельно,
+      // поэтому сверять можно и по ним, и по всему отправленному.
       const said = item.text.trim();
-      const hit = mine.find((m) => m.text.trim() === said);
+      const hit = mine.find((m) => m.text.trim() === said || m.wire.trim() === said);
       if (hit) drop(hit);
     },
     clear() {
@@ -4338,15 +4506,18 @@ function chatPanel(project, st) {
   const row = el("div", "crow");
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
-  const post = (text) => {
+  const post = (text, sel) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
-    const m = echo.add(text, post);
+    // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
+    // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
+    const wire = sel ? selPrefix(sel) + text : text;
+    const m = echo.add(text, (again) => post(again, sel), wire, sel);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     if (way.kind === "new") {
-      chatRaise(project, st, text, st.entry ? st.entry.model : chatModelPref())
+      chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref())
         .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
         .catch((err) => { echo.bad(m); console.error(err); })
         .finally(done);
@@ -4354,7 +4525,7 @@ function chatPanel(project, st) {
     }
     busy.on(st.sid);
     api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-      { method: "POST", body: { text } })
+      { method: "POST", body: { text: wire } })
       .then((r) => {
         if (!r.ok) {
           // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
@@ -4384,7 +4555,10 @@ function chatPanel(project, st) {
     ta.value = "";
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
-    post(text);
+    // Выделенный в постановке кусок уезжает вместе с репликой: человек
+    // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
+    // сам текст (замечание 3 девятого круга POC).
+    post(text, grabSelection());
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
   // короткими репликами, и тянуться к кнопке на каждой из них незачем.

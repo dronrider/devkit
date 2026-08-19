@@ -903,3 +903,37 @@ a:hover{text-decoration:underline}
 /* номер задачи в строке уведомления (замечание 5) */
 .nid{display:inline-block;margin-top:3px;padding:1px 7px;border-radius:5px;background:var(--bg3);color:var(--tx2);font:600 10.5px var(--mono);cursor:pointer}
 .nid:hover{background:var(--acc);color:var(--bg0)}
+
+/* ---- просмотр постановки разметкой (замечания 1 и 2 девятого круга) ---- */
+.fpanel{position:relative}
+.fview{padding:2px 2px 4px;font:400 13.5px/1.65 var(--sans);color:var(--tx);overflow-wrap:anywhere}
+.fview .mdh{font-weight:600;margin:14px 0 6px;color:var(--tx)}
+.fview .mdh1{font-size:17px}
+.fview .mdh2{font-size:15.5px}
+.fview .mdh3{font-size:14px}
+.fview p{margin:7px 0}
+.fview ul,.fview ol{margin:7px 0 7px 20px;padding:0}
+.fview li{margin:3px 0}
+.fview pre{margin:9px 0;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);font:400 12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.fview code{padding:1px 5px;border-radius:5px;background:var(--bg2);font:400 12px var(--mono)}
+.mdq{margin:8px 0;padding:3px 0 3px 12px;border-left:2px solid var(--line2);color:var(--tx2)}
+.mdscroll{overflow-x:auto;margin:9px 0}
+.mdt{border-collapse:collapse;font:400 12.5px var(--sans)}
+.mdt th,.mdt td{border:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
+.mdt th{background:var(--bg2);font-weight:600}
+/* карандаш правки справа от названия задачи */
+.thead{align-items:flex-start}
+.tpen{flex:none;width:var(--ctl);height:var(--ctl);border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.tpen svg{width:15px;height:15px;display:block}
+.tpen:hover{border-color:var(--acc);color:var(--tx)}
+.tpen.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+.tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default}
+/* разворот блока постановки на всю среднюю колонку */
+.fwide{position:absolute;top:8px;right:8px;z-index:3;width:26px;height:26px;border:1px solid var(--line2);border-radius:7px;background:var(--bg1);color:var(--tx3);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.fwide svg{width:13px;height:13px;display:block}
+.fwide:hover{border-color:var(--acc);color:var(--tx)}
+.fpanel.wide{position:absolute;left:16px;right:16px;top:12px;bottom:12px;z-index:22;overflow-y:auto;box-shadow:0 18px 50px -20px rgba(0,0,0,0.7)}
+.bmain{position:relative}
+/* приложенное к реплике выделение */
+.selq.fold{margin:7px 0 0;background:var(--bg2)}
+.selq.fold .foldh b{color:var(--acc)}

@@ -478,6 +478,62 @@ type reply struct {
 // подпись вызова: первое найденное и есть суть вызова.
 var toolNoteKeys = []string{"command", "file_path", "path", "skill", "pattern", "url", "prompt", "id", "query", "description"}
 
+// toolBodyLimit это потолок текста инструмента в ленте: вывод сборки бывает в
+// мегабайт, и тянуть его на телефон незачем, а первых тысяч знаков хватает,
+// чтобы понять, чем занят агент.
+const toolBodyLimit = 4000
+
+// toolBody собирает читаемое тело вызова: команда целиком, а не обрезанная
+// подпись, плюс остальные строковые поля ввода.
+func toolBody(input map[string]any) string {
+	if len(input) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		v, ok := input[k].(string)
+		if !ok || strings.TrimSpace(v) == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(k + ": " + v)
+	}
+	return truncate(b.String(), toolBodyLimit)
+}
+
+// resultText разворачивает содержимое tool_result: строкой либо списком
+// text-блоков, как их пишет харнес.
+func resultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return truncate(strings.TrimRight(s, "\n"), toolBodyLimit)
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return ""
+	}
+	var out []string
+	for _, b := range blocks {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			out = append(out, b.Text)
+		}
+	}
+	return truncate(strings.TrimRight(strings.Join(out, "\n"), "\n"), toolBodyLimit)
+}
+
 func toolNote(input map[string]any) string {
 	for _, key := range toolNoteKeys {
 		if v, ok := input[key].(string); ok && strings.TrimSpace(v) != "" {
@@ -523,10 +579,12 @@ func parseReplies(data []byte, startSeq int) []reply {
 			continue
 		}
 		var blocks []struct {
-			Type  string         `json:"type"`
-			Text  string         `json:"text"`
-			Name  string         `json:"name"`
-			Input map[string]any `json:"input"`
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			Thinking string          `json:"thinking"`
+			Name     string          `json:"name"`
+			Input    map[string]any  `json:"input"`
+			Content  json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
 			continue
@@ -536,9 +594,21 @@ func parseReplies(data []byte, startSeq int) []reply {
 			case "text":
 				add(reply{Role: rec.Type, Time: rec.Timestamp, Text: b.Text})
 			case "thinking":
-				add(reply{Role: "thinking", Time: rec.Timestamp})
+				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
+				// сервер выбрасывал его, и на экране стояла метка «размышления
+				// свёрнуты», из которой ничего не следовало. Свёрнутым блоком
+				// его рисует панель, разворот кликом.
+				add(reply{Role: "thinking", Time: rec.Timestamp, Text: b.Thinking})
 			case "tool_use":
-				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name, Note: toolNote(b.Input)})
+				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
+					Note: toolNote(b.Input), Text: toolBody(b.Input)})
+			case "tool_result":
+				// Вывод инструмента показывается как есть, обрезанным по длине:
+				// по нему видно, что агент делает, а свёрнутая строка «Bash»
+				// про это молчала.
+				if text := resultText(b.Content); text != "" {
+					add(reply{Role: "toolout", Time: rec.Timestamp, Text: text})
+				}
 			}
 		}
 	}

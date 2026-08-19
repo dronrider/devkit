@@ -141,3 +141,138 @@ func (b Binds) Leads(id string) (string, Bind) {
 	}
 	return best, rec
 }
+
+// --- POC разговора (ветка poc-chat) ---
+//
+// Привязка сессии к задаче идёт по факту работы, и работ у одной сессии много:
+// она двигает строку, зовёт ревью, сливает ветку. Поэтому свёртка «последняя
+// запись выигрывает» тут не годится вовсе, и рядом лежит вторая: сессия и
+// множество задач, которых она касалась.
+
+// BySrc это слово источника у записи по факту работы: строку кладут taskctl,
+// shipctl и agentctl, назвав в поводе саму команду.
+const BySrc = "работа"
+
+// All сворачивает журнал в список записей на сессию, порядком записи.
+func All(data []byte) map[string][]Bind {
+	out := map[string][]Bind{}
+	for _, ln := range strings.Split(string(data), "\n") {
+		if sid, b, ok := ParseLine(ln); ok {
+			out[sid] = append(out[sid], b)
+		}
+	}
+	return out
+}
+
+// LoadAll читает журнал дома списком записей на сессию.
+func LoadAll(home string) map[string][]Bind {
+	data, err := os.ReadFile(Path(home))
+	if err != nil {
+		return map[string][]Bind{}
+	}
+	return All(data)
+}
+
+// Touched называет задачи, которых сессия касалась, свежими первыми. Отвязка
+// рукой («снята») стирает накопленное: человек сказал, что работой задачи это
+// не считается, и возвращать её записями задним числом нельзя.
+func Touched(recs []Bind) []string {
+	var out []string
+	seen := map[string]bool{}
+	for i := len(recs) - 1; i >= 0; i-- {
+		r := recs[i]
+		if r.Source == "снята" {
+			break
+		}
+		if r.Task == "" || seen[r.Task] {
+			continue
+		}
+		seen[r.Task] = true
+		out = append(out, r.Task)
+	}
+	return out
+}
+
+// Last отдаёт последнюю запись сессии: у неё берутся дерево, транскрипт и имя
+// tmux-сессии, поля не задачные и перезаписью не портятся. Пустое поле свежей
+// записи добирается из прежних: строку по факту работы кладёт утилита, которой
+// про tmux ничего не известно.
+func Last(recs []Bind) Bind {
+	var b Bind
+	for _, r := range recs {
+		if r.Project != "" {
+			b.Project = r.Project
+		}
+		if r.Tree != "" {
+			b.Tree = r.Tree
+		}
+		if r.Transcript != "" {
+			b.Transcript = r.Transcript
+		}
+		if r.Tmux != "" {
+			b.Tmux = r.Tmux
+		}
+		b.Task, b.Source, b.Time = r.Task, r.Source, r.Time
+	}
+	return b
+}
+
+// Line собирает строку журнала: формат один на всех писателей, и разъехавшись,
+// они оставили бы читателя с половиной записей (hooks/session-task.py, record).
+func Line(now time.Time, sid string, b Bind, why string) string {
+	dash := func(v string) string {
+		if v = strings.Join(strings.Fields(v), " "); v == "" {
+			return "-"
+		}
+		return v
+	}
+	return now.Format(Stamp) + " сессия " + dash(sid) + " задача " + dash(b.Task) +
+		" проект " + dash(b.Project) + " дерево " + dash(b.Tree) +
+		" транскрипт " + dash(b.Transcript) + " источник " + dash(b.Source) +
+		" повод " + dash(why) + " tmux " + dash(b.Tmux) + "\n"
+}
+
+// Append дописывает строку в журнал, обрезав разросшийся файл теми же берегами,
+// что держит писатель на python (hookio.append_capped).
+func Append(path, line string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 100*1024 {
+		if data, err := os.ReadFile(path); err == nil {
+			lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+			if len(lines) > 500 {
+				lines = lines[len(lines)-500:]
+			}
+			os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(line)
+	return err
+}
+
+// SessionEnv это ключ окружения, которым харнес называет сессии её же ID.
+const SessionEnv = "CLAUDE_CODE_SESSION_ID"
+
+// Touch отмечает в журнале, что сессия работала над задачей. Зовут его утилиты
+// доски из своей main: сессии ID известен только из окружения, и вне сессии
+// харнеса отметки не выходит вовсе, это штатное молчание. Ошибка записи гасится
+// нарочно: журнал разговора не повод ронять команду доски.
+func Touch(task, why string) {
+	sid := strings.TrimSpace(os.Getenv(SessionEnv))
+	task = strings.ToUpper(strings.TrimSpace(task))
+	if sid == "" || task == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	tree, _ := os.Getwd()
+	Append(Path(home), Line(time.Now(), sid, Bind{Task: task, Source: BySrc, Tree: tree}, why))
+}

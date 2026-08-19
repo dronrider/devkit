@@ -153,6 +153,7 @@ func main() {
 		return
 	}
 	logStart, logCmd = gdir, args[0]
+	touchWork(args)
 	var msg string
 	var err error
 	switch args[0] {

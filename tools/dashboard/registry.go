@@ -110,12 +110,10 @@ func bindTask(b sessionBinds, sid, dirSuffix string, head sessionHead) (task, no
 	if id := taskIDInName(dirSuffix); id != "" {
 		return id, treeNote, boundLead
 	}
-	if head.Named != "" {
-		return head.Named, replyNote, boundAbout
-	}
-	if id := taskIDInName(head.Branch); id != "" {
-		return id, branchNote, boundAbout
-	}
+	// Угадывание по первой реплике и по имени ветки снято (POC ветки poc-chat):
+	// именно оно разводило один разговор на четыре карточки, называя работой
+	// всякое окно, где прозвучал ID задачи. Привязка теперь идёт по факту
+	// работы и приезжает записью реестра.
 	return "", unknownTaskNote, ""
 }
 

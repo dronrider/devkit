@@ -9,10 +9,14 @@
 на рождении сессии, где ID уже есть, и кладёт строку в машинный журнал
 ~/.devkit/sessions.log. Решение целиком в docs/lld/DK-430-task-chat.md, решение 1.
 
-Режим один:
-  session-task.py --hook [протокол]  событие читается со stdin и разбирается по
-                                     имени протокола таблицей hookio.py (голый
-                                     --hook это claude-code)
+Режимов два:
+  session-task.py --hook [протокол]  рождение сессии: событие читается со stdin
+                                     и разбирается по имени протокола таблицей
+                                     hookio.py (голый --hook это claude-code)
+  session-task.py --touch [протокол] ход инструмента: правка файла в боковом
+                                     дереве задачи дописывает привязку по факту
+                                     работы, повторы одной и той же привязки
+                                     отсеиваются
 
 Строка журнала именованная, как у уведомителя, и читается по ключевым словам:
 
@@ -111,6 +115,57 @@ def record(start, env=None, now=None):
         dashless(start.source), dashless(env.get(TMUX_ENV)))
 
 
+# Ходы, которые считаются работой в дереве задачи: правка файла это работа, а
+# чтение и поиск нет, иначе разговор привязывался бы к задаче за один взгляд в
+# её дерево (POC ветки poc-chat).
+WORK_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
+
+BY_WORK = "работа"
+
+
+def touch_record(tool, now=None):
+    """Строка журнала про работу сессии в дереве задачи. Пусто значит, что ход
+    работой не считается или дерево про задачу молчит."""
+    if tool.tool not in WORK_TOOLS or not tool.session:
+        return ""
+    root = hookio.tree_root(tool.cwd)
+    task, project = tree_task(root)
+    if not task:
+        return ""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
+    return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
+            "источник %s повод %s tmux %s\n") % (
+        stamp, dashless(tool.session), dashless(task), dashless(project),
+        dashless(root), "-", dashless(BY_WORK), "правка файла", "-")
+
+
+def known_touch(path, session, task):
+    """Такая привязка уже лежит в журнале: повторять строку на каждой правке
+    незачем, журнал раздулся бы за один заход в сотню строк."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            data = fh.read()
+    except OSError:
+        return False
+    mark = "сессия %s задача %s" % (session, task)
+    return mark in data
+
+
+def run_touch(protocol, path=None, now=None):
+    tool = hookio.tool_event(protocol)
+    if tool is None:
+        return 0
+    line = touch_record(tool, now)
+    if not line:
+        return 0
+    log = path or LOG
+    task = line.split(" задача ")[1].split(" ")[0]
+    if known_touch(log, dashless(tool.session), task):
+        return 0
+    hookio.append_capped(log, line)
+    return 0
+
+
 def run_hook(protocol, path=None, env=None, now=None):
     start = hookio.start_event(protocol)
     if start is None or not start.session:
@@ -122,10 +177,12 @@ def run_hook(protocol, path=None, env=None, now=None):
 
 
 def main(argv):
-    if not argv or argv[0] != "--hook":
+    if not argv or argv[0] not in ("--hook", "--touch"):
         sys.stderr.write(__doc__)
         return 2
     try:
+        if argv[0] == "--touch":
+            return run_touch(hookio.protocol(argv[1:]))
         return run_hook(hookio.protocol(argv[1:]))
     except hookio.Unknown as e:
         sys.stderr.write("session-task: %s\n" % e)

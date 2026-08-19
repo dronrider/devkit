@@ -140,8 +140,12 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
 			tasks = append([]string{id}, tasks...)
 		}
+		title := head.Summary
+		if title == "" {
+			title = head.First
+		}
 		e := chatEntry{
-			ID: f.ID, Title: head.First, Mtime: f.Mtime, Tasks: tasks,
+			ID: f.ID, Title: title, Mtime: f.Mtime, Tasks: tasks,
 			Tmux: last.Tmux, Tree: f.suffix, Branch: head.Branch,
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),

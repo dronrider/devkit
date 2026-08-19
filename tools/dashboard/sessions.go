@@ -218,6 +218,14 @@ type sessionHead struct {
 	Branch string
 	First  string
 	Named  string
+	// Summary это заголовок разговора, который пишет сам харнес записью
+	// {"type":"summary"} в начале транскрипта. Им подписывает диалоги
+	// расширение Claude Code для vscode и им же зовётся разговор в списке
+	// `claude --resume`, поэтому в списке диалогов он старше первой реплики:
+	// у долгого разговора первая реплика давно не про то, чем он кончился.
+	// Записи этой нет у большинства транскриптов, и тогда заголовком остаётся
+	// обрезанная первая реплика.
+	Summary string
 }
 
 // readSessionHead вычитывает шапку транскрипта; служебные вставки в угловых
@@ -240,12 +248,16 @@ func readSessionHead(path string) (sessionHead, bool) {
 		var rec struct {
 			Type      string `json:"type"`
 			GitBranch string `json:"gitBranch"`
+			Summary   string `json:"summary"`
 			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
+		}
+		if head.Summary == "" && rec.Type == "summary" {
+			head.Summary = firstLine(rec.Summary)
 		}
 		if head.Branch == "" {
 			head.Branch = rec.GitBranch

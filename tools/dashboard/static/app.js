@@ -4731,6 +4731,67 @@ function chatDropOpen(project, st, anchor) {
 // Шапка окна: выбор диалога, «+», модель, переключатель фильтра и крестик.
 // Больше входов в разговор нигде нет: с экрана задачи окно открывает тот же
 // значок в шапке дашборда.
+// Выбор модели стоит в строке отправки, слева от кнопки продолжения: меняют
+// модель перед репликой, а не перед чтением ленты, и тянуться за ней в шапку
+// было незачем (замечание 8 четырнадцатого круга POC). Имена в списке короткие:
+// ярус с подпиской ушли в подсказку, скобки из списка ушли совсем.
+function modelPick(project, st) {
+  const model = el("select", "cdsel");
+  model.setAttribute("aria-label", "Модель агента");
+  // В списке стоит выбранное человеком, и стоит до явной смены. Прежде тут
+  // показывалась модель из транскрипта, и выбор ею затирался на первой же
+  // перерисовке: человек ставил fable, лента приносила ответ прежней модели, и
+  // список откатывался на opus. Фактическая модель никуда не делась, она стоит
+  // пометкой рядом, когда расходится с выбором.
+  const live = st.entry ? st.entry.liveModel : "";
+  const cur = st.entry ? st.entry.model || chatModelPref() : chatModelPref();
+  // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
+  // поднят, и модель у него своя до самого резюма.
+  const alien = Boolean(st.entry && st.entry.state === "live" && !st.entry.own);
+  // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
+  // она платится. Своего перечня имён у панели нет, иначе новая подписка на
+  // машине не появилась бы тут вовсе.
+  const opts = (st.models || []).slice();
+  if (cur && !opts.some((m) => m.model === cur)) opts.unshift({ model: cur, tier: "", harness: "" });
+  for (const m of opts) {
+    const o = el("option", "", m.model);
+    o.value = m.model;
+    if (m.tier) o.title = m.tier + ", " + m.harness;
+    if (m.model === cur) o.selected = true;
+    model.append(o);
+  }
+  const why = (st.models || []).find((m) => m.model === cur);
+  model.title = why ? cur + ": ярус " + why.tier + ", подписка " + why.harness : "Модель агента";
+  if (alien) {
+    model.disabled = true;
+    model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
+  } else if (live && live !== cur) {
+    model.title = "Сейчас работает " + live + ", выбранная " + cur +
+      " возьмётся на следующем подъёме или резюме.";
+  }
+  model.addEventListener("change", () => {
+    chatModelSet(model.value);
+    if (!st.sid) {
+      sayResult("модель нового чата: " + model.value);
+      return;
+    }
+    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
+      { method: "POST", body: { model: model.value } })
+      .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
+      .catch(console.error);
+  });
+  const box = el("div", "cmodel");
+  box.append(model);
+  // Расхождение выбора с фактической моделью названо прямо: молчаливый список
+  // с одним именем неотличим от «работает выбранная».
+  if (live && live !== cur) {
+    const mark = el("span", "cdlive", live);
+    mark.title = model.title;
+    box.append(mark);
+  }
+  return box;
+}
+
 function chatHead(project, st) {
   const head = el("div", "chead");
   const line = el("div", "chline");
@@ -4788,57 +4849,6 @@ function chatHead(project, st) {
     chatDrop = menu;
   });
   line.append(add);
-
-  const model = el("select", "cdsel");
-  model.setAttribute("aria-label", "Модель агента");
-  // В списке стоит выбранное человеком, и стоит до явной смены. Прежде тут
-  // показывалась модель из транскрипта, и выбор ею затирался на первой же
-  // перерисовке: человек ставил fable, лента приносила ответ прежней модели, и
-  // список откатывался на opus. Фактическая модель никуда не делась, она стоит
-  // пометкой рядом, когда расходится с выбором.
-  const live = st.entry ? st.entry.liveModel : "";
-  const cur = st.entry ? st.entry.model || chatModelPref() : chatModelPref();
-  // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
-  // поднят, и модель у него своя до самого резюма.
-  const alien = Boolean(st.entry && st.entry.state === "live" && !st.entry.own);
-  // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
-  // она платится. Своего перечня имён у панели нет, иначе новая подписка на
-  // машине не появилась бы тут вовсе.
-  const opts = (st.models || []).slice();
-  if (cur && !opts.some((m) => m.model === cur)) opts.unshift({ model: cur, tier: "", harness: "" });
-  for (const m of opts) {
-    const label = m.tier ? m.model + " (" + m.tier + ", " + m.harness + ")" : m.model;
-    const o = el("option", "", label);
-    o.value = m.model;
-    if (m.model === cur) o.selected = true;
-    model.append(o);
-  }
-  if (alien) {
-    model.disabled = true;
-    model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
-  } else if (live && live !== cur) {
-    model.title = "Сейчас работает " + live + ", выбранная " + cur +
-      " возьмётся на следующем подъёме или резюме.";
-  }
-  model.addEventListener("change", () => {
-    chatModelSet(model.value);
-    if (!st.sid) {
-      sayResult("модель нового чата: " + model.value);
-      return;
-    }
-    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
-      { method: "POST", body: { model: model.value } })
-      .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
-      .catch(console.error);
-  });
-  line.append(model);
-  // Расхождение выбора с фактической моделью названо прямо: молчаливый список
-  // с одним именем неотличим от «работает выбранная».
-  if (live && live !== cur) {
-    const mark = el("span", "cdlive", live);
-    mark.title = model.title;
-    line.append(mark);
-  }
 
   // Переключатель фильтра стоит справа и виден только там, где есть что
   // фильтровать: без задачи в адресе фильтровать нечем, и погашенная кнопка
@@ -5274,6 +5284,7 @@ function chatPanel(project, st) {
   drawClips();
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
+  row.append(modelPick(project, st));
   if (st.task) {
     const go = el("button", "cgo");
     go.title = st.isGoal ? "Продолжить цель " + st.task : "Продолжить работу по " + st.task;

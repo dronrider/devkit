@@ -754,6 +754,8 @@ a:hover{text-decoration:underline}
 .cdbtn{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;font:600 15px var(--sans);display:flex;align-items:center;justify-content:center;padding:0}
 .cdbtn:hover{border-color:var(--acc);color:var(--tx)}
 .cdbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+/* 14: выбор модели переехал в строку отправки, слева от кнопок. */
+.cmodel{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
 .cdlive{flex:none;font:500 10.5px var(--mono);color:var(--tx3);padding:0 6px;height:32px;display:flex;align-items:center;border:1px dashed var(--line2);border-radius:9px;white-space:nowrap}
 .cdsel{flex:none;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);font:500 12px var(--sans);padding:0 6px;cursor:pointer;outline:none}
 /* сам выпадающий список: лежит под шапкой поверх ленты, потому что панель

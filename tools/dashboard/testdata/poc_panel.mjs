@@ -80,13 +80,24 @@ for (const [sid, kind, off] of [["aaaa1111-1111", "say", false],
 const fresh = await sandbox.chatState("demo", "new:XR-1", board);
 if (fresh.task !== "XR-1" || !fresh.fresh) fail("новый чат потерял задачу");
 
-// --- шапка: модель, лейбл задачи, выпадающий список с поиском ---
+// --- строка отправки: модель, а в шапке лейбл задачи и выпадающий список ---
 st = await sandbox.chatState("demo", "XR-1", board);
 const head = sandbox.chatHead("demo", st);
-const sel = tag(head, "SELECT");
-if (!sel) fail("выбора модели в шапке нет");
+if (tag(head, "SELECT")) fail("выбор модели остался в шапке");
+const sendRow = byClass(sandbox.chatPanel("demo", st), "crow");
+const sel = tag(sendRow, "SELECT");
+if (!sel) fail("выбора модели нет в строке отправки: " + dump(sendRow).slice(0, 200));
 if (!dump(sel).includes("fable") || !dump(sel).includes("glm-5.3")) {
   fail("в списке моделей нет верхнего яруса или второй подписки: " + dump(sel));
+}
+// Имена короткие: ярус с подпиской ушли в подсказку, скобок в списке нет.
+if (dump(sel).includes("(")) fail("в именах моделей остались скобки: " + dump(sel));
+// Выбор стоит левее кнопки продолжения работы.
+const order = (sendRow.children || []).map((k) => String(k.className || "") + "/" + k.tagName);
+const atModel = order.findIndex((k) => k.includes("cmodel"));
+const atGo = order.findIndex((k) => k.includes("cgo"));
+if (atModel < 0 || atGo < 0 || atModel > atGo) {
+  fail("выбор модели стоит не слева от кнопки продолжения: " + JSON.stringify(order));
 }
 if (!dump(head).includes("XR-1")) fail("номера задачи нет лейблом в шапке");
 const line = head.children[0];
@@ -106,7 +117,7 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
 {
   const stPick = await sandbox.chatState("demo", "aaaa1111-1111", board);
   stPick.entry = Object.assign({}, stPick.entry, { model: "fable", liveModel: "opus" });
-  const headPick = sandbox.chatHead("demo", stPick);
+  const headPick = sandbox.chatPanel("demo", stPick);
   const selPick = tag(headPick, "SELECT");
   const chosen = selPick.children.filter((o) => o.selected).map((o) => o.value);
   if (chosen.length !== 1 || chosen[0] !== "fable") {
@@ -119,7 +130,7 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   // Совпали выбор с фактической, значит и говорить не о чем.
   const stSame = await sandbox.chatState("demo", "aaaa1111-1111", board);
   stSame.entry = Object.assign({}, stSame.entry, { model: "opus", liveModel: "opus" });
-  if (byClass(sandbox.chatHead("demo", stSame), "cdlive")) {
+  if (byClass(sandbox.chatPanel("demo", stSame), "cdlive")) {
     fail("пометка стоит там, где выбор и фактическая модель одна");
   }
 }
@@ -731,7 +742,7 @@ async function feedOf(items, sid) {
   if (!sandbox.flashWorthy(mine, "2026-08-20T09:00:00", false)) fail("при закрытой панели баннер молчит");
 }
 
-console.log("окно чатов: адреса, фильтр, дорога реплики, шапка с моделью и поиском, " +
+console.log("окно чатов: адреса, фильтр, дорога реплики, модель в строке отправки, шапка с поиском, " +
   "отправка обоих видов чата, оптимистичный пузырь, лента, разметка, выделение, " +
   "хват над полем, черновик, чат из раздела агентов, навигация, память задачи, тихие уведомления");
 

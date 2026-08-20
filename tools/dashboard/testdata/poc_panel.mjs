@@ -323,6 +323,36 @@ async function feedOf(items, sid) {
   }
 }
 
+// --- нить рвётся по границам работы ---
+// Линия связывает события одного захода: реплика человека его начинает,
+// финальный текст агента закрывает, между заходами щель. Сплошная нить через
+// весь разговор читалась одной бесконечной работой.
+{
+  const rail = [
+    { seq: 0, key: "g:0", role: "user", text: "проверь сборку", time: "2026-08-13T09:00:00+03:00" },
+    { seq: 1, key: "g:1", role: "tool", tool: "Bash", note: "go build ./...",
+      text: "command: go build ./...", time: "2026-08-13T09:00:01+03:00" },
+    { seq: 2, key: "g:2", role: "toolout", text: "готово", time: "2026-08-13T09:00:02+03:00" },
+    { seq: 3, key: "g:3", role: "assistant", text: "сборка зелёная", time: "2026-08-13T09:00:03+03:00" },
+    { seq: 4, key: "g:4", role: "user", text: "теперь тесты", time: "2026-08-13T09:00:10+03:00" },
+    { seq: 5, key: "g:5", role: "tool", tool: "Bash", note: "go test ./...",
+      text: "command: go test ./...", time: "2026-08-13T09:00:11+03:00" },
+  ];
+  const box = await feedOf(rail, "rail-groups");
+  const rows = allByClass(box, "frow");
+  const has = (row, cls) => String(row.className).split(" ").includes(cls);
+  if (!has(rows[0], "gtop")) fail("реплика человека не начала группу: " + rows[0].className);
+  if (has(rows[1], "gtop") || has(rows[1], "gend")) {
+    fail("ход внутри работы разорвал нить: " + rows[1].className);
+  }
+  if (!has(rows[2], "gend")) {
+    fail("финальный текст агента не закрыл группу: " + rows[2].className);
+  }
+  if (!has(rows[3], "gtop")) fail("вторая реплика человека не начала группу: " + rows[3].className);
+  // Работа идёт, слова агента ещё не сказаны: рвать нить рано.
+  if (has(rows[4], "gend")) fail("незакрытая работа закрыта раньше времени: " + rows[4].className);
+}
+
 // --- делегирование и конец фоновой работы помечены одной синей меткой ---
 // Работа ушла субагенту и вернулась: два конца одного события, и в ленте они
 // узнаются с одного взгляда.

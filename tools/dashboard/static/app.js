@@ -3117,6 +3117,7 @@ async function wireFeed(project, sid, opts) {
   const draw = () => {
     const bottom = atBottom(scroll);
     const rest = scroll.scrollHeight - scroll.scrollTop;
+    const marks = feedMarks(talk);
     if (!talk.length) {
       sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
       return;
@@ -3144,18 +3145,20 @@ async function wireFeed(project, sid, opts) {
       const next = talk[i + 1];
       if (item.role === "tool" && next && next.role === "toolout" && opts.pair &&
         item.sub === next.sub) {
+        const mark = (marks[i] + " " + marks[i + 1]).trim();
         items.push({
           key: itemKey(item),
-          sign: [item.role, item.time, item.text, next.text, item.sub || "", next.fail].join("|"),
-          make: () => feedRow(safePair(opts.pair, item, next), item, next),
+          sign: [item.role, item.time, item.text, next.text, item.sub || "", next.fail,
+            mark].join("|"),
+          make: () => feedRow(safePair(opts.pair, item, next), item, next, mark),
         });
         i++;
         continue;
       }
       items.push({
         key: itemKey(item),
-        sign: [item.role, item.time, item.text, item.sub || "", item.fail].join("|"),
-        make: () => feedRow(safeItem(opts.item, item), item, null),
+        sign: [item.role, item.time, item.text, item.sub || "", item.fail, marks[i]].join("|"),
+        make: () => feedRow(safeItem(opts.item, item), item, null, marks[i]),
       });
     }
     sync(box, items);
@@ -3785,8 +3788,40 @@ function itemCursor(item) {
 // серый у нейтральных записей, зелёный у сделанного инструментом, красный у
 // упавшего. Запись субагента стоит на той же нити, но глубже: работа чужая, а
 // хронология общая.
-function feedRow(node, item, out) {
-  const row = el("div", "frow r-" + (item.role || "") + (item.sub ? " sub" : ""));
+// Границы работы в ленте: вертикальная линия связывает события одной работы и
+// рвётся, когда работа сделана. Реплика человека начинает группу, финальный
+// текст агента её закрывает, а между группами остаётся щель. Сплошная нить
+// через весь разговор читалась одной бесконечной работой, и глазом было не
+// найти, где кончился один заход и начался другой (замечание пользователя).
+//
+// Финальный текст это последний текст агента до следующей реплики человека:
+// пока агент ходит инструментами, работа идёт, и рвать нить рано. Не сказавшая
+// ни слова группа (агент ещё работает) не закрывается вовсе.
+function feedMarks(list) {
+  const marks = list.map(() => "");
+  let start = -1;
+  const close = (upto) => {
+    for (let j = upto; j > start; j--) {
+      const it = list[j];
+      if (it.role === "assistant" && String(it.text || "").trim()) {
+        marks[j] = (marks[j] + " gend").trim();
+        return;
+      }
+    }
+  };
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].role !== "user") continue;
+    if (start >= 0) close(i - 1);
+    marks[i] = (marks[i] + " gtop").trim();
+    start = i;
+  }
+  if (start >= 0) close(list.length - 1);
+  return marks;
+}
+
+function feedRow(node, item, out, mark) {
+  const row = el("div", "frow r-" + (item.role || "") + (item.sub ? " sub" : "") +
+    (mark ? " " + mark : ""));
   const dot = el("span", "fdot " + dotKind(item, out));
   if (item.sub) {
     dot.title = "субагент: " + item.sub;

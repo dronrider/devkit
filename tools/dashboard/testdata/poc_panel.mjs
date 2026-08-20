@@ -323,6 +323,27 @@ async function feedOf(items, sid) {
   }
 }
 
+// --- делегирование и конец фоновой работы помечены одной синей меткой ---
+// Работа ушла субагенту и вернулась: два конца одного события, и в ленте они
+// узнаются с одного взгляда.
+{
+  const rail = [
+    { seq: 0, key: "d:0", role: "tool", tool: "Task", about: "разбор находки",
+      args: { subagent_type: "exec-high", prompt: "Разбери находку." },
+      time: "2026-08-13T09:00:00+03:00" },
+    { seq: 1, key: "d:1", role: "toolout", text: "агент поднят", time: "2026-08-13T09:00:01+03:00" },
+    { seq: 2, key: "d:2", role: "note", note: "Фоновый агент завершил работу", mark: "agent",
+      text: "Агент разобрал находку.", time: "2026-08-13T09:01:00+03:00" },
+    { seq: 3, key: "d:3", role: "note", text: "Команда /clear", time: "2026-08-13T09:02:00+03:00" },
+  ];
+  const box = await feedOf(rail, "rail-deleg");
+  const rows = allByClass(box, "frow");
+  const kind = (row) => String(byClass(row, "fdot").className).split(" ").slice(1).join("");
+  if (kind(rows[0]) !== "deleg") fail("делегирование не помечено синим: " + kind(rows[0]));
+  if (kind(rows[1]) !== "deleg") fail("конец фоновой работы не помечен синим: " + kind(rows[1]));
+  if (kind(rows[2]) === "deleg") fail("обычная служебка покрашена синим: " + kind(rows[2]));
+}
+
 // --- сломанная запись не роняет ленту целиком ---
 {
   const boom = { seq: 0, role: "user", get text() { throw new Error("битая запись"); } };
@@ -486,6 +507,20 @@ async function feedOf(items, sid) {
     fail("реплика субагенту нарисована без текста: " + said2);
   }
   if (!byClass(dispatch, "tbox")) fail("у реплики субагенту нет блока: " + said2);
+  // Задание субагенту приезжает тем же блоком: заказ бывает на две страницы, и
+  // строкой без разворота он загромождал ленту.
+  const task = sandbox.toolPair(
+    { role: "tool", tool: "Task", about: "разбор находки",
+      note: "Разбери находку и вернись с причиной",
+      args: { subagent_type: "exec-high", description: "разбор находки",
+        prompt: "Разбери находку и вернись с причиной." } },
+    null);
+  const said4 = dump(task);
+  if (!said4.includes("Task") || !said4.includes("Разбери находку и вернись с причиной.")) {
+    fail("задание субагенту нарисовано без заказа: " + said4);
+  }
+  if (!byClass(task, "tbox")) fail("у задания субагенту нет блока: " + said4);
+  if (!said4.includes("exec-high")) fail("в заголовке задания нет вида субагента: " + said4);
   // Простыня скилла в ленту не идёт вовсе, от него остаётся строка «Skill имя».
   const skill = sandbox.toolPair(
     { role: "tool", tool: "Skill", note: "board-groom", args: { skill: "board-groom" } },

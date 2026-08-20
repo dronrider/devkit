@@ -1628,3 +1628,36 @@ func TestDispatchFrameIsService(t *testing.T) {
 		t.Fatalf("текст реплики диспетчера: %q", note.Text)
 	}
 }
+
+// Весть о законченной фоновой работе едет в ленту с машинной пометкой: по ней
+// панель красит кружок события синим, не разбирая слов заголовка. Прежде
+// пометки не было вовсе, и лента отличала эту запись от прочей служебки только
+// текстом (замечание 9 четырнадцатого круга POC).
+func TestBackgroundAgentNoteCarriesMark(t *testing.T) {
+	text := "<task-notification>\n<task-id>a08d9d8</task-id>\n<status>completed</status>\n" +
+		"<summary>Agent finished</summary>\n</task-notification>\nразобрал находку"
+	var got []reply
+	addUser(func(r reply) { got = append(got, r) }, "user", "2026-08-20T10:00:00Z", text)
+	var note *reply
+	for i := range got {
+		if got[i].Role == roleNote {
+			note = &got[i]
+		}
+	}
+	if note == nil {
+		t.Fatalf("служебной записи о фоновом агенте нет вовсе: %+v", got)
+	}
+	if note.Mark != "agent" {
+		t.Fatalf("пометка записи %q, жду agent: %+v", note.Mark, *note)
+	}
+	if note.Note != "Фоновый агент завершил работу" {
+		t.Fatalf("заголовок записи разошёлся: %q", note.Note)
+	}
+	// Слова человека из той же реплики пометки не носят: покрасить их синим
+	// значило бы выдать реплику за событие фоновой работы.
+	for _, r := range got {
+		if r.Role == "user" && r.Mark != "" {
+			t.Fatalf("реплика человека унесла пометку события: %+v", r)
+		}
+	}
+}

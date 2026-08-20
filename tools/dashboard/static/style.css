@@ -19,6 +19,7 @@
   --block:oklch(0.68 0.13 25);
   --goal:oklch(0.75 0.09 300);
   --wait:oklch(0.78 0.12 60);
+  --deleg:oklch(0.72 0.13 250);
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -1077,6 +1078,8 @@ a:hover{text-decoration:underline}
 .fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}
 .fdot.bad{background:var(--block)}
+/* 14: делегирование субагенту и конец его работы одной синей меткой */
+.fdot.deleg{background:var(--deleg)}
 /* Кружок стоит по середине первой строки записи, а высота её задаётся не ролью,
    а видом записи: у пузыря сверху свой отступ и поля, у свёрнутого блока рамка
    с полями, у строки инструмента и голой строки текста ни того, ни другого.

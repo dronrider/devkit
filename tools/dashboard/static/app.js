@@ -3409,9 +3409,16 @@ function toolPair(call, out) {
       addedLines(args.content || ""));
   }
   // Реплика субагенту это текст, а не команда: направления у неё нет, и блок
-  // под заголовком один (замечание 8).
+  // под заголовком один (замечание 8). Задание субагенту устроено так же:
+  // простыня заказа лезла в ленту строкой без разворота и загромождала её
+  // (замечание 10 четырнадцатого круга POC).
   if (name === "SendMessage") {
     return bodyCard(name, call.about || call.note || "", args.message || call.text || "");
+  }
+  if (name === "Task") {
+    const who = args.subagent_type || "";
+    const said = [call.about || "", who].filter(Boolean).join(", ");
+    return bodyCard(name, said, args.prompt || call.text || "");
   }
   if (name !== "Bash") return toolOneLine(name, call.about || call.note || "");
   return bashCard(name, call, out);
@@ -3656,7 +3663,13 @@ function leadKind(node) {
 
 // Исход записи цветом: пока ответа инструмента нет, ход считается идущим и
 // кружок нейтрален, ошибка инструмента приходит признаком fail.
+// Работа, отданная субагенту, и весть о том, что фоновый агент её закончил, это
+// одно событие с двух концов, и метка у них общая, синяя: в ленте видно, куда
+// работа ушла и когда вернулась (замечание 9). Начало узнаётся по имени
+// инструмента, конец по машинной пометке записи, а не по словам заголовка.
 function dotKind(item, out) {
+  if (item.role === "tool" && item.tool === "Task") return "deleg";
+  if (item.role === "note" && item.mark === "agent") return "deleg";
   if (item.role !== "tool") return item.role === "toolout" && item.fail ? "bad" : "";
   if (!out) return "";
   return out.fail ? "bad" : "ok";

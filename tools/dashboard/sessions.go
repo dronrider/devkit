@@ -520,6 +520,11 @@ type reply struct {
 	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
 	// весь бегущий лог пишется туда, а не в транскрипт сессии.
 	Sub string `json:"sub,omitempty"`
+	// Mark это машинная пометка события ленты: по ней кружок записи красится,
+	// не разбирая слов заголовка. Пока такая пометка одна, agent: весть о том,
+	// что фоновый агент закончил работу. Слово это половина пары с вызовом
+	// Task, вторую половину лента узнаёт по имени инструмента.
+	Mark string `json:"mark,omitempty"`
 	// About это пояснение хода словами, как его написал сам агент (поле
 	// description у вызова). Лента ставит его заголовком записи, а команда
 	// остаётся рядом: без пояснения строка Bash говорила только «что
@@ -875,6 +880,9 @@ var svcStatusRe = regexp.MustCompile(`(?s)<status>(.*?)</status>`)
 type svcLine struct {
 	head string
 	body string
+	// mark едет в запись ленты машинной пометкой события: слова заголовка тут
+	// меняются, а пометка нет, и кружок красится по ней.
+	mark string
 }
 
 // svcNote собирает служебную запись по телу вставки.
@@ -890,10 +898,11 @@ func svcNote(tag svcTag, body string) svcLine {
 		}
 		if m := svcSummaryRe.FindStringSubmatch(body); m != nil {
 			if sum := strings.TrimSpace(m[1]); sum != "" {
-				return svcLine{head: said, body: truncate(strings.TrimSpace(sum), toolBodyLimit)}
+				return svcLine{head: said, mark: "agent",
+					body: truncate(strings.TrimSpace(sum), toolBodyLimit)}
 			}
 		}
-		return svcLine{head: said}
+		return svcLine{head: said, mark: "agent"}
 	case "command-name":
 		return svcLine{head: "Команда " + truncate(strings.Join(strings.Fields(body), " "), 80)}
 	}
@@ -974,10 +983,10 @@ func addUser(add func(reply), role, at, text string) {
 		// Служебка с телом едет как ход инструмента: подпись в Note, само
 		// содержимое в Text. Без тела остаётся одна строка.
 		if n.body != "" {
-			add(reply{Role: roleNote, Time: at, Text: n.body, Note: n.head})
+			add(reply{Role: roleNote, Time: at, Text: n.body, Note: n.head, Mark: n.mark})
 			continue
 		}
-		add(reply{Role: roleNote, Time: at, Text: n.head})
+		add(reply{Role: roleNote, Time: at, Text: n.head, Mark: n.mark})
 	}
 	if said == "" {
 		// Одна служебка без единого слова человека: пустой пузырь тут был бы

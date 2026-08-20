@@ -122,5 +122,5 @@ document.getElementById("geom").textContent=out.join("\\n");
 process.stdout.write(`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>лента</title>
 <link rel="stylesheet" href="style.css"></head>
-<body style="margin:0"><div class="cpanel" style="--cw:${width}px"><i class="cgrab"></i><div class="clist" hidden></div><div class="cpin"><div class="chatwrap"><div class="chatfeed">${html(box)}</div></div></div></div>${measure ? probe : ""}</body></html>
+<body style="margin:0"><div style="width:${width}px"><div class="cpanel" style="--cw:${width}px;position:relative;width:100%"><i class="cgrab"></i><div class="clist" hidden></div><div class="cpin"><div class="chatwrap"><div class="chatfeed">${html(box)}</div></div></div></div></div>${measure ? probe : ""}</body></html>
 `);

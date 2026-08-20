@@ -1038,18 +1038,23 @@ a:hover{text-decoration:underline}
 .q-warm{color:var(--wait)}
 .q-old{color:var(--block)}
 
-/* Записи разговора стоят на общей вертикальной линии, кружок против первой
-   строки каждой: серый у нейтральных, зелёный у сделанного инструментом,
-   красный у упавшего. Запись субагента на той же линии, но глубже */
-.frow{position:relative;display:flex;gap:0;padding:2px 0 2px 22px}
-.frow::before{content:"";position:absolute;left:5px;top:0;bottom:0;width:1px;background:var(--line2)}
-.frow.sub{padding-left:38px}
-.frow.sub::after{content:"";position:absolute;left:22px;top:0;bottom:0;width:1px;background:var(--line)}
+/* Записи разговора стоят на общей вертикальной линии: она одна на всю ленту,
+   кружок против первой строки записи перекрывает её собой. Цвет кружка это
+   исход: серый у нейтральных, зелёный у сделанного инструментом, красный у
+   упавшего. Запись субагента отодвинута глубже, своей линии у неё нет */
+.frow{position:relative;display:flex;padding-left:24px}
+.frow::before{content:"";position:absolute;left:7px;top:0;bottom:0;width:1px;background:var(--line2)}
+.frow.sub{padding-left:44px}
 .fbody{flex:1;min-width:0}
-.fdot{position:absolute;left:1px;top:9px;width:9px;height:9px;border-radius:50%;background:var(--tx3);opacity:.55;border:2px solid var(--bg)}
-.frow.sub .fdot{left:18px}
-.fdot.ok{background:var(--run);opacity:1}
-.fdot.bad{background:var(--block);opacity:1}
+.fdot{position:absolute;left:2px;top:26px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
+.fdot.ok{background:var(--run)}
+.fdot.bad{background:var(--block)}
+/* Кружок стоит по середине первой строки записи, а высота её у пузыря и у
+   строки инструмента разная: у пузыря сверху свой отступ и поля */
+.frow.r-user .fdot,.frow.r-assistant .fdot{top:45px}
+.frow.r-thinking .fdot{top:31px}
+.frow.r-note .fdot{top:31px}
+.frow.r-toolout .fdot{top:8px}
 
 /* правка файла: строка «инструмент файл», подпись о сделанном и дифф с
    подсветкой снятых и поставленных строк */

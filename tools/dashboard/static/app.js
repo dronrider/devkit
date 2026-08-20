@@ -3543,7 +3543,7 @@ function itemCursor(item) {
 // упавшего. Запись субагента стоит на той же нити, но глубже: работа чужая, а
 // хронология общая.
 function feedRow(node, item, out) {
-  const row = el("div", "frow" + (item.sub ? " sub" : ""));
+  const row = el("div", "frow r-" + (item.role || "") + (item.sub ? " sub" : ""));
   const dot = el("span", "fdot " + dotKind(item, out));
   if (item.sub) {
     dot.title = "субагент: " + item.sub;

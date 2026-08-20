@@ -2671,6 +2671,26 @@ function copyBtn(text) {
   return btn;
 }
 
+// Кнопка разворота блока хода: содержимое в ленте обрезано парой строк, и
+// длинный вывод читают, не уходя в терминал. Стрелка вниз раскрывает блок на
+// всю высоту, вверх сворачивает обратно (замечание 7).
+function growBtn(box) {
+  const btn = el("button", "foldcp foldar");
+  const mark = () => {
+    const open = box.classList.contains("open");
+    btn.title = open ? "Свернуть" : "Раскрыть";
+    btn.setAttribute("aria-label", btn.title);
+    btn.replaceChildren(icon(open ? "i-unfold" : "i-fold"));
+  };
+  mark();
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    box.classList.toggle("open");
+    mark();
+  });
+  return btn;
+}
+
 // Первая строка длинного текста для заголовка свёрнутого блока: по ней видно,
 // о чём он, не разворачивая.
 function foldPeek(text, n) {
@@ -2695,7 +2715,7 @@ function replyEl(item) {
     // (диспетчер субагенту, чужая сессия): текст у неё длинный, и в ленте она
     // стоит свёрнутой строкой с подписью, разворачивается кликом.
     if (item.note) {
-      return foldEl("svc", item.note, item.text || "", foldPeek(item.text || "", 90));
+      return bodyCard(item.note, "", item.text || "");
     }
     return el("div", "svcline", item.text || "служебное сообщение");
   }
@@ -3355,6 +3375,11 @@ function toolPair(call, out) {
     return toolDiffCard(name, fileSign(call, args), "Записано",
       addedLines(args.content || ""));
   }
+  // Реплика субагенту это текст, а не команда: направления у неё нет, и блок
+  // под заголовком один (замечание 8).
+  if (name === "SendMessage") {
+    return bodyCard(name, call.about || call.note || "", args.message || call.text || "");
+  }
   if (name !== "Bash") return toolOneLine(name, call.about || call.note || "");
   return bashCard(name, call, out);
 }
@@ -3374,9 +3399,31 @@ function bashCard(name, call, out) {
   const lead = el("span", "tcmd", cmd);
   lead.title = cmd;
   top.append(lead);
+  top.append(growBtn(body));
   top.append(copyBtn((call.text || "") + (call.text && said ? "\n" : "") + said));
   body.append(top);
   if (said) body.append(toolOutLine(said));
+  box.append(body);
+  return box;
+}
+
+// Ход с одним телом: строка заголовка и под ней блок с содержимым. Стрелок
+// направления тут нет вовсе: уведомление харнеса и реплика субагенту это один
+// текст, разбивать его на вход и выход не на чем. Плотность и кнопки те же,
+// что у блока команды (замечание 8).
+function bodyCard(name, about, text) {
+  const box = el("div", "trow2");
+  const head = el("div", "thline");
+  head.append(el("b", "", name));
+  head.append(el("span", "tabout", about || ""));
+  box.append(head);
+  if (!text) return box;
+  const body = el("div", "tbox");
+  const line = el("div", "tline tout tbare");
+  line.append(el("pre", "ttext", text));
+  line.append(growBtn(body));
+  line.append(copyBtn(text));
+  body.append(line);
   box.append(body);
   return box;
 }
@@ -3556,7 +3603,22 @@ function feedRow(node, item, out) {
   const body = el("div", "frowb");
   body.append(node);
   row.append(dot, body);
+  row.className += " " + leadKind(node);
   return row;
+}
+
+// Высоту первой строки записи задаёт не роль, а то, чем запись нарисована:
+// пузырь, заголовок свёрнутого блока, строка инструмента или голая строка
+// текста. Роль тут обманывает: размышление с текстом рисуется свёрнутым
+// блоком, а без текста голой строкой, и кружок у второго уезжал вниз на
+// высоту рамки с полями (замечание 1).
+function leadKind(node) {
+  const cls = " " + String((node && node.className) || "") + " ";
+  if (cls.indexOf(" fold ") >= 0) return "f-fold";
+  if (cls.indexOf(" trow2 ") >= 0) return "f-head";
+  if (cls.indexOf(" msg ") >= 0 || cls.indexOf(" turn ") >= 0) return "f-bub";
+  if (cls.indexOf(" tline ") >= 0) return "f-tline";
+  return "f-line";
 }
 
 // Исход записи цветом: пока ответа инструмента нет, ход считается идущим и
@@ -4039,6 +4101,10 @@ function fillChatNote(note, running, live) {
 // Ширина панели одна на весь дашборд, а не на задачу: человек ставит её под
 // свой экран, а не под предмет разговора. Диапазон закрывает и узкую колонку
 // рядом с доской, и половину ноутбучного экрана.
+// Диапазон меряет ленту, а не панель целиком: колонки списка разговоров в
+// панели больше нет, и --cw достаётся ленте без остатка. Пока колонка стояла
+// призраком, те же 320..640 давали ленте 148..468, и панель почти не
+// раздвигалась (замечание 3).
 const CHAT_W_KEY = "devkit.chat.width";
 const CHAT_W_MIN = 320;
 const CHAT_W_MAX = 640;
@@ -4198,6 +4264,22 @@ function chatTaskLastSet(task, sid) {
   } catch (err) {
     // приватный режим браузера: память живёт до перезагрузки
   }
+}
+
+// Вложение хранится рядом с черновиком, но в памяти страницы, а не в
+// localStorage: снимок это dataURL в мегабайты, хранилище на нём отказывает по
+// квоте и уносит заодно текст черновика. Переключение разговора память не
+// трогает, и вставленная картинка возвращается вместе с недописанной репликой
+// (замечание 6).
+const chatShots = new Map();
+
+function chatShotRead(addr) {
+  return chatShots.get(addr) || null;
+}
+
+function chatShotWrite(addr, pic) {
+  if (pic) chatShots.set(addr, pic);
+  else chatShots.delete(addr);
 }
 
 function chatDraftRead(addr) {
@@ -5051,8 +5133,11 @@ function chatPanel(project, st) {
   const clips = el("div", "cclips");
   row.append(clips);
   let pinnedSel = null;
-  let shot = null;
+  let shot = chatShotRead(st.addr);
   const drawClips = () => {
+    // Отрисовка блоков заодно и запоминает вложение: меняют его только тут же
+    // рядом, и держать запись в трёх местах незачем.
+    chatShotWrite(st.addr, shot);
     clips.replaceChildren();
     if (pinnedSel) {
       const chip = el("div", "cclip");
@@ -5097,6 +5182,9 @@ function chatPanel(project, st) {
   };
   document.addEventListener("selectionchange", catchSel);
   chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
+  // Возврат на разговор показывает то, что при нём приложено: черновик уже
+  // вернулся в поле, картинка возвращается блоком.
+  drawClips();
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
   if (st.task) {

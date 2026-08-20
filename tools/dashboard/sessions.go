@@ -557,7 +557,7 @@ type reply struct {
 // подпись вызова: первое найденное и есть суть вызова. Описание хода тут
 // последнее нарочно: подпись говорит, что именно вызвано (команда, файл,
 // шаблон), а человеческое пояснение едет своим полем.
-var toolNoteKeys = []string{"command", "file_path", "path", "skill", "pattern", "url", "prompt", "id", "query", "description"}
+var toolNoteKeys = []string{"command", "file_path", "path", "skill", "pattern", "url", "summary", "prompt", "id", "query", "description"}
 
 // toolAbout это пояснение хода словами: агент пишет его сам полем description
 // у вызова (Bash, Task и родня). В ленте оно и стоит заголовком, как в vscode,
@@ -868,8 +868,17 @@ var svcSummaryRe = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)
 
 var svcStatusRe = regexp.MustCompile(`(?s)<status>(.*?)</status>`)
 
-// svcNote собирает служебную строку по телу вставки.
-func svcNote(tag svcTag, body string) string {
+// svcLine это готовая служебная запись: заголовок строкой и тело блоком под
+// ней. Тело бывает пустым, и тогда запись это одна строка. Разделение нужно
+// ленте: длинная сводка фонового агента в одну строку не влезала и лезла из
+// ряда прочих записей (замечание 8).
+type svcLine struct {
+	head string
+	body string
+}
+
+// svcNote собирает служебную запись по телу вставки.
+func svcNote(tag svcTag, body string) svcLine {
 	body = strings.TrimSpace(body)
 	switch tag.name {
 	case "task-notification":
@@ -881,14 +890,14 @@ func svcNote(tag svcTag, body string) string {
 		}
 		if m := svcSummaryRe.FindStringSubmatch(body); m != nil {
 			if sum := strings.TrimSpace(m[1]); sum != "" {
-				return said + ": " + truncate(strings.Join(strings.Fields(sum), " "), 300)
+				return svcLine{head: said, body: truncate(strings.TrimSpace(sum), toolBodyLimit)}
 			}
 		}
-		return said
+		return svcLine{head: said}
 	case "command-name":
-		return "Команда " + truncate(strings.Join(strings.Fields(body), " "), 80)
+		return svcLine{head: "Команда " + truncate(strings.Join(strings.Fields(body), " "), 80)}
 	}
-	return tag.word
+	return svcLine{head: tag.word}
 }
 
 // dispatchWrapRe ловит рамку, которой харнес заворачивает реплику, пришедшую
@@ -930,6 +939,13 @@ func unwrapDispatch(text string) (string, string, bool) {
 // служебные вставки харнеса уходят отдельными строками, а реплика, кроме них не
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string) {
+	// Скилл приезжает в ленту дважды: вызовом инструмента Skill и следом
+	// простынёй самого скилла, которую харнес кладёт репликой человека. Второе
+	// это инструкция модели, а не разговор, и показывать её незачем вовсе:
+	// в ленте от скилла остаётся строка «Skill имя» (замечание 5).
+	if skillBodyRe.MatchString(text) {
+		return
+	}
 	// Реплика, пришедшая субагенту посреди работы, стоит служебной строкой со
 	// своей подписью: сказал это не человек в этом чате, а тот, кто ведёт
 	// работу, и рамка харнеса в ленте не нужна вовсе.
@@ -955,7 +971,13 @@ func addUser(add func(reply), role, at, text string) {
 	}
 	said, notes := splitService(text)
 	for _, n := range notes {
-		add(reply{Role: roleNote, Time: at, Text: n})
+		// Служебка с телом едет как ход инструмента: подпись в Note, само
+		// содержимое в Text. Без тела остаётся одна строка.
+		if n.body != "" {
+			add(reply{Role: roleNote, Time: at, Text: n.body, Note: n.head})
+			continue
+		}
+		add(reply{Role: roleNote, Time: at, Text: n.head})
 	}
 	if said == "" {
 		// Одна служебка без единого слова человека: пустой пузырь тут был бы
@@ -964,6 +986,10 @@ func addUser(add func(reply), role, at, text string) {
 	}
 	add(reply{Role: role, Time: at, Text: said})
 }
+
+// skillBodyRe узнаёт простыню скилла: харнес кладёт её репликой роли user и
+// начинает строкой с каталогом скилла.
+var skillBodyRe = regexp.MustCompile(`\A\s*Base directory for this skill:\s`)
 
 // selWrapRe ловит приложенное к реплике выделение. Блок стоит префиксом, и
 // текст внутри едет как есть: кавычки, переносы и разметка человека сохраняются
@@ -998,8 +1024,8 @@ func cutSelection(text string) (sel, file, rest string) {
 // это то, что написал человек, второй это служебные строки в порядке
 // появления. Незнакомая вставка тут не трогается вовсе: выдумывать правило на
 // тег, которого мы не видели, дороже, чем показать его как есть.
-func splitService(text string) (string, []string) {
-	var notes []string
+func splitService(text string) (string, []svcLine) {
+	var notes []svcLine
 	out := text
 	for _, tag := range svcTags {
 		re := svcRe[tag.name]

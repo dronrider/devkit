@@ -303,7 +303,8 @@ async function feedOf(items, sid) {
   if (!dump(quiet).includes("Размышление")) fail("подпись размышлений не та: " + dump(quiet));
   // Ход командой стоит заголовком и блоком под ним: в заголовке имя с
   // пояснением хода, в блоке две строки в две колонки, слева направление
-  // стрелкой. Раскрытия нет, копирование только при команде.
+  // стрелкой. Копирование при команде, рядом с ним разворот блока на всю
+  // высоту содержимого.
   const card = sandbox.toolPair(
     { role: "tool", tool: "Bash", text: "command: ls -la", note: "ls -la",
       about: "смотрю каталог" },
@@ -315,7 +316,6 @@ async function feedOf(items, sid) {
   if (said.includes("IN") || said.includes("OUT")) {
     fail("направление снова подписано словами: " + said);
   }
-  if (deepBtn(card, "foldar")) fail("у хода инструмента осталось раскрытие");
   if (String(card.className).split(" ").includes("tool")) {
     fail("ход снова обёрнут карточкой: " + card.className);
   }
@@ -413,9 +413,10 @@ async function feedOf(items, sid) {
 
   const note = sandbox.chatItem({ role: "note", text: "Фоновый агент завершил работу" });
   if (!dump(note).includes("Фоновый агент")) fail("служебная строка потерялась");
-  // Реплика, доехавшая до работающего субагента, стоит подписанной служебной
-  // строкой и свёрнута: рамку харнеса сервер уже снял, а пузырём человека это
-  // рисовать нельзя, сказал это не он.
+  // Служебка с телом (уведомление о фоновом агенте, реплика работающему
+  // субагенту) рисуется тем же видом, что и ход командой: строка заголовка и
+  // под ней один блок с содержимым. Стрелок направления тут нет, потому что
+  // направления нет (замечание 8).
   const sent = sandbox.chatItem({ role: "note", note: "диспетчер -> субагенту",
     text: "Почини стрим, он молчит." });
   const shown = dump(sent);
@@ -425,17 +426,40 @@ async function feedOf(items, sid) {
   if (shown.includes("sent a message while you were working")) {
     fail("рамка харнеса доехала в ленту: " + shown);
   }
-  if (!String(sent.className).includes("fold")) {
-    fail("реплика диспетчера не свёрнута: " + sent.className);
+  if (!String(sent.className).split(" ").includes("trow2")) {
+    fail("реплика диспетчера нарисована не ходом: " + sent.className);
   }
-  const sentBody = tag(sent, "PRE");
-  if (!sentBody || !sentBody.hidden) fail("текст реплики диспетчера открыт сразу: " + shown);
-  const sentHead = byClass(sent, "foldh");
-  sentHead.handlers.click({ stopPropagation: () => {} });
-  if (sentBody.hidden) fail("клик не развернул реплику диспетчера");
-  if (!dump(sentBody).includes("Почини стрим")) {
-    fail("в развёрнутой реплике нет её текста: " + dump(sentBody));
+  const sentBox = byClass(sent, "tbox");
+  if (!sentBox || !dump(sentBox).includes("Почини стрим")) {
+    fail("текста реплики диспетчера нет в блоке: " + shown);
   }
+  if (byClass(sentBox, "tico")) fail("у служебки появилась стрелка направления: " + dump(sentBox));
+  if (!deepBtn(sentBox, "foldcp")) fail("в блоке служебки нет копирования: " + dump(sentBox));
+  const grow = deepBtn(sentBox, "foldar");
+  if (!grow) fail("в блоке служебки нет разворота: " + dump(sentBox));
+  grow.handlers.click({ stopPropagation: () => {} });
+  if (!String(sentBox.className).split(" ").includes("open")) {
+    fail("разворот не раскрыл блок служебки: " + sentBox.className);
+  }
+  // Реплика субагенту тем же видом приезжает и вызовом SendMessage.
+  const dispatch = sandbox.toolPair(
+    { role: "tool", tool: "SendMessage", note: "Пять замечаний ревью",
+      args: { to: "ac42d29", summary: "Пять замечаний ревью", message: "Разбери каждое замечание." } },
+    null);
+  const said2 = dump(dispatch);
+  if (!said2.includes("SendMessage") || !said2.includes("Разбери каждое замечание.")) {
+    fail("реплика субагенту нарисована без текста: " + said2);
+  }
+  if (!byClass(dispatch, "tbox")) fail("у реплики субагенту нет блока: " + said2);
+  // Простыня скилла в ленту не идёт вовсе, от него остаётся строка «Skill имя».
+  const skill = sandbox.toolPair(
+    { role: "tool", tool: "Skill", note: "board-groom", args: { skill: "board-groom" } },
+    { role: "toolout", text: "Launching skill: board-groom" });
+  const said3 = dump(skill);
+  if (!said3.includes("Skill") || !said3.includes("board-groom")) {
+    fail("вызов скилла не назван строкой: " + said3);
+  }
+  if (byClass(skill, "tbox")) fail("у вызова скилла появился блок: " + said3);
 }
 
 // --- разметка постановки: полный набор и никакого сырого HTML ---
@@ -552,6 +576,30 @@ async function feedOf(items, sid) {
   for (const t of timers.splice(0)) t.fn();
   const ta2 = tag(sandbox.chatPanel("demo", stD), "TEXTAREA");
   if (ta2.value !== "недописанная мысль") fail("черновик не вернулся: " + JSON.stringify(ta2.value));
+}
+
+// --- вложение переживает переключение чата вместе с черновиком ---
+{
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const stA = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  const one = sandbox.chatPanel("demo", stA);
+  tag(one, "TEXTAREA").handlers.paste({
+    preventDefault: () => {},
+    clipboardData: { items: [{ type: "image/png", getAsFile: () => ({ name: "снимок.png" }) }] },
+  });
+  await settle();
+  if (!byClass(one, "cclip")) fail("картинка не встала в строку отправки");
+  // Уход на соседний разговор и возврат: вложение должно вернуться само.
+  const stB = await sandbox.chatState("demo", "bbbb2222-2222", board);
+  const two = sandbox.chatPanel("demo", stB);
+  if (byClass(two, "cclip")) fail("вложение уехало в чужой разговор");
+  const back = sandbox.chatPanel("demo", stA);
+  const clip = byClass(back, "cclip");
+  if (!clip) fail("вложение потерялось при переключении чата");
+  const img = tag(clip, "IMG");
+  if (!img || String(img.src) !== png) {
+    fail("вернулась не та картинка: " + String(img && img.src).slice(0, 40));
+  }
 }
 
 // --- чат из раздела «Агенты»: панель поверх раздела, проект внутри адреса ---

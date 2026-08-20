@@ -42,7 +42,17 @@ const items = [
   { seq: 10, key: "a:1", role: "tool", tool: "Bash", note: "ls testdata", about: "стенды на месте",
     text: "command: ls testdata", sub: "разбор находки", time: at(8) },
   { seq: 11, key: "a:2", role: "toolout", text: "poc_panel.mjs poc_wake.mjs", sub: "разбор находки", time: at(9) },
-  { seq: 12, key: "m:9", role: "assistant", text: "Правка на месте, тесты зелёные.", time: at(10) },
+  { seq: 12, key: "m:9", role: "thinking", spent: 8000, time: at(10) },
+  { seq: 13, key: "m:10", role: "tool", tool: "Skill", note: "board-groom",
+    args: { skill: "board-groom", args: "DK-413" }, time: at(10) },
+  { seq: 14, key: "m:11", role: "toolout", text: "Launching skill: board-groom", time: at(10) },
+  { seq: 15, key: "m:12", role: "note", note: "Фоновый агент завершил работу",
+    text: "Агент разобрал восемь замечаний, стенды зелёные, снимки сняты на трёх ширинах, ветка закоммичена.", time: at(11) },
+  { seq: 16, key: "m:13", role: "tool", tool: "SendMessage", note: "Пять замечаний ревью",
+    args: { to: "ac42d29", summary: "Пять замечаний ревью",
+      message: "Ревью дало пять замечаний, они лежат в разделе «Ревью» файла задачи. Разобрать надо каждое: правкой либо отказом с причиной." },
+    time: at(11) },
+  { seq: 17, key: "m:14", role: "assistant", text: "Правка на месте, тесты зелёные.", time: at(12) },
 ];
 
 items0.push(...items);
@@ -90,12 +100,21 @@ function lead(row){
   return null;
 }
 const out=[];
+for(const sel of [".cpanel",".clist",".cpin",".chatwrap",".chatfeed",".mlist"]){
+  const n=document.querySelector(sel);
+  if(!n){out.push(sel+" | нет");continue;}
+  const r=n.getBoundingClientRect();
+  out.push(sel+" | слева "+r.left.toFixed(1)+" | справа "+r.right.toFixed(1)+" | ширина "+r.width.toFixed(1)+
+    " | своя ширина "+n.clientWidth);
+}
 for(const row of document.querySelectorAll(".frow")){
   const dot=row.querySelector(".fdot").getBoundingClientRect();
   const box=lead(row);
+  const rb=row.getBoundingClientRect();
   out.push(row.className+" | сдвиг "+(box?((dot.top+dot.height/2)-(box.top+box.bottom)/2).toFixed(1):"-")+
     " | зазор слева "+(row.querySelector(".frowb").getBoundingClientRect().left-
-      (dot.left+dot.width/2)).toFixed(1));
+      (dot.left+dot.width/2)).toFixed(1)+
+    " | справа "+(document.querySelector(".cpanel").getBoundingClientRect().right-rb.right).toFixed(1));
 }
 document.getElementById("geom").textContent=out.join("\\n");
 </script>`;
@@ -103,5 +122,5 @@ document.getElementById("geom").textContent=out.join("\\n");
 process.stdout.write(`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>лента</title>
 <link rel="stylesheet" href="style.css"></head>
-<body style="margin:0"><div class="cpanel" style="--cw:${width}px"><div class="cpin"><div class="chatwrap">${html(box)}</div></div></div>${measure ? probe : ""}</body></html>
+<body style="margin:0"><div class="cpanel" style="--cw:${width}px"><i class="cgrab"></i><div class="clist" hidden></div><div class="cpin"><div class="chatwrap"><div class="chatfeed">${html(box)}</div></div></div></div>${measure ? probe : ""}</body></html>
 `);

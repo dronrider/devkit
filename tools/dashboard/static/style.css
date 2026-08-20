@@ -407,7 +407,7 @@ a:hover{text-decoration:underline}
 .tool{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin:8px 0;font:400 12px var(--mono);color:var(--tx2);overflow:hidden}
 .tool b{font-weight:600;color:var(--tx);flex:none}
 .tool span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.think{font:400 12px var(--sans);color:var(--tx3);font-style:italic;margin:8px 0}
+.think{font:400 12px var(--sans);color:var(--tx3);margin:8px 0}
 .more{padding:2px 0 12px;font:500 12px var(--sans);color:var(--acc);cursor:pointer}
 .feed-start{padding:2px 0 12px;font:500 12px var(--sans);color:var(--tx3);text-align:center}
 .tmuxrow{display:flex;align-items:center;gap:16px;padding:11px 18px;font:400 12.5px var(--mono);color:var(--tx2);flex-wrap:wrap}
@@ -487,6 +487,12 @@ a:hover{text-decoration:underline}
    хват, иначе список отъедал бы у чтения и панель на 320 точках превращалась бы
    в полосу. */
 :root{--clw:172px}
+/* спрятанная колонка списка занимает место: [hidden] это display:none правилом
+   браузера, а класс со своим display его перебивает. Список уехал в выпадающий,
+   узел остался в разметке, и его 172 точки стояли призраком слева от ленты:
+   отсюда и лишний отступ у блоков, и почти не двигавшаяся ширина панели
+   (замечания 2 и 3) */
+.clist[hidden]{display:none}
 .clist{flex:none;width:var(--clw);display:flex;flex-direction:column;gap:8px;min-height:0;padding:16px 12px;border-right:1px solid var(--line);background:var(--bg0);overflow-y:auto}
 .clhead{font:600 11.5px var(--sans);text-transform:uppercase;letter-spacing:0.04em;color:var(--tx3)}
 .clist-rows{display:flex;flex-direction:column;gap:6px;min-height:0}
@@ -771,7 +777,7 @@ a:hover{text-decoration:underline}
 .foldh span{flex:1;min-width:0;font:400 11.5px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .foldc{flex:none!important;width:14px;text-align:center;font:600 13px var(--mono);color:var(--tx3)}
 .foldb{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:400 11.5px/1.5 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto}
-.think.fold .foldh b{color:var(--tx3);font-style:italic}
+.think.fold .foldh b{color:var(--tx3)}
 .toolout.fold{background:var(--bg1)}
 
 /* ---- компактная раскладка, второй круг POC ----
@@ -993,6 +999,8 @@ a:hover{text-decoration:underline}
 .tico svg{width:13px;height:13px;display:block}
 .tin .tico{color:var(--acc);opacity:1}
 .tcmd{flex:1;min-width:0;font:400 11.5px/1.45 var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbox.open .ttext{display:block;-webkit-line-clamp:none;overflow:visible}
+.tline.tbare{padding-left:10px}
 .ttext{margin:0;flex:1;min-width:0;font:400 11.5px/1.45 var(--mono);color:var(--tx3);white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .foldcp{width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:var(--tx3);opacity:.5}
 .trow2:hover .foldcp{opacity:1}
@@ -1053,18 +1061,23 @@ a:hover{text-decoration:underline}
 .fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}
 .fdot.bad{background:var(--block)}
-/* Кружок стоит по середине первой строки записи, а высота её у пузыря и у
-   строки инструмента разная: у пузыря сверху свой отступ и поля */
-.frow.r-user .fdot,.frow.r-assistant .fdot{top:23.5px}
-.frow.r-thinking .fdot{top:12.5px}
-.frow.r-note .fdot{top:12.5px}
-.frow.r-toolout .fdot{top:4px}
+/* Кружок стоит по середине первой строки записи, а высота её задаётся не ролью,
+   а видом записи: у пузыря сверху свой отступ и поля, у свёрнутого блока рамка
+   с полями, у строки инструмента и голой строки текста ни того, ни другого.
+   По роли это считалось неверно: размышление с текстом рисуется свёрнутым
+   блоком, а без текста строкой, и кружок у второго уезжал вниз (замечание 1) */
+.frow.f-bub .fdot{top:23.5px}
+.frow.f-fold .fdot{top:11.5px}
+.frow.f-head .fdot{top:4px}
+.frow.f-line .fdot{top:4px}
+.frow.f-tline .fdot{top:8.8px}
 
 /* Плотность как в ленте vscode: записи идут подряд, дышат только смысловые
    куски. Прежние отступы приезжали от чужого правила и от полей пузыря */
 .frow .trow2{margin:2px 0}
 .frow .msg{margin-top:6px;gap:3px}
-.frow .think{margin:3px 0}
+.frow .think{margin:2px 0;font:400 12px/1.35 var(--sans)}
+.frow .svcline{margin:2px 0;padding:0 0 0 9px;font:400 12px/1.35 var(--sans)}
 .frow .svc.fold{margin:3px 0}
 .frow .tbox{margin-top:3px}
 .frow .tsaid{margin:2px 0 3px}

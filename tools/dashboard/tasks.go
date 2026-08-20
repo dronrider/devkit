@@ -75,6 +75,10 @@ type boardRow struct {
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.
 	Waiting *Waiting `json:"waiting,omitempty"`
+	// Closed это дата закрытия у строки, собранной из архива: на доске такой
+	// строки уже нет, а экран задачи её всё равно открывает, потому что в
+	// выдачу поиска архив входит наравне с доской.
+	Closed string `json:"closed,omitempty"`
 }
 
 // Признак идущей работы словами: tmux это сессия дашборда, её и снимает
@@ -269,6 +273,14 @@ func taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
 // taskRow находит проект и строку задачи на его доске; не найдя, отвечает
 // словами сам и возвращает ok=false.
 func (s *server) taskRow(w http.ResponseWriter, r *http.Request) (found *Project, id string, row boardRow, rows map[string]boardRow, ok bool) {
+	return s.taskRowOf(w, r, false)
+}
+
+// taskRowOf это тот же разбор со скидкой на архив. Закрытая задача строки на
+// доске не имеет, и правки ей ни к чему, а вот прочитать её надо: в выдачу
+// поиска архив входит наравне с доской, и нажатие на найденную строку прежде
+// упиралось в отказ вместо экрана (замечание 4 четырнадцатого круга POC).
+func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool) (found *Project, id string, row boardRow, rows map[string]boardRow, ok bool) {
 	found = s.findProject(w, r, "задача")
 	if found == nil {
 		return nil, "", boardRow{}, nil, false
@@ -290,6 +302,12 @@ func (s *server) taskRow(w http.ResponseWriter, r *http.Request) (found *Project
 	}
 	row, hit := rows[id]
 	if !hit {
+		if archive {
+			if arch, closed := archiveRows(found.Path)[id]; closed {
+				return found, id, boardRow{ID: id, Title: arch.Title, Closed: arch.Closed,
+					Type: "task", Cost: "-"}, rows, true
+			}
+		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": rowGone(found, id)})
 		return nil, "", boardRow{}, nil, false
 	}
@@ -367,11 +385,45 @@ func taskFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", id+".md"))
 }
 
+// archiveFile ищет постановку закрытой задачи. Закрытие уносит файл в
+// docs/tasks/archive/<год>/, и год этот заранее неизвестен, поэтому каталоги
+// перебираются; на своём прежнем месте файл тоже проверяется, потому что
+// перенос делает закрытие, а не сам архив.
+func archiveFile(projectPath, id string) (string, string, bool) {
+	rels := []string{taskFileRel(id)}
+	years, _ := os.ReadDir(filepath.Join(projectPath, "docs", "tasks", "archive"))
+	for _, y := range years {
+		if y.IsDir() {
+			rels = append(rels, filepath.ToSlash(filepath.Join("docs", "tasks", "archive", y.Name(), id+".md")))
+		}
+	}
+	for _, rel := range rels {
+		if text, err := os.ReadFile(filepath.Join(projectPath, filepath.FromSlash(rel))); err == nil {
+			return rel, string(text), true
+		}
+	}
+	return "", "", false
+}
+
 // handleTask отдаёт всё, из чего рисуется экран задачи: строку доски,
 // зависимости в обе стороны и текст файла задачи.
 func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
-	found, id, row, rows, ok := s.taskRow(w, r)
+	found, id, row, rows, ok := s.taskRowOf(w, r, true)
 	if !ok {
+		return
+	}
+	// Закрытая задача читается файлом и только: ни зависимостей, ни идущей
+	// работы, ни ожидания человека у неё нет и быть не может.
+	if row.Closed != "" {
+		resp := map[string]any{"project": found.Name, "id": id, "row": row,
+			"after": []depRef{}, "blocks": []depRef{}}
+		if rel, text, hit := archiveFile(found.Path, id); hit {
+			resp["file"] = rel
+			resp["text"] = text
+		} else {
+			resp["note"] = fmt.Sprintf("файла задачи %s нет: закрытая задача осталась одной строкой архива", taskFileRel(id))
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	after, blocks, err := taskDeps(found.Path, id)

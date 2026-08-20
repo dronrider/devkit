@@ -1653,7 +1653,22 @@ function filePanel(project, id, detail, form, touch, edit) {
   // Разворот стал режимом чтения задачи, и кнопка его переехала к карандашу в
   // строку статуса: два переключателя вида стоят рядом, а не по разным углам
   // экрана (замечание 2). Сама ручка отдаётся наружу, кнопку рисует экран.
-  card.setWide = (on) => card.classList.toggle("wide", on);
+  // Пара к ней живёт тут: развёрнутая постановка накрывает собой всю страницу
+  // вместе со строкой статуса, и включённый режим чтения выключать было нечем
+  // (замечание 6 четырнадцатого круга POC). Кнопка стоит в углу самой
+  // постановки и видна только в режиме чтения.
+  const out = el("button", "fwide");
+  out.hidden = true;
+  out.title = "Выйти из режима чтения";
+  out.setAttribute("aria-label", out.title);
+  out.append(icon("close"));
+  out.addEventListener("click", () => { if (card.onWideOff) card.onWideOff(); });
+  head.append(out);
+  card.onWideOff = null;
+  card.setWide = (on) => {
+    card.classList.toggle("wide", on);
+    out.hidden = !on;
+  };
 
   const ta = el("textarea");
   ta.value = form.text;
@@ -1998,6 +2013,20 @@ async function renderTask(project, works, id) {
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
 
+  // Закрытая задача открывается чтением: строки на доске у неё нет, править
+  // нечего, и экран показывает заголовок с датой закрытия и файл постановки.
+  // Прежде выдача поиска высаживала на такой задаче отказ, и нажатие на
+  // найденную строку выглядело сломанным (замечание 4).
+  if (row.closed) {
+    crumb.append(el("span", "chip c-check", "закрыта " + row.closed));
+    const closedHead = el("div", "thline");
+    closedHead.append(el("span", "idbig", row.id));
+    closedHead.append(el("div", "tro", row.title || id));
+    page.append(closedHead);
+    page.append(filePanel(project, id, detail, { text: detail.text || "" }, () => {}, false));
+    return;
+  }
+
   // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
   const base = (row.r_parts || []).map(Number);
   const form = {
@@ -2066,12 +2095,13 @@ async function renderTask(project, works, id) {
   read.title = "Режим чтения";
   read.setAttribute("aria-label", read.title);
   read.append(icon("i-read"));
-  read.addEventListener("click", () => {
-    const on = read.classList.toggle("on");
+  const setRead = (on) => {
+    read.classList.toggle("on", on);
     read.title = on ? "Выйти из режима чтения" : "Режим чтения";
     read.setAttribute("aria-label", read.title);
     if (file.setWide) file.setWide(on);
-  });
+  };
+  read.addEventListener("click", () => { setRead(!read.classList.contains("on")); });
   modes.append(read);
   // Тот же признак работы, что и в строке списка, и теми же словами: решение
   // «продолжить или не трогать» принимают чаще всего на этом экране.
@@ -2269,6 +2299,9 @@ async function renderTask(project, works, id) {
   const rail = el("div", "rrail");
   const deps = depsCard(project, id, detail.after || [], detail.blocks || []);
   const file = filePanel(project, id, detail, form, touch, editing);
+  // Кнопка в углу развёрнутой постановки и кнопка в строке статуса это один
+  // переключатель: нажатая любая из них возвращает страницу в обычный вид.
+  file.onWideOff = () => { setRead(false); };
   const grid = el("div", "tgrid");
   page.append(grid);
   // Блоки экрана встают в разметку туда же, где они нарисованы: полоса
@@ -5618,13 +5651,18 @@ function findType(value) {
 function findGo(value) {
   const project = shownProject || route().proj;
   if (!project) return;
-  const hash = "#" + project + "/find/" + encodeURIComponent(String(value).trim());
+  const base = project + "/find/" + encodeURIComponent(String(value).trim());
+  // Открытый разговор переезжает и с каждой набранной буквой. Замена адреса
+  // хвост панели не дописывала, и поиск оставался единственной дорогой, что
+  // закрывает чат: первая же буква сносила его с экрана.
+  const chat = route().chat;
+  const hash = "#" + (chat ? base + "/chat/" + chat : base);
   if (hash === "#" + location.hash.replace(/^#/, "")) return;
   // Набор это не переход: каждая буква отдельной записью в истории браузера
   // превратила бы «назад» в перемотку по буквам. Переход на экран выдачи
   // записью остаётся, с него «назад» и возвращает на доску.
   if (route().find) location.replace(hash);
-  else goKeepingChat(hash);
+  else goKeepingChat("#" + base);
 }
 
 // Курсор в поле поиска по косой черте: руки на клавиатуре, и тянуться мышью к
@@ -5669,7 +5707,10 @@ function markHits(box, text, q) {
 // архивной строки дата закрытия (ранга и цены в архиве нет вовсе), у найденной
 // в тексте цитата с местом файла.
 function findRow(project, key, row, q) {
-  const tr = el("div", "srow");
+  // Строка выдачи нажимается, и курсор об этом говорит: со стрелкой она
+  // читалась как подпись, а не как дорога (замечание 3 четырнадцатого круга
+  // POC). Класс тот же, каким помечены нажимаемые строки накопителя.
+  const tr = el("div", "srow clicky");
   tr.append(el("span", "id", row.id));
   const st = el("span", "st fst");
   markHits(st, row.title || "", q);
@@ -5691,10 +5732,12 @@ function findRow(project, key, row, q) {
   }
   if (row.r) meta.append(rankCell(row));
   tr.append(meta);
-  // Черновик ведёт в накопитель, остальное на экран задачи: закрытая задача
-  // открывается там же и называет свой архив словами.
+  // Черновик ведёт на свой экран, остальное на экран задачи: закрытая задача
+  // открывается там же, файлом и без правок. Прежде черновик высаживал в общий
+  // накопитель, а закрытая задача упиралась в отказ, и нажатие на найденное
+  // выглядело сломанным.
   tr.addEventListener("click", () => {
-    goKeepingChat(key === "drafts" ? project + "/drafts" : project + "/" + row.id);
+    goKeepingChat(key === "drafts" ? project + "/draft/" + row.id : project + "/" + row.id);
   });
   return tr;
 }

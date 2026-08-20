@@ -781,13 +781,25 @@ const sandbox = {
     if (path.includes("/tasks/") && (!init || !init.method)) {
       const id = decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
       const r = rows.find((x) => x.id === id);
-      if (!r) return refuse(404, { error: "на доске demo нет строки " + id });
+      if (!r) {
+        // Закрытая задача уехала в архив, но экран у неё есть: сервер отдаёт
+        // строку архива с датой закрытия и файл постановки из архива.
+        const arch = archived.find((a) => a.id === id);
+        if (arch) {
+          return reply({ project: "demo", id, after: [], blocks: [],
+            row: { id, title: arch.title, closed: arch.closed, type: "task", cost: "-" },
+            file: "docs/tasks/archive/2026/" + id + ".md", text: "# " + id + "\n\nпостановка из архива" });
+        }
+        return refuse(404, { error: "на доске demo нет строки " + id });
+      }
       const sect = id === "XR-1" ? "in-progress" : "backlog";
       const order = rowOrder(sect, r);
       return reply({
         project: "demo", id,
         row: Object.assign({}, r, { sect, section: sect }, order ? { order } : {}),
         after: [], blocks: [],
+        file: "docs/tasks/" + id + ".md",
+        text: "# " + id + "\n\nпостановка задачи",
       });
     }
     if (path === "/api/harnesses") return reply(harnessBody());
@@ -1262,6 +1274,41 @@ if (!quoted || !byClass(quoted, "hit")) {
   fail("совпадение в цитате не подсвечено: " + dump(textCard));
 }
 
+// Строка выдачи нажимается, и это видно до нажатия: класс нажимаемой строки
+// тот же, что у накопителя, а с ним приходит и курсор (замечание 3).
+await go("#demo/find/" + encodeURIComponent("колокольчик"));
+const litRow = find(groups, "find-card-archive").children[0];
+if (!litRow.classList.contains("clicky")) {
+  fail("строка выдачи не помечена нажимаемой: " + litRow.className);
+}
+
+// Закрытая задача из выдачи открывается экраном чтения, а не отказом: строки на
+// доске у неё нет, зато есть файл в архиве (замечание 4).
+litRow.handlers.click();
+await settle();
+if (sandbox.location.hash !== "demo/XR-90") {
+  fail("архивная строка выдачи не увела на экран задачи: " + sandbox.location.hash);
+}
+await sandbox.refresh();
+await settle();
+{
+  const shown = dump(groups);
+  if (!shown.includes("закрыта 2026-08-01")) fail("экран закрытой задачи не назвал дату: " + shown.slice(0, 300));
+  if (!shown.includes("постановка из архива")) fail("экран закрытой задачи не показал файл: " + shown.slice(0, 300));
+  if (shown.includes("Сохранить")) fail("у закрытой задачи нарисованы правки: " + shown.slice(0, 400));
+}
+
+// Черновик из выдачи ведёт на свой экран, а не в общий накопитель: разбор
+// начинают с той записи, которую нашли.
+await go("#demo/find/" + encodeURIComponent("XR-D2"));
+const draftHit = find(groups, "find-card-drafts");
+if (draftHit) {
+  draftHit.children[0].handlers.click();
+  if (sandbox.location.hash !== "demo/draft/XR-D2") {
+    fail("черновик выдачи не увёл на свой экран: " + sandbox.location.hash);
+  }
+}
+
 // Набор в поле шапки: буквы копятся, запрос уходит один раз по задержке, а
 // экран выдачи собирается тем же путём, что и по ссылке.
 await go("#demo");
@@ -1602,6 +1649,25 @@ await go("#demo/XR-1");
 if (barButton(groups, "Живой статус") || barButton(groups, "Разговор агента")) {
   fail("на полосе действий задачи снова заведён свой вход в разговор");
 }
+// Режим чтения включается и выключается: развёрнутая постановка накрывает
+// строку статуса вместе со своей кнопкой, и выйти из режима было нечем
+// (замечание 6). Пара к ней стоит в углу самой постановки.
+{
+  const on = barButton(groups, "Режим чтения");
+  if (!on) fail("кнопки режима чтения на экране задачи нет: " + dump(groups).slice(0, 200));
+  const panelFile = byClass(groups, "fpanel");
+  const back = barButton(panelFile, "Выйти из режима чтения");
+  if (!back) fail("парной кнопки выхода в постановке нет: " + dump(panelFile).slice(0, 200));
+  if (!back.hidden) fail("кнопка выхода видна вне режима чтения");
+  on.handlers.click();
+  if (!panelFile.classList.contains("wide")) fail("режим чтения не развернул постановку");
+  if (back.hidden) fail("в режиме чтения кнопка выхода так и не показалась");
+  back.handlers.click();
+  if (panelFile.classList.contains("wide")) fail("кнопка выхода не свернула постановку");
+  if (!back.hidden) fail("после выхода кнопка выхода осталась на виду");
+  if (on.classList.contains("on")) fail("кнопка режима чтения осталась нажатой после выхода");
+}
+
 await go("#demo/XR-1/chat/XR-1");
 if (sandbox.location.hash.replace(/^#/, "") !== "demo/XR-1/chat/XR-1") {
   fail("разговор задачи открылся не хвостом адреса: " + sandbox.location.hash);

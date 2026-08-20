@@ -654,12 +654,30 @@ async function feedOf(items, sid) {
     ["уведомления", "demo/feed"], ["накопитель", "demo/drafts"],
     ["запись", "demo/draft/XR-D1"], ["новая задача", "demo/new"],
     ["раздел агентов", "/agents"], ["другой проект", "второй"], ["главная", ""],
+    ["поиск", "demo/find/" + encodeURIComponent("колокольчик")],
   ]) {
     sandbox.location.hash = "#demo/XR-1/chat/aaaa1111-1111";
     sandbox.goKeepingChat(hash);
     const to = sandbox.location.hash;
     if (!to.includes("/chat/aaaa1111-1111")) fail("переход «" + name + "» потерял чат: " + to);
     if (sandbox.route().chat !== "aaaa1111-1111") fail("после «" + name + "» хвост разобран не так");
+  }
+}
+
+// --- набор в поиске панель не закрывает ---
+// Десять дорог чат переживал, а поиск нет: замена адреса на каждой букве
+// хвоста панели не дописывала, и первая же буква сносила разговор с экрана.
+{
+  sandbox.location.hash = "#demo/find/" + encodeURIComponent("коло") + "/chat/aaaa1111-1111";
+  sandbox.findGo("колокольчик");
+  const to = sandbox.location.hash;
+  if (!to.includes("/chat/aaaa1111-1111")) fail("набор в поиске потерял чат: " + to);
+  if (!to.includes("find/")) fail("набор в поиске увёл с выдачи: " + to);
+  // Заход в поиск с доски хвост тоже везёт.
+  sandbox.location.hash = "#demo/chat/aaaa1111-1111";
+  sandbox.findGo("колокольчик");
+  if (!sandbox.location.hash.includes("/chat/aaaa1111-1111")) {
+    fail("заход в поиск с доски потерял чат: " + sandbox.location.hash);
   }
 }
 

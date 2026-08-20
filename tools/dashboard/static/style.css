@@ -937,7 +937,13 @@ a:hover{text-decoration:underline}
 .tpen.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
 .tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default}
 /* разворот блока постановки на всю среднюю колонку */
-.fwide{position:absolute;top:8px;right:8px;z-index:3;width:26px;height:26px;border:1px solid var(--line2);border-radius:7px;background:var(--bg1);color:var(--tx3);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+/* Заголовок закрытой задачи: правки у неё нет, и поля тут нет тоже. */
+.tro{flex:1;min-width:0;font:400 15px/1.4 var(--sans);color:var(--tx)}
+.fwide{flex:none;width:26px;height:26px;border:1px solid var(--line2);border-radius:7px;background:var(--bg1);color:var(--tx3);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+/* Скрытие сильнее своего display: без этого кнопка выхода висела бы и вне
+   режима чтения. */
+.fwide[hidden]{display:none}
+.fpanel.wide .fhead{position:sticky;top:0;z-index:3;background:var(--bg1)}
 .fwide svg{width:13px;height:13px;display:block}
 .fwide:hover{border-color:var(--acc);color:var(--tx)}
 .fpanel.wide{position:absolute;left:16px;right:16px;top:12px;bottom:12px;z-index:22;overflow-y:auto;box-shadow:0 18px 50px -20px rgba(0,0,0,0.7)}
@@ -950,7 +956,7 @@ a:hover{text-decoration:underline}
 
 /* 14: строка черновика кликается целиком, и курсор обязан это показывать */
 .dlist .srow,.srow.clicky{cursor:pointer}
-.dlist .srow:hover{background:var(--bg2)}
+.dlist .srow:hover,.srow.clicky:hover{background:var(--bg2)}
 
 /* 9: номер задачи и название на одной горизонтали. Поле заголовка растёт по
    содержимому, поэтому равняются они по первой строке, а не по центру блока */

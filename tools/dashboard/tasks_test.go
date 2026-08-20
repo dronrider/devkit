@@ -828,12 +828,17 @@ func TestStaticTaskLiveUpdateKeepsDraft(t *testing.T) {
 // когда сохранять и отменять есть что.
 func TestStaticTaskActionBar(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "async function renderTask(")
+	// Полосу собирает общая форма трёх экранов (formPage), а действия задачи
+	// приносит ей сам экран: разметка у задачи, черновика и заведения одна.
+	body := funcBody(t, app, "function formPage(")
 	for _, want := range []string{`el("div", "card abar")`, "drop.hidden = true", "drop.hidden = !dirty",
-		"save.disabled = !dirty", `el("span", "div")`, "taskActions(project, id, row, works)"} {
+		"save.disabled = !dirty", `el("span", "div")`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
+	}
+	if !strings.Contains(funcBody(t, app, "async function renderTask("), "taskActions(project, id, row, works)") {
+		t.Error("экран задачи не приносит в полосу своих действий")
 	}
 	if !strings.Contains(funcBody(t, app, "function taskActions("), "Остановить агента") {
 		t.Error("в полосе действий задачи нет стопа живой работы")
@@ -912,7 +917,7 @@ func TestStaticTaskTips(t *testing.T) {
 		t.Error("подсказка не садится на сам элемент: withTip не выставляет title")
 	}
 	for _, want := range []string{
-		`withTip(p, P_HINT)`,
+		`P_HINT)`,
 		`withTip(el("span", "stale dashed", row.moved)`,
 		"дата последней правки задачи на доске",
 		"Сессия агента будет завершена, при возобновлении состояние агента",
@@ -960,7 +965,7 @@ func TestStaticDepsNamedInWords(t *testing.T) {
 func TestStaticTaskNarrowHead(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "async function renderTask(")
-	if !strings.Contains(body, `crumb.append(el("span", "idsm", row.id))`) {
+	if !strings.Contains(body, `el("span", "idsm", row.id)`) {
 		t.Error("номер задачи не встал в строку с доской и статусом")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
@@ -981,7 +986,7 @@ func TestStaticTaskNarrowHead(t *testing.T) {
 // описание за нижний край.
 func TestStaticTaskNarrowRankFold(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "async function renderTask(")
+	body := funcBody(t, app, "function formPage(")
 	for _, want := range []string{`el("div", "card rcard rfolded")`, `el("div", "rtop")`,
 		`el("div", "rbody")`, `el("button", "rfold", "развернуть")`,
 		`rank.classList.toggle("rfolded")`, `shut ? "развернуть" : "свернуть"`,
@@ -1005,7 +1010,7 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 	// блок ранга, а не на весь экран: перепутав их, тест ловил бы чужой
 	// matchMedia соседнего блока.
 	from := strings.Index(body, `const rank = el("div", "card rcard rfolded")`)
-	to := strings.Index(body, `const rail = el("div", "rrail")`)
+	to := strings.Index(body, `const grid = el("div", "tgrid")`)
 	if from < 0 || to < from {
 		t.Fatal("блок ранга в отрисовке задачи не нашёлся: смотреть запрет негде")
 	}
@@ -1044,10 +1049,11 @@ func TestStaticTaskNarrowRankFold(t *testing.T) {
 // телефоне это значки, на ноутбуке значок со словом.
 func TestStaticTaskBarIcons(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "async function renderTask(")
+	body := funcBody(t, app, "function formPage(")
 	for _, want := range []string{"save.hidden = true", "save.hidden = !dirty",
-		"sep.hidden = true", "sep.hidden = !dirty",
-		`barBtn("btn btn-acc", "Сохранить", "i-done")`, `barBtn("btn", "Отменить правку", "close")`} {
+		"sep.hidden = true", "sep.hidden = drop.hidden",
+		`barBtn("btn btn-acc", cfg.saveLabel || "Сохранить", "i-done")`,
+		`barBtn("btn", "Отменить правку", "close")`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе сохранения нет %q: кнопки видны у нетронутой формы", want)
 		}
@@ -1181,13 +1187,13 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 	if chrome == "" {
 		t.Skip("chrome не найден: замер раскладки экрана задачи пропущен")
 	}
-	// Разметка стенда повторяет renderTask руками, и разъехаться с ней она
-	// может молча: замер на своей вёрстке зеленел бы и после того, как экран
+	// Разметка стенда повторяет общую форму экранов руками, и разъехаться с ней
+	// она может молча: замер на своей вёрстке зеленел бы и после того, как экран
 	// перестали собирать этим блоком.
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "async function renderTask(")
+	body := funcBody(t, app, "function formPage(")
 	for _, want := range []string{`el("div", "tpage")`, "page.append(grid)",
-		"watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps })"} {
+		"watchTaskLayout(placeBar)"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("экран задачи собран не блоком .tpage (нет %q): замер на стендовой "+
 				"разметке перестал говорить о рабочем экране", want)
@@ -1197,15 +1203,18 @@ func TestStaticTaskNarrowWidths(t *testing.T) {
 	// стенд открывает оба случая параметром, а рабочий экран обязан выдавать
 	// их той же ширине. Снимок при отрисовке тут не годится по той же причине,
 	// что и у разворота ранга: окно растягивают без перерисовки экрана.
+	for _, want := range []string{`window.matchMedia("(max-width:900px)")`,
+		"page.append(bar)", "chips.after(bar)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("полоса действий встаёт в разметку не по ширине окна: нет %q", want)
+		}
+	}
 	watch := funcBody(t, app, "function watchTaskLayout(")
 	for _, want := range []string{`window.matchMedia("(max-width:900px)")`,
-		"parts.grid.append(parts.rank, parts.file, parts.deps)", "parts.page.append(parts.bar)",
-		"parts.rail.remove()", "parts.rail.append(parts.rank, parts.deps)",
-		"parts.chips.after(parts.bar)",
 		`mq.addEventListener("change", place)`,
 		`taskLayoutWatch.mq.removeEventListener("change", taskLayoutWatch.place)`} {
 		if !strings.Contains(watch, want) {
-			t.Errorf("блоки экрана задачи не встают в разметку по ширине окна: нет %q", want)
+			t.Errorf("подписка на ширину окна собрана не так: нет %q", want)
 		}
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))

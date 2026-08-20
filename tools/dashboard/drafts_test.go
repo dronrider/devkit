@@ -88,6 +88,65 @@ func TestDraftsListAndText(t *testing.T) {
 	}
 }
 
+// Правка записи с экрана: текст уезжает целиком той же ручкой, что читает его
+// экран, пустой не затирает запись, а пропавший файл отбивается словами. Без
+// этого экран черновика умел бы только читать, и правку записи приходилось бы
+// вести в редакторе.
+func TestDraftPutText(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
+
+	resp := doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
+		`{"text": "уведомитель шумит из песочницы\n\nвторым абзацем правка с экрана"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("правка черновика: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "docs/tasks/drafts/XR-005.md") {
+		t.Errorf("ответ не назвал файл записи: %s", text)
+	}
+	got := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md"))
+	if !strings.Contains(got, "вторым абзацем правка с экрана") {
+		t.Errorf("правка до файла не доехала:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Errorf("файл записи остался без перевода строки в конце:\n%q", got)
+	}
+
+	// Пустой текст затёр бы запись, и удаление у черновика своё, с причиной.
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005", `{"text": "   "}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "затёр бы запись") {
+		t.Fatalf("пустая правка: %d %s, ожидал 400 со словами", resp.StatusCode, text)
+	}
+	if after := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")); after != got {
+		t.Errorf("отбитая правка тронула файл:\n%s", after)
+	}
+
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-404", `{"text": "нет такой записи"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(text, "черновика XR-404") {
+		t.Fatalf("правка пропавшей записи: %d %s, ожидал 404 со словами", resp.StatusCode, text)
+	}
+
+	// Ручка изменяющая: чужая страница из браузера до неё не дотягивается.
+	req, err := http.NewRequest("PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
+		strings.NewReader(`{"text": "правка с чужой страницы"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err = c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("правка черновика с чужим Origin: %d, ожидал 403", resp.StatusCode)
+	}
+}
+
 // Список накопителя и текст записи несут заказ дословно, той же строкой, что
 // унесёт headless-сессии groomPrompt: подсказка кнопки «Провести груминг»
 // читает готовое поле вместо того, чтобы собирать его второй раз на клиенте

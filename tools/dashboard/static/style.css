@@ -379,7 +379,7 @@ a:hover{text-decoration:underline}
 .dnote{display:flex;flex-wrap:wrap;gap:4px;padding:11px 14px;border-radius:10px;background:color-mix(in oklab,var(--goal) 10%,var(--bg1));border:1px solid color-mix(in oklab,var(--goal) 28%,transparent);font:400 12.5px/1.55 var(--sans);color:var(--tx2)}
 .dnote b{color:var(--goal);font-weight:600}
 /* погашенные поля черновика: видно, что они есть, и видно, что не заполняются */
-.nfbody .off{opacity:0.45}
+.nfbody .off,.tpage .off{opacity:0.45}
 /* вид приёмки и барьер в одном ряду, на телефоне переносятся: оба списка
    закрытые, и перенос не рвёт выбор */
 .accbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -938,6 +938,7 @@ a:hover{text-decoration:underline}
 .tpen svg{width:15px;height:15px;display:block}
 .tpen:hover{border-color:var(--acc);color:var(--tx)}
 .tpen.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+.tedit.tbig{min-height:96px}
 .tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default}
 /* разворот блока постановки на всю среднюю колонку */
 /* Заголовок закрытой задачи: правки у неё нет, и поля тут нет тоже. */

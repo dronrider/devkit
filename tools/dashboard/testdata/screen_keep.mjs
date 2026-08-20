@@ -1426,26 +1426,32 @@ if (sandbox.location.hash !== "demo/draft/XR-D2") {
   fail("нажатие на строку накопителя не открыло экран записи: " + sandbox.location.hash);
 }
 
-// Экран черновика: шапка с ID, полоса пометок и текст записи разметкой.
-// Карточки хода, исхода и удаления с экрана сняты двенадцатым кругом POC
-// (замечание 15): разбор идёт живым чатом груминга, и смотрят его там же, а не
-// снимком tmux рядом. Стенд держит то, что от экрана осталось, включая
-// перерисовку по фокусу окна.
+// Экран черновика: шапка с ID, полоса пометок, полоса действий и текст записи
+// разметкой. Карточки хода, исхода и удаления с экрана сняты двенадцатым кругом
+// POC (замечание 15): разбор идёт живым чатом груминга, и смотрят его там же, а
+// не снимком tmux рядом. Собран экран той же формой, что задача и заведение
+// (общий formPage), поэтому груминг стоит кнопкой полосы действий, там же, где
+// у задачи «Выполнить», а не среди пометок.
 grooming = true;
 await go("#demo/draft/XR-D2");
 const dhead = find(groups, "draft-head");
 if (!dhead) fail("экран черновика не собрался: " + dump(groups).slice(0, 200));
 if (!dump(dhead).includes("XR-D2")) fail("шапка записи не назвала ID: " + dump(dhead));
-// Пометки и кнопки разбора стоят своей полосой: шапка держит ID с заголовком,
-// и перерисовываются они врозь.
+// Пометки стоят своей полосой: шапка держит ID с заголовком, и перерисовываются
+// они врозь.
 let dchips = find(groups, "draft-chips");
 if (!dchips) fail("полосы пометок черновика нет: " + dump(groups).slice(0, 200));
 if (!dump(dchips).includes("черновик")) fail("запись не помечена черновиком: " + dump(dchips));
 if (!dump(dchips).includes("груминг идёт")) {
   fail("идущий груминг ничем не помечен: " + dump(dchips));
 }
-if (button(dchips, "Провести груминг")) {
-  fail("поверх идущего груминга экран предлагает поднять второй: " + dump(dchips));
+if (barButton(groups, "Провести груминг")) {
+  fail("поверх идущего груминга экран предлагает поднять второй: " + dump(groups));
+}
+// Правка и чтение у записи те же, что у задачи: карандаш и режим чтения стоят
+// в строке статуса.
+if (!barButton(dchips, "Править запись") || !barButton(dchips, "Режим чтения")) {
+  fail("у записи нет кнопок режимов: " + dump(dchips));
 }
 // Текст записи стоит разметкой, а не сырым файлом.
 const dtext = find(groups, "draft-text");
@@ -1459,8 +1465,8 @@ grooming = false;
 await go("#demo/draft/XR-D2");
 dchips = find(groups, "draft-chips");
 if (dump(dchips).includes("груминг идёт")) fail("кончившийся груминг помечен идущим: " + dump(dchips));
-const groomBtn = button(dchips, "Провести груминг");
-if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(dchips));
+const groomBtn = barButton(groups, "Провести груминг");
+if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(groups).slice(0, 300));
 groomBtn.handlers.click({ stopPropagation: () => {} });
 await settle();
 if (groomAsk === null) fail("кнопка груминга не позвала ручку разбора");
@@ -1471,11 +1477,10 @@ groomAsk = null;
 groomChat = { id: "gggg4444-4444", title: "Груминг XR-D2", mtime: "2026-08-13T10:00:00+03:00",
   tasks: ["XR-D2"], state: "dead" };
 await go("#demo/draft/XR-D2");
-dchips = find(groups, "draft-chips");
-const chatBtn = button(dchips, "Чат груминга");
-if (!chatBtn) fail("ссылки в чат груминга нет: " + dump(dchips));
-if (button(dchips, "Провести груминг")) {
-  fail("рядом с чатом груминга экран зовёт поднять второй: " + dump(dchips));
+const chatBtn = barButton(groups, "Чат груминга");
+if (!chatBtn) fail("ссылки в чат груминга нет: " + dump(groups).slice(0, 300));
+if (barButton(groups, "Провести груминг")) {
+  fail("рядом с чатом груминга экран зовёт поднять второй: " + dump(groups));
 }
 chatBtn.handlers.click({ stopPropagation: () => {} });
 await settle();

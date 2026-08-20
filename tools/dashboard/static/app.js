@@ -1493,11 +1493,16 @@ const taskDraft = { id: "", dirty: false, seen: "", edit: false };
 // порядок строк на доске выводится из ранга и мог поехать.
 async function sendTaskEdit(path, method, body) {
   const r = await api(path, { method, body });
-  let said = r.body.message || r.body.error || "";
-  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-  sayResult(said, !r.ok);
+  sayResult(apiSaid(r), !r.ok);
   if (r.ok) await refresh();
   return r.ok;
+}
+
+// Слова ответа ручки одной строкой: удача, отказ и приписка утилиты. Собраны
+// они в одном месте, потому что говорят ими все правки доски.
+function apiSaid(r) {
+  const said = r.body.message || r.body.error || "";
+  return r.ok && r.body.note ? said + " (" + r.body.note + ")" : said;
 }
 
 function taskPath(project, id, tail) {
@@ -1633,7 +1638,7 @@ function depsCard(project, id, after, blocks) {
 // CSP дашборда не пускает, а тащить библиотеку ради шести правил незачем.
 // Текст в дерево кладётся только узлами (createTextNode), никакого innerHTML,
 // поэтому угловые скобки из постановки остаются текстом и разметкой не станут.
-function filePanel(project, id, detail, form, touch, edit) {
+function filePanel(project, id, detail, form, touch, edit, canMake) {
   const card = el("div", "card fpanel");
   const head = el("div", "fhead");
   // Путь файла постановки в шапке блока не нужен: человек читает описание, а
@@ -1644,9 +1649,13 @@ function filePanel(project, id, detail, form, touch, edit) {
   card.append(head, body);
 
   if (!detail.file) {
-    const make = el("button", "btn btn-sm", "Завести файл");
-    make.addEventListener("click", () => { makeTaskFile(project, id).catch(console.error); });
-    head.append(make);
+    // Дыра чинится только у строки доски: у записи накопителя пропавший файл
+    // это след груминга, и заводить его заново нечем.
+    if (canMake) {
+      const make = el("button", "btn btn-sm", "Завести файл");
+      make.addEventListener("click", () => { makeTaskFile(project, id).catch(console.error); });
+      head.append(make);
+    }
     body.append(el("div", "empty", detail.note || "файла задачи нет"));
     return card;
   }
@@ -1778,8 +1787,15 @@ function taskActionHint(isGoal, row, id) {
 // ещё и в aria-label, иначе с телефона кнопка остаётся без имени.
 function barBtn(cls, label, ico) {
   const btn = el("button", cls);
-  btn.append(icon(ico), el("span", "lb", label));
+  const lb = el("span", "lb", label);
+  btn.append(icon(ico), lb);
   btn.setAttribute("aria-label", label);
+  // Подпись правится по месту: на форме заведения она меняется переключателем,
+  // а пересобранная кнопка теряла бы обработчик вместе с погашенным видом.
+  btn.rename = (name) => {
+    lb.textContent = name;
+    btn.setAttribute("aria-label", name);
+  };
   return btn;
 }
 
@@ -1973,6 +1989,303 @@ async function goalComposition(project, id, into) {
   into.append(card);
 }
 
+// Одна форма на три экрана: задачу, черновик и заведение. Разметка у них общая
+// (крошки, шапка с номером и заголовком, строка статуса с кнопками режимов,
+// полоса действий, ранг, описание и зависимости), а расходятся они тем, какие
+// блоки включены и что делает кнопка действия. Порознь эти три отрисовки
+// разъезжались отступами и кнопками, и правка одной до двух других не доходила.
+//
+// cfg.has перечисляет включённые блоки, cfg.chips и cfg.actions приносят
+// готовые пометки и кнопки экрана, cfg.check называет рубеж формы, а сохранение
+// с отменой приходят обработчиками: что уезжает на сервер, знает сам экран.
+function formPage(cfg) {
+  const has = cfg.has || {};
+  const form = cfg.form || {};
+  const page = el("div", "tpage");
+  const out = { page };
+
+  const crumb = el("div", "crumb");
+  (cfg.crumb || []).forEach((step, i) => {
+    if (i) crumb.append(el("span", "crumb-sep", "/"));
+    const back = el("span", "crumb-back", step.text);
+    back.addEventListener("click", step.go);
+    crumb.append(back);
+  });
+  // Номер второй раз, мелким: на телефоне доска, номер и статус стоят одной
+  // строкой, и большой номер рядом с заголовком там прячется стилями.
+  for (const chip of cfg.crumbChips || []) crumb.append(chip);
+  page.append(keyed(crumb, cfg.key + "-crumb"));
+  for (const node of cfg.lead || []) page.append(node);
+
+  // Шапка: крупный номер и заголовок. Полем он правится там, где лежит строкой
+  // доски; у черновика заголовок это первая строка записи, и правят её в самом
+  // тексте.
+  const head = el("div", "thline");
+  if (cfg.num) head.append(el("span", "idbig", cfg.num));
+  let title = null;
+  if (has.title) {
+    title = el("textarea", "tedit" + (cfg.titleTall ? " tbig" : ""));
+    title.value = form.title || "";
+    title.rows = 1;
+    if (cfg.titleHint) title.placeholder = cfg.titleHint;
+    title.setAttribute("aria-label", cfg.titleLabel || "заголовок задачи");
+    // Высота по содержимому: заголовок в одну строку держал поле на три, и
+    // место уходило в пустоту. Считается она после вставки в дерево, потому что
+    // до неё scrollHeight равен нулю.
+    const fit = () => {
+      title.style.height = "auto";
+      if (title.scrollHeight) title.style.height = title.scrollHeight + "px";
+    };
+    title.addEventListener("input", () => { form.title = title.value; fit(); touch(); });
+    setTimeout(fit, 0);
+    head.append(title);
+  } else {
+    head.append(el("div", "tedit ro dtitle", cfg.titleText || cfg.num || ""));
+  }
+  page.append(keyed(head, cfg.key + "-head"));
+
+  const chips = el("div", "tchips");
+  for (const chip of cfg.chips || []) chips.append(chip);
+  if (has.type) {
+    out.typePick = pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); });
+    chips.append(out.typePick);
+  }
+  if (has.cost) {
+    out.costPick = pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); });
+    chips.append(out.costPick);
+  }
+  for (const chip of cfg.tailChips || []) chips.append(chip);
+  // Кнопки режимов прижимаются к правому краю строки статуса: там для них есть
+  // свободное место, а заголовок остаётся заголовком.
+  const modes = el("div", "tmodes");
+  chips.append(el("span", "gap"), modes);
+  page.append(keyed(chips, cfg.key + "-chips"));
+  out.chips = chips;
+
+  let file = null;
+  let edit = Boolean(cfg.edit);
+  let dressPen = () => {};
+  // Правка включается карандашом: по умолчанию экран открывается на просмотр, и
+  // описание собрано разметкой, а не лежит сырым текстом в поле. Режим меняется
+  // по месту, а не перерисовкой: перерисовка над тронутой формой запрещена, она
+  // стёрла бы несохранённое, и карандаш на ней молчал бы вовсе.
+  const setEdit = (on) => {
+    edit = on;
+    if (title) {
+      title.readOnly = !on;
+      title.classList.toggle("ro", !on);
+    }
+    if (file && file.setEdit) file.setEdit(on);
+    dressPen();
+    if (cfg.onEdit) cfg.onEdit(on);
+  };
+  out.setEdit = setEdit;
+  if (has.pencil) {
+    const pen = el("button", "tpen");
+    dressPen = () => {
+      pen.classList.toggle("on", edit);
+      pen.replaceChildren(icon(edit ? "close" : "i-pen"));
+      pen.title = edit ? "Закончить правку" : (cfg.penLabel || "Править задачу");
+      pen.setAttribute("aria-label", pen.title);
+    };
+    pen.addEventListener("click", () => { setEdit(!edit); });
+    modes.append(pen);
+  }
+  // Режим чтения: описание занимает всю колонку, остальное уходит с глаз. Пара
+  // к этой кнопке стоит в углу самого описания, иначе развёрнутый текст накрыл
+  // бы строку статуса вместе с переключателем.
+  let setRead = () => {};
+  if (has.read) {
+    const read = el("button", "tpen");
+    read.append(icon("i-read"));
+    setRead = (on) => {
+      read.classList.toggle("on", on);
+      read.title = on ? "Выйти из режима чтения" : "Режим чтения";
+      read.setAttribute("aria-label", read.title);
+      if (file && file.setWide) file.setWide(on);
+    };
+    setRead(false);
+    read.addEventListener("click", () => { setRead(!read.classList.contains("on")); });
+    modes.append(read);
+  }
+
+  // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
+  // отдельной карточки действий нет, а надписи про пустую правку нет вовсе. У
+  // нетронутой формы нет и самих кнопок правки, они приходят с первым
+  // изменением поля вместе с разделителем; на форме заведения сохранять есть
+  // что с первого касания, и кнопка там стоит всегда.
+  const bar = el("div", "card abar");
+  const save = barBtn("btn btn-acc", cfg.saveLabel || "Сохранить", "i-done");
+  const drop = barBtn("btn", "Отменить правку", "close");
+  const sep = el("span", "div");
+  const bad = el("div", "error", "");
+  save.hidden = true;
+  drop.hidden = true;
+  sep.hidden = true;
+  bar.append(save, drop, sep);
+  const actions = cfg.actions || [];
+  for (const node of actions) bar.append(node);
+  bar.append(bad);
+  save.addEventListener("click", () => { if (!save.disabled && cfg.onSave) cfg.onSave(); });
+  drop.addEventListener("click", () => { if (cfg.onDrop) cfg.onDrop(); });
+  out.bar = bar;
+  out.save = save;
+  out.bad = bad;
+
+  // Полоса в разметку не встаёт, пока показывать в ней нечего: прятать её
+  // стилями нельзя, рамка карточки осталась бы на экране. Мера пустоты это
+  // действия экрана и тронутая форма, а не наличие кнопки: «Сохранить» с
+  // «Отменить» лежат тут всегда, просто скрытыми.
+  let placed = false;
+  const narrow = window.matchMedia("(max-width:900px)");
+  const placeBar = (force) => {
+    if (force) {
+      bar.remove();
+      placed = false;
+    }
+    if (!actions.length && save.hidden) {
+      if (placed) {
+        bar.remove();
+        placed = false;
+      }
+      return;
+    }
+    if (placed) return;
+    // На телефоне полоса идёт под содержимым, на ноутбуке над ним, теми же
+    // местами, что держит раскладка экрана.
+    if (narrow.matches) page.append(bar);
+    else chips.after(bar);
+    placed = true;
+  };
+  out.placeBar = placeBar;
+
+  // Рубеж формы спрашивается у экрана: он же говорит, тронута ли она. Отказ
+  // гасит кнопку и стоит словами рядом, а не после похода на сервер.
+  function touch() {
+    const state = (cfg.check ? cfg.check() : null) || {};
+    const dirty = Boolean(state.dirty) || Boolean(cfg.always);
+    const refusal = dirty ? state.refusal || "" : "";
+    bad.textContent = refusal;
+    save.disabled = !dirty || Boolean(refusal);
+    save.hidden = !dirty;
+    drop.hidden = !dirty || Boolean(cfg.always);
+    sep.hidden = drop.hidden;
+    placeBar(false);
+  }
+  out.touch = touch;
+
+  for (const node of cfg.top || []) page.append(node);
+
+  // Ранг стоит над описанием: на телефоне он сворачивается в одну строку с
+  // суммой, и переносить его вниз незачем. Свёрнут он с самого начала,
+  // разворачивает нажатие на строку; на ноутбуке карточка открыта всегда.
+  if (has.rank) {
+    const rank = el("div", "card rcard rfolded");
+    const rtop = el("div", "rtop");
+    const rhead = el("div", "rhead");
+    rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
+    // Слева итог крупно, справа от него слагаемые в две строки: показателей
+    // шесть, и одной строкой они переносились как попало.
+    const big = el("div", "rbig");
+    const sum = el("span", "v", "0");
+    const note = el("span", "f", "");
+    big.append(sum, note);
+    const terms = el("div", "rterms");
+    const cells = RANK_PARTS.map((part) => {
+      const cell = el("span", "rterm");
+      const val = el("b", "", "0");
+      cell.append(el("i", "", part.name), val);
+      terms.append(cell);
+      return val;
+    });
+    big.append(terms);
+    // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
+    // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
+    // стили, а спрятанная кнопка ни в обход табом, ни под палец не попадает.
+    const fold = el("button", "rfold", "развернуть");
+    fold.setAttribute("aria-expanded", "false");
+    rtop.append(rhead, big, fold);
+    const foldRank = () => {
+      const shut = rank.classList.toggle("rfolded");
+      fold.textContent = shut ? "развернуть" : "свернуть";
+      fold.setAttribute("aria-expanded", shut ? "false" : "true");
+    };
+    // Нажатие на всю строку остаётся: пальцем целятся в неё, а не в слово. С
+    // кнопки нажатие дальше не идёт, иначе ранг свернулся бы дважды.
+    rtop.addEventListener("click", foldRank);
+    fold.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      foldRank();
+    });
+    rank.append(rtop);
+    const rbody = el("div", "rbody");
+    rank.append(rbody);
+    // Итог считается из слагаемых формы, а не берётся готовым числом строки:
+    // правка слагаемого видна суммой сразу, до сохранения.
+    const drawRank = () => {
+      sum.textContent = String(form.parts.reduce((a, b) => a + Number(b), 0));
+      cells.forEach((cell, i) => { cell.textContent = String(form.parts[i]); });
+    };
+    RANK_PARTS.forEach((part, i) => {
+      const line = el("div", "rrow");
+      line.append(el("span", "nm", part.name));
+      line.append(el("span", "why", part.why));
+      line.append(pickField("", part.values, form.parts[i], (v) => {
+        // Правится одно слагаемое, остальные остаются прежними: пропущенное
+        // сервер берёт из строки, а не считает нулём.
+        form.parts[i] = Number(v);
+        drawRank();
+        touch();
+      }));
+      rbody.append(line);
+    });
+    drawRank();
+    page.append(rank);
+    out.rank = rank;
+    out.rankSum = sum;
+    out.rankNote = note;
+  }
+
+  // Описание и зависимости идут одной строкой под рангом. Колонок на экране
+  // нет ни на какой ширине: ранг ушёл из правой колонки строкой во всю ширину,
+  // и держать колонку ради одних зависимостей стало не за чем.
+  const grid = el("div", "tgrid");
+  page.append(grid);
+  if (has.file) {
+    file = filePanel(cfg.project, cfg.id, cfg.detail || {}, form, touch, edit, has.make);
+    // Кнопка в углу развёрнутого описания и кнопка в строке статуса это один
+    // переключатель: нажатая любая из них возвращает страницу в обычный вид.
+    file.onWideOff = () => { setRead(false); };
+    grid.append(keyed(file, cfg.key + "-text"));
+    out.file = file;
+  }
+  if (has.deps) grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || []));
+  for (const node of cfg.extra || []) page.append(node);
+
+  setEdit(edit);
+  watchTaskLayout(placeBar);
+  touch();
+  return out;
+}
+
+// Место полосы действий зависит от ширины окна, и держит его подписка, а не
+// снимок в момент отрисовки: окно растягивают, планшет поворачивают, и экран
+// при этом не перерисовывается. Подписка одна на весь дашборд: следующая
+// отрисовка формы снимает прежнюю, иначе слушатели копились бы с каждым
+// переходом и двигали полосу в выброшенной разметке.
+let taskLayoutWatch = null;
+function watchTaskLayout(placeBar) {
+  if (taskLayoutWatch) {
+    taskLayoutWatch.mq.removeEventListener("change", taskLayoutWatch.place);
+    taskLayoutWatch = null;
+  }
+  const mq = window.matchMedia("(max-width:900px)");
+  const place = () => { placeBar(true); };
+  place();
+  mq.addEventListener("change", place);
+  taskLayoutWatch = { mq, place };
+}
+
 async function renderTask(project, works, id) {
   const groups = document.getElementById("groups");
   const r = await api(taskPath(project, id));
@@ -1984,32 +2297,26 @@ async function renderTask(project, works, id) {
     return;
   }
   groups.replaceChildren();
-  // Экран задачи лежит одним блоком: полоса действий переезжает по нему с
-  // ширины на ширину, и ей нужен родитель, чей состав не зависит от того, что
-  // ещё лежит на экране.
-  const page = el("div", "tpage");
-  groups.append(page);
-
-  const crumb = el("div", "crumb");
-  const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { goKeepingChat(project); });
-  crumb.append(back);
-  page.append(crumb);
+  const board = { text: "Доска " + project, go: () => { goKeepingChat(project); } };
 
   if (!r.ok) {
+    const page = el("div", "tpage");
+    const crumb = el("div", "crumb");
+    const back = el("span", "crumb-back", board.text);
+    back.addEventListener("click", board.go);
     const card = el("div", "card");
     card.append(el("div", "error", r.body.error || "задача не прочиталась"));
-    page.append(card);
+    page.append(crumb, card);
+    crumb.append(back);
+    groups.append(page);
     return;
   }
   const detail = r.body;
   const row = detail.row || {};
-  // Номер второй раз, мелким: на телефоне доска, номер и статус стоят одной
-  // строкой, и большой номер рядом с заголовком там прячется стилями.
-  crumb.append(el("span", "idsm", row.id));
-  if (row.section) crumb.append(el("span", "chip", row.section));
+  const crumbChips = [el("span", "idsm", row.id)];
+  if (row.section) crumbChips.push(el("span", "chip", row.section));
   if (row.moved) {
-    crumb.append(withTip(el("span", "stale dashed", row.moved),
+    crumbChips.push(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
 
@@ -2018,12 +2325,13 @@ async function renderTask(project, works, id) {
   // Прежде выдача поиска высаживала на такой задаче отказ, и нажатие на
   // найденную строку выглядело сломанным (замечание 4).
   if (row.closed) {
-    crumb.append(el("span", "chip c-check", "закрыта " + row.closed));
-    const closedHead = el("div", "thline");
-    closedHead.append(el("span", "idbig", row.id));
-    closedHead.append(el("div", "tro", row.title || id));
-    page.append(closedHead);
-    page.append(filePanel(project, id, detail, { text: detail.text || "" }, () => {}, false));
+    crumbChips.push(el("span", "chip c-check", "закрыта " + row.closed));
+    groups.append(formPage({
+      key: "task", project, id, detail, crumb: [board], crumbChips,
+      num: row.id, titleText: row.title || id,
+      form: { text: detail.text || "" },
+      has: { file: true, read: true },
+    }).page);
     return;
   }
 
@@ -2036,121 +2344,22 @@ async function renderTask(project, works, id) {
     parts: base.slice(),
     text: detail.text || "",
   };
-  // touch подставляется настоящий ниже, когда собрана кнопка: поля строятся
-  // раньше её и зовут ссылку через эту обёртку.
-  let touchForm = () => {};
-  const touch = () => { touchForm(); };
-
-  const head = el("div", "thline");
-  head.append(el("span", "idbig", row.id));
-  // Правка включается карандашом справа от названия: по умолчанию задача
-  // открывается на просмотр, и постановка собрана разметкой, а не лежит сырым
-  // текстом в поле (замечание 1 девятого круга POC). Признак живёт до ухода с
-  // экрана: сохранение возвращает просмотр само.
-  const editing = taskDraft.id === id && taskDraft.edit;
-  const title = el("textarea", "tedit");
-  title.value = form.title;
-  title.setAttribute("aria-label", "заголовок задачи " + id);
-  title.rows = 1;
-  // Высота по содержимому (замечание 20): заголовок в одну строку держал поле
-  // на три, и место уходило в пустоту. Считается она после вставки в дерево,
-  // потому что до неё scrollHeight равен нулю.
-  const fitTitle = () => {
-    title.style.height = "auto";
-    if (title.scrollHeight) title.style.height = title.scrollHeight + "px";
-  };
-  title.addEventListener("input", () => { form.title = title.value; fitTitle(); touch(); });
-  setTimeout(fitTitle, 0);
-  title.readOnly = !editing;
-  title.classList.toggle("ro", !editing);
-  head.append(title);
-  const pencil = el("button", "tpen" + (editing ? " on" : ""));
-  pencil.title = editing ? "Закончить правку" : "Править задачу";
-  pencil.setAttribute("aria-label", pencil.title);
-  pencil.append(icon(editing ? "close" : "i-pen"));
-  let editNow = editing;
-  pencil.addEventListener("click", () => {
-    editNow = !editNow;
-    taskDraft.id = id;
-    // Признак живёт в черновике: следующая честная перерисовка экрана (она
-    // бывает после сохранения) откроет задачу тем же режимом.
-    taskDraft.edit = editNow;
-    title.readOnly = !editNow;
-    title.classList.toggle("ro", !editNow);
-    pencil.classList.toggle("on", editNow);
-    pencil.replaceChildren(icon(editNow ? "close" : "i-pen"));
-    pencil.title = editNow ? "Закончить правку" : "Править задачу";
-    pencil.setAttribute("aria-label", pencil.title);
-    if (file.setEdit) file.setEdit(editNow);
-  });
-  // Кнопки режимов живут в строке статуса справа, а не при заголовке: там для
-  // них есть свободное место, а заголовок остаётся заголовком (замечание 2).
-  const modes = el("div", "tmodes");
-  modes.append(pencil);
-  page.append(head);
-
-  const chips = el("div", "tchips");
-  // Режим чтения: постановка занимает всю колонку, остальное уходит с глаз.
-  const read = el("button", "tpen");
-  read.title = "Режим чтения";
-  read.setAttribute("aria-label", read.title);
-  read.append(icon("i-read"));
-  const setRead = (on) => {
-    read.classList.toggle("on", on);
-    read.title = on ? "Выйти из режима чтения" : "Режим чтения";
-    read.setAttribute("aria-label", read.title);
-    if (file.setWide) file.setWide(on);
-  };
-  read.addEventListener("click", () => { setRead(!read.classList.contains("on")); });
-  modes.append(read);
-  // Тот же признак работы, что и в строке списка, и теми же словами: решение
-  // «продолжить или не трогать» принимают чаще всего на этом экране.
-  const run = runChip(row);
-  if (run) chips.append(run);
-  // Признаки живости и этап работы переехали сюда с экрана агента (DK-435):
-  // разговор ушёл в панель, а чем занята задача и кто её ведёт это предмет
-  // самой задачи.
+  const isGoal = /^Цель:/.test(row.title || "");
   const work = (works || []).find((w) => w.id === id);
-  const live = liveChip(work);
-  if (live) chips.append(live);
-  const stage = stageChip(row);
-  if (stage) chips.append(stage);
-  const wait = waitChip(row);
-  if (wait) chips.append(wait);
-  if (/^Цель:/.test(row.title)) chips.append(el("span", "chip c-goal", "цель"));
-  chips.append(pickField("тип", TYPE_VALUES, form.type, (v) => { form.type = v; touch(); }));
-  chips.append(pickField("цена", COST_VALUES, form.cost, (v) => { form.cost = v; touch(); }));
-  const p = el("span", "chip dashed" + (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p);
-  chips.append(withTip(p, P_HINT));
-  if (row.fail) chips.append(el("span", "chip c-block", "провал: " + row.fail));
-  if (row.block) chips.append(el("span", "chip c-block", "блок: " + row.block));
-  for (const note of row.notes || []) {
-    if (/^код слит/.test(note) || /^без выката/.test(note)) chips.append(el("span", "chip c-check", note));
-  }
-  // Кнопки режимов прижимаются к правому краю строки статуса.
-  chips.append(el("span", "gap"), modes);
-  page.append(chips);
 
-  // Сохранение и действия одной полосой над содержимым (макет «02 Задача»):
-  // отдельной карточки действий у задачи больше нет, а надписи про пустую
-  // правку нет вовсе. У нетронутой формы нет и самих кнопок правки: они
-  // приходят с первым изменением поля вместе с разделителем. Сохранение одно
-  // на всю форму, по нему уезжает всё изменённое разом, а отказ проверки
-  // гасит кнопку и говорит причину рядом.
-  const bar = el("div", "card abar");
-  const save = barBtn("btn btn-acc", "Сохранить", "i-done");
-  const drop = barBtn("btn", "Отменить правку", "close");
-  // Пока правки нет, сохранять и отменять нечего: на телефоне две мёртвые
-  // кнопки съедали полосу, а погашенная кнопка неотличима от живой.
-  const sep = el("span", "div");
-  save.hidden = true;
-  drop.hidden = true;
-  sep.hidden = true;
-  const bad = el("div", "error", "");
-  bar.append(save, drop, sep);
-  // Расстановка полосы объявлена до формы: её зовёт touchForm с первой правки,
-  // а собирается она ниже, когда известны действия задачи.
-  let placeBar = null;
+  // Тот же признак работы, что и в строке списка, и теми же словами: решение
+  // «продолжить или не трогать» принимают чаще всего на этом экране. Признаки
+  // живости и этап работы переехали сюда с экрана агента (DK-435): разговор
+  // ушёл в панель, а чем занята задача и кто её ведёт это предмет самой задачи.
+  const chips = [runChip(row), liveChip(work), stageChip(row), waitChip(row)].filter(Boolean);
+  if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
+  const tail = [withTip(el("span", "chip dashed" +
+    (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
+  if (row.fail) tail.push(el("span", "chip c-block", "провал: " + row.fail));
+  if (row.block) tail.push(el("span", "chip c-block", "блок: " + row.block));
+  for (const note of row.notes || []) {
+    if (/^код слит/.test(note) || /^без выката/.test(note)) tail.push(el("span", "chip c-check", note));
+  }
 
   const patchBody = () => {
     const out = {};
@@ -2165,206 +2374,72 @@ async function renderTask(project, works, id) {
   // постановку целиком, и лишний заход коммитил бы её впустую.
   const textBody = () => (detail.file && form.text !== (detail.text || "") ? form.text : null);
 
-  touchForm = () => {
-    const patch = patchBody();
-    const text = textBody();
-    const dirty = Object.keys(patch).length > 0 || text !== null;
-    const refusal = dirty ? draftRefusal(form, text) : "";
-    taskDraft.id = id;
-    taskDraft.dirty = dirty;
-    bad.textContent = refusal;
-    save.disabled = !dirty || Boolean(refusal);
-    save.hidden = !dirty;
-    drop.hidden = !dirty;
-    sep.hidden = !dirty;
-    // Первая правка поля приводит полосу вместе с кнопками, отказ от правки
-    // уносит её обратно, если своих действий у задачи нет.
-    if (placeBar) placeBar(false);
-  };
-  save.addEventListener("click", () => {
-    const patch = patchBody();
-    const text = textBody();
-    if (draftRefusal(form, text)) return;
-    saveTaskDraft(project, id, Object.keys(patch).length ? patch : null, text).catch(console.error);
-  });
-  drop.addEventListener("click", () => {
-    taskDraft.dirty = false;
-    taskDraft.edit = false;
-    renderTask(project, works, id).catch(console.error);
-  });
-
-  const actionNodes = taskActions(project, id, row, works);
-  for (const node of actionNodes) bar.append(node);
-  bar.append(bad);
-  // Полоса в разметку не встаёт, пока показывать в ней нечего, и приходит
-  // вместе с кнопками. Прошлая правка мерила пустоту наличием кнопки в полосе и
-  // промахнулась: «Сохранить» с «Отменить» лежат тут всегда, просто скрытыми до
-  // первой правки формы, и полоса выходила непустой всегда. Мера теперь по делу:
-  // есть ли действия у задачи и тронута ли форма. Прятать это стилями нельзя,
-  // рамка карточки осталась бы на экране (замечание 5, второй заход).
-  let barPlaced = false;
-  const barNarrow = window.matchMedia("(max-width:900px)");
-  placeBar = (force) => {
-    if (force) {
-      bar.remove();
-      barPlaced = false;
-    }
-    if (!actionNodes.length && !taskDraft.dirty) {
-      if (barPlaced) {
-        bar.remove();
-        barPlaced = false;
-      }
-      return;
-    }
-    if (barPlaced) return;
-    // На телефоне полоса идёт под содержимым, на ноутбуке над ним, теми же
-    // местами, что держит раскладка экрана.
-    if (barNarrow.matches) page.append(bar);
-    else chips.after(bar);
-    barPlaced = true;
-  };
-
-  // Журнал витка уехал в самый низ экрана (замечание 13): читают его редко, а
-  // места он занимал столько же, сколько сама постановка, и отжимал её вниз.
-  // Панель по-прежнему стоит только у цели и у задачи с живой работой: у
-  // остальных источника у журнала нет вовсе.
-  const wantJournal = /^Цель:/.test(row.title || "") || Boolean(work);
-
   // Состав цели стоит над содержимым: с экрана цели смотрят прежде всего на
   // него. Ждать его отрисовка задачи не обязана, состав приезжает отдельным
   // запросом и встаёт на своё место сам.
-  if (/^Цель:/.test(row.title || "")) {
+  const top = [];
+  if (isGoal) {
     const comp = el("div", "");
-    page.append(comp);
+    top.push(comp);
     goalComposition(project, id, comp).catch(console.error);
   }
 
-  // Ранг стоит там же, где стоял, над описанием: на телефоне он сворачивается
-  // в одну строку с суммой, и переносить его вниз незачем. Свёрнут он с самого
-  // начала, разворачивает нажатие на строку; на ноутбуке карточка открыта
-  // всегда, и класс сворачивания там ни на что не влияет.
-  const rank = el("div", "card rcard rfolded");
-  const rtop = el("div", "rtop");
-  const rhead = el("div", "rhead");
-  rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
-  // Слева итог крупно, справа от него слагаемые в две строки: показателей
-  // шесть, и одной строкой они переносились как попало (замечание 11).
-  const big = el("div", "rbig");
-  big.append(el("span", "v", String(row.r)));
-  const terms = el("div", "rterms");
-  RANK_PARTS.forEach((part, i) => {
-    const cell = el("span", "rterm");
-    cell.append(el("i", "", part.name));
-    cell.append(el("b", "", String((row.r_parts || [])[i] === undefined ? "-" : row.r_parts[i])));
-    terms.append(cell);
+  const view = formPage({
+    key: "task", project, id, detail, crumb: [board], crumbChips,
+    num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
+    has: { title: true, type: true, cost: true, rank: true, deps: true,
+      file: true, make: true, pencil: true, read: true },
+    after: detail.after || [], blocks: detail.blocks || [],
+    actions: taskActions(project, id, row, works),
+    // Признак правки живёт в черновике: следующая честная перерисовка экрана
+    // (она бывает после сохранения) откроет задачу тем же режимом.
+    edit: taskDraft.id === id && taskDraft.edit,
+    onEdit: (on) => {
+      taskDraft.id = id;
+      taskDraft.edit = on;
+    },
+    check: () => {
+      const patch = patchBody();
+      const text = textBody();
+      const dirty = Object.keys(patch).length > 0 || text !== null;
+      taskDraft.id = id;
+      taskDraft.dirty = dirty;
+      return { dirty, refusal: draftRefusal(form, text) };
+    },
+    onSave: () => {
+      const patch = patchBody();
+      const text = textBody();
+      if (draftRefusal(form, text)) return;
+      saveTaskDraft(project, id, Object.keys(patch).length ? patch : null, text).catch(console.error);
+    },
+    onDrop: () => {
+      taskDraft.dirty = false;
+      taskDraft.edit = false;
+      renderTask(project, works, id).catch(console.error);
+    },
   });
-  big.append(terms);
-  // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
-  // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
-  // стили (.rfold на ноутбуке display:none), а спрятанная кнопка ни в обход
-  // табом, ни под палец не попадает. Считать ширину в момент отрисовки
-  // означало бы держать её потом руками: поворот планшета и растянутое окно
-  // оставляли бы то фокусируемую пустышку, то ранг без клавиатуры.
-  const fold = el("button", "rfold", "развернуть");
-  fold.setAttribute("aria-expanded", "false");
-  rtop.append(rhead, big, fold);
-  const foldRank = () => {
-    const shut = rank.classList.toggle("rfolded");
-    fold.textContent = shut ? "развернуть" : "свернуть";
-    fold.setAttribute("aria-expanded", shut ? "false" : "true");
-  };
-  // Нажатие на всю строку остаётся: пальцем целятся в неё, а не в слово. С
-  // кнопки нажатие дальше не идёт, иначе ранг свернулся бы дважды.
-  rtop.addEventListener("click", foldRank);
-  fold.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    foldRank();
-  });
-  rank.append(rtop);
-  const rbody = el("div", "rbody");
-  rank.append(rbody);
-  RANK_PARTS.forEach((part, i) => {
-    const line = el("div", "rrow");
-    line.append(el("span", "nm", part.name));
-    line.append(el("span", "why", part.why));
-    line.append(pickField("", part.values, form.parts[i], (v) => {
-      // Правится одно слагаемое, остальные остаются прежними: пропущенное
-      // сервер берёт из строки, а не считает нулём.
-      form.parts[i] = Number(v);
-      touch();
-    }));
-    rbody.append(line);
-  });
-
-  const rail = el("div", "rrail");
-  const deps = depsCard(project, id, detail.after || [], detail.blocks || []);
-  const file = filePanel(project, id, detail, form, touch, editing);
-  // Кнопка в углу развёрнутой постановки и кнопка в строке статуса это один
-  // переключатель: нажатая любая из них возвращает страницу в обычный вид.
-  file.onWideOff = () => { setRead(false); };
-  const grid = el("div", "tgrid");
-  page.append(grid);
-  // Блоки экрана встают в разметку туда же, где они нарисованы: полоса
-  // действий на ноутбуке над содержимым, на телефоне под ним, ранг на телефоне
-  // над описанием, зависимости под ним. Переставлять их стилями нельзя, order
-  // двигает картинку, а обход табом идёт по разметке, и на телефоне таб уводил
-  // с заголовка вниз на «Сохранить» и только потом возвращался вверх к
-  // описанию (замечание ревью 9).
-  watchTaskLayout({ page, chips, bar, grid, rail, file, rank, deps, placeBar });
+  groups.append(view.page);
 
   // Журнал витка стоит последним блоком экрана, под целью и постановкой
   // (замечание 13): туда за ним и идут, а сверху он отжимал вниз то, ради чего
-  // экран открывают.
-  if (wantJournal) {
+  // экран открывают. Панель стоит только у цели и у задачи с живой работой: у
+  // остальных источника у журнала нет вовсе.
+  if (isGoal || work) {
     const jp = pane("Журнал витка", "источник назовёт сервер");
     // Зелёная точка вместо слов «хвост дописывается»: живость журнала это
-    // состояние, а не сообщение, и строкой текста она занимала место шапки
-    // (замечание 11).
+    // состояние, а не сообщение, и строкой текста она занимала место шапки.
     jp.head.append(el("span", "dot pulse"));
     // Отступ сверху: журнал стоит последним блоком, и без него он слипался с
     // зависимостями над собой в одну простыню.
     jp.card.classList.add("jbottom");
-    page.append(jp.card);
+    view.page.append(jp.card);
     wireJournal(project, id, jp.body, jp.sub);
   }
 
   taskDraft.id = id;
   taskDraft.dirty = false;
   taskDraft.seen = taskSeen(detail);
-  touchForm();
-}
-
-// Порядок блоков экрана задачи зависит от ширины окна, и держит его подписка,
-// а не снимок в момент отрисовки: окно растягивают, планшет поворачивают, и
-// экран при этом не перерисовывается. Раскладка на ноутбуке это две колонки,
-// описание и правая колонка с рангом и зависимостями; на телефоне колонок нет,
-// и блоки идут потоком: ранг, описание, зависимости, полоса действий.
-// append переносит уже созданный узел, поэтому обе раскладки собираются из
-// одних и тех же блоков. Подписка одна на весь дашборд: следующая отрисовка
-// экрана задачи снимает прежнюю, иначе слушатели копились бы с каждым
-// переходом и двигали блоки в выброшенной разметке.
-let taskLayoutWatch = null;
-function watchTaskLayout(parts) {
-  if (taskLayoutWatch) {
-    taskLayoutWatch.mq.removeEventListener("change", taskLayoutWatch.place);
-    taskLayoutWatch = null;
-  }
-  const mq = window.matchMedia("(max-width:900px)");
-  const place = () => {
-    // Колонок на экране задачи больше нет ни на какой ширине. Ранг ушёл из
-    // правой колонки строкой во всю ширину (замечание 3 четвёртого круга), и
-    // держать колонку ради одних зависимостей стало не за чем: они встают
-    // своей строкой под описанием, а описание занимает всю ширину. Раскладка
-    // от этого одна на телефон и на ноутбук, и разъезжаться ей негде.
-    parts.rail.remove();
-    parts.rank.remove();
-    parts.page.insertBefore(parts.rank, parts.grid);
-    parts.grid.append(parts.file, parts.deps);
-    parts.placeBar(true);
-  };
-  place();
-  mq.addEventListener("change", place);
-  taskLayoutWatch = { mq, place };
+  view.touch();
 }
 
 // Живые потоки экрана: EventSource журнала витка, таймер снимка груминга.
@@ -5932,65 +6007,13 @@ async function renderFind(project, q) {
   sync(groups, items);
 }
 
-// Экран черновика (#проект/draft/<ID>) по макету DK-328, решение 4: слева
-// текст записи с путём файла, справа то, что с ней сделали. Груминг живёт
-// здесь же и зовётся грумингом: «Оформить» скрывало, что у разбора четыре
-// исхода вплоть до удаления. Состояний три. Груминг идёт: живой хвост и стоп.
-// Груминг кончился исходом: карточка называет исход и следующий шаг, а сам
-// исход сервер прочитал следами на диске. Груминг кончился вопросом: вопрос
-// стоит карточкой, под ним поле уточнения и повторная ходка.
-const DRAFT_ASK_HINT = "Уточнение уедет новой ходкой груминга: агент перечитает " +
-  "черновик и пойдёт с начала. Писать в закончившуюся сессию дашборду нечем, и " +
-  "доставки в неё он не обещает.";
-const DRAFT_DROP_HINT = "Причина уедет сообщением коммита доски: файла после " +
-  "удаления нет, и живёт она только там.";
-
-// Исход груминга словами: что случилось и что дальше. Сам след читает сервер,
-// его слова стоят рядом отдельной строкой, и придумывать их второй раз на
-// клиенте незачем.
-const DRAFT_PHASES = {
-  running: {
-    head: "Груминг идёт",
-    next: "Разбор кончится строкой, припиской, пометкой «отложен» либо удалением записи.",
-  },
-  row: {
-    head: "Черновик оформлен строкой",
-    next: "Дальше работа идёт по задаче: ранг и цена у неё уже стоят.",
-  },
-  attached: {
-    head: "Черновик приписан к стоящей строке",
-    next: "Дальше работа идёт по задаче-приёмнику, текст записи лежит разделом в её файле.",
-  },
-  deferred: {
-    head: "Черновик отложен",
-    next: "Запись осталась в накопителе: груминг вернётся к ней, когда причина отпадёт.",
-  },
-  dropped: {
-    head: "Черновик удалён",
-    next: "Записи больше нет, причина удаления лежит сообщением коммита доски.",
-  },
-  question: {
-    head: "Груминг кончился вопросом",
-    next: "Ответить можно новой ходкой: агент перечитает черновик вместе с уточнением.",
-  },
-  open: {
-    head: "Груминга не было",
-    next: "Разбор поднимается кнопкой «Провести груминг».",
-  },
-  error: {
-    head: "Исход груминга не прочитался",
-    next: "Пока сервер не ответил, разбор с экрана не поднимается: причина стоит выше.",
-  },
-};
-
-
+// Удаление записи накопителя: причина уезжает сообщением коммита доски, и без
+// неё ручка запись не трогает.
 async function dropDraft(project, id, reason) {
   sayResult("удаление черновика " + id + "...");
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id), { method: "DELETE", body: { reason } });
-  let said = r.body.message || r.body.error || "";
-  if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-  sayResult(said, !r.ok);
+  sayResult(apiSaid(r), !r.ok);
   return r.ok;
 }
 
@@ -5999,66 +6022,57 @@ async function dropDraft(project, id, reason) {
 
 
 
+// Сохранение записи накопителя: текст правится тем же полем, что и постановка
+// задачи, и уезжает целиком одной ручкой. Пустой текст отбивается до похода на
+// сервер: он затёр бы запись, а удаление у черновика своё, с причиной.
+async function saveDraftText(project, id, text) {
+  sayResult("сохранение черновика " + id + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/drafts/" + encodeURIComponent(id), { method: "PUT", body: { text } });
+  sayResult(apiSaid(r), !r.ok);
+  if (!r.ok) return false;
+  taskDraft.dirty = false;
+  // Сохранение возвращает просмотр: правка кончилась, и держать поле открытым
+  // незачем.
+  taskDraft.edit = false;
+  await refresh();
+  return true;
+}
+
 async function renderDraft(project, works, id) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
-  // Экран записи приведён к экрану задачи (замечание 15 двенадцатого круга
-  // POC): та же шапка, та же разметка вместо сырого текста, те же кнопки
-  // режимов справа. Карточки «Груминга не было», «Удаление записи» и «Ход
-  // груминга» сняты: первая говорила о пустоте, вторая дублировала исход, а
-  // третья показывала хвост tmux, которого у живого чата груминга больше нет,
-  // разбор виден в самом чате.
+  // Экран записи собран той же формой, что и экран задачи: та же шапка, та же
+  // разметка вместо сырого текста, те же кнопки режимов справа. Выключены у
+  // него ранг, зависимости и поля строки доски: их запись получит только от
+  // груминга, и показывать их пустыми не за чем.
   const [text, chats] = await Promise.all([
     api(base),
     api("/api/projects/" + encodeURIComponent(project) + "/chats?task=" + encodeURIComponent(id)),
   ]);
+  // В поле лежит правка: перерисовка по фокусу окна стёрла бы её, и экран
+  // остаётся как есть.
+  if (taskDraft.id === id && taskDraft.dirty) return;
   const running = Boolean((works || []).find((w) => w.id === id));
   const said = text.ok ? String(text.body.text || "") : "";
-  const title = said.split("\n").find((ln) => ln.trim()) || "";
   // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
   const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
-
-  const items = [{
-    key: "draft-crumb",
-    sign: project,
+  sync(groups, [{
+    key: "draft-page",
+    sign: [id, said, running, groomChat ? groomChat.id : "", text.body.error || ""].join("|"),
     make: () => {
-      // Дорога на доску была только через накопитель, и с экрана записи её не
-      // было вовсе.
-      const crumb = el("div", "crumb");
-      const board = el("span", "crumb-back", "Доска " + project);
-      board.addEventListener("click", () => { goKeepingChat(project); });
-      const list = el("span", "crumb-back", "Черновики");
-      list.addEventListener("click", () => { goKeepingChat(project + "/drafts"); });
-      crumb.append(board, el("span", "crumb-sep", "/"), list);
-      return crumb;
-    },
-  }, {
-    key: "draft-head",
-    sign: [id, title, running, groomChat ? groomChat.id : ""].join("|"),
-    make: () => {
-      const head = el("div", "thline");
-      head.append(el("span", "idbig", id));
-      const name = el("div", "tedit ro dtitle", title || id);
-      head.append(name);
-      return head;
-    },
-  }, {
-    key: "draft-chips",
-    sign: [running, groomChat ? groomChat.id : ""].join("|"),
-    make: () => {
-      const chips = el("div", "tchips");
-      chips.append(el("span", "chip", "черновик"));
-      if (running) chips.append(el("span", "chip c-run", "груминг идёт"));
-      chips.append(el("span", "gap"));
-      const modes = el("div", "tmodes");
+      const form = { text: said };
+      const chips = [el("span", "chip", "черновик")];
+      if (running) chips.push(el("span", "chip c-run", "груминг идёт"));
+      const actions = [];
       if (groomChat) {
-        const go = el("button", "btn btn-sm", "Чат груминга");
+        const go = barBtn("btn", "Чат груминга", "i-chat");
         go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
-        modes.append(go);
+        actions.push(go);
       } else if (!running) {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
-        const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
+        const groom = barBtn("btn btn-acc", "Провести груминг", "i-play");
         if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
         groom.addEventListener("click", () => {
           groom.disabled = true;
@@ -6067,34 +6081,46 @@ async function renderDraft(project, works, id) {
             if (ok) refresh().catch(console.error);
           }).catch((err) => { groom.disabled = false; console.error(err); });
         });
-        modes.append(groom);
+        actions.push(groom);
       }
-      chips.append(modes);
-      return chips;
-    },
-  }, {
-    key: "draft-text",
-    sign: [text.ok, said || text.body.error].join("|"),
-    make: () => {
-      const card = el("div", "card fpanel");
-      const body = el("div", "fbody");
-      if (!text.ok) {
+      return formPage({
+        key: "draft", project, id,
+        // Дорога на доску была только через накопитель, и с экрана записи её не
+        // было вовсе.
+        crumb: [
+          { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+          { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
+        ],
+        num: id,
+        // Заголовок записи это её первая строка, и правят его в самом тексте.
+        titleText: said.split("\n").find((ln) => ln.trim()) || id,
         // Пропавший файл это не поломка экрана, а след исхода: груминг мог
         // увести запись строкой, припиской или удалением.
-        body.append(el("div", "empty", text.body.error || "текст записи не прочитался"));
-      } else if (said.trim()) {
-        const view = el("div", "fview");
-        view.dataset.file = text.body.file || "";
-        view.append(mdRender(said));
-        body.append(view);
-      } else {
-        body.append(el("div", "empty", "запись пуста"));
-      }
-      card.append(body);
-      return card;
+        detail: { file: text.ok ? text.body.file || "" : "", text: said,
+          note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
+        form, chips, actions,
+        has: { file: true, pencil: true, read: true },
+        penLabel: "Править запись",
+        edit: taskDraft.id === id && taskDraft.edit,
+        onEdit: (on) => {
+          taskDraft.id = id;
+          taskDraft.edit = on;
+        },
+        check: () => {
+          const dirty = form.text !== said;
+          taskDraft.id = id;
+          taskDraft.dirty = dirty;
+          return { dirty, refusal: form.text.trim() ? "" : "пустой текст затёр бы запись черновика" };
+        },
+        onSave: () => { saveDraftText(project, id, form.text).catch(console.error); },
+        onDrop: () => {
+          taskDraft.dirty = false;
+          taskDraft.edit = false;
+          renderDraft(project, works, id).catch(console.error);
+        },
+      }).page;
     },
-  }];
-  sync(groups, items);
+  }]);
 }
 
 // Экран заведения (#проект/new) по макету «07 Заведение»: форма одна на оба
@@ -6140,13 +6166,13 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // окно. Форма одна на экран, как и черновик экрана задачи. Поле написанного
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
-const newForm = { project: "", draft: false, text: "", type: "task", cost: "-",
+const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
   parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "" };
 
 function resetNewForm(project) {
   newForm.project = project;
   newForm.draft = false;
-  newForm.text = "";
+  newForm.title = "";
   newForm.type = "task";
   newForm.cost = "-";
   newForm.parts = [0, 0, 0, 0, 0];
@@ -6166,28 +6192,25 @@ async function sendNew(btns, call) {
   }
 }
 
-async function makeDraft(project, text, btns) {
-  sayResult("запись черновика...");
+// Заведение записи и заведение строки это одна ручка POST с разным адресом и
+// разным телом: складывать их в одну функцию с флагом незачем, а переписывать
+// поход на сервер дважды тем более.
+async function makeNew(project, tail, body, btns, saying) {
+  sayResult(saying);
   return sendNew(btns, async () => {
-    const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts",
-      { method: "POST", body: { text } });
-    let said = r.body.message || r.body.error || "";
-    if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-    sayResult(said, !r.ok);
+    const r = await api("/api/projects/" + encodeURIComponent(project) + tail,
+      { method: "POST", body });
+    sayResult(apiSaid(r), !r.ok);
     return r.ok ? r.body : null;
   });
 }
 
-async function makeTask(project, body, btns) {
-  sayResult("заведение задачи...");
-  return sendNew(btns, async () => {
-    const r = await api("/api/projects/" + encodeURIComponent(project) + "/tasks",
-      { method: "POST", body });
-    let said = r.body.message || r.body.error || "";
-    if (r.ok && r.body.note) said += " (" + r.body.note + ")";
-    sayResult(said, !r.ok);
-    return r.ok ? r.body : null;
-  });
+function makeDraft(project, text, btns) {
+  return makeNew(project, "/drafts", { text }, btns, "запись черновика...");
+}
+
+function makeTask(project, body, btns) {
+  return makeNew(project, "/tasks", body, btns, "заведение задачи...");
 }
 
 // Подтверждение записанного черновика: ID, путь файла и что с ним будет
@@ -6222,78 +6245,31 @@ function renderNew(project) {
   groups.replaceChildren();
   if (newForm.project !== project) resetNewForm(project);
 
-  const crumb = el("div", "crumb");
-  const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { goKeepingChat(project); });
-  crumb.append(back);
-  groups.append(crumb);
-
-  const card = el("div", "card nform");
-  const head = el("div", "nfhead", (newForm.draft ? "Новый черновик в " : "Новая задача в ") + project);
-  card.append(head);
-  const box = el("div", "nfbody");
-  card.append(box);
-  groups.append(card);
-
-  // Переключатель: одна форма, два места, куда ляжет написанное.
+  // Переключатель стоит над шапкой: одна форма, два места, куда ляжет
+  // написанное.
   const swch = el("div", "swch");
   const asTask = el("div", newForm.draft ? "" : "on", "Задача");
   const asDraft = el("div", newForm.draft ? "on" : "", "Черновик");
   swch.append(asTask, asDraft);
-  box.append(swch);
 
-  // Пометка про груминг стоит только у черновика и говорит сразу обе правды:
-  // и чего у него нет, и кто это выдаст.
+  // Пометка про груминг стоит только у черновика и говорит сразу обе правды: и
+  // чего у него нет, и кто это выдаст.
   const note = el("div", "dnote");
   note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
   note.hidden = !newForm.draft;
-  box.append(note);
 
-  const field = el("div", "");
-  field.append(el("span", "flab", "Заголовок"));
-  const ta = el("textarea");
-  ta.value = newForm.text;
-  ta.placeholder = NEW_PLACEHOLDER;
-  ta.setAttribute("aria-label", "заголовок задачи или текст черновика");
-  field.append(ta);
-  box.append(field);
-
-  // Метаданные и ранг у черновика гасятся, а не прячутся: видно, чего он
-  // лишён, и форма не перестраивается при переключении.
-  const meta = el("div", "meta2");
-  const typePick = pickField("тип", TYPE_VALUES, newForm.type, (v) => { newForm.type = v; touch(); });
-  const costPick = pickField("цена", COST_VALUES, newForm.cost, (v) => { newForm.cost = v; touch(); });
+  // Метаданные у черновика гасятся, а не прячутся: видно, чего он лишён, и
+  // форма не перестраивается при переключении.
   const typeOff = el("span", "chip", DRAFT_OFF_TYPE);
   const costOff = el("span", "chip", DRAFT_OFF_COST);
-  meta.append(typePick, costPick, typeOff, costOff);
-  box.append(meta);
-
-  const rankbox = el("div", "rankbox");
-  const sum = el("div", "rbig");
-  const sumv = el("span", "v", "0");
-  const sumf = el("span", "f", "");
-  sum.append(sumv, sumf);
-  rankbox.append(sum);
-  const picks = [];
-  RANK_PARTS.forEach((part, i) => {
-    const line = el("div", "rrow");
-    line.append(el("span", "nm", part.name));
-    line.append(el("span", "why", part.why));
-    const pick = pickField("", part.values, newForm.parts[i], (v) => {
-      newForm.parts[i] = Number(v);
-      touch();
-    });
-    picks.push(pick);
-    line.append(pick);
-    rankbox.append(line);
-  });
-  box.append(rankbox);
-  box.append(el("div", "hint", P_HINT));
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
   // барьер из шести показывается только у не агентского вида, и причина без
   // него не пишется. Списки и на телефоне остаются нативными select: два тапа
   // это вся работа, которую тут можно сделать всерьёз.
+  const card = el("div", "card nform");
+  const box = el("div", "nfbody");
+  card.append(box);
   const acceptBox = el("div", "accbox");
   const acceptPick = pickField("вид приёмки", ACCEPT_VALUES, newForm.accept, (v) => {
     newForm.accept = v;
@@ -6310,11 +6286,7 @@ function renderNew(project) {
   barrierSel.firstElementChild.textContent = BARRIER_PLACEHOLDER;
   barrierSel.setAttribute("aria-label", "барьер приёмки");
   acceptBox.append(barrierPick);
-  box.append(acceptBox);
-  box.append(el("div", "hint", ACCEPT_HINT));
   const barrierHint = el("div", "hint", ACCEPT_BARRIER_HINT);
-  box.append(barrierHint);
-
   const reasonField = el("div", "");
   reasonField.append(el("span", "flab", "Почему обход не годится"));
   const reason = el("input");
@@ -6324,110 +6296,119 @@ function renderNew(project) {
   reason.setAttribute("aria-label", "причина непригодности обхода");
   reason.addEventListener("input", () => { newForm.reason = reason.value; touch(); });
   reasonField.append(reason);
-  box.append(reasonField);
+  box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField,
+    el("div", "hint", P_HINT));
 
-  const bad = el("div", "error", "");
-  const btns = el("div", "tbtns");
-  const send = el("button", "btn btn-acc", "Завести задачу");
-  btns.append(send);
+  // Взять в работу с формы нечего, и сказано это словами, а не погашенной
+  // кнопкой: у ненаписанной строки нет ни ID, ни статуса, по которому конвейер
+  // выбирает заказ.
   const hint = el("div", "hint", FULL_HINT);
   const runHint = el("div", "hint", NEW_RUN_HINT);
-  box.append(hint, runHint, btns, bad);
+
+  let view = null;
+  view = formPage({
+    key: "new", project, id: "",
+    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
+    lead: [swch], top: [note], extra: [card],
+    // Форма заведения это та же правка задачи с пустыми полями: правка тут
+    // включена всегда, и выключать её нечем, экран для неё и открыт.
+    has: { title: true, type: true, cost: true, rank: true },
+    titleHint: NEW_PLACEHOLDER, titleTall: true,
+    titleLabel: "заголовок задачи или текст черновика",
+    tailChips: [typeOff, costOff],
+    form: newForm, edit: true, always: true,
+    saveLabel: newForm.draft ? "Записать черновик" : "Завести задачу",
+    actions: [hint, runHint],
+    check: () => {
+      if (view) paint();
+      // Рубежи те же, что у ручек: поправка на баг не про новую работу, строки
+      // без заголовка и черновика без текста не бывает, а у не агентского вида
+      // барьер обязателен.
+      if (newForm.draft) {
+        return { dirty: true, refusal: newForm.title.trim() ? "" : "черновик пустым не бывает" };
+      }
+      return { dirty: true, refusal: draftRefusal(newForm, null) ||
+        (newForm.accept !== "agent" && !newForm.barrier
+          ? "у не агентского вида назван барьер из шести: без него приёмка повисает без причины"
+          : "") };
+    },
+    onSave: () => {
+      const text = newForm.title.trim();
+      if (!text) return;
+      const send = view.save;
+      if (newForm.draft) {
+        makeDraft(project, text, [send]).then((done) => {
+          if (!done) return;
+          resetNewForm(project);
+          draftDone(project, done);
+        }).catch(console.error);
+        return;
+      }
+      const body = {
+        title: text,
+        type: newForm.type,
+        cost: newForm.cost,
+        r_parts: newForm.parts.map(Number),
+        accept: newForm.accept,
+      };
+      if (newForm.accept !== "agent") {
+        body.barrier = newForm.barrier;
+        body.reason = newForm.reason.trim();
+      }
+      makeTask(project, body, [send]).then((done) => {
+        if (!done) return;
+        resetNewForm(project);
+        // Заведённая строка открывается сразу: с телефона следующий шаг это
+        // дописать постановку, а искать её глазами по Backlog неудобно.
+        if (done.id) goKeepingChat(project + "/" + done.id);
+        else renderNew(project);
+      }).catch(console.error);
+    },
+  });
+  groups.append(view.page);
 
   // Режим меняет подписи и гасит лишнее, но не перестраивает форму: поля
   // остаются на своих местах, а написанное переживает переключение.
-  const paint = () => {
+  function paint() {
     const draft = newForm.draft;
-    head.textContent = (draft ? "Новый черновик в " : "Новая задача в ") + project;
     asTask.className = draft ? "" : "on";
     asDraft.className = draft ? "on" : "";
     note.hidden = !draft;
-    typePick.hidden = draft;
-    costPick.hidden = draft;
+    view.typePick.hidden = draft;
+    view.costPick.hidden = draft;
     typeOff.hidden = !draft;
     costOff.hidden = !draft;
-    meta.classList.toggle("off", draft);
-    rankbox.classList.toggle("off", draft);
-    // У агентского вида барьера нет, и поля под ним не прячутся, а гасятся:
-    // черновику их заполняет груминг, агентскому виду они не нужны вовсе.
-    acceptBox.classList.toggle("off", draft);
-    const bare = draft || newForm.accept === "agent";
+    view.rank.classList.toggle("off", draft);
+    // Приёмку с барьером у черновика заполняет груминг, а у агентского вида
+    // барьера нет вовсе: там прячется одно поле, а не вся карточка.
+    card.hidden = draft;
+    const bare = newForm.accept === "agent";
     barrierPick.hidden = bare;
     barrierHint.hidden = bare;
     reasonField.hidden = bare;
     runHint.hidden = draft;
-    for (const pick of picks) pick.hidden = draft;
-    sumv.textContent = draft ? "-" : String(newForm.parts.reduce((a, b) => a + Number(b), 0));
-    sumf.textContent = draft ? DRAFT_OFF_RANK : "= " + newForm.parts.join("+");
+    view.rankSum.textContent = draft ? "-"
+      : String(newForm.parts.reduce((a, b) => a + Number(b), 0));
+    view.rankNote.textContent = draft ? DRAFT_OFF_RANK : "= " + newForm.parts.join("+");
     // У черновика подсказка шкалы ни к чему, и на её месте стоит одна подпись
     // про то, кто эти поля заполнит.
-    const whys = rankbox.querySelectorAll(".rrow .why");
+    const whys = view.rank.querySelectorAll(".rrow .why");
     RANK_PARTS.forEach((part, i) => {
       whys[i].textContent = draft ? (i === 0 ? DRAFT_OFF_PARTS : "") : part.why;
     });
-    send.textContent = draft ? "Записать черновик" : "Завести задачу";
+    for (const pick of view.rank.querySelectorAll(".rrow .pick")) pick.hidden = draft;
+    view.save.rename(draft ? "Записать черновик" : "Завести задачу");
     hint.textContent = draft ? DRAFT_HINT : FULL_HINT;
-  };
+  }
 
-  // Рубежи те же, что у ручек: поправка на баг не про новую работу, а строки
-  // без заголовка и черновика без текста не бывает.
-  const touch = () => {
-    newForm.text = ta.value;
-    paint();
-    if (newForm.draft) {
-      bad.textContent = "";
-      send.disabled = !newForm.text.trim();
-      return;
-    }
-    // Рубеж тот же, что у воротов add: у не агентского вида барьер обязателен,
-    // и отказ называется словами до отправки, а не после.
-    bad.textContent = newForm.type === "task" && Number(newForm.parts[3]) === 5 ? BUG_PART_REFUSAL
-      : !newForm.text.trim() ? "заголовок задачи пустым не бывает"
-      : newForm.accept !== "agent" && !newForm.barrier ?
-        "у не агентского вида назван барьер из шести: без него приёмка повисает без причины"
-      : "";
-    send.disabled = Boolean(bad.textContent);
-  };
-  ta.addEventListener("input", touch);
   for (const [node, draft] of [[asTask, false], [asDraft, true]]) {
     node.addEventListener("click", () => {
       newForm.draft = draft;
       sayResult("");
-      touch();
+      view.touch();
     });
   }
-  send.addEventListener("click", () => {
-    const text = ta.value.trim();
-    if (!text || bad.textContent) return;
-    if (newForm.draft) {
-      makeDraft(project, text, [send]).then((done) => {
-        if (!done) return;
-        resetNewForm(project);
-        draftDone(project, done);
-      }).catch(console.error);
-      return;
-    }
-    const body = {
-      title: text,
-      type: newForm.type,
-      cost: newForm.cost,
-      r_parts: newForm.parts.map(Number),
-      accept: newForm.accept,
-    };
-    if (newForm.accept !== "agent") {
-      body.barrier = newForm.barrier;
-      body.reason = newForm.reason.trim();
-    }
-    makeTask(project, body, [send]).then((done) => {
-      if (!done) return;
-      resetNewForm(project);
-      // Заведённая строка открывается сразу: с телефона следующий шаг это
-      // дописать постановку, а искать её глазами по Backlog неудобно.
-      if (done.id) goKeepingChat(project + "/" + done.id);
-      else renderNew(project);
-    }).catch(console.error);
-  });
-  touch();
+  view.touch();
 }
 
 // Экран ленты уведомлений по макету DK-216 («05 Лента»): три типа событий DoD

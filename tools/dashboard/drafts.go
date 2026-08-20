@@ -135,6 +135,62 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 // handleDraftGroom поднимает сессию грумминга черновика. Проверки те же и в том
 // же порядке, что у запуска задачи: без tmux и без claude сессия умерла бы
 // молча, а поверх живой работы с тем же ID вторую поднимать нельзя.
+// handleDraftPut переписывает текст записи целиком: экран черновика правит её
+// тем же полем, что экран задачи правит постановку, и своей команды на это у
+// taskctl нет. Пустой текст отбивается до записи: он затёр бы запись, а
+// удаление у черновика своё, с причиной в коммит доски.
+func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "правка черновика")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit)).Decode(&body); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("текст длиннее предела %d КБ: в черновике лежит запись, а не вложение", taskTextLimit/1024)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	path, rel := draftPathOf(found.Path, id)
+	if !isFile(path) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "пустой текст затёр бы запись черновика: жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	text := strings.TrimRight(body.Text, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("черновик не записался: %v", err)})
+		return
+	}
+	resp := map[string]string{"id": id, "file": rel, "message": fmt.Sprintf("текст %s записан", rel)}
+	if note := commitDocs(found.Path, boardCommitMsg(id, "правка черновика с дашборда"), rel); note != "" {
+		resp["note"] = note
+		s.logf("правка черновика %s в %s: %s", id, found.Name, note)
+	}
+	s.logf("черновик %s в %s переписан с дашборда", id, found.Name)
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		s.logf("груминг отклонён: чужой Origin 403")

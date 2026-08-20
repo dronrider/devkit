@@ -46,19 +46,39 @@ const items = [
   { seq: 13, key: "m:10", role: "tool", tool: "Skill", note: "board-groom",
     args: { skill: "board-groom", args: "DK-413" }, time: at(10) },
   { seq: 14, key: "m:11", role: "toolout", text: "Launching skill: board-groom", time: at(10) },
-  { seq: 15, key: "m:12", role: "note", note: "Фоновый агент завершил работу",
+  { seq: 15, key: "m:12", role: "note", mark: "agent", note: "Фоновый агент завершил работу",
     text: "Агент разобрал восемь замечаний, стенды зелёные, снимки сняты на трёх ширинах, ветка закоммичена.", time: at(11) },
   { seq: 16, key: "m:13", role: "tool", tool: "SendMessage", note: "Пять замечаний ревью",
     args: { to: "ac42d29", summary: "Пять замечаний ревью",
       message: "Ревью дало пять замечаний, они лежат в разделе «Ревью» файла задачи. Разобрать надо каждое: правкой либо отказом с причиной." },
     time: at(11) },
-  { seq: 17, key: "m:14", role: "assistant", text: "Правка на месте, тесты зелёные.", time: at(12) },
+  { seq: 17, key: "m:14", role: "tool", tool: "Agent", about: "разбор находки",
+    note: "Разбери находку и вернись с причиной",
+    args: { subagent_type: "exec-high", description: "разбор находки",
+      prompt: "Разбери находку и вернись с причиной. Стенды держи зелёными, снимок сними сам." },
+    time: at(12) },
+  { seq: 18, key: "m:15", role: "toolout", text: "агент поднят", time: at(12) },
+  { seq: 19, key: "m:16", role: "user", text: "вот что вижу на телефоне",
+    shot: "/Users/rider/.devkit/uploads/shot/снимок.png", time: at(13) },
+  { seq: 20, key: "m:17", role: "assistant", text: "Правка на месте, тесты зелёные.", time: at(14) },
 ];
 
 items0.push(...items);
 const box = makeNode("div");
 sandbox.wireChatFeed("demo", box, "shot");
 await settle();
+
+// Ручки вложений у страницы снимка нет вовсе, и настоящий адрес миниатюры
+// отдал бы битую картинку. Вместо него подставляется местная: предмет снимка
+// это размер миниатюры в ленте, а не то, откуда она приехала.
+const PIC = "data:image/svg+xml;utf8," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500">' +
+  '<rect width="900" height="500" fill="#2b3a4a"/>' +
+  '<text x="40" y="270" font-family="sans-serif" font-size="64" fill="#cfe">снимок</text></svg>');
+(function patch(node) {
+  if (String(node.className || "").includes("mshot")) node.src = PIC;
+  for (const kid of node.children || []) patch(kid);
+})(box);
 
 // Разметка игрушечного дерева в html: своего сериализатора у мока нет, а для
 // снимка нужен именно он.
@@ -72,6 +92,9 @@ function html(node) {
   if (node.className) bits.push(' class="' + esc(node.className) + '"');
   if (node.title) bits.push(' title="' + esc(node.title) + '"');
   if (node.hidden) bits.push(" hidden");
+  // Картинку мок держит своим полем, а не атрибутом: без неё снимок ленты
+  // показывал бы пустую рамку вместо миниатюры.
+  if (node.src) bits.push(' src="' + esc(node.src) + '"');
   for (const [k, v] of Object.entries(node.attrs || {})) {
     if (k !== "class") bits.push(" " + k + '="' + esc(v) + '"');
   }

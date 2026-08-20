@@ -3415,7 +3415,7 @@ function toolPair(call, out) {
   if (name === "SendMessage") {
     return bodyCard(name, call.about || call.note || "", args.message || call.text || "");
   }
-  if (name === "Task") {
+  if (isDeleg(call)) {
     const who = args.subagent_type || "";
     const said = [call.about || "", who].filter(Boolean).join(", ");
     return bodyCard(name, said, args.prompt || call.text || "");
@@ -3661,6 +3661,13 @@ function leadKind(node) {
   return "f-line";
 }
 
+// Вызов, которым работа уходит субагенту. Имя у него зависит от харнеса: в
+// claude-code он зовётся Agent, в прежних версиях и у соседей Task, и знать
+// надо оба, иначе метка молчит ровно там, где работа и делегируется.
+function isDeleg(item) {
+  return item && item.role === "tool" && (item.tool === "Agent" || item.tool === "Task");
+}
+
 // Исход записи цветом: пока ответа инструмента нет, ход считается идущим и
 // кружок нейтрален, ошибка инструмента приходит признаком fail.
 // Работа, отданная субагенту, и весть о том, что фоновый агент её закончил, это
@@ -3668,7 +3675,7 @@ function leadKind(node) {
 // работа ушла и когда вернулась (замечание 9). Начало узнаётся по имени
 // инструмента, конец по машинной пометке записи, а не по словам заголовка.
 function dotKind(item, out) {
-  if (item.role === "tool" && item.tool === "Task") return "deleg";
+  if (isDeleg(item)) return "deleg";
   if (item.role === "note" && item.mark === "agent") return "deleg";
   if (item.role !== "tool") return item.role === "toolout" && item.fail ? "bad" : "";
   if (!out) return "";

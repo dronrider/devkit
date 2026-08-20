@@ -328,7 +328,7 @@ async function feedOf(items, sid) {
 // узнаются с одного взгляда.
 {
   const rail = [
-    { seq: 0, key: "d:0", role: "tool", tool: "Task", about: "разбор находки",
+    { seq: 0, key: "d:0", role: "tool", tool: "Agent", about: "разбор находки",
       args: { subagent_type: "exec-high", prompt: "Разбери находку." },
       time: "2026-08-13T09:00:00+03:00" },
     { seq: 1, key: "d:1", role: "toolout", text: "агент поднят", time: "2026-08-13T09:00:01+03:00" },
@@ -510,17 +510,23 @@ async function feedOf(items, sid) {
   // Задание субагенту приезжает тем же блоком: заказ бывает на две страницы, и
   // строкой без разворота он загромождал ленту.
   const task = sandbox.toolPair(
-    { role: "tool", tool: "Task", about: "разбор находки",
+    { role: "tool", tool: "Agent", about: "разбор находки",
       note: "Разбери находку и вернись с причиной",
       args: { subagent_type: "exec-high", description: "разбор находки",
         prompt: "Разбери находку и вернись с причиной." } },
     null);
   const said4 = dump(task);
-  if (!said4.includes("Task") || !said4.includes("Разбери находку и вернись с причиной.")) {
+  if (!said4.includes("Agent") || !said4.includes("Разбери находку и вернись с причиной.")) {
     fail("задание субагенту нарисовано без заказа: " + said4);
   }
   if (!byClass(task, "tbox")) fail("у задания субагенту нет блока: " + said4);
   if (!said4.includes("exec-high")) fail("в заголовке задания нет вида субагента: " + said4);
+  // Прежнее имя вызова узнаётся тем же правилом: харнесы зовут его по-разному.
+  const old = sandbox.toolPair({ role: "tool", tool: "Task", about: "старое имя вызова",
+    args: { subagent_type: "exec-low", prompt: "Сделай рутину." } }, null);
+  if (!byClass(old, "tbox") || !dump(old).includes("Сделай рутину.")) {
+    fail("вызов по прежнему имени нарисован без блока: " + dump(old));
+  }
   // Простыня скилла в ленту не идёт вовсе, от него остаётся строка «Skill имя».
   const skill = sandbox.toolPair(
     { role: "tool", tool: "Skill", note: "board-groom", args: { skill: "board-groom" } },

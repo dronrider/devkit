@@ -431,14 +431,16 @@ a:hover{text-decoration:underline}
 .mlist{display:flex;flex-direction:column}
 .day{display:flex;align-items:center;gap:12px;font:500 11px var(--sans);color:var(--tx3);margin-top:14px}
 .day i{flex:1;height:1px;background:var(--line)}
-.msg{max-width:82%;display:flex;flex-direction:column;gap:5px;margin-top:14px}
+/* пузырь реплики шириной со всю запись ленты: соседние блоки ходов инструментов
+   занимают колонку целиком, и узкий пузырь рядом с ними ломал общий край */
+.msg{max-width:100%;display:flex;flex-direction:column;gap:5px;margin-top:14px}
 .msg .bb{padding:12px 16px;border-radius:13px;font:400 13.5px/1.6 var(--sans);color:var(--tx);background:var(--bg1);border:1px solid var(--line);overflow-wrap:anywhere}
 /* переносы строк внутри пузыря видны: разбор реплики уже расставил их в абзацах
    (mdRender), а HTML без pre-wrap схлопывал их в пробелы, и список из реплики
    человека читался одной строкой */
 .msg .bb .md p{white-space:pre-wrap}
 .msg .mm{font:400 11px var(--mono);color:var(--tx3)}
-.msg.me{align-self:flex-end;align-items:flex-end}
+.msg.me{align-self:stretch;align-items:stretch}
 .msg.me .bb{background:color-mix(in oklab,var(--acc) 13%,var(--bg1));border-color:color-mix(in oklab,var(--acc) 30%,var(--line))}
 /* Состояние своей реплики видно и краем глаза: стоящая в очереди бледнеет, а
    залежавшаяся там подсвечена жёлтой рамкой. Красного тут нет: отправка не

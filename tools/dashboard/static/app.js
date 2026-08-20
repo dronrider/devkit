@@ -3682,13 +3682,11 @@ function chatItem(item) {
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
     if (item.shot) {
       // Картинка лежит файлом на машине, и браузеру её отдаёт ручка вложений.
-      const thumb = el("img", "mshot");
-      thumb.alt = "вложенный снимок";
+      const thumb = shotThumb(shotURL(item.shot), baseName(item.shot));
       thumb.addEventListener("error", () => {
         thumb.hidden = true;
         wrap.append(el("div", "svcline", "картинка не открылась: " + item.shot));
       });
-      thumb.src = shotURL(item.shot);
       wrap.append(thumb);
     }
     return wrap;
@@ -3710,6 +3708,58 @@ let chatShotSid = "";
 // бывает открыта другой (разговор продолжили резюмом, реплику принесло из
 // чужой сессии). Взятая с открытой сессии, ручка отвечала 404, и в ленте
 // оставался значок битого изображения (замечание тринадцатого круга POC).
+// Вложенный снимок в ленте: миниатюра, которая по нажатию разворачивается во
+// весь экран. Полноразмерная картинка прямо в ленте съедала бы её целиком, а
+// маленькая без разворота нечитаема: на снимке человек показывает мелочь вроде
+// сдвинутого кружка (замечание 5 четырнадцатого круга POC).
+function shotThumb(src, name) {
+  const thumb = el("img", "mshot");
+  thumb.alt = "вложенный снимок";
+  thumb.title = "Открыть снимок целиком";
+  thumb.src = src;
+  thumb.addEventListener("click", () => { shotOpen(src, name); });
+  return thumb;
+}
+
+// Разворот снимка поверх страницы. Узел живёт при body, а не в ленте: лента
+// прокручивается и режется своей коробкой, и картинка внутри неё разворачиваться
+// некуда. Закрывается нажатием куда угодно и клавишей Esc.
+let shotLens = null;
+
+function shotOpen(src, name) {
+  shotShut();
+  const box = el("div", "shotbig");
+  box.id = "shotbig";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "снимок " + (name || "чата"));
+  const pic = el("img");
+  pic.alt = "снимок целиком";
+  pic.src = src;
+  box.append(pic);
+  const shut = el("button", "shotx");
+  shut.title = "Закрыть снимок";
+  shut.setAttribute("aria-label", shut.title);
+  shut.append(icon("close"));
+  box.append(shut);
+  box.addEventListener("click", () => { shotShut(); });
+  shotLens = box;
+  document.body.append(box);
+  document.addEventListener("keydown", shotKey);
+}
+
+function shotKey(ev) {
+  if (ev.key === "Escape") shotShut();
+}
+
+function shotShut() {
+  const box = shotLens;
+  shotLens = null;
+  document.removeEventListener("keydown", shotKey);
+  if (!box) return;
+  if (box.parentElement && box.parentElement.removeChild) box.parentElement.removeChild(box);
+  else if (document.body.removeChild) document.body.removeChild(box);
+}
+
 function shotURL(path) {
   const parts = String(path || "").split("/").filter(Boolean);
   const name = parts[parts.length - 1] || "";
@@ -5035,11 +5085,7 @@ function makeEcho(project, box, feedBox) {
       const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
-      if (m.pic) {
-        const thumb = el("img", "mshot");
-        thumb.src = m.pic.data;
-        wrap.append(thumb);
-      }
+      if (m.pic) wrap.append(shotThumb(m.pic.data, m.pic.name));
       if (m.state === "bad") {
         const again = el("button", "linkish", "повторить");
         again.addEventListener("click", () => {

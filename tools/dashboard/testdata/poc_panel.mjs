@@ -579,6 +579,30 @@ async function feedOf(items, sid) {
   if (!url.includes("/shot?name=")) fail("адрес миниатюры собран не так: " + url);
 }
 
+// --- отправленный снимок остаётся в ленте миниатюрой и разворачивается ---
+// Полноразмерная картинка в ленте закрывала бы весь разговор, а маленькая без
+// разворота нечитаема: на снимке показывают мелочь вроде сдвинутого кружка.
+{
+  const item = { role: "user", text: "вот что вижу", time: "2026-08-13T10:02:00+03:00",
+    shot: "/Users/rider/.devkit/uploads/aaaa1111-1111/снимок.png" };
+  const node = sandbox.chatItem(item);
+  const pic = byClass(node, "mshot");
+  if (!pic || pic.tagName !== "IMG") fail("снимка миниатюрой в ленте нет: " + dump(node));
+  if (!String(pic.src).includes("/shot?name=")) fail("миниатюра просит не ту ручку: " + pic.src);
+  const bodyKids = () => sandbox.document.body.children.filter(
+    (k) => String(k.className || "").includes("shotbig"));
+  if (bodyKids().length) fail("разворот снимка висит на странице до нажатия");
+  pic.handlers.click();
+  const lens = bodyKids()[0];
+  if (!lens) fail("нажатие на миниатюру не развернуло снимок");
+  const big = tag(lens, "IMG");
+  if (!big || String(big.src) !== String(pic.src)) {
+    fail("развёрнут не тот снимок: " + String(big && big.src));
+  }
+  lens.handlers.click();
+  if (bodyKids().length) fail("нажатие по развороту его не закрыло");
+}
+
 // --- хват высоты стоит НАД полем: проверяется порядок узлов, а не стили ---
 {
   const stG = await sandbox.chatState("demo", "aaaa1111-1111", board);

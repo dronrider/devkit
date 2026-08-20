@@ -402,3 +402,49 @@ func TestChatReplyEmptyWhenRowLeftTheBoard(t *testing.T) {
 		t.Fatalf("закрытая задача назвала ручку: %q %q", reply, note)
 	}
 }
+
+// Разговор о задаче чужой доски подписан словами: сессия соседнего проекта
+// попадает в список по общему каталогу транскриптов, и без подписи её задача
+// читалась бы как задача этой доски. Считалось это и раньше, но наружу шло
+// только списком работ, а панель разговора подписи не видела вовсе.
+func TestChatListSignsForeignTask(t *testing.T) {
+	e, c := chatEnv(t)
+	writeSession(t, e.home, e.proj, "-dk-9", "aaaa-1111", plainTalk, time.Now())
+	sideTree(t, e.proj, "dk-9")
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("список чатов: %d", resp.StatusCode)
+	}
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Chats) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один", len(got.Chats))
+	}
+	if got.Chats[0].Note != foreignTaskNote {
+		t.Fatalf("подпись чужой задачи %q, ждал %q", got.Chats[0].Note, foreignTaskNote)
+	}
+}
+
+// Работа своей доски подписи не просит: заголовок разговора говорит про неё
+// больше, чем «по дереву задачи», и вторая надпись в шапке была бы шумом.
+func TestChatListKeepsOwnTaskUnsigned(t *testing.T) {
+	e, c := chatEnv(t)
+	writeSession(t, e.home, e.proj, "-xr-4", "aaaa-2222", plainTalk, time.Now())
+	sideTree(t, e.proj, "xr-4")
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Chats) != 1 || got.Chats[0].Note != "" {
+		t.Fatalf("своя задача подписана лишним: %+v", got.Chats)
+	}
+}

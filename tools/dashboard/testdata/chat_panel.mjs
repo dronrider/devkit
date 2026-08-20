@@ -484,6 +484,19 @@ if (!dump(emptyAnchor).includes("просмотрено 12 транскрипт�
 chatRegistry = emptyReg;
 chatsNote = wasNote;
 
+// --- подпись узнавания задачи: чужая доска не выдаётся за свою ---
+{
+  const was = chatRegistry;
+  chatRegistry = () => [Object.assign({}, mine, { note: "задача не с доски проекта" })];
+  st = await sandbox.chatState("demo", mine.id, board);
+  const head = sandbox.chatHead("demo", st);
+  const note = byClass(head, "cnote");
+  if (!note || !dump(note).includes("не с доски проекта")) {
+    fail("подпись про чужую доску перетёрта заголовком чата: " + dump(head));
+  }
+  chatRegistry = was;
+}
+
 // --- привязка разговора к задаче рукой ---
 {
   st = await sandbox.chatState("demo", mine.id, board);
@@ -551,6 +564,8 @@ chatsNote = wasNote;
     fail("ушедшая реплика осталась в очереди: " + store.get("devkit.chat.pend.demo/" + mine.id));
   }
 }
+
+console.log("подпись узнавания задачи: чужая доска названа словами в шапке");
 
 console.log("привязка разговора к задаче: кнопка в шапке, поле номера, ручка сессии");
 

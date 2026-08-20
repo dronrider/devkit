@@ -5574,6 +5574,15 @@ function chatHead(project, st) {
   // следом и дописываются не пульсом, а списком чатов.
   const cts = el("span", "cts", "пульс читается...");
   sub.append(cts);
+  // Чем узнана задача разговора, говорит сервер (bindTask): «задача не с доски
+  // проекта», «задача не распознана», «говорит о XR-1». Раньше подпись
+  // считалась и пропадала, перетёртая заголовком чата, и разговор о чужой
+  // доске выглядел обычной работой этого проекта.
+  if (st.entry && st.entry.note) {
+    const note = el("span", "cnote", st.entry.note);
+    note.title = "Так дашборд узнал задачу разговора: " + st.entry.note;
+    sub.append(note);
+  }
   if (words.textContent) sub.append(words);
   ct.append(sub);
   wireRing(project, st, slot, cts);

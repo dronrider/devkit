@@ -118,6 +118,14 @@ type chatEntry struct {
 	// Own говорит, дашбордова ли это сессия: только у своей смена модели
 	// действует сразу следующим подъёмом, чужую до резюма не переубедить.
 	Own bool `json:"own,omitempty"`
+	// Note подписывает узнавание задачи словами: «задача не с доски проекта»,
+	// «задача не распознана», «говорит о XR-1». Считалось это и раньше
+	// (bindTask), но наружу шло только списком сессий, а панель разговора
+	// подписи не показывала вовсе, и разговор о чужой доске выглядел обычным
+	// разговором проекта. Bound рядом это разряд привязки: работой задачи
+	// считается только boundLead.
+	Note  string `json:"note,omitempty"`
+	Bound string `json:"bound,omitempty"`
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -196,6 +204,16 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 	names := harnessRoots(s.harnesses())
 	live := s.peers()
 	cutoff := s.now().Add(-sessionLiveTTL)
+	// Префикс доски нужен ровно затем, чтобы отличить чужую задачу от своей:
+	// сессия соседнего проекта попадает в список по общему каталогу
+	// транскриптов, и без этой проверки её задача читалась бы как задача этой
+	// доски. Тот же разбор ведёт список работ (sessionWorks).
+	prefix := ""
+	if raw, err := s.projectBoard(projPath); err == nil {
+		if b, err := parseBoardView(raw); err == nil {
+			prefix = b.Prefix
+		}
+	}
 	out := []chatEntry{}
 	for i, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		if limit > 0 && i >= limit {
@@ -212,8 +230,17 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
 			tasks = append([]string{id}, tasks...)
 		}
+		task, note, bound := bindTask(s.binds(), f.ID, f.suffix, head)
+		if task != "" && prefix != "" && !strings.HasPrefix(task, prefix+"-") {
+			note = foreignTaskNote
+		} else if bound == boundLead {
+			// Работа своей доски подписи не просит: заголовок разговора
+			// говорит про неё больше, чем «по дереву задачи».
+			note = ""
+		}
 		e := chatEntry{
 			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: f.Mtime, Tasks: tasks,
+			Note: note, Bound: bound,
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
 			Tmux:      last.Tmux, Tree: f.suffix, Branch: head.Branch,

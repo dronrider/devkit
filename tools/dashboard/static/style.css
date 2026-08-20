@@ -329,7 +329,6 @@ a:hover{text-decoration:underline}
 /* экран черновика (#проект/draft/<ID>, макет DK-328): текст записи слева,
    исход груминга и ход разбора справа. На телефоне порядок переставлен
    областями сетки: исход сверху, текст записи последним */
-.dgrid{display:grid;grid-template-columns:1fr 1.1fr;grid-template-areas:"text out" "text run";gap:18px;margin-top:18px;align-items:start}
 .dcol-text{grid-area:text}
 .dcol-out{grid-area:out;display:flex;flex-direction:column;gap:14px}
 .dcol-run{grid-area:run}
@@ -646,7 +645,6 @@ a:hover{text-decoration:underline}
   .qnote{font-size:11.5px}
   /* телефон: с записи чаще смотрят, чем читают её, поэтому исход груминга идёт
      сверху, за ним ход разбора, а текст записи последним */
-  .dgrid{grid-template-columns:1fr;grid-template-areas:"out" "run" "text";gap:14px;margin-top:12px}
   .dcol-text .pbd{max-height:44vh}
   /* телефон: доска, номер и статус одной строкой, заголовок под ними во всю
      ширину */
@@ -1146,6 +1144,9 @@ a:hover{text-decoration:underline}
 /* Привязка разговора к задаче: то же выпадающее окно, что у нового чата, с
    полем номера и двумя кнопками. Кнопка привязки светится, пока задача не
    узнана: чат без задачи в её ленту не попадёт. */
+/* Подпись узнавания задачи разговора: чужая доска и нераспознанная задача
+   говорят это словами, а не молчанием заголовка. */
+.chead .cnote{font:400 11.5px var(--sans);color:var(--tx3);opacity:.9}
 .cdbind{top:38px;max-height:none;padding:12px}
 .cdbind .hint{font:400 11.5px/1.5 var(--sans);color:var(--tx3)}
 .cdbtn.warn{border-color:var(--warn,var(--acc));color:var(--tx)}

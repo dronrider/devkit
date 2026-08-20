@@ -123,6 +123,15 @@ a:hover{text-decoration:underline}
    требуется внимание. Цветом одним причину не сказать, поэтому у зелёного и
    красного рядом стоят слова, а у серого сказать нечего. */
 .pdot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--bg3);border:1px solid var(--line2)}
+/* кружок состояния строки доски: зелёный работа идёт, жёлтый ждут человека,
+   серый работа не наша или ожидание снаружи. Стоит внутри ячейки номера, а
+   слова состояния лежат подсказкой */
+.sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--tx3)}
+.sd-run{background:var(--run)}
+.sd-wait{background:var(--wait)}
+.sd-out{background:var(--tx3)}
+.sdot.clicky{cursor:pointer}
+.sdot.clicky:hover{box-shadow:0 0 0 4px color-mix(in oklab,var(--tx2) 22%,transparent)}
 .pd-run{background:var(--run);border-color:transparent}
 .pd-warn{background:var(--block);border-color:transparent}
 /* подсказки по наведению: то, что раньше стояло надписью-указкой прямо на
@@ -261,6 +270,10 @@ a:hover{text-decoration:underline}
 .trow{display:grid;grid-template-columns:76px 1fr auto;gap:14px;align-items:center;padding:11px 16px;border-top:1px solid var(--line);cursor:pointer}
 .trow:hover{background:var(--bg2)}
 .trow:first-child{border-top:none}
+/* кружок состояния висит слева от номера, в отступе строки: встань он в поток,
+   номера строк с работой и без разъехались бы по колонке */
+.trow .id{position:relative;display:flex;align-items:center}
+.trow .id .sdot{position:absolute;left:-13px}
 .trow .tt{font:400 13.5px var(--sans);color:var(--tx);display:flex;align-items:center;gap:8px;min-width:0}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}

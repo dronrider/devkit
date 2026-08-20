@@ -76,10 +76,21 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 		t.Error("отпечаток строки собран со списком работ: признак работы входит в него полем строки")
 	}
 	chip := funcBody(t, text, "function runChip(")
-	for _, want := range []string{`row.run === "gone"`, "сессии нет", "работает", `"dot pulse"`} {
+	for _, want := range []string{`row.run === "gone"`, "сессии нет"} {
 		if !strings.Contains(chip, want) {
-			t.Errorf("в признаке работы нет %q: идущая работа снова неотличима от оборванной", want)
+			t.Errorf("в признаке работы нет %q: оборванный конвейер снова неотличим от очереди", want)
 		}
+	}
+	// Идущая работа сказана кружком у номера, а не чипом со словом: одно и то
+	// же состояние стояло в строке дважды (POC ветки poc-chat).
+	dot := funcBody(t, text, "function rowDot(")
+	for _, want := range []string{`row.run !== "gone"`, "sd-run", "sd-wait", "sd-out", "row.waiting"} {
+		if !strings.Contains(dot, want) {
+			t.Errorf("в кружке состояния нет %q: состояния строки снова неразличимы", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowDot(project, row)") {
+		t.Error("строка доски рисуется без кружка состояния: на экране его снова нет")
 	}
 	if !strings.Contains(funcBody(t, text, "function rowChips("), "runChip(row)") {
 		t.Error("строка доски рисуется без признака работы: на экране его снова нет")

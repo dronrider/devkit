@@ -954,8 +954,44 @@ if (!String(button(now, "Стоп").className).includes("btn-danger")) {
 }
 // Стоп это одиночная кнопка без узкой части, не обёрнута в split (DK-349).
 if (byClass(now, "split")) fail("стоп в строке обёрнут в split: " + dump(now));
-if (!dump(now).includes("работает")) {
-  fail("у идущей работы в строке нет признака выполнения: " + dump(now));
+// Признак выполнения стоит кружком у номера, а не словом в чипе: зелёная
+// точка с подсказкой вместо чипа «работает» (POC ветки poc-chat).
+const dot = byClass(now, "sdot");
+if (!dot || !String(dot.className).includes("sd-run")) {
+  fail("у идущей работы в строке нет зелёного кружка: " + (dot && dot.className) + " " + dump(now));
+}
+if (!String(dot.title).includes("работает")) {
+  fail("кружок идущей работы молчит о состоянии: " + dot.title);
+}
+if (dump(now).includes("работает")) {
+  fail("рядом с кружком снова стоит чип со словом: " + dump(now));
+}
+// Строка, за которой никто не стоит, кружка не носит вовсе.
+if (byClass(find(groups, "XR-4"), "sdot")) {
+  fail("кружок встал у строки без живой работы: " + dump(find(groups, "XR-4")));
+}
+// Остальные случаи кружка проверяются прямо на строке данных: ожидание
+// человека читается раньше живости, чужая сессия и ожидание снаружи серые.
+{
+  const kinds = (row) => {
+    const d = sandbox.rowDot("demo", row);
+    return d ? String(d.className) : "";
+  };
+  const wait = { id: "XR-9", run: "tmux", waiting: { state: "ждёт ответа", note: "спросил агент",
+    questions: ["Какой дубль оставить?"] } };
+  if (!kinds(wait).includes("sd-wait")) fail("ждущая строка не жёлтая: " + kinds(wait));
+  const tip = String(sandbox.rowDot("demo", wait).title);
+  if (!tip.includes("спросил агент") || !tip.includes("Какой дубль")) {
+    fail("подсказка ожидания без источника или вопроса: " + tip);
+  }
+  if (!kinds({ id: "XR-9", run: "registry" }).includes("sd-out")) {
+    fail("чужая сессия нарисована не серым: " + kinds({ id: "XR-9", run: "registry" }));
+  }
+  if (!kinds({ id: "XR-9", stage: "снаружи" }).includes("sd-out")) {
+    fail("ожидание снаружи нарисовано не серым: " + kinds({ id: "XR-9", stage: "снаружи" }));
+  }
+  if (kinds({ id: "XR-9", run: "gone" })) fail("оборванный конвейер получил кружок");
+  if (kinds({ id: "XR-9" })) fail("строка без работы получила кружок");
 }
 if (doc.activeElement.textContent !== "Стоп") {
   fail("после нажатия фокус ушёл со строки: " + dump(doc.activeElement));

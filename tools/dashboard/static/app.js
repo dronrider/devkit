@@ -417,11 +417,60 @@ function runChip(row) {
   // чип снимается (POC ветки poc-chat).
   const waiting = row.waiting && row.waiting.state;
   if (row.run === "gone") return waiting ? null : el("span", "chip", "сессии нет");
-  if (!row.run) return null;
-  const chip = el("span", "chip c-run");
-  chip.append(el("span", "dot pulse"), el("span", "", "работает"));
-  return chip;
+  // Идущая работа сказана кружком у номера (rowDot), и чипа со словом
+  // «работает» рядом больше нет: одно и то же состояние стояло в строке
+  // дважды, зелёной точкой и зелёным чипом.
+  return null;
 }
+
+// Кружок состояния перед номером строки: одна точка на все случаи вместо
+// россыпи чипов. Зелёная это живая работа, жёлтая ожидание человека, серая
+// работа не наша (чужая сессия) или ожидание снаружи. Строка, за которой
+// никто не стоит, кружка не носит вовсе: пустая точка на каждой строке доски
+// ела бы место и ничего не говорила. Слова состояния приходят подсказкой, а не
+// текстом рядом: место в строке отдано заголовку задачи.
+function rowDot(project, row) {
+  const w = row.waiting;
+  const live = row.run && row.run !== "gone";
+  const own = row.run === "tmux" || row.run === "session";
+  let kind = "";
+  let tip = "";
+  if (w && w.state) {
+    // Ожидание человека читается раньше живости: пока агент ждёт ответа, ход
+    // задачи стоит, и точка обязана звать человека, а не докладывать, что
+    // сессия жива.
+    kind = "sd-wait";
+    const qs = w.questions || [];
+    tip = w.state + ", источник: " + (w.note || "не назван") + "." +
+      (qs.length ? " Вопрос: " + qs.join("; ") : "");
+  } else if (live && own) {
+    kind = "sd-run pulse";
+    tip = "работает: живая сессия ведёт задачу";
+  } else if (live) {
+    kind = "sd-out";
+    tip = "работа идёт снаружи: задачу ведёт чужая сессия";
+  } else if (row.stage === STAGE_OUTSIDE) {
+    kind = "sd-out";
+    tip = "ждём снаружи: проверка, блокер или чужая работа";
+  } else {
+    return null;
+  }
+  const dot = withTip(el("span", "sdot " + kind), tip);
+  dot.setAttribute("aria-label", tip);
+  // С кружка идущей работы есть ход в разговор: со строки туда вёл чип
+  // «работает», и вместе с ним дорога бы пропала.
+  if (live) {
+    dot.classList.add("clicky");
+    dot.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      location.hash = boardChatHash(project, row.id);
+    });
+  }
+  return dot;
+}
+
+// Этап ожидания не нас: словарь этапов держит его этим словом (internal/stage).
+const STAGE_OUTSIDE = "снаружи";
 
 // Кто ведёт работу: та же тройка случаев, что была в шапке экрана агента.
 // Стоп у tmux-сессии дашборда живёт кнопкой полосы действий рядом, а у сессии
@@ -477,19 +526,10 @@ function waitChip(row) {
 function rowChips(project, row) {
   const chips = [];
   // Признак работы стоит первым чипом: он про то, что происходит со строкой
-  // прямо сейчас, а тип с ценой про то, чем она заведена. У идущей работы чип
-  // ведёт на её живой статус: со строки туда не было хода вовсе.
+  // прямо сейчас, а тип с ценой про то, чем она заведена. Идущую работу чип
+  // больше не называет, её говорит кружок у номера.
   const run = runChip(row);
-  if (run) {
-    if (row.run !== "gone") {
-      run.className += " clicky";
-      run.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        location.hash = boardChatHash(project, row.id);
-      });
-    }
-    chips.push(run);
-  }
+  if (run) chips.push(run);
   if (/^Цель:/.test(row.title)) chips.push(el("span", "chip c-goal", "цель"));
   if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
   if (row.p === "P0" || row.p === "P1") chips.push(el("span", "chip c-p1", row.p));
@@ -791,7 +831,13 @@ function rowAction(project, row, sect) {
 
 function renderRow(project, row, sect) {
   const tr = el("div", "trow");
-  tr.append(el("span", "id", row.id));
+  // Кружок состояния живёт внутри ячейки номера, а не отдельной колонкой:
+  // сетка строки трёхколоночная, и четвёртый элемент разъехался бы по ней.
+  const idc = el("span", "id");
+  const dot = rowDot(project, row);
+  if (dot) idc.append(dot);
+  idc.append(el("span", "", row.id));
+  tr.append(idc);
   const tt = el("span", "tt");
   tt.append(el("span", "ttl", row.title));
   // Чипы лежат своей коробкой, а не россыпью рядом с заголовком: на телефоне

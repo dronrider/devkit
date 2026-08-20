@@ -787,9 +787,11 @@ console.log("окно чатов: адреса, фильтр, дорога ре�
   "отправка обоих видов чата, оптимистичный пузырь, лента, разметка, выделение, " +
   "хват над полем, черновик, чат из раздела агентов, навигация, память задачи, тихие уведомления");
 
-// --- врезка вопроса: припаркованной задаче отвечают из панели ---
-// Живой сессии у такой строки нет, и до этого ответить ей было нечем: вопрос
-// виднелся подсказкой чипа на доске, а с телефона его не прочитать.
+// --- ожидание в шапке: чип вместо врезки, ответ обычным полем ---
+// Врезка над полем ввода носила своё поле ответа, и полей в панели выходило
+// два. Теперь состояние стоит чипом в шапке, а обычная реплика припаркованной
+// задачи уходит во вход строки: живой сессии за ней нет, и адресованную
+// реплику не взял бы никто.
 {
   const st = {
     addr: "XR-1", sid: "", task: "XR-1", chats: [], entry: null, fresh: false,
@@ -798,31 +800,50 @@ console.log("окно чатов: адреса, фильтр, дорога ре�
       questions: ["Какой из двух дублей оставить, XR-D2 или XR-D3?"] },
   };
   const panel = sandbox.chatPanel("demo", st);
-  const card = byClass(panel, "wcard");
-  if (!card) fail("врезки вопроса в панели нет: " + dump(panel).slice(0, 200));
-  const shown = dump(card);
-  if (!shown.includes("припаркована вопросом") || !shown.includes("парковка")) {
-    fail("врезка не назвала состояние и источник: " + shown);
+  if (byClass(panel, "wcard")) fail("врезка вопроса снова стоит в панели");
+  const fields = (node) => (node.tagName === "TEXTAREA" ? 1 : 0) +
+    (node.children || []).reduce((n, kid) => n + fields(kid), 0);
+  if (fields(panel) !== 1) fail("полей ввода в панели не одно: " + fields(panel));
+  const head = sandbox.chatHead("demo", st);
+  const chip = byClass(head, "c-wait");
+  if (!chip) fail("чипа ожидания в шапке нет: " + dump(head).slice(0, 200));
+  if (!String(chip.textContent).includes("припаркована вопросом")) {
+    fail("чип не назвал состояние: " + chip.textContent);
   }
-  if (!shown.includes("Какой из двух дублей")) fail("вопроса агента во врезке нет: " + shown);
-  const ta = tag(card, "TEXTAREA");
-  if (!ta) fail("поля ответа во врезке нет: " + shown);
-  // Пустой ответ никуда не уходит, и отказ назван словами.
+  const tip = String(chip.title || chip.attrs.title || "");
+  for (const want of ["парковка", "Какой из двух дублей", "во вход задачи XR-1"]) {
+    if (!tip.includes(want)) fail("в подсказке чипа нет " + want + ": " + tip);
+  }
+  // Обычное поле панели уходит ручкой задачи, а не подъёмом нового чата.
   posted.length = 0;
-  deepBtn(card, "Ответить").handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (posted.some((p) => p.includes("/message"))) fail("пустой ответ ушёл в ручку");
+  const ta = tag(panel, "TEXTAREA");
   ta.value = "оставить XR-D2, второй дубль снять";
-  deepBtn(card, "Ответить").handlers.click({ stopPropagation: () => {} });
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!posted.some((p) => p.includes("/tasks/XR-1/message"))) {
-    fail("ответ ушёл не ручкой задачи: " + JSON.stringify(posted));
+    fail("реплика ушла не ручкой задачи: " + JSON.stringify(posted));
   }
-  // У цели врезки нет: её реплики уходят своей ручкой.
+  if (posted.some((p) => p.endsWith("/chats"))) fail("реплика подняла новый чат вместо ответа строке");
+  // Живая сессия за задачей забирает реплику себе: ждать может и она сама.
+  const live = Object.assign({}, st, { sid: "aaaa1111-1111",
+    entry: { id: "aaaa1111-1111", state: "live", tasks: ["XR-1"] } });
+  if (sandbox.chatWay(live).kind !== "say") {
+    fail("реплика живой сессии ушла мимо неё: " + sandbox.chatWay(live).kind);
+  }
+  const lchip = byClass(sandbox.chatHead("demo", live), "c-wait");
+  if (!lchip || !String(lchip.title).includes("живой сессии")) {
+    fail("подсказка живой сессии не назвала адрес ответа: " + (lchip && lchip.title));
+  }
+  // У цели ожидание тоже видно, а вот ручкой задачи её реплики не уходят:
+  // цель ведут своим ходом, и подсказка чипа говорит про сессию.
   const goal = Object.assign({}, st, { isGoal: true });
-  if (byClass(sandbox.chatPanel("demo", goal), "wcard")) {
-    fail("врезка вопроса поднялась у цели");
+  const gchip = byClass(sandbox.chatHead("demo", goal), "c-wait");
+  if (!gchip) fail("чип ожидания у цели пропал");
+  if (String(gchip.title).includes("во вход задачи")) {
+    fail("подсказка цели обещает ручку задачи: " + gchip.title);
   }
+  if (sandbox.chatWay(goal).kind === "task") fail("реплика цели ушла во вход задачи");
 }
 
-console.log("врезка вопроса: состояние, вопрос и поле ответа на месте, ответ уходит ручкой задачи");
+console.log("ожидание задачи: чип в шапке с вопросом и адресом ответа, поле ввода одно, " +
+  "реплика припаркованной строки уходит ручкой задачи");

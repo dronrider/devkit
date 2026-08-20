@@ -475,17 +475,6 @@ a:hover{text-decoration:underline}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
 .stopnote{font:400 11.5px/1.5 var(--sans);color:var(--tx3);margin-top:9px}
-/* врезка вопроса в панели разговора (LLD DK-430, решение 4): состояние словами,
-   вопрос пачкой столбиком и своё поле ответа. Цвет тот же, что у чипа
-   ожидания, чтобы врезка и строка доски читались одним состоянием */
-.wcard{background:color-mix(in oklab,var(--wait) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--wait) 28%,transparent);border-radius:12px;padding:12px 14px;margin:12px 0}
-.wtop{display:flex;align-items:baseline;gap:8px;font:600 12.5px/1.4 var(--sans);color:var(--wait)}
-.wtop span{font:400 11px var(--sans);color:var(--tx3)}
-.wq{font:400 13.5px/1.5 var(--sans);color:var(--tx);margin-top:8px;padding-left:12px;border-left:2px solid color-mix(in oklab,var(--wait) 40%,transparent)}
-.wcard textarea{display:block;width:100%;min-height:40px;margin-top:10px;background:var(--bg1);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
-.wcard .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}
-
-
 /* панель разговора справа (LLD DK-430, решение 5). Шире 1100 точек панель
    стоит колонкой экрана и сжимает доску рядом: она флекс-ребёнок .screen, и
    ширину ей даёт переменная --cw, которую двигает хват за левый край. Ниже
@@ -788,7 +777,8 @@ a:hover{text-decoration:underline}
 .cdrow:hover{border-color:var(--line2);background:var(--bg2)}
 .cdrow.on{border-color:var(--acc);background:var(--bg2)}
 .cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere}
-.csub{width:100%;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere;margin-top:6px}
+.csub{width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere;margin-top:6px}
+.csub span{min-width:0}
 /* свёрнутый блок размышлений и вывода инструмента: заголовок строкой, тело по
    клику. Тело моноширинное и с переносами: там лежит вывод команд */
 .fold{margin:8px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg2);overflow:hidden}

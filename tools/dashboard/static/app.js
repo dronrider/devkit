@@ -3043,7 +3043,6 @@ async function wireFeed(project, sid, opts) {
   // shown держит уже показанное: и хвост потока, и догон присылают то же самое
   // по второму разу.
   const shown = new Set();
-  let lastSeq = -1;
   let firstKey = null;
   // Сколько страниц истории поднято сверх хвоста: по этому числу лента
   // возвращается на прежнюю глубину, вернувшись к разговору.
@@ -3238,7 +3237,6 @@ async function wireFeed(project, sid, opts) {
     if (items.length) firstKey = itemCursor(items[0]);
     atFirst = Boolean(first.body.start);
     for (const item of items) {
-      lastSeq = item.seq;
       if (!fresh(item)) continue;
       if (keep(item)) talk.push(item);
     }
@@ -3262,6 +3260,14 @@ async function wireFeed(project, sid, opts) {
   // никогда. Ровно это и видел человек после сна ноутбука: вкладку браузер
   // задушил, поток умер, а вернувшаяся страница показывала ленту такой, какой
   // она была двадцать минут назад, и лечилось это только F5.
+  //
+  // Догон просит хвост целиком (repliesCatch), а не одни пропущенные записи, и
+  // сшивается с лентой по месту, а не приклеивается к её концу. Место сшивки
+  // это последняя запись куска, которая уже стоит в ленте: всё после неё
+  // новое, всё до неё либо уже показано, либо история глубже открытого окна.
+  // Без этой сшивки возврат к вкладке выкладывал под последнюю реплику весь
+  // хвост из ста шестидесяти старых записей, и человек видел в чате разговор,
+  // которого там быть не должно.
   let catching = false;
   const catchUp = async () => {
     if (catching || gone()) return;
@@ -3270,10 +3276,29 @@ async function wireFeed(project, sid, opts) {
       const r = await api(sessionURL(project, sid) + "?n=" + repliesCatch);
       if (!r.ok || gone()) return;
       const items = r.body.items || [];
+      let cut = -1;
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (shown.has(itemKey(items[i]))) {
+          cut = i;
+          break;
+        }
+      }
+      // Знакомого в куске нет вовсе: либо лента пуста, либо разговор ушёл
+      // дальше, чем длина хвоста, и между показанным и приехавшим дыра.
+      // Дописывать к дыре нечестно, лента пересобирается тем же куском, как
+      // это сделала бы перезагрузка страницы.
+      let reset = false;
+      if (cut < 0 && talk.length) {
+        talk.length = 0;
+        shown.clear();
+        pages = 0;
+        firstKey = null;
+        reset = true;
+      }
       let added = false;
-      for (const item of items) {
-        if (item.seq <= lastSeq && !fresh(item)) continue;
-        if (item.seq > lastSeq) lastSeq = item.seq;
+      for (let i = cut + 1; i < items.length; i++) {
+        const item = items[i];
+        if (!fresh(item)) continue;
         if (firstKey === null) firstKey = itemCursor(item);
         if (!keep(item)) continue;
         talk.push(item);
@@ -3281,6 +3306,9 @@ async function wireFeed(project, sid, opts) {
         if (opts.onItem) opts.onItem(item);
       }
       if (added) {
+        // Начало разговора называет только пересборка: у обычного догона
+        // выше ленты стоит своя история, и признак начала к ней не относится.
+        if (reset) atFirst = Boolean(r.body.start);
         draw();
         updateStart();
       }
@@ -3315,7 +3343,6 @@ async function wireFeed(project, sid, opts) {
       // ленту вторым разом. Отсев по ключу, а не по номеру: номер записи
       // считается местом в слитой ленте и от заезда к заезду плывёт.
       if (!fresh(item)) return;
-      if (item.seq > lastSeq) lastSeq = item.seq;
       if (firstKey === null) {
         firstKey = itemCursor(item);
         updateStart();

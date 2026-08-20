@@ -376,6 +376,9 @@ a:hover{text-decoration:underline}
 .meta2{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .meta2 .chip{height:30px;padding:0 11px}
 .rankbox{border:1px solid var(--line);border-radius:11px;padding:4px 14px 8px}
+/* спрятанное атрибутом остаётся спрятанным: своё display у чипа, списка и
+   пометки сильнее встроенного [hidden]{display:none} браузера. */
+.chip[hidden],.pick[hidden],.dnote[hidden],.accbox[hidden]{display:none}
 .dnote{display:flex;flex-wrap:wrap;gap:4px;padding:11px 14px;border-radius:10px;background:color-mix(in oklab,var(--goal) 10%,var(--bg1));border:1px solid color-mix(in oklab,var(--goal) 28%,transparent);font:400 12.5px/1.55 var(--sans);color:var(--tx2)}
 .dnote b{color:var(--goal);font-weight:600}
 /* погашенные поля черновика: видно, что они есть, и видно, что не заполняются */
@@ -980,6 +983,10 @@ a:hover{text-decoration:underline}
 .rtop{display:flex;align-items:center;gap:14px;padding:10px 14px}
 .rbig{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
 .rbig .v{font:600 26px var(--mono);color:var(--tx);flex:none;line-height:1}
+/* сумма прописью нужна форме заведения, где ранга ещё нет; на телефоне место
+   в строке занимают сами показатели, и подпись оттуда уходит. */
+.rbig .f{font:500 12px var(--mono);color:var(--tx3);flex:none}
+@media (max-width:900px){.rbig .f{display:none}}
 .rterms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:auto;gap:3px 12px;flex:1;min-width:0}
 .rterm{display:flex;align-items:baseline;gap:6px;min-width:0}
 .rterm i{font:400 10.5px var(--sans);font-style:normal;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

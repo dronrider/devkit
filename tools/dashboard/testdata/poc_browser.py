@@ -67,6 +67,42 @@ def proxy(base, value):
             self.end_headers()
             self.wfile.write(body)
 
+        # Правки едут теми же методами, какими их шлёт страница: без них живая
+        # проверка упиралась в 501 прокси и умела только читать.
+        def relay(self, method):
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+            data = self.rfile.read(ln) if ln else b""
+            req = urllib.request.Request(base + self.path, data=data, method=method)
+            req.add_header("Cookie", "dashboard_session=" + value)
+            ct = self.headers.get("Content-Type", "")
+            if ct:
+                req.add_header("Content-Type", ct)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    body, code, kind = r.read(), r.status, r.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as e:
+                body, code, kind = e.read(), e.code, e.headers.get("Content-Type", "")
+            except Exception as e:
+                body, code, kind = str(e).encode(), 502, "text/plain"
+            self.send_response(code)
+            if kind:
+                self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            self.relay("POST")
+
+        def do_PUT(self):
+            self.relay("PUT")
+
+        def do_PATCH(self):
+            self.relay("PATCH")
+
+        def do_DELETE(self):
+            self.relay("DELETE")
+
         def log_message(self, *a):
             pass
 

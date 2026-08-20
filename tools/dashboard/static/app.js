@@ -2250,7 +2250,7 @@ function formPage(cfg) {
   // нет ни на какой ширине: ранг ушёл из правой колонки строкой во всю ширину,
   // и держать колонку ради одних зависимостей стало не за чем.
   const grid = el("div", "tgrid");
-  page.append(grid);
+  if (has.file || has.deps) page.append(grid);
   if (has.file) {
     file = filePanel(cfg.project, cfg.id, cfg.detail || {}, form, touch, edit, has.make);
     // Кнопка в углу развёрнутого описания и кнопка в строке статуса это один
@@ -6093,7 +6093,7 @@ async function renderDraft(project, works, id) {
         ],
         num: id,
         // Заголовок записи это её первая строка, и правят его в самом тексте.
-        titleText: said.split("\n").find((ln) => ln.trim()) || id,
+        titleText: (said.split("\n").find((ln) => ln.trim()) || id).replace(/^#+\s*/, ""),
         // Пропавший файл это не поломка экрана, а след исхода: груминг мог
         // увести запись строкой, припиской или удалением.
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
@@ -6116,6 +6116,11 @@ async function renderDraft(project, works, id) {
         onDrop: () => {
           taskDraft.dirty = false;
           taskDraft.edit = false;
+          // Отпечаток снимается руками: данные с сервера те же, и без этого
+          // перерисовка оставила бы на экране прежний узел вместе с брошенной
+          // правкой в поле.
+          const shown = findKey(document.getElementById("groups"), "draft-page");
+          if (shown) shown.dataset.psign = "";
           renderDraft(project, works, id).catch(console.error);
         },
       }).page;
@@ -6267,20 +6272,20 @@ function renderNew(project) {
   // барьер из шести показывается только у не агентского вида, и причина без
   // него не пишется. Списки и на телефоне остаются нативными select: два тапа
   // это вся работа, которую тут можно сделать всерьёз.
-  const card = el("div", "card nform");
+  const card = el("div", "card");
   const box = el("div", "nfbody");
   card.append(box);
   const acceptBox = el("div", "accbox");
   const acceptPick = pickField("вид приёмки", ACCEPT_VALUES, newForm.accept, (v) => {
     newForm.accept = v;
     if (v === "agent") newForm.barrier = "";
-    touch();
+    view.touch();
   });
   acceptPick.querySelector("select").setAttribute("aria-label", "вид приёмки задачи");
   acceptBox.append(acceptPick);
   const barrierPick = pickField("барьер", BARRIER_VALUES, newForm.barrier, (v) => {
     newForm.barrier = v;
-    touch();
+    view.touch();
   });
   const barrierSel = barrierPick.querySelector("select");
   barrierSel.firstElementChild.textContent = BARRIER_PLACEHOLDER;
@@ -6294,10 +6299,10 @@ function renderNew(project) {
   reason.value = newForm.reason;
   reason.placeholder = "что мешает проверить агенту";
   reason.setAttribute("aria-label", "причина непригодности обхода");
-  reason.addEventListener("input", () => { newForm.reason = reason.value; touch(); });
+  reason.addEventListener("input", () => { newForm.reason = reason.value; view.touch(); });
   reasonField.append(reason);
-  box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField,
-    el("div", "hint", P_HINT));
+  box.append(el("div", "hint", P_HINT), acceptBox, el("div", "hint", ACCEPT_HINT),
+    barrierHint, reasonField);
 
   // Взять в работу с формы нечего, и сказано это словами, а не погашенной
   // кнопкой: у ненаписанной строки нет ни ID, ни статуса, по которому конвейер
@@ -6309,7 +6314,7 @@ function renderNew(project) {
   view = formPage({
     key: "new", project, id: "",
     crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
-    lead: [swch], top: [note], extra: [card],
+    lead: [swch, note], extra: [card],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: { title: true, type: true, cost: true, rank: true },

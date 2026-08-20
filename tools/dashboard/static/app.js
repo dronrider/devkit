@@ -6672,6 +6672,122 @@ async function saveDraftText(project, id, text) {
   return true;
 }
 
+// Исход груминга словами: что случилось и что дальше. Сам след читает сервер
+// (ручка /drafts/<id>/outcome), его слова стоят рядом отдельной строкой, и
+// придумывать их второй раз на клиенте незачем. Экран POC эту карточку потерял
+// вместе с переделкой на общую форму, и разбор кончался молча: человек не
+// видел ни заведённой строки, ни вопроса грумера.
+const DRAFT_PHASES = {
+  running: {
+    head: "Груминг идёт",
+    next: "Разбор кончится строкой, припиской, пометкой «отложен» либо удалением записи.",
+  },
+  row: {
+    head: "Черновик оформлен строкой",
+    next: "Дальше работа идёт по задаче: ранг и цена у неё уже стоят.",
+  },
+  attached: {
+    head: "Черновик приписан к стоящей строке",
+    next: "Дальше работа идёт по задаче-приёмнику, текст записи лежит разделом в её файле.",
+  },
+  deferred: {
+    head: "Черновик отложен",
+    next: "Запись осталась в накопителе: груминг вернётся к ней, когда причина отпадёт.",
+  },
+  dropped: {
+    head: "Черновик удалён",
+    next: "Записи больше нет, причина удаления лежит сообщением коммита доски.",
+  },
+  question: {
+    head: "Груминг кончился вопросом",
+    next: "Ответ уходит новым заходом: агент перечитает черновик вместе с уточнением.",
+  },
+  open: {
+    head: "Груминга не было",
+    next: "Разбор поднимается кнопкой «Провести груминг».",
+  },
+  error: {
+    head: "Исход груминга не прочитался",
+    next: "Пока сервер не ответил, разбор с экрана не поднимается: причина стоит выше.",
+  },
+};
+
+// Состояние экрана: живая работа с тем же ID это идущий груминг, а
+// кончившийся разбор без единого следа на диске, но со словом агента в
+// транскрипте, это вопрос.
+function draftPhase(out, running) {
+  if (running) return "running";
+  const state = (out && out.state) || "open";
+  if (state === "open") return out && out.question ? "question" : "open";
+  return state;
+}
+
+// Карточка исхода: заголовок состояния, слова сервера про след, следующий шаг
+// и переход туда, куда груминг увёл запись.
+function draftOutcomeCard(project, id, out, phase) {
+  const card = el("div", "card dcard");
+  const head = el("div", "phd");
+  const said = DRAFT_PHASES[phase] || DRAFT_PHASES.open;
+  head.append(el("b", "", said.head));
+  card.append(head);
+  const body = el("div", "dbd");
+  // След на диске это про прошлое: у идущего разбора он говорил бы «груминга
+  // не было» ровно в тот момент, когда груминг идёт.
+  if (out.note && phase !== "running") {
+    body.append(el("div", phase === "error" ? "error" : "dsay", out.note));
+  }
+  if (phase === "deferred" && out.reason) {
+    body.append(el("div", "dwhy", "Причина: " + out.reason));
+  }
+  body.append(el("div", "hint", said.next));
+  if (phase === "row") {
+    const go = el("button", "btn btn-sm", "Открыть задачу " + id);
+    go.addEventListener("click", () => { goKeepingChat(project + "/" + id); });
+    body.append(go);
+  }
+  if (phase === "attached" && out.task) {
+    const go = el("button", "btn btn-sm", "Открыть задачу " + out.task);
+    go.addEventListener("click", () => { goKeepingChat(project + "/" + out.task); });
+    body.append(go);
+  }
+  card.append(body);
+  return card;
+}
+
+const DRAFT_ASK_HINT = "Уточнение уедет заказом новому заходу груминга: " +
+  "прежняя сессия кончилась вопросом и своих ходов больше не делает.";
+
+// Карточка вопроса: последнее слово агента разметкой, поле уточнения и
+// повторный заход. Без неё вопрос грумера виден только в ленте разговора, а на
+// экране записи разбор выглядел брошенным.
+function draftAskCard(project, id, question) {
+  const card = el("div", "card dcard");
+  const head = el("div", "phd");
+  head.append(el("b", "", "Вопрос груминга"));
+  card.append(head);
+  const body = el("div", "dbd");
+  body.append(mdRender(question));
+  body.append(el("div", "dwhy", "Что ответить грумингу"));
+  const field = el("textarea", "dask");
+  field.placeholder = "Уточнение для нового захода груминга";
+  body.append(field);
+  body.append(el("div", "hint", DRAFT_ASK_HINT));
+  const again = el("button", "btn btn-acc", "Повторить груминг");
+  again.addEventListener("click", () => {
+    again.disabled = true;
+    groomDraft(project, id, field.value.trim()).then((ok) => {
+      again.disabled = false;
+      if (ok) {
+        field.value = "";
+        refresh().catch(console.error);
+      }
+    }).catch((err) => { again.disabled = false; console.error(err); });
+  });
+  body.append(again);
+  card.append(body);
+  return card;
+}
+
 async function renderDraft(project, works, id) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
@@ -6679,10 +6795,15 @@ async function renderDraft(project, works, id) {
   // разметка вместо сырого текста, те же кнопки режимов справа. Выключены у
   // него ранг, зависимости и поля строки доски: их запись получит только от
   // груминга, и показывать их пустыми не за чем.
-  const [text, chats] = await Promise.all([
+  const [text, chats, outcome] = await Promise.all([
     api(base),
     api("/api/projects/" + encodeURIComponent(project) + "/chats?task=" + encodeURIComponent(id)),
+    api(base + "/outcome"),
   ]);
+  // Неотвеченный исход не выдаётся за «груминга не было»: молчание сервера и
+  // нетронутая запись это разные вещи, и причина отказа видна словами.
+  const out = outcome.ok ? outcome.body
+    : { note: outcome.body.error || "исход груминга не прочитался" };
   // В поле лежит правка: перерисовка по фокусу окна стёрла бы её, и экран
   // остаётся как есть.
   if (taskDraft.id === id && taskDraft.dirty) return;
@@ -6690,9 +6811,11 @@ async function renderDraft(project, works, id) {
   const said = text.ok ? String(text.body.text || "") : "";
   // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
   const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
+  const phase = outcome.ok ? draftPhase(out, running) : "error";
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, running, groomChat ? groomChat.id : "", text.body.error || ""].join("|"),
+    sign: [id, said, running, groomChat ? groomChat.id : "", text.body.error || "",
+      phase, JSON.stringify(out)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -6716,8 +6839,12 @@ async function renderDraft(project, works, id) {
         });
         actions.push(groom);
       }
+      // Исход разбора стоит над текстом записи: он и есть ответ на вопрос
+      // «чем кончился груминг», ради которого экран открывают.
+      const lead = [draftOutcomeCard(project, id, out, phase)];
+      if (phase === "question") lead.push(draftAskCard(project, id, out.question));
       return formPage({
-        key: "draft", project, id,
+        key: "draft", project, id, lead,
         // Дорога на доску была только через накопитель, и с экрана записи её не
         // было вовсе.
         crumb: [

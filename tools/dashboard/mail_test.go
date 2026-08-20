@@ -289,6 +289,14 @@ func TestGoalLiveByMovedMarks(t *testing.T) {
 	if got := getMessage(t, c, e, "XR-100"); got.Live {
 		t.Error("строка доставки сошла за движение цели: подхват держит цель живой сам за себя")
 	}
+	// Прежнее слово той же строки лежит в журналах целей с прошлых витков, и
+	// узнавать его надо по-прежнему: пока слова были разными, дашборд считал
+	// чужую по виду строку движением и обещал минуты мёртвой цели.
+	writeCycleLog(t, e, "XR-100", stampNow(5*time.Hour)+" виток 3: конвейер закрыт\n"+
+		stampNow(time.Minute)+" "+mailSayWordOld+": витку доставлена реплика «стой, не туда»\n")
+	if got := getMessage(t, c, e, "XR-100"); got.Live {
+		t.Error("прежняя строка доставки сошла за движение цели")
+	}
 	// Записи реестра без метки хватает liveWorks, но не хватает доставке.
 	if e.s.goalIdle(e.proj, "XR-100") {
 		t.Error("цель ушла из живых работ: стенд перестал ловить подмену живости списком работ")
@@ -310,12 +318,16 @@ func TestGoalLiveRuleMatchesChatHook(t *testing.T) {
 	if want := fmt.Sprintf("MOVED = %d * 3600", int(mailMoved.Hours())); !strings.Contains(text, want) {
 		t.Errorf("порог метки движения разъехался с подхватом: в chat-in.py нет %q", want)
 	}
-	// Слово своей строки сверяется со стороной, которая эти строки и пишет.
-	// В Go оно переименовано в «чат» (mailSayWord), у подхвата осталось
-	// прежним, и пары эти сейчас не сведены: сторож держит хотя бы то, что
-	// подхват своё слово не терял.
-	if want := fmt.Sprintf("SAY_WORD = %q", "разговор"); !strings.Contains(text, want) {
-		t.Errorf("слово строки доставки пропало из подхвата: в chat-in.py нет %q", want)
+	// Слово своей строки сверяется со стороной, которая эти строки и пишет:
+	// разъедься они, дашборд считал бы строку доставки движением цели, и цель
+	// горела бы живой сама за себя (так оно и было, пока Go говорил «чат», а
+	// подхват «разговор»). Прежнее слово обе стороны узнают по-прежнему: в
+	// журналах целей оно осталось.
+	if want := fmt.Sprintf("SAY_WORD = %q", mailSayWord); !strings.Contains(text, want) {
+		t.Errorf("слово строки доставки разъехалось с подхватом: в chat-in.py нет %q", want)
+	}
+	if want := fmt.Sprintf("SAY_WORD_OLD = %q", mailSayWordOld); !strings.Contains(text, want) {
+		t.Errorf("прежнее слово строки доставки пропало из подхвата: в chat-in.py нет %q", want)
 	}
 	if want := fmt.Sprintf("STAMP = %q", "%Y-%m-%dT%H:%M:%S"); !strings.Contains(text, want) {
 		t.Errorf("формат времени отметки разъехался с подхватом: в chat-in.py нет %q", want)

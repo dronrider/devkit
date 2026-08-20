@@ -33,6 +33,11 @@ const mailMoved = 3 * time.Hour
 // держала бы цель живой сама за себя.
 const mailSayWord = "чат"
 
+// mailSayWordOld это прежнее слово той же строки: журналы целей его помнят, и
+// принять старую строку за движение цели значило бы держать цель живой её же
+// доставкой (разъезд слова с подхватом, находка разбора красноты).
+const mailSayWordOld = "разговор"
+
 // mailMark это отметка доставки: время, сессия витка и доставленная строка
 // «Входящих» целиком. Сессия бывает пустой у строки, съеденной ключом --ask в
 // живом чате, где имени витку никто не выдавал, и пустота эта штатная.
@@ -139,7 +144,7 @@ func journalAt(path string) time.Time {
 	rows := strings.Split(string(data), "\n")
 	for i := len(rows) - 1; i >= 0; i-- {
 		head, rest, _ := strings.Cut(strings.TrimSpace(rows[i]), " ")
-		if strings.HasPrefix(rest, mailSayWord) {
+		if strings.HasPrefix(rest, mailSayWord) || strings.HasPrefix(rest, mailSayWordOld) {
 			continue
 		}
 		if at := stampAt(head); !at.IsZero() {

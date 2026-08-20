@@ -109,7 +109,10 @@ OLD_CHAT_SUFFIX = ".inbox"
 # Начало строки доставки в журнале цикла. Оно же признак своей строки: журнал
 # это одна из двух меток живости, а свои строки подхват не должен считать
 # движением цели.
-SAY_WORD = "разговор"
+SAY_WORD = "чат"
+# Прежнее слово строки доставки: журналы целей его помнят, и свои старые строки
+# подхват обязан узнавать по-прежнему, иначе они пойдут за движение цели.
+SAY_WORD_OLD = "разговор"
 TEXT_LIMIT = 200
 TRACE_ENV = "DEVKIT_CHAT_TRACE"
 
@@ -321,7 +324,7 @@ def journal_at(path):
         return None
     for line in reversed(rows):
         head, _, rest = line.strip().partition(" ")
-        if rest.startswith(SAY_WORD):
+        if rest.startswith(SAY_WORD) or rest.startswith(SAY_WORD_OLD):
             continue
         at = stamp_at(head)
         if at is not None:
@@ -508,7 +511,7 @@ def said(line):
 
 
 def voice(lines):
-    """Строка доставки для журнала цикла. Начинается словом «разговор»: журнал
+    """Строка доставки для журнала цикла. Начинается словом «чат»: журнал
     смотрят панелью tmux и tail'ом, и человек видит доставку там же, где смотрит
     ход витка."""
     said_all = ["«%s»" % short(said(line)) for line in lines]

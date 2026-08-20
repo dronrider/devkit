@@ -188,8 +188,8 @@ a:hover{text-decoration:underline}
 .hfoot{padding:9px 11px 6px;border-top:1px solid var(--line);margin-top:4px;
   font:400 11px/1.5 var(--sans);color:var(--tx3)}
 
-.lcard b{cursor:pointer}
-.lcard b.flat{cursor:default;color:var(--tx2)}
+.lcard.clicky{cursor:pointer}
+.lcard b.flat{color:var(--tx2)}
 .crumb{display:flex;align-items:center;gap:10px;padding:18px 4px 0;font:500 12.5px var(--sans);color:var(--tx3)}
 .crumb-back{color:var(--tx2);cursor:pointer}
 .crumb-back:hover{color:var(--tx)}

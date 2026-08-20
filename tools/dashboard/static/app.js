@@ -371,25 +371,26 @@ function renderLive(project, works) {
     // Имя работы: номер задачи, а без него заголовок разговора, который
     // сервер кладёт в note (замечание 21).
     const name = w.id || w.note || "чат";
-    const to = w.id ? boardChatHash(project, w.id)
-      : w.session ? boardChatHash(project, w.session) : "";
+    const to = w.id || w.session || "";
     // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
     // в подписи нет, о занятии агента оно не говорит ничего.
     const label = el("b", to ? "" : "flat", name);
-    if (to) {
-      label.addEventListener("click", () => { location.hash = to; });
-    }
     card.append(label);
     if (w.title) card.append(el("span", "wname wtitle", w.title));
-    if (w.via === "tmux") {
-      const stop = withTip(el("button", "btn btn-sm btn-danger", "Стоп"), STOP_TIP);
-      stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
-      card.append(stop);
-    } else if (w.via === "session") {
+    // Нажатие открывает разговор панелью поверх того, что под ней: адрес
+    // клеится хвостом /chat/ к текущему экрану, как у остальных входов в чат.
+    // Собранный по-старому адрес доски уводил с экрана задачи в список задач,
+    // и одна и та же карточка вела по-разному с разных экранов (POC ветки
+    // poc-chat).
+    if (to) {
+      card.classList.add("clicky");
+      card.addEventListener("click", () => { openChat(chatAddr(project, to)); });
+    }
+    if (w.via === "session") {
       // Подпись вида нужна только там, где есть номер задачи: без него сам
       // заголовок уже стоит именем, и повторять его второй строкой незачем.
       if (w.id && w.note) card.append(el("span", "via", w.note));
-    } else {
+    } else if (w.via !== "tmux") {
       card.append(el("span", "via", "ведёт другая сессия"));
     }
     return card;

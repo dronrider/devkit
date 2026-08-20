@@ -526,6 +526,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// vscode отсюда тоже слышно, и отказывать ему больше не за что.
 	if p, ok := s.peers()[sid]; ok {
 		if err := peerSay(p.Sock, text); err == nil {
+			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			writeJSON(w, http.StatusOK, map[string]any{"way": "socket", "pid": p.PID,
 				"where": peerWord(p)})
@@ -548,6 +549,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 				"реплика не подалась в tmux-сессию %s: %s", last.Tmux, procErr(err))})
 			return
 		}
+		s.saidSay(saidSessionKey(sid), text, "send-keys")
 		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, last.Tmux)
 		writeJSON(w, http.StatusOK, map[string]any{"way": "send-keys", "tmux": last.Tmux,
 			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"})
@@ -594,6 +596,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
+	s.saidSay(saidSessionKey(sid), text, "resume")
 	s.logf("чат %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
 	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(

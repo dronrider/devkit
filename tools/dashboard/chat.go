@@ -165,6 +165,7 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 			"реплика легла в чат %s, но транскрипт сессии %s молчит уже %s: возможно, она не идёт, и строка дождётся её хода",
 			name, sid, stale.Truncate(time.Minute))
 	}
+	s.saidSay(saidSessionKey(sid), text, "вход сессии")
 	s.logf("реплика для сессии %s в %s легла в чат %s", sid, found.Name, name)
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -320,6 +321,7 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 			"реплика легла в чат %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
 			name, id)
 	}
+	s.saidSay(saidTaskKey(id), text, "вход задачи")
 	s.logf("реплика задаче %s в %s легла в чат %s", id, found.Name, name)
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -1232,8 +1232,14 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := info.path
+	// Шапка читается до ленты: по ней зовётся задача сессии, а по задаче
+	// собирается набор журналов отправленного, который подмешивается к
+	// транскрипту (outbox.go).
+	head := s.sessionHeadCached(path, info.stamp)
+	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
+	keys := saidKeys(sid, info.Task, info.Bound)
 	if r.URL.Query().Get("stream") == "1" {
-		s.streamSession(w, r, path)
+		s.streamSession(w, r, path, keys)
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -1242,6 +1248,9 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := expandSubs(path, parseReplies(data, 0))
+	for _, key := range keys {
+		items = saidMerge(items, saidLoad(s.cfg.Home, key))
+	}
 	total := len(items)
 	// «Раньше» режется по устойчивому ключу записи, а не по её месту в ленте:
 	// место плывёт от роста боковых журналов, и страницы истории налезали друг
@@ -1262,10 +1271,8 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// строки доски у такого захода нет, и заголовок ему брать больше неоткуда
 	// (DK-294). Задача тут названа так же, как в списке: узнанная с подписью,
 	// чем узнана, либо пустая с подписью «задача не распознана».
-	head := s.sessionHeadCached(path, info.stamp)
 	info.Branch, info.First = head.Branch, head.First
 	info.Tree = info.suffix
-	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
 	// Ручка для реплики едет в шапке разговора: панель не считает её сама,
 	// иначе мера кончившегося разговора разошлась бы с той, по которой
 	// сторожок будит строку. Доска тут читается из памяти процесса, а не
@@ -1332,13 +1339,21 @@ type tailSrc struct {
 // открытого потока, а прежний стрим цеплял один «живой» файл на открытии и
 // ронял его насовсем, стоило в транскрипте закрыться любому вызову
 // инструмента: после этого лента молчала до перезагрузки страницы.
-func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path string) {
+func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path string, keys []string) {
 	f, ok := sseOpen(w)
 	if !ok {
 		return
 	}
 	var offset int64
 	seq := 0
+	// Журналы отправленного дочитываются наравне с транскриптом: реплика,
+	// уехавшая с одного устройства, приходит событием потока на все открытые
+	// экраны, а не остаётся местным пузырём отправителя (outbox.go).
+	saidTails := []*tailSrc{}
+	for _, key := range keys {
+		saidTails = append(saidTails, &tailSrc{
+			file: saidFile(s.cfg.Home, key), src: saidSrc + key})
+	}
 	// Устойчивый ключ дописанной записи продолжает счёт своего файла, а не
 	// ленты: mainIdx и idx у бокового журнала это столько записей, сколько в
 	// файле уже разобрано.
@@ -1350,6 +1365,9 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 	if data, err := os.ReadFile(path); err == nil {
 		data = lastComplete(data)
 		items := expandSubs(path, parseReplies(data, 0))
+		for _, key := range keys {
+			items = saidMerge(items, saidLoad(s.cfg.Home, key))
+		}
 		seq = len(items)
 		counts := map[string]int{}
 		for _, item := range items {
@@ -1358,6 +1376,12 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 			}
 		}
 		mainIdx = counts[mainSrc]
+		for _, t := range saidTails {
+			t.idx = counts[t.src]
+			if fi, err := os.Stat(t.file); err == nil {
+				t.off = fi.Size()
+			}
+		}
 		for _, log := range subLogs(path) {
 			src := srcName(log.File)
 			t := &tailSrc{file: log.File, label: log.Label, src: src, idx: counts[src]}
@@ -1398,6 +1422,24 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 					}
 					subs[log.File] = &tailSrc{file: log.File, label: log.Label,
 						src: srcName(log.File)}
+				}
+			}
+			// Отправленное с любого устройства первым: оно уже уехало
+			// агенту, и ждать, пока его отразит транскрипт (а по дороге
+			// задачи он не отразит вовсе), значит держать чужой экран
+			// пустым.
+			for _, t := range saidTails {
+				var lines []string
+				lines, t.off = newLines(t.file, t.off)
+				if len(lines) == 0 {
+					continue
+				}
+				list, next := saidReplies(lines, t.src, t.idx)
+				t.idx = next
+				for _, item := range list {
+					item.Seq = seq
+					seq++
+					sseEvent(w, f, "", marshalReply(item))
 				}
 			}
 			// Сперва субагенты: пока они работают, транскрипт сессии молчит, и

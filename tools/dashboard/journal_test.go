@@ -198,7 +198,7 @@ func TestStreamsExitOnClientGone(t *testing.T) {
 		{"журнал", func(w http.ResponseWriter, r *http.Request) {
 			srv.streamGoalLog(w, r, logPath, journalSources{id: "XR-1", logName: "goal-XR-1.log"})
 		}},
-		{"транскрипт", func(w http.ResponseWriter, r *http.Request) { srv.streamSession(w, r, trPath) }},
+		{"транскрипт", func(w http.ResponseWriter, r *http.Request) { srv.streamSession(w, r, trPath, nil) }},
 	}
 	for _, s := range streams {
 		ctx, cancel := context.WithCancel(context.Background())

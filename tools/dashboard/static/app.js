@@ -3111,6 +3111,20 @@ async function wireFeed(project, sid, opts) {
     return true;
   };
 
+  // Реплика человека приходит двумя источниками сразу: журналом отправленного
+  // (её пишет сам дашборд, чтобы её видели все открытые экраны) и эхом из
+  // транскрипта, когда клиент агента до неё дошёл. Пришедшее эхо вытесняет
+  // запись журнала: сверка по тексту, своего идентификатора у реплики в
+  // транскрипте нет.
+  const isSaid = (item) => String((item && item.key) || "").startsWith("said-");
+  const dropSaid = (item) => {
+    if (!item || item.role !== "user" || !item.text || isSaid(item)) return;
+    const said = item.text.trim();
+    for (let i = talk.length - 1; i >= 0; i--) {
+      if (isSaid(talk[i]) && String(talk[i].text || "").trim() === said) talk.splice(i, 1);
+    }
+  };
+
   const draw = () => {
     const bottom = atBottom(scroll);
     const rest = scroll.scrollHeight - scroll.scrollTop;
@@ -3285,7 +3299,9 @@ async function wireFeed(project, sid, opts) {
     atFirst = Boolean(first.body.start);
     for (const item of items) {
       if (!fresh(item)) continue;
-      if (keep(item)) talk.push(item);
+      if (!keep(item)) continue;
+      dropSaid(item);
+      talk.push(item);
     }
     if (first.body.note) empty = first.body.note;
   }
@@ -3348,6 +3364,7 @@ async function wireFeed(project, sid, opts) {
         if (!fresh(item)) continue;
         if (firstKey === null) firstKey = itemCursor(item);
         if (!keep(item)) continue;
+        dropSaid(item);
         talk.push(item);
         added = true;
         if (opts.onItem) opts.onItem(item);
@@ -3395,6 +3412,7 @@ async function wireFeed(project, sid, opts) {
         updateStart();
       }
       if (!keep(item)) return;
+      dropSaid(item);
       talk.push(item);
       draw();
       if (opts.onItem) opts.onItem(item);

@@ -913,10 +913,10 @@ function boardTabs() {
 
 let boardTab = "sess";
 
-// Полоса разделов (только телефон): два таба доски и переход в накопитель
-// черновиков. Черновики стоят тем же табом, потому что с телефона мысль чаще
-// записывают, чем разбирают, и путь к накопителю с доски короче не бывает.
-function boardTabsBar(project) {
+// Полоса разделов (только телефон): два таба доски. Накопитель черновиков
+// отсюда уехал в нижние вкладки, к «Доске» и «Агентам»: свой раздел с адресом
+// честнее третьей кнопки в полосе, которая табом доски не была.
+function boardTabsBar() {
   const bar = el("div", "btabs");
   for (const tab of boardTabs()) {
     const btn = el("button", "btab" + (tab.key === boardTab ? " onbtab" : ""), tab.label);
@@ -928,13 +928,8 @@ function boardTabsBar(project) {
     });
     bar.append(btn);
   }
-  const drafts = el("button", "btab", "Черновики");
-  drafts.type = "button";
-  drafts.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    goKeepingChat(project + "/drafts");
-  });
-  bar.append(drafts);
+  // Черновиков тут больше нет: на телефоне они стоят своей нижней вкладкой,
+  // как «Доска» и «Агенты», и второй дороги к ним с доски не нужно.
   return bar;
 }
 
@@ -971,18 +966,12 @@ function renderBoard(project, board) {
   const items = [{
     key: "board-tabs",
     sign: project,
-    make: () => boardTabsBar(project),
-  }, {
-    key: "board-bar",
-    sign: project,
-    make: () => {
-      // Полоса кнопок остаётся ноутбуку: на телефоне её место заняли табы и
-      // плавающий плюс, и класс .bbar её там гасит.
-      const bar = el("div", "nbar bbar");
-      bar.append(newTaskButton(project, "Новая задача"), draftsButton(project));
-      return bar;
-    },
+    make: () => boardTabsBar(),
   }];
+  // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
+  // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
+  // поиском. Обе мозолили глаза на самой доске, ради которой экран и открыт
+  // (замечание пользователя).
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
   // Снимок нарисованной очереди: по нему жест считает коридор и щели, и берётся
@@ -7847,10 +7836,12 @@ function markNav(rt) {
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
   const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed"
-    : rt.find ? "find" : "board";
+    : rt.find ? "find" : rt.drafts || rt.draft ? "drafts" : rt.make ? "make" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
+    ["drafts", ["nav-drafts", "tab-drafts"]],
     ["agents", ["nav-agents", "tab-agents"]],
+    ["make", ["make-btn"]],
     ["feed", ["bell"]],
     ["find", ["find-btn"]]]) {
     for (const id of ids) {
@@ -7877,6 +7868,7 @@ document.getElementById("chats").addEventListener("click", () => {
 });
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
+  ["nav-drafts", "/drafts"], ["tab-drafts", "/drafts"], ["make-btn", "/new"],
   ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без

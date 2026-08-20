@@ -865,10 +865,16 @@ func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
 		}
 	}
 	bar := funcBody(t, app, "function boardTabsBar(")
-	for _, want := range []string{"boardTabs()", `"Черновики"`, `project + "/drafts"`, "markBoardTab("} {
+	for _, want := range []string{"boardTabs()", "markBoardTab("} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("полоса разделов собрана не полностью: нет %q", want)
 		}
+	}
+	// Черновики отсюда уехали в раздел меню со своим адресом, и полоса доски
+	// их больше не носит: третья кнопка в ней табом доски не была, а глаза
+	// мозолила (замечание пользователя).
+	if strings.Contains(bar, `"Черновики"`) {
+		t.Error("черновики вернулись в полосу разделов доски")
 	}
 }
 

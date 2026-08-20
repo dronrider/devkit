@@ -271,7 +271,7 @@ func TestStaticDraftsSection(t *testing.T) {
 	}
 	// Вход стоит на обоих экранах: черновик пишется с телефона, и разбирать его
 	// приходится оттуда же.
-	for _, fn := range []string{"function renderBoard(", "function renderHome("} {
+	for _, fn := range []string{"function renderHome("} {
 		cut := strings.Index(text, fn)
 		if cut < 0 {
 			t.Fatalf("в static/app.js нет %s", fn)
@@ -283,6 +283,18 @@ func TestStaticDraftsSection(t *testing.T) {
 		if !strings.Contains(part, "draftsButton(") {
 			t.Errorf("в %s нет входа в раздел черновиков", fn)
 		}
+	}
+	// С доски вход в накопитель это раздел левого меню, а не кнопка над
+	// списком строк: кнопка мозолила глаза на самой доске, ради которой экран
+	// и открыт (замечание пользователя).
+	if !strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="nav-drafts"`) {
+		t.Error("в левом меню нет раздела черновиков")
+	}
+	if !strings.Contains(text, `["nav-drafts", "/drafts"]`) {
+		t.Error("раздел меню не ведёт на адрес накопителя")
+	}
+	if strings.Contains(funcBody(t, text, "function renderBoard("), "draftsButton(") {
+		t.Error("кнопка черновиков вернулась на доску")
 	}
 	// Раздел это свой экран хэша, иначе с телефона на него не сослаться.
 	if !strings.Contains(text, `parts[1] === "drafts"`) {

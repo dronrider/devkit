@@ -415,7 +415,7 @@ func TestStaticNewTaskForm(t *testing.T) {
 	}
 	// Кнопка на обоих экранах: на доске и на главной, иначе с телефона до
 	// заведения надо сначала дойти до нужного проекта.
-	for _, fn := range []string{"function renderBoard(", "function renderHome("} {
+	for _, fn := range []string{"function renderDrafts(", "function renderHome("} {
 		cut := strings.Index(text, fn)
 		if cut < 0 {
 			t.Fatalf("в static/app.js нет %s", fn)
@@ -427,6 +427,17 @@ func TestStaticNewTaskForm(t *testing.T) {
 		if !strings.Contains(part, "newTaskButton(") {
 			t.Errorf("в %s нет кнопки заведения", fn)
 		}
+	}
+	// С доски заведение это кнопка в шапке рядом с поиском: полоса кнопок над
+	// строками доски занимала место, ради которого экран и открыт.
+	if !strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="make-btn"`) {
+		t.Error("в шапке нет кнопки заведения задачи")
+	}
+	if !strings.Contains(text, `["make-btn", "/new"]`) {
+		t.Error("кнопка шапки не ведёт на форму заведения")
+	}
+	if strings.Contains(funcBody(t, text, "function renderBoard("), "newTaskButton(") {
+		t.Error("полоса кнопок вернулась на доску")
 	}
 	// Слагаемые ранга не переписаны второй раз: форма берёт их из того же
 	// списка, что и экран задачи.

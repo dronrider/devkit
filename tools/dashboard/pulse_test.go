@@ -20,7 +20,9 @@ import (
 // закрываются.
 const pulseBoardJSON = `{"prefix":"XR","sections":[` +
 	`{"key":"in-progress","title":"In progress","rows":[` +
-	`{"id":"XR-1","title":"Задача в работе","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"-","link":"-"}]},` +
+	`{"id":"XR-1","title":"Задача в работе","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"-","link":"-"},` +
+	`{"id":"XR-7","title":"Цель: пробный цикл","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"-"},` +
+	`{"id":"XR-8","title":"Вторая задача цели","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]},` +
 	`{"key":"check","title":"Check","rows":[` +
 	`{"id":"XR-3","title":"Задача на проверке","type":"task","p":"P2","r":32,"r_parts":[25,4,1,0,2],"cost":"-","link":"-"}]}]}`
 
@@ -37,16 +39,18 @@ func TestPulsePhaseCut(t *testing.T) {
 		testing bool
 		cut     int
 		phase   string
+		known   bool
 	}{
-		{"в очереди фаз нет", "backlog", "", nil, false, 0, ""},
-		{"взята в работу, идёт код", sectRun, stage.Dev, nil, false, 0, phaseCode},
-		{"агент гоняет тесты, код пройден", sectRun, stage.Dev, nil, true, 1, phaseTests},
-		{"уточнение это та же разработка", sectRun, stage.Ask, nil, false, 0, phaseCode},
-		{"на ревью код с тестами позади", sectRun, stage.Review, nil, false, 2, phaseReview},
-		{"проверка после выката закрывает всё", "check", stage.Outside, nil, false, 5, ""},
+		{"без записи этапов о фазах не известно ничего", "backlog", "", nil, false, 0, "", false},
+		{"строка в работе без записи этапа шкалы не даёт", sectRun, "", nil, false, 0, "", false},
+		{"взята в работу, идёт код", sectRun, stage.Dev, nil, false, 0, phaseCode, true},
+		{"агент гоняет тесты, код пройден", sectRun, stage.Dev, nil, true, 1, phaseTests, true},
+		{"уточнение это та же разработка", sectRun, stage.Ask, nil, false, 0, phaseCode, true},
+		{"на ревью код с тестами позади", sectRun, stage.Review, nil, false, 2, phaseReview, true},
+		{"проверка после выката закрывает всё", "check", stage.Outside, nil, false, 5, "", true},
+		{"Check знает про пять фаз и без записи", "check", "", nil, false, 5, "", true},
 		{"блок после ревью кода не теряет", "blocked", stage.Outside,
-			[]string{stage.Dev, stage.Review}, false, 2, ""},
-		{"строка в работе без записи этапа", sectRun, "", nil, false, 0, phaseCode},
+			[]string{stage.Dev, stage.Review}, false, 2, "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -54,9 +58,15 @@ func TestPulsePhaseCut(t *testing.T) {
 			for _, k := range c.seen {
 				seen[k] = true
 			}
-			cut, phase := pulsePhaseCut(c.sect, c.live, seen, c.testing)
+			cut, phase, known := pulsePhaseCut(c.sect, c.live, seen, c.testing)
+			if known != c.known {
+				t.Fatalf("знание о фазах %v, ждал %v", known, c.known)
+			}
 			if cut != c.cut || phase != c.phase {
 				t.Fatalf("рубеж %d фаза %q, ждал %d и %q", cut, phase, c.cut, c.phase)
+			}
+			if !known {
+				return
 			}
 			list := pulsePhaseList(cut, phase)
 			if len(list) != 5 {
@@ -143,6 +153,9 @@ func TestPulseWorking(t *testing.T) {
 	seen := now.Add(-12 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go test ./tools/..."), seen)
 	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	// Запись этапа тут обязательна: без неё о фазах не известно ничего, и
+	// шкалы у кольца нет вовсе.
+	writeStageRecord(t, e.home, e.proj, "XR-1", stage.Dev, now.Add(-10*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1")
 	if p.State != pulseWork {
@@ -160,8 +173,8 @@ func TestPulseWorking(t *testing.T) {
 	if !strings.Contains(p.About, "go test") {
 		t.Errorf("чем занят агент: %q", p.About)
 	}
-	if p.Phase != phaseTests {
-		t.Errorf("фаза %q, ждал тесты", p.Phase)
+	if p.Phase != phaseTests || p.Scale != scaleStages {
+		t.Errorf("шкала %q, фаза %q, ждал тесты по конвейеру", p.Scale, p.Phase)
 	}
 	if len(p.Agents) != 1 || p.Agents[0].State != pulseWork {
 		t.Fatalf("список агентов: %+v", p.Agents)
@@ -211,8 +224,10 @@ func TestPulseEmpty(t *testing.T) {
 	if p.Count != 0 || len(p.Agents) != 0 {
 		t.Fatalf("в пустом кольце нашлись агенты: %+v", p.Agents)
 	}
-	if len(p.Phases) != 5 {
-		t.Fatalf("фаз не пять: %d", len(p.Phases))
+	// Записи этапов у задачи нет, и шкалы тоже нет: кольцо остаётся
+	// индикатором состояния, а не рисует пять неизвестных делений.
+	if p.Scale != scaleNone || len(p.Phases) != 0 {
+		t.Fatalf("шкала взялась из ниоткуда: %q, делений %d", p.Scale, len(p.Phases))
 	}
 }
 
@@ -350,6 +365,9 @@ func TestPulsePhasesFromStageRecord(t *testing.T) {
 	writeStageRecord(t, e.home, e.proj, "XR-1", stage.Review, now.Add(-3*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1")
+	if p.Scale != scaleStages {
+		t.Fatalf("шкала %q, ждал конвейер задачи", p.Scale)
+	}
 	if p.Phase != phaseReview {
 		t.Fatalf("фаза %q, ждал ревью", p.Phase)
 	}
@@ -511,5 +529,109 @@ func TestPulseAboutNamesTheStep(t *testing.T) {
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	if p.Agents[0].About != "Bash go test ./tools/..." {
 		t.Fatalf("подпись хода: %q", p.Agents[0].About)
+	}
+}
+
+// pulseGoalDoc собирает файл цели с разделом «Задачи цели»: тем же разделом
+// читает состав экран цели.
+func pulseGoalDoc(id string, ids ...string) string {
+	body := "# " + id + ": Цель: пробный цикл\n\n## Задачи цели\n\n"
+	for _, one := range ids {
+		body += "- " + one + " что-то сделать\n"
+	}
+	return body
+}
+
+// pulseArchive собирает архив: по строке архива задача цели считается закрытой.
+func pulseArchive(ids ...string) string {
+	body := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n"
+	for _, id := range ids {
+		body += "| " + id + " | закрытая задача | task | P2 | 2026-08-01 | - |\n"
+	}
+	return body
+}
+
+// У цели конвейер задачи неприменим по смыслу: она не проходит код с ревью, а
+// режется на задачи, и её ход это доля закрытых. Считает их тот же разбор,
+// каким живёт экран цели, второго счёта тут не заводится.
+func TestPulseGoalScaleCountsTasks(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	writeGoalDoc(t, e.proj, "XR-7", pulseGoalDoc("XR-7", "XR-1", "XR-8", "XR-9", "XR-10"))
+	writeAt(t, filepath.Join(e.proj, "docs", "TASKS-archive.md"), pulseArchive("XR-9", "XR-10"))
+	// Запись этапов у цели есть, и она всё равно не даёт шкалы конвейера:
+	// вид строки старше записи.
+	writeStageRecord(t, e.home, e.proj, "XR-7", stage.Dev, now.Add(-time.Hour))
+
+	p := getPulse(t, e, c, "task=XR-7")
+	if !p.Goal {
+		t.Fatal("строка цели не узнана")
+	}
+	if p.Scale != scaleGoal {
+		t.Fatalf("шкала %q, ждал задачи цели", p.Scale)
+	}
+	if p.Total != 4 || p.Done != 2 {
+		t.Fatalf("задач цели %d, закрыто %d, ждал 4 и 2", p.Total, p.Done)
+	}
+	if len(p.Phases) != 0 || p.Phase != "" {
+		t.Errorf("цели приписали фазы конвейера: %+v %q", p.Phases, p.Phase)
+	}
+}
+
+// Цель без нарезки шкалы не имеет: раздела «Задачи цели» в файле нет, считать
+// нечего, и ноль задач из нуля тут был бы такой же выдумкой, как пустая
+// пятёрка фаз у задачи без записи.
+func TestPulseGoalWithoutCutHasNoScale(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+
+	p := getPulse(t, e, c, "task=XR-7")
+	if !p.Goal {
+		t.Fatal("строка цели не узнана")
+	}
+	if p.Scale != scaleNone || p.Total != 0 {
+		t.Fatalf("ненарезанная цель нарисовала шкалу: %q, задач %d", p.Scale, p.Total)
+	}
+}
+
+// Задача без записи этапов шкалы не получает вовсе: кольцо остаётся
+// индикатором состояния. Прежде оно показывало «идёт первая из пяти» и там,
+// где о ходе задачи не известно ничего.
+func TestPulseNoStageRecordNoScale(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	seen := now.Add(-9 * time.Second)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
+	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.Scale != scaleNone {
+		t.Fatalf("шкала взялась из ниоткуда: %q", p.Scale)
+	}
+	if len(p.Phases) != 0 || p.Phase != "" {
+		t.Fatalf("деления нарисованы без источника: %+v %q", p.Phases, p.Phase)
+	}
+	// Состояние при этом на месте: без шкалы кольцо не перестаёт показывать,
+	// что работа идёт.
+	if p.State != pulseWork || p.Working != 1 {
+		t.Errorf("состояние потерялось вместе со шкалой: %q, работают %d", p.State, p.Working)
+	}
+}
+
+// Задача в Check знает про пять пройденных фаз и без записи этапов: слияние с
+// выкатом это секция строки, а не догадка.
+func TestPulseCheckScaleWithoutRecord(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+
+	p := getPulse(t, e, c, "task=XR-3")
+	if p.Scale != scaleStages {
+		t.Fatalf("шкала %q, ждал конвейер задачи", p.Scale)
+	}
+	for _, ph := range p.Phases {
+		if !ph.Done {
+			t.Fatalf("у проверенной задачи фаза %q не пройдена", ph.Name)
+		}
 	}
 }

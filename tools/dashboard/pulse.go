@@ -52,6 +52,23 @@ const (
 
 var pulsePhases = []string{phaseCode, phaseTests, phaseReview, phaseMerge, phaseShip}
 
+// Виды шкалы кольца. Правило тут одно и оно жёсткое: кольцо не закрашивает
+// того, чего не знает. Молчит источник, значит шкалы нет вовсе, а кольцо
+// остаётся индикатором состояния; выдавать незнание за пройденную фазу нельзя,
+// потому что «идёт первая из пяти» человек читает как знание о ходе работы.
+const (
+	// scaleNone это отсутствие шкалы: сегментов нет, есть только состояние.
+	scaleNone = ""
+	// scaleStages это конвейер задачи: пять фаз из записи ~/.devkit/runs и
+	// секции строки. Рисуется только там, где запись есть либо задача уже в
+	// Check, то есть слита и выкачена.
+	scaleStages = "stages"
+	// scaleGoal это прогресс цели: доля закрытых задач цели. Конвейер задачи
+	// цели неприменим по смыслу, цель не проходит код с ревью, она режется на
+	// задачи, и её ход это они.
+	scaleGoal = "goal"
+)
+
 // Состояния кольца целиком. Разница между «молчит» и «пусто» не косметическая:
 // молчащий агент жив и его можно спросить, а пустого разговора нет вовсе.
 const (
@@ -68,9 +85,9 @@ const (
 // ожиданием, экран заставляет человека искать вопрос, которого не было.
 const pulseIdle = "idle"
 
-// PulsePhase это одна фаза кольца: имя словом, пройдена ли она и идёт ли прямо
-// сейчас. Процентов у фазы нет: их неоткуда взять, а нарисованные на глаз они
-// врали бы точнее, чем честное «пройдена или нет».
+// PulsePhase это одно деление шкалы: имя словом, пройдено ли оно и идёт ли
+// прямо сейчас. Процентов у деления нет: их неоткуда взять, а нарисованные на
+// глаз они врали бы точнее, чем честное «пройдена или нет».
 type PulsePhase struct {
 	Name string `json:"name"`
 	Done bool   `json:"done"`
@@ -107,8 +124,18 @@ type PulseAgent struct {
 type Pulse struct {
 	Task string `json:"task,omitempty"`
 	// State это состояние кольца: working, waiting, silent, empty.
-	State  string       `json:"state"`
-	Phases []PulsePhase `json:"phases"`
+	State string `json:"state"`
+	// Scale называет, какая под кольцом шкала: пусто значит, что шкалы нет и
+	// делений рисовать не из чего. Молчащий источник тут не повод показать
+	// пустую пятёрку фаз: незнание, нарисованное шкалой, читается как знание.
+	Scale  string       `json:"scale"`
+	Phases []PulsePhase `json:"phases,omitempty"`
+	// Done и Total это задачи цели, закрытые и всего. Только у scaleGoal.
+	Done  int `json:"done,omitempty"`
+	Total int `json:"total,omitempty"`
+	// Goal говорит, что строка это цель: у неё конвейер задачи неприменим по
+	// смыслу, и шкала считает задачи.
+	Goal bool `json:"goal,omitempty"`
 	// Phase это фаза, которая идёт прямо сейчас, словом. Пусто у задачи, чей
 	// этап не отмечен, и у разговора без задачи.
 	Phase string `json:"phase,omitempty"`
@@ -151,9 +178,19 @@ type Pulse struct {
 // заходом, и задача попадает в Check уже слитой и выкаченной, поэтому обе фазы
 // закрываются вместе с секцией. Фаза «тесты» узнаётся по живому ходу агента:
 // раз он прямо сейчас гоняет тесты, код он уже написал.
-func pulsePhaseCut(sect string, live string, seen map[string]bool, testing bool) (int, string) {
+//
+// Третий ответ говорит, есть ли о фазах достоверное знание. Записи этапов у
+// задачи может не быть вовсе (её пишет конвейер, а работу поднимают и руками),
+// и тогда о ходе задачи не известно ничего: шкалу в этом случае не рисуют, а не
+// показывают «идёт первая из пяти».
+func pulsePhaseCut(sect string, live string, seen map[string]bool, testing bool) (int, string, bool) {
 	if sect == "check" || sect == "done" {
-		return len(pulsePhases), ""
+		// Задача в Check слита и выкачена, и это знание со строки доски, а не
+		// догадка: пять фаз позади независимо от того, вёл ли кто-то запись.
+		return len(pulsePhases), "", true
+	}
+	if len(seen) == 0 && live == "" {
+		return 0, "", false
 	}
 	cut, now := 0, ""
 	switch live {
@@ -165,21 +202,13 @@ func pulsePhaseCut(sect string, live string, seen map[string]bool, testing bool)
 		} else {
 			cut, now = 0, phaseCode
 		}
-	default:
-		if sect == sectRun {
-			if testing {
-				cut, now = 1, phaseTests
-			} else {
-				cut, now = 0, phaseCode
-			}
-		}
 	}
 	// История этапов старше живого: задача, побывавшая на ревью и уехавшая в
 	// блок, кода с тестами обратно не теряет.
 	if seen[stage.Review] && cut < 2 {
 		cut = 2
 	}
-	return cut, now
+	return cut, now, true
 }
 
 // pulsePhaseList раскладывает рубеж по именам фаз.
@@ -424,18 +453,23 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.URL.Query().Get("task"))
 	sid := strings.TrimSpace(r.URL.Query().Get("sid"))
 	now := s.now()
-	out := Pulse{Task: id, State: pulseEmpty, Quiet: int(pulseQuiet / time.Second),
-		Phases: pulsePhaseList(0, ""), Agents: []PulseAgent{}}
+	out := Pulse{Task: id, State: pulseEmpty, Scale: scaleNone,
+		Quiet: int(pulseQuiet / time.Second), Agents: []PulseAgent{}}
 
 	// Строка доски читается раньше агентов: по ней считаются и фазы, и то,
 	// ждут ли человека на самом деле.
-	sect, block := "", ""
-	rowHit := false
+	sect, block, prefix := "", "", ""
+	rows := map[string]boardRow{}
+	rowHit, goalRow := false, false
 	if id != "" {
 		if raw, err := s.projectBoard(found.Path); err == nil {
-			if rows, err := parseBoardRows(raw); err == nil {
+			view, _ := parseBoardView(raw)
+			prefix = view.Prefix
+			if parsed, err := parseBoardRows(raw); err == nil {
+				rows = parsed
 				if row, hit := rows[id]; hit {
 					sect, block, rowHit = row.Sect, row.Block, true
+					goalRow = isGoalTitle(row.Title)
 				}
 			}
 		}
@@ -506,10 +540,19 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		out.Since = last.Unix()
 	}
 
-	if rowHit {
+	switch {
+	case rowHit && goalRow:
+		// Цель не проходит код с ревью: её ход это доля закрытых задач цели,
+		// и считает их тот же разбор, каким живёт экран цели.
+		out.Goal = true
+		if counts, ok := s.goalProgress(found.Path, id, prefix, rows); ok {
+			out.Scale, out.Done, out.Total = scaleGoal, counts.Closed, counts.Total
+		}
+	case rowHit:
 		seen, live := s.taskStages(found.Path, id)
-		cut, phase := pulsePhaseCut(sect, live, seen, testing)
-		out.Phases, out.Phase = pulsePhaseList(cut, phase), phase
+		if cut, phase, known := pulsePhaseCut(sect, live, seen, testing); known {
+			out.Scale, out.Phases, out.Phase = scaleStages, pulsePhaseList(cut, phase), phase
+		}
 	}
 	if asking {
 		out.Wait = &ask

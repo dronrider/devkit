@@ -22,7 +22,7 @@ const now = Math.floor(Date.now() / 1000);
 // Четыре состояния кольца, как их отдаёт ручка-агрегат /pulse.
 const pulses = {
   working: {
-    task: "XR-1", state: "working", flow: true, count: 2, working: 1, idle: 1, quiet: 60,
+    task: "XR-1", state: "working", scale: "stages", flow: true, count: 2, working: 1, idle: 1, quiet: 60,
     phase: "тесты", about: "Bash go test ./tools/...", since: now - 12,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: false, now: true },
@@ -39,7 +39,7 @@ const pulses = {
     ],
   },
   waiting: {
-    task: "XR-1", state: "waiting", flow: false, count: 1, working: 0, waiting: 1, quiet: 60,
+    task: "XR-1", state: "waiting", scale: "stages", flow: false, count: 1, working: 0, waiting: 1, quiet: 60,
     phase: "код", since: now - 240,
     wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 240 },
     phases: [
@@ -54,7 +54,7 @@ const pulses = {
       state: "waiting", since: now - 240, wait_since: now - 240 }],
   },
   silent: {
-    task: "XR-1", state: "silent", flow: false, count: 1, working: 0, idle: 1, quiet: 60,
+    task: "XR-1", state: "silent", scale: "stages", flow: false, count: 1, working: 0, idle: 1, quiet: 60,
     phase: "ревью", about: "Bash go build", since: now - 840,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: true },
@@ -70,7 +70,7 @@ const pulses = {
   // Ровно этот случай и врал прежде: шапка работающего чата говорила про
   // вопрос, которого в его ленте не было.
   neighbour: {
-    task: "XR-1", state: "waiting", flow: true, count: 2, working: 1, waiting: 1, quiet: 60,
+    task: "XR-1", state: "waiting", scale: "stages", flow: true, count: 2, working: 1, waiting: 1, quiet: 60,
     phase: "код", about: "Bash go build", since: now - 27,
     wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 7320 },
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
@@ -88,7 +88,7 @@ const pulses = {
     ],
   },
   empty: {
-    task: "XR-1", state: "empty", flow: false, count: 0, working: 0, quiet: 60,
+    task: "XR-1", state: "empty", scale: "stages", flow: false, count: 0, working: 0, quiet: 60,
     phases: [
       { name: "код", done: false }, { name: "тесты", done: false },
       { name: "ревью", done: false }, { name: "слияние", done: false },
@@ -163,7 +163,7 @@ function ringOf(head) {
   if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
   // Пройденных фаз у задачи может не быть ни одной: запись этапов пустая, и
   // кольцо тогда честно показывает одну идущую фазу, а не выдуманный прогресс.
-  const bare = allByClass(pulseRingOf({ state: "working", working: 1, count: 1,
+  const bare = allByClass(pulseRingOf({ state: "working", scale: "stages", working: 1, count: 1,
     phases: [{ name: "код", done: false, now: true }, { name: "тесты", done: false },
       { name: "ревью", done: false }, { name: "слияние", done: false },
       { name: "выкат", done: false }], agents: [] }), "seg");
@@ -238,7 +238,10 @@ function ringOf(head) {
   if (rows.length !== 2) fail("в списке не те строки: " + rows.length);
   if (!byClass(rows[0], "p-working")) fail("у работающего агента точка не того состояния");
   if (!byClass(rows[1], "p-idle")) fail("у простаивающего агента точка не того состояния");
-  if (!dump(rows[0]).includes("go test") || !dump(rows[0]).includes("12 с")) {
+  // Давность сверяется единицей, а не числом: стенд считает её от настоящих
+  // часов, и секунда, прошедшая между сборкой пульса и отрисовкой, к предмету
+  // проверки отношения не имеет.
+  if (!dump(rows[0]).includes("go test") || !/\d+ с(\s|$)/.test(dump(rows[0]))) {
     fail("строка агента не сказала, что он делает: " + dump(rows[0]));
   }
   if (!dump(rows[1]).includes("простаивает 14 мин")) fail("простой агента без срока: " + dump(rows[1]));
@@ -262,7 +265,7 @@ function ringOf(head) {
 // --- долгий ход: команда идёт две минуты, и это работа, а не молчание ---
 {
   const held = {
-    task: "XR-1", state: "working", flow: true, count: 1, working: 1, quiet: 60,
+    task: "XR-1", state: "working", scale: "stages", flow: true, count: 1, working: 1, quiet: 60,
     phase: "тесты", about: "Bash go test ./tools/...", since: now - 132,
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
       held: true, about: "Bash go test ./tools/...", since: now - 132 },
@@ -304,6 +307,84 @@ function ringOf(head) {
     fail("ждущий сосед без срока: " + dump(rows[1]));
   }
   if (!byClass(rows[1], "pfrom")) fail("не сказано, с какого момента ждут: " + dump(rows[1]));
+}
+
+// --- данных о фазах нет: шкалы нет вовсе, кольцо показывает состояние ---
+// Прежде кольцо рисовало пять делений с первым «идущим» и там, где записи
+// этапов нет вовсе. Незнание, нарисованное шкалой, человек читает как знание о
+// ходе работы, и это враньё дороже пустой дорожки.
+{
+  pulses.bare = {
+    task: "XR-1", state: "working", scale: "", flow: true, count: 1, working: 1, quiet: 60,
+    about: "Bash go build ./...", since: now - 15,
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
+      about: "Bash go build ./...", since: now - 15 },
+    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+      state: "working", about: "Bash go build ./...", since: now - 15 }],
+  };
+  const head = await headOf("bare");
+  const wrap = ringOf(head);
+  if (allByClass(wrap, "seg").length) {
+    fail("кольцо без записи этапов нарисовало шкалу: " + allByClass(wrap, "seg").length + " делений");
+  }
+  if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
+  const cts = dump(byClass(head, "cts"));
+  if (cts.includes("фаза")) fail("строка состояния назвала фазу, которой не знает: " + cts);
+  if (!cts.includes("Bash go build")) fail("строка состояния молчит про ход: " + cts);
+  if (!String(wrap.title || "").includes("записи этапов")) {
+    fail("не сказано, почему шкалы нет: " + wrap.title);
+  }
+  // Работа при этом видна как раньше: индикатором состояния кольцо быть не
+  // перестало.
+  if (!String(wrap.className).includes("r-working")) fail("состояние потерялось вместе со шкалой");
+  if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
+}
+
+// --- цель: шкала считает задачи цели, а не фазы конвейера ---
+{
+  pulses.goal = {
+    task: "XR-7", state: "working", scale: "goal", goal: true, done: 6, total: 9,
+    flow: true, count: 1, working: 1, quiet: 60,
+    about: "Bash taskctl list", since: now - 8,
+    own: { session: "aaaa1111-1111", name: "chat-XR-7-1", state: "working", own: true,
+      about: "Bash taskctl list", since: now - 8 },
+    agents: [{ session: "aaaa1111-1111", name: "chat-XR-7-1", title: "Цель XR-7", own: true,
+      state: "working", about: "Bash taskctl list", since: now - 8 }],
+  };
+  const head = await headOf("goal");
+  const wrap = ringOf(head);
+  const segs = allByClass(wrap, "seg");
+  if (segs.length !== 9) fail("делений не по числу задач цели: " + segs.length);
+  const done = segs.filter((x) => String(x.className).includes("on")).length;
+  if (done !== 6) fail("закрашено не по числу закрытых задач: " + done);
+  const cts = dump(byClass(head, "cts"));
+  if (!cts.includes("закрыто 6 из 9")) fail("строка состояния не сказала про задачи цели: " + cts);
+  if (cts.includes("фаза")) fail("цели приписали фазу конвейера: " + cts);
+  // Число в середине это по-прежнему работающие агенты, а не задачи.
+  const num = byClass(wrap, "rnum");
+  if (!num || num.textContent !== "1") fail("в середине не число работающих: " + (num && num.textContent));
+  // Длинная цель считается долей дуги: тридцать делений с зазором это уже
+  // пунктир, а не шкала.
+  const many = allByClass(pulseRingOf({ state: "working", scale: "goal", goal: true,
+    done: 7, total: 30, working: 1, count: 1, agents: [] }), "seg");
+  if (many.length !== 2) fail("длинная цель нарисована делениями: " + many.length);
+  const lit = many.filter((x) => String(x.className).includes("on"));
+  if (lit.length !== 1) fail("у длинной цели не закрашена доля: " + many.map((x) => x.className).join(", "));
+  // Доля именно доля: закрашенная дуга короче полного круга ровно во столько,
+  // во сколько закрытых задач меньше всех. Закрашенный целиком круг у цели с
+  // семью задачами из тридцати и есть то самое враньё, ради которого шкалу и
+  // разбирали.
+  const span = Number(String(lit[0].attrs["stroke-dasharray"]).split(" ")[0]);
+  const want = (2 * Math.PI * 15) * (7 / 30);
+  if (Math.abs(span - want) > 0.5) {
+    fail("закрашенная дуга не по доле закрытых: " + span.toFixed(2) + ", ждал " + want.toFixed(2));
+  }
+  // Нарезки может не быть вовсе, и тогда шкалы нет, как и у задачи без записи.
+  const raw = pulseRingOf({ state: "silent", scale: "", goal: true, count: 1, agents: [] });
+  if (allByClass(raw, "seg").length) fail("ненарезанная цель нарисовала шкалу");
+  if (!String(raw.title || "").includes("не нарезана")) {
+    fail("не сказано, почему у цели нет шкалы: " + raw.title);
+  }
 }
 
 // --- давность словами: секунды ниже минуты, дальше минуты и часы ---

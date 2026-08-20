@@ -193,6 +193,56 @@ type goalCounts struct {
 	Ahead   int `json:"ahead"`
 }
 
+// fillGoalTasks дописывает задачам цели то, что о них знают доска и архив, и
+// считает счётчики шапки. Вынесено из обработчика, потому что тем же счётом
+// живёт кольцо в шапке разговора (pulse.go): у цели прогресс это доля закрытых
+// задач, и второй счёт разъехался бы с экраном цели на первой же правке.
+func fillGoalTasks(tasks []goalTask, rows map[string]boardRow, arch map[string]archiveRow) goalCounts {
+	counts := goalCounts{Total: len(tasks)}
+	for i := range tasks {
+		t := &tasks[i]
+		if row, hit := rows[t.ID]; hit {
+			t.Title, t.Sect, t.Section = row.Title, row.Sect, row.Section
+			t.R, t.P = row.R, row.P
+			if row.Sect == sectRun {
+				counts.Running++
+			} else {
+				counts.Ahead++
+			}
+			continue
+		}
+		if a, hit := arch[t.ID]; hit {
+			t.Title, t.Closed, t.Done = a.Title, a.Closed, true
+			t.Sect, t.Section = "archive", "закрыта"
+			counts.Closed++
+			continue
+		}
+		t.Note = "ни на доске, ни в архиве: строкой задача ещё не заведена"
+		counts.Ahead++
+	}
+	return counts
+}
+
+// goalProgress отдаёт счётчики задач цели, ничего не рисуя: файла цели может не
+// быть, раздела «Задачи цели» в нём может не быть, и раздел бывает пуст. Во
+// всех трёх случаях второй ответ false, и прогресса у цели нет, а не ноль
+// процентов: пустая шкала и нечитаемый файл это разные вещи.
+func (s *server) goalProgress(projectPath, id, prefix string, rows map[string]boardRow) (goalCounts, bool) {
+	doc := s.goalDocPath(projectPath, id)
+	if !doc.seen {
+		return goalCounts{}, false
+	}
+	data, err := os.ReadFile(doc.path)
+	if err != nil {
+		return goalCounts{}, false
+	}
+	tasks, section := goalTasksFromDoc(string(data), prefix)
+	if !section || len(tasks) == 0 {
+		return goalCounts{}, false
+	}
+	return fillGoalTasks(tasks, rows, archiveRows(projectPath)), true
+}
+
 func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "задачи цели")
 	if found == nil {
@@ -237,29 +287,7 @@ func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	arch := archiveRows(found.Path)
-	counts := goalCounts{Total: len(tasks)}
-	for i := range tasks {
-		t := &tasks[i]
-		if row, hit := rows[t.ID]; hit {
-			t.Title, t.Sect, t.Section = row.Title, row.Sect, row.Section
-			t.R, t.P = row.R, row.P
-			if row.Sect == "in-progress" {
-				counts.Running++
-			} else {
-				counts.Ahead++
-			}
-			continue
-		}
-		if a, hit := arch[t.ID]; hit {
-			t.Title, t.Closed, t.Done = a.Title, a.Closed, true
-			t.Sect, t.Section = "archive", "закрыта"
-			counts.Closed++
-			continue
-		}
-		t.Note = "ни на доске, ни в архиве: строкой задача ещё не заведена"
-		counts.Ahead++
-	}
+	counts := fillGoalTasks(tasks, rows, archiveRows(found.Path))
 	resp["tasks"], resp["counts"] = tasks, counts
 	writeJSON(w, http.StatusOK, resp)
 }

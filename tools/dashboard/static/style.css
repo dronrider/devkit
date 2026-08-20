@@ -792,7 +792,11 @@ a:hover{text-decoration:underline}
 .rslot{flex:none;display:flex;align-items:center}
 .ringwrap{position:relative;flex:none;width:36px;height:36px;cursor:pointer}
 .ring{display:block;width:36px;height:36px;overflow:visible}
-.ring .bg{stroke:none}
+/* Кольцо без шкалы: ровная дорожка без делений. Рисуется она там, где о ходе
+   работы не известно ничего, и разметки на ней нет нарочно. */
+.ring .track{stroke:var(--line2)}
+.r-empty .track{stroke:var(--bg3)}
+.r-waiting .track{stroke:var(--block);opacity:0.65}
 /* Непройденная фаза это разметка, а не пустота: цветом подложки она сливалась
    с фоном, и сегментов на кольце было не разглядеть вовсе. Идущая фаза светится
    акцентом: пройденных фаз у задачи может не быть ни одной (запись этапов
@@ -812,7 +816,7 @@ a:hover{text-decoration:underline}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
 .r-silent .seg.on,.r-silent .seg.here{stroke:var(--tx3)}
 .r-empty .seg,.r-empty .seg.on,.r-empty .seg.here{stroke:var(--bg3)}
-@keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-94.25}}
+@keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-71.63}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
 .ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:300px;max-width:394px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}

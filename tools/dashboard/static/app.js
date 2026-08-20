@@ -5023,10 +5023,11 @@ function pulseAge(sec, now) {
 function pulseWords(p, now) {
   if (!p || p.state === "empty") return "живых сессий нет";
   if (p.state === "waiting") {
-    const w = p.wait || {};
-    const age = pulseAge(w.since, now);
-    return [w.state || "вопрос человеку", age ? age + " без ответа" : ""]
-      .filter(Boolean).join(" | ");
+    // Слово «вопрос человеку» тут общее нарочно: точное состояние с подписью
+    // источника несёт чип рядом, и повторять его дословно значило бы писать в
+    // шапке одно и то же дважды.
+    const age = pulseAge((p.wait || {}).since, now);
+    return ["вопрос человеку", age ? age + " без ответа" : ""].filter(Boolean).join(" | ");
   }
   if (p.state === "silent") {
     const age = pulseAge(p.since, now);

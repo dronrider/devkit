@@ -143,7 +143,7 @@ function ringOf(head) {
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("число ждущих не то: " + (num && num.textContent));
   const cts = byClass(head, "cts");
-  if (!dump(cts).includes("ждёт ответа") || !dump(cts).includes("без ответа")) {
+  if (!dump(cts).includes("вопрос человеку") || !dump(cts).includes("4 мин без ответа")) {
     fail("строка состояния молчит про вопрос: " + dump(cts));
   }
 }

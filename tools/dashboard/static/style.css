@@ -788,7 +788,10 @@ a:hover{text-decoration:underline}
    середине это агенты в чатах задачи, красный ореол это вопрос человеку.
    Своих цветов кольцо не заводит: все четыре состояния собраны из токенов
    доски. */
-.cpanel .chead{align-items:center}
+/* Кольцо стоит вровень со строкой названия, а не по середине шапки: подпись
+   под названием бывает в две строки, и центрированное кольцо уезжало бы от
+   заголовка вниз. */
+.cpanel .chead{align-items:flex-start}
 .rslot{flex:none;display:flex;align-items:center}
 .ringwrap{position:relative;flex:none;width:36px;height:36px;cursor:pointer}
 .ring{display:block;width:36px;height:36px;overflow:visible}
@@ -800,6 +803,9 @@ a:hover{text-decoration:underline}
 .rnum{font:600 12px var(--mono);fill:var(--tx)}
 .r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
 .r-waiting .seg.on{stroke:var(--block)}
+/* Идущая фаза у ждущего кольца тоже красная: пройденных фаз у задачи в начале
+   работы нет вовсе, и без этого от кольца оставался бы один ореол. */
+.r-waiting .seg.here{stroke:var(--block)}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
 .r-silent .seg.on{stroke:var(--tx3)}

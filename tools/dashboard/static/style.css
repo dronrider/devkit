@@ -20,9 +20,6 @@
   --goal:oklch(0.75 0.09 300);
   --wait:oklch(0.78 0.12 60);
   --deleg:oklch(0.72 0.13 250);
-  --dot-run:oklch(0.78 0.2 148);
-  --dot-wait:oklch(0.82 0.18 62);
-  --dot-out:oklch(0.68 0.02 85);
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -129,12 +126,12 @@ a:hover{text-decoration:underline}
 /* кружок состояния строки доски: зелёный работа идёт, жёлтый ждут человека,
    серый работа не наша или ожидание снаружи. Стоит внутри ячейки номера, а
    слова состояния лежат подсказкой */
-.sdot{width:11px;height:11px;border-radius:50%;flex:none;background:var(--dot-out);box-shadow:0 0 0 3px color-mix(in oklab,var(--dot-out) 22%,transparent)}
-.sd-run{background:var(--dot-run);box-shadow:0 0 0 3px color-mix(in oklab,var(--dot-run) 26%,transparent)}
-.sd-wait{background:var(--dot-wait);box-shadow:0 0 0 3px color-mix(in oklab,var(--dot-wait) 28%,transparent)}
-.sd-out{background:var(--dot-out);box-shadow:0 0 0 3px color-mix(in oklab,var(--dot-out) 22%,transparent)}
+.sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--tx3)}
+.sd-run{background:var(--run)}
+.sd-wait{background:var(--wait)}
+.sd-out{background:var(--tx3)}
 .sdot.clicky{cursor:pointer}
-.sdot.clicky:hover{box-shadow:0 0 0 5px color-mix(in oklab,var(--tx2) 30%,transparent)}
+.sdot.clicky:hover{box-shadow:0 0 0 4px color-mix(in oklab,var(--tx2) 22%,transparent)}
 .pd-run{background:var(--run);border-color:transparent}
 .pd-warn{background:var(--block);border-color:transparent}
 /* подсказки по наведению: то, что раньше стояло надписью-указкой прямо на
@@ -276,7 +273,7 @@ a:hover{text-decoration:underline}
 /* кружок состояния висит слева от номера, в отступе строки: встань он в поток,
    номера строк с работой и без разъехались бы по колонке */
 .trow .id{position:relative;display:flex;align-items:center}
-.trow .id .sdot{position:absolute;left:-19px}
+.trow .id .sdot{position:absolute;left:-17px}
 .trow .tt{font:400 13.5px var(--sans);color:var(--tx);display:flex;align-items:center;gap:8px;min-width:0}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}

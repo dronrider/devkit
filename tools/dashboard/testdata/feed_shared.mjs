@@ -204,6 +204,8 @@ const sandbox = {
   JSON,
   document: {
     createElement: makeNode,
+      // Кольцо агентов рисуется svg, и узлы у него из своего пространства имён.
+      createElementNS: (ns, tag) => makeNode(tag),
     createTextNode: (text) => {
       const n = makeNode("#text");
       n.textContent = String(text);

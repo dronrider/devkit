@@ -113,6 +113,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/tasks", s.auth(s.handleGoalTasks))
 	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/message", s.auth(s.handleGoalMessageGet))
 	mux.HandleFunc("POST /api/projects/{p}/goals/{id}/message", s.auth(s.handleGoalMessagePost))
+	mux.HandleFunc("GET /api/projects/{p}/pulse", s.auth(s.handlePulse))
 	mux.HandleFunc("GET /api/projects/{p}/sessions", s.auth(s.handleSessions))
 	mux.HandleFunc("GET /api/projects/{p}/sessions/{sid}", s.auth(s.handleSession))
 	mux.HandleFunc("POST /api/projects/{p}/sessions/{sid}/message", s.auth(s.handleSessionMessagePost))

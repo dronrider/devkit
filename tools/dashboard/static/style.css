@@ -782,6 +782,47 @@ a:hover{text-decoration:underline}
 .cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere}
 .csub{width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere;margin-top:6px}
 .csub span{min-width:0}
+
+/* Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
+   фазы конвейера задачи, бегущая поверх дуга значит «события текут», число в
+   середине это агенты в чатах задачи, красный ореол это вопрос человеку.
+   Своих цветов кольцо не заводит: все четыре состояния собраны из токенов
+   доски. */
+.cpanel .chead{align-items:center}
+.rslot{flex:none;display:flex;align-items:center}
+.ringwrap{position:relative;flex:none;width:36px;height:36px;cursor:pointer}
+.ring{display:block;width:36px;height:36px;overflow:visible}
+.ring .bg{stroke:var(--bg3)}
+.ring .seg{stroke:var(--bg3)}
+.ring .seg.on{stroke:var(--run)}
+.ring .comet{stroke:none}
+.ring .halo{stroke:none}
+.rnum{font:600 12px var(--mono);fill:var(--tx)}
+.r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
+.r-waiting .seg.on{stroke:var(--block)}
+.r-waiting .rnum{fill:var(--block)}
+.r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
+.r-silent .seg.on{stroke:var(--tx3)}
+.r-empty .seg,.r-empty .seg.on{stroke:var(--bg3)}
+@keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-94.25}}
+@keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
+/* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
+.ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:262px;max-width:340px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
+.ringwrap:hover .pop,.ringwrap.open .pop{display:block}
+.prow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;min-width:0}
+.prow:hover{background:var(--bg2)}
+.prow b{font:600 11.5px var(--mono);color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .pwhat{margin-left:auto;padding-left:10px;font:400 11px var(--mono);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--tx3)}
+.pdot.p-working{background:var(--run)}
+.pdot.p-waiting{background:var(--block)}
+.pdot.p-silent{background:var(--tx3)}
+.prow.pempty{color:var(--tx3);cursor:default}
+.prow.pempty:hover{background:none}
+.pfoot{margin-top:4px;padding:6px 8px 2px;border-top:1px solid var(--line);font:400 10.5px var(--mono);color:var(--tx3)}
+@media (prefers-reduced-motion:reduce){
+  .ring .comet,.ring .halo{animation:none}
+}
 /* свёрнутый блок размышлений и вывода инструмента: заголовок строкой, тело по
    клику. Тело моноширинное и с переносами: там лежит вывод команд */
 .fold{margin:8px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg2);overflow:hidden}

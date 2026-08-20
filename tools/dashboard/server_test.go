@@ -261,6 +261,10 @@ func TestStaticNoExternalHosts(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("%s: %d", page, resp.StatusCode)
 		}
+		// Пространство имён svg это опознавательная строка, а не адрес: за ним
+		// браузер никуда не ходит, и требовать его отсутствия значило бы
+		// запретить статике рисовать векторную графику вовсе.
+		text = strings.ReplaceAll(text, svgNS, "")
 		if strings.Contains(text, "http://") || strings.Contains(text, "https://") {
 			t.Errorf("%s ссылается на внешний хост", page)
 		}

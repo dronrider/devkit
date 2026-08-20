@@ -72,7 +72,12 @@ export function makeNode(tag) {
   };
   node.remove = () => {};
   node.after = (kid) => { node.children.push(kid); };
-  node.setAttribute = (name, value) => { node.attrs[name] = String(value); };
+  // Класс у svg ставится атрибутом (className там только на чтение), и без
+  // этой связки byClass не видел бы ни сегментов кольца, ни дуги.
+  node.setAttribute = (name, value) => {
+    node.attrs[name] = String(value);
+    if (name === "class") node.className = String(value);
+  };
   node.removeAttribute = (name) => { delete node.attrs[name]; };
   node.getBoundingClientRect = () => ({ top: 0, bottom: 0, height: 0, width: 0 });
   node.focus = () => {};
@@ -182,6 +187,8 @@ export function makeSandbox(appPath, reply) {
       handlers: {},
       visibilityState: "visible",
       createElement: makeNode,
+      // Кольцо агентов рисуется svg, и узлы у него из своего пространства имён.
+      createElementNS: (ns, tag) => makeNode(tag),
       createTextNode: (text) => {
         const n = makeNode("#text");
         n.textContent = String(text);

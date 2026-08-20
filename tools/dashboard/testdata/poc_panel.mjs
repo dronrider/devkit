@@ -100,7 +100,7 @@ if (atModel < 0 || atGo < 0 || atModel > atGo) {
   fail("выбор модели стоит не слева от кнопки продолжения: " + JSON.stringify(order));
 }
 if (!dump(head).includes("XR-1")) fail("номера задачи нет лейблом в шапке");
-const line = head.children[0];
+const line = byClass(head, "chline");
 line.children[0].handlers.click({ stopPropagation: () => {} });
 const drop = line.children[line.children.length - 1];
 if (!String(drop.className).includes("cdrop")) fail("выпадающий список не открылся");

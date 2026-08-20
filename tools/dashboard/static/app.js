@@ -4984,6 +4984,186 @@ function waitChatChip(st) {
   return chip;
 }
 
+// Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
+// фазы конвейера задачи, бегущая поверх них дуга значит «события в транскрипте
+// текут», число в середине это агенты в чатах задачи. Всё приезжает одной
+// ручкой-агрегатом /pulse: собирать это на клиенте значило бы четыре запроса на
+// каждый оборот опроса.
+const RING_NS = "http://www.w3.org/2000/svg";
+const RING_R = 15;
+const RING_LEN = 2 * Math.PI * RING_R;
+// Зазор между сегментами в единицах длины дуги: тот же, что в макете.
+const RING_GAP = 3;
+
+function svgEl(tag, cls) {
+  const node = document.createElementNS(RING_NS, tag);
+  if (cls) node.setAttribute("class", cls);
+  return node;
+}
+
+function svgAttrs(node, attrs) {
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  return node;
+}
+
+// Давность словами. Секунды тут нужны: разница между «12 с» и «4 мин» и есть
+// вся разница между работающим агентом и молчащим, а workAge ниже минуты
+// говорит «меньше минуты» и обе склеивает.
+function pulseAge(sec, now) {
+  if (!sec) return "";
+  const d = Math.max(0, Math.floor(now / 1000 - sec));
+  if (d < 60) return d + " с";
+  if (d < 3600) return Math.floor(d / 60) + " мин";
+  return Math.floor(d / 3600) + " ч " + Math.floor((d % 3600) / 60) + " мин";
+}
+
+// Строка состояния под названием разговора: та же правда, что в кольце, только
+// словами. Кольцо читается краем глаза, а строка отвечает на «что именно
+// происходит».
+function pulseWords(p, now) {
+  if (!p || p.state === "empty") return "живых сессий нет";
+  if (p.state === "waiting") {
+    const w = p.wait || {};
+    const age = pulseAge(w.since, now);
+    return [w.state || "вопрос человеку", age ? age + " без ответа" : ""]
+      .filter(Boolean).join(" | ");
+  }
+  if (p.state === "silent") {
+    const age = pulseAge(p.since, now);
+    return ["тишина" + (age ? " " + age : ""), p.about ? "последний ход " + p.about : ""]
+      .filter(Boolean).join(" | ");
+  }
+  const age = pulseAge(p.since, now);
+  return [p.phase ? "фаза " + p.phase : "", p.about, age ? age + " назад" : ""]
+    .filter(Boolean).join(" | ");
+}
+
+// Чем занят агент строкой списка: работающий назван инструментом, ждущий
+// вопросом, молчащий сроком тишины.
+function pulseAgentWords(a, now) {
+  const age = pulseAge(a.since, now);
+  if (a.state === "waiting") return ["вопрос", age].filter(Boolean).join(" | ");
+  if (a.state === "silent") return "тишина" + (age ? " " + age : "");
+  return [a.about, age].filter(Boolean).join(" | ");
+}
+
+// Сегменты фаз: закрашены пройденные, остальные лежат подложкой. Процентов у
+// сегмента нет, он либо пройден, либо нет.
+function ringSegs(box, p) {
+  const phases = (p && p.phases) || [];
+  const step = RING_LEN / (phases.length || 1);
+  const arc = Math.max(step - RING_GAP, 1);
+  phases.forEach((ph, i) => {
+    const c = svgEl("circle", "seg" + (ph.done ? " on" : "") + (ph.now ? " here" : ""));
+    svgAttrs(c, {
+      cx: 18, cy: 18, r: RING_R, fill: "none",
+      "stroke-width": 3.2, "stroke-linecap": "butt",
+      "stroke-dasharray": arc.toFixed(2) + " " + (RING_LEN - arc).toFixed(2),
+      "stroke-dashoffset": (-i * step).toFixed(2),
+    });
+    const t = document.createElementNS(RING_NS, "title");
+    t.textContent = ph.name + (ph.done ? ": пройдена" : ph.now ? ": идёт" : ": не пройдена");
+    c.append(t);
+    box.append(c);
+  });
+}
+
+// Кольцо целиком. Разметка одна на все четыре состояния, состояние это класс
+// обёртки: разводить четыре ветки сборки значило бы держать четыре разметки.
+function pulseRing(project, p) {
+  const wrap = el("div", "ringwrap r-" + ((p && p.state) || "empty"));
+  const box = svgEl("svg", "ring");
+  svgAttrs(box, { viewBox: "0 0 36 36", width: 36, height: 36 });
+  const g = svgEl("g", "");
+  g.setAttribute("transform", "rotate(-90 18 18)");
+  // Ореол ожидания лежит под сегментами: он пульсирует вокруг кольца, а не
+  // поверх числа.
+  const halo = svgEl("circle", "halo");
+  svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
+  box.append(halo);
+  const back = svgEl("circle", "bg");
+  svgAttrs(back, { cx: 18, cy: 18, r: RING_R, fill: "none", "stroke-width": 3.2 });
+  g.append(back);
+  ringSegs(g, p);
+  // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
+  // опрос, поэтому между заходами на сервер кольцо не замирает.
+  const comet = svgEl("circle", "comet");
+  svgAttrs(comet, {
+    cx: 18, cy: 18, r: RING_R, fill: "none", "stroke-width": 3.2,
+    "stroke-linecap": "round",
+    "stroke-dasharray": "16 " + (RING_LEN - 16).toFixed(2),
+  });
+  g.append(comet);
+  box.append(g);
+  if (p && p.count > 0) {
+    const num = svgEl("text", "rnum");
+    svgAttrs(num, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
+    num.textContent = String(p.state === "waiting" ? (p.waiting || p.count) : p.count);
+    box.append(num);
+  }
+  wrap.append(box);
+  wrap.append(ringPop(project, p));
+  const tip = pulseWords(p, Date.now());
+  wrap.setAttribute("aria-label", tip);
+  wrap.title = tip;
+  // На таче наведения нет, и список открывается нажатием на само кольцо.
+  wrap.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    wrap.classList.toggle("open");
+  });
+  return wrap;
+}
+
+// Всплывающий список агентов задачи. Строка ведёт в свой разговор: кольцо тут
+// не только показывает, но и есть дорога до того, кто ждёт.
+function ringPop(project, p) {
+  const pop = el("div", "pop");
+  const list = (p && p.agents) || [];
+  const now = Date.now();
+  if (!list.length) {
+    pop.append(el("div", "prow pempty", "живых сессий нет"));
+    return pop;
+  }
+  for (const a of list) {
+    const row = el("div", "prow");
+    row.append(el("span", "pdot p-" + a.state));
+    row.append(el("b", "", a.name));
+    row.append(el("span", "pwhat", pulseAgentWords(a, now)));
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      switchChat(a.session);
+    });
+    pop.append(row);
+  }
+  pop.append(el("div", "pfoot", "клик по строке открывает разговор"));
+  return pop;
+}
+
+// Пульс опрашивается сам: шапка панели собирается один раз на открытие
+// разговора, и перерисовка экрана её не трогает, поэтому кольцо ходит за своей
+// ручкой по таймеру и меняет только себя.
+const PULSE_POLL = 5000;
+
+function pulseURL(project, st) {
+  const q = st.task ? "task=" + encodeURIComponent(st.task)
+    : "sid=" + encodeURIComponent(st.sid || "");
+  return "/api/projects/" + encodeURIComponent(project) + "/pulse?" + q;
+}
+
+function wireRing(project, st, slot, words) {
+  const put = (p) => {
+    slot.replaceChildren(pulseRing(project, p));
+    if (words) words.textContent = pulseWords(p, Date.now());
+  };
+  const load = async () => {
+    const r = await api(pulseURL(project, st));
+    if (r.ok) put(r.body);
+  };
+  load().catch(console.error);
+  const t = setInterval(() => { load().catch(console.error); }, PULSE_POLL);
+  chatLive.push(() => clearInterval(t));
+}
+
 function chatHead(project, st) {
   const head = el("div", "chead");
   const line = el("div", "chline");
@@ -5065,7 +5245,13 @@ function chatHead(project, st) {
   shut.append(icon("close"));
   shut.addEventListener("click", () => { chatDropShut(); closeChat(); });
   line.append(shut);
-  head.append(line);
+  // Кольцо агентов стоит слева от названия разговора, а не в строке доски:
+  // человек смотрит в панель, когда разговаривает, и состояние захода нужно
+  // ему тут же. Название с подписью уезжают в колонку справа от кольца.
+  const ct = el("div", "ct");
+  ct.append(line);
+  const slot = el("div", "rslot");
+  head.append(slot, ct);
 
   const sub = el("div", "csub");
   // Ожидание человека стоит чипом в шапке, а не врезкой над полем ввода:
@@ -5086,8 +5272,14 @@ function chatHead(project, st) {
   } else {
     words.textContent = st.task ? "чатов задачи " + st.task + " нет" : "чат не выбран";
   }
-  sub.append(words);
-  head.append(sub);
+  // Строка состояния несёт то же, что кольцо, только словами: фазу, текущий
+  // инструмент и давность. Метаданные разговора (дерево, tmux, время) стоят
+  // следом и дописываются не пульсом, а списком чатов.
+  const cts = el("span", "cts", "пульс читается...");
+  sub.append(cts);
+  if (words.textContent) sub.append(words);
+  ct.append(sub);
+  wireRing(project, st, slot, cts);
   return head;
 }
 

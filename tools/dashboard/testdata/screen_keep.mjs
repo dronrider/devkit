@@ -257,6 +257,8 @@ const store = new Map();
 const byId = new Map();
 const doc = {
   createElement: makeNode,
+      // Кольцо агентов рисуется svg, и узлы у него из своего пространства имён.
+      createElementNS: (ns, tag) => makeNode(tag),
   createTextNode: (text) => {
     const n = makeNode("#text");
     n.textContent = String(text);

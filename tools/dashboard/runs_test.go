@@ -931,7 +931,8 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 // Устаревший экран получает настоящую причину отказа: закрытая задача уехала в
 // архив, а «на доске нет строки» читается как поломка, хотя закрытие прошло.
 // Второе нажатие с телефона по строке, закрытой с ноутбука, до DK-289 отвечало
-// именно так.
+// именно так. Сам экран задачи при этом открывается: закрытую задачу читают
+// строкой архива, и отказ тут был бы тупиком выдачи поиска.
 func TestRunStartClosedRowNamesArchive(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
@@ -940,19 +941,24 @@ func TestRunStartClosedRowNamesArchive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.proj, "docs", "TASKS-archive.md"), []byte(arch), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ what, method, path, body string }{
-		{"нажатие", "POST", "/api/projects/demo/runs", `{"id": "XR-009"}`},
-		{"экран задачи", "GET", "/api/projects/demo/tasks/XR-009", ""},
-	} {
-		resp := doReq(t, c, tc.method, e.srv.URL+tc.path, tc.body)
-		text := body(t, resp)
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("%s по закрытой задаче: %d %s", tc.what, resp.StatusCode, text)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-009"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("нажатие по закрытой задаче: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{"уже закрыта 2026-08-13", "экран устарел"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("нажатие по закрытой задаче не назвало причину %q: %s", want, text)
 		}
-		for _, want := range []string{"уже закрыта 2026-08-13", "экран устарел"} {
-			if !strings.Contains(text, want) {
-				t.Errorf("%s по закрытой задаче не назвал причину %q: %s", tc.what, want, text)
-			}
+	}
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-009", "")
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("экран закрытой задачи: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"closed":"2026-08-13"`, "Принятая глазами", "осталась одной строкой архива"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("экран закрытой задачи пришёл без %q: %s", want, text)
 		}
 	}
 }

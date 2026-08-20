@@ -5398,6 +5398,45 @@ function wireRing(project, st, slot, words) {
   chatLive.push(() => clearInterval(t));
 }
 
+// Привязка разговора к задаче рукой. Дашборд узнаёт задачу сессии по реестру
+// чатов, по первой реплике и по имени бокового дерева, и все три способа мимо,
+// когда человек поднял клиента сам: чат чужой подписки к задаче не привяжется
+// никогда, и в ленте задачи его не будет. Ручка привязки есть (DK-431), а
+// вызова с экрана после переделки POC не осталось вовсе.
+const CHAT_BIND_HINT = "Привязка ложится в реестр чатов: разговор станет работой " +
+  "этой задачи и встанет в её ленту. Пустое значение снимает привязку.";
+
+function chatBindOpen(project, st, line) {
+  chatDropShut();
+  const menu = el("div", "cdrop cdbind");
+  menu.append(el("div", "dwhy", "К какой задаче этот разговор"));
+  const field = el("input", "cbindin");
+  field.type = "text";
+  field.value = st.task || "";
+  field.placeholder = "например, " + (st.task || "DK-123");
+  field.setAttribute("aria-label", "номер задачи");
+  menu.append(field);
+  const send = (task) => {
+    chatDropShut();
+    bindSession(project, st.sid, task).catch(console.error);
+  };
+  const go = el("button", "btn btn-sm btn-acc", "Привязать");
+  go.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    send(field.value.trim().toUpperCase());
+  });
+  menu.append(go);
+  if (st.task) {
+    const off = el("button", "btn btn-sm", "Снять привязку");
+    off.addEventListener("click", (ev) => { ev.stopPropagation(); send(""); });
+    menu.append(off);
+  }
+  menu.append(el("div", "hint", CHAT_BIND_HINT));
+  menu.addEventListener("click", (ev) => { ev.stopPropagation(); });
+  line.append(menu);
+  chatDrop = menu;
+}
+
 function chatHead(project, st) {
   const head = el("div", "chead");
   const line = el("div", "chline");
@@ -5455,6 +5494,25 @@ function chatHead(project, st) {
     chatDrop = menu;
   });
   line.append(add);
+
+  // Привязка к задаче стоит рядом с заведением нового чата: обе про то, чей
+  // это разговор. У пустого адреса привязывать нечего, сессии ещё нет.
+  if (st.sid) {
+    const bind = el("button", "cdbtn" + (st.task ? "" : " warn"));
+    bind.append(icon("i-in"));
+    bind.title = st.task ? "Разговор привязан к " + st.task + ": сменить или снять"
+      : "Задача разговора не узнана: привязать рукой";
+    bind.setAttribute("aria-label", bind.title);
+    bind.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (chatDrop) {
+        chatDropShut();
+        return;
+      }
+      chatBindOpen(project, st, line);
+    });
+    line.append(bind);
+  }
 
   // Переключатель фильтра стоит справа и виден только там, где есть что
   // фильтровать: без задачи в адресе фильтровать нечем, и погашенная кнопка

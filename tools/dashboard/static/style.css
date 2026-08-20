@@ -1143,6 +1143,12 @@ a:hover{text-decoration:underline}
 
 /* 13: меню видов нового чата у кнопки «+» */
 .cdmenu{top:38px;max-height:none}
+/* Привязка разговора к задаче: то же выпадающее окно, что у нового чата, с
+   полем номера и двумя кнопками. Кнопка привязки светится, пока задача не
+   узнана: чат без задачи в её ленту не попадёт. */
+.cdbind{top:38px;max-height:none;padding:12px}
+.cdbind .hint{font:400 11.5px/1.5 var(--sans);color:var(--tx3)}
+.cdbtn.warn{border-color:var(--warn,var(--acc));color:var(--tx)}
 .cdmenu .cdrow{font:400 12.5px var(--sans);color:var(--tx)}
 
 /* 15: экран записи накопителя по образцу экрана задачи */

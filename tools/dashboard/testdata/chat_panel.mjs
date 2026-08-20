@@ -20,6 +20,8 @@ const fail = (msg) => { console.error(msg); process.exit(1); };
 
 // Связь рвётся по этому флагу: мок fetch бросает исключение на отправке.
 let offline = false;
+// Задача, приехавшая ручкой привязки: по ней видно, что уехало с экрана.
+let bound = null;
 
 function makeNode(tag) {
   const node = {
@@ -257,6 +259,10 @@ const sandbox = {
     if (path.includes("/sessions?free=1")) {
       return reply(freeNote ? { sessions: free, note: freeNote } : { sessions: free });
     }
+    if (path.endsWith("/task") && init && init.method === "POST") {
+      bound = JSON.parse(init.body).task;
+      return reply({ message: "сессия привязана к " + bound });
+    }
     if (path.includes("/sessions/")) {
       const sid = path.slice(path.indexOf("/sessions/") + "/sessions/".length).split("?")[0];
       const found = [mine, older, loose].find((s) => s.id === sid) || { id: sid };
@@ -478,6 +484,30 @@ if (!dump(emptyAnchor).includes("просмотрено 12 транскрипт�
 chatRegistry = emptyReg;
 chatsNote = wasNote;
 
+// --- привязка разговора к задаче рукой ---
+{
+  st = await sandbox.chatState("demo", mine.id, board);
+  const head = sandbox.chatHead("demo", st);
+  const line = byClass(head, "chline");
+  const bind = line.children.find((k) => String(k.className).includes("cdbtn") &&
+    String(k.attrs && k.attrs.title || k.title || "").includes("привяз"));
+  if (!bind) fail("кнопки привязки к задаче в шапке нет: " + dump(head));
+  sandbox.chatDropShut();
+  bind.handlers.click({ stopPropagation: () => {} });
+  const menu = byClass(line, "cdbind");
+  if (!menu) fail("окно привязки не открылось: " + dump(line));
+  const field = tag(menu, "INPUT");
+  if (!field) fail("поля номера задачи в окне привязки нет: " + dump(menu));
+  field.value = "xr-7";
+  posted.length = 0;
+  button(menu, "Привязать").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!posted.some((path) => path.includes("/sessions/" + mine.id + "/task"))) {
+    fail("привязка не позвала ручку задачи сессии: " + JSON.stringify(posted));
+  }
+  if (bound !== "XR-7") fail("номер задачи уехал не прописными: " + JSON.stringify(bound));
+}
+
 // --- очередь исходящих: неушедшее переживает перезагрузку и дожимается само ---
 {
   chatRegistry = emptyReg;
@@ -521,6 +551,8 @@ chatsNote = wasNote;
     fail("ушедшая реплика осталась в очереди: " + store.get("devkit.chat.pend.demo/" + mine.id));
   }
 }
+
+console.log("привязка разговора к задаче: кнопка в шапке, поле номера, ручка сессии");
 
 console.log("очередь исходящих панели: неушедшее говорит про дожим, переживает перезагрузку" +
   " и уходит само по возвращении связи");

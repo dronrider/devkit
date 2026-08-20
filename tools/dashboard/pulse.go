@@ -24,10 +24,16 @@ import (
 // строкой в самом тесте.
 const svgNS = "http://www.w3.org/2000/svg"
 
-// pulseQuiet это граница молчания: событий не было дольше срока, значит агент
-// молчит, а не работает. Порог грубый и стоит одной константой нарочно, его
-// ещё двигать по ощущениям.
+// pulseQuiet это граница молчания: записей в транскрипте не было дольше срока.
+// Порог грубый и стоит одной константой нарочно, его ещё двигать по ощущениям.
 const pulseQuiet = 60 * time.Second
+
+// pulseHeld это срок, в течение которого незакрытый вызов инструмента считается
+// работой. Одним pulseQuiet работу не померить: `go test ./...` идёт две минуты
+// и в транскрипт всё это время не пишет ничего, а агент за ним занят. Мера та
+// же, что у занятости сессии (sessionBusy): вызов без ответа старше получаса
+// это брошенный хвост закрытого окна, а не работа.
+const pulseHeld = 30 * time.Minute
 
 // pulseTail это сколько байт хвоста транскрипта читается ради последнего
 // события: запись хода бывает длинной, но десятка кусков хватает, чтобы найти
@@ -88,6 +94,10 @@ type PulseAgent struct {
 	// WaitSince это момент, с которого ждут ответа. Пусто у всех, кроме
 	// ждущего: у работающего и простаивающего ждать нечего.
 	WaitSince int64 `json:"wait_since,omitempty"`
+	// Held говорит, что работа видна не свежей записью, а вызовом инструмента
+	// без ответа: агент занят долгой командой, и в журнал он всё это время не
+	// пишет. Экран подписывает такой ход «идёт», а не давностью молчания.
+	Held bool `json:"held,omitempty"`
 	// Own говорит, что это тот самый разговор, который открыт в панели.
 	Own  bool   `json:"own,omitempty"`
 	Task string `json:"task,omitempty"`
@@ -102,12 +112,18 @@ type Pulse struct {
 	// Phase это фаза, которая идёт прямо сейчас, словом. Пусто у задачи, чей
 	// этап не отмечен, и у разговора без задачи.
 	Phase string `json:"phase,omitempty"`
-	// Flow говорит, текут ли события: последнее моложе pulseQuiet. По нему
-	// бежит дуга поверх сегментов.
+	// Flow говорит, работает ли хоть кто-то: по нему бежит дуга поверх
+	// сегментов. Считается он по агентам, а не по свежести последней записи:
+	// запись бывает свежей и у разговора, которому только что ответил человек.
 	Flow bool `json:"flow"`
-	// Count это агентов в чатах задачи, Waiting из них ждущих человека.
+	// Count это агентов в чатах задачи, а Working, Waiting и Idle разбивка по
+	// состояниям. Разбивка тут не украшение: одно число на всех врало, потому
+	// что простаивающий второй час разговор оно считало наравне с работающим,
+	// и «два агента» в середине кольца читалось как «двое работают».
 	Count   int `json:"count"`
+	Working int `json:"working"`
 	Waiting int `json:"waiting,omitempty"`
+	Idle    int `json:"idle,omitempty"`
 	// About и Since это чем занят и когда последний раз подавал голос тот
 	// агент, по которому подписана шапка: самый свежий из живых.
 	About string `json:"about,omitempty"`
@@ -208,47 +224,54 @@ func pulseTesting(about string) bool {
 	return false
 }
 
-// pulseArg вытаскивает из вызова инструмента то, чем он подписывается на
-// экране: команду у Bash, путь у чтения и правки, заказ у делегирования.
-var pulseArgKeys = []string{"command", "file_path", "pattern", "path", "prompt", "description"}
-
+// pulseArg подписывает вызов инструмента тем же разбором, каким его подписывает
+// лента: главный довод вызова (команда, файл, шаблон), а при его отсутствии
+// пояснение хода словами. Второго словаря полей тут не заводится: разъехавшись
+// с лентой, подпись в кольце звала бы ход иначе, чем запись под ним.
 func pulseArg(input map[string]any) string {
-	for _, key := range pulseArgKeys {
-		v, ok := input[key].(string)
-		if !ok || strings.TrimSpace(v) == "" {
-			continue
-		}
-		return truncate(strings.Join(strings.Fields(v), " "), 48)
+	said := toolNote(input)
+	if said == "" {
+		said = toolAbout(input)
 	}
-	return ""
+	return truncate(said, 52)
 }
 
-// pulseSeen читает хвост транскрипта: когда там было последнее событие и чем
-// агент занят. Инструмент берётся последний по файлу, потому что именно он и
-// идёт прямо сейчас, пока ответа на него нет.
-func pulseSeen(path string) (time.Time, string) {
+// pulseStep это то, что видно в хвосте журнала: когда там была последняя
+// запись, чем занят агент и висит ли незакрытый вызов инструмента. Последнее и
+// отличает долгую команду от молчания.
+type pulseStep struct {
+	At    time.Time
+	About string
+	Held  bool
+}
+
+// pulseSeen читает хвост транскрипта: когда там было последнее событие, чем
+// агент занят и остался ли вызов без ответа. Инструмент берётся последний
+// открытый, а когда открытых нет, последний по файлу: именно он и был ходом.
+func pulseSeen(path string) pulseStep {
+	var step pulseStep
 	f, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, ""
+		return step
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return time.Time{}, ""
+		return step
 	}
 	from := int64(0)
 	if fi.Size() > pulseTail {
 		from = fi.Size() - pulseTail
 	}
 	if _, err := f.Seek(from, 0); err != nil {
-		return time.Time{}, ""
+		return step
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return time.Time{}, ""
+		return step
 	}
-	last := time.Time{}
-	about := ""
+	open := map[string]string{}
+	order := []string{}
 	for _, ln := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(ln) == "" {
 			continue
@@ -262,50 +285,86 @@ func pulseSeen(path string) (time.Time, string) {
 		if json.Unmarshal([]byte(ln), &rec) != nil {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil && at.After(last) {
-			last = at
+		if at, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil && at.After(step.At) {
+			step.At = at
 		}
 		var blocks []struct {
-			Type  string         `json:"type"`
-			Name  string         `json:"name"`
-			Input map[string]any `json:"input"`
+			Type      string         `json:"type"`
+			ID        string         `json:"id"`
+			ToolUseID string         `json:"tool_use_id"`
+			Name      string         `json:"name"`
+			Input     map[string]any `json:"input"`
 		}
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
 			continue
 		}
 		for _, b := range blocks {
-			if b.Type != "tool_use" || b.Name == "" {
-				continue
+			switch b.Type {
+			case "tool_use":
+				if b.Name == "" {
+					continue
+				}
+				step.About = strings.TrimSpace(b.Name + " " + pulseArg(b.Input))
+				if b.ID != "" {
+					open[b.ID] = step.About
+					order = append(order, b.ID)
+				}
+			case "tool_result":
+				delete(open, b.ToolUseID)
 			}
-			about = strings.TrimSpace(b.Name + " " + pulseArg(b.Input))
 		}
 	}
-	return last, about
+	// Незакрытый вызов старше остальных описывает ход точнее последней записи:
+	// пока команда идёт, ответа на неё нет, а после неё в журнале успевает
+	// появиться чужая запись.
+	for i := len(order) - 1; i >= 0; i-- {
+		if said, hit := open[order[i]]; hit {
+			step.About, step.Held = said, true
+			break
+		}
+	}
+	return step
 }
 
 // pulseTrace дочитывает боковые журналы субагентов. Пока сессия ждёт Task, её
-// собственный транскрипт молчит минутами, и без этого дочитывания работающий
-// агент выходил бы молчащим (та же находка, что у ленты разговора).
-func pulseTrace(path string) (time.Time, string) {
-	last, about := pulseSeen(path)
+// собственный транскрипт держит один незакрытый вызов и молчит минутами, и без
+// этого дочитывания работающий агент выходил бы молчащим (та же находка, что у
+// ленты разговора). Ход субагента и подписывается им: «субагент <заказ>: Bash
+// go test» говорит, кто именно занят, а «Task» в шапке не говорит ничего.
+func pulseTrace(path string) pulseStep {
+	step := pulseSeen(path)
 	dir := subDir(path)
 	items, err := os.ReadDir(dir)
 	if err != nil {
-		return last, about
+		return step
+	}
+	labels := subLogs(path)
+	names := map[string]string{}
+	for _, rec := range labels {
+		names[rec.File] = rec.Label
 	}
 	for _, it := range items {
 		if it.IsDir() || !strings.HasSuffix(it.Name(), ".jsonl") {
 			continue
 		}
-		at, said := pulseSeen(filepath.Join(dir, it.Name()))
-		if at.After(last) {
-			last = at
-			if said != "" {
-				about = said
-			}
+		file := filepath.Join(dir, it.Name())
+		sub := pulseSeen(file)
+		if !sub.At.After(step.At) {
+			continue
+		}
+		step.At = sub.At
+		if sub.About == "" {
+			continue
+		}
+		step.About, step.Held = sub.About, sub.Held
+		if name := names[file]; name != "" {
+			// Имя субагента режется коротко: строка списка узкая, и заказ
+			// целиком не оставил бы места самому ходу, ради которого строка и
+			// нужна.
+			step.About = truncate(name, 22) + ": " + step.About
 		}
 	}
-	return last, about
+	return step
 }
 
 // pulseName подписывает разговор в списке кольца: имя tmux-сессии говорит про
@@ -387,7 +446,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	for _, f := range sessionFiles(s.transcriptRoots(), found.Path) {
 		paths[f.ID] = f.path
 	}
-	fresh := time.Time{}
+	last := time.Time{}
 	testing := false
 	for _, e := range s.chatEntries(found.Path, chatListLimit) {
 		// Кольцо считает агентов задачи, а без задачи в адресе один открытый
@@ -402,19 +461,26 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		if e.State != chatLive && e.State != chatVscode {
 			continue
 		}
-		at, about := time.Time{}, ""
+		step := pulseStep{}
 		if p, ok := paths[e.ID]; ok {
-			at, about = pulseTrace(p)
+			step = pulseTrace(p)
 		}
 		a := PulseAgent{Session: e.ID, Name: pulseName(e), Title: pulseTitle(e),
-			About: about, State: pulseIdle, Own: e.ID == sid}
+			About: step.About, State: pulseIdle, Own: e.ID == sid}
 		if len(e.Tasks) > 0 {
 			a.Task = e.Tasks[0]
 		}
-		if !at.IsZero() {
-			a.Since = at.Unix()
-			if now.Sub(at) < pulseQuiet {
+		if !step.At.IsZero() {
+			a.Since = step.At.Unix()
+			// Работой считается свежая запись либо вызов инструмента, на
+			// который ещё нет ответа: длинная команда пишет в журнал один раз
+			// и молчит до конца, и по одной свежести она неотличима от
+			// брошенной сессии.
+			fresh := now.Sub(step.At) < pulseQuiet
+			held := step.Held && now.Sub(step.At) < pulseHeld
+			if fresh || held {
 				a.State = pulseWork
+				a.Held = step.Held && !fresh
 			}
 		}
 		// Ждёт та сессия, которой вопрос и адресован. Работа тут не спорит с
@@ -423,12 +489,12 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		if pulseWaits(ask, asking, e.ID) {
 			a.State, a.WaitSince = pulseWait, ask.Since
 		}
-		if at.After(fresh) {
-			fresh = at
-			if about != "" {
-				out.About = about
+		if step.At.After(last) {
+			last = step.At
+			if step.About != "" {
+				out.About = step.About
 			}
-			if pulseTesting(about) {
+			if pulseTesting(step.About) {
 				testing = true
 			}
 		}
@@ -436,9 +502,8 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.SliceStable(out.Agents, func(i, j int) bool { return out.Agents[i].Since > out.Agents[j].Since })
 	out.Count = len(out.Agents)
-	if !fresh.IsZero() {
-		out.Since = fresh.Unix()
-		out.Flow = now.Sub(fresh) < pulseQuiet
+	if !last.IsZero() {
+		out.Since = last.Unix()
 	}
 
 	if rowHit {
@@ -448,19 +513,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	}
 	if asking {
 		out.Wait = &ask
-		for i := range out.Agents {
-			if out.Agents[i].State == pulseWait {
-				out.Waiting++
-			}
-		}
-		// Ждущей сессии в списке может не быть вовсе: вопрос задал закрывшийся
-		// заход, а у парковки сессии нет по смыслу. Ждёт тогда сама строка, и
-		// это один ждущий, а не ноль.
-		if out.Waiting == 0 {
-			out.Waiting = 1
-		}
 	}
-
 	// Открытый разговор отвечает за себя: его состояние и ожидание считаются по
 	// нему, а не по соседям с той же задачи.
 	for i := range out.Agents {
@@ -480,12 +533,32 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		out.Own.State, out.Own.WaitSince = pulseWait, ask.Since
 	}
 
+	// Разбивка считается после того, как открытый разговор разобрался со своим
+	// ожиданием: безадресный вопрос переводит его в ждущие уже здесь.
+	for _, a := range out.Agents {
+		switch a.State {
+		case pulseWork:
+			out.Working++
+		case pulseWait:
+			out.Waiting++
+		default:
+			out.Idle++
+		}
+	}
+	// Ждущей сессии в списке может не быть вовсе: вопрос задал закрывшийся
+	// заход, а у парковки сессии нет по смыслу. Ждёт тогда сама строка, и это
+	// один ждущий, а не ноль.
+	if asking && out.Waiting == 0 {
+		out.Waiting = 1
+	}
+	out.Flow = out.Working > 0
+
 	switch {
 	case asking:
 		out.State = pulseWait
 	case out.Count == 0:
 		out.State = pulseEmpty
-	case out.Flow:
+	case out.Working > 0:
 		out.State = pulseWork
 	default:
 		out.State = pulseHush

@@ -22,7 +22,7 @@ const now = Math.floor(Date.now() / 1000);
 // Четыре состояния кольца, как их отдаёт ручка-агрегат /pulse.
 const pulses = {
   working: {
-    task: "XR-1", state: "working", flow: true, count: 2, quiet: 60,
+    task: "XR-1", state: "working", flow: true, count: 2, working: 1, idle: 1, quiet: 60,
     phase: "тесты", about: "Bash go test ./tools/...", since: now - 12,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: false, now: true },
@@ -39,7 +39,7 @@ const pulses = {
     ],
   },
   waiting: {
-    task: "XR-1", state: "waiting", flow: false, count: 1, waiting: 1, quiet: 60,
+    task: "XR-1", state: "waiting", flow: false, count: 1, working: 0, waiting: 1, quiet: 60,
     phase: "код", since: now - 240,
     wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 240 },
     phases: [
@@ -54,7 +54,7 @@ const pulses = {
       state: "waiting", since: now - 240, wait_since: now - 240 }],
   },
   silent: {
-    task: "XR-1", state: "silent", flow: false, count: 1, quiet: 60,
+    task: "XR-1", state: "silent", flow: false, count: 1, working: 0, idle: 1, quiet: 60,
     phase: "ревью", about: "Bash go build", since: now - 840,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: true },
@@ -70,7 +70,7 @@ const pulses = {
   // Ровно этот случай и врал прежде: шапка работающего чата говорила про
   // вопрос, которого в его ленте не было.
   neighbour: {
-    task: "XR-1", state: "waiting", flow: true, count: 2, waiting: 1, quiet: 60,
+    task: "XR-1", state: "waiting", flow: true, count: 2, working: 1, waiting: 1, quiet: 60,
     phase: "код", about: "Bash go build", since: now - 27,
     wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 7320 },
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
@@ -88,7 +88,7 @@ const pulses = {
     ],
   },
   empty: {
-    task: "XR-1", state: "empty", flow: false, count: 0, quiet: 60,
+    task: "XR-1", state: "empty", flow: false, count: 0, working: 0, quiet: 60,
     phases: [
       { name: "код", done: false }, { name: "тесты", done: false },
       { name: "ревью", done: false }, { name: "слияние", done: false },
@@ -119,6 +119,10 @@ async function headOf(which) {
   const head = sandbox.chatHead("demo", st);
   await settle();
   return head;
+}
+
+function pulseRingOf(p) {
+  return sandbox.pulseRing("demo", p);
 }
 
 function ringOf(head) {
@@ -157,8 +161,26 @@ function ringOf(head) {
     if (!(offs[i] < offs[i - 1])) fail("сегменты стоят друг на друге: " + JSON.stringify(offs));
   }
   if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
+  // Пройденных фаз у задачи может не быть ни одной: запись этапов пустая, и
+  // кольцо тогда честно показывает одну идущую фазу, а не выдуманный прогресс.
+  const bare = allByClass(pulseRingOf({ state: "working", working: 1, count: 1,
+    phases: [{ name: "код", done: false, now: true }, { name: "тесты", done: false },
+      { name: "ревью", done: false }, { name: "слияние", done: false },
+      { name: "выкат", done: false }], agents: [] }), "seg");
+  if (bare.filter((x) => String(x.className).includes("on")).length !== 0) {
+    fail("кольцо без записи этапов притворилось прогрессом");
+  }
+  if (bare.filter((x) => String(x.className).includes("here")).length !== 1) {
+    fail("идущая фаза не размечена: " + bare.map((x) => x.className).join(", "));
+  }
+  // В середине работающие, а не все: второй разговор задачи простаивает, и
+  // сложенный с работающим он врал бы, что работа кипит вдвоём.
   const num = byClass(wrap, "rnum");
-  if (!num || num.textContent !== "2") fail("в середине не число агентов: " + (num && num.textContent));
+  if (!num || num.textContent !== "1") fail("в середине не число работающих: " + (num && num.textContent));
+  const tip = String(wrap.title || "");
+  if (!tip.includes("1 работает") || !tip.includes("1 простаивает")) {
+    fail("подпись кольца не назвала разбивку: " + tip);
+  }
 }
 
 // --- ожидание: красное кольцо, ореол и число ждущих ---
@@ -182,6 +204,10 @@ function ringOf(head) {
   const head = await headOf("silent");
   const wrap = ringOf(head);
   if (!String(wrap.className).includes("r-silent")) fail("молчание не назвалось классом: " + wrap.className);
+  if (byClass(wrap, "rnum")) fail("у молчащего кольца стоит число работающих");
+  if (!String(wrap.title || "").includes("1 простаивает")) {
+    fail("подпись молчащего кольца не назвала простой: " + wrap.title);
+  }
   const cts = byClass(head, "cts");
   if (!dump(cts).includes("простаивает") || !dump(cts).includes("последний ход")) {
     fail("строка состояния не сказала про простой: " + dump(cts));
@@ -221,7 +247,7 @@ function ringOf(head) {
   if (!dump(rows[1]).includes("Второй чат задачи")) {
     fail("в строке агента нет предмета разговора: " + dump(rows[1]));
   }
-  if (!dump(rows[0]).includes("(открыт)")) fail("открытый разговор в списке не помечен: " + dump(rows[0]));
+  if (!byClass(rows[0], "pown")) fail("открытый разговор в списке не помечен: " + dump(rows[0]));
   if (!dump(pop).includes("клик по строке открывает разговор")) fail("подвала списка нет");
   const was = moves.length;
   rows[1].handlers.click({ stopPropagation: () => {} });
@@ -231,6 +257,29 @@ function ringOf(head) {
   // На таче наведения нет, и список открывается нажатием на само кольцо.
   wrap.handlers.click({ stopPropagation: () => {} });
   if (!String(wrap.className).includes("open")) fail("нажатие не открыло список на таче");
+}
+
+// --- долгий ход: команда идёт две минуты, и это работа, а не молчание ---
+{
+  const held = {
+    task: "XR-1", state: "working", flow: true, count: 1, working: 1, quiet: 60,
+    phase: "тесты", about: "Bash go test ./tools/...", since: now - 132,
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
+      held: true, about: "Bash go test ./tools/...", since: now - 132 },
+    phases: [{ name: "код", done: true }, { name: "тесты", done: false, now: true },
+      { name: "ревью", done: false }, { name: "слияние", done: false },
+      { name: "выкат", done: false }],
+    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+      state: "working", held: true, about: "Bash go test ./tools/...", since: now - 132 }],
+  };
+  pulses.held = held;
+  const head = await headOf("held");
+  const cts = byClass(head, "cts");
+  if (!dump(cts).includes("идёт 2 мин")) {
+    fail("долгий ход подписан молчанием, а не ходом: " + dump(cts));
+  }
+  const rows = allByClass(byClass(ringOf(head), "pop"), "prow");
+  if (!dump(rows[0]).includes("идёт 2 мин")) fail("в списке долгий ход не назван ходом: " + dump(rows[0]));
 }
 
 // --- ждёт соседняя сессия: кольцо красное, а слова открытого чата про работу ---

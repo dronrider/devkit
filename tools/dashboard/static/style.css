@@ -792,9 +792,14 @@ a:hover{text-decoration:underline}
 .rslot{flex:none;display:flex;align-items:center}
 .ringwrap{position:relative;flex:none;width:36px;height:36px;cursor:pointer}
 .ring{display:block;width:36px;height:36px;overflow:visible}
-.ring .bg{stroke:var(--bg3)}
-.ring .seg{stroke:var(--bg3)}
+.ring .bg{stroke:none}
+/* Непройденная фаза это разметка, а не пустота: цветом подложки она сливалась
+   с фоном, и сегментов на кольце было не разглядеть вовсе. Идущая фаза светится
+   акцентом: пройденных фаз у задачи может не быть ни одной (запись этапов
+   пустая), и тогда единственное, что кольцо честно знает, это где мы сейчас. */
+.ring .seg{stroke:var(--line2)}
 .ring .seg.on{stroke:var(--run)}
+.ring .seg.here{stroke:var(--acc)}
 .ring .comet{stroke:none}
 .ring .halo{stroke:none}
 .rnum{font:600 12px var(--mono);fill:var(--tx)}
@@ -805,12 +810,12 @@ a:hover{text-decoration:underline}
 .r-waiting .seg.here{stroke:var(--block)}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
-.r-silent .seg.on{stroke:var(--tx3)}
-.r-empty .seg,.r-empty .seg.on{stroke:var(--bg3)}
+.r-silent .seg.on,.r-silent .seg.here{stroke:var(--tx3)}
+.r-empty .seg,.r-empty .seg.on,.r-empty .seg.here{stroke:var(--bg3)}
 @keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-94.25}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
-.ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:262px;max-width:340px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
+.ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:300px;max-width:394px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
 .ringwrap:hover .pop,.ringwrap.open .pop{display:block}
 .prow{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer;min-width:0}
 .prow:hover{background:var(--bg2)}
@@ -819,8 +824,13 @@ a:hover{text-decoration:underline}
 .pwho{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .pwho b{font:600 11.5px var(--mono);color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ptitle{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prow .pwhat{flex:none;max-width:46%;display:flex;flex-direction:column;gap:2px;align-items:flex-end;padding-left:10px;font:400 11px var(--mono);color:var(--tx3);text-align:right}
-.prow .pwhat span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+/* Занятие агента стоит третьей строкой и переносится по словам: колонкой
+   справа моноширинная команда и имя захода отнимали ширину друг у друга и
+   резались оба, а обрубок «Bash go test ./tool...» не говорит ни что запущено,
+   ни давно ли. */
+.prow .pwhat{margin-top:3px;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere}
+.pown{flex:none;font:600 9.5px var(--sans);letter-spacing:0.06em;text-transform:uppercase;color:var(--acc)}
+.pname{display:flex;align-items:baseline;gap:6px;min-width:0}
 .pfrom{color:var(--tx3);opacity:0.75}
 .pdot.p-working{background:var(--run)}
 .pdot.p-waiting{background:var(--block)}

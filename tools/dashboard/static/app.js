@@ -5022,7 +5022,7 @@ function pulseSubject(p) {
   if (!p) return null;
   if (!p.own) return p;
   return { state: p.own.state, about: p.own.about, since: p.own.since,
-    wait: p.own_wait, wait_since: p.own.wait_since, phase: p.phase };
+    held: p.own.held, wait: p.own_wait, wait_since: p.own.wait_since, phase: p.phase };
 }
 
 function pulseWords(p, now) {
@@ -5041,7 +5041,11 @@ function pulseWords(p, now) {
       .filter(Boolean).join(" | ");
   }
   const age = pulseAge(it.since, now);
-  return [it.phase ? "фаза " + it.phase : "", it.about, age ? age + " назад" : ""]
+  // Ход, который идёт прямо сейчас, подписан «идёт», а не давностью: у долгой
+  // команды в журнале одна запись в начале, и «две минуты назад» читалось бы
+  // как «агент замолчал», тогда как он занят ровно этой командой.
+  const when = it.held ? "идёт " + age : age + " назад";
+  return [it.phase ? "фаза " + it.phase : "", it.about, age ? when : ""]
     .filter(Boolean).join(" | ");
 }
 
@@ -5055,7 +5059,7 @@ function pulseAgentWords(a, now) {
   }
   const age = pulseAge(a.since, now);
   if (a.state === "silent" || a.state === "idle") return "простаивает" + (age ? " " + age : "");
-  return [a.about, age].filter(Boolean).join(" | ");
+  return [a.about, age ? (a.held ? "идёт " + age : age) : ""].filter(Boolean).join(" | ");
 }
 
 // С какого момента ждут: человеку нужен не только срок, но и час, с которого
@@ -5114,15 +5118,20 @@ function pulseRing(project, p) {
   });
   g.append(comet);
   box.append(g);
-  if (p && p.count > 0) {
-    const num = svgEl("text", "rnum");
-    svgAttrs(num, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
-    num.textContent = String(p.state === "waiting" ? (p.waiting || p.count) : p.count);
-    box.append(num);
+  // В середине стоят работающие, а у ждущего кольца ждущие. Простаивающие
+  // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
+  // как второй разговор задачи стоит без хода второй час. Видно их цветом
+  // строки в списке и подписью кольца.
+  const num = ringNumber(p);
+  if (num) {
+    const node = svgEl("text", "rnum");
+    svgAttrs(node, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
+    node.textContent = num;
+    box.append(node);
   }
   wrap.append(box);
   wrap.append(ringPop(project, p));
-  const tip = pulseWords(p, Date.now());
+  const tip = ringTally(p) + ". " + pulseWords(p, Date.now());
   wrap.setAttribute("aria-label", tip);
   wrap.title = tip;
   // На таче наведения нет, и список открывается нажатием на само кольцо.
@@ -5131,6 +5140,23 @@ function pulseRing(project, p) {
     wrap.classList.toggle("open");
   });
   return wrap;
+}
+
+function ringNumber(p) {
+  if (!p) return "";
+  if (p.state === "waiting") return String(p.waiting || 1);
+  return p.working > 0 ? String(p.working) : "";
+}
+
+// Подпись кольца: сколько кого. Число в середине говорит про работающих, и без
+// подписи человек не узнал бы, что рядом стоит второй разговор той же задачи.
+function ringTally(p) {
+  if (!p || !p.count) return "живых сессий нет";
+  const bits = [];
+  if (p.working) bits.push(p.working + " " + plural(p.working, "работает", "работают", "работают"));
+  if (p.waiting) bits.push(p.waiting + " " + plural(p.waiting, "ждёт ответа", "ждут ответа", "ждут ответа"));
+  if (p.idle) bits.push(p.idle + " " + plural(p.idle, "простаивает", "простаивают", "простаивают"));
+  return bits.join(", ") || p.count + " " + plural(p.count, "разговор", "разговора", "разговоров");
 }
 
 // Всплывающий список агентов задачи. Строка ведёт в свой разговор: кольцо тут
@@ -5147,16 +5173,24 @@ function ringPop(project, p) {
     const row = el("div", "prow" + (a.own ? " own" : ""));
     row.append(el("span", "pdot p-" + a.state));
     const who = el("div", "pwho");
-    who.append(el("b", "", a.name + (a.own ? " (открыт)" : "")));
+    const name = el("div", "pname");
+    name.append(el("b", "", a.name));
+    // Пометка открытого разговора стоит отдельным словом, а не приписью к
+    // имени: приписанная, она резалась вместе с ним и пропадала первой.
+    if (a.own) name.append(el("span", "pown", "открыт"));
+    who.append(name);
     // Предмет разговора второй строкой: два чата одной задачи различаются
     // только им, и без него человек спрашивает, откуда в кольце второй агент.
     if (a.title) who.append(el("span", "ptitle", a.title));
-    row.append(who);
+    // Занятие идёт третьей строкой, а не колонкой справа: в двух колонках
+    // моноширинная команда и имя захода отнимали ширину друг у друга, и
+    // резались оба.
     const what = el("div", "pwhat");
     what.append(el("span", "", pulseAgentWords(a, now)));
     const from = pulseAgentSince(a);
-    if (from) what.append(el("span", "pfrom", from));
-    row.append(what);
+    if (from) what.append(el("span", "pfrom", " " + from));
+    who.append(what);
+    row.append(who);
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
       switchChat(a.session);

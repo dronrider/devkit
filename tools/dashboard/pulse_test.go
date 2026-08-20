@@ -102,6 +102,15 @@ func pulseTranscript(at time.Time, tool, arg string) string {
 // Признак ожидания и запись этапа помечены местным временем без зоны, как их
 // пишет конвейер, поэтому «сейчас» у стенда тоже местное.
 
+// pulseHeldTranscript собирает транскрипт, где вызов инструмента ушёл, а ответа
+// на него ещё нет: ровно так выглядит агент посреди долгой команды.
+func pulseHeldTranscript(at time.Time, tool, arg string) string {
+	stamp := at.UTC().Format(time.RFC3339)
+	return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"выполни XR-1"},"timestamp":%q,"gitBranch":"main"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":%q,"input":{"command":%q}}]},"timestamp":%q}
+`, stamp, tool, arg, stamp)
+}
+
 // pulseEnv поднимает окружение с доской pulseBoardJSON и заданным «сейчас».
 func pulseEnv(t *testing.T, now time.Time) (*testEnv, *http.Client) {
 	t.Helper()
@@ -425,4 +434,82 @@ func TestStaticPulseRing(t *testing.T) {
 		t.Fatalf("кольцо агентов: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Долгая команда это работа, а не молчание: `go test ./...` идёт две минуты и
+// в журнал всё это время не пишет, а вызов стоит без ответа. Прежде такой агент
+// выходил простаивающим, и кольцо серело посреди работы.
+func TestPulseHeldToolCountsAsWork(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	began := now.Add(-3 * time.Minute)
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		pulseHeldTranscript(began, "Bash", "go test ./tools/..."), began)
+	writeBinds(t, e.home, bindRecord("2026-08-20T11:50:00", "aaa-1", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.State != pulseWork {
+		t.Fatalf("состояние кольца %q, ждал работу: вызов стоит без ответа", p.State)
+	}
+	if p.Working != 1 || p.Idle != 0 {
+		t.Errorf("разбивка: работают %d, простаивают %d", p.Working, p.Idle)
+	}
+	if len(p.Agents) != 1 || !p.Agents[0].Held {
+		t.Fatalf("долгий ход не помечен: %+v", p.Agents)
+	}
+	if !strings.Contains(p.Agents[0].About, "go test") {
+		t.Errorf("подпись хода: %q", p.Agents[0].About)
+	}
+	// Брошенный хвост закрытого окна работой не считается: вызов без ответа
+	// старше получаса это не команда, а сессия, которую убили. Транскрипт при
+	// этом тронут недавно, иначе разговор выпал бы из списка живых по своему
+	// сроку и проверять было бы нечего.
+	later := began.Add(pulseHeld + time.Minute)
+	e.s.now = func() time.Time { return later }
+	writeSession(t, e.home, e.proj, "", "aaa-1",
+		pulseHeldTranscript(began, "Bash", "go test ./tools/..."), later.Add(-time.Minute))
+	dead := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if dead.State != pulseHush || dead.Working != 0 {
+		t.Fatalf("брошенный вызов выдан за работу: %q, работают %d", dead.State, dead.Working)
+	}
+}
+
+// Число в середине кольца считает работающих, а простаивающие идут своей
+// строкой разбивки: сложенные вместе они врали, что работа кипит вдвоём, тогда
+// как второй разговор задачи стоит без хода второй час.
+func TestPulseCountsSplitByState(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	work := now.Add(-26 * time.Second)
+	idle := now.Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(work, "Bash", "go build ./..."), work)
+	writeSession(t, e.home, e.proj, "", "bbb-2", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
+	writeBinds(t, e.home,
+		bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
+		bindRecord("2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.Count != 2 || p.Working != 1 || p.Idle != 1 || p.Waiting != 0 {
+		t.Fatalf("разбивка: всего %d, работают %d, простаивают %d, ждут %d",
+			p.Count, p.Working, p.Idle, p.Waiting)
+	}
+	if p.State != pulseWork || !p.Flow {
+		t.Errorf("состояние кольца %q, дуга %v", p.State, p.Flow)
+	}
+}
+
+// Ход подписывается тем же разбором, что и лента: имя инструмента с главным
+// доводом. Прежде подпись брала первое попавшееся поле ввода, и два разных
+// разговора выходили с одинаковым «SendMessage».
+func TestPulseAboutNamesTheStep(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	seen := now.Add(-9 * time.Second)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go test ./tools/..."), seen)
+	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.Agents[0].About != "Bash go test ./tools/..." {
+		t.Fatalf("подпись хода: %q", p.Agents[0].About)
+	}
 }

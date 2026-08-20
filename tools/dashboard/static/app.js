@@ -4708,12 +4708,13 @@ function chatHead(project, st) {
 
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
-  // Показывается то, чем сессия работает на самом деле (модель из транскрипта),
-  // а сохранённый выбор дашборда это лишь заказ на следующий подъём. Разойдись
-  // они, врал бы именно выбор: у чужого окна модель ставят в самом vscode
-  // (замечание 7 седьмого круга POC).
+  // В списке стоит выбранное человеком, и стоит до явной смены. Прежде тут
+  // показывалась модель из транскрипта, и выбор ею затирался на первой же
+  // перерисовке: человек ставил fable, лента приносила ответ прежней модели, и
+  // список откатывался на opus. Фактическая модель никуда не делась, она стоит
+  // пометкой рядом, когда расходится с выбором.
   const live = st.entry ? st.entry.liveModel : "";
-  const cur = live || (st.entry ? st.entry.model || chatModelPref() : chatModelPref());
+  const cur = st.entry ? st.entry.model || chatModelPref() : chatModelPref();
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
   const alien = Boolean(st.entry && st.entry.state === "live" && !st.entry.own);
@@ -4732,8 +4733,8 @@ function chatHead(project, st) {
   if (alien) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
-  } else if (st.entry && st.entry.model && live && st.entry.model !== live) {
-    model.title = "Сейчас работает " + live + ", выбранная " + st.entry.model +
+  } else if (live && live !== cur) {
+    model.title = "Сейчас работает " + live + ", выбранная " + cur +
       " возьмётся на следующем подъёме или резюме.";
   }
   model.addEventListener("change", () => {
@@ -4748,6 +4749,13 @@ function chatHead(project, st) {
       .catch(console.error);
   });
   line.append(model);
+  // Расхождение выбора с фактической моделью названо прямо: молчаливый список
+  // с одним именем неотличим от «работает выбранная».
+  if (live && live !== cur) {
+    const mark = el("span", "cdlive", live);
+    mark.title = model.title;
+    line.append(mark);
+  }
 
   // Переключатель фильтра стоит справа и виден только там, где есть что
   // фильтровать: без задачи в адресе фильтровать нечем, и погашенная кнопка

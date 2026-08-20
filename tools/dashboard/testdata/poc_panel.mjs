@@ -100,6 +100,30 @@ find.value = "роутер";
 find.handlers.input();
 if (!dump(rows).includes("ничего не нашлось")) fail("поиск не сказал про пустую выдачу");
 
+// --- выбор модели живёт до явной смены, фактическая стоит пометкой ---
+// Прежде список показывал модель из транскрипта, и выбор ею затирался: человек
+// ставил fable, ответ приходил прежней моделью, и в списке снова стоял opus.
+{
+  const stPick = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  stPick.entry = Object.assign({}, stPick.entry, { model: "fable", liveModel: "opus" });
+  const headPick = sandbox.chatHead("demo", stPick);
+  const selPick = tag(headPick, "SELECT");
+  const chosen = selPick.children.filter((o) => o.selected).map((o) => o.value);
+  if (chosen.length !== 1 || chosen[0] !== "fable") {
+    fail("выбор человека не устоял против фактической модели: " + JSON.stringify(chosen));
+  }
+  const mark = byClass(headPick, "cdlive");
+  if (!mark || !dump(mark).includes("opus")) {
+    fail("фактическая модель не названа пометкой: " + dump(headPick).slice(0, 200));
+  }
+  // Совпали выбор с фактической, значит и говорить не о чем.
+  const stSame = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  stSame.entry = Object.assign({}, stSame.entry, { model: "opus", liveModel: "opus" });
+  if (byClass(sandbox.chatHead("demo", stSame), "cdlive")) {
+    fail("пометка стоит там, где выбор и фактическая модель одна");
+  }
+}
+
 // --- отправка через собранную панель: тут падало на несобранном echo ---
 {
   const stOld = await sandbox.chatState("demo", "aaaa1111-1111", board);

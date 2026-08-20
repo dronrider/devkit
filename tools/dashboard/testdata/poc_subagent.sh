@@ -75,18 +75,33 @@ bad = [i for i in sub if i["role"] == "thinking" and not i.get("text") and not i
 if bad:
     print("размышлений без текста и без длительности: %d" % len(bad))
     raise SystemExit(1)
-# Записи ленты идут по времени, а не кусками журналов: слияние по меткам это
-# и есть хронология разговора.
-prev, back = "", 0
+# Куски журналов слиты по времени, а не свалены друг за другом: слияние по
+# меткам это и есть хронология разговора. Внутри одного журнала правит порядок
+# записей в файле, а не метка: харнес иногда пишет метку назад (служебная
+# приписка к ответу инструмента датируется раньше самого ответа), и переставлять
+# из-за неё записи одной работы значило бы ломать ход работы ради миллисекунд.
+prev, prevsrc, back = "", None, 0
 for i in items:
     at = i.get("time") or ""
-    if at and prev and at < prev:
+    src = i.get("sub") or ""
+    if at and prev and at < prev and src != prevsrc:
         back += 1
     if at:
-        prev = at
+        prev, prevsrc = at, src
 if back:
-    print("записей не по времени: %d" % back)
+    print("кусков журнала не по времени: %d" % back)
     raise SystemExit(1)
+# Внутри одного куска записи идут в том порядке, в каком легли в файл: ключ
+# «источник:номер» обязан расти, иначе лента переставила работу субагента.
+prevsrc, prevn = None, -1
+for i in items:
+    src, _, num = str(i.get("key") or "").rpartition(":")
+    if not num.isdigit():
+        continue
+    if src == prevsrc and int(num) <= prevn:
+        print("записи одного журнала переставлены: %s после %d" % (i.get("key"), prevn))
+        raise SystemExit(1)
+    prevsrc, prevn = src, int(num)
 # Кусок работы это подряд идущие записи одного бокового журнала: их режет
 # всякая запись самой сессии. Одним куском на всё окно лента быть не должна.
 runs, prev = 0, ""

@@ -18,6 +18,9 @@ if (!appPath) {
 
 const fail = (msg) => { console.error(msg); process.exit(1); };
 
+// Связь рвётся по этому флагу: мок fetch бросает исключение на отправке.
+let offline = false;
+
 function makeNode(tag) {
   const node = {
     tagName: String(tag || "div").toUpperCase(),
@@ -208,9 +211,15 @@ const sandbox = {
     documentElement: { style: { setProperty: () => {} } },
   },
   window: {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    removeEventListener: () => {},
+    // Слушатели окна тут не выброшены нарочно: очередь исходящих дожимает
+    // неушедшее по событию online, и без записи слушателя это не проверить.
+    listeners: {},
+    addEventListener: (name, fn) => { (sandbox.window.listeners[name] ||= []).push(fn); },
+    removeEventListener: (name, fn) => {
+      const list = sandbox.window.listeners[name] || [];
+      const at = list.indexOf(fn);
+      if (at >= 0) list.splice(at, 1);
+    },
     innerWidth: 1400,
     matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
     prompt: () => null,
@@ -237,6 +246,11 @@ const sandbox = {
   fetch: (path, init) => {
     asked.push(path);
     if (init && init.method === "POST") posted.push(path);
+    // Обрыв связи это не ответ со статусом, а исключение fetch: ровно так его
+    // видно с телефона в авиарежиме, и очередь обязана его пережить.
+    if (offline && init && init.method === "POST") {
+      return Promise.reject(new Error("сети нет"));
+    }
     if (path.includes("/sessions?task=")) {
       return reply(sessionNote ? { sessions, note: sessionNote } : { sessions });
     }
@@ -463,6 +477,53 @@ if (!dump(emptyAnchor).includes("просмотрено 12 транскрипт�
 }
 chatRegistry = emptyReg;
 chatsNote = wasNote;
+
+// --- очередь исходящих: неушедшее переживает перезагрузку и дожимается само ---
+{
+  chatRegistry = emptyReg;
+  chatsNote = "";
+  st = await sandbox.chatState("demo", mine.id, board);
+  offline = true;
+  posted.length = 0;
+  const p1 = sandbox.chatPanel("demo", st);
+  const ta1 = tag(p1, "TEXTAREA");
+  ta1.value = "дожми это";
+  button(p1, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!dump(p1).includes("не ушло, дожимаю")) {
+    fail("неушедшая реплика не сказала про автодожим: " + dump(p1));
+  }
+  if (!dump(p1).includes("повторить")) {
+    fail("кнопка ручного повтора пропала вместе с автодожимом: " + dump(p1));
+  }
+  const saved = store.get("devkit.chat.pend.demo/" + mine.id);
+  if (!saved || !saved.includes("дожми это")) {
+    fail("неушедшая реплика не легла в память браузера: " + saved);
+  }
+
+  // Перезагрузка страницы: панель собирается заново, и пузырь возвращается.
+  sandbox.closeChatLive();
+  const p2 = sandbox.chatPanel("demo", st);
+  await settle();
+  if (!dump(p2).includes("дожми это")) {
+    fail("после перезагрузки неушедшая реплика потерялась: " + dump(p2));
+  }
+
+  // Связь вернулась: событие online дожимает очередь, ждать отсчёта не надо.
+  offline = false;
+  posted.length = 0;
+  for (const fn of sandbox.window.listeners.online || []) fn();
+  await settle();
+  if (!posted.some((path) => path.includes("/chats/" + mine.id + "/say"))) {
+    fail("по возвращении связи реплика не ушла сама: " + JSON.stringify(posted));
+  }
+  if (store.get("devkit.chat.pend.demo/" + mine.id)) {
+    fail("ушедшая реплика осталась в очереди: " + store.get("devkit.chat.pend.demo/" + mine.id));
+  }
+}
+
+console.log("очередь исходящих панели: неушедшее говорит про дожим, переживает перезагрузку" +
+  " и уходит само по возвращении связи");
 
 console.log("список разговоров: состояние, модель и задачи видны, открытый отмечен, поиск" +
   " режет список, переключение заменяет адрес, пустота названа словами сервера");

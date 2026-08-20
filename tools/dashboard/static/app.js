@@ -5684,16 +5684,61 @@ function selPrefix(sel) {
   return '<selection file="' + sel.file + '">\n' + sel.text + "\n</selection>\n";
 }
 
-function makeEcho(project, box, feedBox) {
+// Очередь исходящих панели: неушедшая реплика не пропадает с перезагрузкой и
+// дожимается сама. Пузырь с кнопкой «повторить» остался (человек вправе
+// дожать руками), но ждать его нажатия дашборд больше не обязан: телефон
+// теряет связь в метро и в лифте, и реплика, набранная там, уходила в никуда,
+// стоило закрыть вкладку.
+//
+// Хранится только неудача: удачно ушедшая реплика живёт журналом разговора на
+// сервере (outbox.go), а «отправляется...» в момент закрытия вкладки редкость,
+// и восстанавливать её значило бы слать второй раз то, что уже уехало.
+const ECHO_KEY = "devkit.chat.pend.";
+// Шаг автодожима: первая пауза короткая, дальше удвоение до потолка, чтобы
+// сутки без связи не обернулись тысячами запросов. Те же числа, что у очереди
+// «Входящих» (OUTBOX_FIRST, OUTBOX_MAX): очередь одна по смыслу.
+const ECHO_FIRST = 2000;
+const ECHO_MAX = 60000;
+
+function echoRead(project, addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ECHO_KEY + project + "/" + addr) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((m) => m && m.text).map((m) => ({
+      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(),
+    }));
+  } catch (err) {
+    // Приватное окно запрещает хранилище: панель тогда живёт без памяти о
+    // неушедшем, но работает.
+    return [];
+  }
+}
+
+function echoWrite(project, addr, list) {
+  try {
+    const keep = list.filter((m) => m.state === "bad")
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born }));
+    if (keep.length) {
+      localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
+    } else {
+      localStorage.removeItem(ECHO_KEY + project + "/" + addr);
+    }
+  } catch (err) {
+    return;
+  }
+}
+
+function makeEcho(project, box, feedBox, addr, resend) {
   // Ключ у местной реплики свой и сквозной: sync рисует ленту по ключам, и
   // без устойчивого ключа пузырь пересобирался бы на каждой перерисовке.
   let seq = 0;
   const mine = [];
+  const save = () => { if (addr) echoWrite(project, addr, mine); };
 
   const draw = () => {
     box.replaceChildren();
     for (const m of mine) {
-      const meta = m.state === "bad" ? "не ушло"
+      const meta = m.state === "bad" ? (stopped ? "не ушло" : "не ушло, дожимаю")
         : m.state === "sent" ? "доставлено" : "отправляется...";
       const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
       wrap.classList.add("m-local", "m-" + m.state);
@@ -5721,10 +5766,73 @@ function makeEcho(project, box, feedBox) {
   const drop = (m) => {
     const at = mine.indexOf(m);
     if (at >= 0) mine.splice(at, 1);
+    save();
     draw();
   };
 
+  // Автодожим: пока в списке есть неушедшее, панель пробует отправку снова по
+  // растущей паузе и без неё по событию online. Заход один, повторные вызовы
+  // он проглатывает: два дожима подряд слали бы один и тот же текст дважды.
+  let timer = null;
+  let wait = ECHO_FIRST;
+  let stopped = false;
+  const pump = () => {
+    if (stopped) return;
+    const bad = mine.filter((m) => m.state === "bad");
+    if (!bad.length) return;
+    for (const m of bad) {
+      const again = m.retry || resend;
+      if (!again) continue;
+      drop(m);
+      again(m.text);
+    }
+  };
+  const plan = () => {
+    if (stopped || timer) return;
+    timer = setTimeout(() => { timer = null; pump(); }, wait);
+    wait = Math.min(wait * 2, ECHO_MAX);
+  };
+  // Вернувшаяся сеть это повод не ждать отсчёта: телефон вышел из метро, и
+  // реплика уходит сразу.
+  const wake = () => {
+    if (stopped) return;
+    wait = ECHO_FIRST;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    pump();
+  };
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("online", wake);
+  }
+
+  // Неушедшее с прошлого захода: перезагрузка страницы больше не теряет
+  // набранное. Выделение и картинка с ним не едут, они живут одним заходом, и
+  // восстановленная реплика уходит словами (POC, замечание про телефон).
+  if (addr) {
+    for (const rec of echoRead(project, addr)) {
+      seq += 1;
+      mine.push({ key: "local-" + seq, text: rec.text, wire: rec.wire,
+        state: "bad", born: rec.born, retry: resend });
+    }
+    if (mine.length) {
+      draw();
+      plan();
+    }
+  }
+
   return {
+    // Уход с панели гасит дожим: вернувшийся человек поднимет его заново, а
+    // два цикла на одну запись слали бы её дважды.
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (typeof window !== "undefined" && window.removeEventListener) {
+        window.removeEventListener("online", wake);
+      }
+    },
     // Пузырь встаёт до похода на сервер: отправка видна мгновенно.
     // wire это то, что ушло агенту (с префиксом выделения), и сверка эха идёт
     // по нему: в транскрипте лежит именно он. text это слова человека, их и
@@ -5743,13 +5851,17 @@ function makeEcho(project, box, feedBox) {
     sent(m) {
       if (!mine.includes(m)) return;
       m.state = "sent";
+      wait = ECHO_FIRST;
+      save();
       draw();
       setTimeout(() => { drop(m); }, ECHO_HOLD);
     },
     bad(m) {
       if (!mine.includes(m)) return;
       m.state = "bad";
+      save();
       draw();
+      plan();
     },
     // Эхо из ленты: та же реплика человека, пришедшая из транскрипта. Сверка по
     // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
@@ -5761,10 +5873,13 @@ function makeEcho(project, box, feedBox) {
       const hit = mine.find((m) => m.text.trim() === said || m.wire.trim() === said);
       if (hit) drop(hit);
     },
+    // Чистка снимает пузыри с экрана, но не из памяти браузера: неушедшее
+    // ждёт там возвращения человека в этот же разговор.
     clear() {
       mine.length = 0;
       draw();
     },
+    pump,
   };
 }
 
@@ -5783,8 +5898,11 @@ function chatPanel(project, st) {
   // они и есть её продолжение, просто эха у них пока нет.
   const pend = el("div", "msgs mlocal");
   wrap.append(feed, pend);
-  const echo = makeEcho(project, pend, feed);
-  chatLive.push(echo.clear);
+  // Дожим неушедшего зовёт ту же отправку, что и кнопка: post объявлен ниже,
+  // и ссылка на него берётся лениво, чтобы очередь поднялась вместе с панелью.
+  const echo = makeEcho(project, pend, feed, st.addr || st.sid,
+    (again) => post(again, null, null));
+  chatLive.push(echo.clear, echo.stop);
 
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));

@@ -70,8 +70,38 @@ function html(node) {
   return "<" + tag + bits.join("") + ">" + own + kids + "</" + tag + ">";
 }
 
+// Страница повторяет настоящую панель разговора: та же обёртка и та же
+// ширина, иначе вёрстка меряется в чужой раскладке. Ширина приходит вторым
+// доводом, замер геометрии третьим («мерка»): он печатает, где стоит кружок и
+// где середина текста заголовка записи.
+const width = process.argv[3] || "900";
+const measure = process.argv[4] === "мерка";
+const probe = `<pre id="geom"></pre><script>
+function lead(row){
+  const head=row.querySelector(".frowb b")||row.querySelector(".frowb");
+  const walk=document.createTreeWalker(head,NodeFilter.SHOW_TEXT);
+  let n;
+  while((n=walk.nextNode())){
+    if(!n.textContent.trim()) continue;
+    const r=document.createRange(); r.selectNodeContents(n);
+    const box=r.getClientRects()[0];
+    if(box&&box.height) return box;
+  }
+  return null;
+}
+const out=[];
+for(const row of document.querySelectorAll(".frow")){
+  const dot=row.querySelector(".fdot").getBoundingClientRect();
+  const box=lead(row);
+  out.push(row.className+" | сдвиг "+(box?((dot.top+dot.height/2)-(box.top+box.bottom)/2).toFixed(1):"-")+
+    " | зазор слева "+(row.querySelector(".frowb").getBoundingClientRect().left-
+      (dot.left+dot.width/2)).toFixed(1));
+}
+document.getElementById("geom").textContent=out.join("\\n");
+</script>`;
+
 process.stdout.write(`<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>лента</title>
 <link rel="stylesheet" href="style.css"></head>
-<body><div class="cpin" style="max-width:760px"><div class="chatwrap">${html(box)}</div></div></body></html>
+<body style="margin:0"><div class="cpanel" style="--cw:${width}px"><div class="cpin"><div class="chatwrap">${html(box)}</div></div></div>${measure ? probe : ""}</body></html>
 `);

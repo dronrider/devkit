@@ -322,7 +322,7 @@ async function feedOf(items, sid) {
   if (card.children.length !== 2) {
     fail("частей у хода " + card.children.length + ", ожидал две: заголовок и блок");
   }
-  const head = byClass(card, "thead");
+  const head = byClass(card, "thline");
   const nameEl = tag(head, "B");
   if (!nameEl || nameEl.textContent !== "Bash") {
     fail("имя инструмента стоит не жирным первым: " + dump(head));

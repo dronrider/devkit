@@ -2012,7 +2012,7 @@ async function renderTask(project, works, id) {
   let touchForm = () => {};
   const touch = () => { touchForm(); };
 
-  const head = el("div", "thead");
+  const head = el("div", "thline");
   head.append(el("span", "idbig", row.id));
   // Правка включается карандашом справа от названия: по умолчанию задача
   // открывается на просмотр, и постановка собрана разметкой, а не лежит сырым
@@ -3365,7 +3365,7 @@ function bashCard(name, call, out) {
   const cmd = call.note || foldPeek(call.text || "", 200);
   const said = out && out.text ? out.text : "";
   const box = el("div", "trow2");
-  const head = el("div", "thead");
+  const head = el("div", "thline");
   head.append(el("b", "", name));
   head.append(el("span", "tabout", call.about || ""));
   box.append(head);
@@ -3385,7 +3385,7 @@ function bashCard(name, call, out) {
 // вовсе: у чтения файла и у поиска смотреть в ленте нечего.
 function toolOneLine(name, sign) {
   const box = el("div", "trow2");
-  const head = el("div", "thead");
+  const head = el("div", "thline");
   head.append(el("b", "", name));
   const lead = el("span", "tcmd", sign);
   lead.title = sign;
@@ -3448,7 +3448,7 @@ const DIFF_LINES = 12;
 // сделано, и сам дифф с подсветкой.
 function toolDiffCard(name, file, said, lines) {
   const box = el("div", "trow2");
-  const head = el("div", "thead");
+  const head = el("div", "thline");
   head.append(el("b", "", name));
   const lead = el("span", "tcmd", file);
   lead.title = file;
@@ -3549,7 +3549,11 @@ function feedRow(node, item, out) {
     dot.title = "субагент: " + item.sub;
     dot.setAttribute("aria-label", dot.title);
   }
-  const body = el("div", "fbody");
+  // Класс тут свой, не общий fbody: тем именем зовётся тело панели файла, и
+  // от него строка ленты получала чужие поля в 14 и 18 пикселей. Отсюда и
+  // расходились кружки на широком экране: у чужого правила своя телефонная
+  // поправка, и высота первой строки записи ехала за шириной окна.
+  const body = el("div", "frowb");
   body.append(node);
   row.append(dot, body);
   return row;
@@ -5816,7 +5820,7 @@ async function renderDraft(project, works, id) {
     key: "draft-head",
     sign: [id, title, running, groomChat ? groomChat.id : ""].join("|"),
     make: () => {
-      const head = el("div", "thead");
+      const head = el("div", "thline");
       head.append(el("span", "idbig", id));
       const name = el("div", "tedit ro dtitle", title || id);
       head.append(name);

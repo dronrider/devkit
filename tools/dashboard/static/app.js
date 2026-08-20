@@ -5501,15 +5501,21 @@ function chatHead(project, st) {
   const sub = el("div", "csub");
   const words = el("span", "cmeta");
   if (st.entry) {
-    // Состояние разговора отсюда снято: его говорят кольцо и строка состояния,
-    // а третьим слово «ждёт реплики» спорило с ними же (агент работает, а
-    // метаданные говорят, что он ждёт). Остаётся то, чего больше нигде нет:
-    // когда разговор шёл, чей он и где живёт.
+    // Приписки под лентой тут больше нет. Время последнего события несёт сама
+    // лента, номер задачи стоит лейблом при названии, а имя tmux-сессии и
+    // боковое дерево человек читает раз в неделю: место в шапке дороже, и
+    // строка «21 августа, 01:57, DK-397, tmux chat-DK-397-1» под названием
+    // только повторяла соседей (замечание пользователя). Всё это осталось
+    // подсказкой на самом названии разговора.
     const bits = [chatWhen(st.entry)];
     if ((st.entry.tasks || []).length) bits.push(st.entry.tasks.join(", "));
     if (st.entry.tree) bits.push(st.entry.tree);
     if (st.entry.tmux) bits.push("tmux " + st.entry.tmux);
-    words.textContent = bits.filter(Boolean).join(", ");
+    const tip = bits.filter(Boolean).join(", ");
+    if (tip) {
+      pick.title = tip;
+      pick.setAttribute("aria-label", chatTitle(st.entry) + ": " + tip);
+    }
   } else if (st.fresh) {
     words.textContent = "новый чат" + (st.task ? " про " + st.task : "") +
       ": первая реплика поднимет сессию";

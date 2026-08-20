@@ -421,6 +421,18 @@ function ringOf(head) {
   if (!dump(cts).includes("последний ход")) fail("не сказано, что ход последний: " + dump(cts));
 }
 
+// --- приписки под названием нет, метаданные ушли в подсказку ---
+{
+  const head = await headOf("working");
+  if (byClass(head, "cmeta")) {
+    fail("приписка под названием вернулась: " + dump(byClass(head, "cmeta")));
+  }
+  const pick = byClass(head, "cdpick");
+  if (!String(pick.title || "").includes("tmux task-XR-1")) {
+    fail("метаданные разговора пропали вместе с припиской: " + pick.title);
+  }
+}
+
 // --- давность словами: секунды ниже минуты, дальше минуты и часы ---
 for (const [ago, want] of [[12, "12 с"], [240, "4 мин"], [4000, "1 ч 6 мин"]]) {
   const said = sandbox.pulseAge(now - ago, now * 1000);

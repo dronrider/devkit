@@ -106,7 +106,11 @@ type PulseAgent struct {
 	// неразличимы (замечание про «почему в кольце два агента»).
 	Title string `json:"title,omitempty"`
 	State string `json:"state"`
+	// Tool это имя инструмента хода, About короткий довод к нему, Sub имя
+	// субагента. Три поля врозь: склеенные, они читались одним предложением.
+	Tool  string `json:"tool,omitempty"`
 	About string `json:"about,omitempty"`
+	Sub   string `json:"sub,omitempty"`
 	Since int64  `json:"since,omitempty"`
 	// WaitSince это момент, с которого ждут ответа. Пусто у всех, кроме
 	// ждущего: у работающего и простаивающего ждать нечего.
@@ -153,7 +157,9 @@ type Pulse struct {
 	Idle    int `json:"idle,omitempty"`
 	// About и Since это чем занят и когда последний раз подавал голос тот
 	// агент, по которому подписана шапка: самый свежий из живых.
+	Tool  string `json:"tool,omitempty"`
 	About string `json:"about,omitempty"`
+	Sub   string `json:"sub,omitempty"`
 	Since int64  `json:"since,omitempty"`
 	// Wait это ожидание строки: вопрос агента (.ask) либо парковка задачи
 	// вопросом. Повод idle_prompt сюда не идёт, он простой, а не вопрос.
@@ -269,8 +275,15 @@ func pulseArg(input map[string]any) string {
 // запись, чем занят агент и висит ли незакрытый вызов инструмента. Последнее и
 // отличает долгую команду от молчания.
 type pulseStep struct {
-	At    time.Time
+	At time.Time
+	// Tool это имя инструмента, About довод хода (команда, файл, пояснение
+	// словами), а Sub имя субагента, если ход его. Три поля врозь, потому что
+	// склеенные в одну строку они читались кашей: «последний ход SendMessage
+	// Кольцо врёт прогрессом: чинить класс» это имя инструмента, слипшееся с
+	// первым предложением реплики (замечание пользователя по снимку).
+	Tool  string
 	About string
+	Sub   string
 	Held  bool
 }
 
@@ -299,7 +312,7 @@ func pulseSeen(path string) pulseStep {
 	if err != nil {
 		return step
 	}
-	open := map[string]string{}
+	open := map[string][2]string{}
 	order := []string{}
 	for _, ln := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(ln) == "" {
@@ -333,9 +346,9 @@ func pulseSeen(path string) pulseStep {
 				if b.Name == "" {
 					continue
 				}
-				step.About = strings.TrimSpace(b.Name + " " + pulseArg(b.Input))
+				step.Tool, step.About = b.Name, pulseArg(b.Input)
 				if b.ID != "" {
-					open[b.ID] = step.About
+					open[b.ID] = [2]string{b.Name, step.About}
 					order = append(order, b.ID)
 				}
 			case "tool_result":
@@ -348,7 +361,7 @@ func pulseSeen(path string) pulseStep {
 	// появиться чужая запись.
 	for i := len(order) - 1; i >= 0; i-- {
 		if said, hit := open[order[i]]; hit {
-			step.About, step.Held = said, true
+			step.Tool, step.About, step.Held = said[0], said[1], true
 			break
 		}
 	}
@@ -382,16 +395,14 @@ func pulseTrace(path string) pulseStep {
 			continue
 		}
 		step.At = sub.At
-		if sub.About == "" {
+		if sub.Tool == "" && sub.About == "" {
 			continue
 		}
-		step.About, step.Held = sub.About, sub.Held
-		if name := names[file]; name != "" {
-			// Имя субагента режется коротко: строка списка узкая, и заказ
-			// целиком не оставил бы места самому ходу, ради которого строка и
-			// нужна.
-			step.About = truncate(name, 22) + ": " + step.About
-		}
+		step.Tool, step.About, step.Held = sub.Tool, sub.About, sub.Held
+		// Имя субагента режется коротко и стоит своим полем: строка узкая, и
+		// заказ целиком не оставил бы места самому ходу, ради которого строка
+		// и нужна.
+		step.Sub = truncate(names[file], 22)
 	}
 	return step
 }
@@ -500,7 +511,8 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 			step = pulseTrace(p)
 		}
 		a := PulseAgent{Session: e.ID, Name: pulseName(e), Title: pulseTitle(e),
-			About: step.About, State: pulseIdle, Own: e.ID == sid}
+			Tool: step.Tool, About: step.About, Sub: step.Sub,
+			State: pulseIdle, Own: e.ID == sid}
 		if len(e.Tasks) > 0 {
 			a.Task = e.Tasks[0]
 		}
@@ -525,10 +537,10 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		}
 		if step.At.After(last) {
 			last = step.At
-			if step.About != "" {
-				out.About = step.About
+			if step.Tool != "" || step.About != "" {
+				out.Tool, out.About, out.Sub = step.Tool, step.About, step.Sub
 			}
-			if pulseTesting(step.About) {
+			if pulseTesting(step.Tool + " " + step.About) {
 				testing = true
 			}
 		}

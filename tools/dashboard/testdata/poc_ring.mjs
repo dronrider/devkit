@@ -87,6 +87,19 @@ const pulses = {
         state: "waiting", since: now - 7320, wait_since: now - 7320 },
     ],
   },
+  // Снимок пользователя: имя инструмента и первое предложение реплики слиплись
+  // в одну кашу («последний ход SendMessage Кольцо врёт прогрессом: чинить
+  // класс»). Поля тут разведены, и стенд держит их врозь.
+  glued: {
+    task: "XR-1", state: "silent", scale: "stages", flow: false, count: 1, working: 0, idle: 1, quiet: 60,
+    phase: "код", tool: "SendMessage", about: "Кольцо врёт прогрессом: чинить класс кружка и подпись",
+    since: now - 120,
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "idle", own: true,
+      tool: "SendMessage", about: "Кольцо врёт прогрессом: чинить класс кружка и подпись",
+      since: now - 120 },
+    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+      state: "idle", tool: "SendMessage", about: "Кольцо врёт прогрессом", since: now - 120 }],
+  },
   empty: {
     task: "XR-1", state: "empty", scale: "stages", flow: false, count: 0, working: 0, quiet: 60,
     phases: [
@@ -385,6 +398,27 @@ function ringOf(head) {
   if (!String(raw.title || "").includes("не нарезана")) {
     fail("не сказано, почему у цели нет шкалы: " + raw.title);
   }
+}
+
+// --- имя инструмента и довод хода не слипаются в одно предложение ---
+{
+  const head = await headOf("glued");
+  const cts = byClass(head, "cts");
+  const tool = byClass(cts, "ctool");
+  const why = byClass(cts, "cwhy");
+  if (!tool || dump(tool).trim() !== "SendMessage") {
+    fail("имя инструмента не стоит своим полем: " + dump(cts));
+  }
+  if (!why || !dump(why).includes("Кольцо врёт прогрессом")) {
+    fail("довода хода нет отдельным полем: " + dump(cts));
+  }
+  if (dump(cts).includes("SendMessage Кольцо")) {
+    fail("имя инструмента слиплось с доводом: " + dump(cts));
+  }
+  if (!byClass(cts, "csep")) fail("поля строки состояния идут без разделителя: " + dump(cts));
+  // Длинный довод режется, а не выдавливает из строки всё остальное.
+  if (dump(why).includes("кружка и подпись")) fail("довод не обрезан по длине: " + dump(why));
+  if (!dump(cts).includes("последний ход")) fail("не сказано, что ход последний: " + dump(cts));
 }
 
 // --- давность словами: секунды ниже минуты, дальше минуты и часы ---

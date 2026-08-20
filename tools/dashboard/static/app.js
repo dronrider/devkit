@@ -5044,46 +5044,117 @@ function pulseSubject(p) {
   // Открытого разговора может не быть вовсе (панель стоит на задаче без чатов),
   // и тогда говорить приходится про кольцо целиком. Слова шкалы в обоих случаях
   // одни: шкала считает задачу, а не разговор.
-  const it = p.own || { state: p.state, about: p.about, since: p.since };
-  return { state: it.state, about: it.about, since: it.since, held: it.held,
+  const it = p.own || { state: p.state, tool: p.tool, about: p.about, sub: p.sub,
+    since: p.since };
+  return { state: it.state, tool: it.tool, about: it.about, sub: it.sub,
+    since: it.since, held: it.held,
     wait: p.own_wait || (p.own ? null : p.wait),
     wait_since: it.wait_since, scale: ringScaleWords(p) };
 }
 
-function pulseWords(p, now) {
+// Сколько довода хода помещается в строку состояния. Сервер режет его до
+// полусотни знаков, и на телефоне этого много: под названием разговора строка
+// одна, и длинный довод выдавливал бы из неё всё остальное.
+const WHY_MAX = 44;
+
+// Обрезка по длине с многоточием из трёх точек: одним символом многоточие
+// писать нельзя (правила символов), а без обрезки длинный довод выдавливает
+// из строки состояния всё остальное.
+function truncate(text, max) {
+  const t = String(text || "");
+  return t.length > max ? t.slice(0, max - 3).trimEnd() + "..." : t;
+}
+
+// Части строки состояния, каждая своим полем. Имя инструмента и довод хода
+// разведены нарочно: склеенные в одно предложение, они читались кашей
+// («последний ход SendMessage Кольцо врёт прогрессом: чинить класс» это имя
+// инструмента, слипшееся с началом реплики), и человек не понимал, где
+// кончается одно и начинается другое.
+function pulseParts(p, now) {
   const it = pulseSubject(p);
-  if (!it || it.state === "empty") return "живых сессий нет";
+  if (!it || it.state === "empty") return [{ text: "живых сессий нет" }];
   if (it.state === "waiting") {
     const from = it.wait_since || (it.wait || {}).since;
     const age = pulseAge(from, now);
-    return ["вопрос человеку", age ? age + " без ответа" : ""].filter(Boolean).join(" | ");
+    return [{ text: "вопрос человеку" }, { text: age ? age + " без ответа" : "" }];
   }
+  // Приставка («последний ход») цепляется к первому непустому полю: у записи
+  // старого харнеса имени инструмента может не быть вовсе, и приставка тогда
+  // пропала бы вместе с ним.
+  const move = (lead) => {
+    const list = [
+      { text: it.sub || "", cls: "csub" },
+      { text: it.tool || "", cls: "ctool" },
+      { text: truncate(it.about || "", WHY_MAX), cls: "cwhy" },
+    ];
+    const head = list.find((x) => x.text);
+    if (head && lead) head.lead = lead;
+    return list;
+  };
   if (it.state === "silent" || it.state === "idle") {
     // Простой это не тишина в эфире, а сессия без хода: она жива и её можно
     // спросить. Слово выбрано так, чтобы его не читали как вопрос человеку.
     const age = pulseAge(it.since, now);
-    return ["простаивает" + (age ? " " + age : ""), it.about ? "последний ход " + it.about : ""]
-      .filter(Boolean).join(" | ");
+    return [{ text: "простаивает" + (age ? " " + age : "") }].concat(
+      it.tool || it.about ? move("последний ход ") : []);
   }
   const age = pulseAge(it.since, now);
   // Ход, который идёт прямо сейчас, подписан «идёт», а не давностью: у долгой
   // команды в журнале одна запись в начале, и «две минуты назад» читалось бы
   // как «агент замолчал», тогда как он занят ровно этой командой.
   const when = it.held ? "идёт " + age : age + " назад";
-  return [it.scale || "", it.about, age ? when : ""].filter(Boolean).join(" | ");
+  return [{ text: it.scale || "" }].concat(move("")).concat([{ text: age ? when : "" }]);
+}
+
+// Те же части одной строкой: подсказка кольца и заголовок окна берут слова,
+// а не разметку.
+function pulseWords(p, now) {
+  return pulseParts(p, now).map((x) => (x.text ? (x.lead || "") + x.text : ""))
+    .filter(Boolean).join(" | ");
+}
+
+// Строка состояния разметкой: каждое поле своим span, между полями своя
+// разделительная черта. Обрезку длинного довода держит и текст (WHY_MAX), и
+// стиль: на узком экране многоточие честнее переноса на вторую строку.
+function pulseFill(box, p, now) {
+  // Текстом строка ставилась до первого пульса («пульс читается...»), и голого
+  // replaceChildren тут мало: узел с текстом остаётся, и слова налезали друг
+  // на друга.
+  box.textContent = "";
+  box.replaceChildren();
+  let first = true;
+  for (const part of pulseParts(p, now)) {
+    if (!part.text) continue;
+    if (!first) box.append(el("span", "csep", "|"));
+    first = false;
+    if (part.lead) box.append(el("span", "clead", part.lead));
+    box.append(el("span", part.cls || "", part.text));
+  }
+  if (first) box.append(el("span", "", "пульс читается..."));
 }
 
 // Чем занят агент строкой списка: работающий назван инструментом и давностью
 // хода, ждущий сроком без ответа, простаивающий сроком простоя. Простой и
 // ожидание тут разные слова нарочно: у первого никто ничего не спрашивал.
-function pulseAgentWords(a, now) {
+function pulseAgentParts(a, now) {
   if (a.state === "waiting") {
     const age = pulseAge(a.wait_since || a.since, now);
-    return ["ждёт ответа", age ? age + " без ответа" : ""].filter(Boolean).join(" | ");
+    return [{ text: "ждёт ответа" }, { text: age ? age + " без ответа" : "" }];
   }
   const age = pulseAge(a.since, now);
-  if (a.state === "silent" || a.state === "idle") return "простаивает" + (age ? " " + age : "");
-  return [a.about, age ? (a.held ? "идёт " + age : age) : ""].filter(Boolean).join(" | ");
+  if (a.state === "silent" || a.state === "idle") {
+    return [{ text: "простаивает" + (age ? " " + age : "") }];
+  }
+  return [
+    { text: a.sub || "", cls: "csub" },
+    { text: a.tool || "", cls: "ctool" },
+    { text: truncate(a.about || "", WHY_MAX), cls: "cwhy" },
+    { text: age ? (a.held ? "идёт " + age : age) : "" },
+  ];
+}
+
+function pulseAgentWords(a, now) {
+  return pulseAgentParts(a, now).map((x) => x.text).filter(Boolean).join(" | ");
 }
 
 // С какого момента ждут: человеку нужен не только срок, но и час, с которого
@@ -5283,7 +5354,11 @@ function ringPop(project, p) {
     // моноширинная команда и имя захода отнимали ширину друг у друга, и
     // резались оба.
     const what = el("div", "pwhat");
-    what.append(el("span", "", pulseAgentWords(a, now)));
+    for (const part of pulseAgentParts(a, now)) {
+      if (!part.text) continue;
+      if (what.children.length) what.append(el("span", "csep", "|"));
+      what.append(el("span", part.cls || "", part.text));
+    }
     const from = pulseAgentSince(a);
     if (from) what.append(el("span", "pfrom", " " + from));
     who.append(what);
@@ -5317,7 +5392,7 @@ function wireRing(project, st, slot, words) {
   const put = (p) => {
     slot.replaceChildren(pulseRing(project, p));
     if (!words) return;
-    words.textContent = pulseWords(p, Date.now());
+    pulseFill(words, p, Date.now());
     // Вопрос, источник и адрес ответа приходят подсказкой той же строки:
     // раньше их носил чип, а место в шапке под третье слово о том же нет.
     const tip = waitChatTip(st, p && p.own_wait);

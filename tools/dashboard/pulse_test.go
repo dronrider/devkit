@@ -170,7 +170,7 @@ func TestPulseWorking(t *testing.T) {
 	if p.Since != seen.Unix() {
 		t.Errorf("момент последнего события %d, ждал %d", p.Since, seen.Unix())
 	}
-	if !strings.Contains(p.About, "go test") {
+	if p.Tool != "Bash" || !strings.Contains(p.About, "go test") {
 		t.Errorf("чем занят агент: %q", p.About)
 	}
 	if p.Phase != phaseTests || p.Scale != scaleStages {
@@ -208,7 +208,7 @@ func TestPulseSilentNotEmpty(t *testing.T) {
 	if p.Count != 1 || p.Agents[0].State != pulseIdle {
 		t.Fatalf("список агентов: %+v", p.Agents)
 	}
-	if !strings.Contains(p.About, "go build") {
+	if p.Tool != "Bash" || !strings.Contains(p.About, "go build") {
 		t.Errorf("последний ход не назван: %q", p.About)
 	}
 }
@@ -475,7 +475,7 @@ func TestPulseHeldToolCountsAsWork(t *testing.T) {
 	if len(p.Agents) != 1 || !p.Agents[0].Held {
 		t.Fatalf("долгий ход не помечен: %+v", p.Agents)
 	}
-	if !strings.Contains(p.Agents[0].About, "go test") {
+	if p.Agents[0].Tool != "Bash" || !strings.Contains(p.Agents[0].About, "go test") {
 		t.Errorf("подпись хода: %q", p.Agents[0].About)
 	}
 	// Брошенный хвост закрытого окна работой не считается: вызов без ответа
@@ -527,8 +527,15 @@ func TestPulseAboutNamesTheStep(t *testing.T) {
 	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
-	if p.Agents[0].About != "Bash go test ./tools/..." {
-		t.Fatalf("подпись хода: %q", p.Agents[0].About)
+	// Имя инструмента и довод хода едут врозь: склеенные в одну строку, они
+	// читались кашей вроде «последний ход SendMessage Кольцо врёт прогрессом:
+	// чинить класс», где имя инструмента не отличить от начала реплики
+	// (замечание пользователя по снимку).
+	if p.Agents[0].Tool != "Bash" || p.Agents[0].About != "go test ./tools/..." {
+		t.Fatalf("подпись хода: инструмент %q, довод %q", p.Agents[0].Tool, p.Agents[0].About)
+	}
+	if strings.Contains(p.Agents[0].About, "Bash") {
+		t.Errorf("имя инструмента затесалось в довод: %q", p.Agents[0].About)
 	}
 }
 

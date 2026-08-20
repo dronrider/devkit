@@ -1412,6 +1412,12 @@ if (!/\.fqbar\{[^}]*display:none/.test(findCSS)) {
 if (!/\.hfbtn\{display:none\}/.test(findCSS) || !/\.hfbtn\{display:flex\}/.test(findCSS)) {
   fail("лупа шапки не отдана телефону: на ноутбуке её место занимает поле");
 }
+// Курсор нажимаемой строки берётся из статики, а не с честного слова стенда:
+// класс без правила это та же стрелка, от которой строка выдачи и читалась
+// подписью (замечание 3 четырнадцатого круга POC).
+if (!/\.srow\.clicky\{cursor:pointer\}/.test(findCSS.replace(/\s+/g, ""))) {
+  fail("у нажимаемой строки нет курсора руки: правила .srow.clicky в статике нет");
+}
 
 // Строка накопителя ведёт на экран записи: разворот текста в строке уступил
 // место одному экрану с текстом, ходом груминга и его исходом.
@@ -1775,6 +1781,64 @@ if (!posted.some((path) => path.includes("/chats/" + mine.id + "/say"))) {
 }
 rows[0].title = "Цель: дашборд без дёрганья";
 sessions = [mine, alien];
+
+// Поиск при открытой панели (замечание 4 четырнадцатого круга POC): набранное в
+// шапке уводит на экран выдачи, а разговор остаётся на месте. Поиск был
+// единственной дорогой, что закрывала чат: первая же буква сносила панель с
+// экрана, и человек терял разговор, пока искал строку для него.
+await go("#demo");
+await go("#demo/chat/XR-1");
+if (panelNode.hidden) fail("панель не открылась перед заходом в поиск");
+const findHq = byId.get("hq");
+timers.length = 0;
+findHq.value = "доски номер 3";
+findHq.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+if (sandbox.location.hash.replace(/^#/, "") !==
+    "demo/find/" + encodeURIComponent("доски номер 3") + "/chat/XR-1") {
+  fail("набор в шапке потерял хвост разговора: " + sandbox.location.hash);
+}
+await sandbox.refresh();
+await settle();
+if (panelNode.hidden) fail("переход в поиск закрыл панель разговора");
+if (!byClass(cpin, "chatwrap")) {
+  fail("тело панели ушло с экрана выдачи: " + dump(cpin).slice(0, 200));
+}
+const foundRow = find(groups, "find-card-board");
+if (!foundRow) fail("экран выдачи под панелью не собрался: " + dump(groups).slice(0, 300));
+
+// Строка выдачи нажимается и при открытой панели: ведёт на экран задачи, и
+// разговор переезжает туда же хвостом адреса.
+foundRow.children[0].handlers.click();
+await settle();
+if (sandbox.location.hash.replace(/^#/, "") !== "demo/XR-3/chat/XR-1") {
+  fail("строка выдачи увела мимо задачи или уронила разговор: " + sandbox.location.hash);
+}
+await sandbox.refresh();
+await settle();
+if (panelNode.hidden) fail("переход из выдачи в задачу закрыл панель");
+if (!dump(groups).includes("XR-3")) {
+  fail("нажатие строки выдачи не открыло экран задачи: " + dump(groups).slice(0, 200));
+}
+
+// Режим чтения на этом же экране выключается той же кнопкой, какой включён:
+// парная кнопка в углу постановки нужна была потому, что развёрнутая
+// постановка накрывает строку статуса, но и сама строка обязана переключать
+// режим в обе стороны (замечание 6).
+{
+  const on = barButton(groups, "Режим чтения");
+  if (!on) fail("кнопки режима чтения на экране задачи из выдачи нет");
+  const panelFile = byClass(groups, "fpanel");
+  on.handlers.click();
+  if (!panelFile.classList.contains("wide")) fail("режим чтения не развернул постановку");
+  if (!on.classList.contains("on")) fail("кнопка режима чтения не показывает, что режим включён");
+  on.handlers.click();
+  if (panelFile.classList.contains("wide")) {
+    fail("вторым нажатием та же кнопка режим чтения не выключила");
+  }
+  if (on.classList.contains("on")) fail("кнопка осталась нажатой при выключенном режиме");
+}
+await go("#demo");
 
 // Ширина панели помнится одним числом на весь дашборд и не выходит за пределы:
 // схлопнутая до нуля и разъехавшаяся на весь экран панель одинаково бесполезны.

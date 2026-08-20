@@ -181,7 +181,9 @@ func TestPulseSilentNotEmpty(t *testing.T) {
 	if p.Flow {
 		t.Error("дуга бежит при молчащем агенте")
 	}
-	if p.Count != 1 || p.Agents[0].State != pulseHush {
+	// Кольцо молчит, а сам разговор простаивает: у кольца это состояние
+	// задачи, у агента его собственное, и слова у них разные.
+	if p.Count != 1 || p.Agents[0].State != pulseIdle {
 		t.Fatalf("список агентов: %+v", p.Agents)
 	}
 	if !strings.Contains(p.About, "go build") {
@@ -225,6 +227,110 @@ func TestPulseWaitingBeatsWork(t *testing.T) {
 	if p.Waiting < 1 {
 		t.Errorf("ждущих в кольце %d", p.Waiting)
 	}
+	// Вопрос адресован этой самой сессии, и открытый разговор отвечает за него.
+	own := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if own.Own == nil || own.Own.State != pulseWait {
+		t.Fatalf("открытый разговор не назван ждущим: %+v", own.Own)
+	}
+	if own.OwnWait == nil {
+		t.Fatal("ожидание открытого разговора не приехало")
+	}
+	if own.Own.WaitSince == 0 {
+		t.Error("не сказано, с какого момента ждут")
+	}
+}
+
+// Ждёт одна сессия задачи, а открытый разговор в это время работает: кольцо
+// красное, потому что ход задачи стоит, а слова под названием разговора
+// говорят про него самого. Прежде шапка работающего чата уверяла, что вопрос
+// задан тут, и человек искал в ленте вопрос, которого в ней нет.
+func TestPulseNeighbourWaitsOwnWorks(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	work := now.Add(-27 * time.Second)
+	idle := now.Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(work, "Bash", "go build ./..."), work)
+	writeSession(t, e.home, e.proj, "", "bbb-2", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
+	writeBinds(t, e.home,
+		bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
+		bindRecord("2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
+	writeAskFor(t, e.proj, "XR-1", "bbb-2", now.Add(20*time.Minute))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.State != pulseWait {
+		t.Fatalf("кольцо не показало вопрос соседней сессии: %q", p.State)
+	}
+	if p.Waiting != 1 || p.Count != 2 {
+		t.Errorf("в кольце %d агентов и %d ждущих", p.Count, p.Waiting)
+	}
+	if p.Own == nil || p.Own.State != pulseWork {
+		t.Fatalf("открытый разговор не назван работающим: %+v", p.Own)
+	}
+	if p.OwnWait != nil {
+		t.Errorf("чужой вопрос приписан открытому разговору: %+v", p.OwnWait)
+	}
+	for _, a := range p.Agents {
+		want := pulseWork
+		if a.Session == "bbb-2" {
+			want = pulseWait
+		}
+		if a.State != want {
+			t.Errorf("сессия %s в состоянии %q, ждал %q", a.Session, a.State, want)
+		}
+	}
+}
+
+// Повод idle_prompt из журнала уведомителя это простой, а не вопрос: сессия
+// жива и её можно спросить, но человека никто не спрашивал. Выданный за
+// ожидание он красил кольцо работающей задачи чужой тревогой.
+func TestPulseIdlePromptIsNotWaiting(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	idle := now.Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
+	writeBinds(t, e.home, bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"))
+	writeIdlePrompt(t, e.home, "aaa-1", now.Add(-2*time.Hour))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.Wait != nil {
+		t.Fatalf("простой выдан за вопрос человеку: %+v", p.Wait)
+	}
+	if p.State != pulseHush {
+		t.Errorf("состояние кольца %q, ждал молчание", p.State)
+	}
+	if len(p.Agents) != 1 || p.Agents[0].State != pulseIdle {
+		t.Fatalf("сессия не названа простаивающей: %+v", p.Agents)
+	}
+	if p.Own == nil || p.Own.State != pulseIdle {
+		t.Fatalf("открытый разговор не назван простаивающим: %+v", p.Own)
+	}
+}
+
+// Список агентов называет каждый разговор: имя захода и предмет. Два чата одной
+// задачи иначе неразличимы, и человек спрашивает, откуда в кольце второй агент.
+func TestPulseAgentsNamed(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	seen := now.Add(-12 * time.Second)
+	body := `{"type":"summary","summary":"Видеть ход работы агентов в чате"}` + "\n" +
+		pulseTranscript(seen, "Bash", "go test ./tools/...")
+	writeSession(t, e.home, e.proj, "", "aaa-1", body, seen)
+	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if len(p.Agents) != 1 {
+		t.Fatalf("агентов %d", len(p.Agents))
+	}
+	a := p.Agents[0]
+	if a.Title != "Видеть ход работы агентов в чате" {
+		t.Errorf("предмет разговора: %q", a.Title)
+	}
+	if !a.Own {
+		t.Error("открытый разговор в списке не помечен")
+	}
+	if a.Name == "" {
+		t.Error("разговор без имени")
+	}
 }
 
 // Фазы читаются с записи этапов задачи: секция строки говорит про рубеж, а
@@ -264,6 +370,29 @@ func writeAskFile(t *testing.T, tree, id string, until time.Time) {
 	if err := chat.WriteAsk(tree, chat.TaskName(id), a); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// writeAskFor кладёт вопрос, адресованный названной сессии.
+func writeAskFor(t *testing.T, tree, id, sid string, until time.Time) {
+	t.Helper()
+	a := chat.Ask{Until: until, Session: sid, Task: id,
+		Questions: []chat.Question{{Text: "чем красить кольцо"}}}
+	if err := chat.WriteAsk(tree, chat.TaskName(id), a); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeIdlePrompt кладёт в журнал уведомителя повод «клиент ждёт ввода»: тот
+// самый запасной источник, который ожиданием считаться перестал. Строка идёт
+// готовой фикстурой формата хука (idleLine), а ID сессии в журнале обрезан до
+// восьми знаков, как его пишет notify.py.
+func writeIdlePrompt(t *testing.T, home, sid string, at time.Time) {
+	t.Helper()
+	short := sid
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	writeNotifyLog(t, home, []string{idleLine(at.Format("2006-01-02T15:04:05"), short, idlePromptReason)})
 }
 
 // writeStageRecord кладёт запись этапа задачи, как её пишет конвейер.

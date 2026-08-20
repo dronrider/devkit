@@ -29,11 +29,13 @@ const pulses = {
       { name: "ревью", done: false }, { name: "слияние", done: false },
       { name: "выкат", done: false },
     ],
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
+      about: "Bash go test ./tools/...", since: now - 12 },
     agents: [
-      { session: "aaaa1111-1111", name: "task-XR-1", state: "working",
-        about: "Bash go test ./tools/...", since: now - 12 },
-      { session: "bbbb2222-2222", name: "chat-XR-1-2", state: "silent",
-        about: "Read app.js", since: now - 840 },
+      { session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+        state: "working", about: "Bash go test ./tools/...", since: now - 12 },
+      { session: "bbbb2222-2222", name: "chat-XR-1-2", title: "Второй чат задачи",
+        state: "idle", about: "Read app.js", since: now - 840 },
     ],
   },
   waiting: {
@@ -45,7 +47,11 @@ const pulses = {
       { name: "ревью", done: false }, { name: "слияние", done: false },
       { name: "выкат", done: false },
     ],
-    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", state: "waiting", since: now - 240 }],
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "waiting", own: true,
+      since: now - 240, wait_since: now - 240 },
+    own_wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 240 },
+    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+      state: "waiting", since: now - 240, wait_since: now - 240 }],
   },
   silent: {
     task: "XR-1", state: "silent", flow: false, count: 1, quiet: 60,
@@ -55,8 +61,31 @@ const pulses = {
       { name: "ревью", done: false, now: true }, { name: "слияние", done: false },
       { name: "выкат", done: false },
     ],
-    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", state: "silent",
-      about: "Bash go build", since: now - 840 }],
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "idle", own: true,
+      about: "Bash go build", since: now - 840 },
+    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+      state: "idle", about: "Bash go build", since: now - 840 }],
+  },
+  // Ждёт соседняя сессия задачи, а открытый разговор в это время работает.
+  // Ровно этот случай и врал прежде: шапка работающего чата говорила про
+  // вопрос, которого в его ленте не было.
+  neighbour: {
+    task: "XR-1", state: "waiting", flow: true, count: 2, waiting: 1, quiet: 60,
+    phase: "код", about: "Bash go build", since: now - 27,
+    wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 7320 },
+    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
+      about: "Bash go build", since: now - 27 },
+    phases: [
+      { name: "код", done: false, now: true }, { name: "тесты", done: false },
+      { name: "ревью", done: false }, { name: "слияние", done: false },
+      { name: "выкат", done: false },
+    ],
+    agents: [
+      { session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
+        state: "working", about: "Bash go build", since: now - 27 },
+      { session: "bbbb2222-2222", name: "chat-XR-1-2", title: "Второй чат задачи",
+        state: "waiting", since: now - 7320, wait_since: now - 7320 },
+    ],
   },
   empty: {
     task: "XR-1", state: "empty", flow: false, count: 0, quiet: 60,
@@ -154,10 +183,13 @@ function ringOf(head) {
   const wrap = ringOf(head);
   if (!String(wrap.className).includes("r-silent")) fail("молчание не назвалось классом: " + wrap.className);
   const cts = byClass(head, "cts");
-  if (!dump(cts).includes("тишина") || !dump(cts).includes("последний ход")) {
-    fail("строка состояния не сказала про тишину: " + dump(cts));
+  if (!dump(cts).includes("простаивает") || !dump(cts).includes("последний ход")) {
+    fail("строка состояния не сказала про простой: " + dump(cts));
   }
-  if (!dump(cts).includes("14 мин")) fail("давность тишины не в минутах: " + dump(cts));
+  if (dump(cts).includes("ждёт") || dump(cts).includes("вопрос")) {
+    fail("простой назван ожиданием: " + dump(cts));
+  }
+  if (!dump(cts).includes("14 мин")) fail("давность простоя не в минутах: " + dump(cts));
 }
 
 // --- пусто: кольцо без числа ---
@@ -179,11 +211,17 @@ function ringOf(head) {
   const rows = allByClass(pop, "prow");
   if (rows.length !== 2) fail("в списке не те строки: " + rows.length);
   if (!byClass(rows[0], "p-working")) fail("у работающего агента точка не того состояния");
-  if (!byClass(rows[1], "p-silent")) fail("у молчащего агента точка не того состояния");
+  if (!byClass(rows[1], "p-idle")) fail("у простаивающего агента точка не того состояния");
   if (!dump(rows[0]).includes("go test") || !dump(rows[0]).includes("12 с")) {
     fail("строка агента не сказала, что он делает: " + dump(rows[0]));
   }
-  if (!dump(rows[1]).includes("тишина 14 мин")) fail("молчание агента без срока: " + dump(rows[1]));
+  if (!dump(rows[1]).includes("простаивает 14 мин")) fail("простой агента без срока: " + dump(rows[1]));
+  // Два чата одной задачи различаются только предметом разговора, и без него
+  // человек спрашивает, откуда в кольце второй агент.
+  if (!dump(rows[1]).includes("Второй чат задачи")) {
+    fail("в строке агента нет предмета разговора: " + dump(rows[1]));
+  }
+  if (!dump(rows[0]).includes("(открыт)")) fail("открытый разговор в списке не помечен: " + dump(rows[0]));
   if (!dump(pop).includes("клик по строке открывает разговор")) fail("подвала списка нет");
   const was = moves.length;
   rows[1].handlers.click({ stopPropagation: () => {} });
@@ -193,6 +231,30 @@ function ringOf(head) {
   // На таче наведения нет, и список открывается нажатием на само кольцо.
   wrap.handlers.click({ stopPropagation: () => {} });
   if (!String(wrap.className).includes("open")) fail("нажатие не открыло список на таче");
+}
+
+// --- ждёт соседняя сессия: кольцо красное, а слова открытого чата про работу ---
+{
+  const head = await headOf("neighbour");
+  const wrap = ringOf(head);
+  if (!String(wrap.className).includes("r-waiting")) {
+    fail("кольцо не показало вопрос соседней сессии: " + wrap.className);
+  }
+  const num = byClass(wrap, "rnum");
+  if (!num || num.textContent !== "1") fail("число ждущих не то: " + (num && num.textContent));
+  const cts = byClass(head, "cts");
+  const said = dump(cts);
+  if (said.includes("вопрос человеку") || said.includes("без ответа")) {
+    fail("шапка работающего чата приписала себе чужой вопрос: " + said);
+  }
+  if (!said.includes("Bash go build") || !said.includes("27 с назад")) {
+    fail("шапка не сказала, чем занят открытый чат: " + said);
+  }
+  const rows = allByClass(byClass(wrap, "pop"), "prow");
+  if (!dump(rows[1]).includes("ждёт ответа") || !dump(rows[1]).includes("2 ч 2 мин без ответа")) {
+    fail("ждущий сосед без срока: " + dump(rows[1]));
+  }
+  if (!byClass(rows[1], "pfrom")) fail("не сказано, с какого момента ждут: " + dump(rows[1]));
 }
 
 // --- давность словами: секунды ниже минуты, дальше минуты и часы ---

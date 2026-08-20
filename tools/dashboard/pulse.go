@@ -55,6 +55,13 @@ const (
 	pulseEmpty = "empty"
 )
 
+// pulseIdle это состояние отдельного разговора: сессия жива, событий давно нет,
+// но человека никто не спрашивал. Ожиданием такое звать нельзя: повод
+// idle_prompt из журнала уведомителя значит «клиент ждёт ввода», и от вопроса
+// агента он отличается ровно тем, что вопроса нет. Раз назвав простой
+// ожиданием, экран заставляет человека искать вопрос, которого не было.
+const pulseIdle = "idle"
+
 // PulsePhase это одна фаза кольца: имя словом, пройдена ли она и идёт ли прямо
 // сейчас. Процентов у фазы нет: их неоткуда взять, а нарисованные на глаз они
 // врали бы точнее, чем честное «пройдена или нет».
@@ -71,10 +78,19 @@ type PulsePhase struct {
 type PulseAgent struct {
 	Session string `json:"session"`
 	Name    string `json:"name"`
-	State   string `json:"state"`
-	About   string `json:"about,omitempty"`
-	Since   int64  `json:"since,omitempty"`
-	Task    string `json:"task,omitempty"`
+	// Title это заголовок разговора: имя tmux-сессии говорит про заход, а
+	// заголовок про предмет, и без него два чата одной задачи в списке
+	// неразличимы (замечание про «почему в кольце два агента»).
+	Title string `json:"title,omitempty"`
+	State string `json:"state"`
+	About string `json:"about,omitempty"`
+	Since int64  `json:"since,omitempty"`
+	// WaitSince это момент, с которого ждут ответа. Пусто у всех, кроме
+	// ждущего: у работающего и простаивающего ждать нечего.
+	WaitSince int64 `json:"wait_since,omitempty"`
+	// Own говорит, что это тот самый разговор, который открыт в панели.
+	Own  bool   `json:"own,omitempty"`
+	Task string `json:"task,omitempty"`
 }
 
 // Pulse это ответ ручки целиком.
@@ -96,9 +112,18 @@ type Pulse struct {
 	// агент, по которому подписана шапка: самый свежий из живых.
 	About string `json:"about,omitempty"`
 	Since int64  `json:"since,omitempty"`
-	// Wait это состояние ожидания строки, как его собирает waiting.go: слово
-	// состояния и подпись источника едут в строку под названием разговора.
+	// Wait это ожидание строки: вопрос агента (.ask) либо парковка задачи
+	// вопросом. Повод idle_prompt сюда не идёт, он простой, а не вопрос.
 	Wait *Waiting `json:"wait,omitempty"`
+	// Own это тот разговор, который открыт в панели, отдельно от остальных.
+	// Кольцо считает задачу целиком, а слова под названием разговора обязаны
+	// говорить про него самого: вопрос соседней сессии в шапке открытого чата
+	// читался бы как вопрос к этому чату, и человек искал бы в ленте вопрос,
+	// которого там нет.
+	Own *PulseAgent `json:"own,omitempty"`
+	// OwnWait это ожидание самого открытого разговора: вопрос, адресованный
+	// его сессии, либо парковка задачи, за которую он отвечает.
+	OwnWait *Waiting `json:"own_wait,omitempty"`
 	// Quiet это порог молчания в секундах: клиент подписывает им тишину, а
 	// своей границы не заводит.
 	Quiet  int          `json:"quiet"`
@@ -298,6 +323,40 @@ func pulseName(e chatEntry) string {
 // handlePulse собирает пульс разговора: задача берётся из запроса, а список
 // агентов из реестра привязок чатов, то есть тех же чатов, что стоят в
 // выпадающем списке шапки.
+// pulseAsking считает настоящее ожидание строки: вопрос агента (.ask) старше
+// всего, за ним парковка задачи вопросом. Третий источник waiting.go, повод
+// idle_prompt из журнала уведомителя, сюда не идёт нарочно: он говорит лишь
+// «клиент ждёт ввода», то есть про простой чужой сессии, и выданный за вопрос
+// он красил шапку работающего разговора чужой тревогой.
+func (s *server) pulseAsking(projPath, id, sect, block string) (Waiting, bool) {
+	if id == "" {
+		return Waiting{}, false
+	}
+	if w, ok := askWaiting(projPath, id, s.now()); ok {
+		return w, true
+	}
+	return parkedWaiting(sect, block)
+}
+
+// pulseTitle это предмет разговора одной строкой: заголовок харнеса старше
+// первой реплики, как и в списке чатов.
+func pulseTitle(e chatEntry) string {
+	for _, v := range []string{e.Summary, e.Title} {
+		if t := strings.TrimSpace(v); t != "" {
+			return truncate(strings.Join(strings.Fields(t), " "), 60)
+		}
+	}
+	return ""
+}
+
+// pulseWaits отвечает, ждут ли ответа от этой сессии. Вопрос агента называет
+// сессию, которой ответ и уйдёт, и ждёт ровно она; безадресный вопрос и
+// парковка ждут строку целиком, а не кого-то одного, и сессию тогда назвать
+// нечем.
+func pulseWaits(w Waiting, ok bool, sid string) bool {
+	return ok && w.Session != "" && w.Session == sid
+}
+
 func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "пульс задачи")
 	if found == nil {
@@ -308,6 +367,21 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	out := Pulse{Task: id, State: pulseEmpty, Quiet: int(pulseQuiet / time.Second),
 		Phases: pulsePhaseList(0, ""), Agents: []PulseAgent{}}
+
+	// Строка доски читается раньше агентов: по ней считаются и фазы, и то,
+	// ждут ли человека на самом деле.
+	sect, block := "", ""
+	rowHit := false
+	if id != "" {
+		if raw, err := s.projectBoard(found.Path); err == nil {
+			if rows, err := parseBoardRows(raw); err == nil {
+				if row, hit := rows[id]; hit {
+					sect, block, rowHit = row.Sect, row.Block, true
+				}
+			}
+		}
+	}
+	ask, asking := s.pulseAsking(found.Path, id, sect, block)
 
 	paths := map[string]string{}
 	for _, f := range sessionFiles(s.transcriptRoots(), found.Path) {
@@ -332,7 +406,8 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		if p, ok := paths[e.ID]; ok {
 			at, about = pulseTrace(p)
 		}
-		a := PulseAgent{Session: e.ID, Name: pulseName(e), About: about, State: pulseHush}
+		a := PulseAgent{Session: e.ID, Name: pulseName(e), Title: pulseTitle(e),
+			About: about, State: pulseIdle, Own: e.ID == sid}
 		if len(e.Tasks) > 0 {
 			a.Task = e.Tasks[0]
 		}
@@ -341,6 +416,12 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 			if now.Sub(at) < pulseQuiet {
 				a.State = pulseWork
 			}
+		}
+		// Ждёт та сессия, которой вопрос и адресован. Работа тут не спорит с
+		// ожиданием: агент, задавший вопрос, стоит на нём и ходов не делает, а
+		// свежая метка в транскрипте у него от самого вопроса.
+		if pulseWaits(ask, asking, e.ID) {
+			a.State, a.WaitSince = pulseWait, ask.Since
 		}
 		if at.After(fresh) {
 			fresh = at
@@ -360,36 +441,48 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		out.Flow = now.Sub(fresh) < pulseQuiet
 	}
 
-	if id != "" {
-		if raw, err := s.projectBoard(found.Path); err == nil {
-			if rows, err := parseBoardRows(raw); err == nil {
-				if row, hit := rows[id]; hit {
-					seen, live := s.taskStages(found.Path, id)
-					cut, phase := pulsePhaseCut(row.Sect, live, seen, testing)
-					out.Phases, out.Phase = pulsePhaseList(cut, phase), phase
-					if wt, ok := s.waitLookup(found.Path)(id, row.Sect, row.Block); ok {
-						out.Wait = &wt
-					}
-				}
-			}
-		}
+	if rowHit {
+		seen, live := s.taskStages(found.Path, id)
+		cut, phase := pulsePhaseCut(sect, live, seen, testing)
+		out.Phases, out.Phase = pulsePhaseList(cut, phase), phase
 	}
-
-	switch {
-	case out.Wait != nil:
-		out.State = pulseWait
-		// Ждут те агенты, чьи разговоры стоят молча: работающий агент вопроса
-		// не задавал. Разговора может не быть вовсе (вопрос задал субагент
-		// закрытого захода), и тогда ждущий один, сама строка.
+	if asking {
+		out.Wait = &ask
 		for i := range out.Agents {
-			if out.Agents[i].State != pulseWork {
-				out.Agents[i].State = pulseWait
+			if out.Agents[i].State == pulseWait {
 				out.Waiting++
 			}
 		}
+		// Ждущей сессии в списке может не быть вовсе: вопрос задал закрывшийся
+		// заход, а у парковки сессии нет по смыслу. Ждёт тогда сама строка, и
+		// это один ждущий, а не ноль.
 		if out.Waiting == 0 {
 			out.Waiting = 1
 		}
+	}
+
+	// Открытый разговор отвечает за себя: его состояние и ожидание считаются по
+	// нему, а не по соседям с той же задачи.
+	for i := range out.Agents {
+		if out.Agents[i].Own {
+			own := out.Agents[i]
+			out.Own = &own
+			break
+		}
+	}
+	if out.Own != nil && out.Own.State == pulseWait {
+		out.OwnWait = &ask
+	} else if asking && ask.Session == "" && out.Own != nil {
+		// Безадресное ожидание это ожидание строки, и отвечает за него любой
+		// разговор задачи: ответ уедет во вход задачи, откуда его возьмёт тот,
+		// кто задачу продолжит.
+		out.OwnWait = &ask
+		out.Own.State, out.Own.WaitSince = pulseWait, ask.Since
+	}
+
+	switch {
+	case asking:
+		out.State = pulseWait
 	case out.Count == 0:
 		out.State = pulseEmpty
 	case out.Flow:

@@ -126,7 +126,7 @@ a:hover{text-decoration:underline}
 /* кружок состояния строки доски: зелёный работа идёт, жёлтый ждут человека,
    серый работа не наша или ожидание снаружи. Стоит внутри ячейки номера, а
    слова состояния лежат подсказкой */
-.sdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--tx3)}
+.sdot,.pdot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--tx3)}
 .sd-run{background:var(--run)}
 .sd-wait{background:var(--wait)}
 .sd-out{background:var(--tx3)}
@@ -146,7 +146,7 @@ a:hover{text-decoration:underline}
 .tipq:hover{color:var(--tx);border-color:var(--tx3)}
 .dashed{border-bottom:1px dashed var(--line2);cursor:default}
 @media (prefers-reduced-motion:no-preference){
-  .pulse{animation:dkpulse 2.2s ease-out infinite}
+  .pulse,.pdot.p-working{animation:dkpulse 2.2s ease-out infinite}
   @keyframes dkpulse{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--run) 55%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
 }
 .id{font:600 12.5px var(--mono);color:var(--tx)}
@@ -812,14 +812,19 @@ a:hover{text-decoration:underline}
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
 .ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:262px;max-width:340px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
 .ringwrap:hover .pop,.ringwrap.open .pop{display:block}
-.prow{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;min-width:0}
+.prow{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer;min-width:0}
 .prow:hover{background:var(--bg2)}
-.prow b{font:600 11.5px var(--mono);color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prow .pwhat{margin-left:auto;padding-left:10px;font:400 11px var(--mono);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--tx3)}
+.prow.own{background:var(--bg2)}
+.prow .pdot{margin-top:4px}
+.pwho{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.pwho b{font:600 11.5px var(--mono);color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptitle{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .pwhat{flex:none;max-width:46%;display:flex;flex-direction:column;gap:2px;align-items:flex-end;padding-left:10px;font:400 11px var(--mono);color:var(--tx3);text-align:right}
+.prow .pwhat span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pfrom{color:var(--tx3);opacity:0.75}
 .pdot.p-working{background:var(--run)}
 .pdot.p-waiting{background:var(--block)}
-.pdot.p-silent{background:var(--tx3)}
+.pdot.p-idle,.pdot.p-silent{background:var(--tx3)}
 .prow.pempty{color:var(--tx3);cursor:default}
 .prow.pempty:hover{background:none}
 .pfoot{margin-top:4px;padding:6px 8px 2px;border-top:1px solid var(--line);font:400 10.5px var(--mono);color:var(--tx3)}

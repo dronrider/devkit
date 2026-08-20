@@ -4961,13 +4961,13 @@ function modelPick(project, st) {
   return box;
 }
 
-// Чип ожидания в шапке разговора: короткое слово состояния, а вопрос,
-// источник и адрес ответа лежат подсказкой. Куда уедет реплика, сказано
-// честно: припаркованной задаче она уходит во вход строки, живой сессии в
-// саму сессию.
-function waitChatChip(st) {
-  const w = st.wait;
-  if (!w || !w.state || !st.task) return null;
+// Вопрос, источник и адрес ответа лежат подсказкой строки состояния. Отдельного
+// чипа у ожидания больше нет: состояние несут кольцо и та же строка словами, а
+// чип рядом с ними говорил третий раз то же самое. Куда уедет реплика, сказано
+// честно: припаркованной задаче она уходит во вход строки, живой сессии в саму
+// сессию.
+function waitChatTip(st, w) {
+  if (!w || !w.state || !st.task) return "";
   const qs = w.questions || [];
   const kind = chatWay(st).kind;
   let where = " Ответ поднимет сессию задачи и уедет в неё.";
@@ -4977,11 +4977,8 @@ function waitChatChip(st) {
   } else if (kind === "say") {
     where = " Ответ уйдёт живой сессии задачи.";
   }
-  const tip = w.state + ", источник: " + (w.note || "не назван") + "." +
+  return w.state + ", источник: " + (w.note || "не назван") + "." +
     (qs.length ? " Вопрос: " + qs.join("; ") : "") + where;
-  const chip = withTip(el("span", "chip c-wait", w.state), tip);
-  chip.setAttribute("aria-label", tip);
-  return chip;
 }
 
 // Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
@@ -5017,35 +5014,56 @@ function pulseAge(sec, now) {
   return Math.floor(d / 3600) + " ч " + Math.floor((d % 3600) / 60) + " мин";
 }
 
-// Строка состояния под названием разговора: та же правда, что в кольце, только
-// словами. Кольцо читается краем глаза, а строка отвечает на «что именно
-// происходит».
+// Строка состояния под названием разговора говорит про сам этот разговор, а не
+// про задачу целиком. Кольцо рядом считает задачу и показывает, что ждёт
+// соседняя сессия; в словах под названием такое ожидание врало бы, что вопрос
+// задан здесь, и человек искал бы в ленте вопрос, которого в ней нет.
+function pulseSubject(p) {
+  if (!p) return null;
+  if (!p.own) return p;
+  return { state: p.own.state, about: p.own.about, since: p.own.since,
+    wait: p.own_wait, wait_since: p.own.wait_since, phase: p.phase };
+}
+
 function pulseWords(p, now) {
-  if (!p || p.state === "empty") return "живых сессий нет";
-  if (p.state === "waiting") {
-    // Слово «вопрос человеку» тут общее нарочно: точное состояние с подписью
-    // источника несёт чип рядом, и повторять его дословно значило бы писать в
-    // шапке одно и то же дважды.
-    const age = pulseAge((p.wait || {}).since, now);
+  const it = pulseSubject(p);
+  if (!it || it.state === "empty") return "живых сессий нет";
+  if (it.state === "waiting") {
+    const from = it.wait_since || (it.wait || {}).since;
+    const age = pulseAge(from, now);
     return ["вопрос человеку", age ? age + " без ответа" : ""].filter(Boolean).join(" | ");
   }
-  if (p.state === "silent") {
-    const age = pulseAge(p.since, now);
-    return ["тишина" + (age ? " " + age : ""), p.about ? "последний ход " + p.about : ""]
+  if (it.state === "silent" || it.state === "idle") {
+    // Простой это не тишина в эфире, а сессия без хода: она жива и её можно
+    // спросить. Слово выбрано так, чтобы его не читали как вопрос человеку.
+    const age = pulseAge(it.since, now);
+    return ["простаивает" + (age ? " " + age : ""), it.about ? "последний ход " + it.about : ""]
       .filter(Boolean).join(" | ");
   }
-  const age = pulseAge(p.since, now);
-  return [p.phase ? "фаза " + p.phase : "", p.about, age ? age + " назад" : ""]
+  const age = pulseAge(it.since, now);
+  return [it.phase ? "фаза " + it.phase : "", it.about, age ? age + " назад" : ""]
     .filter(Boolean).join(" | ");
 }
 
-// Чем занят агент строкой списка: работающий назван инструментом, ждущий
-// вопросом, молчащий сроком тишины.
+// Чем занят агент строкой списка: работающий назван инструментом и давностью
+// хода, ждущий сроком без ответа, простаивающий сроком простоя. Простой и
+// ожидание тут разные слова нарочно: у первого никто ничего не спрашивал.
 function pulseAgentWords(a, now) {
+  if (a.state === "waiting") {
+    const age = pulseAge(a.wait_since || a.since, now);
+    return ["ждёт ответа", age ? age + " без ответа" : ""].filter(Boolean).join(" | ");
+  }
   const age = pulseAge(a.since, now);
-  if (a.state === "waiting") return ["вопрос", age].filter(Boolean).join(" | ");
-  if (a.state === "silent") return "тишина" + (age ? " " + age : "");
+  if (a.state === "silent" || a.state === "idle") return "простаивает" + (age ? " " + age : "");
   return [a.about, age].filter(Boolean).join(" | ");
+}
+
+// С какого момента ждут: человеку нужен не только срок, но и час, с которого
+// разговор стоит. Час без даты: ожидание старше суток тут не живёт, его снимает
+// страховка сторожка.
+function pulseAgentSince(a) {
+  if (a.state !== "waiting" || !a.wait_since) return "";
+  return "с " + localTime(new Date(a.wait_since * 1000).toISOString());
 }
 
 // Сегменты фаз: закрашены пройденные, остальные лежат подложкой. Процентов у
@@ -5126,10 +5144,19 @@ function ringPop(project, p) {
     return pop;
   }
   for (const a of list) {
-    const row = el("div", "prow");
+    const row = el("div", "prow" + (a.own ? " own" : ""));
     row.append(el("span", "pdot p-" + a.state));
-    row.append(el("b", "", a.name));
-    row.append(el("span", "pwhat", pulseAgentWords(a, now)));
+    const who = el("div", "pwho");
+    who.append(el("b", "", a.name + (a.own ? " (открыт)" : "")));
+    // Предмет разговора второй строкой: два чата одной задачи различаются
+    // только им, и без него человек спрашивает, откуда в кольце второй агент.
+    if (a.title) who.append(el("span", "ptitle", a.title));
+    row.append(who);
+    const what = el("div", "pwhat");
+    what.append(el("span", "", pulseAgentWords(a, now)));
+    const from = pulseAgentSince(a);
+    if (from) what.append(el("span", "pfrom", from));
+    row.append(what);
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
       switchChat(a.session);
@@ -5145,16 +5172,27 @@ function ringPop(project, p) {
 // ручкой по таймеру и меняет только себя.
 const PULSE_POLL = 5000;
 
+// Ручка спрашивается и про задачу, и про открытый разговор разом: кольцо
+// считает задачу целиком, а слова под названием отвечают за тот чат, который
+// человек видит, и собирать их двумя заходами незачем.
 function pulseURL(project, st) {
-  const q = st.task ? "task=" + encodeURIComponent(st.task)
-    : "sid=" + encodeURIComponent(st.sid || "");
-  return "/api/projects/" + encodeURIComponent(project) + "/pulse?" + q;
+  const q = [];
+  if (st.task) q.push("task=" + encodeURIComponent(st.task));
+  if (st.sid) q.push("sid=" + encodeURIComponent(st.sid));
+  return "/api/projects/" + encodeURIComponent(project) + "/pulse?" + q.join("&");
 }
 
 function wireRing(project, st, slot, words) {
   const put = (p) => {
     slot.replaceChildren(pulseRing(project, p));
-    if (words) words.textContent = pulseWords(p, Date.now());
+    if (!words) return;
+    words.textContent = pulseWords(p, Date.now());
+    // Вопрос, источник и адрес ответа приходят подсказкой той же строки:
+    // раньше их носил чип, а место в шапке под третье слово о том же нет.
+    const tip = waitChatTip(st, p && p.own_wait);
+    words.title = tip;
+    if (tip) words.setAttribute("aria-label", tip);
+    else words.removeAttribute("aria-label");
   };
   const load = async () => {
     const r = await api(pulseURL(project, st));
@@ -5255,14 +5293,13 @@ function chatHead(project, st) {
   head.append(slot, ct);
 
   const sub = el("div", "csub");
-  // Ожидание человека стоит чипом в шапке, а не врезкой над полем ввода:
-  // врезка носила своё поле ответа, и полей в панели выходило два. Текст
-  // вопроса, источник и то, куда уедет ответ, приходят подсказкой чипа.
-  const chip = waitChatChip(st);
-  if (chip) sub.append(chip);
-  const words = el("span", "");
+  const words = el("span", "cmeta");
   if (st.entry) {
-    const bits = [CHAT_STATE_WORD[st.entry.state] || st.entry.state, chatWhen(st.entry)];
+    // Состояние разговора отсюда снято: его говорят кольцо и строка состояния,
+    // а третьим слово «ждёт реплики» спорило с ними же (агент работает, а
+    // метаданные говорят, что он ждёт). Остаётся то, чего больше нигде нет:
+    // когда разговор шёл, чей он и где живёт.
+    const bits = [chatWhen(st.entry)];
     if ((st.entry.tasks || []).length) bits.push(st.entry.tasks.join(", "));
     if (st.entry.tree) bits.push(st.entry.tree);
     if (st.entry.tmux) bits.push("tmux " + st.entry.tmux);

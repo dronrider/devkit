@@ -252,6 +252,13 @@ const sandbox = {
       return reply(chatsNote ? { chats: chatRegistry(), note: chatsNote }
         : { chats: chatRegistry() });
     }
+    if (path.includes("/pulse")) {
+      return reply({ task: "XR-1", state: "working", flow: true, count: 1, quiet: 60,
+        phase: "код", about: "Bash go build", since: Math.floor(Date.now() / 1000) - 9,
+        phases: [], agents: [],
+        own: { session: mine.id, name: "chat-XR-1-1", state: "working", own: true,
+          about: "Bash go build", since: Math.floor(Date.now() / 1000) - 9 } });
+    }
     if (path.endsWith("/board")) return reply({ board, works: [] });
     return reply({});
   },
@@ -363,8 +370,16 @@ if (!dump(head).includes(mine.first)) {
 if (!dump(byClass(head, "cdtask")).includes("XR-1")) {
   fail("номера задачи при названии разговора нет: " + dump(head));
 }
-if (!dump(head).includes("ждёт реплики")) {
+// Состояние разговора говорит строка под названием, а собирает её пульс: слово
+// «ждёт реплики» из метаданных снято, потому что кольцо рядом говорило то же
+// самое, а у работающего агента ещё и спорило с ним.
+await settle();
+const cts = byClass(head, "cts");
+if (!cts || !dump(cts).includes("Bash go build")) {
   fail("шапка не сказала состояние разговора словами: " + dump(head));
+}
+if (dump(byClass(head, "cmeta")).includes("ждёт реплики")) {
+  fail("состояние разговора вернулось в метаданные: " + dump(head));
 }
 if (!labelBtn(head, "Закрыть панель")) fail("в шапке панели нет крестика: " + dump(head));
 if (!labelBtn(head, "Новый чат")) fail("в шапке панели нечем завести новый чат: " + dump(head));

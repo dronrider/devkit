@@ -34,7 +34,7 @@ const board = { sections: [{ key: "in-progress", rows: [
 ] }] };
 
 const app = appPathArg();
-const { sandbox, store, timers, moves } = makeSandbox(app, (path) => {
+const { sandbox, store, timers, moves, posted } = makeSandbox(app, (path) => {
   if (path.includes("/chats")) return { chats, models };
   if (path.includes("/sessions/")) {
     const sid = path.slice(path.indexOf("/sessions/") + 10).split("?")[0];
@@ -620,3 +620,43 @@ async function feedOf(items, sid) {
 console.log("окно чатов: адреса, фильтр, дорога реплики, шапка с моделью и поиском, " +
   "отправка обоих видов чата, оптимистичный пузырь, лента, разметка, выделение, " +
   "хват над полем, черновик, чат из раздела агентов, навигация, память задачи, тихие уведомления");
+
+// --- врезка вопроса: припаркованной задаче отвечают из панели ---
+// Живой сессии у такой строки нет, и до этого ответить ей было нечем: вопрос
+// виднелся подсказкой чипа на доске, а с телефона его не прочитать.
+{
+  const st = {
+    addr: "XR-1", sid: "", task: "XR-1", chats: [], entry: null, fresh: false,
+    title: "дашборд без дёрганья", isGoal: false,
+    wait: { state: "припаркована вопросом", note: "парковка",
+      questions: ["Какой из двух дублей оставить, XR-D2 или XR-D3?"] },
+  };
+  const panel = sandbox.chatPanel("demo", st);
+  const card = byClass(panel, "wcard");
+  if (!card) fail("врезки вопроса в панели нет: " + dump(panel).slice(0, 200));
+  const shown = dump(card);
+  if (!shown.includes("припаркована вопросом") || !shown.includes("парковка")) {
+    fail("врезка не назвала состояние и источник: " + shown);
+  }
+  if (!shown.includes("Какой из двух дублей")) fail("вопроса агента во врезке нет: " + shown);
+  const ta = tag(card, "TEXTAREA");
+  if (!ta) fail("поля ответа во врезке нет: " + shown);
+  // Пустой ответ никуда не уходит, и отказ назван словами.
+  posted.length = 0;
+  deepBtn(card, "Ответить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (posted.some((p) => p.includes("/message"))) fail("пустой ответ ушёл в ручку");
+  ta.value = "оставить XR-D2, второй дубль снять";
+  deepBtn(card, "Ответить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!posted.some((p) => p.includes("/tasks/XR-1/message"))) {
+    fail("ответ ушёл не ручкой задачи: " + JSON.stringify(posted));
+  }
+  // У цели врезки нет: её реплики уходят своей ручкой.
+  const goal = Object.assign({}, st, { isGoal: true });
+  if (byClass(sandbox.chatPanel("demo", goal), "wcard")) {
+    fail("врезка вопроса поднялась у цели");
+  }
+}
+
+console.log("врезка вопроса: состояние, вопрос и поле ответа на месте, ответ уходит ручкой задачи");

@@ -460,7 +460,8 @@ a:hover{text-decoration:underline}
    вопрос пачкой столбиком и своё поле ответа. Цвет тот же, что у чипа
    ожидания, чтобы врезка и строка доски читались одним состоянием */
 .wcard{background:color-mix(in oklab,var(--wait) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--wait) 28%,transparent);border-radius:12px;padding:12px 14px;margin:12px 0}
-.wtop{font:600 12.5px/1.4 var(--sans);color:var(--wait)}
+.wtop{display:flex;align-items:baseline;gap:8px;font:600 12.5px/1.4 var(--sans);color:var(--wait)}
+.wtop span{font:400 11px var(--sans);color:var(--tx3)}
 .wq{font:400 13.5px/1.5 var(--sans);color:var(--tx);margin-top:8px;padding-left:12px;border-left:2px solid color-mix(in oklab,var(--wait) 40%,transparent)}
 .wcard textarea{display:block;width:100%;min-height:40px;margin-top:10px;background:var(--bg1);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .wcard .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}

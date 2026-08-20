@@ -4449,6 +4449,9 @@ async function chatState(project, addr, board) {
     st.isGoal = isGoalRow(board, st.task);
     const row = boardRow(board, st.task);
     st.title = row ? row.title : "";
+    // Ожидание человека едет в панель вместе с задачей: пока строка стоит с
+    // вопросом, ответить ей больше неоткуда, а живой сессии у неё нет.
+    st.wait = row ? row.waiting : null;
   }
   return st;
 }
@@ -4702,6 +4705,57 @@ function chatHead(project, st) {
   return head;
 }
 
+// Врезка вопроса: задача стоит припаркованной, и ответ ей уходит безадресной
+// строкой во вход задачи (ручка /tasks/<ID>/message). Своей сессии у такой
+// строки нет: адресованную мёртвой сессии реплику не взял бы никто, а лежащую
+// безадресную сторожок увидит и разбудит по ней строку.
+function waitCard(project, st) {
+  const w = st.wait || {};
+  const card = el("div", "wcard");
+  const top = el("div", "wtop");
+  top.append(el("b", "", w.state || "ждёт человека"));
+  top.append(el("span", "", w.note ? "источник: " + w.note : ""));
+  card.append(top);
+  // Вопрос агента стоит текстом, а не подсказкой на чипе: с телефона подсказку
+  // не прочитать, а отвечают именно на него.
+  for (const q of w.questions || []) card.append(el("div", "wq", q));
+  const ta = el("textarea", "wans");
+  ta.placeholder = "Ответ задаче " + st.task;
+  ta.setAttribute("aria-label", "Ответ задаче " + st.task);
+  card.append(ta);
+  const row = el("div", "crow");
+  const send = el("button", "btn btn-acc", "Ответить");
+  send.addEventListener("click", () => {
+    const text = ta.value.trim();
+    if (!text) {
+      sayResult("жду ответ: пустую строку во вход задачи класть незачем", true);
+      ta.focus();
+      return;
+    }
+    send.disabled = true;
+    answerTask(project, st.task, text).then((ok) => {
+      send.disabled = false;
+      if (ok) {
+        ta.value = "";
+        repaintChat().catch(console.error);
+      }
+    }).catch((err) => { send.disabled = false; console.error(err); });
+  });
+  row.append(send);
+  card.append(row);
+  card.append(el("div", "hint", "Строка ляжет во вход задачи " + st.task +
+    ": её возьмёт тот, кто продолжит работу, а сторожок разбудит строку по ней."));
+  return card;
+}
+
+// Ответ задаче безадресной строкой: ручка та же, какой пользуется сторожок.
+async function answerTask(project, id, text) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/tasks/" + encodeURIComponent(id) + "/message", { method: "POST", body: { text } });
+  sayResult(r.body.message || r.body.error || (r.ok ? "ответ уехал" : "ответ не ушёл"), !r.ok);
+  return r.ok;
+}
+
 // Куда уйдёт реплика и почему. Мера приходит с сервера состоянием диалога, а
 // не считается на глаз: ошибка тут стоит реплики, ушедшей мимо адресата.
 function chatWay(st) {
@@ -4947,6 +5001,13 @@ function chatPanel(project, st) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
     note.append(el("span", "", way.why));
     wrap.append(note);
+  }
+  // Задача стоит с вопросом: ответ уходит безадресной строкой во вход задачи,
+  // и сторожок будит по ней строку. Живой сессии у припаркованной задачи нет,
+  // и без этой врезки отвечать ей было нечем: вопрос виднелся подсказкой чипа
+  // на доске, а с телефона его было не прочитать вовсе.
+  if (!st.isGoal && st.task && st.wait && st.wait.state) {
+    wrap.append(waitCard(project, st));
   }
 
   const busy = makeBusy(project, wrap);

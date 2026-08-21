@@ -938,18 +938,28 @@ func TestStaticTaskTips(t *testing.T) {
 	}
 }
 
-// Зависимости названы словами, а маркер [после ...] со строки доски говорит
-// то же самое: «после DK-248» требовало от читателя достроить, кто кого ждёт.
+// Держащая задача на строке это дорога до неё. Словами «заблокирована задачей»
+// чип был подписью в никуда: строка теперь и так стоит в Blocked ярусом «ждут
+// задач», а первый вопрос к ней «что там с держащей» (решение пользователя).
 func TestStaticDepsNamedInWords(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	chips := funcBody(t, app, "function rowChips(")
-	for _, want := range []string{"заблокирована задачей ", "заблокирована задачами "} {
+	for _, want := range []string{`"после " + dep`, `el("button", "chip clicky c-after"`,
+		`goKeepingChat(project + "/" + dep)`} {
 		if !strings.Contains(chips, want) {
-			t.Errorf("в чипах строки нет %q", want)
+			t.Errorf("чип держащей задачи собран не так, нет %q", want)
 		}
 	}
-	if strings.Contains(chips, `"после "`) {
-		t.Error("в чипах строки остался маркер «после»: кто кого ждёт, читателю приходится достраивать")
+	if strings.Contains(chips, "заблокирована задачей ") {
+		t.Error("чип держащей задачи снова подпись, а не дорога до самой задачи")
+	}
+	// Ярусы Blocked: парковки человека сверху, ждущие задач ниже и тихо.
+	tiers := funcBody(t, app, "function blockedItems(")
+	for _, want := range []string{`tier("ждут человека", parked, false)`,
+		`tier("ждут задач", held, true)`} {
+		if !strings.Contains(tiers, want) {
+			t.Errorf("ярусы Blocked собраны не так, нет %q", want)
+		}
 	}
 	deps := funcBody(t, app, "function depsCard(")
 	for _, want := range []string{"Заблокировано задачами", "Блокирует выполнение задач"} {

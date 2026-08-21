@@ -271,10 +271,23 @@ a:hover{text-decoration:underline}
    не подпись */
 .chip.clicky{cursor:pointer}
 .chip.clicky:hover{background:color-mix(in oklab,var(--run) 26%,transparent)}
+/* чип держащей задачи это кнопка: с неё есть ход на саму задачу, и палец с
+   клавиатурой обязаны видеть в ней кнопку, а не подпись */
+button.chip{border:none;font:500 11.5px var(--sans)}
+.c-after{background:var(--bg3);color:var(--tx2)}
+.c-after:hover{background:color-mix(in oklab,var(--run) 26%,transparent);color:var(--tx)}
 
 /* строки задач: сетка на ноутбуке, две строки на телефоне */
 .shead{display:flex;align-items:baseline;gap:9px;padding:22px 4px 9px;font:600 13px var(--sans);color:var(--tx)}
 .shead .n{font:500 11.5px var(--mono);color:var(--tx3)}
+/* ярусы секции Blocked: подпись яруса стоит внутри карточки строкой над своим
+   куском списка. Нижний ярус тихий: строка ждёт чужую задачу, человека там не
+   ждут, и спорить подачей с настоящими парковками ей нечем */
+.btier{display:flex;align-items:baseline;gap:8px;padding:9px 16px 8px 26px;border-top:1px solid var(--line);font:600 11.5px var(--sans);color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em}
+.btier:first-child{border-top:none}
+.btier.quiet{color:var(--tx3)}
+.btier .n{font:500 11px var(--mono);color:var(--tx3);text-transform:none;letter-spacing:0}
+.trow.rwait .ttl{color:var(--tx2)}
 .trow{display:grid;grid-template-columns:66px 1fr auto;gap:7px;align-items:center;padding:11px 16px 11px 26px;border-top:1px solid var(--line);cursor:pointer}
 .trow:hover{background:var(--bg2)}
 .trow:first-child{border-top:none}

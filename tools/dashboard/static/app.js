@@ -536,9 +536,17 @@ function rowChips(project, row) {
   if (row.cost && row.cost !== "-") chips.push(el("span", "chip", row.cost));
   // Маркер [после ...] со строки доски назван теми же словами, что и блок
   // зависимостей: «после DK-248» требовало достроить, кто кого ждёт.
-  if (row.after && row.after.length) {
-    chips.push(el("span", "chip", plural(row.after.length, "заблокирована задачей ",
-      "заблокирована задачами ", "заблокирована задачами ") + row.after.join(", ")));
+  // Держащая задача это дорога до неё, а не подпись: строка стоит в Blocked
+  // ярусом «ждут задач», и первый же вопрос к ней «а что там с DK-311».
+  // Держащих бывает несколько, и чип на каждую свой.
+  for (const dep of row.after || []) {
+    const chip = el("button", "chip clicky c-after", "после " + dep);
+    chip.type = "button";
+    chip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      goKeepingChat(project + "/" + dep);
+    });
+    chips.push(withTip(chip, "строка ждёт задачу " + dep + ", нажатие открывает её"));
   }
   // Ожидание стоит раньше блока: припаркованную строку оба чипа описывают с
   // разных сторон, и первым читается тот, который говорит, чего ждут.
@@ -873,8 +881,12 @@ function rowAction(project, row, sect) {
   return grp;
 }
 
-function renderRow(project, row, sect) {
-  const tr = el("div", "trow");
+// opts.quiet это тихая подача строки, ждущей чужой задачи: она стоит в Blocked
+// нижним ярусом и не должна спорить с парковками, у которых человека и правда
+// ждут.
+function renderRow(project, row, sect, opts) {
+  const quiet = Boolean(opts && opts.quiet);
+  const tr = el("div", "trow" + (quiet ? " rwait" : ""));
   // Кружок состояния живёт внутри ячейки номера, а не отдельной колонкой:
   // сетка строки трёхколоночная, и четвёртый элемент разъехался бы по ней.
   const idc = el("span", "id");
@@ -914,7 +926,9 @@ function renderRow(project, row, sect) {
   });
   // Двигается перетаскиванием только очередь: в остальных секциях порядок
   // ручной и от ранга не зависит, там жест обещал бы то, чего не делает.
-  if (sect === "backlog") wireDrag(project, tr, row);
+  // Перетаскивание живёт в самой очереди: ждущая задач строка нарисована в
+  // Blocked, и жест там обещал бы место в списке, которого она не занимает.
+  if (sect === "backlog" && !quiet) wireDrag(project, tr, row);
   return tr;
 }
 
@@ -1005,6 +1019,41 @@ function newTaskFab(project) {
   return btn;
 }
 
+// Blocked собран из двух ярусов: сверху настоящие парковки с причиной, их
+// подача прежняя, ниже строки, ждущие чужой задачи. Непустой ярус подписан
+// всегда, даже когда он в секции один: без подписи тихая строка читалась бы
+// припаркованной, а семь строк под словом Blocked не говорят, чего ждут.
+// Порядок внутри яруса прежний, по рангу с доски.
+function blockedItems(project, parked, held) {
+  const items = [];
+  const tier = (label, list, quiet) => {
+    if (!list.length) return;
+    items.push({
+      key: "tier-" + (quiet ? "tasks" : "human"),
+      sign: label + "|" + list.length,
+      make: () => {
+        const head = el("div", "btier" + (quiet ? " quiet" : ""), label);
+        head.append(el("span", "n", String(list.length)));
+        return head;
+      },
+    });
+    for (const row of list) {
+      items.push({
+        key: row.id,
+        // Секция строки в отпечатке своя: ярус решает и подпись кнопки, и
+        // тишину строки, и без него переехавшая строка не перерисовалась бы.
+        sign: rowSign(row, quiet ? "blocked-wait" : "blocked"),
+        // Ждущая задач строка остаётся строкой очереди: кнопка у неё та же
+        // погашенная «Выполнить» с причиной, а не «заблокирована».
+        make: () => renderRow(project, row, quiet ? "backlog" : "blocked", { quiet: quiet }),
+      });
+    }
+  };
+  tier("ждут человека", parked, false);
+  tier("ждут задач", held, true);
+  return items;
+}
+
 function renderBoard(project, board) {
   const groups = document.getElementById("groups");
   const items = [{
@@ -1018,29 +1067,48 @@ function renderBoard(project, board) {
   // (замечание пользователя).
   const byKey = {};
   for (const sec of board.sections || []) byKey[sec.key] = sec;
+  // Строка Backlog с незакрытым маркером «после DK-NNN» показывается в Blocked
+  // нижним ярусом: запустить её нельзя, а в очереди она отвечала не на тот
+  // вопрос, ради которого очередь и открывают («чем заняться сейчас»). Доска в
+  // git от этого не меняется: статус строки прежний, это группировка вида.
+  // Держащей считается задача, которая ещё стоит на доске: закрытая уезжает в
+  // архив, и маркер на неё больше никого не держит.
+  const onBoard = new Set();
+  for (const sec of board.sections || []) for (const row of sec.rows || []) onBoard.add(row.id);
+  const holdersOf = (row) => (row.after || []).filter((dep) => onBoard.has(dep));
+  const backRows = (byKey.backlog && byKey.backlog.rows) || [];
+  const freeRows = backRows.filter((row) => !holdersOf(row).length);
+  const heldRows = backRows.filter((row) => holdersOf(row).length);
   // Снимок нарисованной очереди: по нему жест считает коридор и щели, и берётся
   // он с той же доски, которой нарисован список.
-  backlogView = { project, rows: (byKey.backlog && byKey.backlog.rows) || [] };
+  backlogView = { project, rows: freeRows };
   for (const key of SECTION_ORDER) {
-    const sec = byKey[key];
+    let sec = byKey[key];
+    // Ждущие задач строки есть, а секции с доски не пришло вовсе: рисуем её
+    // сами, иначе они пропали бы с экрана вместе со своим ярусом.
+    if (!sec && key === "blocked" && heldRows.length) sec = { key, title: "Blocked", rows: [] };
     if (!sec) continue;
+    const parked = key === "blocked" ? sec.rows || [] : [];
+    const secRows = key === "backlog" ? freeRows
+      : key === "blocked" ? parked.concat(heldRows) : sec.rows || [];
     items.push({
       key: "head-" + key,
-      sign: sec.title + "|" + sec.rows.length,
+      sign: sec.title + "|" + secRows.length,
       make: () => {
         const head = el("div", sectionClass("shead", key, boardTab), sec.title);
         head.dataset.tab = sectionTab(key);
         // Backlog стоит по рангу, и счётчик говорит это же: надписью под
         // формой задачи порядок объяснять больше не надо.
-        head.append(el("span", "n", sec.rows.length + (key === "backlog" ? ", по рангу" : "")));
+        head.append(el("span", "n", secRows.length + (key === "backlog" ? ", по рангу" : "")));
         return head;
       },
     });
-    const rows = sec.rows.map((row) => ({
-      key: row.id,
-      sign: rowSign(row, key),
-      make: () => renderRow(project, row, key),
-    }));
+    const rows = key === "blocked" ? blockedItems(project, parked, heldRows)
+      : secRows.map((row) => ({
+        key: row.id,
+        sign: rowSign(row, key),
+        make: () => renderRow(project, row, key),
+      }));
     if (!rows.length) {
       rows.push({ key: "empty", sign: "", make: () => el("div", "empty", "Нет.") });
     }

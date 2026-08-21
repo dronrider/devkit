@@ -64,10 +64,17 @@ export function makeNode(tag) {
   node.appendChild = (kid) => { node.children.push(kid); return kid; };
   node.prepend = (...kids) => { node.children.unshift(...kids); };
   node.replaceChildren = (...kids) => { node.children = kids; };
+  // Вставка настоящая: узел, который уже стоит в этой коробке, переезжает, а
+  // не раздваивается. Заглушка оставляла его на прежнем месте, и перерисовка
+  // списка на месте (sync двигает узлы insertBefore) плодила в стенде вторые
+  // копии заголовков, которых на экране нет.
   node.insertBefore = (kid, ref) => {
+    const had = node.children.indexOf(kid);
+    if (had >= 0) node.children.splice(had, 1);
     const at = ref ? node.children.indexOf(ref) : -1;
     if (at < 0) node.children.push(kid);
     else node.children.splice(at, 0, kid);
+    if (kid && typeof kid === "object") kid.parentNode = node;
     return kid;
   };
   node.removeChild = (kid) => {

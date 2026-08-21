@@ -1609,6 +1609,45 @@ func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
 	}
 }
 
+// Реплика диспетчера субагенту в слитой ленте стоит дважды: карточкой
+// SendMessage в транскрипте сессии и рамкой в его боковом журнале. Рамка тут
+// чистый дубль, и в ленту она не идёт; встречные рамки остаются, у них пары
+// нет.
+func TestDispatchFrameFromSelfIsDropped(t *testing.T) {
+	e := newTestEnv(t)
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
+	mine := "The coordinator sent a message while you were working:\nПочини стрим.\n\nAddress this before completing your current task."
+	alien := "Another Claude session sent a message while you were working:\nЗагляни в LLD."
+	line := func(text, at string) string {
+		return fmt.Sprintf(`{"type":"user","isSidechain":true,"message":{"role":"user","content":%q},"timestamp":%q}`, text, at) + "\n"
+	}
+	writeSubLog(t, path, "dup1", "разбор находки",
+		line(mine, "2026-08-10T10:00:08.000Z")+line(alien, "2026-08-10T10:00:09.000Z"))
+	c := e.loggedClient(t)
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaa-1?n=50", "")
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range got.Items {
+		if item.Note == "диспетчер -> субагенту" {
+			t.Fatalf("дубль реплики диспетчера доехал в ленту: %+v", item)
+		}
+	}
+	alienSeen := false
+	for _, item := range got.Items {
+		if item.Note == "чужая сессия -> субагенту" && strings.Contains(item.Text, "LLD") {
+			alienSeen = true
+		}
+	}
+	if !alienSeen {
+		t.Fatal("рамка чужой сессии пропала вместе с дублем")
+	}
+}
+
 // Реплика, пришедшая работающему субагенту, лежит в его журнале в английской
 // рамке харнеса. Со слиянием журналов в ленту рамка полезла человеку в чат
 // сырьём: она стоит служебной строкой со своей подписью, а сама рамка из
@@ -1616,7 +1655,7 @@ func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
 func TestDispatchFrameIsService(t *testing.T) {
 	e := newTestEnv(t)
 	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
-	frame := "The coordinator sent a message while you were working:\nПочини стрим, он молчит.\n\nAddress this before completing your current task."
+	frame := "Another Claude session sent a message while you were working:\nПочини стрим, он молчит.\n\nAddress this before completing your current task."
 	line := fmt.Sprintf(`{"type":"user","isSidechain":true,"message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:08.000Z"}`, frame) + "\n"
 	writeSubLog(t, path, "disp1", "разбор находки", line)
 	c := e.loggedClient(t)
@@ -1640,7 +1679,7 @@ func TestDispatchFrameIsService(t *testing.T) {
 	if note == nil {
 		t.Fatal("реплика диспетчера не стала служебной строкой")
 	}
-	if note.Note != "диспетчер -> субагенту" {
+	if note.Note != "чужая сессия -> субагенту" {
 		t.Fatalf("подпись служебной строки: %q", note.Note)
 	}
 	if note.Text != "Почини стрим, он молчит." {

@@ -1484,6 +1484,11 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 						}
 						item.Role = roleNote
 					}
+					// Тот же дубль на живом дописывании: карточка отправителя
+					// уже стоит в ленте.
+					if item.Role == roleNote && item.Note == dispatchWord("") {
+						continue
+					}
 					seq = item.Seq + 1
 					sseEvent(w, f, "", marshalReply(item))
 				}
@@ -2040,12 +2045,23 @@ func expandSubs(path string, items []reply) []reply {
 		if len(side) > 0 && side[0].Role == "user" {
 			side = side[1:]
 		}
+		kept := side[:0]
 		for i := range side {
 			side[i].Sub = log.Label
 			if side[i].Role == "user" {
 				side[i].Role = roleNote
 			}
+			// Реплика диспетчера субагенту в слитой ленте стоит дважды: своей
+			// карточкой SendMessage в транскрипте сессии и рамкой в боковом
+			// журнале. Пара у неё есть всегда, и рамка тут чистый дубль
+			// (жалоба пользователя по снимку). Встречные рамки остаются: у
+			// реплики человека и чужой сессии карточки в ленте нет.
+			if side[i].Role == roleNote && side[i].Note == dispatchWord("") {
+				continue
+			}
+			kept = append(kept, side[i])
 		}
+		side = kept
 		push(srcName(log.File), side)
 	}
 	// Порядок полный и не зависит от того, что ещё лежит в ленте: время, потом

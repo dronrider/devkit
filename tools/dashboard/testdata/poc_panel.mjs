@@ -370,9 +370,10 @@ async function feedOf(items, sid) {
     { seq: 5, key: "d:5", role: "toolout", text: "готово", time: "2026-08-13T09:03:01+03:00" },
     { seq: 6, key: "d:6", role: "tool", tool: "SendMessage", note: "правь по замечанию",
       about: "продолжение субагента", text: "message: правь по замечанию",
+      args: { message: "правь по замечанию" },
       time: "2026-08-13T09:04:00+03:00" },
     { seq: 7, key: "d:7", role: "toolout", text: "принято", time: "2026-08-13T09:04:01+03:00" },
-    { seq: 8, key: "a:0", role: "note", note: "диспетчер -> субагенту", text: "поторопись",
+    { seq: 8, key: "a:0", role: "note", note: "чужая сессия -> субагенту", text: "загляни в LLD",
       sub: "разбор находки", time: "2026-08-13T09:05:00+03:00" },
   ];
   const box = await feedOf(rail, "rail-deleg");
@@ -385,8 +386,17 @@ async function feedOf(items, sid) {
   if (kind(rows[3]) !== "ok") fail("обычный инструмент помечен не исходом: " + kind(rows[3]));
   // Продолжение уже поднятого субагента это та же передача работы: метка та же.
   if (kind(rows[4]) !== "deleg") fail("продолжение субагента не помечено синим: " + kind(rows[4]));
-  // Реплика диспетчера субагенту часть той же пары.
+  // Рамка чужой сессии часть той же пары: своей карточки в ленте у неё нет.
   if (kind(rows[5]) !== "deleg") fail("реплика субагенту не помечена синим: " + kind(rows[5]));
+  // Реплика агенту рисуется как команда: сверху сама реплика, снизу ответ.
+  const sendCard = rows[4];
+  const inLine = byClass(sendCard, "tin");
+  const outLine = byClass(sendCard, "tout");
+  if (!inLine || !outLine) fail("реплика агенту стоит не парой вход и выход: " + dump(sendCard));
+  if (!dump(inLine).includes("правь по замечанию")) {
+    fail("в строке входа не сама реплика: " + dump(inLine));
+  }
+  if (!dump(outLine).includes("принято")) fail("ответа ручки в карточке нет: " + dump(outLine));
 }
 
 // --- план сессии: блок на экране задачи и пустое состояние ---

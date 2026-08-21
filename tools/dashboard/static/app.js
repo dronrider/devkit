@@ -3586,8 +3586,11 @@ function toolPair(call, out) {
   // под заголовком один (замечание 8). Задание субагенту устроено так же:
   // простыня заказа лезла в ленту строкой без разворота и загромождала её
   // (замечание 10 четырнадцатого круга POC).
+  // Реплика агенту это ход с ответом, как команда: сверху сама реплика, снизу
+  // подтверждение доставки. Прежде она стояла телом без ответа, а рядом ту же
+  // реплику повторяла рамка из бокового журнала (жалоба пользователя).
   if (name === "SendMessage") {
-    return bodyCard(name, call.about || call.note || "", args.message || call.text || "");
+    return bashCard(name, call, out, args.message || args.content || call.text || "");
   }
   if (isDeleg(call)) {
     const who = args.subagent_type || "";
@@ -3600,8 +3603,8 @@ function toolPair(call, out) {
 
 // Ход командой: заголовок с пояснением и блок из двух строк, вход и выход со
 // стрелками. Копирование одно, при команде.
-function bashCard(name, call, out) {
-  const cmd = call.note || foldPeek(call.text || "", 200);
+function bashCard(name, call, out, lead) {
+  const cmd = lead || call.note || foldPeek(call.text || "", 200);
   const said = out && out.text ? out.text : "";
   const box = el("div", "trow2");
   const head = el("div", "thline");
@@ -3610,9 +3613,9 @@ function bashCard(name, call, out) {
   box.append(head);
   const body = el("div", "tbox");
   const top = toolLine("i-in", "tin");
-  const lead = el("span", "tcmd", cmd);
-  lead.title = cmd;
-  top.append(lead);
+  const line = el("span", "tcmd", cmd);
+  line.title = cmd;
+  top.append(line);
   top.append(growBtn(body));
   top.append(copyBtn((call.text || "") + (call.text && said ? "\n" : "") + said));
   body.append(top);

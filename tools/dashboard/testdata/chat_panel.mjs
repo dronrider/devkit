@@ -397,9 +397,7 @@ if (!dump(byClass(head, "cdtask")).includes("XR-1")) {
 // кольце и его списке (замечание пользователя).
 await settle();
 if (byClass(head, "cts")) fail("строка состояния вернулась в шапку: " + dump(head));
-if (dump(byClass(head, "cmeta")).includes("ждёт реплики")) {
-  fail("состояние разговора вернулось в метаданные: " + dump(head));
-}
+if (byClass(head, "cmeta")) fail("приписка под заголовком вернулась: " + dump(head));
 if (!labelBtn(head, "Закрыть панель")) fail("в шапке панели нет крестика: " + dump(head));
 if (!labelBtn(head, "Новый чат")) fail("в шапке панели нечем завести новый чат: " + dump(head));
 
@@ -484,15 +482,17 @@ chatRegistry = emptyReg;
 chatsNote = wasNote;
 
 // --- подпись узнавания задачи: чужая доска не выдаётся за свою ---
+// Стоит она подсказкой на значке привязки: плашка под заголовком снята вместе
+// с контейнером, она занимала строку под то, что и так сказано значком.
 {
   const was = chatRegistry;
   chatRegistry = () => [Object.assign({}, mine, { note: "задача не с доски проекта" })];
   st = await sandbox.chatState("demo", mine.id, board);
   const head = sandbox.chatHead("demo", st);
-  const note = byClass(head, "cnote");
-  if (!note || !dump(note).includes("не с доски проекта")) {
-    fail("подпись про чужую доску перетёрта заголовком чата: " + dump(head));
-  }
+  if (byClass(head, "cnote")) fail("плашка подписи вернулась под заголовок: " + dump(head));
+  if (byClass(head, "csub")) fail("контейнер под заголовком вернулся: " + dump(head));
+  const bind = labelBtn(head, "Свободный чат (задача не с доски проекта): привязать к задаче рукой");
+  if (!bind) fail("подписи про чужую доску нет на значке привязки: " + dump(head));
   chatRegistry = was;
 }
 

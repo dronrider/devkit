@@ -1144,7 +1144,6 @@ a:hover{text-decoration:underline}
    узнана: чат без задачи в её ленту не попадёт. */
 /* Подпись узнавания задачи разговора: чужая доска и нераспознанная задача
    говорят это словами, а не молчанием заголовка. */
-.chead .cnote{font:400 11.5px var(--sans);color:var(--tx3);opacity:.9}
 .cdbind{top:38px;max-height:none;padding:12px}
 .cdbind .hint{font:400 11.5px/1.5 var(--sans);color:var(--tx3)}
 .cdbtn.warn{border-color:var(--warn,var(--acc));color:var(--tx)}

@@ -5491,8 +5491,13 @@ function chatHead(project, st) {
   if (st.sid) {
     const bind = el("button", "cdbtn" + (st.task ? "" : " warn"));
     bind.append(icon("i-in"));
-    bind.title = st.task ? "Разговор привязан к " + st.task + ": сменить или снять"
-      : "Задача разговора не узнана: привязать рукой";
+    // Чем узнана задача разговора, говорит сервер (bindTask): «задача не с
+    // доски проекта», «свободный чат», «говорит о XR-1». Раньше это стояло
+    // плашкой под заголовком, а плашка занимала строку под то, что и так
+    // сказано значком (замечание пользователя).
+    const said = (st.entry && st.entry.note) ? " (" + st.entry.note + ")" : "";
+    bind.title = st.task ? "Разговор привязан к " + st.task + said + ": сменить или снять"
+      : "Свободный чат" + said + ": привязать к задаче рукой";
     bind.setAttribute("aria-label", bind.title);
     bind.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -5536,15 +5541,11 @@ function chatHead(project, st) {
   const slot = el("div", "rslot");
   head.append(slot, ct);
 
-  const sub = el("div", "csub");
-  const words = el("span", "cmeta");
+  // Плашки под заголовком нет вовсе: подпись привязки уехала подсказкой на
+  // значок привязки, метаданные разговора на его название, а состояние читается
+  // кольцом и самой лентой. Строка под заголовком повторяла соседей и занимала
+  // место, которого в шапке нет (замечание пользователя).
   if (st.entry) {
-    // Приписки под лентой тут больше нет. Время последнего события несёт сама
-    // лента, номер задачи стоит лейблом при названии, а имя tmux-сессии и
-    // боковое дерево человек читает раз в неделю: место в шапке дороже, и
-    // строка «21 августа, 01:57, DK-397, tmux chat-DK-397-1» под названием
-    // только повторяла соседей (замечание пользователя). Всё это осталось
-    // подсказкой на самом названии разговора.
     const bits = [chatWhen(st.entry)];
     if ((st.entry.tasks || []).length) bits.push(st.entry.tasks.join(", "));
     if (st.entry.tree) bits.push(st.entry.tree);
@@ -5554,26 +5555,7 @@ function chatHead(project, st) {
       pick.title = tip;
       pick.setAttribute("aria-label", chatTitle(st.entry) + ": " + tip);
     }
-  } else if (st.fresh) {
-    words.textContent = "новый чат" + (st.task ? " про " + st.task : "") +
-      ": первая реплика поднимет сессию";
-  } else {
-    words.textContent = st.task ? "чатов задачи " + st.task + " нет" : "чат не выбран";
   }
-  // Строки состояния под заголовком нет: имя инструмента и давность хода
-  // повторяли ленту, которая идёт прямо под ней, а живость и ожидание видны в
-  // кольце и его списке. Простой узнаётся по времени последней записи.
-  // Чем узнана задача разговора, говорит сервер (bindTask): «задача не с доски
-  // проекта», «свободный чат», «говорит о XR-1». Раньше подпись
-  // считалась и пропадала, перетёртая заголовком чата, и разговор о чужой
-  // доске выглядел обычной работой этого проекта.
-  if (st.entry && st.entry.note) {
-    const note = el("span", "cnote", st.entry.note);
-    note.title = "Так дашборд узнал задачу разговора: " + st.entry.note;
-    sub.append(note);
-  }
-  if (words.textContent) sub.append(words);
-  ct.append(sub);
   wireRing(project, st, slot);
   return head;
 }

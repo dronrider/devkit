@@ -1747,15 +1747,20 @@ if (barButton(groups, "Живой статус") || barButton(groups, "Разг�
   const on = barButton(groups, "Режим чтения");
   if (!on) fail("кнопки режима чтения на экране задачи нет: " + dump(groups).slice(0, 200));
   const panelFile = byClass(groups, "fpanel");
-  const back = barButton(panelFile, "Выйти из режима чтения");
-  if (!back) fail("парной кнопки выхода в постановке нет: " + dump(panelFile).slice(0, 200));
-  if (!back.hidden) fail("кнопка выхода видна вне режима чтения");
+  // Шапка блока с этой кнопкой встаёт в разметку вместе с режимом чтения: вне
+  // его в шапке пусто, а пустой её на экране нет вовсе.
+  if (barButton(panelFile, "Выйти из режима чтения")) {
+    fail("кнопка выхода стоит в разметке вне режима чтения: " + dump(panelFile).slice(0, 200));
+  }
   on.handlers.click();
   if (!panelFile.classList.contains("wide")) fail("режим чтения не развернул постановку");
-  if (back.hidden) fail("в режиме чтения кнопка выхода так и не показалась");
+  const back = barButton(panelFile, "Выйти из режима чтения");
+  if (!back || back.hidden) fail("в режиме чтения кнопки выхода нет: " + dump(panelFile).slice(0, 200));
   back.handlers.click();
   if (panelFile.classList.contains("wide")) fail("кнопка выхода не свернула постановку");
-  if (!back.hidden) fail("после выхода кнопка выхода осталась на виду");
+  if (barButton(panelFile, "Выйти из режима чтения")) {
+    fail("после выхода кнопка выхода осталась в разметке");
+  }
   if (on.classList.contains("on")) fail("кнопка режима чтения осталась нажатой после выхода");
 }
 

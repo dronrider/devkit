@@ -334,6 +334,37 @@ function ringOf(head) {
   if (byClass(bare, "plist")) fail("без плана в подсказке остался список");
 }
 
+// --- открытый список плана переживает тик пульса и приход записи ---
+// Кольцо пересобиралось каждым тиком, и открытый по клику список закрывался от
+// любого вывода агента в ленте: человек не успевал его прочитать.
+{
+  const first = { state: "working", working: 1, count: 1, agents: [],
+    plan: [{ text: "первый шаг", state: "in_progress" }] };
+  const wrap = pulseRingOf(first);
+  wrap.handlers.click({ stopPropagation: () => {} });
+  if (!String(wrap.className).includes("open")) fail("клик не открыл список: " + wrap.className);
+  const pop = byClass(wrap, "pop");
+  if (!pop) fail("списка у кольца нет");
+  // Пришли новые данные: список остался открытым, а содержимое стало новым.
+  wrap.ringFill({ state: "working", working: 1, count: 1, agents: [],
+    plan: [{ text: "первый шаг", state: "completed" },
+      { text: "второй шаг", state: "in_progress" }] });
+  if (!String(wrap.className).includes("open")) {
+    fail("тик пульса закрыл открытый список: " + wrap.className);
+  }
+  if (byClass(wrap, "pop") !== pop) fail("узел списка пересобран, а не обновлён на месте");
+  const rows = allByClass(pop, "prow2");
+  if (rows.length !== 2 || !dump(rows[1]).includes("второй шаг")) {
+    fail("содержимое списка не обновилось: " + dump(pop).slice(0, 200));
+  }
+  if (allByClass(wrap, "seg").length !== 2) {
+    fail("деления кольца не обновились: " + allByClass(wrap, "seg").length);
+  }
+  // Клик по кольцу закрывает список, как и раньше.
+  wrap.handlers.click({ stopPropagation: () => {} });
+  if (String(wrap.className).includes("open")) fail("повторный клик не закрыл список");
+}
+
 // --- простой с планом, выполненный план и сон без плана ---
 // Кольцо в простое не гаснет вовсе: план ведущей сессии виден и спящим, а вот
 // там, где плана нет и все спят, от кольца остаётся тонкий контур: серый

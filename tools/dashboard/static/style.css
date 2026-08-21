@@ -851,6 +851,9 @@ a:hover{text-decoration:underline}
 .prow2.p-completed .pmark{color:var(--run)}
 .prow2.p-in_progress{color:var(--tx)}
 .prow2.p-in_progress .pmark{color:var(--acc)}
+/* Блок плана держит тот же вертикальный ритм, что соседние блоки экрана: без
+   отступа он слипался с постановкой над собой */
+.tplan{margin-top:18px}
 .tplan .plist{border:0;padding:0}
 
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */

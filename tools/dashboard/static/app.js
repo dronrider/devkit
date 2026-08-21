@@ -3117,9 +3117,16 @@ async function wireFeed(project, sid, opts) {
     }
   };
 
+  // Приписка сверху (страница истории) двигает всё содержимое вниз, и держать
+  // место надо расстоянием до низа. Приписка снизу высоту выше взгляда не
+  // трогает, и там держится сам scrollTop: мерка «до низа» уводила взгляд на
+  // высоту пришедшего, и читающий историю терял строку с каждой записью агента
+  // (жалоба пользователя).
+  let prepending = false;
   const draw = () => {
     const bottom = atBottom(scroll);
     const rest = scroll.scrollHeight - scroll.scrollTop;
+    const top = scroll.scrollTop;
     const marks = feedMarks(talk);
     if (!talk.length) {
       sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
@@ -3166,7 +3173,8 @@ async function wireFeed(project, sid, opts) {
     }
     sync(box, items);
     if (bottom) keepBottom(scroll, true);
-    else keepPlace(scroll, rest);
+    else if (prepending) keepPlace(scroll, rest);
+    else scroll.scrollTop = top;
   };
 
   // Подгрузка вверх: раньше её звала кнопка, теперь зовёт прокрутка, а тело
@@ -3191,7 +3199,9 @@ async function wireFeed(project, sid, opts) {
     }
     atFirst = Boolean(older.body.start);
     talk.unshift(...add);
+    prepending = true;
     draw();
+    prepending = false;
     updateStart();
   };
 
@@ -3203,6 +3213,8 @@ async function wireFeed(project, sid, opts) {
   // поток открыт, поэтому открытию хвостом не мешает. Если подгрузка не даёт
   // прогресса (сеть отказала, гонка), цикл не крутится вхолостую и встаёт на
   // ту глубину, которую успел набрать.
+  // Досбор истории при возврате на разговор это та же приписка сверху: место
+  // держится расстоянием до низа, как и при обычной подгрузке.
   const restorePlace = async (place) => {
     while (!gone() && pages < (place.pages || 0) && !atFirst) {
       const was = pages;
@@ -5237,61 +5249,65 @@ function planList(plan) {
 // Кольцо целиком. Разметка одна на все четыре состояния, состояние это класс
 // обёртки: разводить четыре ветки сборки значило бы держать четыре разметки.
 function pulseRing(project, p) {
-  const wrap = el("div", "ringwrap r-" + ((p && p.state) || "empty"));
-  const box = svgEl("svg", "ring");
-  svgAttrs(box, { viewBox: "0 0 36 36", width: 36, height: 36 });
-  const g = svgEl("g", "");
-  g.setAttribute("transform", "rotate(-90 18 18)");
-  // Ореол ожидания лежит под сегментами: он пульсирует вокруг кольца, а не
-  // поверх числа.
-  const halo = svgEl("circle", "halo");
-  svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
-  box.append(halo);
-  const plan = (p && p.plan) || [];
-  // Плана нет и все спят: кольца нет вовсе, вместо него тонкий контур той же
-  // кликабельной зоны. Серый бублик обещал бы работу, которой нет, а вход в
-  // список агентов нужен и тут.
-  const asleep = !p || p.state === pulseEmptyState || p.state === pulseSilentState;
-  const ghost = !plan.length && asleep;
-  if (ghost) wrap.classList.add("ghost");
-  if (ghost) g.append(ringArc("ghost", RING_LEN, 0));
-  else if (plan.length) ringPlan(g, plan);
-  else ringTrack(g);
-  // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
-  // опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она по
-  // своей дорожке внутри шкалы: поверх делений она закрывала их собой, и
-  // прогресс цели за ней было не разглядеть.
-  const comet = svgEl("circle", "comet");
-  svgAttrs(comet, {
-    cx: 18, cy: 18, r: RING_SPIN, fill: "none", "stroke-width": 1.6,
-    "stroke-linecap": "round",
-    "stroke-dasharray": (RING_SPIN_LEN * 0.17).toFixed(2) + " " + (RING_SPIN_LEN * 0.83).toFixed(2),
-  });
-  g.append(comet);
-  box.append(g);
-  // В середине стоят работающие, а у ждущего кольца ждущие. Простаивающие
-  // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
-  // как второй разговор задачи стоит без хода второй час. Видно их цветом
-  // строки в списке и подписью кольца.
-  const num = ringNumber(p);
-  if (num) {
-    const node = svgEl("text", "rnum");
-    svgAttrs(node, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
-    node.textContent = num;
-    box.append(node);
-  }
-  wrap.append(box);
-  wrap.append(ringPop(project, p));
-  // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
-  // него говорила то же самое вторым разом и перекрывала сам список. Слов про
-  // ход работы тут нет: кольцо про агентов, а прогресс живёт на экране цели.
-  const tip = [ringTally(p), pulseWords(p, Date.now())].filter(Boolean).join(". ");
-  wrap.setAttribute("aria-label", tip);
-  // На таче наведения нет, и список открывается нажатием на само кольцо.
+  // Узел кольца живёт весь заход, а не пересобирается каждым тиком пульса:
+  // пересборка снимала открытый по клику список, и он закрывался от любой
+  // записи агента в ленте (жалоба пользователя). Данные обновляются на месте.
+  const wrap = el("div", "ringwrap");
+  const pop = el("div", "pop");
   wrap.addEventListener("click", (ev) => {
     ev.stopPropagation();
     wrap.classList.toggle("open");
   });
+  wrap.ringFill = (next) => {
+    const open = wrap.classList.contains("open");
+    const box = svgEl("svg", "ring");
+    svgAttrs(box, { viewBox: "0 0 36 36", width: 36, height: 36 });
+    const g = svgEl("g", "");
+    g.setAttribute("transform", "rotate(-90 18 18)");
+    // Ореол ожидания лежит под сегментами: он пульсирует вокруг кольца, а не
+    // поверх числа.
+    const halo = svgEl("circle", "halo");
+    svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
+    box.append(halo);
+    const plan = (next && next.plan) || [];
+    // Плана нет и все спят: кольца нет вовсе, вместо него тонкий контур той же
+    // кликабельной зоны. Серый бублик обещал бы работу, которой нет, а вход в
+    // список агентов нужен и тут.
+    const asleep = !next || next.state === pulseEmptyState || next.state === pulseSilentState;
+    const ghost = !plan.length && asleep;
+    wrap.className = "ringwrap r-" + ((next && next.state) || "empty") +
+      (ghost ? " ghost" : "") + (open ? " open" : "");
+    if (ghost) g.append(ringArc("ghost", RING_LEN, 0));
+    else if (plan.length) ringPlan(g, plan);
+    else ringTrack(g);
+    // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
+    // опрос, поэтому между заходами на сервер кольцо не замирает.
+    const comet = svgEl("circle", "comet");
+    svgAttrs(comet, {
+      cx: 18, cy: 18, r: RING_SPIN, fill: "none", "stroke-width": 1.6,
+      "stroke-linecap": "round",
+      "stroke-dasharray": (RING_SPIN_LEN * 0.17).toFixed(2) + " " + (RING_SPIN_LEN * 0.83).toFixed(2),
+    });
+    g.append(comet);
+    box.append(g);
+    // В середине стоят работающие, а у ждущего кольца ждущие. Простаивающие
+    // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
+    // как второй разговор задачи стоит без хода второй час.
+    const num = ringNumber(next);
+    if (num) {
+      const node = svgEl("text", "rnum");
+      svgAttrs(node, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
+      node.textContent = num;
+      box.append(node);
+    }
+    fillPop(pop, project, next);
+    wrap.replaceChildren(box, pop);
+    // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
+    // него говорила то же самое вторым разом и перекрывала сам список.
+    const tip = [ringTally(next), pulseWords(next, Date.now())].filter(Boolean).join(". ");
+    wrap.setAttribute("aria-label", tip);
+  };
+  wrap.ringFill(p);
   return wrap;
 }
 
@@ -5316,6 +5332,14 @@ function ringTally(p) {
 // не только показывает, но и есть дорога до того, кто ждёт.
 function ringPop(project, p) {
   const pop = el("div", "pop");
+  fillPop(pop, project, p);
+  return pop;
+}
+
+// Содержимое списка на месте: сам узел поповера живёт весь заход, иначе
+// открытый список закрывался бы каждым тиком пульса.
+function fillPop(pop, project, p) {
+  pop.replaceChildren();
   // План сессии стоит первым: деления кольца это он, и без списка они немые.
   const plan = (p && p.plan) || [];
   if (plan.length) pop.append(planList(plan));
@@ -5323,7 +5347,7 @@ function ringPop(project, p) {
   const now = Date.now();
   if (!list.length) {
     pop.append(el("div", "prow pempty", "живых сессий нет"));
-    return pop;
+    return;
   }
   for (const a of list) {
     const row = el("div", "prow" + (a.own ? " own" : ""));
@@ -5357,7 +5381,6 @@ function ringPop(project, p) {
     });
     pop.append(row);
   }
-  return pop;
 }
 
 // Пульс опрашивается сам: шапка панели собирается один раз на открытие
@@ -5377,6 +5400,12 @@ function pulseURL(project, st) {
 
 function wireRing(project, st, slot) {
   const put = (p) => {
+    // Узел кольца переживает тик: пересборка снимала бы открытый список.
+    const has = slot.children && slot.children[0];
+    if (has && has.ringFill) {
+      has.ringFill(p);
+      return;
+    }
     slot.replaceChildren(pulseRing(project, p));
   };
   const load = async () => {

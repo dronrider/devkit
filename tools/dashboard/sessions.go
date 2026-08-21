@@ -531,6 +531,11 @@ type reply struct {
 	// остаётся рядом: без пояснения строка Bash говорила только «что
 	// запущено», но не «зачем».
 	About string `json:"about,omitempty"`
+	// Report помечает финальный ответ субагента: последнюю запись его журнала
+	// с текстом. Наружу он не едет, это опора сшивки: тем же событием приходит
+	// весть харнеса «фоновый агент завершил работу», и в ленте они сводятся в
+	// один свёрнутый блок.
+	Report bool `json:"-"`
 	// Key это устойчивый ключ записи: «источник:номер в своём файле». Номер в
 	// ленте (Seq) считается местом в слитой ленте и от заезда к заезду плывёт:
 	// боковой журнал растёт, у сессии заводится новый субагент, и запись,
@@ -2045,6 +2050,14 @@ func expandSubs(path string, items []reply) []reply {
 		if len(side) > 0 && side[0].Role == "user" {
 			side = side[1:]
 		}
+		// Финальный ответ субагента это последняя его запись с текстом: она и
+		// есть отчёт, который харнес пересказывает сводкой в своей вести.
+		for i := len(side) - 1; i >= 0; i-- {
+			if side[i].Role == "assistant" && strings.TrimSpace(side[i].Text) != "" {
+				side[i].Report = true
+				break
+			}
+		}
 		kept := side[:0]
 		for i := range side {
 			side[i].Sub = log.Label
@@ -2076,10 +2089,43 @@ func expandSubs(path string, items []reply) []reply {
 		}
 		return all[i].idx < all[j].idx
 	})
+	// Весть о конце фоновой работы и сам отчёт субагента это одно событие с
+	// двух сторон: строка харнеса со сводкой и полный текст в боковом журнале.
+	// В ленте они сходятся одним свёрнутым блоком, а сырой отчёт вторым
+	// элементом рядом больше не стоит (замечание пользователя по снимку).
+	drop := map[int]bool{}
+	for i := range all {
+		it := &all[i].it
+		if it.Role != roleNote || it.Mark != "agent" {
+			continue
+		}
+		pick := -1
+		for j := 0; j < i; j++ {
+			if all[j].it.Report && !drop[j] {
+				pick = j
+			}
+		}
+		if pick < 0 {
+			continue
+		}
+		head, sum := it.Note, it.Text
+		if head == "" {
+			head, sum = it.Text, ""
+		}
+		if strings.TrimSpace(sum) != "" {
+			head += ": " + sum
+		}
+		it.Note, it.Text = head, all[pick].it.Text
+		drop[pick] = true
+	}
 	out := make([]reply, 0, len(all))
 	for i, k := range all {
-		k.it.Seq = i
+		if drop[i] {
+			continue
+		}
+		k.it.Seq = len(out)
 		out = append(out, k.it)
+		_ = i
 	}
 	return out
 }

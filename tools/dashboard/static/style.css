@@ -1101,6 +1101,11 @@ a:hover{text-decoration:underline}
 .rterm i{font:400 10.5px var(--sans);font-style:normal;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rterm b{font:600 12px var(--mono);color:var(--tx2);flex:none}
 
+/* Отчёт фонового агента внутри блока завершения: тот же кегль, что у реплики,
+   и обычная разметка, а не моноширинная простыня */
+.fmd{padding:8px 11px 10px;font:400 13px/1.6 var(--sans);color:var(--tx2);max-height:420px;overflow-y:auto}
+.fmd[hidden]{display:none}
+
 /* чужая реплика, доехавшая до работающего агента: свёрнутая служебная строка
    с подписью, кто вмешался. Пузырём человека она не рисуется: сказал это не он */
 .svc.fold{margin:6px 0;border:1px dashed var(--line2);border-radius:8px;background:none}

@@ -2864,6 +2864,10 @@ function replyEl(item) {
     // (диспетчер субагенту, чужая сессия): текст у неё длинный, и в ленте она
     // стоит свёрнутой строкой с подписью, разворачивается кликом.
     if (item.note) {
+      // Конец фоновой работы это заголовок со сводкой, а внутри полный отчёт
+      // субагента разметкой: сырым пузырём рядом он стоял вторым элементом
+      // того же события (замечание пользователя по снимку).
+      if (item.mark === "agent") return reportCard(item.note, item.text || "");
       return bodyCard(item.note, "", item.text || "");
     }
     return el("div", "svcline", item.text || "служебное сообщение");
@@ -3621,6 +3625,29 @@ function bashCard(name, call, out, lead) {
   body.append(top);
   if (said) body.append(toolOutLine(said));
   box.append(body);
+  return box;
+}
+
+// Блок завершения фоновой работы: заголовок с сутью и свёрнутый отчёт внутри.
+// Отчёт это обычный текст агента, и рисуется он разметкой, как реплика, а не
+// сырой простынёй в моноширинном блоке.
+function reportCard(head, text) {
+  const box = el("div", "svc fold");
+  const top = el("div", "foldh");
+  top.append(el("b", "", head));
+  const car = el("span", "foldc", "+");
+  if (text) top.append(car);
+  const body = el("div", "foldb fmd");
+  if (text) body.append(mdRender(text));
+  body.hidden = true;
+  if (text) {
+    top.addEventListener("click", () => {
+      body.hidden = !body.hidden;
+      car.textContent = body.hidden ? "+" : "-";
+      box.classList.toggle("open", !body.hidden);
+    });
+  }
+  box.append(top, body);
   return box;
 }
 

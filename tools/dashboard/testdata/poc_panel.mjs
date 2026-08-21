@@ -399,6 +399,29 @@ async function feedOf(items, sid) {
   if (!dump(outLine).includes("принято")) fail("ответа ручки в карточке нет: " + dump(outLine));
 }
 
+// --- конец фоновой работы: один свёрнутый блок с отчётом внутри ---
+// Прежде рядом стояли два элемента одного события: служебная строка со сводкой
+// и сырой финальный текст субагента. Теперь это один блок, разворот по клику.
+{
+  const done = sandbox.chatItem({ role: "note", mark: "agent",
+    note: "Фоновый агент завершил работу: вычитка готова",
+    text: "## Итог\nГотово, семнадцать замечаний.\n\nsha: abc1234" });
+  const said = dump(done);
+  if (!said.includes("вычитка готова")) fail("в заголовке блока нет сути: " + said);
+  if (!said.includes("семнадцать замечаний")) fail("отчёта внутри блока нет: " + said);
+  if (!String(done.className).includes("fold")) fail("блок не свёрнут: " + done.className);
+  const body = byClass(done, "fmd");
+  if (!body || !body.hidden) fail("отчёт открыт сразу, а не по клику: " + said);
+  // Разметка отчёта рисуется разметкой, а не сырой простынёй.
+  if (!byClass(body, "mdh")) fail("заголовок отчёта не разобран разметкой: " + dump(body));
+  byClass(done, "foldh").handlers.click({ stopPropagation: () => {} });
+  if (body.hidden) fail("клик не развернул отчёт");
+  // Без отчёта блок остаётся одной строкой без разворота.
+  const bare = sandbox.chatItem({ role: "note", mark: "agent",
+    note: "Фоновый агент завершил работу" });
+  if (byClass(bare, "foldc")) fail("у пустого завершения появился разворот: " + dump(bare));
+}
+
 // --- план сессии: блок на экране задачи и пустое состояние ---
 // План агент пишет себе сам вызовом TodoWrite, сервер отдаёт его последним
 // списком. Плана нет, значит и блока нет: заглушка говорила бы о нашей

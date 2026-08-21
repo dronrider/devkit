@@ -1609,6 +1609,60 @@ func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
 	}
 }
 
+// Конец фоновой работы и финальный отчёт субагента это одно событие: в ленте
+// они сходятся одним свёрнутым блоком, а сырым текстом отчёт рядом не стоит.
+func TestAgentReportFoldsIntoNote(t *testing.T) {
+	e := newTestEnv(t)
+	done := `{"type":"user","message":{"role":"user","content":[{"type":"text",` +
+		`"text":"<task-notification><status>completed</status><summary>вычитка готова</summary></task-notification>"}]},` +
+		`"timestamp":"2026-08-10T10:00:09.000Z"}` + "\n"
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture+done, time.Now())
+	writeSubLog(t, path, "rep1", "вычитка",
+		sideLine("смотрю документ", "2026-08-10T10:00:07.000Z")+
+			sideLine("Готово, семнадцать замечаний. sha: abc1234", "2026-08-10T10:00:08.000Z"))
+	c := e.loggedClient(t)
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaa-1?n=50", "")
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	var note *reply
+	raw := 0
+	for i, item := range got.Items {
+		if item.Mark == "agent" {
+			note = &got.Items[i]
+		}
+		if item.Sub != "" && strings.Contains(item.Text, "sha: abc1234") {
+			raw++
+		}
+	}
+	if note == nil {
+		t.Fatal("записи о конце фоновой работы нет вовсе")
+	}
+	if !strings.Contains(note.Note, "завершил работу") || !strings.Contains(note.Note, "вычитка готова") {
+		t.Fatalf("заголовок блока без сути: %q", note.Note)
+	}
+	if !strings.Contains(note.Text, "sha: abc1234") {
+		t.Fatalf("отчёт субагента не уехал внутрь блока: %q", note.Text)
+	}
+	if raw != 0 {
+		t.Fatalf("сырой отчёт остался в ленте вторым элементом: %d", raw)
+	}
+	// Промежуточные записи субагента остаются на месте: свернулся только отчёт.
+	seen := false
+	for _, item := range got.Items {
+		if item.Sub != "" && strings.Contains(item.Text, "смотрю документ") {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatal("ход субагента пропал вместе с отчётом")
+	}
+}
+
 // Реплика диспетчера субагенту в слитой ленте стоит дважды: карточкой
 // SendMessage в транскрипте сессии и рамкой в его боковом журнале. Рамка тут
 // чистый дубль, и в ленту она не идёт; встречные рамки остаются, у них пары

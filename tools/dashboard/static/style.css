@@ -170,8 +170,12 @@ a:hover{text-decoration:underline}
    поэтому строка доски от него не едет */
 .split{display:inline-flex;position:relative}
 .split .btn:not(.more2){border-top-right-radius:0;border-bottom-right-radius:0}
+/* стык половин это один пиксель, а не два: своя рамка есть у каждой половины,
+   и сложенные рядом они давали двойную линию везде, где рамка кнопки видна
+   (обычная .btn, не acc). Узкая половина наезжает на широкую своей рамкой,
+   и та же линия работает разделителем */
 .split .more2{border-top-left-radius:0;border-bottom-left-radius:0;padding:0;width:30px;
-  gap:0;border-left:1px solid color-mix(in oklab,var(--acc-ink) 30%,transparent)}
+  gap:0;margin-left:-1px;border-left:1px solid color-mix(in oklab,var(--acc-ink) 30%,transparent)}
 /* галочка рисуется рамкой, а не значком: своего значка ради шеврона в шаблоне
    не заводится, а угол в 45 градусов одинаков в любом кегле */
 .car{width:7px;height:7px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;
@@ -1087,7 +1091,12 @@ a:hover{text-decoration:underline}
    тут же и раскрытый список подписки, поэтому у панели своя система координат
    и своя высота в слоях: без неё список уходил под блок меню. */
 .tacts{display:flex;align-items:center;gap:6px;position:relative;z-index:31}
-.tacts .btn{height:var(--ctl);min-height:var(--ctl);padding:0 11px;font-size:12.5px;border-radius:9px}
+/* рост строки один на всю панель: кнопки действий приехали сюда позже
+   карандаша с чтением и держали свои 36px от .btn. Радиус тут не трогается,
+   у .btn он тот же, что у .tpen, а слепая правка радиуса скругляла узкую
+   половину составной кнопки с той стороны, где у неё стык */
+.tacts .btn{height:var(--ctl);min-height:var(--ctl);font-size:12.5px}
+.tacts .btn:not(.more2){padding:0 11px}
 .tacts .btn svg{width:15px;height:15px;flex:none}
 
 .tchips .gap{flex:1}

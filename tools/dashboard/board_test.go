@@ -921,8 +921,10 @@ func TestStaticRunSplitLayout(t *testing.T) {
 
 	laptop := chromeMeasure(t, chrome, dir, page, "1280,900", "down")
 	// Стык без зазора: половины читаются одной кнопкой, а не двумя кубиками
-	// рядом, и делит их полоска внутри узкой части.
-	if laptop["seam"] != 0 {
+	// рядом, и делит их полоска внутри узкой части. Наезд в один пиксель это
+	// тот же стык: рамка есть у каждой половины, и сложенные встык они рисуют
+	// двойную линию везде, где рамка кнопки видна.
+	if laptop["seam"] != 0 && laptop["seam"] != -1 {
 		t.Errorf("между половинами кнопки зазор в %d пикселей: приёмка нашла её "+
 			"распавшейся на две кнопки", laptop["seam"])
 	}
@@ -1114,5 +1116,62 @@ func TestStaticButtonsLook(t *testing.T) {
 	if ask["again-under"] != 1 || ask["again-right"] != 0 {
 		t.Errorf("«Повторить груминг» стоит не под полем справа: под полем %d, до края %d",
 			ask["again-under"], ask["again-right"])
+	}
+}
+
+// Рост строки командной панели меряется настоящим движком: правила высоты
+// приходят с трёх сторон (var(--ctl) у карандаша, .btn у кнопок действий, свои
+// рамки у половин составной кнопки), и на глаз строка дважды выходила
+// ступенькой. Заодно меряется стык половин: рамка есть у каждой, и встык они
+// рисуют двойную линию.
+func TestStaticTactsRowHeights(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер командной панели пропущен")
+	}
+	// Разметка стенда повторяет taskHead руками и разъехаться с ним может
+	// молча: замер на своей вёрстке зеленел бы и после переезда кнопок.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`el("div", "tacts")`, `el("div", "tmodes")`,
+		`el("button", "tpen")`, `wide.className + " more2"`} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("панель собрана не теми классами (нет %q): замер перестал говорить "+
+				"о рабочем экране", want)
+		}
+	}
+	dir, page := chromeStand(t, "tacts_row.js")
+
+	for _, mode := range []string{"down", "up"} {
+		got := chromeMeasure(t, chrome, dir, page, "1280,900", mode)
+		what := "с закрытым списком подписок"
+		if mode == "up" {
+			what = "с раскрытым списком подписок"
+		}
+		row := got["pen-h"]
+		if row == 0 {
+			t.Fatalf("замер %s не получился: %v", what, got)
+		}
+		for _, name := range []string{"read-h", "plain-h", "wide-h", "arrow-h"} {
+			if got[name] != row {
+				t.Errorf("%s: %s = %d, а карандаш %d: строка панели идёт ступенькой",
+					what, name, got[name], row)
+			}
+		}
+		if got["seam"] != 0 && got["seam"] != -1 {
+			t.Errorf("%s: стык половин составной кнопки в %d пикселей", what, got["seam"])
+		}
+		// Скругление только по внешним краям группы, и радиус тот же, что у
+		// карандаша: слепая правка радиуса в панели скругляла стык.
+		if got["wide-rr"] != 0 || got["arrow-rl"] != 0 {
+			t.Errorf("%s: углы стыка составной кнопки скруглены (%d и %d)",
+				what, got["wide-rr"], got["arrow-rl"])
+		}
+		if got["wide-rl"] != got["pen-r"] || got["arrow-rr"] != got["pen-r"] {
+			t.Errorf("%s: внешние углы составной кнопки радиусом %d и %d, у карандаша %d",
+				what, got["wide-rl"], got["arrow-rr"], got["pen-r"])
+		}
+		if got["arrow-w"] != 30 {
+			t.Errorf("%s: узкая половина шириной %d, макет держит 30", what, got["arrow-w"])
+		}
 	}
 }

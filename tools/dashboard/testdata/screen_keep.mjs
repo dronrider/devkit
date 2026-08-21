@@ -1984,9 +1984,11 @@ if (!/\.flashes\{[^}]*position:fixed/.test(css)) {
 // Командная панель строки статуса: карандаш, кнопка режима чтения и кнопки
 // действий стоят в одну строку, и рост у них общий. Кнопки действий приехали
 // туда позже остальных и держали свои 36px от .btn, отчего строка выглядела
-// ступенькой. Высота и радиус читаются из настоящего style.css.
+// ступенькой. Высота, радиус и стык половин составной кнопки читаются из
+// настоящего style.css.
 const cssRule = (sel) => {
-  const m = new RegExp("\\" + sel + "\\{([^}]*)\\}").exec(css);
+  const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp("(?:^|[},])\\s*" + esc + "\\{([^}]*)\\}", "m").exec(css);
   if (!m) fail("в style.css нет правила " + sel);
   return m[1];
 };
@@ -1994,13 +1996,35 @@ const cssProp = (sel, prop) => {
   const m = new RegExp("(?:^|;)" + prop + ":([^;]+)").exec(cssRule(sel));
   return m ? m[1].trim() : "";
 };
-for (const prop of ["height", "border-radius"]) {
-  const pen = cssProp(".tpen", prop);
-  const act = cssProp(".tacts .btn", prop);
-  if (!act || act !== pen) {
-    fail("кнопки действий командной панели разошлись с карандашом по " + prop +
-      ": .tacts .btn = " + JSON.stringify(act) + ", .tpen = " + JSON.stringify(pen));
-  }
+if (cssProp(".tacts .btn", "height") !== cssProp(".tpen", "height")) {
+  fail("кнопки действий командной панели разошлись с карандашом по высоте: " +
+    cssProp(".tacts .btn", "height") + " против " + cssProp(".tpen", "height"));
+}
+if (cssProp(".btn", "border-radius") !== cssProp(".tpen", "border-radius")) {
+  fail("радиус кнопки разошёлся с радиусом карандаша: " +
+    cssProp(".btn", "border-radius") + " против " + cssProp(".tpen", "border-radius"));
+}
+// Радиус в самой панели не переопределяется: правило бьёт и по узкой половине
+// составной кнопки, которой скруглять надо только внешний край, и стык двух
+// половин расходился скруглениями (жалоба пользователя).
+if (cssProp(".tacts .btn", "border-radius")) {
+  fail("панель переопределяет радиус кнопок и ломает углы составной кнопки: " +
+    cssProp(".tacts .btn", "border-radius"));
+}
+// Отступы правятся только у обычной кнопки: у узкой половины они свои (padding:0
+// и ширина в 30 пикселей), и общее правило растягивало её.
+if (cssProp(".tacts .btn", "padding") || !cssProp(".tacts .btn:not(.more2)", "padding")) {
+  fail("отступы кнопок панели правятся общим правилом, вместе с узкой половиной");
+}
+// Стык половин это один пиксель: своя рамка есть у каждой, и без наезда они
+// давали двойную линию.
+if (cssProp(".split .more2", "margin-left") !== "-1px") {
+  fail("узкая половина составной кнопки не наезжает на широкую: стык в две рамки, " +
+    JSON.stringify(cssProp(".split .more2", "margin-left")));
+}
+if (!/^1px /.test(cssProp(".split .more2", "border-left"))) {
+  fail("разделитель половин составной кнопки не в один пиксель: " +
+    cssProp(".split .more2", "border-left"));
 }
 
 await go("#demo");

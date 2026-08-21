@@ -1522,14 +1522,16 @@ func (s *server) home() string {
 // planStamp это метка файла плана сессии: по ней стрим замечает, что агент
 // переписал план, не тронув транскрипта.
 func planStamp(home, sid string) string {
-	if home == "" {
-		return ""
+	out := ""
+	for _, dir := range []string{realHome(), home} {
+		if dir == "" {
+			continue
+		}
+		if fi, err := os.Stat(planPath(dir, sid)); err == nil {
+			out += fi.ModTime().String()
+		}
 	}
-	fi, err := os.Stat(planPath(home, sid))
-	if err != nil {
-		return ""
-	}
-	return fi.ModTime().String()
+	return out
 }
 
 // sendPlan шлёт план событием потока. Пустой план тоже событие: пункты бывают
@@ -1873,6 +1875,14 @@ func sessionPlan(data []byte) ([]planItem, time.Time) {
 
 // planDir это каталог планов: сессии пишут туда файл своего плана сами, и
 // каталог заводится нами, чтобы агенту не пришлось думать о его создании.
+// realHomeOr отдаёт настоящий дом, а при его отсутствии тот, что дали.
+func realHomeOr(home string) string {
+	if h := realHome(); h != "" {
+		return h
+	}
+	return home
+}
+
 func planDir(home string) string {
 	return filepath.Join(home, ".devkit", "plans")
 }
@@ -1932,8 +1942,17 @@ func readPlanFile(path string) ([]planItem, time.Time) {
 func planOf(home, sid, path string) []planItem {
 	var filePlan []planItem
 	var fileAt time.Time
-	if home != "" {
-		filePlan, fileAt = readPlanFile(planPath(home, sid))
+	// Домов тут два: настоящий дом человека, куда правило велит писать план, и
+	// дом самого дашборда. У второго экземпляра (POC) они разные, и смотреть
+	// надо в оба: свежий файл и побеждает.
+	for _, dir := range []string{realHome(), home} {
+		if dir == "" {
+			continue
+		}
+		plan, at := readPlanFile(planPath(dir, sid))
+		if plan != nil && at.After(fileAt) {
+			filePlan, fileAt = plan, at
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

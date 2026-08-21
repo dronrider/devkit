@@ -144,7 +144,7 @@ func cmdServe(home, staticDir string) error {
 	defer closeLog()
 	// Каталог планов заводится демоном: агент пишет туда файл своего плана, и
 	// заставлять его думать о создании каталога незачем.
-	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+	if err := os.MkdirAll(planDir(realHomeOr(home)), 0o755); err != nil {
 		logf("каталог планов не завёлся: %v", err)
 	}
 	// Свой конец канала живых сессий: агент, получивший реплику, отвечает на

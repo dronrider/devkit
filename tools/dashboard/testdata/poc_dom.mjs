@@ -55,7 +55,12 @@ export function makeNode(tag) {
       return want;
     },
   };
-  node.append = (...kids) => { node.children.push(...kids); };
+  node.append = (...kids) => {
+    for (const kid of kids) {
+      if (kid && typeof kid === "object") kid.parentNode = node;
+    }
+    node.children.push(...kids);
+  };
   node.appendChild = (kid) => { node.children.push(kid); return kid; };
   node.prepend = (...kids) => { node.children.unshift(...kids); };
   node.replaceChildren = (...kids) => { node.children = kids; };
@@ -70,7 +75,15 @@ export function makeNode(tag) {
     if (at >= 0) node.children.splice(at, 1);
     return kid;
   };
-  node.remove = () => {};
+  // Снятие узла настоящее: заглушка оставляла снятое в дереве, и пересобранный
+  // на месте список читался вторым (находка по тумблеру фильтра).
+  node.remove = () => {
+    const p = node.parentNode;
+    if (!p) return;
+    const at = p.children.indexOf(node);
+    if (at >= 0) p.children.splice(at, 1);
+    node.parentNode = null;
+  };
   node.after = (kid) => { node.children.push(kid); };
   // Класс у svg ставится атрибутом (className там только на чтение), и без
   // этой связки byClass не видел бы ни сегментов кольца, ни дуги.

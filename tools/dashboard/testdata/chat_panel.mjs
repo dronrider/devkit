@@ -48,7 +48,14 @@ function makeNode(tag) {
     contains: (cls) => node.className.split(" ").includes(cls),
     toggle: () => {},
   };
-  node.append = (...kids) => { node.children.push(...kids); };
+  node.append = (...kids) => {
+    // Узел помнит родителя: без этого node.remove() был заглушкой, и снятый
+    // выпадающий список оставался в дереве вторым.
+    for (const kid of kids) {
+      if (kid && typeof kid === "object") kid.parentNode = node;
+    }
+    node.children.push(...kids);
+  };
   node.appendChild = (kid) => { node.children.push(kid); return kid; };
   node.prepend = (...kids) => { node.children.unshift(...kids); };
   node.replaceChildren = (...kids) => { node.children = kids; };
@@ -63,7 +70,13 @@ function makeNode(tag) {
     if (at >= 0) node.children.splice(at, 1);
     return kid;
   };
-  node.remove = () => {};
+  node.remove = () => {
+    const p = node.parentNode;
+    if (!p) return;
+    const at = p.children.indexOf(node);
+    if (at >= 0) p.children.splice(at, 1);
+    node.parentNode = null;
+  };
   node.setAttribute = (name, value) => { node.attrs[name] = String(value); };
   node.removeAttribute = (name) => { delete node.attrs[name]; };
   node.getBoundingClientRect = () => ({ top: 0, bottom: 0, height: 0, width: 0 });
@@ -368,6 +381,42 @@ if (sandbox.chatVisible(st).length !== 3) {
     JSON.stringify(sandbox.chatVisible(st).map((c) => c.id)));
 }
 sandbox.chatFilterSet(true);
+
+// Тумблер фильтра правит только выпадающий список: экран и панель от него не
+// пересобираются. Прежде он звал общую перерисовку, и лента мигала и теряла
+// место на переключении, хотя видимого менялся только состав списка.
+{
+  const head = sandbox.chatHead("demo", st);
+  const line = byClass(head, "chline");
+  const filt = labelBtn(head, "Список отфильтрован по XR-1: нажмите, чтобы видеть все чаты");
+  if (!filt) fail("тумблера фильтра в шапке нет: " + dump(head));
+  // Список открыт: в нём два чата задачи.
+  sandbox.chatDropOpen("demo", st, line);
+  const rows = (box) => {
+    const out = [];
+    const walk = (n) => {
+      if (String(n.className || "").split(" ").includes("cdrow")) out.push(n);
+      (n.children || []).forEach(walk);
+    };
+    walk(box);
+    return out;
+  };
+  if (rows(line).length !== 2) fail("список открылся не отфильтрованным: " + rows(line).length);
+  asked.length = 0;
+  moves.length = 0;
+  filt.handlers.click({ stopPropagation: () => {} });
+  if (asked.length) fail("тумблер сходил на сервер за перерисовкой: " + JSON.stringify(asked));
+  if (moves.length) fail("тумблер тронул адрес экрана: " + JSON.stringify(moves));
+  if (byClass(head, "chline") !== line) fail("шапка пересобрана из-за тумблера");
+  if (rows(line).length !== 3) {
+    fail("список не пересобрался под снятый фильтр: " + rows(line).length);
+  }
+  if (String(filt.className).includes(" on")) fail("тумблер не сменил свой вид: " + filt.className);
+  // Возврат: список снова только про задачу.
+  filt.handlers.click({ stopPropagation: () => {} });
+  if (rows(line).length !== 2) fail("возврат фильтра не сузил список: " + rows(line).length);
+  sandbox.chatDropShut();
+}
 
 // Отправка живого разговора уходит ручкой самого разговора, а не задачи и не
 // цели: до слияния экранов реплика цели ехала во «Входящие» файла цели.

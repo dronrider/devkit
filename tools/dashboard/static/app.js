@@ -5501,9 +5501,23 @@ function chatHead(project, st) {
       ? "Список отфильтрован по " + st.task + ": нажмите, чтобы видеть все чаты"
       : "Список показывает все чаты: нажмите, чтобы оставить только " + st.task;
     filt.setAttribute("aria-label", filt.title);
-    filt.addEventListener("click", () => {
+    // Тумблер правит только состав выпадающего списка, а не экран: прежде он
+    // звал общую перерисовку, и от переключения фильтра пересобирались панель
+    // с лентой, хотя видимое содержимое то же самое (жалоба пользователя).
+    const paintFilt = () => {
+      filt.className = "cdbtn" + (chatFilterOn() ? " on" : "");
+      filt.title = chatFilterOn()
+        ? "Список отфильтрован по " + st.task + ": нажмите, чтобы видеть все чаты"
+        : "Список показывает все чаты: нажмите, чтобы оставить только " + st.task;
+      filt.setAttribute("aria-label", filt.title);
+    };
+    filt.addEventListener("click", (ev) => {
+      ev.stopPropagation();
       chatFilterSet(!chatFilterOn());
-      repaintChat().catch(console.error);
+      paintFilt();
+      // Открытый список пересобирается на месте: он и есть всё, что меняет
+      // фильтр. Закрытый соберётся с новым фильтром сам, когда его откроют.
+      if (chatDrop) chatDropOpen(project, st, line);
     });
     line.append(filt);
   }

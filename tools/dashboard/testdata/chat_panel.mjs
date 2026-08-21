@@ -274,10 +274,12 @@ const sandbox = {
     }
     if (path.includes("/pulse")) {
       return reply({ task: "XR-1", state: "working", flow: true, count: 1, quiet: 60,
-        phase: "код", about: "Bash go build", since: Math.floor(Date.now() / 1000) - 9,
+        phase: "код", tool: "Bash", about: "SC=/private/tmp/claude-501/-Users-rider go build",
+        scale: "закрыто 6 из 9", since: Math.floor(Date.now() / 1000) - 9,
         phases: [], agents: [],
         own: { session: mine.id, name: "chat-XR-1-1", state: "working", own: true,
-          about: "Bash go build", since: Math.floor(Date.now() / 1000) - 9 } });
+          tool: "Bash", about: "SC=/private/tmp/claude-501/-Users-rider go build",
+          since: Math.floor(Date.now() / 1000) - 9 } });
     }
     if (path.endsWith("/board")) return reply({ board, works: [] });
     return reply({});
@@ -392,11 +394,20 @@ if (!dump(byClass(head, "cdtask")).includes("XR-1")) {
 }
 // Состояние разговора говорит строка под названием, а собирает её пульс: слово
 // «ждёт реплики» из метаданных снято, потому что кольцо рядом говорило то же
-// самое, а у работающего агента ещё и спорило с ним.
+// самое, а у работающего агента ещё и спорило с ним. В самой строке по делу
+// одно: чем занят агент и когда ходил. Прогресс цели несёт кольцо делениями, а
+// кусок команды с путём забивал строку мусором.
 await settle();
 const cts = byClass(head, "cts");
-if (!cts || !dump(cts).includes("Bash go build")) {
+if (!cts || !dump(cts).includes("Bash")) {
   fail("шапка не сказала состояние разговора словами: " + dump(head));
+}
+if (!dump(cts).includes("назад")) fail("в строке состояния нет давности хода: " + dump(cts));
+if (dump(cts).includes("/private/tmp") || dump(cts).includes("SC=")) {
+  fail("кусок команды с путём вернулся в строку состояния: " + dump(cts));
+}
+if (dump(cts).includes("закрыто 6 из 9")) {
+  fail("прогресс цели вернулся в строку состояния: его несёт кольцо");
 }
 if (dump(byClass(head, "cmeta")).includes("ждёт реплики")) {
   fail("состояние разговора вернулось в метаданные: " + dump(head));

@@ -23,19 +23,19 @@ const now = Math.floor(Date.now() / 1000);
 const pulses = {
   working: {
     task: "XR-1", state: "working", scale: "stages", flow: true, count: 2, working: 1, idle: 1, quiet: 60,
-    phase: "тесты", about: "Bash go test ./tools/...", since: now - 12,
+    phase: "тесты", tool: "Bash", about: "go test ./tools/...", since: now - 12,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: false, now: true },
       { name: "ревью", done: false }, { name: "слияние", done: false },
       { name: "выкат", done: false },
     ],
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
-      about: "Bash go test ./tools/...", since: now - 12 },
+      tool: "Bash", about: "go test ./tools/...", since: now - 12 },
     agents: [
       { session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-        state: "working", about: "Bash go test ./tools/...", since: now - 12 },
+        state: "working", tool: "Bash", about: "go test ./tools/...", since: now - 12 },
       { session: "bbbb2222-2222", name: "chat-XR-1-2", title: "Второй чат задачи",
-        state: "idle", about: "Read app.js", since: now - 840 },
+        state: "idle", tool: "Read", about: "app.js", since: now - 840 },
     ],
   },
   waiting: {
@@ -55,26 +55,26 @@ const pulses = {
   },
   silent: {
     task: "XR-1", state: "silent", scale: "stages", flow: false, count: 1, working: 0, idle: 1, quiet: 60,
-    phase: "ревью", about: "Bash go build", since: now - 840,
+    phase: "ревью", tool: "Bash", about: "go build", since: now - 840,
     phases: [
       { name: "код", done: true }, { name: "тесты", done: true },
       { name: "ревью", done: false, now: true }, { name: "слияние", done: false },
       { name: "выкат", done: false },
     ],
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "idle", own: true,
-      about: "Bash go build", since: now - 840 },
+      tool: "Bash", about: "go build", since: now - 840 },
     agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-      state: "idle", about: "Bash go build", since: now - 840 }],
+      state: "idle", tool: "Bash", about: "go build", since: now - 840 }],
   },
   // Ждёт соседняя сессия задачи, а открытый разговор в это время работает.
   // Ровно этот случай и врал прежде: шапка работающего чата говорила про
   // вопрос, которого в его ленте не было.
   neighbour: {
     task: "XR-1", state: "waiting", scale: "stages", flow: true, count: 2, working: 1, waiting: 1, quiet: 60,
-    phase: "код", about: "Bash go build", since: now - 27,
+    phase: "код", tool: "Bash", about: "go build", since: now - 27,
     wait: { state: "ждёт ответа", source: "ask", note: "спросил агент", since: now - 7320 },
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
-      about: "Bash go build", since: now - 27 },
+      tool: "Bash", about: "go build", since: now - 27 },
     phases: [
       { name: "код", done: false, now: true }, { name: "тесты", done: false },
       { name: "ревью", done: false }, { name: "слияние", done: false },
@@ -82,7 +82,7 @@ const pulses = {
     ],
     agents: [
       { session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-        state: "working", about: "Bash go build", since: now - 27 },
+        state: "working", tool: "Bash", about: "go build", since: now - 27 },
       { session: "bbbb2222-2222", name: "chat-XR-1-2", title: "Второй чат задачи",
         state: "waiting", since: now - 7320, wait_since: now - 7320 },
     ],
@@ -190,7 +190,11 @@ function ringOf(head) {
   // сложенный с работающим он врал бы, что работа кипит вдвоём.
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("в середине не число работающих: " + (num && num.textContent));
-  const tip = String(wrap.title || "");
+  // Подсказка у кольца одна, всплывающим списком: браузерная поверх него
+  // говорила то же самое вторым разом и перекрывала сам список. Разбивку по
+  // разговорам держит подпись для чтения с экрана.
+  if (wrap.title) fail("у кольца снова браузерная подсказка: " + wrap.title);
+  const tip = String(wrap.attrs["aria-label"] || "");
   if (!tip.includes("1 работает") || !tip.includes("1 простаивает")) {
     fail("подпись кольца не назвала разбивку: " + tip);
   }
@@ -218,8 +222,8 @@ function ringOf(head) {
   const wrap = ringOf(head);
   if (!String(wrap.className).includes("r-silent")) fail("молчание не назвалось классом: " + wrap.className);
   if (byClass(wrap, "rnum")) fail("у молчащего кольца стоит число работающих");
-  if (!String(wrap.title || "").includes("1 простаивает")) {
-    fail("подпись молчащего кольца не назвала простой: " + wrap.title);
+  if (!String(wrap.attrs["aria-label"] || "").includes("1 простаивает")) {
+    fail("подпись молчащего кольца не назвала простой: " + wrap.attrs["aria-label"]);
   }
   const cts = byClass(head, "cts");
   if (!dump(cts).includes("простаивает") || !dump(cts).includes("последний ход")) {
@@ -264,7 +268,11 @@ function ringOf(head) {
     fail("в строке агента нет предмета разговора: " + dump(rows[1]));
   }
   if (!byClass(rows[0], "pown")) fail("открытый разговор в списке не помечен: " + dump(rows[0]));
-  if (!dump(pop).includes("клик по строке открывает разговор")) fail("подвала списка нет");
+  // Служебной приписки про клик в списке нет: строки и так ведут в разговор, а
+  // подпись занимала место и читалась мусором (замечание пользователя).
+  if (dump(pop).includes("клик по строке открывает разговор")) {
+    fail("служебная приписка вернулась в список агентов");
+  }
   const was = moves.length;
   rows[1].handlers.click({ stopPropagation: () => {} });
   if (moves.length === was || !String(moves[moves.length - 1][1]).includes("bbbb2222-2222")) {
@@ -279,14 +287,14 @@ function ringOf(head) {
 {
   const held = {
     task: "XR-1", state: "working", scale: "stages", flow: true, count: 1, working: 1, quiet: 60,
-    phase: "тесты", about: "Bash go test ./tools/...", since: now - 132,
+    phase: "тесты", tool: "Bash", about: "go test ./tools/...", since: now - 132,
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
-      held: true, about: "Bash go test ./tools/...", since: now - 132 },
+      held: true, tool: "Bash", about: "go test ./tools/...", since: now - 132 },
     phases: [{ name: "код", done: true }, { name: "тесты", done: false, now: true },
       { name: "ревью", done: false }, { name: "слияние", done: false },
       { name: "выкат", done: false }],
     agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-      state: "working", held: true, about: "Bash go test ./tools/...", since: now - 132 }],
+      state: "working", held: true, tool: "Bash", about: "go test ./tools/...", since: now - 132 }],
   };
   pulses.held = held;
   const head = await headOf("held");
@@ -312,7 +320,9 @@ function ringOf(head) {
   if (said.includes("вопрос человеку") || said.includes("без ответа")) {
     fail("шапка работающего чата приписала себе чужой вопрос: " + said);
   }
-  if (!said.includes("Bash go build") || !said.includes("27 с назад")) {
+  // По делу тут имя инструмента и давность хода: сам довод с путями остался в
+  // ленте, а в строке состояния он читался мусором.
+  if (!said.includes("Bash") || !said.includes("27 с назад")) {
     fail("шапка не сказала, чем занят открытый чат: " + said);
   }
   const rows = allByClass(byClass(wrap, "pop"), "prow");
@@ -329,11 +339,11 @@ function ringOf(head) {
 {
   pulses.bare = {
     task: "XR-1", state: "working", scale: "", flow: true, count: 1, working: 1, quiet: 60,
-    about: "Bash go build ./...", since: now - 15,
+    tool: "Bash", about: "go build ./...", since: now - 15,
     own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
-      about: "Bash go build ./...", since: now - 15 },
+      tool: "Bash", about: "go build ./...", since: now - 15 },
     agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-      state: "working", about: "Bash go build ./...", since: now - 15 }],
+      state: "working", tool: "Bash", about: "go build ./...", since: now - 15 }],
   };
   const head = await headOf("bare");
   const wrap = ringOf(head);
@@ -343,9 +353,9 @@ function ringOf(head) {
   if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
   const cts = dump(byClass(head, "cts"));
   if (cts.includes("фаза")) fail("строка состояния назвала фазу, которой не знает: " + cts);
-  if (!cts.includes("Bash go build")) fail("строка состояния молчит про ход: " + cts);
-  if (!String(wrap.title || "").includes("записи этапов")) {
-    fail("не сказано, почему шкалы нет: " + wrap.title);
+  if (!cts.includes("Bash")) fail("строка состояния молчит про ход: " + cts);
+  if (!String(wrap.attrs["aria-label"] || "").includes("записи этапов")) {
+    fail("не сказано, почему шкалы нет: " + wrap.attrs["aria-label"]);
   }
   // Работа при этом видна как раньше: индикатором состояния кольцо быть не
   // перестало.
@@ -358,11 +368,11 @@ function ringOf(head) {
   pulses.goal = {
     task: "XR-7", state: "working", scale: "goal", goal: true, done: 6, total: 9,
     flow: true, count: 1, working: 1, quiet: 60,
-    about: "Bash taskctl list", since: now - 8,
+    tool: "Bash", about: "taskctl list", since: now - 8,
     own: { session: "aaaa1111-1111", name: "chat-XR-7-1", state: "working", own: true,
-      about: "Bash taskctl list", since: now - 8 },
+      tool: "Bash", about: "taskctl list", since: now - 8 },
     agents: [{ session: "aaaa1111-1111", name: "chat-XR-7-1", title: "Цель XR-7", own: true,
-      state: "working", about: "Bash taskctl list", since: now - 8 }],
+      state: "working", tool: "Bash", about: "taskctl list", since: now - 8 }],
   };
   const head = await headOf("goal");
   const wrap = ringOf(head);
@@ -371,7 +381,12 @@ function ringOf(head) {
   const done = segs.filter((x) => String(x.className).includes("on")).length;
   if (done !== 6) fail("закрашено не по числу закрытых задач: " + done);
   const cts = dump(byClass(head, "cts"));
-  if (!cts.includes("закрыто 6 из 9")) fail("строка состояния не сказала про задачи цели: " + cts);
+  // Про задачи цели говорит само кольцо делениями: в строке состояния тот же
+  // счёт стоял вторым разом и забивал место (замечание пользователя).
+  if (cts.includes("закрыто 6 из 9")) {
+    fail("счёт задач цели вернулся в строку состояния: " + cts);
+  }
+  if (!cts.includes("Bash")) fail("строка состояния молчит про ход цели: " + cts);
   if (cts.includes("фаза")) fail("цели приписали фазу конвейера: " + cts);
   // Число в середине это по-прежнему работающие агенты, а не задачи.
   const num = byClass(wrap, "rnum");
@@ -395,29 +410,26 @@ function ringOf(head) {
   // Нарезки может не быть вовсе, и тогда шкалы нет, как и у задачи без записи.
   const raw = pulseRingOf({ state: "silent", scale: "", goal: true, count: 1, agents: [] });
   if (allByClass(raw, "seg").length) fail("ненарезанная цель нарисовала шкалу");
-  if (!String(raw.title || "").includes("не нарезана")) {
+  if (!String(raw.attrs["aria-label"] || "").includes("не нарезана")) {
     fail("не сказано, почему у цели нет шкалы: " + raw.title);
   }
 }
 
-// --- имя инструмента и довод хода не слипаются в одно предложение ---
+// --- в строке состояния имя инструмента, а не довод хода с путями ---
+// Довод хода («SC=/private/tmp/...») занимал строку целиком и читался мусором:
+// смотреть команду есть где, в самой ленте (замечание пользователя).
 {
   const head = await headOf("glued");
   const cts = byClass(head, "cts");
   const tool = byClass(cts, "ctool");
-  const why = byClass(cts, "cwhy");
   if (!tool || dump(tool).trim() !== "SendMessage") {
     fail("имя инструмента не стоит своим полем: " + dump(cts));
   }
-  if (!why || !dump(why).includes("Кольцо врёт прогрессом")) {
-    fail("довода хода нет отдельным полем: " + dump(cts));
-  }
-  if (dump(cts).includes("SendMessage Кольцо")) {
-    fail("имя инструмента слиплось с доводом: " + dump(cts));
+  if (byClass(cts, "cwhy")) fail("довод хода вернулся в строку состояния: " + dump(cts));
+  if (dump(cts).includes("Кольцо врёт прогрессом")) {
+    fail("текст довода вернулся в строку состояния: " + dump(cts));
   }
   if (!byClass(cts, "csep")) fail("поля строки состояния идут без разделителя: " + dump(cts));
-  // Длинный довод режется, а не выдавливает из строки всё остальное.
-  if (dump(why).includes("кружка и подпись")) fail("довод не обрезан по длине: " + dump(why));
   if (!dump(cts).includes("последний ход")) fail("не сказано, что ход последний: " + dump(cts));
 }
 

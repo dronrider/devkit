@@ -334,6 +334,47 @@ function ringOf(head) {
   if (byClass(bare, "plist")) fail("без плана в подсказке остался список");
 }
 
+// --- длинный план: доля растёт, засечка идёт по кольцу ---
+// Планов длиннее дюжины кольцо не режет делениями (пунктир не читается), и
+// раньше план без единого закрытого пункта рисовался ровной дорожкой: человек
+// дописывал пункт за пунктом и на кольце не видел ничего.
+{
+  const long = (done, at) => Array.from({ length: 16 }, (_, i) => ({
+    text: "пункт " + (i + 1),
+    state: i < done ? "completed" : i === at ? "in_progress" : "pending",
+  }));
+  const dash = (node) => node.attrs["stroke-dasharray"].split(" ")[0];
+  const ringOf = (done, at) =>
+    pulseRingOf({ state: "working", working: 1, count: 1, agents: [], plan: long(done, at) });
+
+  const none = ringOf(0, 0);
+  const here = allByClass(none, "seg").filter((x) => String(x.className).includes("here"));
+  if (here.length !== 1) {
+    fail("длинный план без закрытых пунктов нарисован голой дорожкой: " +
+      allByClass(none, "seg").map((x) => x.className).join(", "));
+  }
+  if (allByClass(none, "seg").filter((x) => /\bon\b/.test(String(x.className))).length) {
+    fail("на кольце закрашена доля, которой нет");
+  }
+  // Каждый закрытый пункт растит долю и двигает засечку.
+  const one = ringOf(1, 1);
+  const three = ringOf(3, 3);
+  const doneArc = (w) => allByClass(w, "seg").filter((x) => /\bon\b/.test(String(x.className)))[0];
+  if (!doneArc(one) || !doneArc(three)) fail("доля сделанного на длинном плане не нарисована");
+  if (!(Number(dash(doneArc(three))) > Number(dash(doneArc(one))))) {
+    fail("доля не выросла с закрытыми пунктами: " + dash(doneArc(one)) + " -> " + dash(doneArc(three)));
+  }
+  const tick = (w) => allByClass(w, "seg").filter((x) => String(x.className).includes("here"))[0];
+  if (tick(one).attrs["stroke-dashoffset"] === tick(three).attrs["stroke-dashoffset"]) {
+    fail("засечка идущего пункта стоит на месте: " + tick(one).attrs["stroke-dashoffset"]);
+  }
+  // Подсказка со списком показывает все пункты, сколько бы их ни было.
+  if (allByClass(byClass(three, "plist"), "prow2").length !== 16) {
+    fail("длинный план в подсказке урезан: " +
+      allByClass(byClass(three, "plist"), "prow2").length);
+  }
+}
+
 // --- открытый список плана переживает тик пульса и приход записи ---
 // Кольцо пересобиралось каждым тиком, и открытый по клику список закрывался от
 // любого вывода агента в ленте: человек не успевал его прочитать.

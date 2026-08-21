@@ -1726,7 +1726,19 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   // «Завести файл» у задачи без постановки.
   head.append(el("span", "gap"));
   const body = el("div", "fbody");
-  card.append(head, body);
+  card.append(body);
+  // Шапка встаёт в разметку только с живой кнопкой: после переезда карандаша,
+  // чтения и действий в командную панель у задачи с файлом в ней не осталось
+  // ничего, и над описанием стояла пустая полоса с разделителем. Прятать её
+  // стилями нельзя, рамка с отступами осталась бы на экране, поэтому узла
+  // просто нет (та же мера, что у полосы действий).
+  const placeHead = () => {
+    const live = Array.from(head.children).some(
+      (n) => !n.hidden && !String(n.className || "").split(" ").includes("gap"));
+    if (!live) head.remove();
+    else if (!head.parentNode) card.prepend(head);
+  };
+  placeHead();
 
   if (!detail.file) {
     // Дыра чинится только у строки доски: у записи накопителя пропавший файл
@@ -1735,6 +1747,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
       const make = el("button", "btn btn-sm", "Завести файл");
       make.addEventListener("click", () => { makeTaskFile(project, id).catch(console.error); });
       head.append(make);
+      placeHead();
     }
     body.append(el("div", "empty", detail.note || "файла задачи нет"));
     return card;
@@ -1757,6 +1770,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   card.setWide = (on) => {
     card.classList.toggle("wide", on);
     out.hidden = !on;
+    placeHead();
   };
 
   const ta = el("textarea");
@@ -5352,8 +5366,15 @@ function ringPlan(box, plan) {
     return;
   }
   if (plan.length > RING_MAX_SEGS) {
+    const step = RING_LEN / plan.length;
     box.append(ringArc("seg", RING_LEN, 0));
     if (done > 0) box.append(ringArc("seg on", RING_LEN * (done / plan.length), 0));
+    // Длинный план без единого закрытого пункта рисовался ровной дорожкой, и
+    // кольцо было не отличить от кольца без плана: человек дописывал пункт за
+    // пунктом и не видел на экране ничего (жалоба пользователя). Идущий пункт
+    // отмечен засечкой, и она ползёт по кольцу с каждым закрытым.
+    const at = plan.findIndex((it) => it.state === "in_progress");
+    if (at >= 0) box.append(ringArc("seg here", Math.max(step - 1, 1), at * step));
     return;
   }
   const step = RING_LEN / plan.length;

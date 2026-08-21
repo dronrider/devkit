@@ -213,6 +213,42 @@ func TestPulseSilentNotEmpty(t *testing.T) {
 	}
 }
 
+// План молчащего чата кольцо берёт из файла и подхватывает его переписывание:
+// транскрипт у простаивающей сессии не растёт, и заметить смену плана можно
+// только по самому файлу (жалоба пользователя: пункты дописываются, кольцо
+// стоит).
+func TestPulsePlanFileOfSilentChat(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	seen := now.Add(-40 * time.Minute)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."),
+		now.Add(-2*time.Minute))
+	writeBinds(t, e.home, bindRecord("2026-08-20T11:15:00", "aaa-1", "XR-1", "заказ"))
+
+	if err := os.MkdirAll(planDir(e.home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := planPath(e.home, "aaa-1")
+	first := `[{"text":"разобрать находку","state":"in_progress"}]`
+	if err := os.WriteFile(file, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := getPulse(t, e, c, "task=XR-1")
+	if len(p.Plan) != 1 || p.Plan[0].Text != "разобрать находку" {
+		t.Fatalf("план молчащего чата не пришёл в кольцо: %+v", p.Plan)
+	}
+
+	// Пункты дописаны, транскрипт при этом не тронут.
+	second := `[{"text":"разобрать находку","state":"completed"},{"text":"починить подачу","state":"in_progress"},{"text":"прогнать стенды","state":"pending"}]`
+	if err := os.WriteFile(file, []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p = getPulse(t, e, c, "task=XR-1")
+	if len(p.Plan) != 3 || p.Plan[0].State != "completed" || p.Plan[2].Text != "прогнать стенды" {
+		t.Fatalf("дописанные пункты плана до кольца не доехали: %+v", p.Plan)
+	}
+}
+
 // Живых сессий у задачи нет: кольцо пустое и числа не носит.
 func TestPulseEmpty(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)

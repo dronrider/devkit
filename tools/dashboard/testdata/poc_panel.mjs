@@ -365,6 +365,9 @@ async function feedOf(items, sid) {
     { seq: 2, key: "d:2", role: "note", note: "Фоновый агент завершил работу", mark: "agent",
       text: "Агент разобрал находку.", time: "2026-08-13T09:01:00+03:00" },
     { seq: 3, key: "d:3", role: "note", text: "Команда /clear", time: "2026-08-13T09:02:00+03:00" },
+    { seq: 4, key: "d:4", role: "tool", tool: "Bash", note: "go build ./...",
+      text: "command: go build ./...", time: "2026-08-13T09:03:00+03:00" },
+    { seq: 5, key: "d:5", role: "toolout", text: "готово", time: "2026-08-13T09:03:01+03:00" },
   ];
   const box = await feedOf(rail, "rail-deleg");
   const rows = allByClass(box, "frow");
@@ -372,6 +375,8 @@ async function feedOf(items, sid) {
   if (kind(rows[0]) !== "deleg") fail("делегирование не помечено синим: " + kind(rows[0]));
   if (kind(rows[1]) !== "deleg") fail("конец фоновой работы не помечен синим: " + kind(rows[1]));
   if (kind(rows[2]) === "deleg") fail("обычная служебка покрашена синим: " + kind(rows[2]));
+  // Обычный ход метку делегирования не носит: у него прежний исход работы.
+  if (kind(rows[3]) !== "ok") fail("обычный инструмент помечен не исходом: " + kind(rows[3]));
 }
 
 // --- план сессии: блок на экране задачи и пустое состояние ---

@@ -802,25 +802,15 @@ a:hover{text-decoration:underline}
 .ring .track{stroke:var(--line2)}
 .r-empty .track{stroke:var(--bg3)}
 .r-waiting .track{stroke:var(--block);opacity:0.65}
-/* Непройденная фаза это разметка, а не пустота: цветом подложки она сливалась
-   с фоном, и сегментов на кольце было не разглядеть вовсе. Идущая фаза светится
-   акцентом: пройденных фаз у задачи может не быть ни одной (запись этапов
-   пустая), и тогда единственное, что кольцо честно знает, это где мы сейчас. */
-.ring .seg{stroke:var(--line2)}
-.ring .seg.on{stroke:var(--run)}
-.ring .seg.here{stroke:var(--acc)}
+/* Шкалы хода на кольце нет: деления задач и фазы конвейера были немой
+   разметкой, а ход работы виден там, где ему место, на экране цели и задачи.
+   Осталась ровная дорожка, по которой бежит дуга живой работы. */
 .ring .comet{stroke:none}
 .ring .halo{stroke:none}
 .rnum{font:600 12px var(--mono);fill:var(--tx)}
 .r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
-.r-waiting .seg.on{stroke:var(--block)}
-/* Идущая фаза у ждущего кольца тоже красная: пройденных фаз у задачи в начале
-   работы нет вовсе, и без этого от кольца оставался бы один ореол. */
-.r-waiting .seg.here{stroke:var(--block)}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
-.r-silent .seg.on,.r-silent .seg.here{stroke:var(--tx3)}
-.r-empty .seg,.r-empty .seg.on,.r-empty .seg.here{stroke:var(--bg3)}
 @keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-71.63}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */

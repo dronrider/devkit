@@ -154,38 +154,21 @@ function ringOf(head) {
   if (!byClass(ct, "chline")) fail("строка с названием уехала из колонки");
 }
 
-// --- работа: сегменты по фазам, дуга бежит, число в середине ---
+// --- работа: ровная дорожка, дуга бежит, число в середине ---
+// Шкалы хода на кольце нет вовсе: деления задач и фазы конвейера были немой
+// разметкой («что значат девять сегментов и шесть зелёных?»), а ход работы
+// показан на экране цели блоком «Задачи цели» и этапом на экране задачи.
 {
   const head = await headOf("working");
   const wrap = ringOf(head);
   if (!String(wrap.className).includes("r-working")) {
     fail("состояние работы не назвалось классом: " + wrap.className);
   }
-  const segs = allByClass(wrap, "seg");
-  if (segs.length !== 5) fail("сегментов не пять: " + segs.length);
-  const done = segs.filter((s) => String(s.className).includes("on")).length;
-  if (done !== 1) fail("закрашено не то число фаз: " + done);
-  const here = segs.filter((s) => String(s.className).includes("here"));
-  if (here.length !== 1) fail("идущая фаза не помечена: " + here.length);
-  // Сегменты идут по окружности без наложения: смещение каждого следующего на
-  // свою пятую часть, зазор между ними взят из длины дуги.
-  const offs = segs.map((s) => Number(s.attrs["stroke-dashoffset"]));
-  for (let i = 1; i < offs.length; i += 1) {
-    if (!(offs[i] < offs[i - 1])) fail("сегменты стоят друг на друге: " + JSON.stringify(offs));
+  if (allByClass(wrap, "seg").length) {
+    fail("шкала хода вернулась на кольцо: " + allByClass(wrap, "seg").length + " делений");
   }
+  if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
   if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
-  // Пройденных фаз у задачи может не быть ни одной: запись этапов пустая, и
-  // кольцо тогда честно показывает одну идущую фазу, а не выдуманный прогресс.
-  const bare = allByClass(pulseRingOf({ state: "working", scale: "stages", working: 1, count: 1,
-    phases: [{ name: "код", done: false, now: true }, { name: "тесты", done: false },
-      { name: "ревью", done: false }, { name: "слияние", done: false },
-      { name: "выкат", done: false }], agents: [] }), "seg");
-  if (bare.filter((x) => String(x.className).includes("on")).length !== 0) {
-    fail("кольцо без записи этапов притворилось прогрессом");
-  }
-  if (bare.filter((x) => String(x.className).includes("here")).length !== 1) {
-    fail("идущая фаза не размечена: " + bare.map((x) => x.className).join(", "));
-  }
   // В середине работающие, а не все: второй разговор задачи простаивает, и
   // сложенный с работающим он врал бы, что работа кипит вдвоём.
   const num = byClass(wrap, "rnum");
@@ -319,36 +302,7 @@ function ringOf(head) {
   if (!byClass(rows[1], "pfrom")) fail("не сказано, с какого момента ждут: " + dump(rows[1]));
 }
 
-// --- данных о фазах нет: шкалы нет вовсе, кольцо показывает состояние ---
-// Прежде кольцо рисовало пять делений с первым «идущим» и там, где записи
-// этапов нет вовсе. Незнание, нарисованное шкалой, человек читает как знание о
-// ходе работы, и это враньё дороже пустой дорожки.
-{
-  pulses.bare = {
-    task: "XR-1", state: "working", scale: "", flow: true, count: 1, working: 1, quiet: 60,
-    tool: "Bash", about: "go build ./...", since: now - 15,
-    own: { session: "aaaa1111-1111", name: "task-XR-1", state: "working", own: true,
-      tool: "Bash", about: "go build ./...", since: now - 15 },
-    agents: [{ session: "aaaa1111-1111", name: "task-XR-1", title: "Выполни XR-1", own: true,
-      state: "working", tool: "Bash", about: "go build ./...", since: now - 15 }],
-  };
-  const head = await headOf("bare");
-  const wrap = ringOf(head);
-  if (allByClass(wrap, "seg").length) {
-    fail("кольцо без записи этапов нарисовало шкалу: " + allByClass(wrap, "seg").length + " делений");
-  }
-  if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
-  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
-  if (!String(wrap.attrs["aria-label"] || "").includes("записи этапов")) {
-    fail("не сказано, почему шкалы нет: " + wrap.attrs["aria-label"]);
-  }
-  // Работа при этом видна как раньше: индикатором состояния кольцо быть не
-  // перестало.
-  if (!String(wrap.className).includes("r-working")) fail("состояние потерялось вместе со шкалой");
-  if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
-}
-
-// --- цель: шкала считает задачи цели, а не фазы конвейера ---
+// --- цель и задача: кольцо одинаково, шкалы нет ни у той, ни у другой ---
 {
   pulses.goal = {
     task: "XR-7", state: "working", scale: "goal", goal: true, done: 6, total: 9,
@@ -361,41 +315,26 @@ function ringOf(head) {
   };
   const head = await headOf("goal");
   const wrap = ringOf(head);
-  const segs = allByClass(wrap, "seg");
-  if (segs.length !== 9) fail("делений не по числу задач цели: " + segs.length);
-  const done = segs.filter((x) => String(x.className).includes("on")).length;
-  if (done !== 6) fail("закрашено не по числу закрытых задач: " + done);
-  // Про задачи цели говорит само кольцо делениями и подпись при нём: строки
-  // состояния под заголовком нет вовсе (замечание пользователя).
-  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
-  if (!String(wrap.attrs["aria-label"] || "").includes("закрыто 6 из 9")) {
-    fail("подпись кольца не назвала счёт задач цели: " + wrap.attrs["aria-label"]);
+  if (allByClass(wrap, "seg").length) {
+    fail("цель нарисовала шкалу задач: " + allByClass(wrap, "seg").length + " делений");
   }
+  if (!byClass(wrap, "track")) fail("у цели нет ровной дорожки");
+  const tip = String(wrap.attrs["aria-label"] || "");
+  if (tip.includes("закрыто 6 из 9") || tip.includes("нарезан")) {
+    fail("подпись кольца снова считает задачи цели: " + tip);
+  }
+  if (!tip.includes("1 работает")) fail("подпись кольца не назвала агентов: " + tip);
   // Число в середине это по-прежнему работающие агенты, а не задачи.
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("в середине не число работающих: " + (num && num.textContent));
-  // Длинная цель считается долей дуги: тридцать делений с зазором это уже
-  // пунктир, а не шкала.
-  const many = allByClass(pulseRingOf({ state: "working", scale: "goal", goal: true,
-    done: 7, total: 30, working: 1, count: 1, agents: [] }), "seg");
-  if (many.length !== 2) fail("длинная цель нарисована делениями: " + many.length);
-  const lit = many.filter((x) => String(x.className).includes("on"));
-  if (lit.length !== 1) fail("у длинной цели не закрашена доля: " + many.map((x) => x.className).join(", "));
-  // Доля именно доля: закрашенная дуга короче полного круга ровно во столько,
-  // во сколько закрытых задач меньше всех. Закрашенный целиком круг у цели с
-  // семью задачами из тридцати и есть то самое враньё, ради которого шкалу и
-  // разбирали.
-  const span = Number(String(lit[0].attrs["stroke-dasharray"]).split(" ")[0]);
-  const want = (2 * Math.PI * 15) * (7 / 30);
-  if (Math.abs(span - want) > 0.5) {
-    fail("закрашенная дуга не по доле закрытых: " + span.toFixed(2) + ", ждал " + want.toFixed(2));
-  }
-  // Нарезки может не быть вовсе, и тогда шкалы нет, как и у задачи без записи.
-  const raw = pulseRingOf({ state: "silent", scale: "", goal: true, count: 1, agents: [] });
-  if (allByClass(raw, "seg").length) fail("ненарезанная цель нарисовала шкалу");
-  if (!String(raw.attrs["aria-label"] || "").includes("не нарезана")) {
-    fail("не сказано, почему у цели нет шкалы: " + raw.title);
-  }
+  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
+  // У задачи без записи этапов кольцо ровно такое же: разница между целью и
+  // задачей на нём больше не рисуется.
+  const bare = pulseRingOf({ state: "working", scale: "stages", working: 1, count: 1,
+    phases: [{ name: "код", done: false, now: true }, { name: "тесты", done: true }],
+    agents: [] });
+  if (allByClass(bare, "seg").length) fail("фазы конвейера вернулись на кольцо");
+  if (!byClass(bare, "track")) fail("у задачи нет ровной дорожки");
 }
 
 // --- приписки под названием нет, метаданные ушли в подсказку ---
@@ -416,5 +355,5 @@ for (const [ago, want] of [[12, "12 с"], [240, "4 мин"], [4000, "1 ч 6 ми
   if (said !== want) fail("давность " + ago + " с сказана как " + said + ", ждал " + want);
 }
 
-console.log("кольцо агентов: место в шапке, четыре состояния, фазы сегментами, " +
+console.log("кольцо агентов: место в шапке, четыре состояния, ровная дорожка без шкалы, " +
   "список агентов с дорогой в разговор, давность словами");

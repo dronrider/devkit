@@ -5010,7 +5010,6 @@ const RING_NS = "http://www.w3.org/2000/svg";
 const RING_R = 15;
 const RING_LEN = 2 * Math.PI * RING_R;
 // Зазор между сегментами в единицах длины дуги: тот же, что в макете.
-const RING_GAP = 3;
 // Дорожка бегущей дуги: она идёт внутри шкалы, чтобы не закрывать деления.
 const RING_SPIN = 11.4;
 const RING_SPIN_LEN = 2 * Math.PI * RING_SPIN;
@@ -5051,7 +5050,7 @@ function pulseSubject(p) {
   return { state: it.state, tool: it.tool, about: it.about, sub: it.sub,
     since: it.since, held: it.held,
     wait: p.own_wait || (p.own ? null : p.wait),
-    wait_since: it.wait_since, scale: ringScaleWords(p) };
+    wait_since: it.wait_since };
 }
 
 // Сколько довода хода помещается в строку состояния. Сервер режет его до
@@ -5160,7 +5159,6 @@ function pulseAgentSince(a) {
 // А там, где источник молчит, шкалы нет вовсе: кольцо остаётся индикатором
 // состояния, потому что нарисованное деление человек читает как знание о ходе
 // работы, которого у дашборда нет.
-const RING_MAX_SEGS = 12;
 
 function ringArc(cls, span, at) {
   const c = svgEl("circle", cls);
@@ -5173,67 +5171,13 @@ function ringArc(cls, span, at) {
   return c;
 }
 
-// Подпись деления кольца. Своей всплывающей подсказки у деления больше нет:
-// подсказка у кольца одна, списком агентов, а браузерная поверх неё говорила
-// то же самое и мешала её открыть. Слова остаются подписью для чтения с
-// экрана.
-function ringTitle(node, text) {
-  node.setAttribute("aria-label", text);
-  return node;
-}
-
-// Шкала задачи: пять фаз конвейера поимённо.
-function ringStages(box, phases) {
-  const step = RING_LEN / (phases.length || 1);
-  const arc = Math.max(step - RING_GAP, 1);
-  phases.forEach((ph, i) => {
-    const c = ringArc("seg" + (ph.done ? " on" : "") + (ph.now ? " here" : ""), arc, i * step);
-    ringTitle(c, ph.name + (ph.done ? ": пройдена" : ph.now ? ": идёт" : ": не пройдена"));
-    box.append(c);
-  });
-}
-
-// Шкала цели: задачи цели делениями. Задач бывает и три, и три десятка, поэтому
-// длинная цель считается долей дуги: тридцать делений с зазором в три единицы
-// на кольце в тридцать шесть точек это уже не шкала, а пунктир.
-function ringGoal(box, done, total) {
-  if (total <= RING_MAX_SEGS) {
-    const step = RING_LEN / total;
-    const arc = Math.max(step - RING_GAP, 1);
-    for (let i = 0; i < total; i += 1) {
-      const c = ringArc("seg" + (i < done ? " on" : ""), arc, i * step);
-      ringTitle(c, "задача " + (i + 1) + " из " + total + (i < done ? ": закрыта" : ": не закрыта"));
-      box.append(c);
-    }
-    return;
-  }
-  const filled = RING_LEN * (done / total);
-  box.append(ringTitle(ringArc("seg", RING_LEN, 0), total + " задач цели"));
-  if (done > 0) {
-    box.append(ringTitle(ringArc("seg on", filled, 0), "закрыто " + done + " из " + total));
-  }
-}
-
-function ringSegs(box, p) {
-  if (!p) return;
-  if (p.scale === "goal" && p.total > 0) {
-    ringGoal(box, p.done || 0, p.total);
-    return;
-  }
-  if (p.scale === "stages" && (p.phases || []).length) {
-    ringStages(box, p.phases);
-    return;
-  }
-  // Шкалы нет: кольцо это ровная дорожка без делений. Разметка тут была бы
-  // враньём, а пустое место читалось бы как поломка.
-  box.append(ringTitle(ringArc("track", RING_LEN, 0), ringScaleNote(p)));
-}
-
-// Почему шкалы нет, сказано словами: молчащий источник и «прогресса нет» это
-// разные вещи, и подсказка обязана их различать.
-function ringScaleNote(p) {
-  if (p && p.goal) return "цель ещё не нарезана на задачи: считать нечего";
-  return "записи этапов у задачи нет: чем занят конвейер, дашборду не известно";
+// Дорожка кольца. Шкалы хода на нём больше нет вовсе: деления задач нарезки и
+// фазы конвейера были немой разметкой («что значат девять сегментов и шесть
+// зелёных?»), а ход работы показан там, где ему место, блоком «Задачи цели» на
+// экране цели и этапом на экране задачи. Кольцо осталось про агентов: сколько
+// работает, кто ждёт, каким цветом.
+function ringTrack(box) {
+  box.append(ringArc("track", RING_LEN, 0));
 }
 
 // Кольцо целиком. Разметка одна на все четыре состояния, состояние это класс
@@ -5249,7 +5193,7 @@ function pulseRing(project, p) {
   const halo = svgEl("circle", "halo");
   svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
   box.append(halo);
-  ringSegs(g, p);
+  ringTrack(g);
   // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
   // опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она по
   // своей дорожке внутри шкалы: поверх делений она закрывала их собой, и
@@ -5276,11 +5220,9 @@ function pulseRing(project, p) {
   wrap.append(box);
   wrap.append(ringPop(project, p));
   // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
-  // него говорила то же самое вторым разом и перекрывала сам список. Слова
-  // шкалы стоят тут же: строки состояния под заголовком больше нет, и сказать
-  // их больше негде. Без шкалы вместо них причина, почему её нет.
-  const tip = [ringTally(p), ringScaleWords(p) || ringScaleNote(p),
-    pulseWords(p, Date.now())].filter(Boolean).join(". ");
+  // него говорила то же самое вторым разом и перекрывала сам список. Слов про
+  // ход работы тут нет: кольцо про агентов, а прогресс живёт на экране цели.
+  const tip = [ringTally(p), pulseWords(p, Date.now())].filter(Boolean).join(". ");
   wrap.setAttribute("aria-label", tip);
   // На таче наведения нет, и список открывается нажатием на само кольцо.
   wrap.addEventListener("click", (ev) => {
@@ -5298,15 +5240,6 @@ function ringNumber(p) {
 
 // Подпись кольца: сколько кого. Число в середине говорит про работающих, и без
 // подписи человек не узнал бы, что рядом стоит второй разговор той же задачи.
-// Что говорит шкала. У задачи это фаза, у цели доля закрытых задач, а без
-// шкалы про ход работы не говорится ничего: сказать нечего.
-function ringScaleWords(p) {
-  if (!p) return "";
-  if (p.scale === "goal") return "закрыто " + (p.done || 0) + " из " + p.total;
-  if (p.scale === "stages" && p.phase) return "фаза " + p.phase;
-  return "";
-}
-
 function ringTally(p) {
   if (!p || !p.count) return "живых сессий нет";
   const bits = [];

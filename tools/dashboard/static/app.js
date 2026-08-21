@@ -5581,6 +5581,37 @@ function wireTaskPlan(project, id, page) {
   agentLive.push(() => clearInterval(t));
 }
 
+// Прерывать ход можно у своей работающей tmux-сессии: занятость приходит
+// записью реестра (idle), а принадлежность именем tmux. Окно vscode это чужой
+// процесс, мёртвая сессия ход не ведёт вовсе.
+function chatStoppable(st) {
+  const e = st && st.entry;
+  return Boolean(e && e.state === "live" && e.tmux && !e.idle);
+}
+
+// Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
+// сессию: следующая реплика попадёт в тот же разговор с его памятью, а полное
+// завершение живёт на экране задачи и в кнопке остановки конвейера.
+function chatStopBtn(project, st) {
+  const stop = el("button", "cstop");
+  stop.title = "Прервать текущий ход агента: сессия останется жить";
+  stop.setAttribute("aria-label", stop.title);
+  stop.append(icon("i-stop"));
+  stop.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    stop.disabled = true;
+    stopChat(project, st.sid).catch(console.error).finally(() => { stop.disabled = false; });
+  });
+  return stop;
+}
+
+async function stopChat(project, sid) {
+  const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/stop",
+    { method: "POST", body: {} });
+  sayResult(r.body.message || r.body.error || (r.ok ? "ход прерван" : "прервать не вышло"), !r.ok);
+  return r.ok;
+}
+
 // Ответ задаче безадресной строкой: ручка та же, какой пользуется сторожок.
 async function answerTask(project, id, text) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
@@ -6217,6 +6248,10 @@ function chatPanel(project, st) {
     }
   });
   send.addEventListener("click", fire);
+  // Стоп стоит рядом с отправкой и виден только там, где прерывать есть что и
+  // чем: сессия работает и живёт в нашей tmux. У окна vscode и у мёртвой
+  // сессии клавиатуры отсюда нет, и кнопка там обещала бы несуществующее.
+  if (chatStoppable(st)) row.append(chatStopBtn(project, st));
   row.append(send);
   // Порядок узлов и есть положение хвата: полоса стоит первой в коробке, то
   // есть над полем.

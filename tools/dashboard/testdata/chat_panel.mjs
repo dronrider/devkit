@@ -625,3 +625,43 @@ console.log("список разговоров: состояние, модель
 console.log("панель разговора: адрес хвостом и старые ссылки живы, задачный адрес открывает" +
   " свежий разговор задачи, реплика уходит ручкой разговора, шапка называет разговор с задачей," +
   " ширина тянется хватом и помнится");
+
+// --- стоп в строке отправки: только у своей работающей сессии ---
+// Прерывать ход можно там, где есть чем: сессия живёт в нашей tmux. Окно
+// vscode это чужой процесс, у мёртвой сессии хода нет вовсе.
+{
+  const base = await sandbox.chatState("demo", mine.id, board);
+  const withEntry = (extra) => Object.assign({}, base,
+    { entry: Object.assign({ id: mine.id, tasks: ["XR-1"] }, extra) });
+  const busy = withEntry({ state: "live", tmux: "chat-XR-1-1", idle: false });
+  const panel = sandbox.chatPanel("demo", busy);
+  const stop = byClass(panel, "cstop");
+  if (!stop) fail("у работающей сессии нет стопа в строке отправки: " + dump(panel).slice(0, 200));
+  posted.length = 0;
+  stop.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const hit = posted.filter((p) => p.includes("/stop"));
+  if (hit.length !== 1 || !hit[0].includes("/chats/" + mine.id + "/stop")) {
+    fail("стоп ушёл не ручкой прерывания: " + JSON.stringify(posted));
+  }
+  if (posted.some((p) => p.includes("kill") || p.includes("/runs/"))) {
+    fail("стоп полез убивать сессию: " + JSON.stringify(posted));
+  }
+  // Ждущая реплики сессия хода не ведёт: прерывать нечего.
+  if (byClass(sandbox.chatPanel("demo", withEntry({ state: "live", tmux: "chat-XR-1-1", idle: true })), "cstop")) {
+    fail("стоп стоит у сессии, которая ждёт реплики");
+  }
+  // Чужое окно vscode и мёртвая сессия: клавиатуры отсюда нет.
+  if (byClass(sandbox.chatPanel("demo", withEntry({ state: "vscode", idle: false })), "cstop")) {
+    fail("стоп стоит у чужого окна vscode");
+  }
+  if (byClass(sandbox.chatPanel("demo", withEntry({ state: "dead", tmux: "chat-XR-1-1" })), "cstop")) {
+    fail("стоп стоит у мёртвой сессии");
+  }
+  // Своей tmux у сессии нет: поднята она не нами, прерывать нечем.
+  if (byClass(sandbox.chatPanel("demo", withEntry({ state: "live", idle: false })), "cstop")) {
+    fail("стоп стоит у сессии без нашей tmux");
+  }
+}
+
+console.log("стоп чата: кнопка у своей работающей сессии, ручка прерывания, сессия не убивается");

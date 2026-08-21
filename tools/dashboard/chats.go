@@ -524,6 +524,62 @@ func chatSend(name, text string) error {
 	return err
 }
 
+// Прерывание хода: два Escape в TUI клиента снимают текущий ход и оставляют
+// сессию жить дальше. Убийство сессии сюда не годится: прерывают ход, а не
+// разговор, и следующая реплика должна попасть в ту же сессию с её памятью.
+// chatStopPause это пауза между двумя Escape. Один клавиатурный ход клиент
+// тратит на своё состояние (снимает подсказку, выходит из режима ввода), и ход
+// от него не прерывается: проверено живым прогоном, где после одного Escape
+// журнал субагента продолжал расти, а после второго встал.
+const chatStopPause = 400 * time.Millisecond
+
+func chatStop(name string) error {
+	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape"); err != nil {
+		return err
+	}
+	time.Sleep(chatStopPause)
+	_, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape")
+	return err
+}
+
+// handleChatStop прерывает идущий ход чата. Прервать можно только то, что
+// поднято нашей tmux: у окна vscode и у мёртвой сессии клавиатуры отсюда нет,
+// и кнопки стопа у них на экране тоже нет.
+func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "стоп чата")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !sessionIDRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return
+	}
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	last := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid])
+	alive := tmuxAliveFn()
+	if last.Tmux == "" || !alive(last.Tmux) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"чат %s не живёт в нашей tmux: прервать его ход отсюда нечем", sid)})
+		return
+	}
+	if err := chatStop(last.Tmux); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+			"прерывание не подалось в tmux-сессию %s: %s", last.Tmux, procErr(err))})
+		return
+	}
+	s.logf("ход чата %s прерван (tmux-сессия %s)", sid, last.Tmux)
+	writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
+		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
+}
+
 // handleChatSay доставляет реплику диалогу. Правило одно на три состояния:
 // живому процессу реплика подаётся прямо в него, кончившемуся поднимается
 // продолжение той же сессии, а окно vscode дашборду не принадлежит, и туда

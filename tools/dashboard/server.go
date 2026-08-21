@@ -104,6 +104,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/chats", s.auth(s.handleChatStart))
 	mux.HandleFunc("GET /api/projects/{p}/chats", s.auth(s.handleChatList))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/say", s.auth(s.handleChatSay))
+	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/stop", s.auth(s.handleChatStop))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/status", s.auth(s.handleChatStatus))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShot))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShotGet))

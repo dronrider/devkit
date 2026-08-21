@@ -1467,6 +1467,15 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 					item.Sub = src.label
 					item.Key = src.src + ":" + strconv.Itoa(src.idx)
 					src.idx++
+					// Заказ субагенту (первая запись журнала) уже показан
+					// карточкой вызова Agent, а пузыря человека в боковом
+					// журнале не бывает вовсе: там пишет не он.
+					if item.Role == "user" {
+						if src.idx == 1 {
+							continue
+						}
+						item.Role = roleNote
+					}
 					seq = item.Seq + 1
 					sseEvent(w, f, "", marshalReply(item))
 				}
@@ -1891,8 +1900,20 @@ func expandSubs(path string, items []reply) []reply {
 			continue
 		}
 		side := parseRepliesOpt(data, 0, true)
+		// Человек в боковой журнал не пишет, и пузыря человека там быть не
+		// может. Первая запись это заказ субагенту, тот же текст уже стоит
+		// карточкой вызова Agent, и вторым разом жёлтой простынёй он читался
+		// как реплика человека (жалоба пользователя). Остальные записи роли
+		// user это служебное: рамки диспетчера свои правила уже разобрали, а
+		// что осталось, идёт служебной строкой, а не пузырём.
+		if len(side) > 0 && side[0].Role == "user" {
+			side = side[1:]
+		}
 		for i := range side {
 			side[i].Sub = log.Label
+			if side[i].Role == "user" {
+				side[i].Role = roleNote
+			}
 		}
 		push(srcName(log.File), side)
 	}

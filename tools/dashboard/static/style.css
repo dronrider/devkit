@@ -514,13 +514,11 @@ a:hover{text-decoration:underline}
 .chead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
 .chead .ct{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .chead .ct b{font:600 14px var(--sans);color:var(--tx);overflow-wrap:anywhere}
-.chead .cts{font:400 11.5px var(--mono);color:var(--tx3);overflow-wrap:anywhere}
-/* Поля строки состояния врозь: имя инструмента заметно, довод хода приглушён и
-   режется многоточием, между полями своя черта. Склеенные в одно предложение,
-   имя и довод читались кашей. */
+/* Поля строки агента в списке кольца врозь: имя инструмента заметно, довод
+   хода приглушён и режется многоточием, между полями своя черта. Склеенные в
+   одно предложение, имя и довод читались кашей. */
 .csep{color:var(--tx4,var(--tx3));opacity:.5;margin:0 5px}
 .ctool{color:var(--tx2);font-weight:600}
-.clead{color:var(--tx3)}
 .csub{color:var(--tx3);font-style:italic}
 .cwhy{color:var(--tx3);opacity:.85;max-width:22em;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}

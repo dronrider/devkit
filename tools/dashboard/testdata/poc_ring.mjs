@@ -210,10 +210,11 @@ function ringOf(head) {
   if (!byClass(wrap, "halo")) fail("ореола ожидания нет");
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("число ждущих не то: " + (num && num.textContent));
-  const cts = byClass(head, "cts");
-  if (!dump(cts).includes("вопрос человеку") || !dump(cts).includes("4 мин без ответа")) {
-    fail("строка состояния молчит про вопрос: " + dump(cts));
-  }
+  // Слова про вопрос несёт список кольца: строки состояния под заголовком
+  // больше нет вовсе, она повторяла ленту (замечание пользователя).
+  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
+  const waitRow = allByClass(byClass(wrap, "pop"), "prow")[0];
+  if (!dump(waitRow).includes("ждёт ответа")) fail("в списке не сказано про вопрос: " + dump(waitRow));
 }
 
 // --- молчание: сегменты серые, дуга не бежит ---
@@ -225,14 +226,13 @@ function ringOf(head) {
   if (!String(wrap.attrs["aria-label"] || "").includes("1 простаивает")) {
     fail("подпись молчащего кольца не назвала простой: " + wrap.attrs["aria-label"]);
   }
-  const cts = byClass(head, "cts");
-  if (!dump(cts).includes("простаивает") || !dump(cts).includes("последний ход")) {
-    fail("строка состояния не сказала про простой: " + dump(cts));
+  const idleRow = allByClass(byClass(wrap, "pop"), "prow")[0];
+  if (!dump(idleRow).includes("простаивает") || !dump(idleRow).includes("14 мин")) {
+    fail("в списке простой без срока: " + dump(idleRow));
   }
-  if (dump(cts).includes("ждёт") || dump(cts).includes("вопрос")) {
-    fail("простой назван ожиданием: " + dump(cts));
+  if (dump(idleRow).includes("ждёт") || dump(idleRow).includes("вопрос")) {
+    fail("простой назван ожиданием: " + dump(idleRow));
   }
-  if (!dump(cts).includes("14 мин")) fail("давность простоя не в минутах: " + dump(cts));
 }
 
 // --- пусто: кольцо без числа ---
@@ -241,8 +241,9 @@ function ringOf(head) {
   const wrap = ringOf(head);
   if (!String(wrap.className).includes("r-empty")) fail("пустота не назвалась классом: " + wrap.className);
   if (byClass(wrap, "rnum")) fail("у пустого кольца стоит число");
-  const cts = byClass(head, "cts");
-  if (!dump(cts).includes("живых сессий нет")) fail("строка состояния не сказала про пустоту: " + dump(cts));
+  if (!dump(byClass(wrap, "pop")).includes("живых сессий нет")) {
+    fail("список кольца не сказал про пустоту: " + dump(wrap));
+  }
 }
 
 // --- список агентов: точка состояния, что делает, давность, дорога в чат ---
@@ -298,10 +299,6 @@ function ringOf(head) {
   };
   pulses.held = held;
   const head = await headOf("held");
-  const cts = byClass(head, "cts");
-  if (!dump(cts).includes("идёт 2 мин")) {
-    fail("долгий ход подписан молчанием, а не ходом: " + dump(cts));
-  }
   const rows = allByClass(byClass(ringOf(head), "pop"), "prow");
   if (!dump(rows[0]).includes("идёт 2 мин")) fail("в списке долгий ход не назван ходом: " + dump(rows[0]));
 }
@@ -315,16 +312,6 @@ function ringOf(head) {
   }
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("число ждущих не то: " + (num && num.textContent));
-  const cts = byClass(head, "cts");
-  const said = dump(cts);
-  if (said.includes("вопрос человеку") || said.includes("без ответа")) {
-    fail("шапка работающего чата приписала себе чужой вопрос: " + said);
-  }
-  // По делу тут имя инструмента и давность хода: сам довод с путями остался в
-  // ленте, а в строке состояния он читался мусором.
-  if (!said.includes("Bash") || !said.includes("27 с назад")) {
-    fail("шапка не сказала, чем занят открытый чат: " + said);
-  }
   const rows = allByClass(byClass(wrap, "pop"), "prow");
   if (!dump(rows[1]).includes("ждёт ответа") || !dump(rows[1]).includes("2 ч 2 мин без ответа")) {
     fail("ждущий сосед без срока: " + dump(rows[1]));
@@ -351,9 +338,7 @@ function ringOf(head) {
     fail("кольцо без записи этапов нарисовало шкалу: " + allByClass(wrap, "seg").length + " делений");
   }
   if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
-  const cts = dump(byClass(head, "cts"));
-  if (cts.includes("фаза")) fail("строка состояния назвала фазу, которой не знает: " + cts);
-  if (!cts.includes("Bash")) fail("строка состояния молчит про ход: " + cts);
+  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
   if (!String(wrap.attrs["aria-label"] || "").includes("записи этапов")) {
     fail("не сказано, почему шкалы нет: " + wrap.attrs["aria-label"]);
   }
@@ -380,14 +365,12 @@ function ringOf(head) {
   if (segs.length !== 9) fail("делений не по числу задач цели: " + segs.length);
   const done = segs.filter((x) => String(x.className).includes("on")).length;
   if (done !== 6) fail("закрашено не по числу закрытых задач: " + done);
-  const cts = dump(byClass(head, "cts"));
-  // Про задачи цели говорит само кольцо делениями: в строке состояния тот же
-  // счёт стоял вторым разом и забивал место (замечание пользователя).
-  if (cts.includes("закрыто 6 из 9")) {
-    fail("счёт задач цели вернулся в строку состояния: " + cts);
+  // Про задачи цели говорит само кольцо делениями и подпись при нём: строки
+  // состояния под заголовком нет вовсе (замечание пользователя).
+  if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
+  if (!String(wrap.attrs["aria-label"] || "").includes("закрыто 6 из 9")) {
+    fail("подпись кольца не назвала счёт задач цели: " + wrap.attrs["aria-label"]);
   }
-  if (!cts.includes("Bash")) fail("строка состояния молчит про ход цели: " + cts);
-  if (cts.includes("фаза")) fail("цели приписали фазу конвейера: " + cts);
   // Число в середине это по-прежнему работающие агенты, а не задачи.
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("в середине не число работающих: " + (num && num.textContent));
@@ -413,24 +396,6 @@ function ringOf(head) {
   if (!String(raw.attrs["aria-label"] || "").includes("не нарезана")) {
     fail("не сказано, почему у цели нет шкалы: " + raw.title);
   }
-}
-
-// --- в строке состояния имя инструмента, а не довод хода с путями ---
-// Довод хода («SC=/private/tmp/...») занимал строку целиком и читался мусором:
-// смотреть команду есть где, в самой ленте (замечание пользователя).
-{
-  const head = await headOf("glued");
-  const cts = byClass(head, "cts");
-  const tool = byClass(cts, "ctool");
-  if (!tool || dump(tool).trim() !== "SendMessage") {
-    fail("имя инструмента не стоит своим полем: " + dump(cts));
-  }
-  if (byClass(cts, "cwhy")) fail("довод хода вернулся в строку состояния: " + dump(cts));
-  if (dump(cts).includes("Кольцо врёт прогрессом")) {
-    fail("текст довода вернулся в строку состояния: " + dump(cts));
-  }
-  if (!byClass(cts, "csep")) fail("поля строки состояния идут без разделителя: " + dump(cts));
-  if (!dump(cts).includes("последний ход")) fail("не сказано, что ход последний: " + dump(cts));
 }
 
 // --- приписки под названием нет, метаданные ушли в подсказку ---

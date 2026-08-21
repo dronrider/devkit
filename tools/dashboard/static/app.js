@@ -5001,26 +5001,6 @@ function modelPick(project, st) {
   return box;
 }
 
-// Вопрос, источник и адрес ответа лежат подсказкой строки состояния. Отдельного
-// чипа у ожидания больше нет: состояние несут кольцо и та же строка словами, а
-// чип рядом с ними говорил третий раз то же самое. Куда уедет реплика, сказано
-// честно: припаркованной задаче она уходит во вход строки, живой сессии в саму
-// сессию.
-function waitChatTip(st, w) {
-  if (!w || !w.state || !st.task) return "";
-  const qs = w.questions || [];
-  const kind = chatWay(st).kind;
-  let where = " Ответ поднимет сессию задачи и уедет в неё.";
-  if (kind === "task") {
-    where = " Ответ уйдёт во вход задачи " + st.task +
-      " безадресной строкой: по ней сторожок разбудит строку.";
-  } else if (kind === "say") {
-    where = " Ответ уйдёт живой сессии задачи.";
-  }
-  return w.state + ", источник: " + (w.note || "не назван") + "." +
-    (qs.length ? " Вопрос: " + qs.join("; ") : "") + where;
-}
-
 // Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
 // фазы конвейера задачи, бегущая поверх них дуга значит «события в транскрипте
 // текут», число в середине это агенты в чатах задачи. Всё приезжает одной
@@ -5137,26 +5117,6 @@ function pulseParts(p, now) {
 function pulseWords(p, now) {
   return pulseParts(p, now).map((x) => (x.text ? (x.lead || "") + x.text : ""))
     .filter(Boolean).join(" | ");
-}
-
-// Строка состояния разметкой: каждое поле своим span, между полями своя
-// разделительная черта. Обрезку длинного довода держит и текст (WHY_MAX), и
-// стиль: на узком экране многоточие честнее переноса на вторую строку.
-function pulseFill(box, p, now) {
-  // Текстом строка ставилась до первого пульса («пульс читается...»), и голого
-  // replaceChildren тут мало: узел с текстом остаётся, и слова налезали друг
-  // на друга.
-  box.textContent = "";
-  box.replaceChildren();
-  let first = true;
-  for (const part of pulseParts(p, now)) {
-    if (!part.text) continue;
-    if (!first) box.append(el("span", "csep", "|"));
-    first = false;
-    if (part.lead) box.append(el("span", "clead", part.lead));
-    box.append(el("span", part.cls || "", part.text));
-  }
-  if (first) box.append(el("span", "", "пульс читается..."));
 }
 
 // Чем занят агент строкой списка: работающий назван инструментом и давностью
@@ -5315,11 +5275,11 @@ function pulseRing(project, p) {
   }
   wrap.append(box);
   wrap.append(ringPop(project, p));
-  // Слова шкалы в подписи не повторяются: их уже несёт строка состояния,
-  // которая идёт следом. Без шкалы вместо них стоит причина, почему её нет.
   // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
-  // него говорила то же самое вторым разом и перекрывала сам список.
-  const tip = [ringTally(p), ringScaleWords(p) ? "" : ringScaleNote(p),
+  // него говорила то же самое вторым разом и перекрывала сам список. Слова
+  // шкалы стоят тут же: строки состояния под заголовком больше нет, и сказать
+  // их больше негде. Без шкалы вместо них причина, почему её нет.
+  const tip = [ringTally(p), ringScaleWords(p) || ringScaleNote(p),
     pulseWords(p, Date.now())].filter(Boolean).join(". ");
   wrap.setAttribute("aria-label", tip);
   // На таче наведения нет, и список открывается нажатием на само кольцо.
@@ -5416,17 +5376,9 @@ function pulseURL(project, st) {
   return "/api/projects/" + encodeURIComponent(project) + "/pulse?" + q.join("&");
 }
 
-function wireRing(project, st, slot, words) {
+function wireRing(project, st, slot) {
   const put = (p) => {
     slot.replaceChildren(pulseRing(project, p));
-    if (!words) return;
-    pulseFill(words, p, Date.now());
-    // Вопрос, источник и адрес ответа приходят подсказкой той же строки:
-    // раньше их носил чип, а место в шапке под третье слово о том же нет.
-    const tip = waitChatTip(st, p && p.own_wait);
-    words.title = tip;
-    if (tip) words.setAttribute("aria-label", tip);
-    else words.removeAttribute("aria-label");
   };
   const load = async () => {
     const r = await api(pulseURL(project, st));
@@ -5608,11 +5560,9 @@ function chatHead(project, st) {
   } else {
     words.textContent = st.task ? "чатов задачи " + st.task + " нет" : "чат не выбран";
   }
-  // Строка состояния несёт то же, что кольцо, только словами: фазу, текущий
-  // инструмент и давность. Метаданные разговора (дерево, tmux, время) стоят
-  // следом и дописываются не пульсом, а списком чатов.
-  const cts = el("span", "cts", "пульс читается...");
-  sub.append(cts);
+  // Строки состояния под заголовком нет: имя инструмента и давность хода
+  // повторяли ленту, которая идёт прямо под ней, а живость и ожидание видны в
+  // кольце и его списке. Простой узнаётся по времени последней записи.
   // Чем узнана задача разговора, говорит сервер (bindTask): «задача не с доски
   // проекта», «свободный чат», «говорит о XR-1». Раньше подпись
   // считалась и пропадала, перетёртая заголовком чата, и разговор о чужой
@@ -5624,7 +5574,7 @@ function chatHead(project, st) {
   }
   if (words.textContent) sub.append(words);
   ct.append(sub);
-  wireRing(project, st, slot, cts);
+  wireRing(project, st, slot);
   return head;
 }
 
@@ -5643,6 +5593,24 @@ function chatWaitsTask(st) {
   if (st.isGoal || !st.task) return false;
   if (!st.wait || !st.wait.state) return false;
   return !st.entry || st.entry.state !== "live";
+}
+
+// Вопрос строки словами: состояние, источник, сам вопрос и адрес ответа. Висит
+// подсказкой на поле ввода, а не отдельной плашкой: плашка над лентой заводила
+// второе поле ответа рядом с обычным.
+function waitChatTip(st, w) {
+  if (!w || !w.state || !st.task) return "";
+  const qs = w.questions || [];
+  const kind = chatWay(st).kind;
+  let where = " Ответ поднимет сессию задачи и уедет в неё.";
+  if (kind === "task") {
+    where = " Ответ уйдёт во вход задачи " + st.task +
+      " безадресной строкой: по ней сторожок разбудит строку.";
+  } else if (kind === "say") {
+    where = " Ответ уйдёт живой сессии задачи.";
+  }
+  return w.state + ", источник: " + (w.note || "не назван") + "." +
+    (qs.length ? " Вопрос: " + qs.join("; ") : "") + where;
 }
 
 // Куда уйдёт реплика и почему. Мера приходит с сервера состоянием диалога, а
@@ -6031,6 +5999,14 @@ function chatPanel(project, st) {
     : (way.kind === "task" ? "Ответ задаче " + st.task + "..." : "Написать агенту...");
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в чат");
+  // Вопрос строки, его источник и адрес ответа висят подсказкой на самом поле:
+  // строки состояния под заголовком больше нет, а знать, куда уедет реплика,
+  // человеку надо ровно тут.
+  const waitTip = waitChatTip(st, st.wait);
+  if (waitTip) {
+    ta.title = waitTip;
+    ta.setAttribute("aria-label", "Реплика в чат. " + waitTip);
+  }
   wireTaGrip(grip, ta);
   // Черновик возвращается при открытии разговора и пишется по ходу набора.
   ta.value = chatDraftRead(st.addr);

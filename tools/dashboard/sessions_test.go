@@ -1204,10 +1204,16 @@ func TestStaticWorkTitle(t *testing.T) {
 		t.Error("в шапке панели нет номера задачи: с чата не уйти на её экран")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname", ".chead .cts"} {
+	for _, want := range []string{".lcard span.wname.wtitle", ".lcard span.wname"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в стилях нет %s: заголовок и подпись рисуются одним кеглем", want)
 		}
+	}
+	// Строки состояния под заголовком в шапке нет вовсе: имя инструмента и
+	// давность хода повторяли ленту, которая идёт прямо под ней, а живость и
+	// ожидание видны в кольце и его списке.
+	if strings.Contains(head, `el("span", "cts"`) {
+		t.Error("строка состояния вернулась в шапку панели: она повторяет ленту под собой")
 	}
 }
 

@@ -1087,7 +1087,7 @@ a:hover{text-decoration:underline}
    тут же и раскрытый список подписки, поэтому у панели своя система координат
    и своя высота в слоях: без неё список уходил под блок меню. */
 .tacts{display:flex;align-items:center;gap:6px;position:relative;z-index:31}
-.tacts .btn{padding:6px 11px;font-size:12.5px}
+.tacts .btn{height:var(--ctl);min-height:var(--ctl);padding:0 11px;font-size:12.5px;border-radius:9px}
 .tacts .btn svg{width:15px;height:15px;flex:none}
 
 .tchips .gap{flex:1}

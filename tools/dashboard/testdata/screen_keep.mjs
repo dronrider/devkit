@@ -1976,6 +1976,28 @@ if (!/\.flashes\{[^}]*position:fixed/.test(css)) {
   fail("контейнер .flashes стоит в потоке документа: карточка ответа будет двигать экран");
 }
 
+// Командная панель строки статуса: карандаш, кнопка режима чтения и кнопки
+// действий стоят в одну строку, и рост у них общий. Кнопки действий приехали
+// туда позже остальных и держали свои 36px от .btn, отчего строка выглядела
+// ступенькой. Высота и радиус читаются из настоящего style.css.
+const cssRule = (sel) => {
+  const m = new RegExp("\\" + sel + "\\{([^}]*)\\}").exec(css);
+  if (!m) fail("в style.css нет правила " + sel);
+  return m[1];
+};
+const cssProp = (sel, prop) => {
+  const m = new RegExp("(?:^|;)" + prop + ":([^;]+)").exec(cssRule(sel));
+  return m ? m[1].trim() : "";
+};
+for (const prop of ["height", "border-radius"]) {
+  const pen = cssProp(".tpen", prop);
+  const act = cssProp(".tacts .btn", prop);
+  if (!act || act !== pen) {
+    fail("кнопки действий командной панели разошлись с карандашом по " + prop +
+      ": .tacts .btn = " + JSON.stringify(act) + ", .tpen = " + JSON.stringify(pen));
+  }
+}
+
 await go("#demo");
 timers.length = 0;
 const flashes = byId.get("flashes");

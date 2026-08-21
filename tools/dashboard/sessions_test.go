@@ -1680,3 +1680,53 @@ func TestBackgroundAgentNoteCarriesMark(t *testing.T) {
 		}
 	}
 }
+
+// План сессии приходит из двух источников: файла ~/.devkit/plans/<sid>.json и
+// последнего вызова TodoWrite в транскрипте. Побеждает свежий: в обход
+// разрешений харнес TodoWrite не выдаёт вовсе, и файл там единственная дорога.
+func TestSessionPlanFileWins(t *testing.T) {
+	e := newTestEnv(t)
+	todo := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[{"content":"из транскрипта","status":"in_progress","activeForm":"Делаю"}]}}]},"timestamp":"2026-08-10T10:00:03.000Z"}` + "\n"
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture+todo, time.Now())
+	c := e.loggedClient(t)
+
+	planOfSession := func() []planItem {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaa-1?n=5", "")
+		var got struct {
+			Plan []planItem `json:"plan"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Plan
+	}
+	if plan := planOfSession(); len(plan) != 1 || plan[0].Text != "из транскрипта" {
+		t.Fatalf("план из транскрипта не прочитан: %+v", plan)
+	}
+	// Файл свежее записи: его и показываем.
+	dir := planDir(e.home)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := planPath(e.home, "aaa-1")
+	body := `[{"text":"из файла","state":"completed"},{"text":"второй","state":"in_progress"},{"text":"третий","state":"кривое"}]`
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := planOfSession()
+	if len(plan) != 3 || plan[0].Text != "из файла" || plan[0].State != "completed" {
+		t.Fatalf("план из файла не победил: %+v", plan)
+	}
+	// Чужое состояние не роняет разбор и читается как «ждёт».
+	if plan[2].State != "pending" {
+		t.Errorf("незнакомое состояние пункта: %q, ждал pending", plan[2].State)
+	}
+	// Битый файл это не поломка ленты: план тогда берётся из транскрипта.
+	if err := os.WriteFile(file, []byte("{не json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := planOfSession(); len(got) != 1 || got[0].Text != "из транскрипта" {
+		t.Fatalf("битый файл плана увёл ленту с транскрипта: %+v", got)
+	}
+	_ = path
+}

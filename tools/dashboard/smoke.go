@@ -448,8 +448,11 @@ func smokeClientBody(runs, name, journal, binds string) string {
 	}
 	return body + fmt.Sprintf(`dir=%s
 mkdir -p "$dir"
+# Кавычки заказа экранируются: в заказе стоит правило плана с полями text и
+# state в кавычках, и сырой подстановкой оно ломало бы JSON транскрипта.
+said=$(printf '%%s' "$2" | sed 's/"/\\"/g')
 {
-  printf '{"type":"user","message":{"role":"user","content":"%%s"},"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","gitBranch":"main"}\n' "$2"
+  printf '{"type":"user","message":{"role":"user","content":"%%s"},"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","gitBranch":"main"}\n' "$said"
   printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Взял в работу."}]},"timestamp":"2026-08-10T10:00:02.000Z"}\n'
 } > "$dir/%s.jsonl"
 if [ -n "$DEVKIT_TASK" ]; then

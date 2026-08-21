@@ -826,7 +826,7 @@ a:hover{text-decoration:underline}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* Стоп в строке отправки: красный кружок с квадратом. Он прерывает ход, а не
    разговор, поэтому стоит рядом с отправкой, а не среди действий задачи */
-.cstop{flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;padding:0;border-radius:50%;border:1px solid color-mix(in oklab,var(--block) 45%,transparent);background:color-mix(in oklab,var(--block) 12%,transparent);color:var(--block);cursor:pointer}
+.cstop{flex:none;height:36px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;border-radius:9px;border:1px solid color-mix(in oklab,var(--block) 45%,transparent);background:color-mix(in oklab,var(--block) 12%,transparent);color:var(--block);cursor:pointer}
 .cstop:hover{background:color-mix(in oklab,var(--block) 22%,transparent)}
 .cstop:disabled{opacity:.5;cursor:progress}
 .cstop svg{width:14px;height:14px;display:block}

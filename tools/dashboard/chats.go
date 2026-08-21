@@ -352,12 +352,16 @@ func chatNewName(id string, alive func(string) bool) string {
 // аргументом: интерактивный клиент берёт её как первый вопрос и остаётся
 // стоять, дальше реплики подаются в тот же процесс через send-keys.
 // planRule это правило плана в заказе любой поднятой работы: чата, конвейерной
-// сессии задачи и груминга черновика. Чаты дашборда поднимаются
+// сессии задачи и груминга черновика. План ведётся файлом, а не инструментом
+// TodoWrite: в обход разрешений (--dangerously-skip-permissions) харнес его не
+// выдаёт вовсе, и у сессий дашборда дороги, кроме файла, нет. Чаты дашборда поднимаются
 // голым клиентом, без определений исполнителей конвейера, и вести план им
 // некому было велеть: кольцо в шапке разговора рисует деления как раз по этому
 // плану, а без него оно остаётся ровной дорожкой.
-const planRule = "Веди план работ инструментом TodoWrite: список этапов до первого шага, " +
-	"помечай текущий и закрывай сделанные."
+const planRule = "Веди план работ файлом ~/.devkit/plans/<ID сессии>.json " +
+	"(ID в CLAUDE_CODE_SESSION_ID): до первого шага список этапов массивом " +
+	"{\"text\",\"state\"}, помечай текущий in_progress, закрывай сделанные, " +
+	"пиши файл целиком."
 
 func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
 	client := defaultClient
@@ -951,11 +955,31 @@ const titleLegacy = "Назови диалог заголовком"
 // причине, по которой там нет сессий суммаризации (замечание 20).
 const probeMark = "[devkit-probe]"
 
+// probeLegacy это пробы, поднятые до правила про метку: они лежат в дереве
+// devkit безметочными и всплывали в списке разговорами вроде «если в твоём
+// списке инструментов есть TodoWrite, ответь ровно...». Список короткий и
+// закрытый: он про уже написанные транскрипты, а новые пробы зовутся с меткой.
+var probeLegacy = []string{
+	"если в твоём списке инструментов есть todowrite",
+	"если у тебя есть инструмент todowrite",
+	"ответь одним словом: ок",
+	"запусти в bash команду: sleep 300",
+}
+
 // titleSession узнаёт служебную сессию по первой реплике.
 func titleSession(first string) bool {
 	first = strings.TrimSpace(first)
-	return strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy) ||
-		strings.HasPrefix(first, probeMark)
+	if strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy) ||
+		strings.HasPrefix(first, probeMark) {
+		return true
+	}
+	low := strings.ToLower(first)
+	for _, mark := range probeLegacy {
+		if strings.HasPrefix(low, mark) {
+			return true
+		}
+	}
+	return false
 }
 
 // titleDir это рабочая директория служебного вызова: каталог вне всех проектов,

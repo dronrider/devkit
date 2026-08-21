@@ -5612,6 +5612,18 @@ async function stopChat(project, sid) {
   return r.ok;
 }
 
+// Палец вместо мыши: у грубого указателя нет ни Shift под большим пальцем, ни
+// привычки к Enter как отправке. Спрашивается это у самого браузера, а не
+// угадывается по ширине окна: планшет с клавиатурой шире телефона, а указатель
+// у него тот же.
+function touchPointer() {
+  try {
+    return Boolean(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  } catch (err) {
+    return false;
+  }
+}
+
 // Ответ задаче безадресной строкой: ручка та же, какой пользуется сторожок.
 async function answerTask(project, id, text) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
@@ -6241,11 +6253,21 @@ function chatPanel(project, st) {
       return;
     }
   });
+  // Enter на телефоне это перевод строки, а не отправка: виртуальная
+  // клавиатура шлёт его тем же ключом, и недописанная реплика уезжала с
+  // полуслова (жалоба пользователя). Устройство различается указателем:
+  // грубый указатель это палец. На столе всё как было, а Cmd или Ctrl с
+  // Enter шлют всегда, привычной парой.
   ta.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+    if (ev.key !== "Enter" || ev.isComposing) return;
+    if (ev.metaKey || ev.ctrlKey) {
       ev.preventDefault();
       fire();
+      return;
     }
+    if (ev.shiftKey || touchPointer()) return;
+    ev.preventDefault();
+    fire();
   });
   send.addEventListener("click", fire);
   // Стоп стоит рядом с отправкой и виден только там, где прерывать есть что и

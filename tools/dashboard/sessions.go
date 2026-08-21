@@ -1240,7 +1240,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
 	keys := saidKeys(sid, info.Task, info.Bound)
 	if r.URL.Query().Get("stream") == "1" {
-		s.streamSession(w, r, path, keys)
+		s.streamSession(w, r, sid, path, keys)
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -1289,7 +1289,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
 	// План сессии едет вместе с лентой: экран задачи показывает его блоком, а
 	// считать его на клиенте значило бы второй разбор транскрипта.
-	if plan := sessionPlan(data); plan != nil {
+	if plan := planOf(s.home(), sid, path); plan != nil {
 		resp["plan"] = plan
 	}
 	if total == 0 {
@@ -1345,7 +1345,7 @@ type tailSrc struct {
 // открытого потока, а прежний стрим цеплял один «живой» файл на открытии и
 // ронял его насовсем, стоило в транскрипте закрыться любому вызову
 // инструмента: после этого лента молчала до перезагрузки страницы.
-func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path string, keys []string) {
+func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path string, keys []string) {
 	f, ok := sseOpen(w)
 	if !ok {
 		return
@@ -1410,6 +1410,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 		sseEvent(w, f, "note", emptyTranscriptNote)
 	}
 	stamp := subStamp(path)
+	planAt := planStamp(s.home(), sid)
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()
 	for {
@@ -1417,6 +1418,13 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 		case <-r.Context().Done():
 			return
 		case <-t.C:
+			// План переписан файлом: транскрипт при этом молчит, и заметить
+			// смену можно только по метке файла своей сессии. Чужие планы в
+			// каталоге не смотрятся вовсе.
+			if now := planStamp(s.home(), sid); now != planAt {
+				planAt = now
+				sendPlan(w, f, planOf(s.home(), sid, path))
+			}
 			// Новый субагент заводит свой файл, и каталог журналов меняется:
 			// по этой метке набор и пересматривается, без чтения мета-файлов
 			// на каждом тике.
@@ -1495,12 +1503,43 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 			// План сессии живёт своим событием: он приходит целиком и меняет
 			// не ленту, а блок плана и кольцо, поэтому в поток реплик его
 			// класть нечем.
-			if plan := sessionPlan(raw); plan != nil {
-				if data, err := json.Marshal(plan); err == nil {
-					sseEvent(w, f, "plan", string(data))
-				}
+			if todo, _ := sessionPlan(raw); todo != nil {
+				sendPlan(w, f, planOf(s.home(), sid, path))
 			}
 		}
+	}
+}
+
+// home это дом дашборда, безопасный к пустому серверу: стенды поднимают его
+// голым, и лезть в настройки без проверки значит ронять поток на ровном месте.
+func (s *server) home() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return s.cfg.Home
+}
+
+// planStamp это метка файла плана сессии: по ней стрим замечает, что агент
+// переписал план, не тронув транскрипта.
+func planStamp(home, sid string) string {
+	if home == "" {
+		return ""
+	}
+	fi, err := os.Stat(planPath(home, sid))
+	if err != nil {
+		return ""
+	}
+	return fi.ModTime().String()
+}
+
+// sendPlan шлёт план событием потока. Пустой план тоже событие: пункты бывают
+// сняты все разом, и лента обязана убрать блок, а не держать старый список.
+func sendPlan(w http.ResponseWriter, f http.Flusher, plan []planItem) {
+	if plan == nil {
+		plan = []planItem{}
+	}
+	if data, err := json.Marshal(plan); err == nil {
+		sseEvent(w, f, "plan", string(data))
 	}
 }
 
@@ -1791,8 +1830,9 @@ func planFromInput(input map[string]any) []planItem {
 // sessionPlan достаёт план сессии из её транскрипта: последний вызов TodoWrite
 // по файлу. Боковые журналы субагентов сюда не идут: у субагента план свой, и
 // подмешанный в план сессии он читался бы как её собственные шаги.
-func sessionPlan(data []byte) []planItem {
+func sessionPlan(data []byte) ([]planItem, time.Time) {
 	var out []planItem
+	var at time.Time
 	for _, ln := range strings.Split(string(data), "\n") {
 		if !strings.Contains(ln, "TodoWrite") {
 			continue
@@ -1800,6 +1840,7 @@ func sessionPlan(data []byte) []planItem {
 		var rec struct {
 			Type        string `json:"type"`
 			IsSidechain bool   `json:"isSidechain"`
+			Timestamp   string `json:"timestamp"`
 			Message     struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
@@ -1821,20 +1862,91 @@ func sessionPlan(data []byte) []planItem {
 			}
 			if plan := planFromInput(b.Input); plan != nil {
 				out = plan
+				if t, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
+					at = t
+				}
 			}
 		}
 	}
-	return out
+	return out, at
 }
 
-// readPlan это тот же план, но от файла: путь к транскрипту знают и ручка
-// ленты, и пульс.
-func readPlan(path string) []planItem {
+// planDir это каталог планов: сессии пишут туда файл своего плана сами, и
+// каталог заводится нами, чтобы агенту не пришлось думать о его создании.
+func planDir(home string) string {
+	return filepath.Join(home, ".devkit", "plans")
+}
+
+// planPath это файл плана одной сессии.
+func planPath(home, sid string) string {
+	return filepath.Join(planDir(home), sid+".json")
+}
+
+// planFileItem это пункт плана, как его пишет агент: текст и состояние. Форма
+// нарочно короче той, что приходит от TodoWrite: писать план руками надо в два
+// поля, а не в четыре.
+type planFileItem struct {
+	Text  string `json:"text"`
+	State string `json:"state"`
+}
+
+// readPlanFile читает план сессии из файла. Битый JSON, чужие поля и пустые
+// строки молча пропускаются: план это подспорье, и рушить из-за него ленту
+// нельзя.
+func readPlanFile(path string) ([]planItem, time.Time) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, time.Time{}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, time.Time{}
 	}
-	return sessionPlan(data)
+	var raw []planFileItem
+	if json.Unmarshal(data, &raw) != nil {
+		return nil, time.Time{}
+	}
+	out := make([]planItem, 0, len(raw))
+	for _, it := range raw {
+		if strings.TrimSpace(it.Text) == "" {
+			continue
+		}
+		state := it.State
+		switch state {
+		case "pending", "in_progress", "completed":
+		default:
+			state = "pending"
+		}
+		out = append(out, planItem{Text: truncate(it.Text, 200), State: state})
+	}
+	if len(out) == 0 {
+		return nil, time.Time{}
+	}
+	return out, fi.ModTime()
+}
+
+// planOf сводит два источника плана: файл сессии и последний вызов TodoWrite в
+// её транскрипте. Побеждает свежий: харнес в обход разрешений TodoWrite не
+// даёт вовсе, и файл там единственная дорога, а где инструмент работает,
+// прежний способ остаётся живым.
+func planOf(home, sid, path string) []planItem {
+	var filePlan []planItem
+	var fileAt time.Time
+	if home != "" {
+		filePlan, fileAt = readPlanFile(planPath(home, sid))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return filePlan
+	}
+	todoPlan, todoAt := sessionPlan(data)
+	if filePlan == nil {
+		return todoPlan
+	}
+	if todoPlan == nil || !todoAt.After(fileAt) {
+		return filePlan
+	}
+	return todoPlan
 }
 
 // mainSrc это имя источника для самого транскрипта сессии в ключах записей.

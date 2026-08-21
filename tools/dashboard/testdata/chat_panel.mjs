@@ -665,3 +665,48 @@ console.log("панель разговора: адрес хвостом и ст�
 }
 
 console.log("стоп чата: кнопка у своей работающей сессии, ручка прерывания, сессия не убивается");
+
+// --- отправка с телефона: Enter не шлёт недописанное ---
+// Виртуальная клавиатура шлёт Enter тем же ключом, что и настольная, и реплика
+// уезжала с полуслова. Устройство различается указателем, а не шириной окна.
+{
+  const st2 = await sandbox.chatState("demo", mine.id, board);
+  const panelOf = () => sandbox.chatPanel("demo", st2);
+  const keys = (panel) => tag(panel, "TEXTAREA").handlers.keydown;
+  const press = (panel, ev) => {
+    let stopped = false;
+    keys(panel)(Object.assign({ key: "Enter", preventDefault: () => { stopped = true; } }, ev));
+    return stopped;
+  };
+  // Палец: Enter это перевод строки, отправка только кнопкой.
+  sandbox.window.matchMedia = () => ({ matches: true, addEventListener: () => {},
+    removeEventListener: () => {} });
+  const touch = panelOf();
+  tag(touch, "TEXTAREA").value = "недописанная реплика";
+  posted.length = 0;
+  if (press(touch, {})) fail("на телефоне Enter перехвачен: строку не поставить");
+  await settle();
+  if (posted.some((p) => p.includes("/say"))) fail("на телефоне Enter отправил реплику");
+  button(touch, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!posted.some((p) => p.includes("/say"))) fail("кнопка на телефоне не отправила реплику");
+  // Мышь: Enter шлёт, Shift с Enter ставит строку, Cmd с Enter тоже шлёт.
+  sandbox.window.matchMedia = () => ({ matches: false, addEventListener: () => {},
+    removeEventListener: () => {} });
+  const desk = panelOf();
+  tag(desk, "TEXTAREA").value = "реплика со стола";
+  posted.length = 0;
+  if (!press(desk, {})) fail("на столе Enter не отправляет");
+  await settle();
+  if (!posted.some((p) => p.includes("/say"))) fail("на столе Enter не дошёл до ручки");
+  posted.length = 0;
+  tag(desk, "TEXTAREA").value = "вторая строка";
+  if (press(desk, { shiftKey: true })) fail("Shift с Enter отправил вместо перевода строки");
+  await settle();
+  if (posted.some((p) => p.includes("/say"))) fail("Shift с Enter ушёл в ручку");
+  if (!press(desk, { metaKey: true })) fail("Cmd с Enter не отправляет");
+  await settle();
+  if (!posted.some((p) => p.includes("/say"))) fail("Cmd с Enter не дошёл до ручки");
+}
+
+console.log("отправка: на телефоне Enter ставит строку и шлёт кнопка, на столе Enter и Cmd с Enter шлют");

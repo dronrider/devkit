@@ -174,9 +174,10 @@ class TestHook(unittest.TestCase):
         r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431"})
         # Контекст задачи уезжает сессии тем же ходом: в нём правило плана,
         # которое дашборд рисует делениями кольца, а строка доски и файл
-        # постановки прибавляются, когда они есть.
+        # постановки прибавляются, когда они есть. План ведётся файлом:
+        # инструмент TodoWrite харнес в обход разрешений не выдаёт.
         self.assertEqual((r.returncode, r.stderr), (0, ""))
-        self.assertIn("TodoWrite", r.stdout)
+        self.assertIn(".devkit/plans/", r.stdout)
         lines = self.log()
         self.assertEqual(len(lines), 1)
         f, _ = fields(lines[0])

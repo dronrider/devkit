@@ -172,7 +172,11 @@ class TestHook(unittest.TestCase):
 
     def test_live_start_writes_one_line(self):
         r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431"})
-        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+        # Контекст задачи уезжает сессии тем же ходом: в нём правило плана,
+        # которое дашборд рисует делениями кольца, а строка доски и файл
+        # постановки прибавляются, когда они есть.
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertIn("TodoWrite", r.stdout)
         lines = self.log()
         self.assertEqual(len(lines), 1)
         f, _ = fields(lines[0])

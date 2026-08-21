@@ -1149,7 +1149,11 @@ func TestStaticHiddenBeatsDisplay(t *testing.T) {
 	rules := cssRules(readFile(t, filepath.Join("static", "style.css")))
 	// Классы, которые статика прячет атрибутом: кнопки полосы правки,
 	// разделитель между правкой и действиями, точка на колокольчике.
-	for _, cls := range []string{"btn", "div", "bdot", "chip", "pick", "dnote"} {
+	// Список тут не украшение: пока в нём не было поля правки и кнопки
+	// разворота диффа, сторож смотрел мимо, и постановка стояла на экране
+	// дважды, разметкой и полем ввода разом (жалоба пользователя).
+	for _, cls := range []string{"btn", "div", "bdot", "chip", "pick", "dnote",
+		"submore", "textarea", "fview", "tbox", "plist"} {
 		setter, guard := "", false
 		for _, rule := range rules {
 			if !cssSubject(rule[0], cls) {

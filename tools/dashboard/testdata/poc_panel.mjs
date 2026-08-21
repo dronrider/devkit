@@ -905,3 +905,31 @@ console.log("окно чатов: адреса, фильтр, дорога ре�
 
 console.log("ожидание задачи: без чипа, вопрос с адресом ответа подсказкой строки состояния, " +
   "поле ввода одно, реплика припаркованной строки уходит ручкой задачи");
+
+// --- постановка на форме: один блок в каждом режиме ---
+// Описание стояло на экране дважды, разметкой и полем ввода разом, и правился
+// нижний блок: правило display у поля перебивало признак hidden.
+{
+  const detail = { file: "docs/tasks/XR-1.md", text: "# XR-1\nтекст постановки" };
+  const shown = (card, mode) => {
+    const view = byClass(card, "fview");
+    const ta = tag(card, "TEXTAREA");
+    if (!view || !ta) fail("в постановке нет пары «разметка и поле»: " + mode);
+    const live = [!view.hidden, !ta.hidden].filter(Boolean).length;
+    if (live !== 1) fail("в режиме «" + mode + "» блоков описания видно " + live + ", ожидал один");
+    return { view, ta };
+  };
+  const read = sandbox.filePanel("demo", "XR-1", detail, { text: detail.text },
+    () => {}, false, false);
+  const r = shown(read, "просмотр");
+  if (r.view.hidden || !r.ta.hidden) fail("по умолчанию открыт не просмотр разметкой");
+  const edit = sandbox.filePanel("demo", "XR-1", detail, { text: detail.text },
+    () => {}, true, false);
+  const e = shown(edit, "правка");
+  if (!e.view.hidden || e.ta.hidden) fail("по карандашу открыт не режим правки");
+  // Переключение идёт по месту, а не перерисовкой экрана.
+  read.setEdit(true);
+  shown(read, "переключение карандашом");
+}
+
+console.log("постановка на форме: один блок описания в каждом режиме, просмотр по умолчанию");

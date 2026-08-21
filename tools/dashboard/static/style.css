@@ -239,6 +239,10 @@ a:hover{text-decoration:underline}
 .fhead{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line)}
 .fhead b{font:500 12.5px var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fbody{padding:14px 18px}
+/* Правило display у поля правки перебивало [hidden]: постановка стояла на
+   экране дважды, разметкой и полем ввода разом, и правился нижний блок
+   (жалоба пользователя про дублирование описания). */
+.fbody textarea[hidden]{display:none}
 .fbody textarea{display:block;width:100%;min-height:44vh;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 12.5px/1.7 var(--mono);resize:vertical}
 .rhead{display:flex;align-items:baseline;gap:10px;padding:14px 18px 0}
 .rhead b{font:600 13px var(--sans)}
@@ -822,6 +826,7 @@ a:hover{text-decoration:underline}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* План сессии: пункты её todo-списка. Сделанное приглушено и зачёркнуто,
    идущее акцентом, ждущее обычным цветом */
+.plist[hidden]{display:none}
 .plist{display:flex;flex-direction:column;gap:4px;padding:9px 11px;border-bottom:1px solid var(--line)}
 .prow2{display:flex;align-items:baseline;gap:8px;font:400 12px/1.45 var(--sans);color:var(--tx2)}
 .pmark{flex:none;width:12px;font:600 11px var(--mono);color:var(--tx3)}
@@ -1221,6 +1226,9 @@ a:hover{text-decoration:underline}
 .d-del{background:oklch(0.32 0.09 25 / 0.55);color:var(--tx)}
 .d-add{background:oklch(0.34 0.09 150 / 0.5);color:var(--tx)}
 .d-ctx{color:var(--tx3)}
+/* Тот же случай, что у поля правки: display перебивал бы [hidden], и кнопка
+   разворота диффа осталась бы висеть после нажатия. */
+.submore[hidden]{display:none}
 .submore{display:block;margin:4px 0 0;padding:3px 0;border:0;background:none;color:var(--tx3);font:400 11px var(--sans);text-align:left;cursor:pointer}
 .submore:hover{color:var(--tx2)}
 

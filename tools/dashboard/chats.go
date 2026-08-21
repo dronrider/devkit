@@ -351,6 +351,13 @@ func chatNewName(id string, alive func(string) bool) string {
 // chatCmd собирает команду клиента для tmux. Реплика человека едет первым
 // аргументом: интерактивный клиент берёт её как первый вопрос и остаётся
 // стоять, дальше реплики подаются в тот же процесс через send-keys.
+// planRule это правило плана в заказе подъёма чата. Чаты дашборда поднимаются
+// голым клиентом, без определений исполнителей конвейера, и вести план им
+// некому было велеть: кольцо в шапке разговора рисует деления как раз по этому
+// плану, а без него оно остаётся ровной дорожкой.
+const planRule = "Веди план работ инструментом TodoWrite: список этапов до первого шага, " +
+	"помечай текущий и закрывай сделанные."
+
 func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
 	client := defaultClient
 	head := env
@@ -366,6 +373,12 @@ func chatCmd(env, model, resume, text string, h *Harness, agentctl string) strin
 		cmd += " --resume " + shQuote(resume)
 	}
 	if text != "" {
+		// Правило плана цепляется только к заказу подъёма: у резюма текст это
+		// реплика человека, и приписывать к ней наше правило значило бы
+		// говорить за него.
+		if resume == "" {
+			text += " " + planRule
+		}
 		cmd += " " + shQuote(text)
 	}
 	return cmd
@@ -701,7 +714,7 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 // continuePrompt это заказ продолжения. Он разговорный: сессия уже знает
 // задачу, и пересказывать ей постановку незачем.
 func continuePrompt(id string) string {
-	return "Продолжай работу по " + id + " с того места, где остановился."
+	return "Продолжай работу по " + id + " с того места, где остановился. " + planRule
 }
 
 func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
@@ -719,7 +732,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	goal := isGoalTitle(row.Title)
 	text := continuePrompt(id)
 	if goal {
-		text = "Продолжай цель " + id + "."
+		text = "Продолжай цель " + id + ". " + planRule
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {

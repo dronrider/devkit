@@ -237,6 +237,11 @@ function routeScreen(h) {
   if (parts.length >= 3 && parts[1] === "draft") {
     return { proj: parts[0], id: parts[2], draft: true };
   }
+  // Путь документа относителен docs/, как в колонке «Ссылка» доски: хвост
+  // склеивается обратно, потому что косые черты в нём свои.
+  if (parts.length >= 3 && parts[1] === "doc") {
+    return { proj: parts[0], id: "", doc: true, path: parts.slice(2).join("/") };
+  }
   const cut = h.indexOf("/");
   if (cut < 0) return { proj: h, id: "" };
   return { proj: h.slice(0, cut), id: h.slice(cut + 1) };
@@ -1829,7 +1834,17 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
       head.append(make);
       placeHead();
     }
-    body.append(el("div", "empty", detail.note || "файла задачи нет"));
+    if (detail.doc) {
+      // Ссылка строки ведёт в другой документ, обычно LLD: постановка есть,
+      // и панель показывает её собранной, а не рапортует о дыре. Правится
+      // такой документ на своей форме, файл задачи заводится той же кнопкой.
+      const view = el("div", "fview");
+      view.dataset.file = "docs/" + detail.doc;
+      view.replaceChildren(mdRender(detail.docText || ""));
+      body.append(view);
+    } else {
+      body.append(el("div", "empty", detail.note || "файла задачи нет"));
+    }
     return card;
   }
   // Разворот стал режимом чтения задачи, и кнопка его переехала к карандашу в
@@ -1886,7 +1901,8 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
 function taskSeen(detail) {
   const row = detail.row || {};
   return JSON.stringify([row.title, row.type, row.cost, row.p, row.r, row.r_parts,
-    row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || ""]);
+    row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || "",
+    detail.doc || ""]);
 }
 
 // Пометка «задача обновилась»: живое обновление при открытой правке молчаливо
@@ -7022,12 +7038,12 @@ function findRow(project, key, row, q) {
   }
   if (row.r) meta.append(rankCell(row));
   tr.append(meta);
-  // Черновик ведёт на свой экран, остальное на экран задачи: закрытая задача
-  // открывается там же, файлом и без правок. Прежде черновик высаживал в общий
-  // накопитель, а закрытая задача упиралась в отказ, и нажатие на найденное
-  // выглядело сломанным.
+  // Черновик ведёт на свой экран, найденный LLD на форму документа, остальное
+  // на экран задачи: закрытая задача открывается там же, файлом и без правок.
   tr.addEventListener("click", () => {
-    goKeepingChat(key === "drafts" ? project + "/draft/" + row.id : project + "/" + row.id);
+    goKeepingChat(key === "drafts" ? project + "/draft/" + row.id
+      : row.file && row.file.startsWith("docs/lld/") ? project + "/doc/" + row.file.slice("docs/".length)
+      : project + "/" + row.id);
   });
   return tr;
 }
@@ -7068,6 +7084,51 @@ function findGroupItems(project, group, q) {
     },
     fill: (card) => { sync(card, rows); },
   }];
+}
+
+// Экран документа: LLD или другой markdown из docs/ на чтение. Сюда ведут
+// кнопки дизайна с экрана задачи и найденный в поиске LLD; правки у экрана
+// нет, постановки и дизайны правятся в репозитории, а не с телефона.
+async function renderDoc(project, path) {
+  const groups = document.getElementById("groups");
+  const crumb = {
+    key: "doc-crumb",
+    sign: project + "|" + path,
+    make: () => {
+      const box = el("div", "crumb");
+      const back = el("span", "crumb-back", "Доска " + project);
+      back.addEventListener("click", () => { location.hash = project; });
+      box.append(back);
+      return box;
+    },
+  };
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/doc?path=" + encodeURIComponent(path));
+  if (!r.ok) {
+    sync(groups, [crumb, {
+      key: "doc-err",
+      sign: path + "|" + r.status,
+      make: () => el("div", "error", r.body.error || ("документ не прочитался (" + r.status + ")")),
+    }]);
+    return;
+  }
+  sync(groups, [crumb, {
+    key: "doc-body",
+    sign: r.body.path + "|" + r.body.text.length,
+    make: () => {
+      const card = el("div", "card fpanel");
+      const head = el("div", "fhead");
+      head.append(el("b", "", r.body.path));
+      const body = el("div", "fbody");
+      const ta = el("textarea");
+      ta.value = r.body.text;
+      ta.readOnly = true;
+      ta.setAttribute("aria-label", "документ " + r.body.path);
+      body.append(ta);
+      card.append(head, body);
+      return card;
+    },
+  }]);
 }
 
 async function renderFind(project, q) {
@@ -8468,7 +8529,7 @@ function screenKey(rt) {
   // узлом и своими потоками, а экран под ней от её открытия не меняется и
   // собираться заново не должен.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
-    rt.find, rt.draft].join("|");
+    rt.find, rt.draft, rt.doc, rt.path].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те
@@ -8589,6 +8650,13 @@ async function paint() {
     document.getElementById("psub").textContent = "черновик " + rt.id;
     markNav(rt);
     await renderDraft(current.name, current.works, rt.id);
+    return;
+  }
+  if (rt.doc) {
+    // Документу доска не нужна: он читается своей ручкой на чтение.
+    document.getElementById("psub").textContent = "docs/" + rt.path;
+    markNav(rt);
+    await renderDoc(current.name, rt.path);
     return;
   }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");

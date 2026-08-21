@@ -203,6 +203,8 @@ func searchWhere(rel string) string {
 			return "архив"
 		case "drafts":
 			return "черновик"
+		case "lld":
+			return "LLD"
 		}
 	}
 	return ""
@@ -301,45 +303,56 @@ func searchArchive(dir, q string) []searchRow {
 	return rows
 }
 
-// searchFiles это группа «В тексте задач»: обход docs/tasks с подкаталогами.
-// Задача, найденная по номеру или заголовку, сюда не попадает: она уже стоит
-// выше своей группой, и вторая её строка была бы шумом.
+// docIDRe вынимает ID задачи из имени LLD-документа: у него, в отличие от
+// файла задачи, за номером идёт смысловой хвост (DK-306-merge-queue.md).
+var docIDRe = regexp.MustCompile(`^[A-Za-z]+-\d+`)
+
+// searchFiles это группа «В тексте задач»: обход docs/tasks с подкаталогами
+// и docs/lld. Задача, найденная по номеру или заголовку, сюда не попадает:
+// она уже стоит выше своей группой, и вторая её строка была бы шумом. К LLD
+// это не относится: дизайн это отдельный документ, и совпадение в нём не
+// повторяет строку доски.
 func searchFiles(dir, q string, seen map[string]bool, titles map[string]string) []searchRow {
-	base := filepath.Join(dir, "docs", "tasks")
 	var rows []searchRow
-	filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+	walk := func(base string, lld bool) {
+		filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+				return nil
+			}
+			id := strings.TrimSuffix(d.Name(), ".md")
+			if lld {
+				id = docIDRe.FindString(id)
+			} else if seen[id] {
+				return nil
+			}
+			if info, err := d.Info(); err != nil || info.Size() > searchFileMax {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			quote, num := searchQuote(string(data), q)
+			if num == 0 {
+				return nil
+			}
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return nil
+			}
+			title := titles[id]
+			if title == "" {
+				title = searchDocTitle(id, string(data))
+			}
+			rows = append(rows, searchRow{
+				ID: id, Title: title, File: filepath.ToSlash(rel), Line: num,
+				Quote: quote, Where: searchWhere(rel),
+			})
 			return nil
-		}
-		id := strings.TrimSuffix(d.Name(), ".md")
-		if seen[id] {
-			return nil
-		}
-		if info, err := d.Info(); err != nil || info.Size() > searchFileMax {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		quote, num := searchQuote(string(data), q)
-		if num == 0 {
-			return nil
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return nil
-		}
-		title := titles[id]
-		if title == "" {
-			title = searchDocTitle(id, string(data))
-		}
-		rows = append(rows, searchRow{
-			ID: id, Title: title, File: filepath.ToSlash(rel), Line: num,
-			Quote: quote, Where: searchWhere(rel),
 		})
-		return nil
-	})
+	}
+	walk(filepath.Join(dir, "docs", "tasks"), false)
+	walk(filepath.Join(dir, "docs", "lld"), true)
 	return rows
 }
 

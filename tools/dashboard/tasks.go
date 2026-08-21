@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -487,6 +488,14 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	if text, err := os.ReadFile(filepath.Join(found.Path, filepath.FromSlash(rel))); err == nil {
 		resp["file"] = rel
 		resp["text"] = string(text)
+		if refs := lldRefs(found.Path, string(text)); len(refs) > 0 {
+			resp["lld"] = refs
+		}
+	} else if doc, docText, ok := linkedTaskDoc(found.Path, id, row.Link); ok {
+		// Ссылка строки ведёт не в файл задачи, а в другой документ, обычно
+		// LLD: постановка у такой строки есть, и «файла нет» про неё врёт.
+		resp["doc"] = doc
+		resp["docText"] = docText
 	} else {
 		// Пустой текст без причины неотличим от пустого файла: сервер говорит,
 		// что файла нет и чем дыра чинится. С минуты заведения файл кладёт сам
@@ -494,6 +503,85 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		resp["note"] = fmt.Sprintf("файла задачи %s нет: строка без файла это дыра, чинит её кнопка «Завести файл» (taskctl file)", rel)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// linkedTaskDoc читает документ по ссылке строки, когда та ведёт не в
+// docs/tasks/<ID>.md: у LLD-задач вместо файла задачи в колонке «Ссылка»
+// стоит сам дизайн (RULES.board.md, «Трекинг задач» п. 6). Путь отдаётся
+// относительно docs/, тем же счётом, что у linkPath и линтера taskctl.
+func linkedTaskDoc(projectPath, id, link string) (string, string, bool) {
+	target := linkPath(link)
+	if target == "" || target == "tasks/"+id+".md" {
+		return "", "", false
+	}
+	full := filepath.Join(projectPath, "docs", filepath.FromSlash(target))
+	if info, err := os.Stat(full); err != nil || info.Size() > searchFileMax {
+		return "", "", false
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return "", "", false
+	}
+	return target, string(data), true
+}
+
+// lldRefRe ловит путь в docs/lld как угодно записанный: markdown-ссылкой от
+// docs/ или docs/tasks/ («lld/...», «../lld/...») и прозой в бэктиках
+// («docs/lld/...»), потому что в живых файлах задач встречаются все три
+// написания. Та же регулярка стоит в taskctl (view.go): признак один, а
+// общего пакета под два вхождения не заводится до утверждения POC.
+var lldRefRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(lld/[A-Za-z0-9._-]+\.md)`)
+
+// lldRefs собирает из текста файла задачи ссылки на дизайн: до сих пор путь
+// к LLD жил только прозой внутри файла, и с экрана задачи его было не
+// открыть. Путь отдаётся относительно docs/, как и у linkedTaskDoc.
+func lldRefs(projectPath, text string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range lldRefRe.FindAllStringSubmatch(text, -1) {
+		rel := m[1]
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		if _, err := os.Stat(filepath.Join(projectPath, "docs", filepath.FromSlash(rel))); err != nil {
+			continue
+		}
+		out = append(out, rel)
+	}
+	return out
+}
+
+// handleDoc отдаёт документ из docs/ на чтение: экран задачи и поиск
+// открывают по нему LLD, до сих пор недостижимый с доски. Ручка читает
+// только markdown внутри docs/ и ничего не правит: постановки и дизайны
+// правятся в репозитории, а не с телефона.
+func (s *server) handleDoc(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "документ")
+	if found == nil {
+		return
+	}
+	rel := strings.TrimSpace(r.URL.Query().Get("path"))
+	if !safeRel(rel) || !strings.HasSuffix(rel, ".md") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на путь документа внутри docs/", rel)})
+		return
+	}
+	full := filepath.Join(found.Path, "docs", filepath.FromSlash(rel))
+	info, err := os.Stat(full)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "документа docs/" + rel + " нет"})
+		return
+	}
+	if info.Size() > searchFileMax {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": fmt.Sprintf("docs/%s толще потолка %d КБ, читать его на экране всё равно нельзя", rel, searchFileMax>>10)})
+		return
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "docs/" + rel + " не прочитался: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": "docs/" + rel, "text": string(data)})
 }
 
 // rankArg собирает разбивку ранга для taskctl set. Слагаемые правятся по

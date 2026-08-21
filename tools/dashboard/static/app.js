@@ -2080,7 +2080,11 @@ function goalTaskRow(project, task) {
   // остаётся под ним подсказкой: строка доски говорит, что это за задача, а
   // нарезка, зачем она цели.
   const st = el("span", "st", task.title || task.fate || "");
-  if (task.title && task.fate) withTip(st, task.fate);
+  // Полный заголовок и судьба задачи в цели идут одной подсказкой: строка
+  // режется кромкой, и без заголовка целиком подсказка объясняла бы обрезок.
+  const said = [task.title || task.fate || "", task.title ? task.fate : ""]
+    .filter(Boolean).join(". ");
+  withFull(st, said);
   row.append(st);
   const meta = el("span", "sm");
   if (task.r) meta.append(el("span", "rank", String(task.r)));
@@ -6731,7 +6735,10 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 function draftRow(project, d) {
   const row = el("div", "srow clicky");
   row.append(el("span", "id", d.id));
-  row.append(el("span", "st", d.title || ""));
+  // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
+  // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
+  // телефона иначе не прочитать, не заходя внутрь (замечание пользователя).
+  row.append(withFull(el("span", "st", d.title || ""), d.title || ""));
   const meta = el("span", "sm");
   meta.append(el("span", "stale", d.age_words || ""));
   if (d.prio) meta.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));

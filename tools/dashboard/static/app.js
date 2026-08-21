@@ -3867,11 +3867,15 @@ function leadKind(node) {
   return "f-line";
 }
 
-// Вызов, которым работа уходит субагенту. Имя у него зависит от харнеса: в
-// нынешнем он зовётся Agent, в прежних версиях и у соседей Task, и знать надо
-// оба, иначе метка молчит ровно там, где работа и делегируется.
+// Вызов, которым работа уходит агенту. Имя зависит от харнеса и от того, что
+// именно делается: Agent и Task поднимают субагента, SendMessage продолжает уже
+// поднятого. Работа уходит в обоих случаях, и метка у них одна: в ленте
+// пользователя делегирование идёт как раз продолжениями, и серая точка на них
+// рвала пару «ушло, вернулось» (замечание по снимку).
+const delegTools = ["Agent", "Task", "SendMessage"];
+
 function isDeleg(item) {
-  return item && item.role === "tool" && (item.tool === "Agent" || item.tool === "Task");
+  return Boolean(item && item.role === "tool" && delegTools.includes(item.tool));
 }
 
 // Исход записи цветом: пока ответа инструмента нет, ход считается идущим и
@@ -3882,7 +3886,9 @@ function isDeleg(item) {
 // инструмента, конец по машинной пометке записи, а не по словам заголовка.
 function dotKind(item, out) {
   if (isDeleg(item)) return "deleg";
-  if (item.role === "note" && item.mark === "agent") return "deleg";
+  // Реплика, доехавшая до работающего субагента, это та же передача работы:
+  // служебная строка из бокового журнала носит ту же метку, что и вызов.
+  if (item.role === "note" && (item.mark === "agent" || item.sub)) return "deleg";
   if (item.role !== "tool") return item.role === "toolout" && item.fail ? "bad" : "";
   if (!out) return "";
   return out.fail ? "bad" : "ok";

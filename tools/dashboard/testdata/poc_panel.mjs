@@ -368,6 +368,12 @@ async function feedOf(items, sid) {
     { seq: 4, key: "d:4", role: "tool", tool: "Bash", note: "go build ./...",
       text: "command: go build ./...", time: "2026-08-13T09:03:00+03:00" },
     { seq: 5, key: "d:5", role: "toolout", text: "готово", time: "2026-08-13T09:03:01+03:00" },
+    { seq: 6, key: "d:6", role: "tool", tool: "SendMessage", note: "правь по замечанию",
+      about: "продолжение субагента", text: "message: правь по замечанию",
+      time: "2026-08-13T09:04:00+03:00" },
+    { seq: 7, key: "d:7", role: "toolout", text: "принято", time: "2026-08-13T09:04:01+03:00" },
+    { seq: 8, key: "a:0", role: "note", note: "диспетчер -> субагенту", text: "поторопись",
+      sub: "разбор находки", time: "2026-08-13T09:05:00+03:00" },
   ];
   const box = await feedOf(rail, "rail-deleg");
   const rows = allByClass(box, "frow");
@@ -377,6 +383,10 @@ async function feedOf(items, sid) {
   if (kind(rows[2]) === "deleg") fail("обычная служебка покрашена синим: " + kind(rows[2]));
   // Обычный ход метку делегирования не носит: у него прежний исход работы.
   if (kind(rows[3]) !== "ok") fail("обычный инструмент помечен не исходом: " + kind(rows[3]));
+  // Продолжение уже поднятого субагента это та же передача работы: метка та же.
+  if (kind(rows[4]) !== "deleg") fail("продолжение субагента не помечено синим: " + kind(rows[4]));
+  // Реплика диспетчера субагенту часть той же пары.
+  if (kind(rows[5]) !== "deleg") fail("реплика субагенту не помечена синим: " + kind(rows[5]));
 }
 
 // --- план сессии: блок на экране задачи и пустое состояние ---

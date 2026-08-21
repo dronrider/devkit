@@ -5011,6 +5011,11 @@ function modelPick(project, st) {
 // текут», число в середине это агенты в чатах задачи. Всё приезжает одной
 // ручкой-агрегатом /pulse: собирать это на клиенте значило бы четыре запроса на
 // каждый оборот опроса.
+// Состояния пульса словами: те же, что зовёт сервер. Спящим считается и
+// молчащий чат, и разговор без единой живой сессии.
+const pulseEmptyState = "empty";
+const pulseSilentState = "silent";
+
 const RING_NS = "http://www.w3.org/2000/svg";
 const RING_R = 15;
 const RING_LEN = 2 * Math.PI * RING_R;
@@ -5195,6 +5200,12 @@ const RING_GAP = 3;
 // значит делений нет вовсе: ровная дорожка честнее выдуманной шкалы.
 function ringPlan(box, plan) {
   const done = plan.filter((it) => it.state === "completed").length;
+  // План выполнен целиком: кольцо замыкается одной дугой. Щели между
+  // делениями тут читались бы как незакрытые пункты, которых нет.
+  if (done === plan.length) {
+    box.append(ringArc("seg on", RING_LEN, 0));
+    return;
+  }
   if (plan.length > RING_MAX_SEGS) {
     box.append(ringArc("seg", RING_LEN, 0));
     if (done > 0) box.append(ringArc("seg on", RING_LEN * (done / plan.length), 0));
@@ -5237,7 +5248,14 @@ function pulseRing(project, p) {
   svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
   box.append(halo);
   const plan = (p && p.plan) || [];
-  if (plan.length) ringPlan(g, plan);
+  // Плана нет и все спят: кольца нет вовсе, вместо него тонкий контур той же
+  // кликабельной зоны. Серый бублик обещал бы работу, которой нет, а вход в
+  // список агентов нужен и тут.
+  const asleep = !p || p.state === pulseEmptyState || p.state === pulseSilentState;
+  const ghost = !plan.length && asleep;
+  if (ghost) wrap.classList.add("ghost");
+  if (ghost) g.append(ringArc("ghost", RING_LEN, 0));
+  else if (plan.length) ringPlan(g, plan);
   else ringTrack(g);
   // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
   // опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она по

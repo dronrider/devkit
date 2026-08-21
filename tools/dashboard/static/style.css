@@ -814,8 +814,16 @@ a:hover{text-decoration:underline}
 .ring .seg.here{stroke:var(--acc)}
 .r-waiting .seg.on{stroke:var(--block)}
 .r-waiting .seg.here{stroke:var(--block)}
-.r-silent .seg.on,.r-silent .seg.here{stroke:var(--tx3)}
-.r-empty .seg,.r-empty .seg.on,.r-empty .seg.here{stroke:var(--bg3)}
+/* Простой с планом: сделанное приглушённо-зелёным, оставшееся контуром. План
+   виден и у спящего чата, а цветом состояния кольцо оживает, когда агент
+   проснётся */
+.r-silent .seg.on,.r-empty .seg.on{stroke:color-mix(in oklab,var(--run) 55%,var(--bg1))}
+.r-silent .seg.here,.r-empty .seg.here{stroke:color-mix(in oklab,var(--run) 35%,var(--bg1))}
+.r-silent .seg,.r-empty .seg{stroke:var(--line2)}
+/* Плана нет и все спят: от кольца остаётся тонкий контур, кликабельная зона та
+   же. Серый бублик читался как работа, которой нет */
+.ring .ghost{stroke:var(--line2);stroke-width:1;opacity:.7}
+.ringwrap.ghost:hover .ghost{stroke:var(--tx3);opacity:1}
 .ring .comet{stroke:none}
 .ring .halo{stroke:none}
 .rnum{font:600 12px var(--mono);fill:var(--tx)}

@@ -334,6 +334,50 @@ function ringOf(head) {
   if (byClass(bare, "plist")) fail("без плана в подсказке остался список");
 }
 
+// --- простой с планом, выполненный план и сон без плана ---
+// Кольцо в простое не гаснет вовсе: план ведущей сессии виден и спящим, а вот
+// там, где плана нет и все спят, от кольца остаётся тонкий контур: серый
+// бублик обещал бы работу, которой нет.
+{
+  const plan = [
+    { text: "разобрать", state: "completed" },
+    { text: "починить", state: "in_progress" },
+    { text: "прогнать", state: "pending" },
+  ];
+  // 1. Простой с планом: деления на месте, числа в середине нет.
+  const idle = pulseRingOf({ state: "silent", count: 1, idle: 1, plan, agents: [] });
+  if (allByClass(idle, "seg").length !== 3) {
+    fail("у спящего чата с планом пропали деления: " + allByClass(idle, "seg").length);
+  }
+  if (byClass(idle, "rnum")) fail("у спящего кольца стоит число");
+  if (byClass(idle, "ghost")) fail("кольцо с планом схлопнулось в контур");
+  if (!dump(byClass(idle, "plist"))) fail("в подсказке спящего кольца нет списка плана");
+  // 2. План выполнен целиком: кольцо замкнуто одной дугой.
+  const full = pulseRingOf({ state: "silent", count: 1, idle: 1, agents: [],
+    plan: plan.map((it) => ({ text: it.text, state: "completed" })) });
+  const segs = allByClass(full, "seg");
+  if (segs.length !== 1 || !String(segs[0].className).includes("on")) {
+    fail("выполненный план нарисован не замкнутым кольцом: " +
+      segs.map((x) => x.className).join(", "));
+  }
+  const rows = allByClass(byClass(full, "plist"), "prow2");
+  if (rows.length !== 3 || !dump(rows[0]).includes("+")) {
+    fail("в подсказке выполненного плана нет списка с галочками: " + dump(full).slice(0, 200));
+  }
+  // 3. Плана нет и все спят: тонкий контур вместо кольца, список на месте.
+  const bare = pulseRingOf({ state: "empty", count: 0, agents: [] });
+  if (!String(bare.className).includes("ghost")) {
+    fail("спящее кольцо без плана осталось бубликом: " + bare.className);
+  }
+  if (!byClass(bare, "ghost")) fail("контура вместо кольца нет: " + dump(bare).slice(0, 150));
+  if (byClass(bare, "track") || allByClass(bare, "seg").length) {
+    fail("у контура остались дорожка и деления");
+  }
+  if (!dump(byClass(bare, "pop")).includes("живых сессий нет")) {
+    fail("список агентов у контура пропал: " + dump(bare).slice(0, 150));
+  }
+}
+
 // --- цель и задача: кольцо одинаково, шкалы нет ни у той, ни у другой ---
 {
   pulses.goal = {
@@ -388,4 +432,5 @@ for (const [ago, want] of [[12, "12 с"], [240, "4 мин"], [4000, "1 ч 6 ми
 }
 
 console.log("кольцо агентов: место в шапке, четыре состояния, деления по плану сессии, " +
+  "простой с планом и контур без плана, " +
   "список агентов с дорогой в разговор, давность словами");

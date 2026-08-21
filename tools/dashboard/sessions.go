@@ -1287,6 +1287,11 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	info.Live = info.mod.After(s.now().Add(-sessionLiveTTL))
 	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows, tmuxAliveFn())
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
+	// План сессии едет вместе с лентой: экран задачи показывает его блоком, а
+	// считать его на клиенте значило бы второй разбор транскрипта.
+	if plan := sessionPlan(data); plan != nil {
+		resp["plan"] = plan
+	}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote
 	}
@@ -1471,11 +1476,20 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, path stri
 			if len(lines) == 0 {
 				continue
 			}
-			for _, item := range parseReplies([]byte(strings.Join(lines, "\n")), seq) {
+			raw := []byte(strings.Join(lines, "\n"))
+			for _, item := range parseReplies(raw, seq) {
 				item.Key = mainSrc + ":" + strconv.Itoa(mainIdx)
 				mainIdx++
 				seq = item.Seq + 1
 				sseEvent(w, f, "", marshalReply(item))
+			}
+			// План сессии живёт своим событием: он приходит целиком и меняет
+			// не ленту, а блок плана и кольцо, поэтому в поток реплик его
+			// класть нечем.
+			if plan := sessionPlan(raw); plan != nil {
+				if data, err := json.Marshal(plan); err == nil {
+					sseEvent(w, f, "plan", string(data))
+				}
 			}
 		}
 	}
@@ -1726,6 +1740,92 @@ func subLogs(path string) map[string]struct {
 		}{File: log, Label: m.label()}
 	}
 	return out
+}
+
+// planItem это пункт плана сессии: текст, его состояние и та же мысль в форме
+// «делаю» (activeForm), которой харнес подписывает идущий пункт. Пункты
+// приходят вызовом TodoWrite целиком, а не дельтой, поэтому планом сессии
+// считается последний такой вызов.
+type planItem struct {
+	Text   string `json:"text"`
+	State  string `json:"state"`
+	Active string `json:"active,omitempty"`
+}
+
+// planFromInput разбирает поле todos вызова TodoWrite.
+func planFromInput(input map[string]any) []planItem {
+	raw, ok := input["todos"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([]planItem, 0, len(raw))
+	for _, it := range raw {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		text, _ := m["content"].(string)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		state, _ := m["status"].(string)
+		active, _ := m["activeForm"].(string)
+		out = append(out, planItem{Text: truncate(text, 200), State: state,
+			Active: truncate(active, 200)})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sessionPlan достаёт план сессии из её транскрипта: последний вызов TodoWrite
+// по файлу. Боковые журналы субагентов сюда не идут: у субагента план свой, и
+// подмешанный в план сессии он читался бы как её собственные шаги.
+func sessionPlan(data []byte) []planItem {
+	var out []planItem
+	for _, ln := range strings.Split(string(data), "\n") {
+		if !strings.Contains(ln, "TodoWrite") {
+			continue
+		}
+		var rec struct {
+			Type        string `json:"type"`
+			IsSidechain bool   `json:"isSidechain"`
+			Message     struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(ln), &rec) != nil || rec.IsSidechain || rec.Type != "assistant" {
+			continue
+		}
+		var blocks []struct {
+			Type  string         `json:"type"`
+			Name  string         `json:"name"`
+			Input map[string]any `json:"input"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" || b.Name != "TodoWrite" {
+				continue
+			}
+			if plan := planFromInput(b.Input); plan != nil {
+				out = plan
+			}
+		}
+	}
+	return out
+}
+
+// readPlan это тот же план, но от файла: путь к транскрипту знают и ручка
+// ленты, и пульс.
+func readPlan(path string) []planItem {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return sessionPlan(data)
 }
 
 // mainSrc это имя источника для самого транскрипта сессии в ключах записей.

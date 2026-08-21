@@ -302,6 +302,38 @@ function ringOf(head) {
   if (!byClass(rows[1], "pfrom")) fail("не сказано, с какого момента ждут: " + dump(rows[1]));
 }
 
+// --- деления по плану сессии: сделано, идёт, ждёт ---
+// Деления вернулись на кольцо с новым смыслом: это пункты плана, который агент
+// пишет себе сам (TodoWrite). Плана нет, значит делений нет вовсе.
+{
+  const plan = [
+    { text: "разобрать находку", state: "completed", active: "Разбираю находку" },
+    { text: "починить стрим", state: "in_progress", active: "Чиню стрим" },
+    { text: "прогнать стенды", state: "pending", active: "Гоняю стенды" },
+  ];
+  const wrap = pulseRingOf({ state: "working", working: 1, count: 1, plan, agents: [] });
+  const segs = allByClass(wrap, "seg");
+  if (segs.length !== 3) fail("делений не по числу пунктов плана: " + segs.length);
+  if (segs.filter((x) => String(x.className).includes("on")).length !== 1) {
+    fail("сделанный пункт не закрашен: " + segs.map((x) => x.className).join(", "));
+  }
+  if (segs.filter((x) => String(x.className).includes("here")).length !== 1) {
+    fail("идущий пункт не подсвечен: " + segs.map((x) => x.className).join(", "));
+  }
+  // Список плана стоит первым в подсказке кольца, идущий пункт формой «делаю».
+  const rows = allByClass(byClass(wrap, "plist"), "prow2");
+  if (rows.length !== 3) fail("списка плана в подсказке нет: " + dump(wrap).slice(0, 200));
+  if (!dump(rows[1]).includes("Чиню стрим")) {
+    fail("идущий пункт назван не формой «делаю»: " + dump(rows[1]));
+  }
+  if (!dump(rows[0]).includes("разобрать находку")) fail("сделанный пункт пропал: " + dump(rows[0]));
+  // Плана нет: делений нет, дорожка ровная, списка в подсказке тоже нет.
+  const bare = pulseRingOf({ state: "working", working: 1, count: 1, agents: [] });
+  if (allByClass(bare, "seg").length) fail("без плана кольцо нарисовало деления");
+  if (!byClass(bare, "track")) fail("без плана у кольца нет ровной дорожки");
+  if (byClass(bare, "plist")) fail("без плана в подсказке остался список");
+}
+
 // --- цель и задача: кольцо одинаково, шкалы нет ни у той, ни у другой ---
 {
   pulses.goal = {
@@ -316,7 +348,7 @@ function ringOf(head) {
   const head = await headOf("goal");
   const wrap = ringOf(head);
   if (allByClass(wrap, "seg").length) {
-    fail("цель нарисовала шкалу задач: " + allByClass(wrap, "seg").length + " делений");
+    fail("цель без плана нарисовала деления: " + allByClass(wrap, "seg").length);
   }
   if (!byClass(wrap, "track")) fail("у цели нет ровной дорожки");
   const tip = String(wrap.attrs["aria-label"] || "");
@@ -355,5 +387,5 @@ for (const [ago, want] of [[12, "12 с"], [240, "4 мин"], [4000, "1 ч 6 ми
   if (said !== want) fail("давность " + ago + " с сказана как " + said + ", ждал " + want);
 }
 
-console.log("кольцо агентов: место в шапке, четыре состояния, ровная дорожка без шкалы, " +
+console.log("кольцо агентов: место в шапке, четыре состояния, деления по плану сессии, " +
   "список агентов с дорогой в разговор, давность словами");

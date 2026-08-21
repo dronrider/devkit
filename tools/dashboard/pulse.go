@@ -170,6 +170,10 @@ type Pulse struct {
 	// читался бы как вопрос к этому чату, и человек искал бы в ленте вопрос,
 	// которого там нет.
 	Own *PulseAgent `json:"own,omitempty"`
+	// Plan это план ведущей живой сессии: пункты её todo-списка целиком, как их
+	// написал сам агент. По ним кольцо и рисует деления, а подсказка список.
+	// Плана нет это обычный случай: сессия его не заводила.
+	Plan []planItem `json:"plan,omitempty"`
 	// OwnWait это ожидание самого открытого разговора: вопрос, адресованный
 	// его сессии, либо парковка задачи, за которую он отвечает.
 	OwnWait *Waiting `json:"own_wait,omitempty"`
@@ -539,6 +543,12 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 			last = step.At
 			if step.Tool != "" || step.About != "" {
 				out.Tool, out.About, out.Sub = step.Tool, step.About, step.Sub
+			}
+			// План берётся у ведущей сессии, той же, чей ход подписывает
+			// кольцо: у соседнего разговора задачи план свой, и смешанные они
+			// читались бы как один список.
+			if p, ok := paths[e.ID]; ok {
+				out.Plan = readPlan(p)
 			}
 			if pulseTesting(step.Tool + " " + step.About) {
 				testing = true

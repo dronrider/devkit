@@ -802,9 +802,16 @@ a:hover{text-decoration:underline}
 .ring .track{stroke:var(--line2)}
 .r-empty .track{stroke:var(--bg3)}
 .r-waiting .track{stroke:var(--block);opacity:0.65}
-/* Шкалы хода на кольце нет: деления задач и фазы конвейера были немой
-   разметкой, а ход работы виден там, где ему место, на экране цели и задачи.
-   Осталась ровная дорожка, по которой бежит дуга живой работы. */
+/* Деления кольца это пункты плана сессии: закрашенное сделано, подсвеченное
+   идёт, пустое ждёт. Плана нет, значит остаётся ровная дорожка, по которой
+   бежит дуга живой работы. */
+.ring .seg{stroke:var(--line2)}
+.ring .seg.on{stroke:var(--run)}
+.ring .seg.here{stroke:var(--acc)}
+.r-waiting .seg.on{stroke:var(--block)}
+.r-waiting .seg.here{stroke:var(--block)}
+.r-silent .seg.on,.r-silent .seg.here{stroke:var(--tx3)}
+.r-empty .seg,.r-empty .seg.on,.r-empty .seg.here{stroke:var(--bg3)}
 .ring .comet{stroke:none}
 .ring .halo{stroke:none}
 .rnum{font:600 12px var(--mono);fill:var(--tx)}
@@ -813,6 +820,19 @@ a:hover{text-decoration:underline}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
 @keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-71.63}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
+/* План сессии: пункты её todo-списка. Сделанное приглушено и зачёркнуто,
+   идущее акцентом, ждущее обычным цветом */
+.plist{display:flex;flex-direction:column;gap:4px;padding:9px 11px;border-bottom:1px solid var(--line)}
+.prow2{display:flex;align-items:baseline;gap:8px;font:400 12px/1.45 var(--sans);color:var(--tx2)}
+.pmark{flex:none;width:12px;font:600 11px var(--mono);color:var(--tx3)}
+.ptext2{min-width:0;overflow-wrap:anywhere}
+.prow2.p-completed{color:var(--tx3)}
+.prow2.p-completed .ptext2{text-decoration:line-through;opacity:.75}
+.prow2.p-completed .pmark{color:var(--run)}
+.prow2.p-in_progress{color:var(--tx)}
+.prow2.p-in_progress .pmark{color:var(--acc)}
+.tplan .plist{border:0;padding:0}
+
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
 .ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:300px;max-width:394px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
 .ringwrap:hover .pop,.ringwrap.open .pop{display:block}

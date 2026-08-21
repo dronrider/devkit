@@ -374,6 +374,33 @@ async function feedOf(items, sid) {
   if (kind(rows[2]) === "deleg") fail("обычная служебка покрашена синим: " + kind(rows[2]));
 }
 
+// --- план сессии: блок на экране задачи и пустое состояние ---
+// План агент пишет себе сам вызовом TodoWrite, сервер отдаёт его последним
+// списком. Плана нет, значит и блока нет: заглушка говорила бы о нашей
+// бедности, а не о задаче.
+{
+  const plan = [
+    { text: "разобрать находку", state: "completed", active: "Разбираю находку" },
+    { text: "починить стрим", state: "in_progress", active: "Чиню стрим" },
+    { text: "прогнать стенды", state: "pending", active: "Гоняю стенды" },
+  ];
+  const list = sandbox.planList(plan);
+  const rows = allByClass(list, "prow2");
+  if (rows.length !== 3) fail("в списке плана не три пункта: " + rows.length);
+  if (!String(rows[0].className).includes("p-completed")) {
+    fail("сделанный пункт не помечен состоянием: " + rows[0].className);
+  }
+  if (!String(rows[1].className).includes("p-in_progress")) {
+    fail("идущий пункт не помечен состоянием: " + rows[1].className);
+  }
+  if (!dump(rows[1]).includes("Чиню стрим")) {
+    fail("идущий пункт назван не формой «делаю»: " + dump(rows[1]));
+  }
+  if (!dump(rows[2]).includes("прогнать стенды")) fail("ждущий пункт пропал: " + dump(rows[2]));
+  // Пустой план это пустой список: строить из него блок незачем.
+  if (allByClass(sandbox.planList([]), "prow2").length) fail("пустой план нарисовал строки");
+}
+
 // --- сломанная запись не роняет ленту целиком ---
 {
   const boom = { seq: 0, role: "user", get text() { throw new Error("битая запись"); } };

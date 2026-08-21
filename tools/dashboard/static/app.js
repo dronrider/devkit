@@ -2456,6 +2456,11 @@ async function renderTask(project, works, id) {
   });
   groups.append(view.page);
 
+  // План агента блоком под постановкой: те же пункты, что делениями на кольце
+  // в шапке разговора. Плана нет, значит блока нет вовсе: заглушка «плана нет»
+  // говорила бы о нашей бедности, а не о задаче.
+  wireTaskPlan(project, id, view.page);
+
   // Журнал витка стоит последним блоком экрана, под целью и постановкой
   // (замечание 13): туда за ним и идут, а сверху он отжимал вниз то, ради чего
   // экран открывают. Панель стоит только у цели и у задачи с живой работой: у
@@ -5180,6 +5185,44 @@ function ringTrack(box) {
   box.append(ringArc("track", RING_LEN, 0));
 }
 
+// Сколько пунктов плана кольцо рисует делениями. Длинный план это уже пунктир,
+// и вместо него закрашивается доля сделанного.
+const RING_MAX_SEGS = 12;
+const RING_GAP = 3;
+
+// Деления кольца это пункты плана сессии, как их написал сам агент вызовом
+// TodoWrite: закрашенное сделано, подсвеченное идёт, пустое ждёт. Плана нет,
+// значит делений нет вовсе: ровная дорожка честнее выдуманной шкалы.
+function ringPlan(box, plan) {
+  const done = plan.filter((it) => it.state === "completed").length;
+  if (plan.length > RING_MAX_SEGS) {
+    box.append(ringArc("seg", RING_LEN, 0));
+    if (done > 0) box.append(ringArc("seg on", RING_LEN * (done / plan.length), 0));
+    return;
+  }
+  const step = RING_LEN / plan.length;
+  const arc = Math.max(step - RING_GAP, 1);
+  plan.forEach((it, i) => {
+    const cls = it.state === "completed" ? " on" : it.state === "in_progress" ? " here" : "";
+    box.append(ringArc("seg" + cls, arc, i * step));
+  });
+}
+
+// Список плана: галочка у сделанного, стрелка у идущего, пусто у ждущего.
+// Идущий пункт назван формой «делаю» (activeForm), как его пишет сам агент.
+function planList(plan) {
+  const box = el("div", "plist");
+  for (const it of plan) {
+    const row = el("div", "prow2 p-" + (it.state || "pending"));
+    row.append(el("span", "pmark", it.state === "completed" ? "+"
+      : it.state === "in_progress" ? ">" : ""));
+    row.append(el("span", "ptext2",
+      it.state === "in_progress" && it.active ? it.active : it.text));
+    box.append(row);
+  }
+  return box;
+}
+
 // Кольцо целиком. Разметка одна на все четыре состояния, состояние это класс
 // обёртки: разводить четыре ветки сборки значило бы держать четыре разметки.
 function pulseRing(project, p) {
@@ -5193,7 +5236,9 @@ function pulseRing(project, p) {
   const halo = svgEl("circle", "halo");
   svgAttrs(halo, { cx: 18, cy: 18, r: 17.4, fill: "none", "stroke-width": 1.2 });
   box.append(halo);
-  ringTrack(g);
+  const plan = (p && p.plan) || [];
+  if (plan.length) ringPlan(g, plan);
+  else ringTrack(g);
   // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
   // опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она по
   // своей дорожке внутри шкалы: поверх делений она закрывала их собой, и
@@ -5253,6 +5298,9 @@ function ringTally(p) {
 // не только показывает, но и есть дорога до того, кто ждёт.
 function ringPop(project, p) {
   const pop = el("div", "pop");
+  // План сессии стоит первым: деления кольца это он, и без списка они немые.
+  const plan = (p && p.plan) || [];
+  if (plan.length) pop.append(planList(plan));
   const list = (p && p.agents) || [];
   const now = Date.now();
   if (!list.length) {
@@ -5491,6 +5539,32 @@ function chatHead(project, st) {
   }
   wireRing(project, st, slot);
   return head;
+}
+
+// Блок плана на экране задачи. План берётся тем же пульсом, что кормит кольцо
+// в шапке разговора: он уже знает ведущую живую сессию задачи, и второго
+// разбора транскрипта тут не нужно. Пока плана нет, блока на экране нет.
+function wireTaskPlan(project, id, page) {
+  const card = pane("План агента", "");
+  card.card.classList.add("tplan");
+  card.card.hidden = true;
+  page.append(card.card);
+  const put = (p) => {
+    const plan = (p && p.plan) || [];
+    card.card.hidden = !plan.length;
+    if (!plan.length) return;
+    const who = (p.own && p.own.name) || (p.agents || []).map((a) => a.name)[0] || "";
+    card.sub.textContent = who ? "сессия " + who : "";
+    card.body.replaceChildren(planList(plan));
+  };
+  const load = async () => {
+    const r = await api("/api/projects/" + encodeURIComponent(project) +
+      "/pulse?task=" + encodeURIComponent(id));
+    if (r.ok) put(r.body);
+  };
+  load().catch(console.error);
+  const t = setInterval(() => { load().catch(console.error); }, PULSE_POLL);
+  agentLive.push(() => clearInterval(t));
 }
 
 // Ответ задаче безадресной строкой: ручка та же, какой пользуется сторожок.

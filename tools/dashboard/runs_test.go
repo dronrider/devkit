@@ -145,7 +145,9 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 			// называет себя в реестре чатов (hooks/session-task.py).
 			want := "new-session -d -s task-" + tc.id + " -c " + e.proj +
 				" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'" +
-				" claude -p '" + tc.prompt + "'"
+				// Правило плана едет в том же заказе: по нему дашборд рисует
+				// деления кольца и блок «План агента».
+				" claude -p '" + tc.prompt + " " + planRule + "'"
 			if !strings.Contains(got, want) {
 				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 			}
@@ -198,7 +200,7 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	// launchd он системный, и утилит devkit в нём может не быть.
 	want := "new-session -d -s task-XR-002 -c " + e.proj +
 		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
-		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002'"
+		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002 " + planRule + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 	}
@@ -214,7 +216,7 @@ func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 		t.Fatalf("запуск без выбора: %d %s", resp.StatusCode, text)
 	}
 	got := readFile(t, tmuxLog)
-	if !strings.Contains(got, " claude -p 'Выполни XR-002'") {
+	if !strings.Contains(got, " claude -p 'Выполни XR-002 "+planRule+"'") {
 		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
 	}
 	if strings.Contains(got, "agentctl exec") {
@@ -921,7 +923,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			if !strings.Contains(text, `"kind":"task"`) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
-			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+"'") {
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+" "+planRule+"'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
 			}
 		})

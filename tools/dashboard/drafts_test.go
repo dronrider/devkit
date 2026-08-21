@@ -233,7 +233,10 @@ func TestDraftGroomPrompt(t *testing.T) {
 	got := readFile(t, tmuxLog)
 	for _, want := range []string{
 		"new-session -d -s task-XR-005 -c " + e.proj + " ",
-		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude 'Проведи груминг XR-005'",
+		// Правило плана цепляется к заказу на самом запуске: по этому плану
+		// дашборд рисует деления кольца и блок «План агента».
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude 'Проведи груминг XR-005 " +
+			planRule + "'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
@@ -645,7 +648,8 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude 'Проведи груминг " + id + ". Человек уточняет: оставить эту, вторую снять'"
+	want := "claude 'Проведи груминг " + id +
+		". Человек уточняет: оставить эту, вторую снять " + planRule + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
 	}
@@ -683,7 +687,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
 	}
-	want := "Проведи груминг " + id + ". Человек уточняет: " + ask
+	want := "Проведи груминг " + id + ". Человек уточняет: " + ask + " " + planRule
 	if string(out) != want {
 		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
 	}

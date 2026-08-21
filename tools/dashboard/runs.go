@@ -367,7 +367,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id), id, sess)); err != nil {
+		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id)+" "+planRule,
+			id, sess)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

@@ -176,6 +176,46 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   }
   echo.saw({ role: "assistant", text: "вторая реплика" });
   if (!dump(pend).includes("вторая реплика")) fail("ответ агента съел местный пузырь");
+  // Реплику взяли, а хода ей не дали: агент стоит на вопросе разрешения в
+  // своём окне. Доставленной такая реплика не считается, причина стоит в самом
+  // пузыре: молчание тут неотличимо от работы (жалоба пользователя про
+  // произвольный чат, где три реплики ушли в никуда).
+  const held = echo.add("третья реплика", () => {});
+  echo.held(held, "агент ждёт разрешения в своём окне");
+  if (allByClass(pend, "m-sent").length) fail("непринятая реплика показана доставленной");
+  if (!allByClass(pend, "m-held").length) fail("у непринятой реплики нет своего состояния");
+  if (!dump(pend).includes("не доставлено: агент ждёт разрешения в своём окне")) {
+    fail("причина недоставки не названа в пузыре: " + dump(pend));
+  }
+  if (!dump(pend).includes("повторить")) fail("у непринятой реплики нет повтора");
+}
+
+// --- ответ ручки с пометкой очереди рисует пузырь недоставленным ---
+{
+  const prev = sandbox.fetch;
+  const seen = [];
+  sandbox.fetch = (path, init) => {
+    seen.push(path);
+    if (init && init.method === "POST" && path.includes("/say")) {
+      return Promise.resolve({ ok: true, status: 200,
+        json: () => Promise.resolve({ way: "socket", stuck: "агент ждёт разрешения в своём окне" }) });
+    }
+    return prev(path, init);
+  };
+  const st = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  const panel = sandbox.chatPanel("demo", st);
+  const ta = tag(panel, "TEXTAREA");
+  ta.value = "почему не ответил";
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!seen.some((p) => p.includes("/say"))) fail("реплика вовсе не ушла на ручку");
+  if (!dump(panel).includes("не доставлено: агент ждёт разрешения")) {
+    fail("пузырь не назвал причину недоставки: " + dump(panel).slice(0, 300));
+  }
+  if (allByClass(panel, "m-sent").length) {
+    fail("реплика в очереди вставшего клиента показана доставленной: " + dump(panel).slice(0, 300));
+  }
+  sandbox.fetch = prev;
 }
 
 // feedOf поднимает ленту на готовом списке записей: сервер тут не нужен, а

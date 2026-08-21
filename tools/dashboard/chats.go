@@ -616,8 +616,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf(
-			"транскрипта %s нет среди сессий проекта %s: разговаривать не с кем", sid, found.Name)})
+		// Транскрипта нет вовсе: разговор заведён, а сессии за ним никогда не
+		// было (произвольный чат, у которого подъём не случился). Отказ тут
+		// ронял реплику в никуда, и человек писал в пустой чат по разу в день,
+		// не получая ответа (жалоба пользователя). Реплика человека и есть
+		// начало разговора: она поднимает сессию заказом.
+		s.chatRaiseSay(w, found, sid, text)
 		return
 	}
 	recs := sessions.LoadAll(s.cfg.Home)
@@ -629,8 +633,14 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		if err := peerSay(p.Sock, text); err == nil {
 			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
-			writeJSON(w, http.StatusOK, map[string]any{"way": "socket", "pid": p.PID,
-				"where": peerWord(p)})
+			out := map[string]any{"way": "socket", "pid": p.PID, "where": peerWord(p)}
+			// Взятая сокетом реплика доставленной ещё не значит: клиент,
+			// стоящий на вопросе разрешения, кладёт её в очередь и молчит.
+			if why := s.chatStuck(sid); why != "" {
+				out["stuck"] = why
+				s.logf("реплика чата %s легла в очередь: %s", sid, why)
+			}
+			writeJSON(w, http.StatusOK, out)
 			return
 		} else {
 			// Сокет есть, а разговора по нему не вышло: сессия могла умереть
@@ -652,8 +662,13 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		}
 		s.saidSay(saidSessionKey(sid), text, "send-keys")
 		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, last.Tmux)
-		writeJSON(w, http.StatusOK, map[string]any{"way": "send-keys", "tmux": last.Tmux,
-			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"})
+		out := map[string]any{"way": "send-keys", "tmux": last.Tmux,
+			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"}
+		if why := s.chatStuck(sid); why != "" {
+			out["stuck"] = why
+			s.logf("реплика чата %s легла в очередь: %s", sid, why)
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	// Отказа «разговор идёт в vscode» тут больше нет: канал клиента достаёт
@@ -702,6 +717,70 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
 			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)})
+}
+
+// chatStuck говорит, стоит ли сессия чата на вопросе, который дашборду не
+// закрыть: клиент спросил разрешение в своём окне и ждёт человека там. Реплика
+// в такую сессию уходит без отказа (сокет её берёт), но ходу не даёт, и в
+// ленте она выглядела доставленной. Меру даёт журнал уведомителя: последнее
+// событие сессии это запрос разрешения, значит с тех пор ход не кончался.
+// Транскрипту тут веры нет, его двигают и сами вставшие в очередь реплики.
+func (s *server) chatStuck(sid string) string {
+	data, err := os.ReadFile(s.notifyPath())
+	if err != nil {
+		return ""
+	}
+	lines := tailLines(data, tailDefault)
+	for i := len(lines) - 1; i >= 0; i-- {
+		n, ok := parseNotifyLine(lines[i])
+		if !ok || len(n.Session) < 8 || !strings.HasPrefix(sid, n.Session) {
+			continue
+		}
+		if n.Reason == "permission_prompt" {
+			return "агент ждёт разрешения в своём окне: реплика встала в очередь и хода не даёт"
+		}
+		return ""
+	}
+	return ""
+}
+
+// chatRaiseSay поднимает новую сессию репликой человека: разговор в списке
+// есть, а сессии за ним нет ни живой, ни мёртвой. Такой чат заводит кнопка «+»
+// без задачи, и до этой ветки реплика в нём ложилась в журнал отправленного
+// без адресата: агент не поднимался, ответа не приходило, и молчание было
+// неотличимо от работы. Дерево тут корень проекта, задача пустая, правило
+// плана приезжает заказом, как у любого подъёма.
+func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text string) {
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if m := clientMissing(defaultClient); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	recs := sessions.LoadAll(s.cfg.Home)
+	task := ""
+	if t := sessions.Touched(recs[sid]); len(t) > 0 {
+		task = t[0]
+	}
+	model := s.chatModel(sid, "")
+	sess := chatNewName(task, tmuxAliveFn())
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
+		s.logf("настройки чата %s не записались: %v", sess, err)
+	}
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
+		chatCmd(chatVars(task, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
+		s.logf("%s", msg)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
+		return
+	}
+	s.saidSay(saidSessionKey(sid), text, "start")
+	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
+	writeJSON(w, http.StatusOK, map[string]any{"way": "start", "tmux": sess, "model": model,
+		"message": fmt.Sprintf(
+			"сессии у чата не было: реплика поднята заказом новой сессии в tmux %s", sess)})
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём

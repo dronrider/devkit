@@ -5979,7 +5979,13 @@ async function chatRaise(project, st, text, model) {
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
-  const name = r.body.tmux;
+  return chatWait(project, r.body.tmux);
+}
+
+// Ожидание ID поднятой сессии: она рождается позже команды и называет себя в
+// реестре сама, первым своим ходом. Дорога одна на оба подъёма, и с кнопки
+// нового чата, и с реплики в чат, у которого сессии не было.
+async function chatWait(project, name) {
   for (let i = 0; i < 40; i += 1) {
     await new Promise((ok) => setTimeout(ok, 1500));
     const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
@@ -6147,13 +6153,17 @@ function makeEcho(project, box, feedBox, addr, resend) {
   const draw = () => {
     box.replaceChildren();
     for (const m of mine) {
-      const meta = m.state === "bad" ? (stopped ? "не ушло" : "не ушло, дожимаю")
+      // Реплика, которую взяли, но которой не дали хода (агент стоит на
+      // вопросе разрешения в своём окне), доставленной не считается: пузырь
+      // называет причину, а дожимать её нечем, повтор лёг бы в ту же очередь.
+      const meta = m.state === "held" ? "не доставлено: " + (m.why || "агенту её не отдали")
+        : m.state === "bad" ? (stopped ? "не ушло" : "не ушло, дожимаю")
         : m.state === "sent" ? "доставлено" : "отправляется...";
       const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       if (m.pic) wrap.append(shotThumb(m.pic.data, m.pic.name));
-      if (m.state === "bad") {
+      if (m.state === "bad" || m.state === "held") {
         const again = el("button", "linkish", "повторить");
         again.addEventListener("click", () => {
           const text = m.text;
@@ -6271,6 +6281,15 @@ function makeEcho(project, box, feedBox, addr, resend) {
       save();
       draw();
       plan();
+    },
+    // Реплику взяли, а хода ей не дали: причина стоит в пузыре, дожима нет.
+    // Автодожим тут только множил бы очередь у вставшего клиента.
+    held(m, why) {
+      if (!mine.includes(m)) return;
+      m.state = "held";
+      m.why = why;
+      save();
+      draw();
     },
     // Эхо из ленты: та же реплика человека, пришедшая из транскрипта. Сверка по
     // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
@@ -6498,7 +6517,14 @@ function chatPanel(project, st) {
           sayResult(r.body.error || "реплика не ушла", true);
           return;
         }
-        echo.sent(m);
+        if (r.body.stuck) echo.held(m, r.body.stuck);
+        else echo.sent(m);
+        // Реплика подняла сессию сама (чата без сессии не бывает после первой
+        // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
+        if (r.body.way === "start") {
+          chatWait(project, r.body.tmux).catch(console.error);
+          return;
+        }
         // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
         // список надо перечитать, иначе следующая реплика опять пошла бы
         // резюмом и завела второго агента.

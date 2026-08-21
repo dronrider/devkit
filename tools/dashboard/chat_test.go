@@ -448,3 +448,118 @@ func TestChatListKeepsOwnTaskUnsigned(t *testing.T) {
 		t.Fatalf("своя задача подписана лишним: %+v", got.Chats)
 	}
 }
+
+// Реплика в чат, за которым нет ни живого процесса, ни транскрипта, поднимает
+// сессию заказом. Так живёт произвольный чат: сессия у него рождается первой же
+// репликой человека, а до этой ветки ручка отвечала «разговаривать не с кем»,
+// реплика ложилась в журнал отправленного без адресата, и молчание было
+// неотличимо от работы (жалоба пользователя: три реплики за два дня без ответа).
+func TestChatSayRaisesSessionWithoutTranscript(t *testing.T) {
+	e, c := chatEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in
+ls) exit 1;;
+esac
+exit 0`)
+	writeScript(t, e.bin, "claude", "exit 0")
+
+	sid := "aaaa-1111-2222-3333"
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "почему подписка тратится медленнее"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика в чат без сессии: %d %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Way  string `json:"way"`
+		Tmux string `json:"tmux"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Way != "start" {
+		t.Fatalf("дорога реплики %q, ждал подъём сессии: %s", got.Way, text)
+	}
+	if got.Tmux == "" {
+		t.Fatal("подъём не назвал tmux-сессию: панели некуда переезжать")
+	}
+	log := readFile(t, tmuxLog)
+	if !strings.Contains(log, "new-session") {
+		t.Fatalf("сессию не поднимали: %s", log)
+	}
+	if !strings.Contains(log, "почему подписка тратится медленнее") {
+		t.Fatalf("реплика человека не уехала заказом: %s", log)
+	}
+	if strings.Contains(log, "--resume") {
+		t.Fatalf("подъём пошёл резюмом несуществующей сессии: %s", log)
+	}
+	// Правило плана приезжает тем же заказом, как у любого подъёма дашборда.
+	if !strings.Contains(log, "план работ файлом") {
+		t.Fatalf("в заказе нет правила плана: %s", log)
+	}
+}
+
+// Реплику взял сокет, а хода ей не дали: клиент стоит на вопросе разрешения в
+// своём окне. Ручка называет это в ответе, и панель рисует пузырь «не
+// доставлено» с причиной, а не благополучно отправленным.
+func TestChatSayNamesStuckPermission(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "bbbb-2222-3333-4444"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) printf 'chat-1\t1\t1754770421\n';;
+esac
+exit 0`)
+	// Реестр держит имя живой tmux-сессии чата: реплика пойдёт в неё.
+	writeBinds(t, e.home, "2026-08-20T12:00:00 сессия "+sid+
+		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		"источник заказ повод startup tmux chat-1\n")
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "почему не ответил"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика в живую сессию: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"stuck"`) {
+		t.Fatalf("ручка не сказала, что реплика легла в очередь вставшего клиента: %s", text)
+	}
+	if !strings.Contains(text, "ждёт разрешения") {
+		t.Fatalf("причина не названа словами: %s", text)
+	}
+
+	// Ход кончился, значит вопрос закрыт: свежее событие снимает пометку.
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid),
+		"2026-08-20T12:06:00 сессия " + sid[:8] +
+			" повод turn_done уровень фоновый бэкенд terminal-notifier цель - задача - проект demo " +
+			"код возврата: 0 текст «devkit: ход кончился» «готово»"})
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "продолжай"}`)
+	text = body(t, resp)
+	if strings.Contains(text, `"stuck"`) {
+		t.Fatalf("пометка очереди осталась после закрытого хода: %s", text)
+	}
+}
+
+// permissionNotify это строка журнала уведомителя про запрос разрешения, как её
+// пишет hooks/notify.py: ID сессии там обрезан до восьми знаков.
+func permissionNotify(sid string) string {
+	return "2026-08-20T12:05:00 сессия " + sid[:8] +
+		" повод permission_prompt уровень громкий бэкенд terminal-notifier цель - задача - проект demo " +
+		"код возврата: 0 текст «devkit: нужно разрешение» «Claude needs your permission»"
+}
+
+// Панель знает обе новости ручки: поднятую репликой сессию (переезжает в неё)
+// и реплику, легшую в очередь вставшего клиента (пузырь с причиной).
+func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`if (r.body.stuck) echo.held(m, r.body.stuck);`,
+		`if (r.body.way === "start")`, `chatWait(project, r.body.tmux)`,
+		`m.state === "held" ? "не доставлено: "`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет %q", want)
+		}
+	}
+}

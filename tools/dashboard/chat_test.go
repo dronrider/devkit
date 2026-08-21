@@ -563,3 +563,37 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 		}
 	}
 }
+
+// Произвольный чат (кнопка «+» без задачи) поднимается тем же порядком, что
+// задачный: дерево это корень проекта, задачи в окружении нет вовсе, правило
+// плана и реплика человека едут заказом.
+func TestChatStartWithoutTask(t *testing.T) {
+	e, c := chatEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in
+ls) exit 1;;
+esac
+exit 0`)
+	writeScript(t, e.bin, "claude", "exit 0")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats",
+		`{"text": "подписка тратится медленнее, разберись"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём произвольного чата: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"tmux":"chat-1"`) {
+		t.Fatalf("имя сессии не по образцу chat-<n>: %s", text)
+	}
+	log := readFile(t, tmuxLog)
+	if !strings.Contains(log, "new-session") || !strings.Contains(log, "подписка тратится медленнее") {
+		t.Fatalf("сессия поднята не с репликой человека: %s", log)
+	}
+	if strings.Contains(log, "DEVKIT_TASK") {
+		t.Fatalf("у разговора без задачи в окружении встала задача: %s", log)
+	}
+	if !strings.Contains(log, "план работ файлом") {
+		t.Fatalf("в заказе нет правила плана: %s", log)
+	}
+}

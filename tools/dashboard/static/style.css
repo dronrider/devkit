@@ -1081,7 +1081,15 @@ a:hover{text-decoration:underline}
 .thead .tedit{line-height:30px;padding-top:0;padding-bottom:0}
 
 /* 2: кнопки режимов в строке статуса справа */
-.tmodes{display:flex;align-items:center;gap:6px;flex:none}
+.tmodes{display:flex;align-items:center;gap:6px;flex:none;position:relative}
+/* Действия экрана в командной панели строки статуса: кнопки те же, что стояли
+   отдельной полосой, только помельче и рядом с карандашом. Позиционируется
+   тут же и раскрытый список подписки, поэтому у панели своя система координат
+   и своя высота в слоях: без неё список уходил под блок меню. */
+.tacts{display:flex;align-items:center;gap:6px;position:relative;z-index:31}
+.tacts .btn{padding:6px 11px;font-size:12.5px}
+.tacts .btn svg{width:15px;height:15px;flex:none}
+
 .tchips .gap{flex:1}
 .tchips{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 

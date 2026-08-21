@@ -966,16 +966,34 @@ var probeLegacy = []string{
 	"запусти в bash команду: sleep 300",
 }
 
-// taskChats отвечает, у каких задач есть разговоры на этой машине, живые или
-// кончившиеся. По нему строка In progress и решает, наша это работа или её
-// взяли в другом месте: там запускать нечего, а тут есть с чем разговаривать.
-func (s *server) taskChats(projPath string) map[string]bool {
-	out := map[string]bool{}
-	for _, e := range s.chatEntries(projPath, chatListLimit) {
-		for _, t := range e.Tasks {
-			if t != "" {
-				out[t] = true
-			}
+// taskChats отвечает, у каких задач на этой машине есть исполнительские сессии,
+// живые или кончившиеся. По нему строка In progress и решает, наша это работа
+// или её взяли в другом месте. Исполнительской считается сессия, поднятая
+// кнопкой запуска или продолжения, конвейером и сессия в дереве задачи.
+// Разговорные чаты строку не присваивают: груминг, привязка рукой и разговор о
+// задаче это чтение и обсуждение, а не работа над ней, и запускать по ним
+// нечего (замечание пользователя про DK-460).
+func (s *server) taskChats(projPath string) map[string]string {
+	out := map[string]string{}
+	binds := s.binds()
+	view := s.harnesses()
+	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
+		head := s.sessionHeadCached(f.path, f.stamp)
+		// Груминг черновика и служебная сессия заголовка приезжают тем же
+		// заказом дашборда, и по полям реестра от запуска задачи они
+		// неотличимы: разводит их первая реплика.
+		if strings.HasPrefix(head.First, groomOrderPrefix) || titleSession(head.First) {
+			continue
+		}
+		task, note, bound := bindTask(binds, f.ID, f.suffix, head)
+		if task == "" || bound != boundLead || note == handNote {
+			continue
+		}
+		// Подписка задачи это подписка её исполнительской сессии: та, на которой
+		// работу начали, ею же её и закрывают. Корень транскрипта называет её
+		// сам, отдельной записи для этого не заводится.
+		if out[task] == "" {
+			out[task] = harnessOfRoot(view, s.cfg.Home, f.root)
 		}
 	}
 	return out

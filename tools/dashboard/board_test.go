@@ -130,12 +130,14 @@ func TestStaticBoardEchoOnNotification(t *testing.T) {
 }
 
 // Действие называется по статусу строки: из Backlog задачу выполняют, начатую
-// продолжают, проверенную закрывают. Те же слова сервер кладёт в промпт
-// конвейеру, и подпись кнопки обязана совпадать с заказом.
+// продолжают, проверенную проверяют и закрывают. Те же слова сервер кладёт в
+// промпт конвейеру, и подпись кнопки обязана совпадать с заказом. У Check
+// подпись говорит оба дела разом: нажатие человека это его приёмка, а прогон
+// проверки и закрытие идут дальше сами (решение пользователя).
 func TestStaticActionLabelBySection(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	labels := funcBody(t, text, "const ACTION_BY_SECT")
-	for _, want := range []string{`"in-progress": "Продолжить"`, `check: "Закрыть"`, `|| "Выполнить"`} {
+	for _, want := range []string{`"in-progress": "Продолжить"`, `check: "Проверить и закрыть"`, `|| "Выполнить"`} {
 		if !strings.Contains(labels, want) {
 			t.Errorf("в подписях действий нет %q", want)
 		}

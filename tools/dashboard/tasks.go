@@ -64,6 +64,9 @@ type boardRow struct {
 	// списка работ он отвечал ровно на один вопрос, «есть ли сейчас работа с
 	// таким же ID», и оборванный конвейер в нём был неотличим от очереди.
 	Run string `json:"run,omitempty"`
+	// Harness называет подписку, которой закрывать проверенную строку: ту, на
+	// которой работу начинали.
+	Harness string `json:"harness,omitempty"`
 	// Stage это вид деятельности строки словом (разработка, ревью, снаружи,
 	// уточнение), а StageSince момент начала этапа в unix-секундах. Отмечает
 	// этап конвейер записью за пределами репозитория (DK-338), дашборд её
@@ -91,8 +94,9 @@ const (
 	// сессии, ни транскрипта. Задачу взяли в другом месте, и запускать её
 	// отсюда значит устроить конфликт двух исполнителей (замечание
 	// пользователя про DK-460).
-	runOther = "other"
-	sectRun  = "in-progress"
+	runOther  = "other"
+	sectRun   = "in-progress"
+	sectCheck = "check"
 )
 
 // runMarks собирает живые работы по ID: работа без ID это интерактивная
@@ -112,7 +116,7 @@ func runMarks(works []Work) map[string]string {
 // выглядит штатной очередью: строка стоит в работе, кнопка предлагает
 // продолжить, и сказать, идёт ли кто-то по ней прямо сейчас, нечем (хвост
 // DK-314).
-func rowRun(live map[string]string, mine map[string]bool, id, key string) string {
+func rowRun(live, mine map[string]string, id, key string) string {
 	if via, hit := live[id]; hit {
 		return via
 	}
@@ -120,7 +124,7 @@ func rowRun(live map[string]string, mine map[string]bool, id, key string) string
 		// Наши сессии задачи есть, просто ни одна не жива: работа наша, и с
 		// ней можно разговаривать и продолжать. Нет ни одной, значит взяли её
 		// на другой машине.
-		if mine[id] {
+		if _, ours := mine[id]; ours {
 			return runGone
 		}
 		return runOther
@@ -134,7 +138,7 @@ func rowRun(live map[string]string, mine map[string]bool, id, key string) string
 // правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
-func boardRuns(raw json.RawMessage, works []Work, mine map[string]bool,
+func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 	stages map[string]stageMark, wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -158,6 +162,18 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]bool,
 			json.Unmarshal(row["title"], &title)
 			json.Unmarshal(row["accept"], &accept)
 			run := rowRun(live, mine, id, key)
+			// Подписка задачи едет строкой Check: закрытие пойдёт той же, на
+			// которой работу начинали, и кнопка называет её человеку до
+			// нажатия, а не спрашивает выбором.
+			if key == sectCheck {
+				if h := mine[id]; h != "" {
+					mark, err := json.Marshal(h)
+					if err != nil {
+						return raw
+					}
+					row["harness"] = mark
+				}
+			}
 			if run != "" {
 				mark, err := json.Marshal(run)
 				if err != nil {
@@ -447,8 +463,11 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	// второго подпроцесса taskctl не стоит.
 	if raw, err := s.projectBoard(found.Path); err == nil {
 		view, _ := parseBoardView(raw)
-		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)),
-			s.taskChats(found.Path), id, row.Sect)
+		mine := s.taskChats(found.Path)
+		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), mine, id, row.Sect)
+		if row.Sect == sectCheck {
+			row.Harness = mine[id]
+		}
 		row.Stage, row.StageSince = rowStage(s.liveStages(found.Path), row.Run, id)
 	}
 	// Ожидание человека едет и сюда: врезка панели чата берёт вопрос и срок с

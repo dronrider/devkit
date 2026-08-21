@@ -112,6 +112,24 @@ func sessionDirs(roots []string, projPath string) []transcriptDir {
 // хозяйством той подписки, чьим клиентом он написан, и список разговоров
 // называет её словом. Своё ~/.claude без подписки остаётся безымянным, и это
 // честнее выдуманного имени.
+// harnessOfRoot называет подписку по корню транскриптов. Своего каталога у
+// подписки по умолчанию нет, она пишет в ~/.claude, и в карте корней её нет
+// вовсе: тут этот корень и получает её имя.
+func harnessOfRoot(view HarnessView, home, root string) string {
+	if name := harnessRoots(view)[root]; name != "" {
+		return name
+	}
+	if root != filepath.Join(home, ".claude", "projects") {
+		return ""
+	}
+	for _, h := range view.Harnesses {
+		if h.Home == "" {
+			return h.Name
+		}
+	}
+	return ""
+}
+
 func harnessRoots(view HarnessView) map[string]string {
 	out := map[string]string{}
 	for _, h := range view.Harnesses {

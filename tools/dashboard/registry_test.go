@@ -368,3 +368,34 @@ func TestBindLineIsReadBack(t *testing.T) {
 		t.Fatalf("разбор строки ручки: %+v", b)
 	}
 }
+
+// Строку In progress присваивают исполнительские сессии, а не всякий разговор о
+// задаче: груминг черновика и привязка рукой это чтение задачи, и по ним
+// запускать нечего. Жалоба была на живой доске: задачу вели на другой машине, а
+// строка предлагала кнопку запуска, потому что тут по ней когда-то грумили.
+func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
+	// Груминг приезжает тем же заказом дашборда, что запуск задачи, и по полям
+	// реестра от него неотличим: разводит их первая реплика.
+	writeSession(t, e.home, e.proj, "", "groomer",
+		sessionLine("Проведи груминг XR-7", "main"), time.Now())
+	writeSession(t, e.home, e.proj, "", "hands",
+		sessionLine("посмотри, что там с XR-8", "main"), time.Now())
+	writeSession(t, e.home, e.proj, "", "worker",
+		sessionLine("возьми XR-9 в работу", "main"), time.Now())
+	writeBinds(t, e.home,
+		bindRecord("2026-08-18T12:00:00", "groomer", "XR-7", bindOrder),
+		bindRecord("2026-08-18T12:01:00", "hands", "XR-8", bindHand),
+		bindRecord("2026-08-18T12:02:00", "worker", "XR-9", bindOrder))
+	own := e.s.taskChats(e.proj)
+	if _, hit := own["XR-7"]; hit {
+		t.Error("груминг присвоил строку задачи: кнопки запуска вернулись на чужую работу")
+	}
+	if _, hit := own["XR-8"]; hit {
+		t.Error("привязка рукой присвоила строку задачи")
+	}
+	if _, hit := own["XR-9"]; !hit {
+		t.Errorf("исполнительская сессия строку не присвоила: %+v", own)
+	}
+}

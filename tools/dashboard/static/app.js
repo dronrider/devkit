@@ -597,7 +597,7 @@ function rankCell(row) {
 // продолжают, проверенную закрывают. Подпись кнопки идёт от той же секции, по
 // которой сервер собирает промпт конвейеру, иначе кнопка обещала бы одно, а
 // агент получал другое.
-const ACTION_BY_SECT = { "in-progress": "Продолжить", check: "Закрыть" };
+const ACTION_BY_SECT = { "in-progress": "Продолжить", check: "Проверить и закрыть" };
 
 function actionLabel(sect) {
   return ACTION_BY_SECT[sect] || "Выполнить";
@@ -714,7 +714,26 @@ function harnessRow(h) {
 // удачный запуск: пусто на строке списка, где человек нарочно остаётся на
 // доске (DK-316), и заполнено на экране задачи, откуда до DK-286 нажатие
 // вело в никуда.
-function runControl(project, id, make, label, isGoal, tip, afterOk) {
+// Строка Check закрывается одной кнопкой и без выбора подписки: нажатие
+// человека на строке с его приёмкой это и есть его согласие, а подписка у
+// задачи уже своя, та, на которой её начинали. Кнопка называет её подсказкой,
+// чтобы человек знал, чем пойдёт закрытие (решение пользователя).
+function checkPin(row) {
+  if (!row || row.sect !== "check") return "";
+  return row.harness || harnessDefault() || "";
+}
+
+function checkTip(row) {
+  const pin = checkPin(row);
+  const how = pin ? "Закрытие пойдёт подпиской " + pin +
+    (row.harness ? " (на ней задачу и вели)." : " (подписка по умолчанию: чем вели задачу, машина не помнит).")
+    : "";
+  const who = row.accept === "agent" ? "Проверку прогонит агент и закроет строку."
+    : "Нажатие это ваша приёмка: дальше агент прогонит проверку и закроет строку.";
+  return how ? who + " " + how : who;
+}
+
+function runControl(project, id, make, label, isGoal, tip, afterOk, pinned) {
   const wide = make(label);
   if (tip) withTip(wide, tip);
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
@@ -726,11 +745,13 @@ function runControl(project, id, make, label, isGoal, tip, afterOk) {
   };
   wide.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    fire(wide, harnessDefault());
+    fire(wide, pinned || harnessDefault());
   });
   const list = harnesses();
-  if (isGoal || list.length < 2) {
-    const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
+  // Прикреплённая подписка снимает выбор вовсе: список подписок у такой кнопки
+  // отвечал не на тот вопрос.
+  if (pinned || isGoal || list.length < 2) {
+    const why = pinned ? "" : (isGoal ? GOAL_HARNESS_TIP : harnessWhy());
     if (why) withTip(wide, tip ? tip + " " + why : why);
     // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
     // кнопка ниже держит span.split той же глубины, и rowAction для Стопа
@@ -824,8 +845,11 @@ function rowAction(project, row, sect) {
     // Строка списка остаётся на доске и после нажатия (DK-316): экран не
     // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
     // равно виден по наведению.
+    const pin = checkPin(Object.assign({ sect: sect }, row));
+    const hint = pin ? checkTip(Object.assign({ sect: sect }, row))
+      : orderHint(row.order, row.accept, sect, row.id);
     return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
-      actionLabel(sect), /^Цель:/.test(row.title), orderHint(row.order, row.accept, sect, row.id));
+      actionLabel(sect), /^Цель:/.test(row.title), hint, "", pin);
   }
   const btn = el("button", "btn btn-sm btn-danger", "Стоп");
   btn.addEventListener("click", (ev) => {
@@ -1931,8 +1955,9 @@ function taskActions(project, id, row, works) {
     // у цели оставалась стоять.
     return out;
   }
+  const pin = checkPin(row);
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
-    orderHint(row.order, row.accept, row.sect, id), afterOk));
+    pin ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id), afterOk, pin));
   let hint = taskActionHint(isGoal, row, id);
   // Причина, по которой выбирать не из чего, стоит в той же подписи под
   // полосой: на широком экране место для неё есть, и подсказкой по наведению
@@ -2120,6 +2145,11 @@ function formPage(cfg) {
   // Кнопки режимов прижимаются к правому краю строки статуса: там для них есть
   // свободное место, а заголовок остаётся заголовком.
   const modes = el("div", "tmodes");
+  // Действия экрана стоят тут же, левее карандаша: отдельная полоса под
+  // строкой статуса держала две кнопки и целую карточку под них, а команды
+  // формы и без того собраны в одном углу (решение пользователя).
+  const acts = el("div", "tacts");
+  modes.append(acts);
   chips.append(el("span", "gap"), modes);
   page.append(keyed(chips, cfg.key + "-chips"));
   out.chips = chips;
@@ -2185,8 +2215,16 @@ function formPage(cfg) {
   drop.hidden = true;
   sep.hidden = true;
   bar.append(save, drop, sep);
+  // Кнопки уезжают в командную панель, а подписи причин остаются полосой: в
+  // углу строки статуса им не поместиться, а без них погашенная кнопка молчит
+  // о том, чего ждёт.
   const actions = cfg.actions || [];
-  for (const node of actions) bar.append(node);
+  const notes = [];
+  for (const node of actions) {
+    if (String(node.className || "").split(" ").includes("hint")) notes.push(node);
+    else acts.append(node);
+  }
+  for (const node of notes) bar.append(node);
   bar.append(bad);
   save.addEventListener("click", () => { if (!save.disabled && cfg.onSave) cfg.onSave(); });
   drop.addEventListener("click", () => { if (cfg.onDrop) cfg.onDrop(); });
@@ -2205,7 +2243,9 @@ function formPage(cfg) {
       bar.remove();
       placed = false;
     }
-    if (!actions.length && save.hidden) {
+    // Мера пустоты теперь одна: правка. Действия уехали в командную панель, и
+    // полоса живёт ради «Сохранить», «Отменить правку» и отказа.
+    if (!notes.length && save.hidden && !bad.textContent) {
       if (placed) {
         bar.remove();
         placed = false;

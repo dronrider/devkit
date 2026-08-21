@@ -82,7 +82,7 @@ func TestBoardRunsCarriesStage(t *testing.T) {
 			Rows []boardRow `json:"rows"`
 		} `json:"sections"`
 	}
-	if err := json.Unmarshal(boardRuns(raw, works, stages, nil), &doc); err != nil {
+	if err := json.Unmarshal(boardRuns(raw, works, nil, stages, nil), &doc); err != nil {
 		t.Fatal(err)
 	}
 	rows := map[string]boardRow{}
@@ -95,9 +95,11 @@ func TestBoardRunsCarriesStage(t *testing.T) {
 	if live.Run != "tmux" || live.Stage != stage.Dev || live.StageSince != stageAt.Unix() {
 		t.Fatalf("живая строка: run=%q stage=%q since=%d", live.Run, live.Stage, live.StageSince)
 	}
+	// Сессий этой машины у строки нет вовсе, и признак говорит это прямо:
+	// запускать её отсюда нечем, работу ведут в другом месте.
 	gone := rows["XR-002"]
-	if gone.Run != runGone {
-		t.Fatalf("строка без сессии помечена %q, жду %q", gone.Run, runGone)
+	if gone.Run != runOther {
+		t.Fatalf("строка без сессии помечена %q, жду %q", gone.Run, runOther)
 	}
 	if gone.Stage != "" || gone.StageSince != 0 {
 		t.Fatalf("оборванный этап уехал на экран: stage=%q since=%d", gone.Stage, gone.StageSince)
@@ -107,7 +109,7 @@ func TestBoardRunsCarriesStage(t *testing.T) {
 func TestBoardRunsWithoutStagesKeepsRun(t *testing.T) {
 	raw := json.RawMessage(`{"prefix":"XR","sections":[{"key":"in-progress","rows":[
 		{"id":"XR-001","title":"Живая","sect":"in-progress"}]}]}`)
-	out := boardRuns(raw, []Work{{ID: "XR-001", Kind: "task", Via: "tmux"}}, nil, nil)
+	out := boardRuns(raw, []Work{{ID: "XR-001", Kind: "task", Via: "tmux"}}, nil, nil, nil)
 	var doc struct {
 		Sections []struct {
 			Rows []boardRow `json:"rows"`

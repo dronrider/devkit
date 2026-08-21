@@ -1016,3 +1016,38 @@ console.log("постановка на форме: один блок описа�
 }
 
 console.log("боковой журнал: заказ субагенту не двоится пузырём, чужие реплики служебной строкой");
+
+// --- кромки ленты: все виды записей по одной вертикали ---
+// На снимке пользователя заголовок команды, реплика и размышление начинались с
+// трёх разных кромок. Кромку задаёт отступ строки ленты, а не карточка внутри:
+// свой отступ у карточки и был лишним.
+{
+  const at = (n) => "2026-08-21T10:0" + n + ":00+03:00";
+  const kinds = [
+    { seq: 0, key: "m:0", role: "user", text: "проверь сборку", time: at(0) },
+    { seq: 1, key: "m:1", role: "thinking", text: "смотрю", spent: 1200, time: at(1) },
+    { seq: 2, key: "m:2", role: "tool", tool: "Bash", note: "go build ./...",
+      about: "сборка", text: "command: go build ./...", time: at(2) },
+    { seq: 3, key: "m:3", role: "toolout", text: "готово", time: at(2) },
+    { seq: 4, key: "m:4", role: "tool", tool: "SendMessage", note: "правь",
+      args: { message: "правь" }, text: "message: правь", time: at(3) },
+    { seq: 5, key: "m:5", role: "toolout", text: "принято", time: at(3) },
+    { seq: 6, key: "m:6", role: "note", mark: "agent", note: "Фоновый агент завершил работу",
+      text: "итог", time: at(4) },
+  ];
+  const box = await feedOf(kinds, "edges");
+  const rows = allByClass(box, "frow");
+  if (rows.length < 5) fail("строк ленты меньше пяти: " + rows.length);
+  // Кромка это отступ строки: у карточки внутри своего отступа быть не должно.
+  for (const row of rows) {
+    const body = byClass(row, "frowb");
+    if (!body) fail("у строки нет тела: " + dump(row).slice(0, 120));
+    const card = body.children[0];
+    const cls = String(card.className || "");
+    if (/\bcard\b|\bfpanel\b/.test(cls)) {
+      fail("карточка записи носит свой отступ поверх общего: " + cls);
+    }
+  }
+}
+
+console.log("кромки ленты: отступ задаёт строка, у карточек своего нет");

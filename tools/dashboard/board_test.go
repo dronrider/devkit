@@ -64,7 +64,7 @@ func TestStaticBoardRowActions(t *testing.T) {
 func TestStaticRowRunFromRowData(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	act := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.run", `row.run === "session"`, `row.run !== "tmux"`} {
+	for _, want := range []string{"row.run", `row.run === "other"`, `row.run !== "tmux"`} {
 		if !strings.Contains(act, want) {
 			t.Errorf("в rowAction нет %q: признак работы снова собирается на клиенте", want)
 		}
@@ -383,7 +383,7 @@ func TestStaticAgentsScreen(t *testing.T) {
 	if strings.Index(row, `el("span", "tt", w.title`) > strings.Index(row, "workChips(") {
 		t.Error("строка начинается не с заголовка задачи")
 	}
-	for _, want := range []string{"агент цели", "конвейер задачи", "ведёт другая сессия",
+	for _, want := range []string{"агент цели", "конвейер задачи", "сессия кончилась",
 		"интерактивная сессия"} {
 		if !strings.Contains(funcBody(t, app, "function workChips("), want) {
 			t.Errorf("вид работы %q не назван чипом", want)
@@ -593,7 +593,9 @@ func boardRows(t *testing.T, e *testEnv) map[string]boardRunRow {
 func TestBoardRowsCarryRun(t *testing.T) {
 	e, _, _ := runsEnv(t, "task-XR-004\t1\t1786000000\n")
 	rows := boardRows(t, e)
-	want := map[string]string{"XR-004": "tmux", "XR-100": "gone", "XR-003": "", "XR-002": ""}
+	// Наших сессий у XR-100 нет ни одной: работу взяли в другом месте, и
+	// признак это говорит прямо (замечание пользователя про чужую машину).
+	want := map[string]string{"XR-004": "tmux", "XR-100": "other", "XR-003": "", "XR-002": ""}
 	for id, run := range want {
 		if got, hit := rows[id]; !hit || got.Run != run {
 			t.Errorf("признак работы строки %s %q, ожидал %q", id, got.Run, run)

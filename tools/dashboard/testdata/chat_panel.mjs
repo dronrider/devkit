@@ -710,3 +710,39 @@ console.log("стоп чата: кнопка у своей работающей 
 }
 
 console.log("отправка: на телефоне Enter ставит строку и шлёт кнопка, на столе Enter и Cmd с Enter шлют");
+
+// --- высота поля ввода живёт вместе с черновиком ---
+// Растянутое поле переживает перезагрузку, пока в нём лежит ненаписанное, а
+// отправка уносит и текст, и высоту: держать поле большим после неё незачем.
+{
+  const st3 = await sandbox.chatState("demo", mine.id, board);
+  const grown = () => {
+    const panel = sandbox.chatPanel("demo", st3);
+    return { panel, ta: tag(panel, "TEXTAREA"), grip: byClass(panel, "tagrip") };
+  };
+  const first = grown();
+  first.ta.value = "недописанная реплика";
+  // Тяга вверх: поле выросло, и по концу тяги высота записана.
+  first.ta.getBoundingClientRect = () => ({ height: 44 });
+  first.grip.handlers.pointerdown({ button: 0, clientY: 300, pointerId: 1,
+    preventDefault: () => {} });
+  first.grip.handlers.pointermove({ buttons: 1, clientY: 200 });
+  first.grip.handlers.pointerup({ clientY: 200 });
+  const saved = store.get("devkit.chat.draft." + st3.addr + ".h");
+  if (!saved) fail("высота поля не записалась по концу тяги");
+  // Пересборка панели: высота вернулась вместе с черновиком.
+  const again = grown();
+  if (String(again.ta.style.height || "") !== saved + "px") {
+    fail("высота не пережила пересборку: " + again.ta.style.height + ", ждал " + saved + "px");
+  }
+  // Отправка: и черновик, и высота сняты, поле вернулось к обычному росту.
+  again.ta.value = "реплика";
+  button(again.panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (store.get("devkit.chat.draft." + st3.addr + ".h")) {
+    fail("после отправки высота осталась записанной");
+  }
+  if (again.ta.style.height) fail("после отправки поле осталось растянутым: " + again.ta.style.height);
+}
+
+console.log("поле ввода: высота живёт с черновиком и снимается отправкой");

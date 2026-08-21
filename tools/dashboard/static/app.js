@@ -376,7 +376,7 @@ function renderLive(project, works) {
     // в подписи нет, о занятии агента оно не говорит ничего.
     const label = el("b", to ? "" : "flat", name);
     card.append(label);
-    if (w.title) card.append(el("span", "wname wtitle", w.title));
+    if (w.title) card.append(withFull(el("span", "wname wtitle", w.title), w.title));
     // Нажатие открывает разговор панелью поверх того, что под ней: адрес
     // клеится хвостом /chat/ к текущему экрану, как у остальных входов в чат.
     // Собранный по-старому адрес доски уводил с экрана задачи в список задач,
@@ -391,7 +391,7 @@ function renderLive(project, works) {
       // заголовок уже стоит именем, и повторять его второй строкой незачем.
       if (w.id && w.note) card.append(el("span", "via", w.note));
     } else if (w.via !== "tmux") {
-      card.append(el("span", "via", "ведёт другая сессия"));
+      card.append(el("span", "via", "сессия кончилась"));
     }
     return card;
   };
@@ -479,7 +479,7 @@ function liveChip(work) {
   if (!work) return null;
   if (work.via === "tmux") return el("span", "chip c-run", "tmux-сессия активна");
   if (work.via === "session") return el("span", "chip c-check", "интерактивная сессия");
-  return el("span", "chip", "ведёт другая сессия");
+  return el("span", "chip", "сессия кончилась");
 }
 
 // Этап работы строки: вид деятельности словом и сколько он идёт. Запись кладут
@@ -546,12 +546,25 @@ function rowChips(project, row) {
   if (wait) chips.push(wait);
   if (row.fail) chips.push(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) chips.push(el("span", "chip c-block", "блок: " + row.block));
-  for (const note of row.notes || []) {
-    if (/^код слит/.test(note) || /^без выката/.test(note)) {
-      chips.push(el("span", "chip c-check", note));
-    }
-  }
+  const check = checkChip(row);
+  if (check) chips.push(check);
   return chips;
+}
+
+// Чип проверенной строки говорит человеку, ждут ли его: у видов mixed и user
+// строка без него не закроется, у agent проверку закрывает прогон. Служебные
+// детали (код слит, без выката, сам вид словом) уходят в подсказку: на строке
+// они занимали место, отвечая не на тот вопрос (замечание пользователя).
+function checkChip(row) {
+  const notes = (row.notes || []).filter((n) => /^код слит/.test(n) || /^без выката/.test(n));
+  if (row.sect !== "check" && !notes.length) return null;
+  if (row.sect !== "check") return null;
+  const mine = row.accept !== "agent";
+  const chip = el("span", "chip " + (mine ? "c-wait" : "c-check"),
+    mine ? "ждёт вашей приёмки" : "агент проверит сам");
+  const bits = ["вид приёмки: " + (row.accept || "agent")].concat(notes);
+  if (row.barrier) bits.push("барьер: " + row.barrier);
+  return withTip(chip, bits.join(", ") + ".");
 }
 
 // Ранг в строке это одна сумма: расшифровка слагаемых нужна изредка, а места
@@ -786,13 +799,17 @@ const HPOP_ROOM = 260;
 // ответ выходит в ту же строку результата. Что со строкой сейчас, говорит её
 // признак работы, а не поиск по списку работ.
 function rowAction(project, row, sect) {
-  const live = row.run && row.run !== "gone";
-  if (row.run === "session") {
-    return el("span", "stale", "интерактивная сессия");
+  const live = row.run && row.run !== "gone" && row.run !== "other";
+  // Задачу взяли на другой машине: наших сессий у неё нет ни одной, и запускать
+  // её отсюда значит завести второго исполнителя на ту же строку.
+  if (row.run === "other") {
+    return withTip(el("span", "stale", "в работе на другой машине"),
+      "на этой машине у задачи нет ни одной сессии: работу ведут в другом месте");
   }
-  if (live && row.run !== "tmux") {
-    return el("span", "stale", "ведёт другая сессия");
-  }
+  // Работа наша, просто идёт не нашей tmux-сессией, а живым чатом: подпись
+  // «ведёт другая сессия» врала, а вход в разговор прятала. Кнопки тут те же,
+  // что доступны в панели: разговор и продолжение.
+  if (live && row.run !== "tmux") return rowChatActions(project, row);
   if (!live && row.after && row.after.length) {
     // Заблокированную маркером задачу конвейер брать не должен, и кнопка
     // говорит это сама: погашенная с причиной понятнее исчезнувшей.
@@ -800,6 +817,9 @@ function rowAction(project, row, sect) {
     wait.disabled = true;
     return withTip(wait, "сначала " + row.after.join(", "));
   }
+  // Наши сессии есть, но все кончились: запускать конвейер поверх них нечего,
+  // разговор продолжается той же кнопкой, что в панели.
+  if (row.run === "gone") return rowChatActions(project, row);
   if (!live) {
     // Строка списка остаётся на доске и после нажатия (DK-316): экран не
     // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
@@ -839,7 +859,7 @@ function renderRow(project, row, sect) {
   idc.append(el("span", "", row.id));
   tr.append(idc);
   const tt = el("span", "tt");
-  tt.append(el("span", "ttl", row.title));
+  tt.append(withFull(el("span", "ttl", row.title), row.title));
   // Чипы лежат своей коробкой, а не россыпью рядом с заголовком: на телефоне
   // они уходят под него отдельной строкой, и заголовку достаётся вся ширина.
   // Рядом с заголовком они ширины не отдавали, и от длинного названия
@@ -1610,7 +1630,7 @@ function pickField(label, values, cur, onPick) {
 function depRow(project, id, side, dep) {
   const row = el("div", "drow");
   row.append(el("span", "id", dep.id));
-  row.append(el("span", "dt", dep.title || dep.note || ""));
+  row.append(withFull(el("span", "dt", dep.title || dep.note || ""), dep.title || dep.note || ""));
   if (dep.section) {
     row.append(el("span", "chip" + (dep.sect === "in-progress" ? " c-run" : ""), dep.section));
   }
@@ -1874,10 +1894,16 @@ function taskActions(project, id, row, works) {
     out.push(stop);
     return out;
   }
-  if (work && work.via === "session") return out;
-  if (work) {
-    out.push(el("span", "hint", "Задачу ведёт другая сессия (живой чат), tmux-сессии дашборда " +
-      "у неё нет: остановить отсюда нечем, снимать там, где она поднята."));
+  // Работа наша, но не нашей tmux-сессией: снимать нечем, а разговаривать и
+  // продолжать есть чем, и делается это в панели. Подписи «ведёт другая
+  // сессия» тут больше нет: она врала про чужую машину (замечание
+  // пользователя).
+  if (work) return out;
+  // Задачу взяли в другом месте: наших сессий у неё нет ни одной, и запускать
+  // её отсюда значит завести второго исполнителя на ту же строку.
+  if (row.run === "other") {
+    out.push(el("span", "hint", "Задача в работе на другой машине: на этой у неё нет " +
+      "ни одной сессии, запускать её отсюда нечем."));
     return out;
   }
   const label = actionLabel(row.sect);
@@ -2393,9 +2419,8 @@ async function renderTask(project, works, id) {
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
   if (row.fail) tail.push(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) tail.push(el("span", "chip c-block", "блок: " + row.block));
-  for (const note of row.notes || []) {
-    if (/^код слит/.test(note) || /^без выката/.test(note)) tail.push(el("span", "chip c-check", note));
-  }
+  const check = checkChip(row);
+  if (check) tail.push(check);
 
   const patchBody = () => {
     const out = {};
@@ -4503,7 +4528,7 @@ function saveChatWidth(w) {
 const TA_MIN = 44;
 const TA_MAX = 420;
 
-function wireTaGrip(grip, ta) {
+function wireTaGrip(grip, ta, done) {
   let from = 0;
   let base = 0;
   let held = false;
@@ -4532,7 +4557,10 @@ function wireTaGrip(grip, ta) {
     // ось экрана считает вниз.
     set(base + (from - ev.clientY));
   });
-  const release = () => { held = false; };
+  const release = () => {
+    if (held && done) done(height());
+    held = false;
+  };
   grip.addEventListener("pointerup", release);
   grip.addEventListener("pointercancel", release);
   grip.addEventListener("lostpointercapture", release);
@@ -4632,6 +4660,26 @@ function chatDraftRead(addr) {
     return localStorage.getItem(CHAT_DRAFT_KEY + addr) || "";
   } catch (err) {
     return "";
+  }
+}
+
+// Высота поля ввода это спутник черновика, а не вечная настройка дашборда:
+// пока набранное лежит, поле остаётся тем же, каким его растянули, а отправка
+// уносит и текст, и высоту (замечание пользователя про сброс после отправки).
+function chatDraftHeight(addr) {
+  try {
+    return Number(localStorage.getItem(CHAT_DRAFT_KEY + addr + ".h")) || 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
+function chatDraftHeightWrite(addr, h) {
+  try {
+    if (h > 0) localStorage.setItem(CHAT_DRAFT_KEY + addr + ".h", String(Math.round(h)));
+    else localStorage.removeItem(CHAT_DRAFT_KEY + addr + ".h");
+  } catch (err) {
+    // приватный режим браузера: высота живёт до перезагрузки
   }
 }
 
@@ -4905,6 +4953,15 @@ const CHAT_STATE_WORD = {
 
 // Заголовок диалога: первая реплика человека, обрезанная, как это делает
 // расширение Claude Code для vscode. Имени диалог не требует.
+// Полное название подсказкой: заголовки задач и чатов режутся многоточием
+// почти всегда, и прочитать обрезанное было негде. Ставится она всегда, а не
+// по замеру ширины: замер стоит перерисовки, а лишняя подсказка не мешает.
+function withFull(node, text) {
+  const said = String(text || "").trim();
+  if (said) node.title = said;
+  return node;
+}
+
 function chatTitle(c) {
   if (!c) return "чата нет";
   const t = (c.title || "").trim();
@@ -4921,7 +4978,7 @@ function chatWhen(c) {
 // строку, и привязка тут один ко многим.
 function chatOption(project, c, current) {
   const row = el("div", "cdrow" + (c.id === current ? " on" : ""));
-  row.append(el("b", "", chatTitle(c)));
+  row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
   const chips = el("div", "cchips");
   // Живой чат различается занятостью: работает агент или ждёт реплики.
   const busyNow = c.state === "live" && !c.idle;
@@ -5501,14 +5558,15 @@ function chatHead(project, st) {
   // «Экран DK-397» под шапкой: место экономится, а нажатие ведёт туда же
   // (замечание 17).
   if (st.task) {
-    const lab = el("span", "cdtask", st.task);
+    const lab = withFull(el("span", "cdtask", st.task), st.title ? st.task + ": " + st.title : st.task);
     lab.addEventListener("click", (ev) => {
       ev.stopPropagation();
       goKeepingChat(project + "/" + st.task);
     });
     pick.append(lab);
   }
-  pick.append(el("b", "", chatTitle(st.entry) + (st.fresh ? " (новый чат)" : "")));
+  const picked = chatTitle(st.entry) + (st.fresh ? " (новый чат)" : "");
+  pick.append(withFull(el("b", "", picked), picked));
   const car = el("span", "cdcar");
   car.append(icon("i-caret"));
   pick.append(car);
@@ -5670,6 +5728,25 @@ function wireTaskPlan(project, id, page) {
 function chatStoppable(st) {
   const e = st && st.entry;
   return Boolean(e && e.state === "live" && e.tmux && !e.idle);
+}
+
+// Кнопки строки, чью работу ведёт наша сессия: разговор и продолжение. Стопа
+// тут нет: снимать нечего, tmux-сессии дашборда у такой работы не бывает.
+function rowChatActions(project, row) {
+  const grp = el("span");
+  const talk = el("button", "btn btn-sm", "Чат");
+  talk.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openChat(chatAddr(project, row.id));
+  });
+  const go = el("button", "btn btn-sm btn-acc", "Продолжить");
+  go.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    go.disabled = true;
+    continueTask(project, row.id).catch(console.error).finally(() => { go.disabled = false; });
+  });
+  grp.append(talk, go);
+  return grp;
 }
 
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
@@ -6136,9 +6213,13 @@ function chatPanel(project, st) {
     ta.title = waitTip;
     ta.setAttribute("aria-label", "Реплика в чат. " + waitTip);
   }
-  wireTaGrip(grip, ta);
+  // Высота поля возвращается вместе с черновиком: растянутое поле переживает
+  // перезагрузку ровно пока в нём лежит ненаписанное.
+  wireTaGrip(grip, ta, (h) => { chatDraftHeightWrite(st.addr, h); });
   // Черновик возвращается при открытии разговора и пишется по ходу набора.
   ta.value = chatDraftRead(st.addr);
+  const savedHeight = chatDraftHeight(st.addr);
+  if (savedHeight > 0) ta.style.height = savedHeight + "px";
   let draftTimer = null;
   ta.addEventListener("input", () => {
     if (draftTimer) clearTimeout(draftTimer);
@@ -6307,6 +6388,10 @@ function chatPanel(project, st) {
     ta.value = "";
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
+    // Отправка уносит и высоту: поле возвращается к своему обычному росту,
+    // растянутым его держало ненаписанное.
+    chatDraftHeightWrite(st.addr, 0);
+    ta.style.height = "";
     // Выделенный в постановке кусок уезжает вместе с репликой: человек
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC).
@@ -6722,7 +6807,7 @@ function findRow(project, key, row, q) {
   // POC). Класс тот же, каким помечены нажимаемые строки накопителя.
   const tr = el("div", "srow clicky");
   tr.append(el("span", "id", row.id));
-  const st = el("span", "st fst");
+  const st = withFull(el("span", "st fst"), row.title || "");
   markHits(st, row.title || "", q);
   if (row.quote) {
     const quote = el("div", "fquote");
@@ -7449,7 +7534,7 @@ function feedItemEl(project, n) {
   ico.append(icon(kind));
   item.append(ico);
   const b = el("div", "nb2");
-  b.append(el("div", "t1", n.title));
+  b.append(withFull(el("div", "t1", n.title), n.title));
   if (n.body) b.append(el("div", "t2", n.body));
   // Про недошедший баннер человеку в списке событий сказать нечего: он читает
   // список, а не разбирает канал доставки, и строка «фокус не определился,
@@ -7916,7 +8001,7 @@ function allWorks(projects) {
 function workChips(project, w) {
   const chips = [el("span", "chip", project)];
   if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
-  if (w.via === "registry") chips.push(el("span", "chip c-check", "ведёт другая сессия"));
+  if (w.via === "registry") chips.push(el("span", "chip c-check", "сессия кончилась"));
   else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
   else if (w.kind !== "goal") chips.push(el("span", "chip", "конвейер задачи"));
   return chips;

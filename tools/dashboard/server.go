@@ -457,7 +457,7 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
-		"board":   boardRuns(raw, works, s.liveStages(found.Path), s.waitLookup(found.Path)),
+		"board":   boardRuns(raw, works, s.taskChats(found.Path), s.liveStages(found.Path), s.waitLookup(found.Path)),
 		"works":   works,
 		"errors":  []string{},
 	}

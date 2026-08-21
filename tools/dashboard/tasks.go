@@ -87,7 +87,12 @@ type boardRow struct {
 // сессии нет.
 const (
 	runGone = "gone"
-	sectRun = "in-progress"
+	// runOther это строка в работе, которой на этой машине нет вовсе: ни живой
+	// сессии, ни транскрипта. Задачу взяли в другом месте, и запускать её
+	// отсюда значит устроить конфликт двух исполнителей (замечание
+	// пользователя про DK-460).
+	runOther = "other"
+	sectRun  = "in-progress"
 )
 
 // runMarks собирает живые работы по ID: работа без ID это интерактивная
@@ -107,12 +112,18 @@ func runMarks(works []Work) map[string]string {
 // выглядит штатной очередью: строка стоит в работе, кнопка предлагает
 // продолжить, и сказать, идёт ли кто-то по ней прямо сейчас, нечем (хвост
 // DK-314).
-func rowRun(live map[string]string, id, key string) string {
+func rowRun(live map[string]string, mine map[string]bool, id, key string) string {
 	if via, hit := live[id]; hit {
 		return via
 	}
 	if key == sectRun {
-		return runGone
+		// Наши сессии задачи есть, просто ни одна не жива: работа наша, и с
+		// ней можно разговаривать и продолжать. Нет ни одной, значит взяли её
+		// на другой машине.
+		if mine[id] {
+			return runGone
+		}
+		return runOther
 	}
 	return ""
 }
@@ -123,8 +134,8 @@ func rowRun(live map[string]string, id, key string) string {
 // правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
-func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark,
-	wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
+func boardRuns(raw json.RawMessage, works []Work, mine map[string]bool,
+	stages map[string]stageMark, wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -146,7 +157,7 @@ func boardRuns(raw json.RawMessage, works []Work, stages map[string]stageMark,
 			json.Unmarshal(row["id"], &id)
 			json.Unmarshal(row["title"], &title)
 			json.Unmarshal(row["accept"], &accept)
-			run := rowRun(live, id, key)
+			run := rowRun(live, mine, id, key)
 			if run != "" {
 				mark, err := json.Marshal(run)
 				if err != nil {
@@ -436,7 +447,8 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	// второго подпроцесса taskctl не стоит.
 	if raw, err := s.projectBoard(found.Path); err == nil {
 		view, _ := parseBoardView(raw)
-		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)), id, row.Sect)
+		row.Run = rowRun(runMarks(s.liveWorks(found.Path, view.Prefix, raw)),
+			s.taskChats(found.Path), id, row.Sect)
 		row.Stage, row.StageSince = rowStage(s.liveStages(found.Path), row.Run, id)
 	}
 	// Ожидание человека едет и сюда: врезка панели чата берёт вопрос и срок с

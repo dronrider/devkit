@@ -673,10 +673,11 @@ func (s *smoke) stepBoard() (string, error) {
 		return "", fmt.Errorf("до запуска работ быть не должно, пришло %d", len(v.Works))
 	}
 	// Признак идущей работы приезжает в самой строке: до запуска цель стоит в
-	// работе без живой сессии, и строка обязана сказать это словом gone, а не
-	// выглядеть штатной очередью. Задача в Backlog остаётся без признака.
-	if run := boardRun(v, smokeGoal); run != "gone" {
-		return "", fmt.Errorf("признак работы строки %s %q, до запуска ждал gone", smokeGoal, run)
+	// работе, а сессий у неё на этой машине нет ни одной, и строка обязана
+	// сказать это словом other, а не выглядеть штатной очередью. Задача в
+	// Backlog остаётся без признака.
+	if run := boardRun(v, smokeGoal); run != "other" {
+		return "", fmt.Errorf("признак работы строки %s %q, до запуска ждал other", smokeGoal, run)
 	}
 	if run := boardRun(v, smokeTask); run != "" {
 		return "", fmt.Errorf("строка %s в Backlog помечена работой %q", smokeTask, run)
@@ -1259,8 +1260,11 @@ func (s *smoke) stepStop() (string, error) {
 	if len(board.Works) != 0 {
 		return "", fmt.Errorf("после стопа работа всё ещё живая: %+v", board.Works)
 	}
-	if run := boardRun(board, smokeGoal); run != "gone" {
-		return "", fmt.Errorf("признак работы строки %s после стопа %q, ждал gone", smokeGoal, run)
+	// После стопа живой работы нет, а транскриптов у цели на этой машине не
+	// заводилось вовсе (фикстура tmux их не пишет), и строка честно говорит
+	// «работа не наша»: запускать её отсюда нечем, разговаривать не с кем.
+	if run := boardRun(board, smokeGoal); run != "other" {
+		return "", fmt.Errorf("признак работы строки %s после стопа %q, ждал other", smokeGoal, run)
 	}
 	return "сессия снята, строка про стоп в журнале цикла, живых работ нет, строка снова помечена «сессии нет»", nil
 }

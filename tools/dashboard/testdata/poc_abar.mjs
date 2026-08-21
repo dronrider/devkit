@@ -115,3 +115,48 @@ if (!deepBtn(bar(), "Выполнить")) fail("в полосе нет кноп
 console.log("экран задачи: пустая полоса действий не рисуется, постановка открывается " +
   "разметкой, разворот на колонку и обратно, правка приводит кнопки, карандаш работает " +
   "и над тронутой формой, колонок нет, действия задачи на месте");
+
+// --- строка In progress: своя работа против чужой машины ---
+// Строку оценивает реестр этой машины. Есть наши сессии, живые или
+// кончившиеся, значит работа наша: с ней разговаривают и её продолжают. Нет ни
+// одной, значит задачу взяли в другом месте, и запускать её отсюда нечем.
+{
+  const ours = sandbox.rowAction("demo", { id: "XR-1", title: "наша работа", run: "gone" }, "in-progress");
+  if (!deepBtn(ours, "Чат") || !deepBtn(ours, "Продолжить")) {
+    fail("у нашей кончившейся сессии нет входа в чат и продолжения: " + dump(ours));
+  }
+  const live = sandbox.rowAction("demo", { id: "XR-1", title: "живой чат", run: "session" }, "in-progress");
+  if (!deepBtn(live, "Чат") || !deepBtn(live, "Продолжить")) {
+    fail("у живого чата задачи нет тех же кнопок: " + dump(live));
+  }
+  if (dump(live).includes("ведёт другая сессия")) {
+    fail("подпись про чужую сессию вернулась: " + dump(live));
+  }
+  const alien = sandbox.rowAction("demo", { id: "XR-2", title: "чужая", run: "other" }, "in-progress");
+  if (deepBtn(alien, "Продолжить") || deepBtn(alien, "Чат") || tag(alien, "BUTTON")) {
+    fail("у чужой работы остались кнопки: " + dump(alien));
+  }
+  if (!dump(alien).includes("в работе на другой машине")) {
+    fail("чужая работа не названа словами: " + dump(alien));
+  }
+  // Backlog не трогали: там запуск как был.
+  const back = sandbox.rowAction("demo", { id: "XR-3", title: "новая" }, "backlog");
+  if (!tag(back, "BUTTON")) fail("в Backlog пропала кнопка запуска: " + dump(back));
+}
+
+// --- чип проверенной строки говорит человеку, ждут ли его ---
+{
+  const mine = sandbox.checkChip({ id: "XR-1", sect: "check", accept: "mixed",
+    notes: ["код слит", "без выката"] });
+  if (!dump(mine).includes("ждёт вашей приёмки")) fail("приёмка человека не названа: " + dump(mine));
+  if (!String(mine.title || "").includes("mixed") || !String(mine.title).includes("код слит")) {
+    fail("детали не уехали в подсказку: " + mine.title);
+  }
+  const auto = sandbox.checkChip({ id: "XR-2", sect: "check", accept: "agent", notes: ["код слит"] });
+  if (!dump(auto).includes("агент проверит сам")) fail("агентская приёмка не названа: " + dump(auto));
+  if (sandbox.checkChip({ id: "XR-3", sect: "backlog", notes: [] })) {
+    fail("чип приёмки вылез вне Check");
+  }
+}
+
+console.log("строка доски: своя работа с кнопками, чужая машина без них, чип приёмки по её виду");

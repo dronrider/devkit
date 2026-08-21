@@ -966,6 +966,21 @@ var probeLegacy = []string{
 	"запусти в bash команду: sleep 300",
 }
 
+// taskChats отвечает, у каких задач есть разговоры на этой машине, живые или
+// кончившиеся. По нему строка In progress и решает, наша это работа или её
+// взяли в другом месте: там запускать нечего, а тут есть с чем разговаривать.
+func (s *server) taskChats(projPath string) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range s.chatEntries(projPath, chatListLimit) {
+		for _, t := range e.Tasks {
+			if t != "" {
+				out[t] = true
+			}
+		}
+	}
+	return out
+}
+
 // titleSession узнаёт служебную сессию по первой реплике.
 func titleSession(first string) bool {
 	first = strings.TrimSpace(first)

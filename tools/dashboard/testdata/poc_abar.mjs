@@ -7,7 +7,8 @@
 //
 // Зовётся: node testdata/poc_abar.mjs static/app.js
 
-import { makeSandbox, settle, dump, tag, byClass, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg }
+  from "./poc_dom.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,13 +81,21 @@ if (ta0 && !ta0.hidden) fail("в просмотре осталось откры�
 if (byClass(fpanel, "fhead")) fail("у блока описания осталась пустая шапка: " + dump(fpanel).slice(0, 200));
 
 // --- режим чтения: кнопка переехала в строку статуса к карандашу ---
+// Там же стоит и вход в разговор: чат по задаче это такое же действие над
+// открытой задачей, и своей дороги ему не нужно (решение пользователя).
 const read = deepBtn(byClass(groups, "tmodes"), "tpen");
 if (!read) fail("кнопок режимов в строке статуса нет");
 const reads = (byClass(groups, "tmodes").children || []).filter((k) => k.tagName === "BUTTON");
-if (reads.length !== 2) fail("в строке статуса не две кнопки режимов: " + reads.length);
-reads[1].handlers.click({ stopPropagation: () => {} });
+if (reads.length !== 3) fail("в строке статуса не три кнопки: " + reads.length);
+const talk = (byClass(groups, "tmodes").children || [])
+  .find((k) => String(k.title) === "Чат по задаче");
+if (!talk) fail("входа в чат нет рядом с карандашом: " + dump(byClass(groups, "tmodes")));
+// Кнопка берётся по подсказке, а не по месту в ряду: соседей у неё прибавилось.
+const readBtn = reads.find((b) => String(b.title).includes("Режим чтения"));
+if (!readBtn) fail("кнопки режима чтения нет: " + reads.map((b) => b.title).join(", "));
+readBtn.handlers.click({ stopPropagation: () => {} });
 if (!String(fpanel.className).includes("wide")) fail("режим чтения не включился");
-reads[1].handlers.click({ stopPropagation: () => {} });
+readBtn.handlers.click({ stopPropagation: () => {} });
 if (String(fpanel.className).includes("wide")) fail("режим чтения не выключился");
 
 // --- правка формы приводит полосу вместе с кнопками ---
@@ -104,7 +113,10 @@ if (save.disabled) fail("«Сохранить» погашено на честн
 // --- карандаш переключает режим и над тронутой формой ---
 // Перерисовка экрана над тронутой формой запрещена (она стёрла бы
 // несохранённое), поэтому режим меняется по месту; раньше кнопка тут молчала.
-const pen = (byClass(groups, "tmodes").children || []).filter((k) => k.tagName === "BUTTON")[0];
+// Карандаш тоже узнаётся подсказкой: первым в ряду теперь стоит вход в чат.
+const pen = (byClass(groups, "tmodes").children || [])
+  .filter((k) => k.tagName === "BUTTON")
+  .find((b) => String(b.title).includes("Править"));
 if (!pen) fail("карандаша правки нет");
 pen.handlers.click({ stopPropagation: () => {} });
 const panelNow = byClass(groups, "fpanel");
@@ -256,3 +268,58 @@ console.log("Check: одна кнопка с прикреплённой подп
 }
 
 console.log("форма: действия в командной панели, отдельной полосы под них нет");
+
+// --- строка накопителя: тот же вход в разговор, что у строки доски ---
+// Черновик это та же задача, просто в черновом исполнении, и обсуждать его
+// надо тем же способом (решение пользователя).
+{
+  const row = sandbox.draftRow("demo", { id: "XR-D1", title: "мысль с телефона", age_words: "вчера" });
+  const talk = allByClass(row, "btn").find((b) => String(b.title) === "Чат по задаче");
+  if (!talk) fail("у строки накопителя нет входа в разговор: " + dump(row));
+  if (!String(talk.className).includes("btn-ico")) fail("кнопка чата не значком: " + talk.className);
+  sandbox.location.hash = "#demo/drafts";
+  talk.handlers.click({ stopPropagation: () => {} });
+  if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes("XR-D1")) {
+    fail("чат черновика открыл не его разговор: " + sandbox.location.hash);
+  }
+  // Нажатие на кнопку не уводит внутрь записи: у строки своё нажатие.
+  if (sandbox.location.hash.includes("/draft/")) {
+    fail("кнопка чата утащила на экран записи: " + sandbox.location.hash);
+  }
+}
+
+// --- форма документа: кнопки режимов стоят в строке названия ---
+// У документа нет ни типа, ни цены, ни пометок, и строка статуса под одни
+// кнопки занимала целую строку экрана (замечание пользователя).
+{
+  const view = sandbox.formPage({
+    key: "doc", project: "demo", id: "XR-1",
+    crumb: [{ text: "Доска demo", go: () => {} }],
+    titleText: "LLD: разговор вокруг задачи",
+    detail: { file: "docs/lld/XR-1.md", text: "# заголовок\n\nтекст", note: "документ пуст" },
+    form: { text: "# заголовок\n\nтекст" },
+    has: { file: true, pencil: true, read: true },
+  });
+  const modes = byClass(view.page, "tmodes");
+  if (!modes) fail("кнопок режимов на форме документа нет");
+  const line = byClass(view.page, "thline");
+  if (!byClass(line, "tmodes")) fail("кнопки режимов стоят не в строке названия: " + dump(line));
+  if (byClass(view.page, "tchips")) fail("под кнопки осталась своя строка статуса");
+
+  // У формы задачи строка статуса своя, и кнопки остаются в ней.
+  const task = sandbox.formPage({
+    key: "task", project: "demo", id: "XR-2",
+    crumb: [{ text: "Доска demo", go: () => {} }],
+    form: { title: "задача", type: "task", cost: "M" },
+    detail: { file: "docs/tasks/XR-2.md", text: "текст" },
+    has: { title: true, type: true, cost: true, read: true, chat: true },
+  });
+  if (byClass(byClass(task.page, "thline"), "tmodes")) {
+    fail("на форме задачи кнопки уехали из строки статуса");
+  }
+  if (!byClass(byClass(task.page, "tchips"), "tmodes")) {
+    fail("на форме задачи кнопок режимов нет в строке статуса");
+  }
+}
+
+console.log("формы: чат у черновика, кнопки режимов без пустой строки");

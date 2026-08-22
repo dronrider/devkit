@@ -2365,8 +2365,18 @@ function formPage(cfg) {
   // формы и без того собраны в одном углу (решение пользователя).
   const acts = el("div", "tacts");
   modes.append(acts);
-  chips.append(el("span", "gap"), modes);
-  page.append(keyed(chips, cfg.key + "-chips"));
+  // Строка статуса бывает пустой: у документа нет ни типа, ни цены, ни пометок,
+  // и одни кнопки режимов занимали целую строку экрана (замечание
+  // пользователя). Тогда они уезжают в строку названия, как на форме задачи, а
+  // сама строка статуса в разметку не встаёт вовсе.
+  const bareChips = !chips.children.length;
+  if (bareChips) {
+    modes.classList.add("thmodes");
+    head.append(modes);
+  } else {
+    chips.append(el("span", "gap"), modes);
+    page.append(keyed(chips, cfg.key + "-chips"));
+  }
   out.chips = chips;
 
   let file = null;
@@ -2387,6 +2397,13 @@ function formPage(cfg) {
     if (cfg.onEdit) cfg.onEdit(on);
   };
   out.setEdit = setEdit;
+  // Вход в разговор стоит в той же строке, что карандаш и режим чтения: это
+  // такое же действие над открытой задачей, и отдельной дороги ему не нужно
+  // (решение пользователя). Кнопка та же, что в строке доски и в накопителе,
+  // чтобы вход в чат везде выглядел одинаково.
+  if (has.chat && cfg.id) {
+    modes.append(rowChatBtn(cfg.project, { id: cfg.id }));
+  }
   if (has.pencil) {
     const pen = el("button", "tpen");
     dressPen = () => {
@@ -2650,7 +2667,7 @@ async function renderTask(project, works, id) {
       key: "task", project, id, detail, crumb: [board], crumbChips,
       num: row.id, titleText: row.title || id,
       form: { text: detail.text || "" },
-      has: { file: true, read: true },
+      has: { file: true, read: true, chat: true },
     }).page);
     return;
   }
@@ -2707,7 +2724,7 @@ async function renderTask(project, works, id) {
     key: "task", project, id, detail, crumb: [board], crumbChips,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     links: detail.links || null,
-    has: { title: true, type: true, cost: true, rank: true, deps: true,
+    has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },
     after: detail.after || [], blocks: detail.blocks || [],
     actions: taskActions(project, id, row, works),
@@ -3854,7 +3871,13 @@ function chatBubble(who, text, meta) {
   const bb = el("div", "bb");
   bb.append(mdRender(text));
   const said = meta ? who + ", " + meta : who;
-  bb.append(el("div", "mm", said));
+  const foot = el("div", "mm", said);
+  // Копирование сообщения целиком той же кнопкой, что у блоков команд: реплику
+  // уносят в редактор и в другой чат, а выделять её мышью из ленты неудобно, у
+  // длинной ещё и прокрутка убегает (замечание пользователя). Кнопка стоит у
+  // обоих пузырей, и своего, и агентского: причина одна и та же.
+  if (String(text || "").trim()) foot.append(copyBtn(text));
+  bb.append(foot);
   wrap.append(bb);
   return wrap;
 }
@@ -7101,12 +7124,17 @@ function draftRow(project, d) {
   meta.append(el("span", "stale", d.age_words || ""));
   if (d.prio) meta.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
+  // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
+  // агентом надо тем же способом: кнопка та же, значок тот же, панель
+  // открывается с привязкой к его ID (решение пользователя).
+  const talk = rowChatBtn(project, d);
+  meta.append(talk);
   const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
   if (d.order) withTip(groom, "Заказ агенту: «" + d.order + "».");
   meta.append(groom);
   row.append(meta);
   row.addEventListener("click", (ev) => {
-    if (ev.target === groom) return;
+    if (ev.target === groom || ev.target === talk) return;
     goKeepingChat(project + "/draft/" + d.id);
   });
   groom.addEventListener("click", (ev) => {
@@ -7912,7 +7940,7 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        has: { file: true, pencil: true, read: true },
+        has: { file: true, pencil: true, read: true, chat: true },
         penLabel: "Править запись",
         edit: taskDraft.id === id && taskDraft.edit,
         onEdit: (on) => {

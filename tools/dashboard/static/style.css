@@ -1331,3 +1331,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .stuckn{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-color:var(--block)}
 .stuckn b{font:600 12.5px var(--sans);color:var(--tx)}
 .stuckn span{flex:1;min-width:180px}
+
+/* кнопка копирования в подписи пузыря: рядом с автором, проявляется наведением */
+.msg .bb .mm{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.msg .bb .mm .foldcp{opacity:0}
+.msg:hover .bb .mm .foldcp,.msg .bb .mm .foldcp.ok,.msg .bb .mm .foldcp.bad{opacity:1}
+.msg .bb .mm .foldcp.ok{color:var(--run)}
+
+/* пустой строки статуса не бывает: кнопки режимов уезжают в строку названия */
+.thline .thmodes{margin-left:auto;align-self:center}

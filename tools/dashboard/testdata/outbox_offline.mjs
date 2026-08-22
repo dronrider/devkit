@@ -170,7 +170,13 @@ const sandbox = {
       // просто возвращает null. Заведись он тут, таймер гаснущей карточки лёг
       // бы в ту же очередь, по которой стенд считает запланированные повторы.
       if (id === "flashes") return null;
-      if (!byId.has(id)) byId.set(id, makeNode("div"));
+      if (!byId.has(id)) {
+        const node = makeNode("div");
+        // Шаблон значков лежит разметкой, и статика копирует из него узлы:
+        // без content разбор падал бы на первой же кнопке со значком.
+        node.content = { querySelector: () => null };
+        byId.set(id, node);
+      }
       return byId.get(id);
     },
     addEventListener: () => {},

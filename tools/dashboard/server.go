@@ -31,6 +31,13 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Память зонда живости канала (peerProbe): сокет -> ответил ли клиент.
+	// Зонд стоит миллисекунды у живого и целый таймаут у клина, и дёргать его
+	// на каждую сборку списка чатов было бы дорого ровно там, где больно.
+	deaf map[string]deafEntry
+	// Шов зонда для тестов: боевой сервер зовёт peerProbe, тест подставляет
+	// свой ответ и не трогает настоящие сокеты машины.
+	probe func(sock string, wait time.Duration) error
 	// Отпечаток сборки для адресов статики: считается один раз на процесс.
 	stamp string
 	// Раскладка подписок машины (harnesses.go): её спрашивает и экран, и
@@ -73,7 +80,8 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		logf = func(string, ...any) {}
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
-		boards: map[string]boardEntry{}, heads: map[string]headEntry{}}
+		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
+		probe: peerProbe}
 }
 
 func (s *server) handler() http.Handler {

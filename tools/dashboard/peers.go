@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -147,9 +148,46 @@ func peerFrame(text, from string) ([]byte, error) {
 // кнопку.
 const peerSendTimeout = 3 * time.Second
 
-// peerSay пишет реплику в сокет живой сессии. Ответа канал не даёт вовсе, и
-// удача тут это записанный кадр: подтверждение приходит следующей репликой в
-// ленте, а не по проводу.
+// errPeerNoAck это отказ подтверждения: байты ушли в ядро, а клиент так и не
+// дочитал соединение до конца. У живого клиента событийный цикл принимает
+// соединение, дочитывает кадр до полузакрытия и закрывает его сам, за
+// миллисекунды (живая проба по всем сессиям машины). Молчание за целый таймаут
+// значит, что цикл мёртв: connect и write проходят силами ядра (очередь
+// прослушивания и буфер сокета), и до этой сверки такая доставка выглядела
+// успехом (клин клиента 69975: три «реплика ушла в сокет» подряд без единого
+// хода).
+var errPeerNoAck = fmt.Errorf("клиент не подтвердил доставку")
+
+// peerAwaitClose ждёт подтверждения от клиента: полузакрытие говорит ему, что
+// кадр дочитан, а закрытие соединения с его стороны (EOF у нас) и есть ответ
+// живого событийного цикла. Пришедшие байты вычитываются: сам ответ не нужен,
+// нужен факт, что его было кому написать.
+func peerAwaitClose(conn net.Conn, wait time.Duration) error {
+	if u, ok := conn.(*net.UnixConn); ok {
+		if err := u.CloseWrite(); err != nil {
+			return fmt.Errorf("полузакрытие не прошло: %v", err)
+		}
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		return err
+	}
+	buf := make([]byte, 4096)
+	for {
+		_, err := conn.Read(buf)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%w: тишина в сокете за %v (%v)", errPeerNoAck, wait, err)
+		}
+	}
+}
+
+// peerSay пишет реплику в сокет живой сессии и ждёт подтверждения. Записанные
+// байты успехом не считаются: их принимает ядро и у клиента с мёртвым
+// событийным циклом, и реплика тогда не доходит никуда. Подтверждение это
+// закрытие соединения клиентом после полузакрытия с нашей стороны; без него
+// peerSay отвечает errPeerNoAck, и реплика остаётся недоставленной.
 func peerSay(sock, text string) error {
 	conn, err := net.DialTimeout("unix", sock, peerSendTimeout)
 	if err != nil {
@@ -167,7 +205,20 @@ func peerSay(sock, text string) error {
 	if _, err := conn.Write(frame); err != nil {
 		return fmt.Errorf("кадр не записался в %s: %v", sock, err)
 	}
-	return nil
+	return peerAwaitClose(conn, peerSendTimeout)
+}
+
+// peerProbe это пустая проба живости событийного цикла: соединение без единого
+// байта с немедленным полузакрытием. Живой клиент отвечает закрытием за
+// миллисекунды, кадра он при этом не получает, и в разговор ничего не едет.
+// Этим зондом детектор отличает живую сессию от клина с живым pty.
+func peerProbe(sock string, wait time.Duration) error {
+	conn, err := net.DialTimeout("unix", sock, wait)
+	if err != nil {
+		return fmt.Errorf("сокет %s не отозвался: %v", sock, err)
+	}
+	defer conn.Close()
+	return peerAwaitClose(conn, wait)
 }
 
 // peerWord называет сессию словами для экрана: окно vscode отличается от

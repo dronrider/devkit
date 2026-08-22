@@ -64,6 +64,10 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
 	s := newServer(cfg, os.DirFS("static"), nil)
+	// Зонд канала в тестах молчаливо здоров: настоящих сокетов у синтетических
+	// сессий нет, и без шва каждый тест со старым транскриптом ловил бы клин.
+	// Тесты детектора подставляют свой ответ сами.
+	s.probe = func(string, time.Duration) error { return nil }
 	srv := httptest.NewServer(s.handler())
 	t.Cleanup(srv.Close)
 	return &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}

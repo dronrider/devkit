@@ -14,8 +14,10 @@ import { makeSandbox, settle, dump, byClass, deepBtn, fail, appPathArg }
 
 const app = appPathArg();
 let killOK = true;
+let sayDeaf = false;
 const asked = [];
 const bodies = [];
+const got = [];
 
 const { sandbox } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST") {
@@ -26,7 +28,17 @@ const { sandbox } = makeSandbox(app, (path, init) => {
         text: JSON.stringify({ error: "процесса чата в реестре клиента нет: снимать нечего" }) } };
     }
     if (path.endsWith("/stop")) return { way: "kill", pid: 19289, message: "зависший процесс снят" };
+    if (path.endsWith("/say") && sayDeaf) {
+      return { raw: { status: 502, statusText: "Bad Gateway",
+        text: JSON.stringify({ error: "клиент принял байты, но не подтвердил доставку: " +
+          "событийный цикл стоит, реплика не доставлена", stuck: "канал молчит" }) } };
+    }
     if (path.endsWith("/say")) return { way: "resume", tmux: "chat-DK-460-3" };
+  } else {
+    got.push(path);
+    // Перечитывание панели идёт полной перерисовкой экрана, и дорога к ней
+    // лежит через список проектов: без него маршрут не находит demo.
+    if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
   }
   return {};
 });
@@ -93,6 +105,62 @@ const wedged = () => ({
   const said = dump(sandbox.document.getElementById("flashes"));
   if (!said.includes("снимать нечего")) fail("отказ снятия смолчал: " + said);
   killOK = true;
+}
+
+// --- отказ доставки с именем клина: пузырь недоставлен, панель перечитана ---
+// Реплика без подтверждения не помечается доставленной: ручка ответила отказом,
+// пузырь остаётся «не ушло», а панель перечитывает список сразу, потому что
+// сервер уже запомнил молчащий канал и плашка клина обязана встать здесь.
+{
+  sandbox.location.hash = "#demo/chat/8e9c1cf9-2222";
+  sayDeaf = true;
+  asked.length = 0;
+  got.length = 0;
+  const st = wedged();
+  st.addr = "8e9c1cf9-2222";
+  st.sid = "8e9c1cf9-2222";
+  st.task = "";
+  st.entry = { id: "8e9c1cf9-2222", state: "live", tasks: [], model: "opus", stuck: "" };
+  const panel = sandbox.chatPanel("demo", st);
+  const ta = (function find(node) {
+    if (node.tagName === "TEXTAREA") return node;
+    for (const kid of node.children || []) {
+      const hit = typeof kid === "object" && find(kid);
+      if (hit) return hit;
+    }
+    return null;
+  })(panel);
+  if (!ta) fail("поля ввода нет");
+  ta.value = "ау";
+  ta.handlers.keydown({ key: "Enter", preventDefault: () => {} });
+  await settle(400);
+  if (!got.some((p) => p.includes("/chats"))) {
+    fail("отказ с именем клина не перечитал панель: " + JSON.stringify(got));
+  }
+  // Перечитанная панель собирается в cpin, а недоставленная реплика переживает
+  // пересборку персистом эха: пузырь стоит с пометкой, доставленной её никто
+  // не назвал.
+  const said = dump(sandbox.document.getElementById("cpin")).replace(/\s+/g, " ");
+  if (said.includes("доставлено")) fail("реплика без подтверждения помечена доставленной: " + said);
+  if (!said.includes("не ушло") || !said.includes("ау")) {
+    fail("пузырь недоставленной реплики пропал с перечитанной панели: " + said.slice(0, 300));
+  }
+  sayDeaf = false;
+}
+
+// --- второй род клина: живой pty, канал молчит, та же плашка ---
+// Живой случай клиента 69975: терминал на месте, приглашение рисуется, а
+// событийный цикл мёртв. Сервер зовёт его своим словом, плашка и кнопка одни
+// на оба рода.
+{
+  const st = wedged();
+  st.entry.stuck = "канал молчит";
+  const panel = sandbox.chatPanel("demo", st);
+  const note = byClass(panel, "stuckn");
+  if (!note || !dump(note).includes("канал молчит")) {
+    fail("плашка второго рода клина не встала: " + dump(panel).slice(0, 200));
+  }
+  if (!deepBtn(note, "Продолжить")) fail("у второго рода клина нет кнопки выхода");
 }
 
 console.log("poc_wedge: ok");

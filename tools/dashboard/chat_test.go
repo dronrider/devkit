@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -791,6 +794,175 @@ func writePeer(t *testing.T, home, sid string, pid int) {
 	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"devkit-1","kind":"interactive"}`, pid, sid)
 	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// writePeerSock то же, но с явным сокетом канала: тесты доставки поднимают
+// свои сокеты, а умолчание /tmp/cc-socks/<pid>.sock тут указало бы в чужие.
+func writePeerSock(t *testing.T, home, sid string, pid int, sock string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"devkit-1","kind":"interactive","messagingSocketPath":%q}`,
+		pid, sid, sock)
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sockTempDir выбирает короткий каталог под тестовый сокет: у unix-сокета
+// предел длины пути около сотни знаков, и t.TempDir() в него не влезает.
+func sockTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "dashsock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// liveSock изображает живого клиента: соединение принимается, дочитывается до
+// полузакрытия и закрывается, как это делает настоящий событийный цикл.
+func liveSock(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(sockTempDir(t), "live.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				io.Copy(io.Discard, c)
+			}(c)
+		}
+	}()
+	return path
+}
+
+// deafSock изображает клин второго рода: сокет слушает, но соединений не
+// принимает. Ровно так выглядит клиент с мёртвым событийным циклом: connect и
+// write проходят силами ядра, а подтверждения нет (живой случай клиента 69975).
+func deafSock(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(sockTempDir(t), "deaf.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	return path
+}
+
+// Доставка в сокет не успех по факту записи байтов: успехом считается только
+// подтверждение клиента (закрытие соединения после нашего полузакрытия). Байты
+// в сокет клина уходят «удачно» силами ядра, и до этой сверки дашборд трижды
+// писал «реплика ушла в сокет» замершему клиенту (живой случай 69975).
+func TestPeerSayNeedsAck(t *testing.T) {
+	if err := peerSay(liveSock(t), "привет"); err != nil {
+		t.Fatalf("доставка живому клиенту не прошла: %v", err)
+	}
+	err := peerSay(deafSock(t), "привет")
+	if err == nil {
+		t.Fatal("запись в молчащий сокет сошла за доставку")
+	}
+	if !errors.Is(err, errPeerNoAck) {
+		t.Fatalf("отказ не назван отказом подтверждения: %v", err)
+	}
+	// Пустой зонд различает их так же, но без кадра: им ходит детектор.
+	if err := peerProbe(liveSock(t), time.Second); err != nil {
+		t.Errorf("зонд живого клиента не прошёл: %v", err)
+	}
+	if err := peerProbe(deafSock(t), 300*time.Millisecond); !errors.Is(err, errPeerNoAck) {
+		t.Errorf("зонд клина не назвал молчание: %v", err)
+	}
+}
+
+// Реплика без подтверждения остаётся недоставленной: ручка отвечает отказом с
+// именем клина, запасной дорогой в замороженный pty не идёт (send-keys там
+// исчезает без эха), а список чатов называет клин своим полем сразу, без
+// второго зонда.
+func TestChatSayNoAckStaysUndelivered(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-10*time.Minute))
+	writePeerSock(t, e.home, sid, os.Getpid(), deafSock(t))
+	calls := filepath.Join(e.bin, "tmux-calls")
+	writeScript(t, e.bin, "tmux", `echo "$@" >> `+calls+`
+case "$1" in ls) echo "chat-XR-1-1|1|123";; esac
+exit 0`)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text": "ау"}`)
+	text := body(t, resp)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("реплика без подтверждения сошла за доставленную: %s", text)
+	}
+	if !strings.Contains(text, stuckDeafWord) {
+		t.Errorf("отказ не назвал клин словами: %s", text)
+	}
+	if data, _ := os.ReadFile(calls); strings.Contains(string(data), "send-keys") {
+		t.Errorf("реплика уехала запасной дорогой в замороженный pty: %s", data)
+	}
+	list := chatsOf(t, e, c)
+	if len(list) != 1 || list[0].Stuck != stuckDeafWord {
+		t.Errorf("клин не виден списком после отказа доставки: %+v", list)
+	}
+}
+
+// Детектор второго рода клина: pty жив (tmux на месте), подтверждения нет,
+// транскрипт стоит. Такой разговор помечается той же механикой, что и
+// пропавший терминал: плашка и кнопка выхода берутся из поля stuck. Живой
+// сосед с тем же стоящим транскриптом клином не считается: его канал отвечает.
+func TestChatListDeafPeerStuck(t *testing.T) {
+	e, c := chatEnv(t)
+	deadSid := "dddd4444-4444-4444-8444-444444444444"
+	okSid := "aaaa1111-1111-4111-8111-111111111111"
+	old := time.Now().Add(-10 * time.Minute)
+	writeSession(t, e.home, e.proj, "", deadSid, plainTalk, old)
+	fresher := `{"type":"user","message":{"role":"user","content":"работа идёт"},"timestamp":"2026-08-16T10:00:01.000Z","gitBranch":"main"}` + "\n"
+	writeSession(t, e.home, e.proj, "", okSid, fresher, old)
+	writePeerSock(t, e.home, deadSid, os.Getpid(), "/tmp/dash-deaf-test.sock")
+	writePeerSock(t, e.home, okSid, os.Getppid(), "/tmp/dash-live-test.sock")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "chat-XR-1-1|1|123";;
+esac
+exit 0`)
+	// Зонд отвечает по имени сокета: молчание у клина, закрытие у живого.
+	e.s.probe = func(sock string, wait time.Duration) error {
+		if strings.Contains(sock, "deaf") {
+			return fmt.Errorf("%w: тишина", errPeerNoAck)
+		}
+		return nil
+	}
+	byID := map[string]chatEntry{}
+	for _, ch := range chatsOf(t, e, c) {
+		byID[ch.ID] = ch
+	}
+	if got := byID[deadSid]; got.Stuck != stuckDeafWord {
+		t.Errorf("клин с живым pty не узнан: stuck=%q, ждал %q", got.Stuck, stuckDeafWord)
+	}
+	if got := byID[okSid]; got.Stuck != "" {
+		t.Errorf("живой сосед со старым транскриптом назван клином: %+v", got)
+	}
+	// Свежий транскрипт снимает вопрос без зонда: разговор ходит.
+	e.s.probe = func(string, time.Duration) error { t.Error("зонд пошёл к разговору со свежим транскриптом"); return nil }
+	e.s.mu.Lock()
+	e.s.deaf = map[string]deafEntry{}
+	e.s.mu.Unlock()
+	writeSession(t, e.home, e.proj, "", deadSid, plainTalk, time.Now())
+	writeSession(t, e.home, e.proj, "", okSid, fresher, time.Now())
+	for _, ch := range chatsOf(t, e, c) {
+		if ch.Stuck != "" {
+			t.Errorf("свежий транскрипт не снял клин: %+v", ch)
+		}
 	}
 }
 

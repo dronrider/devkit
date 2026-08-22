@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -172,6 +173,55 @@ func lostTerminal(pid int, tmux string, alive func(string) bool, mod, now time.T
 		return false
 	}
 	return now.Sub(mod) > stuckLostTerm
+}
+
+// stuckDeafWord это слова второго рода клина: терминал на месте, приглашение
+// рисуется, а событийный цикл мёртв (клиент 69975, чат 29fc49de). Сокет
+// такого клиента принимает соединения и байты силами ядра, ввод с клавиатуры
+// исчезает без эха, транскрипт стоит, и до зонда доставка выглядела успехом.
+const stuckDeafWord = "канал молчит"
+
+// deafTTL держит память зонда: клин не рассасывается сам за секунды, а зонд
+// клина стоит целый таймаут, и гонять его на каждую сборку списка нельзя.
+const deafTTL = 45 * time.Second
+
+// deafProbeWait это таймаут зонда детектора: живой клиент отвечает за
+// миллисекунды (живая проба по всем сессиям машины), полторы секунды тут с
+// запасом на занятый цикл.
+const deafProbeWait = 1500 * time.Millisecond
+
+type deafEntry struct {
+	ok   bool
+	born time.Time
+}
+
+// peerDeaf отвечает, молчит ли канал живой сессии: транскрипт стоит дольше
+// срока клина, а пустой зонд (peerProbe) не дождался закрытия. Свежий
+// транскрипт снимает вопрос без зонда: разговор ходит, значит цикл жив.
+func (s *server) peerDeaf(sock string, mod time.Time) bool {
+	if sock == "" || s.now().Sub(mod) <= stuckLostTerm {
+		return false
+	}
+	now := s.now()
+	s.mu.Lock()
+	e, hit := s.deaf[sock]
+	s.mu.Unlock()
+	if hit && now.Sub(e.born) < deafTTL {
+		return !e.ok
+	}
+	ok := s.probe(sock, deafProbeWait) == nil
+	s.mu.Lock()
+	s.deaf[sock] = deafEntry{ok: ok, born: now}
+	s.mu.Unlock()
+	return !ok
+}
+
+// markDeaf сеет память зонда провалом с ручки отправки: реплика уже упёрлась
+// в молчание, и список обязан назвать клин сразу, а не после своего зонда.
+func (s *server) markDeaf(sock string) {
+	s.mu.Lock()
+	s.deaf[sock] = deafEntry{ok: false, born: s.now()}
+	s.mu.Unlock()
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -411,9 +461,13 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 			}
 		}
 		// Клин ищется там же, где меряется состояние: у клина все признаки
-		// живого разговора, и без отдельной проверки он им и остаётся.
+		// живого разговора, и без отдельной проверки он им и остаётся. Родов
+		// два: пропавший терминал и мёртвый событийный цикл при живом pty,
+		// второй ловится зондом канала по стоящему транскрипту.
 		if lostTerminal(e.PID, e.Tmux, alive, f.mod, s.now()) {
 			e.Stuck = stuckLostTermWord
+		} else if e.Sock != "" && s.peerDeaf(e.Sock, f.mod) {
+			e.Stuck = stuckDeafWord
 		}
 		switch {
 		case e.Sock != "":
@@ -871,7 +925,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// свой сокет и просыпается за секунды, чем бы она ни была поднята. Окно
 	// vscode отсюда тоже слышно, и отказывать ему больше не за что.
 	if p, ok := s.peers()[sid]; ok {
-		if err := peerSay(p.Sock, text); err == nil {
+		err := peerSay(p.Sock, text)
+		if err == nil {
 			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			out := map[string]any{"way": "socket", "pid": p.PID, "where": peerWord(p)}
@@ -894,12 +949,25 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, out)
 			return
-		} else {
-			// Сокет есть, а разговора по нему не вышло: сессия могла умереть
-			// между чтением реестра и записью. Дальше идут запасные дороги, и
-			// причина остаётся в журнале, а не пропадает молча.
-			s.logf("сокет чата %s не взял реплику, иду запасной дорогой: %v", sid, err)
 		}
+		if errors.Is(err, errPeerNoAck) {
+			// Байты ушли, подтверждения нет: событийный цикл клиента мёртв при
+			// живом pty (клин клиента 69975). Запасные дороги тут не выход:
+			// send-keys в замороженный терминал исчезает без эха, а резюм
+			// поверх живого процесса завёл бы второго агента. Реплика остаётся
+			// недоставленной в исходящем, клин назван словами, а выход из него
+			// стоит кнопкой на плашке.
+			s.markDeaf(p.Sock)
+			s.logf("клиент чата %s не подтвердил доставку (pid %d): %v", sid, p.PID, err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "клиент принял байты, но не подтвердил доставку: событийный цикл стоит, реплика не доставлена",
+				"stuck": stuckDeafWord})
+			return
+		}
+		// Сокет есть, а разговора по нему не вышло: сессия могла умереть
+		// между чтением реестра и записью. Дальше идут запасные дороги, и
+		// причина остаётся в журнале, а не пропадает молча.
+		s.logf("сокет чата %s не взял реплику, иду запасной дорогой: %v", sid, err)
 	}
 	alive := tmuxAliveFn()
 	if m := tmuxMissingCheck(); m != "" {
@@ -1200,10 +1268,22 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 				"message": "цель " + id + " уже идёт: будить её нечем и незачем"})
 			return
 		}
-		if err := peerSay(e.Sock, text); err == nil {
+		err := peerSay(e.Sock, text)
+		if err == nil {
 			s.logf("работа %s продолжена в живом чате %s (pid %d)", id, e.ID, e.PID)
 			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "socket",
 				"session": e.ID, "where": e.Where})
+			return
+		}
+		if errors.Is(err, errPeerNoAck) {
+			// Молчащий канал это клин, а не повод поднимать резюм поверх
+			// живого процесса: вторым агентом клин не лечится, лечится он
+			// кнопкой на плашке чата.
+			s.markDeaf(e.Sock)
+			s.logf("клиент чата %s не подтвердил доставку, продолжение %s не поехало: %v", e.ID, id, err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "чат " + e.ID[:8] + " в клине: клиент не подтверждает доставку, снимите его с плашки в панели разговора",
+				"stuck": stuckDeafWord})
 			return
 		}
 	}

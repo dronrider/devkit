@@ -363,6 +363,15 @@ const planRule = "Веди план работ файлом ~/.devkit/plans/<ID 
 	"{\"text\",\"state\"}, помечай текущий in_progress, закрывай сделанные, " +
 	"пиши файл целиком."
 
+// paceRule это правило отзывчивости. Разговор с человеком идёт ходами, и
+// длинный ход в нём читается как молчание: агент чата DK-460 полчаса гонял
+// mdfind по всему дому, и с той стороны это выглядело зависшей сессией. Долгое
+// дело у агента есть кому отдать, и субагент возвращает выжимку, пока сам
+// разговор остаётся живым.
+const paceRule = "Долгие дела (поиск по диску, большие прогоны, сборки) отдавай " +
+	"субагенту, а ход разговора держи отзывчивым: человек ждёт реплики, а не " +
+	"конца команды."
+
 func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
 	client := defaultClient
 	head := env
@@ -384,6 +393,9 @@ func chatCmd(env, model, resume, text string, h *Harness, agentctl string) strin
 		if resume == "" {
 			text += " " + planRule
 		}
+		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
+		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
+		text += " " + paceRule
 		cmd += " " + shQuote(text)
 	}
 	return cmd
@@ -854,7 +866,8 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 // continuePrompt это заказ продолжения. Он разговорный: сессия уже знает
 // задачу, и пересказывать ей постановку незачем.
 func continuePrompt(id string) string {
-	return "Продолжай работу по " + id + " с того места, где остановился. " + planRule
+	return "Продолжай работу по " + id + " с того места, где остановился. " +
+		planRule + " " + paceRule
 }
 
 func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
@@ -872,7 +885,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	goal := isGoalTitle(row.Title)
 	text := continuePrompt(id)
 	if goal {
-		text = "Продолжай цель " + id + ". " + planRule
+		text = "Продолжай цель " + id + ". " + planRule + " " + paceRule
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {

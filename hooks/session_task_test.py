@@ -178,6 +178,9 @@ class TestHook(unittest.TestCase):
         # инструмент TodoWrite харнес в обход разрешений не выдаёт.
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertIn(".devkit/plans/", r.stdout)
+        # Тем же абзацем едет правило отзывчивости: разговор идёт ходами, и
+        # получасовой ход в нём неотличим от зависшей сессии.
+        self.assertIn("отдавай субагенту", r.stdout)
         lines = self.log()
         self.assertEqual(len(lines), 1)
         f, _ = fields(lines[0])

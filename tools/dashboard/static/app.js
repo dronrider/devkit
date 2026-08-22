@@ -2521,29 +2521,22 @@ function formPage(cfg) {
   if (has.rank) {
     const rank = el("div", "card rcard rfolded");
     const rtop = el("div", "rtop");
-    const rhead = el("div", "rhead");
-    rhead.append(el("b", "", "Ранг"), el("span", "stale", "по RANKING.md"));
-    // Слева итог крупно, справа от него слагаемые в две строки: показателей
-    // шесть, и одной строкой они переносились как попало.
+    // Слева итог крупно, дальше сами поля правки. Надписи «Ранг» и «по
+    // RANKING.md» тут больше нет: крупное число в этом месте экрана ничем
+    // другим быть не может, а откуда правило, спрашивают в самом RANKING.md.
+    // Нет и повтора слагаемых числами справа: те же пять значений стоят в
+    // полях правки строкой ниже, и блок занимал вдвое больше места, чем
+    // говорил (замечание пользователя).
     const big = el("div", "rbig");
     const sum = el("span", "v", "0");
     const note = el("span", "f", "");
     big.append(sum, note);
-    const terms = el("div", "rterms");
-    const cells = RANK_PARTS.map((part) => {
-      const cell = el("span", "rterm");
-      const val = el("b", "", "0");
-      cell.append(el("i", "", part.name), val);
-      terms.append(cell);
-      return val;
-    });
-    big.append(terms);
     // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
     // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
     // стили, а спрятанная кнопка ни в обход табом, ни под палец не попадает.
     const fold = el("button", "rfold", "развернуть");
     fold.setAttribute("aria-expanded", "false");
-    rtop.append(rhead, big, fold);
+    rtop.append(big, fold);
     const foldRank = () => {
       const shut = rank.classList.toggle("rfolded");
       fold.textContent = shut ? "развернуть" : "свернуть";
@@ -2563,7 +2556,6 @@ function formPage(cfg) {
     // правка слагаемого видна суммой сразу, до сохранения.
     const drawRank = () => {
       sum.textContent = String(form.parts.reduce((a, b) => a + Number(b), 0));
-      cells.forEach((cell, i) => { cell.textContent = String(form.parts[i]); });
     };
     RANK_PARTS.forEach((part, i) => {
       const line = el("div", "rrow");

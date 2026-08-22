@@ -323,3 +323,36 @@ console.log("форма: действия в командной панели, о
 }
 
 console.log("формы: чат у черновика, кнопки режимов без пустой строки");
+
+// --- блок ранга: одна строка, итог рядом с полями ---
+// Прежде он занимал две строки, и верхняя повторяла числами ровно то, что
+// стоит в полях нижней, да ещё подписывала себя правилом, которое и так
+// очевидно (замечание пользователя).
+{
+  const view = sandbox.formPage({
+    key: "task", project: "demo", id: "XR-3",
+    crumb: [{ text: "Доска demo", go: () => {} }],
+    form: { title: "задача", type: "task", cost: "M", parts: [25, 4, 1, 0, 2] },
+    detail: { file: "docs/tasks/XR-3.md", text: "текст" },
+    has: { title: true, type: true, cost: true, rank: true },
+  });
+  const card = byClass(view.page, "rcard");
+  if (!card) fail("блока ранга на форме нет");
+  const said = dump(card);
+  if (said.includes("RANKING.md")) fail("надпись про правило осталась: " + said);
+  if (said.includes("Ранг")) fail("подпись «Ранг» осталась при крупном числе: " + said);
+  if (byClass(card, "rterm") || byClass(card, "rterms")) {
+    fail("повтор слагаемых числами остался: " + said);
+  }
+  // Итог считается из слагаемых формы и стоит один раз.
+  const sum = byClass(card, "v");
+  if (!sum || sum.textContent !== "32") fail("итог ранга не тот: " + (sum && sum.textContent));
+  // Полей правки пять, по числу слагаемых, и лежат они своей строкой.
+  const rows = allByClass(card, "rrow");
+  if (rows.length !== 5) fail("полей правки ранга не пять: " + rows.length);
+  if (card.children.length !== 2) {
+    fail("в блоке ранга не две части (итог и поля): " + card.children.length);
+  }
+}
+
+console.log("ранг: одна строка, итог рядом с полями");

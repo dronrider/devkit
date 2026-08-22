@@ -8449,7 +8449,7 @@ async function paint() {
   if (rt.agents) {
     // Экран собран из того же ответа, что и колонка: живые работы всех
     // проектов приходят одним запросом, и доска ему не нужна.
-    document.getElementById("pname").textContent = "Агенты";
+    headName("Агенты");
     document.getElementById("psub").textContent = "все активные задачи";
     renderLive("", []);
     markNav(rt);
@@ -8457,20 +8457,23 @@ async function paint() {
     return;
   }
   if (rt.home) {
-    document.getElementById("pname").textContent = "Проекты";
-    document.getElementById("psub").textContent = "главная, доски из корней конфига";
+    headName("Проекты");
+    // Приписки у заголовка главной нет вовсе: список досок под ним и так
+    // говорит, что это главная, а откуда они взялись, спрашивают у конфига, а
+    // не у шапки (замечание пользователя).
+    document.getElementById("psub").textContent = "";
     renderLive("", []);
     markNav(rt);
     renderHome(projects);
     return;
   }
   if (!current) {
-    document.getElementById("pname").textContent = "Проектов нет";
+    headName("Проектов нет");
     document.getElementById("psub").textContent = "";
     showError((body.errors || []).join("; ") || "в корнях конфига не нашлось ни одной доски docs/TASKS.md");
     return;
   }
-  document.getElementById("pname").textContent = current.name;
+  headName(current.name);
   renderLive(current.name, current.works);
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
@@ -8525,9 +8528,23 @@ async function paint() {
     await renderTask(current.name, r.body.works, rt.id);
     return;
   }
-  document.getElementById("psub").textContent =
-    "доска docs/TASKS.md" + (board.prefix ? ", " + board.prefix : "");
+  // Путь доски и префикс ID строкой в шапке не стоят: имя файла с префиксом
+  // человек читал каждый раз заново, отвечая на вопрос, которого не задавал
+  // (замечание пользователя). Приписка говорит, что за экран открыт, а знание
+  // осталось подсказкой на самом названии проекта: там его берут, когда надо.
+  document.getElementById("psub").textContent = "задачи проекта";
+  headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""));
   renderBoard(current.name, board);
+}
+
+// Заголовок раздела в шапке: имя и подсказка ставятся одним заходом. Порознь
+// подсказка переживала переход на соседний экран и висела там, объясняя чужое
+// название.
+function headName(name, tip) {
+  const node = document.getElementById("pname");
+  node.textContent = name;
+  node.title = tip || "";
+  return node;
 }
 
 function plural(n, one, few, many) {

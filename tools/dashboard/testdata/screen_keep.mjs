@@ -892,6 +892,20 @@ await settle();
 await go("#demo");
 const card = find(groups, "card-backlog");
 if (!card) fail("доска не собралась: карточки Backlog на экране нет");
+// Заголовок раздела: путь доски с префиксом ID стоял строкой рядом с названием
+// проекта и отвечал на вопрос, которого никто не задавал (замечание
+// пользователя). В «Доске» приписка говорит, что за экран открыт, на главной её
+// нет вовсе, а знание про файл доски осталось подсказкой на самом названии.
+{
+  const sub = byId.get("psub");
+  const name = byId.get("pname");
+  if (String(sub.textContent || "").trim() !== "задачи проекта") {
+    fail("приписка раздела «Доска» не та: " + JSON.stringify(sub.textContent));
+  }
+  if (!String(name.title || "").includes("docs/TASKS.md")) {
+    fail("путь доски пропал вовсе, а он нужен подсказкой: " + JSON.stringify(name.title));
+  }
+}
 const third = find(groups, "XR-3");
 if (!third) fail("строки XR-3 на доске нет: " + dump(groups).slice(0, 200));
 const act = button(third, "Выполнить");
@@ -1956,6 +1970,11 @@ if (store.get("devkit.chat.width") !== "505") {
 // живости, этап работы и кнопку стопа (DK-435).
 await go("#demo");
 await go("#demo/XR-1");
+// Подсказка доски не переживает перехода: на экране задачи она объясняла бы
+// чужое название.
+if (String(byId.get("pname").title || "")) {
+  fail("подсказка доски осталась на экране задачи: " + JSON.stringify(byId.get("pname").title));
+}
 if (!dump(groups).includes("Журнал витка")) {
   fail("журнал витка не переехал на экран задачи: " + dump(groups).slice(0, 300));
 }
@@ -2442,6 +2461,16 @@ if (rows.find((r) => r.id === "XR-6").r !== 31) {
   fail("отбитый откат всё равно переписал строку: " + rows.find((r) => r.id === "XR-6").r);
 }
 for (const t of timers.splice(0)) t.fn();
+
+// Главная без приписки: список досок под заголовком и так говорит, что это
+// главная, а путь доски там не к месту вовсе (замечание пользователя).
+await go("#");
+if (String(byId.get("psub").textContent || "").trim()) {
+  fail("у заголовка главной осталась приписка: " + JSON.stringify(byId.get("psub").textContent));
+}
+if (String(byId.get("pname").title || "")) {
+  fail("подсказка доски осталась на главной: " + JSON.stringify(byId.get("pname").title));
+}
 
 console.log("частичная перерисовка: доска, черновики и лента панели держат место и фокус, " +
   "панель разговора открывается хвостом адреса и закрывается крестиком назад, " +

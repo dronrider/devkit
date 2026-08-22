@@ -372,13 +372,18 @@ func TestStaticWaitWords(t *testing.T) {
 	}
 }
 
-// Чип ожидания стоит и в строке доски, и на карточке задачи, а сам вопрос
-// приходит подсказкой при нём: без этого поле waiting некуда показать, и
-// простой задачи с доски не виден.
+// Ожидание видно на обоих экранах, но по-разному: в строке доски это кружок
+// у номера со словами в подсказке, а на карточке задачи чип словами. Прежде
+// строка несла оба указателя разом, кружок и чип, и одно состояние занимало
+// место дважды в самом тесном месте экрана (замечание пользователя).
 func TestStaticWaitChipAndCard(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(funcBody(t, text, "function rowChips("), "waitChip(row)") {
-		t.Error("в строке доски нет чипа ожидания: простой задачи с доски не виден")
+	if strings.Contains(funcBody(t, text, "function rowChips("), "waitChip(row)") {
+		t.Error("чип ожидания вернулся в строку доски: там же стоит кружок с теми же словами")
+	}
+	dot := funcBody(t, text, "function rowDot(")
+	if !strings.Contains(dot, "sd-wait") || !strings.Contains(dot, "w.questions") {
+		t.Error("кружок строки не рассказывает про ожидание: слова и вопрос уходят в подсказку")
 	}
 	if !strings.Contains(funcBody(t, text, "async function renderTask("), "waitChip(row)") {
 		t.Error("на карточке задачи нет чипа ожидания: с её экрана простой не виден")

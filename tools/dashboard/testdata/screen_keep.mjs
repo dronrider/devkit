@@ -547,11 +547,13 @@ const talk = [
 ];
 
 function reply(body) {
-  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  return Promise.resolve({ ok: true, status: 200, statusText: "OK",
+    text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) });
 }
 
 function refuse(status, body) {
-  return Promise.resolve({ ok: false, status, json: () => Promise.resolve(body) });
+  return Promise.resolve({ ok: false, status,
+    text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) });
 }
 
 // Игрушечный taskctl под ручкой PATCH (DK-324): правка слагаемых пересчитывает
@@ -620,7 +622,8 @@ function patchRow(id, body) {
 function slowReply(body) {
   let p = Promise.resolve();
   for (let i = 0; i < 20; i += 1) p = p.then(() => {});
-  return p.then(() => ({ ok: true, status: 200, json: () => Promise.resolve(body) }));
+  return p.then(() => ({ ok: true, status: 200,
+    text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) }));
 }
 
 // Разговоры задачи: у одной задачи их бывает несколько (взяли, спросили из

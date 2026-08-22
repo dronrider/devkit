@@ -1319,3 +1319,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* полоска работ вместо ленты сессий на экране проекта */
 .lline{display:flex;align-items:center;gap:9px}
 .lline b{font:500 12.5px var(--sans);color:var(--tx2)}
+
+/* кнопка чата в строке доски: значок вместо слова, рядом стоит «Продолжить» */
+.btn-ico{width:30px;padding:0;flex:none}
+.btn-ico svg{width:16px;height:16px}

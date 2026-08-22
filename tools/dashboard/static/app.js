@@ -178,7 +178,38 @@ async function api(path, opts) {
     location.href = "/login";
     throw new Error("нужен вход");
   }
-  return { ok: resp.ok, status: resp.status, body: await resp.json() };
+  return { ok: resp.ok, status: resp.status, body: await apiBody(resp) };
+}
+
+// Ответ бывает и не от дашборда: до него стоит внешний вход, и свой отказ
+// (413 на длинное тело, 502 на упавший бэкенд) он пишет страницей html.
+// Разбор такой страницы падал SyntaxError, и человек читал жалобу движка js
+// вместо причины (жалоба пользователя на снимок через внешний вход). Тут
+// нечитаемое тело сводится к тем же полям, что у ответа дашборда: код и слова.
+async function apiBody(resp) {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { error: outerFail(resp.status, resp.statusText, text) };
+  }
+}
+
+// Слова про отказ внешнего входа: известные коды названы по-человечески, у
+// остальных берётся код со статусом, а хвост страницы отбрасывается, в нём
+// разметка.
+function outerFail(status, statusText, text) {
+  const who = "внешний вход";
+  if (status === 413) {
+    return "снимок слишком большой для внешнего входа (413): " +
+      "уменьшите картинку или отправьте её меньшим куском";
+  }
+  if (status === 502 || status === 504) {
+    return who + " не дозвался дашборда (" + status + "): попробуйте ещё раз";
+  }
+  const said = String(text || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return who + " ответил " + status + (statusText ? " " + statusText : "") +
+    (said ? ": " + truncate(said, 120) : "");
 }
 
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
@@ -568,10 +599,11 @@ function rowChips(project, row) {
     });
     chips.push(withTip(chip, "строка ждёт задачу " + dep + ", нажатие открывает её"));
   }
-  // Ожидание стоит раньше блока: припаркованную строку оба чипа описывают с
-  // разных сторон, и первым читается тот, который говорит, чего ждут.
-  const wait = waitChip(row);
-  if (wait) chips.push(wait);
+  // Чипа ожидания в строке доски нет: то же самое состояние стоит кружком у
+  // номера, а слова к нему приходят подсказкой. Два указателя на одно
+  // состояние съедали строку, в которой и так тесно (замечание пользователя).
+  // На экране задачи чип остаётся: там место есть, и читают его глазами, а не
+  // наводят мышь.
   if (row.fail) chips.push(el("span", "chip c-block", "провал: " + row.fail));
   if (row.block) chips.push(el("span", "chip c-block", "блок: " + row.block));
   const check = checkChip(row);
@@ -856,12 +888,9 @@ function rowAction(project, row, sect) {
     // столкновение, а разговор нет. Обсуждать чужую работу приходится именно
     // отсюда, и прежнее правило заодно с запуском убирало и чат (замечание
     // пользователя).
-    const grp = el("span");
-    grp.append(withTip(el("span", "stale", "в работе на другой машине"),
+    return withTip(el("span", "stale", "в работе на другой машине"),
       "на этой машине у задачи нет ни одной сессии: работу ведут в другом месте, " +
-      "а поговорить о ней можно и здесь"));
-    grp.append(rowChatBtn(project, row));
-    return grp;
+      "а поговорить о ней можно и здесь, кнопкой чата");
   }
   // Работа наша, просто идёт не нашей tmux-сессией, а живым чатом: подпись
   // «ведёт другая сессия» врала, а вход в разговор прятала. Кнопки тут те же,
@@ -944,6 +973,7 @@ function renderRow(project, row, sect, opts) {
     meta.append(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
+  meta.append(rowChatBtn(project, row));
   meta.append(rowAction(project, row, sect));
   tr.append(meta);
   tr.addEventListener("click", () => {
@@ -5964,10 +5994,20 @@ function chatStoppable(st) {
 
 // Кнопки строки, чью работу ведёт наша сессия: разговор и продолжение. Стопа
 // тут нет: снимать нечего, tmux-сессии дашборда у такой работы не бывает.
-// Вход в разговор задачи прямо со строки. Стоит и у чужой работы: чат к
-// конвейеру не привязан, и сессия под него поднимается своя.
+// Вход в разговор задачи прямо со строки. Стоит у каждой строки доски, чем бы
+// она ни была занята: чат к конвейеру не привязан, у задачи без сессии он
+// поднимет новый разговор, а у чужой работы разговор идёт у нас и её не
+// трогает. Правило от этого объясняется одной фразой, «чат есть у каждой
+// задачи», и человеку не приходится гадать, где кнопка есть, а где нет
+// (замечание пользователя).
+//
+// Подпись у кнопки значком, а не словом: рядом стоит «Продолжить», и два
+// слова подряд слипались в кашу.
 function rowChatBtn(project, row) {
-  const talk = el("button", "btn btn-sm", "Чат");
+  const talk = el("button", "btn btn-sm btn-ico");
+  talk.append(icon("i-chat"));
+  withTip(talk, "Чат по задаче");
+  talk.setAttribute("aria-label", "Чат по задаче " + row.id);
   talk.addEventListener("click", (ev) => {
     ev.stopPropagation();
     openChat(chatAddr(project, row.id));
@@ -5975,16 +6015,17 @@ function rowChatBtn(project, row) {
   return talk;
 }
 
+// Продолжение разговора: сам вход в чат стоит у строки отдельной кнопкой, тут
+// остаётся только подъём хода.
 function rowChatActions(project, row) {
   const grp = el("span");
-  const talk = rowChatBtn(project, row);
   const go = el("button", "btn btn-sm btn-acc", "Продолжить");
   go.addEventListener("click", (ev) => {
     ev.stopPropagation();
     go.disabled = true;
     continueTask(project, row.id).catch(console.error).finally(() => { go.disabled = false; });
   });
-  grp.append(talk, go);
+  grp.append(go);
   return grp;
 }
 
@@ -6199,6 +6240,73 @@ function grabSelection() {
 // править чужой текст по дороге нельзя, агент должен увидеть ровно то, что
 // человек выделил. Разделитель это закрывающий тег на своей строке, поэтому
 // внутри выделения он не встретится случайно.
+// Снимок ужимается перед отправкой. Ретина-экран отдаёт png в несколько
+// мегабайт, внешний вход рубит такое тело своим 413, и до дашборда оно не
+// доезжает вовсе (жалоба пользователя: локально работало, снаружи нет).
+// Длинная сторона сводится к потолку, картинка перекодируется в jpeg, и, пока
+// тело длиннее предела, качество с размером понижаются шагами. Мелкую
+// картинку (иконка, кусок текста) трогать незачем: png там и меньше, и чётче.
+const SHOT_SMALL = 120 * 1024;
+const SHOT_BYTES = 900 * 1024;
+const SHOT_STEPS = [[1600, 0.85], [1600, 0.7], [1200, 0.6], [900, 0.5]];
+
+// Длина тела: base64 длиннее самих данных на треть, и считать надо байты, а
+// не буквы, иначе предел срабатывал бы раньше времени.
+function shotBytes(dataURL) {
+  const text = String(dataURL || "");
+  const cut = text.indexOf(",");
+  return Math.floor((cut >= 0 ? text.length - cut - 1 : text.length) * 3 / 4);
+}
+
+function loadImage(src) {
+  return new Promise((ok, no) => {
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = () => no(new Error("картинка не разобралась"));
+    img.src = src;
+  });
+}
+
+// Один шаг сжатия: перерисовка в холст нужного размера и вывод в jpeg.
+function shotDraw(img, side, quality) {
+  const w = img.width || 0;
+  const h = img.height || 0;
+  if (!w || !h) return "";
+  const k = Math.min(1, side / Math.max(w, h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  const ctx = c.getContext && c.getContext("2d");
+  if (!ctx) return "";
+  // Под jpeg нужен непрозрачный низ: прозрачности он не умеет, и на её месте
+  // вышла бы чернота.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", quality);
+}
+
+// Среда без холста (старый браузер, стенд) картинку не ужимает, а отправляет
+// как есть: молча потерять вложение хуже, чем упереться в предел входа.
+async function shrinkShot(pic) {
+  if (!pic || !pic.data || shotBytes(pic.data) <= SHOT_SMALL) return pic;
+  let img = null;
+  try {
+    img = await loadImage(pic.data);
+  } catch (e) {
+    return pic;
+  }
+  let best = "";
+  for (const [side, quality] of SHOT_STEPS) {
+    const out = shotDraw(img, side, quality);
+    if (!out) break;
+    best = out;
+    if (shotBytes(out) <= SHOT_BYTES) break;
+  }
+  if (!best) return pic;
+  return { data: best, kind: "image/jpeg", name: pic.name || "снимок" };
+}
+
 // Префикс картинки: агент читает файл сам, поэтому ему нужен путь, а не байты.
 // Форма та же, что у выделения: строка перед репликой, разбирает её сервер.
 function shotPrefix(path) {
@@ -6574,8 +6682,11 @@ function chatPanel(project, st) {
   // человек узнавал об этом только от агента (жалоба на чат DK-460).
   const shotKey = () => st.sid || "new-" + Date.now();
 
-  const putShot = async (pic) => {
-    if (!pic) return { path: "", error: "" };
+  const putShot = async (raw0) => {
+    if (!raw0) return { path: "", error: "" };
+    // Ужимается снимок здесь, а не при вставке: в коробке отправки человек
+    // видит то, что вставил, а на сервер едет то, что пролезет во внешний вход.
+    const pic = await shrinkShot(raw0);
     // dataURL это «data:<тип>;base64,<данные>»: режется он по первой запятой,
     // в самом base64 запятых нет. Тип берётся из dataURL, а не из типа
     // буфера: буфер иногда называет вид иначе, чем то, что реально пришло.

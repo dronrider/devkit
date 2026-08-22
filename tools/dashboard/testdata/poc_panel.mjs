@@ -200,6 +200,7 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
     seen.push(path);
     if (init && init.method === "POST" && path.includes("/say")) {
       return Promise.resolve({ ok: true, status: 200,
+        text: () => Promise.resolve(JSON.stringify({ way: "socket", stuck: "агент ждёт разрешения в своём окне" })),
         json: () => Promise.resolve({ way: "socket", stuck: "агент ждёт разрешения в своём окне" }) });
     }
     return prev(path, init);
@@ -227,9 +228,10 @@ async function feedOf(items, sid) {
   const prev = sandbox.fetch;
   sandbox.fetch = (path, init) => {
     if (path.includes("/sessions/") && !path.includes("stream=1")) {
+      const said = { session: sid, head: { id: sid }, items, total: items.length };
       return Promise.resolve({ ok: true, status: 200,
-        json: () => Promise.resolve({ session: sid, head: { id: sid }, items,
-          total: items.length }) });
+        text: () => Promise.resolve(JSON.stringify(said)),
+        json: () => Promise.resolve(said) });
     }
     return prev(path, init);
   };

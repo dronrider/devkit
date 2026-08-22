@@ -127,6 +127,7 @@ function reply(body) {
   return Promise.resolve({
     ok: true,
     status: 200,
+    text: () => Promise.resolve(JSON.stringify(body)),
     json: () => Promise.resolve(body),
   });
 }

@@ -226,9 +226,22 @@ export function makeSandbox(appPath, reply) {
   const asked = [];
   const posted = [];
 
-  const ok = (body) => Promise.resolve({
-    ok: true, status: 200, json: () => Promise.resolve(body),
-  });
+  // Ответ мока умеет и text(): дашборд читает тело текстом и только потом
+  // разбирает его как JSON, потому что перед ним стоит внешний вход, который
+  // свой отказ пишет страницей html. Стенд отдаёт такую страницу, вернув из
+  // reply объект {raw: {status, statusText, text}}.
+  const ok = (body) => {
+    const raw = body && body.raw ? body.raw : null;
+    const text = raw ? String(raw.text || "") : JSON.stringify(body);
+    const status = raw ? raw.status : 200;
+    return Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: raw ? raw.statusText || "" : "OK",
+      text: () => Promise.resolve(text),
+      json: () => Promise.resolve(raw ? JSON.parse(text) : body),
+    });
+  };
 
   const sandbox = {
     console: { log: () => {}, error: () => {}, warn: () => {} },
@@ -243,7 +256,26 @@ export function makeSandbox(appPath, reply) {
     document: {
       handlers: {},
       visibilityState: "visible",
-      createElement: makeNode,
+      createElement: (tag) => {
+        const node = makeNode(tag);
+        // Холст в стенде рисует не картинку, а её длину: предмет проверки это
+        // сжатие, то есть сколько байт уедет на сервер и каким видом, а не
+        // расстановка точек. Длина считается от размера холста и качества той
+        // же пропорцией, что у настоящего jpeg: меньше сторона, короче тело.
+        if (String(tag).toLowerCase() === "canvas") {
+          node.getContext = () => ({
+            fillStyle: "",
+            fillRect: () => {},
+            drawImage: () => {},
+          });
+          node.toDataURL = (kind, quality) => {
+            const cells = Math.max(1, node.width * node.height);
+            const bytes = Math.round(cells * 0.55 * (quality || 1));
+            return "data:" + (kind || "image/png") + ";base64," + "A".repeat(Math.ceil(bytes * 4 / 3));
+          };
+        }
+        return node;
+      },
       // Кольцо агентов рисуется svg, и узлы у него из своего пространства имён.
       createElementNS: (ns, tag) => makeNode(tag),
       createTextNode: (text) => {
@@ -295,6 +327,21 @@ export function makeSandbox(appPath, reply) {
       }
       addEventListener(name, fn) { this.listeners[name] = fn; }
       close() { this.closed = true; this.readyState = 2; }
+    },
+    // Картинка в песочнице: настоящей расшифровки тут нет, размеры приезжают
+    // из самого dataURL, куда их кладёт стенд («#<ширина>x<высота>»).
+    Image: class {
+      set src(value) {
+        const m = /#(\d+)x(\d+)/.exec(String(value));
+        this.width = m ? Number(m[1]) : 0;
+        this.height = m ? Number(m[2]) : 0;
+        const fire = () => {
+          if (this.width && this.height) {
+            if (this.onload) this.onload();
+          } else if (this.onerror) this.onerror();
+        };
+        Promise.resolve().then(fire);
+      }
     },
     // Чтение вставленного файла: мок отдаёт готовый dataURL сразу, потому что
     // предмет стенда это то, что попадёт в src, а не сама расшифровка.

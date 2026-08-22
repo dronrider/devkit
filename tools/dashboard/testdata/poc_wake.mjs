@@ -98,7 +98,9 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   const prev = sandbox.fetch;
   sandbox.fetch = (path, init) => {
     if (path.includes("/sessions/deep") && !path.includes("stream=1")) {
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(tailOf(path)) });
+      return Promise.resolve({ ok: true, status: 200,
+        text: () => Promise.resolve(JSON.stringify(tailOf(path))),
+        json: () => Promise.resolve(tailOf(path)) });
     }
     return prev(path, init);
   };
@@ -151,8 +153,10 @@ if (sess().length !== 0) fail("лента полезла переподключ�
   const prev = sandbox.fetch;
   sandbox.fetch = (path, init) => {
     if (path.includes("/sessions/") && !path.includes("stream=1")) {
+      const said = { session: "cold", head: { id: "cold" }, items: many, total: many.length };
       return Promise.resolve({ ok: true, status: 200,
-        json: () => Promise.resolve({ session: "cold", head: { id: "cold" }, items: many, total: many.length }) });
+        text: () => Promise.resolve(JSON.stringify(said)),
+        json: () => Promise.resolve(said) });
     }
     return prev(path, init);
   };

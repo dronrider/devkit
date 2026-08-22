@@ -191,7 +191,8 @@ let empty = false;
 let growScroll = null;
 
 function reply(body) {
-  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  return Promise.resolve({ ok: true, status: 200, statusText: "OK",
+    text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) });
 }
 
 const sandbox = {
@@ -252,6 +253,7 @@ const sandbox = {
       if (heldSession && sid === heldSession) {
         return new Promise((res) => {
           release = () => res({ ok: true, status: 200,
+            text: () => Promise.resolve(JSON.stringify({ session: sid, head, total: talk.length, items: talk })),
             json: () => Promise.resolve({ session: sid, head, total: talk.length, items: talk }) });
         });
       }

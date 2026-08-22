@@ -192,7 +192,8 @@ const board = { sections: [{ key: "in-progress", rows: [
 ] }] };
 
 function reply(body) {
-  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  return Promise.resolve({ ok: true, status: 200, statusText: "OK",
+    text: () => Promise.resolve(JSON.stringify(body)), json: () => Promise.resolve(body) });
 }
 
 const sandbox = {

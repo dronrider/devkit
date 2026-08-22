@@ -16,6 +16,10 @@ const app = appPathArg();
 
 // Что отвечает ручка вложения: путь либо пустота (сервер не назвал файл).
 let shotPath = "/Users/rider/.devkit/uploads/new-1/20260822T120000.png";
+// Внешний вход рубит длинное тело своим 413 и пишет об этом страницей html:
+// разбор такой страницы падал SyntaxError, и человек читал жалобу движка js
+// вместо причины (жалоба пользователя).
+let outer413 = false;
 const asked = [];
 const bodies = [];
 
@@ -24,7 +28,15 @@ const { sandbox } = makeSandbox(app, (path, init) => {
     asked.push(path);
     bodies.push(init.body ? JSON.parse(init.body) : null);
   }
-  if (path.includes("/shot")) return shotPath ? { path: shotPath, name: "снимок.png" } : {};
+  if (path.includes("/shot")) {
+    if (outer413) {
+      return { raw: { status: 413, statusText: "Request Entity Too Large",
+        text: "<html><head><title>413 Request Entity Too Large</title></head>" +
+          "<body><center><h1>413 Request Entity Too Large</h1></center>" +
+          "<hr><center>nginx</center></body></html>" } };
+    }
+    return shotPath ? { path: shotPath, name: "снимок.png" } : {};
+  }
   if (path.endsWith("/chats")) return { tmux: "chat-DK-460-1" };
   return {};
 });
@@ -36,10 +48,14 @@ const fresh = () => ({
   models: [], fresh: false, error: "", note: "",
 });
 
-const paste = (ta) => {
+// Вставка картинки из буфера. Размеры и длина приезжают в самом dataURL:
+// мок FileReader отдаёт то, что положил стенд, а мок Image читает из него
+// «#<ширина>x<высота>».
+const paste = (ta, dataURL) => {
   ta.handlers.paste({
     preventDefault: () => {},
-    clipboardData: { items: [{ type: "image/png", getAsFile: () => ({ name: "снимок.png" }) }] },
+    clipboardData: { items: [{ type: "image/png",
+      getAsFile: () => ({ name: "снимок.png", dataURL: dataURL || "" }) }] },
   });
 };
 
@@ -117,6 +133,91 @@ const paste = (ta) => {
   if (!dump(pend).includes("вот снимок")) {
     fail("пузырь неушедшей реплики пропал вместе с набранным: " + dump(pend));
   }
+}
+
+// --- большой снимок ужимается до предела входа ---
+// Ретина-снимок уезжал во внешний вход как есть и возвращался оттуда 413:
+// длинное тело фронт рубит раньше дашборда (жалоба пользователя).
+{
+  shotPath = "/Users/rider/.devkit/uploads/new-2/20260822T150000.jpg";
+  asked.length = 0;
+  bodies.length = 0;
+  const big = "data:image/png;base64,#3000x2000" + "A".repeat(6 * 1024 * 1024);
+  const st = fresh();
+  st.sid = "aaaa1111-1111";
+  st.entry = { id: st.sid, state: "live", tasks: ["DK-460"], model: "opus" };
+  const panel = sandbox.chatPanel("demo", st);
+  const ta = tag(panel, "TEXTAREA");
+  paste(ta, big);
+  await settle();
+  ta.value = "вот весь экран";
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const up = bodies[asked.findIndex((p) => p.includes("/shot"))];
+  if (!up) fail("вложение не ушло вовсе: " + JSON.stringify(asked));
+  if (up.kind !== "image/jpeg") fail("снимок уехал не перекодированным: " + up.kind);
+  // Предел тот же, что и в самой статике (SHOT_BYTES): держать его тут
+  // числом честнее, чем читать из песочницы, где верхний const не виден.
+  const LIMIT = 900 * 1024;
+  const bytes = Math.floor(up.data.length * 3 / 4);
+  if (bytes > LIMIT) fail("снимок не ужался до предела входа: " + bytes + " байт");
+  // Сжатие идёт шагами, а не одним качеством: первый шаг длинного снимка в
+  // предел не влезает, и стенд держит, что дальше него ходка не встала.
+  if (bytes <= 0) fail("после сжатия не осталось данных");
+}
+
+// --- мелкая картинка едет как есть, png не портится ---
+{
+  asked.length = 0;
+  bodies.length = 0;
+  const small = "data:image/png;base64,#64x64" + "A".repeat(4 * 1024);
+  const st = fresh();
+  st.sid = "aaaa1111-1111";
+  st.entry = { id: st.sid, state: "live", tasks: ["DK-460"], model: "opus" };
+  const panel = sandbox.chatPanel("demo", st);
+  paste(tag(panel, "TEXTAREA"), small);
+  await settle();
+  tag(panel, "TEXTAREA").value = "значок";
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const up = bodies[asked.findIndex((p) => p.includes("/shot"))];
+  if (!up || up.kind !== "image/png") fail("мелкая картинка перекодирована зря: " + (up && up.kind));
+}
+
+// --- 413 от внешнего входа доходит до человека словами ---
+{
+  outer413 = true;
+  asked.length = 0;
+  const st = fresh();
+  st.sid = "aaaa1111-1111";
+  st.entry = { id: st.sid, state: "live", tasks: ["DK-460"], model: "opus" };
+  const panel = sandbox.chatPanel("demo", st);
+  paste(tag(panel, "TEXTAREA"), "data:image/png;base64,#3000x2000" + "A".repeat(6 * 1024 * 1024));
+  await settle();
+  tag(panel, "TEXTAREA").value = "вот экран";
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const said = dump(sandbox.document.getElementById("flashes"));
+  if (!said.includes("слишком большой")) fail("413 не объяснён человеку: " + said);
+  if (said.includes("SyntaxError") || said.includes("JSON")) {
+    fail("вместо причины показана жалоба разбора: " + said);
+  }
+  if (asked.some((p) => p.endsWith("/say"))) {
+    fail("реплика ушла без картинки, которую 413 не пропустил: " + JSON.stringify(asked));
+  }
+  outer413 = false;
+}
+
+// --- отказ внешнего входа читается словами, а не разбором html ---
+{
+  const said = sandbox.outerFail(413, "Request Entity Too Large",
+    "<html><head><title>413 Request Entity Too Large</title></head><body>nginx</body></html>");
+  if (!said.includes("слишком большой") || !said.includes("413")) {
+    fail("413 не объяснён человеку: " + said);
+  }
+  if (said.includes("<")) fail("в слова про отказ уехала разметка: " + said);
+  const other = sandbox.outerFail(502, "Bad Gateway", "<html>502</html>");
+  if (!other.includes("502") || other.includes("<")) fail("502 не объяснён: " + other);
 }
 
 console.log("poc_shot_send: ok");

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dronrider/devkit/internal/sessions"
@@ -126,6 +127,36 @@ type chatEntry struct {
 	// считается только boundLead.
 	Note  string `json:"note,omitempty"`
 	Bound string `json:"bound,omitempty"`
+	// Stuck называет клин словами: разговор выглядит живым (сокет отвечает,
+	// доставки «успешны»), а хода в нём нет и не будет. Пусто у здорового
+	// разговора, и экран тогда рисует его как прежде.
+	Stuck string `json:"stuck,omitempty"`
+}
+
+// stuckLostTerm это срок молчания транскрипта, после которого клин считается
+// клином, а не паузой между ходами: ход агента длится секунды, и две минуты
+// тишины при пропавшем терминале не пауза.
+const stuckLostTerm = 2 * time.Minute
+
+// stuckLostTermWord это слова клина. Одни и те же на списке чатов и в ответе
+// на реплику: человек читает их в плашке, а решает по ним одинаково.
+const stuckLostTermWord = "терминал пропал"
+
+// lostTerminal узнаёт клин: процесс клиента жив, а tmux-сессии, в которой он
+// был поднят, больше нет. Такой клиент пишет в исчезнувший терминал и стоит
+// намертво: реплики уходят в его сокет «успешно» и копятся в замороженной
+// очереди, транскрипт молчит, а экран показывает вечное «работает» (инцидент с
+// чатом DK-460). Само по себе исчезновение tmux-сессии клином не считается:
+// у окна vscode её нет вовсе, а у только что снятой сессии процесс успевает
+// умереть сам.
+func lostTerminal(pid int, tmux string, alive func(string) bool, mod, now time.Time) bool {
+	if pid <= 0 || tmux == "" || alive(tmux) {
+		return false
+	}
+	if !pidAlive(pid) {
+		return false
+	}
+	return now.Sub(mod) > stuckLostTerm
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -263,6 +294,11 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			if p.Tmux != "" && e.Tmux == "" {
 				e.Tmux = strings.SplitN(p.Tmux, ":", 2)[0]
 			}
+		}
+		// Клин ищется там же, где меряется состояние: у клина все признаки
+		// живого разговора, и без отдельной проверки он им и остаётся.
+		if lostTerminal(e.PID, e.Tmux, alive, f.mod, s.now()) {
+			e.Stuck = stuckLostTermWord
 		}
 		switch {
 		case e.Sock != "":
@@ -501,6 +537,44 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 // strings.Fields и склеивала всё в одну строку, отчего нумерованный список
 // приезжал агенту кашей. Схлопывается только лишнее: возврат каретки, пробелы
 // по краям строк и хвостовые пустые строки.
+// killWedged снимает зависший процесс клиента. Ход ему не прервать: он стоит
+// на записи в терминал, которого нет, и ни Escape, ни реплика в сокет до него
+// не доходят. Сигнал идёт мягкий, а потом жёсткий: клиент, который ещё способен
+// закрыться сам, закроется и запишет транскрипт, а вставший намертво уйдёт по
+// KILL. Состояние разговора на диске от этого не теряется: следующая реплика
+// поднимет ту же сессию резюмом.
+func (s *server) killWedged(w http.ResponseWriter, sid, tmux string, alive func(string) bool) {
+	p, ok := s.peers()[sid]
+	if !ok || p.PID <= 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"процесса чата %s в реестре клиента нет: снимать нечего", sid)})
+		return
+	}
+	if tmux != "" && alive(tmux) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"tmux-сессия %s жива: это не клин, ход прерывается обычным стопом", tmux)})
+		return
+	}
+	proc, err := os.FindProcess(p.PID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+			"процесс %d не нашёлся: %v", p.PID, err)})
+		return
+	}
+	proc.Signal(syscall.SIGTERM)
+	time.Sleep(chatKillPause)
+	if pidAlive(p.PID) {
+		proc.Signal(syscall.SIGKILL)
+	}
+	s.logf("зависший чат %s снят сигналом (pid %d, терминал %s пропал)", sid, p.PID, tmux)
+	writeJSON(w, http.StatusOK, map[string]any{"way": "kill", "pid": p.PID,
+		"message": "зависший процесс снят: следующая реплика поднимет разговор резюмом"})
+}
+
+// chatKillPause это пауза между мягким сигналом и жёстким: клиенту дают
+// закрыться самому, но не дают тянуть ответ ручке.
+const chatKillPause = 700 * time.Millisecond
+
 func chatText(raw string) string {
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	raw = strings.ReplaceAll(raw, "\r", "\n")
@@ -575,12 +649,25 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
+	// Стоп бывает двух родов, и род называет зовущий: обычный это Escape в
+	// живой терминал, а клин снимается сигналом самому процессу. Мёртвому
+	// терминалу Escape подать некуда, и разговор в клине оставался бы вечным.
+	var body struct {
+		Kill bool `json:"kill"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	last := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid])
 	alive := tmuxAliveFn()
+	if body.Kill {
+		s.killWedged(w, sid, last.Tmux, alive)
+		return
+	}
 	if last.Tmux == "" || !alive(last.Tmux) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
 			"чат %s не живёт в нашей tmux: прервать его ход отсюда нечем", sid)})
@@ -646,6 +733,17 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			out := map[string]any{"way": "socket", "pid": p.PID, "where": peerWord(p)}
+			// Клиент с пропавшим терминалом берёт реплику сокетом так же
+			// охотно, как живой, и кладёт её в очередь, которую уже некому
+			// разобрать: про клин надо сказать здесь, иначе доставка выглядит
+			// удачной (инцидент с чатом DK-460).
+			if lostTerminal(p.PID, last.Tmux, tmuxAliveFn(), info.mod, s.now()) {
+				out["stuck"] = stuckLostTermWord
+				out["wedged"] = true
+				s.logf("реплика чата %s легла в очередь клина: %s", sid, stuckLostTermWord)
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
 			// Взятая сокетом реплика доставленной ещё не значит: клиент,
 			// стоящий на вопросе разрешения, кладёт её в очередь и молчит.
 			if why := s.chatStuck(sid); why != "" {
@@ -703,6 +801,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		dir = found.Path
 	}
 	model := s.chatModel(sid, last.Tmux)
+	// Реплики, которые агент так и не прочитал, едут вводной резюма. Клин берёт
+	// их сокетом и складывает в свою очередь, а та умирает вместе с процессом:
+	// без этого человек пишет три реплики, снимает клин и получает ответ только
+	// на последнюю (инцидент с чатом DK-460).
+	text = withLost(s.lostSaid(sid, info.mod), text)
 	sess := chatNewName(task, alive)
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
@@ -729,6 +832,36 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
 			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)})
+}
+
+// lostSaid собирает реплики, сказанные после того, как транскрипт замолчал:
+// всё, что легло в журнал позже последнего хода агента, до него не доехало.
+// Мера грубая нарочно: журнал знает время записи, а транскрипт время хода, и
+// сойтись точнее им негде. Лишняя реплика во вводной резюма это повтор, а
+// потерянная это молчание в ответ на сказанное.
+func (s *server) lostSaid(sid string, mod time.Time) []string {
+	out := []string{}
+	for _, r := range saidLoad(s.cfg.Home, saidSessionKey(sid)) {
+		at, err := time.Parse(time.RFC3339, r.Time)
+		if err != nil || !at.After(mod) {
+			continue
+		}
+		if t := strings.TrimSpace(r.Text); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// withLost клеит недоставленные реплики к новой: агент читает их подряд, как
+// прочитал бы в разговоре, и знает, что они пришли раньше.
+func withLost(lost []string, text string) string {
+	if len(lost) == 0 {
+		return text
+	}
+	head := "Разговор завис, и эти реплики до тебя не дошли: " +
+		strings.Join(lost, "\n") + "\n\nПоследняя реплика: "
+	return head + text
 }
 
 // chatStuck говорит, стоит ли сессия чата на вопросе, который дашборду не

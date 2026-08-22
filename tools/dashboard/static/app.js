@@ -6119,6 +6119,57 @@ function chatWay(st) {
   return { kind: "resume", off: false, why: "" };
 }
 
+// Слово клина приезжает записью чата: считает его сервер, у которого есть и
+// реестр процессов, и список tmux-сессий, и время последнего хода.
+function chatStuckWord(st) {
+  return (st && st.entry && st.entry.stuck) || "";
+}
+
+// Плашка клина: что случилось и одна кнопка выхода. Кнопка делает два шага
+// подряд, потому что человеку они видятся одним: снимает зависший процесс
+// (Escape мёртвому терминалу подать некуда) и поднимает разговор резюмом той же
+// сессии. Недоставленные реплики к вводной резюма приклеит сервер.
+function stuckNote(project, st, word) {
+  const note = el("div", "cnote stuckn");
+  note.append(el("b", "", "Чат завис (" + word + ")."));
+  note.append(el("span", "", "Ход агента стоит, реплики копятся в очереди, " +
+    "которую уже некому разобрать. Нажмите продолжить: зависший процесс снимется, " +
+    "а разговор поднимется резюмом с того же места."));
+  const go = el("button", "btn btn-sm btn-acc", "Продолжить");
+  go.type = "button";
+  go.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    go.disabled = true;
+    unwedge(project, st).catch(console.error).finally(() => { go.disabled = false; });
+  });
+  note.append(go);
+  return note;
+}
+
+// Выход из клина: снятие процесса, потом резюм. Второй шаг идёт только после
+// удачи первого: подъём резюма поверх живого зависшего клиента завёл бы второго
+// агента на тот же разговор.
+async function unwedge(project, st) {
+  sayResult("снимаю зависший процесс...");
+  const kill = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/stop",
+    { method: "POST", body: { kill: true } });
+  if (!kill.ok) {
+    sayResult(kill.body.error || "процесс не снялся", true);
+    return;
+  }
+  sayResult(kill.body.message || "процесс снят");
+  const r = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
+    { method: "POST", body: { text: CHAT_UNWEDGE } });
+  sayResult(apiSaid(r), !r.ok);
+  if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
+  await repaintChat();
+}
+
+// Реплика, которой поднимается разговор после клина. Своих слов человек тут не
+// говорил, и говорить за него нельзя: это заказ продолжения, а не его реплика.
+const CHAT_UNWEDGE = "Разговор завис, процесс был снят и поднят заново. " +
+  "Продолжай с того места, где остановился.";
+
 // Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и
 // ID приходит из реестра по имени tmux-сессии: дашборд опрашивает список, пока
 // он не встанет, и переключается на живой диалог сам.
@@ -6557,6 +6608,11 @@ function chatPanel(project, st) {
     note.append(el("span", "", way.why));
     wrap.append(note);
   }
+  // Клин виден плашкой над полем ввода: разговор в нём выглядит работающим,
+  // реплики уходят «успешно», а хода нет и не будет, пока зависший процесс не
+  // снят. Выход из клина один и стоит тут же кнопкой (инцидент с чатом DK-460).
+  const stuck = chatStuckWord(st);
+  if (stuck) wrap.append(stuckNote(project, st, stuck));
   const busy = makeBusy(project, wrap);
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка

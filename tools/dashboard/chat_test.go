@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -619,5 +620,155 @@ func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	}
 	if !strings.Contains(continuePrompt("XR-1"), pace) {
 		t.Errorf("во вводной продолжения нет правила отзывчивости: %s", continuePrompt("XR-1"))
+	}
+}
+
+// chatsOf читает список чатов проекта ответом ручки.
+func chatsOf(t *testing.T, e *testEnv, c *http.Client) []chatEntry {
+	t.Helper()
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("список чатов: %d", resp.StatusCode)
+	}
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Chats
+}
+
+// writePeer кладёт запись реестра живых сессий клиента: она и говорит, что у
+// разговора есть процесс со своим сокетом.
+func writePeer(t *testing.T, home, sid string, pid int) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"devkit-1","kind":"interactive"}`, pid, sid)
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Клин узнаётся по трём признакам разом: процесс клиента жив, tmux-сессии, в
+// которой он поднят, больше нет, и транскрипт молчит дольше пары минут. Такой
+// разговор выглядит живым (сокет берёт реплики и отвечает удачей), а хода в нём
+// нет и не будет: клиент стоит на записи в исчезнувший терминал, очередь
+// копится, человек видит вечное «работает» (инцидент с чатом DK-460).
+func TestChatEntryWedgeWhenTerminalLost(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	// Транскрипт замер десять минут назад, а процесс жив: свой же и берём, он
+	// точно есть.
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
+	writePeer(t, e.home, sid, os.Getpid())
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+
+	// tmux-сессии нет: список пуст.
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	got := chatsOf(t, e, c)
+	if len(got) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один: %+v", len(got), got)
+	}
+	if got[0].Stuck != stuckLostTermWord {
+		t.Errorf("клин не узнан: stuck=%q, ждал %q", got[0].Stuck, stuckLostTermWord)
+	}
+	// Состояние остаётся живым нарочно: процесс жив, и врать про смерть нельзя,
+	// а про клин сказано своим полем.
+	if got[0].State != chatLive {
+		t.Errorf("состояние разговора в клине %q, ждал %q", got[0].State, chatLive)
+	}
+
+	// Та же сессия при живой tmux это не клин, а обычная работа.
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1-1\t1\t1786000000\n")
+	if got := chatsOf(t, e, c); got[0].Stuck != "" {
+		t.Errorf("живой разговор назван клином: %q", got[0].Stuck)
+	}
+
+	// Свежий транскрипт это идущий ход, а не клин: tmux-сессии нет, но агент
+	// только что писал, и снимать его нельзя.
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Second))
+	if got := chatsOf(t, e, c); got[0].Stuck != "" {
+		t.Errorf("свежий ход назван клином: %q", got[0].Stuck)
+	}
+}
+
+// Недоставленные реплики едут вводной резюма: клин берёт их сокетом и кладёт в
+// очередь, которая умирает вместе с процессом. Без этого человек пишет три
+// реплики, снимает клин и получает ответ только на последнюю.
+func TestLostSaidGoesIntoResume(t *testing.T) {
+	if got := withLost(nil, "последняя"); got != "последняя" {
+		t.Errorf("без потерянных реплик вводная поменялась: %q", got)
+	}
+	got := withLost([]string{"первая", "вторая"}, "третья")
+	for _, want := range []string{"первая", "вторая", "третья", "не дошли"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("во вводной резюма нет %q: %q", want, got)
+		}
+	}
+	if strings.Index(got, "первая") > strings.Index(got, "третья") {
+		t.Error("потерянные реплики встали после последней: порядок разговора сбит")
+	}
+}
+
+// Снятие клина это отдельный род стопа, и род называет зовущий. Обычный стоп
+// подаёт Escape в терминал, а у клина терминала нет: зависший процесс снимается
+// сигналом, иначе разговор остаётся вечным (инцидент с чатом DK-460).
+func TestChatStopKillsWedged(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+
+	// Процесс-жертва настоящий: снятие проверяется тем, что он умер, а не тем,
+	// что ручка так сказала.
+	victim := exec.Command("sleep", "120")
+	if err := victim.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { victim.Process.Kill(); victim.Wait() })
+	writePeer(t, e.home, sid, victim.Process.Pid)
+
+	// tmux-сессии нет: это и есть клин.
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{"kill": true}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("снятие клина: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"kill"`) {
+		t.Errorf("ручка не назвала род стопа: %s", text)
+	}
+	done := make(chan error, 1)
+	go func() { done <- victim.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("зависший процесс не снят: он жив через пять секунд после стопа")
+	}
+
+	// Живая tmux-сессия это не клин, и снимать процесс отказываются словами:
+	// ход там прерывается обычным стопом. Процесс для этой половины свой:
+	// прежний снят, а мёртвого в реестре живых сессий уже нет.
+	second := exec.Command("sleep", "120")
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { second.Process.Kill(); second.Wait() })
+	writePeer(t, e.home, sid, second.Process.Pid)
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1-1\t1\t1786000000\n")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{"kill": true}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusConflict || !strings.Contains(text, "это не клин") {
+		t.Errorf("снятие живой сессии: %d %s, ждал отказ про живую tmux", resp.StatusCode, text)
 	}
 }

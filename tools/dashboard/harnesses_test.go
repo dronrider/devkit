@@ -64,6 +64,33 @@ func TestHarnessesFromAgentctl(t *testing.T) {
 	}
 }
 
+// Порог ротации исполнителя-субагента приезжает из машинного конфига через
+// agentctl harness --json и виден в ответе ручки; без ключа и без agentctl
+// стоит умолчание, нуля снаружи не бывает (DK-397).
+func TestHarnessesExecRotateTokens(t *testing.T) {
+	t.Run("ключ задан", func(t *testing.T) {
+		e := newTestEnv(t)
+		writeAgentctlFake(t, e.bin, `{"source": "фикстура", "exec_rotate_tokens": 640000,
+  "harnesses": [{"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1"}]}`)
+		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != 640000 {
+			t.Fatalf("порог %d, жду 640000 из конфига", v.ExecRotateTokens)
+		}
+	})
+	t.Run("ключа нет", func(t *testing.T) {
+		e := newTestEnv(t)
+		writeAgentctlFake(t, e.bin, harnessJSONFixture)
+		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateDefault {
+			t.Fatalf("порог %d, жду умолчание %d", v.ExecRotateTokens, execRotateDefault)
+		}
+	})
+	t.Run("agentctl не нашёлся", func(t *testing.T) {
+		e := newTestEnv(t)
+		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateDefault {
+			t.Fatalf("порог %d, жду умолчание %d", v.ExecRotateTokens, execRotateDefault)
+		}
+	})
+}
+
 // Отсутствие agentctl и его отказ это причина словами, а не пустой список
 // молча: без причины экран показывал бы кнопку без выбора и не говорил, почему.
 func TestHarnessesNoteInsteadOfSilence(t *testing.T) {

@@ -416,7 +416,20 @@ const paceRule = "Долгие дела (поиск по диску, больш�
 	"субагенту, а ход разговора держи отзывчивым: человек ждёт реплики, а не " +
 	"конца команды."
 
-func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
+// rotateRule это правило ротации исполнителя в заказе поднятой работы.
+// Диспетчер держит одного субагента подолгу, контекст его распухает (усталость
+// видна с ~600 тысяч токенов, деградация с ~900), а свежий исполнитель с
+// короткой вводной работает не хуже. Порог приезжает ключом exec_rotate_tokens
+// машинного конфига (~/.devkit/harness.local) и называется в заказе числом:
+// так его видно снаружи, в самом тексте первой реплики.
+func rotateRule(tokens int) string {
+	return fmt.Sprintf("Исполнителя-субагента ротируй по размеру контекста: чей "+
+		"суммарный контекст перевалил %d токенов (видно по subagent_tokens в "+
+		"уведомлениях), тому новых заданий не давай, следующее задание отдавай "+
+		"свежему субагенту с короткой вводной и передачей хвоста работы.", tokens)
+}
+
+func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl string) string {
 	client := defaultClient
 	head := env
 	if h != nil && !h.Default {
@@ -433,9 +446,10 @@ func chatCmd(env, model, resume, text string, h *Harness, agentctl string) strin
 	if text != "" {
 		// Правило плана цепляется только к заказу подъёма: у резюма текст это
 		// реплика человека, и приписывать к ней наше правило значило бы
-		// говорить за него.
+		// говорить за него. Ротация исполнителя едет тем же вагоном и по той
+		// же причине.
 		if resume == "" {
-			text += " " + planRule
+			text += " " + planRule + " " + rotateRule(rotate)
 		}
 		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
 		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
@@ -528,7 +542,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -823,7 +837,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(task, sess), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(task, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -923,7 +937,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text s
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		chatCmd(chatVars(task, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(task, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -1024,10 +1038,12 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 }
 
 // continuePrompt это заказ продолжения. Он разговорный: сессия уже знает
-// задачу, и пересказывать ей постановку незачем.
-func continuePrompt(id string) string {
+// задачу, и пересказывать ей постановку незачем. Правила едут те же, что у
+// подъёма, включая ротацию исполнителя: длинный разговор диспетчера идёт
+// как раз резюмами, и порог ему нужен не меньше, чем новой сессии.
+func continuePrompt(id string, rotate int) string {
 	return "Продолжай работу по " + id + " с того места, где остановился. " +
-		planRule + " " + paceRule
+		planRule + " " + rotateRule(rotate) + " " + paceRule
 }
 
 func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
@@ -1043,9 +1059,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
-	text := continuePrompt(id)
+	text := continuePrompt(id, s.rotateTokens())
 	if goal {
-		text = "Продолжай цель " + id + ". " + planRule + " " + paceRule
+		text = "Продолжай цель " + id + ". " + planRule + " " +
+			rotateRule(s.rotateTokens()) + " " + paceRule
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {
@@ -1088,7 +1105,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(id, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -1526,7 +1543,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

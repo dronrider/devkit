@@ -604,22 +604,67 @@ exit 0`)
 // дому, и с той стороны разговора это выглядело зависшей сессией, а не работой.
 func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	pace := "отдавай субагенту"
-	fresh := chatCmd("", "opus", "", "посмотри доску", nil, "agentctl")
+	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
 	if !strings.Contains(fresh, pace) || !strings.Contains(fresh, "план работ файлом") {
 		t.Errorf("в заказе подъёма нет правил хода: %s", fresh)
 	}
 	// У резюма текст это реплика человека, и правило плана к ней не цепляется:
 	// план сессия уже ведёт. Отзывчивость нужна и тут, длинный разговор идёт
 	// как раз резюмами.
-	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", nil, "agentctl")
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateDefault, nil, "agentctl")
 	if !strings.Contains(again, pace) {
 		t.Errorf("в резюмном заказе нет правила отзывчивости: %s", again)
 	}
 	if strings.Contains(again, "план работ файлом") {
 		t.Errorf("правило плана уехало в реплику человека: %s", again)
 	}
-	if !strings.Contains(continuePrompt("XR-1"), pace) {
-		t.Errorf("во вводной продолжения нет правила отзывчивости: %s", continuePrompt("XR-1"))
+	if !strings.Contains(continuePrompt("XR-1", execRotateDefault), pace) {
+		t.Errorf("во вводной продолжения нет правила отзывчивости: %s",
+			continuePrompt("XR-1", execRotateDefault))
+	}
+}
+
+// Правило ротации исполнителя едет заказом подъёма с числом порога: диспетчер
+// держит одного субагента подолгу, контекст того распухает, и после порога
+// следующее задание уходит свежему субагенту (DK-397). Число видно прямо в
+// тексте заказа, отдельного экрана у порога нет.
+func TestChatRotateRuleCarriesThreshold(t *testing.T) {
+	fresh := chatCmd("", "opus", "", "посмотри доску", 640000, nil, "agentctl")
+	if !strings.Contains(fresh, "640000") || !strings.Contains(fresh, "subagent_tokens") {
+		t.Errorf("в заказе подъёма нет порога ротации: %s", fresh)
+	}
+	// У резюма текст это реплика человека, правила к ней не цепляются.
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", 640000, nil, "agentctl")
+	if strings.Contains(again, "640000") {
+		t.Errorf("правило ротации уехало в реплику человека: %s", again)
+	}
+	if got := continuePrompt("XR-1", 640000); !strings.Contains(got, "640000") {
+		t.Errorf("во вводной продолжения нет порога ротации: %s", got)
+	}
+}
+
+// Число порога едет от машинного конфига до текста заказа: раскладка с ключом
+// exec_rotate_tokens приезжает ответом agentctl, и заказ нового чата называет
+// её число, а не умолчание.
+func TestChatOrderCarriesConfiguredThreshold(t *testing.T) {
+	e, c := chatEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in
+ls) exit 1;;
+esac
+exit 0`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, `{"source": "фикстура", "exec_rotate_tokens": 777000, "harnesses": []}`)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats",
+		`{"text": "разбери пачку"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём чата: %d %s", resp.StatusCode, body(t, resp))
+	}
+	log := readFile(t, tmuxLog)
+	if !strings.Contains(log, "777000") {
+		t.Fatalf("в заказе не число порога из конфига: %s", log)
 	}
 }
 

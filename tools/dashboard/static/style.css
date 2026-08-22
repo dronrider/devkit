@@ -1299,6 +1299,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Блок «Связи» экрана задачи (круг 2 POC DK-470): задачи стоят под дизайнами
    с небольшим отступом, дорожки те же, что у строк выдачи поиска */
 .dcard .lrel{margin-top:8px;border-top:1px solid var(--line);padding-top:2px}
+.dcard .lmid{display:flex;gap:8px;align-items:center;min-width:0}
+.dcard .lmid .st{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dcard .st.lnone{color:var(--tx3);font-style:italic}
+.dcard .lmeta{font:400 11.5px var(--sans);color:var(--tx3);white-space:nowrap}
+.dcard .lmore{display:block;border:none;background:none;color:var(--acc);font:500 12.5px var(--sans);cursor:pointer;padding:8px 16px 10px;text-align:left}
 
 /* строка агентов: номер задачи ссылкой, вся строка ведёт в разговор */
 .arow.atalk{cursor:pointer}

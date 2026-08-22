@@ -518,7 +518,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// Блок «Связи»: дизайны задачи и упомянутые в постановке задачи (круг 2
 	// POC DK-470).
-	if links := taskLinks(found.Path, id, row.Link, fileText, rows); links != nil {
+	if links := taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
 		resp["links"] = links
 	}
 	writeJSON(w, http.StatusOK, resp)

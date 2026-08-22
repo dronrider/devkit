@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -122,12 +123,23 @@ func (s *server) handleDocPut(w http.ResponseWriter, r *http.Request) {
 // внутри пути tasks/DK-NNN.md.
 var taskIDMentionRe = regexp.MustCompile(`[A-Za-z]+-[0-9]+`)
 
+// taskNum вытаскивает номер из ID для сортировки связей: список стоит по
+// номеру, а не в порядке упоминания, порядок текста постановки случайный.
+func taskNum(id string) int {
+	_, num, _ := strings.Cut(id, "-")
+	n, _ := strconv.Atoi(num)
+	return n
+}
+
 // taskLinks собирает блок «Связи» экрана задачи: сначала LLD самой задачи
 // (файл с её ID в имени либо ссылка строки), затем остальные дизайны из
-// текста, ниже задачи, упомянутые в файле. Заголовки берутся из первых строк
-// документов и со строк доски; упоминание закрытой задачи остаётся без
-// заголовка, экран задачи её всё равно откроет из архива.
-func taskLinks(projectPath, id, link, text string, rows map[string]boardRow) map[string]any {
+// текста, ниже задачи, упомянутые в файле: цели раньше задач, внутри по
+// номеру. Заголовок берётся со строки доски, у закрытой из архива (вместе с
+// датой закрытия), у упоминания без строки и архива из самого файла задачи;
+// не нашёлся нигде, причина едет полем note, голый ID молча не остаётся. Род
+// связи (после, держит) приезжает из зависимостей строки; прочие упоминания
+// идут без рода, источник его не различает, и выдумывать нечего.
+func taskLinks(projectPath, id, link, text string, rows map[string]boardRow, after, blocks []string) map[string]any {
 	seen := map[string]bool{}
 	lld := []map[string]any{}
 	addDoc := func(rel string, own bool) {
@@ -162,6 +174,16 @@ func taskLinks(projectPath, id, link, text string, rows map[string]boardRow) map
 		addDoc(rel, false)
 	}
 	prefix, _, _ := strings.Cut(id, "-")
+	rel := map[string]string{}
+	for _, b := range blocks {
+		rel[b] = "держит"
+	}
+	for _, a := range after {
+		rel[a] = "после"
+	}
+	// Архив читается лениво: у задачи без упоминаний закрытых соседей файл
+	// docs/TASKS-archive.md разбирать незачем.
+	var arch map[string]archiveRow
 	tasks := []map[string]any{}
 	seenTask := map[string]bool{id: true}
 	for _, m := range taskIDMentionRe.FindAllString(text, -1) {
@@ -169,12 +191,41 @@ func taskLinks(projectPath, id, link, text string, rows map[string]boardRow) map
 			continue
 		}
 		seenTask[m] = true
-		row := map[string]any{"id": m}
-		if t := rows[m].Title; t != "" {
-			row["title"] = t
+		row := map[string]any{"id": m, "kind": "задача"}
+		title := rows[m].Title
+		if title == "" {
+			if arch == nil {
+				arch = archiveRows(projectPath)
+			}
+			if a, hit := arch[m]; hit {
+				title = a.Title
+				if a.Closed != "" {
+					row["closed"] = a.Closed
+				}
+			} else if _, txt, hit := archiveFile(projectPath, m); hit {
+				title = searchDocTitle(m, txt)
+			}
+		}
+		if title != "" {
+			row["title"] = title
+			if isGoalTitle(title) {
+				row["kind"] = "цель"
+			}
+		} else {
+			row["note"] = "названия нет ни на доске, ни в архиве"
+		}
+		if r := rel[m]; r != "" {
+			row["rel"] = r
 		}
 		tasks = append(tasks, row)
 	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		gi, gj := tasks[i]["kind"] == "цель", tasks[j]["kind"] == "цель"
+		if gi != gj {
+			return gi
+		}
+		return taskNum(tasks[i]["id"].(string)) < taskNum(tasks[j]["id"].(string))
+	})
 	if len(lld) == 0 && len(tasks) == 0 {
 		return nil
 	}

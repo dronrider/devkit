@@ -1839,10 +1839,33 @@ function depRow(project, id, side, dep) {
 // поэтому вторая сторона это обратный поиск, а не вторая запись. Названы они
 // словами, а не «После» и «Держит»: от тех читателю приходилось достраивать,
 // кто кого ждёт.
-// Блок «Связи» (круг 2 POC DK-470): дизайны задачи и упомянутые в постановке
-// задачи одним местом. Первым идёт LLD самой задачи, за ним остальные
-// дизайны из текста, ниже с отступом связанные задачи; каждая строка это
-// дорога на форму документа или экран задачи.
+// Блок «Связи» (круг 2 POC DK-470, доработка по замечаниям): у каждой строки
+// виден тип артефакта (LLD, цель, задача), у связанной задачи род связи
+// (после, держит) и дата закрытия, где они есть у источника. Первым идёт LLD
+// самой задачи, за ним остальные дизайны из текста, ниже задачи по номеру;
+// каждая строка это дорога на форму документа или экран задачи.
+
+// LINKS_SHOW это видимая часть длинного списка связей: у цели упоминаний
+// бывают десятки, остальное разворачивает кнопка «ещё N». Хвост из одной
+// строки не прячется, кнопка заняла бы столько же места.
+const LINKS_SHOW = 8;
+
+function linkTaskRow(project, t) {
+  const row = el("div", "srow clicky");
+  row.append(el("span", "chip", t.kind || "задача"));
+  const mid = el("div", "lmid");
+  mid.append(el("span", "id", t.id));
+  const title = t.title || t.note || "";
+  mid.append(withFull(el("span", t.title ? "st" : "st lnone", title), t.id + " " + title));
+  row.append(mid);
+  const meta = [];
+  if (t.rel) meta.push(t.rel);
+  if (t.closed) meta.push("закрыта " + t.closed);
+  if (meta.length) row.append(el("span", "lmeta", meta.join(", ")));
+  row.addEventListener("click", () => { goKeepingChat(project + "/" + t.id); });
+  return row;
+}
+
 function linksCard(project, links) {
   const card = el("div", "card dcard");
   card.append(el("div", "dhead", "Связи"));
@@ -1856,12 +1879,15 @@ function linksCard(project, links) {
   const tasks = links.tasks || [];
   if (tasks.length) {
     const box = el("div", "lrel");
-    for (const t of tasks) {
-      const row = el("div", "srow clicky");
-      row.append(el("span", "id", t.id));
-      row.append(withFull(el("span", "st", t.title || ""), t.title || ""));
-      row.addEventListener("click", () => { goKeepingChat(project + "/" + t.id); });
-      box.append(row);
+    const head = tasks.length > LINKS_SHOW + 1 ? tasks.slice(0, LINKS_SHOW) : tasks;
+    for (const t of head) box.append(linkTaskRow(project, t));
+    if (head.length < tasks.length) {
+      const more = el("button", "lmore", "ещё " + (tasks.length - head.length));
+      more.addEventListener("click", () => {
+        more.remove();
+        for (const t of tasks.slice(head.length)) box.append(linkTaskRow(project, t));
+      });
+      box.append(more);
     }
     card.append(box);
   }

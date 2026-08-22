@@ -29,6 +29,9 @@ const works = {
 
 const rowOf = (w) => sandbox.agentRow("demo", w, now);
 const btns = (row) => allByClass(row, "btn").map((b) => b.textContent);
+// Кнопка чата тут значком, как в строке доски: подписи у неё нет, узнаётся она
+// подсказкой.
+const chatBtn = (row) => allByClass(row, "btn").find((b) => String(b.title) === "Чат агента");
 
 // --- у работы с задачей обе дороги, чем бы она ни была поднята ---
 for (const which of ["tmux", "registry"]) {
@@ -38,8 +41,9 @@ for (const which of ["tmux", "registry"]) {
   if (!link || link.textContent !== w.id) {
     fail(which + ": номер задачи не ссылка: " + dump(row));
   }
-  if (!btns(row).includes("Чат")) {
-    fail(which + ": входа в разговор нет: " + JSON.stringify(btns(row)));
+  if (!chatBtn(row)) fail(which + ": входа в разговор нет: " + dump(row));
+  if (!String(chatBtn(row).className).includes("btn-ico")) {
+    fail(which + ": кнопка чата не значком: " + chatBtn(row).className);
   }
   // Ссылка ведёт на форму задачи и не утаскивает за собой чат строки.
   sandbox.location.hash = "#/agents";
@@ -57,8 +61,14 @@ for (const which of ["tmux", "registry"]) {
   }
   const reg = rowOf(works.registry);
   if (btns(reg).includes("Остановить")) fail("реестровой работе достался стоп");
-  if (!dump(reg).includes("поднята мимо дашборда")) {
-    fail("реестровая работа не сказала, почему стопа нет: " + dump(reg));
+  // Приписки в строке больше нет: она занимала полстроки и ломала ряд, а
+  // знание уехало в подсказку строки, где лежат остальные метаданные
+  // (замечание пользователя).
+  if (dump(reg).includes("поднята мимо дашборда")) {
+    fail("приписка вернулась в строку: " + dump(reg));
+  }
+  if (!String(reg.title).includes("поднята мимо дашборда")) {
+    fail("подсказка строки не говорит, почему стопа нет: " + reg.title);
   }
 }
 
@@ -66,8 +76,7 @@ for (const which of ["tmux", "registry"]) {
 {
   const row = rowOf(works.tmux);
   sandbox.location.hash = "#/agents";
-  allByClass(row, "btn").find((b) => b.textContent === "Чат")
-    .handlers.click({ stopPropagation: () => {} });
+  chatBtn(row).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!sandbox.location.hash.includes(works.tmux.session)) {
     fail("кнопка открыла не разговор этой сессии: " + sandbox.location.hash);
@@ -95,7 +104,7 @@ for (const which of ["tmux", "registry"]) {
 {
   const row = rowOf(works.bare);
   if (byClass(row, "alink")) fail("у сессии без задачи взялась ссылка на задачу");
-  if (!btns(row).includes("Чат")) fail("у сессии без задачи нет разговора");
+  if (!chatBtn(row)) fail("у сессии без задачи нет разговора");
   sandbox.location.hash = "#/agents";
   row.handlers.click({ stopPropagation: () => {} });
   await settle();

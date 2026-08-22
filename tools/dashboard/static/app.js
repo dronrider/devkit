@@ -1020,34 +1020,11 @@ function sectionClass(base, key, tab) {
   return base + " bsec" + (sectionTab(key) === tab ? " onsec" : "");
 }
 
-function boardTabs() {
-  return [
-    { key: "sess", label: "Сессии" },
-    { key: "back", label: "Бэклог" },
-  ];
-}
-
+// Какая половина доски открыта на телефоне: сессии (In progress и Check) либо
+// задачи (Backlog и Blocked). На ноутбуке видны обе, и признак там не при чём.
+// Умолчание это сессии: экран доски открывают, чтобы посмотреть на идущую
+// работу, а не на очередь.
 let boardTab = "sess";
-
-// Полоса разделов (только телефон): два таба доски. Накопитель черновиков
-// отсюда уехал в нижние вкладки, к «Доске» и «Агентам»: свой раздел с адресом
-// честнее третьей кнопки в полосе, которая табом доски не была.
-function boardTabsBar() {
-  const bar = el("div", "btabs");
-  for (const tab of boardTabs()) {
-    const btn = el("button", "btab" + (tab.key === boardTab ? " onbtab" : ""), tab.label);
-    btn.type = "button";
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      boardTab = tab.key;
-      markBoardTab();
-    });
-    bar.append(btn);
-  }
-  // Черновиков тут больше нет: на телефоне они стоят своей нижней вкладкой,
-  // как «Доска» и «Агенты», и второй дороги к ним с доски не нужно.
-  return bar;
-}
 
 // Открытый таб отмечается по месту, без перерисовки доски: список уже собран,
 // и пересобирать его ради подсветки значило бы ронять прокрутку и фокус.
@@ -1056,11 +1033,12 @@ function markBoardTab() {
   for (const node of groups.querySelectorAll(".bsec")) {
     node.classList.toggle("onsec", node.dataset.tab === boardTab);
   }
-  const bar = groups.querySelector(".btabs");
+  const bar = groups.querySelector(".ktabs");
   if (!bar) return;
-  boardTabs().forEach((tab, i) => {
-    bar.children[i].classList.toggle("onbtab", tab.key === boardTab);
-  });
+  const now = boardKindNow("tasks");
+  for (const btn of bar.children) {
+    btn.classList.toggle("onktab", btn.dataset.kind === now);
+  }
 }
 
 // Заведение задачи на телефоне это плавающий плюс над нижними вкладками:
@@ -1117,15 +1095,57 @@ function blockedItems(project, parked, held) {
 // разделом стояли наравне с «Агентами», у которых обзор всех проектов сразу
 // (решение пользователя). Старый адрес #проект/drafts никуда не делся, он
 // открывает второй таб.
+// Узкий экран это телефон: там колонки нет, разделы живут нижними вкладками, и
+// доска раскладывается по табам целиком.
+function narrowScreen() {
+  return Boolean(window.matchMedia && window.matchMedia("(max-width:900px)").matches);
+}
+
+// Табы экрана доски. На ноутбуке их два, задачи и накопитель. На телефоне
+// между ними встаёт третий, «Сессии»: прежде тем же самым занимался свой
+// переключатель под полосой табов, и два ряда переключателей подряд отвечали
+// на один вопрос, «что показать» (замечание пользователя). Раздел «Агенты»
+// живёт своей вкладкой и на телефоне, и на ноутбуке, третьего таба на широком
+// экране не просит.
+function boardKinds() {
+  const kinds = [["tasks", "Задачи"], ["drafts", "Черновики"]];
+  if (narrowScreen()) kinds.splice(1, 0, ["sess", "Сессии"]);
+  return kinds;
+}
+
+// Какой таб открыт: у накопителя свой адрес, а задачи с сессиями это два вида
+// одного экрана доски, и разводит их полоса секций (boardTab).
+function boardKindNow(kind) {
+  if (kind === "drafts") return "drafts";
+  return narrowScreen() && boardTab === "sess" ? "sess" : "tasks";
+}
+
 function boardKindBar(project, kind) {
   const bar = el("div", "ktabs");
-  for (const [key, label] of [["tasks", "Задачи"], ["drafts", "Черновики"]]) {
-    const btn = el("button", "ktab" + (key === kind ? " onktab" : ""), label);
+  const now = boardKindNow(kind);
+  for (const [key, label] of boardKinds()) {
+    const btn = el("button", "ktab" + (key === now ? " onktab" : ""), label);
     btn.type = "button";
+    btn.dataset.kind = key;
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      if (key === kind) return;
-      goKeepingChat(project + (key === "drafts" ? "/drafts" : ""));
+      // Открытое считается на нажатии, а не на сборке полосы: половины доски
+      // переключаются по месту, узлы кнопок при этом живут дальше, и знание,
+      // снятое при сборке, устаревало после первого же переключения.
+      if (key === boardKindNow(kind)) return;
+      if (key === "drafts") {
+        goKeepingChat(project + "/drafts");
+        return;
+      }
+      // Задачи и сессии это один экран: с накопителя туда ведёт переход, а на
+      // самом экране меняется только показанная половина, по месту и без
+      // перерисовки списка.
+      boardTab = key === "sess" ? "sess" : "back";
+      if (kind === "drafts") {
+        goKeepingChat(project);
+        return;
+      }
+      markBoardTab();
     });
     bar.append(btn);
   }
@@ -1136,12 +1156,11 @@ function renderBoard(project, board) {
   const groups = document.getElementById("groups");
   const items = [{
     key: "board-kind",
-    sign: project + "|tasks",
+    // Отпечаток несёт открытую половину и ширину экрана: от первой зависит
+    // подсветка таба, от второй сам их набор (на телефоне табов три). Без
+    // этого перерисовка оставляла бы на экране полосу, собранную по-старому.
+    sign: [project, boardKindNow("tasks"), narrowScreen()].join("|"),
     make: () => boardKindBar(project, "tasks"),
-  }, {
-    key: "board-tabs",
-    sign: project,
-    make: () => boardTabsBar(),
   }];
   // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
   // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
@@ -8767,9 +8786,14 @@ function workTaskLink(project, id) {
 function agentRow(project, w, now) {
   const row = el("div", "arow");
   const addr = workChatAddr(w);
+  const tips = [];
+  if (addr) tips.push("Открыть разговор этой работы");
+  if (w.via === "registry") {
+    tips.push("сессия поднята мимо дашборда: остановить работу можно там, где она поднята");
+  }
+  if (tips.length) row.title = tips.join(". ");
   if (addr) {
     row.classList.add("atalk");
-    row.title = "Открыть разговор этой работы";
     row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
   }
   row.append(el("span", "dot" + (w.via === "registry" ? " dot-other" : " pulse")));
@@ -8798,19 +8822,22 @@ function agentRow(project, w, now) {
   // та же панель, а ручку для реплики выбирает она сама (DK-435). Панель
   // встаёт хвостом поверх текущего раздела, а не уводит на доску.
   if (addr) {
-    const talk = el("button", "btn btn-sm", "Чат");
+    const talk = el("button", "btn btn-sm btn-ico");
+    talk.append(icon("i-chat"));
+    withTip(talk, "Чат агента");
+    talk.setAttribute("aria-label", "Чат агента " + (w.id || w.session || ""));
     talk.addEventListener("click", (ev) => {
       ev.stopPropagation();
       openChat(chatAddr(project, addr));
     });
     acts.append(talk);
   }
-  if (w.via === "registry") {
-    // Работа поднята мимо дашборда: её сессией он не распоряжается, и кнопки
-    // остановки у неё нет.
-    acts.append(withTip(el("span", "stale", "сессия поднята мимо дашборда"),
-      "остановить работу можно там, где она поднята"));
-  } else if (w.via === "tmux" && w.id) {
+  // Работа из реестра поднята мимо дашборда, и кнопки остановки у неё нет.
+  // Словами это в строке больше не стоит: приписка занимала полстроки и ломала
+  // ряд, а сказать ей было нечего сверх того, что видно по отсутствию кнопки
+  // (замечание пользователя). Знание уехало в подсказку строки, где и лежат
+  // остальные метаданные.
+  if (w.via === "tmux" && w.id) {
     const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
     stop.addEventListener("click", (ev) => {
       ev.stopPropagation();

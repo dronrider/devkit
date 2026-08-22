@@ -284,11 +284,14 @@ func TestStaticDraftsSection(t *testing.T) {
 	if strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="nav-drafts"`) {
 		t.Error("раздел черновиков вернулся в меню: накопитель это таб доски")
 	}
-	kind := funcBody(t, text, "function boardKindBar(")
-	for _, want := range []string{`"Задачи"`, `"Черновики"`, `"/drafts"`} {
-		if !strings.Contains(kind, want) {
+	kinds := funcBody(t, text, "function boardKinds(")
+	for _, want := range []string{`"Задачи"`, `"Черновики"`} {
+		if !strings.Contains(kinds, want) {
 			t.Errorf("в табах доски нет %q", want)
 		}
+	}
+	if !strings.Contains(funcBody(t, text, "function boardKindBar("), `"/drafts"`) {
+		t.Error("таб черновиков не ведёт на адрес накопителя")
 	}
 	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts")`) {
 		t.Error("накопитель открывается без табов доски: дороги назад к задачам нет")

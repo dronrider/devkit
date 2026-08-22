@@ -887,11 +887,21 @@ func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 			t.Errorf("в меню плюса нет %q", want)
 		}
 	}
-	bar := funcBody(t, app, "function boardTabsBar(")
-	for _, want := range []string{"boardTabs()", "markBoardTab("} {
+	// Своей полосы-переключателя под табами больше нет: третьим табом на
+	// телефоне стоят «Сессии», а два ряда переключателей подряд отвечали на
+	// один вопрос (замечание пользователя).
+	if strings.Contains(app, "function boardTabsBar(") {
+		t.Error("полоса-переключатель вернулась под табы доски")
+	}
+	bar := funcBody(t, app, "function boardKindBar(")
+	for _, want := range []string{"boardKinds()", "markBoardTab("} {
 		if !strings.Contains(bar, want) {
-			t.Errorf("полоса разделов собрана не полностью: нет %q", want)
+			t.Errorf("полоса табов собрана не полностью: нет %q", want)
 		}
+	}
+	kinds := funcBody(t, app, "function boardKinds(")
+	if !strings.Contains(kinds, "narrowScreen()") || !strings.Contains(kinds, `"Сессии"`) {
+		t.Error("таб сессий не привязан к узкому экрану: на ноутбуке живут «Агенты»")
 	}
 	// Черновики отсюда уехали в раздел меню со своим адресом, и полоса доски
 	// их больше не носит: третья кнопка в ней табом доски не была, а глаза

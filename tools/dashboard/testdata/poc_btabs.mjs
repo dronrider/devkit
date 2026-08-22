@@ -12,9 +12,10 @@
 import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
   from "./poc_dom.mjs";
 
-const board = { sections: [{ key: "backlog", rows: [
-  { id: "XR-1", title: "первая строка", sect: "backlog" },
-] }] };
+const board = { sections: [
+  { key: "in-progress", rows: [{ id: "XR-9", title: "идущая работа", sect: "in-progress" }] },
+  { key: "backlog", rows: [{ id: "XR-1", title: "первая строка", sect: "backlog" }] },
+] };
 const drafts = [{ id: "XR-D1", title: "запись накопителя", file: "docs/tasks/drafts/XR-D1.md" }];
 const works = [
   { id: "XR-1", kind: "task", via: "tmux", title: "первая строка", session: "aaaa1111" },
@@ -103,6 +104,48 @@ await go("#demo");
   // читалась бы недорисованной.
   sandbox.renderLive("demo", []);
   if (live.children.length) fail("полоска осталась на экране без работ");
+}
+
+// --- телефон: третий таб «Сессии» вместо своего переключателя ---
+{
+  // Узкий экран мерится тем же запросом, что и в статике.
+  sandbox.window.matchMedia = (q) => ({ matches: String(q).includes("max-width:900px"),
+    addEventListener: () => {}, removeEventListener: () => {} });
+  await go("#demo");
+  const names = tabs().map((t) => t.textContent);
+  if (names.join("|") !== "Задачи|Сессии|Черновики") {
+    fail("на телефоне табы не те: " + JSON.stringify(names));
+  }
+  if (byClass(groups, "btabs")) fail("старый переключатель «Бэклог/Сессии» остался на экране");
+  const sect = (key) => allByClass(groups, "bsec").find((n) => n.dataset.tab === key);
+  const opened = (key) => String(sect(key).className).includes("onsec");
+
+  // Половины доски переключаются по месту: адрес тот же, список не
+  // пересобирается, и подсветка переезжает вместе с секциями.
+  const was = sandbox.location.hash;
+  tabs()[1].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (sandbox.location.hash !== was) fail("таб сессий тронул адрес: " + sandbox.location.hash);
+  if (openTab() !== "Сессии") fail("подсветка не переехала на сессии: " + openTab());
+  if (!opened("sess") || opened("back")) fail("открыта не та половина доски");
+
+  tabs()[0].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (openTab() !== "Задачи") fail("подсветка не переехала на задачи: " + openTab());
+  if (!opened("back") || opened("sess")) fail("половина задач не открылась");
+
+  // С накопителя «Сессии» возвращают на доску своим переходом.
+  await go("#demo/drafts");
+  if (tabs().length !== 3) fail("на телефоне накопитель показал не три таба");
+  tabs()[1].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (sandbox.location.hash.replace(/^#/, "") !== "demo") {
+    fail("с накопителя сессии увели не на доску: " + sandbox.location.hash);
+  }
+  await sandbox.refresh();
+  await settle();
+  if (openTab() !== "Сессии") fail("после возврата открыт не таб сессий: " + openTab());
+  sandbox.window.matchMedia = () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} });
 }
 
 console.log("poc_btabs: ok");

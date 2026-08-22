@@ -13,7 +13,10 @@
 («devkit» это доска проекта, «/agents» раздел агентов), и тогда меню в снимок
 не вписывается, оно принадлежит главной.
 
-Зовётся: python3 testdata/poc_shot_home.py <база> <токен> <файл.png> [хэш]
+Ширина окна пятым доводом: телефонная вёрстка живёт за 900 точками, и
+проверять её надо в её же ширине.
+
+Зовётся: python3 testdata/poc_shot_home.py <база> <токен> <файл.png> [хэш] [ширина]
 """
 import os
 import re
@@ -52,7 +55,7 @@ def page(text, css, menu):
     return html
 
 
-def shot(base, token, out, hash_=""):
+def shot(base, token, out, hash_="", width="1400"):
     if not os.path.exists(CHROME):
         print("chrome не найден, снимок пропущен")
         return 1
@@ -78,7 +81,7 @@ def shot(base, token, out, hash_=""):
                 subprocess.run(
                     [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
                      "--hide-scrollbars", "--user-data-dir=" + profile,
-                     "--window-size=1400,900", "--screenshot=" + name, "file://" + html],
+                     "--window-size=%s,900" % width, "--screenshot=" + name, "file://" + html],
                     capture_output=True, text=True, timeout=40)
             except subprocess.TimeoutExpired:
                 pass
@@ -94,4 +97,4 @@ if __name__ == "__main__":
     if len(sys.argv) < 4:
         sys.stderr.write(__doc__)
         raise SystemExit(2)
-    raise SystemExit(shot(*sys.argv[1:5]))
+    raise SystemExit(shot(*sys.argv[1:6]))

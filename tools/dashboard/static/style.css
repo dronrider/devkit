@@ -636,11 +636,18 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .trow .tt{order:2;flex-direction:column;align-items:flex-start;gap:6px}
   .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
   .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
-  .trow .meta{order:1;justify-content:flex-start}
+  .trow .meta{order:1;justify-content:flex-start;flex-wrap:wrap}
   /* телефон: сумма ранга и действие строки с пальцем в 44 пикселя, действие
      прижато к правому краю */
   .rsum{min-width:44px;min-height:44px;text-align:left}
-  .trow .meta .btn{margin-left:auto;height:36px}
+  .trow .meta .btn{height:36px}
+  /* Вправо уезжает первая из кнопок, а не каждая: с двумя «margin-left:auto»
+     свободное место делилось между ними, и длинное действие вылезало за край
+     экрана (кнопка чата встала в строку значком). */
+  .trow .meta .btn-ico{margin-left:auto;width:36px}
+  .trow .meta .btn-ico + .btn,
+  .trow .meta .btn-ico + .split{margin-left:6px}
+  .trow .meta > .btn:first-of-type{margin-left:auto}
   /* телефон: составная кнопка целиком уходит вправо, стрелка держит палец в
      44 пикселя по ширине, а список подписок не выходит за край экрана */
   .trow .meta .split{margin-left:auto}

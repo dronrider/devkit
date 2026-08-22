@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -526,6 +527,10 @@ type reply struct {
 	Text string `json:"text,omitempty"`
 	Tool string `json:"tool,omitempty"`
 	Note string `json:"note,omitempty"`
+	// Who это автор реплики словом, когда он не тот, о ком говорит роль:
+	// каналом живых сессий в ленту приходят слова другого агента, а роль у
+	// такой записи всё равно user, и панель подписывала их «вы».
+	Who string `json:"who,omitempty"`
 	// Sel это выделенный человеком кусок постановки, приложенный к реплике
 	// контекстом, а SelFile называет файл, откуда он взят. В ленте это
 	// свёрнутый блок при пузыре, а агенту оно уезжает префиксом самой реплики:
@@ -817,6 +822,102 @@ var peerWrapRe = regexp.MustCompile(`(?s)<cross-session-message\b([^>]*)>(.*?)</
 
 var peerFromRe = regexp.MustCompile(`from-name="([^"]*)"`)
 
+// dashboardPeer это имя отправителя, каким подписывается сам дашборд: реплику
+// с него пишет человек, дашборд только несёт.
+const dashboardPeer = "dashboard"
+
+// Автор реплики словом: «вы» у человека, «агент-диспетчер» у живой сессии
+// клиента, «агент» у всего прочего, что пришло каналом. Слова одни на сервер и
+// на панель.
+const (
+	whoHuman = "вы"
+	whoLead  = "агент-диспетчер"
+	whoAgent = "агент"
+)
+
+// peerKinds это короткий кэш реестра живых сессий клиента: у каждой записи там
+// написано имя и чем сессия является. Реестр читается не чаще раза в
+// peerKindsTTL: реплик канала в ленте бывают сотни, и обход каталога на каждую
+// стоил бы дороже самой ленты.
+var peerKinds struct {
+	sync.Mutex
+	at   time.Time
+	kind map[string]string
+}
+
+const peerKindsTTL = 5 * time.Second
+
+// peerKind говорит, чем был отправитель реплики: interactive это живая сессия
+// клиента (окно человека либо сессия, поднятая дашбордом), прочее это другой
+// процесс. Имени нет в реестре, значит сессия уже кончилась, и чем она была,
+// сказать нечем.
+func peerKind(name string) string {
+	peerKinds.Lock()
+	defer peerKinds.Unlock()
+	if peerKinds.kind == nil || time.Since(peerKinds.at) > peerKindsTTL {
+		peerKinds.kind = readPeerKinds()
+		peerKinds.at = time.Now()
+	}
+	return peerKinds.kind[name]
+}
+
+// peerRegistryDir это каталог реестра живых сессий клиента. Он машинный, а не
+// проектный, и живёт в настоящем доме человека: у второго экземпляра дашборда
+// (POC) свой подложный дом, а клиент пишет реестр всё равно в настоящий.
+// Отдельной переменной он ради стенда: подсовывать стенду настоящий реестр
+// машины значило бы проверять чужие живые сессии.
+var peerRegistryDir = func() string { return peerDir(realHomeOr("")) }
+
+// forgetPeerKinds сбрасывает кэш реестра: зовётся стендом, у которого реестр
+// меняется в пределах одного прогона.
+func forgetPeerKinds() {
+	peerKinds.Lock()
+	defer peerKinds.Unlock()
+	peerKinds.kind = nil
+}
+
+func readPeerKinds() map[string]string {
+	out := map[string]string{}
+	dir := peerRegistryDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var p peer
+		if json.Unmarshal(data, &p) != nil || p.Name == "" {
+			continue
+		}
+		out[p.Name] = p.Kind
+	}
+	return out
+}
+
+// peerAuthor называет автора реплики, пришедшей каналом живых сессий. «Вы»
+// достаётся только тому, что человек написал сам: реплике с дашборда и словам,
+// набранным в самом окне сессии. Всё, что прислал другой процесс клиента, это
+// агент, и подпись у него своя: живая сессия машины ведёт работу, значит
+// диспетчер, а всё прочее (субагент, чужой процесс, умершая сессия) остаётся
+// просто агентом. Пузырь у неавторских реплик нейтральный, не пользовательский:
+// подпись «вы» под чужими словами врала цветом заодно с именем (замечание
+// пользователя).
+func peerAuthor(name string) string {
+	if name == "" || name == dashboardPeer {
+		return ""
+	}
+	if peerKind(name) == "interactive" {
+		return whoLead
+	}
+	return whoAgent
+}
+
 // peerSource подписывает реплику каналом. Своя реплика с дашборда это реплика
 // человека: пишет её он, а дашборд только несёт. Чужая сессия называется своим
 // именем, иначе непонятно, кто вмешался в разговор.
@@ -824,7 +925,7 @@ func peerSource(name string) string {
 	// Реплика с дашборда это реплика человека, и подписывать её источником
 	// незачем: он и так видит, где написал. Подпись остаётся только у чужой
 	// сессии, вмешавшейся в разговор (замечание 17 двенадцатого круга POC).
-	if name == "dashboard" {
+	if name == dashboardPeer {
 		return ""
 	}
 	if name == "" {
@@ -990,7 +1091,7 @@ func addUser(add func(reply), role, at, text string) {
 		shot, rest0 := cutShot(inner)
 		sel, file, rest := cutSelection(rest0)
 		add(reply{Role: role, Time: at, Text: rest, Note: peerSource(name),
-			Sel: sel, SelFile: file, Shot: shot})
+			Who: peerAuthor(name), Sel: sel, SelFile: file, Shot: shot})
 		return
 	}
 	if shot, rest0 := cutShot(text); shot != "" {

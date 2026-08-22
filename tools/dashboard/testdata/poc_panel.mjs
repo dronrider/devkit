@@ -237,6 +237,46 @@ async function feedOf(items, sid) {
   return box;
 }
 
+// --- авторство реплик канала: три подписи и три цвета ---
+// Реплика, пришедшая каналом живых сессий, лежит в транскрипте ролью user, и
+// лента подписывала её «вы» жёлтым пузырём человека, кем бы она ни была
+// написана. Автора теперь называет сервер полем who, а «вы» остаётся только у
+// того, что человек написал сам (замечание пользователя).
+{
+  const at = "2026-08-13T09:00:00+03:00";
+  const box = await feedOf([
+    { seq: 1, key: "m:1", role: "user", text: "слова человека", time: at },
+    { seq: 2, key: "m:2", role: "user", text: "слова диспетчера", time: at,
+      who: "агент-диспетчер", note: "из сессии devkit-20" },
+    { seq: 3, key: "m:3", role: "user", text: "слова субагента", time: at,
+      who: "агент", note: "из сессии devkit-sub" },
+  ], "aaaa1111-1111");
+  const bubbles = allByClass(box, "msg");
+  if (bubbles.length !== 3) fail("пузырей в ленте " + bubbles.length + ", ждал три");
+  const meta = (b) => dump(byClass(b, "mm"));
+  if (!meta(bubbles[0]).startsWith("вы")) {
+    fail("своя реплика подписана не «вы»: " + meta(bubbles[0]));
+  }
+  if (!String(bubbles[0].className).includes("me")) {
+    fail("своя реплика перестала быть пузырём человека: " + bubbles[0].className);
+  }
+  if (!meta(bubbles[1]).startsWith("агент-диспетчер")) {
+    fail("реплика живой сессии подписана не диспетчером: " + meta(bubbles[1]));
+  }
+  if (!meta(bubbles[1]).includes("из сессии devkit-20")) {
+    fail("имя приславшей сессии пропало: " + meta(bubbles[1]));
+  }
+  if (String(bubbles[1].className).includes("me")) {
+    fail("чужая реплика нарисована жёлтым пузырём человека: " + bubbles[1].className);
+  }
+  if (!meta(bubbles[2]).startsWith("агент,")) {
+    fail("реплика прочего агента подписана не «агент»: " + meta(bubbles[2]));
+  }
+  if (String(bubbles[2].className).includes("me")) {
+    fail("реплика агента нарисована пузырём человека: " + bubbles[2].className);
+  }
+}
+
 // --- работа субагента идёт той же лентой, без блока ---
 // Свёрнутый блок с заголовком и счётом ходов был нашей выдумкой: человек
 // просил видеть работу агента так же, как её видно в vscode. Записи стоят в

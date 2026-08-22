@@ -1823,3 +1823,66 @@ func TestSessionPlanFileWins(t *testing.T) {
 	}
 	_ = path
 }
+
+// Автор реплики, пришедшей каналом живых сессий, читается по отправителю:
+// дашборд несёт слова человека, живая сессия клиента это агент-диспетчер, а
+// всё прочее просто агент. До этого любая такая реплика рисовалась пузырём
+// «вы» и жёлтым цветом человека, хотя писал её другой процесс (замечание
+// пользователя).
+func TestPeerReplyAuthorBySource(t *testing.T) {
+	dir := t.TempDir()
+	old := peerRegistryDir
+	peerRegistryDir = func() string { return dir }
+	t.Cleanup(func() {
+		peerRegistryDir = old
+		forgetPeerKinds()
+	})
+	live := `{"pid":1,"sessionId":"aaa","name":"devkit-20","kind":"interactive"}`
+	if err := os.WriteFile(filepath.Join(dir, "1.json"), []byte(live), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := `{"pid":2,"sessionId":"bbb","name":"devkit-sub","kind":"sdk"}`
+	if err := os.WriteFile(filepath.Join(dir, "2.json"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forgetPeerKinds()
+
+	line := func(name, text string) string {
+		body := fmt.Sprintf(`<cross-session-message from=\"uds:/tmp/cc-socks/9.sock\" `+
+			`from-name=\"%s\" from-mode=\"prompting\">\n%s\n</cross-session-message>`, name, text)
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"%s"},`+
+			`"timestamp":"2026-08-21T10:00:00.000Z"}`, body) + "\n"
+	}
+	data := []byte(line("dashboard", "слова человека") +
+		line("devkit-20", "слова диспетчера") +
+		line("devkit-sub", "слова субагента"))
+
+	got := parseReplies(data, 0)
+	if len(got) != 3 {
+		t.Fatalf("реплик в ленте %d, ждал три: %+v", len(got), got)
+	}
+	for i, want := range []struct{ text, who, note string }{
+		{"слова человека", "", ""},
+		{"слова диспетчера", whoLead, "из сессии devkit-20"},
+		{"слова субагента", whoAgent, "из сессии devkit-sub"},
+	} {
+		if got[i].Text != want.text {
+			t.Fatalf("реплика %d: текст %q, ждал %q", i, got[i].Text, want.text)
+		}
+		if got[i].Who != want.who {
+			t.Errorf("реплика %q подписана %q, ждал %q", want.text, got[i].Who, want.who)
+		}
+		if got[i].Note != want.note {
+			t.Errorf("реплика %q: источник %q, ждал %q", want.text, got[i].Note, want.note)
+		}
+		if got[i].Role != "user" {
+			t.Errorf("реплика %q сменила роль на %q", want.text, got[i].Role)
+		}
+	}
+	// Умершая сессия из реестра пропала, и чем она была, сказать нечем: подпись
+	// остаётся агентской, а не человеческой.
+	gone := parseReplies([]byte(line("devkit-ff", "слова мёртвой сессии")), 0)
+	if len(gone) != 1 || gone[0].Who != whoAgent {
+		t.Fatalf("реплика умершей сессии подписана %q", gone[0].Who)
+	}
+}

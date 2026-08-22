@@ -442,6 +442,11 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			// ни экрана.
 			task, note = "", aboutTaskNote(task, note)
 		}
+		// Разговорный чат задачи остаётся её работой на экране «Агенты»: сессия
+		// живая, разговор идёт, и номер задачи у него свой. Строку он при этом
+		// не присваивает, и признак разводит эти два случая: без него чат по
+		// чужой задаче возвращал на неё кнопки конвейера (жалоба на DK-460).
+		talk := task != "" && !leadsTask(binds[f.ID].Tmux, f.suffix, note)
 		kind, title, sect := "session", "", ""
 		if task != "" {
 			if busy[task] {
@@ -475,7 +480,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			}
 		}
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
-			Via: "session", Session: f.ID, Note: note})
+			Via: "session", Session: f.ID, Note: note, Talk: talk})
 	}
 	return works
 }

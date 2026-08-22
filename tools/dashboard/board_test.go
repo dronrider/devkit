@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // funcBody вырезает тело функции статики по её началу: тесты разметки
@@ -1188,4 +1189,76 @@ func TestStaticTactsRowHeights(t *testing.T) {
 			t.Errorf("%s: узкая половина шириной %d, макет держит 30", what, got["arrow-w"])
 		}
 	}
+}
+
+// Разговорный чат задачу не присваивает: строка, которую ведут на другой
+// машине, остаётся чужой, пока у неё нет исполнительской сессии. Прежде
+// сервер считал своей всякую сессию с привязкой к задаче, и первый же чат по
+// DK-460 возвращал на строку кнопки конвейера (жалоба пользователя). Критерий
+// один (leadsTask), и проверяется он тем же путём, каким его видит экран:
+// ответом ручки доски.
+func TestBoardTalkChatKeepsRunOther(t *testing.T) {
+	e, _, _ := runsEnv(t, "")
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "cccc3333-3333-4333-8333-333333333333"
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Minute))
+	bind := func(tmux string) {
+		writeBinds(t, e.home, fmt.Sprintf("2026-08-22T11:59:00 сессия %s задача XR-100 проект demo "+
+			"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n", sid, e.proj, tmux))
+	}
+
+	bind("chat-XR-100-1")
+	if got := boardRows(t, e)["XR-100"]; got.Run != runOther {
+		t.Errorf("строку присвоил разговорный чат: run=%q, ожидал %q", got.Run, runOther)
+	}
+	// Сам разговор при этом остаётся живой работой раздела «Агенты» и знает
+	// свою задачу: у строки там две дороги, в задачу и в чат.
+	talk := workByID(projectWorks(t, e), "XR-100")
+	if talk == nil || !talk.Talk {
+		t.Fatalf("разговор пропал из работ или не помечен разговором: %+v", projectWorks(t, e))
+	}
+
+	// Исполнительская сессия ту же строку присваивает: имя tmux-сессии и
+	// говорит, кто её ведёт.
+	bind("task-XR-100")
+	if got := boardRows(t, e)["XR-100"]; got.Run == runOther {
+		t.Errorf("исполнительская сессия строку не присвоила: run=%q", got.Run)
+	}
+	if lead := workByID(projectWorks(t, e), "XR-100"); lead == nil || lead.Talk {
+		t.Errorf("работа конвейера потерялась или помечена разговором: %+v", lead)
+	}
+}
+
+// workByID достаёт работу задачи из списка: кроме неё в окружении стенда
+// живут и другие, чужие этой проверке.
+func workByID(list []Work, id string) *Work {
+	for i := range list {
+		if list[i].ID == id {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
+// projectWorks читает живые работы проекта тем же ответом, каким их читает
+// экран «Агенты».
+func projectWorks(t *testing.T, e *testEnv) []Work {
+	t.Helper()
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects", "")
+	var got struct {
+		Projects []struct {
+			Name  string `json:"name"`
+			Works []Work `json:"works"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range got.Projects {
+		if p.Name == "demo" {
+			return p.Works
+		}
+	}
+	return nil
 }

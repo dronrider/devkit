@@ -105,7 +105,9 @@ const (
 func runMarks(works []Work) map[string]string {
 	live := map[string]string{}
 	for _, w := range works {
-		if w.ID != "" {
+		// Разговор о задаче признака работы строке не даёт: чат её не ведёт, и
+		// строка остаётся такой, какой была без него (leadsTask).
+		if w.ID != "" && !w.Talk {
 			live[w.ID] = w.Via
 		}
 	}

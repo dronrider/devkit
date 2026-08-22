@@ -6567,25 +6567,28 @@ function chatPanel(project, st) {
   }
   const send = el("button", "btn btn-acc", "Отправить");
   send.disabled = Boolean(way.off);
-  // Вложение уезжает на сервер до самой реплики: агенту нужен путь, а он
-  // рождается только после записи файла.
+  // Вложение уезжает на сервер раньше самой реплики: агенту нужен путь, а он
+  // рождается только после записи файла. Сессии у чата к этому моменту может и
+  // не быть (новый разговор, чужая задача), и тогда файл ложится под свежим
+  // ключом: прежде вложение без сессии пропадало молча, картинка не уезжала, и
+  // человек узнавал об этом только от агента (жалоба на чат DK-460).
+  const shotKey = () => st.sid || "new-" + Date.now();
+
   const putShot = async (pic) => {
-    if (!pic || !st.sid) return "";
+    if (!pic) return { path: "", error: "" };
     // dataURL это «data:<тип>;base64,<данные>»: режется он по первой запятой,
     // в самом base64 запятых нет. Тип берётся из dataURL, а не из типа
     // буфера: буфер иногда называет вид иначе, чем то, что реально пришло.
     const raw = String(pic.data);
     const cut = raw.indexOf(",");
     const kind = (raw.match(/^data:([^;,]+)/) || [])[1] || pic.kind;
-    const r = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/shot", {
+    const r = await api(chatsURL(project) + "/" + encodeURIComponent(shotKey()) + "/shot", {
       method: "POST",
       body: { kind, data: cut >= 0 ? raw.slice(cut + 1) : raw },
     });
-    if (!r.ok) {
-      sayResult(r.body.error || "картинка не легла", true);
-      return "";
-    }
-    return r.body.path || "";
+    if (!r.ok) return { path: "", error: r.body.error || "картинка не легла" };
+    if (!r.body.path) return { path: "", error: "сервер не назвал путь вложения" };
+    return { path: r.body.path, error: "" };
   };
 
   const post = (text, sel, pic) => {
@@ -6598,57 +6601,81 @@ function chatPanel(project, st) {
     const m = echo.add(text, (again) => post(again, sel, pic), wire0, sel, pic);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
-    if (way.kind === "task") {
-      // Реплика ждущей задаче: ручка кладёт её безадресной строкой во вход.
-      // Ленты у такой строки нет, и пузырь тут единственный след ответа,
-      // поэтому панель после удачи не перерисовывается: перерисовка стирала
-      // пузырь сразу же, и нажатие выглядело так, будто ничего не случилось.
-      answerTask(project, st.task, wire0)
-        .then((ok) => { if (ok) echo.sent(m); else echo.bad(m); })
-        .catch((err) => { echo.bad(m); console.error(err); })
-        .finally(done);
-      return;
-    }
-    if (way.kind === "new") {
-      chatRaise(project, st, wire0, st.entry ? st.entry.model : chatModelPref())
-        .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
-        .catch((err) => { echo.bad(m); console.error(err); })
-        .finally(done);
-      return;
-    }
-    busy.on(st.sid);
-    putShot(pic).then((path) => api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-      { method: "POST", body: { text: path ? shotPrefix(path) + wire0 : wire0 } }))
-      .then((r) => {
-        if (!r.ok) {
-          // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
-          // пометкой и кнопкой повтора, а не пропадает молча, унося с собой
-          // набранное. Удача молчит: реплика и так видна в ленте.
+    // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
+    // первой строкой: у всех трёх дорог он один и тот же.
+    const go = (wire) => {
+      if (way.kind === "task") {
+        // Реплика ждущей задаче: ручка кладёт её безадресной строкой во вход.
+        // Ленты у такой строки нет, и пузырь тут единственный след ответа,
+        // поэтому панель после удачи не перерисовывается: перерисовка стирала
+        // пузырь сразу же, и нажатие выглядело так, будто ничего не случилось.
+        answerTask(project, st.task, wire)
+          .then((ok) => { if (ok) echo.sent(m); else echo.bad(m); })
+          .catch((err) => { echo.bad(m); console.error(err); })
+          .finally(done);
+        return;
+      }
+      if (way.kind === "new") {
+        chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref())
+          .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
+          .catch((err) => { echo.bad(m); console.error(err); })
+          .finally(done);
+        return;
+      }
+      busy.on(st.sid);
+      api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
+        { method: "POST", body: { text: wire } })
+        .then((r) => {
+          if (!r.ok) {
+            // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
+            // пометкой и кнопкой повтора, а не пропадает молча, унося с собой
+            // набранное. Удача молчит: реплика и так видна в ленте.
+            busy.off();
+            echo.bad(m);
+            sayResult(r.body.error || "реплика не ушла", true);
+            return;
+          }
+          if (r.body.stuck) echo.held(m, r.body.stuck);
+          else echo.sent(m);
+          // Реплика подняла сессию сама (чата без сессии не бывает после первой
+          // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
+          if (r.body.way === "start") {
+            chatWait(project, r.body.tmux).catch(console.error);
+            return;
+          }
+          // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
+          // список надо перечитать, иначе следующая реплика опять пошла бы
+          // резюмом и завела второго агента.
+          if (r.body.way === "resume") repaintChat().catch(console.error);
+        })
+        .catch((err) => {
           busy.off();
           echo.bad(m);
-          sayResult(r.body.error || "реплика не ушла", true);
+          console.error(err);
+        })
+        .finally(done);
+    };
+    // Не легло вложение, значит реплика не уходит вовсе: агент ответил бы на
+    // половину сказанного, а человек считал бы, что картинку тот видит.
+    // Причина сказана словами, пузырь остаётся с пометкой и повтором.
+    putShot(pic)
+      .then((got) => {
+        if (got.error) {
+          echo.bad(m);
+          sayResult("картинка не ушла: " + got.error, true);
+          done();
           return;
         }
-        if (r.body.stuck) echo.held(m, r.body.stuck);
-        else echo.sent(m);
-        // Реплика подняла сессию сама (чата без сессии не бывает после первой
-        // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
-        if (r.body.way === "start") {
-          chatWait(project, r.body.tmux).catch(console.error);
-          return;
-        }
-        // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:
-        // список надо перечитать, иначе следующая реплика опять пошла бы
-        // резюмом и завела второго агента.
-        if (r.body.way === "resume") repaintChat().catch(console.error);
+        go(got.path ? shotPrefix(got.path) + wire0 : wire0);
       })
       .catch((err) => {
-        busy.off();
         echo.bad(m);
+        sayResult("картинка не ушла: " + err, true);
+        done();
         console.error(err);
-      })
-      .finally(done);
+      });
   };
+
   const fire = () => {
     const text = ta.value.trim();
     if (!text || send.disabled) return;

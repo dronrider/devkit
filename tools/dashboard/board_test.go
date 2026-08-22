@@ -399,31 +399,37 @@ func TestStaticAgentsScreen(t *testing.T) {
 	}
 }
 
-// Переходы строки те же, что на экране задачи: разговор открывается панелью,
-// стоп стоит только у работы, чьей tmux-сессией дашборд распоряжается, а
-// поднятой мимо него остаётся переход на задачу.
+// Дороги со строки агентов две, и обе стоят у каждой строки: номер задачи
+// ведёт на её форму, разговор открывается панелью. Стоп стоит только у работы,
+// чьей tmux-сессией дашборд распоряжается.
 func TestStaticAgentsRowGates(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	row := funcBody(t, app, "function agentRow(")
 	// Разговор открывается панелью поверх экрана: нажатие зовёт openChat, а не
 	// уводит по адресу задачи.
-	if !strings.Contains(row, `openChat(chatAddr(project, w.id))`) {
+	if !strings.Contains(row, `openChat(chatAddr(project, addr))`) {
 		t.Error("перехода в разговор агента нет")
 	}
-	if strings.Contains(row, `goButton("Чат с агентом"`) {
-		t.Error("у цели два входа в один и тот же разговор: после DK-435 панель одна")
+	if !strings.Contains(row, "workTaskLink(project, w.id)") {
+		t.Error("номер задачи в строке агентов не ссылка на её форму")
 	}
-	if !strings.Contains(row, `if (w.via === "tmux") {`) || !strings.Contains(row, `"Остановить"`) {
+	if strings.Contains(row, `goButton(`) {
+		t.Error("переход на задачу вернулся кнопкой: номер задачи и есть ссылка")
+	}
+	// Адрес разговора это сессия, когда дашборд её видит, и задача, когда нет:
+	// иначе у работы из реестра чата не было бы вовсе.
+	addr := funcBody(t, app, "function workChatAddr(")
+	if !strings.Contains(addr, "w.session || w.id") {
+		t.Error("адрес разговора строки собран не из сессии и задачи")
+	}
+	if !strings.Contains(row, `w.via === "tmux" && w.id`) || !strings.Contains(row, `"Остановить"`) {
 		t.Error("кнопка стопа стоит не у tmux-работы")
 	}
 	if strings.Index(row, `w.via === "registry"`) > strings.Index(row, `w.via === "tmux"`) {
 		t.Error("ветка реестровой работы стоит после стопа: кнопка достанется и ей")
 	}
-	if !strings.Contains(row, "работа поднята мимо дашборда: остановить можно там, где поднята") {
+	if !strings.Contains(row, "сессия поднята мимо дашборда") {
 		t.Error("реестровая работа не объясняет, почему стопа у неё нет")
-	}
-	if !strings.Contains(row, `goButton("Открыть задачу"`) {
-		t.Error("у реестровой работы нет перехода на задачу")
 	}
 }
 
@@ -460,17 +466,18 @@ func TestStaticAgentsCollect(t *testing.T) {
 	}
 	cases := []struct{ expr, want string }{
 		// Статус со строки доски идёт в подписи русским словом, а работа без
-		// строки остаётся без него: взять его неоткуда.
+		// строки остаётся без него: взять его неоткуда. Номера задачи в тексте
+		// подписи нет: он стоит перед ней ссылкой на форму задачи.
 		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "check"})`,
-			"DK-247, на проверке, сессия task-DK-247"},
+			"на проверке, сессия task-DK-247"},
 		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "in-progress"})`,
-			"DK-247, в работе, сессия task-DK-247"},
+			"в работе, сессия task-DK-247"},
 		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "backlog"})`,
-			"DK-247, в очереди, сессия task-DK-247"},
+			"в очереди, сессия task-DK-247"},
 		{`workSub({id: "DK-247", kind: "task", via: "tmux", sect: "blocked"})`,
-			"DK-247, заблокирована, сессия task-DK-247"},
-		{`workSub({id: "DK-112", kind: "goal", via: "tmux"})`, "DK-112, сессия goal-DK-112"},
-		{`workSub({id: "BB-7", kind: "task", via: "registry"})`, "BB-7, сессии дашборда нет"},
+			"заблокирована, сессия task-DK-247"},
+		{`workSub({id: "DK-112", kind: "goal", via: "tmux"})`, "сессия goal-DK-112"},
+		{`workSub({id: "BB-7", kind: "task", via: "registry"})`, "сессии дашборда нет"},
 		{`workSub({kind: "session", via: "session", session: "abc", note: "задача не узнана"})`,
 			"задача не узнана, сессия abc"},
 		{"workAge(0, 1000000)", ""},

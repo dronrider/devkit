@@ -8517,7 +8517,6 @@ function workChips(project, w) {
 // статуса в подписи тоже нет: взять его неоткуда.
 function workSub(w) {
   const parts = [];
-  if (w.id) parts.push(w.id);
   if (SECT_WORD[w.sect]) parts.push(SECT_WORD[w.sect]);
   if (w.via === "registry") parts.push("сессии дашборда нет");
   if (w.note) parts.push(w.note);
@@ -8542,8 +8541,37 @@ function goButton(label, hash) {
   return btn;
 }
 
+// Куда ведёт разговор строки агентов: у сессии, которую дашборд видит, это её
+// собственный чат, а у работы без сессии остаётся адрес задачи, и панель
+// поднимет разговор о ней. Панель встаёт хвостом поверх раздела, доска под ней
+// не меняется.
+function workChatAddr(w) {
+  return w.session || w.id || "";
+}
+
+// Номер задачи в подписи это ссылка на её форму: из списка агентов человек
+// уходит либо в разговор, либо в саму задачу, и обе дороги нужны у каждой
+// строки (замечание пользователя). Кликом по строке открывается чат, поэтому
+// ссылка гасит всплытие.
+function workTaskLink(project, id) {
+  const link = el("button", "alink", id);
+  link.type = "button";
+  link.title = "Открыть задачу " + id;
+  link.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    goKeepingChat(project + "/" + id);
+  });
+  return link;
+}
+
 function agentRow(project, w, now) {
   const row = el("div", "arow");
+  const addr = workChatAddr(w);
+  if (addr) {
+    row.classList.add("atalk");
+    row.title = "Открыть разговор этой работы";
+    row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
+  }
   row.append(el("span", "dot" + (w.via === "registry" ? " dot-other" : " pulse")));
   const box = el("div", "ab");
   const line = el("div", "l1");
@@ -8553,37 +8581,42 @@ function agentRow(project, w, now) {
   // берёт той же лестницей, что список чатов (замечание 1 восьмого круга).
   line.append(el("span", "tt", w.title || w.id || w.note || "чат без задачи"));
   for (const chip of workChips(project, w)) line.append(chip);
-  box.append(line, el("div", "l2", workSub(w)));
+  // Подпись собирается узлами, а не одной строкой: номер задачи в ней это
+  // ссылка, и склеенный текст ссылкой быть не может.
+  const sub = el("div", "l2");
+  if (w.id) sub.append(workTaskLink(project, w.id));
+  const tail = workSub(w);
+  if (tail) sub.append(document.createTextNode((w.id ? ", " : "") + tail));
+  box.append(line, sub);
   row.append(box);
 
   const acts = el("div", "aacts");
   const age = workAge(w.started, now);
   if (age) acts.append(el("span", "atime", age));
-  if (w.via === "registry") {
-    // Работа поднята мимо дашборда: её сессией он не распоряжается, и вместо
-    // кнопок остаётся переход на задачу.
-    acts.append(el("span", "stale",
-      "работа поднята мимо дашборда: остановить можно там, где поднята"));
-    if (w.id) acts.append(goButton("Открыть задачу", project + "/" + w.id));
-  } else if (w.id) {
-    // Вход в чат один на цель и задачу: после слияния экранов это одна и та же
-    // панель, а ручку для реплики выбирает она сама (DK-435). Панель встаёт
-    // поверх текущего раздела, а не уводит на доску: хвост /chat/ клеится к
-    // адресу раздела, как он клеится к задаче (замечание 3 восьмого круга).
-    const talk = el("button", "btn btn-sm", "Чат агента");
-    talk.addEventListener("click", () => { openChat(chatAddr(project, w.id)); });
-    acts.append(talk);
-    if (w.via === "tmux") {
-      const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
-      stop.addEventListener("click", () => { stopRun(project, w.id).catch(console.error); });
-      acts.append(stop);
-    }
-  } else if (w.session) {
-    // Задачу сессии узнать не удалось, и адресовать панель по ID нечем: чат
-    // открывается по id сессии (DK-294).
+  // Разговор есть у любой строки: и у работы из реестра, чью сессию дашборд не
+  // видит, и у сессии без задачи. Вход в чат один на цель и задачу, это одна и
+  // та же панель, а ручку для реплики выбирает она сама (DK-435). Панель
+  // встаёт хвостом поверх текущего раздела, а не уводит на доску.
+  if (addr) {
     const talk = el("button", "btn btn-sm", "Чат");
-    talk.addEventListener("click", () => { openChat(chatAddr(project, w.session)); });
+    talk.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openChat(chatAddr(project, addr));
+    });
     acts.append(talk);
+  }
+  if (w.via === "registry") {
+    // Работа поднята мимо дашборда: её сессией он не распоряжается, и кнопки
+    // остановки у неё нет.
+    acts.append(withTip(el("span", "stale", "сессия поднята мимо дашборда"),
+      "остановить работу можно там, где она поднята"));
+  } else if (w.via === "tmux" && w.id) {
+    const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
+    stop.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      stopRun(project, w.id).catch(console.error);
+    });
+    acts.append(stop);
   }
   row.append(acts);
   return row;

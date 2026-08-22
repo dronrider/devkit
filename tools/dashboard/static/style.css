@@ -1303,3 +1303,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Блок «Связи» экрана задачи (круг 2 POC DK-470): задачи стоят под дизайнами
    с небольшим отступом, дорожки те же, что у строк выдачи поиска */
 .dcard .lrel{margin-top:8px;border-top:1px solid var(--line);padding-top:2px}
+
+/* строка агентов: номер задачи ссылкой, вся строка ведёт в разговор */
+.arow.atalk{cursor:pointer}
+.arow.atalk:hover{background:var(--bg2)}
+.alink{padding:0;border:none;background:none;color:var(--acc);font:400 12px var(--sans);cursor:pointer}
+.alink:hover{text-decoration:underline}

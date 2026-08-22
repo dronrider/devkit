@@ -1,0 +1,115 @@
+// Стенд поля поиска в шапке (ветка poc-chat).
+//
+// Поле одно на все экраны, а отвечает на разные вопросы: на доске оно ведёт в
+// выдачу по задачам, в разделе «Агенты» фильтрует сами сессии раздела. Прежде
+// раздел уводил в поиск по доске, то есть отвечал не на тот вопрос (замечание
+// пользователя). Второй предмет стенда: набор следующей буквы обязан
+// перерисовывать выдачу, хотя экран при этом тот же самый.
+//
+// Зовётся: node testdata/poc_find.mjs static/app.js
+
+import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
+  from "./poc_dom.mjs";
+
+const app = appPathArg();
+const works = [
+  { id: "XR-1", kind: "task", via: "tmux", title: "конвейер задачи", session: "aaaa1111",
+    own: true, model: "opus", sect: "in-progress" },
+  { id: "XR-2", kind: "goal", via: "registry", title: "цикл цели", sect: "in-progress" },
+];
+const board = { sections: [{ key: "backlog", rows: [{ id: "XR-7", title: "строка доски", sect: "backlog" }] }] };
+const asked = [];
+
+const { sandbox } = makeSandbox(app, (path) => {
+  asked.push(path);
+  if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works }] };
+  if (path.endsWith("/board")) return { board, works };
+  if (path.includes("/search")) {
+    const q = decodeURIComponent(path.split("q=")[1] || "");
+    return { groups: [{ key: "board", title: "Доска", rows: [
+      { id: "XR-7", title: "нашлось по запросу " + q, sect: "backlog" }] }] };
+  }
+  if (path === "/api/notifications") return { items: [] };
+  return {};
+});
+
+const groups = sandbox.document.getElementById("groups");
+const field = sandbox.document.getElementById("hq");
+const go = async (hash) => {
+  sandbox.location.hash = hash;
+  await sandbox.refresh();
+  await settle();
+};
+// Набор буквы в поле: обработчик тот же, что у живого поля, а срок ожидания
+// стенду не нужен, он зовёт отправку сразу.
+// Набор буквы. В браузере смену адреса подхватывает обработчик хэша; в стенде
+// его будит сам стенд, но решение, перерисовывать экран или одну панель,
+// остаётся за статикой (chatOnlyMove). Возвращается принятое решение: набор
+// буквы движением панели считаться не должен, иначе выдача останется прежней.
+const type = async (text) => {
+  field.value = text;
+  sandbox.findGo(text);
+  await settle();
+  const panelOnly = sandbox.chatOnlyMove(sandbox.route());
+  if (!panelOnly) {
+    await sandbox.refresh();
+    await settle();
+  }
+  return panelOnly;
+};
+
+// --- раздел «Агенты»: поле фильтрует сессии и не уводит на доску ---
+await go("#/agents");
+{
+  asked.length = 0;
+  await type("цикл");
+  if (sandbox.location.hash.includes("/find/")) {
+    fail("поиск раздела увёл в выдачу по доске: " + sandbox.location.hash);
+  }
+  if (!sandbox.location.hash.includes("agents")) {
+    fail("запрос раздела ушёл не в его адрес: " + sandbox.location.hash);
+  }
+  if (asked.some((p) => p.includes("/search"))) {
+    fail("раздел сходил в поиск по задачам: " + JSON.stringify(asked));
+  }
+  // Найденное лежит в соседнем табе, и раздел говорит об этом словами, а не
+  // молчит пустотой.
+  if (!dump(groups).includes("В соседнем табе нашлось 1")) {
+    fail("раздел не сказал, где нашлось: " + dump(groups).slice(0, 200));
+  }
+  allByClass(groups, "ktab")[1].handlers.click({ stopPropagation: () => {} });
+  const rows = allByClass(groups, "arow");
+  if (rows.length !== 1 || !dump(rows[0]).includes("цикл цели")) {
+    fail("раздел не отфильтровался: " + dump(groups).slice(0, 200));
+  }
+  // Запрос живёт в адресе: перерисовка экрана его не теряет.
+  await sandbox.refresh();
+  await settle();
+  if (!dump(groups).includes("цикл цели")) fail("запрос раздела не пережил перерисовку");
+  if (field.value !== "цикл") fail("поле шапки потеряло набранное: " + field.value);
+}
+
+// --- доска: поле по-прежнему ведёт в выдачу, и каждая буква её обновляет ---
+await go("#demo");
+{
+  await type("пер");
+  if (!sandbox.location.hash.includes("/find/")) {
+    fail("с доски поиск не открыл выдачу: " + sandbox.location.hash);
+  }
+  // Запрос в выдаче подсвечен своим узлом, поэтому пробелы в сравнении
+  // схлопываются: предмет тут сама выдача, а не её разметка.
+  const said = () => dump(groups).replace(/\s+/g, " ");
+  if (!said().includes("нашлось по запросу пер")) {
+    fail("выдача не собралась: " + said().slice(0, 300));
+  }
+  // Вторая буква: экран тот же, а выдача обязана перерисоваться. Перерисовка
+  // панели вместо экрана оставляла бы на нём выдачу по прежнему запросу.
+  if (await type("перв")) {
+    fail("набор буквы принят за движение панели: выдача осталась бы прежней");
+  }
+  if (!said().includes("нашлось по запросу перв")) {
+    fail("следующая буква выдачу не обновила: " + said().slice(0, 300));
+  }
+}
+
+console.log("poc_find: ok");

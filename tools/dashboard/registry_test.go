@@ -196,8 +196,10 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	if len(works) != 1 {
 		t.Fatalf("работы: %+v", works)
 	}
+	// Модель работы приезжает вместе с ней: по ней фильтруется раздел
+	// «Агенты», и у сессии без своей записи это модель по умолчанию.
 	want := Work{Kind: "session", Via: "session", Session: "talker",
-		Note: "а что там с XR-4"}
+		Note: "а что там с XR-4", Model: chatModelDefault}
 	if works[0] != want {
 		t.Errorf("работа:\n%+v\nожидал:\n%+v", works[0], want)
 	}
@@ -213,8 +215,10 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	rows := map[string]boardRow{"XR-4": {ID: "XR-4", Title: "Начатая задача", Sect: "in-progress"}}
 
 	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{})
+	// Своей она не считается: имени tmux-сессии в записи нет, значит подняли её
+	// мимо дашборда, и в разделе «Агенты» ей место в табе прочих.
 	want := Work{ID: "XR-4", Kind: "task", Via: "session", Session: "worker",
-		Title: "Начатая задача", Sect: "in-progress"}
+		Title: "Начатая задача", Sect: "in-progress", Model: chatModelDefault}
 	if len(works) != 1 || works[0] != want {
 		t.Fatalf("работа:\n%+v\nожидал:\n%+v", works, want)
 	}

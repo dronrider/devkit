@@ -113,4 +113,60 @@ for (const which of ["tmux", "registry"]) {
   }
 }
 
+// --- раздел разложен на два таба, признак тот же, что у подсказки ---
+{
+  const projects = [{ name: "demo", prefix: "XR", works: [
+    { id: "XR-1", kind: "task", via: "tmux", title: "конвейер задачи", session: "aaaa1111",
+      own: true, model: "opus", sect: "in-progress" },
+    { id: "XR-2", kind: "goal", via: "registry", title: "цикл цели", sect: "in-progress" },
+    { kind: "session", via: "session", session: "bbbb2222", note: "окно человека" },
+  ] }];
+  const groups = sandbox.document.getElementById("groups");
+  const tabs = () => allByClass(groups, "ktab");
+  const rows = () => allByClass(groups, "arow");
+  const openTab = () => (tabs().find((t) => String(t.className).includes("onktab")) || {}).textContent;
+
+  sandbox.renderAgents(projects, "");
+  const names = tabs().map((t) => t.textContent.replace(/\d+$/, ""));
+  if (names.join("|") !== "Дашборд|Прочие") fail("табов раздела нет: " + JSON.stringify(names));
+  if (!openTab().startsWith("Дашборд")) fail("открыт не тот таб: " + openTab());
+  if (rows().length !== 1 || !dump(rows()[0]).includes("конвейер задачи")) {
+    fail("в табе дашборда не своя работа: " + dump(groups).slice(0, 200));
+  }
+
+  tabs()[1].handlers.click({ stopPropagation: () => {} });
+  const other = rows().map((r) => dump(r)).join(" ");
+  if (rows().length !== 2 || !other.includes("цикл цели") || !other.includes("окно человека")) {
+    fail("в табе прочих не те работы: " + other);
+  }
+  // Признак таба и признак подсказки один и тот же: разъехавшись, они сказали
+  // бы про одну строку разное.
+  for (const row of rows()) {
+    if (!String(row.title).includes("поднята мимо дашборда")) {
+      fail("чужая строка не объясняет себя подсказкой: " + row.title);
+    }
+  }
+
+  // --- поиск фильтрует сессии раздела, а не задачи доски ---
+  sandbox.renderAgents(projects, "цикл");
+  if (rows().length !== 1 || !dump(rows()[0]).includes("цикл цели")) {
+    fail("поиск не нашёл работу по заголовку: " + dump(groups).slice(0, 200));
+  }
+  sandbox.renderAgents(projects, "opus");
+  if (rows().length) fail("работа чужого таба нашлась не в своём: " + dump(groups).slice(0, 200));
+  tabs()[0].handlers.click({ stopPropagation: () => {} });
+  if (rows().length !== 1 || !dump(rows()[0]).includes("конвейер задачи")) {
+    fail("поиск по модели не нашёл свою работу: " + dump(groups).slice(0, 200));
+  }
+  for (const [q, what] of [["XR-1", "задаче"], ["demo", "проекту"], ["конвейер", "заголовку"]]) {
+    sandbox.renderAgents(projects, q);
+    if (!rows().length) fail("поиск по " + what + " (" + q + ") ничего не нашёл");
+  }
+  sandbox.renderAgents(projects, "такого нет");
+  if (rows().length) fail("поиск нашёл лишнее по чепухе");
+  if (!dump(groups).includes("ничего не нашлось")) {
+    fail("пустая выдача раздела молчит: " + dump(groups).slice(0, 200));
+  }
+}
+
 console.log("poc_agents: ok");

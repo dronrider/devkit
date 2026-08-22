@@ -366,7 +366,7 @@ func TestStaticAgentsScreen(t *testing.T) {
 		t.Error("пункт «Агенты» остался погашенной заглушкой")
 	}
 	app := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(app, `if (h === "/agents") return { proj: "", id: "", agents: true };`) {
+	if !strings.Contains(app, `agents: true, q: parts.slice(2).join("/")`) {
 		t.Error("хэша экрана «Агенты» нет: раздел никуда не ведёт")
 	}
 	if !strings.Contains(funcBody(t, app, "function markNav("), `["agents", ["nav-agents", "tab-agents"]]`) {
@@ -376,7 +376,7 @@ func TestStaticAgentsScreen(t *testing.T) {
 		t.Error("пункт колонки и вкладка телефона не ведут на экран")
 	}
 	refresh := funcBody(t, app, "async function paint(")
-	if !strings.Contains(refresh, "renderAgents(projects)") {
+	if !strings.Contains(refresh, `renderAgents(projects, rt.q || "")`) {
 		t.Error("экран «Агенты» не рисуется из ответа /api/projects")
 	}
 	if strings.Contains(refresh, `"/agents") + "/board"`) {

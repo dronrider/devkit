@@ -249,7 +249,11 @@ function route() {
 function routeScreen(h) {
   const parts = h.split("/");
   if (!h) return { proj: "", id: "", home: true };
-  if (h === "/agents") return { proj: "", id: "", agents: true };
+  // Запрос раздела живёт в адресе, как у выдачи поиска задач: набранное
+  // переживает обновление экрана и кнопку «назад».
+  if (h === "/agents" || parts[0] === "" && parts[1] === "agents") {
+    return { proj: "", id: "", agents: true, q: parts.slice(2).join("/") };
+  }
   if (parts.length >= 2 && parts[1] === "feed") {
     return { proj: parts[0], id: "", feed: true };
   }
@@ -5058,6 +5062,14 @@ function openChat(addr) {
 // Переключение разговора списком: адрес заменяется, а не толкается в историю.
 // Пять просмотренных разговоров иначе стоили бы пяти нажатий «назад» до доски,
 // а экран под панелью от переключения не меняется вовсе.
+// Двинулся ли один хвост разговора: экран тот же и запрос тот же, значит под
+// панелью перерисовывать нечего. Набор буквы в поиске экран не меняет (запрос в
+// ключ не входит нарочно), но выдачу обновить обязан, поэтому запрос
+// сравнивается отдельно.
+function chatOnlyMove(rt) {
+  return Boolean(shownScreen) && screenKey(rt) === shownScreen && (rt.q || "") === shownQuery;
+}
+
 // Панель это хвост адреса, и её движение экрана под ней не касается. Полный
 // обход (список проектов, подписки, доска, пересборка списка строк) на каждое
 // переключение чата стоил человеку задержки на ровном месте: до правки первый
@@ -7248,6 +7260,17 @@ function findType(value) {
 }
 
 function findGo(value) {
+  const rt = route();
+  // В разделе «Агенты» поле фильтрует его собственные строки: доска тут ни при
+  // чём, и уводить отсюда в выдачу по задачам значит отвечать не на тот вопрос
+  // (замечание пользователя).
+  if (rt.agents) {
+    const q = String(value).trim();
+    const base = "/agents" + (q ? "/" + encodeURIComponent(q) : "");
+    const hash = "#" + (rt.chat ? base + "/chat/" + rt.chat : base);
+    if (hash !== "#" + location.hash.replace(/^#/, "")) location.replace(hash);
+    return;
+  }
   const project = shownProject || route().proj;
   if (!project) return;
   const base = project + "/find/" + encodeURIComponent(String(value).trim());
@@ -8813,7 +8836,7 @@ function agentRow(project, w, now) {
   const addr = workChatAddr(w);
   const tips = [];
   if (addr) tips.push("Открыть разговор этой работы");
-  if (w.via === "registry") {
+  if (!agentOwn(w)) {
     tips.push("сессия поднята мимо дашборда: остановить работу можно там, где она поднята");
   }
   if (tips.length) row.title = tips.join(". ");
@@ -8874,16 +8897,78 @@ function agentRow(project, w, now) {
   return row;
 }
 
-function renderAgents(projects) {
+// Раздел «Агенты» разложен на два таба: свои сессии, поднятые дашбордом, и
+// прочие, поднятые мимо него (цикл цели из реестра, окно человека). Признак
+// один и приезжает работой (own): им же объясняется, почему у чужой строки нет
+// кнопки остановки, и разъехаться этим двум местам нельзя.
+let agentTab = "own";
+
+function agentTabs() {
+  return [["own", "Дашборд"], ["other", "Прочие"]];
+}
+
+function agentOwn(w) {
+  return Boolean(w && w.own);
+}
+
+// Что видно в строке словами, по тому и ищем: заголовок работы, задача, проект
+// и модель. Поиск раздела свой нарочно: поле шапки уводило отсюда в выдачу по
+// доске, то есть отвечало не на тот вопрос, который тут задают (замечание
+// пользователя).
+function agentMatch(item, q) {
+  if (!q) return true;
+  const w = item.work;
+  const hay = [w.title, w.id, w.note, item.project, w.model, w.session,
+    w.sect, w.kind].filter(Boolean).join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every((word) => hay.includes(word));
+}
+
+function renderAgents(projects, q) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
+  const all = allWorks(projects);
+  const found = all.filter((item) => agentMatch(item, q));
+  const list = found.filter((item) => agentOwn(item.work) === (agentTab === "own"));
+
+  // Полоса табов та же, что на доске: два вида одного экрана, и переключаются
+  // они по месту.
+  const bar = el("div", "ktabs");
+  for (const [key, label] of agentTabs()) {
+    const btn = el("button", "ktab" + (key === agentTab ? " onktab" : ""), label);
+    btn.type = "button";
+    const n = found.filter((item) => agentOwn(item.work) === (key === "own")).length;
+    if (n) btn.append(el("span", "n", String(n)));
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (key === agentTab) return;
+      agentTab = key;
+      renderAgents(projects, q);
+    });
+    bar.append(btn);
+  }
+  groups.append(bar);
+
   const card = el("div", "card");
-  const list = allWorks(projects);
   if (!list.length) {
     const empty = el("div", "empty");
-    empty.append(el("b", "", "Агентов сейчас нет."));
-    empty.append(document.createTextNode(
-      "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
+    if (q) {
+      empty.append(el("b", "", "По запросу ничего не нашлось."));
+      // Найденное в соседнем табе называется прямо: молчаливая пустота при
+      // непустой выдаче рядом читается как «нет нигде».
+      const near = found.length - list.length;
+      empty.append(document.createTextNode(near
+        ? "Ищем по заголовку работы, задаче, проекту и модели. В соседнем табе нашлось " +
+          near + " " + plural(near, "работа", "работы", "работ") + "."
+        : "Ищем по заголовку работы, задаче, проекту и модели."));
+    } else if (agentTab === "other") {
+      empty.append(el("b", "", "Чужих сессий сейчас нет."));
+      empty.append(document.createTextNode(
+        "Сюда попадают работы, поднятые мимо дашборда: цикл цели из реестра и окно человека."));
+    } else {
+      empty.append(el("b", "", "Агентов сейчас нет."));
+      empty.append(document.createTextNode(
+        "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
+    }
     card.append(empty);
   }
   const now = Date.now();
@@ -9005,6 +9090,10 @@ let shownWorks = [];
 // новый экран сверху и снимает живые потоки прежнего.
 let shownScreen = "";
 
+// Запрос, с которым экран нарисован: выдача поиска и раздел «Агенты» держат
+// набранное в адресе, а в ключ экрана оно не входит.
+let shownQuery = "";
+
 function screenKey(rt) {
   // Запрос в ключ не входит: набор буквы это не переход на другой экран, и
   // выдача обязана перерисоваться по месту, а не собраться заново под пальцем.
@@ -9053,6 +9142,10 @@ async function paint() {
   // потоков и сюда не входит вовсе.
   if (screen !== shownScreen || !rt.draft) closeAgentLive();
   shownScreen = screen;
+  // Запрос в ключ экрана не входит нарочно (набор буквы это не переход), но
+  // помнить набранное всё равно надо: по нему обновление отличает «сменился
+  // один хвост разговора» от «человек набрал следующую букву».
+  shownQuery = rt.q || "";
   shownBoard = null;
   shownWorks = [];
   const { body } = await api("/api/projects");
@@ -9078,10 +9171,16 @@ async function paint() {
     // Экран собран из того же ответа, что и колонка: живые работы всех
     // проектов приходят одним запросом, и доска ему не нужна.
     headName("Агенты");
-    document.getElementById("psub").textContent = "все активные задачи";
+    document.getElementById("psub").textContent = rt.q ? "поиск по сессиям" : "все активные задачи";
     renderLive("", []);
     markNav(rt);
-    renderAgents(projects);
+    // Поле шапки держит тот же запрос: раздел открывается и по ссылке, и
+    // кнопкой «назад», а поле при этом пустовало бы.
+    const field = document.getElementById("hq");
+    if (field && document.activeElement !== field && field.value !== (rt.q || "")) {
+      field.value = rt.q || "";
+    }
+    renderAgents(projects, rt.q || "");
     return;
   }
   if (rt.home) {
@@ -9285,7 +9384,7 @@ window.addEventListener("hashchange", () => {
   // Двинулся один хвост разговора, а экран тот же: перерисовывать под панелью
   // нечего, и полный обход тут был чистым ожиданием сети (замечание
   // пользователя про тормоза переключения и закрытия).
-  if (shownScreen && screenKey(route()) === shownScreen) {
+  if (chatOnlyMove(route())) {
     repaintChatOnly();
     return;
   }

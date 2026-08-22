@@ -1008,11 +1008,16 @@ func TestLiveWorksSessions(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-xr-88", "stale", transcriptFixture, now.Add(-30*time.Minute))
 
 	want := []Work{
-		{ID: "XR-9", Kind: "goal", Via: "tmux"},
-		{ID: "XR-5", Kind: "task", Via: "tmux"},
+		// Конвейерные сессии поднял дашборд: они свои, и модель у них его.
+		{ID: "XR-9", Kind: "goal", Via: "tmux", Own: true, Model: chatModelDefault},
+		{ID: "XR-5", Kind: "task", Via: "tmux", Own: true, Model: chatModelDefault},
 		{ID: "XR-112", Kind: "goal", Via: "registry"},
-		{Kind: "session", Via: "session", Session: "live-plain", Note: "поправь вёрстку карточки"},
-		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session", Session: "live-task"},
+		// Окна человека дашборд не поднимал: имени tmux-сессии у них нет, и
+		// своими они не считаются.
+		{Kind: "session", Via: "session", Session: "live-plain", Note: "поправь вёрстку карточки",
+			Model: chatModelDefault},
+		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session",
+			Session: "live-task", Model: chatModelDefault},
 	}
 	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
@@ -1033,8 +1038,10 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 	// Цель со строки доски остаётся целью и в интерактивном окне: по виду
 	// работы клиент открывает переписку, и обычной задаче она не положена.
 	want := []Work{
-		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Sect: "backlog", Via: "session", Session: "win-new"},
-		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Sect: "in-progress", Via: "session", Session: "win-goal"},
+		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Sect: "backlog", Via: "session",
+			Session: "win-new", Model: chatModelDefault},
+		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Sect: "in-progress", Via: "session",
+			Session: "win-goal", Model: chatModelDefault},
 	}
 	got := boardWorks(t, e)
 	var sessions []Work
@@ -1062,7 +1069,7 @@ func TestLiveWorksSessionForeignTask(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-ab-9", "win-foreign", plainSessionFixture, now.Add(-time.Minute))
 
 	want := []Work{{Kind: "session", Via: "session", Session: "win-foreign",
-		Note: "поправь вёрстку карточки"}}
+		Note: "поправь вёрстку карточки", Model: chatModelDefault}}
 	var sessions []Work
 	for _, w := range boardWorks(t, e) {
 		if w.Via == "session" {

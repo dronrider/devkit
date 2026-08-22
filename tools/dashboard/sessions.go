@@ -535,8 +535,12 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 				note = said
 			}
 		}
+		// Своя работа это та, чью tmux-сессию поднял дашборд: её имя лежит в
+		// записи реестра. У окна человека имени нет вовсе.
+		tmux := binds[f.ID].Tmux
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
-			Via: "session", Session: f.ID, Note: note, Talk: talk})
+			Via: "session", Session: f.ID, Note: note, Talk: talk,
+			Own: tmux != "", Model: s.chatModel(f.ID, tmux)})
 	}
 	return works
 }

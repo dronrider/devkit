@@ -3429,7 +3429,9 @@ async function wireFeed(project, sid, opts) {
   // возвращается на прежнюю глубину, вернувшись к разговору.
   let pages = 0;
   let atFirst = false;
-  let empty = opts.empty || EMPTY_TALK;
+  // Пустая строка тут не «возьми умолчание», а «плашки не надо вовсе»: у
+  // ленты чата пустота говорит сама за себя.
+  let empty = opts.empty === undefined ? EMPTY_TALK : opts.empty;
   let loadingOlder = false;
   // Надпись начала горит, только когда раньше правда нечего показать: пока
   // лента пуста или ещё не упёрлась в начало разговора, надпись не видна.
@@ -3471,7 +3473,7 @@ async function wireFeed(project, sid, opts) {
     const top = scroll.scrollTop;
     const marks = feedMarks(talk);
     if (!talk.length) {
-      sync(box, [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }]);
+      sync(box, empty ? [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }] : []);
       return;
     }
     const items = [];
@@ -4391,7 +4393,10 @@ function wireChatFeed(project, feed, sid, onItem) {
     days: true,
     item: chatItem,
     pair: toolPair,
-    empty: "чат пуст: в транскрипте нет ни одной реплики",
+    // Пустая лента остаётся пустой без приписки: пустой чат и так выглядит
+    // пустым, а «в транскрипте нет ни одной реплики» читалось поломкой
+    // (замечание пользователя).
+    empty: "",
     live: chatLive,
     era: () => chatGen,
   });
@@ -5929,7 +5934,10 @@ function chatHead(project, st) {
     });
     pick.append(lab);
   }
-  const picked = chatTitle(st.entry) + (st.fresh ? " (новый чат)" : "");
+  // У нового чата имя своё, а не «чата нет»: диалога ещё нет по замыслу, и
+  // говорить об этом словами отсутствия значит называть штатное состояние
+  // поломкой (замечание пользователя).
+  const picked = st.fresh ? "Новый чат" : chatTitle(st.entry);
   pick.append(withFull(el("b", "", picked), picked));
   const car = el("span", "cdcar");
   car.append(icon("i-caret"));
@@ -6283,24 +6291,62 @@ async function chatRaise(project, st, text, model) {
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
-  return chatWait(project, r.body.tmux);
+  return chatWait(project, r.body.tmux, st.addr);
 }
 
 // Ожидание ID поднятой сессии: она рождается позже команды и называет себя в
 // реестре сама, первым своим ходом. Дорога одна на оба подъёма, и с кнопки
 // нового чата, и с реплики в чат, у которого сессии не было.
-async function chatWait(project, name) {
+//
+// Обычно это секунды, но клиент бывает встаёт на вопросе в собственном
+// терминале (доверие каталогу, логин), и тогда сессия не родится, пока человек
+// не ответит там. Ошибкой такое ожидание не считается и на экран не идёт:
+// реплика уже у клиента, аргументом запуска, и чат пришивается сам, как
+// только сессия назовётся (прежний текст «ещё не назвала себя в реестре»
+// читался провалом и хоронил первую реплику). Возврат: true это найденный
+// диалог, "waiting" это ожидание сверх обычного, им пузырь первой реплики
+// помечается причиной, но со счетов не снимается.
+async function chatWait(project, name, addr) {
+  const look = async () => {
+    const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
+    return (list.ok && (list.body.chats || [])[0]) || null;
+  };
+  const attach = (hit) => {
+    // Найденный диалог дальше сам подтверждает реплики своей лентой, память
+    // адреса подъёма ему больше не нужна.
+    if (addr) echoPurge(project, addr);
+    switchChat(hit.id);
+  };
   for (let i = 0; i < 40; i += 1) {
     await new Promise((ok) => setTimeout(ok, 1500));
-    const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
-    const hit = (list.ok && (list.body.chats || [])[0]) || null;
+    const hit = await look();
     if (hit) {
-      switchChat(hit.id);
-      return;
+      attach(hit);
+      return true;
     }
   }
-  sayResult("сессия " + name + " ещё не назвала себя в реестре: чат встанет в списке сам", true);
+  // Дальше опрос идёт фоном и реже: сессия назовётся, когда человек ответит
+  // клиенту, и лента пришьётся без его действий здесь. Уводить человека с
+  // другого экрана нельзя, поэтому фоновая фаза переключает только пока он
+  // сам стоит на панели этого же нового чата.
+  (async () => {
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((ok) => setTimeout(ok, 5000));
+      if (!addr || route().chat !== addr) return;
+      const hit = await look();
+      if (hit) {
+        attach(hit);
+        return;
+      }
+    }
+  })().catch(console.error);
+  return "waiting";
 }
+
+// Причина на пузыре первой реплики, когда подъём идёт дольше обычного: не
+// провал, а ожидание, у которого назван виновник и обещан исход.
+const CHAT_WAIT_WHY = "сессия поднимается дольше обычного, возможно клиент " +
+  "ждёт ответа в своём терминале; чат встанет сам, как только сессия назовётся";
 
 // Индикатор живой работы агента (замечание третьего круга POC). После отправки
 // реплики в ленте была тишина до готового ответа, и отправка была неотличима от
@@ -6490,8 +6536,13 @@ function echoRead(project, addr) {
   try {
     const raw = JSON.parse(localStorage.getItem(ECHO_KEY + project + "/" + addr) || "[]");
     if (!Array.isArray(raw)) return [];
+    // Восстановленное «отправляется» становится «не доставлено» с причиной:
+    // цикла отправки за ним больше нет, и часики без водителя врали бы, а
+    // held-пузырь честно ждёт эха из транскрипта и даёт кнопку повтора.
     return raw.filter((m) => m && m.text).map((m) => ({
       text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(),
+      state: m.state === "held" || m.state === "wait" ? "held" : "bad",
+      why: m.state === "wait" ? ECHO_LOST_WHY : (m.why ? String(m.why) : ""),
     }));
   } catch (err) {
     // Приватное окно запрещает хранилище: панель тогда живёт без памяти о
@@ -6500,15 +6551,35 @@ function echoRead(project, addr) {
   }
 }
 
+// Причина у пузыря, пережившего перерисовку или перезагрузку до подтверждения:
+// сама отправка успела уйти, но эха из транскрипта панель ещё не видела.
+const ECHO_LOST_WHY = "доставка не подтверждена: реплика ушла, но эха из " +
+  "транскрипта ещё нет";
+
 function echoWrite(project, addr, list) {
   try {
-    const keep = list.filter((m) => m.state === "bad")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born }));
+    // Переживают выгрузку панели не только неушедшие: held ждёт эха из
+    // транскрипта, wait это отправка в полёте, и оба обязаны стоять в ленте
+    // после перерисовки, пока эхо их не сняло (первая реплика нового чата
+    // пропадала с экрана ровно из-за того, что жил только bad).
+    const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, why: m.why || "" }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
       localStorage.removeItem(ECHO_KEY + project + "/" + addr);
     }
+  } catch (err) {
+    return;
+  }
+}
+
+// echoPurge снимает память панели про адрес целиком: новый чат нашёлся в
+// списке, его лента дальше сама подтверждает реплики, а пузырь с адреса
+// «нового» без чистки воскресал бы при следующем нажатии «+».
+function echoPurge(project, addr) {
+  try {
+    localStorage.removeItem(ECHO_KEY + project + "/" + addr);
   } catch (err) {
     return;
   }
@@ -6604,11 +6675,13 @@ function makeEcho(project, box, feedBox, addr, resend) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
       mine.push({ key: "local-" + seq, text: rec.text, wire: rec.wire,
-        state: "bad", born: rec.born, retry: resend });
+        state: rec.state, why: rec.why, born: rec.born, retry: resend });
     }
     if (mine.length) {
       draw();
-      plan();
+      // Дожим только неушедшему: held ждёт эха или руки человека, и слать его
+      // самим значило бы дублировать реплику, которую клиент уже держит.
+      if (mine.some((m) => m.state === "bad")) plan();
     }
   }
 
@@ -6632,6 +6705,9 @@ function makeEcho(project, box, feedBox, addr, resend) {
       const m = { key: "local-" + seq, text, wire: wire || text, sel, pic,
         state: "wait", born: Date.now(), retry };
       mine.push(m);
+      // Запись сразу: перерисовка панели во время отправки съедала пузырь
+      // вместе с текстом, и первая реплика нового чата пропадала с экрана.
+      save();
       draw();
       return m;
     },
@@ -6886,7 +6962,16 @@ function chatPanel(project, st) {
       }
       if (way.kind === "new") {
         chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref())
-          .then((ok) => { if (ok === false) echo.bad(m); else echo.sent(m); })
+          .then((got) => {
+            if (got === false) {
+              echo.bad(m);
+              return;
+            }
+            // Долгий подъём не хоронит реплику: пузырь остаётся с причиной и
+            // ждёт эха, а фоновый опрос chatWait пришьёт ленту сам.
+            if (got === "waiting") echo.held(m, CHAT_WAIT_WHY);
+            else echo.sent(m);
+          })
           .catch((err) => { echo.bad(m); console.error(err); })
           .finally(done);
         return;

@@ -21,6 +21,7 @@ const LOST = "deadc0de-0000-4000-8000-000000000000";
 // Старый разговор глубже видимого верха списка: транскрипт на диске есть.
 const DEEP = "01dcafe0-0000-4000-8000-000000000000";
 
+let listChats = [];
 const { sandbox, timers, store } = makeSandbox(app, (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
   if (path.includes("/chats") && init && init.method === "POST") {
@@ -29,7 +30,7 @@ const { sandbox, timers, store } = makeSandbox(app, (path, init) => {
   if (path.includes("/chats?tmux=")) {
     return { chats: found ? [{ id: "f00dcafe-0001", state: "live" }] : [] };
   }
-  if (path.includes("/chats")) return { chats: [], models: [] };
+  if (path.includes("/chats")) return { chats: listChats, models: [] };
   if (path.includes("/sessions/" + LOST)) {
     return { raw: { status: 404, statusText: "Not Found",
       text: JSON.stringify({ error: "транскрипта " + LOST + " нет среди сессий проекта demo" }) } };
@@ -215,4 +216,22 @@ if (!deepHead.includes("чат " + DEEP.slice(0, 8))) {
   fail("старый разговор не подписан своим ID: " + deepHead);
 }
 
-console.log("ok: новый чат называется новым, лента без приписки, первая реплика живёт до пришивания, протухший адрес назван находкой");
+// --- задача чужого проекта не едет в панель и заказ нового чата ---
+// Живой случай: пользователь пришёл из чата DK-397 в devkit, переключил проект
+// и нажал «+», а хвост адреса панели пережил смену проекта, и заказ поднял
+// chat-DK-397-2 с чужой привязкой в it-road-course. Чужая задача узнаётся по
+// префиксу доски и в панель не берётся ни из адреса, ни из самого диалога.
+{
+  const brd = { prefix: "XR", sections: [] };
+  let st2 = await sandbox.chatState("demo", "DK-397", brd);
+  if (st2.task) fail("задача чужой доски пережила смену проекта: " + st2.task);
+  listChats = [{ id: "abcd1234-0001", state: "dead", tasks: ["DK-397"], title: "чужое содержимое" }];
+  st2 = await sandbox.chatState("demo", "abcd1234-0001", brd);
+  if (st2.task) fail("чужая задача диалога усыновлена панелью: " + st2.task);
+  // Своя задача при этом живёт как жила.
+  st2 = await sandbox.chatState("demo", "XR-4", brd);
+  if (st2.task !== "XR-4") fail("своя задача потерялась: " + JSON.stringify(st2.task));
+  listChats = [];
+}
+
+console.log("ok: новый чат называется новым, лента без приписки, первая реплика живёт до пришивания, протухший адрес назван находкой, чужая задача в панель не едет");

@@ -5312,6 +5312,13 @@ async function chatState(project, addr, board) {
   // Задача берётся у самого диалога, когда адрес её не назвал: по ней
   // подписывается шапка и заводится следующий диалог в том же дереве.
   if (!st.task && st.entry && (st.entry.tasks || []).length) st.task = st.entry.tasks[0];
+  // Задача панели живёт только на своей доске: хвост адреса переживает смену
+  // проекта, и задача devkit не должна ехать ни в шапку, ни в заказ нового
+  // чата соседнего проекта (живой случай: «+» в it-road-course поднимал
+  // chat-DK-397-2 с чужой привязкой). Чужая задача узнаётся по префиксу доски;
+  // доска без префикса судить не берётся и оставляет всё как есть.
+  const prefix = board && board.prefix ? String(board.prefix).toUpperCase() + "-" : "";
+  if (st.task && prefix && !st.task.toUpperCase().startsWith(prefix)) st.task = "";
   if (st.task) {
     st.isGoal = isGoalRow(board, st.task);
     const row = boardRow(board, st.task);

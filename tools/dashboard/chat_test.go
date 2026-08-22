@@ -35,6 +35,59 @@ func chatEnv(t *testing.T) (*testEnv, *http.Client) {
 	return e, e.loggedClient(t)
 }
 
+// Имя tmux сворачивается по последней записи всего реестра, а сессии без
+// транскрипта в списке не показываются (живой случай chat-DK-397-2): клиент за
+// диалогами доверия пересоздаёт сессию, имя переиспользуется между заходами и
+// проектами, и старая запись держала живое имя, отчего мёртвый разговор
+// выглядел живым и ловился по ?tmux= вместо нового.
+func TestChatListTmuxNameClaimedByLatest(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "chat-X|1|123";;
+esac
+exit 0`)
+	old := time.Now().Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaaa-0001", plainTalk, old)
+	writeSession(t, e.home, e.proj, "", "bbbb-0002", plainTalk, time.Now())
+	reg := func(stamp, sid, tmux string) string {
+		return stamp + " сессия " + sid + " задача - проект demo дерево " + e.proj +
+			" транскрипт /tmp/" + sid + ".jsonl источник заказ повод startup tmux " + tmux + "\n"
+	}
+	writeBinds(t, e.home,
+		reg("2026-08-20T10:00:00", "aaaa-0001", "chat-X"),
+		reg("2026-08-22T10:00:00", "bbbb-0002", "chat-X"),
+		// Эфемерная запись без транскрипта: клиент пересоздал сессию за
+		// диалогом доверия, файла разговора у неё нет.
+		reg("2026-08-22T10:00:01", "cccc-0003", "-"))
+	list := chatsOf(t, e, c)
+	byID := map[string]chatEntry{}
+	for _, ch := range list {
+		byID[ch.ID] = ch
+	}
+	if _, ghost := byID["cccc-0003"]; ghost {
+		t.Fatalf("сессия без транскрипта встала в список: %+v", list)
+	}
+	if got := byID["bbbb-0002"]; got.Tmux != "chat-X" || got.State != chatLive {
+		t.Errorf("свежая запись не владеет именем: %+v", got)
+	}
+	if got := byID["aaaa-0001"]; got.Tmux != "" || got.State == chatLive {
+		t.Errorf("устаревшая запись держит имя и живость: %+v", got)
+	}
+	// Поиск по имени tmux находит одну сессию, владельца имени: по нему
+	// дашборд пришивает свежеподнятый чат, и старый тут был бы чужим.
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?tmux=chat-X", "")
+	text := body(t, resp)
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ не разобрался (%v): %s", err, text)
+	}
+	if len(got.Chats) != 1 || got.Chats[0].ID != "bbbb-0002" {
+		t.Fatalf("по имени tmux нашёлся не владелец: %s", text)
+	}
+}
+
 // sideTree заводит боковое дерево задачи рядом с проектом и возвращает путь.
 func sideTree(t *testing.T, proj, suffix string) string {
 	t.Helper()

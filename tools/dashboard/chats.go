@@ -235,6 +235,24 @@ func (s *server) chatModel(sid, tmux string) string {
 // разговор на четыре карточки.
 func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 	recs := sessions.LoadAll(s.cfg.Home)
+	// Имя tmux сворачивается по последней записи всего реестра: клиент за
+	// диалогами доверия и импортов пересоздаёт сессию, и одно имя носят
+	// несколько записей подряд, а поверх этого имя переиспользуется между
+	// проектами (живой случай chat-DK-397-2: старая сессия соседнего проекта
+	// держала имя живой tmux-сессии и выглядела живым разговором). Имя
+	// достаётся сессии, чья запись с ним свежее всех, у остальных снимается.
+	tmuxClaim := map[string]string{}
+	tmuxWhen := map[string]string{}
+	for sid, rs := range recs {
+		for _, rec := range rs {
+			if rec.Tmux == "" {
+				continue
+			}
+			if w, ok := tmuxWhen[rec.Tmux]; !ok || rec.Time > w {
+				tmuxClaim[rec.Tmux], tmuxWhen[rec.Tmux] = sid, rec.Time
+			}
+		}
+	}
 	alive := tmuxAliveFn()
 	names := harnessRoots(s.harnesses())
 	live := s.peers()
@@ -281,6 +299,12 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			Tmux:      last.Tmux, Tree: f.suffix, Branch: head.Branch,
 			Harness: names[f.root],
 			Model:   s.chatModel(f.ID, last.Tmux),
+		}
+		// Устаревшее имя снимается: живую tmux-сессию под этим именем ведёт
+		// другая, более свежая запись реестра, и мерить ею живость этого
+		// разговора значило бы показывать его живым и ловить его по ?tmux=.
+		if e.Tmux != "" && tmuxClaim[e.Tmux] != f.ID {
+			e.Tmux = ""
 		}
 		// Мера состояния: реестр живых сессий клиента старше всего остального.
 		// Есть запись с живым процессом, значит диалог идёт и ему есть куда

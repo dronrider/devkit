@@ -998,8 +998,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* ---- ранг строкой во всю ширину (замечание 3) ----
    Показатели встают в ряд и переносятся, а не столбиком: строка занимает одну
    полосу экрана вместо колонки выше самой постановки. */
-.rcard .rbody{display:flex;flex-wrap:wrap;gap:8px 10px;padding:8px 12px 10px}
-.rcard .rrow{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:0;border-top:none;min-height:0;flex:1 1 150px;min-width:130px}
+.rcard .rbody{display:flex;flex-wrap:wrap;gap:6px 8px;padding:6px 10px 8px}
+.rcard .rrow{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:0;border-top:none;min-height:0;flex:1 1 108px;min-width:96px}
 .rcard .rrow .nm{width:auto;flex:none;font:500 11px var(--sans);color:var(--tx3);white-space:nowrap}
 .rcard .rrow .why{display:none}
 .rcard .rrow .pick,.rcard .rrow select{width:100%}
@@ -1343,11 +1343,22 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* блок ранга в одну строку: крупный итог и рядом поля правки. Прежде он занимал
    две строки, и верхняя повторяла числами то, что стоит в полях нижней */
 .rcard{display:flex;align-items:center;flex-wrap:wrap;gap:0}
-.rcard .rtop{flex:none;padding:8px 4px 8px 18px}
-.rcard .rbody{flex:1;min-width:0;padding:8px 18px 8px 12px}
+.rcard .rtop{flex:none;padding:5px 4px 5px 14px;min-width:0;flex:1 1 auto}
+.rcard .rbody{flex:1;min-width:0;padding:5px 14px 5px 10px}
+/* просмотр: полей правки нет вовсе, слагаемые стоят компактным текстом при
+   итоге; поля приходят карандашом вместе с остальной правкой (замечание
+   пользователя: жирные селекты в просмотре не нужны никому) */
+.rcard:not(.redit) .rbody{display:none}
+.rcard:not(.redit) .rfold{display:none}
+.rcard.redit .rview{display:none}
+.rcard .rview{font:400 12.5px var(--sans);color:var(--tx2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rcard.redit .rtop{flex:none}
+.rcard .rbig{gap:10px}
+.rcard .rbig .v{font-size:22px}
 @media (max-width:900px){
   /* телефон: итог остаётся строкой с разворотом, поля уходят под него */
   .rcard{display:block}
-  .rcard .rtop{padding:6px 14px}
-  .rcard .rbody{padding:8px 12px 10px}
+  .rcard .rtop{padding:5px 14px}
+  .rcard .rbody{padding:6px 10px 8px}
+  .rcard .rview{white-space:normal;font-size:12px}
 }

@@ -2413,6 +2413,10 @@ function formPage(cfg) {
   let file = null;
   let edit = Boolean(cfg.edit);
   let dressPen = () => {};
+  // Блок ранга живёт в двух видах: просмотр показывает компактный текст итога
+  // со слагаемыми, поля правки появляются карандашом. Ссылка ленивая: сам блок
+  // собирается ниже, когда setEdit уже объявлен.
+  let rankMode = () => {};
   // Правка включается карандашом: по умолчанию экран открывается на просмотр, и
   // описание собрано разметкой, а не лежит сырым текстом в поле. Режим меняется
   // по месту, а не перерисовкой: перерисовка над тронутой формой запрещена, она
@@ -2424,6 +2428,7 @@ function formPage(cfg) {
       title.classList.toggle("ro", !on);
     }
     if (file && file.setEdit) file.setEdit(on);
+    rankMode(on);
     dressPen();
     if (cfg.onEdit) cfg.onEdit(on);
   };
@@ -2556,7 +2561,12 @@ function formPage(cfg) {
     const big = el("div", "rbig");
     const sum = el("span", "v", "0");
     const note = el("span", "f", "");
-    big.append(sum, note);
+    // В просмотре слагаемые стоят компактной строкой текста при итоге, а
+    // жирные поля правки не показываются вовсе: читателю нужны значения, а не
+    // пять селектов (замечание пользователя). Поля приходят карандашом, вместе
+    // с остальной правкой формы.
+    const view = el("span", "rview");
+    big.append(sum, note, view);
     // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
     // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
     // стили, а спрятанная кнопка ни в обход табом, ни под палец не попадает.
@@ -2582,7 +2592,11 @@ function formPage(cfg) {
     // правка слагаемого видна суммой сразу, до сохранения.
     const drawRank = () => {
       sum.textContent = String(form.parts.reduce((a, b) => a + Number(b), 0));
+      view.textContent = RANK_PARTS
+        .map((part, i) => part.name.toLowerCase() + " " + Number(form.parts[i]))
+        .join(", ");
     };
+    rankMode = (on) => { rank.classList.toggle("redit", on); };
     RANK_PARTS.forEach((part, i) => {
       const line = el("div", "rrow");
       line.append(el("span", "nm", part.name));

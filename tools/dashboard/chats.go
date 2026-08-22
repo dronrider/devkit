@@ -94,6 +94,10 @@ const (
 type chatEntry struct {
 	ID      string   `json:"id"`
 	Title   string   `json:"title,omitempty"`
+	// Mtime это время последней содержательной реплики разговора: по нему
+	// список стоит свежими сверху и им же подписана строка. Время правки файла
+	// сюда больше не едет вовсе, оно двигалось служебщиной (замечание
+	// пользователя про чаты, всплывшие наверх без единой реплики).
 	Mtime   string   `json:"mtime,omitempty"`
 	Tasks   []string `json:"tasks,omitempty"`
 	Model   string   `json:"model,omitempty"`
@@ -270,7 +274,7 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			note = ""
 		}
 		e := chatEntry{
-			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: f.Mtime, Tasks: tasks,
+			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: saidAt(head, f), Tasks: tasks,
 			Note: note, Bound: bound,
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
@@ -314,6 +318,10 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 		}
 		out = append(out, e)
 	}
+	// Порядок списка это порядок разговора, а не порядок касаний файла: пока
+	// сортировки тут не было, список стоял так, как его отдал обход каталога, то
+	// есть по времени правки транскриптов (замечание пользователя).
+	sortEntries(out)
 	return out
 }
 
@@ -966,6 +974,25 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	s.logf("модель чата %s в %s теперь %s", sid, found.Name, model)
 	writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model,
 		"message": fmt.Sprintf("модель чата теперь %s: она возьмётся на следующем подъёме или резюме сессии", model)})
+}
+
+// saidAt это время разговора для списка: метка последней содержательной реплики,
+// а когда её не нашлось (в прочитанном хвосте одни ходы инструментов либо
+// транскрипт пуст), остаётся время правки файла. Пустая строка в списке была бы
+// хуже неточной: разговор без времени уезжает в самый низ и пропадает из виду.
+func saidAt(head sessionHead, f sessionInfo) string {
+	if head.Said == "" {
+		return f.Mtime
+	}
+	// Метка транскрипта приходит с долями секунды, а время правки файла без
+	// них, и список сравнивает их строками: в таком виде «...:55.166Z»
+	// оказывалось раньше «...:55Z» той же секунды. Формат тут сводится к
+	// одному, секундному UTC, каким его пишет и сам список файлов.
+	at, err := time.Parse(time.RFC3339, head.Said)
+	if err != nil {
+		return f.Mtime
+	}
+	return at.UTC().Format(time.RFC3339)
 }
 
 // sortEntries держит список свежими сверху и при равном времени по ID: порядок

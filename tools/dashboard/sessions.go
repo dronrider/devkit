@@ -238,6 +238,14 @@ type sessionHead struct {
 	Branch string
 	First  string
 	Named  string
+	// Said это метка последней содержательной реплики транскрипта: слова
+	// человека или агента, те самые, что видны в ленте. Время правки файла на
+	// этот вопрос не отвечает: транскрипт трогает всякая служебщина (постановка
+	// реплики в очередь, отметки харнеса, служебные вставки, которые лента и
+	// так прячет), и разговор, где месяц никто не писал, выходил в списке
+	// первым (замечание пользователя). Пусто, когда в прочитанном хвосте
+	// содержательных реплик не нашлось.
+	Said string
 	// Model это модель, которой сессия работает на самом деле: её пишет харнес
 	// в каждую запись ответа (message.model). Выбор, сохранённый дашбордом,
 	// говорит лишь о том, чем поднимать сессию в следующий раз, а чем она
@@ -257,6 +265,53 @@ type sessionHead struct {
 // скобках (<ide_opened_file> и родня) репликой не считаются. Второй ответ
 // говорит, дочитана ли голова до предела: дальше файл только дописывается, и
 // такая голова больше не меняется, на этом стоит память процесса.
+// lastSaid отвечает, когда в разговоре последний раз сказали что-то по делу.
+// Разбор тут общий с лентой (parseReplies): содержательным считается ровно то,
+// что лента показывает пузырём, слова человека и ответ агента. Ходы
+// инструментов, размышления и служебные строки время не двигают, иначе список
+// снова стал бы сортироваться по касаниям файла.
+//
+// Читается хвост, а не файл целиком: транскрипт долгого разговора это мегабайты,
+// а последняя реплика лежит в самом конце.
+func lastSaid(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	from := int64(0)
+	if fi.Size() > modelTailLimit {
+		from = fi.Size() - modelTailLimit
+	}
+	if _, err := f.Seek(from, 0); err != nil {
+		return ""
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	list := parseReplies(data, 0)
+	for i := len(list) - 1; i >= 0; i-- {
+		if saidReply(list[i]) {
+			return list[i].Time
+		}
+	}
+	return ""
+}
+
+// saidReply отделяет сказанное от машинного: пузырём в ленте стоят реплика
+// человека и ответ агента, и только они говорят о том, что разговор жив.
+func saidReply(r reply) bool {
+	if r.Role != "user" && r.Role != "assistant" {
+		return false
+	}
+	return strings.TrimSpace(r.Text) != ""
+}
+
 func readSessionHead(path string) (sessionHead, bool) {
 	var head sessionHead
 	f, err := os.Open(path)
@@ -302,6 +357,7 @@ func readSessionHead(path string) (sessionHead, bool) {
 			break
 		}
 	}
+	head.Said = lastSaid(path)
 	return head, full
 }
 

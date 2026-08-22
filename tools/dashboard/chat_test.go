@@ -772,3 +772,67 @@ func TestChatStopKillsWedged(t *testing.T) {
 		t.Errorf("снятие живой сессии: %d %s, ждал отказ про живую tmux", resp.StatusCode, text)
 	}
 }
+
+// Время разговора в списке это время последней содержательной реплики, а не
+// время правки транскрипта. Файл трогает всякая служебщина (постановка реплики
+// в очередь, отметки харнеса, служебные вставки, которые лента и так прячет), и
+// по ней наверх списка всплывали разговоры, где месяц никто не писал (замечание
+// пользователя). Стенд держит и порядок: сортировки в списке когда-то не было
+// вовсе, он стоял так, как отдал обход каталога, то есть по тем же mtime.
+func TestChatListTimeIsLastSaid(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 22, 19, 30, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+
+	// Разговор, где последняя реплика вчера, а файл тронут только что: ровно
+	// так выглядит чат после служебного касания.
+	quiet := "aaaa1111-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", quiet, said("2026-08-21T10:00:00.123Z", "давний разговор")+
+		queued("2026-08-22T19:25:52.000Z"), now.Add(-time.Minute))
+
+	// Разговор, где вчера же говорили позже: он и должен стоять выше.
+	later := "bbbb2222-2222-4222-8222-222222222222"
+	writeSession(t, e.home, e.proj, "", later, said("2026-08-21T12:00:00.456Z", "разговор позже")+
+		queued("2026-08-22T19:20:00.000Z"), now.Add(-2*time.Minute))
+
+	// Живой разговор: реплика сегодня, ему и стоять первым.
+	fresh := "cccc3333-3333-4333-8333-333333333333"
+	writeSession(t, e.home, e.proj, "", fresh, said("2026-08-22T19:00:00.000Z", "сегодняшний разговор"),
+		now.Add(-3*time.Minute))
+
+	got := chatsOf(t, e, c)
+	if len(got) != 3 {
+		t.Fatalf("чатов в списке %d, ждал три: %+v", len(got), got)
+	}
+	want := map[string]string{
+		quiet: "2026-08-21T10:00:00Z",
+		later: "2026-08-21T12:00:00Z",
+		fresh: "2026-08-22T19:00:00Z",
+	}
+	for _, e := range got {
+		if want[e.ID] != e.Mtime {
+			t.Errorf("время разговора %s %q, ждал %q: взято касание файла, а не реплика",
+				e.ID[:8], e.Mtime, want[e.ID])
+		}
+	}
+	order := []string{got[0].ID, got[1].ID, got[2].ID}
+	if order[0] != fresh || order[1] != later || order[2] != quiet {
+		t.Errorf("порядок списка %v: список стоит не по последней реплике", order)
+	}
+}
+
+// said это обычная пара реплик транскрипта: слова человека и ответ агента.
+func said(at, text string) string {
+	return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q}`+"\n"+
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ответ"}]},"timestamp":%q}`+"\n",
+		text, at, at)
+}
+
+// queued это служебное касание транскрипта: постановка реплики в очередь и ход
+// инструмента. Лента такие записи пузырём не показывает, и время разговора они
+// двигать не должны.
+func queued(at string) string {
+	return fmt.Sprintf(`{"type":"queue-operation","operation":"enqueue","timestamp":%q}`+"\n"+
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash",`+
+		`"input":{"command":"ls"}}]},"timestamp":%q}`+"\n", at, at)
+}

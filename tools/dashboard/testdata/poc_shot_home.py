@@ -44,7 +44,7 @@ def page(text, css, menu):
     if menu:
         # Меню разворачивается у первой карточки списка: снимок про то, как оно
         # ложится под плюс, и второй карточки для этого не нужно.
-        html = html.replace('</button></div>', '</button>' + MENU + '</div>', 1)
+        html = html.replace('+</button></div>', '+</button>' + MENU + '</div>', 1)
     return html
 
 

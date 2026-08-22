@@ -7246,6 +7246,14 @@ function findInput(cls, q) {
 function wireFindField(input) {
   input.addEventListener("input", () => { findType(input.value); });
   input.addEventListener("keydown", (ev) => {
+    // Escape это отказ от поиска: поле пустеет, и экран возвращается к тому,
+    // что было под выдачей. Ждать при этом нечего, срок набора снимается.
+    if (ev.key === "Escape") {
+      clearTimeout(findTimer);
+      input.value = "";
+      findGo("");
+      return;
+    }
     if (ev.key !== "Enter") return;
     clearTimeout(findTimer);
     findGo(input.value);
@@ -7259,6 +7267,10 @@ function findType(value) {
   findTimer = setTimeout(() => { findGo(value); }, FIND_WAIT);
 }
 
+// Столько знаков сервер ждёт от запроса (searchMinQuery в search.go): короче
+// он не ищет, и экран выдачи до этого порога не открывается вовсе.
+const FIND_MIN = 2;
+
 function findGo(value) {
   const rt = route();
   // В разделе «Агенты» поле фильтрует его собственные строки: доска тут ни при
@@ -7267,13 +7279,28 @@ function findGo(value) {
   if (rt.agents) {
     const q = String(value).trim();
     const base = "/agents" + (q ? "/" + encodeURIComponent(q) : "");
+    // Пустой запрос это весь раздел, и адрес у него прежний: экран тут не
+    // меняется, меняется только отбор строк.
     const hash = "#" + (rt.chat ? base + "/chat/" + rt.chat : base);
     if (hash !== "#" + location.hash.replace(/^#/, "")) location.replace(hash);
     return;
   }
   const project = shownProject || route().proj;
   if (!project) return;
-  const base = project + "/find/" + encodeURIComponent(String(value).trim());
+  const q = String(value).trim();
+  // Пустое поле это отказ от поиска, а не поиск пустоты: экран выдачи уходит
+  // целиком и открывается доска. Прежде адрес оставался «.../find/», выдача
+  // висела прежними строками, а следом за ней вставала пустая с надписью про
+  // два символа, и лечилось это только перезагрузкой (замечание пользователя).
+  // Короче двух знаков это ещё не запрос: сервер такой не ищет и отвечает
+  // словами про два символа, а экран выдачи на месте доски показывал бы пустоту
+  // с этой надписью. Пока запрос не набран, стоит доска.
+  if (Array.from(q).length < FIND_MIN) {
+    if (!route().find) return;
+    goKeepingChat(project);
+    return;
+  }
+  const base = project + "/find/" + encodeURIComponent(q);
   // Открытый разговор переезжает и с каждой набранной буквой. Замена адреса
   // хвост панели не дописывала, и поиск оставался единственной дорогой, что
   // закрывает чат: первая же буква сносила его с экрана.

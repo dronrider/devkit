@@ -34,6 +34,9 @@ const { sandbox } = makeSandbox(app, (path) => {
 });
 
 const groups = sandbox.document.getElementById("groups");
+// Запрос в выдаче подсвечен своим узлом, поэтому пробелы в сравнении
+// схлопываются: предмет стенда сама выдача, а не её разметка.
+const said = () => dump(groups).replace(/\s+/g, " ");
 const field = sandbox.document.getElementById("hq");
 const go = async (hash) => {
   sandbox.location.hash = hash;
@@ -96,9 +99,6 @@ await go("#demo");
   if (!sandbox.location.hash.includes("/find/")) {
     fail("с доски поиск не открыл выдачу: " + sandbox.location.hash);
   }
-  // Запрос в выдаче подсвечен своим узлом, поэтому пробелы в сравнении
-  // схлопываются: предмет тут сама выдача, а не её разметка.
-  const said = () => dump(groups).replace(/\s+/g, " ");
   if (!said().includes("нашлось по запросу пер")) {
     fail("выдача не собралась: " + said().slice(0, 300));
   }
@@ -109,6 +109,46 @@ await go("#demo");
   }
   if (!said().includes("нашлось по запросу перв")) {
     fail("следующая буква выдачу не обновила: " + said().slice(0, 300));
+  }
+}
+
+// --- очистка поля возвращает доску без перезагрузки ---
+{
+  await go("#demo");
+  await type("перв");
+  if (!said().includes("нашлось по запросу")) fail("выдача не открылась: " + said().slice(0, 200));
+
+  // Стёрли до одного знака: сервер такой запрос не ищет, и вместо пустой
+  // выдачи с надписью про два символа обязана вернуться доска.
+  await type("п");
+  if (sandbox.location.hash.includes("/find/")) {
+    fail("на одном знаке экран выдачи остался: " + sandbox.location.hash);
+  }
+  if (!said().includes("строка доски")) fail("доска не вернулась: " + said().slice(0, 200));
+  if (said().includes("нашлось по запросу")) fail("на экране остались строки прежней выдачи");
+
+  // Стёрли совсем: то же самое, доска и никаких промежуточных пустот.
+  await type("перв");
+  await type("");
+  if (sandbox.location.hash.includes("/find/")) {
+    fail("пустое поле оставило экран выдачи: " + sandbox.location.hash);
+  }
+  if (!said().includes("строка доски")) fail("после очистки нет доски: " + said().slice(0, 200));
+  if (said().includes("Ждём двух символов")) fail("мелькнула пустая выдача с надписью про символы");
+
+  // Escape это тот же отказ: поле пустеет и экран возвращается.
+  await type("перв");
+  const field2 = sandbox.document.getElementById("hq");
+  field2.value = "перв";
+  field2.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
+  await settle();
+  if (!sandbox.chatOnlyMove(sandbox.route())) {
+    await sandbox.refresh();
+    await settle();
+  }
+  if (field2.value !== "") fail("Escape не очистил поле: " + field2.value);
+  if (sandbox.location.hash.includes("/find/")) {
+    fail("Escape оставил экран выдачи: " + sandbox.location.hash);
   }
 }
 

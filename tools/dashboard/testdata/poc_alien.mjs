@@ -27,7 +27,7 @@ const chatBtn = (row) => allByClass(row, "btn").find((b) => String(b.title) === 
 {
   const row = sandbox.renderRow("demo", alien, "in-progress");
   const said = dump(row);
-  if (!said.includes("в работе на другой машине")) {
+  if (!said.includes("исполнителя не видно")) {
     fail("подпись про чужую машину пропала: " + said);
   }
   if (!chatBtn(row)) fail("кнопки чата у чужой работы нет: " + said);

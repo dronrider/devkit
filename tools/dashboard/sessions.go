@@ -265,6 +265,43 @@ type sessionHead struct {
 // скобках (<ide_opened_file> и родня) репликой не считаются. Второй ответ
 // говорит, дочитана ли голова до предела: дальше файл только дописывается, и
 // такая голова больше не меняется, на этом стоит память процесса.
+// tailParsed читает хвост транскрипта и разбирает его тем же разбором, каким
+// собрана лента: читателей у хвоста двое, время последней реплики и разбор
+// работы по задаче, и держать два чтения ради одного файла незачем.
+func tailParsed(path string) []reply {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	from := int64(0)
+	if fi.Size() > modelTailLimit {
+		from = fi.Size() - modelTailLimit
+	}
+	if _, err := f.Seek(from, 0); err != nil {
+		return nil
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	return parseReplies(data, 0)
+}
+
+// tailReplies отдаёт последние n записей хвоста: работа по задаче видна
+// последними ходами, а глубже начинается прошлое сессии.
+func tailReplies(path string, n int) []reply {
+	list := tailParsed(path)
+	if n > 0 && len(list) > n {
+		return list[len(list)-n:]
+	}
+	return list
+}
+
 // lastSaid отвечает, когда в разговоре последний раз сказали что-то по делу.
 // Разбор тут общий с лентой (parseReplies): содержательным считается ровно то,
 // что лента показывает пузырём, слова человека и ответ агента. Ходы
@@ -274,27 +311,7 @@ type sessionHead struct {
 // Читается хвост, а не файл целиком: транскрипт долгого разговора это мегабайты,
 // а последняя реплика лежит в самом конце.
 func lastSaid(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return ""
-	}
-	from := int64(0)
-	if fi.Size() > modelTailLimit {
-		from = fi.Size() - modelTailLimit
-	}
-	if _, err := f.Seek(from, 0); err != nil {
-		return ""
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return ""
-	}
-	list := parseReplies(data, 0)
+	list := tailParsed(path)
 	for i := len(list) - 1; i >= 0; i-- {
 		if saidReply(list[i]) {
 			return list[i].Time

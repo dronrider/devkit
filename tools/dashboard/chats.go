@@ -1535,3 +1535,91 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "fresh", "tmux": sess,
 		"message": "чата не было: поднят новый в tmux-сессии " + sess})
 }
+
+// Привязка по факту работы. Сессия, у которой задачи в реестре нет, всё равно
+// бывает исполнительской: человек открыл окно, сказал «test» и работает по
+// строке, а привязке взяться неоткуда. Прежде такая строка объявлялась взятой
+// на другой машине, и это было прямое враньё: отсутствие привязанной сессии не
+// доказывает чужую машину (жалоба пользователя на DK-481).
+//
+// Порог держится строгим нарочно: ложная привязка хуже отсутствия, она отдаёт
+// строку не тому. Считается только явная работа по задаче, а не случайное
+// упоминание ID в разговоре.
+const (
+	// Сколько реплик хвоста смотрим: работа по задаче видна последними ходами,
+	// а глубже начинается прошлое сессии.
+	tailWorkReplies = 60
+	// Сколько раз ID должен прозвучать в репликах, чтобы считаться работой.
+	// Один раз это вопрос «а что там с DK-481», два и больше это работа.
+	tailWorkSaid = 2
+)
+
+// gitSubjectRe ловит subject коммита в команде: ID в нём это работа по задаче,
+// а не разговор о ней.
+var gitSubjectRe = regexp.MustCompile(`(?s)git\s+commit[^\n]*?-m\s*['"]([^'"]*)['"]`)
+
+// worksTask отвечает, работает ли сессия по этой задаче, судя по хвосту её
+// транскрипта. Доводов два: ID в subject коммита (сильный, хватает одного) и ID
+// в репликах разговора (слабый, нужен не один раз).
+func worksTask(list []reply, id string) bool {
+	said := 0
+	for _, r := range list {
+		text := r.Text
+		if r.Args != nil && r.Args["command"] != "" {
+			text += "\n" + r.Args["command"]
+		}
+		if r.Role == "tool" {
+			// Ход инструмента: интересует только коммит, остальные команды
+			// упоминают ID мимоходом (открыть файл задачи, показать строку).
+			for _, m := range gitSubjectRe.FindAllStringSubmatch(text, -1) {
+				if strings.Contains(m[1], id) {
+					return true
+				}
+			}
+			continue
+		}
+		if r.Role != "user" && r.Role != "assistant" {
+			continue
+		}
+		if strings.Contains(text, id) {
+			said++
+			if said >= tailWorkSaid {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// taskWorkers ищет исполнителей среди сессий без привязки: живых, этого
+// проекта, у которых своей задачи нет вовсе. Спрашивается только про
+// названные задачи (те, которых иначе объявят чужими), и только по хвосту
+// транскрипта: полный скан тут не нужен.
+func (s *server) taskWorkers(projPath string, want []string) map[string]string {
+	out := map[string]string{}
+	if len(want) == 0 {
+		return out
+	}
+	binds := s.binds()
+	live := s.peers()
+	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
+		if _, alive := live[f.ID]; !alive {
+			continue
+		}
+		if task, _, bound := bindTask(binds, f.ID, f.suffix, s.sessionHeadCached(f.path, f.stamp)); task != "" && bound == boundLead {
+			continue
+		}
+		list := tailReplies(f.path, tailWorkReplies)
+		for _, id := range want {
+			if out[id] != "" {
+				continue
+			}
+			if worksTask(list, id) {
+				out[id] = f.ID
+				s.logf("задача %s: исполнителем считается сессия %s, привязки у неё нет, "+
+					"а хвост транскрипта работает этим ID", id, f.ID)
+			}
+		}
+	}
+	return out
+}

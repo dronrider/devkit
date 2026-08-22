@@ -82,7 +82,7 @@ func TestBoardRunsCarriesStage(t *testing.T) {
 			Rows []boardRow `json:"rows"`
 		} `json:"sections"`
 	}
-	if err := json.Unmarshal(boardRuns(raw, works, nil, stages, nil), &doc); err != nil {
+	if err := json.Unmarshal(boardRuns(raw, works, nil, nil, stages, nil), &doc); err != nil {
 		t.Fatal(err)
 	}
 	rows := map[string]boardRow{}
@@ -109,7 +109,7 @@ func TestBoardRunsCarriesStage(t *testing.T) {
 func TestBoardRunsWithoutStagesKeepsRun(t *testing.T) {
 	raw := json.RawMessage(`{"prefix":"XR","sections":[{"key":"in-progress","rows":[
 		{"id":"XR-001","title":"Живая","sect":"in-progress"}]}]}`)
-	out := boardRuns(raw, []Work{{ID: "XR-001", Kind: "task", Via: "tmux"}}, nil, nil, nil)
+	out := boardRuns(raw, []Work{{ID: "XR-001", Kind: "task", Via: "tmux"}}, nil, nil, nil, nil)
 	var doc struct {
 		Sections []struct {
 			Rows []boardRow `json:"rows"`

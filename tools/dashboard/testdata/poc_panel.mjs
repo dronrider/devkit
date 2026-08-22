@@ -275,6 +275,22 @@ async function feedOf(items, sid) {
   if (String(bubbles[2].className).includes("me")) {
     fail("реплика агента нарисована пузырём человека: " + bubbles[2].className);
   }
+
+  // Ответ самой сессии подписан диспетчерским, когда она делегирует: признак
+  // считает сервер по боковым журналам, панель только рисует. Ответ субагента
+  // остаётся агентским, он и так стоит с отступом и заказом.
+  const mixedBox = await feedOf([
+    { seq: 1, key: "m:1", role: "assistant", text: "беру задачу", time: at, who: "агент-диспетчер" },
+    { seq: 2, key: "a:1", role: "assistant", text: "нашёл причину", time: at, sub: "разбор находки" },
+  ], "aaaa1111-1111");
+  const said = allByClass(mixedBox, "msg").map((b) => dump(byClass(b, "mm")));
+  if (said.length !== 2) fail("пузырей в смешанной ленте " + said.length + ", ждал два");
+  if (!said[0].startsWith("агент-диспетчер")) {
+    fail("ответ делегирующей сессии подписан не диспетчером: " + said[0]);
+  }
+  if (!said[1].startsWith("агент,") && said[1] !== "агент") {
+    fail("ответ субагента подписан не агентом: " + said[1]);
+  }
 }
 
 // --- работа субагента идёт той же лентой, без блока ---

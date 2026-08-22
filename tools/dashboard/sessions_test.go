@@ -1886,3 +1886,56 @@ func TestPeerReplyAuthorBySource(t *testing.T) {
 		t.Fatalf("реплика умершей сессии подписана %q", gone[0].Who)
 	}
 }
+
+// Ответы сессии, которая делегирует, подписаны диспетчерскими: боковой журнал
+// субагента при транскрипте и есть признак делегирования. Записи самого
+// субагента остаются агентскими, они стоят с отступом и заказом, а у сессии без
+// субагентов ответы тоже просто агентские (замечание пользователя).
+func TestLeadSessionAnswersSignedAsDispatcher(t *testing.T) {
+	e := newTestEnv(t)
+	at := "2026-08-21T10:00:00.000Z"
+	main := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"выполни XR-1"},"timestamp":%q}`, at) + "\n" +
+		fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"беру задачу"}]},"timestamp":%q}`, at) + "\n"
+	solo := writeSession(t, e.home, e.proj, "", "aaa-1", main, time.Now())
+	lead := writeSession(t, e.home, e.proj, "", "bbb-2", main, time.Now())
+	writeSubLog(t, lead, "1", "разбор находки", sideLine("нашёл причину", at))
+
+	who := func(path string) []string {
+		items := expandSubs(path, parseReplies(readBytes(t, path), 0))
+		var out []string
+		for _, it := range items {
+			if it.Role != "assistant" {
+				continue
+			}
+			out = append(out, it.Text+"="+it.Who+"/"+it.Sub)
+		}
+		return out
+	}
+	// Субагентов нет: делегировать некому, и ответы остаются агентскими.
+	if got := who(solo); len(got) != 1 || got[0] != "беру задачу=/" {
+		t.Fatalf("сессия без субагентов подписана диспетчером: %v", got)
+	}
+	// Журнал есть: ответы главной диспетчерские, ответ субагента прежний.
+	got := map[string]bool{}
+	for _, line := range who(lead) {
+		got[line] = true
+	}
+	if len(got) != 2 {
+		t.Fatalf("записей в слитой ленте %d, ждал две: %v", len(got), got)
+	}
+	if !got["беру задачу="+whoLead+"/"] {
+		t.Errorf("ответ главной сессии подписан не диспетчером: %v", got)
+	}
+	if !got["нашёл причину=/разбор находки"] {
+		t.Errorf("ответ субагента подписан не агентом: %v", got)
+	}
+}
+
+func readBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

@@ -1623,7 +1623,11 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 				continue
 			}
 			raw := []byte(strings.Join(lines, "\n"))
-			for _, item := range parseReplies(raw, seq) {
+			// Субагент заводится посреди хода, и с ним сессия становится
+			// диспетчером: подпись её ответов считается на каждой порции, а не
+			// один раз на открытие потока.
+			lead := len(subLogs(path)) > 0
+			for _, item := range markLead(parseReplies(raw, seq), lead) {
 				item.Key = mainSrc + ":" + strconv.Itoa(mainIdx)
 				mainIdx++
 				seq = item.Seq + 1
@@ -2105,6 +2109,24 @@ func srcName(file string) string {
 	return strings.TrimSuffix(filepath.Base(file), ".jsonl")
 }
 
+// markLead подписывает ответы главной сессии диспетчерскими. Диспетчер это
+// сессия, которая делегирует, и видно это по её же боковым журналам: завела
+// хоть один субагентский журнал, значит работу ведут за неё, а её собственные
+// ответы это ответы диспетчера (замечание пользователя). Записи субагентов
+// остаются просто агентскими, они и так стоят с отступом и заказом. Чужую
+// подпись правка не трогает: пришедшее каналом уже названо своим источником.
+func markLead(items []reply, lead bool) []reply {
+	if !lead {
+		return items
+	}
+	for i := range items {
+		if items[i].Role == "assistant" && items[i].Who == "" && items[i].Sub == "" {
+			items[i].Who = whoLead
+		}
+	}
+	return items
+}
+
 // expandSubs вплетает записи боковых журналов в ленту по меткам времени.
 // Прежде они вставлялись за своим вызовом Task, а журнал, который пишется
 // прямо сейчас, целиком уезжал в хвост, и хвостовое окно ленты состояло из
@@ -2144,8 +2166,8 @@ func expandSubs(path string, items []reply) []reply {
 			all = append(all, keyed{it: it, at: at, src: src, idx: i})
 		}
 	}
-	push(mainSrc, items)
 	logs := subLogs(path)
+	push(mainSrc, markLead(items, len(logs) > 0))
 	// Порядок файлов у os.ReadDir свой, а лента должна собираться одинаково от
 	// захода к заходу, поэтому журналы обходятся по имени файла.
 	ids := make([]string, 0, len(logs))

@@ -9,6 +9,8 @@
 
 import { makeSandbox, makeNode, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const chats = [
   { id: "aaaa1111-1111", title: "Выполни XR-1", mtime: "2026-08-13T10:02:00+03:00",
@@ -516,6 +518,34 @@ async function feedOf(items, sid) {
   const bare = sandbox.chatItem({ role: "note", mark: "agent",
     note: "Фоновый агент завершил работу" });
   if (byClass(bare, "foldc")) fail("у пустого завершения появился разворот: " + dump(bare));
+
+  // Раскрывашка у блока та же, что у соседей по ленте: шеврон значком, а не
+  // плюс с минусом, и класс тот же. Разными они отвечали на вопрос «что это за
+  // элемент» по-разному, хотя действие одно (замечание пользователя).
+  const fresh = sandbox.chatItem({ role: "note", mark: "agent",
+    note: "Фоновый агент завершил работу: вычитка готова", text: "## Итог\nГотово." });
+  const think = sandbox.chatItem({ role: "thinking", text: "думаю про находку", spent: 5000 });
+  const carOf = (node) => byClass(node, "foldc");
+  const sign = (node) => String(carOf(node).className).split(" ").sort().join(" ");
+  if (!carOf(think)) fail("у размышления пропала раскрывашка: " + dump(think));
+  if (sign(fresh) !== sign(think)) {
+    fail("раскрывашки блока и размышления разных классов: " +
+      sign(fresh) + " против " + sign(think));
+  }
+  for (const [what, node] of [["завершения", fresh], ["размышления", think]]) {
+    if (dump(carOf(node)).includes("+") || dump(carOf(node)).includes("-")) {
+      fail("раскрывашка " + what + " нарисована плюсом: " + JSON.stringify(dump(carOf(node))));
+    }
+    if (!tag(carOf(node), "SVG") && !tag(carOf(node), "I")) {
+      fail("раскрывашка " + what + " не значок: " + dump(carOf(node)));
+    }
+  }
+  // Пунктира у служебного блока нет: рамка и кегль у него общие с соседями,
+  // и стенд читает это в самом style.css, а не пересказывает себя.
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  for (const rule of (css.match(/\.svc\.fold[^{]*\{[^}]*\}/g) || [])) {
+    if (rule.includes("dashed")) fail("у служебного блока остался пунктир: " + rule);
+  }
 }
 
 // --- план сессии: блок на экране задачи и пустое состояние ---

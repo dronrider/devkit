@@ -908,7 +908,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .foldh:hover{background:var(--bg3)}
 .foldh b{flex:none;font:600 11.5px var(--mono);color:var(--tx2)}
 .foldh span{flex:1;min-width:0;font:400 11.5px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.foldc{flex:none!important;width:14px;text-align:center;font:600 13px var(--mono);color:var(--tx3)}
+.foldc{flex:none!important;width:14px;display:flex;align-items:center;justify-content:center;color:var(--tx3)}
+.foldc svg{width:13px;height:13px;display:block}
 .foldb{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:400 11.5px/1.5 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto}
 .think.fold .foldh b{color:var(--tx3)}
 .toolout.fold{background:var(--bg1)}
@@ -1138,10 +1139,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* чужая реплика, доехавшая до работающего агента: свёрнутая служебная строка
    с подписью, кто вмешался. Пузырём человека она не рисуется: сказал это не он */
-.svc.fold{margin:6px 0;border:1px dashed var(--line2);border-radius:8px;background:none}
-.svc.fold .foldh{padding:4px 9px;gap:7px}
-.svc.fold .foldh b{font:600 11px var(--sans);color:var(--tx3)}
-.svc.fold .foldb{padding:6px 9px;max-height:320px;font:400 11.5px/1.5 var(--sans);color:var(--tx2);white-space:pre-wrap}
+/* служебный свёрнутый блок (конец фоновой работы, рамки диспетчера) это тот же
+   свёрнутый блок ленты, что и остальные: пунктирный контур с плюсом и своим
+   кеглем выбивался из ряда, отвечая на вопрос «что это за элемент» иначе, чем
+   соседи (замечание пользователя). Заголовок остаётся словами, а не
+   моноширинным именем инструмента, отчёт внутри идёт разметкой */
+.svc.fold .foldh b{font:600 11.5px var(--sans);color:var(--tx2)}
+.svc.fold .foldb{white-space:normal}
 
 /* 7: ход инструмента заголовком и блоком под ним. В заголовке имя с
    пояснением хода, в блоке две строки в две колонки: слева направление

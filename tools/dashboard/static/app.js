@@ -2924,6 +2924,20 @@ function mdRender(text) {
   return box;
 }
 
+// Шеврон разворота: он один на все свёрнутые блоки ленты. Прежде размышления и
+// блок фонового агента показывали плюс с минусом, а карточки хода шеврон, и
+// одно и то же действие выглядело двумя разными (замечание пользователя).
+function foldCar() {
+  const car = el("span", "foldc foldar");
+  car.set = (open) => {
+    car.replaceChildren(icon(open ? "i-unfold" : "i-fold"));
+    car.title = open ? "Свернуть" : "Раскрыть";
+    car.setAttribute("aria-label", car.title);
+  };
+  car.set(false);
+  return car;
+}
+
 // Свёрнутый блок с разворотом по клику: заголовок остаётся строкой ленты, а
 // тело раскрывается на месте. Так показываются размышления и вызовы
 // инструментов, которых на экране бывает больше, чем самого разговора. copy это
@@ -2934,13 +2948,13 @@ function foldEl(cls, head, text, sub, copy) {
   top.append(el("b", "", head));
   if (sub) top.append(el("span", "", sub));
   if (copy) top.append(copyBtn(copy));
-  const car = el("span", "foldc", "+");
+  const car = foldCar();
   top.append(car);
   const body = el("pre", "foldb", text);
   body.hidden = true;
   top.addEventListener("click", () => {
     body.hidden = !body.hidden;
-    car.textContent = body.hidden ? "+" : "-";
+    car.set(!body.hidden);
     box.classList.toggle("open", !body.hidden);
   });
   box.append(top, body);
@@ -3786,7 +3800,7 @@ function reportCard(head, text) {
   const box = el("div", "svc fold");
   const top = el("div", "foldh");
   top.append(el("b", "", head));
-  const car = el("span", "foldc", "+");
+  const car = foldCar();
   if (text) top.append(car);
   const body = el("div", "foldb fmd");
   if (text) body.append(mdRender(text));
@@ -3794,7 +3808,7 @@ function reportCard(head, text) {
   if (text) {
     top.addEventListener("click", () => {
       body.hidden = !body.hidden;
-      car.textContent = body.hidden ? "+" : "-";
+      car.set(!body.hidden);
       box.classList.toggle("open", !body.hidden);
     });
   }

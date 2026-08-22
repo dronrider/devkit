@@ -5058,18 +5058,29 @@ function openChat(addr) {
 // Переключение разговора списком: адрес заменяется, а не толкается в историю.
 // Пять просмотренных разговоров иначе стоили бы пяти нажатий «назад» до доски,
 // а экран под панелью от переключения не меняется вовсе.
+// Панель это хвост адреса, и её движение экрана под ней не касается. Полный
+// обход (список проектов, подписки, доска, пересборка списка строк) на каждое
+// переключение чата стоил человеку задержки на ровном месте: до правки первый
+// отклик приходил через ответ сети, а не сразу (замер poc_bench_chat).
+function repaintChatOnly() {
+  paintChat(shownProject, route().chat, shownBoard, shownWorks).catch(console.error);
+}
+
 function switchChat(addr) {
   const to = "#" + chatBase() + "/chat/" + addr;
   chatLastSet(addr);
   if (location.hash === to) return;
   history.replaceState({ chat: addr }, "", to);
-  refresh().catch(console.error);
+  repaintChatOnly();
 }
 
 function closeChat() {
   // Закрытие рукой снимает и память: вернувшись, человек видит дашборд, а не
   // разговор, от которого он ушёл нарочно.
   chatLastSet("");
+  // Панель уходит с экрана сразу, до всякой истории и сети: экран под ней уже
+  // нарисован, ждать от закрытия нечего вовсе.
+  shutChatPanel();
   if (chatDepth > 0) {
     chatDepth -= 1;
     history.back();
@@ -5078,7 +5089,21 @@ function closeChat() {
   // Пришли по ссылке снаружи: возвращаться некуда, и панель закрывается
   // заменой адреса на тот экран, что под ней.
   history.pushState({}, "", "#" + chatBase());
-  refresh().catch(console.error);
+}
+
+// Снятие панели по месту: узел прячется, живые потоки разговора закрываются, а
+// экран под панелью остаётся как был.
+function shutChatPanel() {
+  const panel = document.getElementById("cpanel");
+  const pin = document.getElementById("cpin");
+  if (!panel || !pin) return;
+  closeChatLive();
+  chatDropShut();
+  chatOpen = "";
+  chatFill = null;
+  chatShown = { project: "", sid: "", task: "" };
+  pin.replaceChildren();
+  panel.hidden = true;
 }
 
 // Адрес разговора это либо id сессии, либо ID задачи, и второе значит
@@ -9257,6 +9282,13 @@ document.getElementById("logout").addEventListener("click", async () => {
 });
 
 window.addEventListener("hashchange", () => {
+  // Двинулся один хвост разговора, а экран тот же: перерисовывать под панелью
+  // нечего, и полный обход тут был чистым ожиданием сети (замечание
+  // пользователя про тормоза переключения и закрытия).
+  if (shownScreen && screenKey(route()) === shownScreen) {
+    repaintChatOnly();
+    return;
+  }
   // Уход с экрана это отказ от черновика: он держит ровно ту задачу, которая
   // на экране.
   taskDraft.dirty = false;

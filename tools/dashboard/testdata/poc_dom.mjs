@@ -217,7 +217,11 @@ export function deepBtn(node, what) {
 // makeSandbox поднимает окружение и выполняет в нём app.js. Ответы сервера
 // задаёт стенд функцией reply(path, init): вернула она объект, значит это тело
 // удачного ответа, вернула null, значит ручка стенду не интересна.
-export function makeSandbox(appPath, reply) {
+// opts.realTimers переводит песочницу на настоящие таймеры и настоящую
+// задержку ответов (opts.latency, миллисекунды): замеру отзывчивости нужны
+// часы, а стендам поведения они только мешают, там время идёт оборотами
+// микрозадач.
+export function makeSandbox(appPath, reply, opts) {
   const byId = new Map();
   const moves = [];
   const store = new Map();
@@ -245,8 +249,15 @@ export function makeSandbox(appPath, reply) {
 
   const sandbox = {
     console: { log: () => {}, error: () => {}, warn: () => {} },
-    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-    clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].fn = () => {}; },
+    setTimeout: (fn, ms) => {
+      if (opts && opts.realTimers) return setTimeout(fn, ms);
+      timers.push({ fn, ms });
+      return timers.length;
+    },
+    clearTimeout: (id) => {
+      if (opts && opts.realTimers) return clearTimeout(id);
+      if (id && timers[id - 1]) timers[id - 1].fn = () => {};
+    },
     setInterval: () => 0,
     clearInterval: () => {},
     Date,
@@ -356,7 +367,13 @@ export function makeSandbox(appPath, reply) {
       asked.push(path);
       if (init && init.method === "POST") posted.push(path);
       const body = reply(path, init);
-      return ok(body === null || body === undefined ? {} : body);
+      const answer = () => ok(body === null || body === undefined ? {} : body);
+      const wait = opts && opts.latency;
+      if (!wait) return answer();
+      // Задержка сети моделируется настоящим ожиданием: замер отвечает на
+      // вопрос «через сколько человек увидит отклик», а не «сколько оборотов
+      // сделал движок».
+      return new Promise((go) => { setTimeout(() => { go(answer()); }, wait); });
     },
   };
   sandbox.globalThis = sandbox;

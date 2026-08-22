@@ -9,7 +9,11 @@
 --dump-dom нечем, поэтому во второй снимок оно вписывается той же разметкой,
 какую собирает makePlus.
 
-Зовётся: python3 testdata/poc_shot_home.py <база> <токен> <файл.png>
+Тем же ходом снимается любой другой экран: хэш приходит четвёртым доводом
+(«devkit» это доска проекта, «/agents» раздел агентов), и тогда меню в снимок
+не вписывается, оно принадлежит главной.
+
+Зовётся: python3 testdata/poc_shot_home.py <база> <токен> <файл.png> [хэш]
 """
 import os
 import re
@@ -25,10 +29,10 @@ MENU = ('<div class="pmenu"><div class="pmrow">Задача</div>'
         '<div class="pmrow">Черновик</div></div>')
 
 
-def dom(chrome_base, profile):
+def dom(chrome_base, profile, hash_):
     cmd = [CHROME, "--headless=old", "--disable-gpu", "--no-sandbox", "--no-first-run",
            "--user-data-dir=" + profile, "--virtual-time-budget=4000", "--dump-dom",
-           chrome_base + "/#"]
+           chrome_base + "/#" + hash_]
     # Главная не успокаивается: опросы ленты и подписок идут по таймеру, и срок
     # виртуального времени на ней не кончается. Разметку chrome печатает
     # вовремя, поэтому берётся напечатанное, а само окно снимается сроком.
@@ -48,19 +52,21 @@ def page(text, css, menu):
     return html
 
 
-def shot(base, token, out):
+def shot(base, token, out, hash_=""):
     if not os.path.exists(CHROME):
         print("chrome не найден, снимок пропущен")
         return 1
     srv, chrome_base = proxy(base, cookie(token))
     try:
         with tempfile.TemporaryDirectory() as profile:
-            text = dom(chrome_base, profile)
+            text = dom(chrome_base, profile, hash_)
             css = fetch(chrome_base, re.search(r'href="(/assets/style\.css[^"]*)"', text).group(1))
     finally:
         srv.shutdown()
     shots = []
-    for menu, tail in ((False, ""), (True, "-menu")):
+    # Меню плюса это разметка главной: на других экранах его вписывать некуда, и
+    # снимок там один.
+    for menu, tail in ((False, ""), (True, "-menu")) if not hash_ else ((False, ""),):
         html = os.path.join(tempfile.gettempdir(), "poc-home%s.html" % tail)
         with open(html, "w") as f:
             f.write(page(text, css, menu))
@@ -88,4 +94,4 @@ if __name__ == "__main__":
     if len(sys.argv) < 4:
         sys.stderr.write(__doc__)
         raise SystemExit(2)
-    raise SystemExit(shot(*sys.argv[1:4]))
+    raise SystemExit(shot(*sys.argv[1:5]))

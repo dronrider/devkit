@@ -242,6 +242,10 @@ function routeScreen(h) {
   if (parts.length >= 3 && parts[1] === "doc") {
     return { proj: parts[0], id: "", doc: true, path: parts.slice(2).join("/") };
   }
+  // Раздел LLD; запрос поиска живёт в адресе, как у выдачи поиска задач.
+  if (parts.length >= 2 && parts[1] === "lld") {
+    return { proj: parts[0], id: "", lldList: true, q: parts.slice(2).join("/") };
+  }
   const cut = h.indexOf("/");
   if (cut < 0) return { proj: h, id: "" };
   return { proj: h.slice(0, cut), id: h.slice(cut + 1) };
@@ -1766,6 +1770,35 @@ function depRow(project, id, side, dep) {
 // поэтому вторая сторона это обратный поиск, а не вторая запись. Названы они
 // словами, а не «После» и «Держит»: от тех читателю приходилось достраивать,
 // кто кого ждёт.
+// Блок «Связи» (круг 2 POC DK-470): дизайны задачи и упомянутые в постановке
+// задачи одним местом. Первым идёт LLD самой задачи, за ним остальные
+// дизайны из текста, ниже с отступом связанные задачи; каждая строка это
+// дорога на форму документа или экран задачи.
+function linksCard(project, links) {
+  const card = el("div", "card dcard");
+  card.append(el("div", "dhead", "Связи"));
+  for (const doc of links.lld || []) {
+    const row = el("div", "srow clicky");
+    row.append(el("span", "chip", doc.own ? "LLD задачи" : "LLD"));
+    row.append(withFull(el("span", "st"), doc.title || doc.file));
+    row.addEventListener("click", () => { goKeepingChat(project + "/doc/" + doc.file); });
+    card.append(row);
+  }
+  const tasks = links.tasks || [];
+  if (tasks.length) {
+    const box = el("div", "lrel");
+    for (const t of tasks) {
+      const row = el("div", "srow clicky");
+      row.append(el("span", "id", t.id));
+      row.append(withFull(el("span", "st"), t.title || ""));
+      row.addEventListener("click", () => { goKeepingChat(project + "/" + t.id); });
+      box.append(row);
+    }
+    card.append(box);
+  }
+  return card;
+}
+
 function depsCard(project, id, after, blocks) {
   const card = el("div", "card dcard");
   card.append(el("div", "dhead", "Заблокировано задачами"));
@@ -2476,6 +2509,9 @@ function formPage(cfg) {
     out.file = file;
   }
   if (has.deps) grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || []));
+  if (cfg.links && ((cfg.links.lld || []).length || (cfg.links.tasks || []).length)) {
+    grid.append(linksCard(cfg.project, cfg.links));
+  }
   for (const node of cfg.extra || []) page.append(node);
 
   setEdit(edit);
@@ -2602,6 +2638,7 @@ async function renderTask(project, works, id) {
   const view = formPage({
     key: "task", project, id, detail, crumb: [board], crumbChips,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
+    links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true,
       file: true, make: true, pencil: true, read: true },
     after: detail.after || [], blocks: detail.blocks || [],
@@ -7086,49 +7123,193 @@ function findGroupItems(project, group, q) {
   }];
 }
 
-// Экран документа: LLD или другой markdown из docs/ на чтение. Сюда ведут
-// кнопки дизайна с экрана задачи и найденный в поиске LLD; правки у экрана
-// нет, постановки и дизайны правятся в репозитории, а не с телефона.
+// Форма LLD (круг 2 POC DK-470): документ docs/lld собранной разметкой, той
+// же формой, что задача и черновик, без лишних рамок и полей. По умолчанию
+// чтение, правку включает карандаш, сохранение уводит текст ручкой PUT /doc
+// и коммитом; режим чтения разворачивает текст на всю страницу.
+const docDraft = { path: "", text: "", dirty: false, edit: false };
 async function renderDoc(project, path) {
   const groups = document.getElementById("groups");
-  const crumb = {
-    key: "doc-crumb",
-    sign: project + "|" + path,
-    make: () => {
-      const box = el("div", "crumb");
-      const back = el("span", "crumb-back", "Доска " + project);
-      back.addEventListener("click", () => { location.hash = project; });
-      box.append(back);
-      return box;
-    },
-  };
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/doc?path=" + encodeURIComponent(path));
   if (!r.ok) {
-    sync(groups, [crumb, {
+    sync(groups, [{
       key: "doc-err",
       sign: path + "|" + r.status,
       make: () => el("div", "error", r.body.error || ("документ не прочитался (" + r.status + ")")),
     }]);
     return;
   }
-  sync(groups, [crumb, {
-    key: "doc-body",
-    sign: r.body.path + "|" + r.body.text.length,
-    make: () => {
-      const card = el("div", "card fpanel");
-      const head = el("div", "fhead");
-      head.append(el("b", "", r.body.path));
-      const body = el("div", "fbody");
-      const ta = el("textarea");
-      ta.value = r.body.text;
-      ta.readOnly = true;
-      ta.setAttribute("aria-label", "документ " + r.body.path);
-      body.append(ta);
-      card.append(head, body);
-      return card;
-    },
+  if (docDraft.path !== path) {
+    docDraft.path = path;
+    docDraft.text = "";
+    docDraft.dirty = false;
+    docDraft.edit = false;
+  }
+  const said = r.body.text || "";
+  const form = { text: docDraft.dirty ? docDraft.text : said };
+  const name = (path.split("/").pop() || "").replace(/\.md$/, "");
+  const taskId = (name.match(/^[A-Za-z]+-[0-9]+/) || [""])[0];
+  // Заголовок берётся из первой решётки документа; ID из него уходит в номер
+  // рядом и второй раз в заголовке не повторяется.
+  let titleText = (said.split("\n").find((ln) => ln.startsWith("# ")) || "").replace(/^#\s*/, "") || name;
+  if (taskId && titleText.startsWith(taskId + ":")) {
+    titleText = titleText.slice(taskId.length + 1).trim();
+  }
+  const crumb = [
+    { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+    { text: "LLD", go: () => { goKeepingChat(project + "/lld"); } },
+  ];
+  if (taskId) {
+    crumb.push({ text: taskId, go: () => { goKeepingChat(project + "/" + taskId); } });
+  }
+  sync(groups, [{
+    key: "doc-page",
+    sign: [project, path, said.length, docDraft.dirty, docDraft.edit].join("|"),
+    make: () => formPage({
+      key: "doc", project, id: taskId || name,
+      crumb,
+      num: taskId,
+      titleText,
+      detail: { file: "docs/" + path, text: said, note: "документ пуст" },
+      form,
+      has: { file: true, pencil: true, read: true },
+      penLabel: "Править документ",
+      edit: docDraft.edit,
+      onEdit: (on) => {
+        docDraft.path = path;
+        docDraft.edit = on;
+      },
+      check: () => {
+        const dirty = form.text !== said;
+        docDraft.path = path;
+        docDraft.dirty = dirty;
+        docDraft.text = form.text;
+        return { dirty, refusal: form.text.trim() ? "" : "пустой текст затёр бы документ" };
+      },
+      onSave: () => { saveDoc(project, path, form.text).catch(console.error); },
+      onDrop: () => {
+        docDraft.dirty = false;
+        docDraft.edit = false;
+        const shown = findKey(groups, "doc-page");
+        if (shown) shown.dataset.psign = "";
+        renderDoc(project, path).catch(console.error);
+      },
+    }).page,
   }]);
+}
+
+async function saveDoc(project, path, text) {
+  sayResult("сохранение docs/" + path + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/doc?path=" + encodeURIComponent(path), { method: "PUT", body: { text } });
+  sayResult(apiSaid(r), !r.ok);
+  if (!r.ok) return;
+  docDraft.dirty = false;
+  docDraft.edit = false;
+  const shown = findKey(document.getElementById("groups"), "doc-page");
+  if (shown) shown.dataset.psign = "";
+  await renderDoc(project, path);
+}
+
+// Раздел LLD (круг 2 POC DK-470): дизайны проекта одним списком, свежие
+// сверху. Строка показывает задачу, заголовок документа и дату правки;
+// поиск идёт по имени, заголовку и тексту, совпадение по тексту едет
+// цитатой, как в поиске задач. Запрос живёт в адресе, как у выдачи поиска.
+let lldGen = 0;
+let lldTimer = 0;
+function lldType(project, value) {
+  clearTimeout(lldTimer);
+  lldTimer = setTimeout(() => {
+    const base = project + "/lld/" + encodeURIComponent(String(value).trim());
+    const chat = route().chat;
+    const hash = "#" + (chat ? base + "/chat/" + chat : base);
+    if (hash === "#" + location.hash.replace(/^#/, "")) return;
+    if (route().lldList) location.replace(hash);
+    else goKeepingChat("#" + base);
+  }, FIND_WAIT);
+}
+
+async function renderLld(project, q) {
+  const groups = document.getElementById("groups");
+  const head = [{
+    key: "lld-crumb",
+    sign: project,
+    make: () => {
+      const crumb = el("div", "crumb");
+      const back = el("span", "crumb-back", "Доска " + project);
+      back.addEventListener("click", () => { goKeepingChat(project); });
+      crumb.append(back);
+      return crumb;
+    },
+  }, {
+    key: "lld-q",
+    sign: project,
+    make: () => {
+      const box = el("div", "fqbar");
+      const ico = el("span", "fico");
+      ico.append(icon("i-find"));
+      box.append(ico);
+      const input = el("input", "");
+      input.type = "text";
+      input.value = q || "";
+      input.placeholder = "Поиск LLD";
+      input.setAttribute("autocomplete", "off");
+      input.setAttribute("aria-label", "Поиск LLD по названию и тексту");
+      input.addEventListener("input", () => { lldType(project, input.value); });
+      box.append(input);
+      return box;
+    },
+    fill: (box) => {
+      const input = box.children[1];
+      if (document.activeElement !== input && input.value !== q) input.value = q;
+    },
+  }];
+  const fresh = !findKey(groups, "lld-q");
+  if (fresh) sync(groups, head);
+  const gen = ++lldGen;
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/lld" + (q ? "?q=" + encodeURIComponent(q) : ""));
+  if (gen !== lldGen) return;
+  if (!r.ok) {
+    sync(groups, [...head, {
+      key: "lld-err",
+      sign: String(r.status),
+      make: () => el("div", "error", r.body.error || ("список LLD не прочитался (" + r.status + ")")),
+    }]);
+    return;
+  }
+  const rows = r.body.rows || [];
+  const items = rows.map((row) => ({
+    key: "lld-" + row.file,
+    sign: JSON.stringify(row) + "|" + q,
+    make: () => {
+      const tr = el("div", "srow clicky");
+      tr.append(el("span", "id", row.id || ""));
+      const st = withFull(el("span", "st fst"), row.title || row.file);
+      markHits(st, row.title || row.file, q);
+      if (row.quote) {
+        const quote = el("div", "fquote");
+        markHits(quote, row.quote, q);
+        st.append(quote);
+      }
+      tr.append(st);
+      const meta = el("span", "sm");
+      meta.append(el("span", "stale", "docs/" + row.file + (row.line ? ":" + row.line : "")));
+      if (row.date) meta.append(el("span", "chip", row.date));
+      tr.append(meta);
+      tr.addEventListener("click", () => { goKeepingChat(project + "/doc/" + row.file); });
+      return tr;
+    },
+  }));
+  if (!items.length) {
+    items.push({
+      key: "lld-empty",
+      sign: q || "",
+      make: () => el("div", "empty", q ? "ничего не нашлось, уточните запрос" : "в docs/lld пусто"),
+    });
+  }
+  sync(groups, [...head, ...items]);
 }
 
 async function renderFind(project, q) {
@@ -8529,7 +8710,7 @@ function screenKey(rt) {
   // узлом и своими потоками, а экран под ней от её открытия не меняется и
   // собираться заново не должен.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
-    rt.find, rt.draft, rt.doc, rt.path].join("|");
+    rt.find, rt.draft, rt.doc, rt.path, rt.lldList].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те
@@ -8653,10 +8834,17 @@ async function paint() {
     return;
   }
   if (rt.doc) {
-    // Документу доска не нужна: он читается своей ручкой на чтение.
+    // Документу доска не нужна: он читается своей ручкой.
     document.getElementById("psub").textContent = "docs/" + rt.path;
     markNav(rt);
     await renderDoc(current.name, rt.path);
+    return;
+  }
+  if (rt.lldList) {
+    // Списку LLD доска тоже не нужна: раздел живёт своей ручкой.
+    document.getElementById("psub").textContent = "LLD проекта";
+    markNav(rt);
+    await renderLld(current.name, rt.q);
     return;
   }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
@@ -8722,10 +8910,12 @@ function markNav(rt) {
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
   const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed"
-    : rt.find ? "find" : rt.drafts || rt.draft ? "drafts" : rt.make ? "make" : "board";
+    : rt.find ? "find" : rt.drafts || rt.draft ? "drafts" : rt.make ? "make"
+    : rt.lldList || rt.doc ? "lld" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
     ["drafts", ["nav-drafts", "tab-drafts"]],
+    ["lld", ["nav-lld"]],
     ["agents", ["nav-agents", "tab-agents"]],
     ["make", ["make-btn"]],
     ["feed", ["bell"]],
@@ -8755,7 +8945,7 @@ document.getElementById("chats").addEventListener("click", () => {
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
   ["nav-drafts", "/drafts"], ["tab-drafts", "/drafts"], ["make-btn", "/new"],
-  ["bell", "/feed"], ["find-btn", "/find/"]]) {
+  ["nav-lld", "/lld"], ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
     // имени увёл бы на "#/feed". Открытый разговор переезжает вместе с

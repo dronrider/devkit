@@ -1300,3 +1300,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .pmenu{position:absolute;right:12px;top:38px;z-index:40;min-width:130px;padding:5px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
 .pmrow{padding:7px 9px;border-radius:6px;font:400 12.5px var(--sans);color:var(--tx);cursor:pointer}
 .pmrow:hover{background:var(--bg2)}
+/* Блок «Связи» экрана задачи (круг 2 POC DK-470): задачи стоят под дизайнами
+   с небольшим отступом, дорожки те же, что у строк выдачи поиска */
+.dcard .lrel{margin-top:8px;border-top:1px solid var(--line);padding-top:2px}

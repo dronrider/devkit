@@ -485,12 +485,11 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		"blocks":  depRefs(blocks, rows),
 	}
 	rel := taskFileRel(id)
+	var fileText string
 	if text, err := os.ReadFile(filepath.Join(found.Path, filepath.FromSlash(rel))); err == nil {
 		resp["file"] = rel
 		resp["text"] = string(text)
-		if refs := lldRefs(found.Path, string(text)); len(refs) > 0 {
-			resp["lld"] = refs
-		}
+		fileText = string(text)
 	} else if doc, docText, ok := linkedTaskDoc(found.Path, id, row.Link); ok {
 		// Ссылка строки ведёт не в файл задачи, а в другой документ, обычно
 		// LLD: постановка у такой строки есть, и «файла нет» про неё врёт.
@@ -501,6 +500,11 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		// что файла нет и чем дыра чинится. С минуты заведения файл кладёт сам
 		// add, и дыра это строка до рубежа либо снятый руками файл.
 		resp["note"] = fmt.Sprintf("файла задачи %s нет: строка без файла это дыра, чинит её кнопка «Завести файл» (taskctl file)", rel)
+	}
+	// Блок «Связи»: дизайны задачи и упомянутые в постановке задачи (круг 2
+	// POC DK-470).
+	if links := taskLinks(found.Path, id, row.Link, fileText, rows); links != nil {
+		resp["links"] = links
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

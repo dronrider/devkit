@@ -85,6 +85,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/board", s.auth(s.handleBoard))
 	mux.HandleFunc("GET /api/projects/{p}/search", s.auth(s.handleSearch))
 	mux.HandleFunc("GET /api/projects/{p}/doc", s.auth(s.handleDoc))
+	mux.HandleFunc("PUT /api/projects/{p}/doc", s.auth(s.handleDocPut))
+	mux.HandleFunc("GET /api/projects/{p}/lld", s.auth(s.handleLldList))
 	mux.HandleFunc("POST /api/projects/{p}/tasks", s.auth(s.handleTaskCreate))
 	mux.HandleFunc("POST /api/projects/{p}/drafts", s.auth(s.handleDraftPost))
 	mux.HandleFunc("GET /api/projects/{p}/drafts", s.auth(s.handleDrafts))

@@ -1,0 +1,182 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+// Раздел LLD (круг 2 POC DK-470): дизайны это отдельная сущность со своим
+// списком и своей формой, а не хвост экрана задачи. Список отдаёт задачу,
+// заголовок документа и дату правки, поиск идёт по имени файла, заголовку и
+// тексту; форма читает документ ручкой GET /doc и правит его ручкой PUT /doc.
+
+// handleLldList отдаёт документы docs/lld, свежеправленные сверху. Запрос q
+// сначала ищется в имени и заголовке, потом по тексту, и совпадение по тексту
+// едет цитатой строкой выдачи, как в поиске задач.
+func (s *server) handleLldList(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "список LLD")
+	if found == nil {
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	needle := strings.ToLower(q)
+	rows := []map[string]any{}
+	entries, err := os.ReadDir(filepath.Join(found.Path, "docs", "lld"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "docs/lld не прочитался: " + err.Error()})
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(found.Path, "docs", "lld", e.Name()))
+		if err != nil {
+			continue
+		}
+		id := docIDRe.FindString(e.Name())
+		title := searchDocTitle(id, string(data))
+		row := map[string]any{
+			"id": id, "file": "lld/" + e.Name(), "title": title,
+			"mtime": info.ModTime().Unix(), "date": info.ModTime().Format("02.01.2006"),
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(e.Name()+"\n"+title), needle) {
+			quote, num := searchQuote(string(data), q)
+			if num == 0 {
+				continue
+			}
+			row["quote"], row["line"] = quote, num
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i]["mtime"].(int64) > rows[j]["mtime"].(int64) })
+	writeJSON(w, http.StatusOK, map[string]any{"project": found.Name, "q": q, "rows": rows})
+}
+
+// handleDocPut правит документ с формы LLD. Пишутся только docs/lld: у файла
+// задачи своя ручка со своими правилами, а остальное в docs/ дашборд не
+// трогает. Правка коммитится и едет в origin тем же путём, что правка файла
+// задачи (commitDocs).
+func (s *server) handleDocPut(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "правка документа")
+	if found == nil {
+		return
+	}
+	rel := strings.TrimSpace(r.URL.Query().Get("path"))
+	if !safeRel(rel) || !strings.HasPrefix(rel, "lld/") || !strings.HasSuffix(rel, ".md") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на документ docs/lld: правится с этой формы только LLD", rel)})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, searchFileMax)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	if strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустой текст затёр бы документ"})
+		return
+	}
+	full := filepath.Join(found.Path, "docs", filepath.FromSlash(rel))
+	if !isFile(full) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "документа docs/" + rel + " нет, новые LLD заводятся в репозитории"})
+		return
+	}
+	text := strings.TrimRight(body.Text, "\n") + "\n"
+	if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("документ не записался: %v", err)})
+		return
+	}
+	relRepo := "docs/" + rel
+	subj := "правка " + path.Base(rel) + " с дашборда"
+	if id := docIDRe.FindString(path.Base(rel)); id != "" {
+		subj = id + " " + subj
+	}
+	resp := map[string]string{"path": relRepo, "message": "текст " + relRepo + " записан"}
+	if note := commitDocs(found.Path, "docs(lld): "+subj, relRepo); note != "" {
+		resp["note"] = note
+		s.logf("правка %s в %s: %s", relRepo, found.Name, note)
+	}
+	s.logf("документ %s в %s переписан с дашборда", relRepo, found.Name)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// taskIDMentionRe ловит упоминание задачи в тексте файла: и голое DK-NNN, и
+// внутри пути tasks/DK-NNN.md.
+var taskIDMentionRe = regexp.MustCompile(`[A-Za-z]+-[0-9]+`)
+
+// taskLinks собирает блок «Связи» экрана задачи: сначала LLD самой задачи
+// (файл с её ID в имени либо ссылка строки), затем остальные дизайны из
+// текста, ниже задачи, упомянутые в файле. Заголовки берутся из первых строк
+// документов и со строк доски; упоминание закрытой задачи остаётся без
+// заголовка, экран задачи её всё равно откроет из архива.
+func taskLinks(projectPath, id, link, text string, rows map[string]boardRow) map[string]any {
+	seen := map[string]bool{}
+	lld := []map[string]any{}
+	addDoc := func(rel string, own bool) {
+		if rel == "" || seen[rel] || !strings.HasPrefix(rel, "lld/") {
+			return
+		}
+		full := filepath.Join(projectPath, "docs", filepath.FromSlash(rel))
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return
+		}
+		seen[rel] = true
+		docID := docIDRe.FindString(path.Base(rel))
+		row := map[string]any{"file": rel, "title": searchDocTitle(docID, string(data))}
+		if own {
+			row["own"] = true
+		}
+		lld = append(lld, row)
+	}
+	// LLD самой задачи ищется по имени файла с её ID: обычай каталога
+	// docs/lld это DK-NNN-<slug>.md.
+	if own, _ := filepath.Glob(filepath.Join(projectPath, "docs", "lld", id+"-*.md")); len(own) > 0 {
+		sort.Strings(own)
+		for _, p := range own {
+			addDoc("lld/"+filepath.Base(p), true)
+		}
+	}
+	if target := linkPath(link); strings.HasPrefix(target, "lld/") {
+		addDoc(target, true)
+	}
+	for _, rel := range lldRefs(projectPath, text) {
+		addDoc(rel, false)
+	}
+	prefix, _, _ := strings.Cut(id, "-")
+	tasks := []map[string]any{}
+	seenTask := map[string]bool{id: true}
+	for _, m := range taskIDMentionRe.FindAllString(text, -1) {
+		if seenTask[m] || !strings.HasPrefix(m, prefix+"-") {
+			continue
+		}
+		seenTask[m] = true
+		row := map[string]any{"id": m}
+		if t := rows[m].Title; t != "" {
+			row["title"] = t
+		}
+		tasks = append(tasks, row)
+	}
+	if len(lld) == 0 && len(tasks) == 0 {
+		return nil
+	}
+	return map[string]any{"lld": lld, "tasks": tasks}
+}

@@ -16,8 +16,12 @@ import { makeSandbox, settle, dump, byClass, fail, appPathArg }
 const app = appPathArg();
 const board = { sections: [] };
 let found = false;
+// Сессия, чьего транскрипта в проекте нет: протухший адрес панели.
+const LOST = "deadc0de-0000-4000-8000-000000000000";
+// Старый разговор глубже видимого верха списка: транскрипт на диске есть.
+const DEEP = "01dcafe0-0000-4000-8000-000000000000";
 
-const { sandbox, timers } = makeSandbox(app, (path, init) => {
+const { sandbox, timers, store } = makeSandbox(app, (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
   if (path.includes("/chats") && init && init.method === "POST") {
     return { tmux: "chat-1", model: "opus", tree: "/x" };
@@ -26,6 +30,10 @@ const { sandbox, timers } = makeSandbox(app, (path, init) => {
     return { chats: found ? [{ id: "f00dcafe-0001", state: "live" }] : [] };
   }
   if (path.includes("/chats")) return { chats: [], models: [] };
+  if (path.includes("/sessions/" + LOST)) {
+    return { raw: { status: 404, statusText: "Not Found",
+      text: JSON.stringify({ error: "транскрипта " + LOST + " нет среди сессий проекта demo" }) } };
+  }
   if (path.includes("/sessions/")) return { items: [], start: true };
   if (path === "/api/harnesses") return { harnesses: [] };
   return {};
@@ -110,4 +118,44 @@ if (!String(sandbox.location.hash).includes("f00dcafe-0001")) {
   fail("панель не переехала на найденный диалог: " + sandbox.location.hash);
 }
 
-console.log("ok: новый чат называется новым, лента без приписки, первая реплика живёт до пришивания");
+// --- протухший адрес: «Чат не найден», а не «чата нет» ---
+// Панель попадает сюда сохранённым адресом чата, которого больше нет в списке:
+// сессию сняли, либо она так и не родилась (клиент встал на вопросе доверия в
+// своём терминале). Различает протухшее и просто старое точечная проба ленты.
+store.set("devkit.chat.last", LOST);
+sandbox.location.hash = "#demo/chat/" + LOST;
+const lostSt = await sandbox.chatState("demo", LOST, board);
+if (!lostSt.lost) fail("протухший адрес не помечен: " + JSON.stringify(lostSt));
+const lostHead = dump(sandbox.chatHead("demo", lostSt)).replace(/\s+/g, " ");
+if (lostHead.includes("чата нет")) fail("шапка протухшего адреса говорит «чата нет»: " + lostHead);
+if (!lostHead.includes("Чат не найден")) fail("шапка не назвала находку: " + lostHead);
+const lostPanel = sandbox.chatPanel("demo", lostSt);
+await settle();
+const lostSaid = dump(lostPanel).replace(/\s+/g, " ");
+if (!lostSaid.includes("больше нет")) fail("в панели нет причины про снятый чат: " + lostSaid);
+const lostTa = (function find(node) {
+  if (node.tagName === "TEXTAREA") return node;
+  for (const kid of node.children || []) {
+    const got = typeof kid === "object" && find(kid);
+    if (got) return got;
+  }
+  return null;
+})(lostPanel);
+if (!lostTa || !lostTa.disabled) fail("ввод в потерянный чат не погашен");
+// Память панели вычищена: следующий вход в проект не вернёт «Чат не найден».
+if (store.get("devkit.chat.last")) {
+  fail("протухший адрес остался в памяти: " + store.get("devkit.chat.last"));
+}
+
+// --- старый разговор глубже списка не хоронится ---
+const deepSt = await sandbox.chatState("demo", DEEP, board);
+if (deepSt.lost) fail("старый разговор с транскриптом записан в потерянные");
+const deepHead = dump(sandbox.chatHead("demo", deepSt)).replace(/\s+/g, " ");
+if (deepHead.includes("чата нет") || deepHead.includes("Чат не найден")) {
+  fail("шапка старого разговора хоронит его: " + deepHead);
+}
+if (!deepHead.includes("чат " + DEEP.slice(0, 8))) {
+  fail("старый разговор не подписан своим ID: " + deepHead);
+}
+
+console.log("ok: новый чат называется новым, лента без приписки, первая реплика живёт до пришивания, протухший адрес назван находкой");

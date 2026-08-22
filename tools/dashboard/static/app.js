@@ -5269,7 +5269,7 @@ function chatsURL(project) {
 // похода на сервер.
 async function chatState(project, addr, board) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
-    error: "", models: [], fresh: false };
+    error: "", models: [], fresh: false, lost: false };
   if (chatIsNew(addr)) {
     st.fresh = true;
     st.task = chatNewTask(addr);
@@ -5297,6 +5297,18 @@ async function chatState(project, addr, board) {
     else if (list.length) st.sid = list[0].id;
   }
   st.entry = st.chats.find((c) => c.id === st.sid) || null;
+  // Адрес, которого нет в списке, это одно из двух: старый разговор глубже
+  // видимого верха (транскрипт на диске есть, лента откроется) либо протухшая
+  // память (чат снят, сессия умерла или так и не родилась, как у клиента,
+  // вставшего на вопросе доверия в терминале). Различает их точечная проба
+  // ленты: решать по одному списку значило бы хоронить старые разговоры.
+  if (st.sid && !st.entry) {
+    const probe = await api(sessionURL(project, st.sid) + "?n=1");
+    st.lost = !probe.ok;
+    // Протухший адрес уходит из памяти панели сразу: иначе человек возвращался
+    // бы на «Чат не найден» при каждом входе в проект.
+    if (st.lost && chatLast() === st.addr) chatLastSet("");
+  }
   // Задача берётся у самого диалога, когда адрес её не назвал: по ней
   // подписывается шапка и заводится следующий диалог в том же дереве.
   if (!st.task && st.entry && (st.entry.tasks || []).length) st.task = st.entry.tasks[0];
@@ -5339,7 +5351,9 @@ function withFull(node, text) {
 }
 
 function chatTitle(c) {
-  if (!c) return "чата нет";
+  // Пустого аргумента у живых вызовов не осталось (шапка разбирает состояния
+  // сама), но на всякий пожарный слова отсутствия тут больше не живут.
+  if (!c) return "Чат не найден";
   const t = (c.title || "").trim();
   if (t) return t.length > 70 ? t.slice(0, 70) + "..." : t;
   return "чат " + c.id.slice(0, 8);
@@ -5948,10 +5962,15 @@ function chatHead(project, st) {
     });
     pick.append(lab);
   }
-  // У нового чата имя своё, а не «чата нет»: диалога ещё нет по замыслу, и
-  // говорить об этом словами отсутствия значит называть штатное состояние
-  // поломкой (замечание пользователя).
-  const picked = st.fresh ? "Новый чат" : chatTitle(st.entry);
+  // У каждого состояния панели своё имя, «чата нет» не говорит ни одно: у
+  // нового чата диалога ещё нет по замыслу, протухший адрес назван находкой
+  // честно, старый разговор глубже видимого списка подписан своим ID, а пустой
+  // проект говорит про пустоту, не про поломку (замечания пользователя).
+  const picked = st.fresh ? "Новый чат"
+    : st.lost ? "Чат не найден"
+    : st.entry ? chatTitle(st.entry)
+    : st.sid ? "чат " + st.sid.slice(0, 8)
+    : "Чатов пока нет";
   pick.append(withFull(el("b", "", picked), picked));
   const car = el("span", "cdcar");
   car.append(icon("i-caret"));
@@ -6234,6 +6253,13 @@ function chatWay(st) {
   // поля ввода сразу (POC ветки poc-chat).
   if (chatWaitsTask(st)) return { kind: "task", off: false, why: "" };
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
+  // Протухший адрес: писать некуда, и резюм по несуществующей сессии обещал бы
+  // доставку, которой не будет. Причина стоит плашкой, ввод погашен.
+  if (st.lost) {
+    return { kind: "lost", off: true,
+      why: "Чата с этим адресом больше нет: сессия снята или так и не " +
+        "назвалась. Выберите диалог в шапке или начните новый кнопкой «+»." };
+  }
   const state = st.entry ? st.entry.state : "dead";
   if (state === "live") return { kind: "say", off: false, why: "" };
   // Окна vscode отдельным случаем больше нет: канал самого клиента достаёт
@@ -7113,6 +7139,10 @@ function chatPanel(project, st) {
   chatLive.push(busy.off);
   if (st.error) {
     say(feed, "error", st.error);
+  } else if (st.lost) {
+    // Ленту потерянного адреса не открыть, и честнее сказать это словами, чем
+    // показать пустоту или ошибку загрузки.
+    say(feed, "empty", "разговора с этим адресом в проекте нет");
   } else if (!st.sid) {
     say(feed, "empty", st.fresh
       ? "новый чат: напишите первую реплику, она и поднимет сессию"

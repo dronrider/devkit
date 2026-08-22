@@ -278,14 +278,23 @@ func TestStaticDraftsSection(t *testing.T) {
 	if !strings.Contains(plus, `"Черновик"`) {
 		t.Error("в меню плюса на главной нет пункта черновика")
 	}
-	// С доски вход в накопитель это раздел левого меню, а не кнопка над
-	// списком строк: кнопка мозолила глаза на самой доске, ради которой экран
-	// и открыт (замечание пользователя).
-	if !strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="nav-drafts"`) {
-		t.Error("в левом меню нет раздела черновиков")
+	// С доски вход в накопитель это второй таб экрана, а не раздел меню:
+	// черновики лежат на той же доске, и разделом стояли наравне с «Агентами»,
+	// у которых обзор всех проектов сразу (решение пользователя).
+	if strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="nav-drafts"`) {
+		t.Error("раздел черновиков вернулся в меню: накопитель это таб доски")
 	}
-	if !strings.Contains(text, `["nav-drafts", "/drafts"]`) {
-		t.Error("раздел меню не ведёт на адрес накопителя")
+	kind := funcBody(t, text, "function boardKindBar(")
+	for _, want := range []string{`"Задачи"`, `"Черновики"`, `"/drafts"`} {
+		if !strings.Contains(kind, want) {
+			t.Errorf("в табах доски нет %q", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts")`) {
+		t.Error("накопитель открывается без табов доски: дороги назад к задачам нет")
+	}
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), `boardKindBar(project, "tasks")`) {
+		t.Error("на доске нет таба черновиков")
 	}
 	if strings.Contains(funcBody(t, text, "function renderBoard("), "draftsButton(") {
 		t.Error("кнопка черновиков вернулась на доску")

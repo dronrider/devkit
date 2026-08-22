@@ -1309,3 +1309,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .arow.atalk:hover{background:var(--bg2)}
 .alink{padding:0;border:none;background:none;color:var(--acc);font:400 12px var(--sans);cursor:pointer}
 .alink:hover{text-decoration:underline}
+
+/* два таба экрана доски: задачи и накопитель черновиков */
+.ktabs{display:flex;gap:18px;margin-top:16px;border-bottom:1px solid var(--line)}
+.ktab{padding:0 2px 9px;border:none;border-bottom:2px solid transparent;background:none;font:500 13.5px var(--sans);color:var(--tx3);cursor:pointer}
+.ktab:hover{color:var(--tx2)}
+.ktab.onktab{color:var(--tx);border-bottom-color:var(--acc)}
+
+/* полоска работ вместо ленты сессий на экране проекта */
+.lline{display:flex;align-items:center;gap:9px}
+.lline b{font:500 12.5px var(--sans);color:var(--tx2)}

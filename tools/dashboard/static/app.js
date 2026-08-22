@@ -399,48 +399,29 @@ async function stopRun(project, id) {
   if (r.ok) await refresh();
 }
 
+// Лента живых сессий с экрана проекта ушла: карточки занимали строку над самой
+// доской и повторяли раздел «Агенты», где та же работа разобрана подробнее.
+// Осталась полоска с числом работ и дорогой туда: сессии живут в двух местах,
+// в обзоре агентов и в разговоре (решение пользователя).
 function renderLive(project, works) {
   const live = document.getElementById("live");
-  const liveCard = (w) => {
-    const card = el("div", "lcard");
-    card.append(el("span", "dot pulse"));
-    // Интерактивная сессия без узнанной задачи названа своим видом: имени
-    // работы у неё нет. Ведёт она на тот же экран агента, только по id сессии:
-    // разговор лежит на диске, и до DK-294 карточка стояла мёртвой.
-    // Имя работы: номер задачи, а без него заголовок разговора, который
-    // сервер кладёт в note (замечание 21).
-    const name = w.id || w.note || "чат";
-    const to = w.id || w.session || "";
-    // Работа подписана номером задачи и её заголовком: служебного goal-DK-112
-    // в подписи нет, о занятии агента оно не говорит ничего.
-    const label = el("b", to ? "" : "flat", name);
-    card.append(label);
-    if (w.title) card.append(withFull(el("span", "wname wtitle", w.title), w.title));
-    // Нажатие открывает разговор панелью поверх того, что под ней: адрес
-    // клеится хвостом /chat/ к текущему экрану, как у остальных входов в чат.
-    // Собранный по-старому адрес доски уводил с экрана задачи в список задач,
-    // и одна и та же карточка вела по-разному с разных экранов (POC ветки
-    // poc-chat).
-    if (to) {
-      card.classList.add("clicky");
-      card.addEventListener("click", () => { openChat(chatAddr(project, to)); });
-    }
-    if (w.via === "session") {
-      // Подпись вида нужна только там, где есть номер задачи: без него сам
-      // заголовок уже стоит именем, и повторять его второй строкой незачем.
-      if (w.id && w.note) card.append(el("span", "via", w.note));
-    } else if (w.via !== "tmux") {
-      card.append(el("span", "via", "сессия кончилась"));
-    }
-    return card;
-  };
-  // Полоса живых работ перерисовывается по месту: она стоит над списком, и
-  // пересобранная целиком дёргала бы его при каждом обновлении.
-  sync(live, (works || []).map((w, i) => ({
-    key: w.id || w.session || ("live-" + i),
-    sign: [w.id, w.title, w.via, w.note, w.session].join("|"),
-    make: () => liveCard(w),
-  })));
+  const n = (works || []).length;
+  if (!n) {
+    live.replaceChildren();
+    return;
+  }
+  const line = el("div", "lline");
+  line.append(el("span", "dot pulse"));
+  line.append(el("b", "", "работает " + n + " " + plural(n, "агент", "агента", "агентов")));
+  const go = el("button", "alink", "показать");
+  go.type = "button";
+  go.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    goKeepingChat("/agents");
+  });
+  line.append(go);
+  line.title = "Работы всех досок разобраны в разделе «Агенты»";
+  live.replaceChildren(line);
 }
 
 // Признак идущей работы стоит в самой строке и приезжает её полем (row.run):
@@ -1101,9 +1082,33 @@ function blockedItems(project, parked, held) {
   return items;
 }
 
+// Экран доски открывается одним из двух: задачами или накопителем черновиков.
+// Своего раздела в меню у черновиков больше нет: они лежат на той же доске, и
+// разделом стояли наравне с «Агентами», у которых обзор всех проектов сразу
+// (решение пользователя). Старый адрес #проект/drafts никуда не делся, он
+// открывает второй таб.
+function boardKindBar(project, kind) {
+  const bar = el("div", "ktabs");
+  for (const [key, label] of [["tasks", "Задачи"], ["drafts", "Черновики"]]) {
+    const btn = el("button", "ktab" + (key === kind ? " onktab" : ""), label);
+    btn.type = "button";
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (key === kind) return;
+      goKeepingChat(project + (key === "drafts" ? "/drafts" : ""));
+    });
+    bar.append(btn);
+  }
+  return bar;
+}
+
 function renderBoard(project, board) {
   const groups = document.getElementById("groups");
   const items = [{
+    key: "board-kind",
+    sign: project + "|tasks",
+    make: () => boardKindBar(project, "tasks"),
+  }, {
     key: "board-tabs",
     sign: project,
     make: () => boardTabsBar(),
@@ -6873,15 +6878,11 @@ async function renderDrafts(project) {
   const groups = document.getElementById("groups");
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
   const items = [{
-    key: "drafts-crumb",
-    sign: project,
-    make: () => {
-      const crumb = el("div", "crumb");
-      const back = el("span", "crumb-back", "Доска " + project);
-      back.addEventListener("click", () => { goKeepingChat(project); });
-      crumb.append(back);
-      return crumb;
-    },
+    key: "board-kind",
+    sign: project + "|drafts",
+    // Дорога назад к задачам это тот же таб, что и привёл сюда: хлебной
+    // крошки над накопителем больше нет, она вела туда же вторым способом.
+    make: () => boardKindBar(project, "drafts"),
   }, {
     key: "drafts-bar",
     sign: project,
@@ -8959,12 +8960,13 @@ function markNav(rt) {
   // Легенда кружков живёт на главной: её рисует renderHome, а с остальных
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
+  // Накопитель это таб доски, а не раздел: открытые черновики подсвечивают
+  // «Доску», как её подсвечивает и экран записи.
   const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed"
-    : rt.find ? "find" : rt.drafts || rt.draft ? "drafts" : rt.make ? "make"
+    : rt.find ? "find" : rt.make ? "make"
     : rt.lldList || rt.doc ? "lld" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
-    ["drafts", ["nav-drafts", "tab-drafts"]],
     ["lld", ["nav-lld"]],
     ["agents", ["nav-agents", "tab-agents"]],
     ["make", ["make-btn"]],
@@ -8994,7 +8996,7 @@ document.getElementById("chats").addEventListener("click", () => {
 });
 
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
-  ["nav-drafts", "/drafts"], ["tab-drafts", "/drafts"], ["make-btn", "/new"],
+  ["make-btn", "/new"],
   ["nav-lld", "/lld"], ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без

@@ -678,8 +678,8 @@ func TestStaticSessionsAskedByTask(t *testing.T) {
 	if !strings.Contains(funcBody(t, text, "function chatsURL("), `"/chats"`) {
 		t.Error("адрес списка чатов собран мимо ручки /chats: брать список больше неоткуда")
 	}
-	if !strings.Contains(funcBody(t, text, "async function chatState("), "await api(chatsURL(project))") {
-		t.Error("панель берёт список чатов не ручкой проекта")
+	if !strings.Contains(funcBody(t, text, "async function chatState("), `await api(chatsURL(project) + "?all=1")`) {
+		t.Error("панель берёт список чатов не общей ручкой машины (?all=1)")
 	}
 	if !strings.Contains(funcBody(t, text, "function chatVisible("), "(c.tasks || []).includes(st.task)") {
 		t.Error("список панели не отбирается по задаче: под заголовком задачи пойдёт чужой чат")

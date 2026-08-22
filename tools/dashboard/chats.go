@@ -92,8 +92,13 @@ const (
 // человека, обрезанной, как это делает расширение Claude Code для vscode:
 // имени диалог не требует, а первая реплика узнаётся глазом.
 type chatEntry struct {
-	ID      string   `json:"id"`
-	Title   string   `json:"title,omitempty"`
+	ID string `json:"id"`
+	// Project называет проект разговора в общем списке машины (?all=1): без
+	// него строку чужого проекта не подписать и не открыть, адрес ленты и
+	// реплики ходит через имя проекта. В проектном списке поле пустое, там
+	// хозяин и так известен.
+	Project string `json:"project,omitempty"`
+	Title   string `json:"title,omitempty"`
 	// Mtime это время последней содержательной реплики разговора: по нему
 	// список стоит свежими сверху и им же подписана строка. Время правки файла
 	// сюда больше не едет вовсе, оно двигалось служебщиной (замечание
@@ -115,6 +120,12 @@ type chatEntry struct {
 	Idle  bool   `json:"idle,omitempty"`
 	// Summary это заголовок от самого харнеса: он старше и эвристики, и haiku.
 	Summary string `json:"-"`
+	// First это первая реплика человека, обрезанная для списка. Title поверх
+	// неё замещается заголовком (titleFill), а панель, вернувшаяся на адрес
+	// new, узнаёт родившийся диалог именно по первой реплике: она уехала
+	// клиенту первым аргументом и легла в транскрипт первой (пришивание,
+	// chatSewn в app.js).
+	First string `json:"first,omitempty"`
 	// Live это модель, которой сессия работает на самом деле (из транскрипта).
 	// Model рядом это сохранённый выбор дашборда, то есть чем её поднимать в
 	// следующий раз. Расходятся они у чужого окна: там модель выбрана в самом
@@ -228,12 +239,77 @@ func (s *server) chatModel(sid, tmux string) string {
 	return chatModelDefault
 }
 
+// chatFile это транскрипт вместе с проектом, из чьего обхода он пришёл: общий
+// список машины собирает файлы всех проектов разом, и строке надо помнить
+// своего, чтобы назвать его на экране и посчитать префикс его доски.
+type chatFile struct {
+	sessionInfo
+	projName string
+	projPath string
+}
+
+func chatFilesOf(list []sessionInfo, name, path string) []chatFile {
+	out := make([]chatFile, 0, len(list))
+	for _, f := range list {
+		out = append(out, chatFile{sessionInfo: f, projName: name, projPath: path})
+	}
+	return out
+}
+
 // chatEntries собирает список диалогов проекта. Транскрипты идут свежими
 // сверху, привязка к задачам приходит из реестра по факту работы плюс хвост
 // имени бокового дерева: дерево заводится ровно под одну задачу и врать не
 // умеет. Угадывания по первой реплике тут нет вовсе, оно и разводило один
 // разговор на четыре карточки.
 func (s *server) chatEntries(projPath string, limit int) []chatEntry {
+	files := chatFilesOf(sessionFiles(s.transcriptRoots(), projPath), "", projPath)
+	return s.chatEntriesFrom(files, limit)
+}
+
+// chatAllLimit это потолок общего списка машины: он выше проектного, потому
+// что накрывает все доски разом, но остаётся потолком, чтобы обход не
+// перечитывал транскрипты машины целиком.
+const chatAllLimit = 160
+
+// chatEntriesAll собирает диалоги всех проектов машины в один список:
+// переключение на чужой разговор не должно требовать смены проекта доски, а
+// принадлежность строки называет поле Project. Шапки читаются только у файлов
+// над общим потолком, свежие сверху, и лежат в той же памяти процесса, что и у
+// проектного списка.
+func (s *server) chatEntriesAll(limit int) []chatEntry {
+	roots := s.transcriptRoots()
+	projects, _ := s.projects()
+	byPath := map[string]chatFile{}
+	for _, p := range projects {
+		for _, f := range sessionFiles(roots, p.Path) {
+			// Каталог бокового дерева задачи попадает и в обход родителя (имя
+			// продолжает его дефисом), и в обход собственного проекта, когда
+			// дерево стоит рядом с ним. Файл остаётся за тем, чьё имя каталога
+			// длиннее: он и есть более точный хозяин.
+			if had, ok := byPath[f.path]; ok && len(claudeDirName(had.projPath)) >= len(claudeDirName(p.Path)) {
+				continue
+			}
+			byPath[f.path] = chatFile{sessionInfo: f, projName: p.Name, projPath: p.Path}
+		}
+	}
+	files := make([]chatFile, 0, len(byPath))
+	for _, f := range byPath {
+		files = append(files, f)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if !files[i].mod.Equal(files[j].mod) {
+			return files[i].mod.After(files[j].mod)
+		}
+		return files[i].ID < files[j].ID
+	})
+	return s.chatEntriesFrom(files, limit)
+}
+
+// chatEntriesFrom строит строки списка по готовому набору файлов. Общее
+// хозяйство захода (реестр записей, свёртка имён tmux, живые сессии, имена
+// подписок) считается один раз, сколько бы проектов ни легло в обход, а
+// префикс доски берётся по проекту файла и помнится на заход.
+func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 	recs := sessions.LoadAll(s.cfg.Home)
 	// Имя tmux сворачивается по последней записи всего реестра: клиент за
 	// диалогами доверия и импортов пересоздаёт сессию, и одно имя носят
@@ -261,17 +337,26 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 	// сессия соседнего проекта попадает в список по общему каталогу
 	// транскриптов, и без этой проверки её задача читалась бы как задача этой
 	// доски. Тот же разбор ведёт список работ (sessionWorks).
-	prefix := ""
-	if raw, err := s.projectBoard(projPath); err == nil {
-		if b, err := parseBoardView(raw); err == nil {
-			prefix = b.Prefix
+	prefixes := map[string]string{}
+	prefixOf := func(projPath string) string {
+		if p, ok := prefixes[projPath]; ok {
+			return p
 		}
+		p := ""
+		if raw, err := s.projectBoard(projPath); err == nil {
+			if b, err := parseBoardView(raw); err == nil {
+				p = b.Prefix
+			}
+		}
+		prefixes[projPath] = p
+		return p
 	}
 	out := []chatEntry{}
-	for i, f := range sessionFiles(s.transcriptRoots(), projPath) {
+	for i, f := range files {
 		if limit > 0 && i >= limit {
 			break
 		}
+		prefix := prefixOf(f.projPath)
 		head := s.sessionHeadCached(f.path, f.stamp)
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
@@ -292,7 +377,9 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 			note = ""
 		}
 		e := chatEntry{
-			ID: f.ID, Title: head.First, Summary: head.Summary, Mtime: saidAt(head, f), Tasks: tasks,
+			ID: f.ID, Project: f.projName,
+			Title: head.First, First: head.First, Summary: head.Summary,
+			Mtime: saidAt(head, f.sessionInfo), Tasks: tasks,
 			Note: note, Bound: bound,
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
@@ -368,7 +455,16 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	list := s.chatEntries(found.Path, chatListLimit)
+	// Общий список машины (?all=1): диалоги всех проектов разом, у каждой
+	// строки назван её проект. Панель выбирает разговор из него, не меняя
+	// проекта доски; проектный список остаётся для точечных вопросов вроде
+	// поиска по имени tmux.
+	var list []chatEntry
+	if r.URL.Query().Get("all") != "" {
+		list = s.chatEntriesAll(chatAllLimit)
+	} else {
+		list = s.chatEntries(found.Path, chatListLimit)
+	}
 	// Поиск по имени tmux-сессии: им дашборд узнаёт ID сессии, поднятой минуту
 	// назад, когда хук старта уже успел записать строку реестра.
 	if name := strings.TrimSpace(r.URL.Query().Get("tmux")); name != "" {

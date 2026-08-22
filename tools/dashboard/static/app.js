@@ -5219,6 +5219,43 @@ function chatNewTask(addr) {
   return chatIsTask(tail) ? tail : "";
 }
 
+// chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
+// Узнавание двумя ключами по убыванию силы: имя tmux-сессии подъёма, если
+// персист его помнит, и сама первая реплика, ведь она уехала клиенту первым
+// аргументом и легла в транскрипт первой, то есть стала заголовком диалога в
+// списке. Пустой ответ значит, что сессия ещё не родилась либо реплика
+// пропала вместе с tmux, и тогда пузырь честно остаётся held.
+function chatSewn(project, addr, chats) {
+  for (const rec of echoRead(project, addr)) {
+    if (rec.state !== "held" && rec.state !== "wait") continue;
+    if (rec.tmux) {
+      const hit = (chats || []).find((c) => c.tmux === rec.tmux);
+      if (hit) return hit.id;
+    }
+    // Первая реплика сверяется со своим полем, а не с заголовком: заголовок
+    // у диалога бывает от харнеса и с первой репликой не совпадает.
+    const hit = (chats || []).find((c) => sameSaid(c.first || c.title, rec.wire || rec.text));
+    if (hit) return hit.id;
+  }
+  return "";
+}
+
+// sameSaid сверяет заголовок диалога с отправленным текстом. Заголовок это
+// первая строка первой реплики, обрезанная сервером с «...» на хвосте
+// (firstLine в sessions.go), поэтому от отправленного берётся первая строка,
+// у заголовка снимается многоточие, и сравнивается общая голова. Порог длины
+// держит сверку от ложных пришиваний на коротких репликах вроде «да».
+const SEW_MIN = 24;
+
+function sameSaid(title, said) {
+  let a = String(title || "").trim();
+  if (a.endsWith("...")) a = a.slice(0, -3);
+  const b = (String(said || "").split("\n", 1)[0] || "").trim();
+  const n = Math.min(a.length, b.length);
+  if (n < SEW_MIN) return false;
+  return a.slice(0, n) === b.slice(0, n);
+}
+
 // Состояние переключателя фильтра по задаче живёт в localStorage: человек
 // ставит его один раз под свою привычку, а не на каждое открытие окна.
 const CHAT_FILTER_KEY = "devkit.chat.filter";
@@ -5263,10 +5300,11 @@ function chatsURL(project) {
   return "/api/projects/" + encodeURIComponent(project) + "/chats";
 }
 
-// Состояние окна чатов: весь список диалогов проекта, выбранный диалог и
-// задача, по которой список фильтруется. Список приезжает целиком и
-// фильтруется на клиенте: переключатель фильтра тогда работает мгновенно, без
-// похода на сервер.
+// Состояние окна чатов: список диалогов всей машины, выбранный диалог и
+// задача, по которой список фильтруется. Список общий (?all=1), а не
+// проектный: диалог ищут по всем проектам разом, и переключение на чужой не
+// требует смены проекта доски. Приезжает он целиком и фильтруется на клиенте:
+// переключатель фильтра тогда работает мгновенно, без похода на сервер.
 async function chatState(project, addr, board) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
     error: "", models: [], fresh: false, lost: false };
@@ -5278,7 +5316,7 @@ async function chatState(project, addr, board) {
   } else if (addr && addr !== CHAT_BOARD) {
     st.sid = addr;
   }
-  const r = await api(chatsURL(project));
+  const r = await api(chatsURL(project) + "?all=1");
   if (!r.ok) {
     st.error = r.body.error || "список чатов не прочитался";
     return st;
@@ -5286,11 +5324,31 @@ async function chatState(project, addr, board) {
   st.chats = r.body.chats || [];
   st.note = r.body.note || "";
   if (r.body.models) st.models = r.body.models;
+  // Пришивание застрявшего нового адреса: первая реплика уходила в чат,
+  // которого ещё не было, сессия родилась позже (клиент стоял на вопросе в
+  // своём терминале), а панель возвращалась на эфемерный адрес new и молчала,
+  // хотя транскрипт давно жив. Родившийся диалог узнаётся по имени tmux из
+  // персиста реплики либо по самой первой реплике, и панель переезжает на
+  // живой sid прямо в этой сборке, без перерисовки.
+  if (st.fresh) {
+    const sewn = chatSewn(project, addr, st.chats);
+    if (sewn) {
+      echoPurge(project, addr);
+      chatLastSet(sewn);
+      history.replaceState({ chat: sewn }, "", "#" + chatBase() + "/chat/" + sewn);
+      st.addr = sewn;
+      st.sid = sewn;
+      st.fresh = false;
+      st.task = "";
+    }
+  }
   // Задача адреса это фильтр, а не сам чат: открытый ею список показывает чаты
   // задачи. Открывается тот, в котором человек разговаривал последним, а если
-  // такого нет или он пропал из списка, то свежий.
+  // такого нет или он пропал из списка, то свежий. Выбор по умолчанию ходит
+  // только по своему проекту: общий список начинается с чужих разговоров, и
+  // без этой оговорки панель доски открывала бы чат соседнего проекта.
   if (!st.sid && !st.fresh) {
-    const list = chatVisible(st);
+    const list = chatVisible(st).filter((c) => !c.project || c.project === project);
     const want = st.task ? chatTaskLast(st.task) : "";
     const kept = want && list.find((c) => c.id === want);
     if (kept) st.sid = kept.id;
@@ -5377,6 +5435,10 @@ function chatOption(project, c, current) {
   const row = el("div", "cdrow" + (c.id === current ? " on" : ""));
   row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
   const chips = el("div", "cchips");
+  // Принадлежность видна первой: список общий по машине, и без имени проекта
+  // строки разных досок неотличимы. Свой проект тоже назван, пустое место у
+  // части строк читалось бы пропажей.
+  chips.append(el("span", "chip c-proj", c.project || project));
   // Живой чат различается занятостью: работает агент или ждёт реплики.
   const busyNow = c.state === "live" && !c.idle;
   chips.append(el("span", "chip" + (busyNow ? " c-run" : ""),
@@ -5388,7 +5450,10 @@ function chatOption(project, c, current) {
   row.append(el("span", "cfirst", chatWhen(c) + (c.tree ? ", " + c.tree : "")));
   row.addEventListener("click", () => {
     chatDropShut();
-    switchChat(c.id);
+    // Разговор чужого проекта открывается со своим проектом в адресе: панель
+    // это хвост, и смены проекта доски переход не требует.
+    const foreign = c.project && c.project !== project;
+    switchChat(foreign ? c.project + CHAT_PROJ_SEP + c.id : c.id);
   });
   return row;
 }
@@ -5411,8 +5476,11 @@ document.addEventListener("click", (ev) => {
   chatDropShut();
 });
 
-// Список с поиском: поле сверху, дальше строки. Поиск идёт по заголовку, по ID
-// сессии и по задачам, потому что ищут диалог всеми тремя способами.
+// Список с поиском: поле сверху, дальше строки всех диалогов машины. Поиск
+// идёт по заголовку, по ID сессии, по задачам и по имени проекта, потому что
+// ищут диалог всеми четырьмя способами. Фильтр по задаче панели это стартовое
+// состояние того же поиска, а не жёсткая отсечка: стереть запрос значит
+// увидеть весь список.
 function chatDropOpen(project, st, anchor) {
   chatDropShut();
   const box = el("div", "cdrop");
@@ -5420,19 +5488,23 @@ function chatDropOpen(project, st, anchor) {
   find.type = "text";
   find.placeholder = "Поиск чата";
   find.setAttribute("aria-label", "Поиск чата");
+  if (st.task && chatFilterOn()) find.value = st.task;
   const rows = el("div", "cdrows");
   const draw = () => {
     const q = find.value.trim().toLowerCase();
-    const list = chatVisible(st).filter((c) => {
+    const list = st.chats.filter((c) => {
       if (!q) return true;
       return (c.title || "").toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q) ||
-        (c.tasks || []).join(" ").toLowerCase().includes(q);
+        (c.tasks || []).join(" ").toLowerCase().includes(q) ||
+        (c.project || project).toLowerCase().includes(q);
     });
     rows.replaceChildren();
     for (const c of list) rows.append(chatOption(project, c, st.sid));
     if (!list.length) {
-      rows.append(el("div", "hint", q ? "по запросу ничего не нашлось" :
+      // Пустому списку словами отвечает сервер, чем бы ни было поле поиска:
+      // «ничего не нашлось» имеет смысл, только когда искали среди чего-то.
+      rows.append(el("div", "hint", st.chats.length && q ? "по запросу ничего не нашлось" :
         (st.note || "чатов тут нет")));
     }
   };
@@ -6330,7 +6402,7 @@ const CHAT_UNWEDGE = "Разговор завис, процесс был сня�
 // Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и
 // ID приходит из реестра по имени tmux-сессии: дашборд опрашивает список, пока
 // он не встанет, и переключается на живой диалог сам.
-async function chatRaise(project, st, text, model) {
+async function chatRaise(project, st, text, model, onTmux) {
   const body = { text, model };
   if (st.task) body.id = st.task;
   const r = await api(chatsURL(project), { method: "POST", body });
@@ -6338,7 +6410,35 @@ async function chatRaise(project, st, text, model) {
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
+  // Имя tmux уезжает вызвавшему сразу: он кладёт его в персист реплики, и
+  // дорога к родившемуся диалогу переживает закрытие вкладки.
+  if (onTmux) onTmux(r.body.tmux);
   return chatWait(project, r.body.tmux, st.addr);
+}
+
+// chatByTmux спрашивает у сервера диалог по имени tmux-сессии: так дашборд
+// узнаёт ID сессии, родившейся позже команды подъёма.
+async function chatByTmux(project, name) {
+  const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
+  return (list.ok && (list.body.chats || [])[0]) || null;
+}
+
+// chatSewLoop опрашивает реестр, пока человек стоит на адресе addr, и
+// пришивает панель к найденному диалогу: память адреса подъёма вычищается,
+// панель переезжает на живой sid. Уводить человека с другого экрана нельзя,
+// поэтому каждый заход сверяется с адресом панели.
+async function chatSewLoop(project, name, addr, step, tries) {
+  for (let i = 0; i < tries; i += 1) {
+    await new Promise((ok) => setTimeout(ok, step));
+    if (!addr || route().chat !== addr) return false;
+    const hit = await chatByTmux(project, name);
+    if (hit) {
+      echoPurge(project, addr);
+      switchChat(hit.id);
+      return true;
+    }
+  }
+  return false;
 }
 
 // Ожидание ID поднятой сессии: она рождается позже команды и называет себя в
@@ -6354,39 +6454,21 @@ async function chatRaise(project, st, text, model) {
 // диалог, "waiting" это ожидание сверх обычного, им пузырь первой реплики
 // помечается причиной, но со счетов не снимается.
 async function chatWait(project, name, addr) {
-  const look = async () => {
-    const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
-    return (list.ok && (list.body.chats || [])[0]) || null;
-  };
-  const attach = (hit) => {
-    // Найденный диалог дальше сам подтверждает реплики своей лентой, память
-    // адреса подъёма ему больше не нужна.
-    if (addr) echoPurge(project, addr);
-    switchChat(hit.id);
-  };
   for (let i = 0; i < 40; i += 1) {
     await new Promise((ok) => setTimeout(ok, 1500));
-    const hit = await look();
+    const hit = await chatByTmux(project, name);
     if (hit) {
-      attach(hit);
+      // Найденный диалог дальше сам подтверждает реплики своей лентой, память
+      // адреса подъёма ему больше не нужна.
+      if (addr) echoPurge(project, addr);
+      switchChat(hit.id);
       return true;
     }
   }
   // Дальше опрос идёт фоном и реже: сессия назовётся, когда человек ответит
-  // клиенту, и лента пришьётся без его действий здесь. Уводить человека с
-  // другого экрана нельзя, поэтому фоновая фаза переключает только пока он
-  // сам стоит на панели этого же нового чата.
-  (async () => {
-    for (let i = 0; i < 60; i += 1) {
-      await new Promise((ok) => setTimeout(ok, 5000));
-      if (!addr || route().chat !== addr) return;
-      const hit = await look();
-      if (hit) {
-        attach(hit);
-        return;
-      }
-    }
-  })().catch(console.error);
+  // клиенту, и лента пришьётся без его действий здесь (охраняемый цикл
+  // chatSewLoop переключает панель, только пока человек сам стоит на ней).
+  chatSewLoop(project, name, addr, 5000, 60).catch(console.error);
   return "waiting";
 }
 
@@ -6597,10 +6679,13 @@ function echoRead(project, addr) {
     // Восстановленное отдаётся как записано, вместе со временем отправки:
     // судьбу «отправляется» решает не сам факт перерисовки, а прошедший с
     // отправки срок, и считает его makeEcho от born из персиста.
+    // tmux это имя сессии, которую подняла эта реплика: по нему панель,
+    // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
     return raw.filter((m) => m && m.text).map((m) => ({
       text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(),
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
+      tmux: m.tmux ? String(m.tmux) : "",
     }));
   } catch (err) {
     // Приватное окно запрещает хранилище: панель тогда живёт без памяти о
@@ -6621,7 +6706,8 @@ function echoWrite(project, addr, list) {
     // после перерисовки, пока эхо их не сняло (первая реплика нового чата
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, why: m.why || "" }));
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
+        why: m.why || "", tmux: m.tmux || "" }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -6757,7 +6843,7 @@ function makeEcho(project, box, feedBox, addr, resend) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
       mine.push({ key: "local-" + seq, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, retry: resend });
+        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux, retry: resend });
     }
     if (mine.length) {
       draw();
@@ -6833,6 +6919,25 @@ function makeEcho(project, box, feedBox, addr, resend) {
     waiting() {
       return mine.some((m) => m.state === "wait");
     },
+    // Реплика подняла сессию: имя tmux едет в персист сразу, как его назвал
+    // сервер. Без этого закрытая до пришивания вкладка теряла дорогу к
+    // родившемуся диалогу, и панель на адресе new молчала вечно.
+    mark(m, tmux) {
+      if (!mine.includes(m) || !tmux) return;
+      m.tmux = tmux;
+      save();
+    },
+    // Имена tmux у реплик, ждущих пришивания: по ним панель нового адреса
+    // опрашивает реестр, пока человек стоит на ней.
+    raised() {
+      const names = [];
+      for (const m of mine) {
+        if ((m.state === "wait" || m.state === "held") && m.tmux && !names.includes(m.tmux)) {
+          names.push(m.tmux);
+        }
+      }
+      return names;
+    },
     // Эхо из ленты: та же реплика человека, пришедшая из транскрипта. Сверка по
     // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
     saw(item) {
@@ -6899,6 +7004,16 @@ function chatPanel(project, st) {
   // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
   // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
   if (chatIsNew(st.addr) && echo.waiting()) busy.raise();
+  // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
+  // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
+  // только сессия назовётся, панель переедет на живой sid и покажет транскрипт
+  // (пришивание, вторая половина chatSewn: там список, тут ещё не родившееся).
+  if (chatIsNew(st.addr)) {
+    const names = echo.raised();
+    if (names.length) {
+      chatSewLoop(project, names[names.length - 1], st.addr, 2000, 150).catch(console.error);
+    }
+  }
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
   // отправки, и родной уголок стоял поверх неё, а расти полю надо вверх, в
@@ -7071,7 +7186,8 @@ function chatPanel(project, st) {
         // Плашка о подъёме встаёт сразу: между отправкой и пришиванием ленты
         // проходят секунды, и пустота под пузырём читалась как зависание.
         busy.raise();
-        chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref())
+        chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref(),
+          (name) => echo.mark(m, name))
           .then((got) => {
             if (got === false) {
               echo.bad(m);

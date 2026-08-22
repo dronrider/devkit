@@ -108,8 +108,16 @@ const drop = line.children[line.children.length - 1];
 if (!String(drop.className).includes("cdrop")) fail("выпадающий список не открылся");
 const rows = drop.children[1];
 if (rows.children.length !== 2) fail("в списке не те строки: " + rows.children.length);
+// Фильтр по задаче это состояние поиска, а не жёсткая отсечка: задача стоит
+// запросом в поле, а запрос по чужому разговору находит его поверх фильтра.
 const find = drop.children[0];
+if (find.value !== "XR-1") fail("фильтр задачи не встал запросом поиска: " + JSON.stringify(find.value));
 find.value = "роутер";
+find.handlers.input();
+if (!dump(rows).includes("почини роутер")) {
+  fail("поиск поверх фильтра не нашёл разговор вне задачи: " + dump(rows).slice(0, 200));
+}
+find.value = "гарнитура";
 find.handlers.input();
 if (!dump(rows).includes("ничего не нашлось")) fail("поиск не сказал про пустую выдачу");
 

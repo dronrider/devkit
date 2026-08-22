@@ -35,6 +35,49 @@ func chatEnv(t *testing.T) (*testEnv, *http.Client) {
 	return e, e.loggedClient(t)
 }
 
+// Общий список машины (?all=1): диалоги всех проектов в одном ответе, свежие
+// сверху, у каждой строки назван её проект. Панель выбирает разговор из него,
+// не меняя проекта доски; проектный список без параметра остаётся прежним.
+func TestChatListAllProjects(t *testing.T) {
+	e, c := chatEnv(t)
+	other := filepath.Join(filepath.Dir(e.proj), "other")
+	mkProject(t, other)
+	// Метка последней реплики в транскрипте соседа свежее: порядок общего
+	// списка считается по ней, а не по касанию файла.
+	fresher := `{"type":"user","message":{"role":"user","content":"работа идёт"},"timestamp":"2026-08-18T10:00:01.000Z","gitBranch":"main"}` + "\n"
+	writeSession(t, e.home, e.proj, "", "aaaa-0001", plainTalk, time.Now().Add(-time.Hour))
+	writeSession(t, e.home, other, "", "bbbb-0002", fresher, time.Now())
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("общий список: %d", resp.StatusCode)
+	}
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Chats) != 2 {
+		t.Fatalf("в общем списке не оба проекта: %+v", got.Chats)
+	}
+	if got.Chats[0].ID != "bbbb-0002" || got.Chats[0].Project != "other" {
+		t.Errorf("свежий разговор соседнего проекта не первый или без имени проекта: %+v", got.Chats[0])
+	}
+	if got.Chats[1].ID != "aaaa-0001" || got.Chats[1].Project != "demo" {
+		t.Errorf("разговор своего проекта без имени проекта: %+v", got.Chats[1])
+	}
+	// Первая реплика едет своим полем: заголовок бывает от харнеса, а панель
+	// пришивает застрявший адрес new именно по первой реплике.
+	if got.Chats[0].First != "работа идёт" {
+		t.Errorf("первой реплики нет своим полем: %+v", got.Chats[0])
+	}
+	// Без ?all=1 ответ прежний: только свой проект и без поля project.
+	own := chatsOf(t, e, c)
+	if len(own) != 1 || own[0].ID != "aaaa-0001" || own[0].Project != "" {
+		t.Errorf("проектный список изменился: %+v", own)
+	}
+}
+
 // Имя tmux сворачивается по последней записи всего реестра, а сессии без
 // транскрипта в списке не показываются (живой случай chat-DK-397-2): клиент за
 // диалогами доверия пересоздаёт сессию, имя переиспользуется между заходами и

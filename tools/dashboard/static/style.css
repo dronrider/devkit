@@ -528,6 +528,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .crow3 b{font:600 11.5px var(--mono);color:var(--tx2)}
 .cchips{display:flex;flex-wrap:wrap;gap:4px}
 .cchips .chip{font-size:10.5px}
+/* принадлежность строки общего списка чатов: имя проекта первым чипом */
+.cchips .c-proj{background:color-mix(in oklab,var(--acc) 14%,transparent);color:var(--acc)}
 .cfirst{font:400 11.5px/1.4 var(--sans);color:var(--tx2);overflow-wrap:anywhere}
 .cwhere{font:400 10.5px var(--mono);color:var(--tx3);overflow-wrap:anywhere}
 .chead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}

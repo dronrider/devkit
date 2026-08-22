@@ -623,7 +623,12 @@ type layers struct {
 	Setup      map[string]*setup
 	Profiles   map[string]*profile
 	Source     string // откуда взялся список включённых
-	Warns      []string
+	// ExecRotateTokens это порог ротации исполнителя-субагента у
+	// чата-диспетчера: верхнеуровневый ключ exec_rotate_tokens машинного
+	// конфига. Ноль значит ключ не задан или бит: умолчание называет
+	// потребитель (дашборд), слой тут только транспорт.
+	ExecRotateTokens int
+	Warns            []string
 }
 
 func readConfig(path string) (*tomlDoc, error) {
@@ -658,6 +663,16 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		}
 		l.Default, l.DefaultHow = mdoc.table("").str("default"), "default машинного конфига"
 		l.Enabled = append(l.Enabled, mdoc.table("").arr("enabled")...)
+		// Ключ читается мягко, а не через machineRootKeys: битое значение не
+		// должно ронять раскладку целиком, диспетчер обойдётся умолчанием, а
+		// причина уезжает предупреждением.
+		if v, ok := mdoc.table("").get("exec_rotate_tokens"); ok {
+			if v.Kind == tomlInt && v.Int > 0 {
+				l.ExecRotateTokens = v.Int
+			} else {
+				l.Warns = append(l.Warns, fmt.Sprintf("%s: ключ exec_rotate_tokens ждёт целое больше нуля, значение пропущено", machinePath))
+			}
+		}
 		for _, name := range mdoc.Order {
 			if name == "" {
 				continue
@@ -1214,8 +1229,11 @@ type harnessesJSON struct {
 	Default   string        `json:"default,omitempty"`
 	Source    string        `json:"source"`
 	Harnesses []harnessJSON `json:"harnesses"`
-	Note      string        `json:"note,omitempty"`
-	Warns     []string      `json:"warns,omitempty"`
+	// ExecRotateTokens это порог ротации исполнителя-субагента из машинного
+	// конфига; нет ключа, нет и поля, умолчание ставит потребитель.
+	ExecRotateTokens int      `json:"exec_rotate_tokens,omitempty"`
+	Note             string   `json:"note,omitempty"`
+	Warns            []string `json:"warns,omitempty"`
 }
 
 // clientBin отвечает, чем поднимается клиент харнеса. Порядок тот же, каким
@@ -1256,7 +1274,8 @@ func cmdHarnessJSON(start string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{}, Warns: l.Warns}
+	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{},
+		ExecRotateTokens: l.ExecRotateTokens, Warns: l.Warns}
 	var names []string
 	for name := range l.Setup {
 		names = append(names, name)

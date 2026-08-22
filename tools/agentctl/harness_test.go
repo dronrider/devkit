@@ -569,6 +569,46 @@ func TestCmdHarnessJSONEmpty(t *testing.T) {
 	}
 }
 
+// TestCmdHarnessJSONExecRotateTokens: верхнеуровневый ключ exec_rotate_tokens
+// машинного конфига уезжает в раскладку как есть, слой тут транспорт (DK-397).
+// Без ключа поля нет, умолчание называет потребитель. Мусор в значении не
+// роняет раскладку целиком: диспетчер обойдётся умолчанием, а причина видна
+// предупреждением.
+func TestCmdHarnessJSONExecRotateTokens(t *testing.T) {
+	cases := []struct {
+		name, line string
+		want       int
+		warn       bool
+	}{
+		{"задан", "exec_rotate_tokens = 640000\n", 640000, false},
+		{"не задан", "", 0, false},
+		{"мусор", "exec_rotate_tokens = \"много\"\n", 0, true},
+		{"ноль", "exec_rotate_tokens = 0\n", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			kit := fakeKit(t)
+			writeProfile(t, kit, "homecli", echoProfile)
+			writeMachine(t, kit, "enabled = [\"homecli\"]\ndefault = \"homecli\"\n"+c.line)
+			text, err := cmdHarnessJSON(kit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var v harnessesJSON
+			if err := json.Unmarshal([]byte(text), &v); err != nil {
+				t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
+			}
+			if v.ExecRotateTokens != c.want {
+				t.Fatalf("порог ротации %d, жду %d:\n%s", v.ExecRotateTokens, c.want, text)
+			}
+			warned := strings.Contains(strings.Join(v.Warns, "\n"), "exec_rotate_tokens")
+			if warned != c.warn {
+				t.Fatalf("предупреждение про ключ: жду %v, вижу %v:\n%s", c.warn, warned, text)
+			}
+		})
+	}
+}
+
 // TestHarnessDir: директорию профилей бинарь ищет сам, а не знает про свой
 // devkit; не нашёл, значит говорит, где искал и чем это чинится.
 func TestHarnessDir(t *testing.T) {

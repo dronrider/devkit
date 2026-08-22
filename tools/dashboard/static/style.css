@@ -1291,3 +1291,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* не загрузившееся вложение называет себя словами, а не значком браузера */
 .cclip .bad{font:400 11px var(--sans);color:var(--block)}
+
+/* плюс у карточки проекта на главной и его меню из двух дорог заведения */
+.card > .prow{position:relative}
+.card > .prow .pplus{margin-left:auto;flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:7px;background:var(--bg2);color:var(--tx2);font:400 17px/1 var(--sans);cursor:pointer}
+.card > .prow .stale ~ .pplus{margin-left:8px}
+.card > .prow .pplus:hover{border-color:var(--acc);color:var(--acc)}
+.pmenu{position:absolute;right:12px;top:38px;z-index:40;min-width:130px;padding:5px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
+.pmrow{padding:7px 9px;border-radius:6px;font:400 12.5px var(--sans);color:var(--tx);cursor:pointer}
+.pmrow:hover{background:var(--bg2)}

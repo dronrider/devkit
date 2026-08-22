@@ -242,10 +242,40 @@ function routeScreen(h) {
   return { proj: h.slice(0, cut), id: h.slice(cut + 1) };
 }
 
+// Выбранный проект переживает уход на главную. Хэш главной пуст, и без памяти
+// раздел «Доска» вёл оттуда на первый проект списка, а не на тот, с которого
+// человек ушёл: выбор приходилось делать заново после каждого захода на
+// главную (замечание пользователя).
+const LAST_PROJECT_KEY = "devkit.dash.project";
+
+function lastProject() {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function keepProject(name) {
+  if (!name) return;
+  try {
+    localStorage.setItem(LAST_PROJECT_KEY, name);
+  } catch (e) {
+    // Приватный режим браузера запрещает запись: память выбора это удобство, и
+    // ронять из-за неё экран незачем.
+  }
+}
+
 function currentProject(projects) {
   const want = route().proj;
-  const hit = projects.find((p) => p.name === want);
-  return hit || projects[0] || null;
+  // Проект из хэша запоминается: он и есть выбор человека, а не догадка экрана.
+  if (want) {
+    const named = projects.find((p) => p.name === want);
+    if (named) keepProject(named.name);
+    if (named) return named;
+  }
+  const kept = projects.find((p) => p.name === lastProject());
+  return kept || projects[0] || null;
 }
 
 // Состояние проекта одним кружком (макет «00 Главная»): серый работы нет,
@@ -1541,32 +1571,14 @@ function sayDrop(text, undo) {
   resultToast = toast({ parts: [body, back], body, life: DROP_LIFE, cls: "res" });
 }
 
-// Кнопка заведения: стоит и на доске проекта, и на главной, потому что мысль
-// приходит вне машины, а не в тот момент, когда открыта нужная доска.
+// Кнопка заведения на доске проекта: мысль приходит вне машины, а не в тот
+// момент, когда открыта нужная доска. На главной такой полосы больше нет,
+// заведение живёт плюсом у самой карточки проекта.
 function newTaskButton(project, label) {
   const btn = el("button", "btn btn-acc", label);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     goKeepingChat(project + "/new");
-  });
-  return btn;
-}
-
-// Вход в накопитель черновиков стоит рядом с заведением, на доске и на
-// главной: записанная с телефона мысль иначе видна только в файле, а разбирать
-// её приходится с ноутбука.
-// Подписи кнопок главной: доска там не одна, и «Новая задача» без имени
-// заводила её молча в тот проект, который показан списком последним. Кнопка
-// называет проект сама, потому что заголовка доски рядом с ней нет.
-function homeBarLabels(project) {
-  return { make: "Новая задача в " + project, drafts: "Черновики " + project };
-}
-
-function draftsButton(project, label) {
-  const btn = el("button", "btn", label || "Черновики");
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    goKeepingChat(project + "/drafts");
   });
   return btn;
 }
@@ -8132,7 +8144,62 @@ function projectWhy(p) {
   return "";
 }
 
+// Плюс у карточки проекта: заведение принадлежит проекту, и на общей странице
+// ему место у самой карточки, а не полосой кнопок внизу. Полоса называла один
+// проект из списка, и завести задачу в соседний с главной было нечем
+// (замечание пользователя). Дорог за плюсом две, задача и черновик, поэтому он
+// открывает меню, а не ведёт сразу.
+let homeMenu = null;
+
+function homeMenuShut() {
+  if (homeMenu) {
+    homeMenu.remove();
+    homeMenu = null;
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  if (!homeMenu) return;
+  if (homeMenu.contains(ev.target)) return;
+  homeMenuShut();
+});
+
+function makePlus(project) {
+  const btn = el("button", "pplus", "+");
+  btn.type = "button";
+  btn.title = "Завести в " + project;
+  btn.setAttribute("aria-label", "Завести в " + project);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const had = homeMenu;
+    homeMenuShut();
+    // Повторное нажатие по тому же плюсу закрывает меню, а не собирает его
+    // заново под пальцем.
+    if (had && had.dataset.project === project) return;
+    const menu = el("div", "pmenu");
+    menu.dataset.project = project;
+    // Оба пункта ведут на тот же экран заведения (#проект/new), что и кнопка с
+    // доски: форма там одна на оба случая, а пункт меню только выставляет её
+    // переключатель.
+    for (const [label, draft] of [["Задача", false], ["Черновик", true]]) {
+      const opt = el("div", "pmrow", label);
+      opt.addEventListener("click", (e) => {
+        e.stopPropagation();
+        homeMenuShut();
+        resetNewForm(project);
+        newForm.draft = draft;
+        goKeepingChat(project + "/new");
+      });
+      menu.append(opt);
+    }
+    btn.parentNode.append(menu);
+    homeMenu = menu;
+  });
+  return btn;
+}
+
 function renderHome(projects) {
+  homeMenuShut();
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   // Легенда стоит у заголовка шапки, а не отдельной строкой списка: заголовок
@@ -8152,6 +8219,7 @@ function renderHome(projects) {
     }
     const why = projectWhy(p);
     if (why) row.append(el("span", "stale", why));
+    row.append(makePlus(p.name));
     row.addEventListener("click", () => { goKeepingChat(p.name); });
     card.append(row);
   }
@@ -8160,11 +8228,6 @@ function renderHome(projects) {
   quota.id = "quota-card";
   groups.append(quota);
   paintQuota();
-  if (!shownProject) return;
-  const bar = el("div", "nbar");
-  const labels = homeBarLabels(shownProject);
-  bar.append(newTaskButton(shownProject, labels.make), draftsButton(shownProject, labels.drafts));
-  groups.append(bar);
 }
 
 // Экран «Агенты» (макет «08 Агенты»): живые работы всех проектов одним

@@ -844,11 +844,11 @@ func TestStaticBoardNarrowRow(t *testing.T) {
 	}
 }
 
-// Полоса разделов раскладывает секции доски по табам, а кнопки главной
-// называют доску, в которую заведут задачу: проектов на дашборде несколько, и
-// «Новая задача» без имени заводит её молча в тот проект, что показан.
-func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
-	heads := []string{"function sectionTab(", "function sectionClass(", "function homeBarLabels("}
+// Полоса разделов раскладывает секции доски по табам, а заведение на главной
+// принадлежит карточке проекта: проектов на дашборде несколько, и полоса
+// кнопок внизу называла один из них, а до соседнего с главной было не добраться.
+func TestStaticBoardTabsAndHomePlus(t *testing.T) {
+	heads := []string{"function sectionTab(", "function sectionClass("}
 	cases := []struct{ expr, want string }{
 		{`sectionTab("in-progress")`, "sess"},
 		{`sectionTab("check")`, "sess"},
@@ -857,8 +857,6 @@ func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
 		{`sectionClass("card", "backlog", "back")`, "card bsec onsec"},
 		{`sectionClass("card", "backlog", "sess")`, "card bsec"},
 		{`sectionClass("shead", "check", "sess")`, "shead bsec onsec"},
-		{`homeBarLabels("devkit").make`, "Новая задача в devkit"},
-		{`homeBarLabels("devkit").drafts`, "Черновики devkit"},
 	}
 	for _, c := range cases {
 		if got := jsEval(t, heads, c.expr); got != c.want {
@@ -867,9 +865,18 @@ func TestStaticBoardTabsAndHomeLabels(t *testing.T) {
 	}
 	app := readFile(t, filepath.Join("static", "app.js"))
 	home := funcBody(t, app, "function renderHome(")
-	for _, want := range []string{"homeBarLabels(shownProject)", "labels.make", "labels.drafts"} {
-		if !strings.Contains(home, want) {
-			t.Errorf("кнопки главной не называют доску: в renderHome нет %q", want)
+	if !strings.Contains(home, "makePlus(p.name)") {
+		t.Error("у карточки проекта на главной нет плюса заведения")
+	}
+	for _, gone := range []string{"newTaskButton(", "homeBarLabels("} {
+		if strings.Contains(home, gone) {
+			t.Errorf("на главной осталась проектная кнопка: %q", gone)
+		}
+	}
+	plus := funcBody(t, app, "function makePlus(")
+	for _, want := range []string{`"Задача"`, `"Черновик"`, `"/new"`} {
+		if !strings.Contains(plus, want) {
+			t.Errorf("в меню плюса нет %q", want)
 		}
 	}
 	bar := funcBody(t, app, "function boardTabsBar(")

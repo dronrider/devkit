@@ -106,9 +106,33 @@ export function makeNode(tag) {
   node.removeEventListener = (name) => { delete node.handlers[name]; };
   node.querySelector = (sel) => {
     const cls = String(sel).replace(/^\./, "");
-    return byClass(node, cls) || (sel === "button" ? tag(node, "BUTTON") : null);
+    const hit = byClass(node, cls);
+    if (hit) return hit;
+    // Селектор без точки это имя тега: подписи для чтения с экрана вешаются на
+    // сам input или select внутри собранного поля, и по классу их не найти.
+    // Имя тега берётся обходом, а не общей функцией tag: у makeNode тег стоит
+    // параметром и имя это перекрывает.
+    return /^[a-z]+$/.test(String(sel)) ? byTag(node, String(sel).toUpperCase()) : null;
   };
-  node.querySelectorAll = () => [];
+  // Выборка списком идёт по последнему звену селектора: вложенность мок не
+  // разбирает, а класс листа («.rrow .why» это «.why») отбирает ровно те узлы,
+  // за которыми экран и приходит.
+  node.querySelectorAll = (sel) => {
+    const leaf = String(sel).trim().split(/\s+/).pop();
+    if (leaf.startsWith(".")) return allByClass(node, leaf.slice(1)).filter((n) => n !== node);
+    if (/^[a-z]+$/.test(leaf)) {
+      const out = [];
+      const walk = (n) => {
+        for (const kid of n.children || []) {
+          if (kid.tagName === leaf.toUpperCase()) out.push(kid);
+          walk(kid);
+        }
+      };
+      walk(node);
+      return out;
+    }
+    return [];
+  };
   node.closest = (sel) => (String(sel).replace(/^\./, "") === node.className ? node : null);
   Object.defineProperty(node, "childElementCount", { get: () => node.children.length });
   // Высота считается по числу узлов внутри: прокрутка это предмет проверки, и
@@ -119,6 +143,9 @@ export function makeNode(tag) {
     get: () => node.own + (node.children || []).reduce((n, k) => n + (k.scrollHeight || 0) + 20, 0),
   });
   Object.defineProperty(node, "firstChild", { get: () => node.children[0] || null });
+  Object.defineProperty(node, "firstElementChild", {
+    get: () => (node.children || []).find((k) => k && k.tagName && k.tagName !== "#text") || null,
+  });
   return node;
 }
 
@@ -127,6 +154,16 @@ export function dump(node) {
   if (!node) return "";
   const own = typeof node.textContent === "string" ? node.textContent : "";
   return [own, ...(node.children || []).map(dump)].join(" ");
+}
+
+function byTag(node, name) {
+  if (!node) return null;
+  if (node.tagName === name) return node;
+  for (const kid of node.children || []) {
+    const hit = byTag(kid, name);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export function tag(node, name) {

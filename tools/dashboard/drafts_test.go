@@ -262,7 +262,6 @@ func TestStaticDraftsSection(t *testing.T) {
 		"Провести груминг",
 		"async function renderDrafts(",
 		"async function renderDraft(",
-		"function draftsButton(",
 		"async function groomDraft(",
 		"async function dropDraft(",
 		"/drafts",
@@ -272,20 +271,12 @@ func TestStaticDraftsSection(t *testing.T) {
 			t.Errorf("в static/app.js нет надписи %q", want)
 		}
 	}
-	// Вход стоит на обоих экранах: черновик пишется с телефона, и разбирать его
-	// приходится оттуда же.
-	for _, fn := range []string{"function renderHome("} {
-		cut := strings.Index(text, fn)
-		if cut < 0 {
-			t.Fatalf("в static/app.js нет %s", fn)
-		}
-		part := text[cut:]
-		if stop := strings.Index(part, "\n}\n"); stop > 0 {
-			part = part[:stop]
-		}
-		if !strings.Contains(part, "draftsButton(") {
-			t.Errorf("в %s нет входа в раздел черновиков", fn)
-		}
+	// Черновик пишется с телефона, и завести его с главной есть чем: пункт
+	// меню у плюса карточки проекта открывает ту же форму заведения, что и
+	// кнопка с доски.
+	plus := funcBody(t, text, "function makePlus(")
+	if !strings.Contains(plus, `"Черновик"`) {
+		t.Error("в меню плюса на главной нет пункта черновика")
 	}
 	// С доски вход в накопитель это раздел левого меню, а не кнопка над
 	// списком строк: кнопка мозолила глаза на самой доске, ради которой экран

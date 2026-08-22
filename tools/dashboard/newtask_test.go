@@ -413,9 +413,13 @@ func TestStaticNewTaskForm(t *testing.T) {
 	if strings.Contains(text, "nfcheck") || strings.Contains(text, "newForm.file") {
 		t.Error("в static/app.js остался чекбокс заведения файла задачи")
 	}
-	// Кнопка на обоих экранах: на доске и на главной, иначе с телефона до
-	// заведения надо сначала дойти до нужного проекта.
-	for _, fn := range []string{"function renderDrafts(", "function renderHome("} {
+	// Кнопка стоит в накопителе, а на главной то же заведение живёт пунктом
+	// меню у плюса карточки: иначе с телефона до заведения надо сначала дойти
+	// до нужного проекта.
+	if plus := funcBody(t, text, "function makePlus("); !strings.Contains(plus, `"/new"`) {
+		t.Error("плюс на главной не ведёт на заведение")
+	}
+	for _, fn := range []string{"function renderDrafts("} {
 		cut := strings.Index(text, fn)
 		if cut < 0 {
 			t.Fatalf("в static/app.js нет %s", fn)

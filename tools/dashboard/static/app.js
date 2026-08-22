@@ -1793,7 +1793,7 @@ function linksCard(project, links) {
   for (const doc of links.lld || []) {
     const row = el("div", "srow clicky");
     row.append(el("span", "chip", doc.own ? "LLD задачи" : "LLD"));
-    row.append(withFull(el("span", "st"), doc.title || doc.file));
+    row.append(withFull(el("span", "st", doc.title || doc.file), doc.title || doc.file));
     row.addEventListener("click", () => { goKeepingChat(project + "/doc/" + doc.file); });
     card.append(row);
   }
@@ -1803,7 +1803,7 @@ function linksCard(project, links) {
     for (const t of tasks) {
       const row = el("div", "srow clicky");
       row.append(el("span", "id", t.id));
-      row.append(withFull(el("span", "st"), t.title || ""));
+      row.append(withFull(el("span", "st", t.title || ""), t.title || ""));
       row.addEventListener("click", () => { goKeepingChat(project + "/" + t.id); });
       box.append(row);
     }
@@ -8535,7 +8535,12 @@ function workChips(project, w) {
   const chips = [el("span", "chip", project)];
   if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
   if (w.via === "registry") chips.push(el("span", "chip c-check", "сессия кончилась"));
-  else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
+  // Разговор о задаче назван собой: сессия живая и номер задачи у неё свой, но
+  // строку она не ведёт, и кнопок конвейера на доске у той не появляется.
+  else if (w.talk) {
+    chips.push(withTip(el("span", "chip", "разговор о задаче"),
+      "чат задачу не ведёт: строка на доске от него своей не становится"));
+  } else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
   else if (w.kind !== "goal") chips.push(el("span", "chip", "конвейер задачи"));
   return chips;
 }

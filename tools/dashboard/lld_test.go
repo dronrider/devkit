@@ -48,9 +48,16 @@ func TestTaskLinksTitlesForClosed(t *testing.T) {
 | XR-136 | панель чата в шапке | task | P2 | 2026-07-01 | [tasks/archive/2026/XR-136.md](tasks/archive/2026/XR-136.md) |
 `)
 	putDoc(t, root, "docs/tasks/XR-9.md", "# XR-9: название из файла задачи\n\nтело\n")
+	putDoc(t, root, "docs/lld/XR-1-own.md", "# XR-1: свой дизайн\n")
+	putDoc(t, root, "docs/lld/XR-77-alien.md", "# XR-77: чужой дизайн\n")
 	rows := map[string]boardRow{}
-	text := "постановка поминает XR-136, XR-9 и XR-404"
+	text := "дизайн в lld/XR-77-alien.md, постановка поминает XR-136, XR-9 и XR-404"
 	links := taskLinks(root, "XR-1", "", text, rows, nil, nil)
+	// Артефакты самой задачи стоят выше упомянутых чужих: свой LLD первым.
+	lld := links["lld"].([]map[string]any)
+	if len(lld) != 2 || lld[0]["own"] != true || lld[1]["file"] != "lld/XR-77-alien.md" {
+		t.Errorf("свой LLD не встал раньше чужого: %+v", lld)
+	}
 	tasks := linkTasks(t, links)
 	byID := map[string]map[string]any{}
 	for _, row := range tasks {
@@ -69,27 +76,36 @@ func TestTaskLinksTitlesForClosed(t *testing.T) {
 
 // Тип артефакта и род связи: цель узнаётся по заголовку, задачи из
 // зависимостей несут направление (после, держит), упоминание без зависимости
-// идёт без рода, источник его не различает. Порядок: цели раньше задач,
-// внутри по номеру, а не в порядке упоминания.
+// идёт без рода, источник его не различает. Порядок пересмотрен
+// пользователем: сначала открытые со связью держит/после, затем остальные
+// открытые по убыванию ранга (высокий ранг обычной задачи не обгоняет
+// блокирующую), закрытые в самом низу; без ранга по номеру.
 func TestTaskLinksKindsRelOrder(t *testing.T) {
 	root := t.TempDir()
+	putDoc(t, root, "docs/TASKS-archive.md", `# сделано
+
+| ID | Задача | Тип | P | Закрыто | Ссылка |
+|----|--------|-----|---|---------|--------|
+| XR-136 | давно закрытая | task | P2 | 2026-07-01 | [tasks/archive/2026/XR-136.md](tasks/archive/2026/XR-136.md) |
+`)
 	rows := map[string]boardRow{
-		"XR-100": {ID: "XR-100", Title: "Цель: большой раздел"},
-		"XR-2":   {ID: "XR-2", Title: "ранняя задача"},
-		"XR-30":  {ID: "XR-30", Title: "поздняя задача"},
-		"XR-7":   {ID: "XR-7", Title: "упомянутая мимоходом"},
+		"XR-100": {ID: "XR-100", Title: "Цель: большой раздел", R: 40},
+		"XR-2":   {ID: "XR-2", Title: "блокирует после", R: 8},
+		"XR-30":  {ID: "XR-30", Title: "блокирует держит", R: 30},
+		"XR-7":   {ID: "XR-7", Title: "важная открытая", R: 50},
+		"XR-5":   {ID: "XR-5", Title: "открытая поменьше", R: 10},
 	}
-	text := "сначала XR-30, потом XR-7, XR-100 и XR-2"
+	text := "сначала XR-5, потом XR-136, XR-7, XR-30, XR-100, XR-404 и XR-2"
 	links := taskLinks(root, "XR-1", "", text, rows, []string{"XR-2"}, []string{"XR-30"})
 	tasks := linkTasks(t, links)
 	var order []string
 	for _, row := range tasks {
 		order = append(order, row["id"].(string))
 	}
-	want := []string{"XR-100", "XR-2", "XR-7", "XR-30"}
+	want := []string{"XR-30", "XR-2", "XR-7", "XR-100", "XR-5", "XR-404", "XR-136"}
 	for i := range want {
 		if i >= len(order) || order[i] != want[i] {
-			t.Fatalf("порядок связей %v, жду %v (цель первой, дальше по номеру)", order, want)
+			t.Fatalf("порядок связей %v, жду %v (блокирующие, открытые по рангу, без ранга по номеру, закрытые внизу)", order, want)
 		}
 	}
 	byID := map[string]map[string]any{}

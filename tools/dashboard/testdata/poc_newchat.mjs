@@ -75,6 +75,29 @@ await settle();
 const bubbleIn = (node) => dump(node).includes("первая реплика нового чата");
 if (!bubbleIn(panel)) fail("пузырь первой реплики не встал в панель");
 
+// --- нить ленты у одинокого пузыря начинается точкой, а не обрубком ---
+// Метка gtop у строки та же, что у реплики человека в ленте: стиль
+// .frow.gtop.f-bub::before режет линию до точки, без метки она висела в
+// воздухе от верха контейнера (замечание пользователя по снимку).
+const pendRow = (function find(node) {
+  if (String(node.className || "").includes("frow")) return node;
+  for (const kid of node.children || []) {
+    const got = typeof kid === "object" && find(kid);
+    if (got) return got;
+  }
+  return null;
+})(byClass(panel, "mlocal"));
+if (!pendRow || !String(pendRow.className).includes("gtop")) {
+  fail("строка одинокого пузыря без метки gtop, нить начнётся в воздухе: " +
+    (pendRow && pendRow.className));
+}
+
+// --- плашка о подъёме сессии видна, а не пустота ---
+const plate = byClass(panel, "busyrow");
+if (!plate || plate.hidden || !dump(plate).includes("сессия поднимается")) {
+  fail("плашки о подъёме сессии нет: " + (plate ? dump(plate) : "узла нет"));
+}
+
 // Опрос реестра: дёргаются только таймеры ожидания chatWait (1.5s), по одному,
 // как их и ставит цикл. Список всё это время пуст: клиент стоит на вопросе в
 // своём терминале.
@@ -101,6 +124,40 @@ const panel2 = sandbox.chatPanel("demo", st);
 await settle();
 if (!bubbleIn(panel2)) {
   fail("после перерисовки панели первая реплика пропала: " + dump(panel2).slice(0, 300));
+}
+// Молодой пузырь после перерисовки остаётся «отправляется», без причины: срок
+// считается от времени отправки из персиста, а оно только что.
+if (!dump(panel2).includes("отправляется")) {
+  fail("молодой восстановленный пузырь потерял часики: " + dump(panel2).slice(0, 300));
+}
+// И плашка о подъёме сессии на месте: реплика в полёте, пустота врала бы.
+const plate2 = byClass(panel2, "busyrow");
+if (!plate2 || plate2.hidden || !dump(plate2).includes("сессия поднимается")) {
+  fail("после перерисовки плашка о подъёме пропала");
+}
+
+// --- причина считается от времени отправки из персиста ---
+// Человек ушёл с панели и вернулся через минуту: таймера той перерисовки, где
+// была отправка, больше нет, а причина всё равно обязана появиться. Стенд
+// старит запись в хранилище и собирает панель заново.
+{
+  const key = "devkit.chat.pend.demo/new";
+  const recs = JSON.parse(store.get(key) || "[]");
+  if (!recs.length || recs[0].state !== "wait") {
+    fail("реплика в полёте не легла в персист: " + store.get(key));
+  }
+  recs[0].born = Date.now() - 70000;
+  store.set(key, JSON.stringify(recs));
+  const panel3 = sandbox.chatPanel("demo", st);
+  await settle();
+  if (!await fireNext(0)) fail("переворот созревшего пузыря не запланирован");
+  const said3 = dump(panel3).replace(/\s+/g, " ");
+  if (!said3.includes("дольше обычного")) {
+    fail("у созревшего пузыря нет причины от времени отправки: " + said3.slice(0, 400));
+  }
+  if (!said3.includes("не доставлено")) fail("созревший пузырь не помечен недоставленным: " + said3.slice(0, 400));
+  const plate3 = byClass(panel3, "busyrow");
+  if (plate3 && !plate3.hidden) fail("плашка о подъёме мигает поверх причины");
 }
 
 // --- ожидание сверх обычного: причина на пузыре, ошибки на экране нет ---

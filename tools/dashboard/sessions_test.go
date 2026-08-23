@@ -717,6 +717,24 @@ func TestSessionRepliesFieldByField(t *testing.T) {
 // первую реплику и задачу с подписью, чем она узнана. Экран агента открывается
 // и по id сессии, строки доски у такого захода нет, и заголовок ему брать
 // больше неоткуда (DK-294).
+// Первая реплика со служебными обёртками панели (снимок экрана, выделение)
+// даёт шапке слова человека: обёртки срезаются до чтения First. Без среза
+// реплика, начатая снимком, оставляла First пустым, и чат жил с фолбэком
+// «чат <id8>» до заказа haiku (живой случай, сессия d055dcf5 с осмысленной
+// первой репликой).
+func TestSessionHeadCutsReplyWraps(t *testing.T) {
+	e := newTestEnv(t)
+	said := "<screenshot file=\"/tmp/shot.png\">\nвставлен снимок экрана\n</screenshot>\n" +
+		"<selection file=\"docs/a.md\">\nстрока выделения\n</selection>\n" +
+		"у коллеги не получилось завершить задачу\nвторая строка про сам разбор"
+	writeSession(t, e.home, e.proj, "", "ccc-3", sessionLine(said, "main"), time.Now())
+	c := e.loggedClient(t)
+	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 ||
+		list[0].First != "у коллеги не получилось завершить задачу" {
+		t.Errorf("шапка реплики с обёртками потеряла слова человека: %+v", list)
+	}
+}
+
 func TestSessionHeadNamesTask(t *testing.T) {
 	e := newTestEnv(t)
 	// Боковое дерево задачи на месте: без него шапка честно назвала бы разговор

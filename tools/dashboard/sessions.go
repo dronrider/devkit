@@ -361,6 +361,12 @@ func readSessionHead(path string) (sessionHead, bool) {
 		}
 		if head.First == "" && rec.Type == "user" {
 			for _, text := range contentTexts(rec.Message.Content) {
+				// Служебные обёртки панели (снимок экрана, выделение) не слова
+				// человека: они срезаются до проверки, и First берётся из того,
+				// что он написал сам. Реплика, начатая снимком, оставляла шапку
+				// пустой, и чат жил с фолбэком «чат <id8>» до haiku (живой
+				// случай, сессия d055dcf5 с осмысленной первой репликой).
+				text = cutFirstWraps(text)
 				if !strings.HasPrefix(text, "<") {
 					head.First = firstLine(text)
 					// ID ищется по всей реплике, а не по обрезанной для списка
@@ -1285,6 +1291,23 @@ var selWrapRe = regexp.MustCompile(`(?s)\A<selection file="([^"]*)">\n(.*?)\n</s
 // выделением: так реплика читается сверху вниз, сначала что показали, потом что
 // выделили, потом слова.
 var shotWrapRe = regexp.MustCompile(`(?s)\A<screenshot file="([^"]*)">\n.*?\n</screenshot>\n?`)
+
+// cutFirstWraps срезает служебные обёртки начала реплики: снимок и выделение
+// кладёт панель, а не человек, и в заголовок разговора они не годятся. Порядок
+// произвольный, обёрток бывает несколько.
+func cutFirstWraps(text string) string {
+	for {
+		if m := shotWrapRe.FindString(text); m != "" {
+			text = strings.TrimLeft(text[len(m):], "\n")
+			continue
+		}
+		if m := selWrapRe.FindString(text); m != "" {
+			text = strings.TrimLeft(text[len(m):], "\n")
+			continue
+		}
+		return text
+	}
+}
 
 // cutShot отрезает префикс картинки от остального.
 func cutShot(text string) (string, string) {

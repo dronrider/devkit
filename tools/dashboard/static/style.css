@@ -884,7 +884,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* Список агентов: наведением на ноутбуке, нажатием на таче (класс open). */
 .ringwrap .pop{display:none;position:absolute;top:44px;left:-4px;z-index:40;min-width:300px;max-width:394px;padding:6px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
-.ringwrap:hover .pop,.ringwrap.open .pop{display:block}
+.ringwrap.open .pop{display:block}
 .prow{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:7px;cursor:pointer;min-width:0}
 .prow:hover{background:var(--bg2)}
 .prow.own{background:var(--bg2)}

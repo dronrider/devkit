@@ -61,9 +61,23 @@ export function makeNode(tag) {
     }
     node.children.push(...kids);
   };
-  node.appendChild = (kid) => { node.children.push(kid); return kid; };
-  node.prepend = (...kids) => { node.children.unshift(...kids); };
-  node.replaceChildren = (...kids) => { node.children = kids; };
+  // Родитель проставляется всеми путями вставки, а не одним append: по нему
+  // читается, лежит ли узел внутри коробки (клик мимо всплывашки), и половина
+  // дерева без родителя врала бы, что узел стоит сам по себе.
+  const own = (kids) => {
+    for (const kid of kids) {
+      if (kid && typeof kid === "object") kid.parentNode = node;
+    }
+  };
+  node.appendChild = (kid) => { own([kid]); node.children.push(kid); return kid; };
+  node.prepend = (...kids) => { own(kids); node.children.unshift(...kids); };
+  node.replaceChildren = (...kids) => {
+    for (const kid of node.children) {
+      if (kid && typeof kid === "object" && kid.parentNode === node) kid.parentNode = null;
+    }
+    own(kids);
+    node.children = kids;
+  };
   // Вставка настоящая: узел, который уже стоит в этой коробке, переезжает, а
   // не раздваивается. Заглушка оставляла его на прежнем месте, и перерисовка
   // списка на месте (sync двигает узлы insertBefore) плодила в стенде вторые
@@ -247,6 +261,8 @@ export function makeSandbox(appPath, reply, opts) {
     });
   };
 
+  // Пачки обработчиков документа по имени события.
+  const docBags = {};
   const sandbox = {
     console: { log: () => {}, error: () => {}, warn: () => {} },
     setTimeout: (fn, ms) => {
@@ -302,8 +318,21 @@ export function makeSandbox(appPath, reply, opts) {
         }
         return byId.get(id);
       },
-      addEventListener: (name, fn) => { sandbox.document.handlers[name] = fn; },
-      removeEventListener: (name) => { delete sandbox.document.handlers[name]; },
+      // Обработчиков одного события у документа бывает несколько (всплывашки
+      // закрываются общим кликом, а поиск ловит свою клавишу), и хранить
+      // последний значило бы терять половину поведения. Наружу остаётся тот же
+      // вид, handlers.click(ev): под именем лежит вызов всей пачки.
+      addEventListener: (name, fn) => {
+        const bag = docBags[name] || (docBags[name] = []);
+        bag.push(fn);
+        sandbox.document.handlers[name] = (ev) => { for (const f of [...bag]) f(ev); };
+      },
+      removeEventListener: (name, fn) => {
+        const bag = docBags[name] || [];
+        const at = bag.indexOf(fn);
+        if (at >= 0) bag.splice(at, 1);
+        if (!bag.length) delete sandbox.document.handlers[name];
+      },
       body: makeNode("body"),
       documentElement: { style: { setProperty: () => {} } },
     },

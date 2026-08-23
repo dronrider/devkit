@@ -114,6 +114,12 @@ const pulses = {
 let mood = "working";
 const app = appPathArg();
 const { sandbox, moves } = makeSandbox(app, (path) => {
+  if (path.includes("/harnesses")) {
+    return { harnesses: [
+      { name: "перваяtest", default: true, models: [] },
+      { name: "втораяtest", models: [] },
+    ] };
+  }
   if (path.includes("/pulse")) return pulses[mood];
   if (path.includes("/chats")) return { chats, models: [] };
   if (path.includes("/sessions/")) {
@@ -503,6 +509,80 @@ for (const [ago, want] of [[12, "12 с"], [240, "4 мин"], [4000, "1 ч 6 ми
   if (said !== want) fail("давность " + ago + " с сказана как " + said + ", ждал " + want);
 }
 
+// --- список кольца закрывается тремя путями ---
+// Открытый список висел до ухода с экрана: закрытия не было ни повторным
+// нажатием (показ держал hover), ни кликом мимо, ни Escape (жалоба
+// пользователя). Пути проверяются все три, каждый со своего открытия.
+{
+  const clickOn = (node) => node.handlers.click({ stopPropagation: () => {}, target: node });
+  const isOpen = (wrap) => String(wrap.className).split(" ").includes("open");
+
+  const head = await headOf("working");
+  const wrap = ringOf(head);
+  if (isOpen(wrap)) fail("список кольца открыт до нажатия: " + wrap.className);
+
+  // Путь первый: повторное нажатие по самому кольцу.
+  clickOn(wrap);
+  if (!isOpen(wrap)) fail("нажатие по кольцу не открыло список: " + wrap.className);
+  clickOn(wrap);
+  if (isOpen(wrap)) fail("второе нажатие по кольцу не закрыло список: " + wrap.className);
+
+  // Путь второй: клик мимо. Целью тут чужой узел экрана, а не часть кольца.
+  clickOn(wrap);
+  if (!isOpen(wrap)) fail("список не открылся перед кликом мимо: " + wrap.className);
+  const away = sandbox.document.createElement("div");
+  sandbox.document.handlers.click({ target: away });
+  if (isOpen(wrap)) fail("клик мимо не закрыл список кольца: " + wrap.className);
+
+  // Клик по самому списку закрытия не значит: строка ведёт в свой разговор, и
+  // список под пальцем исчезать не должен.
+  clickOn(wrap);
+  const pop = byClass(wrap, "pop");
+  sandbox.document.handlers.click({ target: pop });
+  if (!isOpen(wrap)) fail("клик по самому списку закрыл его: " + wrap.className);
+
+  // Путь третий: Escape.
+  sandbox.document.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
+  if (isOpen(wrap)) fail("Escape не закрыл список кольца: " + wrap.className);
+
+  // Чужая клавиша списка не трогает: Escape тут не единственный обработчик
+  // документа.
+  clickOn(wrap);
+  sandbox.document.handlers.keydown({ key: "a", stopPropagation: () => {} });
+  if (!isOpen(wrap)) fail("посторонняя клавиша закрыла список: " + wrap.className);
+  sandbox.document.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
+
+  // Механика общая: выбор подписки в строке доски закрывается теми же тремя
+  // путями, что и список кольца.
+  // Список подписок кнопка берёт из памяти экрана, и стенд наполняет её тем
+  // же путём, что и живой заход: раскрытый выбор бывает только там, где
+  // подписок на машине две.
+  await sandbox.loadHarnesses();
+  const grp = sandbox.runControl("demo", "XR-1",
+    (label) => { const b = sandbox.document.createElement("button"); b.textContent = label; return b; },
+    "Выполнить", false, "", () => {}, "");
+  const more = byClass(grp, "more2");
+  const hpop = byClass(grp, "hpop");
+  if (!more || !hpop) fail("выбора подписки в кнопке нет: " + dump(grp).slice(0, 200));
+  clickOn(more);
+  if (hpop.hidden) fail("нажатие не раскрыло выбор подписки");
+  clickOn(more);
+  if (!hpop.hidden) fail("второе нажатие не закрыло выбор подписки");
+  clickOn(more);
+  sandbox.document.handlers.click({ target: away });
+  if (!hpop.hidden) fail("клик мимо не закрыл выбор подписки");
+  clickOn(more);
+  sandbox.document.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
+  if (!hpop.hidden) fail("Escape не закрыл выбор подписки");
+
+  // Две всплывашки разом экран не держит: открытие соседней уносит прежнюю.
+  clickOn(wrap);
+  clickOn(more);
+  if (isOpen(wrap)) fail("список кольца остался открытым под выбором подписки");
+  sandbox.document.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
+}
+
 console.log("кольцо агентов: место в шапке, четыре состояния, деления по плану сессии, " +
   "простой с планом и контур без плана, " +
-  "список агентов с дорогой в разговор, давность словами");
+  "список агентов с дорогой в разговор, давность словами, " +
+  "список закрывается вторым нажатием, кликом мимо и Escape, как и выбор подписки");

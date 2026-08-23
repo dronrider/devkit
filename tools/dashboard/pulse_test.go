@@ -490,6 +490,20 @@ func TestStaticPulseRing(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Список кольца не показывается по наведению: показ по hover держал его
+// открытым поверх снятого класса, и второе нажатие по кольцу выглядело не
+// работающим, а увести список с экрана было нечем вовсе (жалоба пользователя).
+// Открытие и закрытие идут одним классом, и правило стиля тут одно.
+func TestStaticRingPopOpensByClassOnly(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if strings.Contains(css, ".ringwrap:hover .pop") {
+		t.Error("список кольца снова показывается по наведению: закрыть его кликом нельзя")
+	}
+	if !strings.Contains(css, ".ringwrap.open .pop{display:block}") {
+		t.Error("в static/style.css нет показа списка кольца по классу open")
+	}
+}
+
 // Долгая команда это работа, а не молчание: `go test ./...` идёт две минуты и
 // в журнал всё это время не пишет, а вызов стоит без ответа. Прежде такой агент
 // выходил простаивающим, и кольцо серело посреди работы.

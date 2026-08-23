@@ -212,6 +212,62 @@ function outerFail(status, statusText, text) {
     (said ? ": " + truncate(said, 120) : "");
 }
 
+// Всплывающие контейнеры экрана (список кольца, выбор подписки, меню плюса,
+// выпадающий список чатов) закрываются одинаково и тремя путями: повторным
+// нажатием по своей кнопке, кликом мимо и Escape. Прежде каждый заводил свою
+// закрывалку, у кольца её не было вовсе, и открытый список висел до ухода с
+// экрана (жалоба пользователя). Учёт общий нарочно: правило «мимо закрывает»
+// разъезжается ровно тогда, когда его пишут по разу на всплывашку.
+const popupsOpen = new Set();
+
+// popupHold ставит открытую всплывашку на учёт: node это её контейнер, клик
+// внутри него закрытия не значит, shut прячет её саму.
+function popupHold(node, shut) {
+  const held = { node, shut };
+  popupsOpen.add(held);
+  return held;
+}
+
+// popupDrop снимает всплывашку с учёта, не закрывая: так уходит та, которую
+// закрыли своей же кнопкой.
+function popupDrop(held) {
+  if (held) popupsOpen.delete(held);
+}
+
+// nodeInside отвечает, лежит ли узел внутри контейнера. Обход идёт по
+// родителям, а не через node.contains: в дереве стенда contains это проверка
+// класса, и всплывашка закрывалась бы от клика по себе самой.
+function nodeInside(box, node) {
+  for (let at = node; at; at = at.parentNode) {
+    if (at === box) return true;
+  }
+  return false;
+}
+
+// popupsShut закрывает открытые всплывашки, кроме той, внутри которой стоит
+// названный узел. Без узла закрываются все: так уходит список, когда рядом
+// открывают соседний.
+function popupsShut(target) {
+  for (const held of [...popupsOpen]) {
+    if (target && nodeInside(held.node, target)) continue;
+    popupsOpen.delete(held);
+    held.shut();
+  }
+}
+
+document.addEventListener("click", (ev) => {
+  if (!popupsOpen.size) return;
+  popupsShut(ev.target);
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !popupsOpen.size) return;
+  // Escape гасит только всплывашки: панель разговора и формы держат свои
+  // ответы на ту же клавишу, и отбирать её у них нечем.
+  if (ev.stopPropagation) ev.stopPropagation();
+  popupsShut(null);
+});
+
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
 // "#проект/DK-NNN" задача, "#проект/draft/DK-NNN" запись накопителя с
 // грумингом и его исходом, "#проект/feed" лента уведомлений. Экран «Агенты»
@@ -831,11 +887,20 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned) {
   const pop = el("div", "hpop");
   pop.hidden = true;
   pop.append(el("span", "hph", "На какой подписке запустить"));
+  // Список подписок стоит на общем учёте всплывашек: закрывают его те же три
+  // пути, что и список кольца.
+  let held = null;
+  const shut = () => {
+    pop.hidden = true;
+    more.setAttribute("aria-expanded", "false");
+    held = null;
+  };
   for (const h of list) {
     const row = harnessRow(h);
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      pop.hidden = true;
+      popupDrop(held);
+      shut();
       fire(wide, h.name);
     });
     pop.append(row);
@@ -852,8 +917,15 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned) {
   withTip(more, "Выбрать подписку: " + list.map((h) => h.name).join(", "));
   more.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    pop.hidden = !pop.hidden;
-    more.setAttribute("aria-expanded", pop.hidden ? "false" : "true");
+    if (!pop.hidden) {
+      popupDrop(held);
+      shut();
+      return;
+    }
+    popupsShut(null);
+    pop.hidden = false;
+    more.setAttribute("aria-expanded", "true");
+    held = popupHold(pop, shut);
     // Вверх список раскрывается там, где под кнопкой не хватает места: на
     // телефоне кнопка стоит низко, и раскрытый вниз список уезжает под нижние
     // вкладки. Считается это по месту кнопки на экране, а не по ширине окна:
@@ -5559,20 +5631,23 @@ function chatOption(project, c, current) {
 // Выпадающий список открыт: узел живёт при шапке, а не при документе, чтобы
 // закрытие панели уносило его с собой.
 let chatDrop = null;
+let chatDropHeld = null;
 
 function chatDropShut() {
+  popupDrop(chatDropHeld);
+  chatDropHeld = null;
   if (chatDrop) {
     chatDrop.remove();
     chatDrop = null;
   }
 }
 
-document.addEventListener("click", (ev) => {
-  if (!chatDrop) return;
-  if (chatDrop.contains(ev.target)) return;
-  if (ev.target.closest && ev.target.closest(".cdpick")) return;
-  chatDropShut();
-});
+// chatDropSet ставит открытый список на общий учёт всплывашек: закрывают его
+// те же три пути, что список кольца и выбор подписки.
+function chatDropSet(node) {
+  chatDrop = node;
+  chatDropHeld = popupHold(node, chatDropShut);
+}
 
 // Список с поиском: поле сверху, дальше строки всех диалогов машины. Поиск
 // идёт по заголовку, по ID сессии, по задачам и по имени проекта, потому что
@@ -5581,6 +5656,7 @@ document.addEventListener("click", (ev) => {
 // увидеть весь список.
 function chatDropOpen(project, st, anchor) {
   chatDropShut();
+  popupsShut(null);
   const box = el("div", "cdrop");
   const find = el("input");
   find.type = "text";
@@ -5610,7 +5686,7 @@ function chatDropOpen(project, st, anchor) {
   draw();
   box.append(find, rows);
   anchor.append(box);
-  chatDrop = box;
+  chatDropSet(box);
   find.focus();
 }
 
@@ -5921,9 +5997,28 @@ function pulseRing(project, p) {
   // записи агента в ленте (жалоба пользователя). Данные обновляются на месте.
   const wrap = el("div", "ringwrap");
   const pop = el("div", "pop");
+  // Список открывается и закрывается кликом по кольцу, а мимо и Escape его
+  // гасит общий учёт всплывашек. Наведением он больше не показывается вовсе:
+  // показ по hover держал список открытым поверх снятого класса, и второй
+  // клик по кольцу выглядел не работающим (жалоба пользователя).
+  let held = null;
+  const shut = () => {
+    wrap.classList.remove("open");
+    held = null;
+  };
   wrap.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    wrap.classList.toggle("open");
+    // Клик по строке списка ведёт в свой разговор и закрытия не значит: сюда
+    // он доходит только с пустого места контейнера.
+    if (ev.target && ev.target !== wrap && nodeInside(pop, ev.target)) return;
+    if (wrap.classList.contains("open")) {
+      popupDrop(held);
+      shut();
+      return;
+    }
+    popupsShut(null);
+    wrap.classList.add("open");
+    held = popupHold(wrap, shut);
   });
   wrap.ringFill = (next) => {
     const open = wrap.classList.contains("open");
@@ -6120,7 +6215,7 @@ function chatBindOpen(project, st, line) {
   menu.append(el("div", "hint", CHAT_BIND_HINT));
   menu.addEventListener("click", (ev) => { ev.stopPropagation(); });
   line.append(menu);
-  chatDrop = menu;
+  chatDropSet(menu);
 }
 
 function chatHead(project, st) {
@@ -6186,7 +6281,7 @@ function chatHead(project, st) {
       menu.append(opt);
     }
     line.append(menu);
-    chatDrop = menu;
+    chatDropSet(menu);
   });
   line.append(add);
 
@@ -9246,19 +9341,16 @@ function projectWhy(p) {
 // (замечание пользователя). Дорог за плюсом две, задача и черновик, поэтому он
 // открывает меню, а не ведёт сразу.
 let homeMenu = null;
+let homeMenuHeld = null;
 
 function homeMenuShut() {
+  popupDrop(homeMenuHeld);
+  homeMenuHeld = null;
   if (homeMenu) {
     homeMenu.remove();
     homeMenu = null;
   }
 }
-
-document.addEventListener("click", (ev) => {
-  if (!homeMenu) return;
-  if (homeMenu.contains(ev.target)) return;
-  homeMenuShut();
-});
 
 function makePlus(project) {
   const btn = el("button", "pplus", "+");
@@ -9272,6 +9364,9 @@ function makePlus(project) {
     // Повторное нажатие по тому же плюсу закрывает меню, а не собирает его
     // заново под пальцем.
     if (had && had.dataset.project === project) return;
+    // Соседняя всплывашка уходит с открытием этой: два раскрытых списка разом
+    // экран не показывает ни в одном месте дашборда.
+    popupsShut(null);
     const menu = el("div", "pmenu");
     menu.dataset.project = project;
     // Оба пункта ведут на тот же экран заведения (#проект/new), что и кнопка с
@@ -9290,6 +9385,7 @@ function makePlus(project) {
     }
     btn.parentNode.append(menu);
     homeMenu = menu;
+    homeMenuHeld = popupHold(menu, homeMenuShut);
   });
   return btn;
 }

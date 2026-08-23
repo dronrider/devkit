@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -486,27 +487,31 @@ func TestNotificationsStreamMissingThenBorn(t *testing.T) {
 // который сервер отдаёт при подключении, не всплывает, на открытой ленте
 // событие тоже не дублируется, там оно и так дописывается строкой, а про
 // открытый в панели разговор баннер молчит вовсе: человек смотрит прямо на
-// него.
+// него. Карточкой всплывает только доставленное громкое событие: фоновые
+// поводы и повторы, задушенные дросселем, остаются в ленте строками.
 func TestStaticFlashWorthy(t *testing.T) {
 	heads := []string{"function flashMuted(", "function flashWorthy("}
+	loud := `level: "громкий", sent: true, `
 	cases := []struct {
 		shown string
 		expr  string
 		want  string
 	}{
-		{"", `flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", false)`, "true"},
-		{"", `flashWorthy({time: "2026-08-11T09:20:00"}, "2026-08-11T10:00:00", false)`, "false"},
-		{"", `flashWorthy({time: "2026-08-11T10:20:00"}, "2026-08-11T10:00:00", true)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00", level: "громкий", sent: true}, "2026-08-11T10:00:00", false)`, "true"},
+		{"", `flashWorthy({time: "2026-08-11T09:20:00", ` + loud + `}, "2026-08-11T10:00:00", false)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00", ` + loud + `}, "2026-08-11T10:00:00", true)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00", level: "фоновый", sent: true}, "2026-08-11T10:00:00", false)`, "false"},
+		{"", `flashWorthy({time: "2026-08-11T10:20:00", level: "громкий", sent: false}, "2026-08-11T10:00:00", false)`, "false"},
 		{"", `flashWorthy({}, "2026-08-11T10:00:00", false)`, "false"},
 		{"", `flashWorthy(null, "", false)`, "false"},
 		{`{project: "demo", sid: "", task: "XR-100"}`,
-			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", id: "XR-100"}, "2026-08-11T10:00:00", false)`,
+			`flashWorthy({time: "2026-08-11T10:20:00", ` + loud + `project: "demo", id: "XR-100"}, "2026-08-11T10:00:00", false)`,
 			"false"},
 		{`{project: "demo", sid: "s1", task: ""}`,
-			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", session: "s1"}, "2026-08-11T10:00:00", false)`,
+			`flashWorthy({time: "2026-08-11T10:20:00", ` + loud + `project: "demo", session: "s1"}, "2026-08-11T10:00:00", false)`,
 			"false"},
 		{`{project: "demo", sid: "s1", task: ""}`,
-			`flashWorthy({time: "2026-08-11T10:20:00", project: "demo", session: "s2"}, "2026-08-11T10:00:00", false)`,
+			`flashWorthy({time: "2026-08-11T10:20:00", ` + loud + `project: "demo", session: "s2"}, "2026-08-11T10:00:00", false)`,
 			"true"},
 	}
 	for _, c := range cases {
@@ -643,4 +648,22 @@ func TestStaticFeedHeadAndIcons(t *testing.T) {
 	if !strings.Contains(funcBody(t, app, "function icon("), `[data-ico="`) {
 		t.Error("значок не берётся копией из разметки")
 	}
+}
+
+// Отбор всплывашек проверяется исполнением, а не текстом исходника: предмет
+// тут это какое из событий потока поднимает карточку, а какое остаётся строкой
+// ленты (замечание из проверки POC о пачке одинаковых карточек). Стенд
+// поднимает статику в node с заглушкой DOM (testdata/poc_flash.mjs). Без node
+// шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticFlashLoudOnly(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд всплывашек пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_flash.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("всплывашки уведомлений: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

@@ -1368,3 +1368,27 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .rcard .rbody{padding:6px 10px 8px}
   .rcard .rview{white-space:normal;font-size:12px}
 }
+
+/* узкий телефон: один ряд шапки (логотип, имя, четыре кнопки и выбор проекта)
+   упирался примерно в 470 точек, и на обычных 390-430 страница резалась
+   горизонтальным скроллом. Шапка ложится в две строки: имя проекта с выбором
+   проекта в первой, кнопки-действия во второй, а поиск и так живёт лупой среди
+   кнопок. Разрыв делает ::after во всю ширину: он встаёт флекс-элементом между
+   селектом и кнопками, и разметка не трогается */
+@media (max-width:520px){
+  .bhead{flex-wrap:wrap;row-gap:8px}
+  .bhead::after{content:"";width:100%;order:1}
+  /* подпись экрана и легенда уезжают во вторую строку к кнопкам: первую
+     делят имя и выбор проекта */
+  .bhead .bell,.bhead .sub,#hlegend{order:2}
+  /* кнопки прижаты вправо, как стояли в одном ряду */
+  .bhead #make-btn{margin-left:auto}
+  /* ширины запираются числом, а не ужатием: флекс с переносом не жмёт
+     элементы, а уносит селект на свою строку, стоит базовым ширинам
+     перерасти строку. 240 это логотип с селектом и зазорами, 226 кнопки */
+  .bhead h2{min-width:0;max-width:calc(100% - 240px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bhead .sub{min-width:0;max-width:calc(100% - 226px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* строка главной: длинная приписка состояния режется многоточием, а не
+     распирает список до горизонтальной прокрутки под строками */
+  .prow .stale{min-width:0;overflow:hidden;text-overflow:ellipsis}
+}

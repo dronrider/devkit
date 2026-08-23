@@ -7742,28 +7742,48 @@ function findInput(cls, q) {
   input.placeholder = "Поиск задач";
   input.setAttribute("autocomplete", "off");
   input.setAttribute("aria-label", "Поиск по доске, черновикам и архиву");
-  wireFindField(input);
-  box.append(input);
+  const clear = el("button", "fclear");
+  clear.setAttribute("aria-label", "Сбросить поиск");
+  clear.append(icon("close"));
+  wireFindField(input, clear);
+  // Крестик стоит после поля: fill экрана выдачи ищет поле вторым узлом.
+  box.append(input, clear);
   return box;
 }
 
 // Поле поиска: набор с задержкой, ввод отправляет запрос сразу. Поля два, в
-// шапке и на экране выдачи, и ведут они себя одинаково.
-function wireFindField(input) {
-  input.addEventListener("input", () => { findType(input.value); });
+// шапке и на экране выдачи, и ведут они себя одинаково. Крестик сброса это
+// та же дорога, что Escape: запрос стирается, экран возвращается к доске.
+function wireFindField(input, clear) {
+  const showClear = () => { if (clear) clear.hidden = !input.value; };
+  const reset = () => {
+    clearTimeout(findTimer);
+    input.value = "";
+    showClear();
+    findGo("");
+  };
+  input.addEventListener("input", () => {
+    showClear();
+    findType(input.value);
+  });
   input.addEventListener("keydown", (ev) => {
     // Escape это отказ от поиска: поле пустеет, и экран возвращается к тому,
     // что было под выдачей. Ждать при этом нечего, срок набора снимается.
     if (ev.key === "Escape") {
-      clearTimeout(findTimer);
-      input.value = "";
-      findGo("");
+      reset();
       return;
     }
     if (ev.key !== "Enter") return;
     clearTimeout(findTimer);
     findGo(input.value);
   });
+  if (clear) {
+    clear.addEventListener("click", () => {
+      reset();
+      if (input.focus) input.focus();
+    });
+    showClear();
+  }
 }
 
 // Набор с задержкой: запрос уезжает в адрес, а не в ручку напрямую, и экран
@@ -8148,10 +8168,7 @@ async function renderFind(project, q) {
       if (document.activeElement !== input && input.value !== q) input.value = q;
     },
   }];
-  // Поле шапки держит тот же запрос: экран выдачи открывается и по ссылке, и
-  // кнопкой «назад», а поле при этом пустовало бы.
-  const field = document.getElementById("hq");
-  if (field && document.activeElement !== field && field.value !== q) field.value = q;
+  // Поле шапки синхронизирует с адресом сам paint: тут оно не трогается.
   // Первый заход рисует крошку с полем сразу, до ответа сервера: пустой экран
   // не давал бы набрать запрос. Дальше прежняя выдача стоит, пока не приехала
   // новая, и экран не моргает пустотой на каждой букве.
@@ -9704,6 +9721,15 @@ async function paint() {
   // помнить набранное всё равно надо: по нему обновление отличает «сменился
   // один хвост разговора» от «человек набрал следующую букву».
   shownQuery = rt.q || "";
+  // Поле шапки всегда отражает адрес экрана: запрос живёт в адресе (образец
+  // раздела «Агенты»), переживает переход на форму и возврат кнопкой «назад»,
+  // а у экранов без запроса поле пустеет. Прежде после возврата с формы в поле
+  // оставалась строка поиска при полном списке, и поле противоречило выдаче
+  // (замечание пользователя). Набираемое под фокусом не трогается.
+  const hq = document.getElementById("hq");
+  if (hq && document.activeElement !== hq && hq.value !== shownQuery) hq.value = shownQuery;
+  const hqClear = document.getElementById("hq-clear");
+  if (hqClear) hqClear.hidden = !(hq && hq.value);
   shownBoard = null;
   shownWorks = [];
   const { body } = await api("/api/projects");
@@ -9732,12 +9758,6 @@ async function paint() {
     document.getElementById("psub").textContent = rt.q ? "поиск по сессиям" : "все активные задачи";
     renderLive("", []);
     markNav(rt);
-    // Поле шапки держит тот же запрос: раздел открывается и по ссылке, и
-    // кнопкой «назад», а поле при этом пустовало бы.
-    const field = document.getElementById("hq");
-    if (field && document.activeElement !== field && field.value !== (rt.q || "")) {
-      field.value = rt.q || "";
-    }
     renderAgents(projects, rt.q || "");
     return;
   }
@@ -9960,7 +9980,7 @@ window.addEventListener("hashchange", () => {
 window.addEventListener("focus", () => { refresh().catch(console.error); });
 // Поле поиска в шапке живёт разметкой, а не сборкой экрана: шапка стоит над
 // любым из них, и перерисовка доски поле не задевает.
-wireFindField(document.getElementById("hq"));
+wireFindField(document.getElementById("hq"), document.getElementById("hq-clear"));
 // Хват панели разговора и её ширина живут той же разметкой: панель стоит над
 // любым экраном, и запомненная ширина ставится до первой отрисовки, чтобы
 // открытая по ссылке панель не прыгала с умолчания на своё.

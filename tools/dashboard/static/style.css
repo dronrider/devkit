@@ -341,6 +341,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .fqbar svg{width:17px;height:17px;flex:none;color:var(--tx3)}
 .fqbar input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--tx);font:400 15px var(--sans)}
 .fqbar input::placeholder{color:var(--tx3)}
+/* крестик сброса поиска: та же дорога, что Escape, виден только при запросе.
+   Стоит после правил .hfind и .fqbar, чтобы размер иконки не перебивался их
+   общими правилами svg */
+.fclear{display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;background:none;border:none;border-radius:7px;color:var(--tx3);cursor:pointer;padding:0}
+.fclear:hover{background:var(--bg3);color:var(--tx)}
+.fclear svg{width:14px;height:14px;display:block}
+.fclear[hidden]{display:none}
 .hit{background:var(--acc);color:var(--bg0);border-radius:3px;padding:0 1px}
 .fquote{margin-top:4px;font:400 12px/1.45 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere}
 .srow .st.fst{white-space:normal;overflow:visible}

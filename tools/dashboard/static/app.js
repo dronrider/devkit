@@ -5433,8 +5433,14 @@ async function chatState(project, addr, board) {
   // такого нет или он пропал из списка, то свежий. Выбор по умолчанию ходит
   // только по своему проекту: общий список начинается с чужих разговоров, и
   // без этой оговорки панель доски открывала бы чат соседнего проекта.
+  // Кандидатов по задаче даёт сама задача, а не chatVisible: тот слушает
+  // переключатель фильтра списка, и с выключенным фильтром кнопка чата на
+  // форме DK-459 открывала последний разговор всего проекта, чат DK-397
+  // (живой случай). Нет у задачи своих диалогов, значит пустой sid, и панель
+  // открывает новый чат с её привязкой.
   if (!st.sid && !st.fresh) {
-    const list = chatVisible(st).filter((c) => !c.project || c.project === project);
+    const list = (st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
+      : chatVisible(st)).filter((c) => !c.project || c.project === project);
     const want = st.task ? chatTaskLast(st.task) : "";
     const kept = want && list.find((c) => c.id === want);
     if (kept) st.sid = kept.id;

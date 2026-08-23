@@ -1924,6 +1924,89 @@ function depsCard(project, id, after, blocks) {
 // панели нет, она одна на всю форму. Файл кладёт сам add вместе со строкой, и
 // кнопка «Завести файл» достаётся только дыре: строке до рубежа либо файлу,
 // снятому руками (taskctl file заодно чинит ссылку в строке доски).
+// Служебные разделы файла задачи. Файл разрастается ходом работ (у DK-397
+// журнал с итогом и вклейками занимали почти половину из 655 строк), и на
+// форме такие разделы сворачиваются строками-аккордеонами. Список имён живёт
+// одним местом: точные имена плюс префикс вклеек черновиков. Хранение не
+// трогается, сворачивает только просмотр, правка видит файл целиком.
+const FOLD_SECTIONS = ["Журнал", "Ход работы", "Итог", "Входящие", "Грумминг"];
+const FOLD_SECTION_PREFIX = "Из черновика";
+
+function foldSection(name) {
+  const said = String(name || "").trim();
+  return FOLD_SECTIONS.includes(said) || said.startsWith(FOLD_SECTION_PREFIX);
+}
+
+// Разрез файла на разделы по заголовкам второго уровня: шапка до первого
+// «## » остаётся куском без имени и не сворачивается никогда.
+function mdSections(text) {
+  const out = [];
+  let cur = { name: "", lines: [] };
+  for (const ln of String(text || "").split("\n")) {
+    const m = /^##\s+(.+?)\s*$/.exec(ln);
+    if (m) {
+      if (cur.lines.length) out.push(cur);
+      cur = { name: m[1], lines: [] };
+    }
+    cur.lines.push(ln);
+  }
+  if (cur.lines.length) out.push(cur);
+  return out;
+}
+
+// Объём раздела словами: по нему видно, что прячется за свёрнутой строкой.
+function lineWord(n) {
+  const t = n % 10;
+  const h = n % 100;
+  if (t === 1 && h !== 11) return n + " строка";
+  if (t >= 2 && t <= 4 && (h < 12 || h > 14)) return n + " строки";
+  return n + " строк";
+}
+
+// Просмотр файла по разделам: постановка развёрнута, служебное свёрнуто до
+// строки с именем и объёмом, разворот по клику. Незнакомый раздел по
+// умолчанию развёрнут: свёртка не должна прятать неизвестное молча. Тело
+// свёрнутого рендерится лениво, первым разворотом: журнал в полторы сотни
+// строк не стоит разметки, пока на него не смотрят.
+function mdRenderSections(text) {
+  const box = el("div", "fsecs");
+  let plain = [];
+  const flushPlain = () => {
+    if (!plain.length) return;
+    box.append(mdRender(plain.join("\n")));
+    plain = [];
+  };
+  for (const sec of mdSections(text)) {
+    if (!sec.name || !foldSection(sec.name)) {
+      plain = plain.concat(sec.lines);
+      continue;
+    }
+    flushPlain();
+    const fold = el("div", "ffold fold");
+    const top = el("div", "foldh");
+    top.append(el("b", "", sec.name));
+    top.append(el("span", "", lineWord(sec.lines.length)));
+    const car = foldCar();
+    top.append(car);
+    const bodyEl = el("div", "ffoldb");
+    bodyEl.hidden = true;
+    let drawn = false;
+    top.addEventListener("click", () => {
+      if (!drawn) {
+        bodyEl.append(mdRender(sec.lines.join("\n")));
+        drawn = true;
+      }
+      bodyEl.hidden = !bodyEl.hidden;
+      car.set(!bodyEl.hidden);
+      fold.classList.toggle("open", !bodyEl.hidden);
+    });
+    fold.append(top, bodyEl);
+    box.append(fold);
+  }
+  flushPlain();
+  return box;
+}
+
 // Блок постановки: по умолчанию просмотр разметки, правка по карандашу
 // (замечание 1 девятого круга POC). Сырой текст в поле ввода читается хуже
 // собранного: постановка длинная, со списками и таблицами, и глазами её берут
@@ -2005,7 +2088,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   const view = el("div", "fview");
   view.dataset.file = detail.file || "docs/tasks/" + id + ".md";
   const paint = () => {
-    if (String(form.text || "").trim()) view.replaceChildren(mdRender(form.text));
+    if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(form.text));
     else view.replaceChildren(el("div", "empty", "файл задачи пуст"));
   };
   paint();

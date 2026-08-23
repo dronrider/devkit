@@ -915,6 +915,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .foldb{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:400 11.5px/1.5 var(--mono);color:var(--tx2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto}
 .think.fold .foldh b{color:var(--tx3)}
 .toolout.fold{background:var(--bg1)}
+/* аккордеон служебного раздела файла задачи: тело это разметка, а не pre,
+   и потолка высоты у него нет, раскрыл значит читаешь */
+.ffold .ffoldb{padding:9px 11px;border-top:1px solid var(--line)}
+.ffold .ffoldb[hidden]{display:none}
 
 /* ---- компактная раскладка, второй круг POC ----
    Замечания 14-16 и 20: место уходило в отступы и в колонку ранга, а три шапки

@@ -1943,3 +1943,56 @@ func readBytes(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+// Приписки заказа видны отдельно от слов человека: подъём сессии приклеивает к
+// первой реплике правила (план, ротация, отзывчивость), и в ленте они стояли
+// одним пузырём с текстом человека от его имени (живой пример: «Найди черновик
+// или задачу...» плюс простыня правил). Пузырь несёт только сказанное,
+// приписки едут свёрнутой служебной строкой следом, а неузнанный хвост
+// остаётся в пузыре целиком: спрятать кусок реплики человека дороже, чем
+// показать служебное.
+func TestFeedSplitsOrderRules(t *testing.T) {
+	said := "Найди черновик или задачу суть которой в выдаче разрешений агенту."
+	full := said + " " + planRule + " " + rotateRule(500000) + " " + paceRule
+	line := func(text string) []byte {
+		rec := map[string]any{"type": "user",
+			"message":   map[string]any{"role": "user", "content": text},
+			"timestamp": "2026-08-22T10:00:00.000Z"}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(data, '\n')
+	}
+	got := parseReplies(line(full), 0)
+	if len(got) != 2 {
+		t.Fatalf("реплик %d, ждал пузырь и приписки: %+v", len(got), got)
+	}
+	if got[0].Role != "user" || got[0].Text != said {
+		t.Fatalf("пузырь несёт не только слова человека: %+v", got[0])
+	}
+	if got[1].Role != roleNote || got[1].Note != orderRulesWord {
+		t.Fatalf("приписки не стали служебной строкой: %+v", got[1])
+	}
+	if want := planRule + " " + rotateRule(500000) + " " + paceRule; got[1].Text != want {
+		t.Errorf("в приписках не весь заказ: %q", got[1].Text)
+	}
+	// Резюм приклеивает к реплике человека одно правило отзывчивости: режется
+	// и такой хвост.
+	pace := parseReplies(line("Продолжай. "+paceRule), 0)
+	if len(pace) != 2 || pace[0].Text != "Продолжай." || pace[1].Note != orderRulesWord {
+		t.Errorf("хвост правила отзывчивости не отрезан: %+v", pace)
+	}
+	// Сменившаяся формулировка не режется молча: узнанное начало с незнакомым
+	// продолжением остаётся в пузыре целиком.
+	odd := said + " " + planRule + " и ещё незнакомый хвост"
+	kept := parseReplies(line(odd), 0)
+	if len(kept) != 1 || kept[0].Text != odd {
+		t.Errorf("неузнанный хвост спрятан: %+v", kept)
+	}
+	// Порог ротации в чужом заказе другой: правило узнаётся с любым числом.
+	other := parseReplies(line(said+" "+planRule+" "+rotateRule(120000)+" "+paceRule), 0)
+	if len(other) != 2 || other[0].Text != said {
+		t.Errorf("ротация с другим порогом сломала разрез: %+v", other)
+	}
+}

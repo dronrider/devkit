@@ -1150,11 +1150,75 @@ func unwrapDispatch(text string) (string, string, bool) {
 	return strings.TrimSpace(inner), dispatchWord(m[1]), true
 }
 
+// orderRulesWord подписывает свёрнутую строку приписок заказа в ленте.
+const orderRulesWord = "приписки заказа"
+
+// rotateRuleRe узнаёт правило ротации с любым числом порога: порог приезжает
+// из машинного конфига, и в разных заказах он разный. Шаблон собирается из
+// самого правила, чтобы смена формулировки не разъезжалась с вырезалкой.
+var rotateRuleRe = func() *regexp.Regexp {
+	probe := rotateRule(987654321)
+	return regexp.MustCompile(strings.Replace(regexp.QuoteMeta(probe), "987654321", `\d+`, 1))
+}()
+
+// cutOrderRules отрезает от реплики приписки заказа: правила плана, ротации и
+// отзывчивости, которые дашборд приклеивает к тексту человека при подъёме
+// сессии (chatCmd и родня). В ленте они выглядели словами человека одним
+// пузырём с его репликой (замечание пользователя: «что я написал отдельно и
+// что отправилось агенту отдельно»). Шов это начало первого известного
+// правила, и хвост от шва обязан состоять из известных правил целиком: правила
+// сверяются точными текстами своих констант, а неузнанный хвост (сменилась
+// формулировка, чужая приписка) остаётся в пузыре весь. Спрятать кусок реплики
+// человека дороже, чем показать служебное.
+func cutOrderRules(text string) (said, rules string) {
+	cut := -1
+	if i := strings.Index(text, planRule); i >= 0 {
+		cut = i
+	}
+	if i := strings.Index(text, paceRule); i >= 0 && (cut < 0 || i < cut) {
+		cut = i
+	}
+	if i := rotateRuleRe.FindStringIndex(text); i != nil && (cut < 0 || i[0] < cut) {
+		cut = i[0]
+	}
+	if cut < 0 {
+		return text, ""
+	}
+	rest := text[cut:]
+	for {
+		rest = strings.TrimLeft(rest, " ")
+		if rest == "" {
+			break
+		}
+		switch {
+		case strings.HasPrefix(rest, planRule):
+			rest = rest[len(planRule):]
+		case strings.HasPrefix(rest, paceRule):
+			rest = rest[len(paceRule):]
+		default:
+			m := rotateRuleRe.FindStringIndex(rest)
+			if m == nil || m[0] != 0 {
+				return text, ""
+			}
+			rest = rest[m[1]:]
+		}
+	}
+	return strings.TrimSpace(text[:cut]), strings.TrimSpace(text[cut:])
+}
+
 // addUser кладёт в ленту реплику роли user (и текстовый блок ответа агента тем
 // же путём). Пузырём человека рисуется только то, что человек написал:
 // служебные вставки харнеса уходят отдельными строками, а реплика, кроме них не
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string) {
+	// Приписки заказа отрезаются первыми: они стоят хвостом после слов
+	// человека, а префиксные рамки (картинка, выделение) разбираются дальше по
+	// оставшемуся. В ленту приписки едут свёрнутой служебной строкой после
+	// пузыря, тем же видом, что и прочая служебка с телом.
+	if said, rules := cutOrderRules(text); rules != "" {
+		text = said
+		defer add(reply{Role: roleNote, Time: at, Text: rules, Note: orderRulesWord})
+	}
 	// Скилл приезжает в ленту дважды: вызовом инструмента Skill и следом
 	// простынёй самого скилла, которую харнес кладёт репликой человека. Второе
 	// это инструкция модели, а не разговор, и показывать её незачем вовсе:

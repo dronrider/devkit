@@ -1871,7 +1871,10 @@ function linksCard(project, links) {
   card.append(el("div", "dhead", "Связи"));
   for (const doc of links.lld || []) {
     const row = el("div", "srow clicky");
-    row.append(el("span", "chip", doc.own ? "LLD задачи" : "LLD"));
+    // Подпись у чипа одна: «LLD задачи» не влезал в колонку типа. Свой дизайн
+    // от упомянутого отличают порядок (свой стоит первым) и подсказка.
+    row.append(withTip(el("span", "chip", "LLD"),
+      doc.own ? "LLD самой задачи" : "LLD, упомянутый в постановке"));
     row.append(withFull(el("span", "st", doc.title || doc.file), doc.title || doc.file));
     row.addEventListener("click", () => { goKeepingChat(project + "/doc/" + doc.file); });
     card.append(row);

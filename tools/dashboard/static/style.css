@@ -721,7 +721,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .swch{max-width:none}
   .swch div{min-height:44px;display:flex;align-items:center;justify-content:center}
   /* телефон: строка состава в две колонки, статус переносится под заголовок */
-  .srow{grid-template-columns:60px 1fr;gap:6px}
+  .srow{grid-template-columns:minmax(60px,auto) 1fr;gap:6px}
   .srow .st{white-space:normal}
   .srow .sm{grid-column:1 / -1;justify-content:flex-start}
   .prog{width:100%;max-width:none}
@@ -948,7 +948,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .rank{max-width:none}
 .rank .rfold{display:none}
 .rank:hover .rfold,.rank.on .rfold{display:inline}
-.srow{grid-template-columns:60px 1fr auto;gap:6px;padding:7px 12px}
+/* колонка типа растёт под длинную подпись чипа, а не режет её */
+.srow{grid-template-columns:minmax(60px,auto) 1fr auto;gap:6px;padding:7px 12px}
 
 /* 20: поле названия задачи растёт по содержимому, а не держит пустую высоту */
 .fgrid textarea.oneline,textarea.tname{min-height:0;height:auto;overflow-y:hidden}

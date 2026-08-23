@@ -59,10 +59,14 @@ const groups = byId.get("groups");
 const card = allByClass(groups, "dcard").find((c) => dump(c).includes("Связи"));
 if (!card) fail("карточки «Связи» на экране нет: " + dump(groups).slice(0, 200));
 
-// --- тип артефакта у каждой строки ---
+// --- тип артефакта у каждой строки; подпись LLD короткая, свой дизайн
+// отличает подсказка (замечание пользователя: «LLD задачи» не влезал) ---
 const said = dump(card).replace(/\s+/g, " ");
-if (!said.includes("LLD задачи") || !said.includes("дизайн задачи")) {
+if (!said.includes("LLD") || !said.includes("дизайн задачи")) {
   fail("строка LLD потеряла тип или название: " + said);
+}
+if (said.includes("LLD задачи")) {
+  fail("подпись чипа LLD не сократилась: " + said.slice(0, 120));
 }
 const box = byClass(card, "lrel");
 if (!box) fail("блока связанных задач нет: " + said);

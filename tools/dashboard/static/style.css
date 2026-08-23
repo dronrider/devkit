@@ -1331,6 +1331,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .ktab{padding:0 2px 9px;border:none;border-bottom:2px solid transparent;background:none;font:500 13.5px var(--sans);color:var(--tx3);cursor:pointer}
 .ktab:hover{color:var(--tx2)}
 .ktab.onktab{color:var(--tx);border-bottom-color:var(--acc)}
+/* Счётчик строк таба стоит отдельным словом, а не хвостом подписи: без отступа
+   и своего цвета читалось «Дашборд5» (замечание пользователя). Вид тот же, что
+   у счётчика раздела в боковой колонке. */
+.ktab .n{margin-left:6px;font:500 11px var(--mono);color:var(--tx3);white-space:nowrap}
 
 /* полоска работ вместо ленты сессий на экране проекта */
 .lline{display:flex;align-items:center;gap:9px}

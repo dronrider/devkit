@@ -9807,6 +9807,10 @@ function renderAgents(projects, q) {
   for (const [key, label] of agentTabs()) {
     const btn = el("button", "ktab" + (key === agentTab ? " onktab" : ""), label);
     btn.type = "button";
+    // Число строк таба отдельным узлом, а не хвостом подписи: слитое с ней, оно
+    // читалось словом («Дашборд5»), и вид ему даёт .ktab .n, как счётчику
+    // раздела в боковой колонке. Пустой таб число не пишет вовсе: ноль рядом с
+    // подписью это шум, а сама подпись читается и без него.
     const n = found.filter((item) => agentOwn(item.work) === (key === "own")).length;
     if (n) btn.append(el("span", "n", String(n)));
     btn.addEventListener("click", (ev) => {
@@ -10024,6 +10028,15 @@ async function paint() {
   // (замечание пользователя). Набираемое под фокусом не трогается.
   const hq = document.getElementById("hq");
   if (hq && document.activeElement !== hq && hq.value !== shownQuery) hq.value = shownQuery;
+  // Слова в пустом поле называют то, что оно ищет по месту: в разделе «Агенты»
+  // оно фильтрует сессии раздела (findGo), и «Поиск задач» обещал бы там выдачу
+  // по доске. Значения поля это не касается, его правит синхронизация выше.
+  if (hq) {
+    hq.placeholder = rt.agents ? "Поиск сессий" : "Поиск задач";
+    hq.setAttribute("aria-label", rt.agents
+      ? "Поиск по сессиям агентов"
+      : "Поиск по доске, черновикам и архиву");
+  }
   const hqClear = document.getElementById("hq-clear");
   if (hqClear) hqClear.hidden = !(hq && hq.value);
   shownBoard = null;
@@ -10051,7 +10064,10 @@ async function paint() {
     // Экран собран из того же ответа, что и колонка: живые работы всех
     // проектов приходят одним запросом, и доска ему не нужна.
     headName("Агенты");
-    document.getElementById("psub").textContent = rt.q ? "поиск по сессиям" : "все активные задачи";
+    // Приписки у заголовка тут нет вовсе: охват называют табы «Дашборд» и
+    // «Прочие», а слова про все активные задачи спорили с отбором, который
+    // человек уже сделал табом или поиском (замечание пользователя).
+    document.getElementById("psub").textContent = "";
     renderLive("", []);
     markNav(rt);
     renderAgents(projects, rt.q || "");

@@ -10,9 +10,26 @@
 
 import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
   from "./poc_dom.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const app = appPathArg();
-const { sandbox } = makeSandbox(app, () => ({}));
+// Список проектов для экрана по адресу: одна своя работа и одна чужая, чтобы
+// оба таба были непустыми.
+const headProjects = [{ name: "demo", prefix: "XR", works: [
+  { id: "XR-1", kind: "task", via: "tmux", title: "конвейер задачи", session: "aaaa1111",
+    own: true, model: "opus", sect: "in-progress" },
+  { id: "XR-2", kind: "goal", via: "registry", title: "цикл цели", sect: "in-progress" },
+] }];
+
+// Ответы стенда: раздел собирается из одного списка проектов, а экран по
+// адресу «#/agents» поднимается тем же refresh, что и доска.
+const { sandbox, byId } = makeSandbox(app, (path) => {
+  if (path === "/api/projects") return { projects: headProjects };
+  if (path.endsWith("/board")) return { board: { sections: [] } };
+  if (path.includes("/chats")) return { chats: [] };
+  return {};
+});
 
 const now = Date.now();
 const works = {
@@ -166,6 +183,90 @@ for (const which of ["tmux", "registry"]) {
   if (rows().length) fail("поиск нашёл лишнее по чепухе");
   if (!dump(groups).includes("ничего не нашлось")) {
     fail("пустая выдача раздела молчит: " + dump(groups).slice(0, 200));
+  }
+}
+
+// --- счётчик строк таба стоит отдельным словом ---
+// В снимке пользователя таб читался словом «Дашборд5»: число шло хвостом
+// подписи, без отступа и своего цвета.
+{
+  const many = [];
+  for (let i = 1; i <= 123; i += 1) {
+    many.push({ id: "XR-" + i, kind: "task", via: "tmux", title: "работа " + i,
+      session: "s" + i, own: true, sect: "in-progress" });
+  }
+  const groups = sandbox.document.getElementById("groups");
+  const tabs = () => allByClass(groups, "ktab");
+
+  sandbox.renderAgents([{ name: "demo", prefix: "XR", works: many }], "");
+  const own = tabs()[0];
+  const other = tabs()[1];
+  if (own.textContent !== "Дашборд") {
+    fail("число слиплось с подписью таба: " + JSON.stringify(own.textContent));
+  }
+  const n = byClass(own, "n");
+  if (!n || n.textContent !== "123") {
+    fail("трёхзначный счётчик таба не отдельным узлом: " + dump(own));
+  }
+  // Пустой таб число не пишет вовсе, и подпись остаётся подписью.
+  if (other.textContent !== "Прочие" || byClass(other, "n")) {
+    fail("пустой таб пишет счётчик: " + dump(other));
+  }
+
+  // Отступ и цвет счётчика живут в style.css: слитое с подписью число это как
+  // раз отсутствие своего правила у .ktab .n.
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  const rule = (css.match(/\.ktab \.n\{([^}]*)\}/) || [])[1];
+  if (!rule) fail("вида у счётчика таба нет: правила .ktab .n в style.css не нашлось");
+  if (!/margin-left:\s*[1-9]/.test(rule)) {
+    fail("счётчик таба стоит вплотную к подписи: " + rule);
+  }
+  if (!rule.includes("var(--tx3)")) {
+    fail("счётчик таба не бледнее подписи: " + rule);
+  }
+}
+
+// --- шапка раздела: приписки нет, а поле поиска называет сессии ---
+// Приписка «все активные задачи» спорила с отбором, который человек уже сделал
+// табом или поиском, и её убрали целиком (замечание пользователя). Поле шапки
+// тут фильтрует сессии раздела, поэтому и слова в нём про сессии, а на доске
+// про задачи.
+{
+  const psub = byId.get("psub");
+  const hq = byId.get("hq");
+  const go = async (hash) => {
+    sandbox.location.hash = hash;
+    await sandbox.refresh();
+    await settle();
+  };
+
+  await go("#/agents");
+  if (String(psub.textContent || "").trim()) {
+    fail("у заголовка раздела осталась приписка: " + JSON.stringify(psub.textContent));
+  }
+  if (hq.placeholder !== "Поиск сессий") {
+    fail("поле раздела обещает не то, что ищет: " + JSON.stringify(hq.placeholder));
+  }
+
+  await go("#/agents/" + encodeURIComponent("цикл"));
+  if (String(psub.textContent || "").trim()) {
+    fail("приписка вернулась под поиском: " + JSON.stringify(psub.textContent));
+  }
+  if (hq.placeholder !== "Поиск сессий") {
+    fail("под поиском поле раздела заговорило о задачах: " + JSON.stringify(hq.placeholder));
+  }
+  // Смена слов поля не трогает его значение: запрос по-прежнему приезжает из
+  // адреса, а не остаётся от прежнего экрана.
+  if (hq.value !== "цикл") {
+    fail("поле шапки не отражает запрос раздела: " + JSON.stringify(hq.value));
+  }
+
+  await go("#demo");
+  if (hq.placeholder !== "Поиск задач") {
+    fail("на доске поле заговорило о сессиях: " + JSON.stringify(hq.placeholder));
+  }
+  if (hq.value !== "") {
+    fail("уход с раздела оставил запрос в поле: " + JSON.stringify(hq.value));
   }
 }
 

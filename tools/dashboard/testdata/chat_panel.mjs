@@ -454,7 +454,14 @@ if (!labelBtn(head, "Новый чат")) fail("в шапке панели не�
 // Ширина панели помнится одним числом на весь дашборд и не выходит за пределы.
 if (sandbox.chatWidth() !== 420) fail("ширина по умолчанию не та: " + sandbox.chatWidth());
 store.set("devkit.chat.width", "1200");
-if (sandbox.chatWidth() !== 640) fail("ширина не прижата к потолку: " + sandbox.chatWidth());
+// Потолок ширины меряется окном стенда (1400 точек), а не числом в коде:
+// упор в 640 точек человек отверг, панель тянется почти во весь экран.
+if (sandbox.chatWidth() !== 1200) fail("широкая панель обрезана: " + sandbox.chatWidth());
+store.set("devkit.chat.width", "99999");
+const roomy = sandbox.window.innerWidth - 72;
+if (sandbox.chatWidth() !== roomy) {
+  fail("ширина не прижата к окну: " + sandbox.chatWidth() + ", окно " + sandbox.window.innerWidth);
+}
 store.set("devkit.chat.width", "10");
 if (sandbox.chatWidth() !== 320) fail("ширина не прижата к полу: " + sandbox.chatWidth());
 sandbox.saveChatWidth(505);

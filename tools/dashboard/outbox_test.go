@@ -162,3 +162,98 @@ func TestStreamSendsSaid(t *testing.T) {
 		t.Fatalf("поток не разнёс отправленное: %q", seen)
 	}
 }
+
+// Смена модели диалога оставляет след в самой ленте: разделитель, который
+// живёт журналом разговора и потому переживает и перерисовку панели, и
+// перезагрузку страницы. Раньше смена не оставляла ничего, и человек,
+// вернувшийся к разговору, читал подряд ответы двух разных моделей.
+func TestModelChangeMarksFeed(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa-1111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/model"
+	if resp := doReq(t, c, "POST", at, `{"model":"fable"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("смена модели: %d %s", resp.StatusCode, body(t, resp))
+	}
+	items := saidFeed(t, c, e, sid)
+	var marks []string
+	for _, it := range items {
+		if it.Role == roleMark {
+			marks = append(marks, it.Text)
+		}
+	}
+	if len(marks) != 1 || marks[0] != "модель изменена: opus -> fable" {
+		t.Fatalf("разделитель смены модели не встал в ленту: %q (лента %+v)", marks, items)
+	}
+	// Пометка это не реплика человека: пузырём она не рисуется и в вводную
+	// резюма не подкладывается.
+	if said := userTexts(items); len(said) != 1 || said[0] != "работа идёт" {
+		t.Errorf("пометка уехала пузырём человека: %q", said)
+	}
+	if lost := e.s.lostSaid(sid, time.Time{}); len(lost) != 0 {
+		t.Errorf("пометка попала в недоставленные реплики резюма: %q", lost)
+	}
+	// Повторный выбор той же модели ничего не меняет и второго разделителя не
+	// заводит: рубеж это смена, а не нажатие.
+	if resp := doReq(t, c, "POST", at, `{"model":"fable"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("повтор смены: %d", resp.StatusCode)
+	}
+	again := 0
+	for _, it := range saidFeed(t, c, e, sid) {
+		if it.Role == roleMark {
+			again++
+		}
+	}
+	if again != 1 {
+		t.Errorf("выбор той же модели завёл второй разделитель: %d", again)
+	}
+}
+
+// Номер записи журнала один и тот же, каким бы путём запись ни приехала в
+// ленту: обычным ответом или дочитыванием в потоке. Пока поток считал номера
+// по выжившим после слияния записям, дописанная реплика приезжала под чужим
+// ключом, лента видела в ней вторую запись и показывала реплику дважды
+// (жалоба пользователя про дубль, уходивший с обновлением чата).
+func TestStreamSaidKeysMatchFeed(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa-1111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	key := saidSessionKey(sid)
+	// Первая запись журнала уже отражена транскриптом: слияние её выбрасывает,
+	// и счёт выживших расходится с номерами строк файла.
+	if err := e.s.saidPut(key, saidRec{Time: "2026-08-17T10:00:01Z", Text: "работа идёт", Way: "socket"}); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid+"?stream=1", "")
+	defer resp.Body.Close()
+	if err := e.s.saidPut(key, saidRec{Time: "2026-08-17T10:00:09Z", Text: "с ноутбука"}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4096)
+	deadline := time.Now().Add(5 * time.Second)
+	seen := ""
+	for time.Now().Before(deadline) && !strings.Contains(seen, "с ноутбука") {
+		n, err := resp.Body.Read(buf)
+		seen += string(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(seen, "с ноутбука") {
+		t.Fatalf("поток не разнёс отправленное: %q", seen)
+	}
+	// Ключ той же записи в обычном ответе ленты: по нему лента и отсеивает
+	// повторы, и разойтись эти два ключа не имеют права.
+	want := ""
+	for _, it := range saidFeed(t, c, e, sid) {
+		if it.Text == "с ноутбука" {
+			want = it.Key
+		}
+	}
+	if want != saidSrc+key+":1" {
+		t.Fatalf("ключ записи в обычной ленте: %q", want)
+	}
+	if !strings.Contains(seen, `"key":"`+want+`"`) {
+		t.Fatalf("поток назвал ту же запись другим ключом: %q (ждали %s)", seen, want)
+	}
+}

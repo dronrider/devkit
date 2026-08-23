@@ -1403,3 +1403,53 @@ func TestChatChannelRuleInEveryOrder(t *testing.T) {
 		t.Errorf("во вводной продолжения цели нет правила канала: %s", got)
 	}
 }
+
+// Модель живой сессии, поднятой дашбордом, называет запись подъёма, а не
+// транскрипт. Транскрипт узнаёт про смену только с первого ответа новой
+// модели, и до него селектор панели показывал прежнюю: человек перезапускал
+// разговор с opus, а в списке оставался fable (жалоба пользователя). Чужое
+// окно (vscode) своей записи не заводит, и там модель по-прежнему читается из
+// транскрипта.
+func TestLiveModelComesFromOurLaunch(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "cccc7777-7777-4777-8777-777777777777"
+	talk := plainTalk + `{"type":"assistant","message":{"role":"assistant","model":"claude-fable-1",` +
+		`"content":[{"type":"text","text":"готово"}]},"timestamp":"2026-08-17T10:00:02.000Z"}` + "\n"
+	writeSession(t, e.home, e.proj, "", sid, talk, time.Now())
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:40:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1-1\t1\t1786000000\n")
+
+	find := func() chatEntry {
+		t.Helper()
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+		var got struct {
+			Chats []chatEntry `json:"chats"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range got.Chats {
+			if c.ID == sid {
+				return c
+			}
+		}
+		t.Fatalf("чата нет в списке: %+v", got.Chats)
+		return chatEntry{}
+	}
+	// Записи подъёма нет вовсе: модель приезжает из транскрипта, как и раньше.
+	if got := find().LiveModel; got != "fable" {
+		t.Fatalf("без записи подъёма модель не из транскрипта: %q", got)
+	}
+	// Дашборд поднял эту tmux-сессию моделью opus: её и показываем, не дожидаясь
+	// первого ответа.
+	if err := e.s.chatStoreWrite("tmux-chat-XR-1-1", chatStore{Model: "opus", From: sid}); err != nil {
+		t.Fatal(err)
+	}
+	// Список читается заново: кэш шапок ключуется меткой файла, а модель
+	// приезжает мимо него.
+
+	if got := find().LiveModel; got != "opus" {
+		t.Fatalf("живая модель разошлась с тем, чем дашборд поднял сессию: %q", got)
+	}
+}

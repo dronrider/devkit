@@ -3627,10 +3627,28 @@ async function wireFeed(project, sid, opts) {
   const isSaid = (item) => String((item && item.key) || "").startsWith("said-");
   const dropSaid = (item) => {
     if (!item || item.role !== "user" || !item.text || isSaid(item)) return;
-    const said = item.text.trim();
     for (let i = talk.length - 1; i >= 0; i--) {
-      if (isSaid(talk[i]) && String(talk[i].text || "").trim() === said) talk.splice(i, 1);
+      if (isSaid(talk[i]) && sameSay(talk[i].text, item.text)) talk.splice(i, 1);
     }
+  };
+  // Запись журнала, уже стоящая в ленте, второй раз не встаёт. Дорог у неё
+  // две: та же запись под другим ключом (поток и обычный ответ считали номера
+  // по-разному) и эхо из транскрипта, приехавшее раньше журнала. Обе давали
+  // одну реплику двумя пузырями, и уходил дубль только с полной пересборкой
+  // ленты (жалоба пользователя: «задублировалось, потом чат обновился и
+  // дубляж пропал»).
+  const seenSaid = (item) => {
+    if (!item || !isSaid(item)) return false;
+    const at = String(item.time || "");
+    for (const it of talk) {
+      if (it.role !== item.role) continue;
+      if (isSaid(it)) {
+        if (String(it.time || "") === at && sayNorm(it.text) === sayNorm(item.text)) return true;
+        continue;
+      }
+      if (item.role === "user" && sameSay(it.text, item.text)) return true;
+    }
+    return false;
   };
 
   // Приписка сверху (страница истории) двигает всё содержимое вниз, и держать
@@ -3646,6 +3664,7 @@ async function wireFeed(project, sid, opts) {
     const marks = feedMarks(talk);
     if (!talk.length) {
       sync(box, empty ? [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }] : []);
+      if (opts.onFeed) opts.onFeed(talk);
       return;
     }
     const items = [];
@@ -3658,6 +3677,18 @@ async function wireFeed(project, sid, opts) {
           items.push({ key: "day-" + key, sign: key, make: () => dayEl(localDay(item.time)) });
           day = key;
         }
+      }
+      // Пометка ленты рисуется разделителем, тем же приёмом, что и граница
+      // дня: смена модели это не чья-то реплика, а рубеж в разговоре, и
+      // пузырь для неё был бы враньём. Приезжает пометка журналом разговора,
+      // поэтому она переживает и перерисовку панели, и перезагрузку страницы.
+      if (item.role === "mark") {
+        items.push({
+          key: itemKey(item),
+          sign: "mark|" + item.text,
+          make: () => dayEl(item.text),
+        });
+        continue;
       }
       // Вывод инструмента идёт следом за своим вызовом и рисуется вместе с
       // ним одной карточкой: два блока подряд про один и тот же ход распухали
@@ -3691,6 +3722,13 @@ async function wireFeed(project, sid, opts) {
     if (bottom) keepBottom(scroll, true);
     else if (prepending) keepPlace(scroll, rest);
     else scroll.scrollTop = top;
+    // Лента перерисована, и тут же сверяется всё, что панель держит своим:
+    // местный пузырь отправки снимается той же перерисовкой, которой его
+    // копия встала из ленты. Сверка идёт по всему содержимому ленты, а не по
+    // одной приехавшей записи: записи доезжают четырьмя дорогами, и всякая,
+    // что кладёт реплику мимо разбора приехавшего куска (страница истории,
+    // пересборка догоном), оставляла пузырь висеть вторым экземпляром.
+    if (opts.onFeed) opts.onFeed(talk);
   };
 
   // Подгрузка вверх: раньше её звала кнопка, теперь зовёт прокрутка, а тело
@@ -3708,7 +3746,7 @@ async function wireFeed(project, sid, opts) {
     // Отсев по ключу тут не украшение: страницы истории приходят с сервера,
     // который каждый раз собирает ленту заново, и запись с края страницы
     // приезжала вторым разом.
-    const add = items.filter((it) => fresh(it) && keep(it));
+    const add = items.filter((it) => fresh(it) && keep(it) && !seenSaid(it));
     if (items.length) {
       firstKey = itemCursor(items[0]);
       pages += 1;
@@ -3823,6 +3861,7 @@ async function wireFeed(project, sid, opts) {
     for (const item of items) {
       if (!fresh(item)) continue;
       if (!keep(item)) continue;
+      if (seenSaid(item)) continue;
       dropSaid(item);
       talk.push(item);
       // Начальный хвост проходит через тот же onItem, что поток и догон:
@@ -3893,6 +3932,7 @@ async function wireFeed(project, sid, opts) {
         if (!fresh(item)) continue;
         if (firstKey === null) firstKey = itemCursor(item);
         if (!keep(item)) continue;
+        if (seenSaid(item)) continue;
         dropSaid(item);
         talk.push(item);
         added = true;
@@ -3941,6 +3981,7 @@ async function wireFeed(project, sid, opts) {
         updateStart();
       }
       if (!keep(item)) return;
+      if (seenSaid(item)) return;
       dropSaid(item);
       talk.push(item);
       draw();
@@ -4345,6 +4386,24 @@ function itemKey(item) {
   return item.key ? "k-" + item.key : "seq-" + item.seq;
 }
 
+// Одна и та же реплика человека доезжает до ленты двумя дорогами: журналом
+// отправленного (его пишет сам дашборд) и эхом из транскрипта. Сверять их
+// точным совпадением строк нельзя: по дороге к транскрипту реплика обрастает
+// рамкой канала и приписками заказа, а пробелы с переводами строк меняет и
+// клиент, и разбор. Поэтому сверка идёт по нормализованному сырому тексту, а
+// не по тому, что видно в ленте: показанное собрано разметкой, и сравнивать
+// его с отправленным значит сравнивать разное.
+function sayNorm(text) {
+  return String(text === undefined || text === null ? "" : text).replace(/\s+/g, " ").trim();
+}
+
+function sameSay(a, b) {
+  const x = sayNorm(a);
+  const y = sayNorm(b);
+  if (!x || !y) return false;
+  return x === y || x.endsWith(y) || y.endsWith(x);
+}
+
 // То же самое, но как его понимает сервер: ключ записи либо старый номер.
 // Этим значением лента и просит следующую страницу истории.
 function itemCursor(item) {
@@ -4559,11 +4618,12 @@ function shotURL(path) {
     "/shot?name=" + encodeURIComponent(name);
 }
 
-function wireChatFeed(project, feed, sid, onItem) {
+function wireChatFeed(project, feed, sid, onItem, onFeed) {
   chatShotProject = project;
   chatShotSid = sid;
   return wireFeed(project, sid, {
     onItem,
+    onFeed,
     box: feed,
     scroll: feed,
     list: "mlist",
@@ -4976,19 +5036,31 @@ function fillChatNote(note, running, live) {
 // они и есть предмет, а полоса tmux убрана совсем.
 
 // Ширина панели одна на весь дашборд, а не на задачу: человек ставит её под
-// свой экран, а не под предмет разговора. Диапазон закрывает и узкую колонку
-// рядом с доской, и половину ноутбучного экрана.
+// свой экран, а не под предмет разговора.
 // Диапазон меряет ленту, а не панель целиком: колонки списка разговоров в
 // панели больше нет, и --cw достаётся ленте без остатка. Пока колонка стояла
 // призраком, те же 320..640 давали ленте 148..468, и панель почти не
 // раздвигалась (замечание 3).
+// Верхнего предела в точках у панели больше нет: разговор бывает главным
+// делом экрана, а доска при нём справкой, и упор в 640 точек на широком
+// мониторе мешал (замечание пользователя). Потолок теперь меряется самим
+// окном: панель тянется почти во весь экран, оставляя доске узкую полосу.
+// Нижний предел остался прежним: уже 320 точек лента нечитаема.
 const CHAT_W_KEY = "devkit.chat.width";
 const CHAT_W_MIN = 320;
-const CHAT_W_MAX = 640;
 const CHAT_W_DEF = 420;
+// Полоса доски, которая остаётся видной при самой широкой панели: за неё
+// берутся, чтобы вернуть панель назад, и съедать её целиком незачем.
+const CHAT_W_KEEP = 72;
+
+function chatMax() {
+  const win = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 0;
+  if (!win) return CHAT_W_MIN * 4;
+  return Math.max(CHAT_W_MIN, win - CHAT_W_KEEP);
+}
 
 function chatClamp(w) {
-  return Math.max(CHAT_W_MIN, Math.min(CHAT_W_MAX, Math.round(w) || CHAT_W_DEF));
+  return Math.max(CHAT_W_MIN, Math.min(chatMax(), Math.round(w) || CHAT_W_DEF));
 }
 
 // Ширина уезжает в корень переменной, а не в стиль самой панели: медиазапросу
@@ -5000,6 +5072,9 @@ function putChatWidth(w) {
   return px;
 }
 
+// Память ширины хранит запрошенное человеком, а обрезает его окно при чтении:
+// панель, растянутая на широком мониторе, не должна усыхать навсегда от
+// одного захода с ноутбука.
 function chatWidth() {
   let saved = 0;
   try {
@@ -5014,7 +5089,7 @@ function chatWidth() {
 
 function saveChatWidth(w) {
   try {
-    localStorage.setItem(CHAT_W_KEY, String(chatClamp(w)));
+    localStorage.setItem(CHAT_W_KEY, String(Math.max(CHAT_W_MIN, Math.round(w) || CHAT_W_DEF)));
   } catch (err) {
     return;
   }
@@ -5471,7 +5546,7 @@ function chatsURL(project) {
 // переключатель фильтра тогда работает мгновенно, без похода на сервер.
 async function chatState(project, addr, board) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
-    error: "", models: [], fresh: false, lost: false };
+    error: "", models: [], fresh: false, lost: false, project };
   if (chatIsNew(addr)) {
     st.fresh = true;
     st.task = chatNewTask(addr);
@@ -5525,6 +5600,10 @@ async function chatState(project, addr, board) {
     else if (list.length) st.sid = list[0].id;
   }
   st.entry = st.chats.find((c) => c.id === st.sid) || null;
+  // Проект самого разговора: список общий по машине, и открытый чат бывает не
+  // из того проекта, что стоит на доске. Все ручки чата (лента, реплика, стоп,
+  // модель, вложение) адресуются его проектом, а не проектом доски.
+  st.project = (st.entry && st.entry.project) || project;
   // Адрес, которого нет в списке, это одно из двух: старый разговор глубже
   // видимого верха (транскрипт на диске есть, лента откроется) либо протухшая
   // память (чат снят, сессия умерла или так и не родилась, как у клиента,
@@ -5706,11 +5785,10 @@ function modelPick(project, st) {
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
   const alien = Boolean(isLive && !st.entry.own);
-  // Живая сессия показывается своей настоящей моделью: клиент уже поднят, и
-  // молча показывать выбор поверх работающей модели значило бы врать
-  // (замечание пользователя: выбран opus, работает fable). Невступивший выбор
-  // виден пометкой рядом и вступает только перезапуском с подтверждением.
-  // У мёртвой и новой сессии стоит выбор: он и возьмётся подъёмом или резюмом.
+  // Живая сессия показывается своей настоящей моделью: молча показывать выбор
+  // поверх работающей модели значило бы врать (замечание пользователя: выбран
+  // opus, работает fable). Своя живая сессия называет модель записью подъёма,
+  // а не транскриптом, поэтому смена видна в списке сразу же.
   const shown = isLive && live ? live : cur;
   // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
   // она платится. Своего перечня имён у панели нет, иначе новая подписка на
@@ -5728,124 +5806,86 @@ function modelPick(project, st) {
   }
   const why = (st.models || []).find((m) => m.model === shown);
   model.title = why ? shown + ": ярус " + why.tier + ", подписка " + why.harness : "Модель агента";
+  const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
+  const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
+  // Разговор на второй подписке моделью отсюда не переубедить: её заказ явной
+  // модели не несёт (модель называет сам профиль подписки), а история
+  // разговора живёт в её каталоге, и на другой подписке её не продолжить.
+  // Селектор там не действие, а честный текст: подписка названа рядом словами.
+  const own = harnessOf(shown);
+  const second = Boolean(isLive && own && mainHarness && own !== mainHarness);
   if (alien) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
+  } else if (second) {
+    model.disabled = true;
+    model.title = "Разговор идёт на подписке " + own + ": модель называет она сама, явную модель " +
+      "её заказ не несёт. Нужная модель выбирается подъёмом нового чата.";
   }
   const box = el("div", "cmodel");
   box.append(model);
-
-  const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
-  const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
-  let ask = null;
-  const askShut = () => { if (ask) { ask.remove(); ask = null; } };
-  const backToShown = () => {
-    for (const o of model.children) o.selected = o.value === shown;
-    model.value = shown;
-  };
-  // Плашка подтверждения: без него живому чату ничего не меняется. Для
-  // разговора на второй подписке кнопки нет, есть честный текст: её заказ
-  // явную модель не несёт (модель называет сама подписка), а история
-  // разговора живёт в профиле подписки, и на другой её не продолжить.
-  const restartAsk = (pick) => {
-    askShut();
-    ask = el("div", "cnote modeln");
-    const second = harnessOf(shown) && harnessOf(shown) !== mainHarness;
-    const cross = harnessOf(pick) !== harnessOf(shown);
-    if (second || cross) {
-      ask.append(el("b", "", "Модель задаёт подписка"));
-      const who = harnessOf(shown) || harnessOf(pick);
-      ask.append(el("span", "", second
-        ? "Разговор идёт на подписке " + who + ": модель называет она сама, явную модель " +
-          "её заказ не несёт, и перезапуск её не сменит. Нужная модель выбирается " +
-          "подъёмом нового чата."
-        : "История разговора живёт в профиле подписки " + who + ", и на другой подписке " +
-          "её не продолжить. Нужная модель выбирается подъёмом нового чата."));
-      const okBtn = el("button", "btn btn-sm", "Понятно");
-      okBtn.type = "button";
-      okBtn.addEventListener("click", (ev) => { ev.stopPropagation(); backToShown(); askShut(); });
-      ask.append(okBtn);
-    } else {
-      ask.append(el("b", "", shown + " -> " + pick + ", перезапустить?"));
-      ask.append(el("span", "", "Живой клиент остаётся на своей модели, смена вступает " +
-        "перезапуском: сессия снимется и поднимется резюмом с новой моделью, история сохранится."));
-      const go = el("button", "btn btn-sm btn-acc", "Перезапустить с " + pick);
-      go.type = "button";
-      go.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        go.disabled = true;
-        modelRestart(project, st, pick).catch(console.error).finally(() => { go.disabled = false; });
-      });
-      const drop = el("button", "btn btn-sm", "Отмена");
-      drop.type = "button";
-      drop.addEventListener("click", (ev) => { ev.stopPropagation(); backToShown(); askShut(); });
-      const row = el("div", "mrow");
-      row.append(go, drop);
-      ask.append(row);
-    }
-    box.append(ask);
-  };
-  model.addEventListener("change", () => {
-    const pick = model.value;
-    if (!st.sid || !isLive) {
-      // Сессии нет либо она кончилась: выбор действует сам, его возьмёт
-      // ближайший подъём или резюм, как и раньше.
-      chatModelSet(pick);
-      if (!st.sid) {
-        sayResult("модель нового чата: " + pick);
-        return;
-      }
-      api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
-        { method: "POST", body: { model: pick } })
-        .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
-        .catch(console.error);
-      return;
-    }
-    if (pick === shown) {
-      askShut();
-      return;
-    }
-    restartAsk(pick);
-  });
-  // Сохранённый выбор, не совпавший с живой моделью, виден ожидающим: клик по
-  // пометке открывает ту же плашку перезапуска.
-  if (isLive && !alien && cur && shown && cur !== shown) {
-    const pend = el("button", "cdpend", shown + " -> " + cur);
-    pend.type = "button";
-    pend.title = "Выбрана " + cur + ", работает " + shown + ": смена вступит перезапуском или резюмом";
-    pend.addEventListener("click", (ev) => { ev.stopPropagation(); restartAsk(cur); });
-    box.append(pend);
+  if (second) {
+    const mark = el("span", "cdlive", own);
+    mark.title = model.title;
+    box.append(mark);
   }
+  model.addEventListener("change", () => {
+    // Запертый список это текст, а не действие: у чужого окна и у второй
+    // подписки менять отсюда нечего, и молча писать выбор в память диалога
+    // значило бы обещать смену, которой не будет.
+    if (model.disabled) return;
+    const pick = model.value;
+    if (pick === shown) return;
+    chatModelSet(pick);
+    if (!st.sid) {
+      sayResult("модель нового чата: " + pick);
+      return;
+    }
+    modelSwitch(project, st, pick, isLive && !alien && !second).catch(console.error);
+  });
   return box;
 }
 
-// modelRestart перезапускает живой разговор с новой моделью: записывает выбор,
-// снимает сессию целиком (не Escape и не клин, свой род стопа) и поднимает тот
-// же разговор резюмом. Резюм берёт модель из памяти диалога, поэтому запись
-// выбора идёт первой.
-async function modelRestart(project, st, pick) {
-  sayResult("перезапускаю разговор с " + pick + "...");
+// modelSwitch меняет модель диалога прямо выбором в списке, без единого
+// подтверждения: человек уже сказал, чего хочет, а плашка «перезапустить?»
+// была вторым нажатием на ту же мысль (замечание пользователя). Выбор
+// записывается в память диалога, и живой разговор тут же снимается и
+// поднимается резюмом новой моделью: контекст резюм сохраняет, а на ходу
+// модель клиенту не подменить. Мёртвому разговору хватает записи: его поднимет
+// ближайший резюм.
+async function modelSwitch(project, st, pick, live) {
   const at = chatsURL(project) + "/" + encodeURIComponent(st.sid);
   const set = await api(at + "/model", { method: "POST", body: { model: pick } });
   if (!set.ok) {
     sayResult(apiSaid(set), true);
     return;
   }
+  if (!live) {
+    sayResult(set.body.message || "");
+    await repaintChat();
+    return;
+  }
+  sayResult("модель разговора теперь " + pick + ": поднимаю резюмом...");
   const drop = await api(at + "/stop", { method: "POST", body: { drop: true } });
   if (!drop.ok) {
     sayResult(drop.body.error || "сессия не снялась", true);
+    await repaintChat();
     return;
   }
-  const r = await api(at + "/say", { method: "POST", body: { text: CHAT_REMODEL } });
-  sayResult(apiSaid(r), !r.ok);
+  const r = await api(at + "/say", { method: "POST", body: { text: chatRemodelSay(pick) } });
+  if (!r.ok) sayResult(apiSaid(r), true);
   if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
   await repaintChat();
 }
 
-// Реплика перезапуска со сменой модели: своих слов человек не говорил, и
-// говорить за него нельзя, это заказ продолжения.
-const CHAT_REMODEL = "Разговор перезапущен со сменой модели. " +
-  "Продолжай с того места, где остановился.";
+// Заказ продолжения после смены модели. Своих слов человек тут не говорил, и
+// говорить за него нельзя: заказ едет служебной рамкой, которую лента не
+// показывает пузырём вовсе. Про саму смену в ленте говорит разделитель, его
+// пишет в журнал разговора ручка модели.
+function chatRemodelSay(pick) {
+  return "<devkit-remodel>Разговор продолжается моделью " + pick +
+    ". Продолжай с того места, где остановился.</devkit-remodel>";
+}
 
 // Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
 // фазы конвейера задачи, бегущая поверх них дуга значит «события в транскрипте
@@ -7050,6 +7090,10 @@ function makeEcho(project, box, feedBox, addr, resend) {
   // без устойчивого ключа пузырь пересобирался бы на каждой перерисовке.
   let seq = 0;
   const mine = [];
+  // Записи ленты, которыми уже снят чей-то пузырь: сверка идёт на каждой
+  // перерисовке, и без памяти вторая одинаковая реплика снималась бы копией
+  // первой.
+  const claimed = new Set();
   const save = () => { if (addr) echoWrite(project, addr, mine); };
 
   const draw = () => {
@@ -7265,17 +7309,39 @@ function makeEcho(project, box, feedBox, addr, resend) {
       }
       return names;
     },
-    // Эхо из ленты: та же реплика человека, пришедшая из транскрипта. Сверка по
-    // тексту, потому что своего идентификатора у реплики в журнале нет вовсе.
+    // Сверка с лентой: пузырь отправки снимается, как только его копия
+    // появилась в ленте, откуда бы лента её ни взяла (журнал отправленного,
+    // эхо из транскрипта, догон после спящей вкладки, страница истории).
+    // Сверяется весь показанный кусок, а не одна свежая запись: копия встаёт
+    // в ленту по времени, то есть выше следующих за ней ходов инструмента, а
+    // пузырь всегда висит в самом хвосте, и сверка «по последней записи»
+    // своей же реплики не узнавала (снимок пользователя: реплика из
+    // транскрипта на своём месте, ниже ход Bash, а под ним тот же текст
+    // пузырём «вы, доставлено»).
+    // Сверка идёт по сырому тексту отправленного, а не по показанному:
+    // в ленте текст собран разметкой, и сравнивать с ним отправленное значит
+    // сравнивать разное.
+    reconcile(list) {
+      if (!mine.length || !list || !list.length) return;
+      let went = false;
+      for (const m of mine.slice()) {
+        // Одна запись ленты снимает не больше одного пузыря: две одинаковые
+        // реплики подряд это две реплики, а не дубль.
+        const hit = list.find((it) => it && it.role === "user" && !it.who && it.text &&
+          !claimed.has(itemKey(it)) && (sameSay(it.text, m.text) || sameSay(it.text, m.wire)));
+        if (!hit) continue;
+        claimed.add(itemKey(hit));
+        const at = mine.indexOf(m);
+        if (at >= 0) mine.splice(at, 1);
+        went = true;
+      }
+      if (!went) return;
+      save();
+      draw();
+    },
+    // Эхо одной записи: тот же разбор, что и у сверки со всей лентой.
     saw(item) {
-      // Чужая реплика эхом не считается, даже придя ролью user: сказал её
-      // другой агент, и снимать ею свой пузырь значит терять свою же отправку.
-      if (item.role !== "user" || item.who || !item.text) return;
-      // Сервер отрезал префикс выделения и вернул слова человека отдельно,
-      // поэтому сверять можно и по ним, и по всему отправленному.
-      const said = item.text.trim();
-      const hit = mine.find((m) => m.text.trim() === said || m.wire.trim() === said);
-      if (hit) drop(hit);
+      out.reconcile([item]);
     },
     // Чистка снимает пузыри с экрана, но не из памяти браузера: неушедшее
     // ждёт там возвращения человека в этот же разговор.
@@ -7672,7 +7738,8 @@ function chatPanel(project, st) {
   } else {
     wireChatFeed(project, feed, st.sid, (item) => {
       busy.saw(item);
-      echo.saw(item);
+    }, (list) => {
+      echo.reconcile(list);
     }).catch(console.error);
   }
   return wrap;
@@ -7708,7 +7775,15 @@ async function paintChat(project, addr, board, works) {
     side.replaceChildren();
   }
   if (!panel || !pin) return;
-  const key = project + "|" + (addr || "");
+  // Разговор общий по машине, и по sid он один и тот же, с какого проекта на
+  // доске на него ни смотри: смена проекта в шапке меняет доску под панелью, а
+  // саму панель не трогает вовсе. Пока проект стоял в ключе, тот же чат
+  // считался другим, панель пересобиралась и содержимое пропадало (регресс
+  // общего списка разговоров). Проект остаётся в ключе только у адресов, без
+  // него ничего не значащих: новый чат, чат задачи и общий чат доски заводятся
+  // на доске проекта.
+  const ownAddr = addr && !chatIsNew(addr) && !chatIsTask(addr) && addr !== CHAT_BOARD;
+  const key = (ownAddr ? "sid" : project) + "|" + (addr || "");
   if (!addr || !project) {
     if (chatOpen) {
       closeChatLive();
@@ -7743,6 +7818,11 @@ async function paintChat(project, addr, board, works) {
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;
+  // Ручки разговора живут при его собственном проекте: транскрипт ищется по
+  // дереву проекта, и лента чужого разговора, спрошенная у соседней доски,
+  // отвечала пустотой. Доска под панелью при этом остаётся той, что выбрана в
+  // шапке.
+  project = st.project || project;
   chatShown = { project, sid: st.sid || "", task: st.task || "" };
   // Открытый чат закрепляется за задачей: следующее открытие панели с её
   // экрана вернёт этот же чат, а не первый из списка.

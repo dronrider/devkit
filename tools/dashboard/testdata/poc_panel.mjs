@@ -36,6 +36,9 @@ const board = { sections: [{ key: "in-progress", rows: [
 ] }] };
 
 const app = appPathArg();
+// Модель живого разговора, какой её называет сервер: пусто значит «как в
+// фикстуре».
+let modelNow = "";
 // Тела POST-запросов по пути: подтверждение перезапуска сверяется и с тем,
 // что уехало, а не только с порядком путей.
 const postBodies = {};
@@ -47,7 +50,15 @@ const { sandbox, store, timers, moves, posted } = makeSandbox(app, (path, init) 
     if (path.endsWith("/model")) return { message: "выбор записан" };
     return {};
   }
-  if (path.includes("/chats")) return { chats, models };
+  if (path.includes("/chats")) {
+    // modelNow подменяет модель живого разговора: так стенд смотрит, сошёлся
+    // ли селектор с тем, что ответил сервер после смены.
+    const list = modelNow
+      ? chats.map((c) => (c.id === "aaaa1111-1111"
+        ? Object.assign({}, c, { model: modelNow, liveModel: modelNow }) : c))
+      : chats;
+    return { chats: list, models };
+  }
   if (path.includes("/sessions/")) {
     const sid = path.slice(path.indexOf("/sessions/") + 10).split("?")[0];
     return { session: sid, head: { id: sid }, items: [], total: 0 };
@@ -131,12 +142,12 @@ find.value = "гарнитура";
 find.handlers.input();
 if (!dump(rows).includes("ничего не нашлось")) fail("поиск не сказал про пустую выдачу");
 
-// --- живой чат: селектор показывает настоящую модель, смена ждёт подтверждения ---
-// Прежде выбор применялся только подъёмом, а реплики живой сессии шли сокетом:
-// человек выбирал opus, работал и показывался fable, и объяснения не было
-// (замечание пользователя). Теперь живая сессия показывается своей моделью,
-// невступивший выбор виден пометкой, а смена вступает перезапуском с
-// подтверждением; без подтверждения не меняется ничего.
+// --- живой чат: смена модели одним выбором, без подтверждений ---
+// Прежде тут стояла пометка-кнопка «fable -> opus» с плашкой «перезапустить?»:
+// человек отверг её целиком («хочу просто поменять модель без всех этих лишних
+// действий»). Выбор в списке и есть команда: модель пишется в память диалога,
+// живая сессия снимается и поднимается резюмом с новой моделью, а в ленте про
+// смену говорит разделитель из журнала разговора.
 {
   const stPick = await sandbox.chatState("demo", "aaaa1111-1111", board);
   stPick.entry = Object.assign({}, stPick.entry, { model: "fable", liveModel: "opus", own: true });
@@ -146,54 +157,56 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (chosen.length !== 1 || chosen[0] !== "opus") {
     fail("селектор живого чата не показал настоящую модель: " + JSON.stringify(chosen));
   }
-  // Невступивший выбор стоит пометкой-кнопкой, из неё открывается та же плашка.
-  const pend = byClass(headPick, "cdpend");
-  if (!pend || !dump(pend).includes("opus -> fable")) {
-    fail("ожидающий выбор не назван пометкой: " + dump(headPick).slice(0, 200));
+  // Кнопки перехода и плашки подтверждения в панели нет вовсе.
+  if (byClass(headPick, "cdpend") || byClass(headPick, "modeln")) {
+    fail("в панели осталась кнопка перехода или плашка подтверждения: " +
+      dump(headPick).slice(0, 300));
   }
-  pend.handlers.click({ stopPropagation: () => {} });
-  let note = byClass(headPick, "modeln");
-  if (!note || !dump(note).includes("opus -> fable, перезапустить?")) {
-    fail("плашка перезапуска не открылась из пометки: " + dump(headPick).slice(0, 300));
+  if (dump(headPick).includes("перезапустить")) {
+    fail("панель всё ещё предлагает перезапуск словами: " + dump(headPick).slice(0, 300));
   }
-  // Отмена возвращает селектор на живую модель и ничего не шлёт.
-  const before = posted.length;
-  deepBtn(note, "Отмена").handlers.click({ stopPropagation: () => {} });
-  if (posted.length !== before) fail("отмена перезапуска что-то отправила: " + JSON.stringify(posted));
-  if (byClass(headPick, "modeln")) fail("плашка не закрылась отменой");
 
-  // Смена в самом селекторе: без подтверждения ничего не меняется.
-  selPick.value = "fable";
+  // Смена на любую модель списка, а не на зашитую: тут это sonnet.
+  const before = posted.length;
+  selPick.value = "sonnet";
   selPick.handlers.change({});
-  if (posted.length !== before) {
-    fail("смена модели живого чата уехала без подтверждения: " + JSON.stringify(posted.slice(before)));
-  }
-  note = byClass(headPick, "modeln");
-  if (!note) fail("плашка подтверждения не открылась сменой селектора");
-  // Подтверждение: выбор пишется, сессия снимается своим родом, резюм едет.
-  deepBtn(note, "Перезапустить с fable").handlers.click({ stopPropagation: () => {} });
   await settle();
   const tail = posted.slice(before);
   const wantTail = ["/api/projects/demo/chats/aaaa1111-1111/model",
     "/api/projects/demo/chats/aaaa1111-1111/stop",
     "/api/projects/demo/chats/aaaa1111-1111/say"];
   if (JSON.stringify(tail.slice(0, 3)) !== JSON.stringify(wantTail)) {
-    fail("перезапуск пошёл не тем порядком: " + JSON.stringify(tail));
+    fail("смена модели пошла не тем порядком (или ждёт подтверждения): " + JSON.stringify(tail));
+  }
+  if (byClass(headPick, "modeln")) fail("смена модели открыла плашку подтверждения");
+  const modelBody = postBodies[wantTail[0]];
+  if (!modelBody || modelBody.model !== "sonnet") {
+    fail("в память диалога уехала не выбранная модель: " + JSON.stringify(modelBody));
   }
   const stopBody = postBodies[wantTail[1]];
   if (!stopBody || stopBody.drop !== true) {
     fail("снятие сессии пошло не родом drop: " + JSON.stringify(stopBody));
   }
-
-  // Совпали выбор с фактической: ни пометки, ни плашки.
-  const stSame = await sandbox.chatState("demo", "aaaa1111-1111", board);
-  stSame.entry = Object.assign({}, stSame.entry, { model: "opus", liveModel: "opus", own: true });
-  const same = sandbox.chatPanel("demo", stSame);
-  if (byClass(same, "cdpend") || byClass(same, "modeln")) {
-    fail("пометка стоит там, где выбор и фактическая модель одна");
+  const sayBody = postBodies[wantTail[2]];
+  if (!sayBody || !String(sayBody.text).includes("<devkit-remodel>")) {
+    fail("заказ резюма поехал словами человека, а не служебной рамкой: " + JSON.stringify(sayBody));
+  }
+  if (!String(sayBody.text).includes("sonnet")) {
+    fail("заказ резюма не назвал новую модель: " + JSON.stringify(sayBody));
   }
 
-  // Мёртвой сессии выбор пишется сразу, как и раньше: он возьмётся резюмом.
+  // После смены селектор показывает новую модель: сервер называет живой ту,
+  // которой сам поднял сессию, и панель обязана сойтись с этим ответом.
+  modelNow = "sonnet";
+  const stAfter = await sandbox.chatState("demo", "aaaa1111-1111", board);
+  const selAfter = tag(sandbox.chatPanel("demo", stAfter), "SELECT");
+  const after = selAfter.children.filter((o) => o.selected).map((o) => o.value);
+  if (after.length !== 1 || after[0] !== "sonnet") {
+    fail("после смены селектор остался на прежней модели: " + JSON.stringify(after));
+  }
+  modelNow = "";
+
+  // Мёртвой сессии хватает записи: её возьмёт ближайший резюм, снимать нечего.
   const stDead = await sandbox.chatState("demo", "bbbb2222-2222", board);
   const dead = sandbox.chatPanel("demo", stDead);
   const selDead = tag(dead, "SELECT");
@@ -201,36 +214,37 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   selDead.value = "fable";
   selDead.handlers.change({});
   await settle();
-  if (!posted.slice(wasDead).includes("/api/projects/demo/chats/bbbb2222-2222/model")) {
-    fail("выбор модели мёртвой сессии не записался: " + JSON.stringify(posted.slice(wasDead)));
+  const deadTail = posted.slice(wasDead);
+  if (!deadTail.includes("/api/projects/demo/chats/bbbb2222-2222/model")) {
+    fail("выбор модели мёртвой сессии не записался: " + JSON.stringify(deadTail));
+  }
+  if (deadTail.some((p) => p.endsWith("/stop") || p.endsWith("/say"))) {
+    fail("мёртвую сессию зачем-то снимали и поднимали: " + JSON.stringify(deadTail));
   }
 }
 
-// --- вторая подписка: перезапуском модель не сменить, текст говорит честно ---
-// Заказ второй подписки явной модели не несёт (модель называет сама подписка),
-// а история разговора живёт в её профиле: кнопки перезапуска тут нет, есть
-// объяснение и дорога через новый чат.
+// --- вторая подписка: модель называет сама подписка ---
+// Заказ второй подписки явной модели не несёт, а история разговора живёт в её
+// профиле: селектор тут не действие, а честный текст, и смена в нём ничего не
+// шлёт.
 {
   const stGlm = await sandbox.chatState("demo", "aaaa1111-1111", board);
   stGlm.entry = Object.assign({}, stGlm.entry, { model: "glm-5.3", liveModel: "glm-5.3", own: true });
   const glm = sandbox.chatPanel("demo", stGlm);
   const sel = tag(glm, "SELECT");
+  if (!sel.disabled) fail("селектор второй подписки предлагает смену модели");
+  if (!String(sel.title).includes("glm-code")) {
+    fail("селектор не назвал подписку словами: " + JSON.stringify(sel.title));
+  }
+  if (!dump(glm).includes("glm-code")) {
+    fail("подписка разговора не видна без наведения: " + dump(glm).slice(0, 300));
+  }
   const was = posted.length;
   sel.value = "opus";
   sel.handlers.change({});
-  if (posted.length !== was) fail("смена модели glm-чата что-то отправила: " + JSON.stringify(posted.slice(was)));
-  const note = byClass(glm, "modeln");
-  if (!note) fail("плашки про подписку нет: " + dump(glm).slice(0, 300));
-  const said = dump(note);
-  if (!said.includes("glm-code")) fail("плашка не назвала подписку: " + said);
-  if (said.includes("перезапустить?") || deepBtn(note, "Перезапустить с opus")) {
-    fail("glm-чату предложен перезапуск с явной моделью: " + said);
-  }
-  deepBtn(note, "Понятно").handlers.click({ stopPropagation: () => {} });
-  if (byClass(glm, "modeln")) fail("плашка про подписку не закрылась");
-  const back = sel.children.filter((o) => o.selected).map((o) => o.value);
-  if (back.length !== 1 || back[0] !== "glm-5.3") {
-    fail("селектор не вернулся на живую модель: " + JSON.stringify(back));
+  await settle();
+  if (posted.length !== was) {
+    fail("смена модели glm-чата что-то отправила: " + JSON.stringify(posted.slice(was)));
   }
 }
 
@@ -1104,8 +1118,13 @@ async function feedOf(items, sid) {
   sandbox.location.hash = "#demo/chat/aaaa1111-1111";
   await sandbox.paintChat("demo", "aaaa1111-1111", board, []);
   await settle();
-  const mine = { time: "2026-08-20T10:00:00", project: "demo", session: "aaaa1111-1111", title: "ход" };
-  const alien = { time: "2026-08-20T10:00:00", project: "demo", session: "zzzz9999-9999", title: "ход" };
+  // Карточкой всплывает только доставленное громкое событие, поэтому и то, и
+  // другое тут громкое: предмет проверки это заглушка открытого разговора, а
+  // не отбор по громкости.
+  const mine = { time: "2026-08-20T10:00:00", project: "demo", session: "aaaa1111-1111",
+    title: "ход", level: "громкий", sent: true };
+  const alien = { time: "2026-08-20T10:00:00", project: "demo", session: "zzzz9999-9999",
+    title: "ход", level: "громкий", sent: true };
   if (sandbox.flashWorthy(mine, "2026-08-20T09:00:00", false)) fail("баннер про открытый чат не заглушён");
   if (!sandbox.flashWorthy(alien, "2026-08-20T09:00:00", false)) fail("чужой баннер заглушён напрасно");
   await sandbox.paintChat("demo", "", board, []);

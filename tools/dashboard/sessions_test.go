@@ -1299,10 +1299,17 @@ func TestStaticChatWidthRemembered(t *testing.T) {
 	if !strings.Contains(app, `const CHAT_W_KEY = "devkit.chat.width"`) {
 		t.Error("ширина панели не помнится в localStorage: каждый заход начинается с умолчания")
 	}
-	for _, want := range []string{"const CHAT_W_MIN = 320", "const CHAT_W_MAX = 640"} {
-		if !strings.Contains(app, want) {
-			t.Errorf("нет предела ширины %q: панель схлопнется или съест доску", want)
-		}
+	// Потолок ширины меряется окном, а не точками: разговор бывает главным
+	// делом экрана, и упор в 640 точек на широком мониторе мешал (замечание
+	// пользователя). Пол остался прежним: уже 320 точек лента нечитаема.
+	if !strings.Contains(app, "const CHAT_W_MIN = 320") {
+		t.Error("нет нижнего предела ширины: панель схлопнется")
+	}
+	if strings.Contains(app, "const CHAT_W_MAX") {
+		t.Error("вернулся потолок ширины в точках: панель снова не раздвинуть")
+	}
+	if !strings.Contains(app, "win - CHAT_W_KEEP") {
+		t.Error("потолок ширины не меряется окном: доске не останется полосы")
 	}
 	grab := funcBody(t, app, "function wireChatGrab(")
 	for _, want := range []string{"pointerdown", "pointermove", "window.innerWidth - ev.clientX",

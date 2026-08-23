@@ -1957,11 +1957,17 @@ if (!dump(groups).includes("XR-3")) {
 }
 await go("#demo");
 
-// Ширина панели помнится одним числом на весь дашборд и не выходит за пределы:
-// схлопнутая до нуля и разъехавшаяся на весь экран панель одинаково бесполезны.
+// Ширина панели помнится одним числом на весь дашборд. Схлопнутая до нуля
+// панель бесполезна, и пол ей стоит прежний; потолка в точках у неё больше
+// нет, он меряется окном стенда (1400 точек).
 if (sandbox.chatWidth() !== 420) fail("ширина по умолчанию не та: " + sandbox.chatWidth());
 store.set("devkit.chat.width", "900");
-if (sandbox.chatWidth() !== 640) fail("ширина не прижата к потолку: " + sandbox.chatWidth());
+if (sandbox.chatWidth() !== 900) fail("широкая панель обрезана: " + sandbox.chatWidth());
+store.set("devkit.chat.width", "99999");
+const roomy = sandbox.window.innerWidth - 72;
+if (sandbox.chatWidth() !== roomy) {
+  fail("ширина не прижата к окну: " + sandbox.chatWidth() + ", окно " + sandbox.window.innerWidth);
+}
 store.set("devkit.chat.width", "100");
 if (sandbox.chatWidth() !== 320) fail("ширина не прижата к полу: " + sandbox.chatWidth());
 sandbox.saveChatWidth(505);

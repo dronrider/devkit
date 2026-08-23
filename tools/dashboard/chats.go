@@ -451,6 +451,17 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 		if e.Tmux != "" && tmuxClaim[e.Tmux] != f.ID {
 			e.Tmux = ""
 		}
+		// Свою tmux-сессию дашборд поднял сам и знает, какой моделью её
+		// поднял: транскрипт называет модель только с первого ответа, и сразу
+		// после смены он ещё какое-то время говорит прежнее имя. Ровно это и
+		// видел человек: перезапустил разговор с opus, а в селекторе остался
+		// fable. Чужое окно (vscode) своей записи не заводит, и там модель
+		// по-прежнему читается из транскрипта.
+		if e.Tmux != "" && chatKeyRe.MatchString(e.Tmux) {
+			if st := s.chatStoreRead("tmux-" + e.Tmux); st.Model != "" {
+				e.LiveModel = st.Model
+			}
+		}
 		// Мера состояния: реестр живых сессий клиента старше всего остального.
 		// Есть запись с живым процессом, значит диалог идёт и ему есть куда
 		// писать, чем бы он ни был поднят, окном vscode или tmux-сессией
@@ -1143,6 +1154,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 func (s *server) lostSaid(sid string, mod time.Time) []string {
 	out := []string{}
 	for _, r := range saidLoad(s.cfg.Home, saidSessionKey(sid)) {
+		// Пометка ленты это не сказанное человеком: подкладывать её в вводную
+		// резюма значило бы говорить за него.
+		if r.Role != "user" {
+			continue
+		}
 		at, err := time.Parse(time.RFC3339, r.Time)
 		if err != nil || !at.After(mod) {
 			continue
@@ -1258,11 +1274,19 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая модель ничего не значит"})
 		return
 	}
+	was := s.chatModel(sid, "")
 	st := s.chatStoreRead(sid)
 	st.Model = model
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
 		return
+	}
+	// След смены в самой ленте: без него человек, вернувшийся к разговору,
+	// читает ответы двух разных моделей подряд и не видит, где кончилась одна
+	// и началась другая. Разделитель живёт журналом разговора, а не памятью
+	// панели: он обязан пережить и перерисовку, и перезагрузку страницы.
+	if was != "" && was != model {
+		s.saidMark(saidSessionKey(sid), fmt.Sprintf("модель изменена: %s -> %s", was, model))
 	}
 	s.logf("модель чата %s в %s теперь %s", sid, found.Name, model)
 	writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model,

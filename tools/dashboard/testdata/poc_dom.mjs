@@ -334,7 +334,12 @@ export function makeSandbox(appPath, reply, opts) {
         if (!bag.length) delete sandbox.document.handlers[name];
       },
       body: makeNode("body"),
-      documentElement: { style: { setProperty: () => {} } },
+      // Переменные корня стенд помнит: ширину панели дашборд ставит именно
+      // ими, и проверять её иначе нечем.
+      documentElement: { style: {
+        props: {},
+        setProperty: (name, value) => { sandbox.document.documentElement.style.props[name] = value; },
+      } },
     },
     window: {
       addEventListener: () => {},

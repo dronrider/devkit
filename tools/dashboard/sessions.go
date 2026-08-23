@@ -1067,6 +1067,10 @@ var svcTags = []svcTag{
 	{name: "command-args", show: false},
 	{name: "command-name", show: true, word: "команда"},
 	{name: "command-contents", show: false},
+	// Заказ перезапуска со сменой модели: его пишет дашборд, а не человек, и
+	// пузырём человека он был бы враньём. В ленте смену называет разделитель
+	// из журнала разговора, и второй записи об одном и том же там не надо.
+	{name: "devkit-remodel", show: false},
 }
 
 // svcRe собирает вырезалку на каждый известный тег: тело берётся нежадно до
@@ -1695,8 +1699,13 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			}
 		}
 		mainIdx = counts[mainSrc]
-		for _, t := range saidTails {
-			t.idx = counts[t.src]
+		for i, t := range saidTails {
+			// Номер записи журнала это её номер в файле, а не место в слитой
+			// ленте: слияние выбрасывает записи, у которых уже пришло эхо, и
+			// счёт по выжившим уезжал назад. Дописанная строка получала тогда
+			// чужой номер, лента видела ту же реплику под двумя ключами и
+			// показывала её двумя пузырями (снимок пользователя).
+			t.idx = saidLines(s.cfg.Home, keys[i])
 			if fi, err := os.Stat(t.file); err == nil {
 				t.off = fi.Size()
 			}

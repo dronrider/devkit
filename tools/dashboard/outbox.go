@@ -28,8 +28,14 @@ import (
 // saidRec это строка журнала: время отправки, слова человека и дорога, которой
 // реплика ушла.
 type saidRec struct {
-	Time    string `json:"time"`
-	Text    string `json:"text"`
+	Time string `json:"time"`
+	Text string `json:"text"`
+	// Kind отличает запись-пометку от реплики человека. Пустое значит реплику,
+	// saidKindMark значит разделитель ленты: им отмечена смена модели диалога.
+	// Пометка едет той же дорогой, что и реплика, нарочно: разделитель обязан
+	// пережить перерисовку панели и перезагрузку страницы, а всё, что живёт
+	// одной памятью панели, их не переживает.
+	Kind    string `json:"kind,omitempty"`
 	Way     string `json:"way,omitempty"`
 	Sel     string `json:"sel,omitempty"`
 	SelFile string `json:"selFile,omitempty"`
@@ -39,6 +45,13 @@ type saidRec struct {
 // saidSrc это приставка источника в ключах записей журнала: ключ выходит
 // «said-<разговор>:<номер строки>», и по нему лента отсеивает повторы.
 const saidSrc = "said-"
+
+// saidKindMark это разряд записи-пометки, а roleMark её роль в ленте: панель
+// рисует такую запись разделителем, как разделитель дня, а не пузырём.
+const (
+	saidKindMark = "mark"
+	roleMark     = "mark"
+)
 
 // saidKeyRe оставляет в имени разговора только то, из чего собирается имя
 // файла: разговор зовётся по сессии или по задаче, и чужого там взяться не
@@ -109,13 +122,36 @@ func saidReplies(lines []string, src string, from int) ([]reply, int) {
 		if json.Unmarshal([]byte(line), &rec) != nil || rec.Text == "" {
 			continue
 		}
+		role := "user"
+		if rec.Kind == saidKindMark {
+			role = roleMark
+		}
 		out = append(out, reply{
-			Role: "user", Time: rec.Time, Text: rec.Text,
+			Role: role, Time: rec.Time, Text: rec.Text,
 			Sel: rec.Sel, SelFile: rec.SelFile, Shot: rec.Shot,
 			Key: src + ":" + strconv.Itoa(idx),
 		})
 	}
 	return out, from
+}
+
+// saidLines считает записи журнала, уже лежащие в файле: столько же номеров
+// раздал им разбор, и с этого номера продолжает счёт дочитывание в потоке.
+// Считать выжившие после слияния записи (так было раньше) нельзя: эхо
+// выбрасывает часть из них, счёт уезжает назад, и одна и та же реплика
+// приезжает в ленту под двумя разными ключами, то есть двумя пузырями.
+func saidLines(home, key string) int {
+	data, err := os.ReadFile(saidFile(home, key))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(string(lastComplete(data)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // saidKeys называет разговоры, чей журнал показывается в ленте сессии: свой
@@ -140,7 +176,10 @@ func saidMerge(items []reply, said []reply) []reply {
 	}
 	fresh := make([]reply, 0, len(said))
 	for _, it := range said {
-		if !saidEcho(items, it.Text) {
+		// Эхом вытесняется только реплика человека: пометка в транскрипт не
+		// попадает вовсе, и сверять её там не с чем, а совпадение текста с
+		// чьей-то репликой стёрло бы разделитель из ленты.
+		if it.Role != "user" || !saidEcho(items, it.Text) {
 			fresh = append(fresh, it)
 		}
 	}
@@ -214,10 +253,24 @@ func saidOf(wire, way string) saidRec {
 	return saidRec{Text: text, Way: way, Sel: sel, SelFile: file, Shot: shot}
 }
 
+// saidMark пишет в журнал разговора пометку-разделитель. Отказ записи стоит
+// строки в логе: смена модели уже случилась, и ронять из-за журнала ответ
+// ручке нельзя.
+func (s *server) saidMark(key, text string) {
+	if err := s.saidPut(key, saidRec{Kind: saidKindMark, Text: text}); err != nil {
+		s.logf("пометка не легла в журнал разговора %s: %v", key, err)
+	}
+}
+
 // saidSay пишет отправленное в журнал разговора и не роняет ручку из-за отказа
 // записи: реплика уже уехала, и отказ тут стоит строки в логе, а не ошибки
 // человеку.
 func (s *server) saidSay(key, wire, way string) {
+	// Служебный заказ (перезапуск со сменой модели) в журнал разговора не
+	// едет: журнал это сказанное человеком, а тут говорит сам дашборд.
+	if said, _ := splitService(wire); strings.TrimSpace(said) == "" {
+		return
+	}
 	if err := s.saidPut(key, saidOf(wire, way)); err != nil {
 		s.logf("реплика не легла в журнал разговора %s: %v", key, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -165,4 +166,98 @@ func lintUnmerged(root string, b *Board, bp string) []string {
 		}
 	}
 	return finds
+}
+
+// promptPages это страницы корня, которые агент читает как контракт: форма
+// задачи, шкала ранга и виды приёмки. Правки правил ловятся отдельно, по
+// началу имени `RULES`.
+var promptPages = map[string]bool{"TASKFORM.md": true, "RANKING.md": true, "ACCEPTANCE.md": true}
+
+// promptPath отвечает, едет ли текст файла в контекст агента: скилл,
+// определение субагента, файл правил или страница-контракт корня. Проза
+// внутри kit/skills (README соседей, вспомогательные скрипты) сюда попадает
+// заодно, и это дешевле разбора расширений: подсказка ничего не запрещает.
+func promptPath(p string) bool {
+	if strings.HasPrefix(p, "kit/skills/") || strings.HasPrefix(p, "kit/agents/") {
+		return true
+	}
+	if strings.Contains(p, "/") {
+		return false
+	}
+	return strings.HasPrefix(p, "RULES") || promptPages[p]
+}
+
+// subjectHasTask отвечает, стоит ли ID задачи в теме коммита. Хвостовая цифра
+// отсекается: иначе коммиты DK-4480 считались бы коммитами DK-448.
+func subjectHasTask(subject, id string) bool {
+	rest := subject
+	for {
+		i := strings.Index(rest, id)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(id):]
+		if rest == "" || rest[0] < '0' || rest[0] > '9' {
+			return true
+		}
+	}
+}
+
+// taskPromptFiles собирает промпты, тронутые коммитами задачи. Источник это
+// коммиты с ID в теме по всем ссылкам, а не дифф ветки против main: к моменту
+// move check код обычно уже слит (ворота выше того и требуют, а сам move
+// зовёт shipctl merge после слияния), и дифф ветки там пуст. По коммитам
+// подсказка работает на обоих концах: до слияния они лежат в ветке, после в
+// main, а мелочь без ветки коммитится в main сразу.
+func taskPromptFiles(root, id string) []string {
+	out, err := exec.Command("git", "-C", root, "log", "--all", "-F", "--grep="+id,
+		"--format=%H%x09%s", "-n", "100").Output()
+	if err != nil {
+		return nil
+	}
+	var shas []string
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		sha, subject, ok := strings.Cut(ln, "\t")
+		if ok && subjectHasTask(subject, id) {
+			shas = append(shas, sha)
+		}
+	}
+	if len(shas) == 0 {
+		return nil
+	}
+	files, err := exec.Command("git", append([]string{"-C", root, "show", "--name-only",
+		"--format=", "--no-renames"}, shas...)...).Output()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, p := range strings.Split(strings.TrimSpace(string(files)), "\n") {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || !promptPath(p) {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// promptHint печатает одну строку про стенд, когда задача правила промпты.
+// Отказа тут нет: цена прогона стенда высока, и решает её платить человек, а
+// ворота лишь называют повод, пока задача ещё на виду (LLD DK-448 в файле
+// задачи, раздел «Границы»).
+func promptHint(root, id string) string {
+	paths := taskPromptFiles(root, id)
+	if len(paths) == 0 {
+		return ""
+	}
+	shown := paths
+	tail := ""
+	if len(shown) > 3 {
+		shown, tail = shown[:3], fmt.Sprintf(" и ещё %d", len(paths)-3)
+	}
+	return fmt.Sprintf("подсказка: задача правила промпты (%s%s), а такая правка меняет поведение агентов: проверить её стендом по скиллу prompt-test и вложить прогон в раздел «Проверка» файла задачи",
+		strings.Join(shown, ", "), tail)
 }

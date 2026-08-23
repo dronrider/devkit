@@ -151,6 +151,16 @@ class ProjectFindingsTest(SandboxCase):
                        "нет находки про хук реестра чатов")
         self.assertIn_("реестр чатов", out, "находка не говорит, что ломается без хука")
 
+    def test_4c_board_catchup_hook(self):
+        # Догон бокового дерева доски стоит на том же старте сессии, и находка
+        # про него своя: без хука отставание дерева не видно вовсе.
+        drop_lines(self.settings, "board-catchup")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("SessionStart-хук board-catchup.sh", out,
+                       "нет находки про хук догона бокового дерева")
+        self.assertIn_("устаревшая доска читается как свежая", out,
+                       "находка не говорит, что ломается без хука")
+
     def test_5_notifier_events(self):
         # Уведомитель висит на четырёх событиях сразу, и пропажа любого это
         # находка: без SubagentStop сессия молчит про отработавшего субагента, а
@@ -1795,6 +1805,9 @@ class HarnessHooksTest(SandboxCase):
         start = [h["command"] for g in hooks["SessionStart"] for h in g["hooks"]]
         self.assertEqual(len([c for c in start if "quota-refresh.sh" in c]), 1, start)
         self.assertEqual(len([c for c in start if "session-task.py" in c]), 1, start)
+        # Догон бокового дерева доски (DK-269) ложится туда же, третьим
+        # SessionStart-хуком, и повторный --fix его не дублирует.
+        self.assertEqual(len([c for c in start if "board-catchup.sh" in c]), 1, start)
         # Повторный --fix хуки второй раз не раскладывает.
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertNotIn_("хук харнеса на", out, "повторный --fix разложил хуки второй раз")

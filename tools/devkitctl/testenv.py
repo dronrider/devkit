@@ -98,7 +98,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-longfile.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"}
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [

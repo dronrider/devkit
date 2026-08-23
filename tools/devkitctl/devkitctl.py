@@ -207,6 +207,11 @@ SESSION_HOOK = "quota-refresh.sh"
 # снимок квоты.
 TASK_HOOK = "session-task.py"
 NOTIFY_HOOK = "notify.py"
+# Догон бокового дерева доски (DK-269): тоже SessionStart, потому что чинить
+# дерево надо до того, как сессия прочла из него устаревшую доску. Категория
+# сообщения в hook_gaps своя: без хука отставание не видно вовсе, а это не то
+# же самое, что пустой реестр чатов.
+BOARD_HOOK = "board-catchup.sh"
 # Подхват реплики (DK-341): PostToolUse на пустом матчере, потому что реплику
 # надо доставлять на любом ходе идущего витка, а не на записи файла. Категория
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
@@ -235,6 +240,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
+    ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1232,6 +1238,10 @@ def hook_gaps(text, settings):
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
                             "(hooks/README.md)" % (SESSION_HOOK, settings))
+        elif script == BOARD_HOOK:
+            findings.append("SessionStart-хук %s не подключён в %s: боковое дерево доски не "
+                            "догоняется на старте сессии, и устаревшая доска читается как свежая "
+                            "(hooks/README.md)" % (BOARD_HOOK, settings))
     if missing_post:
         findings.append("%s; правки текстов идут мимо проверок (hooks/README.md)"
                         % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_post,

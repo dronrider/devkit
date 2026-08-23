@@ -69,11 +69,11 @@ func treeClean(root string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == ""
 }
 
-// gitBusy замечает идущую операцию git. Чистое detached-дерево посреди rebase
-// или merge выглядит «позади main» так же, как отставшее боковое дерево, и
-// чекаут на середине сломал бы чужую операцию.
+// gitBusy замечает идущую операцию git. Чистое detached-дерево посреди rebase,
+// merge или bisect выглядит «позади main» так же, как отставшее боковое
+// дерево, и чекаут на середине сломал бы чужую операцию.
 func gitBusy(root string) bool {
-	for _, n := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
+	for _, n := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"} {
 		p, err := gitRevParse(root, "--git-path", n)
 		if err != nil || p == "" {
 			continue
@@ -158,7 +158,7 @@ func cmdCatchup(root string, hook bool) (string, error) {
 		return "", fmt.Errorf("не нашёл указателя свежести (origin/main или main), догонять не до чего")
 	}
 	if gitBusy(root) {
-		return hookSay(hook, "в дереве идёт операция git (rebase или merge), catchup её не трогает")
+		return hookSay(hook, "в дереве идёт операция git (rebase, merge или bisect), catchup её не трогает")
 	}
 	if !treeClean(root) {
 		return hookSay(hook, "дерево не чистое, двигать файлы под правками нельзя: закоммить или почисти его")

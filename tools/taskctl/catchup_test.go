@@ -130,6 +130,27 @@ func TestCatchupRefusesDuringRebase(t *testing.T) {
 	}
 }
 
+// TestCatchupRefusesDuringBisect: bisect держит HEAD на проверяемом коммите,
+// и чекаут уводил бы бисекцию с него так же, как rebase с середины.
+func TestCatchupRefusesDuringBisect(t *testing.T) {
+	_, wt, _ := laggedWorktree(t, 2)
+	p := gitOut(t, wt, "rev-parse", "--git-path", "BISECT_LOG")
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(wt, p)
+	}
+	if err := os.WriteFile(p, []byte("git bisect start\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cmdCatchup(wt, false)
+	if err == nil {
+		t.Fatal("дерево посреди bisect принято догонять")
+	}
+	if !strings.Contains(err.Error(), "bisect") {
+		t.Fatalf("отказ не про идущую операцию git: %v", err)
+	}
+}
+
 // TestCatchupHookActs: в режиме хука отставшее боковое дерево догоняется и
 // сообщение уходит в stdout, а не в ошибку: старт сессии хук не ломает.
 func TestCatchupHookActs(t *testing.T) {

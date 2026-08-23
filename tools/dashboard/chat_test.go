@@ -717,9 +717,62 @@ func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	if strings.Contains(again, "план работ файлом") {
 		t.Errorf("правило плана уехало в реплику человека: %s", again)
 	}
-	if !strings.Contains(continuePrompt("XR-1", execRotateDefault), pace) {
+	if !strings.Contains(continuePrompt("XR-1", execRotateDefault, ""), pace) {
 		t.Errorf("во вводной продолжения нет правила отзывчивости: %s",
-			continuePrompt("XR-1", execRotateDefault))
+			continuePrompt("XR-1", execRotateDefault, ""))
+	}
+}
+
+// Команда чужой подписки идёт без --model: клиент второй подписки берёт свою
+// модель из настроек её каталога конфигурации, а явное имя чужой лестницы
+// claude не узнаёт ([claude-code:unrecognized_model] в панели запуска DK-269)
+// и рискует увести запросы в квоту первой подписки.
+func TestChatCmdSecondHarnessOmitsModel(t *testing.T) {
+	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
+	got := chatCmd("", "glm-5.3", "", "посмотри доску", execRotateDefault, h, "agentctl")
+	if strings.Contains(got, "--model") {
+		t.Errorf("заказ второй подписки несёт явную модель: %s", got)
+	}
+	if !strings.Contains(got, "exec --harness 'втораяtest'") {
+		t.Errorf("заказ второй подписки потерял обёртку exec: %s", got)
+	}
+	// Резюм на второй подписке идёт той же дорогой: без модели в команде.
+	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
+	if strings.Contains(again, "--model") {
+		t.Errorf("резюм второй подписки несёт явную модель: %s", again)
+	}
+	// Подписка по умолчанию остаётся с моделью: выбор селектора панели работает
+	// как работал.
+	def := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	if !strings.Contains(def, " --model 'opus'") {
+		t.Errorf("заказ подписки по умолчанию потерял модель: %s", def)
+	}
+	byDef := chatCmd("", "opus", "", "посмотри доску", execRotateDefault,
+		&Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}, "agentctl")
+	if !strings.Contains(byDef, " --model 'opus'") {
+		t.Errorf("заказ default-харнеса потерял модель: %s", byDef)
+	}
+}
+
+// Правило плана несёт запасной адрес по имени tmux-сессии: в контуре второй
+// подписки CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 сжёг первый десяток
+// ходов, разыскивая свой ID по printenv и каталогу планов. Имя берётся из пар
+// окружения заказа, отдельного параметра у команды нет.
+func TestChatCmdPlanRuleFallbackName(t *testing.T) {
+	got := chatCmd(chatVars("XR-4", "chat-XR-4-1"), "opus", "", "привет", execRotateDefault, nil, "agentctl")
+	if !strings.Contains(got, "Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/chat-XR-4-1.json.") {
+		t.Errorf("в заказе нет запасного адреса плана с именем tmux: %s", got)
+	}
+	// Без имени tmux правило остаётся прежним: запасному адресу неоткуда
+	// взяться, и выдуманный он был бы хуже отсутствия.
+	bare := chatCmd("", "opus", "", "привет", execRotateDefault, nil, "agentctl")
+	if strings.Contains(bare, "Если CLAUDE_CODE_SESSION_ID пуст") {
+		t.Errorf("запасной адрес появился без имени tmux: %s", bare)
+	}
+	// Вводная продолжения несёт тот же запасной адрес.
+	cont := continuePrompt("XR-4", execRotateDefault, "chat-XR-4-2")
+	if !strings.Contains(cont, "~/.devkit/plans/chat-XR-4-2.json") {
+		t.Errorf("вводная продолжения без запасного адреса плана: %s", cont)
 	}
 }
 
@@ -737,7 +790,7 @@ func TestChatRotateRuleCarriesThreshold(t *testing.T) {
 	if strings.Contains(again, "640000") {
 		t.Errorf("правило ротации уехало в реплику человека: %s", again)
 	}
-	if got := continuePrompt("XR-1", 640000); !strings.Contains(got, "640000") {
+	if got := continuePrompt("XR-1", 640000, ""); !strings.Contains(got, "640000") {
 		t.Errorf("во вводной продолжения нет порога ротации: %s", got)
 	}
 }
@@ -1250,10 +1303,10 @@ func TestChatChannelRuleInEveryOrder(t *testing.T) {
 	if !strings.Contains(again, sign) {
 		t.Errorf("в резюмном заказе нет правила канала: %s", again)
 	}
-	if got := continuePrompt("XR-1", execRotateDefault); !strings.Contains(got, sign) {
+	if got := continuePrompt("XR-1", execRotateDefault, ""); !strings.Contains(got, sign) {
 		t.Errorf("во вводной продолжения нет правила канала: %s", got)
 	}
-	if got := goalContinuePrompt("XR-100", execRotateDefault); !strings.Contains(got, sign) {
+	if got := goalContinuePrompt("XR-100", execRotateDefault, ""); !strings.Contains(got, sign) {
 		t.Errorf("во вводной продолжения цели нет правила канала: %s", got)
 	}
 }

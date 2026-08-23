@@ -581,6 +581,32 @@ const planRule = "Веди план работ файлом ~/.devkit/plans/<ID 
 	"{\"text\",\"state\"}, помечай текущий in_progress, закрывай сделанные, " +
 	"пиши файл целиком."
 
+// planRuleFor приклеивает к правилу плана запасной адрес. В контуре второй
+// подписки CLAUDE_CODE_SESSION_ID пуст (переменную кладёт окружение подписки
+// по умолчанию, а не сам клиент), и агент DK-269 сжёг первый десяток ходов,
+// разыскивая свой ID по printenv и каталогу планов. Имя tmux-сессии заказ
+// знает дословно, им план и ведётся, а читатель плана смотрит оба адреса
+// (planOf).
+func planRuleFor(sess string) string {
+	if sess == "" {
+		return planRule
+	}
+	return planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом " +
+		"~/.devkit/plans/" + sess + ".json."
+}
+
+// tmuxVarRe достаёт имя tmux-сессии из пар окружения заказа: правило плана
+// несёт его запасным адресом, а отдельным параметром имя не едет, пары уже
+// собраны chatVars.
+var tmuxVarRe = regexp.MustCompile(`DEVKIT_TMUX='([^']*)'`)
+
+func envTmux(env string) string {
+	if m := tmuxVarRe.FindStringSubmatch(env); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // paceRule это правило отзывчивости. Разговор с человеком идёт ходами, и
 // длинный ход в нём читается как молчание: агент чата DK-460 полчаса гонял
 // mdfind по всему дому, и с той стороны это выглядело зависшей сессией. Долгое
@@ -624,7 +650,15 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 		// раздаёт экраны (LLD DK-328, решение 3).
 		client = shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " + shQuote(h.Bin)
 	}
-	cmd := head + client + " --model " + shQuote(model)
+	cmd := head + client
+	// Модель называется только подписке по умолчанию. Клиент второй подписки
+	// берёт свою модель сам, из настроек её каталога конфигурации, а явное имя
+	// чужой лестницы он не узнаёт (предупреждение unrecognized_model в панели
+	// DK-269), и уехать такой заказ рискует в квоту первой подписки. Селектор
+	// панели модель всё равно видит: она записана в памяти диалога.
+	if h == nil || h.Default {
+		cmd += " --model " + shQuote(model)
+	}
 	if resume != "" {
 		cmd += " --resume " + shQuote(resume)
 	}
@@ -634,7 +668,7 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 		// говорить за него. Ротация исполнителя едет тем же вагоном и по той
 		// же причине.
 		if resume == "" {
-			text += " " + planRule + " " + rotateRule(rotate)
+			text += " " + planRuleFor(envTmux(env)) + " " + rotateRule(rotate)
 		}
 		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
 		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
@@ -1243,15 +1277,15 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 // задачу, и пересказывать ей постановку незачем. Правила едут те же, что у
 // подъёма, включая ротацию исполнителя: длинный разговор диспетчера идёт
 // как раз резюмами, и порог ему нужен не меньше, чем новой сессии.
-func continuePrompt(id string, rotate int) string {
+func continuePrompt(id string, rotate int, sess string) string {
 	return "Продолжай работу по " + id + " с того места, где остановился. " +
-		planRule + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
+		planRuleFor(sess) + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
 }
 
 // goalContinuePrompt это вводная продолжения цели: правило про живую сессию у
 // цели другое (долгий цикл не подгоняют репликой), а правила заказа те же.
-func goalContinuePrompt(id string, rotate int) string {
-	return "Продолжай цель " + id + ". " + planRule + " " +
+func goalContinuePrompt(id string, rotate int, sess string) string {
+	return "Продолжай цель " + id + ". " + planRuleFor(sess) + " " +
 		rotateRule(rotate) + " " + paceRule + " " + channelRule
 }
 
@@ -1268,16 +1302,20 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
-	text := continuePrompt(id, s.rotateTokens())
-	if goal {
-		text = goalContinuePrompt(id, s.rotateTokens())
+	// Заказ собирается по месту: запасной адрес правила плана несёт имя
+	// tmux-сессии, а оно в каждой ветке своё (живой чат против резюма).
+	prompt := func(sess string) string {
+		if goal {
+			return goalContinuePrompt(id, s.rotateTokens(), sess)
+		}
+		return continuePrompt(id, s.rotateTokens(), sess)
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {
 		// Чата нет ни одного: поднимается новый, с той же репликой. Раньше тут
 		// экран откатывался на подъём конвейера, и у цели это был не тот
 		// механизм вовсе.
-		s.startFresh(w, found, id, text)
+		s.startFresh(w, found, id, prompt(""))
 		return
 	}
 	if e.Sock != "" {
@@ -1288,7 +1326,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 				"message": "цель " + id + " уже идёт: будить её нечем и незачем"})
 			return
 		}
-		err := peerSay(e.Sock, text)
+		err := peerSay(e.Sock, prompt(e.Tmux))
 		if err == nil {
 			s.logf("работа %s продолжена в живом чате %s (pid %d)", id, e.ID, e.PID)
 			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "socket",
@@ -1310,7 +1348,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sid := e.ID
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {
-		s.startFresh(w, found, id, text)
+		s.startFresh(w, found, id, prompt(""))
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -1325,7 +1363,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(chatVars(id, sess), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return

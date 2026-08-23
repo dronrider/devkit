@@ -150,8 +150,12 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 				" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'" +
 				// Правило плана едет в том же заказе: по нему дашборд рисует
-				// деления кольца и блок «План агента».
-				" claude -p '" + tc.prompt + " " + planRule + "'"
+				// деления кольца и блок «План агента». Запасной адрес называет
+				// имя tmux-сессии дословно: в контуре второй подписки
+				// CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 разыскивал свой
+				// ID десяток ходов.
+				" claude -p '" + tc.prompt + " " + planRule +
+				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + tc.id + ".json.'"
 			if !strings.Contains(got, want) {
 				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 			}
@@ -207,7 +211,8 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	want := "new-session -d -s task-XR-002 -c " + e.proj +
 		" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
-		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002 " + planRule + "'"
+		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002 " + planRule +
+		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json.'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 	}
@@ -245,7 +250,8 @@ func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 		t.Fatalf("запуск без выбора: %d %s", resp.StatusCode, text)
 	}
 	got := readFile(t, tmuxLog)
-	if !strings.Contains(got, " claude -p 'Выполни XR-002 "+planRule+"'") {
+	if !strings.Contains(got, " claude -p 'Выполни XR-002 "+planRule+
+		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json.'") {
 		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
 	}
 	if strings.Contains(got, "agentctl exec") {
@@ -952,7 +958,8 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			if !strings.Contains(text, `"kind":"task"`) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
-			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+" "+planRule+"'") {
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+" "+planRule+
+				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-"+tc.id+".json.'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
 			}
 		})

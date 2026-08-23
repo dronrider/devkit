@@ -1846,6 +1846,69 @@ func TestSessionPlanFileWins(t *testing.T) {
 	_ = path
 }
 
+// План сессии без файла по sid находится по имени tmux из реестра чатов:
+// запасной адрес правила плана велит сессии с пустым CLAUDE_CODE_SESSION_ID
+// (контур второй подписки, живой случай DK-269) писать план файлом имени своей
+// tmux-сессии, и читатель кружка обязан смотреть туда же, иначе правило
+// выполнено, а кольцо слепое.
+func TestSessionPlanByTmuxName(t *testing.T) {
+	e := newTestEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaa-2", transcriptFixture, time.Now())
+	reg := filepath.Join(e.home, ".devkit", "sessions.log")
+	if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := "2026-08-10T10:00:00 сессия aaa-2 задача XR-004 проект demo дерево - " +
+		"транскрипт - источник заказ повод startup tmux task-XR-004\n"
+	if err := os.WriteFile(reg, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(planDir(e.home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath(e.home, "task-XR-004"),
+		[]byte(`[{"text":"по имени tmux","state":"in_progress"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := e.loggedClient(t)
+	read := func() []planItem {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaa-2?n=5", "")
+		var got struct {
+			Plan []planItem `json:"plan"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Plan
+	}
+	if plan := read(); len(plan) != 1 || plan[0].Text != "по имени tmux" {
+		t.Fatalf("план по имени tmux не прочитан: %+v", plan)
+	}
+	// Файл по sid главнее: его пишет сессия, знающая свой ID, и запасной адрес
+	// при нём не смотрится вовсе.
+	if err := os.WriteFile(planPath(e.home, "aaa-2"),
+		[]byte(`[{"text":"по sid","state":"in_progress"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if plan := read(); len(plan) != 1 || plan[0].Text != "по sid" {
+		t.Fatalf("файл по sid не победил запасной адрес: %+v", plan)
+	}
+}
+
+// Приписка заказа с запасным адресом плана режется из пузыря целиком: имя tmux
+// в ней у каждого заказа своё, и константой хвост не узнаётся.
+func TestCutOrderRulesPlanFallback(t *testing.T) {
+	rule := planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом " +
+		"~/.devkit/plans/task-DK-269.json."
+	said, rules := cutOrderRules("сделай хорошо " + rule + " " + paceRule)
+	if said != "сделай хорошо" {
+		t.Errorf("слова человека обрезаны не так: %q", said)
+	}
+	if !strings.Contains(rules, "task-DK-269.json") || !strings.Contains(rules, paceRule) {
+		t.Errorf("приписки заказа не собраны: %q", rules)
+	}
+}
+
 // Автор реплики, пришедшей каналом живых сессий, читается по отправителю:
 // дашборд несёт слова человека, живая сессия клиента это агент-диспетчер, а
 // всё прочее просто агент. До этого любая такая реплика рисовалась пузырём

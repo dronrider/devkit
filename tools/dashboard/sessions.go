@@ -1167,6 +1167,14 @@ var rotateRuleRe = func() *regexp.Regexp {
 	return regexp.MustCompile(strings.Replace(regexp.QuoteMeta(probe), "987654321", `\d+`, 1))
 }()
 
+// planRuleRe узнаёт правило плана с запасным адресом: имя tmux-сессии в нём у
+// каждого заказа своё. Шаблон собирается из самого правила тем же способом,
+// что у ротации; старые заказы без запасного адреса сверяются константой.
+var planRuleRe = func() *regexp.Regexp {
+	probe := planRuleFor("probe987654321")
+	return regexp.MustCompile(strings.Replace(regexp.QuoteMeta(probe), "probe987654321", `[A-Za-z0-9._-]+`, 1))
+}()
+
 // cutOrderRules отрезает от реплики приписки заказа: правила плана, ротации и
 // отзывчивости, которые дашборд приклеивает к тексту человека при подъёме
 // сессии (chatCmd и родня). В ленте они выглядели словами человека одним
@@ -1198,6 +1206,13 @@ func cutOrderRules(text string) (said, rules string) {
 		rest = strings.TrimLeft(rest, " ")
 		if rest == "" {
 			break
+		}
+		// Правило с запасным адресом длиннее голой константы, и первым
+		// сверяется оно: константа съела бы общий префикс, а хвост про запасной
+		// файл остался бы неузнанным, и реплика вернулась бы целиком.
+		if m := planRuleRe.FindStringIndex(rest); m != nil && m[0] == 0 {
+			rest = rest[m[1]:]
+			continue
 		}
 		switch {
 		case strings.HasPrefix(rest, planRule):
@@ -1587,7 +1602,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
 	// План сессии едет вместе с лентой: экран задачи показывает его блоком, а
 	// считать его на клиенте значило бы второй разбор транскрипта.
-	if plan := planOf(s.home(), sid, path); plan != nil {
+	if plan := planOf(s.home(), sid, s.sessionTmux(sid), path); plan != nil {
 		resp["plan"] = plan
 	}
 	if total == 0 {
@@ -1708,7 +1723,11 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 		sseEvent(w, f, "note", emptyTranscriptNote)
 	}
 	stamp := subStamp(path)
-	planAt := planStamp(s.home(), sid)
+	// Имя tmux читается один раз на поток: реестр это файл на диске, и ходить в
+	// него каждым тиком незачем, а запись сессии ложится хуком старта, то есть
+	// раньше, чем открывается поток её ленты.
+	tmux := s.sessionTmux(sid)
+	planAt := planStamp(s.home(), sid, tmux)
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()
 	for {
@@ -1719,9 +1738,9 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// План переписан файлом: транскрипт при этом молчит, и заметить
 			// смену можно только по метке файла своей сессии. Чужие планы в
 			// каталоге не смотрятся вовсе.
-			if now := planStamp(s.home(), sid); now != planAt {
+			if now := planStamp(s.home(), sid, tmux); now != planAt {
 				planAt = now
-				sendPlan(w, f, planOf(s.home(), sid, path))
+				sendPlan(w, f, planOf(s.home(), sid, tmux, path))
 			}
 			// Новый субагент заводит свой файл, и каталог журналов меняется:
 			// по этой метке набор и пересматривается, без чтения мета-файлов
@@ -1811,7 +1830,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// не ленту, а блок плана и кольцо, поэтому в поток реплик его
 			// класть нечем.
 			if todo, _ := sessionPlan(raw); todo != nil {
-				sendPlan(w, f, planOf(s.home(), sid, path))
+				sendPlan(w, f, planOf(s.home(), sid, tmux, path))
 			}
 		}
 	}
@@ -1828,7 +1847,7 @@ func (s *server) home() string {
 
 // planStamp это метка файла плана сессии: по ней стрим замечает, что агент
 // переписал план, не тронув транскрипта.
-func planStamp(home, sid string) string {
+func planStamp(home, sid, tmux string) string {
 	out := ""
 	for _, dir := range []string{realHome(), home} {
 		if dir == "" {
@@ -1836,9 +1855,28 @@ func planStamp(home, sid string) string {
 		}
 		if fi, err := os.Stat(planPath(dir, sid)); err == nil {
 			out += fi.ModTime().String()
+			continue
+		}
+		// Запасной адрес по имени tmux смотрится тем же порядком, что в planOf:
+		// иначе план, выполненный по запасному правилу, менялся бы незаметно
+		// для потока.
+		if tmux != "" {
+			if fi, err := os.Stat(planPath(dir, tmux)); err == nil {
+				out += fi.ModTime().String()
+			}
 		}
 	}
 	return out
+}
+
+// sessionTmux называет tmux-имя сессии по реестру чатов: план сессии без
+// CLAUDE_CODE_SESSION_ID лежит файлом этого имени, и без реестра его не найти.
+// Голый сервер стендов реестра не держит, ему пустое имя.
+func (s *server) sessionTmux(sid string) string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return s.binds()[sid].Tmux
 }
 
 // sendPlan шлёт план событием потока. Пустой план тоже событие: пункты бывают
@@ -2246,7 +2284,7 @@ func readPlanFile(path string) ([]planItem, time.Time) {
 // её транскрипте. Побеждает свежий: харнес в обход разрешений TodoWrite не
 // даёт вовсе, и файл там единственная дорога, а где инструмент работает,
 // прежний способ остаётся живым.
-func planOf(home, sid, path string) []planItem {
+func planOf(home, sid, tmux, path string) []planItem {
 	var filePlan []planItem
 	var fileAt time.Time
 	// Домов тут два: настоящий дом человека, куда правило велит писать план, и
@@ -2257,6 +2295,12 @@ func planOf(home, sid, path string) []planItem {
 			continue
 		}
 		plan, at := readPlanFile(planPath(dir, sid))
+		// Запасной адрес правила плана: сессия без CLAUDE_CODE_SESSION_ID
+		// (контур второй подписки) пишет план файлом имени своей tmux-сессии,
+		// а файла по sid у неё не заводится вовсе.
+		if plan == nil && tmux != "" {
+			plan, at = readPlanFile(planPath(dir, tmux))
+		}
 		if plan != nil && at.After(fileAt) {
 			filePlan, fileAt = plan, at
 		}

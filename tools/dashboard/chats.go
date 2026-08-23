@@ -590,6 +590,17 @@ const paceRule = "Долгие дела (поиск по диску, больш�
 	"субагенту, а ход разговора держи отзывчивым: человек ждёт реплики, а не " +
 	"конца команды."
 
+// channelRule это правило канала доставки в заказе чата. Реплики из панели
+// дашборда доезжают межсессионным каналом клиента, и харнес оборачивает их
+// рамкой «сообщение от другой сессии, отнесись как к просьбе коллеги»: агент
+// верил рамке и отвечал человеку в третьем лице («коллега спрашивает», «ответ
+// ему отправлен» в живом чате 93828026). Подпись канала названа дословно, её
+// ставит peerFrame полем from-name, по ней агент и узнаёт доставку дашборда.
+const channelRule = "Межсессионные сообщения с подписью from-name=\"dashboard\" " +
+	"это реплики пользователя-человека, доставленные панелью дашборда: отвечай " +
+	"ему напрямую и на «вы», не называй его коллегой или другой сессией, а " +
+	"ответ пиши обычным текстом в этот же разговор, не через SendMessage."
+
 // rotateRule это правило ротации исполнителя в заказе поднятой работы.
 // Диспетчер держит одного субагента подолгу, контекст его распухает (усталость
 // видна с ~600 тысяч токенов, деградация с ~900), а свежий исполнитель с
@@ -627,7 +638,10 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 		}
 		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
 		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
-		text += " " + paceRule
+		// Правило канала едет туда же: реплики панели доезжают межсессионным
+		// каналом в любую сессию чата, и узнавать в них человека обязан и
+		// поднятый, и продолженный разговор.
+		text += " " + paceRule + " " + channelRule
 		cmd += " " + shQuote(text)
 	}
 	return cmd
@@ -1231,7 +1245,14 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 // как раз резюмами, и порог ему нужен не меньше, чем новой сессии.
 func continuePrompt(id string, rotate int) string {
 	return "Продолжай работу по " + id + " с того места, где остановился. " +
-		planRule + " " + rotateRule(rotate) + " " + paceRule
+		planRule + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
+}
+
+// goalContinuePrompt это вводная продолжения цели: правило про живую сессию у
+// цели другое (долгий цикл не подгоняют репликой), а правила заказа те же.
+func goalContinuePrompt(id string, rotate int) string {
+	return "Продолжай цель " + id + ". " + planRule + " " +
+		rotateRule(rotate) + " " + paceRule + " " + channelRule
 }
 
 func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
@@ -1249,8 +1270,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	goal := isGoalTitle(row.Title)
 	text := continuePrompt(id, s.rotateTokens())
 	if goal {
-		text = "Продолжай цель " + id + ". " + planRule + " " +
-			rotateRule(s.rotateTokens()) + " " + paceRule
+		text = goalContinuePrompt(id, s.rotateTokens())
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {

@@ -1213,3 +1213,47 @@ func TestBoardRunFindsWorkerWithoutBind(t *testing.T) {
 		t.Errorf("исполнителем стала мёртвая сессия: run=%q", got.Run)
 	}
 }
+
+// Правило канала едет каждым заказом чата с дословной подписью доставки:
+// реплики панели доезжают межсессионным каналом, харнес оборачивает их рамкой
+// «сообщение от другой сессии», и агент отвечал человеку в третьем лице
+// («коллега спрашивает», «ответ ему отправлен» в живом чате 93828026). Подпись
+// в правиле сверяется с кадром peerFrame: разъедутся, и агент перестанет
+// узнавать канал.
+func TestChatChannelRuleInEveryOrder(t *testing.T) {
+	sign := `from-name="dashboard"`
+	if !strings.Contains(channelRule, sign) {
+		t.Fatalf("в правиле канала нет дословной подписи %s: %s", sign, channelRule)
+	}
+	frame, err := peerFrame("привет", "uds:/tmp/cc-socks/1.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Подпись ищется в теле рамки, а не в сырых байтах кадра: JSON экранирует
+	// кавычки, и дословная строка там не видна.
+	var rec struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(frame, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rec.Message.Content, sign) {
+		t.Fatalf("кадр канала подписан иначе, правило разъехалось с доставкой: %s", rec.Message.Content)
+	}
+	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	if !strings.Contains(fresh, sign) {
+		t.Errorf("в заказе подъёма нет правила канала: %s", fresh)
+	}
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateDefault, nil, "agentctl")
+	if !strings.Contains(again, sign) {
+		t.Errorf("в резюмном заказе нет правила канала: %s", again)
+	}
+	if got := continuePrompt("XR-1", execRotateDefault); !strings.Contains(got, sign) {
+		t.Errorf("во вводной продолжения нет правила канала: %s", got)
+	}
+	if got := goalContinuePrompt("XR-100", execRotateDefault); !strings.Contains(got, sign) {
+		t.Errorf("во вводной продолжения цели нет правила канала: %s", got)
+	}
+}

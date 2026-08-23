@@ -110,6 +110,16 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."]             скелет доски в корне репозитория
 
+Держать дерево доски свежим:
+  catchup [--hook]                            догнать боковое дерево (detached HEAD,
+                                              чистое) до origin/main и напечатать,
+                                              сколько коммитов приехало; дерево на
+                                              ветке, не чистое и не позади отказывают
+                                              с причиной; list и show предупреждают
+                                              об отставании сами; --hook это режим
+                                              SessionStart-хука, молчащий вне боковых
+                                              деревьев
+
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
   review add <ID> "суть замечания"            дописать замечание, файл задачи
                                               создаётся сам
@@ -598,6 +608,12 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "id")
 		msg, err = cmdID(root(*dir))
+	case "catchup":
+		fs := flag.NewFlagSet("catchup", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		hook := fs.Bool("hook", false, "режим SessionStart-хука: молчать, когда догонять нечего или дерево не боковое")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "catchup [--hook]")
+		msg, err = cmdCatchup(root(*dir), *hook)
 	case "help":
 		fmt.Print(usageText)
 		return

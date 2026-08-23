@@ -313,3 +313,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-460 | LLD: в корп-контуре ветка доходит до пуша только через ревью [приёмка: user] | LLD | P1 | 2026-08-22 | [tasks/archive/2026/DK-460.md](tasks/archive/2026/DK-460.md) |
 | DK-470 | LLD открывается со строки задачи в show и дашборде [режим: poc] [приёмка: user] | task | P1 | 2026-08-23 | [tasks/archive/2026/DK-470.md](tasks/archive/2026/DK-470.md) |
 | DK-269 | Отставание бокового дерева от main не видно и чинится руками | task | P1 | 2026-08-23 | [tasks/archive/2026/DK-269.md](tasks/archive/2026/DK-269.md) |
+| DK-448 | Скилл prompt-test: проверка промптов стендом obeycheck и подсказка ворот при промптах в диффе | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-448.md](tasks/archive/2026/DK-448.md) |

@@ -8186,10 +8186,6 @@ async function saveDraftText(project, id, text) {
 // вместе с переделкой на общую форму, и разбор кончался молча: человек не
 // видел ни заведённой строки, ни вопроса грумера.
 const DRAFT_PHASES = {
-  running: {
-    head: "Груминг идёт",
-    next: "Разбор кончится строкой, припиской, пометкой «отложен» либо удалением записи.",
-  },
   row: {
     head: "Черновик оформлен строкой",
     next: "Дальше работа идёт по задаче: ранг и цена у неё уже стоят.",
@@ -8239,9 +8235,7 @@ function draftOutcomeCard(project, id, out, phase) {
   head.append(el("b", "", said.head));
   card.append(head);
   const body = el("div", "dbd");
-  // След на диске это про прошлое: у идущего разбора он говорил бы «груминга
-  // не было» ровно в тот момент, когда груминг идёт.
-  if (out.note && phase !== "running") {
+  if (out.note) {
     body.append(el("div", phase === "error" ? "error" : "dsay", out.note));
   }
   if (phase === "deferred" && out.reason) {
@@ -8296,6 +8290,30 @@ function draftAskCard(project, id, question) {
   return card;
 }
 
+// Опрос конца груминга: пока разбор идёт, состояние записи перечитывается по
+// кругу, той же механикой, какой панель разговора дожидается доставки реплики.
+// Таймер один: следующий заводит очередная перерисовка, пока разбор жив, а
+// конец разбора круг обрывает сам, без своего таймера. Уход с экрана снимает
+// опрос вместе с остальными живыми потоками (agentLive).
+const DRAFT_GROOM_POLL = 3000;
+let draftPoll = null;
+let draftPollWired = false;
+function watchDraftGroom() {
+  if (!draftPollWired) {
+    draftPollWired = true;
+    agentLive.push(() => {
+      if (draftPoll !== null) clearTimeout(draftPoll);
+      draftPoll = null;
+      draftPollWired = false;
+    });
+  }
+  if (draftPoll !== null) return;
+  draftPoll = setTimeout(() => {
+    draftPoll = null;
+    refresh().catch(console.error);
+  }, DRAFT_GROOM_POLL);
+}
+
 async function renderDraft(project, works, id) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
@@ -8312,10 +8330,14 @@ async function renderDraft(project, works, id) {
   // нетронутая запись это разные вещи, и причина отказа видна словами.
   const out = outcome.ok ? outcome.body
     : { note: outcome.body.error || "исход груминга не прочитался" };
+  const running = Boolean((works || []).find((w) => w.id === id));
+  // Конец груминга виден без перезагрузки страницы: пока разбор идёт, экран
+  // сам дожидается исхода опросом, и пометка уходит вместе с его приходом.
+  // Опрос стоит до сторожа правки: иначе он глох бы на время редактирования.
+  if (running) watchDraftGroom();
   // В поле лежит правка: перерисовка по фокусу окна стёрла бы её, и экран
   // остаётся как есть.
   if (taskDraft.id === id && taskDraft.dirty) return;
-  const running = Boolean((works || []).find((w) => w.id === id));
   const said = text.ok ? String(text.body.text || "") : "";
   // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
   const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
@@ -8348,8 +8370,11 @@ async function renderDraft(project, works, id) {
         actions.push(groom);
       }
       // Исход разбора стоит над текстом записи: он и есть ответ на вопрос
-      // «чем кончился груминг», ради которого экран открывают.
-      const lead = [draftOutcomeCard(project, id, out, phase)];
+      // «чем кончился груминг», ради которого экран открывают. У идущего
+      // разбора своей карточки нет: она повторяла бы пометку «груминг идёт»
+      // из шапки, а исход появится на её месте сам, опросом выше.
+      const lead = [];
+      if (phase !== "running") lead.push(draftOutcomeCard(project, id, out, phase));
       if (phase === "question") lead.push(draftAskCard(project, id, out.question));
       return formPage({
         key: "draft", project, id, lead,

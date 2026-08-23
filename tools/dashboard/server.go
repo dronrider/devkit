@@ -44,6 +44,12 @@ type server struct {
 	// каждый запуск, а стоит она подпроцесса agentctl.
 	harn     *HarnessView
 	harnBorn time.Time
+	// Исход последнего обновления снимка квоты (quota.go). Причина отказа едет
+	// в плашку квоты: молчание оставляло человека со старым снимком и без
+	// объяснения, а в журнале та же строка повторялась каждым тиком.
+	quotaErr   string
+	quotaErrAt time.Time
+	quotaSaid  bool
 
 	// Замки записи во «Входящие», по одному на репозиторий: сверка с лежащим и
 	// запись это одно действие, и разводить их по разным горутинам нельзя
@@ -476,8 +482,8 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		"path":    found.Path,
 		"board": boardRuns(raw, works, mine, worked, s.liveStages(found.Path),
 			s.waitLookup(found.Path)),
-		"works":   works,
-		"errors":  []string{},
+		"works":  works,
+		"errors": []string{},
 	}
 	// Пустой список работ при ненайденном tmux это не «агенты не работают»,
 	// причина называется и здесь, а не только в /healthz.

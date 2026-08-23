@@ -75,6 +75,20 @@ type QuotaView struct {
 	Dir       string         `json:"dir"`
 	Note      string         `json:"note,omitempty"`
 	Harnesses []QuotaHarness `json:"harnesses"`
+	// Fail это отказ последнего обновления. Пусто, пока обновление проходит:
+	// молчание тут и означает, что снимок стар не потому, что его перестали
+	// снимать.
+	Fail *QuotaFail `json:"fail,omitempty"`
+}
+
+// QuotaFail это причина, по которой снимок перестал обновляться. Прежде она
+// оседала только в журнале демона и повторялась там каждые десять минут, а
+// человек оставался с трёхчасовым снимком на экране и без единого слова о том,
+// почему он такой (живой случай пользователя).
+type QuotaFail struct {
+	Reason string `json:"reason"`
+	Dir    string `json:"dir,omitempty"`
+	Age    string `json:"age,omitempty"`
 }
 
 func quotaDir(home string) string {
@@ -231,7 +245,9 @@ func humanAge(d time.Duration) string {
 // подпроцессов, ради которых заведён кэш DK-242, а лишний слой стоил бы
 // показанного остатка, который на минуту отстаёт от снятого.
 func (s *server) handleQuota(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, readQuota(s.cfg.Home, s.now()))
+	view := readQuota(s.cfg.Home, s.now())
+	view.Fail = s.quotaFail()
+	writeJSON(w, http.StatusOK, view)
 }
 
 // Свежесть снимка квоты держит сам демон (замечание 21 двенадцатого круга
@@ -244,6 +260,130 @@ func (s *server) handleQuota(w http.ResponseWriter, r *http.Request) {
 // чтобы экран успел покраснеть между тиками.
 const quotaTick = 10 * time.Minute
 
+// quotaRefreshDir это каталог, из которого зовётся обновление снимка. Пустой
+// каталог означал бы рабочий каталог самого демона, а под launchd он к дереву
+// пользователя отношения не имеет: клиент харнеса такому каталогу не доверяет и
+// вместо панели остатка показывает вопрос про доверие, за которым refresh стоит
+// до срока. Снимок при этом стареет часами, а в журнал каждые десять минут
+// капает одна и та же ошибка (живой случай пользователя).
+//
+// Берётся настоящий дом, тот же, что у прочих служебных вызовов клиента
+// (homeEnv, chatVars): из него человек клиента и запускает, поэтому доверие
+// каталогу у клиента уже есть, а от того, откуда поднят демон, дом не зависит
+// вовсе. Дерево проекта тут не годится, хоть и доверено: транскрипт служебного
+// вызова лёг бы в чаты этого проекта и всплыл бы в списке разговоров.
+func quotaRefreshDir() string {
+	return realHome()
+}
+
+// quotaRefreshRun это шов вызова обновления: в работе подпроцесс agentctl, а
+// тест смотрит, из какого каталога зовут, не поднимая клиента вовсе.
+var quotaRefreshRun = func(dir, bin string) error {
+	_, err := runProcQuiet(dir, true, bin, "quota", "refresh")
+	return err
+}
+
+// quotaFailMin это длина фразы, которой хватает на причину: разрез идёт по
+// двоеточию, а первым куском у подпроцесса стоит слово вроде «ошибка», и одним
+// им причина не названа.
+const quotaFailMin = 24
+
+// quotaFailMax это потолок причины в плашке: блок стоит в колонке шириной с
+// ладонь, и совет с командами человек читает в журнале, а не там.
+const quotaFailMax = 140
+
+// quotaFailWords сжимает причину отказа до первой фразы. Разрез по двоеточию
+// нарочно: так причину пишут и agentctl, и подпроцессы девкита, а хвост за ним
+// это совет, что делать руками.
+func quotaFailWords(text string) string {
+	text = strings.TrimSpace(text)
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = strings.TrimSpace(text[:i])
+	}
+	out := ""
+	for _, part := range strings.Split(text, ": ") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		// Голая подпись подпроцесса это не причина: с неё начинается всякий его
+		// отказ, и в плашке она заняла бы место того, что стоит прочитать.
+		if out == "" && quotaFailLabel(part) {
+			continue
+		}
+		if out == "" {
+			out = part
+		} else {
+			out += ": " + part
+		}
+		if len([]rune(out)) >= quotaFailMin {
+			break
+		}
+	}
+	if r := []rune(out); len(r) > quotaFailMax {
+		out = strings.TrimSpace(string(r[:quotaFailMax])) + "..."
+	}
+	return out
+}
+
+// quotaFailLabel узнаёт подпись отказа, стоящую перед самой причиной.
+func quotaFailLabel(part string) bool {
+	switch strings.ToLower(part) {
+	case "ошибка", "ошибки", "error", "err":
+		return true
+	}
+	return false
+}
+
+// quotaFail собирает отказ для ответа ручки. Каталог вызова тут же: у отказа
+// про доверие он и есть половина ответа на вопрос «почему».
+func (s *server) quotaFail() *QuotaFail {
+	s.mu.Lock()
+	reason, at := s.quotaErr, s.quotaErrAt
+	s.mu.Unlock()
+	if reason == "" {
+		return nil
+	}
+	fail := &QuotaFail{Reason: reason, Dir: quotaRefreshDir()}
+	if !at.IsZero() {
+		fail.Age = humanAge(s.now().Sub(at))
+	}
+	return fail
+}
+
+// quotaOutcome помнит исход обновления и отвечает, сменился ли он. По этому
+// ответу пишется журнал: одинаковая строка раз в десять минут топит его, ничего
+// не добавляя, а смена исхода это как раз то, что стоит прочитать.
+func (s *server) quotaOutcome(reason string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fresh := !s.quotaSaid || s.quotaErr != reason
+	s.quotaSaid = true
+	s.quotaErr = reason
+	if reason == "" {
+		s.quotaErrAt = time.Time{}
+	} else {
+		s.quotaErrAt = s.now()
+	}
+	return fresh
+}
+
+// quotaRefresh снимает снимок и помнит исход: причина отказа уезжает в плашку
+// квоты, а в журнал идёт сменой исхода.
+func (s *server) quotaRefresh(bin string) {
+	dir := quotaRefreshDir()
+	if err := quotaRefreshRun(dir, bin); err != nil {
+		full := procErr(err)
+		if s.quotaOutcome(quotaFailWords(full)) {
+			s.logf("снимок квоты не обновился (каталог %q): %s", dir, full)
+		}
+		return
+	}
+	if s.quotaOutcome("") {
+		s.logf("снимок квоты обновляется тиком демона (каталог %q)", dir)
+	}
+}
+
 // quotaKeeper обновляет снимок квоты по кругу, пока жив демон. Вызов служебный:
 // хуки devkit на нём молчат, и лента уведомлений от него не наполняется.
 func (s *server) quotaKeeper(stop <-chan struct{}) {
@@ -252,6 +392,10 @@ func (s *server) quotaKeeper(stop <-chan struct{}) {
 		s.logf("снимок квоты обновлять нечем: agentctl не нашёлся")
 		return
 	}
+	// Первый снимок снимается сразу: демон перезапускается каждой пересборкой,
+	// и ждать десять минут значило бы держать на экране снимок, который к этому
+	// времени уже протух.
+	s.quotaRefresh(bin)
 	t := time.NewTicker(quotaTick)
 	defer t.Stop()
 	for {
@@ -259,11 +403,7 @@ func (s *server) quotaKeeper(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			if _, err := runProcQuiet("", true, bin, "quota", "refresh"); err != nil {
-				s.logf("снимок квоты не обновился: %v", procErr(err))
-				continue
-			}
-			s.logf("снимок квоты обновлён тиком демона")
+			s.quotaRefresh(bin)
 		}
 	}
 }

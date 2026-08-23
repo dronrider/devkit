@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -215,5 +216,155 @@ func TestQuotaNoHarnessNamesInCode(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Живой случай пользователя: снимок квоты стоял трёхчасовой давности, а в
+// журнале каждые десять минут повторялось «claude спрашивает про доверие
+// каталогу». Обновление шло из рабочего каталога демона, а под launchd он к
+// дереву пользователя отношения не имеет, и клиент упирался в вопрос доверия
+// вместо панели остатка.
+
+// quotaCatch подменяет вызов обновления и запоминает каталог, из которого
+// звали. Настоящий agentctl тут не поднимается: предмет проверки это каталог.
+func quotaCatch(t *testing.T, err error) *string {
+	t.Helper()
+	dir := new(string)
+	was := quotaRefreshRun
+	quotaRefreshRun = func(got, bin string) error {
+		*dir = got
+		return err
+	}
+	t.Cleanup(func() { quotaRefreshRun = was })
+	return dir
+}
+
+// Каталог вызова не зависит от того, откуда запущен демон: он один и тот же до
+// и после смены рабочего каталога, и рабочим каталогом процесса не является.
+func TestQuotaRefreshDirNotCwd(t *testing.T) {
+	e := newTestEnv(t)
+	dir := quotaCatch(t, nil)
+
+	e.s.quotaRefresh("agentctl")
+	first := *dir
+	if first == "" {
+		t.Fatal("обновление зовётся с пустым каталогом: вызов уйдёт в рабочий каталог демона")
+	}
+	if !filepath.IsAbs(first) {
+		t.Fatalf("каталог вызова не абсолютный: %q", first)
+	}
+	if first != realHome() {
+		t.Fatalf("обновление зовётся не из дома пользователя: %q, дом %q", first, realHome())
+	}
+
+	t.Chdir(t.TempDir())
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.quotaRefresh("agentctl")
+	if *dir != first {
+		t.Fatalf("каталог вызова уехал вместе с рабочим: было %q, стало %q", first, *dir)
+	}
+	if *dir == wd {
+		t.Fatalf("обновление зовётся из рабочего каталога демона: %q", wd)
+	}
+}
+
+// Причина отказа доезжает до плашки квоты: ручка отдаёт её вместе со снимками,
+// коротко и с каталогом вызова, чтобы человек не гадал, почему снимок старый.
+func TestQuotaFailReachesPlate(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return quotaNow }
+	writeQuota(t, e.home, "harness-one", quotaFixtureA)
+	quotaCatch(t, fmt.Errorf("ошибка: claude спрашивает про доверие каталогу, панель за этим "+
+		"вопросом недоступна: подтвердить доверие руками (claude в этом каталоге) либо "+
+		"гонять refresh из каталога, которому клиент уже доверяет"))
+
+	if view := getQuota(t, e); view.Fail != nil {
+		t.Fatalf("отказ взялся до единой попытки: %+v", view.Fail)
+	}
+
+	e.s.quotaRefresh("agentctl")
+	view := getQuota(t, e)
+	if view.Fail == nil {
+		t.Fatal("плашка молчит об отказе: человек остаётся со старым снимком без объяснения")
+	}
+	if !strings.Contains(view.Fail.Reason, "доверие каталогу") {
+		t.Fatalf("причина отказа не названа: %q", view.Fail.Reason)
+	}
+	if strings.Contains(view.Fail.Reason, "подтвердить доверие руками") {
+		t.Fatalf("в плашку уехал совет с командами, а не причина: %q", view.Fail.Reason)
+	}
+	if view.Fail.Dir != realHome() {
+		t.Fatalf("отказ не назвал каталог вызова: %q", view.Fail.Dir)
+	}
+	if view.Fail.Age == "" {
+		t.Fatal("отказ без возраста: свежая попытка неотличима от вчерашней")
+	}
+	// Снимки при этом на месте: отказ обновления не отменяет того, что уже снято.
+	if len(view.Harnesses) != 1 {
+		t.Fatalf("снимки пропали вместе с отказом: %+v", view.Harnesses)
+	}
+
+	// Обновление прошло, отказ снят: старая причина не висит на экране вечно.
+	quotaCatch(t, nil)
+	e.s.quotaRefresh("agentctl")
+	if view := getQuota(t, e); view.Fail != nil {
+		t.Fatalf("отказ остался после удачного обновления: %+v", view.Fail)
+	}
+}
+
+// Журнал пишется сменой исхода, а не каждым тиком: тик десятиминутный, и одна
+// и та же строка про доверие каталогу росла в журнале часами.
+func TestQuotaFailLoggedOnce(t *testing.T) {
+	e := newTestEnv(t)
+	said := []string{}
+	e.s.logf = func(format string, args ...any) { said = append(said, fmt.Sprintf(format, args...)) }
+	quotaCatch(t, fmt.Errorf("ошибка: claude спрашивает про доверие каталогу, панель за этим вопросом недоступна"))
+
+	for i := 0; i < 3; i++ {
+		e.s.quotaRefresh("agentctl")
+	}
+	if len(said) != 1 {
+		t.Fatalf("одна и та же причина написана %d раз: %q", len(said), said)
+	}
+	if !strings.Contains(said[0], "доверие каталогу") || !strings.Contains(said[0], realHome()) {
+		t.Fatalf("в журнале нет ни причины, ни каталога вызова: %q", said[0])
+	}
+
+	// Сменившаяся причина это новость, её журнал называет.
+	quotaCatch(t, fmt.Errorf("ошибка: claude не залогинен, снимать нечего"))
+	e.s.quotaRefresh("agentctl")
+	if len(said) != 2 {
+		t.Fatalf("сменившаяся причина не попала в журнал: %q", said)
+	}
+
+	// Как и возвращение к работе: молчание тут неотличимо от «всё ещё стоит».
+	quotaCatch(t, nil)
+	e.s.quotaRefresh("agentctl")
+	e.s.quotaRefresh("agentctl")
+	if len(said) != 3 {
+		t.Fatalf("возвращение к работе написано %d строками: %q", len(said)-2, said)
+	}
+}
+
+// Сжатие причины: в плашку идёт первая фраза, а совет с командами остаётся
+// журналу. Голое «ошибка» причиной не считается.
+func TestQuotaFailWords(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"ошибка: claude не залогинен, снимать нечего: пройти вход и повторить",
+			"claude не залогинен, снимать нечего"},
+		{"agentctl не ответил за 2m0s и снят по сроку", "agentctl не ответил за 2m0s и снят по сроку"},
+		{"  ошибка: короткая\nвторая строка  ", "короткая"},
+	}
+	for _, c := range cases {
+		if got := quotaFailWords(c.in); got != c.want {
+			t.Fatalf("причина сжалась не так: %q -> %q, ждали %q", c.in, got, c.want)
+		}
+	}
+	long := "ошибка: " + strings.Repeat("длинн", 60)
+	if got := quotaFailWords(long); len([]rune(got)) > quotaFailMax+3 {
+		t.Fatalf("длинная причина не подрезана: %d знаков", len([]rune(got)))
 	}
 }

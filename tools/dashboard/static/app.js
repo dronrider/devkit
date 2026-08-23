@@ -9905,6 +9905,17 @@ function quotaNodes(view) {
     return out;
   }
   if (view.note) out.push(el("div", "qnote", view.note));
+  // Отказ обновления стоит прямо в плашке, над снимками: возраст снимка тут и
+  // так написан, а без причины он читался как «дашборд забыл про квоту». В
+  // журнале эта же строка лежала одна и та же каждые десять минут, а человек
+  // смотрел на трёхчасовой снимок и объяснения не имел (живой случай).
+  if (view.fail && view.fail.reason) {
+    const bad = el("div", "qnote qfail", "обновление не проходит: " + view.fail.reason);
+    const when = view.fail.age ? "последняя попытка " + view.fail.age + " назад" : "";
+    const where = view.fail.dir ? "каталог вызова " + view.fail.dir : "";
+    bad.title = [when, where].filter(Boolean).join(", ");
+    out.push(bad);
+  }
   for (const h of view.harnesses || []) {
     out.push(el("div", "qsub", h.name));
     for (const b of h.buckets || []) out.push(quotaRow(b));

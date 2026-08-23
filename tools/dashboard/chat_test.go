@@ -664,6 +664,66 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 	}
 }
 
+// Команда чужой подписки несёт режим разрешений флагом: свежий профиль
+// поднимает клиента в ручном режиме, и чат вставал с вопросом «Do you want to
+// proceed?» на каждом инструменте (живой случай chat-13 на второй подписке).
+// Явный флаг выравнивает поведение с чатами подписки по умолчанию и не зависит
+// от содержимого чужого конфига; сам конфиг подписки дашборд не правит.
+func TestChatCmdSecondHarnessCarriesAutoPermissionMode(t *testing.T) {
+	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
+	got := chatCmd("", "glm-5.3", "", "посмотри доску", execRotateDefault, h, "agentctl")
+	if !strings.Contains(got, " --permission-mode auto") {
+		t.Errorf("заказ второй подписки без режима разрешений: %s", got)
+	}
+	// Резюм идёт тем же клиентом и с тем же режимом.
+	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
+	if !strings.Contains(again, " --permission-mode auto") {
+		t.Errorf("резюм второй подписки без режима разрешений: %s", again)
+	}
+	// Подписке по умолчанию флаг не ставится: её режим настраивает сам человек,
+	// и дашборд в него не лезет.
+	def := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	if strings.Contains(def, "--permission-mode") {
+		t.Errorf("режим разрешений уехал в заказ подписки по умолчанию: %s", def)
+	}
+}
+
+// Живой клиент, вставший на вопросе в своём терминале (разрешение, доверие
+// каталогу первого запуска чужого профиля), виден в списке чатов своим словом:
+// без него «чат молчит» неотличим от работы, а человеку нужен attach в tmux, а
+// не снятие процесса (живой случай chat-13 на второй подписке).
+func TestChatEntryAskWhenPermissionPrompt(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 23, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:59:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-13\t1\t1786000000\n")
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+
+	got := chatsOf(t, e, c)
+	if len(got) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один: %+v", len(got), got)
+	}
+	if got[0].Stuck != stuckAskWord {
+		t.Errorf("вопрос в терминале не узнан: stuck=%q, ждал %q", got[0].Stuck, stuckAskWord)
+	}
+	if got[0].Tmux != "chat-13" {
+		t.Errorf("имя tmux потеряно, плашке некуда звать attach: %+v", got[0])
+	}
+
+	// Ход кончился, значит вопрос закрыт: свежее событие снимает слово.
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid),
+		"2026-08-23T14:59:30 сессия " + sid[:8] +
+			" повод turn_done уровень фоновый бэкенд terminal-notifier цель - задача - проект demo " +
+			"код возврата: 0 текст «devkit: ход кончился» «готово»"})
+	if got := chatsOf(t, e, c); got[0].Stuck != "" {
+		t.Errorf("слово вопроса осталось после конца хода: %q", got[0].Stuck)
+	}
+}
+
 // Произвольный чат (кнопка «+» без задачи) поднимается тем же порядком, что
 // задачный: дерево это корень проекта, задачи в окружении нет вовсе, правило
 // плана и реплика человека едут заказом.

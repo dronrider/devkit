@@ -175,6 +175,14 @@ func lostTerminal(pid int, tmux string, alive func(string) bool, mod, now time.T
 	return now.Sub(mod) > stuckLostTerm
 }
 
+// stuckAskWord это слова третьего рода стоящего чата: клиент спросил
+// разрешение или ответ в своём терминале и ждёт человека там. Это не клин,
+// снимать процесс тут нельзя, человеку нужен attach в tmux-сессию: свежий
+// профиль второй подписки встаёт так на первом же запуске (вопрос доверия
+// каталогу, живой случай chat-13), и без плашки «чат молчит» неотличим от
+// работы.
+const stuckAskWord = "ждёт ответа в терминале"
+
 // stuckDeafWord это слова второго рода клина: терминал на месте, приглашение
 // рисуется, а событийный цикл мёртв (клиент 69975, чат 29fc49de). Сокет
 // такого клиента принимает соединения и байты силами ядра, ввод с клавиатуры
@@ -468,6 +476,12 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 			e.Stuck = stuckLostTermWord
 		} else if e.Sock != "" && s.peerDeaf(e.Sock, f.mod) {
 			e.Stuck = stuckDeafWord
+		} else if (e.Sock != "" || (e.Tmux != "" && alive(e.Tmux))) && s.chatStuck(f.ID) != "" {
+			// Третий род: живой клиент стоит на вопросе в своём терминале
+			// (разрешение, доверие каталогу первого запуска). Мера та же, что
+			// у ответа на реплику: последняя запись сессии в журнале
+			// уведомителя это permission_prompt.
+			e.Stuck = stuckAskWord
 		}
 		switch {
 		case e.Sock != "":
@@ -658,6 +672,14 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 	// панели модель всё равно видит: она записана в памяти диалога.
 	if h == nil || h.Default {
 		cmd += " --model " + shQuote(model)
+	} else {
+		// Режим разрешений чужой подписке называется флагом, а не берётся из
+		// её профиля: свежий профиль поднимает клиента в ручном режиме, и чат
+		// вставал с вопросом «Do you want to proceed?» на каждом инструменте
+		// (живой случай, chat-13 на второй подписке). Чаты подписки по
+		// умолчанию идут в авто-режиме, и одинаковость поведения не должна
+		// зависеть от содержимого чужого конфига.
+		cmd += " --permission-mode auto"
 	}
 	if resume != "" {
 		cmd += " --resume " + shQuote(resume)

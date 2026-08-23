@@ -211,7 +211,7 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	want := "new-session -d -s task-XR-002 -c " + e.proj +
 		" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
-		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002 " + planRule +
+		"' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto -p 'Выполни XR-002 " + planRule +
 		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json.'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)

@@ -441,7 +441,11 @@ func (s *smoke) bindsFile() string { return sessions.Path(s.home) }
 // DEVKIT_TASK, а угадывание по первой реплике снято, и без этой строки
 // поднятый разговор задачи не знает вовсе.
 func smokeClientBody(runs, name, journal, binds string) string {
-	body := fmt.Sprintf("printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$2\" >> %s\n",
+	// Заказ это последний аргумент команды, а не позиционный: между именем
+	// клиента и -p стоят флаги запуска (--permission-mode auto у второй
+	// подписки), и взятый по номеру аргумент ловил бы флаг вместо заказа.
+	body := fmt.Sprintf("for a; do said=\"$a\"; done\n"+
+		"printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$said\" >> %s\n",
 		name, shQuote(runs))
 	if journal == "" {
 		return body + "exit 0\n"
@@ -450,7 +454,7 @@ func smokeClientBody(runs, name, journal, binds string) string {
 mkdir -p "$dir"
 # Кавычки заказа экранируются: в заказе стоит правило плана с полями text и
 # state в кавычках, и сырой подстановкой оно ломало бы JSON транскрипта.
-said=$(printf '%%s' "$2" | sed 's/"/\\"/g')
+said=$(printf '%%s' "$said" | sed 's/"/\\"/g')
 {
   printf '{"type":"user","message":{"role":"user","content":"%%s"},"timestamp":"2026-08-10T10:00:01.000Z","promptSource":"sdk","gitBranch":"main"}\n' "$said"
   printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Взял в работу."}]},"timestamp":"2026-08-10T10:00:02.000Z"}\n'

@@ -51,6 +51,31 @@ const wedged = () => ({
     sock: "/tmp/cc-socks/19289.sock", pid: 19289, stuck: "терминал пропал" },
 });
 
+// --- вопрос в терминале: плашка зовёт attach и не предлагает снятие ---
+// Третий род стоящего чата: клиент спросил разрешение или доверие каталогу в
+// своём окне (первый запуск чужого профиля, живой случай chat-13). Это не
+// клин, процесс снимать нельзя, и плашка называет tmux-сессию дословно.
+{
+  const asks = () => ({
+    addr: "DK-460", sid: "8e9c1cf9-1111", task: "DK-460", chats: [], models: [],
+    fresh: false, error: "", note: "",
+    entry: { id: "8e9c1cf9-1111", state: "live", tasks: ["DK-460"], model: "opus",
+      sock: "/tmp/cc-socks/19289.sock", pid: 19289, tmux: "chat-13",
+      stuck: "ждёт ответа в терминале" },
+  });
+  const panel = sandbox.chatPanel("demo", asks());
+  const note = byClass(panel, "stuckn");
+  if (!note) fail("плашки вопроса в терминале нет: " + dump(panel).slice(0, 200));
+  const said = dump(note);
+  if (!said.includes("tmux attach -t chat-13")) {
+    fail("плашка не назвала tmux-сессию для attach: " + said);
+  }
+  if (said.includes("завис")) fail("вопрос в терминале назван клином: " + said);
+  if (deepBtn(note, "Продолжить")) {
+    fail("плашка вопроса предлагает снять процесс, а вопрос стоит человеку");
+  }
+}
+
 // --- плашка называет клин и несёт кнопку выхода ---
 {
   const panel = sandbox.chatPanel("demo", wedged());

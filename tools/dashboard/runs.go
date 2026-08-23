@@ -225,8 +225,11 @@ func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string
 	// claude до этой задачи, и проверка «не нашёлся» идёт по нему же.
 	// Имя, путь и клиент квотятся наравне с заказом: строка уходит шеллу сессии,
 	// и пробел в пути рассыпал бы команду на слова.
+	// Режим разрешений едет флагом по той же причине, что у чата (chatCmd):
+	// свежий профиль второй подписки поднимает клиента в ручном режиме, и
+	// конвейер вставал бы на вопросе разрешения, которого некому увидеть.
 	return chatVars(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
-		shQuote(h.Bin) + " -p " + shQuote(prompt)
+		shQuote(h.Bin) + " --permission-mode auto -p " + shQuote(prompt)
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {

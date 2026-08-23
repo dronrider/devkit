@@ -3753,6 +3753,12 @@ async function wireFeed(project, sid, opts) {
       if (!keep(item)) continue;
       dropSaid(item);
       talk.push(item);
+      // Начальный хвост проходит через тот же onItem, что поток и догон:
+      // эхо-сверка снимает местный пузырь той же перерисовкой, которой его
+      // копия встаёт из транскрипта. Без этого пузырь, переживший пересборку
+      // панели, стоял дублем под своей же репликой до следующего события
+      // ленты (снимок пользователя с двумя «вы, 14:03»).
+      if (opts.onItem) opts.onItem(item);
     }
     if (first.body.note) empty = first.body.note;
   }
@@ -5419,7 +5425,7 @@ async function chatState(project, addr, board) {
   if (st.fresh) {
     const sewn = chatSewn(project, addr, st.chats);
     if (sewn) {
-      echoPurge(project, addr);
+      echoMove(project, addr, sewn);
       chatLastSet(sewn);
       history.replaceState({ chat: sewn }, "", "#" + chatBase() + "/chat/" + sewn);
       st.addr = sewn;
@@ -6525,7 +6531,7 @@ async function chatSewLoop(project, name, addr, step, tries) {
     if (!addr || route().chat !== addr) return false;
     const hit = await chatByTmux(project, name);
     if (hit) {
-      echoPurge(project, addr);
+      echoMove(project, addr, hit.id);
       switchChat(hit.id);
       return true;
     }
@@ -6550,9 +6556,9 @@ async function chatWait(project, name, addr) {
     await new Promise((ok) => setTimeout(ok, 1500));
     const hit = await chatByTmux(project, name);
     if (hit) {
-      // Найденный диалог дальше сам подтверждает реплики своей лентой, память
-      // адреса подъёма ему больше не нужна.
-      if (addr) echoPurge(project, addr);
+      // Память адреса подъёма переезжает к найденному диалогу: пузырь первой
+      // реплики стоит, пока его не снимет эхо из ленты.
+      if (addr) echoMove(project, addr, hit.id);
       switchChat(hit.id);
       return true;
     }
@@ -6810,12 +6816,25 @@ function echoWrite(project, addr, list) {
   }
 }
 
-// echoPurge снимает память панели про адрес целиком: новый чат нашёлся в
-// списке, его лента дальше сама подтверждает реплики, а пузырь с адреса
-// «нового» без чистки воскресал бы при следующем нажатии «+».
-function echoPurge(project, addr) {
+// Пришивание переносит память адреса подъёма к родившемуся диалогу, а не
+// стирает её: пузырь первой реплики обязан пережить переезд панели и уйти
+// только своим эхом из ленты. Чистка на месте оставляла промежуток без единой
+// копии реплики, пока лента нового sid ехала с сервера, и человек видел
+// мигание (снимок пользователя). Старый ключ снимается, чтобы пузырь не
+// воскресал при следующем нажатии «+».
+function echoMove(project, from, to) {
   try {
-    localStorage.removeItem(ECHO_KEY + project + "/" + addr);
+    const key = ECHO_KEY + project + "/";
+    const raw = localStorage.getItem(key + from);
+    if (raw && from !== to) {
+      let add = [];
+      let was = [];
+      try { add = JSON.parse(raw); } catch (err) { add = []; }
+      try { was = JSON.parse(localStorage.getItem(key + to) || "[]"); } catch (err) { was = []; }
+      const list = (Array.isArray(was) ? was : []).concat(Array.isArray(add) ? add : []);
+      if (list.length) localStorage.setItem(key + to, JSON.stringify(list));
+    }
+    localStorage.removeItem(key + from);
   } catch (err) {
     return;
   }
@@ -7492,7 +7511,16 @@ async function paintChat(project, addr, board, works) {
   chatFill = null;
   chatOpen = key;
   const gen = chatGen;
-  pin.replaceChildren(el("div", "empty", "чат открывается..."));
+  // Плашка ожидания только у пустой панели: пришивание нового чата и
+  // переключение диалога держат прежнее содержимое до готового нового, иначе
+  // между ними мигал пустой «чат открывается...» (снимок пользователя).
+  // Отклик при этом виден в тот же ход (его сторожит замер poc_bench_chat):
+  // над прежним разговором встаёт строка перехода, а не пустота вместо него.
+  if (!pin.children.length) {
+    pin.replaceChildren(el("div", "empty", "чат открывается..."));
+  } else if (!String((pin.children[0] || {}).className || "").includes("cswap")) {
+    pin.prepend(el("div", "empty cswap", "открывается другой разговор..."));
+  }
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows);
   if (gen !== chatGen) return;

@@ -226,7 +226,8 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
 // --- вторая подписка: модель называет сама подписка ---
 // Заказ второй подписки явной модели не несёт, а история разговора живёт в её
 // профиле: селектор тут не действие, а честный текст, и смена в нём ничего не
-// шлёт.
+// шлёт. Имени подписки отдельной меткой рядом с селектором нет: оно живёт в
+// подсказке, а метка выглядела кнопкой и путала (замечание пользователя).
 {
   const stGlm = await sandbox.chatState("demo", "aaaa1111-1111", board);
   stGlm.entry = Object.assign({}, stGlm.entry, { model: "glm-5.3", liveModel: "glm-5.3", own: true });
@@ -236,8 +237,11 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (!String(sel.title).includes("glm-code")) {
     fail("селектор не назвал подписку словами: " + JSON.stringify(sel.title));
   }
-  if (!dump(glm).includes("glm-code")) {
-    fail("подписка разговора не видна без наведения: " + dump(glm).slice(0, 300));
+  if (byClass(glm, "cdlive")) {
+    fail("рядом с селектором осталась метка подписки: " + dump(byClass(glm, "cdlive")));
+  }
+  if (dump(glm).includes("glm-code")) {
+    fail("имя подписки написано в панели текстом, а не подсказкой: " + dump(glm).slice(0, 300));
   }
   const was = posted.length;
   sel.value = "opus";

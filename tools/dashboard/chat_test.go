@@ -1147,6 +1147,39 @@ func TestLostSaidGoesIntoResume(t *testing.T) {
 // Снятие клина это отдельный род стопа, и род называет зовущий. Обычный стоп
 // подаёт Escape в терминал, а у клина терминала нет: зависший процесс снимается
 // сигналом, иначе разговор остаётся вечным (инцидент с чатом DK-460).
+// Снятие под перезапуск (род drop): живая tmux-сессия заканчивается целиком,
+// чтобы следующая реплика подняла разговор резюмом с новой моделью. Это не
+// клин (у клина tmux уже нет) и не Escape (ход не прерывают, сессию снимают).
+func TestChatStopDropEndsLiveSession(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "ffff6666-6666-4666-8666-666666666666"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:40:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "chat-XR-1-1\t1\t1786000000\n")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{"drop": true}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("снятие под перезапуск: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"drop"`) {
+		t.Errorf("ручка не назвала род стопа: %s", text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "kill-session -t chat-XR-1-1") {
+		t.Errorf("tmux-сессия не снята: %s", got)
+	}
+
+	// Без живой tmux снимать под перезапуск нечего: род отвечает отказом, а не
+	// молчаливой удачей.
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{"drop": true}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusConflict {
+		t.Errorf("снятие мимо tmux не отбито: %d %s", resp.StatusCode, text)
+	}
+}
+
 func TestChatStopKillsWedged(t *testing.T) {
 	e, c := chatEnv(t)
 	now := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)

@@ -5700,59 +5700,152 @@ function chatDropOpen(project, st, anchor) {
 function modelPick(project, st) {
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
-  // В списке стоит выбранное человеком, и стоит до явной смены. Прежде тут
-  // показывалась модель из транскрипта, и выбор ею затирался на первой же
-  // перерисовке: человек ставил fable, лента приносила ответ прежней модели, и
-  // список откатывался на opus. Фактическая модель никуда не делась, она стоит
-  // пометкой рядом, когда расходится с выбором.
   const live = st.entry ? st.entry.liveModel : "";
   const cur = st.entry ? st.entry.model || chatModelPref() : chatModelPref();
+  const isLive = Boolean(st.entry && st.entry.state === "live");
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
-  const alien = Boolean(st.entry && st.entry.state === "live" && !st.entry.own);
+  const alien = Boolean(isLive && !st.entry.own);
+  // Живая сессия показывается своей настоящей моделью: клиент уже поднят, и
+  // молча показывать выбор поверх работающей модели значило бы врать
+  // (замечание пользователя: выбран opus, работает fable). Невступивший выбор
+  // виден пометкой рядом и вступает только перезапуском с подтверждением.
+  // У мёртвой и новой сессии стоит выбор: он и возьмётся подъёмом или резюмом.
+  const shown = isLive && live ? live : cur;
   // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
   // она платится. Своего перечня имён у панели нет, иначе новая подписка на
   // машине не появилась бы тут вовсе.
   const opts = (st.models || []).slice();
-  if (cur && !opts.some((m) => m.model === cur)) opts.unshift({ model: cur, tier: "", harness: "" });
+  for (const name of [cur, shown]) {
+    if (name && !opts.some((m) => m.model === name)) opts.unshift({ model: name, tier: "", harness: "" });
+  }
   for (const m of opts) {
     const o = el("option", "", m.model);
     o.value = m.model;
     if (m.tier) o.title = m.tier + ", " + m.harness;
-    if (m.model === cur) o.selected = true;
+    if (m.model === shown) o.selected = true;
     model.append(o);
   }
-  const why = (st.models || []).find((m) => m.model === cur);
-  model.title = why ? cur + ": ярус " + why.tier + ", подписка " + why.harness : "Модель агента";
+  const why = (st.models || []).find((m) => m.model === shown);
+  model.title = why ? shown + ": ярус " + why.tier + ", подписка " + why.harness : "Модель агента";
   if (alien) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
-  } else if (live && live !== cur) {
-    model.title = "Сейчас работает " + live + ", выбранная " + cur +
-      " возьмётся на следующем подъёме или резюме.";
   }
-  model.addEventListener("change", () => {
-    chatModelSet(model.value);
-    if (!st.sid) {
-      sayResult("модель нового чата: " + model.value);
-      return;
-    }
-    api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
-      { method: "POST", body: { model: model.value } })
-      .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
-      .catch(console.error);
-  });
   const box = el("div", "cmodel");
   box.append(model);
-  // Расхождение выбора с фактической моделью названо прямо: молчаливый список
-  // с одним именем неотличим от «работает выбранная».
-  if (live && live !== cur) {
-    const mark = el("span", "cdlive", live);
-    mark.title = model.title;
-    box.append(mark);
+
+  const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
+  const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
+  let ask = null;
+  const askShut = () => { if (ask) { ask.remove(); ask = null; } };
+  const backToShown = () => {
+    for (const o of model.children) o.selected = o.value === shown;
+    model.value = shown;
+  };
+  // Плашка подтверждения: без него живому чату ничего не меняется. Для
+  // разговора на второй подписке кнопки нет, есть честный текст: её заказ
+  // явную модель не несёт (модель называет сама подписка), а история
+  // разговора живёт в профиле подписки, и на другой её не продолжить.
+  const restartAsk = (pick) => {
+    askShut();
+    ask = el("div", "cnote modeln");
+    const second = harnessOf(shown) && harnessOf(shown) !== mainHarness;
+    const cross = harnessOf(pick) !== harnessOf(shown);
+    if (second || cross) {
+      ask.append(el("b", "", "Модель задаёт подписка"));
+      const who = harnessOf(shown) || harnessOf(pick);
+      ask.append(el("span", "", second
+        ? "Разговор идёт на подписке " + who + ": модель называет она сама, явную модель " +
+          "её заказ не несёт, и перезапуск её не сменит. Нужная модель выбирается " +
+          "подъёмом нового чата."
+        : "История разговора живёт в профиле подписки " + who + ", и на другой подписке " +
+          "её не продолжить. Нужная модель выбирается подъёмом нового чата."));
+      const okBtn = el("button", "btn btn-sm", "Понятно");
+      okBtn.type = "button";
+      okBtn.addEventListener("click", (ev) => { ev.stopPropagation(); backToShown(); askShut(); });
+      ask.append(okBtn);
+    } else {
+      ask.append(el("b", "", shown + " -> " + pick + ", перезапустить?"));
+      ask.append(el("span", "", "Живой клиент остаётся на своей модели, смена вступает " +
+        "перезапуском: сессия снимется и поднимется резюмом с новой моделью, история сохранится."));
+      const go = el("button", "btn btn-sm btn-acc", "Перезапустить с " + pick);
+      go.type = "button";
+      go.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        go.disabled = true;
+        modelRestart(project, st, pick).catch(console.error).finally(() => { go.disabled = false; });
+      });
+      const drop = el("button", "btn btn-sm", "Отмена");
+      drop.type = "button";
+      drop.addEventListener("click", (ev) => { ev.stopPropagation(); backToShown(); askShut(); });
+      const row = el("div", "mrow");
+      row.append(go, drop);
+      ask.append(row);
+    }
+    box.append(ask);
+  };
+  model.addEventListener("change", () => {
+    const pick = model.value;
+    if (!st.sid || !isLive) {
+      // Сессии нет либо она кончилась: выбор действует сам, его возьмёт
+      // ближайший подъём или резюм, как и раньше.
+      chatModelSet(pick);
+      if (!st.sid) {
+        sayResult("модель нового чата: " + pick);
+        return;
+      }
+      api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/model",
+        { method: "POST", body: { model: pick } })
+        .then((r) => { sayResult(r.body.message || r.body.error || "", !r.ok); })
+        .catch(console.error);
+      return;
+    }
+    if (pick === shown) {
+      askShut();
+      return;
+    }
+    restartAsk(pick);
+  });
+  // Сохранённый выбор, не совпавший с живой моделью, виден ожидающим: клик по
+  // пометке открывает ту же плашку перезапуска.
+  if (isLive && !alien && cur && shown && cur !== shown) {
+    const pend = el("button", "cdpend", shown + " -> " + cur);
+    pend.type = "button";
+    pend.title = "Выбрана " + cur + ", работает " + shown + ": смена вступит перезапуском или резюмом";
+    pend.addEventListener("click", (ev) => { ev.stopPropagation(); restartAsk(cur); });
+    box.append(pend);
   }
   return box;
 }
+
+// modelRestart перезапускает живой разговор с новой моделью: записывает выбор,
+// снимает сессию целиком (не Escape и не клин, свой род стопа) и поднимает тот
+// же разговор резюмом. Резюм берёт модель из памяти диалога, поэтому запись
+// выбора идёт первой.
+async function modelRestart(project, st, pick) {
+  sayResult("перезапускаю разговор с " + pick + "...");
+  const at = chatsURL(project) + "/" + encodeURIComponent(st.sid);
+  const set = await api(at + "/model", { method: "POST", body: { model: pick } });
+  if (!set.ok) {
+    sayResult(apiSaid(set), true);
+    return;
+  }
+  const drop = await api(at + "/stop", { method: "POST", body: { drop: true } });
+  if (!drop.ok) {
+    sayResult(drop.body.error || "сессия не снялась", true);
+    return;
+  }
+  const r = await api(at + "/say", { method: "POST", body: { text: CHAT_REMODEL } });
+  sayResult(apiSaid(r), !r.ok);
+  if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
+  await repaintChat();
+}
+
+// Реплика перезапуска со сменой модели: своих слов человек не говорил, и
+// говорить за него нельзя, это заказ продолжения.
+const CHAT_REMODEL = "Разговор перезапущен со сменой модели. " +
+  "Продолжай с того места, где остановился.";
 
 // Кольцо агентов в шапке разговора (макет пользователя). Пять сегментов это
 // фазы конвейера задачи, бегущая поверх них дуга значит «события в транскрипте

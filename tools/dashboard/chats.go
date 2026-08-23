@@ -920,6 +920,11 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// терминалу Escape подать некуда, и разговор в клине оставался бы вечным.
 	var body struct {
 		Kill bool `json:"kill"`
+		// Drop это третий род: снять живую сессию целиком под перезапуск
+		// (смена модели вступает только новым подъёмом клиента). Это не клин,
+		// у клина свой род, и не Escape: ход тут не прерывают, а сессию
+		// заканчивают, чтобы следующая реплика подняла её резюмом.
+		Drop bool `json:"drop"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
@@ -930,6 +935,22 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	}
 	last := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid])
 	alive := tmuxAliveFn()
+	if body.Drop {
+		if last.Tmux == "" || !alive(last.Tmux) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+				"чат %s не живёт в нашей tmux: снимать под перезапуск нечего", sid)})
+			return
+		}
+		if _, err := runProc("tmux", "kill-session", "-t", last.Tmux); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+				"tmux-сессия %s не снялась: %s", last.Tmux, procErr(err))})
+			return
+		}
+		s.logf("сессия чата %s снята под перезапуск (tmux-сессия %s)", sid, last.Tmux)
+		writeJSON(w, http.StatusOK, map[string]any{"way": "drop", "tmux": last.Tmux,
+			"message": "сессия снята: следующая реплика поднимет разговор резюмом"})
+		return
+	}
 	if body.Kill {
 		s.killWedged(w, sid, last.Tmux, alive)
 		return

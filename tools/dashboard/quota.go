@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -260,20 +261,72 @@ func (s *server) handleQuota(w http.ResponseWriter, r *http.Request) {
 // чтобы экран успел покраснеть между тиками.
 const quotaTick = 10 * time.Minute
 
+// Доверие каталогу клиент харнеса помнит у себя в конфиге, и спрашивается оно
+// оттуда, а не угадывается. Дом пользователя на роль доверенного каталога не
+// годится: он у клиента в списке стоит, а подтверждения доверия у него нет
+// (живой случай пользователя, где refresh упирался в вопрос именно из дома).
+
+// clientTrustFile это конфиг клиента с подтверждениями доверия каталогам.
+func clientTrustFile(home string) string {
+	return filepath.Join(home, ".claude.json")
+}
+
+// clientTrusted читает каталоги, доверие которым человек клиенту уже
+// подтвердил. Файла нет или формат разошёлся, значит доверенных каталогов
+// стенду неизвестно: вызов пойдёт откатом, а причина отказа доедет до плашки.
+func clientTrusted(home string) map[string]bool {
+	out := map[string]bool{}
+	if home == "" {
+		return out
+	}
+	data, err := os.ReadFile(clientTrustFile(home))
+	if err != nil {
+		return out
+	}
+	var conf struct {
+		Projects map[string]struct {
+			Trusted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(data, &conf); err != nil {
+		return out
+	}
+	for dir, p := range conf.Projects {
+		if p.Trusted {
+			out[dir] = true
+		}
+	}
+	return out
+}
+
+// quotaTrust это шов чтения доверия: тест подставляет свой список и не зависит
+// от конфига машины, на которой его гоняют.
+var quotaTrust = clientTrusted
+
 // quotaRefreshDir это каталог, из которого зовётся обновление снимка. Пустой
 // каталог означал бы рабочий каталог самого демона, а под launchd он к дереву
-// пользователя отношения не имеет: клиент харнеса такому каталогу не доверяет и
-// вместо панели остатка показывает вопрос про доверие, за которым refresh стоит
-// до срока. Снимок при этом стареет часами, а в журнал каждые десять минут
-// капает одна и та же ошибка (живой случай пользователя).
+// пользователя отношения не имеет: клиент такому каталогу не доверяет и вместо
+// панели остатка показывает вопрос про доверие, за которым refresh стоит до
+// срока. Снимок при этом стареет часами, а в журнал каждые десять минут капает
+// одна и та же ошибка (живой случай пользователя).
 //
-// Берётся настоящий дом, тот же, что у прочих служебных вызовов клиента
-// (homeEnv, chatVars): из него человек клиента и запускает, поэтому доверие
-// каталогу у клиента уже есть, а от того, откуда поднят демон, дом не зависит
-// вовсе. Дерево проекта тут не годится, хоть и доверено: транскрипт служебного
-// вызова лёг бы в чаты этого проекта и всплыл бы в списке разговоров.
-func quotaRefreshDir() string {
-	return realHome()
+// Берётся дерево проекта, доверие которому клиент уже помнит: в дереве человек
+// клиента и запускает, поэтому вопроса про доверие там не будет, а от того,
+// откуда поднят сам демон, выбор не зависит вовсе. Служебным вызовом транскрипт
+// в проекте не заводится, разговоры проекта такой refresh не засоряет
+// (проверено живым прогоном). Не нашлось ни одного доверенного дерева, значит
+// вызов идёт из дома: он хотя бы принадлежит человеку, а отказ теперь виден
+// причиной в плашке квоты.
+func (s *server) quotaRefreshDir() string {
+	home := realHome()
+	trusted := quotaTrust(home)
+	projects, _ := s.projects()
+	for _, p := range projects {
+		if trusted[p.Path] {
+			return p.Path
+		}
+	}
+	return home
 }
 
 // quotaRefreshRun это шов вызова обновления: в работе подпроцесс agentctl, а
@@ -344,7 +397,7 @@ func (s *server) quotaFail() *QuotaFail {
 	if reason == "" {
 		return nil
 	}
-	fail := &QuotaFail{Reason: reason, Dir: quotaRefreshDir()}
+	fail := &QuotaFail{Reason: reason, Dir: s.quotaRefreshDir()}
 	if !at.IsZero() {
 		fail.Age = humanAge(s.now().Sub(at))
 	}
@@ -371,7 +424,7 @@ func (s *server) quotaOutcome(reason string) bool {
 // quotaRefresh снимает снимок и помнит исход: причина отказа уезжает в плашку
 // квоты, а в журнал идёт сменой исхода.
 func (s *server) quotaRefresh(bin string) {
-	dir := quotaRefreshDir()
+	dir := s.quotaRefreshDir()
 	if err := quotaRefreshRun(dir, bin); err != nil {
 		full := procErr(err)
 		if s.quotaOutcome(quotaFailWords(full)) {

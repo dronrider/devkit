@@ -239,10 +239,28 @@ func quotaCatch(t *testing.T, err error) *string {
 	return dir
 }
 
+// quotaTrustSays подменяет чтение доверия клиента: список машины, на которой
+// гоняют тест, к предмету проверки отношения не имеет.
+func quotaTrustSays(t *testing.T, dirs ...string) {
+	t.Helper()
+	was := quotaTrust
+	quotaTrust = func(string) map[string]bool {
+		out := map[string]bool{}
+		for _, d := range dirs {
+			out[d] = true
+		}
+		return out
+	}
+	t.Cleanup(func() { quotaTrust = was })
+}
+
 // Каталог вызова не зависит от того, откуда запущен демон: он один и тот же до
 // и после смены рабочего каталога, и рабочим каталогом процесса не является.
+// Берётся дерево, доверие которому клиент уже помнит, иначе он спросит про
+// доверие вместо панели остатка.
 func TestQuotaRefreshDirNotCwd(t *testing.T) {
 	e := newTestEnv(t)
+	quotaTrustSays(t, e.proj)
 	dir := quotaCatch(t, nil)
 
 	e.s.quotaRefresh("agentctl")
@@ -253,8 +271,8 @@ func TestQuotaRefreshDirNotCwd(t *testing.T) {
 	if !filepath.IsAbs(first) {
 		t.Fatalf("каталог вызова не абсолютный: %q", first)
 	}
-	if first != realHome() {
-		t.Fatalf("обновление зовётся не из дома пользователя: %q, дом %q", first, realHome())
+	if first != e.proj {
+		t.Fatalf("обновление зовётся не из доверенного дерева: %q, доверено %q", first, e.proj)
 	}
 
 	t.Chdir(t.TempDir())
@@ -271,12 +289,56 @@ func TestQuotaRefreshDirNotCwd(t *testing.T) {
 	}
 }
 
+// Недоверенное дерево не берётся: вызов из него упёрся бы в вопрос про доверие,
+// и снимок остался бы вчерашним. Откат тут дом человека, а не каталог демона.
+func TestQuotaRefreshDirSkipsUntrusted(t *testing.T) {
+	e := newTestEnv(t)
+	quotaTrustSays(t)
+	dir := quotaCatch(t, nil)
+
+	e.s.quotaRefresh("agentctl")
+	if *dir == e.proj {
+		t.Fatalf("вызов ушёл в дерево, доверия которому у клиента нет: %q", *dir)
+	}
+	if *dir != realHome() {
+		t.Fatalf("откатом взят не дом человека: %q, дом %q", *dir, realHome())
+	}
+}
+
+// Доверие читается из конфига клиента, а не угадывается по списку проектов.
+func TestClientTrustedReadsConfig(t *testing.T) {
+	home := t.TempDir()
+	conf := `{"projects":{"/a/trusted":{"hasTrustDialogAccepted":true},` +
+		`"/a/asked":{"hasTrustDialogAccepted":false},"/a/plain":{}}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := clientTrusted(home)
+	if !got["/a/trusted"] {
+		t.Fatalf("подтверждённое доверие не прочиталось: %+v", got)
+	}
+	if got["/a/asked"] || got["/a/plain"] {
+		t.Fatalf("недоверенное дерево сошло за доверенное: %+v", got)
+	}
+	// Ни файла, ни разбора: доверенных каталогов просто нет, и падать тут нечему.
+	if len(clientTrusted(t.TempDir())) != 0 {
+		t.Fatal("без конфига клиента взялись доверенные каталоги")
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte("не json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if len(clientTrusted(home)) != 0 {
+		t.Fatal("битый конфиг клиента дал доверенные каталоги")
+	}
+}
+
 // Причина отказа доезжает до плашки квоты: ручка отдаёт её вместе со снимками,
 // коротко и с каталогом вызова, чтобы человек не гадал, почему снимок старый.
 func TestQuotaFailReachesPlate(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return quotaNow }
 	writeQuota(t, e.home, "harness-one", quotaFixtureA)
+	quotaTrustSays(t, e.proj)
 	quotaCatch(t, fmt.Errorf("ошибка: claude спрашивает про доверие каталогу, панель за этим "+
 		"вопросом недоступна: подтвердить доверие руками (claude в этом каталоге) либо "+
 		"гонять refresh из каталога, которому клиент уже доверяет"))
@@ -296,7 +358,7 @@ func TestQuotaFailReachesPlate(t *testing.T) {
 	if strings.Contains(view.Fail.Reason, "подтвердить доверие руками") {
 		t.Fatalf("в плашку уехал совет с командами, а не причина: %q", view.Fail.Reason)
 	}
-	if view.Fail.Dir != realHome() {
+	if view.Fail.Dir != e.proj {
 		t.Fatalf("отказ не назвал каталог вызова: %q", view.Fail.Dir)
 	}
 	if view.Fail.Age == "" {
@@ -321,6 +383,7 @@ func TestQuotaFailLoggedOnce(t *testing.T) {
 	e := newTestEnv(t)
 	said := []string{}
 	e.s.logf = func(format string, args ...any) { said = append(said, fmt.Sprintf(format, args...)) }
+	quotaTrustSays(t, e.proj)
 	quotaCatch(t, fmt.Errorf("ошибка: claude спрашивает про доверие каталогу, панель за этим вопросом недоступна"))
 
 	for i := 0; i < 3; i++ {
@@ -329,7 +392,7 @@ func TestQuotaFailLoggedOnce(t *testing.T) {
 	if len(said) != 1 {
 		t.Fatalf("одна и та же причина написана %d раз: %q", len(said), said)
 	}
-	if !strings.Contains(said[0], "доверие каталогу") || !strings.Contains(said[0], realHome()) {
+	if !strings.Contains(said[0], "доверие каталогу") || !strings.Contains(said[0], e.proj) {
 		t.Fatalf("в журнале нет ни причины, ни каталога вызова: %q", said[0])
 	}
 

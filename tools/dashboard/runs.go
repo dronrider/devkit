@@ -209,21 +209,15 @@ func harnessTail(h *Harness) string {
 	return ", подписка " + h.Name
 }
 
-// sessionEnv это пары окружения, которыми поднятая сессия сама себя называет в
-// реестре чатов: задачу и имя своей tmux-сессии SessionStart-хук
-// hooks/session-task.py берёт отсюда. Без задачи конвейер узнавался бы только
-// по ID в первой реплике: стартует он в главном чекауте, и дерево про него
-// молчит. Имя tmux-сессии из записи не вывести вовсе, а на нём стоит мера
-// кончившегося разговора, и знает его только тот, кто сессию поднял. Пары
-// уходят в начало команды, `-e` у tmux для этого не нужен, значит и версия
-// tmux ни при чём.
-func sessionEnv(id, sess string) string {
-	return "DEVKIT_TASK=" + shQuote(id) + " DEVKIT_TMUX=" + shQuote(sess) + " "
-}
-
+// Пары окружения конвейера те же, что у диалога (chatVars): задача и имя
+// tmux-сессии для SessionStart-хука, настоящий HOME и заглушка опроса фокуса.
+// HOME тут не мелочь: tmux-сервер, поднятый демоном, наследует его подложный
+// дом, agentctl exec разворачивает в нём тильду раскладки харнеса, и
+// CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог демона, а клиент
+// отвечал «Not logged in» (живой случай, запуск DK-269 на второй подписке).
 func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string {
 	if h == nil {
-		return sessionEnv(id, sess) + defaultClient + " -p " + shQuote(prompt)
+		return chatVars(id, sess) + defaultClient + " -p " + shQuote(prompt)
 	}
 	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
@@ -231,7 +225,7 @@ func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string
 	// claude до этой задачи, и проверка «не нашёлся» идёт по нему же.
 	// Имя, путь и клиент квотятся наравне с заказом: строка уходит шеллу сессии,
 	// и пробел в пути рассыпал бы команду на слова.
-	return sessionEnv(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
+	return chatVars(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
 		shQuote(h.Bin) + " -p " + shQuote(prompt)
 }
 
@@ -365,6 +359,18 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, m)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
+	}
+	// Модель конвейера чужой подписки пишется в память диалога: сам заказ её
+	// не называет (клиент подписки берёт свою по умолчанию), а панель без
+	// записи показывала бы в селекторе умолчание первой подписки поверх
+	// второй (живой случай, запуск DK-269 показывал opus). Пишется ярус pro: им
+	// подписка и поднимает клиента.
+	if harness != nil {
+		if m := harness.tierModel("pro"); m != "" {
+			if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: m}); err != nil {
+				s.logf("модель конвейера %s не записалась: %v", sess, err)
+			}
+		}
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
 		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id)+" "+planRule,

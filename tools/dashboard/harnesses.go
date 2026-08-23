@@ -105,7 +105,10 @@ func readHarnesses() HarnessView {
 		view.Note = agentctlMissingNote
 		return view
 	}
-	out, err := runProc(bin, "harness", "--json")
+	// Настоящий дом обязателен: под подложным HOME демона agentctl читал бы
+	// машинный конфиг из каталога демона и разворачивал в нём тильду ключа
+	// home, а CLAUDE_CONFIG_DIR второй подписки указывал бы в пустой каталог.
+	out, err := runProcHome(bin, "harness", "--json")
 	if err != nil {
 		view.Note = fmt.Sprintf("agentctl harness --json не ответил (%s): запуск идёт на подписке по умолчанию", procErr(err))
 		return view
@@ -142,6 +145,17 @@ func readHarnesses() HarnessView {
 		}
 	}
 	return view
+}
+
+// tierModel называет модель яруса подписки: ею подписка поднимает клиента,
+// когда заказ модели не называет.
+func (h *Harness) tierModel(tier string) string {
+	for _, m := range h.Models {
+		if m.Tier == tier {
+			return m.Model
+		}
+	}
+	return ""
 }
 
 // pick находит подписку по имени. Второе возвращаемое значение это причина

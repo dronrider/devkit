@@ -141,9 +141,13 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 			got := readFile(t, tmuxLog)
 			// Промпт уходит одной заквоченной строкой: tmux склеивает хвост
 			// new-session пробелами и отдаёт шеллу.
-			// Пары окружения едут в начале команды: ими поднятая сессия
-			// называет себя в реестре чатов (hooks/session-task.py).
+			// Пары окружения едут в начале команды те же, что у диалога
+			// (chatVars): имя сессии для реестра чатов, настоящий HOME (без
+			// него agentctl exec разворачивал тильду раскладки в подложном
+			// доме демона, и клиент второй подписки отвечал «Not logged in»)
+			// и заглушка опроса фокуса.
 			want := "new-session -d -s task-" + tc.id + " -c " + e.proj +
+				" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 				" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'" +
 				// Правило плана едет в том же заказе: по нему дашборд рисует
 				// деления кольца и блок «План агента».
@@ -197,12 +201,37 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 		}
 	}
 	// agentctl зовётся полным путём: tmux-сессия наследует PATH дашборда, а под
-	// launchd он системный, и утилит devkit в нём может не быть.
+	// launchd он системный, и утилит devkit в нём может не быть. HOME в заказе
+	// настоящий: exec разворачивает тильду раскладки харнеса, и в подложном
+	// доме демона CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог.
 	want := "new-session -d -s task-XR-002 -c " + e.proj +
+		" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
 		"' exec --harness 'втораяtest' -- 'клиент-2' -p 'Выполни XR-002 " + planRule + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+	}
+}
+
+// Модель конвейера чужой подписки оседает в памяти диалога: заказ её не
+// называет (клиент подписки берёт свою по умолчанию), а панель без записи
+// показывала бы в селекторе умолчание первой подписки поверх второй (живой
+// случай, запуск DK-269 показывал opus). Пишется ярус pro раскладки.
+func TestRunStartRecordsHarnessModel(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	fixture := strings.Replace(harnessJSONFixture,
+		`"bin": "клиент-2", "env": ["CONFIG_DIR"]`,
+		`"bin": "клиент-2", "env": ["CONFIG_DIR"], "models": [`+
+			`{"tier": "base", "model": "глм-база"}, {"tier": "pro", "model": "глм-про"}]`, 1)
+	writeAgentctlFake(t, e.bin, fixture)
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-002", "harness": "втораяtest"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск на второй подписке: %d %s", resp.StatusCode, text)
+	}
+	if got := e.s.chatStoreRead("tmux-task-XR-002").Model; got != "глм-про" {
+		t.Errorf("память диалога конвейера держит модель %q, ждал модель яруса pro подписки", got)
 	}
 }
 

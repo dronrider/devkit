@@ -276,3 +276,32 @@ func Touch(task, why string) {
 	tree, _ := os.Getwd()
 	Append(Path(home), Line(time.Now(), sid, Bind{Task: task, Source: BySrc, Tree: tree}, why))
 }
+
+// TmuxOwner называет разговор, которому сейчас принадлежит tmux-сессия name:
+// сессию из свежайшей записи реестра, назвавшей это имя. Пустое имя значит, что
+// реестр про него не знает.
+//
+// Имя tmux живёт дольше разговора и переиспользуется нарочно: конвейер задачи
+// поднимает task-<ID> тем же именем после снятия прежнего, а chatNewName отдаёт
+// номер снятого диалога следующему. Поэтому «сессия с таким именем жива» не
+// значит «жива та самая сессия», и адресовать по имени, не сверив хозяина,
+// значит писать в чужой разговор (DK-397 POC: реплика уехала посторонней живой
+// сессии, занявшей освободившееся имя).
+func TmuxOwner(recs map[string][]Bind, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	best, at := "", ""
+	for sid, rs := range recs {
+		for _, r := range rs {
+			if r.Tmux != name {
+				continue
+			}
+			if best == "" || r.Time > at {
+				best, at = sid, r.Time
+			}
+		}
+	}
+	return best
+}

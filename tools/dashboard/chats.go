@@ -1098,7 +1098,18 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if last.Tmux != "" && alive(last.Tmux) {
+	// Имя tmux адресом не работает без сверки хозяина: конвейер задачи снимает
+	// сессию и поднимает новую тем же именем, реестр при снятии не правится, а
+	// свёртка sessions.Last тянет Tmux из прежних записей. Живое имя, которое
+	// реестр отдал другому разговору, значит занятое имя, и send-keys по нему
+	// уехал бы в чужую сессию (DK-397 POC). Тогда процесса у диалога нет, и
+	// дальше идёт обычный резюм той же сессии.
+	held := sessions.TmuxOwner(recs, last.Tmux)
+	if held != "" && held != sid {
+		s.logf("имя tmux %s занято разговором %s, а не %s: реплика идёт резюмом, а не в чужую сессию",
+			last.Tmux, held, sid)
+	}
+	if last.Tmux != "" && alive(last.Tmux) && (held == "" || held == sid) {
 		if err := chatSend(last.Tmux, text); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"реплика не подалась в tmux-сессию %s: %s", last.Tmux, procErr(err))})

@@ -1633,3 +1633,38 @@ exit 0`)
 		t.Fatalf("реплика после отказа доехала %d раз: %q", len(got), got)
 	}
 }
+
+// Утечка адресации по имени tmux (DK-397 POC). Конвейер задачи подняли заново:
+// прежнюю tmux-сессию сняли, новую подняли тем же именем, а реестр при снятии
+// не правится, и свёртка sessions.Last всё ещё отдаёт старому разговору это
+// имя. Прежде реплика уезжала send-keys в живое имя, то есть в чужую сессию.
+// Теперь хозяин имени сверяется по реестру, и адресат остаётся собой.
+func TestChatSayDoesNotRideRecycledTmuxName(t *testing.T) {
+	e, c := chatEnv(t)
+	old := "aaaa5030-1111-4111-8111-111111111111"
+	fresh := "bbbb5031-2222-4222-8222-222222222222"
+	writeSession(t, e.home, e.proj, "", old, plainTalk, time.Now().Add(-time.Minute))
+	// Сокета у снятого разговора нет: дорога падает на имя tmux.
+	writeBinds(t, e.home,
+		"2026-08-24T12:42:48 сессия "+old+" задача DK-503 проект demo дерево "+e.proj+
+			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-503\n",
+		// Конвейер подняли заново: то же имя реестр отдал другому разговору.
+		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект demo дерево "+e.proj+
+			" транскрипт /tmp/t2.jsonl источник заказ повод startup tmux task-DK-503\n")
+	// Имя живо, и прежде этого хватало для доставки.
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "task-DK-503|1|123";;
+send-keys) echo "$@" >> `+filepath.Join(e.home, "sent.log")+`;;
+esac
+exit 0`)
+	at := e.srv.URL + "/api/projects/demo/chats/" + old + "/say"
+	r := doReq(t, c, "POST", at, sayBody("Продолжай работу", "m-1"))
+	said := body(t, r)
+	sent, _ := os.ReadFile(filepath.Join(e.home, "sent.log"))
+	if strings.Contains(string(sent), "Продолжай работу") {
+		t.Fatalf("реплика уехала в чужую сессию, занявшую имя task-DK-503: %q", sent)
+	}
+	if strings.Contains(said, `"way": "send-keys"`) || strings.Contains(said, `"way":"send-keys"`) {
+		t.Fatalf("дорога send-keys по занятому имени: %s", said)
+	}
+}

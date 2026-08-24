@@ -8558,15 +8558,163 @@ async function groomDraft(project, id, afterOk, harness, tier) {
   return r.ok;
 }
 
+// Выбор черновиков под разбор: отметки в строках, запуск один на выбранное.
+// Прежде кнопка «Провести груминг» стояла в каждой строке, и разбирать
+// накопитель приходилось по одной записи, а нажатие всплывало до обработчика
+// строки и уводило на экран записи вместо запуска (решение пользователя).
+// Память живёт экраном: уход с накопителя её очищает, потому что выбор это
+// намерение сейчас, а не настройка.
+const draftPick = new Set();
+// Перерисовка полосы запуска: её зовёт всякая правка выбора. Ставится она
+// самой полосой, а до первой отрисовки её нет.
+let draftBarPaint = null;
+// Отрисовка отметки в строке, по одной на запись. Своё нажатие строка рисует
+// сама, но снятие выбора приходит со стороны (после запуска разбора), и без
+// этой памяти отметки оставались бы гореть при пустом выборе.
+const draftPickSays = new Map();
+
+function draftPickSet(id, on) {
+  if (on) draftPick.add(id);
+  else draftPick.delete(id);
+  const say = draftPickSays.get(id);
+  if (say) say();
+  if (draftBarPaint) draftBarPaint();
+}
+
+function draftPickClear() {
+  const was = [...draftPick];
+  draftPick.clear();
+  for (const id of was) {
+    const say = draftPickSays.get(id);
+    if (say) say();
+  }
+  if (draftBarPaint) draftBarPaint();
+}
+
+// Полоса запуска разбора: одна кнопка на выбранное, с тем же выбором подписки
+// и яруса, что был у прежней кнопки в строке. Пока ничего не выбрано, кнопка
+// стоит гашеной: прятать её вовсе значило бы прятать и способ узнать, что
+// отметки вообще есть.
+function draftRunBar(project, works) {
+  const bar = el("div", "nbar");
+  draftRunBarFill(bar, project, works);
+  return bar;
+}
+
+function draftRunBarFill(bar, project, works) {
+  // Перерисовка полосы это её собственное дело: отметка в строке зовёт её через
+  // draftBarPaint, не трогая список.
+  draftBarPaint = () => { draftRunBarFill(bar, project, works); };
+  const picked = [...draftPick];
+  const box = el("span", "drun");
+  const label = "Разобрать выбранное" + (picked.length ? " (" + picked.length + ")" : "");
+  const grp = runControl(project, "", (word) => {
+    const btn = el("button", "btn btn-sm btn-acc", word);
+    btn.disabled = picked.length === 0;
+    return btn;
+  }, label, false, GROOM_HINT, "", "",
+    (harness, tier) => draftGroomAsk(project, works, box, harness, tier),
+    harnessTiers());
+  bar.replaceChildren(grp, box, el("span", "hint",
+    picked.length ? "Каждая запись пойдёт своим разговором."
+      : "Отметьте записи в списке, и разбор поднимется на выбранные."));
+}
+
+// Подтверждение перед подъёмом: сколько сессий встанет и что каждая пойдёт
+// своим разговором. Пачка тут не одно действие, а несколько подъёмов подряд, и
+// сказать об этом надо до нажатия, а не после (решение пользователя).
+async function draftGroomAsk(project, works, box, harness, tier) {
+  const picked = [...draftPick];
+  if (!picked.length) return false;
+  // Разбор части выбранного уже идёт: такие записи пропускаются, а не роняют
+  // всю пачку отказом.
+  const going = picked.filter((id) => taskLively(project, id, works));
+  const todo = picked.filter((id) => !going.includes(id));
+  box.replaceChildren();
+  const card = el("div", "dconfirm");
+  if (!todo.length) {
+    card.append(el("div", "dwhy", "Разбор идёт у всех выбранных записей (" +
+      going.join(", ") + "): поднимать нечего."));
+    const row = el("div", "drow");
+    const no = el("button", "btn btn-sm", "Понятно");
+    no.addEventListener("click", () => { box.replaceChildren(); });
+    row.append(no);
+    card.append(row);
+    box.append(card);
+    return false;
+  }
+  card.append(el("div", "dwhy", "Поднимется " + todo.length + " " +
+    plural(todo.length, "сессия", "сессии", "сессий") + " разбора, по одной на запись: " +
+    "каждая пойдёт своим разговором."));
+  if (going.length) {
+    card.append(el("div", "hint", "У " + going.length + " " +
+      plural(going.length, "записи", "записей", "записей") + " разбор уже идёт (" +
+      going.join(", ") + "), их пропустим."));
+  }
+  const row = el("div", "drow");
+  const go = el("button", "btn btn-sm btn-acc", "Поднять " + todo.length);
+  const no = el("button", "btn btn-sm", "Отмена");
+  no.addEventListener("click", () => { box.replaceChildren(); });
+  go.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    go.disabled = true;
+    await draftGroomRun(project, todo, box, harness, tier);
+  });
+  row.append(go, no);
+  card.append(row);
+  box.append(card);
+  return true;
+}
+
+// Подъём идёт по одной сессии: ручка разбора поднимает свою, и слать их разом
+// значило бы драться за один и тот же tmux-замок.
+async function draftGroomRun(project, ids, box, harness, tier) {
+  let done = 0;
+  const bad = [];
+  for (const id of ids) {
+    // afterOk тут пустой: пачка остаётся на накопителе, уводить её на экран
+    // одной записи некуда.
+    if (await groomDraft(project, id, "", harness, tier)) done += 1;
+    else bad.push(id);
+  }
+  box.replaceChildren();
+  draftPickClear();
+  sayResult("поднято " + done + " " + plural(done, "сессия", "сессии", "сессий") +
+    " разбора" + (bad.length ? ", не поднялось: " + bad.join(", ") : ""), bad.length > 0);
+  await refresh();
+  return done;
+}
+
 // DRAFT_PRIO переводит уровень разбора в слово чипа: имя уровня латиницей
 // живёт в поле prio ответа taskctl, а экран накопителя говорит по-русски, тем
 // же словом, каким уровень стоит в файле черновика и в draft list.
 const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низкий" };
 
-// Строка накопителя ведёт на экран записи, а кнопка груминга остаётся и в ней:
-// накопитель разбирают пачкой, не заходя внутрь каждой записи (LLD DK-328).
+// Строка накопителя ведёт на экран записи, а разбор запускается не из неё:
+// накопитель разбирают пачкой, и отметка выбора стоит в строке, а кнопка
+// запуска одна над списком (LLD DK-328, решение пользователя).
 function draftRow(project, d) {
-  const row = freshMark(el("div", "srow clicky"), d.id);
+  const row = freshMark(el("div", "srow clicky dsrow"), d.id);
+  // Отметка выбора это кнопка, а не флажок браузера: палец попадает в неё
+  // целиком, а состояние читается с самой кнопки, а не с её начинки.
+  const pick = el("button", "dpick" + (draftPick.has(d.id) ? " on" : ""));
+  pick.type = "button";
+  pick.append(el("span", "dbox"));
+  const pickSay = () => {
+    const on = draftPick.has(d.id);
+    pick.classList.toggle("on", on);
+    pick.setAttribute("aria-pressed", on ? "true" : "false");
+    withTip(pick, on ? "Снять выбор с " + d.id : "Выбрать " + d.id + " для разбора");
+    pick.setAttribute("aria-label", "Выбрать " + d.id + " для разбора");
+  };
+  pickSay();
+  draftPickSays.set(d.id, pickSay);
+  pick.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    draftPickSet(d.id, !draftPick.has(d.id));
+    pickSay();
+  });
+  row.append(pick);
   row.append(el("span", "id", d.id));
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
   // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
@@ -8585,16 +8733,6 @@ function draftRow(project, d) {
   // открывается с привязкой к его ID (решение пользователя).
   const talk = rowChatBtn(project, d);
   meta.append(talk);
-  // Разбор идёт под тем же ID, каким черновик станет строкой, и смотреть за
-  // ним удобнее на экране записи: ход, исход и повторная ходка стоят там.
-  const groomBox = runControl(project, d.id,
-    (label) => el("button", "btn btn-sm btn-acc", label),
-    "Провести груминг", false,
-    d.order ? "Заказ агенту: «" + d.order + "»." : "",
-    project + "/draft/" + d.id, "",
-    (harness, tier) => groomDraft(project, d.id, project + "/draft/" + d.id, harness, tier),
-    harnessTiers());
-  meta.append(groomBox);
   row.append(meta);
   row.addEventListener("click", (ev) => {
     // Нажатым оказывается не сама кнопка, а её начинка (значок у чата,
@@ -8603,7 +8741,7 @@ function draftRow(project, d) {
     // children, а children в браузере это HTMLCollection без методов массива:
     // нажатие на строку накопителя падало с TypeError, не доходя до перехода,
     // и запись не открывалась ни с доски, ни с телефонного таба.
-    if (talk.contains(ev.target) || groomBox.contains(ev.target)) return;
+    if (talk.contains(ev.target) || pick.contains(ev.target)) return;
     goKeepingChat(project + "/draft/" + d.id);
   });
   return row;
@@ -8634,6 +8772,17 @@ async function renderDrafts(project, works) {
       bar.append(newTaskButton(project, "Новая задача"), el("span", "hint", DRAFTS_HINT));
       return bar;
     },
+  }, {
+    key: "drafts-run",
+    // Полоса запуска перерисовывается сама, изнутри: от выбора её подпись не
+    // зависит нарочно, иначе отметка перебирала бы весь список на каждое
+    // нажатие. А вот живые работы в подпись входят: по ним полоса решает, у
+    // какой записи разбор уже идёт, и собранная однажды она отвечала бы по
+    // позапрошлому состоянию машины.
+    sign: [project, (works || []).filter((w) => w.live === WORK_BUSY || w.live === WORK_WAIT)
+      .map((w) => w.id).join(",")].join("|"),
+    make: () => draftRunBar(project, works),
+    fill: (bar) => { draftRunBarFill(bar, project, works); },
   }];
   if (!r.ok) {
     const text = r.body.error || "накопитель не прочитался";
@@ -8650,6 +8799,18 @@ async function renderDrafts(project, works) {
     return;
   }
   const drafts = r.body.drafts || [];
+  // Выбор живёт этим экраном и этим списком: записи, которой больше нет в
+  // накопителе (её разобрали), в выборе тоже быть не должно.
+  const here = new Set(drafts.map((d) => d.id));
+  for (const id of [...draftPick]) {
+    if (!here.has(id)) draftPick.delete(id);
+  }
+  // Память отрисовок чистится по списку, а не целиком: строка, пережившая
+  // обновление, свою отрисовку не перезаводит (её узел тот же), и снос всей
+  // памяти оставил бы такие строки без кисти.
+  for (const id of [...draftPickSays.keys()]) {
+    if (!here.has(id)) draftPickSays.delete(id);
+  }
   const rows = [{
     key: "drafts-head",
     sign: String(drafts.length),
@@ -8670,7 +8831,12 @@ async function renderDrafts(project, works) {
   // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
   // строки, что изменились, и список не уезжает из-под пальца.
   for (const d of drafts) {
-    rows.push({ key: d.id, sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : ""),
+    // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
+    // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
+    // подписи строка осталась бы отмеченной при пустом выборе.
+    rows.push({ key: d.id,
+      sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : "") +
+        (draftPick.has(d.id) ? "|pick" : ""),
       make: () => draftRow(project, d) });
   }
   items.push({
@@ -10940,6 +11106,13 @@ async function paint() {
   // перечитанной доски незачем (DK-316). Панель разговора живёт своим списком
   // потоков и сюда не входит вовсе.
   if (screen !== shownScreen || !rt.draft) closeAgentLive();
+  // Выбор черновиков это намерение сейчас, а не настройка: смена экрана его
+  // снимает. Перерисовка того же экрана (обновление по фокусу окна, ответ
+  // сервера) выбор переживает, иначе отметки таяли бы под рукой.
+  if (screen !== shownScreen) {
+    draftPick.clear();
+    draftBarPaint = null;
+  }
   shownScreen = screen;
   // Запрос в ключ экрана не входит нарочно (набор буквы это не переход), но
   // помнить набранное всё равно надо: по нему обновление отличает «сменился

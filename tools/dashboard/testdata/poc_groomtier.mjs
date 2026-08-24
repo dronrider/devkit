@@ -37,7 +37,22 @@ await settle();
 await sandbox.loadHarnesses();
 
 const draft = { id: "XR-D1", title: "мысль с телефона", age_words: "вчера" };
-const rowOf = () => sandbox.draftRow("demo", draft);
+// Кнопка разбора стоит над списком, а не в строке: строки держат отметки
+// выбора, и запуск один на выбранное (решение пользователя). Полоса
+// пересобирается на всякую правку выбора, поэтому её узлы берутся заново.
+const barNode = sandbox.draftRunBar("demo", []);
+const rowOf = () => {
+  sandbox.draftPickSet(draft.id, true);
+  return barNode;
+};
+// Подтверждение стоит между нажатием и подъёмом: сколько сессий встанет,
+// сказано до нажатия.
+const confirm = async () => {
+  const go = deepBtn(barNode, "Поднять 1");
+  if (!go) fail("подтверждения перед подъёмом нет: " + dump(barNode));
+  go.handlers.click({ stopPropagation: () => {} });
+  await settle();
+};
 
 // --- ярусы берутся из раскладки машины, а не из головы ---
 {
@@ -66,9 +81,10 @@ const rowOf = () => sandbox.draftRow("demo", draft);
 // --- широкая половина поднимает разбор ярусом pro ---
 {
   const row = rowOf();
-  const wide = deepBtn(row, "Провести груминг");
+  const wide = deepBtn(row, "Разобрать выбранное");
   wide.handlers.click({ stopPropagation: () => {} });
   await settle();
+  await confirm();
   const last = posted[posted.length - 1];
   if (!last || !last.path.includes("/groom")) fail("разбор не поднялся: " + JSON.stringify(posted));
   if (!last.body || last.body.tier !== "pro") {
@@ -90,6 +106,7 @@ const rowOf = () => sandbox.draftRow("demo", draft);
   if (!pick) fail("в списке нет второй подписки: " + dump(pop));
   pick.handlers.click({ stopPropagation: () => {} });
   await settle();
+  await confirm();
   const last = posted[posted.length - 1];
   if (!last.body || last.body.tier !== "base" || last.body.harness !== "glm-code") {
     fail("выбранные ярус с подпиской не доехали до заказа: " + JSON.stringify(last.body));

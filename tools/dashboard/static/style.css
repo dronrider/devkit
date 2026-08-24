@@ -367,6 +367,21 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .prog .run{background:var(--acc)}
 .srow{display:grid;grid-template-columns:66px 1fr auto;gap:7px;align-items:center;padding:9px 16px;border-top:1px solid var(--line);min-height:44px}
 .srow:first-child{border-top:none}
+/* строка накопителя: перед номером стоит отметка выбора, и колонок у неё на
+   одну больше, чем у прочих списков */
+.dsrow{grid-template-columns:auto 66px 1fr auto}
+/* отметка выбора черновика это кнопка с квадратом, а не флажок браузера: палец
+   попадает в неё целиком, а состояние читается с самой кнопки */
+.dpick{display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;background:none;cursor:pointer}
+.dbox{position:relative;width:16px;height:16px;border:1.5px solid var(--line2);border-radius:4px;background:var(--bg2)}
+.dpick:hover .dbox{border-color:var(--acc)}
+.dpick.on .dbox{border-color:var(--acc);background:var(--acc)}
+/* галочка рисуется углом рамки и меряется долями квадрата: тогда она едет за
+   его размером на телефоне */
+.dpick.on .dbox::after{content:"";position:absolute;left:32%;top:8%;width:26%;height:56%;border:solid var(--bg0);border-width:0 2px 2px 0;transform:rotate(45deg)}
+/* полоса запуска разбора: подтверждение встаёт под кнопкой во всю ширину */
+.drun{width:100%}
+.drun .dconfirm{padding:12px 0 2px}
 .srow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow.done .st{color:var(--tx3)}
 .srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
@@ -781,6 +796,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .swch div{min-height:44px;display:flex;align-items:center;justify-content:center}
   /* телефон: строка состава в две колонки, статус переносится под заголовок */
   .srow{grid-template-columns:minmax(60px,auto) 1fr;gap:6px}
+  /* телефон: отметка выбора крупнее под палец, а строка держит её колонкой */
+  .dsrow{grid-template-columns:auto minmax(60px,auto) 1fr}
+  .dpick{width:36px;height:36px}
+  .dbox{width:20px;height:20px}
   .srow .st{white-space:normal}
   .srow .sm{grid-column:1 / -1;justify-content:flex-start}
   .prog{width:100%;max-width:none}

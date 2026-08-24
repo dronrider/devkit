@@ -74,16 +74,22 @@ function press(row, target, why) {
 }
 
 // --- кнопки строки внутрь не уводят ---
+//
+// Кнопки разбора в строке больше нет вовсе: запуск один на выбранное и стоит
+// над списком, а в строке осталась отметка выбора. Она внутрь записи уводить
+// тоже не должна: прежде нажатие всплывало до обработчика строки и открывало
+// форму вместо своего дела (замечание пользователя).
 {
   const row = browserKids(sandbox.draftRow("demo", drafts[0]));
-  const groomBox = byClass(row, "split");
-  if (!groomBox) fail("у разбора нет составной кнопки с выбором подписки: " + dump(row));
-  const wide = deepBtn(row, "Провести груминг");
+  if (deepBtn(row, "Провести груминг")) fail("кнопка разбора вернулась в строку: " + dump(row));
+  const pick = byClass(row, "dpick");
+  if (!pick) fail("в строке накопителя нет отметки выбора: " + dump(row));
+  const box = byClass(pick, "dbox");
   const talk = deepBtn(row, "btn-ico");
   if (!talk) fail("кнопки чата в строке накопителя нет: " + dump(row));
   const icon = tag(talk, "SVG") || Array.from(talk.children)[0];
-  for (const [node, why] of [[wide, "на широкую половину разбора"],
-    [groomBox, "на коробку составной кнопки"],
+  for (const [node, why] of [[pick, "на отметку выбора"],
+    [box, "на квадрат внутри отметки"],
     [talk, "на кнопку чата"],
     [icon, "на значок внутри кнопки чата"]]) {
     sandbox.location.hash = "#demo/drafts";

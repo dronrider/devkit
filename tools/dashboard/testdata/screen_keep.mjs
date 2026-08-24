@@ -546,6 +546,7 @@ let grooming = false;
 let groomChat = null;
 
 let groomAsk = null;
+const groomed = [];
 let dropped = null;
 
 function groomWorks() {
@@ -833,6 +834,9 @@ const sandbox = {
     if (path.endsWith("/groom") && post) {
       groomAsk = JSON.parse(init.body).ask || "";
       const gid = path.slice(path.indexOf("/drafts/") + "/drafts/".length, path.indexOf("/groom"));
+      // Каждый поднятый разбор помнится отдельно: пачка поднимает по сессии на
+      // запись, и проверять надо все, а не последнюю.
+      groomed.push(gid);
       return reply({ message: "груминг " + gid + " поднят в tmux-сессии task-" + gid });
     }
     if (path.includes("/drafts/") && init && init.method === "DELETE") {
@@ -1242,15 +1246,19 @@ if (!dump(byId.get("flashes")).includes("сессия поднята")) {
 for (const t of timers.splice(0)) t.fn();
 byId.get("flashes").replaceChildren();
 
-// Черновики: строки и прокрутка переживают обновление, а кнопка разбора зовёт
-// груминг грумингом (DK-321).
+// Черновики: строки и прокрутка переживают обновление, а разбор запускается не
+// из строки. Кнопка в строке уводила на форму записи вместо запуска (нажатие
+// всплывало до обработчика строки), и устройство пересмотрено: строки держат
+// отметки выбора, а запуск один на выбранное и стоит над списком (решение
+// пользователя).
 running = false;
 await go("#demo/drafts");
 const wrap = find(groups, "XR-D2");
 if (!wrap) fail("накопитель не собрался: записи XR-D2 нет");
-if (!button(wrap, "Провести груминг")) {
-  fail("кнопка строки накопителя не зовёт груминг грумингом: " + dump(wrap));
+if (button(wrap, "Провести груминг")) {
+  fail("кнопка разбора осталась в строке накопителя: " + dump(wrap));
 }
+if (!byClass(wrap, "dpick")) fail("в строке накопителя нет отметки выбора: " + dump(wrap));
 // Заголовок записи режется кромкой строки, и подсказка с полным текстом у неё
 // такая же, как у строки доски: мысль с телефона длинная, а читать её, заходя
 // внутрь каждой записи, незачем (замечание пользователя).
@@ -1273,32 +1281,88 @@ if (groups.scrollTop !== 120) {
   fail("обновление накопителя сбило прокрутку: " + groups.scrollTop + " вместо 120");
 }
 
-// Груминг со строки накопителя ведёт на экран записи, а не на общий экран
-// агента: у того нет ни текста черновика, ни исхода разбора (LLD DK-328,
-// «Отвергнутое»). Подсказка кнопки называет заказ дословно, а переход не
-// теряет карточку ответа (DK-286).
-const d3Row = find(groups, "XR-D3");
-if (!d3Row) fail("в накопителе нет записи XR-D3: " + dump(groups).slice(0, 300));
-const d3Groom = button(d3Row, "Провести груминг");
-if (!d3Groom) fail("у записи XR-D3 нет кнопки груминга: " + dump(d3Row));
-if (!String(d3Groom.title).includes("Проведи груминг XR-D3")) {
-  fail("подсказка кнопки груминга не называет заказ дословно: " + JSON.stringify(d3Groom.title));
+// Пока ничего не выбрано, запускать нечего, и кнопка стоит гашеной.
+const runBtn = () => button(groups, "Разобрать выбранное") ||
+  button(groups, "Разобрать выбранное (1)") || button(groups, "Разобрать выбранное (2)");
+{
+  const btn = runBtn();
+  if (!btn) fail("кнопки запуска разбора над списком нет: " + dump(groups).slice(0, 400));
+  if (!btn.disabled) fail("кнопка запуска активна без выбора: " + dump(btn));
 }
-timers.length = 0;
-byId.get("flashes").replaceChildren();
-d3Groom.handlers.click({ stopPropagation: () => {} });
-await settle();
-if (sandbox.location.hash !== "demo/draft/XR-D3") {
-  fail("груминг со строки накопителя увёл не на экран записи: " + sandbox.location.hash);
+
+// Выбор двух записей поднимает по сессии на каждую, и экран остаётся на месте.
+{
+  groomed.length = 0;
+  timers.length = 0;
+  byId.get("flashes").replaceChildren();
+  for (const id of ["XR-D1", "XR-D3"]) {
+    const row = find(groups, id);
+    if (!row) fail("в накопителе нет записи " + id + ": " + dump(groups).slice(0, 300));
+    byClass(row, "dpick").handlers.click({ stopPropagation: () => {} });
+    await settle();
+  }
+  const btn = runBtn();
+  if (btn.disabled) fail("кнопка запуска осталась гашеной при выбранных записях");
+  btn.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  // Подтверждение называет число сессий и говорит, что каждая пойдёт своим
+  // разговором: пачка это несколько подъёмов, а не одно действие.
+  const said = dump(groups).replace(/\s+/g, " ");
+  if (!said.includes("Поднимется 2")) fail("подтверждение не назвало число сессий: " + said.slice(0, 400));
+  if (!said.includes("своим разговором")) {
+    fail("подтверждение молчит о том, что разговоров будет несколько: " + said.slice(0, 400));
+  }
+  if (groomed.length) fail("разбор поднялся до подтверждения: " + JSON.stringify(groomed));
+  const go2 = button(groups, "Поднять 2");
+  if (!go2) fail("в подтверждении нет кнопки подъёма: " + said.slice(0, 400));
+  go2.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (JSON.stringify(groomed) !== JSON.stringify(["XR-D1", "XR-D3"])) {
+    fail("подъём пошёл не по сессии на запись: " + JSON.stringify(groomed));
+  }
+  // Экран остаётся на накопителе: запуск это не переход к записи.
+  if (String(sandbox.location.hash).replace(/^#/, "") !== "demo/drafts") {
+    fail("запуск разбора увёл с накопителя: " + sandbox.location.hash);
+  }
+  // Выбор снят: пачка сделана, и отметки не висят до следующего захода.
+  const marked = (node) => {
+    let count = String(node.className || "").includes("dpick") &&
+      String(node.className || "").includes("on") ? 1 : 0;
+    for (const kid of node.children || []) count += marked(kid);
+    return count;
+  };
+  if (marked(groups)) fail("после запуска отметки выбора остались: " + marked(groups));
+  for (const t of timers.splice(0)) t.fn();
 }
-if (!find(groups, "draft-head")) {
-  fail("после перехода экран записи не собрался: " + dump(groups).slice(0, 300));
+
+// Идущий разбор пропускается словами, а не отказом всей пачке.
+{
+  grooming = true;
+  await go("#demo/drafts");
+  groomed.length = 0;
+  for (const id of ["XR-D1", "XR-D2"]) {
+    const row = find(groups, id);
+    byClass(row, "dpick").handlers.click({ stopPropagation: () => {} });
+    await settle();
+  }
+  runBtn().handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const said = dump(groups).replace(/\s+/g, " ");
+  if (!said.includes("разбор уже идёт")) {
+    fail("про идущий разбор не сказано ни слова: " + said.slice(0, 400));
+  }
+  if (!said.includes("XR-D2")) fail("не названо, какую запись пропускают: " + said.slice(0, 400));
+  const go2 = button(groups, "Поднять 1");
+  if (!go2) fail("пачка отказала целиком вместо пропуска идущего: " + said.slice(0, 400));
+  go2.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (JSON.stringify(groomed) !== JSON.stringify(["XR-D1"])) {
+    fail("поднялся не только непочатый разбор: " + JSON.stringify(groomed));
+  }
+  grooming = false;
+  for (const t of timers.splice(0)) t.fn();
+  byId.get("flashes").replaceChildren();
 }
-if (!dump(byId.get("flashes")).includes("груминг XR-D3 поднят")) {
-  fail("переход на экран записи стёр карточку ответа на нажатие: " + dump(byId.get("flashes")));
-}
-for (const t of timers.splice(0)) t.fn();
-byId.get("flashes").replaceChildren();
 
 // Поиск (DK-325). Выдача занимает свой экран по адресу "#проект/find/<запрос>":
 // запрос в адресе делает её ссылкой и переживает кнопку «назад». Группы стоят

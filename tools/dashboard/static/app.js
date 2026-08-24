@@ -3309,7 +3309,7 @@ function mdGo(text, addr) {
   a.addEventListener("click", (ev) => {
     if (ev.preventDefault) ev.preventDefault();
     if (ev.stopPropagation) ev.stopPropagation();
-    goKeepingChat(addr);
+    goFromChat(addr);
   });
   return a;
 }
@@ -5617,6 +5617,9 @@ function openChat(addr) {
   if (location.hash === to) return;
   history.pushState({ chat: addr }, "", to);
   chatDepth += 1;
+  // Полоска возврата уходит с экрана сразу, а не ответом сети: разговор уже
+  // открывается, и звать обратно в него больше некуда.
+  paintChatBack();
   refresh().catch(console.error);
 }
 
@@ -5645,6 +5648,48 @@ function switchChat(addr) {
   if (location.hash === to) return;
   history.replaceState({ chat: addr }, "", to);
   repaintChatOnly();
+}
+
+// Переход по ссылке из разговора. На широком экране панель стоит сбоку, экран
+// под ней меняется сам, и рвать разговор незачем. На телефоне панель занимает
+// экран целиком, и показать переход было негде: человек нажимал на ID задачи
+// в реплике и оставался в той же ленте, а ссылка выглядела мёртвой (замечание
+// пользователя). Тут панель отдаёт экран цели: хвост разговора уходит из
+// адреса, сам разговор остаётся в памяти, и полоска возврата приводит в него
+// обратно одним касанием. Кнопка «назад» браузера ведёт туда же: адрес с
+// хвостом остался прежней записью истории.
+function goFromChat(addr) {
+  const chat = route().chat;
+  if (!chat || !narrowScreen()) {
+    goKeepingChat(addr);
+    return;
+  }
+  chatLastSet(chat);
+  shutChatPanel();
+  location.hash = addr;
+  paintChatBack();
+}
+
+// Полоска возврата в разговор: стоит на телефоне, когда панель отдала экран
+// переходу по ссылке, а разговор ещё помнится. На широком экране панель никуда
+// не девалась, и возвращаться неоткуда. Закрытый рукой разговор память снимает,
+// и полоска уходит вместе с ней.
+function paintChatBack() {
+  const back = document.getElementById("cback");
+  if (!back) return;
+  const last = chatLast();
+  const show = Boolean(last) && !route().chat && narrowScreen();
+  back.hidden = !show;
+  if (!show) {
+    back.dataset.addr = "";
+    back.replaceChildren();
+    return;
+  }
+  if (back.dataset.addr === last && back.children.length) return;
+  back.dataset.addr = last;
+  const btn = barBtn("btn cbackbtn", "Вернуться в разговор", "i-chat");
+  btn.addEventListener("click", () => { openChat(last); });
+  back.replaceChildren(btn);
 }
 
 function closeChat() {
@@ -6622,7 +6667,7 @@ function chatHead(project, st) {
     const lab = withFull(el("span", "cdtask", st.task), st.title ? st.task + ": " + st.title : st.task);
     lab.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      goKeepingChat(project + "/" + st.task);
+      goFromChat(project + "/" + st.task);
     });
     pick.append(lab);
   }
@@ -8083,6 +8128,9 @@ async function paintChat(project, addr, board, works) {
     project = parts.project;
     addr = parts.addr;
   }
+  // Полоска возврата живёт тем же обходом, что и панель: она и есть её след
+  // на экране, пока экран отдан переходу.
+  paintChatBack();
   const panel = document.getElementById("cpanel");
   const pin = document.getElementById("cpin");
   const side = document.getElementById("clist");

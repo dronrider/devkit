@@ -9,7 +9,8 @@
 //
 // Зовётся: node testdata/poc_mdlinks.mjs static/app.js
 
-import { makeSandbox, settle, dump, allByClass, fail, appPathArg } from "./poc_dom.mjs";
+import fs from "node:fs";
+import { makeSandbox, settle, dump, allByClass, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
 
 const app = appPathArg();
 
@@ -120,6 +121,59 @@ const bubble = (project, text) => {
   await settle();
   if (sandbox.location.hash !== "devkit/DK-397/chat/aaaa1111-1111") {
     fail("нажатие на автоссылку закрыло разговор или ушло не туда: " + sandbox.location.hash);
+  }
+}
+
+// --- телефон: переход по ссылке отдаёт экран, возврат одним касанием ---
+//
+// Панель на узком экране занимает его целиком, и показать переход было негде:
+// нажатие на ID в реплике меняло адрес под панелью, а человек оставался в той
+// же ленте (замечание пользователя).
+{
+  const wide = sandbox.window.matchMedia;
+  sandbox.window.matchMedia = (q) => ({ matches: String(q).includes("max-width:900px"),
+    addEventListener: () => {}, removeEventListener: () => {} });
+  const panel = sandbox.document.getElementById("cpanel");
+  const back = sandbox.document.getElementById("cback");
+  panel.hidden = false;
+  sandbox.location.hash = "#devkit/chat/aaaa1111-1111";
+  const box = bubble("devkit", "Правку везёт DK-397.");
+  allByClass(box, "mdgo")[0].handlers.click({ preventDefault: () => {}, stopPropagation: () => {} });
+  await settle();
+  if (sandbox.location.hash.replace(/^#/, "") !== "devkit/DK-397") {
+    fail("переход с телефона ушёл не на экран задачи: " + sandbox.location.hash);
+  }
+  if (!panel.hidden) fail("панель осталась поверх экрана, на который вёл переход");
+  if (back.hidden) fail("дороги обратно в разговор на экране нет");
+
+  const btn = deepBtn(back, "Вернуться в разговор");
+  if (!btn) fail("полоска возврата собралась без кнопки: " + dump(back));
+  btn.handlers.click({});
+  await settle();
+  if (sandbox.location.hash.replace(/^#/, "") !== "devkit/DK-397/chat/aaaa1111-1111") {
+    fail("возврат привёл не в тот разговор: " + sandbox.location.hash);
+  }
+  if (!back.hidden) fail("полоска возврата осталась при открытом разговоре");
+
+  // Широкий экран переход переживает как раньше: панель стоит сбоку, и
+  // отдавать ей нечего.
+  sandbox.window.matchMedia = wide;
+  sandbox.location.hash = "#devkit/chat/aaaa1111-1111";
+  panel.hidden = false;
+  const wideBox = bubble("devkit", "Правку везёт DK-397.");
+  allByClass(wideBox, "mdgo")[0].handlers.click({ preventDefault: () => {}, stopPropagation: () => {} });
+  await settle();
+  if (sandbox.location.hash.replace(/^#/, "") !== "devkit/DK-397/chat/aaaa1111-1111") {
+    fail("на широком экране переход оборвал разговор: " + sandbox.location.hash);
+  }
+  if (panel.hidden) fail("на широком экране панель ушла с экрана без нужды");
+
+  // Узел полоски живёт разметкой страницы, а не сборкой экрана: не окажись его
+  // там, paintChatBack молчал бы, и на живой странице дороги обратно не было бы
+  // вовсе, а стенд этого не заметил бы (мок отдаёт узел на любой id).
+  const html = fs.readFileSync(app.replace(/app\.js$/, "index.html"), "utf8");
+  if (!html.includes('id="cback"')) {
+    fail("в разметке страницы нет узла полоски возврата в разговор");
   }
 }
 

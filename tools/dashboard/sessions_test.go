@@ -2084,3 +2084,27 @@ func TestFeedSplitsOrderRules(t *testing.T) {
 		t.Errorf("ротация с другим порогом сломала разрез: %+v", other)
 	}
 }
+
+// Служебный хвост заказа подписан в ленте словами, которые человеку что-то
+// говорят: «приписки заказа» не говорили ничего, а это именно инструкции,
+// которые дашборд даёт агенту поверх реплики (замечание пользователя).
+func TestOrderRulesNoteNamesAgentRules(t *testing.T) {
+	items := []reply{}
+	addUser(func(r reply) { items = append(items, r) }, "user", "2026-08-24T10:00:00Z",
+		"сделай хорошо "+planRule+" "+paceRule)
+	var note *reply
+	for i := range items {
+		if items[i].Role == roleNote {
+			note = &items[i]
+		}
+	}
+	if note == nil {
+		t.Fatalf("служебный хвост не отделился от слов человека: %+v", items)
+	}
+	if note.Note != "инструкции агента" {
+		t.Fatalf("хвост заказа подписан %q, человек читает это как загадку", note.Note)
+	}
+	if !strings.Contains(note.Text, paceRule) {
+		t.Fatalf("под подписью не сами инструкции: %q", note.Text)
+	}
+}

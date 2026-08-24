@@ -8,7 +8,7 @@
 //
 // Зовётся: node testdata/poc_home.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const projects = [
@@ -36,13 +36,13 @@ const go = async (hash) => {
 const groups = byId.get("groups");
 await settle();
 
-// Куда ляжет написанное, видно по переключателю над формой заведения: подсвечен
-// либо «Задача», либо «Черновик».
+// Что заводится, видно по самой форме: переключателя над ней больше нет, вид
+// выбран до неё (пунктом меню плюса либо экраном выбора), и форма собрана
+// только своими полями. Различает их кнопка сохранения.
 function madeAs() {
-  const swch = byClass(groups, "swch");
-  if (!swch) return "переключателя нет";
-  const on = swch.children.find((k) => String(k.className).includes("on"));
-  return on ? on.textContent : "не подсвечен никто";
+  if (deepBtn(groups, "Записать черновик")) return "Черновик";
+  if (deepBtn(groups, "Завести задачу")) return "Задача";
+  return "формы нет";
 }
 
 // --- на главной нет проектных кнопок ---
@@ -90,7 +90,9 @@ await go("");
   const opts = allByClass(byClass(rows[1], "pmenu"), "pmrow");
   opts[1].handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (sandbox.location.hash.replace(/^#/, "") !== "beta/new") {
+  // Плюс на карточке ведёт сразу в свою форму: вид выбран самим пунктом меню,
+  // и переспрашивать его вторым экраном незачем.
+  if (sandbox.location.hash.replace(/^#/, "") !== "beta/new/draft") {
     fail("черновик увёл не на заведение беты: " + sandbox.location.hash);
   }
   await sandbox.refresh();
@@ -105,7 +107,7 @@ await go("");
   const opts = allByClass(byClass(rows[0], "pmenu"), "pmrow");
   opts[0].handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (sandbox.location.hash.replace(/^#/, "") !== "alpha/new") {
+  if (sandbox.location.hash.replace(/^#/, "") !== "alpha/new/task") {
     fail("задача увела не на заведение альфы: " + sandbox.location.hash);
   }
   await sandbox.refresh();

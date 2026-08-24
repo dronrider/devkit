@@ -884,7 +884,8 @@ func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 		}
 	}
 	plus := funcBody(t, app, "function makePlus(")
-	for _, want := range []string{`"Задача"`, `"Черновик"`, `"/new"`} {
+	// Пункт меню ведёт сразу в свою форму: вид заводимого стоит в адресе.
+	for _, want := range []string{`"Задача"`, `"Черновик"`, `"/new/"`} {
 		if !strings.Contains(plus, want) {
 			t.Errorf("в меню плюса нет %q", want)
 		}

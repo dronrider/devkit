@@ -54,7 +54,9 @@ const fill = (text) => {
 };
 
 // --- задача: после заведения экран сам идёт за свежими данными ---
-sandbox.location.hash = "#demo/new";
+// Вид заводимого стоит в адресе: заведение сперва спрашивает, что заводят, и
+// форма открывается своя.
+sandbox.location.hash = "#demo/new/task";
 await sandbox.refresh();
 await settle();
 fill("свежая строка");
@@ -94,20 +96,8 @@ if (allByClass(groups, "fresh").length) {
 }
 
 // --- черновик: с карточки записи есть дорога в накопитель ---
-sandbox.location.hash = "#demo/new";
+sandbox.location.hash = "#demo/new/draft";
 await sandbox.refresh();
-await settle();
-const pick = (() => {
-  const hit = [];
-  const walk = (n) => {
-    if (dump(n).trim() === "Черновик" && !(n.children || []).length) hit.push(n);
-    for (const kid of n.children || []) walk(kid);
-  };
-  walk(groups);
-  return hit[0];
-})();
-if (!pick) fail("на форме нет переключателя в черновик: " + dump(groups).slice(0, 300));
-pick.handlers.click({ stopPropagation: () => {} });
 await settle();
 fill("свежая мысль");
 const write = deepBtn(groups, "Записать черновик");

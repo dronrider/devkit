@@ -314,8 +314,12 @@ function routeScreen(h) {
   if (parts.length >= 2 && parts[1] === "feed") {
     return { proj: parts[0], id: "", feed: true };
   }
+  // Заведение спрашивает, что заводят, и только потом открывает свою форму:
+  // одна форма на оба случая мешала поля черновика с полями строки доски
+  // (замечание пользователя про кашу полей). Вид стоит в адресе, поэтому на
+  // форму можно сослаться и вернуться в неё кнопкой «назад».
   if (parts.length >= 2 && parts[1] === "new") {
-    return { proj: parts[0], id: "", make: true };
+    return { proj: parts[0], id: "", make: true, kind: parts[2] || "" };
   }
   if (parts.length >= 2 && parts[1] === "drafts") {
     return { proj: parts[0], id: parts[2] || "", drafts: true };
@@ -2781,9 +2785,13 @@ function formPage(cfg) {
     }
     if (placed) return;
     // На телефоне полоса идёт под содержимым, на ноутбуке над ним, теми же
-    // местами, что держит раскладка экрана.
+    // местами, что держит раскладка экрана. Строки статуса может не быть вовсе
+    // (форма черновика: ни типа, ни цены, ни пометок), и тогда полоса встаёт
+    // после шапки: у узла вне дерева after не делает ничего, и кнопка
+    // «Записать черновик» пропадала с экрана совсем.
     if (narrow.matches) page.append(bar);
-    else chips.after(bar);
+    else if (chips.parentNode) chips.after(bar);
+    else head.after(bar);
     placed = true;
   };
   out.placeBar = placeBar;
@@ -9347,6 +9355,12 @@ const FULL_HINT = "Встанет в Backlog сразу, место выведе
 const NEW_RUN_HINT = "Взять в работу можно с карточки задачи: до заведения " +
   "у неё нет ни ID, ни статуса, от которого конвейер берёт заказ.";
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
+
+// Черновик пишется по SCQA, и подсказка поля говорит это словами, а не ждёт,
+// что человек помнит четыре буквы (скилл board-draft, TASKFORM.md, раздел
+// «Черновик»). Заголовок это первая строка, тело идёт под ней.
+const DRAFT_PLACEHOLDER = "Заголовок-исход одной строкой, дальше по SCQA: " +
+  "что происходит, чем мешает, какой вопрос, какая гипотеза";
 // Вид приёмки выбирается закрытым списком, а не текстом: свободный ввод на
 // телефоне дороже двух тапов, а значения всего три (DK-301).
 const ACCEPT_VALUES = ["agent", "mixed", "user"];
@@ -9454,28 +9468,51 @@ function draftDone(project, done) {
   groups.append(card);
 }
 
-function renderNew(project) {
+// Что заводим: две двери, и человек с первого взгляда видит, куда идёт.
+// Прежде экран открывал одну форму на оба случая, поля черновика стояли в ней
+// вперемешку с полями строки доски, а гашеные чипы объясняли, чего у черновика
+// нет (замечание пользователя про кашу полей). Памяти выбора тут нет нарочно:
+// заведение это осознанное действие, и подставлять прошлый ответ не за что.
+function renderMakePick(project) {
+  const groups = document.getElementById("groups");
+  groups.replaceChildren();
+  const card = el("div", "card mkpick");
+  card.append(el("div", "mkhead", "Что заводим в " + project));
+  for (const [kind, name, why] of [
+    ["draft", "Черновик", "Сырая мысль своими словами: заголовок и тело по SCQA " +
+      "(ситуация, осложнение, вопрос, гипотеза). Ранга, типа и цены у неё нет, " +
+      "их выдаст груминг."],
+    ["task", "Задача", "Строка доски со всеми метаданными: тип, цена, ранг и вид " +
+      "приёмки. Заводится, когда предмет и объём уже понятны."],
+  ]) {
+    const row = el("button", "mkrow" + (kind === "draft" ? " on" : ""));
+    row.type = "button";
+    row.append(el("b", "", name), el("span", "mkwhy", why));
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      resetNewForm(project);
+      newForm.draft = kind === "draft";
+      goKeepingChat(project + "/new/" + kind);
+    });
+    card.append(row);
+  }
+  groups.append(card);
+}
+
+// kind это вид заводимого: draft либо task. Форма собирается только своими
+// полями, и переключателя над ней больше нет: вид выбран до неё, на своём
+// экране.
+function renderNew(project, kind) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   if (newForm.project !== project) resetNewForm(project);
+  newForm.draft = kind === "draft";
 
-  // Переключатель стоит над шапкой: одна форма, два места, куда ляжет
-  // написанное.
-  const swch = el("div", "swch");
-  const asTask = el("div", newForm.draft ? "" : "on", "Задача");
-  const asDraft = el("div", newForm.draft ? "on" : "", "Черновик");
-  swch.append(asTask, asDraft);
-
+  const draft = newForm.draft;
   // Пометка про груминг стоит только у черновика и говорит сразу обе правды: и
   // чего у него нет, и кто это выдаст.
   const note = el("div", "dnote");
   note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
-  note.hidden = !newForm.draft;
-
-  // Метаданные у черновика гасятся, а не прячутся: видно, чего он лишён, и
-  // форма не перестраивается при переключении.
-  const typeOff = el("span", "chip", DRAFT_OFF_TYPE);
-  const costOff = el("span", "chip", DRAFT_OFF_COST);
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
   // барьер из шести показывается только у не агентского вида, и причина без
@@ -9516,23 +9553,25 @@ function renderNew(project) {
   // Взять в работу с формы нечего, и сказано это словами, а не погашенной
   // кнопкой: у ненаписанной строки нет ни ID, ни статуса, по которому конвейер
   // выбирает заказ.
-  const hint = el("div", "hint", FULL_HINT);
+  const hint = el("div", "hint", draft ? DRAFT_HINT : FULL_HINT);
   const runHint = el("div", "hint", NEW_RUN_HINT);
 
   let view = null;
   view = formPage({
     key: "new", project, id: "",
-    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
-    lead: [swch, note], extra: [card],
+    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } },
+      { text: "Что заводим", go: () => { goKeepingChat(project + "/new"); } }],
+    // У черновика на экране только он сам: ни карточки приёмки, ни полей
+    // строки доски. У задачи наоборот, ни слова про груминг.
+    lead: draft ? [note] : [], extra: draft ? [] : [card],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
-    has: { title: true, type: true, cost: true, rank: true },
-    titleHint: NEW_PLACEHOLDER, titleTall: true,
-    titleLabel: "заголовок задачи или текст черновика",
-    tailChips: [typeOff, costOff],
+    has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
+    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: true,
+    titleLabel: draft ? "текст черновика" : "заголовок задачи",
     form: newForm, edit: true, always: true,
-    saveLabel: newForm.draft ? "Записать черновик" : "Завести задачу",
-    actions: [hint, runHint],
+    saveLabel: draft ? "Записать черновик" : "Завести задачу",
+    actions: draft ? [hint] : [hint, runHint],
     check: () => {
       if (view) paint();
       // Рубежи те же, что у ручек: поправка на баг не про новую работу, строки
@@ -9596,47 +9635,19 @@ function renderNew(project) {
   });
   groups.append(view.page);
 
-  // Режим меняет подписи и гасит лишнее, но не перестраивает форму: поля
-  // остаются на своих местах, а написанное переживает переключение.
+  // Форма собрана под свой вид, и переключать в ней нечего: полей чужого вида
+  // на ней нет вовсе. Обход тут остаётся ради одного живого поля, барьера: он
+  // виден только у не агентской приёмки.
   function paint() {
-    const draft = newForm.draft;
-    asTask.className = draft ? "" : "on";
-    asDraft.className = draft ? "on" : "";
-    note.hidden = !draft;
-    view.typePick.hidden = draft;
-    view.costPick.hidden = draft;
-    typeOff.hidden = !draft;
-    costOff.hidden = !draft;
-    view.rank.classList.toggle("off", draft);
-    // Приёмку с барьером у черновика заполняет груминг, а у агентского вида
-    // барьера нет вовсе: там прячется одно поле, а не вся карточка.
-    card.hidden = draft;
+    if (draft) return;
     const bare = newForm.accept === "agent";
     barrierPick.hidden = bare;
     barrierHint.hidden = bare;
     reasonField.hidden = bare;
-    runHint.hidden = draft;
-    view.rankSum.textContent = draft ? "-"
-      : String(newForm.parts.reduce((a, b) => a + Number(b), 0));
-    view.rankNote.textContent = draft ? DRAFT_OFF_RANK : "= " + newForm.parts.join("+");
-    // У черновика подсказка шкалы ни к чему, и на её месте стоит одна подпись
-    // про то, кто эти поля заполнит.
-    const whys = view.rank.querySelectorAll(".rrow .why");
-    RANK_PARTS.forEach((part, i) => {
-      whys[i].textContent = draft ? (i === 0 ? DRAFT_OFF_PARTS : "") : part.why;
-    });
-    for (const pick of view.rank.querySelectorAll(".rrow .pick")) pick.hidden = draft;
-    view.save.rename(draft ? "Записать черновик" : "Завести задачу");
-    hint.textContent = draft ? DRAFT_HINT : FULL_HINT;
+    view.rankSum.textContent = String(newForm.parts.reduce((a, b) => a + Number(b), 0));
+    view.rankNote.textContent = "= " + newForm.parts.join("+");
   }
 
-  for (const [node, draft] of [[asTask, false], [asDraft, true]]) {
-    node.addEventListener("click", () => {
-      newForm.draft = draft;
-      sayResult("");
-      view.touch();
-    });
-  }
   view.touch();
 }
 
@@ -10160,7 +10171,7 @@ function makePlus(project) {
         homeMenuShut();
         resetNewForm(project);
         newForm.draft = draft;
-        goKeepingChat(project + "/new");
+        goKeepingChat(project + "/new/" + (draft ? "draft" : "task"));
       });
       menu.append(opt);
     }
@@ -11039,9 +11050,11 @@ async function paint() {
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
-    document.getElementById("psub").textContent = newForm.draft ? "новый черновик" : "новая задача";
+    document.getElementById("psub").textContent = rt.kind === "draft" ? "новый черновик"
+      : rt.kind === "task" ? "новая задача" : "что заводим";
     markNav(rt);
-    renderNew(current.name);
+    if (rt.kind === "draft" || rt.kind === "task") renderNew(current.name, rt.kind);
+    else renderMakePick(current.name);
     return;
   }
   if (rt.drafts) {

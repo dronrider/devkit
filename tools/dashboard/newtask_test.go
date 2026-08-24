@@ -416,7 +416,9 @@ func TestStaticNewTaskForm(t *testing.T) {
 	// Кнопка стоит в накопителе, а на главной то же заведение живёт пунктом
 	// меню у плюса карточки: иначе с телефона до заведения надо сначала дойти
 	// до нужного проекта.
-	if plus := funcBody(t, text, "function makePlus("); !strings.Contains(plus, `"/new"`) {
+	// Пункт меню ведёт сразу в свою форму: вид заводимого стоит в адресе, и
+	// переспрашивать его вторым экраном незачем.
+	if plus := funcBody(t, text, "function makePlus("); !strings.Contains(plus, `"/new/"`) {
 		t.Error("плюс на главной не ведёт на заведение")
 	}
 	for _, fn := range []string{"function renderDrafts("} {
@@ -462,19 +464,14 @@ func TestStaticNewTaskForm(t *testing.T) {
 	}
 }
 
-// Переключатель задача-черновик по макету «07 Заведение»: форма одна, поля у
-// черновика гасятся с подписью, кто их заполнит, а не прячутся; несохранённое
-// в работу не берётся, и сказано это словами.
+// Заведение спрашивает, что заводят, и открывает свою форму: у черновика поля
+// черновика, у задачи поля строки доски, и мешать их в одной форме больше
+// нечему. Несохранённое в работу не берётся, и сказано это словами.
 func TestStaticNewFormSwitch(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
-		`el("div", "swch")`,
 		"Черновику доступен только груминг",
 		"в работу его не взять",
-		"тип выдаст груминг",
-		"цена выдаст груминг",
-		"ранг выведет груминг",
-		"поля те же, что у задачи, но пока не заполняются",
 		"Ляжет в docs/tasks/drafts/, ID выдаст taskctl",
 		"Встанет в Backlog сразу, место выведется из ранга",
 		"Взять в работу можно с карточки задачи",
@@ -499,12 +496,25 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	if strings.Contains(form, "startRun(") {
 		t.Error("на форме заведения есть запуск работы: у несохранённой задачи нет ни ID, ни статуса")
 	}
-	// Погашенное не спрятано: у черновика те же поля, только с подписью.
-	if !strings.Contains(form, `classList.toggle("off"`) {
-		t.Error("режим черновика не гасит поля класса off: форма перестраивается вместо подписи")
+	// Форма собрана под свой вид: полей чужого вида на ней нет вовсе, и гасить
+	// нечего. Прежде она была одна на оба случая, поля черновика стояли
+	// вперемешку с полями строки доски, а гашеные чипы объясняли, чего у
+	// черновика нет («каша полей», замечание пользователя).
+	if strings.Contains(form, `classList.toggle("off"`) {
+		t.Error("форма снова гасит чужие поля вместо того, чтобы их не носить")
+	}
+	if !strings.Contains(form, "draft ? { title: true }") {
+		t.Error("состав полей формы не зависит от вида заводимого")
+	}
+	// Выбор стоит своим экраном, и по каждой двери сказано, что за ней.
+	pick := funcBody(t, text, "function renderMakePick(")
+	for _, want := range []string{"Что заводим", "Черновик", "Задача", "SCQA"} {
+		if !strings.Contains(pick, want) {
+			t.Errorf("на экране выбора нет %q", want)
+		}
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".swch", ".dnote", ".nfbody .off"} {
+	for _, want := range []string{".mkrow", ".dnote"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет правила %q", want)
 		}

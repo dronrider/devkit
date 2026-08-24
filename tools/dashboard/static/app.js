@@ -848,11 +848,7 @@ function harnessRow(h) {
   // Две полоски: столько же, сколько стоит в блоке квоты, и больше в строку
   // выбора не влезает даже на ноутбуке.
   for (const b of buckets.slice(0, 2)) row.append(quotaRow(b));
-  // Разъезд снимков назван и тут: подписки выбирают по остатку, и сравнивать
-  // цифры, снятые в разное время, нельзя.
-  if (quotaView && quotaView.spread) {
-    row.append(el("span", "hnote stale", "снимки подписок сняты в разное время"));
-  }
+
   if (!buckets.length) row.append(el("span", "hnote", snap.note || "бакетов в снимке нет"));
   // Возраст снимка стоит у каждой строки, а не у одной старой: остаток,
   // снятый час назад, и остаток, снятый минуту назад, это разные ответы на
@@ -860,8 +856,13 @@ function harnessRow(h) {
   // блоке квоты, а слова «протух» тут нет по той же причине: оно не говорило,
   // насколько всё плохо (замечание 21 двенадцатого круга POC).
   else if (snap.age) {
-    row.append(el("span", "hnote qage " + quotaAgeClass(snap.age_sec),
-      "снимок " + snap.age + " назад"));
+    // Возраст снимка и приписка о разъезде стоят одной строкой: подписку
+    // выбирают по остатку, и знать, насколько он свеж, надо ровно тут.
+    const older = snap.name === quotaOldest(quotaView) ? ", раньше остальных" : "";
+    const age = el("span", "hnote qage " + quotaAgeClass(snap.age_sec),
+      "снимок " + snap.age + " назад" + older);
+    if (older && quotaView.spread) age.title = quotaView.spread;
+    row.append(age);
   } else if (snap.stale) {
     // Возрасту верить нельзя вовсе: момента снятия нет либо часы разошлись.
     // Тут остаётся причина словами, её сервер и называет.
@@ -9049,81 +9050,19 @@ async function saveDraftText(project, id, text) {
   return true;
 }
 
-// Исход груминга словами: что случилось и что дальше. Сам след читает сервер
-// (ручка /drafts/<id>/outcome), его слова стоят рядом отдельной строкой, и
-// придумывать их второй раз на клиенте незачем. Экран POC эту карточку потерял
-// вместе с переделкой на общую форму, и разбор кончался молча: человек не
-// видел ни заведённой строки, ни вопроса грумера.
-const DRAFT_PHASES = {
-  row: {
-    head: "Черновик оформлен строкой",
-    next: "Дальше работа идёт по задаче: ранг и цена у неё уже стоят.",
-  },
-  attached: {
-    head: "Черновик приписан к стоящей строке",
-    next: "Дальше работа идёт по задаче-приёмнику, текст записи лежит разделом в её файле.",
-  },
-  deferred: {
-    head: "Черновик отложен",
-    next: "Запись осталась в накопителе: груминг вернётся к ней, когда причина отпадёт.",
-  },
-  dropped: {
-    head: "Черновик удалён",
-    next: "Записи больше нет, причина удаления лежит сообщением коммита доски.",
-  },
-  question: {
-    head: "Груминг кончился без исхода",
-    next: "Ни строки, ни приписки, ни пометки об отложенном. Что успел сказать " +
-      "агент, видно в чате груминга: вопросы он задаёт там же и там же ждёт ответа.",
-  },
-  open: {
-    head: "Груминга не было",
-    next: "Разбор поднимается кнопкой «Провести груминг».",
-  },
-  error: {
-    head: "Исход груминга не прочитался",
-    next: "Пока сервер не ответил, разбор с экрана не поднимается: причина стоит выше.",
-  },
-};
+// Карточек исхода груминга на форме записи нет ни одной: разговор с агентом
+// всегда идёт в чате, там же видно и чем кончился разбор, а на доске исход
+// виден по факту, строкой или её отсутствием (решение пользователя). Прежде
+// форма пересказывала след разбора шестью состояниями, и человек читал их
+// вместо самой записи.
 
-// Состояние экрана: живая работа с тем же ID это идущий груминг, а
-// кончившийся разбор без единого следа на диске, но со словом агента в
-// транскрипте, это вопрос.
-function draftPhase(out, running) {
-  if (running) return "running";
-  const state = (out && out.state) || "open";
-  if (state === "open") return out && out.question ? "question" : "open";
-  return state;
-}
-
-// Карточка исхода: заголовок состояния, слова сервера про след, следующий шаг
-// и переход туда, куда груминг увёл запись.
-function draftOutcomeCard(project, id, out, phase) {
-  const card = el("div", "card dcard");
-  const head = el("div", "phd");
-  const said = DRAFT_PHASES[phase] || DRAFT_PHASES.open;
-  head.append(el("b", "", said.head));
-  card.append(head);
-  const body = el("div", "dbd");
-  if (out.note) {
-    body.append(el("div", phase === "error" ? "error" : "dsay", out.note));
-  }
-  if (phase === "deferred" && out.reason) {
-    body.append(el("div", "dwhy", "Причина: " + out.reason));
-  }
-  body.append(el("div", "hint", said.next));
-  if (phase === "row") {
-    const go = el("button", "btn btn-sm", "Открыть задачу " + id);
-    go.addEventListener("click", () => { goKeepingChat(project + "/" + id); });
-    body.append(go);
-  }
-  if (phase === "attached" && out.task) {
-    const go = el("button", "btn btn-sm", "Открыть задачу " + out.task);
-    go.addEventListener("click", () => { goKeepingChat(project + "/" + out.task); });
-    body.append(go);
-  }
-  card.append(body);
-  return card;
+// Груминг это его собственная сессия (draftSession, имя task-<ID>), а не
+// всякий разговор про запись. Прежде идущим разбором считалась любая работа с
+// тем же ID, и открытый чат о черновике показывал форме «груминг идёт», хотя
+// tmux-сессии разбора не было вовсе (замечание пользователя по DK-502). Тот же
+// признак разводит работу и разговор у строк доски (talk).
+function draftGrooming(works, id) {
+  return Boolean((works || []).find((w) => w.id === id && w.via === "tmux" && !w.talk));
 }
 
 // Опрос конца работы: пока работа идёт, экран перечитывается по кругу, той же
@@ -9160,16 +9099,8 @@ async function renderDraft(project, works, id) {
   // разметка вместо сырого текста, те же кнопки режимов справа. Выключены у
   // него ранг, зависимости и поля строки доски: их запись получит только от
   // груминга, и показывать их пустыми не за чем.
-  const [text, chats, outcome] = await Promise.all([
-    api(base),
-    api("/api/projects/" + encodeURIComponent(project) + "/chats?task=" + encodeURIComponent(id)),
-    api(base + "/outcome"),
-  ]);
-  // Неотвеченный исход не выдаётся за «груминга не было»: молчание сервера и
-  // нетронутая запись это разные вещи, и причина отказа видна словами.
-  const out = outcome.ok ? outcome.body
-    : { note: outcome.body.error || "исход груминга не прочитался" };
-  const running = Boolean((works || []).find((w) => w.id === id));
+  const text = await api(base);
+  const running = draftGrooming(works, id);
   // Конец груминга виден без перезагрузки страницы: пока разбор идёт, экран
   // сам дожидается исхода опросом, и пометка уходит вместе с его приходом.
   // Опрос стоит до сторожа правки: иначе он глох бы на время редактирования.
@@ -9178,16 +9109,12 @@ async function renderDraft(project, works, id) {
   // остаётся как есть.
   if (taskDraft.id === id && taskDraft.dirty) return;
   const said = text.ok ? String(text.body.text || "") : "";
-  // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
-  const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
-  const phase = outcome.ok ? draftPhase(out, running) : "error";
   // Ожидание разговора приезжает тем же ответом, что и текст записи: его считает
   // сервер по признаку ожидания, как и у строки доски.
   const waiting = (text.ok && text.body.waiting) || null;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, running, groomChat ? groomChat.id : "", text.body.error || "",
-      phase, JSON.stringify(out), JSON.stringify(waiting)].join("|"),
+    sign: [id, said, running, text.body.error || "", JSON.stringify(waiting)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -9198,15 +9125,11 @@ async function renderDraft(project, works, id) {
       const waits = waitChip({ waiting });
       if (waits) chips.push(waits);
       const actions = [];
-      if (groomChat) {
-        const go = barBtn("btn", "Чат груминга", "i-chat");
-        // Та же рамка, что у кнопки чата задачи: разбор идёт, и смотреть за ним
-        // надо в разговоре. Сам разбор панель не открывает, как и запуск.
-        if (running) go.classList.add("chatlive");
-        withTip(go, running ? "Разговор разбора записи: разбор идёт" : "Разговор разбора записи");
-        go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
-        actions.push(go);
-      } else if (!running) {
+      // Вход в разговор тут один и стоит значком, как у строк задач: кнопка
+      // «Чат груминга» вела в тот же самый чат, что и значок рядом, и две
+      // двери в одну комнату человек читал как две разные (замечание
+      // пользователя).
+      if (!running) {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
         const groom = runControl(project, id,
@@ -9221,14 +9144,12 @@ async function renderDraft(project, works, id) {
           harnessTiers());
         actions.push(groom);
       }
-      // Исход разбора стоит над текстом записи: он и есть ответ на вопрос
-      // «чем кончился груминг», ради которого экран открывают. У идущего
-      // разбора своей карточки нет: она повторяла бы пометку «груминг идёт»
-      // из шапки, а исход появится на её месте сам, опросом выше.
-      const lead = [];
-      if (phase !== "running") lead.push(draftOutcomeCard(project, id, out, phase));
+      // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
+      // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
+      // факту: строка появилась или нет (решение пользователя). Форма держит
+      // саму запись и действия над ней, и больше ничего.
       return formPage({
-        key: "draft", project, id, lead,
+        key: "draft", project, id,
         // Дорога на доску была только через накопитель, и с экрана записи её не
         // было вовсе.
         crumb: [
@@ -10718,6 +10639,21 @@ function quotaRow(b) {
 // quotaNodes собирает узлы блока. Пустота тут говорит словами, какая она:
 // каталога снимков нет, каталог пуст и снимок без бакетов это три разных
 // причины, и молчащий блок был бы неотличим от отработавшего.
+// Чей снимок старше остальных, когда они разъехались по времени. Разъезд это
+// приписка к возрасту, а не отдельная плашка: красный абзац на весь блок
+// вытеснял из колонки сами цифры, ради которых блок и открывают (замечание
+// пользователя, «ни полос, ни процентов не осталось»). Разница в возрасте
+// снимков это обычное дело, а не поломка.
+function quotaOldest(view) {
+  if (!view || !view.spread) return "";
+  let old = null;
+  for (const h of view.harnesses || []) {
+    if (!h.age_sec) continue;
+    if (!old || h.age_sec > old.age_sec) old = h;
+  }
+  return old ? old.name : "";
+}
+
 // Все подписки машины со снимками и без: снимки приходят ответом ручки, а
 // список подписок тем же ответом, из которого собрана кнопка запуска. Подписка
 // без снимка это не пропуск строки, а неизвестный остаток, и сказано это
@@ -10753,9 +10689,6 @@ function quotaNodes(view) {
     bad.title = [when, where].filter(Boolean).join(", ");
     out.push(bad);
   }
-  // Снимки разных подписок сняты в разное время: цифры рядом читаются как одна
-  // картина на один момент, и разъезд надо назвать словами.
-  if (view.spread) out.push(el("div", "qnote qfail", view.spread));
   for (const h of quotaEvery(view)) {
     out.push(el("div", "qsub", h.name));
     // Подписка без снимка стоит строкой со словами, а не пропуском: список
@@ -10769,7 +10702,16 @@ function quotaNodes(view) {
     // Возраст снимка виден цветом, а не словом «протух»: слово ничего не
     // говорило о том, насколько всё плохо, и стояло почти всегда (замечание 21).
     const note = el("div", "qnote");
-    if (h.age) note.append(el("span", "qage " + quotaAgeClass(h.age_sec), "снимок " + h.age + " назад"));
+    if (h.age) {
+      const age = el("span", "qage " + quotaAgeClass(h.age_sec), "снимок " + h.age + " назад");
+      // Разъезд снимков стоит припиской к возрасту той подписки, чей снимок
+      // старше: цифры соседей от этого никуда не деваются.
+      if (h.name === quotaOldest(view)) {
+        age.textContent += ", раньше остальных";
+        age.title = view.spread;
+      }
+      note.append(age);
+    }
     const rest = [];
     // Причина остаётся словами там, где возрасту верить нельзя вовсе: часы
     // разошлись, момента снятия нет.

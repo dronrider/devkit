@@ -78,13 +78,39 @@ function byTag(node) {
   return null;
 }
 
-// --- разъезд снимков назван словами ---
+// --- разъезд снимков сопровождает цифры, а не заменяет их ---
+//
+// Красный абзац на весь блок вытеснял из колонки сами цифры, ради которых блок
+// и открывают: пользователь видел одно предупреждение и ни одного процента.
+// Разница в возрасте снимков это обычное дело, а не поломка.
 {
-  if (!said().includes("сняты в разное время")) {
-    fail("разъезд снимков в блоке квоты не назван: " + said());
+  const shown = said();
+  // Цифры обеих подписок на месте.
+  for (const want of ["claude-code", "6%", "0%", "glm-code", "7%", "31%"]) {
+    if (!shown.includes(want)) fail("из блока пропало «" + want + "»: " + shown);
   }
-  const note = allByClass(box, "qfail").find((n) => dump(n).includes("разное время"));
-  if (!note) fail("разъезд снимков стоит не приметной строкой: " + said());
+  if (allByClass(box, "qrow").length !== 4) {
+    fail("полос остатка не четыре: " + allByClass(box, "qrow").length + ", " + shown);
+  }
+  // Давность подписана у каждой подписки своя.
+  if (!shown.includes("снимок 2 мин назад") || !shown.includes("снимок 3 ч назад")) {
+    fail("давность снимков подписана не у каждой подписки: " + shown);
+  }
+  // Разъезд стоит короткой припиской у того, чей снимок старше, а не плашкой
+  // на весь блок.
+  if (!shown.includes("раньше остальных")) {
+    fail("разъезд снимков не назван вовсе: " + shown);
+  }
+  if (allByClass(box, "qfail").length) {
+    fail("разъезд снимков снова стоит плашкой отказа: " + shown);
+  }
+  const older = allByClass(box, "qage").find((n) => dump(n).includes("раньше остальных"));
+  if (!older || !dump(older).includes("3 ч")) {
+    fail("приписка встала не у старшего снимка: " + shown);
+  }
+  if (!String(older.title || "").includes("разное время")) {
+    fail("полные слова про разъезд не остались подсказкой: " + JSON.stringify(older.title));
+  }
 }
 
 // --- подписка машины без снимка названа словами, а не пропущена ---
@@ -122,10 +148,11 @@ function byTag(node) {
   await sandbox.refreshQuota();
   await settle();
   const second = dump(sandbox.harnessRow({ name: "glm-code" })).replace(/\s+/g, " ");
-  if (!second.includes("в разное время")) {
+  if (!second.includes("раньше остальных")) {
     fail("список выбора подписки молчит о разъезде снимков: " + second);
   }
   if (!second.includes("3 ч")) fail("возраст снимка в списке выбора пропал: " + second);
+  if (!second.includes("7%")) fail("выбор подписки потерял остаток: " + second);
 }
 
 console.log("poc_quotahonest: ok");

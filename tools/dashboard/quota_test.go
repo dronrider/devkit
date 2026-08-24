@@ -474,4 +474,11 @@ func TestQuotaSpreadWords(t *testing.T) {
 	if got := getQuota(t, e); got.Spread != "" {
 		t.Errorf("снимки одного времени объявлены разъехавшимися: %q", got.Spread)
 	}
+
+	// Час разницы это тоже обычное дело: подписки снимаются по-разному, одну
+	// двигает тик демона, другую рука, и говорить тут не о чем.
+	writeQuota(t, e.home, "старая", "taken = 2026-08-11T12:26\nweek_all = 31% сброс 2026-08-17T15:00\n")
+	if got := getQuota(t, e); got.Spread != "" {
+		t.Errorf("часовая разница снимков объявлена разъездом: %q", got.Spread)
+	}
 }

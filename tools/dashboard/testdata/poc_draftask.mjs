@@ -22,12 +22,12 @@ const waiting = { state: "ждёт ответа", source: "ask", note: "спро
 
 // Ожиданием управляет стенд: сперва разбор спросил и ждёт, потом человек
 // ответил, и признак снялся.
-const now = { waiting: true };
+const now = { waiting: true, works: [] };
 const draft = { id: "XR-D2", title: "запись накопителя", age_words: "вчера",
   file: "docs/tasks/drafts/XR-D2.md", order: "Проведи груминг XR-D2" };
 
 const { sandbox, byId } = makeSandbox(app, (path) => {
-  if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };
+  if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: now.works }] };
   if (path === "/api/harnesses") return { harnesses: [{ name: "claude-code", bin: "claude", default: true }] };
   if (path === "/api/notifications") return { items: [] };
   if (path.endsWith("/drafts")) {
@@ -72,12 +72,24 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   if (said.includes("Ответ уходит новым заходом")) {
     fail("подсказка про повторный заход осталась на экране: " + said.slice(0, 400));
   }
-  // Разбор без следа на диске экран по-прежнему называет, но зовёт в разговор.
-  if (!said.includes("Груминг кончился без исхода")) {
-    fail("исход разбора без следа не назван: " + said.slice(0, 400));
+  // Карточек исхода на форме нет ни одной: разговор с агентом идёт в чате, там
+  // же виден и его исход, а на доске он виден по факту, строкой или её
+  // отсутствием (решение пользователя).
+  for (const gone of ["Груминг кончился", "Груминг идёт", "Черновик оформлен строкой",
+    "Черновик приписан", "Черновик отложен", "Черновик удалён", "Груминга не было",
+    "Исход груминга"]) {
+    if (said.includes(gone)) fail("на форме осталась карточка исхода «" + gone + "»: " + said.slice(0, 400));
   }
   if (!waits()) fail("ожидание ответа на экране записи ничем не помечено: " + said.slice(0, 400));
   if (!said.includes("ждёт ответа")) fail("чип ожидания молчит: " + said.slice(0, 400));
+  // Дверь в разговор одна: кнопка «Чат груминга» вела в тот же чат, что и
+  // значок рядом, и две двери в одну комнату читались как две разные.
+  if (said.includes("Чат груминга")) {
+    fail("на форме осталась вторая кнопка в тот же чат: " + said.slice(0, 300));
+  }
+  if (chatBtns().length !== 1) {
+    fail("входов в разговор на форме не один: " + chatBtns().length);
+  }
   // На кнопке чата признака нет вовсе, и подсказка её про вход в разговор.
   for (const btn of chatBtns()) {
     if (allByClass(btn, "wdot").length || /ждёт ответа/.test(String(btn.title || ""))) {
@@ -113,6 +125,48 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   await go("#demo");
   await go("#demo/drafts");
   if (waits()) fail("чип в строке накопителя стоит после ответа");
+}
+
+// --- разговор о черновике грумингом не считается ---
+//
+// Груминг это его собственная сессия (task-<ID>), а не всякий чат про запись.
+// Прежде идущим разбором считалась любая работа с тем же ID, и открытый чат о
+// черновике показывал форме «груминг идёт», хотя tmux-сессии разбора не было
+// вовсе (замечание пользователя по живой записи).
+{
+  const talk = [{ id: "XR-D2", kind: "session", via: "session", session: "s1",
+    own: true, talk: true, live: "idle" }];
+  if (sandbox.draftGrooming(talk, "XR-D2")) {
+    fail("разговор о черновике посчитан идущим грумингом");
+  }
+  const groom = [{ id: "XR-D2", kind: "task", via: "tmux", own: true, live: "busy" }];
+  if (!sandbox.draftGrooming(groom, "XR-D2")) {
+    fail("своя сессия разбора не признана грумингом");
+  }
+  // Чужая работа с другим ID разбор тут не заводит.
+  if (sandbox.draftGrooming([{ id: "XR-D9", via: "tmux" }], "XR-D2")) {
+    fail("грумингом посчитана работа другой записи");
+  }
+
+  // И на самом экране: при живом разговоре о записи пометки разбора нет, а
+  // кнопка «Провести груминг» на месте.
+  now.waiting = false;
+  now.works = talk;
+  await go("#demo");
+  await go("#demo/draft/XR-D2");
+  const said = dump(groups).replace(/\s+/g, " ");
+  if (said.includes("груминг идёт")) {
+    fail("разговор о записи показан идущим разбором: " + said.slice(0, 300));
+  }
+  if (!said.includes("Провести груминг")) {
+    fail("кнопка разбора пропала из-за разговора о записи: " + said.slice(0, 300));
+  }
+  now.works = groom;
+  await go("#demo");
+  await go("#demo/draft/XR-D2");
+  if (!dump(groups).includes("груминг идёт")) {
+    fail("идущий разбор на экране не помечен: " + dump(groups).slice(0, 300));
+  }
 }
 
 console.log("poc_draftask: ok");

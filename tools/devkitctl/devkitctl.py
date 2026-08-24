@@ -222,7 +222,19 @@ CHAT_HOOK = "chat-in.py"
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
 # сперва убирает старую.
 RETIRED_HOOKS = {"inbox.py": CHAT_HOOK}
-NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
+NOTIFY_EVENTS = ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit")
+# Ретрай-вотчдог харнеса (DK-172): найден strings бинаря 2.1.241 рядом с
+# CLAUDE_CODE_MAX_RETRIES, CLAUDE_ENABLE_STREAM_WATCHDOG и
+# CLAUDE_ENABLE_BYTE_WATCHDOG, публичной докой не описан. Разделяющий замер
+# стенда (ключ=1, ключ=0, ключа нет вовсе, один и тот же обрыв, подробности в
+# docs/tasks/DK-172.md) разницы в поведении не нашёл: харнес ретраит часть
+# сбоев сам и без ключа. Кладём его безвредным заделом на случай другой версии
+# или платформы, а не как подтверждённое решение проблемы (hooks/README.md,
+# «Возобновление после обрыва связи»). Ключ кладётся в секцию env тех же
+# настроек, где лежат хуки; значение, вписанное человеком (хоть "0"), доктор
+# не трогает: это его решение, а не пробел раскладки.
+WATCHDOG_KEY = "CLAUDE_CODE_RETRY_WATCHDOG"
+WATCHDOG_VALUE = "1"
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
@@ -243,6 +255,7 @@ HOOK_LAYOUT = (
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
+    ("StopFailure", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/notify.py --hook claude-code"),
 )
@@ -1347,7 +1360,7 @@ def install_hooks(settings, gaps, devkit, stale=()):
                        ", ".join(RETIRED_HOOKS[n] for n in sorted(set(stale)))))
     if not done:
         return said
-    # Уведомитель висит на четырёх событиях сразу, и четыре строки про него это
+    # Уведомитель висит на пяти событиях сразу, и пять строк про него это
     # одна и та же новость: хуки подключены. Поэтому события собираются к своему
     # скрипту, а строка остаётся одна на всю раскладку.
     events = {}
@@ -1358,6 +1371,50 @@ def install_hooks(settings, gaps, devkit, stale=()):
     return said + ["%s %s в %s: %s" % ("включён" if n == 1 else "включено",
                                        HOOK_WORD[0] if n == 1 else say.counted(n, HOOK_WORD),
                                        settings, what)]
+
+
+def watchdog_gap(text, settings):
+    """Стоит ли в настройках харнеса env-ключ ретрай-вотчдога. Возврат
+    (пробел, находка): пробел чинит install_watchdog, находка без пробела
+    значит, что вписать ключ некуда и файл правится руками."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        # Про нечитаемый файл говорят проверки того же файла рубежом раньше,
+        # вторая строка о том же не нужна.
+        return False, ""
+    if not isinstance(data, dict):
+        return False, ""
+    env = data.get("env")
+    if isinstance(env, dict) and WATCHDOG_KEY in env:
+        return False, ""
+    if env is not None and not isinstance(env, dict):
+        return False, ("секция env в %s не объект json: ключ %s вписать некуда, поправить "
+                       "руками (hooks/README.md, «Возобновление после обрыва связи»)"
+                       % (settings, WATCHDOG_KEY))
+    return True, ("в %s нет env-ключа %s: недокументированный задел ретрай-вотчдога "
+                  "харнеса, стенд DK-172 разницы в поведении с ним не нашёл, но вреда от "
+                  "лишнего ключа тоже нет; вписать: devkitctl doctor --fix (hooks/README.md, "
+                  "«Возобновление после обрыва связи»)" % (settings, WATCHDOG_KEY))
+
+
+def install_watchdog(settings):
+    """Вписать env-ключ ретрай-вотчдога в настройки харнеса. Правка additive,
+    как у хуков и прав: чужие ключи и порядок остаются."""
+    data, bad = perms.load(settings)
+    if bad is not None:
+        return []
+    env = data.setdefault("env", {})
+    if not isinstance(env, dict) or WATCHDOG_KEY in env:
+        return []
+    env[WATCHDOG_KEY] = WATCHDOG_VALUE
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(settings.name + ".devkit-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(settings))
+    return ["вписан env-ключ %s=%s в %s: недокументированный задел ретрай-вотчдога харнеса "
+            "(hooks/README.md, «Возобновление после обрыва связи»)"
+            % (WATCHDOG_KEY, WATCHDOG_VALUE, settings)]
 
 
 def check_notify_hook(fix=False):
@@ -1440,6 +1497,15 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         else:
             findings += gap_findings
+        # Ретрай-вотчдог тем же файлом и тем же рубежом from_main: ключ виден
+        # каждой сессии на машине сразу, и ехать туда с непроверенной ветки ему
+        # нельзя так же, как хукам и правам.
+        wgap, wfinding = watchdog_gap(text, settings)
+        if wgap and fix and from_main:
+            fixed += install_watchdog(settings)
+            text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+        elif wfinding:
+            findings.append(wfinding)
         pf, pd = perms.check(settings, fix, None if from_main else main)
         findings += pf
         fixed += pd

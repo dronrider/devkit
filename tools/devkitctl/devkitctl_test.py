@@ -177,8 +177,29 @@ class ProjectFindingsTest(SandboxCase):
         write(self.settings, full)
         drop_lines(self.settings, "notify.py")
         _, out = self.box.doctor(self.proj)
-        self.assertIn_("notify.py не подключён на события Notification, Stop, SubagentStop, "
-                       "UserPromptSubmit", out, "нет находки про неподключённый уведомитель")
+        self.assertIn_("notify.py не подключён на события Notification, Stop, StopFailure, "
+                       "SubagentStop, UserPromptSubmit", out,
+                       "нет находки про неподключённый уведомитель")
+        write(self.settings, full)
+
+    def test_5b_retry_watchdog_key(self):
+        # Без env-ключа недокументированного ретрай-вотчдога доктор называет
+        # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
+        # находка про пробел раскладки от этого не отменяется); значение
+        # человека (хоть "0") находкой не считается.
+        full = read(self.settings)
+        data = json.loads(full)
+        del data["env"][devkitctl.WATCHDOG_KEY]
+        write(self.settings, json.dumps(data, ensure_ascii=False, indent=1))
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("нет env-ключа %s" % devkitctl.WATCHDOG_KEY, out,
+                       "нет находки про отсутствующий ретрай-вотчдог")
+        self.assertIn_("недокументированный задел", out,
+                       "находка не говорит, что ключ недокументирован")
+        data["env"][devkitctl.WATCHDOG_KEY] = "0"
+        write(self.settings, json.dumps(data, ensure_ascii=False, indent=1))
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("env-ключа", out, "доктор спорит со значением, вписанным человеком")
         write(self.settings, full)
 
     def test_6_no_notification_backend(self):
@@ -1799,9 +1820,13 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
                          ["Bash", "Read"], hooks["PreToolUse"])
-        for event in ("Notification", "Stop", "SubagentStop", "UserPromptSubmit"):
+        for event in ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))
+        # Ретрай-вотчдог (DK-172) ложится тем же --fix: env-ключ, с которым
+        # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
+        self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),
+                         devkitctl.WATCHDOG_VALUE, data.get("env"))
         start = [h["command"] for g in hooks["SessionStart"] for h in g["hooks"]]
         self.assertEqual(len([c for c in start if "quota-refresh.sh" in c]), 1, start)
         self.assertEqual(len([c for c in start if "session-task.py" in c]), 1, start)
@@ -1811,6 +1836,7 @@ class HarnessHooksTest(SandboxCase):
         # Повторный --fix хуки второй раз не раскладывает.
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertNotIn_("хук харнеса на", out, "повторный --fix разложил хуки второй раз")
+        self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
         self.assertEqual(len(post), 4, post)
@@ -1863,6 +1889,63 @@ def snapshot(home, skip=()):
             continue
         out[rel] = p.read_bytes()
     return out
+
+
+class RetryWatchdogTest(unittest.TestCase):
+    """Env-ключ ретрай-вотчдога в настройках харнеса (DK-172).
+
+    Ключ публичной докой Claude Code не описан, найден strings бинаря;
+    разделяющий замер стенда (docs/tasks/DK-172.md) разницы в поведении
+    харнеса с ним и без него не нашёл. Раскладка всё равно кладёт его
+    безвредным заделом: пробел чинит doctor --fix, а значение, вписанное
+    человеком, не трогается: выключенный вотчдог это его решение."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="dk172-"))
+        self.addCleanup(shutil.rmtree, str(self.dir), True)
+        self.settings = self.dir / "settings.json"
+
+    def test_gap_on_empty_settings(self):
+        gap, finding = devkitctl.watchdog_gap("", self.settings)
+        self.assertTrue(gap)
+        self.assertIn(devkitctl.WATCHDOG_KEY, finding)
+        self.assertIn("doctor --fix", finding)
+
+    def test_no_gap_when_key_is_set(self):
+        text = json.dumps({"env": {devkitctl.WATCHDOG_KEY: "1"}})
+        self.assertEqual(devkitctl.watchdog_gap(text, self.settings), (False, ""))
+
+    def test_human_value_is_kept(self):
+        # Хоть "0": выключенный вотчдог это решение человека, а не пробел.
+        text = json.dumps({"env": {devkitctl.WATCHDOG_KEY: "0"}})
+        self.assertEqual(devkitctl.watchdog_gap(text, self.settings), (False, ""))
+
+    def test_env_of_wrong_shape_is_a_manual_finding(self):
+        gap, finding = devkitctl.watchdog_gap(json.dumps({"env": ["x"]}), self.settings)
+        self.assertFalse(gap)
+        self.assertIn("не объект json", finding)
+
+    def test_broken_json_is_silent(self):
+        # Про нечитаемый файл говорят проверки того же файла рубежом раньше.
+        self.assertEqual(devkitctl.watchdog_gap("{оборвано", self.settings), (False, ""))
+
+    def test_install_keeps_neighbours(self):
+        write(self.settings, json.dumps({"model": "opus", "env": {"FOO": "bar"}}))
+        said = devkitctl.install_watchdog(self.settings)
+        self.assertEqual(len(said), 1, said)
+        self.assertIn(devkitctl.WATCHDOG_KEY, said[0])
+        data = json.loads(read(self.settings))
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(data["env"]["FOO"], "bar")
+        self.assertEqual(data["env"][devkitctl.WATCHDOG_KEY], devkitctl.WATCHDOG_VALUE)
+        # Повторная установка молчит: ключ уже стоит.
+        self.assertEqual(devkitctl.install_watchdog(self.settings), [])
+
+    def test_install_into_missing_file(self):
+        said = devkitctl.install_watchdog(self.settings)
+        self.assertEqual(len(said), 1, said)
+        data = json.loads(read(self.settings))
+        self.assertEqual(data["env"][devkitctl.WATCHDOG_KEY], devkitctl.WATCHDOG_VALUE)
 
 
 class AltSubDirTest(unittest.TestCase):

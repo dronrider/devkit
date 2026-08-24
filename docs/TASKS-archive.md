@@ -325,3 +325,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-459 | LLD: режим POC для работы с высокой неопределённостью результата [приёмка: user] | LLD | P1 | 2026-08-24 | [tasks/archive/2026/DK-459.md](tasks/archive/2026/DK-459.md) |
 | DK-512 | dashboard: память обхода корней не держит цепочку экрана, main красный | bug | P1 | 2026-08-24 | [tasks/archive/2026/DK-512.md](tasks/archive/2026/DK-512.md), `ff7a4ae7` |
 | DK-503 | LLD: лимит жизненного цикла агента и передача хвоста работы [приёмка: user] | LLD | P2 | 2026-08-25 | [tasks/archive/2026/DK-503.md](tasks/archive/2026/DK-503.md) |
+| DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-176.md](tasks/archive/2026/DK-176.md), `a3cd642c`, `a66102eb`, `f0710f3d` |

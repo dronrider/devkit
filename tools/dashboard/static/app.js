@@ -178,7 +178,7 @@ async function api(path, opts) {
     location.href = "/login";
     throw new Error("нужен вход");
   }
-  return { ok: resp.ok, status: resp.status, body: await apiBody(resp) };
+  return { ok: resp.ok, status: resp.status, body: await apiBody(resp, path, init.method) };
 }
 
 // Ответ бывает и не от дашборда: до него стоит внешний вход, и свой отказ
@@ -186,26 +186,53 @@ async function api(path, opts) {
 // Разбор такой страницы падал SyntaxError, и человек читал жалобу движка js
 // вместо причины (жалоба пользователя на снимок через внешний вход). Тут
 // нечитаемое тело сводится к тем же полям, что у ответа дашборда: код и слова.
-async function apiBody(resp) {
+async function apiBody(resp, path, method) {
   const text = await resp.text();
   try {
     return JSON.parse(text);
   } catch (e) {
-    return { error: outerFail(resp.status, resp.statusText, text) };
+    return { error: outerFail(resp.status, resp.statusText, text, path, method) };
   }
+}
+
+// Что делать с несостоявшимся запросом, зависит от того, что в нём ехало.
+// Реплику панель дожимает сама, поэтому про неё сказано, что она не потеряна;
+// у прочей отправки дожима нет, там повтор за человеком; а чтение экрана
+// повторится следующим заходом.
+function outerAgain(path, method) {
+  if (!method || method === "GET") {
+    return " Экран покажет своё, как только дашборд отзовётся.";
+  }
+  if (/\/say$/.test(String(path || ""))) {
+    return " Реплика не потеряна: она осталась в панели и уйдёт повтором сама.";
+  }
+  return " Набранное не потеряно, отправьте ещё раз, когда дашборд отзовётся.";
 }
 
 // Слова про отказ внешнего входа: известные коды названы по-человечески, у
 // остальных берётся код со статусом, а хвост страницы отбрасывается, в нём
 // разметка.
-function outerFail(status, statusText, text) {
+//
+// Про 502 и 504 сказано, что это отказ не дашборда, а ворот перед ним: они
+// стоят на сервере, а дашборд на машине человека, и «не дозвался дашборда
+// (502): попробуйте ещё раз» не объясняло ни того, кто кому не дозвался, ни
+// того, куда делось написанное (замечание пользователя). Коды разведены: 502
+// это ворота не достучались вовсе, 504 достучались и не дождались ответа, и
+// причины у них разные.
+function outerFail(status, statusText, text, path, method) {
   const who = "внешний вход";
   if (status === 413) {
     return "снимок слишком большой для внешнего входа (413): " +
       "уменьшите картинку или отправьте её меньшим куском";
   }
-  if (status === 502 || status === 504) {
-    return who + " не дозвался дашборда (" + status + "): попробуйте ещё раз";
+  if (status === 502) {
+    return who + " не достучался до дашборда на вашей машине (502): " +
+      "ноутбук мог уснуть, сеть моргнуть, а сам дашборд перезапускаться." +
+      outerAgain(path, method);
+  }
+  if (status === 504) {
+    return who + " ждал ответа дашборда на вашей машине и не дождался (504): " +
+      "машина занята или связь еле дышит." + outerAgain(path, method);
   }
   const said = String(text || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   return who + " ответил " + status + (statusText ? " " + statusText : "") +

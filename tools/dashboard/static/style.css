@@ -200,6 +200,13 @@ a:hover{text-decoration:underline}
 .hnote{font:400 11px var(--sans);color:var(--tx3)}
 .hfoot{padding:9px 11px 6px;border-top:1px solid var(--line);margin-top:4px;
   font:400 11px/1.5 var(--sans);color:var(--tx3)}
+/* Полоса ярусов в том же списке, что и подписки: выбор веса модели стоит рядом
+   с выбором контура, а не отдельной кнопкой рядом с запуском. */
+.tbar{display:flex;gap:6px;padding:4px 11px 8px;flex-wrap:wrap}
+.tpick{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:3px 9px;
+  font:400 12px/1.4 var(--sans);color:var(--tx2);cursor:pointer}
+.tpick:hover{color:var(--tx)}
+.tpick.on{border-color:var(--acc);color:var(--acc)}
 
 .lcard.clicky{cursor:pointer}
 .lcard b.flat{color:var(--tx2)}

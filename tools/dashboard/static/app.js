@@ -755,6 +755,27 @@ function harnesses() {
 // Подписка по умолчанию: на неё идёт широкая часть кнопки. Признак ставит
 // машинный слой, а без признака берётся первая в списке, чтобы кнопка работала
 // и на полураскрытом конфиге.
+// RUN_TIER это ярус по умолчанию для работ, которые заказывает сам дашборд.
+// Разбор черновика это работа среднего веса: верхний ярус ей не нужен, а
+// дефолт клиента бывает как раз верхним (замечание пользователя).
+const RUN_TIER = "pro";
+
+// Ярусы раскладки машины. Лестница у подписок одна и та же (mini, base, pro,
+// max), а модель под ярусом своя, поэтому список собирается с подписки по
+// умолчанию, а недостающее добирается у соседей: короткая лестница одной
+// подписки не должна отнимать выбор у остальных.
+function harnessTiers() {
+  const out = [];
+  const list = harnesses();
+  const own = list.find((h) => h.default);
+  for (const h of own ? [own].concat(list) : list) {
+    for (const m of h.models || []) {
+      if (m.tier && !out.includes(m.tier)) out.push(m.tier);
+    }
+  }
+  return out;
+}
+
 function harnessDefault() {
   const list = harnesses();
   return ((list.find((h) => h.default) || list[0] || {}).name) || "";
@@ -858,7 +879,7 @@ function checkTip(row) {
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
-function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run) {
+function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run, tiers) {
   // isGoal тут остаётся ради подписи, а не ради запрета: выбор подписки у цели
   // такой же, как у задачи, и разводить их поведением больше незачем.
   const wide = make(label);
@@ -866,9 +887,15 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run)
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
   // второе нажатие уходило вторым запуском, а возвращалось отказом «работа уже
   // идёт».
+  // Ярус выбирается там же, где подписка: подписка это контур и квота, а ярус
+  // вес модели. Разбор черновика ходил дефолтом самого клиента, то есть верхним
+  // ярусом, которого никто не выбирал (замечание пользователя), и теперь ярус
+  // назван: pro по умолчанию, другой берут осознанно.
+  const tierList = tiers || [];
+  let tier = tierList.includes(RUN_TIER) ? RUN_TIER : (tierList[0] || "");
   const fire = (node, harness) => {
     node.disabled = true;
-    const going = run ? run(harness) : startRun(project, id, harness, afterOk);
+    const going = run ? run(harness, tier) : startRun(project, id, harness, afterOk);
     Promise.resolve(going).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
@@ -876,9 +903,13 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run)
     fire(wide, pinned || harnessDefault());
   });
   const list = harnesses();
+  // Выбирать есть что, когда подписок на машине больше одной либо когда у
+  // кнопки свой выбор яруса: с одной подпиской и ярусом список отвечал бы на
+  // вопрос, которого никто не задавал.
+  const pickHarness = !pinned && list.length >= 2;
   // Прикреплённая подписка снимает выбор вовсе: список подписок у такой кнопки
   // отвечал не на тот вопрос.
-  if (pinned || list.length < 2) {
+  if (!pickHarness && tierList.length < 2) {
     const why = pinned ? "" : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
     // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
@@ -894,7 +925,7 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run)
   grp.append(wide);
   const pop = el("div", "hpop");
   pop.hidden = true;
-  pop.append(el("span", "hph", "На какой подписке запустить"));
+  if (pickHarness) pop.append(el("span", "hph", "На какой подписке запустить"));
   // Список подписок стоит на общем учёте всплывашек: закрывают его те же три
   // пути, что и список кольца.
   let held = null;
@@ -903,21 +934,53 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run)
     more.setAttribute("aria-expanded", "false");
     held = null;
   };
-  for (const h of list) {
-    const row = harnessRow(h);
-    row.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      popupDrop(held);
-      shut();
-      fire(wide, h.name);
-    });
-    pop.append(row);
+  if (pickHarness) {
+    for (const h of list) {
+      const row = harnessRow(h);
+      row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        popupDrop(held);
+        shut();
+        fire(wide, h.name);
+      });
+      pop.append(row);
+    }
+  }
+  // Полоса ярусов: выбор тут не запускает работу, а меняет вес модели, которым
+  // она поедет. Запускают её потом широкой половиной либо строкой подписки, и
+  // список от выбора яруса не закрывается: человек выбирает два ответа подряд.
+  if (tierList.length > 1) {
+    pop.append(el("span", "hph", "Каким ярусом"));
+    const bar = el("div", "tbar");
+    const marks = [];
+    for (const name of tierList) {
+      const btn = el("button", "tpick" + (name === tier ? " on" : ""), name);
+      btn.type = "button";
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        tier = name;
+        for (const m of marks) m.classList.toggle("on", m === btn);
+        tierNote();
+      });
+      marks.push(btn);
+      bar.append(btn);
+    }
+    pop.append(bar);
   }
   // Подвал говорит, откуда список и насколько выбор действует: без этих двух
   // строк человек не знает, чем список пополнить и не запомнил ли дашборд его
   // выбор на будущее.
-  pop.append(el("span", "hfoot",
-    "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."));
+  const foot = el("span", "hfoot", "");
+  // Подвал говорит и про ярус: выбранное имя иначе видно только подсветкой, а
+  // человек, открывший список второй раз, спрашивает «чем поедет».
+  const tierNote = () => {
+    const said = pickHarness
+      ? "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."
+      : "Ярусы из раскладки машины, agentctl harness. Выбор действует на один запуск.";
+    foot.textContent = tier ? said + " Ярус: " + tier + "." : said;
+  };
+  tierNote();
+  pop.append(foot);
   const more = el("button", wide.className + " more2");
   more.append(el("span", "car"));
   more.setAttribute("aria-label", "Выбрать подписку");
@@ -8031,13 +8094,16 @@ const GROOM_HINT = "«Провести груминг» поднимает се�
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
 // записи afterOk не передают, там уже стоит экран этой работы.
-async function groomDraft(project, id, ask, afterOk, harness) {
+async function groomDraft(project, id, ask, afterOk, harness, tier) {
   sayResult("подъём груминга " + id + "...");
   const order = {};
   if (ask) order.ask = ask;
   // Подписка едет только выбранная: пустое поле это «как раньше», и сервер
   // поднимает разбор подпиской по умолчанию.
   if (harness) order.harness = harness;
+  // Ярус едет тем же телом: пустое поле это pro, и сверяет имя с раскладкой
+  // машины сам сервер, как сверяет имя подписки.
+  if (tier) order.tier = tier;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id) + "/groom",
     { method: "POST", body: order });
@@ -8081,7 +8147,8 @@ function draftRow(project, d) {
     "Провести груминг", false,
     d.order ? "Заказ агенту: «" + d.order + "»." : "",
     project + "/draft/" + d.id, "",
-    (harness) => groomDraft(project, d.id, "", project + "/draft/" + d.id, harness));
+    (harness, tier) => groomDraft(project, d.id, "", project + "/draft/" + d.id, harness, tier),
+    harnessTiers());
   meta.append(groomBox);
   row.append(meta);
   row.addEventListener("click", (ev) => {
@@ -8905,10 +8972,11 @@ async function renderDraft(project, works, id) {
           "Провести груминг", false,
           text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
           "", "",
-          (harness) => groomDraft(project, id, "", "", harness).then((ok) => {
+          (harness, tier) => groomDraft(project, id, "", "", harness, tier).then((ok) => {
             if (ok) refresh().catch(console.error);
             return ok;
-          }));
+          }),
+          harnessTiers());
         actions.push(groom);
       }
       // Исход разбора стоит над текстом записи: он и есть ответ на вопрос

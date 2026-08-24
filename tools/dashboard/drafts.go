@@ -207,7 +207,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
-	ask, want, ok := s.draftAsk(w, r, id)
+	ask, want, wantTier, ok := s.draftAsk(w, r, id)
 	if !ok {
 		return
 	}
@@ -223,6 +223,39 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		harness = h
+	}
+	// Ярус разворачивается в модель раскладкой машины, и сверяется он с ней же:
+	// имени яруса, которого у подписки нет, верить нельзя, как и имени подписки.
+	// Названного яруса в теле может не быть вовсе, тогда берётся pro; не знает
+	// раскладка и его (пустой список, agentctl не отвечает), значит разбор идёт
+	// как раньше, клиентом без модели: отказывать тут не за что.
+	view := s.harnesses()
+	own := harness
+	if own == nil {
+		own = view.byDefault()
+	}
+	tier := wantTier
+	if tier == "" {
+		tier = groomTier
+	}
+	model := ""
+	if own != nil {
+		model = own.modelOf(tier)
+	}
+	if model == "" && wantTier != "" {
+		known := "у подписки нет ни одного яруса"
+		if own != nil && len(own.tierNames()) > 0 {
+			known = "ярусы подписки: " + strings.Join(own.tierNames(), ", ")
+		}
+		why := fmt.Sprintf("яруса %s в раскладке машины нет, %s", wantTier, known)
+		s.logf("груминг %s в %s отклонён: %s", id, found.Name, why)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
+	}
+	// Второй подписке явная модель не клеится: её заказ модели не несёт вовсе,
+	// имя называет профиль подписки, и флаг тут спорил бы с её же настройкой.
+	if own != nil && !own.Default {
+		model = ""
 	}
 	path, rel := draftPathOf(found.Path, id)
 	if !isFile(path) {
@@ -264,7 +297,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(id, sess, groomPrompt(id, ask)+" "+planRuleFor(sess), harness)); err != nil {
+		groomCmd(id, sess, groomPrompt(id, ask)+" "+planRuleFor(sess), harness, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -277,7 +310,11 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]string{
 		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask),
-		"message": message,
+		"message": message, "tier": tier,
+	}
+	if model != "" {
+		out["model"] = model
+		out["message"] = fmt.Sprintf("%s, ярус %s (%s)", message, tier, model)
 	}
 	if harness != nil {
 		out["harness"] = harness.Name
@@ -290,11 +327,15 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 // её же обвязкой (agentctl exec), как у чата и у конвейера задачи: пары
 // окружения второй подписки собирает она, а не дашборд, и режим разрешений ей
 // называется флагом, иначе свежий профиль встал бы на первом же вопросе.
-func groomCmd(id, sess, prompt string, h *Harness) string {
+func groomCmd(id, sess, prompt string, h *Harness, model string) string {
 	client := defaultClient
 	if h != nil && !h.Default {
 		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
 			" -- " + shQuote(h.Bin) + " --permission-mode auto"
+	} else if model != "" {
+		// Ярус разбора называется явно: без флага клиент берёт свой дефолт, а
+		// он бывает и верхним ярусом, за который человек платить не собирался.
+		client += " --model " + shQuote(model)
 	}
 	return chatVars(id, sess) + client + " " + shQuote(prompt)
 }
@@ -302,18 +343,21 @@ func groomCmd(id, sess, prompt string, h *Harness) string {
 // draftAsk достаёт уточнение из тела запроса. Тело бывает и пустым: кнопка
 // «Провести груминг» шлёт заказ без слов, а уточнение приходит только с поля
 // повторной ходки.
-func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (string, string, bool) {
+func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (string, string, string, bool) {
 	var body struct {
 		Ask string `json:"ask"`
 		// Подписка выбирается при запуске, как у конвейера задачи: разбор
 		// черновика это такая же работа агента, и платить за неё человек хочет
 		// той же квотой, какую выбрал (замечание пользователя).
 		Harness string `json:"harness"`
+		// Ярус едет тем же телом, что и подписка: подписка выбирает контур, а
+		// ярус вес модели, и без него разбор шёл дефолтом клиента.
+		Tier string `json:"tier"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftAskLimit)).Decode(&body)
 	switch {
 	case errors.Is(err, io.EOF):
-		return "", "", true
+		return "", "", "", true
 	case err != nil:
 		var mbe *http.MaxBytesError
 		text := "жду JSON {\"ask\": \"...\"} либо пустое тело"
@@ -322,9 +366,9 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (st
 		}
 		s.logf("груминг %s отклонён: тело запроса не разобралось 400", id)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
-		return "", "", false
+		return "", "", "", false
 	}
-	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, true
+	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, strings.TrimSpace(body.Tier), true
 }
 
 // handleDraftDrop удаляет черновик. Причина обязательна, как и у самой

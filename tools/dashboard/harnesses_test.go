@@ -23,6 +23,20 @@ const harnessJSONFixture = `{
   ]
 }`
 
+// harnessTiersFixture это та же раскладка с лестницей ярусов: по ней ярус
+// разворачивается в модель. Без неё стенды разбора зависели бы от машины
+// разработчика, где на вопрос о ярусах отвечает живой agentctl.
+const harnessTiersFixture = `{
+  "default": "перваяtest",
+  "source": "фикстура",
+  "harnesses": [
+    {"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1",
+     "models": [{"tier": "base", "model": "модель-base"}, {"tier": "pro", "model": "модель-pro"}]},
+    {"name": "втораяtest", "enabled": true, "default": false, "bin": "клиент-2", "env": ["CONFIG_DIR"],
+     "models": [{"tier": "base", "model": "вторая-base"}, {"tier": "pro", "model": "вторая-pro"}]}
+  ]
+}`
+
 func writeAgentctlFake(t *testing.T, bin, out string) {
 	t.Helper()
 	writeScript(t, bin, "agentctl", "cat <<'JSON'\n"+out+"\nJSON")

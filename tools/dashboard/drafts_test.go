@@ -217,6 +217,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"text": "дашборд не показывает накопитель черновиков"}`).Body.Close()
 
@@ -235,7 +236,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 		"new-session -d -s task-XR-005 -c " + e.proj + " ",
 		// Правило плана цепляется к заказу на самом запуске: по этому плану
 		// дашборд рисует деления кольца и блок «План агента».
-		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude 'Проведи груминг XR-005 " +
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' 'Проведи груминг XR-005 " +
 			planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-005.json.'",
 	} {
 		if !strings.Contains(got, want) {
@@ -640,6 +641,7 @@ func TestDraftGroomAsk(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	id := makeDraft(t, c, e, "две записи об одном и том же")
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
@@ -651,7 +653,7 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude 'Проведи груминг " + id +
+	want := "claude --model 'модель-pro' 'Проведи груминг " + id +
 		". Человек уточняет: оставить эту, вторую снять " + planRule +
 		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + id + ".json.'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
@@ -669,6 +671,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	id := makeDraft(t, c, e, "запись с непростым уточнением")
 
 	ask := "оставить 'эту', а `rm -rf /` не трогать"
@@ -678,11 +681,19 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 		t.Fatalf("груминг с уточнением в кавычках: %d %s", resp.StatusCode, got)
 	}
 	logged := readFile(t, tmuxLog)
+	// Перед заказом в команде стоит ярус («--model 'модель-pro'»), и разбирается
+	// тут сам заказ: он лежит последним аргументом, за первой же кавычкой после
+	// имени клиента.
 	cut := strings.LastIndex(logged, "claude ")
 	if cut < 0 {
 		t.Fatalf("сессия с заказом не поднялась:\n%s", logged)
 	}
-	quoted := strings.TrimSpace(logged[cut+len("claude "):])
+	tail := logged[cut+len("claude "):]
+	at := strings.Index(tail, "'Проведи груминг")
+	if at < 0 {
+		t.Fatalf("заказа в команде нет:\n%s", logged)
+	}
+	quoted := strings.TrimSpace(tail[at:])
 	// Тот же разбор, что сделает шелл tmux: заказ обязан прийти одной строкой и
 	// ровно тем текстом, который написал человек. Порванная цитата уронила бы
 	// сам shell, а неэкранированные обратные кавычки подставили бы сюда вывод
@@ -870,13 +881,14 @@ func TestDraftGroomUnknownHarnessRefused(t *testing.T) {
 	}
 }
 
-// Без выбора всё как было: разбор идёт подпиской по умолчанию, и обвязки в
-// заказе нет вовсе.
+// Без выбора подписки обвязки в заказе нет вовсе: разбор идёт клиентом
+// подписки по умолчанию. Ярус при этом назван явно, см. стенд ниже.
 func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 	e, c, _ := draftsEnv(t)
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	id := makeDraft(t, c, e, "черновик без выбора подписки")
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{}`)
@@ -887,9 +899,84 @@ func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 	if strings.Contains(got, "exec --harness") {
 		t.Errorf("разбор без выбора завернули в обвязку подписки: %s", got)
 	}
-	if !strings.Contains(got, "claude 'Проведи груминг "+id) {
+	if !strings.Contains(got, "claude --model 'модель-pro' 'Проведи груминг "+id) {
 		t.Errorf("заказ разбора поехал не тем клиентом: %s", got)
 	}
+}
+
+// Ярус разбора называется явно и по умолчанию это pro. Прежде команда шла
+// клиентом без модели вовсе, то есть дефолтом самого клиента: у пользователя
+// это верхний ярус, самая дорогая подписка, которую он не выбирал (замечание
+// пользователя). Второй подписке явная модель по-прежнему не клеится: её
+// называет профиль подписки, и флаг тут спорил бы с её настройкой.
+func TestDraftGroomTier(t *testing.T) {
+	setup := func(t *testing.T) (*testEnv, *http.Client, string, string) {
+		t.Helper()
+		e, c, _ := draftsEnv(t)
+		tmuxLog := filepath.Join(e.home, "tmux.log")
+		writeTmuxFake(t, e.bin, tmuxLog, "")
+		writeScript(t, e.bin, "claude", "exit 0")
+		writeAgentctlFake(t, e.bin, harnessTiersFixture)
+		return e, c, tmuxLog, makeDraft(t, c, e, "черновик про ярус разбора")
+	}
+
+	t.Run("основная подписка едет ярусом pro", func(t *testing.T) {
+		e, c, tmuxLog, id := setup(t)
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+			`{"harness": "перваяtest"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("груминг на основной подписке: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"tier":"pro"`) || !strings.Contains(text, `"model":"модель-pro"`) {
+			t.Errorf("ответ не назвал ярус с моделью: %s", text)
+		}
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "--model 'модель-pro'") {
+			t.Errorf("команда разбора поехала без модели яруса: %s", got)
+		}
+	})
+
+	t.Run("выбранный ярус доезжает до команды", func(t *testing.T) {
+		e, c, tmuxLog, id := setup(t)
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+			`{"harness": "перваяtest", "tier": "base"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("груминг выбранным ярусом: %d %s", resp.StatusCode, body(t, resp))
+		}
+		got := readFile(t, tmuxLog)
+		if !strings.Contains(got, "--model 'модель-base'") || strings.Contains(got, "модель-pro") {
+			t.Errorf("выбранный ярус не доехал до команды: %s", got)
+		}
+	})
+
+	t.Run("второй подписке явной модели нет", func(t *testing.T) {
+		e, c, tmuxLog, id := setup(t)
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+			`{"harness": "втораяtest"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("груминг на второй подписке: %d %s", resp.StatusCode, body(t, resp))
+		}
+		got := readFile(t, tmuxLog)
+		if !strings.Contains(got, "exec --harness 'втораяtest'") {
+			t.Errorf("разбор второй подписки поехал мимо её обвязки: %s", got)
+		}
+		if strings.Contains(got, "--model") {
+			t.Errorf("второй подписке приклеили явную модель: %s", got)
+		}
+	})
+
+	t.Run("незнакомый ярус отбивается", func(t *testing.T) {
+		e, c, tmuxLog, id := setup(t)
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+			`{"harness": "перваяtest", "tier": "космос"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "ярусы подписки") {
+			t.Fatalf("незнакомый ярус: %d %s, ожидал 400 со списком ярусов", resp.StatusCode, text)
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+			t.Errorf("сессию всё равно подняли: %s", got)
+		}
+	})
 }
 
 // Остаток прошлого разбора грумингу не помеха. Разбор идёт живым чатом, и его

@@ -177,6 +177,56 @@ func (v HarnessView) pick(name string) (*Harness, string) {
 	return nil, fmt.Sprintf("подписки %s на машине нет, включены: %s", name, strings.Join(known, ", "))
 }
 
+// groomTier это ярус, которым идёт разбор черновика. Груминг это работа
+// среднего веса, и верхний ярус ей не нужен: до этой правки разбор поднимался
+// клиентом без модели вовсе, то есть шёл дефолтом самого клиента (у fable это
+// самая дорогая подписка), которого человек не выбирал (замечание
+// пользователя). Ярус тут это выбор дашборда, а модель под ним называет
+// раскладка машины.
+const groomTier = "pro"
+
+// modelOf разворачивает ярус в модель по раскладке подписки. Пустая строка это
+// «такого яруса у подписки нет»: имён моделей дашборд не сочиняет, вся лестница
+// приезжает ответом agentctl.
+func (h *Harness) modelOf(tier string) string {
+	for _, m := range h.Models {
+		if m.Tier == tier {
+			return m.Model
+		}
+	}
+	return ""
+}
+
+// tierNames это ярусы подписки по порядку раскладки: ими выбор и ограничен, а
+// в отказе они называются человеку списком.
+func (h *Harness) tierNames() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range h.Models {
+		if m.Tier == "" || seen[m.Tier] {
+			continue
+		}
+		seen[m.Tier] = true
+		out = append(out, m.Tier)
+	}
+	return out
+}
+
+// byDefault находит подписку по умолчанию: широкая половина кнопки идёт на неё,
+// и ярус разворачивается её же раскладкой. Признака в раскладке может и не
+// быть, тогда берётся первая, как это делает и экран.
+func (v HarnessView) byDefault() *Harness {
+	for i := range v.Harnesses {
+		if v.Harnesses[i].Default {
+			return &v.Harnesses[i]
+		}
+	}
+	if len(v.Harnesses) > 0 {
+		return &v.Harnesses[0]
+	}
+	return nil
+}
+
 // harnessTTL это срок памяти процесса на раскладку подписок. Спрашивается она
 // на каждой сборке экрана и на каждом запуске, а меняется правкой конфига
 // руками, поэтому подпроцесс за ней ходит не чаще раза в полминуты.

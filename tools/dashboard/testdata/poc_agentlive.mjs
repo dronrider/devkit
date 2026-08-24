@@ -10,6 +10,7 @@
 //
 // Зовётся: node testdata/poc_agentlive.mjs static/app.js
 
+import { readFileSync } from "node:fs";
 import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
@@ -17,6 +18,18 @@ const app = appPathArg();
 
 const hour = 3600 * 1000;
 const stamp = (ms) => new Date(Date.now() - ms).toISOString();
+
+// Порог пачки стенд берёт из самого кода, а не держит своё число: разъехавшись,
+// они молчат оба, а на экране остаётся кнопка, снимающая не то, что обещала.
+const edgeHours = Number((readFileSync(app, "utf8")
+  .match(/const SWEEP_IDLE_HOURS = (\d+(?:\.\d+)?);/) || [])[1]);
+if (!edgeHours) fail("порога пачки в коде не нашлось: править стенд вместе с ним");
+// Сутки это нижняя граница порога: сессия двухчасовой давности вполне живая, к
+// ней возвращаются, а пачкой закрывают накопившиеся хвосты (решение
+// пользователя).
+if (edgeHours < 24) {
+  fail("порог пачки меньше суток (" + edgeHours + " ч): под него попадают живые сессии");
+}
 
 const works = [
   { id: "XR-1", kind: "task", via: "tmux", title: "идущая работа", own: true,
@@ -28,12 +41,20 @@ const works = [
   { id: "XR-9", kind: "goal", via: "registry", title: "цикл цели мимо дашборда", live: "dead" },
 ];
 
-// Разговоры машины: два молчат дольше порога пачки, один свежий.
+// Разговоры машины: два молчат дольше порога пачки, один свежий. Давность
+// отсчитывается от самого порога, поэтому его правка не роняет стенд ложно.
 const chats = [
-  { id: "bbbb2222-2222", state: "live", tmux: "chat-XR-2-1", project: "demo", mtime: stamp(3 * hour) },
-  { id: "cccc3333-3333", state: "live", tmux: "chat-XR-3-1", project: "demo", mtime: stamp(9 * hour) },
-  { id: "dddd4444-4444", state: "live", tmux: "chat-XR-4-1", project: "demo", mtime: stamp(2 * 60 * 1000) },
-  { id: "eeee5555-5555", state: "dead", tmux: "", project: "demo", mtime: stamp(30 * hour) },
+  { id: "bbbb2222-2222", state: "live", tmux: "chat-XR-2-1", project: "demo",
+    mtime: stamp((edgeHours + 1) * hour) },
+  { id: "cccc3333-3333", state: "live", tmux: "chat-XR-3-1", project: "demo",
+    mtime: stamp(3 * edgeHours * hour) },
+  { id: "dddd4444-4444", state: "live", tmux: "chat-XR-4-1", project: "demo",
+    mtime: stamp(2 * 60 * 1000) },
+  // Свежесть по эту сторону порога: час молчания под пачку не идёт.
+  { id: "ffff6666-6666", state: "live", tmux: "chat-XR-6-1", project: "demo",
+    mtime: stamp((edgeHours - 1) * hour) },
+  { id: "eeee5555-5555", state: "dead", tmux: "", project: "demo",
+    mtime: stamp(3 * edgeHours * hour) },
 ];
 
 const stopped = [];
@@ -150,14 +171,28 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   await go("#/agents");
   const sweep = deepBtn(groups, "Закрыть простаивающие");
   if (!sweep) fail("кнопки пачки на экране нет: " + dump(groups).slice(0, 300));
+  // Порог назван словами и на кнопке, и в подтверждении: число берётся из кода,
+  // поэтому подсказка со старым порогом видна стенду, а не только глазу.
+  const days = edgeHours / 24;
+  const edgeSaid = Number.isInteger(days)
+    ? (days === 1 ? "суток" : days + " суток") : edgeHours + " ч";
+  if (!String(sweep.title || "").includes("дольше " + edgeSaid)) {
+    fail("подсказка кнопки назвала не тот порог: " + sweep.title);
+  }
   sweep.handlers.click({ stopPropagation: () => {} });
   await settle();
   const box = byClass(groups, "swbox");
   const said = dump(box);
+  if (!said.includes("дольше " + edgeSaid)) {
+    fail("подтверждение назвало не тот порог: " + said);
+  }
   if (!said.includes("chat-XR-2-1") || !said.includes("chat-XR-3-1")) {
     fail("пачка не назвала, что снимет: " + said);
   }
   if (said.includes("chat-XR-4-1")) fail("в пачку попала свежая сессия: " + said);
+  if (said.includes("chat-XR-6-1")) {
+    fail("в пачку попала сессия по эту сторону порога: " + said);
+  }
   if (stopped.length) fail("пачка сняла сессии до подтверждения: " + JSON.stringify(stopped));
   const go2 = deepBtn(box, "Снять 2");
   if (!go2) fail("в пачке нет кнопки снятия: " + said);
@@ -167,7 +202,9 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   if (!paths.includes("bbbb2222-2222/stop") || !paths.includes("cccc3333-3333/stop")) {
     fail("пачка сняла не те сессии: " + JSON.stringify(stopped));
   }
-  if (paths.includes("dddd4444-4444")) fail("пачка сняла свежую сессию: " + JSON.stringify(stopped));
+  if (paths.includes("dddd4444-4444") || paths.includes("ffff6666-6666")) {
+    fail("пачка сняла свежую сессию: " + JSON.stringify(stopped));
+  }
 }
 
 // --- одно состояние одним словом во всех показах ---

@@ -10538,8 +10538,20 @@ function agentMatch(item, q) {
 
 // Порог пачки: сессии, молчащие дольше него, снимаются одним заходом. Он
 // крупнее рубежа простоя (там сессия перестаёт считаться работающей), потому
-// что тут её снимают насовсем, и час молчания это ещё не повод.
-const SWEEP_IDLE_HOURS = 2;
+// что тут её снимают насовсем. Стоят тут сутки, а не пара часов: сессия
+// двухчасовой давности вполне живая, к ней возвращаются, а пачкой человек
+// закрывает как раз накопившиеся хвосты. Квоту простаивающие не тратят, только
+// память машины (решение пользователя).
+const SWEEP_IDLE_HOURS = 24;
+
+// Порог словами: сутки человек читает сутками, а не двадцатью четырьмя часами.
+// Берётся оно из того же числа, чтобы правка порога не оставила на кнопке
+// старое.
+function sweepSaid() {
+  const days = SWEEP_IDLE_HOURS / 24;
+  if (!Number.isInteger(days)) return SWEEP_IDLE_HOURS + " ч";
+  return days === 1 ? "суток" : days + " суток";
+}
 
 // Что уйдёт пачкой: живые в нашей tmux разговоры машины, молчащие дольше
 // порога. Считается это по списку разговоров, а не по строкам экрана: строкой
@@ -10560,8 +10572,8 @@ async function sweepIdle(project, box) {
   const list = sweepPick(r.body.chats, Date.now());
   box.replaceChildren();
   if (!list.length) {
-    box.append(el("div", "hint", "Молчащих дольше " + SWEEP_IDLE_HOURS +
-      " ч сессий нет: снимать нечего."));
+    box.append(el("div", "hint", "Молчащих дольше " + sweepSaid() +
+      " сессий нет: снимать нечего."));
     return;
   }
   // Список того, что будет снято, стоит перед нажатием, а не после: снятое
@@ -10569,7 +10581,7 @@ async function sweepIdle(project, box) {
   const card = el("div", "dconfirm");
   card.append(el("div", "dwhy", "Снять " + list.length + " " +
     plural(list.length, "сессию", "сессии", "сессий") + ", молчащих дольше " +
-    SWEEP_IDLE_HOURS + " ч:"));
+    sweepSaid() + ":"));
   const names = el("div", "hint", list.map((c) => c.tmux).join(", "));
   card.append(names);
   const row = el("div", "drow");
@@ -10683,8 +10695,8 @@ function renderSessions(project, works, q) {
     make: () => {
       const sweepBox = el("div", "swbox");
       const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
-      withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + SWEEP_IDLE_HOURS +
-        " ч. Перед снятием покажет список.");
+      withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + sweepSaid() +
+        ". Перед снятием покажет список.");
       sweep.addEventListener("click", (ev) => {
         ev.stopPropagation();
         sweepIdle(project, sweepBox).catch(console.error);

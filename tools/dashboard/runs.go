@@ -291,13 +291,24 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		kind = "goal"
 	}
 	sess := kind + "-" + id
+	talk := s.tmuxTalk(found.Path)
 	for _, name := range tmuxSessions() {
-		if name == "goal-"+id || name == "task-"+id {
+		if name != "goal-"+id && name != "task-"+id {
+			continue
+		}
+		if !talk[name] {
 			s.logf("запуск %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, name)
 			writeJSON(w, http.StatusConflict, map[string]string{
 				"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): запускать поверх живой сессии нельзя, сначала стоп", id, name)})
 			return
 		}
+		// Сессия без хода это досчитавший разговор (чаще всего груминг, который
+		// кончился строкой и остался стоять на приглашении). Работой строка его
+		// не считает, кнопку запуска показывает, и отказывать тут значило бы
+		// обещать кнопкой то, чего ручка не делает: остаток снимается, а на его
+		// месте поднимается заказанная работа.
+		s.logf("запуск %s в %s: остаток разговора в tmux-сессии %s снят", id, found.Name, name)
+		runProc("tmux", "kill-session", "-t", name)
 	}
 	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
 	// нет, верить нельзя, иначе экран, устаревший на смену конфига, поднимал бы

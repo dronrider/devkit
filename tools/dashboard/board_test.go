@@ -1272,3 +1272,59 @@ func projectWorks(t *testing.T, e *testEnv) []Work {
 	}
 	return nil
 }
+
+// writePeerTmux кладёт запись реестра живых сессий клиента с адресом tmux-пары
+// и состоянием: по ним сервер и различает идущий ход и досчитавший разговор.
+// Процесс берётся свой: запись без живого процесса реестр отсеивает.
+func writePeerTmux(t *testing.T, home, sid, tmux, status string) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"groom-1","kind":"interactive","tmux":%q,"status":%q}`,
+		pid, sid, tmux, status)
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Груминг черновика идёт живым чатом, и его tmux-сессия переживает конец
+// разбора: клиент стоит на приглашении и ждёт человека. Строка с таким соседом
+// показывала один «Стоп» и запустить себя не давала, хотя разбор кончился час
+// назад (замечание пользователя). Работа это ход агента, а не живой клиент:
+// досчитавшая сессия остаётся разговором, и строка возвращается к своим
+// кнопкам.
+func TestBoardRowFreeWhenTmuxIdle(t *testing.T) {
+	e, _, _ := runsEnv(t, "task-XR-002\t1\t1786000000\n")
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Minute))
+
+	// Записи в реестре нет вовсе: про ход сказать нечего, и работа остаётся
+	// работой, со «Стопом» на строке.
+	if got := boardRows(t, e)["XR-002"]; got.Run != "tmux" {
+		t.Fatalf("признак работы строки без записи реестра %q, ожидал tmux", got.Run)
+	}
+
+	// Клиент ведёт ход: строка занята, как и была.
+	writePeerTmux(t, e.home, sid, "task-XR-002:@1.%1", "busy")
+	if got := boardRows(t, e)["XR-002"]; got.Run != "tmux" {
+		t.Errorf("у идущего хода признак работы %q, ожидал tmux: «Стоп» пропал с работающей строки", got.Run)
+	}
+
+	// Ход кончился, клиент жив: строка свободна.
+	writePeerTmux(t, e.home, sid, "task-XR-002:@1.%1", "idle")
+	if got := boardRows(t, e)["XR-002"]; got.Run != "" {
+		t.Errorf("после конца хода признак работы %q, ожидал пустой: строка так и стоит под «Стопом»", got.Run)
+	}
+
+	// Работа при этом не пропала: раздел «Агенты» видит её разговором, и вход
+	// в чат со строки остаётся.
+	talk := workByID(projectWorks(t, e), "XR-002")
+	if talk == nil || !talk.Talk {
+		t.Fatalf("досчитавшая сессия пропала из работ или не помечена разговором: %+v", talk)
+	}
+}

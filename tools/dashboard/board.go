@@ -221,6 +221,8 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	// сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).
 	// Строки на доске может и не быть, и тогда работа остаётся при своём ID.
 	rows, _ := parseBoardRows(board)
+	// Сессии, где клиент жив, а хода нет: строке они работы не дают.
+	talk := s.tmuxTalk(projectPath)
 	// Сессии спрашиваются со временем создания (tmuxList): по нему экран
 	// «Агенты» говорит, сколько работа идёт.
 	for _, sess := range tmuxList() {
@@ -232,7 +234,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created,
 			// Конвейерная сессия это сессия дашборда: он её и поднял, её имя
 			// собрано по его же образцу.
-			Own: true, Model: s.chatModel("", sess.Name)})
+			Own: true, Model: s.chatModel("", sess.Name), Talk: talk[sess.Name]})
 		seen[kind+"-"+id] = true
 		busy[id] = true
 	}
@@ -245,6 +247,37 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		busy[goal] = true
 	}
 	return append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
+}
+
+// tmuxTalk называет tmux-сессии, где клиент жив, а хода в них нет. Груминг
+// черновика идёт живым чатом, а не headless-ходом, и его tmux-сессия переживает
+// конец разбора: клиент остаётся стоять на приглашении и ждать человека. Строка
+// с таким соседом показывала один «Стоп» и запустить себя не давала, хотя
+// разбор кончился час назад (замечание пользователя). Работа это ход агента, а
+// не живой клиент: досчитавшая сессия остаётся разговором, её видно разделом
+// «Агенты» и списком чатов, а строка возвращается к своим кнопкам.
+//
+// Простой признаётся только доказанным: запись реестра клиента говорит idle, и
+// транскрипт это подтверждает (тот же двойной признак, каким занятость чата
+// меряет handleChatStatus). Сессия, о которой в реестре нет записи, остаётся
+// работой, как и раньше: неизвестность это не повод снимать «Стоп» с идущего
+// конвейера.
+func (s *server) tmuxTalk(projPath string) map[string]bool {
+	talk := map[string]bool{}
+	for _, p := range s.peers() {
+		// В реестре стоит полный адрес пары («task-DK-499:@896.%896»), а имя
+		// сессии это его первое звено.
+		name := strings.SplitN(p.Tmux, ":", 2)[0]
+		if name == "" || p.Status != "idle" {
+			continue
+		}
+		if info, ok := findSession(s.transcriptRoots(), projPath, p.SessionID); ok &&
+			sessionBusy(info.path, s.now()) {
+			continue
+		}
+		talk[name] = true
+	}
+	return talk
 }
 
 // tmuxMissingCheck называет ненайденный tmux: без него живые работы это

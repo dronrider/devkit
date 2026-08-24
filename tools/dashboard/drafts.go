@@ -237,13 +237,22 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := draftSession(id)
+	talk := s.tmuxTalk(found.Path)
 	for _, name := range tmuxSessions() {
-		if name == sess || name == "goal-"+id {
+		if name != sess && name != "goal-"+id {
+			continue
+		}
+		if !talk[name] {
 			s.logf("грумминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, name)
 			writeJSON(w, http.StatusConflict, map[string]string{
 				"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать грумминг поверх живой сессии нельзя, сначала стоп", id, name)})
 			return
 		}
+		// Остаток прошлого разбора: сессия жива, а хода в ней нет. Повторный
+		// груминг по той же записи как раз с этого и начинается, и отказ тут
+		// стоял бы поперёк собственной кнопки экрана.
+		s.logf("грумминг %s в %s: остаток прошлого разбора в tmux-сессии %s снят", id, found.Name, name)
+		runProc("tmux", "kill-session", "-t", name)
 	}
 	if m := claudeMissing(); m != "" {
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, m)

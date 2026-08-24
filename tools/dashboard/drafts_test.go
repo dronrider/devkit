@@ -891,3 +891,33 @@ func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 		t.Errorf("заказ разбора поехал не тем клиентом: %s", got)
 	}
 }
+
+// Остаток прошлого разбора грумингу не помеха. Разбор идёт живым чатом, и его
+// tmux-сессия переживает конец хода: клиент стоит на приглашении. Работой такая
+// сессия не считается, строка показывает свою кнопку, и отказ ручки стоял бы
+// поперёк собственной кнопки экрана. Остаток снимается, на его месте встаёт
+// заказанный разбор.
+func TestDraftGroomOverIdleLeftover(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, `task-XR-005\n`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "дашборд не показывает накопитель черновиков"}`).Body.Close()
+
+	// Клиент прошлого разбора жив, а хода в нём нет.
+	writePeerTmux(t, e.home, "eeee5555-5555-4555-8555-555555555555", "task-XR-005:@2.%2", "idle")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг поверх досчитавшего разбора: %d %s, ожидал подъём", resp.StatusCode, text)
+	}
+	got := readFile(t, tmuxLog)
+	if !strings.Contains(got, "kill-session -t task-XR-005") {
+		t.Errorf("остаток прошлого разбора не снят: %s", got)
+	}
+	if !strings.Contains(got, "new-session -d -s task-XR-005") {
+		t.Errorf("новый разбор не поднялся: %s", got)
+	}
+}

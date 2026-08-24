@@ -290,9 +290,13 @@ func normalizeStatus(s string) string {
 var barePathRe = regexp.MustCompile(`^[0-9A-Za-z._/~-]+$`)
 
 // wrapLink оборачивает голый путь вида tasks/XR-001.md в markdown-ссылку,
-// иначе ячейка не кликается и выпадает из проверки ссылок в lint.
+// иначе ячейка не кликается и выпадает из проверки ссылок в lint. Путь,
+// написанный естественно от корня репозитория (docs/tasks/XR-001.md), режется
+// до docs-относительного вида: checkLinks резолвит цель от docs/, и голый
+// префикс docs/ разворачивался бы в несуществующий docs/docs/... (DK-176).
 func wrapLink(link string) string {
 	if barePathRe.MatchString(link) && (strings.Contains(link, "/") || strings.HasSuffix(link, ".md")) {
+		link = strings.TrimPrefix(link, "docs/")
 		return fmt.Sprintf("[%s](%s)", link, link)
 	}
 	return link

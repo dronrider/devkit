@@ -6944,11 +6944,30 @@ function chatStoppable(st) {
 //
 // Подпись у кнопки значком, а не словом: рядом стоит «Продолжить», и два
 // слова подряд слипались в кашу.
+// Кружок ожидания на кнопке чата: разговор задал вопрос и ждёт человека. Тот же
+// признак, что рисует чип ожидания на строке доски (waitChip), и второго тут не
+// заводится: груминг черновика спрашивает в разговоре и ждёт там же, а на форме
+// записи никаких вопросов больше нет вовсе (решение пользователя).
+function waitDot(w) {
+  if (!w || !w.state) return null;
+  return el("i", "wdot");
+}
+
+function waitBtnTip(w, what) {
+  if (!w || !w.state) return what;
+  const qs = w.questions || [];
+  return what + ": " + waitWords(w, Date.now()) + ", " + (w.note || "источник не назван") + "." +
+    (qs.length ? " Вопрос: " + qs.join("; ") : "");
+}
+
 function rowChatBtn(project, row) {
   const talk = el("button", "btn btn-sm btn-ico");
   talk.append(icon("i-chat"));
-  withTip(talk, "Чат по задаче");
-  talk.setAttribute("aria-label", "Чат по задаче " + row.id);
+  const dot = waitDot(row.waiting);
+  if (dot) talk.append(dot);
+  withTip(talk, waitBtnTip(row.waiting, "Чат по задаче"));
+  talk.setAttribute("aria-label", "Чат по задаче " + row.id +
+    (row.waiting && row.waiting.state ? ", " + row.waiting.state : ""));
   talk.addEventListener("click", (ev) => {
     ev.stopPropagation();
     openChat(chatAddr(project, row.id));
@@ -8327,10 +8346,9 @@ const GROOM_HINT = "«Провести груминг» поднимает се�
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
 // записи afterOk не передают, там уже стоит экран этой работы.
-async function groomDraft(project, id, ask, afterOk, harness, tier) {
+async function groomDraft(project, id, afterOk, harness, tier) {
   sayResult("подъём груминга " + id + "...");
   const order = {};
-  if (ask) order.ask = ask;
   // Подписка едет только выбранная: пустое поле это «как раньше», и сервер
   // поднимает разбор подпиской по умолчанию.
   if (harness) order.harness = harness;
@@ -8380,7 +8398,7 @@ function draftRow(project, d) {
     "Провести груминг", false,
     d.order ? "Заказ агенту: «" + d.order + "»." : "",
     project + "/draft/" + d.id, "",
-    (harness, tier) => groomDraft(project, d.id, "", project + "/draft/" + d.id, harness, tier),
+    (harness, tier) => groomDraft(project, d.id, project + "/draft/" + d.id, harness, tier),
     harnessTiers());
   meta.append(groomBox);
   row.append(meta);
@@ -9042,8 +9060,9 @@ const DRAFT_PHASES = {
     next: "Записи больше нет, причина удаления лежит сообщением коммита доски.",
   },
   question: {
-    head: "Груминг кончился вопросом",
-    next: "Ответ уходит новым заходом: агент перечитает черновик вместе с уточнением.",
+    head: "Груминг кончился без исхода",
+    next: "Ни строки, ни приписки, ни пометки об отложенном. Что успел сказать " +
+      "агент, видно в чате груминга: вопросы он задаёт там же и там же ждёт ответа.",
   },
   open: {
     head: "Груминга не было",
@@ -9091,40 +9110,6 @@ function draftOutcomeCard(project, id, out, phase) {
     go.addEventListener("click", () => { goKeepingChat(project + "/" + out.task); });
     body.append(go);
   }
-  card.append(body);
-  return card;
-}
-
-const DRAFT_ASK_HINT = "Уточнение уедет заказом новому заходу груминга: " +
-  "прежняя сессия кончилась вопросом и своих ходов больше не делает.";
-
-// Карточка вопроса: последнее слово агента разметкой, поле уточнения и
-// повторный заход. Без неё вопрос грумера виден только в ленте разговора, а на
-// экране записи разбор выглядел брошенным.
-function draftAskCard(project, id, question) {
-  const card = el("div", "card dcard");
-  const head = el("div", "phd");
-  head.append(el("b", "", "Вопрос груминга"));
-  card.append(head);
-  const body = el("div", "dbd");
-  body.append(mdRender(question));
-  body.append(el("div", "dwhy", "Что ответить грумингу"));
-  const field = el("textarea", "dask");
-  field.placeholder = "Уточнение для нового захода груминга";
-  body.append(field);
-  body.append(el("div", "hint", DRAFT_ASK_HINT));
-  const again = el("button", "btn btn-acc", "Повторить груминг");
-  again.addEventListener("click", () => {
-    again.disabled = true;
-    groomDraft(project, id, field.value.trim()).then((ok) => {
-      again.disabled = false;
-      if (ok) {
-        field.value = "";
-        refresh().catch(console.error);
-      }
-    }).catch((err) => { again.disabled = false; console.error(err); });
-  });
-  body.append(again);
   card.append(body);
   return card;
 }
@@ -9184,10 +9169,13 @@ async function renderDraft(project, works, id) {
   // Груминг уже шёл, значит есть его чат: вместо кнопки ссылка туда.
   const groomChat = ((chats.ok && chats.body.chats) || [])[0] || null;
   const phase = outcome.ok ? draftPhase(out, running) : "error";
+  // Ожидание разговора приезжает тем же ответом, что и текст записи: его считает
+  // сервер по признаку ожидания, как и у строки доски.
+  const waiting = (text.ok && text.body.waiting) || null;
   sync(groups, [{
     key: "draft-page",
     sign: [id, said, running, groomChat ? groomChat.id : "", text.body.error || "",
-      phase, JSON.stringify(out)].join("|"),
+      phase, JSON.stringify(out), JSON.stringify(waiting)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -9195,6 +9183,11 @@ async function renderDraft(project, works, id) {
       const actions = [];
       if (groomChat) {
         const go = barBtn("btn", "Чат груминга", "i-chat");
+        // Разбор спрашивает в разговоре и ждёт там же: кружок на кнопке и есть
+        // весь след вопроса на этом экране.
+        const dot = waitDot(waiting);
+        if (dot) go.append(dot);
+        withTip(go, waitBtnTip(waiting, "Разговор разбора записи"));
         go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
         actions.push(go);
       } else if (!running) {
@@ -9205,7 +9198,7 @@ async function renderDraft(project, works, id) {
           "Провести груминг", false,
           text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
           "", "",
-          (harness, tier) => groomDraft(project, id, "", "", harness, tier).then((ok) => {
+          (harness, tier) => groomDraft(project, id, "", harness, tier).then((ok) => {
             if (ok) refresh().catch(console.error);
             return ok;
           }),
@@ -9218,7 +9211,6 @@ async function renderDraft(project, works, id) {
       // из шапки, а исход появится на её месте сам, опросом выше.
       const lead = [];
       if (phase !== "running") lead.push(draftOutcomeCard(project, id, out, phase));
-      if (phase === "question") lead.push(draftAskCard(project, id, out.question));
       return formPage({
         key: "draft", project, id, lead,
         // Дорога на доску была только через накопитель, и с экрана записи её не

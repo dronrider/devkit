@@ -26,8 +26,17 @@ import (
 // Уточнение человека едет в тот же заказ (LLD DK-328, решение 4): писать в
 // закончившуюся сессию нечем, и ответ на вопрос груминга уходит новой ходкой,
 // которая перечитает черновик и пойдёт заново.
+// groomPrompt это заказ грумеру дословно. Заказ называет и то, как задавать
+// вопросы: разбор идёт живым разговором (решение 1 LLD DK-354), человек сидит в
+// той же панели, и вопрос ему задаётся прямо там, ожиданием ответа. Прежде
+// вопрос был выходом из захода, а ответ уезжал новым заходом с уточнением, и
+// грумер перечитывал черновик заново; экран черновика держал под это своё поле
+// ответа, и оно ушло вместе с механикой (решение пользователя).
 func groomPrompt(id, ask string) string {
-	prompt := "Проведи груминг " + id
+	prompt := "Проведи груминг " + id +
+		". Вопросы задавай в этом же разговоре, командой `taskctl ask " + id +
+		" --question \"...\" --wait 480`, и жди ответа в ней: вопросом заход не кончай, " +
+		"а не дождавшись, отложи запись с причиной"
 	if ask != "" {
 		prompt += ". Человек уточняет: " + ask
 	}
@@ -63,7 +72,7 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("ответ taskctl draft list --json не разобрался: %v", err)})
 		return
 	}
-	resp := map[string]any{"project": found.Name, "drafts": draftsWithOrder(v.Drafts)}
+	resp := map[string]any{"project": found.Name, "drafts": s.draftsWithOrder(found.Path, v.Drafts)}
 	if len(v.Drafts) == 0 {
 		// Пустой список без слов неотличим от неотрисованного раздела.
 		resp["note"] = fmt.Sprintf("накопитель черновиков %s пуст: записанных мимо доски идей нет", found.Name)
@@ -78,7 +87,7 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 // формат записи накопителя держит taskctl, и разбор в типизированную строку
 // потерял бы поля, неизвестные дашборду. Неразобранная запись уезжает
 // нетронутой, без подсказки: без неё запись рисуется по-старому.
-func draftsWithOrder(items []json.RawMessage) []json.RawMessage {
+func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []json.RawMessage {
 	out := make([]json.RawMessage, 0, len(items))
 	for _, raw := range items {
 		var m map[string]json.RawMessage
@@ -91,6 +100,17 @@ func draftsWithOrder(items []json.RawMessage) []json.RawMessage {
 		if id != "" {
 			if mark, err := json.Marshal(groomPrompt(id, "")); err == nil {
 				m["order"] = mark
+			}
+			// Ожидание разговора едет тем же полем и в том же виде, что у
+			// строки доски: груминг спрашивает в чате и ждёт там же, а строка
+			// накопителя помечает это кружком на кнопке чата. Второго признака
+			// ожидания у накопителя нет. Имя разговора у груминга это task-<ID>
+			// (sessionChatName), туда же кладёт ответ панель, и признак лежит
+			// под тем же именем.
+			if w, ok := askWaiting(projPath, id, s.now()); ok {
+				if mark, err := json.Marshal(w); err == nil {
+					m["waiting"] = mark
+				}
 			}
 		}
 		enc, err := json.Marshal(m)
@@ -138,8 +158,14 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Провести
 	// груминг», и подсказка на ней читает то же поле, что и строка накопителя.
-	writeJSON(w, http.StatusOK, map[string]string{
-		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, "")})
+	out := map[string]any{
+		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, "")}
+	// И ожидание разговора тем же полем: кнопка чата груминга на экране записи
+	// помечает его так же, как строка накопителя.
+	if wait, ok := askWaiting(found.Path, id, s.now()); ok {
+		out["waiting"] = wait
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleDraftGroom поднимает сессию грумминга черновика. Проверки те же и в том

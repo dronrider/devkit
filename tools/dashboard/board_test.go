@@ -1037,10 +1037,6 @@ func TestStaticButtonsLook(t *testing.T) {
 			t.Errorf("подтверждение удаления собрано не по макету 12 (нет %q)", want)
 		}
 	}
-	if !strings.Contains(funcBody(t, app, "function draftAskCard("),
-		`el("button", "btn btn-acc dend", "Повторить груминг")`) {
-		t.Error("повторная ходка груминга собрана без правого края (класс dend)")
-	}
 	dir, page := chromeStand(t, "buttons.js")
 
 	// Строка доски: мелкая кнопка макета это 30 пикселей высоты, поля по 12 и

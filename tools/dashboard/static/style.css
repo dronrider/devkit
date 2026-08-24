@@ -145,6 +145,14 @@ a:hover{text-decoration:underline}
 .tipq{width:18px;height:18px;flex:none;border-radius:50%;border:1px solid var(--line2);color:var(--tx3);font:600 10.5px var(--sans);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .tipq:hover{color:var(--tx);border-color:var(--tx3)}
 .dashed{border-bottom:1px dashed var(--line2);cursor:default}
+/* кружок ожидания на кнопке чата: разговор задал вопрос и ждёт человека. Цвет
+   тот же, каким помечено ожидание чипом строки, а моргает он той же дорожкой,
+   что и точка работы, только своим цветом */
+.wdot{width:7px;height:7px;border-radius:50%;background:var(--wait);flex:none}
+@media (prefers-reduced-motion:no-preference){
+  .wdot{animation:dkwait 2.2s ease-out infinite}
+  @keyframes dkwait{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--wait) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+}
 @media (prefers-reduced-motion:no-preference){
   .pulse,.pdot.p-working{animation:dkpulse 2.2s ease-out infinite}
   @keyframes dkpulse{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--run) 55%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
@@ -373,8 +381,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .dcard .dbd{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:14px 18px}
 .dsay{font:400 12.5px/1.6 var(--sans);color:var(--tx2)}
 .dwhy{font:500 12.5px/1.6 var(--sans);color:var(--tx)}
-.dcard .dbd .btn.dend{align-self:flex-end}
-.dask{width:100%;min-height:76px;resize:vertical;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg0);color:var(--tx);font:400 13px/1.55 var(--sans)}
 /* подтверждение удаления по макету «12 Груминг черновика»: причина своей
    строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
 .dconfirm{display:flex;flex-direction:column;gap:10px;width:100%}

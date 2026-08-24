@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
 )
 
 // Раздел «Черновики»: список накопителя, текст записи, груминг с его исходом и
@@ -162,8 +164,11 @@ func TestDraftsCarryOrder(t *testing.T) {
 		t.Fatalf("в накопителе %d черновиков, жду 1: %v", len(drafts), list)
 	}
 	first, _ := drafts[0].(map[string]any)
-	if order, _ := first["order"].(string); order != "Проведи груминг XR-005" {
-		t.Errorf("заказ строки накопителя %q, ждал «Проведи груминг XR-005»", order)
+	// Заказ едет дословно тем же текстом, каким его собирает groomPrompt: слова
+	// заказа сторожит TestDraftWaitingFromAsk, а тут проверяется, что до экрана
+	// доезжает именно он, без пересборки на клиенте.
+	if order, _ := first["order"].(string); order != groomPrompt("XR-005", "") {
+		t.Errorf("заказ строки накопителя %q, ждал %q", order, groomPrompt("XR-005", ""))
 	}
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
@@ -171,7 +176,11 @@ func TestDraftsCarryOrder(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("текст черновика: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, `"order":"Проведи груминг XR-005"`) {
+	var withOrder struct {
+		Order string `json:"order"`
+	}
+	json.Unmarshal([]byte(text), &withOrder)
+	if withOrder.Order != groomPrompt("XR-005", "") {
 		t.Errorf("заказ экрана записи не приехал: %s", text)
 	}
 }
@@ -236,8 +245,9 @@ func TestDraftGroomPrompt(t *testing.T) {
 		"new-session -d -s task-XR-005 -c " + e.proj + " ",
 		// Правило плана цепляется к заказу на самом запуске: по этому плану
 		// дашборд рисует деления кольца и блок «План агента».
-		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' 'Проведи груминг XR-005 " +
-			planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-005.json.'",
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' '" +
+			groomPrompt("XR-005", "") + " " + planRule +
+			" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-005.json.'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
@@ -653,8 +663,8 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude --model 'модель-pro' 'Проведи груминг " + id +
-		". Человек уточняет: оставить эту, вторую снять " + planRule +
+	want := "claude --model 'модель-pro' '" + groomPrompt(id, "оставить эту, вторую снять") +
+		" " + planRule +
 		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + id + ".json.'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
@@ -702,7 +712,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
 	}
-	want := "Проведи груминг " + id + ". Человек уточняет: " + ask + " " + planRule +
+	want := groomPrompt(id, ask) + " " + planRule +
 		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + id + ".json."
 	if string(out) != want {
 		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
@@ -1048,5 +1058,60 @@ func TestTaskOfDraftIDNamesDraft(t *testing.T) {
 	}
 	if plain["draft"] != "" || !strings.Contains(plain["error"], "нет строки XR-777") {
 		t.Fatalf("ID без строки и без файла назван черновиком: %s", text)
+	}
+}
+
+// Груминг идёт живым разговором и спрашивает в нём же (решение 1 LLD DK-354):
+// вопросов на форме записи больше нет, а ожидание ответа видно кружком на
+// кнопке чата. Признак тот же, что у строки доски: его кладёт taskctl ask во
+// вход разговора, и разговор груминга носит имя task-<ID>, туда же кладёт ответ
+// панель. Заодно тут сторожится сам заказ: он обязан звать агента спрашивать в
+// разговоре, а не кончать заход вопросом.
+func TestDraftWaitingFromAsk(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "ссылка на черновик из чата не открывается"}`).Body.Close()
+
+	order := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)["order"]
+	if said, _ := order.(string); !strings.Contains(said, "taskctl ask XR-005") ||
+		!strings.Contains(said, "вопросом заход не кончай") {
+		t.Errorf("заказ груминга не велит спрашивать в разговоре: %v", order)
+	}
+
+	// Признак кладёт taskctl ask; тут он пишется тем же пакетом, что и у
+	// инструмента, чтобы стенд не расходился с ним форматом.
+	ask := chat.Ask{Until: time.Now().Add(5 * time.Minute), Task: "XR-005", Session: "sid-1",
+		Questions: []chat.Question{{Text: "резать строку или поднять цену"}}}
+	if err := chat.WriteAsk(e.proj, chat.TaskName("XR-005"), ask); err != nil {
+		t.Fatal(err)
+	}
+
+	got := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)
+	wait, ok := got["waiting"].(map[string]any)
+	if !ok {
+		t.Fatalf("строка накопителя не знает про ожидание ответа: %v", got)
+	}
+	if wait["state"] != "ждёт ответа" || wait["note"] != "спросил агент" {
+		t.Errorf("ожидание записано не теми словами: %v", wait)
+	}
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	text := body(t, resp)
+	if !strings.Contains(text, "ждёт ответа") || !strings.Contains(text, "спросил агент") {
+		t.Errorf("экран записи не знает про ожидание ответа: %s", text)
+	}
+
+	// Ответ пришёл, инструмент снял признак: ожидания больше нет ни в списке,
+	// ни на экране записи, и кружку гаснуть есть по чему.
+	if err := chat.DropAsk(e.proj, chat.TaskName("XR-005")); err != nil {
+		t.Fatal(err)
+	}
+	after := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)
+	if _, still := after["waiting"]; still {
+		t.Errorf("ожидание осталось после ответа: %v", after)
+	}
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	if text := body(t, resp); strings.Contains(text, "ждёт ответа") {
+		t.Errorf("экран записи держит ожидание после ответа: %s", text)
 	}
 }

@@ -1597,29 +1597,24 @@ if (!button(groups, "Открыть задачу XR-D2")) {
   fail("с исхода нет дороги на заведённую задачу: " + dump(groups).slice(0, 400));
 }
 
-// Разбор кончился вопросом: он виден на экране записи вместе с полем ответа, и
-// ответ уходит заказом нового захода груминга.
+// Разбор вышел, не оставив следа: исход назван словами, а вопросов на форме
+// нет вовсе. Спрашивает груминг в своём разговоре и там же ждёт ответа
+// (решение 1 LLD DK-354), поле ответа с повторным заходом ушло с экрана вместе
+// с прежней механикой.
 draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md",
   question: "Это про доску или про накопитель?", session: "gggg4444-4444",
   note: "груминг вышел, не оставив следа на диске" };
 await go("#demo/draft/XR-D2");
-if (!dump(groups).includes("Вопрос груминга")) {
-  fail("вопрос грумера на экране записи не виден: " + dump(groups).slice(0, 400));
+if (!dump(groups).includes("Груминг кончился без исхода")) {
+  fail("исход разбора без следа не назван: " + dump(groups).slice(0, 400));
 }
-if (!dump(groups).includes("Это про доску или про накопитель")) {
-  fail("текста вопроса нет: " + dump(groups).slice(0, 400));
+if (byClass(groups, "dask") || button(groups, "Повторить груминг")) {
+  fail("поле ответа грумингу с повторным заходом осталось на форме: " +
+    dump(groups).slice(0, 400));
 }
-const askField = byClass(groups, "dask");
-if (!askField) fail("поля ответа грумеру нет: " + dump(groups).slice(0, 400));
-askField.value = "про накопитель";
-const askBtn = button(groups, "Повторить груминг");
-if (!askBtn) fail("кнопки повторного захода нет: " + dump(groups).slice(0, 400));
-askBtn.handlers.click({ stopPropagation: () => {} });
-await settle();
-if (groomAsk !== "про накопитель") {
-  fail("уточнение не уехало заказом груминга: " + JSON.stringify(groomAsk));
+if (dump(groups).includes("Это про доску или про накопитель")) {
+  fail("текст вопроса всё ещё стоит на форме: " + dump(groups).slice(0, 400));
 }
-groomAsk = null;
 draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md",
   note: "груминг записи не касался" };
 

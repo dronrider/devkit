@@ -881,19 +881,26 @@ func TestStaticChatTimeIsLocal(t *testing.T) {
 // поэтому вырезаются те же строки, что уедут в браузер, а не их пересказ.
 func mdSource(t *testing.T, text string) string {
 	t.Helper()
-	line := ""
-	for _, l := range strings.Split(text, "\n") {
-		if strings.HasPrefix(l, "const MD_INLINE") {
-			line = l
-			break
+	// Разбор строчной разметки стоит на двух выражениях: MD_INLINE режет саму
+	// разметку, MD_MENTION узнаёт в остатке упоминание задачи или документа.
+	// Память префиксов досок едет сюда же: без неё автоссылка не собирается.
+	var parts []string
+	for _, want := range []string{"const MD_INLINE", "const MD_MENTION =", "const boardPrefixes"} {
+		line := ""
+		for _, l := range strings.Split(text, "\n") {
+			if strings.HasPrefix(l, want) {
+				line = l
+				break
+			}
 		}
+		if line == "" {
+			t.Fatalf("в static/app.js нет %s: рендер markdown не собрать", want)
+		}
+		parts = append(parts, line)
 	}
-	if line == "" {
-		t.Fatal("в static/app.js нет MD_INLINE: рендер markdown не собрать")
-	}
-	parts := []string{line}
 	for _, head := range []string{
-		"function el(", "function mdLink(", "function mdInline(", "function mdRender(",
+		"function el(", "function mdGo(", "function mentionAddr(", "function projectOfPrefix(",
+		"function mdText(", "function mdLink(", "function mdInline(", "function mdRender(",
 	} {
 		parts = append(parts, funcBody(t, text, head)+"\n}")
 	}

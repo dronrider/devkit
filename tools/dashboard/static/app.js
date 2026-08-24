@@ -3086,13 +3086,125 @@ function localDayKey(stamp) {
 
 // Ссылка из реплики: кликается только http и https, а javascript: и data:
 // остаются текстом. Чужая вкладка открывается без доступа к нашей (noopener).
-function mdLink(text, href) {
-  if (!/^https?:\/\//i.test(href)) return document.createTextNode(text);
-  const a = el("a", "", text);
-  a.href = href;
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
+// Ссылка на файл репозитория («[tasks/DK-397.md](../tasks/DK-397.md)») в чужую
+// вкладку не ведёт вовсе: такой путь открывается экраном дашборда, и разбирает
+// его тот же mentionAddr, что и голое упоминание в тексте.
+function mdLink(text, href, where) {
+  if (/^https?:\/\//i.test(href)) {
+    const a = el("a", "", text);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    return a;
+  }
+  const addr = where
+    ? mentionAddr(where, String(href).replace(/^(?:\.{1,2}\/)+/, "")) || mentionAddr(where, text)
+    : "";
+  if (addr) return mdGo(text, addr);
+  return document.createTextNode(text);
+}
+
+// Префиксы досок по проекту (DK, XR): по ним автоссылка узнаёт в реплике ID
+// задачи, а обратной дорогой выбирает проект, куда вести. Список приезжает тем
+// же ответом, что и колонка проектов, своего запроса тут нет.
+const boardPrefixes = new Map();
+
+function rememberPrefixes(projects) {
+  for (const p of projects || []) {
+    if (p && p.name && p.prefix) boardPrefixes.set(p.name, String(p.prefix).toUpperCase());
+  }
+}
+
+function projectOfPrefix(pfx) {
+  for (const [name, own] of boardPrefixes) {
+    if (own === pfx) return name;
+  }
+  return "";
+}
+
+// Проект открытой ленты: автоссылки в репликах ведут в него, а не в проект,
+// открытый на доске, потому что разговор бывает чужой. Ставится он там же, где
+// адрес картинки (chatShotProject): пузырь рисуется без контекста, и назвать
+// проект больше нечем.
+let chatFeedProject = "";
+
+// Проект ленты ставится одной дверью, а не присваиванием по месту: зовут её и
+// лента разговора, и очередь своих реплик, и обе рисуют одни и те же пузыри.
+function chatFeedIn(project) {
+  chatFeedProject = project || "";
+}
+
+// Проект открытой ленты словом: разметка пузыря спрашивает его тут.
+function chatFeedAt() {
+  return chatFeedProject;
+}
+
+// Куда ведёт упоминание из реплики. ID задачи ведёт на её форму: строка на
+// доске для этого не спрашивается, потому что в разговоре чаще всего называют
+// как раз закрытую задачу, а её форма открывается файлом, и пропавший ID
+// говорит об этом словами сервера. Судит тут префикс: имя со своим префиксом
+// ведёт в свой проект, с чужим в тот, чья это доска, а незнакомое («UTF-8»,
+// «COVID-19») остаётся текстом. Путь документа ведёт на его экран, а файл
+// задачи на ту же форму, что и ID.
+function mentionAddr(where, text) {
+  const path = String(text || "").replace(/^(?:\.{1,2}\/)+/, "");
+  if (/\.md$/i.test(path)) {
+    const doc = path.replace(/^docs\//, "");
+    const draft = doc.match(/^tasks\/drafts\/(.+)\.md$/);
+    if (draft) return where + "/draft/" + draft[1];
+    const task = doc.match(/^tasks\/([A-Za-z][A-Za-z0-9]*-\d+)\.md$/);
+    if (task) return where + "/" + task[1].toUpperCase();
+    if (/^(?:tasks|lld)\//.test(doc)) return where + "/doc/" + doc;
+    return "";
+  }
+  const id = path.toUpperCase();
+  const cut = id.indexOf("-");
+  if (cut <= 0 || !/^[A-Z][A-Z0-9]*-\d+$/.test(id)) return "";
+  const pfx = id.slice(0, cut);
+  if (boardPrefixes.get(where) === pfx) return where + "/" + id;
+  const alien = projectOfPrefix(pfx);
+  return alien ? alien + "/" + id : "";
+}
+
+// Ссылка внутрь дашборда: адрес стоит в href, чтобы её можно было открыть
+// соседней вкладкой и скопировать, а нажатие идёт через goKeepingChat, иначе
+// хэш затёр бы хвост открытой панели и разговор закрывался бы сам собой.
+function mdGo(text, addr) {
+  const a = el("a", "mdgo", text);
+  a.href = "#" + addr;
+  a.addEventListener("click", (ev) => {
+    if (ev.preventDefault) ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
+    goKeepingChat(addr);
+  });
   return a;
+}
+
+// Упоминание задачи или документа в обычном тексте реплики. Разбор идёт только
+// по тому, что осталось от строчной разметки текстом: ID в обратных кавычках и
+// в блоке кода сюда не попадает вовсе, и команда с путём остаётся командой.
+const MD_MENTION = /(^|[^\w/.-])((?:docs\/)?(?:tasks|lld)\/[\w./-]+\.md|[A-Za-z][A-Za-z0-9]{0,7}-\d+)(?![\w-])/;
+
+function mdText(text, into, where) {
+  let rest = String(text);
+  for (;;) {
+    const m = where ? MD_MENTION.exec(rest) : null;
+    if (!m) break;
+    const at = m.index + m[1].length;
+    const end = at + m[2].length;
+    const addr = mentionAddr(where, m[2]);
+    if (!addr) {
+      // Вести некуда: чужой префикс, незнакомый документ. Упоминание остаётся
+      // текстом целиком, и разбор продолжается за ним.
+      into.append(document.createTextNode(rest.slice(0, end)));
+      rest = rest.slice(end);
+      continue;
+    }
+    if (at) into.append(document.createTextNode(rest.slice(0, at)));
+    into.append(mdGo(m[2], addr));
+    rest = rest.slice(end);
+  }
+  if (rest) into.append(document.createTextNode(rest));
 }
 
 // Строчная разметка: код в обратных кавычках, ссылка скобками, жирный,
@@ -3100,30 +3212,30 @@ function mdLink(text, href) {
 // уходит текстовым узлом.
 const MD_INLINE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|(\*\*|__)([\s\S]+?)\4|(\*|_)([\s\S]+?)\6|(https?:\/\/[^\s<>"']+)/;
 
-function mdInline(text, into) {
+function mdInline(text, into, where) {
   let rest = String(text);
   for (;;) {
     const m = MD_INLINE.exec(rest);
     if (!m) break;
-    if (m.index) into.append(document.createTextNode(rest.slice(0, m.index)));
+    if (m.index) mdText(rest.slice(0, m.index), into, where);
     if (m[1] !== undefined) {
       into.append(el("code", "", m[1]));
     } else if (m[2] !== undefined) {
-      into.append(mdLink(m[2], m[3]));
+      into.append(mdLink(m[2], m[3], where));
     } else if (m[5] !== undefined) {
       const b = el("b");
-      mdInline(m[5], b);
+      mdInline(m[5], b, where);
       into.append(b);
     } else if (m[7] !== undefined) {
       const i = el("i");
-      mdInline(m[7], i);
+      mdInline(m[7], i, where);
       into.append(i);
     } else {
-      into.append(mdLink(m[8], m[8]));
+      into.append(mdLink(m[8], m[8], where));
     }
     rest = rest.slice(m.index + m[0].length);
   }
-  if (rest) into.append(document.createTextNode(rest));
+  if (rest) mdText(rest, into, where);
 }
 
 // Минимальный markdown реплик: заголовки, списки, код-блоки, строчный код,
@@ -3138,7 +3250,7 @@ function wrapScroll(node) {
   return box;
 }
 
-function mdRender(text) {
+function mdRender(text, where) {
   const box = el("div", "md");
   const lines = String(text || "").split("\n");
   // stack это открытые списки по уровням вложенности: у каждого свой отступ,
@@ -3164,7 +3276,7 @@ function mdRender(text) {
       list = null;
       para = null;
       const h = el("div", "mdh mdh" + head[1].length);
-      mdInline(head[2], h);
+      mdInline(head[2], h, where);
       box.append(h);
       continue;
     }
@@ -3180,7 +3292,7 @@ function mdRender(text) {
       const hrow = el("tr");
       for (const c of cells(line)) {
         const th = el("th");
-        mdInline(c.trim(), th);
+        mdInline(c.trim(), th, where);
         hrow.append(th);
       }
       thead.append(hrow);
@@ -3191,7 +3303,7 @@ function mdRender(text) {
         const tr = el("tr");
         for (const c of cells(lines[i])) {
           const td = el("td");
-          mdInline(c.trim(), td);
+          mdInline(c.trim(), td, where);
           tr.append(td);
         }
         tbody.append(tr);
@@ -3207,7 +3319,7 @@ function mdRender(text) {
       list = null;
       para = null;
       const q = el("blockquote", "mdq");
-      mdInline(quote[1], q);
+      mdInline(quote[1], q, where);
       box.append(q);
       continue;
     }
@@ -3241,7 +3353,7 @@ function mdRender(text) {
         stack.push(top);
       }
       const li = el("li");
-      mdInline(item[4], li);
+      mdInline(item[4], li, where);
       top.box.append(li);
       top.li = li;
       list = top.box;
@@ -3252,7 +3364,7 @@ function mdRender(text) {
     if (stack.length && /^\s+\S/.test(line) && stack[stack.length - 1].li) {
       const li = stack[stack.length - 1].li;
       li.append(document.createTextNode(" "));
-      mdInline(line.trim(), li);
+      mdInline(line.trim(), li, where);
       continue;
     }
     if (!line.trim()) {
@@ -3265,13 +3377,13 @@ function mdRender(text) {
     }
     if (para) {
       para.append(document.createTextNode("\n"));
-      mdInline(line, para);
+      mdInline(line, para, where);
       continue;
     }
     stack.length = 0;
     list = null;
     para = el("p");
-    mdInline(line, para);
+    mdInline(line, para, where);
     box.append(para);
   }
   return box;
@@ -3412,7 +3524,7 @@ function replyEl(item) {
   const when = item.time ? ", " + localTime(item.time) : "";
   turn.append(el("div", "th", (item.role === "user" ? "человек" : "агент") + when));
   const body = el("div", "tb");
-  body.append(mdRender(item.text || ""));
+  body.append(mdRender(item.text || "", chatFeedAt()));
   turn.append(body);
   return turn;
 }
@@ -4121,7 +4233,9 @@ function dayEl(date) {
 function chatBubble(who, text, meta) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   const bb = el("div", "bb");
-  bb.append(mdRender(text));
+  // Упоминания задач и документов в реплике становятся ссылками, и ведут они в
+  // проект этой ленты: разговор бывает чужой, а адрес на доске свой.
+  bb.append(mdRender(text, chatFeedAt()));
   const said = meta ? who + ", " + meta : who;
   const foot = el("div", "mm", said);
   // Копирование сообщения целиком той же кнопкой, что у блоков команд: реплику
@@ -4629,6 +4743,7 @@ function shotURL(path) {
 function wireChatFeed(project, feed, sid, onItem, onFeed) {
   chatShotProject = project;
   chatShotSid = sid;
+  chatFeedIn(project);
   return wireFeed(project, sid, {
     onItem,
     onFeed,
@@ -7121,6 +7236,9 @@ function makeEcho(project, box, feedBox, addr, resend) {
 
   const draw = () => {
     box.replaceChildren();
+    // Свои пузыри рисуются мимо ленты, а ссылки в них те же самые: проект
+    // называется тут, потому что рисовать их могут и до первой отрисовки ленты.
+    chatFeedIn(project);
     for (const m of mine) {
       // Реплика, которую взяли, но которой не дали хода (агент стоит на
       // вопросе разрешения в своём окне), доставленной не считается: пузырь
@@ -10102,6 +10220,9 @@ async function paint() {
   shownWorks = [];
   const { body } = await api("/api/projects");
   const projects = body.projects || [];
+  // Префиксы досок оседают тут: по ним автоссылка в реплике узнаёт ID задачи и
+  // выбирает проект, чья это доска.
+  rememberPrefixes(projects);
   const current = currentProject(projects);
   // Проект помнится и на главной: с неё раздел «Доска» ведёт на тот проект,
   // который откроется по имени, а не на пустой хэш.

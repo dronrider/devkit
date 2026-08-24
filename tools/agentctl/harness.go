@@ -128,7 +128,7 @@ var optionalSchema = []sectionSpec{
 
 var discoveryValues = []string{"auto", "manual"}
 
-var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit", "tool-done"}
+var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "turn-failed", "prompt-submit", "tool-done"}
 
 // Свод машинного слоя. Ярусы в секции харнеса обязательны все четыре: сложенные
 // в одну модель соседние ярусы пишутся повторением значения, а пропуск ключа

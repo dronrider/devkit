@@ -54,7 +54,7 @@ TIERS = ("mini", "base", "pro", "max")
 # month_ это 30. Длины окон живут в agentctl (quota.go), тут только перечень.
 BUCKET_PREFIXES = ("week_", "month_")
 KNOWN_EVENTS = ("write", "session-start", "notify", "subagent-done", "turn-done",
-                "prompt-submit", "tool-done")
+                "turn-failed", "prompt-submit", "tool-done")
 
 
 class TomlError(Exception):

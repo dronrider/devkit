@@ -74,7 +74,8 @@ await go("");
   const menu = byClass(rows[1], "pmenu");
   if (!menu) fail("плюс не развернул меню");
   const opts = allByClass(menu, "pmrow").map((o) => o.textContent);
-  if (opts.join("|") !== "Задача|Черновик") {
+  // Черновик стоит первым: мысль записывают чаще, чем заводят готовую строку.
+  if (opts.join("|") !== "Черновик|Задача") {
     fail("в меню не два ожидаемых пункта: " + JSON.stringify(opts));
   }
   // Повторное нажатие складывает меню обратно, а не собирает второе.
@@ -88,7 +89,7 @@ await go("");
   const plus = byClass(rows[1], "pplus");
   plus.handlers.click({ stopPropagation: () => {} });
   const opts = allByClass(byClass(rows[1], "pmenu"), "pmrow");
-  opts[1].handlers.click({ stopPropagation: () => {} });
+  opts[0].handlers.click({ stopPropagation: () => {} });
   await settle();
   // Плюс на карточке ведёт сразу в свою форму: вид выбран самим пунктом меню,
   // и переспрашивать его вторым экраном незачем.
@@ -105,7 +106,7 @@ await go("");
   const plus = byClass(rows[0], "pplus");
   plus.handlers.click({ stopPropagation: () => {} });
   const opts = allByClass(byClass(rows[0], "pmenu"), "pmrow");
-  opts[0].handlers.click({ stopPropagation: () => {} });
+  opts[1].handlers.click({ stopPropagation: () => {} });
   await settle();
   if (sandbox.location.hash.replace(/^#/, "") !== "alpha/new/task") {
     fail("задача увела не на заведение альфы: " + sandbox.location.hash);

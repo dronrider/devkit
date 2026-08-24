@@ -176,7 +176,40 @@ function ringOf(head) {
     fail("шкала хода вернулась на кольцо: " + allByClass(wrap, "seg").length + " делений");
   }
   if (!byClass(wrap, "track")) fail("вместо шкалы пусто, а не ровная дорожка");
-  if (!byClass(wrap, "comet")) fail("бегущей дуги нет");
+  // Занятость бежит по самому кольцу этапов, а не вторым кружком внутри:
+  // отдельный маленький круг читался как ещё один прибор, а не как жизнь этой
+  // работы (замысел кольца, решение пользователя).
+  const comet = byClass(wrap, "comet");
+  if (!comet) fail("бегущей подсветки нет");
+  const track = byClass(wrap, "track");
+  if (Number(comet.attrs.r) !== Number(track.attrs.r)) {
+    fail("подсветка идёт не по кольцу этапов: радиус " + comet.attrs.r +
+      " против " + track.attrs.r);
+  }
+  // Тоньше сегментов: под ней они обязаны читаться.
+  if (!(Number(comet.attrs["stroke-width"]) < Number(track.attrs["stroke-width"]))) {
+    fail("подсветка толще самих сегментов: " + comet.attrs["stroke-width"]);
+  }
+  // Отрезок короткий: подсветка бежит, а не закрашивает кольцо целиком.
+  const lit = Number(String(comet.attrs["stroke-dasharray"]).split(" ")[0]);
+  const whole = 2 * Math.PI * Number(track.attrs.r);
+  if (!(lit > 0 && lit < whole / 3)) {
+    fail("бегущий отрезок занял треть кольца и больше: " + lit + " из " + whole.toFixed(2));
+  }
+  // Крутит её анимация той же длины: оборот обязан замыкаться, иначе подсветка
+  // прыгает на стыке.
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  const spin = (css.match(/@keyframes ringrun\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:(-?\d+(?:\.\d+)?)\}\}/) || [])[1];
+  if (!spin || Math.abs(Math.abs(Number(spin)) - whole) > 0.5) {
+    fail("оборот подсветки не по длине кольца: " + spin + " при длине " + whole.toFixed(2));
+  }
+  // На простое анимации нет вовсе: крутится она только у работающего кольца.
+  if (!/\.r-working \.comet\{[^}]*animation:ringrun/.test(css)) {
+    fail("подсветка крутится не только у работающего кольца");
+  }
+  if (!/\.ring \.comet\{stroke:none\}/.test(css)) {
+    fail("подсветка видна и на простое: " + css.slice(css.indexOf(".ring .comet"), 80));
+  }
   // В середине работающие, а не все: второй разговор задачи простаивает, и
   // сложенный с работающим он врал бы, что работа кипит вдвоём.
   const num = byClass(wrap, "rnum");

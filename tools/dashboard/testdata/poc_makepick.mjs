@@ -2,13 +2,16 @@
 //
 // Кнопка заведения открывала одну форму на оба случая: поля черновика стояли в
 // ней вперемешку с полями строки доски, а гашеные чипы объясняли, чего у
-// черновика нет («каша полей», замечание пользователя). Теперь нажатие сперва
-// спрашивает, что заводят, и по выбору открывается своя форма. Предмет стенда:
-// выбор виден, каждая форма несёт только свои поля, запись уезжает в свою
-// ручку.
+// черновика нет («каша полей», замечание пользователя). Теперь кнопка
+// раскрывает выпадашку с двумя пунктами, и выбор ведёт сразу в свою форму;
+// отдельного экрана выбора нет, он стоил лишнего перехода. Предмет стенда:
+// меню у кнопки, две формы со своими полями, запись в свою ручку и поведение
+// меню на узком экране.
 //
 // Зовётся: node testdata/poc_makepick.mjs static/app.js
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
@@ -38,24 +41,69 @@ const go = async (hash) => {
 const said = () => dump(groups).replace(/\s+/g, " ");
 const hashNow = () => sandbox.location.hash.replace(/^#/, "");
 
-// --- нажатие заведения спрашивает, что заводят ---
+// --- кнопка заведения раскрывает меню, а не экран выбора ---
 {
-  await go("#demo/new");
-  const rows = allByClass(groups, "mkrow");
-  if (rows.length !== 2) fail("выбора на экране нет: " + said().slice(0, 300));
-  const names = rows.map((r) => (r.children[0] || {}).textContent);
-  if (JSON.stringify(names) !== JSON.stringify(["Черновик", "Задача"])) {
-    fail("двери названы не так: " + JSON.stringify(names));
+  await go("#demo");
+  // На доске заведение живёт плавающим плюсом (на телефоне он же главная
+  // дорога), в накопителе кнопкой со словами: меню у обеих одно и то же.
+  const btn = byClass(byId.get("bmain") || byId.get("groups"), "fab") ||
+    deepBtn(byId.get("groups"), "Новая задача");
+  if (!btn) fail("кнопки заведения на доске нет: " + said().slice(0, 200));
+  btn.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const menu = byClass(btn.parentNode, "pmenu");
+  if (!menu) fail("кнопка заведения не развернула меню");
+  const opts = allByClass(menu, "pmrow").map((o) => o.textContent);
+  if (opts.join("|") !== "Черновик|Задача") {
+    fail("в меню не два ожидаемых пункта: " + JSON.stringify(opts));
   }
-  // По каждой двери сказано, что за ней: человек выбирает со знанием, а не
-  // наугад.
-  if (!said().includes("SCQA") || !said().includes("метаданными")) {
-    fail("выбор не объясняет, чем формы разные: " + said().slice(0, 300));
+  // Промежуточного экрана выбора нет вовсе: адрес не меняется, пока пункт не
+  // выбран.
+  if (hashNow() !== "demo") fail("кнопка увела с доски до выбора: " + hashNow());
+  if (byClass(byId.get("groups"), "mkrow")) fail("экран выбора вернулся: " + said().slice(0, 200));
+
+  // Пункт ведёт сразу в свою форму.
+  allByClass(menu, "pmrow")[0].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (hashNow() !== "demo/new/draft") fail("черновик увёл не в свою форму: " + hashNow());
+}
+
+// --- меню закрывается тремя путями и держится в границах узкого экрана ---
+{
+  await go("#demo");
+  const btn = byClass(byId.get("bmain") || byId.get("groups"), "fab") ||
+    deepBtn(byId.get("groups"), "Новая задача");
+  const open = () => {
+    btn.handlers.click({ stopPropagation: () => {} });
+    return byClass(btn.parentNode, "pmenu");
+  };
+  // Второе нажатие по той же кнопке.
+  if (!open()) fail("меню не раскрылось");
+  if (open()) fail("второе нажатие меню не закрыло");
+  // Клик мимо.
+  if (!open()) fail("меню не раскрылось второй раз");
+  sandbox.document.handlers.click({ target: byId.get("groups") });
+  await settle();
+  if (byClass(btn.parentNode, "pmenu")) fail("клик мимо меню не закрыл");
+  // Escape.
+  if (!open()) fail("меню не раскрылось третий раз");
+  sandbox.document.handlers.keydown({ key: "Escape", target: {} });
+  await settle();
+  if (byClass(btn.parentNode, "pmenu")) fail("Escape меню не закрыл");
+
+  // Узкий экран: меню держится в границах и пункт крупнее под палец.
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  if (!/\.pmenu\{[^}]*max-width:calc\(100vw/.test(css)) {
+    fail("меню не ограничено шириной экрана: уедет за край на телефоне");
   }
-  // Полей формы на экране выбора нет вовсе: слова про приёмку в подписи двери
-  // это объяснение, а не поле, поэтому ищутся сами узлы формы.
-  if (byClass(groups, "accbox") || byClass(groups, "rrow") || byClass(groups, "nfbody")) {
-    fail("на экране выбора уже стоит форма: " + said().slice(0, 300));
+  const narrow = css.slice(css.indexOf("@media (max-width:900px){", css.indexOf(".rcard{display:block}") - 400));
+  if (!/\.pmrow\{padding:1[0-9]/.test(narrow.slice(0, 400))) {
+    fail("на узком экране пункт меню не подрос под палец: " + narrow.slice(0, 200));
+  }
+  // Кнопка заведения на доске стоит с якорем: без него меню уедет к правому
+  // краю экрана, а не встанет под кнопкой.
+  if (!/\.bhead \.btn-acc\{position:relative\}/.test(css)) {
+    fail("у кнопки заведения нет якоря для меню");
   }
 }
 

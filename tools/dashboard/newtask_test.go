@@ -416,10 +416,16 @@ func TestStaticNewTaskForm(t *testing.T) {
 	// Кнопка стоит в накопителе, а на главной то же заведение живёт пунктом
 	// меню у плюса карточки: иначе с телефона до заведения надо сначала дойти
 	// до нужного проекта.
-	// Пункт меню ведёт сразу в свою форму: вид заводимого стоит в адресе, и
-	// переспрашивать его вторым экраном незачем.
-	if plus := funcBody(t, text, "function makePlus("); !strings.Contains(plus, `"/new/"`) {
-		t.Error("плюс на главной не ведёт на заведение")
+	// Заведение спрашивает вид выпадашкой у самой кнопки, и пункт ведёт сразу
+	// в свою форму: отдельный экран выбора стоил лишнего перехода (решение
+	// пользователя). Меню одно на все кнопки заведения.
+	if menu := funcBody(t, text, "function makeMenuAt("); !strings.Contains(menu, `"/new/"`) {
+		t.Error("меню заведения не ведёт в форму")
+	}
+	for _, fn := range []string{"function makePlus(", "function newTaskButton(", "function newTaskFab("} {
+		if body := funcBody(t, text, fn); !strings.Contains(body, "makeMenuAt(btn") {
+			t.Errorf("%s не открывает меню заведения", fn)
+		}
 	}
 	for _, fn := range []string{"function renderDrafts("} {
 		cut := strings.Index(text, fn)
@@ -506,15 +512,17 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	if !strings.Contains(form, "draft ? { title: true }") {
 		t.Error("состав полей формы не зависит от вида заводимого")
 	}
-	// Выбор стоит своим экраном, и по каждой двери сказано, что за ней.
-	pick := funcBody(t, text, "function renderMakePick(")
-	for _, want := range []string{"Что заводим", "Черновик", "Задача", "SCQA"} {
-		if !strings.Contains(pick, want) {
-			t.Errorf("на экране выбора нет %q", want)
-		}
+	// Отдельного экрана выбора нет вовсе: он стоил лишнего перехода там, где
+	// хватает выпадашки у кнопки (решение пользователя).
+	if strings.Contains(text, "renderMakePick") {
+		t.Error("экран выбора вернулся вместо выпадашки у кнопки")
+	}
+	// Подсказка про SCQA живёт в самом поле черновика.
+	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "SCQA") {
+		t.Error("форма черновика молчит про SCQA")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".mkrow", ".dnote"} {
+	for _, want := range []string{".pmenu", ".pmrow", ".dnote"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет правила %q", want)
 		}

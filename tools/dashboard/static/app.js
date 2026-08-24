@@ -1221,11 +1221,13 @@ function harnessSign() {
 function newTaskFab(project) {
   const btn = el("button", "fab", "+");
   btn.type = "button";
-  btn.title = "Новая задача в " + project;
-  btn.setAttribute("aria-label", "Новая задача в " + project);
+  btn.title = "Завести в " + project;
+  btn.setAttribute("aria-label", "Завести в " + project);
+  // Тот же выбор, что у кнопки на ноутбуке: меню раскрывается над плюсом, а не
+  // уводит на экран. На телефоне это и есть главная дорога к заведению.
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    goKeepingChat(project + "/new");
+    makeMenuAt(btn, project);
   });
   return btn;
 }
@@ -1829,9 +1831,12 @@ function sayDrop(text, undo) {
 // заведение живёт плюсом у самой карточки проекта.
 function newTaskButton(project, label) {
   const btn = el("button", "btn btn-acc", label);
+  // Что заводят, спрашивает выпадашка у самой кнопки: поля черновика и поля
+  // строки доски живут на разных формах, и выбор между ними стоит одного
+  // нажатия, а не отдельного экрана (решение пользователя).
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    goKeepingChat(project + "/new");
+    makeMenuAt(btn, project);
   });
   return btn;
 }
@@ -6310,10 +6315,13 @@ const pulseSilentState = "silent";
 const RING_NS = "http://www.w3.org/2000/svg";
 const RING_R = 15;
 const RING_LEN = 2 * Math.PI * RING_R;
-// Зазор между сегментами в единицах длины дуги: тот же, что в макете.
-// Дорожка бегущей дуги: она идёт внутри шкалы, чтобы не закрывать деления.
-const RING_SPIN = 11.4;
-const RING_SPIN_LEN = 2 * Math.PI * RING_SPIN;
+// Бегущая подсветка занятости идёт по самому кольцу этапов, той же дугой, на
+// которой стоят сегменты: вторым кружком внутри она читалась отдельным
+// прибором, а не жизнью этой работы (замысел кольца, решение пользователя).
+// Длина её отрезка это доля кольца, а тонкая она нарочно, чтобы под ней были
+// видны сами сегменты.
+const RING_SPIN_PART = 0.14;
+const RING_SPIN_W = 1.4;
 
 function svgEl(tag, cls) {
   const node = document.createElementNS(RING_NS, tag);
@@ -6602,13 +6610,16 @@ function pulseRing(project, p) {
     if (ghost) g.append(ringArc("ghost", RING_LEN, 0));
     else if (shown.length) ringPlan(g, shown);
     else ringTrack(g);
-    // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
-    // опрос, поэтому между заходами на сервер кольцо не замирает.
+    // Бегущая подсветка: она и значит, что события текут. Крутит её анимация, а
+    // не опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она
+    // по кольцу этапов, поверх сегментов и тоньше их: сегменты под ней
+    // читаются, а дробь в середине она не задевает вовсе.
     const comet = svgEl("circle", "comet");
     svgAttrs(comet, {
-      cx: 18, cy: 18, r: RING_SPIN, fill: "none", "stroke-width": 1.6,
+      cx: 18, cy: 18, r: RING_R, fill: "none", "stroke-width": RING_SPIN_W,
       "stroke-linecap": "round",
-      "stroke-dasharray": (RING_SPIN_LEN * 0.17).toFixed(2) + " " + (RING_SPIN_LEN * 0.83).toFixed(2),
+      "stroke-dasharray": (RING_LEN * RING_SPIN_PART).toFixed(2) + " " +
+        (RING_LEN * (1 - RING_SPIN_PART)).toFixed(2),
     });
     g.append(comet);
     box.append(g);
@@ -9468,37 +9479,6 @@ function draftDone(project, done) {
   groups.append(card);
 }
 
-// Что заводим: две двери, и человек с первого взгляда видит, куда идёт.
-// Прежде экран открывал одну форму на оба случая, поля черновика стояли в ней
-// вперемешку с полями строки доски, а гашеные чипы объясняли, чего у черновика
-// нет (замечание пользователя про кашу полей). Памяти выбора тут нет нарочно:
-// заведение это осознанное действие, и подставлять прошлый ответ не за что.
-function renderMakePick(project) {
-  const groups = document.getElementById("groups");
-  groups.replaceChildren();
-  const card = el("div", "card mkpick");
-  card.append(el("div", "mkhead", "Что заводим в " + project));
-  for (const [kind, name, why] of [
-    ["draft", "Черновик", "Сырая мысль своими словами: заголовок и тело по SCQA " +
-      "(ситуация, осложнение, вопрос, гипотеза). Ранга, типа и цены у неё нет, " +
-      "их выдаст груминг."],
-    ["task", "Задача", "Строка доски со всеми метаданными: тип, цена, ранг и вид " +
-      "приёмки. Заводится, когда предмет и объём уже понятны."],
-  ]) {
-    const row = el("button", "mkrow" + (kind === "draft" ? " on" : ""));
-    row.type = "button";
-    row.append(el("b", "", name), el("span", "mkwhy", why));
-    row.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      resetNewForm(project);
-      newForm.draft = kind === "draft";
-      goKeepingChat(project + "/new/" + kind);
-    });
-    card.append(row);
-  }
-  groups.append(card);
-}
-
 // kind это вид заводимого: draft либо task. Форма собирается только своими
 // полями, и переключателя над ней больше нет: вид выбран до неё, на своём
 // экране.
@@ -9559,8 +9539,7 @@ function renderNew(project, kind) {
   let view = null;
   view = formPage({
     key: "new", project, id: "",
-    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } },
-      { text: "Что заводим", go: () => { goKeepingChat(project + "/new"); } }],
+    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
     lead: draft ? [note] : [], extra: draft ? [] : [card],
@@ -10144,6 +10123,39 @@ function homeMenuShut() {
   }
 }
 
+// Меню заведения: два пункта, черновик и задача, и выбор ведёт сразу в свою
+// форму. Стоит оно у кнопки заведения везде, где та есть: у плюса карточки на
+// главной и у кнопки на доске. Промежуточного экрана выбора тут нет: он стоил
+// человеку лишнего перехода там, где хватает выпадашки (решение пользователя).
+// Закрывается меню теми же тремя путями, что остальные всплывашки дашборда:
+// повторным нажатием, кликом мимо и Escape.
+function makeMenuAt(btn, project) {
+  const had = homeMenu;
+  homeMenuShut();
+  // Повторное нажатие по той же кнопке закрывает меню, а не собирает его
+  // заново под пальцем.
+  if (had && had.dataset.project === project) return;
+  // Соседняя всплывашка уходит с открытием этой: два раскрытых списка разом
+  // экран не показывает ни в одном месте дашборда.
+  popupsShut(null);
+  const menu = el("div", "pmenu");
+  menu.dataset.project = project;
+  for (const [label, draft] of [["Черновик", true], ["Задача", false]]) {
+    const opt = el("div", "pmrow", label);
+    opt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      homeMenuShut();
+      resetNewForm(project);
+      newForm.draft = draft;
+      goKeepingChat(project + "/new/" + (draft ? "draft" : "task"));
+    });
+    menu.append(opt);
+  }
+  btn.parentNode.append(menu);
+  homeMenu = menu;
+  homeMenuHeld = popupHold(menu, homeMenuShut);
+}
+
 function makePlus(project) {
   const btn = el("button", "pplus", "+");
   btn.type = "button";
@@ -10151,33 +10163,7 @@ function makePlus(project) {
   btn.setAttribute("aria-label", "Завести в " + project);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    const had = homeMenu;
-    homeMenuShut();
-    // Повторное нажатие по тому же плюсу закрывает меню, а не собирает его
-    // заново под пальцем.
-    if (had && had.dataset.project === project) return;
-    // Соседняя всплывашка уходит с открытием этой: два раскрытых списка разом
-    // экран не показывает ни в одном месте дашборда.
-    popupsShut(null);
-    const menu = el("div", "pmenu");
-    menu.dataset.project = project;
-    // Оба пункта ведут на тот же экран заведения (#проект/new), что и кнопка с
-    // доски: форма там одна на оба случая, а пункт меню только выставляет её
-    // переключатель.
-    for (const [label, draft] of [["Задача", false], ["Черновик", true]]) {
-      const opt = el("div", "pmrow", label);
-      opt.addEventListener("click", (e) => {
-        e.stopPropagation();
-        homeMenuShut();
-        resetNewForm(project);
-        newForm.draft = draft;
-        goKeepingChat(project + "/new/" + (draft ? "draft" : "task"));
-      });
-      menu.append(opt);
-    }
-    btn.parentNode.append(menu);
-    homeMenu = menu;
-    homeMenuHeld = popupHold(menu, homeMenuShut);
+    makeMenuAt(btn, project);
   });
   return btn;
 }
@@ -11050,11 +11036,13 @@ async function paint() {
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
-    document.getElementById("psub").textContent = rt.kind === "draft" ? "новый черновик"
-      : rt.kind === "task" ? "новая задача" : "что заводим";
+    // Вид заводимого стоит в адресе, и голый #проект/new это задача: выбор
+    // делает выпадашка у кнопки заведения, а адрес без вида остаётся живым
+    // входом для ссылки и закладки.
+    const kind = rt.kind === "draft" ? "draft" : "task";
+    document.getElementById("psub").textContent = kind === "draft" ? "новый черновик" : "новая задача";
     markNav(rt);
-    if (rt.kind === "draft" || rt.kind === "task") renderNew(current.name, rt.kind);
-    else renderMakePick(current.name);
+    renderNew(current.name, kind);
     return;
   }
   if (rt.drafts) {

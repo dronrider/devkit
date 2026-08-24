@@ -883,8 +883,10 @@ func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 			t.Errorf("на главной осталась проектная кнопка: %q", gone)
 		}
 	}
-	plus := funcBody(t, app, "function makePlus(")
-	// Пункт меню ведёт сразу в свою форму: вид заводимого стоит в адресе.
+	// Меню заведения одно на все кнопки: у плюса карточки, у кнопки накопителя
+	// и у плавающего плюса телефона. Пункт ведёт сразу в свою форму, вид стоит
+	// в адресе.
+	plus := funcBody(t, app, "function makeMenuAt(")
 	for _, want := range []string{`"Задача"`, `"Черновик"`, `"/new/"`} {
 		if !strings.Contains(plus, want) {
 			t.Errorf("в меню плюса нет %q", want)

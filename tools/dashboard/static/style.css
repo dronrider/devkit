@@ -144,15 +144,15 @@ a:hover{text-decoration:underline}
 .tipq{width:18px;height:18px;flex:none;border-radius:50%;border:1px solid var(--line2);color:var(--tx3);font:600 10.5px var(--sans);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .tipq:hover{color:var(--tx);border-color:var(--tx3)}
 .dashed{border-bottom:1px dashed var(--line2);cursor:default}
-/* выбор при заведении: две двери, и по каждой сказано, что за ней. Прежде
-   экран открывал одну форму на оба случая, и поля черновика стояли вперемешку
-   с полями строки доски */
-.mkpick{margin-top:16px;padding:6px}
-.mkhead{padding:12px 14px 8px;font:600 14px var(--sans);color:var(--tx)}
-.mkrow{display:flex;flex-direction:column;align-items:flex-start;gap:5px;width:100%;padding:14px;border:1px solid var(--line2);border-radius:11px;background:var(--bg2);color:var(--tx);text-align:left;cursor:pointer;margin:6px}
-.mkrow:hover{border-color:var(--acc);background:var(--bg3)}
-.mkrow b{font:600 14px var(--sans)}
-.mkwhy{font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
+/* кнопка заведения на доске держит ту же выпадашку, что плюс карточки на
+   главной: меню встаёт под кнопкой, а не у правого края экрана, и на телефоне
+   остаётся в его границах, где до пункта достаёт палец */
+.bhead .btn-acc{position:relative}
+.bhead .pmenu{left:0;right:auto;top:44px}
+/* плавающий плюс телефона держит то же меню: оно раскрывается над кнопкой,
+   потому что снизу нижние вкладки и место кончилось */
+.fab{position:relative}
+.fab .pmenu{bottom:52px;top:auto;right:0}
 /* вопрос клиента в панели: он встал на выборе и до ответа не делает ни хода,
    а человек видел пустую ленту и шёл отвечать руками в tmux */
 .cask{margin-top:10px;padding:12px 14px;border:1px solid var(--wait);border-radius:11px;background:color-mix(in oklab,var(--wait) 8%,transparent)}
@@ -918,7 +918,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
-@keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-71.63}}
+/* полный оборот по кольцу этапов: длина дуги при радиусе 15 */
+@keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-94.25}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}
 /* Стоп в строке отправки: красный кружок с квадратом. Он прерывает ход, а не
    разговор, поэтому стоит рядом с отправкой, а не среди действий задачи */
@@ -1378,7 +1379,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .card > .prow .pplus{margin-left:auto;flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:7px;background:var(--bg2);color:var(--tx2);font:400 17px/1 var(--sans);cursor:pointer}
 .card > .prow .stale ~ .pplus{margin-left:8px}
 .card > .prow .pplus:hover{border-color:var(--acc);color:var(--acc)}
-.pmenu{position:absolute;right:12px;top:38px;z-index:40;min-width:130px;padding:5px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
+.pmenu{position:absolute;right:12px;top:38px;z-index:40;min-width:130px;max-width:calc(100vw - 24px);padding:5px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);box-shadow:0 12px 28px rgba(0,0,0,0.45)}
+/* палец крупнее курсора: на телефоне пункт меню выше и просторнее */
 .pmrow{padding:7px 9px;border-radius:6px;font:400 12.5px var(--sans);color:var(--tx);cursor:pointer}
 .pmrow:hover{background:var(--bg2)}
 /* Блок «Связи» экрана задачи (круг 2 POC DK-470): задачи стоят под дизайнами
@@ -1447,6 +1449,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .rcard .rbig{gap:10px}
 .rcard .rbig .v{font-size:22px}
 @media (max-width:900px){
+  /* телефон: до пункта меню достаёт палец, а само меню держится в границах
+     экрана и не уезжает за правый край */
+  .pmrow{padding:11px 12px;font-size:13.5px}
+  .pmenu{min-width:150px}
   /* телефон: итог остаётся строкой с разворотом, поля уходят под него */
   .rcard{display:block}
   .rcard .rtop{padding:5px 14px}

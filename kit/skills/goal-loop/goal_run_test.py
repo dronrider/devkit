@@ -1054,5 +1054,128 @@ class SkillMarkerTests(unittest.TestCase):
         self.assertIn("ошибка витка", section, "запрет задачного повода у маркера пропал")
 
 
+# Подписка витков (замечание пользователя: «выполнить задачу с выбором подписки
+# можно только для задач, а для цели нет, а должно быть»). Раскладку подписок
+# знает agentctl, и клиента чужой подписки поднимает он же своей обвязкой.
+AGENTCTL_STUB = r'''#!/usr/bin/env python3
+import json
+import os
+import sys
+
+root = os.environ["STAND_ROOT"]
+args = sys.argv[1:]
+if args[:1] == ["harness"]:
+    print(json.dumps({"default": "перваяtest", "harnesses": [
+        {"name": "перваяtest", "enabled": True, "default": True, "bin": "claude"},
+        {"name": "втораяtest", "enabled": True, "default": False, "bin": "клиент-2"},
+        {"name": "третьяtest", "enabled": False, "default": False, "bin": "клиент-3"},
+    ]}))
+    sys.exit(0)
+if args[:1] == ["exec"]:
+    with open(os.path.join(root, "execs"), "a", encoding="utf-8") as f:
+        f.write(" ".join(args) + "\n")
+    cut = args.index("--")
+    os.execvp(args[cut + 1], args[cut + 1:])
+sys.exit("стаб agentctl: неизвестная команда %s" % args)
+'''
+
+
+def load_goal_run():
+    """Оболочка грузится модулем: часть вопросов (разбор флага, команда витка)
+    не стоит целого прогона цикла, а дефис в имени файла не годится для
+    import."""
+    spec = importlib.util.spec_from_file_location("devkit_goal_run", RUN)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class HarnessTests(Stand, unittest.TestCase):
+    def test_parse_args_reads_harness(self):
+        mod = load_goal_run()
+        got = mod.parse_args(["DK-100", "-C", "/tmp", "--harness", "втораяtest"])
+        self.assertEqual(got[5], "втораяtest", "имя подписки не разобралось: %r" % (got,))
+        # Без флага всё как было: подписка по умолчанию, пустое имя.
+        self.assertEqual(mod.parse_args(["DK-100"])[5], "")
+
+    def test_turn_cmd_wraps_foreign_harness(self):
+        mod = load_goal_run()
+        loop = mod.Loop("DK-100", "/tmp")
+        self.assertEqual(loop.turn_cmd("сид")[0], "claude",
+                          "виток без выбора поехал не своим клиентом")
+        loop = mod.Loop("DK-100", "/tmp", "втораяtest")
+        loop.client = "клиент-2"
+        cmd = loop.turn_cmd("сид")
+        self.assertEqual(cmd[:5], [mod.AGENTCTL, "exec", "--harness", "втораяtest", "--"],
+                          "виток чужой подписки поехал мимо её обвязки: %r" % (cmd,))
+        self.assertEqual(cmd[5], "клиент-2", "поднят не клиент выбранной подписки: %r" % (cmd,))
+        self.assertIn("--permission-mode", cmd,
+                       "чужой подписке не назван режим разрешений: виток встанет на первом вопросе")
+        self.assertIn("--session-id", cmd, "виток потерял своё имя: живая реплика до него не доедет")
+        # Подписка по умолчанию обвязки не требует: её клиент зовётся как звался.
+        loop = mod.Loop("DK-100", "/tmp", "перваяtest")
+        loop.client = ""
+        self.assertEqual(loop.turn_cmd("сид")[0], "claude")
+
+    def test_cycle_runs_turn_through_chosen_harness(self):
+        root = self.stand("continue", "done")
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
+        # Клиент второй подписки это тот же стаб: витки он играет так же, а
+        # предмет проверки в том, кем он поднят.
+        write_exec(os.path.join(root, "bin", "клиент-2"), CLAUDE_STUB)
+        p = self.goal_run(root, "DK-100", "--harness", "втораяtest", "--foreground")
+        self.assertEqual(p.returncode, 0, "цикл на второй подписке не прошёл: %s" % p.stdout)
+        with open(os.path.join(root, "execs"), encoding="utf-8") as f:
+            execs = f.read()
+        self.assertIn("exec --harness втораяtest", execs,
+                       "витки пошли мимо выбранной подписки: %s" % execs)
+        self.assertIn("клиент-2", execs, "поднят не клиент выбранной подписки: %s" % execs)
+        self.assertEqual(self.turns_done(root), 2, "витков прошло не два: %s" % p.stdout)
+
+    def test_unknown_harness_refused_before_turns(self):
+        root = self.stand("done")
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
+        p = self.goal_run(root, "DK-100", "--harness", "какая-то", "--foreground")
+        self.assertNotEqual(p.returncode, 0, "неизвестная подписка прошла: %s" % p.stdout)
+        self.assertIn("в раскладке машины нет", p.stdout)
+        self.assertEqual(self.turns_done(root), 0, "виток всё равно подняли: %s" % p.stdout)
+
+    def test_disabled_harness_refused(self):
+        root = self.stand("done")
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
+        p = self.goal_run(root, "DK-100", "--harness", "третьяtest", "--foreground")
+        self.assertNotEqual(p.returncode, 0, "выключенная подписка прошла: %s" % p.stdout)
+        self.assertIn("выключена", p.stdout)
+
+    def test_tmux_launch_carries_harness(self):
+        mod = load_goal_run()
+        seen = {}
+
+        class FakeRun:
+            def __init__(self, code):
+                self.returncode = code
+
+        def fake_run(cmd, **kw):
+            seen.setdefault("calls", []).append(cmd)
+            # Живой сессии у цели нет: иначе оболочка отказывает до подъёма, и
+            # проверять было бы нечего.
+            return FakeRun(1 if "has-session" in cmd else 0)
+
+        loop = mod.Loop("DK-100", "/tmp", "втораяtest")
+        loop.lock_busy = lambda: False
+        old_run, old_which = mod.subprocess.run, mod.shutil.which
+        mod.subprocess.run = fake_run
+        mod.shutil.which = lambda name: "/bin/" + name
+        try:
+            with self.assertRaises(SystemExit):
+                loop.launch_tmux()
+        finally:
+            mod.subprocess.run, mod.shutil.which = old_run, old_which
+        new = [c for c in seen.get("calls", []) if "new-session" in c]
+        self.assertTrue(new, "tmux-сессию не поднимали: %r" % seen)
+        self.assertIn("--harness", " ".join(new[-1]),
+                       "своя tmux-сессия цикла потеряла подписку: %r" % new[-1])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

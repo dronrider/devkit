@@ -80,4 +80,30 @@ if (sandbox.location.hash !== "#demo/drafts" && !sandbox.location.hash.includes(
   fail("нажатие на разбор увело не туда: " + sandbox.location.hash);
 }
 
+// --- у цели выбор подписки такой же, как у задачи ---
+// Витки цели платятся выбранной подпиской: имя едет оболочке цикла флагом.
+// Прежде выбора у цели не было вовсе, а сервер отвечал на него отказом
+// (замечание пользователя).
+{
+  const goal = { id: "XR-7", title: "Цель: панель разговора", sect: "backlog" };
+  const box = sandbox.rowAction("demo", goal, "backlog");
+  const split = byClass(box, "split");
+  if (!split) fail("у строки цели нет выбора подписки: " + dump(box));
+  const list = allByClass(split, "hrow").map((h) => dump(h).trim().split(/\s+/)[0]);
+  if (!list.includes("glm-code")) {
+    fail("в списке подписок цели нет второй подписки машины: " + JSON.stringify(list));
+  }
+  const was = posted.length;
+  allByClass(split, "hrow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const last = posted[posted.length - 1];
+  if (posted.length === was || !last.path.includes("/runs")) {
+    fail("выбор подписки не поднял цель: " + JSON.stringify(posted.slice(was)));
+  }
+  if (!last.body || last.body.harness !== "glm-code" || last.body.id !== "XR-7") {
+    fail("до запуска цели не доехали ни ID, ни подписка: " + JSON.stringify(last.body));
+  }
+}
+
 console.log("poc_groomsub: ok");

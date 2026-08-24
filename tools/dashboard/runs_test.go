@@ -290,18 +290,46 @@ func TestRunStartChosenClientMissing(t *testing.T) {
 	}
 }
 
-// У цели выбор подписки не работает: цикл поднимает оболочка goal-run своей
-// сессией, и передать ей имя нечем. Отказ словами честнее молчаливого запуска
-// на подписке по умолчанию.
-func TestRunStartGoalRefusesHarness(t *testing.T) {
+// Витки цели платятся выбранной подпиской наравне с задачей: имя едет оболочке
+// цикла флагом, и она поднимает витки её клиентом. Прежде выбора у цели не было
+// вовсе, а на попытку сервер отвечал отказом (замечание пользователя).
+func TestRunStartGoalOnChosenHarness(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	writeAgentctlFake(t, e.bin, harnessJSONFixture)
-	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(filepath.Join(e.home, "goal-run.calls")))
+	calls := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(calls))
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
 		`{"id": "XR-100", "harness": "втораяtest"}`)
 	text := body(t, resp)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "оболочка цикла goal-run") {
-		t.Fatalf("выбор подписки у цели: %d %s, ожидал 400 с причиной", resp.StatusCode, text)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск цели на второй подписке: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"harness":"втораяtest"`, "поднят на подписке втораяtest"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе запуска цели нет %q: %s", want, text)
+		}
+	}
+	// Оболочка цикла узнаёт подписку флагом: витки она заводит сама, и без него
+	// платила бы подпиской по умолчанию.
+	if got := readFile(t, calls); !strings.Contains(got, "--harness втораяtest") {
+		t.Errorf("оболочка цикла позвана без выбранной подписки: %s", got)
+	}
+}
+
+// Имя сверяется с раскладкой машины и у цели: неизвестному верить нельзя, и
+// оболочка цикла до запуска не доходит вовсе.
+func TestRunStartGoalUnknownHarnessRefused(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	calls := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(calls))
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-100", "harness": "какая-то"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("неизвестная подписка у цели прошла: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Errorf("оболочку цикла всё равно позвали: %s", readFile(t, calls))
 	}
 }
 

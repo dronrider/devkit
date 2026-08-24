@@ -290,17 +290,6 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if isGoalTitle(row.Title) {
 		kind = "goal"
 	}
-	// Цикл цели поднимает оболочка goal-run своей сессией, и подписку ей
-	// передать нечем: виток она заводит сама, каждый раз заново. Отказ тут
-	// честнее молчаливого запуска на подписке по умолчанию, потому что имя
-	// человек уже выбрал.
-	if kind == "goal" && body.Harness != "" {
-		why := fmt.Sprintf("цель %s поднимает оболочка цикла goal-run своей сессией, и выбор подписки до неё не доезжает: "+
-			"виток пойдёт на подписке по умолчанию, а выбрать её можно у одиночной задачи", id)
-		s.logf("запуск цели %s в %s отклонён: выбор подписки цели не передаётся", id, found.Name)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-		return
-	}
 	sess := kind + "-" + id
 	for _, name := range tmuxSessions() {
 		if name == "goal-"+id || name == "task-"+id {
@@ -310,9 +299,24 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
+	// нет, верить нельзя, иначе экран, устаревший на смену конфига, поднимал бы
+	// сессию неизвестно на чём. Проверка одна на цель и на задачу: витки цели
+	// платятся той же квотой, которую человек выбрал (замечание пользователя).
+	var harness *Harness
+	if body.Harness != "" {
+		h, why := s.harnesses().pick(body.Harness)
+		if h == nil {
+			s.logf("запуск %s в %s отклонён: %s", id, found.Name, why)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+			return
+		}
+		harness = h
+	}
 	// У цели заказ один на все статусы: и «выполнить», и «продолжить» это
 	// следующий виток, а промпт витка сочиняет не дашборд, а сама оболочка
-	// цикла, и лезть в её слова отсюда нечем.
+	// цикла, и лезть в её слова отсюда нечем. Подписка едет ей флагом: витки
+	// она заводит сама, и без флага платила бы подпиской по умолчанию.
 	if kind == "goal" {
 		gr := goalRunPath(s.cfg.Roots)
 		if gr == "" {
@@ -320,7 +324,11 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": goalRunMissing})
 			return
 		}
-		out, err := runProc("python3", gr, id, "-C", found.Path)
+		args := []string{gr, id, "-C", found.Path}
+		if harness != nil {
+			args = append(args, "--harness", harness.Name)
+		}
+		out, err := runProc("python3", args...)
 		if err != nil {
 			text := procErr(err)
 			code := http.StatusBadGateway
@@ -334,25 +342,17 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, code, map[string]string{"error": text})
 			return
 		}
-		s.logf("цель %s поднята в %s (tmux-сессия %s)", id, found.Name, sess)
-		writeJSON(w, http.StatusOK, map[string]string{
+		s.logf("цель %s поднята в %s (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+		goalOut := map[string]string{
 			"id": id, "kind": kind, "session": sess,
 			"message": strings.TrimSpace(string(out)),
-		})
-		return
-	}
-	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
-	// нет, верить нельзя, иначе экран, устаревший на смену конфига, поднимал бы
-	// сессию неизвестно на чём.
-	var harness *Harness
-	if body.Harness != "" {
-		h, why := s.harnesses().pick(body.Harness)
-		if h == nil {
-			s.logf("запуск задачи %s в %s отклонён: %s", id, found.Name, why)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-			return
 		}
-		harness = h
+		if harness != nil {
+			goalOut["harness"] = harness.Name
+			goalOut["message"] = fmt.Sprintf("цикл цели %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+		}
+		writeJSON(w, http.StatusOK, goalOut)
+		return
 	}
 	client := defaultClient
 	if harness != nil {

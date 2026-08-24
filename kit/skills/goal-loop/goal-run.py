@@ -5,7 +5,7 @@ headless-сессиями, пока виток отвечает маркером
 цели, доска, git, деревья задач), а оболочка только зовёт следующий виток и
 решает, когда перестать звать.
 
-  goal-run.py <ID> [-C <корень проекта>] [--foreground]
+  goal-run.py <ID> [-C <корень проекта>] [--harness <подписка>] [--foreground]
   goal-run.py <ID> [-C <корень проекта>] --say <строка хода>
   goal-run.py <ID> [-C <корень проекта>] --ask <вопрос человеку>
 
@@ -28,6 +28,7 @@ headless-сессиями, пока виток отвечает маркером
 или окружения, 3 цикл этой цели уже идёт.
 """
 import importlib.util
+import json
 import os
 import re
 import shlex
@@ -44,6 +45,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
 NOTIFIER = os.path.join(HOOKS, "notify.py")
 PERMS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl", "perms.py"))
+# Утилита раскладки подписок: она же поднимает клиента чужой подписки своей
+# обвязкой (agentctl exec), и пары окружения второй подписки собирает она, а не
+# оболочка цикла.
+AGENTCTL = "agentctl"
 FUNNEL_LIMIT = 3  # витков подряд без записи в «Журнале», после которых стоп
 # Стоп без вердикта (упавшая сессия, обрыв соединения, ответ без маркера) это
 # не приговор цели: состояние лежит на диске, и продолжение механическое, той
@@ -88,6 +93,8 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
 Любой другой маркер завершает цикл и зовёт уведомитель громким поводом.
 
   -C <корень>    проект с доской, по умолчанию текущая директория
+  --harness <имя> подписка, чьей квотой платятся витки; без флага подписка
+                 по умолчанию, как было
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
   --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
   --ask <вопрос> задать вопрос человеку и ждать ответа во «Входящих» цели
@@ -129,6 +136,7 @@ def parse_args(argv):
     fg = False
     note = None
     question = None
+    harness = ""
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -154,6 +162,13 @@ def parse_args(argv):
             if question.strip() == "":
                 die("вопрос пустой, отвечать человеку не на что")
             i += 2
+        elif arg == "--harness":
+            if i + 1 >= len(argv):
+                die("у --harness нет значения: имя подписки это его аргумент")
+            harness = argv[i + 1]
+            if harness.strip() == "":
+                die("имя подписки пустое, поднимать виток нечем")
+            i += 2
         elif arg in ("-h", "--help"):
             sys.stdout.write(USAGE)
             sys.exit(0)
@@ -174,7 +189,7 @@ def parse_args(argv):
         die("--ask и --foreground вместе не ходят: вопрос человеку цикла не поднимает")
     if note is not None and question is not None:
         die("--say и --ask вместе не ходят: вопрос и так пишет свою строку хода")
-    return goal_id, proj, fg, note, question
+    return goal_id, proj, fg, note, question, harness
 
 
 def resolve_proj(proj):
@@ -185,14 +200,47 @@ def resolve_proj(proj):
     return abspath
 
 
+def harness_client(name):
+    """Клиент подписки по её имени: раскладку машины знает agentctl, своего
+    перечня подписок у оболочки нет вовсе, иначе включённая завтра подписка
+    сюда бы не доехала. Пустой ответ значит подписку по умолчанию: её клиент
+    зовётся как звался, без обвязки."""
+    p = subprocess.run([AGENTCTL, "harness", "--json"], stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True)
+    if p.returncode != 0:
+        die("раскладка подписок не прочиталась (%s harness --json): %s"
+            % (AGENTCTL, (p.stdout or "").strip()))
+    try:
+        data = json.loads(p.stdout or "{}")
+    except ValueError as e:
+        die("раскладка подписок не разобралась: %s" % e)
+    for h in data.get("harnesses", []):
+        if h.get("name") != name:
+            continue
+        if not h.get("enabled", True):
+            die("подписка %s выключена в раскладке машины, витки ей не платятся" % name)
+        if h.get("default"):
+            return ""
+        client = h.get("bin") or ""
+        if not client:
+            die("у подписки %s в раскладке нет клиента, поднимать виток нечем" % name)
+        return client
+    die("подписки %s в раскладке машины нет: включённые называет %s harness"
+        % (name, AGENTCTL))
+
+
 class Loop:
     """Состояние одного цикла: пути цели, лог, замок и подсчёт воронки. Класс
     только группирует то, что в sh было переменными верхнего уровня, своей
     логики сверх методов ниже у него нет."""
 
-    def __init__(self, goal_id, proj):
+    def __init__(self, goal_id, proj, harness=""):
         self.id = goal_id
         self.proj = proj
+        # Подписка, чьей квотой платятся витки. Пусто это подписка по
+        # умолчанию, ровно то, что цикл делал всегда. Имя живёт весь прогон:
+        # витку его не выбирают заново, платит цель одним кошельком.
+        self.harness = harness
         self.devdir = os.path.join(proj, ".devkit")
         self.deploy = os.path.join(self.devdir, "deploy.local")
         self.goal = os.path.join(proj, "docs", "tasks", "%s.md" % goal_id)
@@ -215,6 +263,18 @@ class Loop:
 
     # -- предполётные проверки --------------------------------------------
 
+    def turn_cmd(self, sid):
+        """Команда витка. Своя подписка поднимается своей же обвязкой, и режим
+        разрешений ей называется флагом: свежий профиль второй подписки поднял
+        бы клиента в ручном режиме, а одобрять запросы в headless-витке
+        некому."""
+        turn = ["-p", "--session-id", sid, self.prompt]
+        client = getattr(self, "client", "")
+        if not self.harness or not client:
+            return ["claude"] + turn
+        return [AGENTCTL, "exec", "--harness", self.harness, "--", client,
+                "--permission-mode", "auto"] + turn
+
     def preflight(self):
         if not os.path.isfile(os.path.join(self.proj, "docs", "TASKS.md")):
             die("доски %s/docs/TASKS.md нет, режим цели живёт только в проекте с доской" % self.proj)
@@ -226,7 +286,14 @@ class Loop:
         if not self.autonomous_flag_set():
             die("в %s нет autonomous = true, цикл без выката проверял бы сценарии против старого прода"
                 % self.deploy)
-        if shutil.which("claude") is None:
+        if self.harness:
+            # Клиент чужой подписки поднимается её обвязкой, и проверять надо
+            # именно её: самого claude в PATH при этом может не быть вовсе.
+            if shutil.which(AGENTCTL) is None:
+                die("%s в PATH нет, а виток заказан подпиской %s: поднимать его нечем"
+                    % (AGENTCTL, self.harness))
+            self.client = harness_client(self.harness)
+        elif shutil.which("claude") is None:
             die("claude в PATH нет, поднимать витки нечем")
         # Предполётная проверка прав: одобрять запросы харнеса в headless-сессии
         # некому, и виток без прав отвечает continue, не сделав ничего. Без
@@ -520,8 +587,14 @@ class Loop:
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if has.returncode == 0:
             die("tmux-сессия %s уже поднята, смотреть её: tmux attach -t %s" % (self.sess, self.sess), 3)
-        cmd = " ".join(shlex.quote(a) for a in
-                        (os.path.join(HERE, "goal-run.py"), self.id, "-C", self.proj, "--foreground"))
+        args = [os.path.join(HERE, "goal-run.py"), self.id, "-C", self.proj]
+        # Подписка едет в свою же tmux-сессию: цикл там поднимает витки сам, и
+        # без флага он платил бы подпиской по умолчанию, а человек выбирал
+        # другую.
+        if self.harness:
+            args += ["--harness", self.harness]
+        args.append("--foreground")
+        cmd = " ".join(shlex.quote(a) for a in args)
         new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess, cmd])
         if new.returncode != 0:
             die("tmux не поднял сессию %s" % self.sess)
@@ -549,7 +622,7 @@ class Loop:
         except OSError as e:
             self.say("имя витка %d не записано в замок (%s): живая реплика доедет "
                       "не раньше следующего витка" % (self.turn, e))
-        p = subprocess.run(["claude", "-p", "--session-id", sid, self.prompt], cwd=self.proj,
+        p = subprocess.run(self.turn_cmd(sid), cwd=self.proj,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         after = self.journal_entries()
         code = p.returncode
@@ -648,9 +721,9 @@ def ask_wait():
 
 
 def main(argv):
-    goal_id, proj, fg, note, question = parse_args(argv)
+    goal_id, proj, fg, note, question, harness = parse_args(argv)
     proj = resolve_proj(proj)
-    loop = Loop(goal_id, proj)
+    loop = Loop(goal_id, proj, harness)
     if question is not None:
         # Предполётной проверки вопросу не нужно по той же причине, что и
         # строке хода: его задаёт уже идущий виток, в том числе виток чата.

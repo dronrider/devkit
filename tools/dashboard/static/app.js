@@ -781,9 +781,11 @@ function numWord(n) {
   return NUM_WORDS[n] || String(n);
 }
 
-// У цели выбора нет: виток поднимает оболочка цикла своей сессией, и передать
-// ей подписку нечем. Сервер отвечает на такой запрос тем же отказом.
-const GOAL_HARNESS_TIP = "виток цели поднимает оболочка цикла: он идёт на подписке по умолчанию";
+// Витки цели платятся выбранной подпиской наравне с задачей: имя едет оболочке
+// цикла флагом --harness, и она поднимает витки её клиентом. Прежде выбора у
+// цели не было вовсе, а сервер отвечал на него отказом (замечание
+// пользователя).
+const GOAL_HARNESS_TIP = "витки цели пойдут на выбранной подписке: имя едет оболочке цикла";
 
 // Строка списка подписок (макет «11 Подписка при запуске»): имя, чип «по
 // умолчанию» и остаток квоты. Остаток тут не для красоты, подписку выбирают
@@ -857,6 +859,8 @@ function checkTip(row) {
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
 function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run) {
+  // isGoal тут остаётся ради подписи, а не ради запрета: выбор подписки у цели
+  // такой же, как у задачи, и разводить их поведением больше незачем.
   const wide = make(label);
   if (tip) withTip(wide, tip);
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
@@ -874,8 +878,8 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run)
   const list = harnesses();
   // Прикреплённая подписка снимает выбор вовсе: список подписок у такой кнопки
   // отвечал не на тот вопрос.
-  if (pinned || isGoal || list.length < 2) {
-    const why = pinned ? "" : (isGoal ? GOAL_HARNESS_TIP : harnessWhy());
+  if (pinned || list.length < 2) {
+    const why = pinned ? "" : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
     // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
     // кнопка ниже держит span.split той же глубины, и rowAction для Стопа
@@ -2366,7 +2370,7 @@ function taskActions(project, id, row, works) {
   // Причина, по которой выбирать не из чего, стоит в той же подписи под
   // полосой: на широком экране место для неё есть, и подсказкой по наведению
   // она бы там пряталась.
-  const why = isGoal ? GOAL_HARNESS_TIP : harnessWhy();
+  const why = harnessWhy() + (isGoal && harnesses().length > 1 ? ", " + GOAL_HARNESS_TIP : "");
   if (why) hint += " " + why.charAt(0).toUpperCase() + why.slice(1) + ".";
   out.push(el("span", "hint", hint));
   return out;

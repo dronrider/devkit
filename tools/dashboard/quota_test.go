@@ -412,6 +412,23 @@ func TestQuotaFailLoggedOnce(t *testing.T) {
 	}
 }
 
+// Плашка отличает поломку разметки от неотвечающего клиента: цифры устаревают
+// по обеим причинам, а чинятся они по-разному, и человеку видно, какая из них.
+func TestQuotaFailPanelVsClient(t *testing.T) {
+	panel := quotaFailWords("ошибка: панель /usage не узналась за 25s, разметка могла измениться " +
+		"(у бакета week_max в панели нет даты сброса); снимок не тронут, образцы панели лежат в tools/agentctl/testdata")
+	client := quotaFailWords("ошибка: claude не отрисовал строку ввода за 20s, снимок не тронут")
+	if panel == client {
+		t.Fatalf("обе причины в плашке выглядят одинаково: %q", panel)
+	}
+	if !strings.Contains(panel, "разметка") || !strings.Contains(panel, "week_max") {
+		t.Fatalf("в плашке нет ни разметки, ни бакета, на котором споткнулись: %q", panel)
+	}
+	if !strings.Contains(client, "не отрисовал строку ввода") {
+		t.Fatalf("молчание клиента в плашке не названо: %q", client)
+	}
+}
+
 // Сжатие причины: в плашку идёт первая фраза, а совет с командами остаётся
 // журналу. Голое «ошибка» причиной не считается.
 func TestQuotaFailWords(t *testing.T) {

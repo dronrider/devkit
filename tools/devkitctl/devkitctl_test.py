@@ -823,6 +823,16 @@ class MachineContourTest(SandboxCase):
         for s in sorted((self.box.dk / "kit" / "skills").glob("*/SKILL.md")):
             self.assertTrue((skills / s.parent.name / "SKILL.md").is_file(),
                             "doctor --fix не разложил скилл %s" % s.parent.name)
+        # Каталог скилла едет целиком: у proofread рядом со SKILL.md лежат
+        # пары, словарь и корпус, и без них вычитка в чужом проекте идёт по
+        # одним названиям пунктов типологии (DK-331).
+        for sat in ("pairs.md", "dictionary.md", "corpus.md"):
+            self.assertTrue((skills / "proofread" / sat).is_file(),
+                            "doctor --fix не разложил спутник скилла %s" % sat)
+        # Оболочка goal-loop доезжает тем же каталогом, звать её всё равно
+        # положено из чекаута, но на машине она обязана совпадать с devkit.
+        self.assertTrue((skills / "goal-loop" / "goal-run.py").is_file(),
+                        "doctor --fix не разложил оболочку скилла goal-loop")
         # Однотипное свёрнуто в строку с числом и именами (DK-157): строка на
         # каждый скилл, агента и хук делала вывод установки нечитаемым.
         self.assertRegex(out, r"починено: установлено \d+ скиллов в[^\n]*board-batch",
@@ -888,6 +898,35 @@ class MachineContourTest(SandboxCase):
         self.assertNotIn("своя строка", read(skill), "--fix не переложил разошедшийся скилл")
         _, out = self.docm("--fix")
         self.assertNotIn_("починено", out, "повторный --fix после перекладки скилла не должен менять")
+
+    def test_04b_missing_skill_companion(self):
+        # Спутник скилла пришёл в devkit позже самого SKILL.md (так вышло с
+        # парами и словарём proofread), и на машине его нет. Это то же
+        # расхождение с devkit, что правка SKILL.md руками: находка с командой
+        # починки, а --fix докладывает недостающее.
+        pairs = self.mhome / ".claude" / "skills" / "proofread" / "pairs.md"
+        pairs.unlink()
+        _, out = self.docm()
+        self.assertRegex(out, r"разошёлся скилл в[^\n]*proofread",
+                         "нет находки про скилл без спутника")
+        self.assertIn_("разложить: devkitctl doctor --fix", out,
+                       "находка про спутника не зовёт починку")
+        self.assertFalse(pairs.exists(), "doctor без --fix положил спутника")
+        _, out = self.docm("--fix")
+        self.assertRegex(out, r"починено: обновлён скилл в[^\n]*proofread",
+                         "--fix не отчитался о доложенном спутнике")
+        self.assertTrue(pairs.is_file(), "--fix не положил недостающего спутника")
+        # Правка спутника руками откатывается так же, как правка SKILL.md:
+        # devkit источник правды для промптов целиком, а не заголовком.
+        dic = self.mhome / ".claude" / "skills" / "proofread" / "dictionary.md"
+        write(dic, read(dic) + "\nсвоя строка\n")
+        _, out = self.docm()
+        self.assertRegex(out, r"разошёлся скилл в[^\n]*proofread",
+                         "нет находки про разошедшегося спутника")
+        _, out = self.docm("--fix")
+        self.assertNotIn("своя строка", read(dic), "--fix не переложил разошедшегося спутника")
+        _, out = self.docm("--fix")
+        self.assertNotIn_("починено", out, "повторный --fix после спутника не должен менять")
 
     def snap(self, taken):
         write(self.mhome / ".devkit" / "quota" / "claude-code.local",

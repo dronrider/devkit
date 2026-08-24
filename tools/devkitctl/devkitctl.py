@@ -1115,34 +1115,62 @@ def check_agent_defs(fix, dst_dir):
     return findings, fixed
 
 
+def skill_files(skill):
+    """Файлы скилла относительными путями: каталог едет на машину целиком.
+
+    Разбирать `SKILL.md` в поисках имён спутников доктор не берётся: имена
+    названы там прозой, и парсер прозы отставал бы от каждой правки скилла, а
+    отставание видно только в чужом проекте, где чекаута devkit нет. Каталог
+    как единица раскладки проверяется тем, что файл в нём лежит.
+
+    Служебное (`__pycache__`, точечные файлы вроде `.DS_Store`) отсеивается:
+    оно заводится прогоном тестов и файловым менеджером, а не автором скилла, и
+    уехав на машину, давало бы находку про расхождение на ровном месте.
+    """
+    out = []
+    for path in sorted(skill.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(skill)
+        if any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
+            continue
+        out.append(rel)
+    return out
+
+
 def check_skills(fix, dst_dir):
     # Скиллы едут на машину тем же каналом, что определения субагентов: эталон
     # это основной чекаут, из worktree ветки задачи идёт только сверка. Скилл
-    # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
-    # kit/skills/ на машину не уезжает. Каталог назначения из профиля харнеса
-    # ([skills] dir), у каждого включённого он свой.
+    # это директория с SKILL.md, по нему он и опознаётся, а едет директория
+    # целиком: у proofread рядом со SKILL.md лежат пары, словарь и корпус, и без
+    # них вычитка в чужом проекте идёт по одним названиям пунктов (DK-331).
+    # Каталог назначения из профиля харнеса ([skills] dir), у каждого
+    # включённого он свой.
     findings, fixed = [], []
     laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "skills" if (main / "kit" / "skills").is_dir() else DEVKIT / "kit" / "skills"
     how = fix_hint(main, from_main, "скиллы")
     for src in sorted(src_dir.glob("*/SKILL.md")):
-        name = src.parent.name
-        dst = dst_dir / name / "SKILL.md"
-        if dst.exists():
-            if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
-                if fix and from_main:
-                    shutil.copyfile(src, dst)
-                    again.append(name)
-                else:
-                    stale.append(name)
+        skill = src.parent
+        name = skill.name
+        dst = dst_dir / name
+        # Скилл, у которого нет на машине даже SKILL.md, не разложен вовсе;
+        # у остального недостающий или разошедшийся спутник это то же
+        # расхождение с devkit, что правка самого SKILL.md руками. Сравнение
+        # побайтовое: в каталоге скилла лежит и python (оболочка goal-loop).
+        fresh = not (dst / "SKILL.md").exists()
+        apart = [rel for rel in skill_files(skill)
+                 if not (dst / rel).is_file() or (dst / rel).read_bytes() != (skill / rel).read_bytes()]
+        if not apart:
             continue
         if fix and from_main:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
-            laid.append(name)
+            for rel in apart:
+                (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(skill / rel, dst / rel)
+            (laid if fresh else again).append(name)
             continue
-        none.append(name)
+        (none if fresh else stale).append(name)
     if none:
         findings.append("%s; сессия соберёт процедуру на глаз, а не по скиллу devkit; %s"
                         % (say.folded(("не разложен", "не разложено"), SKILL_WORD, none, dst_dir),

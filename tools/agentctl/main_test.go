@@ -153,3 +153,46 @@ func TestQuotaWithoutSpec(t *testing.T) {
 		})
 	}
 }
+
+// TestQuotaHarnessFlag: снимок второй подписки читается флагом --harness из
+// чужой сессии. Активной glm-code бывает только внутри собственного подпроцесса,
+// и без флага его остаток из сессии первой подписки недосягаем. Гоняется
+// процессом, как TestQuotaWithoutSpec: развилка живёт в main.
+func TestQuotaHarnessFlag(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, home, ".devkit/harness.local", `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+home+`"
+`)
+	// Профили и съёмщик берутся из репозитория: временный DEVKIT_HOME без snap/
+	// проверял бы отсутствие съёмщика, а не его работу.
+	cases := []struct {
+		args    []string
+		refused bool
+		want    string
+	}{
+		{[]string{"quota", "--harness", "glm-code"}, false, "glm-code.local"},
+		// refresh и правда зовёт съёмщика: без настроек клиента в пустом HOME он
+		// честно отказывает, и в причине назван съёмщик второй подписки.
+		{[]string{"quota", "refresh", "--harness", "glm-code"}, true, "glm-code.sh"},
+	}
+	for _, c := range cases {
+		cmd := exec.Command("go", append([]string{"run", "."}, c.args...)...)
+		cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t), "DEVKIT_HARNESS=")
+		out, err := cmd.CombinedOutput()
+		if (err != nil) != c.refused {
+			t.Fatalf("%v: отказ %v при выводе:\n%s", c.args, err, out)
+		}
+		if strings.Contains(string(out), "claude-code") || !strings.Contains(string(out), c.want) {
+			t.Fatalf("%v: флаг не привёл команду к снимку второй подписки:\n%s", c.args, out)
+		}
+	}
+}

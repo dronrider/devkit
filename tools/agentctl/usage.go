@@ -301,10 +301,11 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 
 // snapByScript зовёт сменный съёмщик из kit/harness/snap/. Контракт разобран в
 // docs/lld/DK-033-universal-kit.md, раздел «Контракт съёмщика»: stdin не даётся,
-// в окружении имя харнеса и бюджет, stdout это готовый текст снимка, а отказ это
-// ненулевой код с человеческой причиной в stderr. Файл пишет не скрипт: вывод
-// разбирается тем же парсером, которым читается снимок, и негодный отказывает
-// громко, оставляя прежний снимок на месте.
+// в окружении имя харнеса, бюджет и каталог машинного хозяйства, stdout это
+// готовый текст снимка, а отказ это ненулевой код с человеческой причиной в
+// stderr. Файл пишет не скрипт: вывод разбирается тем же парсером, которым
+// читается снимок, и негодный отказывает громко, оставляя прежний снимок на
+// месте.
 func snapByScript(q *quotaSpec, now time.Time) (snapshot, error) {
 	path := filepath.Join(q.Dir, q.Script)
 	if _, err := os.Stat(path); err != nil {
@@ -316,6 +317,9 @@ func snapByScript(q *quotaSpec, now time.Time) (snapshot, error) {
 	}
 	cmd := exec.Command(path)
 	cmd.Env = append(os.Environ(), "DEVKIT_HARNESS="+q.Harness)
+	if q.Home != "" {
+		cmd.Env = append(cmd.Env, "DEVKIT_HARNESS_HOME="+q.Home)
+	}
 	if q.BudgetBased {
 		cmd.Env = append(cmd.Env, "DEVKIT_QUOTA_BUDGET="+strconv.Itoa(q.Budget))
 	}

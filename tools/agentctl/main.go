@@ -46,14 +46,15 @@ const usageText = `agentctl: выбор исполнителя под задач
                           между снимками квоты из раздела «Журнал» и текущим
                           снимком; --record дописывает текущий снимок в «Журнал»
   quota [refresh]         снимок остатка лимитов активного харнеса: без
-       [--if-stale]       аргумента печатает разобранный
-                          ~/.devkit/quota/<харнес>.local (бакеты, возраст, pace,
+       [--harness <имя>]  аргумента печатает разобранный
+       [--if-stale]       ~/.devkit/quota/<харнес>.local (бакеты, возраст, pace,
                           статус), refresh снимает остаток тем способом, что
                           объявил профиль (панель /usage в одноразовой
                           tmux-сессии либо съёмщик из kit/harness/snap), и
                           переписывает файл; --if-stale снимает только протухший
                           снимок, на этом режиме стоит хук старта сессии
-                          (hooks/README.md)
+                          (hooks/README.md); --harness читает и снимает чужую
+                          подписку, не поднимая её сессию
   harness [--harness      окно в резолв харнеса: активный инструмент и чем он
            <имя>]         определён, включённый список после слияния слоёв,
           [--json]        маппинг ярусов, режим делегирования, снимок квоты;
@@ -245,22 +246,29 @@ func main() {
 	case "quota":
 		// Корень с доской команде не нужен: снимок лежит на уровне машины, а не
 		// проекта. Профиль харнеса при этом нужен: он говорит, чем снимать,
-		// какие бакеты бывают и в какой файл директории они ложатся.
-		q, qerr := quotaSpecFor(gdir)
+		// какие бакеты бывают и в какой файл директории они ложатся. Флаг
+		// --harness читает и снимает чужую подписку из любой сессии: вторая
+		// подписка активной бывает только внутри собственного подпроцесса, и
+		// без флага её остаток снаружи недосягаем.
+		fs := flag.NewFlagSet("quota", flag.ExitOnError)
+		name := fs.String("harness", "", "имя харнеса, чей остаток читает команда, перебивает детект")
+		ifStale := fs.Bool("if-stale", false, "снимать, только если снимок протух")
+		pos := frame.ParseArgs(fs, args[1:])
+		if len(pos) > 1 || (len(pos) == 1 && pos[0] != "refresh") {
+			fail(fmt.Errorf("жду: quota [refresh] [--harness <имя>] [--if-stale]"))
+		}
+		q, qerr := quotaSpecFor(gdir, *name)
 		if qerr != nil {
 			fail(qerr)
 		}
-		if len(args) > 1 && args[1] == "refresh" {
-			fs := flag.NewFlagSet("quota refresh", flag.ExitOnError)
-			ifStale := fs.Bool("if-stale", false, "снимать панель, только если снимок протух")
-			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "quota refresh [--if-stale]")
-			msg, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
+		if len(pos) == 0 {
+			if *ifStale {
+				fail(fmt.Errorf("флаг --if-stale идёт вместе с refresh: quota refresh --if-stale"))
+			}
+			msg, err = cmdQuota(q, timeNow())
 			break
 		}
-		if len(args) > 1 {
-			fail(fmt.Errorf("жду: quota [refresh]"))
-		}
-		msg, err = cmdQuota(q, timeNow())
+		msg, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
 	case "harness":
 		fs := flag.NewFlagSet("harness", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

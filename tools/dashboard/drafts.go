@@ -207,9 +207,22 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
-	ask, ok := s.draftAsk(w, r, id)
+	ask, want, ok := s.draftAsk(w, r, id)
 	if !ok {
 		return
+	}
+	// Имя подписки сверяется с раскладкой машины той же проверкой, что у
+	// запуска задачи: экран, устаревший на смену конфига, поднимал бы разбор
+	// неизвестно на чём.
+	var harness *Harness
+	if want != "" {
+		h, why := s.harnesses().pick(want)
+		if h == nil {
+			s.logf("груминг %s в %s отклонён: %s", id, found.Name, why)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+			return
+		}
+		harness = h
 	}
 	path, rel := draftPathOf(found.Path, id)
 	if !isFile(path) {
@@ -242,34 +255,56 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		chatVars(id, sess)+defaultClient+" "+shQuote(groomPrompt(id, ask)+" "+planRuleFor(sess))); err != nil {
+		groomCmd(id, sess, groomPrompt(id, ask)+" "+planRuleFor(sess), harness)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	s.logf("грумминг %s в %s поднят (tmux-сессия %s)", id, found.Name, sess)
+	s.logf("грумминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
 	message := fmt.Sprintf("грумминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной", id, sess)
 	if ask != "" {
 		message = fmt.Sprintf("грумминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала", id, sess)
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	out := map[string]string{
 		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask),
 		"message": message,
-	})
+	}
+	if harness != nil {
+		out["harness"] = harness.Name
+		out["message"] = fmt.Sprintf("грумминг %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// groomCmd собирает команду сессии разбора. Клиент чужой подписки поднимается
+// её же обвязкой (agentctl exec), как у чата и у конвейера задачи: пары
+// окружения второй подписки собирает она, а не дашборд, и режим разрешений ей
+// называется флагом, иначе свежий профиль встал бы на первом же вопросе.
+func groomCmd(id, sess, prompt string, h *Harness) string {
+	client := defaultClient
+	if h != nil && !h.Default {
+		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
+			" -- " + shQuote(h.Bin) + " --permission-mode auto"
+	}
+	return chatVars(id, sess) + client + " " + shQuote(prompt)
 }
 
 // draftAsk достаёт уточнение из тела запроса. Тело бывает и пустым: кнопка
 // «Провести груминг» шлёт заказ без слов, а уточнение приходит только с поля
 // повторной ходки.
-func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (string, bool) {
+func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (string, string, bool) {
 	var body struct {
 		Ask string `json:"ask"`
+		// Подписка выбирается при запуске, как у конвейера задачи: разбор
+		// черновика это такая же работа агента, и платить за неё человек хочет
+		// той же квотой, какую выбрал (замечание пользователя).
+		Harness string `json:"harness"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftAskLimit)).Decode(&body)
 	switch {
 	case errors.Is(err, io.EOF):
-		return "", true
+		return "", "", true
 	case err != nil:
 		var mbe *http.MaxBytesError
 		text := "жду JSON {\"ask\": \"...\"} либо пустое тело"
@@ -278,9 +313,9 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (st
 		}
 		s.logf("груминг %s отклонён: тело запроса не разобралось 400", id)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
-		return "", false
+		return "", "", false
 	}
-	return strings.Join(strings.Fields(body.Ask), " "), true
+	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, true
 }
 
 // handleDraftDrop удаляет черновик. Причина обязательна, как и у самой

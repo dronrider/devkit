@@ -853,7 +853,10 @@ function checkTip(row) {
   return how ? who + " " + how : who;
 }
 
-function runControl(project, id, make, label, isGoal, tip, afterOk, pinned) {
+// run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
+// задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
+// потому что разбор это такая же работа агента (замечание пользователя).
+function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run) {
   const wide = make(label);
   if (tip) withTip(wide, tip);
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
@@ -861,7 +864,8 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned) {
   // идёт».
   const fire = (node, harness) => {
     node.disabled = true;
-    startRun(project, id, harness, afterOk).catch(console.error).finally(() => { node.disabled = false; });
+    const going = run ? run(harness) : startRun(project, id, harness, afterOk);
+    Promise.resolve(going).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -7878,11 +7882,16 @@ const GROOM_HINT = "«Провести груминг» поднимает се�
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
 // записи afterOk не передают, там уже стоит экран этой работы.
-async function groomDraft(project, id, ask, afterOk) {
+async function groomDraft(project, id, ask, afterOk, harness) {
   sayResult("подъём груминга " + id + "...");
+  const order = {};
+  if (ask) order.ask = ask;
+  // Подписка едет только выбранная: пустое поле это «как раньше», и сервер
+  // поднимает разбор подпиской по умолчанию.
+  if (harness) order.harness = harness;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id) + "/groom",
-    { method: "POST", body: ask ? { ask } : {} });
+    { method: "POST", body: order });
   const said = r.body.message || r.body.error || "";
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);
@@ -7916,22 +7925,20 @@ function draftRow(project, d) {
   // открывается с привязкой к его ID (решение пользователя).
   const talk = rowChatBtn(project, d);
   meta.append(talk);
-  const groom = el("button", "btn btn-sm btn-acc", "Провести груминг");
-  if (d.order) withTip(groom, "Заказ агенту: «" + d.order + "».");
-  meta.append(groom);
+  // Разбор идёт под тем же ID, каким черновик станет строкой, и смотреть за
+  // ним удобнее на экране записи: ход, исход и повторная ходка стоят там.
+  const groomBox = runControl(project, d.id,
+    (label) => el("button", "btn btn-sm btn-acc", label),
+    "Провести груминг", false,
+    d.order ? "Заказ агенту: «" + d.order + "»." : "",
+    project + "/draft/" + d.id, "",
+    (harness) => groomDraft(project, d.id, "", project + "/draft/" + d.id, harness));
+  meta.append(groomBox);
   row.append(meta);
   row.addEventListener("click", (ev) => {
-    if (ev.target === groom || ev.target === talk) return;
+    if (ev.target === talk || (groomBox.children || []).includes(ev.target)) return;
+    if (ev.target === groomBox) return;
     goKeepingChat(project + "/draft/" + d.id);
-  });
-  groom.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    groom.disabled = true;
-    // Разбор идёт под тем же ID, каким черновик станет строкой, и смотреть за
-    // ним удобнее на экране записи: ход, исход и повторная ходка стоят там.
-    groomDraft(project, d.id, "", project + "/draft/" + d.id)
-      .catch((err) => { console.error(err); })
-      .finally(() => { groom.disabled = false; });
   });
   return row;
 }
@@ -8735,15 +8742,15 @@ async function renderDraft(project, works, id) {
       } else if (!running) {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
-        const groom = barBtn("btn btn-acc", "Провести груминг", "i-play");
-        if (text.ok && text.body.order) withTip(groom, "Заказ агенту: «" + text.body.order + "».");
-        groom.addEventListener("click", () => {
-          groom.disabled = true;
-          groomDraft(project, id).then((ok) => {
-            groom.disabled = false;
+        const groom = runControl(project, id,
+          (label) => barBtn("btn btn-acc", label, "i-play"),
+          "Провести груминг", false,
+          text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
+          "", "",
+          (harness) => groomDraft(project, id, "", "", harness).then((ok) => {
             if (ok) refresh().catch(console.error);
-          }).catch((err) => { groom.disabled = false; console.error(err); });
-        });
+            return ok;
+          }));
         actions.push(groom);
       }
       // Исход разбора стоит над текстом записи: он и есть ответ на вопрос

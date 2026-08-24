@@ -818,3 +818,76 @@ func TestDraftAttachedToExactID(t *testing.T) {
 		t.Errorf("заголовок внутри самого накопителя сошёл за приписку к %q", task)
 	}
 }
+
+// Разбор черновика это такая же работа агента, как конвейер задачи, и подписка
+// у него выбирается так же: платить за груминг человек хочет той квотой,
+// которую выбрал (замечание пользователя). Прежде выбора не было вовсе, и
+// разбор всегда шёл подпиской по умолчанию.
+func TestDraftGroomOnChosenHarness(t *testing.T) {
+	e, c, _ := draftsEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	id := makeDraft(t, c, e, "мысль с телефона про подписку груминга")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+		`{"harness": "втораяtest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг на второй подписке: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"harness":"втораяtest"`, "поднят на подписке втораяtest"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе груминга нет %q: %s", want, text)
+		}
+	}
+	// Клиент чужой подписки поднимается её же обвязкой, как у задачи и у чата.
+	want := "' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto 'Проведи груминг " + id
+	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
+		t.Errorf("разбор поднят мимо выбранной подписки:\n%s\nжду %q", got, want)
+	}
+}
+
+// Имя подписки сверяется с раскладкой машины: экран, устаревший на смену
+// конфига, поднимал бы разбор неизвестно на чём.
+func TestDraftGroomUnknownHarnessRefused(t *testing.T) {
+	e, c, _ := draftsEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	id := makeDraft(t, c, e, "черновик под несуществующую подписку")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+		`{"harness": "какой-то-третий"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("неизвестная подписка прошла: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессию всё равно подняли: %s", got)
+	}
+}
+
+// Без выбора всё как было: разбор идёт подпиской по умолчанию, и обвязки в
+// заказе нет вовсе.
+func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
+	e, c, _ := draftsEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	id := makeDraft(t, c, e, "черновик без выбора подписки")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг без выбора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	got := readFile(t, tmuxLog)
+	if strings.Contains(got, "exec --harness") {
+		t.Errorf("разбор без выбора завернули в обвязку подписки: %s", got)
+	}
+	if !strings.Contains(got, "claude 'Проведи груминг "+id) {
+		t.Errorf("заказ разбора поехал не тем клиентом: %s", got)
+	}
+}

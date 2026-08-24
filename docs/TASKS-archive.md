@@ -320,3 +320,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-367.md](tasks/archive/2026/DK-367.md) |
 | DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-172.md](tasks/archive/2026/DK-172.md) |
 | DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-181.md](tasks/archive/2026/DK-181.md) |
+| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-357.md](tasks/archive/2026/DK-357.md), `2225d859` |

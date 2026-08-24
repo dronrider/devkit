@@ -2146,16 +2146,20 @@ func (m subMeta) label() string {
 	return "субагент"
 }
 
-// subLogs сводит боковые журналы транскрипта в отображение «id вызова -> файл».
-// Каталога может не быть вовсе, и это обычный случай: сессия без субагентов.
-func subLogs(path string) map[string]struct {
+// subLog это боковой журнал вызова: сам файл, подпись вызова и заказ мета-файла
+// отдельно. Заказ лежит рядом с подписью, потому что подпись бывает и служебной
+// («claude», «Explore»): у вызова без заказа имя определения это всё, что о нём
+// сказал харнес, и подпись работе тогда ищется в самом журнале (subOrder).
+type subLog struct {
 	File  string
 	Label string
-} {
-	out := map[string]struct {
-		File  string
-		Label string
-	}{}
+	About string
+}
+
+// subLogs сводит боковые журналы транскрипта в отображение «id вызова -> файл».
+// Каталога может не быть вовсе, и это обычный случай: сессия без субагентов.
+func subLogs(path string) map[string]subLog {
+	out := map[string]subLog{}
 	dir := subDir(path)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -2177,10 +2181,7 @@ func subLogs(path string) map[string]struct {
 		if _, err := os.Stat(log); err != nil {
 			continue
 		}
-		out[m.ToolID] = struct {
-			File  string
-			Label string
-		}{File: log, Label: m.label()}
+		out[m.ToolID] = subLog{File: log, Label: m.label(), About: strings.TrimSpace(m.About)}
 	}
 	return out
 }
@@ -2362,6 +2363,59 @@ func subStart(file string) time.Time {
 	return time.Time{}
 }
 
+// subOrderLimit это потолок подписи работы: строка длиннее семидесяти знаков в
+// кольце и в списке работ не читается, а хвост её всё равно не виден.
+const subOrderLimit = 70
+
+// subOrder читает заказ субагента: первую содержательную строку первой реплики
+// его бокового журнала. Это тот текст, который диспетчер написал субагенту, и о
+// работе он говорит больше, чем короткая подпись вызова («claude», «Explore»),
+// которую харнес пишет мета-файлом. Приписки заказа (правила плана, ротации,
+// темпа, канала) отрезаются тем же разбором, что и в ленте: словами о работе
+// они не являются. Головы файла хватает: заказ лежит первой записью.
+func subOrder(file string) string {
+	f, err := os.Open(file)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	head := make([]byte, 64<<10)
+	n, _ := f.Read(head)
+	for _, ln := range strings.Split(string(head[:n]), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(ln), &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		said, _ := cutOrderRules(strings.Join(contentTexts(rec.Message.Content), "\n"))
+		if line := firstSaid(said); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// firstSaid берёт первую содержательную строку текста: пустые строки и
+// разметочные обёртки (заголовок, маркер списка, цитата) снимаются, потому что
+// подпись это слова, а не разметка.
+func firstSaid(text string) string {
+	for _, ln := range strings.Split(text, "\n") {
+		ln = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(ln), "#>*-+ \t"))
+		if ln == "" {
+			continue
+		}
+		return truncate(ln, subOrderLimit)
+	}
+	return ""
+}
+
 // subClosed собирает id вызовов, у которых в транскрипте сессии есть ответ.
 // Ответ пришёл, значит работа вернулась: это машинный признак закрытой работы,
 // и он точнее свежести журнала (субагент, который думает третью минуту, в
@@ -2414,13 +2468,13 @@ const (
 // (замечание пользователя, случай третий). Подпись работе даёт заказ из
 // мета-файла, а состояние ответ на её вызов в транскрипте: есть ответ, работа
 // вернулась, нет ответа и журнал ещё пишется, работа идёт.
-func subWorks(path string, closed map[string]bool, now time.Time) []planItem {
+func subWorks(path string, closed map[string]bool, now time.Time) []subWork {
 	logs := subLogs(path)
 	if len(logs) == 0 {
 		return nil
 	}
 	type work struct {
-		item planItem
+		item subWork
 		at   time.Time
 	}
 	list := make([]work, 0, len(logs))
@@ -2439,28 +2493,51 @@ func subWorks(path string, closed map[string]bool, now time.Time) []planItem {
 		case !closed[id] && quiet <= subStale:
 			state = "in_progress"
 		}
-		list = append(list, work{item: planItem{Text: truncate(log.Label, 200), State: state},
-			at: subStart(log.File)})
+		// Подпись работы это заказ, который диспетчер написал субагенту.
+		// Коротким его пишет мета-файл вызова, и он же читается лучше всего;
+		// нет его там, значит подпись берётся из самого журнала, первой
+		// содержательной строкой заказа, и только потом остаётся служебное имя
+		// определения, которым работа не называется вовсе.
+		label := log.About
+		if label == "" {
+			label = subOrder(log.File)
+		}
+		if label == "" {
+			label = log.Label
+		}
+		label = truncate(label, subOrderLimit)
+		list = append(list, work{
+			item: subWork{item: planItem{Text: label, State: state}, alias: log.Label},
+			at:   subStart(log.File)})
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].at.Before(list[j].at) })
 	// Закрытое режется, живое остаётся целиком: старая работа это история, а
 	// вопрос к кольцу про сейчас.
 	done := 0
 	for _, w := range list {
-		if w.item.State == "completed" {
+		if w.item.item.State == "completed" {
 			done++
 		}
 	}
 	skip := done - subDoneLimit
-	out := make([]planItem, 0, len(list))
+	out := make([]subWork, 0, len(list))
 	for _, w := range list {
-		if w.item.State == "completed" && skip > 0 {
+		if w.item.item.State == "completed" && skip > 0 {
 			skip--
 			continue
 		}
 		out = append(out, w.item)
 	}
 	return out
+}
+
+// subWork это работа из бокового журнала: сам пункт и короткая подпись вызова
+// рядом. Подпись в паре не для показа, а для сверки с планом: пункт плана и
+// подпись вызова пишет один и тот же агент почти одними словами, а заказ
+// субагенту он пишет своими, и по одному заказу работа с пунктом не сходится.
+type subWork struct {
+	item  planItem
+	alias string
 }
 
 // planKey сводит текст пункта к сравнимому виду: пункт плана и заказ субагента
@@ -2474,29 +2551,40 @@ func planKey(text string) string {
 // список, переписанный руками агента. Работа, которой в плане нет вовсе, встаёт
 // наравне с пунктами: раздали и не записали это ровно тот случай, ради которого
 // журналы сюда и приехали.
-func withSubWorks(plan, subs []planItem) []planItem {
+func withSubWorks(plan []planItem, subs []subWork) []planItem {
 	if len(subs) == 0 {
 		return plan
 	}
 	out := append([]planItem{}, plan...)
 	for _, sub := range subs {
-		key := planKey(sub.Text)
+		// Ключей у работы два: подпись вызова и её заказ. Сверяются оба, потому
+		// что пункт плана агент пишет теми же словами, что и подпись вызова, а
+		// заказ субагенту он пишет своими, и по одному заказу работа с пунктом
+		// не сошлась бы и встала бы рядом двойником.
 		hit := -1
-		for i := range out {
-			own := planKey(out[i].Text)
-			if own == "" || key == "" {
+		for _, key := range []string{planKey(sub.alias), planKey(sub.item.Text)} {
+			if key == "" {
 				continue
 			}
-			if own == key || strings.Contains(own, key) || strings.Contains(key, own) {
-				hit = i
+			for i := range out {
+				own := planKey(out[i].Text)
+				if own == "" {
+					continue
+				}
+				if own == key || strings.Contains(own, key) || strings.Contains(key, own) {
+					hit = i
+					break
+				}
+			}
+			if hit >= 0 {
 				break
 			}
 		}
 		if hit < 0 {
-			out = append(out, sub)
+			out = append(out, sub.item)
 			continue
 		}
-		if sub.State == "in_progress" {
+		if sub.item.State == "in_progress" {
 			out[hit].State = "in_progress"
 		}
 	}

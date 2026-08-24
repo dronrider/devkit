@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2231,5 +2232,76 @@ func TestPlanTakesWorksFromSubLogs(t *testing.T) {
 	}
 	if byText["вторая ходка"] != "in_progress" {
 		t.Errorf("работа мимо плана потеряна или без состояния: %+v", plan)
+	}
+}
+
+// sideOrder это первая реплика бокового журнала: заказ, который диспетчер
+// написал субагенту. Признак isSidechain тут тот же, что у настоящего журнала.
+func sideOrder(text, at string) string {
+	return fmt.Sprintf(`{"type":"user","isSidechain":true,"message":{"role":"user","content":%q},"timestamp":%q}`,
+		text, at) + "\n"
+}
+
+// Работа из бокового журнала подписывается заказом. Короткий заказ пишет
+// мета-файл вызова, а у вызова без него подписью оставалось служебное имя
+// определения («claude», «Explore»), и список работ не читался вовсе
+// (замечание пользователя). Тогда подпись берётся из самого журнала: первой
+// содержательной строкой заказа, без служебных приписок и обрезанной по ширине
+// строки.
+func TestSubWorkLabelFromOrder(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-time.Minute).Format(time.RFC3339)
+	path := writeSession(t, e.home, e.proj, "", "bbb-2", transcriptFixture, now)
+
+	// Заказ с приписками, которые дашборд клеит к тексту человека: в подпись
+	// им не место, режет их тот же разбор, что и в ленте.
+	// Пустая строка и маркер списка это разметка, а не слова: подпись начинается
+	// с первой содержательной строки.
+	order := "\n- Ссылка на черновик и переход с телефона\n\nДальше подробности. " +
+		planRuleFor("bbb-2") + " " + paceRule
+	plain := writeSubLog(t, path, "ord1", "", sideOrder(order, at)+sideLine("иду", at))
+	// Длинный заказ режется по ширине строки, а не уезжает в кольцо целиком.
+	long := strings.Repeat("очень длинная строка заказа ", 6)
+	wide := writeSubLog(t, path, "ord2", "", sideOrder(long, at)+sideLine("иду", at))
+	// У вызова с заказом мета-файла подпись остаётся его: она короче и читается
+	// лучше всего.
+	short := writeSubLog(t, path, "ord3", "Закрытие сессий",
+		sideOrder("Тут длинная вводная про то, как всё устроено", at)+sideLine("иду", at))
+	for _, file := range []string{plain, wide, short} {
+		if err := os.Chtimes(file, now.Add(-time.Minute), now.Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	texts := []string{}
+	for _, it := range planOf(e.home, "bbb-2", "", path, now) {
+		texts = append(texts, it.Text)
+	}
+	joined := strings.Join(texts, " | ")
+	if !slices.Contains(texts, "Ссылка на черновик и переход с телефона") {
+		t.Errorf("подпись работы взята не из заказа: %s", joined)
+	}
+	for _, gone := range []string{"claude", "Дальше подробности", "план работ", "Долгие дела"} {
+		if strings.Contains(joined, gone) {
+			t.Errorf("в подписи работы осталось служебное (%q): %s", gone, joined)
+		}
+	}
+	if !slices.Contains(texts, "Закрытие сессий") {
+		t.Errorf("короткий заказ мета-файла пропал из подписи: %s", joined)
+	}
+	cut := ""
+	for _, text := range texts {
+		if strings.HasPrefix(text, "очень длинная строка") {
+			cut = text
+		}
+	}
+	if cut == "" {
+		t.Fatalf("длинный заказ пропал из работ: %s", joined)
+	}
+	// Ширина строки тут числом нарочно: стенд сверяет её с тем, что видит
+	// человек, а не с той же константой, которой её и режут (subOrderLimit).
+	if !strings.HasSuffix(cut, "...") || len([]rune(cut)) != 73 {
+		t.Errorf("длинный заказ не обрезан по ширине строки: %q (%d знаков)", cut, len([]rune(cut)))
 	}
 }

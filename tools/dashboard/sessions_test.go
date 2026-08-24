@@ -2390,3 +2390,48 @@ func TestWorksHandle(t *testing.T) {
 		t.Errorf("работы неизвестного проекта: %d, ожидал 404", resp.StatusCode)
 	}
 }
+
+// Кольцо стоит замороженным, пока метка боковых журналов не двинулась, и метки
+// по каталогу не хватало: новый субагент каталог трогает, а ход уже начатой
+// работы нет. Работа кончалась, сегмент обязан был позеленеть, а план не
+// пересылался до следующего субагента (жалоба пользователя, третий заход к
+// одной теме). Теперь в метку идёт и время последней записи в самих журналах.
+func TestSubStampMovesOnJournalWrite(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, now)
+	log := writeSubLog(t, path, "one", "первая ходка", sideLine("иду", now.Format(time.RFC3339)))
+	if err := os.Chtimes(log, now, now); err != nil {
+		t.Fatal(err)
+	}
+	// Каталог метится своим временем: без его фиксации стенд ловил бы правку
+	// каталога вместо правки журнала.
+	dir := subDir(path)
+	if err := os.Chtimes(dir, now, now); err != nil {
+		t.Fatal(err)
+	}
+	was := subStamp(path)
+	if was == "" {
+		t.Fatal("метки боковых журналов нет вовсе")
+	}
+
+	// Субагент дописал свой журнал: каталог тот же, файл тот же, а метка
+	// обязана двинуться, иначе кольцо не узнает о ходе работы.
+	later := now.Add(time.Minute)
+	if err := os.Chtimes(log, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(dir, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := subStamp(path); got == was {
+		t.Errorf("дописанный журнал метку не двинул: %q", got)
+	}
+
+	// Новый субагент двигает её тем же порядком, как и раньше.
+	moved := subStamp(path)
+	writeSubLog(t, path, "two", "вторая ходка", sideLine("иду", later.Format(time.RFC3339)))
+	if got := subStamp(path); got == moved {
+		t.Errorf("новый журнал метку не двинул: %q", got)
+	}
+}

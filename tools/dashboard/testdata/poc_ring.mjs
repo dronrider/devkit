@@ -6,6 +6,8 @@
 //
 // Зовётся: node testdata/poc_ring.mjs static/app.js
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
   from "./poc_dom.mjs";
 
@@ -340,119 +342,65 @@ function ringOf(head) {
   if (byClass(bare, "plist")) fail("без плана в подсказке остался список");
 }
 
-// --- длинный план: доля растёт, засечка идёт по кольцу ---
-// Планов длиннее дюжины кольцо не режет делениями (пунктир не читается), и
-// раньше план без единого закрытого пункта рисовался ровной дорожкой: человек
-// дописывал пункт за пунктом и на кольце не видел ничего.
+// --- окно этапов: кольцо показывает текущую работу, а не историю сессии ---
+//
+// У сессии, которая делегирует третий день, этапов набирается под сотню:
+// дольки становятся тоньше волоса и сливаются в сплошную полосу (замечание
+// пользователя). В окне остаются все незакрытые этапы и последние закрытые, а
+// полное число живёт в подсказке.
 {
-  const long = (done, at) => Array.from({ length: 16 }, (_, i) => ({
-    text: "пункт " + (i + 1),
-    state: i < done ? "completed" : i === at ? "in_progress" : "pending",
-  }));
-  const dash = (node) => node.attrs["stroke-dasharray"].split(" ")[0];
-  const ringOf = (done, at) =>
-    pulseRingOf({ state: "working", working: 1, count: 1, agents: [], plan: long(done, at) });
+  const many = [];
+  for (let i = 1; i <= 20; i += 1) many.push({ text: "этап " + i, state: "completed" });
+  many.push({ text: "этап 21", state: "in_progress" });
+  many.push({ text: "этап 22", state: "pending" });
+  const ring = pulseRingOf({ state: "working", count: 1, working: 1, plan: many, agents: [] });
 
-  const none = ringOf(0, 0);
-  const here = allByClass(none, "seg").filter((x) => String(x.className).includes("here"));
-  if (here.length !== 1) {
-    fail("длинный план без закрытых пунктов нарисован голой дорожкой: " +
-      allByClass(none, "seg").map((x) => x.className).join(", "));
+  const segs = allByClass(ring, "seg");
+  if (segs.length !== 7) {
+    fail("сегментов в окне " + segs.length + ", жду семь (пять закрытых и два незакрытых)");
   }
-  if (allByClass(none, "seg").filter((x) => /\bon\b/.test(String(x.className))).length) {
-    fail("на кольце закрашена доля, которой нет");
+  // Счёт в центре идёт по тому же окну: иначе он рос бы бесконечно и ничего
+  // не значил.
+  const num = byClass(ring, "rnum");
+  if (!num || num.textContent !== "5/7") {
+    fail("счёт в центре не по окну: " + (num ? num.textContent : "числа нет"));
   }
-  // Каждый закрытый пункт растит долю и двигает засечку.
-  const one = ringOf(1, 1);
-  const three = ringOf(3, 3);
-  const doneArc = (w) => allByClass(w, "seg").filter((x) => /\bon\b/.test(String(x.className)))[0];
-  if (!doneArc(one) || !doneArc(three)) fail("доля сделанного на длинном плане не нарисована");
-  if (!(Number(dash(doneArc(three))) > Number(dash(doneArc(one))))) {
-    fail("доля не выросла с закрытыми пунктами: " + dash(doneArc(one)) + " -> " + dash(doneArc(three)));
+  // Полное число этапов за жизнь сессии остаётся в подсказке.
+  const tip = String(ring.attrs["aria-label"] || "");
+  if (!tip.includes("всего за сессию 22")) {
+    fail("подсказка молчит о полном числе этапов: " + tip);
   }
-  const tick = (w) => allByClass(w, "seg").filter((x) => String(x.className).includes("here"))[0];
-  if (tick(one).attrs["stroke-dashoffset"] === tick(three).attrs["stroke-dashoffset"]) {
-    fail("засечка идущего пункта стоит на месте: " + tick(one).attrs["stroke-dashoffset"]);
-  }
-  // Подсказка со списком показывает все пункты, сколько бы их ни было.
-  if (allByClass(byClass(three, "plist"), "prow2").length !== 16) {
-    fail("длинный план в подсказке урезан: " +
-      allByClass(byClass(three, "plist"), "prow2").length);
-  }
-}
+  if (!tip.includes("этапов 5 из 7")) fail("подсказка не назвала окно: " + tip);
 
-// --- открытый список плана переживает тик пульса и приход записи ---
-// Кольцо пересобиралось каждым тиком, и открытый по клику список закрывался от
-// любого вывода агента в ленте: человек не успевал его прочитать.
-{
-  const first = { state: "working", working: 1, count: 1, agents: [],
-    plan: [{ text: "первый шаг", state: "in_progress" }] };
-  const wrap = pulseRingOf(first);
-  wrap.handlers.click({ stopPropagation: () => {} });
-  if (!String(wrap.className).includes("open")) fail("клик не открыл список: " + wrap.className);
-  const pop = byClass(wrap, "pop");
-  if (!pop) fail("списка у кольца нет");
-  // Пришли новые данные: список остался открытым, а содержимое стало новым.
-  wrap.ringFill({ state: "working", working: 1, count: 1, agents: [],
-    plan: [{ text: "первый шаг", state: "completed" },
-      { text: "второй шаг", state: "in_progress" }] });
-  if (!String(wrap.className).includes("open")) {
-    fail("тик пульса закрыл открытый список: " + wrap.className);
+  // Цифры стоят внутри дуги: длинное значение мельче короткого, иначе «12/47»
+  // задевает кольцо (замечание пользователя).
+  if (String(num.className) !== "rnum") {
+    fail("короткое значение помечено как длинное: " + num.className);
   }
-  if (byClass(wrap, "pop") !== pop) fail("узел списка пересобран, а не обновлён на месте");
-  const rows = allByClass(pop, "prow2");
-  if (rows.length !== 2 || !dump(rows[1]).includes("второй шаг")) {
-    fail("содержимое списка не обновилось: " + dump(pop).slice(0, 200));
+  const long = [];
+  for (let i = 1; i <= 47; i += 1) long.push({ text: "этап " + i, state: i <= 40 ? "completed" : "pending" });
+  const wideNum = byClass(pulseRingOf({ state: "working", count: 1, working: 1, plan: long, agents: [] }), "rnum");
+  if (!String(wideNum.className).includes("rlong")) {
+    fail("длинное значение не помечено мелким: " + wideNum.className + ", " + wideNum.textContent);
   }
-  if (allByClass(wrap, "seg").length !== 2) {
-    fail("деления кольца не обновились: " + allByClass(wrap, "seg").length);
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  const base = (css.match(/\.rnum\{font:[^}]*?(\d+(?:\.\d+)?)px/) || [])[1];
+  const small = (css.match(/\.rnum\.rlong\{font-size:(\d+(?:\.\d+)?)px/) || [])[1];
+  if (!base || Number(base) > 10) fail("цифры в кольце крупнее места: " + base);
+  if (!small || Number(small) >= Number(base)) {
+    fail("длинное значение не мельче короткого: " + small + " против " + base);
   }
-  // Клик по кольцу закрывает список, как и раньше.
-  wrap.handlers.click({ stopPropagation: () => {} });
-  if (String(wrap.className).includes("open")) fail("повторный клик не закрыл список");
-}
 
-// --- простой с планом, выполненный план и сон без плана ---
-// Кольцо в простое не гаснет вовсе: план ведущей сессии виден и спящим, а вот
-// там, где плана нет и все спят, от кольца остаётся тонкий контур: серый
-// бублик обещал бы работу, которой нет.
-{
-  const plan = [
-    { text: "разобрать", state: "completed" },
-    { text: "починить", state: "in_progress" },
-    { text: "прогнать", state: "pending" },
-  ];
-  // 1. Простой с планом: деления на месте, числа в середине нет.
-  const idle = pulseRingOf({ state: "silent", count: 1, idle: 1, plan, agents: [] });
-  if (allByClass(idle, "seg").length !== 3) {
-    fail("у спящего чата с планом пропали деления: " + allByClass(idle, "seg").length);
+  // Незакрытых этапов много: они остаются все, окно режет только закрытые.
+  const busy = [];
+  for (let i = 1; i <= 9; i += 1) busy.push({ text: "закрытый " + i, state: "completed" });
+  for (let i = 1; i <= 4; i += 1) busy.push({ text: "открытый " + i, state: "pending" });
+  const wide = pulseRingOf({ state: "working", count: 1, working: 1, plan: busy, agents: [] });
+  if (allByClass(wide, "seg").length !== 9) {
+    fail("окно съело незакрытые этапы: сегментов " + allByClass(wide, "seg").length);
   }
-  if (byClass(idle, "rnum")) fail("у спящего кольца стоит число");
-  if (byClass(idle, "ghost")) fail("кольцо с планом схлопнулось в контур");
-  if (!dump(byClass(idle, "plist"))) fail("в подсказке спящего кольца нет списка плана");
-  // 2. План выполнен целиком: кольцо замкнуто одной дугой.
-  const full = pulseRingOf({ state: "silent", count: 1, idle: 1, agents: [],
-    plan: plan.map((it) => ({ text: it.text, state: "completed" })) });
-  const segs = allByClass(full, "seg");
-  if (segs.length !== 1 || !String(segs[0].className).includes("on")) {
-    fail("выполненный план нарисован не замкнутым кольцом: " +
-      segs.map((x) => x.className).join(", "));
-  }
-  const rows = allByClass(byClass(full, "plist"), "prow2");
-  if (rows.length !== 3 || !dump(rows[0]).includes("+")) {
-    fail("в подсказке выполненного плана нет списка с галочками: " + dump(full).slice(0, 200));
-  }
-  // 3. Плана нет и все спят: тонкий контур вместо кольца, список на месте.
-  const bare = pulseRingOf({ state: "empty", count: 0, agents: [] });
-  if (!String(bare.className).includes("ghost")) {
-    fail("спящее кольцо без плана осталось бубликом: " + bare.className);
-  }
-  if (!byClass(bare, "ghost")) fail("контура вместо кольца нет: " + dump(bare).slice(0, 150));
-  if (byClass(bare, "track") || allByClass(bare, "seg").length) {
-    fail("у контура остались дорожка и деления");
-  }
-  if (!dump(byClass(bare, "pop")).includes("живых сессий нет")) {
-    fail("список агентов у контура пропал: " + dump(bare).slice(0, 150));
+  if (byClass(wide, "rnum").textContent !== "5/9") {
+    fail("счёт незакрытых этапов не тот: " + byClass(wide, "rnum").textContent);
   }
 }
 

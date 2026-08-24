@@ -1938,9 +1938,14 @@ func sendPlan(w http.ResponseWriter, f http.Flusher, plan []planItem) {
 	}
 }
 
-// subStamp это метка каталога боковых журналов: по ней видно, что у сессии
-// завёлся новый субагент. Дописывание в стоящий файл каталога не трогает, а
-// новый файл трогает, и этого хватает.
+// subStamp это метка боковых журналов: по ней поток видит, что у сессии
+// что-то изменилось. Каталог меняется от нового субагента, а вот ход уже
+// начатой работы каталога не трогает вовсе, и метки по каталогу не хватало:
+// работа кончалась, сегмент кольца обязан был позеленеть, а план не
+// пересылался, пока не заведётся следующий субагент. Кольцо стояло
+// замороженным (жалоба пользователя, третий заход к одной теме). Поэтому в
+// метку идёт и время последней записи в самих журналах: пишет субагент, метка
+// двигается.
 func subStamp(path string) string {
 	dir := subDir(path)
 	fi, err := os.Stat(dir)
@@ -1951,7 +1956,17 @@ func subStamp(path string) string {
 	if err != nil {
 		return fi.ModTime().String()
 	}
-	return fi.ModTime().String() + ":" + strconv.Itoa(len(entries))
+	last := time.Time{}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+	}
+	return fi.ModTime().String() + ":" + strconv.Itoa(len(entries)) + ":" + last.String()
 }
 
 func marshalReply(item reply) string {
@@ -2418,6 +2433,34 @@ const subOrderLimit = 70
 // темпа, канала) отрезаются тем же разбором, что и в ленте: словами о работе
 // они не являются. Головы файла хватает: заказ лежит первой записью.
 func subOrder(file string) string {
+	stamp := ""
+	if fi, err := os.Stat(file); err == nil {
+		stamp = fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size())
+	}
+	if said, hit := subOrderSeen.Load(file); hit && stamp != "" {
+		if kept, ok := said.(subOrderEntry); ok && kept.stamp == stamp {
+			return kept.said
+		}
+	}
+	said := readSubOrder(file)
+	if stamp != "" {
+		subOrderSeen.Store(file, subOrderEntry{stamp: stamp, said: said})
+	}
+	return said
+}
+
+// Память заказов по отпечатку файла: план сессии пересчитывается на каждое
+// движение журналов, а заказов у сессии, делегирующей третий день, под сотню.
+// Без памяти каждый пересчёт читал бы голову каждого журнала заново, и живое
+// кольцо стоило бы тех самых тормозов, которые мы лечили у ленты.
+type subOrderEntry struct {
+	stamp string
+	said  string
+}
+
+var subOrderSeen sync.Map
+
+func readSubOrder(file string) string {
 	f, err := os.Open(file)
 	if err != nil {
 		return ""

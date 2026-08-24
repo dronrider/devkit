@@ -6478,27 +6478,41 @@ function ringTrack(box) {
 const RING_MAX_SEGS = 12;
 const RING_GAP = 3;
 
-// Деления кольца это пункты плана сессии, как их написал сам агент вызовом
-// TodoWrite: закрашенное сделано, подсвеченное идёт, пустое ждёт. Плана нет,
-// значит делений нет вовсе: ровная дорожка честнее выдуманной шкалы.
+// Сколько закрытых этапов кольцо оставляет на виду. Кольцо показывает текущую
+// работу, а не историю сессии: у сессии, которая делегирует третий день,
+// этапов набирается под сотню, дольки становятся тоньше волоса и сливаются в
+// сплошную полосу (замечание пользователя). В окне остаются все незакрытые
+// этапы и последние закрытые, полное число живёт в подсказке.
+const RING_DONE_KEEP = 5;
+
+// Окно кольца: незакрытые этапы целиком, закрытые последние. Порядок пунктов
+// сохраняется, потому что он и есть ход работы. Если и после этого этапов
+// больше, чем кольцо умеет показать дольками, остаются свежие: сплошная дуга
+// вместо долек это и есть та полоса, на которую жаловался человек.
+function ringWindow(plan) {
+  const list = plan || [];
+  const done = list.filter((it) => it.state === "completed");
+  const skip = Math.max(0, done.length - RING_DONE_KEEP);
+  let seen = 0;
+  const kept = list.filter((it) => {
+    if (it.state !== "completed") return true;
+    seen += 1;
+    return seen > skip;
+  });
+  return kept.length > RING_MAX_SEGS ? kept.slice(kept.length - RING_MAX_SEGS) : kept;
+}
+
+// Деления кольца это этапы работы сессии: закрашенное сделано, подсвеченное
+// идёт, пустое ждёт. Этапов нет, значит делений нет вовсе: ровная дорожка
+// честнее выдуманной шкалы. Сюда приходит окно (ringWindow), поэтому долек
+// всегда столько, сколько кольцо умеет показать: прежде длинный план рисовался
+// одной сплошной дугой с засечкой, и она читалась слипшейся полосой.
 function ringPlan(box, plan) {
   const done = plan.filter((it) => it.state === "completed").length;
   // План выполнен целиком: кольцо замыкается одной дугой. Щели между
   // делениями тут читались бы как незакрытые пункты, которых нет.
   if (done === plan.length) {
     box.append(ringArc("seg on", RING_LEN, 0));
-    return;
-  }
-  if (plan.length > RING_MAX_SEGS) {
-    const step = RING_LEN / plan.length;
-    box.append(ringArc("seg", RING_LEN, 0));
-    if (done > 0) box.append(ringArc("seg on", RING_LEN * (done / plan.length), 0));
-    // Длинный план без единого закрытого пункта рисовался ровной дорожкой, и
-    // кольцо было не отличить от кольца без плана: человек дописывал пункт за
-    // пунктом и не видел на экране ничего (жалоба пользователя). Идущий пункт
-    // отмечен засечкой, и она ползёт по кольцу с каждым закрытым.
-    const at = plan.findIndex((it) => it.state === "in_progress");
-    if (at >= 0) box.append(ringArc("seg here", Math.max(step - 1, 1), at * step));
     return;
   }
   const step = RING_LEN / plan.length;
@@ -6574,8 +6588,11 @@ function pulseRing(project, p) {
     const ghost = !plan.length && asleep;
     wrap.className = "ringwrap r-" + ((next && next.state) || "empty") +
       (ghost ? " ghost" : "") + (open ? " open" : "");
+    // Сегменты и счёт в центре идут по окну: сотня долек за три дня работы
+    // сливалась в сплошную полосу и не говорила ни о чём.
+    const shown = ringWindow(plan);
     if (ghost) g.append(ringArc("ghost", RING_LEN, 0));
-    else if (plan.length) ringPlan(g, plan);
+    else if (shown.length) ringPlan(g, shown);
     else ringTrack(g);
     // Бегущая дуга: она и значит, что события текут. Крутит её анимация, а не
     // опрос, поэтому между заходами на сервер кольцо не замирает.
@@ -6590,9 +6607,11 @@ function pulseRing(project, p) {
     // В середине стоят работающие, а у ждущего кольца ждущие. Простаивающие
     // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
     // как второй разговор задачи стоит без хода второй час.
-    const num = ringNumber(next);
+    const num = ringNumber(next, shown);
     if (num) {
-      const node = svgEl("text", "rnum");
+      // Длинное значение мельче короткого: «12/47» крупным шрифтом задевало
+      // дугу кольца (замечание пользователя).
+      const node = svgEl("text", "rnum" + (num.length > 3 ? " rlong" : ""));
       svgAttrs(node, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
       node.textContent = num;
       box.append(node);
@@ -6601,17 +6620,41 @@ function pulseRing(project, p) {
     wrap.replaceChildren(box, pop);
     // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
     // него говорила то же самое вторым разом и перекрывала сам список.
-    const tip = [ringTally(next), pulseWords(next, Date.now())].filter(Boolean).join(". ");
+    const tip = [ringStages(plan, shown), ringTally(next), pulseWords(next, Date.now())]
+      .filter(Boolean).join(". ");
     wrap.setAttribute("aria-label", tip);
   };
   wrap.ringFill(p);
   return wrap;
 }
 
-function ringNumber(p) {
+// Что стоит в середине кольца: ход работы этапами, «выполнено/всего». Число
+// агентов там ничего не говорило человеку («отображение количества агентов
+// неинформативно», замечание пользователя): агент один и тот же, а знать надо,
+// сколько шагов работы позади. Счёт идёт по тому же окну, что и сегменты,
+// иначе он рос бы бесконечно и ничего не значил. Этапов нет вовсе, значит в
+// середине остаётся прежнее: ждущие у ждущего кольца, работающие у
+// работающего.
+function ringNumber(p, shown) {
+  const list = shown || [];
+  if (list.length) {
+    return list.filter((it) => it.state === "completed").length + "/" + list.length;
+  }
   if (!p) return "";
   if (p.state === "waiting") return String(p.waiting || 1);
   return p.working > 0 ? String(p.working) : "";
+}
+
+// Этапы словами для подсказки: сколько их в окне и сколько всего за жизнь
+// сессии. Полное число тут и живёт: в кольце ему места нет, а знать его иногда
+// надо.
+function ringStages(plan, shown) {
+  const all = (plan || []).length;
+  if (!all) return "";
+  const list = shown || [];
+  const done = list.filter((it) => it.state === "completed").length;
+  const said = "этапов " + done + " из " + list.length;
+  return all > list.length ? said + " в показе, всего за сессию " + all : said;
 }
 
 // Подпись кольца: сколько кого. Число в середине говорит про работающих, и без

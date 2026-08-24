@@ -626,6 +626,21 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		}
 		sameFile(t, q.Path, before)
 	})
+
+	t.Run("окно дважды это отказ, а не две строки", func(t *testing.T) {
+		// Повторная запись того же окна молча дала бы вторую строку бакета,
+		// и парсер снимка взял бы первую без единого предупреждения.
+		kept := body
+		body = strings.Replace(kept, `"unit":6,"number":1`, `"unit":3,"number":5`, 1)
+		defer func() { body = kept }()
+		q := quotaHome(t, token)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "дважды") {
+			t.Fatalf("повтор окна принят за снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
 }
 
 // seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика

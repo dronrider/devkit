@@ -37,7 +37,7 @@ const board = { sections: [{ key: "in-progress", rows: [
   { id: "DK-503", title: "расход подписки", sect: "in-progress" },
 ] }] };
 
-const { sandbox, store } = makeSandbox(app, (path) => {
+const { sandbox, timers, store } = makeSandbox(app, (path) => {
   if (path.includes("/chats")) return { chats, models };
   if (path.includes("/sessions/")) {
     const sid = path.slice(path.indexOf("/sessions/") + 10).split("?")[0];
@@ -125,4 +125,44 @@ if (!draft || !String(draft[1]).includes("Продолжай работу")) {
   fail("выход не унёс набранное в живой чат: " + JSON.stringify([...store.keys()]));
 }
 
-console.log("ок: реплика в снятый разговор никуда не уехала, названа недоставленной, повтор, отмена и выход работают");
+// --- смежный случай: недоставленное, пережившее перезапуск конвейера ---
+// Реплика не ушла, пока сессия умирала, и осталась в очереди неушедшей («bad»).
+// Работу подняли заново, разговор сняли. Дожим такой записи обязан остановиться
+// на причине у СТАРОГО разговора, а не уехать молча в новый: молчаливый переезд
+// это ровно то, чем реплика попала в чужую сессию.
+{
+  store.set("devkit.chat.pend.demo/" + DEAD, JSON.stringify([
+    { text: "ответ, не ушедший до перезапуска", wire: "ответ, не ушедший до перезапуска",
+      born: Date.now() - 1000, state: "bad", why: "", tmux: "", id: "m-old", to: "" },
+  ]));
+  posts.length = 0;
+  const st2 = await sandbox.chatState("demo", DEAD, board);
+  const panel2 = sandbox.chatPanel("demo", st2);
+  await settle();
+  // Дожим очереди: у неушедшей записи он заведён таймером.
+  for (let i = 0; i < 4; i += 1) {
+    for (const t of timers.splice(0)) t.fn();
+    await settle();
+  }
+  if (posts.length) {
+    fail("недоставленное после перезапуска уехало: " + JSON.stringify(posts));
+  }
+  const said2 = dump(panel2);
+  if (!said2.includes("ответ, не ушедший до перезапуска")) {
+    fail("недоставленное потерялось вместе со снятым разговором: " + said2);
+  }
+  if (!said2.includes(WHY)) {
+    fail("недоставленное осталось без причины: " + said2);
+  }
+  // И оно осталось у старого разговора, а не переехало к новому.
+  const moved = store.get("devkit.chat.pend.demo/" + LIVE);
+  if (moved && String(moved).includes("ответ, не ушедший до перезапуска")) {
+    fail("недоставленное молча переехало в новый разговор: " + moved);
+  }
+  const kept = store.get("devkit.chat.pend.demo/" + DEAD);
+  if (!kept || !String(kept).includes("ответ, не ушедший до перезапуска")) {
+    fail("недоставленное не осталось у старого разговора: " + kept);
+  }
+}
+
+console.log("ок: реплика в снятый разговор никуда не уехала, названа недоставленной, повтор, отмена и выход работают, недоставленное осталось у старого разговора");

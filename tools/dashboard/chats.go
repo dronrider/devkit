@@ -490,7 +490,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 			e.Sock, e.PID, e.Where = p.Sock, p.PID, peerWord(p)
 			// Простой мерится транскриптом: поле реестра у сессий vscode
 			// пустое всегда, и по нему работающий агент выходил простаивающим.
-			e.Idle = !sessionBusy(f.path, s.now())
+			e.Idle = !s.sessionBusy(f.path, s.now())
 			if p.Status == "busy" {
 				e.Idle = false
 			}
@@ -1526,7 +1526,7 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	// и врать про неё нечем. Индикатор в таком случае живёт лентой, а не опросом.
 	busy := false
 	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
-		busy = sessionBusy(info.path, s.now())
+		busy = s.sessionBusy(info.path, s.now())
 	}
 	if p.Status == "busy" {
 		busy = true

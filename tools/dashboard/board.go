@@ -272,7 +272,7 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 			if at := info.mod.Unix(); at > moved {
 				moved = at
 			}
-			busy = sessionBusy(info.path, now)
+			busy = s.sessionBusy(info.path, now)
 		}
 	}
 	if id != "" {
@@ -381,7 +381,7 @@ func (s *server) tmuxTalk(projPath string) map[string]bool {
 			continue
 		}
 		if info, ok := findSession(s.transcriptRoots(), projPath, p.SessionID); ok &&
-			sessionBusy(info.path, s.now()) {
+			s.sessionBusy(info.path, s.now()) {
 			continue
 		}
 		talk[name] = true

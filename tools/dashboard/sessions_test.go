@@ -2305,3 +2305,93 @@ func TestSubWorkLabelFromOrder(t *testing.T) {
 		t.Errorf("длинный заказ не обрезан по ширине строки: %q (%d знаков)", cut, len([]rune(cut)))
 	}
 }
+
+// Живой опрос таба сессий спрашивает работы своей ручкой и по кругу, поэтому
+// разбор хвоста транскрипта («идёт ли ход») держится в памяти под отпечатком
+// файла: без памяти каждый заход перечитывал бы хвосты всех сессий машины, а
+// это ровно те тормоза, которые лечили у ленты и кольца. Память сторожит
+// отпечаток, а не срок: файл двинулся, значит разбор повторяется.
+func TestSessionBusyRemembersByStamp(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	fresh := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+		`[{"type":"text","text":"иду"}]},"timestamp":%q}`, now.Add(-time.Second).Format(time.RFC3339)) + "\n"
+	path := filepath.Join(t.TempDir(), "live.jsonl")
+	if err := os.WriteFile(path, []byte(fresh), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !e.s.sessionBusy(path, now) {
+		t.Fatalf("свежий транскрипт не признан идущим ходом")
+	}
+
+	// Содержимое подменено, а отпечаток тот же (время правки и размер не
+	// двинулись): ответ идёт из памяти, файл второй раз не читается.
+	stale := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+		`[{"type":"text","text":"жду"}]},"timestamp":%q}`, now.Add(-time.Hour).Format(time.RFC3339)) + "\n"
+	if len(stale) != len(fresh) {
+		t.Fatalf("подмена не того же размера: %d против %d", len(stale), len(fresh))
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if !e.s.sessionBusy(path, now) {
+		t.Errorf("память по отпечатку не сработала: хвост перечитан при неизменившемся файле")
+	}
+
+	// Файл двинулся: разбор повторяется, и ход больше не идёт.
+	later := now.Add(time.Minute)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if e.s.sessionBusy(path, now) {
+		t.Errorf("двинувшийся файл не перечитан: ход считается идущим по старой памяти")
+	}
+
+	// Ход часов память не рушит, но и не врёт: тот же разбор через час это уже
+	// не работа, потому что решение считается из времени последней записи.
+	if e.s.sessionBusy(path, now.Add(time.Hour)) {
+		t.Errorf("память выдала работу спустя час после последней записи")
+	}
+}
+
+// Работы проекта едут своей ручкой: живой опрос таба сессий спрашивает её по
+// кругу, и общий список проектов ради этого опрашивал бы все доски машины
+// разом.
+func TestWorksHandle(t *testing.T) {
+	e, c, _ := runsEnv(t, "task-XR-002\t1\t1786000000\n")
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/works", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("работы проекта: %d %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Project string `json:"project"`
+		Works   []Work `json:"works"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ не разобрался: %v\n%s", err, text)
+	}
+	if got.Project != "demo" {
+		t.Errorf("ручка назвала проект %q", got.Project)
+	}
+	w := workByID(got.Works, "XR-002")
+	if w == nil {
+		t.Fatalf("работы XR-002 в ответе нет: %s", text)
+	}
+	// Состояние едет тем же полем, что и в списке проектов: экран сортирует
+	// строки по нему, и второго вида ответа тут быть не должно.
+	if w.Live == "" {
+		t.Errorf("работа приехала без состояния: %s", text)
+	}
+	if resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/нетаких/works", ""); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("работы неизвестного проекта: %d, ожидал 404", resp.StatusCode)
+	}
+}

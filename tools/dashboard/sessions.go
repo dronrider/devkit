@@ -2040,32 +2040,81 @@ func modelShort(id string) string {
 // работающей: запись падает в журнал на каждом куске ответа.
 const busyFresh = 20 * time.Second
 
-// sessionBusy решает по транскрипту, работает ли сессия. Поле status реестра
-// тут не годится: у сессий vscode харнес его не пишет вовсе (пусто у всех до
-// единой), и мера по нему объявляла работающего агента простаивающим. Признаков
-// два, хватает любого: журнал писался только что, либо в хвосте висит вызов
-// инструмента без ответа, то есть агент сейчас в ходе (долгий ход не пишет в
-// журнал минутами).
-func sessionBusy(path string, now time.Time) bool {
+// Работает ли сессия, решает транскрипт, а не поле status реестра: у сессий
+// vscode харнес его не пишет вовсе (пусто у всех до единой), и мера по нему
+// объявляла работающего агента простаивающим. Признаков два, хватает любого:
+// журнал писался только что, либо в хвосте висит вызов инструмента без ответа,
+// то есть агент сейчас в ходе (долгий ход не пишет в журнал минутами).
+// busyEntry это разбор хвоста транскрипта, запомненный под отпечатком файла:
+// время последней записи и число незакрытых вызовов. Ответ «работает ли
+// сессия» считается уже из них и текущего времени, поэтому память не устаревает
+// от одного лишь хода часов, а сам разбор (чтение хвоста и парсинг json) не
+// повторяется, пока файл не двинулся. Считалось это по десятку раз на сборку
+// работ и по разу в несколько секунд на живой опрос таба сессий: без памяти
+// живой список стоил бы тех самых тормозов, которые лечила правка ленты.
+type busyEntry struct {
+	stamp string
+	last  time.Time
+	open  int
+}
+
+// sessionBusy отвечает, работает ли сессия, и держит разбор в памяти процесса.
+func (s *server) sessionBusy(path string, now time.Time) bool {
+	stamp := ""
+	if fi, err := os.Stat(path); err == nil {
+		stamp = fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size())
+	}
+	s.mu.Lock()
+	e, hit := s.busy[path]
+	s.mu.Unlock()
+	if hit && stamp != "" && e.stamp == stamp {
+		return busyNow(e.last, e.open, now)
+	}
+	last, open := sessionBusyTail(path)
+	if stamp != "" {
+		s.mu.Lock()
+		s.busy[path] = busyEntry{stamp: stamp, last: last, open: open}
+		s.mu.Unlock()
+	}
+	return busyNow(last, open, now)
+}
+
+// busyNow это само решение по разобранному хвосту: журнал писался только что
+// либо в хвосте висит незакрытый вызов инструмента, то есть агент сейчас в
+// ходе. Незакрытый вызов старше получаса это брошенный хвост закрытого окна, а
+// не работа.
+func busyNow(last time.Time, open int, now time.Time) bool {
+	if last.IsZero() {
+		return false
+	}
+	if now.Sub(last) < busyFresh {
+		return true
+	}
+	return open > 0 && now.Sub(last) < 30*time.Minute
+}
+
+// sessionBusyTail читает хвост транскрипта и отдаёт из него две меры: время
+// последней записи и число незакрытых вызовов инструмента.
+func sessionBusyTail(path string) (time.Time, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return time.Time{}, 0
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return false
+		return time.Time{}, 0
 	}
 	from := int64(0)
 	if fi.Size() > modelTailLimit {
 		from = fi.Size() - modelTailLimit
 	}
 	if _, err := f.Seek(from, 0); err != nil {
-		return false
+		return time.Time{}, 0
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return false
+		return time.Time{}, 0
 	}
 	open := map[string]bool{}
 	last := time.Time{}
@@ -2104,12 +2153,7 @@ func sessionBusy(path string, now time.Time) bool {
 			}
 		}
 	}
-	if !last.IsZero() && now.Sub(last) < busyFresh {
-		return true
-	}
-	// Незакрытый вызов старше получаса это брошенный хвост закрытого окна, а не
-	// работа.
-	return len(open) > 0 && !last.IsZero() && now.Sub(last) < 30*time.Minute
+	return last, len(open)
 }
 
 // Боковые журналы субагентов (находка тринадцатого круга POC). Когда сессия

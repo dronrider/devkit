@@ -31,6 +31,10 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Память разбора хвостов транскриптов (busyEntry): по ней считается, идёт
+	// ли ход в сессии. Разбор стоит чтения и парсинга хвоста файла, а спрашивают
+	// его и сборка работ, и живой опрос таба сессий.
+	busy map[string]busyEntry
 	// Память зонда живости канала (peerProbe): сокет -> ответил ли клиент.
 	// Зонд стоит миллисекунды у живого и целый таймаут у клина, и дёргать его
 	// на каждую сборку списка чатов было бы дорого ровно там, где больно.
@@ -90,6 +94,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
+		busy:  map[string]busyEntry{},
 		probe: peerProbe}
 }
 
@@ -100,6 +105,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.auth(s.handleLogout))
 	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/{p}/board", s.auth(s.handleBoard))
+	mux.HandleFunc("GET /api/projects/{p}/works", s.auth(s.handleWorks))
 	mux.HandleFunc("GET /api/projects/{p}/search", s.auth(s.handleSearch))
 	mux.HandleFunc("GET /api/projects/{p}/doc", s.auth(s.handleDoc))
 	mux.HandleFunc("PUT /api/projects/{p}/doc", s.auth(s.handleDocPut))
@@ -451,6 +457,34 @@ func (s *server) findProject(w http.ResponseWriter, r *http.Request, action stri
 	s.logf("%s отклонён: проект %s не найден 404", action, name)
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("проекта %s нет в корнях конфига", name)})
 	return nil
+}
+
+// handleWorks отдаёт живые работы одного проекта и ничего больше. Ручка эта
+// заведена под живой опрос таба сессий: список там перестраивается по ходу
+// работы агентов, и спрашивать ради этого весь /api/projects значило бы
+// каждые несколько секунд опрашивать все доски машины разом. Тут доска
+// читается из памяти по отпечатку файла, а разбор хвостов транскриптов из
+// памяти по отпечатку транскрипта, поэтому повторный заход стоит немногого.
+func (s *server) handleWorks(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "работы проекта")
+	if found == nil {
+		return
+	}
+	raw, err := s.projectBoard(found.Path)
+	if err != nil {
+		s.logf("работы %s: %v", found.Name, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	view, err := parseBoardView(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("ответ taskctl не разобрался: %v", err)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project": found.Name,
+		"works":   s.liveWorks(found.Path, view.Prefix, raw),
+	})
 }
 
 func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {

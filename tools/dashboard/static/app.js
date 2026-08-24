@@ -10423,44 +10423,147 @@ async function sweepIdle(project, box) {
 // один короткий список надвое. Чужие проекты сюда не попадают вовсе: их сессии
 // видны переключением проекта, а сквозной обзор машины живёт общим списком
 // разговоров в панели (решение пользователя).
+// Порядок сессий на экране: сперва работающие, за ними ждущие ответа, дальше
+// простаивающие, мёртвые в самом низу. Внутри группы свежий ход выше: список
+// отвечает на вопрос «чем машина занята сейчас», и молчащий второй день
+// разговор стоять над идущим ходом не должен. Работа, о состоянии которой
+// сказать нечего, идёт к простаивающим, а не к мёртвым: неизвестность это не
+// повод хоронить.
+const WORK_LIVE_ORDER = { busy: 0, waiting: 1, idle: 2, dead: 3 };
+
+function workOrder(w) {
+  const said = WORK_LIVE_ORDER[w && w.live];
+  return said === undefined ? WORK_LIVE_ORDER.idle : said;
+}
+
+function sortSessions(list) {
+  return list.slice().sort((a, b) => {
+    const byLive = workOrder(a.work) - workOrder(b.work);
+    if (byLive) return byLive;
+    return (b.work.moved || 0) - (a.work.moved || 0);
+  });
+}
+
+// Ключ строки: сессия, а у работы без своей сессии её вид с задачей. По нему
+// перерисовка находит прежний узел, и строка, у которой ничего не изменилось,
+// переживает обновление вместе с фокусом и подтверждением закрытия.
+function workKey(w) {
+  return w.session || (w.kind || "work") + "-" + (w.id || w.note || "");
+}
+
+function workSign(w, now) {
+  return [w.live || "", w.moved || 0, w.title || "", w.sect || "", w.note || "",
+    w.model || "", w.talk ? 1 : 0, workMoved(w, now)].join("|");
+}
+
+// Строки таба сессий: рисуются по месту, узел за узлом. Полная пересборка
+// экрана тут запрещена ценой: список живой, он перерисовывается по кругу, и
+// обход всего экрана на каждый тик это ровно те тормоза, которые лечила
+// правка панели (замер poc_bench_chat).
+function paintSessionRows(card, project, works, q) {
+  const list = sortSessions((works || []).map((w) => ({ project, work: w }))
+    .filter((item) => agentMatch(item, q)));
+  const now = Date.now();
+  if (!list.length) {
+    sync(card, [{
+      key: "sess-empty",
+      sign: q ? "q" : "all",
+      make: () => {
+        const empty = el("div", "empty");
+        if (q) {
+          empty.append(el("b", "", "По запросу ничего не нашлось."));
+          empty.append(document.createTextNode(
+            "Ищем по заголовку работы, задаче и модели."));
+        } else {
+          empty.append(el("b", "", "Сессий проекта сейчас нет."));
+          empty.append(document.createTextNode(
+            "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
+        }
+        return empty;
+      },
+    }]);
+    return;
+  }
+  sync(card, list.map((item) => ({
+    key: workKey(item.work),
+    sign: workSign(item.work, now),
+    make: () => agentRow(item.project, item.work, now),
+  })));
+}
+
 function renderSessions(project, works, q) {
   const groups = document.getElementById("groups");
-  groups.replaceChildren();
-  const all = (works || []).map((w) => ({ project, work: w }));
-  const list = all.filter((item) => agentMatch(item, q));
-  groups.append(boardKindBar(project, "sess", works));
+  const nodes = sync(groups, [{
+    key: "board-kind",
+    sign: [project, "sess", (works || []).length].join("|"),
+    make: () => boardKindBar(project, "sess", works),
+  }, {
+    key: "sess-bar",
+    sign: project,
+    // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному
+    // мучительно, а строкой видна не всякая сессия машины.
+    make: () => {
+      const sweepBox = el("div", "swbox");
+      const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
+      withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + SWEEP_IDLE_HOURS +
+        " ч. Перед снятием покажет список.");
+      sweep.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        sweepIdle(project, sweepBox).catch(console.error);
+      });
+      const bar = el("div", "nbar");
+      bar.append(sweep, sweepBox);
+      return bar;
+    },
+  }, {
+    key: "sess-card",
+    sign: "card",
+    make: () => el("div", "card"),
+  }]);
+  paintSessionRows(nodes[nodes.length - 1], project, works, q);
+  watchSessions(project, q);
+}
 
-  // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному
-  // мучительно, а строкой видна не всякая сессия машины.
-  const sweepBox = el("div", "swbox");
-  const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
-  withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + SWEEP_IDLE_HOURS +
-    " ч. Перед снятием покажет список.");
-  sweep.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    sweepIdle(project, sweepBox).catch(console.error);
-  });
-  const sweepBar = el("div", "nbar");
-  sweepBar.append(sweep, sweepBox);
-  groups.append(sweepBar);
+// Как часто открытый таб переспрашивает состояние сессий. Живой список это его
+// смысл: сессия начала ход, поднялась наверх и позеленела, кончила, опустилась.
+// Частота названа тут же, где и порядок, а рубеж простоя, с которого работа
+// перестаёт считаться работой, живёт у сервера (workIdleAfter в board.go):
+// вопросы это разные, и мерить их одним числом нельзя.
+const SESS_POLL = 4000;
 
-  const card = el("div", "card");
-  if (!list.length) {
-    const empty = el("div", "empty");
-    if (q) {
-      empty.append(el("b", "", "По запросу ничего не нашлось."));
-      empty.append(document.createTextNode(
-        "Ищем по заголовку работы, задаче и модели."));
-    } else {
-      empty.append(el("b", "", "Сессий проекта сейчас нет."));
-      empty.append(document.createTextNode(
-        "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
-    }
-    card.append(empty);
+let sessPoll = null;
+let sessWired = false;
+
+// Опрос гаснет при уходе с таба вместе с остальными живыми потоками экрана, и
+// сторожевая переменная тут та же, что у экрана черновика: таймер один на таб,
+// сколько бы раз его ни перерисовали.
+function watchSessions(project, q) {
+  if (!sessWired) {
+    sessWired = true;
+    agentLive.push(() => {
+      if (sessPoll !== null) clearTimeout(sessPoll);
+      sessPoll = null;
+      sessWired = false;
+    });
   }
-  const now = Date.now();
-  for (const item of list) card.append(agentRow(item.project, item.work, now));
-  groups.append(card);
+  if (sessPoll !== null) return;
+  sessPoll = setTimeout(() => {
+    sessPoll = null;
+    pollSessions(project, q).catch(console.error);
+  }, SESS_POLL);
+}
+
+// Заход опроса: работы спрашиваются своей ручкой, а не общим списком проектов,
+// и приезжают в те же строки. Молчание сервера экран не трогает вовсе:
+// следующий заход спросит снова, а стирать список ради обрыва связи незачем.
+async function pollSessions(project, q) {
+  const rt = route();
+  if (!rt.sess || rt.proj !== project) return;
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/works");
+  const now = route();
+  if (!now.sess || now.proj !== project) return;
+  if (r.ok) renderSessions(project, r.body.works || [], q);
+  else watchSessions(project, q);
 }
 
 // Остаток подписок (макет «00 Главная», блок в подвале боковой колонки). Имён

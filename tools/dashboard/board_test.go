@@ -435,7 +435,9 @@ func TestStaticAgentsRowGates(t *testing.T) {
 // и тогда, когда ни одной работы не идёт.
 func TestStaticAgentsEmpty(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "function renderSessions(")
+	// Пустота живёт там же, где строки: список перерисовывается по месту, и
+	// слова про пустой таб рисует та же сборка строк.
+	body := funcBody(t, app, "function paintSessionRows(")
 	for _, want := range []string{"Сессий проекта сейчас нет.",
 		"Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."} {
 		if !strings.Contains(body, want) {

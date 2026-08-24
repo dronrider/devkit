@@ -42,6 +42,20 @@ func writeAgentctlFake(t *testing.T, bin, out string) {
 	writeScript(t, bin, "agentctl", "cat <<'JSON'\n"+out+"\nJSON")
 }
 
+// writeAgentctlPick кладёт фикстуру agentctl, которая отвечает на оба вопроса
+// запуска: раскладкой на harness --json и машинными строками вердикта на
+// pick <ID>. Ярус вердикта называет стенд, пустой ярус это молчащий вердикт
+// (утилита есть, а строки tier в ответе нет).
+func writeAgentctlPick(t *testing.T, bin, layout, tier string) {
+	t.Helper()
+	said := "model: модель-pro\neffort: high\n"
+	if tier != "" {
+		said += "tier: " + tier + "\n"
+	}
+	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\ncat <<'JSON'\n"+layout+
+		"\nJSON\n;;\npick)\nprintf '"+said+"'\n;;\n*)\nexit 1\n;;\nesac")
+}
+
 func getHarnesses(t *testing.T, e *testEnv, c *http.Client) HarnessView {
 	t.Helper()
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/harnesses", "")

@@ -185,18 +185,6 @@ func (v HarnessView) pick(name string) (*Harness, string) {
 // раскладка машины.
 const groomTier = "pro"
 
-// modelOf разворачивает ярус в модель по раскладке подписки. Пустая строка это
-// «такого яруса у подписки нет»: имён моделей дашборд не сочиняет, вся лестница
-// приезжает ответом agentctl.
-func (h *Harness) modelOf(tier string) string {
-	for _, m := range h.Models {
-		if m.Tier == tier {
-			return m.Model
-		}
-	}
-	return ""
-}
-
 // tierNames это ярусы подписки по порядку раскладки: ими выбор и ограничен, а
 // в отказе они называются человеку списком.
 func (h *Harness) tierNames() []string {

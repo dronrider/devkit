@@ -1066,8 +1066,11 @@ root = os.environ["STAND_ROOT"]
 args = sys.argv[1:]
 if args[:1] == ["harness"]:
     print(json.dumps({"default": "перваяtest", "harnesses": [
-        {"name": "перваяtest", "enabled": True, "default": True, "bin": "claude"},
-        {"name": "втораяtest", "enabled": True, "default": False, "bin": "клиент-2"},
+        {"name": "перваяtest", "enabled": True, "default": True, "bin": "claude",
+         "models": [{"tier": "base", "model": "модель-base"},
+                    {"tier": "pro", "model": "модель-pro"}]},
+        {"name": "втораяtest", "enabled": True, "default": False, "bin": "клиент-2",
+         "models": [{"tier": "pro", "model": "вторая-pro"}]},
         {"name": "третьяtest", "enabled": False, "default": False, "bin": "клиент-3"},
     ]}))
     sys.exit(0)
@@ -1097,6 +1100,52 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertEqual(got[5], "втораяtest", "имя подписки не разобралось: %r" % (got,))
         # Без флага всё как было: подписка по умолчанию, пустое имя.
         self.assertEqual(mod.parse_args(["DK-100"])[5], "")
+
+    def test_parse_args_reads_tier(self):
+        """Ярус витка приезжает флагом от дашборда: без него виток шёл дефолтом
+        клиента, то есть верхним ярусом, которого цели никто не назначал."""
+        mod = load_goal_run()
+        got = mod.parse_args(["DK-100", "--tier", "base"])
+        self.assertEqual(got[6], "base", "ярус не разобрался: %r" % (got,))
+        self.assertEqual(mod.parse_args(["DK-100"])[6], "", "без флага ярус обязан быть пустым")
+
+    def test_turn_cmd_names_tier_model(self):
+        """Ярус разворачивается в модель раскладкой машины и называется витку
+        флагом. Второй подписке модель не называется вовсе: её называет
+        собственный профиль подписки."""
+        mod = load_goal_run()
+        loop = mod.Loop("DK-100", "/tmp", "", "base")
+        loop.model = "модель-base"
+        cmd = loop.turn_cmd("сид")
+        self.assertEqual(cmd[:3], ["claude", "--model", "модель-base"],
+                          "виток поехал не ярусом заказа: %r" % (cmd,))
+        loop = mod.Loop("DK-100", "/tmp", "втораяtest", "pro")
+        loop.client = "клиент-2"
+        loop.model = ""
+        self.assertNotIn("--model", loop.turn_cmd("сид"),
+                          "второй подписке приклеили явную модель")
+
+    def test_unknown_tier_refused_before_turns(self):
+        """Имён моделей у оболочки своих нет: лестницу держит раскладка машины,
+        и незнакомый ярус это отказ словами до первого витка, а не молчаливый
+        дефолт посреди цикла."""
+        root = self.stand("continue", "done")
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
+        p = self.goal_run(root, "DK-100", "--tier", "космос", "--foreground")
+        self.assertNotEqual(p.returncode, 0, "незнакомый ярус прошёл: %s" % p.stdout)
+        self.assertIn("яруса космос", p.stdout, "отказ не назвал ярус: %s" % p.stdout)
+        self.assertEqual(self.turns_done(root), 0, "витки пошли на незнакомом ярусе")
+
+    def test_cycle_turn_carries_tier_model(self):
+        """Ярус доезжает до самой команды витка, а не только до разбора флагов."""
+        root = self.stand("continue", "done")
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
+        p = self.goal_run(root, "DK-100", "--tier", "base", "--foreground")
+        self.assertEqual(p.returncode, 0, "цикл с ярусом не прошёл: %s" % p.stdout)
+        with open(os.path.join(root, "calls"), encoding="utf-8") as f:
+            calls = f.read()
+        self.assertIn("--model модель-base", calls,
+                       "виток поехал не ярусом заказа: %s" % calls)
 
     def test_turn_cmd_wraps_foreign_harness(self):
         mod = load_goal_run()

@@ -467,9 +467,13 @@ async function goKeepingResult(hash) {
 // Подписка едет полем harness: пусто значит «как раньше», на подписке по
 // умолчанию. afterOk это хэш экрана этой работы: заполнен на экране задачи,
 // пуст на строке списка, где человек нарочно остаётся на доске (DK-316).
-async function startRun(project, id, harness, afterOk) {
+async function startRun(project, id, harness, afterOk, tier) {
   sayResult("запуск " + id + (harness ? " на подписке " + harness : "") + "...");
-  const body = harness ? { id, harness } : { id };
+  const body = { id };
+  if (harness) body.harness = harness;
+  // Ярус едет только выбранный рукой: пустое поле это «как назначено», и ярус
+  // тогда называет вердикт agentctl pick на стороне сервера.
+  if (tier) body.tier = tier;
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs",
     { method: "POST", body });
   const said = r.body.message || r.body.error || "";
@@ -755,6 +759,12 @@ function harnesses() {
 // Подписка по умолчанию: на неё идёт широкая часть кнопки. Признак ставит
 // машинный слой, а без признака берётся первая в списке, чтобы кнопка работала
 // и на полураскрытом конфиге.
+// TIER_VERDICT это не ярус, а отказ от выбора: назначает его тогда вердикт
+// agentctl pick на стороне сервера, как и велит правило доски. Стоит он первым
+// у запуска задачи и выбран там по умолчанию; у цели и у разбора черновика
+// вердикта нет, там по умолчанию pro.
+const TIER_VERDICT = "вердикт";
+
 // RUN_TIER это ярус по умолчанию для работ, которые заказывает сам дашборд.
 // Разбор черновика это работа среднего веса: верхний ярус ей не нужен, а
 // дефолт клиента бывает как раз верхним (замечание пользователя).
@@ -891,11 +901,16 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // вес модели. Разбор черновика ходил дефолтом самого клиента, то есть верхним
   // ярусом, которого никто не выбирал (замечание пользователя), и теперь ярус
   // назван: pro по умолчанию, другой берут осознанно.
-  const tierList = tiers || [];
-  let tier = tierList.includes(RUN_TIER) ? RUN_TIER : (tierList[0] || "");
+  // tiers это либо список ярусов, либо пара «список и выбранный по умолчанию»:
+  // у запуска задачи умолчание это вердикт, у цели и разбора pro.
+  const tierList = (tiers && tiers.list) || tiers || [];
+  let tier = (tiers && tiers.now) || (tierList.includes(RUN_TIER) ? RUN_TIER : (tierList[0] || ""));
+  // Наружу вердикт едет пустым полем: имени такого яруса в раскладке нет, его
+  // называет сервер.
+  const tierOut = () => (tier === TIER_VERDICT ? "" : tier);
   const fire = (node, harness) => {
     node.disabled = true;
-    const going = run ? run(harness, tier) : startRun(project, id, harness, afterOk);
+    const going = run ? run(harness, tierOut()) : startRun(project, id, harness, afterOk, tierOut());
     Promise.resolve(going).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
@@ -977,7 +992,10 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     const said = pickHarness
       ? "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."
       : "Ярусы из раскладки машины, agentctl harness. Выбор действует на один запуск.";
-    foot.textContent = tier ? said + " Ярус: " + tier + "." : said;
+    const how = tier === TIER_VERDICT
+      ? " Ярус называет вердикт agentctl pick."
+      : (tier ? " Ярус: " + tier + "." : "");
+    foot.textContent = said + how;
   };
   tierNote();
   pop.append(foot);
@@ -1063,8 +1081,16 @@ function rowAction(project, row, sect) {
     const pin = checkPin(Object.assign({ sect: sect }, row));
     const hint = pin ? checkTip(Object.assign({ sect: sect }, row))
       : orderHint(row.order, row.accept, sect, row.id);
+    // Ярус выбирается там же, где подписка. У задачи по умолчанию стоит
+    // вердикт: назначает исполнителя и ярус agentctl pick, а не глаз
+    // диспетчера, и человек его лишь переопределяет. У цели вердикта на весь
+    // цикл нет, там умолчание pro.
+    const goal = /^Цель:/.test(row.title);
+    const tiers = goal
+      ? { list: harnessTiers(), now: RUN_TIER }
+      : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT };
     return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
-      actionLabel(sect), /^Цель:/.test(row.title), hint, "", pin);
+      actionLabel(sect), goal, hint, "", pin, null, tiers);
   }
   const btn = el("button", "btn btn-sm btn-danger", "Стоп");
   btn.addEventListener("click", (ev) => {
@@ -2449,8 +2475,12 @@ function taskActions(project, id, row, works) {
     return out;
   }
   const pin = checkPin(row);
+  // Выбор яруса тот же, что и у строки списка: экран задачи и доска не должны
+  // предлагать разное.
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
-    pin ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id), afterOk, pin));
+    pin ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id), afterOk, pin, null,
+    isGoal ? { list: harnessTiers(), now: RUN_TIER }
+      : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT }));
   let hint = taskActionHint(isGoal, row, id);
   // Причина, по которой выбирать не из чего, стоит в той же подписи под
   // полосой: на широком экране место для неё есть, и подсказкой по наведению

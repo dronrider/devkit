@@ -240,7 +240,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	model := ""
 	if own != nil {
-		model = own.modelOf(tier)
+		model = own.tierModel(tier)
 	}
 	if model == "" && wantTier != "" {
 		known := "у подписки нет ни одного яруса"

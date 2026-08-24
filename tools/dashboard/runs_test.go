@@ -65,6 +65,9 @@ func runsEnv(t *testing.T, sessions string) (*testEnv, *http.Client, string) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, sessions)
 	writeScript(t, e.bin, "claude", "exit 0")
+	// Раскладка подписок и вердикт приезжают фикстурой: живой agentctl отвечал
+	// бы по машине разработчика, и ярус запуска ездил бы от неё.
+	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 	return e, e.loggedClient(t), tmuxLog
 }
 
@@ -154,7 +157,10 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				// имя tmux-сессии дословно: в контуре второй подписки
 				// CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 разыскивал свой
 				// ID десяток ходов.
-				" claude -p '" + tc.prompt + " " + planRule +
+				// Ярус вердикта называется явной моделью: без флага клиент
+				// брал свой дефолт, а он бывает верхним ярусом, которого
+				// задаче никто не назначал.
+				" claude --model 'модель-pro' -p '" + tc.prompt + " " + planRule +
 				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + tc.id + ".json.'"
 			if !strings.Contains(got, want) {
 				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
@@ -976,6 +982,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			tmuxLog := filepath.Join(e.home, "tmux.log")
 			writeTmuxFake(t, e.bin, tmuxLog, "")
 			writeScript(t, e.bin, "claude", "exit 0")
+			writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 			c := e.loggedClient(t)
 
 			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, tc.id))
@@ -986,7 +993,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			if !strings.Contains(text, `"kind":"task"`) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
-			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude -p '"+tc.prompt+" "+planRule+
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude --model 'модель-pro' -p '"+tc.prompt+" "+planRule+
 				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-"+tc.id+".json.'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
 			}
@@ -1026,5 +1033,123 @@ func TestRunStartClosedRowNamesArchive(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("экран закрытой задачи пришёл без %q: %s", want, text)
 		}
+	}
+}
+
+// Ярус конвейера называет вердикт, а не дашборд: правило доски велит брать
+// исполнителя и ярус у agentctl pick. Прежде команда шла как `claude -p
+// <заказ>`, без модели вовсе, то есть дефолтом клиента: у пользователя это
+// верхний ярус, за который работа не назначалась (находка этого захода).
+func TestRunStartTierFromVerdict(t *testing.T) {
+	t.Run("ярус вердикта едет моделью", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlPick(t, e.bin, harnessTiersFixture, "base")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск задачи: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"tier":"base"`) || !strings.Contains(text, "по вердикту agentctl pick") {
+			t.Errorf("ответ не назвал ярус вердикта и его источник: %s", text)
+		}
+		got := readFile(t, tmuxLog)
+		if !strings.Contains(got, "claude --model 'модель-base' -p") {
+			t.Errorf("команда конвейера поехала не ярусом вердикта: %s", got)
+		}
+	})
+
+	t.Run("молчащий вердикт откатывает на pro и говорит об этом", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlPick(t, e.bin, harnessTiersFixture, "")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск при молчащем вердикте: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"tier":"pro"`) {
+			t.Errorf("молчащий вердикт не откатил на pro: %s", text)
+		}
+		if !strings.Contains(text, "яруса не назвал") {
+			t.Errorf("подмена яруса прошла молча, а её обязано быть видно: %s", text)
+		}
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "claude --model 'модель-pro' -p") {
+			t.Errorf("откатный ярус не доехал до команды: %s", got)
+		}
+	})
+
+	t.Run("выбор человека перебивает вердикт", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+			`{"id": "XR-002", "tier": "base"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск выбранным ярусом: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, "выбран рукой") {
+			t.Errorf("ответ не сказал, что ярус выбран человеком: %s", text)
+		}
+		got := readFile(t, tmuxLog)
+		if !strings.Contains(got, "--model 'модель-base'") || strings.Contains(got, "модель-pro") {
+			t.Errorf("выбор человека не перебил вердикт: %s", got)
+		}
+	})
+
+	t.Run("незнакомый ярус отбивается до подъёма", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+			`{"id": "XR-002", "tier": "космос"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "ярусы подписки") {
+			t.Fatalf("незнакомый ярус: %d %s, ожидал 400 со списком ярусов", resp.StatusCode, text)
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+			t.Errorf("сессию всё равно подняли: %s", got)
+		}
+	})
+
+	t.Run("второй подписке явной модели нет", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+		writeScript(t, e.bin, "клиент-2", "exit 0")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+			`{"id": "XR-002", "harness": "втораяtest"}`)
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск на второй подписке: %d %s", resp.StatusCode, text)
+		}
+		got := readFile(t, tmuxLog)
+		if !strings.Contains(got, "exec --harness 'втораяtest'") {
+			t.Errorf("запуск второй подписки поехал мимо её обвязки: %s", got)
+		}
+		if strings.Contains(got, "--model") {
+			t.Errorf("второй подписке приклеили явную модель: %s", got)
+		}
+	})
+}
+
+// Ярус витков доезжает до оболочки цели её же флагом: разворачивать его моделью
+// будет она сама, раскладкой машины. Прежде ярус туда не ехал вовсе, и витки
+// шли дефолтом клиента.
+func TestRunStartGoalCarriesTier(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	calls := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(calls))
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, calls); !strings.Contains(got, "--tier pro") {
+		t.Errorf("ярус по умолчанию не доехал до оболочки цели: %q", got)
+	}
+
+	// Выбор человека едет тем же флагом.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id": "XR-100", "tier": "base"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск цели выбранным ярусом: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, calls); !strings.Contains(got, "--tier base") {
+		t.Errorf("выбранный ярус не доехал до оболочки цели: %q", got)
 	}
 }

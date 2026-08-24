@@ -5,7 +5,8 @@ headless-сессиями, пока виток отвечает маркером
 цели, доска, git, деревья задач), а оболочка только зовёт следующий виток и
 решает, когда перестать звать.
 
-  goal-run.py <ID> [-C <корень проекта>] [--harness <подписка>] [--foreground]
+  goal-run.py <ID> [-C <корень проекта>] [--harness <подписка>] [--tier <ярус>]
+                   [--foreground]
   goal-run.py <ID> [-C <корень проекта>] --say <строка хода>
   goal-run.py <ID> [-C <корень проекта>] --ask <вопрос человеку>
 
@@ -95,6 +96,10 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
   -C <корень>    проект с доской, по умолчанию текущая директория
   --harness <имя> подписка, чьей квотой платятся витки; без флага подписка
                  по умолчанию, как было
+  --tier <ярус>  ярус модели витка (mini, base, pro, max); без флага pro.
+                 В модель ярус разворачивает раскладка машины (agentctl
+                 harness --json), и второй подписке модель не называется:
+                 её профиль называет её сам
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
   --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
   --ask <вопрос> задать вопрос человеку и ждать ответа во «Входящих» цели
@@ -137,6 +142,7 @@ def parse_args(argv):
     note = None
     question = None
     harness = ""
+    tier = ""
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -169,6 +175,13 @@ def parse_args(argv):
             if harness.strip() == "":
                 die("имя подписки пустое, поднимать виток нечем")
             i += 2
+        elif arg == "--tier":
+            if i + 1 >= len(argv):
+                die("у --tier нет значения: имя яруса это его аргумент")
+            tier = argv[i + 1]
+            if tier.strip() == "":
+                die("имя яруса пустое, разворачивать в модель нечего")
+            i += 2
         elif arg in ("-h", "--help"):
             sys.stdout.write(USAGE)
             sys.exit(0)
@@ -189,7 +202,7 @@ def parse_args(argv):
         die("--ask и --foreground вместе не ходят: вопрос человеку цикла не поднимает")
     if note is not None and question is not None:
         die("--say и --ask вместе не ходят: вопрос и так пишет свою строку хода")
-    return goal_id, proj, fg, note, question, harness
+    return goal_id, proj, fg, note, question, harness, tier
 
 
 def resolve_proj(proj):
@@ -200,20 +213,45 @@ def resolve_proj(proj):
     return abspath
 
 
-def harness_client(name):
-    """Клиент подписки по её имени: раскладку машины знает agentctl, своего
-    перечня подписок у оболочки нет вовсе, иначе включённая завтра подписка
-    сюда бы не доехала. Пустой ответ значит подписку по умолчанию: её клиент
-    зовётся как звался, без обвязки."""
+def harness_layout():
+    """Раскладка подписок машины. Знает её agentctl, своего перечня у оболочки
+    нет вовсе, иначе включённая завтра подписка сюда бы не доехала."""
     p = subprocess.run([AGENTCTL, "harness", "--json"], stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT, text=True)
     if p.returncode != 0:
         die("раскладка подписок не прочиталась (%s harness --json): %s"
             % (AGENTCTL, (p.stdout or "").strip()))
     try:
-        data = json.loads(p.stdout or "{}")
+        return json.loads(p.stdout or "{}")
     except ValueError as e:
         die("раскладка подписок не разобралась: %s" % e)
+
+
+def tier_model(name, tier):
+    """Модель яруса по раскладке машины. Имён моделей оболочка не сочиняет:
+    лестницу ярусов держит подписка, и завтрашняя её правка доезжает сюда без
+    правки оболочки. Пустой ответ значит «называть модель нечем»: такого яруса
+    у подписки нет либо раскладка о ярусах молчит, и виток идёт как шёл."""
+    if not tier:
+        return ""
+    data = harness_layout()
+    want = name or data.get("default") or ""
+    for h in data.get("harnesses", []):
+        if h.get("name") != want:
+            continue
+        for m in h.get("models", []):
+            if m.get("tier") == tier:
+                return m.get("model") or ""
+        names = ", ".join(m.get("tier", "") for m in h.get("models", []))
+        die("яруса %s у подписки %s нет%s"
+            % (tier, want, (", ярусы подписки: " + names) if names else ""))
+    return ""
+
+
+def harness_client(name):
+    """Клиент подписки по её имени. Пустой ответ значит подписку по умолчанию:
+    её клиент зовётся как звался, без обвязки."""
+    data = harness_layout()
     for h in data.get("harnesses", []):
         if h.get("name") != name:
             continue
@@ -234,13 +272,19 @@ class Loop:
     только группирует то, что в sh было переменными верхнего уровня, своей
     логики сверх методов ниже у него нет."""
 
-    def __init__(self, goal_id, proj, harness=""):
+    def __init__(self, goal_id, proj, harness="", tier=""):
         self.id = goal_id
         self.proj = proj
         # Подписка, чьей квотой платятся витки. Пусто это подписка по
         # умолчанию, ровно то, что цикл делал всегда. Имя живёт весь прогон:
         # витку его не выбирают заново, платит цель одним кошельком.
         self.harness = harness
+        # Ярус модели витка. Пусто значит «как звался клиент», а имя ярусом
+        # разворачивается в модель раскладкой машины, один раз на прогон:
+        # витки цели идут одним весом, и решать это заново каждому витку не за
+        # чем.
+        self.tier = tier
+        self.model = ""
         self.devdir = os.path.join(proj, ".devkit")
         self.deploy = os.path.join(self.devdir, "deploy.local")
         self.goal = os.path.join(proj, "docs", "tasks", "%s.md" % goal_id)
@@ -270,8 +314,13 @@ class Loop:
         некому."""
         turn = ["-p", "--session-id", sid, self.prompt]
         client = getattr(self, "client", "")
+        # Ярус называется только своей подписке: у второй модель называет её
+        # собственный профиль, и флаг тут спорил бы с её настройкой. Без флага
+        # клиент берёт свой дефолт, а он бывает верхним ярусом, которого витку
+        # никто не назначал.
+        model = ["--model", self.model] if self.model else []
         if not self.harness or not client:
-            return ["claude"] + turn
+            return ["claude"] + model + turn
         return [AGENTCTL, "exec", "--harness", self.harness, "--", client,
                 "--permission-mode", "auto"] + turn
 
@@ -295,6 +344,11 @@ class Loop:
             self.client = harness_client(self.harness)
         elif shutil.which("claude") is None:
             die("claude в PATH нет, поднимать витки нечем")
+        # Ярус разворачивается в модель до первого витка: раскладку спрашиваем
+        # один раз, а отказ «такого яруса нет» человек обязан увидеть сразу, а
+        # не после первого сожжённого витка.
+        if self.tier and not getattr(self, "client", ""):
+            self.model = tier_model(self.harness, self.tier)
         # Предполётная проверка прав: одобрять запросы харнеса в headless-сессии
         # некому, и виток без прав отвечает continue, не сделав ничего. Без
         # проверки такой цикл жёг бы бюджет до самой воронки, а стоп был бы
@@ -593,6 +647,10 @@ class Loop:
         # другую.
         if self.harness:
             args += ["--harness", self.harness]
+        # Ярус едет туда же и по той же причине: цикл в своей сессии поднимает
+        # витки сам, и без флага виток пошёл бы дефолтом клиента.
+        if self.tier:
+            args += ["--tier", self.tier]
         args.append("--foreground")
         cmd = " ".join(shlex.quote(a) for a in args)
         new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess, cmd])
@@ -721,9 +779,9 @@ def ask_wait():
 
 
 def main(argv):
-    goal_id, proj, fg, note, question, harness = parse_args(argv)
+    goal_id, proj, fg, note, question, harness, tier = parse_args(argv)
     proj = resolve_proj(proj)
-    loop = Loop(goal_id, proj, harness)
+    loop = Loop(goal_id, proj, harness, tier)
     if question is not None:
         # Предполётной проверки вопросу не нужно по той же причине, что и
         # строке хода: его задаёт уже идущий виток, в том числе виток чата.

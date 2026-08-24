@@ -176,6 +176,53 @@ func procErr(err error) string {
 // ровно то, что дашборд звал до появления выбора.
 const defaultClient = "claude"
 
+// fallbackTier это ярус, которым работа идёт, когда назначить его некому: у
+// груминга он тот же самый. Верхний ярус тут не годится, он самый дорогой, а
+// нижний не тянет работу конвейера.
+const fallbackTier = "pro"
+
+// pickTier спрашивает у вердикта, каким ярусом закрывать задачу. Назначающий
+// тут вердикт, а не дашборд: правило доски велит брать исполнителя и ярус у
+// agentctl pick, а не выбирать глазом. Вторая строка это слова про то, откуда
+// ярус взялся: молчащий вердикт откатывает на pro, и молчать об откате нельзя,
+// иначе подмена яруса ничем не видна.
+func (s *server) pickTier(dir, id string) (string, string) {
+	out, err := runProcQuiet(dir, true, binPath(agentctlBin), "pick", id)
+	if err != nil {
+		return fallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
+			procErr(err), fallbackTier)
+	}
+	for _, ln := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), "tier:"); ok {
+			if tier := strings.TrimSpace(rest); tier != "" {
+				return tier, "ярус " + tier + " по вердикту agentctl pick"
+			}
+		}
+	}
+	return fallbackTier, fmt.Sprintf("вердикт agentctl pick яруса не назвал: ярус %s", fallbackTier)
+}
+
+// runTier сводит два голоса про ярус: выбор человека и вердикт. Человек
+// сильнее, вердикт назначает, когда человек не выбирал. Имя, выбранное
+// человеком, сверяется с раскладкой подписки той же проверкой, что и имя самой
+// подписки: устаревший экран не должен поднимать работу неизвестно чем.
+func (s *server) runTier(dir, id, want string, h *Harness, goal bool) (string, string, string) {
+	if want != "" {
+		if h != nil && len(h.tierNames()) > 0 && h.tierModel(want) == "" {
+			return "", "", fmt.Sprintf("яруса %s в раскладке машины нет, ярусы подписки: %s",
+				want, strings.Join(h.tierNames(), ", "))
+		}
+		return want, "ярус " + want + " выбран рукой", ""
+	}
+	// У цели вердикта на весь цикл нет: витки режет потолок из раздела
+	// «Бюджет», а ярус первого витка это тот же pro, что у разбора.
+	if goal {
+		return fallbackTier, "ярус " + fallbackTier + " по умолчанию цикла цели", ""
+	}
+	tier, said := s.pickTier(dir, id)
+	return tier, said, ""
+}
+
 // clientMissing называет ненайденный клиент до подъёма tmux-сессии: сессия с
 // ненайденной командой умерла бы молча, и стоп был бы неотличим от запуска.
 // Имя приезжает раскладкой подписок (`bin` харнеса), а не зашито: у второй
@@ -215,9 +262,15 @@ func harnessTail(h *Harness) string {
 // дом, agentctl exec разворачивает в нём тильду раскладки харнеса, и
 // CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог демона, а клиент
 // отвечал «Not logged in» (живой случай, запуск DK-269 на второй подписке).
-func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string {
+func sessionCommand(agentctl string, h *Harness, prompt, id, sess, model string) string {
 	if h == nil {
-		return chatVars(id, sess) + defaultClient + " -p " + shQuote(prompt)
+		client := defaultClient
+		// Ярус называется явно: без флага клиент берёт свой дефолт, и работа
+		// уходила верхним ярусом, которого ей никто не назначал.
+		if model != "" {
+			client += " --model " + shQuote(model)
+		}
+		return chatVars(id, sess) + client + " -p " + shQuote(prompt)
 	}
 	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
@@ -228,8 +281,15 @@ func sessionCommand(agentctl string, h *Harness, prompt, id, sess string) string
 	// Режим разрешений едет флагом по той же причине, что у чата (chatCmd):
 	// свежий профиль второй подписки поднимает клиента в ручном режиме, и
 	// конвейер вставал бы на вопросе разрешения, которого некому увидеть.
+	tier := ""
+	// Ярус называется и тут, когда подписку выбрали руками, а она основная:
+	// обвязка меняет контур, а не вес модели. Второй подписке модель не
+	// клеится вовсе, и до сюда она приезжает пустой.
+	if model != "" {
+		tier = " --model " + shQuote(model)
+	}
 	return chatVars(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
-		shQuote(h.Bin) + " --permission-mode auto -p " + shQuote(prompt)
+		shQuote(h.Bin) + " --permission-mode auto" + tier + " -p " + shQuote(prompt)
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +307,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// Harness это выбранная подписка. Пусто значит «как раньше»: список не
 		// прочитан или экран старый, и работа идёт на подписке по умолчанию.
 		Harness string `json:"harness"`
+		// Tier это выбранный человеком ярус. Пусто значит «как назначено»: у
+		// задачи ярус называет вердикт agentctl pick, у цели это pro.
+		Tier string `json:"tier"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
@@ -324,6 +387,18 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		}
 		harness = h
 	}
+	// Ярус называется до подъёма: у задачи его назначает вердикт, у цели это
+	// pro, и выбор человека сильнее обоих.
+	own := harness
+	if own == nil {
+		own = s.harnesses().byDefault()
+	}
+	tier, tierWhy, tierBad := s.runTier(found.Path, id, body.Tier, own, kind == "goal")
+	if tierBad != "" {
+		s.logf("запуск %s в %s отклонён: %s", id, found.Name, tierBad)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
+		return
+	}
 	// У цели заказ один на все статусы: и «выполнить», и «продолжить» это
 	// следующий виток, а промпт витка сочиняет не дашборд, а сама оболочка
 	// цикла, и лезть в её слова отсюда нечем. Подписка едет ей флагом: витки
@@ -339,6 +414,13 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		if harness != nil {
 			args = append(args, "--harness", harness.Name)
 		}
+		// Ярус едет оболочке той же дорогой, что и подписка: разворачивать его
+		// моделью она будет сама, раскладкой машины (agentctl harness --json).
+		// Собирать модель тут значило бы решать за неё на каждом витке, а витков
+		// у цикла много и подписка между ними меняется.
+		if tier != "" {
+			args = append(args, "--tier", tier)
+		}
 		out, err := runProc("python3", args...)
 		if err != nil {
 			text := procErr(err)
@@ -353,15 +435,16 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, code, map[string]string{"error": text})
 			return
 		}
-		s.logf("цель %s поднята в %s (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+		s.logf("цель %s поднята в %s (tmux-сессия %s%s), %s", id, found.Name, sess, harnessTail(harness), tierWhy)
 		goalOut := map[string]string{
-			"id": id, "kind": kind, "session": sess,
+			"id": id, "kind": kind, "session": sess, "tier": tier,
 			"message": strings.TrimSpace(string(out)),
 		}
 		if harness != nil {
 			goalOut["harness"] = harness.Name
 			goalOut["message"] = fmt.Sprintf("цикл цели %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
 		}
+		goalOut["message"] = strings.TrimSpace(goalOut["message"]) + ", " + tierWhy
 		writeJSON(w, http.StatusOK, goalOut)
 		return
 	}
@@ -377,18 +460,26 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// Модель конвейера чужой подписки пишется в память диалога: сам заказ её
 	// не называет (клиент подписки берёт свою по умолчанию), а панель без
 	// записи показывала бы в селекторе умолчание первой подписки поверх
-	// второй (живой случай, запуск DK-269 показывал opus). Пишется ярус pro: им
-	// подписка и поднимает клиента.
+	// второй (живой случай, запуск DK-269 показывал opus). Пишется модель того
+	// же яруса, которым идёт работа.
 	if harness != nil {
-		if m := harness.tierModel("pro"); m != "" {
+		if m := harness.tierModel(tier); m != "" {
 			if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: m}); err != nil {
 				s.logf("модель конвейера %s не записалась: %v", sess, err)
 			}
 		}
 	}
+	// Второй подписке явная модель не клеится: её заказ модели не несёт вовсе,
+	// имя называет профиль подписки. Основной ярус называется флагом, иначе
+	// клиент берёт свой дефолт, а он бывает верхним ярусом, которого никто не
+	// назначал (находка этого захода).
+	model := ""
+	if own != nil && own.Default {
+		model = own.tierModel(tier)
+	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
 		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id)+" "+planRuleFor(sess),
-			id, sess)); err != nil {
+			id, sess, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -398,13 +489,19 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// сказано тут именно про сессию конвейера. Куда она отдаст исполнителя
 	// дальше, решает вердикт pick по лестнице этой подписки, и обещать тут
 	// большее значило бы обещать чужую настройку.
-	resp := map[string]string{"id": id, "kind": kind, "session": sess,
+	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier,
 		"message": fmt.Sprintf("конвейер задачи %s поднят в tmux-сессии %s", id, sess)}
 	if harness != nil {
 		resp["harness"] = harness.Name
 		resp["message"] = fmt.Sprintf("конвейер задачи %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
 	}
-	s.logf("задача %s поднята в %s (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+	if model != "" {
+		resp["model"] = model
+	}
+	// Откуда взялся ярус, сказано словами и в ответе, и в журнале: молчащий
+	// вердикт подменяет назначение, и человеку это видно.
+	resp["message"] += ", " + tierWhy
+	s.logf("задача %s поднята в %s (tmux-сессия %s%s), %s", id, found.Name, sess, harnessTail(harness), tierWhy)
 	writeJSON(w, http.StatusOK, resp)
 }
 

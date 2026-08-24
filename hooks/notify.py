@@ -25,9 +25,9 @@
                                     hookio.py (голый --hook это claude-code), а
                                     заголовок и тело собираются из разобранного.
                                     Оси notify (по поводу), turn-done,
-                                    subagent-done и prompt-submit (та только
-                                    снимает отметку ожидания), остальное молча
-                                    пропускается
+                                    turn-failed, subagent-done и prompt-submit
+                                    (та только снимает отметку ожидания),
+                                    остальное молча пропускается
   notify.py --self-test             послать пробное уведомление и напечатать,
                                     чем именно послано
 
@@ -106,6 +106,15 @@ NOTIFICATION_REASONS = {
 SUBAGENT_REASON = "субагент отработал"
 TURN_DONE = "turn_done"
 TURN_REASON = "ход закончен"
+# Ход, убитый API-ошибкой. Часть сетевых обрывов харнес ретраит сам,
+# недокументированно (DK-172, docs/tasks/DK-172.md), поэтому сюда доезжает
+# только исчерпание этих попыток или неретраибельная ошибка, и молчать про
+# такое нельзя: сессия стоит до ручного «продолжай», а снаружи это неотличимо
+# от штатной работы. Подпись несёт тип ошибки из события (server_error,
+# rate_limit и прочие значения матчера StopFailure), пустой тип подписывается
+# словом без уточнения.
+TURN_FAILED = "turn_failed"
+FAIL_REASON = "ход упал"
 # Звать ли о конце хода, решает фокус: смотришь на окно этой сессии значит
 # молчим, всё остальное значит зовём. Куда смотрит человек, System Events
 # отвечает заголовком переднего окна, а имя рабочего дерева стоит там хвостом.
@@ -319,6 +328,14 @@ def parse_event(sess, root=None):
         # (hookio кладёт её в message из last_assistant_message), тело собираем
         # так же, как у субагента; пустая реплика оставляет прежний вид баннера.
         key, label, body = TURN_DONE, TURN_REASON, short(sess.message)
+    elif sess.kind == hookio.TURN_FAILED:
+        # Тип ошибки лежит поводом (hookio кладёт его из error), текст ошибки
+        # последней репликой. Свой ключ, а не WAIT_KEY: баннер конца хода,
+        # ушедший парой минут раньше, не должен глушить весть о том, что
+        # следующий ход упал.
+        key = TURN_FAILED
+        label = "%s (%s)" % (FAIL_REASON, sess.reason) if sess.reason else FAIL_REASON
+        body = short(sess.message)
     elif sess.kind == hookio.SUBAGENT_DONE:
         level = QUIET
         # Обычный субагент приходит сюда, а не поводом agent_completed события

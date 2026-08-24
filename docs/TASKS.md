@@ -22,6 +22,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 |--------|--------|-----|---|---|------|--------|
 | DK-481 | dashboard: живой демон не видит токен после secret --rotate | bug | P2 | 35 (25+2+1+5+2) | S | [tasks/DK-481.md](tasks/DK-481.md) |
 | DK-503 | LLD: потолок захода исполнителя и передача хвоста работы [приёмка: user] | LLD | P2 | 41 (25+9+3+0+4) | M | [tasks/DK-503.md](tasks/DK-503.md) |
+| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 37 (25+4+1+5+2) | S | [tasks/DK-357.md](tasks/DK-357.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -57,7 +58,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 37 (25+8+2+0+2) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 37 (25+4+1+5+2) | - | [tasks/DK-315.md](tasks/DK-315.md) |
-| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 37 (25+4+1+5+2) | S | [tasks/DK-357.md](tasks/DK-357.md) |
 | DK-364 | Назначение исполнителя с учётом остатков подписок | task | P2 | 37 (25+8+2+0+2) | M | [tasks/DK-364.md](tasks/DK-364.md) |
 | DK-477 | Минимум процедуры доски, переживающий сжатие контекста | task | P2 | 37 (25+6+3+0+3) | M | [tasks/DK-477.md](tasks/DK-477.md) |
 | DK-168 | Связь из груминга обязательна: вход без маркера «после» это находка doctor | task | P2 | 36 (25+6+1+0+4) | S | [tasks/DK-168.md](tasks/DK-168.md) |

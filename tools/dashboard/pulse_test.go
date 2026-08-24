@@ -692,3 +692,28 @@ func TestPulseCheckScaleWithoutRecord(t *testing.T) {
 		}
 	}
 }
+
+// Кольцо не перечитывает боковые журналы каждым тиком: ход сессии зависит от
+// хвоста файла, и неизменившийся файл отвечает из памяти процесса. Прежде
+// сотня журналов долгого разговора перечитывалась на каждый опрос кольца, и
+// кольцо выходило дороже самой ленты.
+func TestPulseRemembersJournalSteps(t *testing.T) {
+	e := newTestEnv(t)
+	forgetPulseSteps()
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
+	for i := 0; i < 40; i++ {
+		fatSubLog(t, path, fmt.Sprintf("p%02d", i), 1<<20)
+	}
+	at := time.Now()
+	first := pulseTrace(path)
+	cold := time.Since(at)
+	at = time.Now()
+	again := pulseTrace(path)
+	warm := time.Since(at)
+	if first.At.IsZero() || first != again {
+		t.Fatalf("ход кольца разошёлся: %+v против %+v", first, again)
+	}
+	if warm > cold/5 || warm > 30*time.Millisecond {
+		t.Fatalf("повторный опрос кольца стоит %v против первого %v", warm, cold)
+	}
+}

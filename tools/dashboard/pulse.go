@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dronrider/devkit/internal/stage"
@@ -294,7 +295,48 @@ type pulseStep struct {
 // pulseSeen читает хвост транскрипта: когда там было последнее событие, чем
 // агент занят и остался ли вызов без ответа. Инструмент берётся последний
 // открытый, а когда открытых нет, последний по файлу: именно он и был ходом.
+// pulseSeen читается на каждом тике кольца по всем боковым журналам сессии, а
+// журналы у долгого разговора это сотня файлов: без памяти процесса кольцо
+// перечитывало их хвосты по кругу и стоило дороже самой ленты (жалоба
+// пользователя про тормоза). Ответ зависит только от хвоста файла, поэтому
+// отпечаток файла его и сторожит, тем же приёмом, что у кусков ленты (feed.go).
+var pulseSteps struct {
+	sync.Mutex
+	stamp map[string]string
+	m     map[string]pulseStep
+}
+
+// forgetPulseSteps снимает память на ходы: нужна стендам.
+func forgetPulseSteps() {
+	pulseSteps.Lock()
+	pulseSteps.m, pulseSteps.stamp = nil, nil
+	pulseSteps.Unlock()
+}
+
 func pulseSeen(path string) pulseStep {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return pulseStep{}
+	}
+	stamp := fileStamp(fi)
+	pulseSteps.Lock()
+	step, hit := pulseSteps.m[path]
+	same := pulseSteps.stamp[path] == stamp
+	pulseSteps.Unlock()
+	if hit && same {
+		return step
+	}
+	step = pulseRead(path)
+	pulseSteps.Lock()
+	if pulseSteps.m == nil || len(pulseSteps.m) > feedKeep {
+		pulseSteps.m, pulseSteps.stamp = map[string]pulseStep{}, map[string]string{}
+	}
+	pulseSteps.m[path], pulseSteps.stamp[path] = step, stamp
+	pulseSteps.Unlock()
+	return step
+}
+
+func pulseRead(path string) pulseStep {
 	var step pulseStep
 	f, err := os.Open(path)
 	if err != nil {

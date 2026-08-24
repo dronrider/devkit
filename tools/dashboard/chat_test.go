@@ -1668,3 +1668,61 @@ exit 0`)
 		t.Fatalf("дорога send-keys по занятому имени: %s", said)
 	}
 }
+
+// Снятый и пересозданный разговор виден словами (DK-397 POC). Имя tmux реестр
+// отдал другому разговору, то есть работу подняли заново. Прежде имя просто
+// снималось молча, разговор выглядел обычным, и реплика в него уезжала мимо
+// человека. Теперь запись несёт причину и адрес выхода.
+func TestChatEntryNamesRestartedConversation(t *testing.T) {
+	e, c := chatEnv(t)
+	old := "aaaa5040-1111-4111-8111-111111111111"
+	fresh := "bbbb5041-2222-4222-8222-222222222222"
+	writeSession(t, e.home, e.proj, "", old, plainTalk, time.Now().Add(-time.Hour))
+	writeSession(t, e.home, e.proj, "", fresh, plainTalk, time.Now().Add(-time.Minute))
+	writeBinds(t, e.home,
+		"2026-08-24T12:42:48 сессия "+old+" задача DK-503 проект demo дерево "+e.proj+
+			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-503\n",
+		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект demo дерево "+e.proj+
+			" транскрипт /tmp/t2.jsonl источник заказ повод startup tmux task-DK-503\n")
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "task-DK-503|1|123";; esac
+exit 0`)
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	var got struct {
+		Chats []struct {
+			ID     string `json:"id"`
+			Gone   string `json:"gone"`
+			GoneTo string `json:"goneTo"`
+			Tmux   string `json:"tmux"`
+		} `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	var dead, live *struct {
+		ID     string `json:"id"`
+		Gone   string `json:"gone"`
+		GoneTo string `json:"goneTo"`
+		Tmux   string `json:"tmux"`
+	}
+	for i := range got.Chats {
+		switch got.Chats[i].ID {
+		case old:
+			dead = &got.Chats[i]
+		case fresh:
+			live = &got.Chats[i]
+		}
+	}
+	if dead == nil || live == nil {
+		t.Fatalf("в списке нет обоих разговоров: %+v", got.Chats)
+	}
+	if dead.Gone == "" {
+		t.Fatal("снятый разговор не назван словами: панель покажет его обычным")
+	}
+	if dead.GoneTo != fresh {
+		t.Fatalf("выход указан не на занявший имя разговор: %q, ждали %q", dead.GoneTo, fresh)
+	}
+	if live.Gone != "" {
+		t.Fatalf("живой разговор объявлен снятым: %q", live.Gone)
+	}
+}

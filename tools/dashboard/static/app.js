@@ -6896,6 +6896,13 @@ function chatWay(st) {
   // бы никто, а новый чат унёс бы ответ мимо ждущей строки. Раньше на этот
   // случай в панели стояла врезка со своим полем ответа, и над лентой было два
   // поля ввода сразу (POC ветки poc-chat).
+  // Снятый и пересозданный разговор: имя его tmux-сессии реестр отдал другому
+  // разговору, работу подняли заново. Реплике сюда ехать некуда, и молча
+  // увезти её в задачу нельзя: ровно так она и уехала посторонней сессии.
+  // Пузырь честно встаёт недоставленным, а выход это живой чат задачи.
+  if (st.entry && st.entry.gone) {
+    return { kind: "gone", off: false, why: st.entry.gone, to: st.entry.goneTo || "" };
+  }
   if (chatWaitsTask(st)) return { kind: "task", off: false, why: "" };
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   // Протухший адрес: писать некуда, и резюм по несуществующей сессии обещал бы
@@ -7303,7 +7310,7 @@ function echoWrite(project, addr, list) {
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
-        why: m.why || "", tmux: m.tmux || "", id: m.id || "" }));
+        why: m.why || "", tmux: m.tmux || "", id: m.id || "", to: m.to || "" }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -7384,6 +7391,18 @@ function makeEcho(project, box, feedBox, addr, resend) {
           if (!mine.length && out.onGone) out.onGone();
         });
         wrap.append(undo);
+        // Выход из кончившегося разговора: живой разговор, занявший его имя.
+        // Без него человеку оставался повтор в то же никуда.
+        if (m.to) {
+          const away = el("button", "linkish", "открыть живой чат");
+          away.addEventListener("click", () => {
+            const text = m.text;
+            drop(m);
+            chatDraftWrite(m.to, text);
+            switchChat(m.to);
+          });
+          wrap.append(away);
+        }
       }
       // Местный пузырь встаёт в ту же разметку строки ленты, что и запись из
       // транскрипта: без обёртки frow он рисовался без левой колонки с нитью и
@@ -7475,7 +7494,7 @@ function makeEcho(project, box, feedBox, addr, resend) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux,
+        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux, to: rec.to,
         retry: (again) => resend(again, rec.id) });
     }
     if (mine.length) {
@@ -7541,10 +7560,13 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // Автодожим тут только множил бы очередь у вставшего клиента. Панель
     // узнаёт о причине хуком onHeld и гасит свою плашку работы: агент не
     // работает, и мигать о работе поверх причины значило бы врать.
-    held(m, why) {
+    held(m, why, to) {
       if (!mine.includes(m)) return;
       m.state = "held";
       m.why = why;
+      // Адрес выхода едет в персист вместе с пузырём: перезагрузка страницы
+      // не должна уносить дорогу к живому разговору.
+      if (to !== undefined) m.to = to || "";
       save();
       draw();
       if (out.onHeld) out.onHeld();
@@ -7831,6 +7853,13 @@ function chatPanel(project, st) {
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
     // первой строкой: у всех трёх дорог он один и тот же.
     const go = (wire) => {
+      if (way.kind === "gone") {
+        // Никуда не отправляется: адресата нет, и обещать доставку нечем.
+        // Пузырь остаётся с причиной, повтором, отменой и выходом в живой чат.
+        echo.held(m, way.why, way.to);
+        done();
+        return;
+      }
       if (way.kind === "task") {
         // Реплика ждущей задаче: ручка кладёт её безадресной строкой во вход.
         // Ленты у такой строки нет, и пузырь тут единственный след ответа,

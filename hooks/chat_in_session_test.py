@@ -38,9 +38,9 @@ class ChatStand:
     DIR = "chat"
     SUFFIX = ".in"
 
-    def __init__(self, tmp, name):
+    def __init__(self, tmp, name, tree="tree"):
         self.home = os.path.join(tmp, name, "home")
-        self.root = os.path.join(tmp, name, "tree")
+        self.root = os.path.join(tmp, name, tree)
         self.chat = os.path.join(self.root, ".devkit", self.DIR)
         os.makedirs(self.chat)
         # .git файлом, как у бокового дерева задачи (worktree): границу дерева
@@ -48,6 +48,19 @@ class ChatStand:
         with open(os.path.join(self.root, ".git"), "w", encoding="utf-8") as f:
             f.write("gitdir: %s/main/.git\n" % tmp)
         os.makedirs(os.path.join(self.home, ".devkit"))
+        # Сессия стенда ведёт задачу DK-1: разговор task-DK-1 принадлежит ей, и
+        # безадресную строку оттуда забирает она. Без записи реестра разговор
+        # задачи хозяина не имеет, и подхват не отдаёт его никому.
+        self.bind(SID, "DK-1")
+
+    def bind(self, session, task, when="2026-08-17T11:00:00", tmux="-"):
+        """Строка реестра чатов ~/.devkit/sessions.log: её пишет хук старта
+        hooks/session-task.py, а свёртка берёт последнюю запись сессии."""
+        with open(os.path.join(self.home, ".devkit", "sessions.log"), "a",
+                  encoding="utf-8") as f:
+            f.write("%s сессия %s задача %s проект devkit дерево %s "
+                    "транскрипт - источник заказ повод startup tmux %s\n"
+                    % (when, session, task or "-", self.root, tmux))
 
     def said(self, name, *lines):
         with open(os.path.join(self.chat, name + self.SUFFIX), "w", encoding="utf-8") as f:
@@ -120,9 +133,9 @@ class ChatCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.n = 0
 
-    def stand(self):
+    def stand(self, tree="tree"):
         self.n += 1
-        return self.STAND(self.tmp, "s%d" % self.n)
+        return self.STAND(self.tmp, "s%d" % self.n, tree)
 
     def added(self, p):
         """Текст добавки контекста из ответа хука, ровно одной записью JSON."""
@@ -138,7 +151,7 @@ class ChatCase(unittest.TestCase):
 
 
 class ChatDeliveryTest(ChatCase):
-    def test_unaddressed_line_reaches_the_session_of_the_tree(self):
+    def test_unaddressed_line_reaches_the_session_that_leads_the_task(self):
         s = self.stand()
         s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
         text = self.added(s.run())
@@ -149,6 +162,58 @@ class ChatDeliveryTest(ChatCase):
         # И доставленная строка ушла из разговора: повторный ход молчит.
         self.assertEqual(s.read("task-DK-1"), "")
         self.silent(s.run())
+
+    # Утечка адресации (DK-397 POC). Живой случай: конвейер задачи подняли
+    # заново, старую tmux-сессию сняли, а реплика в разговор task-DK-503 легла
+    # безадресной строкой во вход основного чекаута. Забрал её первый же ход в
+    # том же чекауте, диспетчерская сессия чужой задачи, и человек прочитал её
+    # у себя как реплику из чужого разговора. Разговор задачи принадлежит той
+    # сессии, что задачу ведёт, и больше никому.
+
+    def test_task_chat_does_not_reach_a_session_of_another_task(self):
+        s = self.stand()
+        s.bind(OTHER, "DK-9")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: Продолжай работу")
+        self.silent(s.run(session=OTHER))
+        self.assertIn("Продолжай работу", s.read("task-DK-1"),
+                      "сессия чужой задачи забрала безадресную реплику")
+        self.assertIn("разговор принадлежит не этой сессии", s.journal())
+
+    def test_task_chat_does_not_reach_a_session_without_a_task(self):
+        # Сессии нет в реестре вовсе: окно человека в том же чекауте. Прежде
+        # такой ход забирал безадресную строку задачи наравне с исполнителем.
+        s = self.stand()
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: Продолжай работу")
+        self.silent(s.run(session=OTHER))
+        self.assertIn("Продолжай работу", s.read("task-DK-1"))
+
+    def test_rebound_session_loses_the_task_chat(self):
+        # Свёртка реестра по последней записи: сессию перепривязали, и разговор
+        # прежней задачи ей больше не принадлежит.
+        s = self.stand()
+        s.bind(SID, "DK-9", when="2026-08-17T12:30:00")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        self.silent(s.run())
+        self.assertIn("стой, не туда", s.read("task-DK-1"))
+
+    def test_task_worktree_session_takes_the_task_chat(self):
+        # Боковое дерево задачи принадлежит ей целиком: разговор task-DK-1 в
+        # нём свой по месту, даже когда реестра про сессию не знает.
+        s = self.stand(tree="devkit-DK-1")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        text = self.added(s.run(session=OTHER))
+        self.assertIn("стой, не туда", text)
+
+    def test_personal_chat_reaches_only_its_own_session(self):
+        # Личный разговор сессии несёт её ID прямо в имени, и чужой ход в том же
+        # дереве забирать оттуда нечего.
+        s = self.stand()
+        s.said("sess-" + OTHER, "2026-08-17 12:00, из дашборда: только тебе")
+        self.silent(s.run())
+        self.assertIn("только тебе", s.read("sess-" + OTHER),
+                      "чужая сессия забрала личный разговор")
+        text = self.added(s.run(session=OTHER))
+        self.assertIn("только тебе", text)
 
     def test_addressed_line_goes_only_to_its_session(self):
         s = self.stand()
@@ -167,11 +232,13 @@ class ChatDeliveryTest(ChatCase):
         self.assertIn("реплика адресована сессии %s" % OTHER, s.journal())
 
     def test_handwritten_line_reads_by_any_session(self):
+        # Имя разговора хозяина не называет: ни task-<ID>, ни sess-<ID>. Такой
+        # разговор человек заводит рукой, и читает его любая сессия дерева.
         s = self.stand()
-        s.said("sess-x", "рукописная строка без подписи")
+        s.said("note", "рукописная строка без подписи")
         text = self.added(s.run())
         self.assertIn("рукописная строка без подписи", text)
-        self.assertEqual(s.read("sess-x"), "")
+        self.assertEqual(s.read("note"), "")
 
     def test_mixed_lines_take_only_their_own(self):
         s = self.stand()
@@ -257,6 +324,13 @@ class ChatWithGoalTest(ChatCase):
         with open(os.path.join(s.root, ".git"), "w", encoding="utf-8") as f:
             f.write("gitdir: elsewhere\n")
         os.makedirs(os.path.join(s.root, ".devkit", "chat"))
+        # Сессия витка ведёт DK-1: разговор задачи принадлежит ей, иначе
+        # безадресную строку оттуда не забирает никто.
+        with open(os.path.join(s.home, ".devkit", "sessions.log"), "a",
+                  encoding="utf-8") as f:
+            f.write("2026-08-15T11:00:00 сессия %s задача DK-1 проект devkit "
+                    "дерево %s транскрипт - источник заказ повод startup tmux -\n"
+                    % (SID, s.root))
         with open(os.path.join(s.root, ".devkit", "chat", "task-DK-1.in"),
                   "w", encoding="utf-8") as f:
             f.write("2026-08-17 12:00, из дашборда: из разговора\n")

@@ -71,6 +71,7 @@ import collections
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -94,6 +95,23 @@ FROM_DASHBOARD = ", из дашборда: "
 # Стоит перед подписью дашборда и кончается запятой, а ID сессии из цифр и
 # дефисов, поэтому граница читается по первой запятой после адресата.
 TO_SESSION = ", сессии "
+# Приставки имён разговоров. Имя несёт того, кому разговор принадлежит:
+# task-<ID> это разговор задачи, sess-<ID> личный разговор сессии. Безадресную
+# строку такого разговора забирает только его хозяин, а не любой ход в дереве
+# (DK-397 POC: реплика в снятый разговор задачи уезжала в чужую сессию того же
+# чекаута).
+TASK_CHAT = "task-"
+SESS_CHAT = "sess-"
+# ID задачи в имени разговора и в хвосте имени бокового дерева. Тот же вид, что
+# у реестра чатов (hooks/session-task.py) и у разбора дашборда.
+TASK_ID_RE = re.compile(r"^[A-Z]{2,10}-[0-9]{1,6}$")
+TREE_TASK_RE = re.compile(r"(?:^|-)([A-Za-z]{2,10}-[0-9]{1,6})$")
+# Реестр чатов: он говорит, какую задачу ведёт сессия. Пишет его хук старта
+# hooks/session-task.py, читают дашборд (internal/sessions) и этот подхват.
+SESS_LOG = os.path.join(".devkit", "sessions.log")
+# Ключевые слова полей строки реестра, порядком записи.
+BIND_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт",
+             "источник", "повод", "tmux")
 # Каталог разговоров любой сессии в дереве работы: .devkit/chat/<имя>.in.
 # Поля признака ожидания ниже срока: кто ждёт и по какой задаче. Пишет их
 # инструмент ожидания taskctl ask (internal/chat), читают подхват и сторожок.
@@ -432,9 +450,80 @@ def addressee(line):
     return rest.partition(",")[0].strip()
 
 
-def for_me(line, session):
+def bind_line(line):
+    """Сессия и её задача из строки реестра чатов либо (None, None). Разбор тот
+    же, что в internal/sessions: значение поля собирается до следующего
+    ключевого слова, поэтому пробел в пути дерева строку не рассыпает, а
+    непонятая строка пропускается, не роняя разбора."""
+    f = line.strip().split()
+    if len(f) < 3 or f[1] != "сессия":
+        return None, None
+    vals, key = {}, ""
+    for tok in f[1:]:
+        if tok in BIND_KEYS and vals.get(key):
+            key = tok
+            continue
+        if not key:
+            key = tok
+            continue
+        vals[key] = (vals.get(key, "") + " " + tok).strip()
+    sid = vals.get("сессия", "").strip()
+    if sid in ("", "-"):
+        return None, None
+    task = vals.get("задача", "").strip()
+    return sid, "" if task == "-" else task.upper()
+
+
+def session_task(session, home=None):
+    """Задача, которую ведёт сессия по реестру чатов. Выигрывает последняя её
+    запись: перепривязка и отвязка это обычные строки журнала, а не правка
+    файла, и снятая привязка приезжает пустой задачей (LLD DK-430, решение 1).
+    Реестра нет, значит сессия не ведёт ничего: молчание тут строже догадки."""
+    home = os.path.expanduser("~") if home is None else home
+    try:
+        with open(os.path.join(home, SESS_LOG), encoding="utf-8", errors="replace") as f:
+            rows = f.read().split("\n")
+    except OSError:
+        return ""
+    task = ""
+    for row in rows:
+        sid, got = bind_line(row)
+        if sid == session:
+            task = got
+    return task
+
+
+def tree_task(root):
+    """Задача бокового дерева: хвост имени каталога <проект>-<ID>. Дерево
+    задачи принадлежит ей целиком, и разговор задачи там свой по месту."""
+    m = TREE_TASK_RE.search(os.path.basename(root or ""))
+    return m.group(1).upper() if m else ""
+
+
+def owns_chat(name, session, root, home=None):
+    """Хозяин ли сессия разговору name. Безадресную строку забирает только он:
+    имя разговора несёт того, кому строка предназначена, и отдавать её первому
+    ходу в дереве значит увозить реплику в чужую сессию.
+
+    Разговор задачи принадлежит той сессии, что ведёт задачу по реестру чатов
+    либо работает в её боковом дереве. Личный разговор сессии принадлежит ей
+    одной, и её ID стоит прямо в имени. Имя без приставки хозяина не называет
+    (рукописный разговор), и там всё остаётся по-прежнему."""
+    if name.startswith(SESS_CHAT):
+        return name[len(SESS_CHAT):] == session
+    if name.startswith(TASK_CHAT):
+        task = name[len(TASK_CHAT):].upper()
+        if not TASK_ID_RE.match(task):
+            return True
+        return task in (session_task(session, home), tree_task(root))
+    return True
+
+
+def for_me(line, session, own=True):
     addressee_line = addressee(line)
-    return not addressee_line or addressee_line == session
+    if addressee_line:
+        return addressee_line == session
+    return own
 
 
 def chat_add(name, lines):
@@ -447,7 +536,7 @@ def chat_add(name, lines):
             "Строка уходит из разговора в момент доставки, повторно она не приедет." % (name, body))
 
 
-def serve_chat(d, name, suffix, turn, now):
+def serve_chat(d, name, suffix, turn, now, tree=None):
     """Один разговор: текст добавки либо None. Отличие от цели в том, что
     доставленная строка уходит из входа тут же, под тем же замком: читателя,
     который забирает строку своей записью, у входа нет, и отдельная механика
@@ -473,11 +562,19 @@ def serve_chat(d, name, suffix, turn, now):
                 lines = [l.strip() for l in f.read().split("\n") if l.strip()]
         except OSError:
             return None
-        taken = [l for l in lines if for_me(l, turn.session)]
+        own = owns_chat(name, turn.session, tree)
+        taken = [l for l in lines if for_me(l, turn.session, own)]
         if waiting is not None:
             taken = [l for l in taken if addressee(l) and addressee(l) != waiting]
         if not taken:
-            if tracing() and lines:
+            # Отказ хозяина громкий, а не под ключом трассировки: безадресная
+            # строка лежит в разговоре, чья сессия снята, и молчание тут
+            # неотличимо от доставки. По этой строке видно, что реплика ждёт
+            # хозяина, а не уехала в первый попавшийся ход.
+            if not own and any(not addressee(l) for l in lines):
+                log(turn.session, name,
+                    "отказ: разговор принадлежит не этой сессии, безадресная строка ждёт хозяина")
+            elif tracing() and lines:
                 other = next((addressee(l) for l in lines if addressee(l)), "-")
                 log(turn.session, name, "отказ: реплика адресована сессии %s, а ход идёт сессией %s"
                     % (other, turn.session or "-"))
@@ -680,7 +777,7 @@ def run_hook(protocol, now=None):
     root = tree_root(turn.cwd)
     if root is not None:
         for d, name, suffix in chat_names(root):
-            text = serve_chat(d, name, suffix, turn, now)
+            text = serve_chat(d, name, suffix, turn, now, root)
             if text:
                 adds.append(text)
     if not adds:

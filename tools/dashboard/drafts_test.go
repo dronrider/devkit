@@ -296,18 +296,18 @@ func TestStaticDraftsSection(t *testing.T) {
 		t.Error("раздел черновиков вернулся в меню: накопитель это таб доски")
 	}
 	kinds := funcBody(t, text, "function boardKinds(")
-	for _, want := range []string{`"Задачи"`, `"Черновики"`} {
+	for _, want := range []string{`"Задачи"`, `"Сессии"`, `"Черновики"`} {
 		if !strings.Contains(kinds, want) {
 			t.Errorf("в табах доски нет %q", want)
 		}
 	}
-	if !strings.Contains(funcBody(t, text, "function boardKindBar("), `"/drafts"`) {
+	if !strings.Contains(funcBody(t, text, "function boardKindHash("), `"/drafts"`) {
 		t.Error("таб черновиков не ведёт на адрес накопителя")
 	}
-	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts")`) {
+	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts", works)`) {
 		t.Error("накопитель открывается без табов доски: дороги назад к задачам нет")
 	}
-	if !strings.Contains(funcBody(t, text, "function renderBoard("), `boardKindBar(project, "tasks")`) {
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), `boardKindBar(project, "tasks", works)`) {
 		t.Error("на доске нет таба черновиков")
 	}
 	if strings.Contains(funcBody(t, text, "function renderBoard("), "draftsButton(") {
@@ -317,7 +317,7 @@ func TestStaticDraftsSection(t *testing.T) {
 	if !strings.Contains(text, `parts[1] === "drafts"`) {
 		t.Error("у раздела черновиков нет своего хэша: route его не узнаёт")
 	}
-	if !strings.Contains(text, "renderDrafts(current.name)") {
+	if !strings.Contains(text, "renderDrafts(current.name, current.works)") {
 		t.Error("экран черновиков не подключён к разбору хэша")
 	}
 	// У записи свой экран: на него ведёт строка накопителя, и на него же

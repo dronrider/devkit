@@ -1,10 +1,13 @@
-// Стенд раздела «Агенты» (ветка poc-chat): две дороги у каждой строки.
+// Стенд таба сессий на доске (ветка poc-chat).
 //
-// Прежде строки расходились: у работы из реестра стоял переход на задачу без
-// чата, у работы конвейера чат без перехода на задачу, а у сессии без задачи
-// не было ни того ни другого (замечание пользователя). Предмет стенда в том,
-// что номер задачи это ссылка на её форму, а разговор открывается и кнопкой, и
-// нажатием на саму строку, и адрес его берётся от сессии, когда она известна.
+// Сессии переехали с отдельного раздела «Агенты» в третий таб доски: они
+// работа проекта, и место им на его доске, а сквозной обзор машины живёт общим
+// списком разговоров в панели (решение пользователя). Предмет стенда: три таба
+// на любой ширине, единый список без вложенных табов, происхождение сессии
+// чипом в строке, переезд старого адреса вместе с запросом и поиск по табу.
+// Строка проверяется тут же: номер задачи это ссылка на её форму, разговор
+// открывается и кнопкой, и нажатием на строку, а адрес его берётся от сессии,
+// когда она известна.
 //
 // Зовётся: node testdata/poc_agents.mjs static/app.js
 
@@ -34,7 +37,7 @@ const { sandbox, byId } = makeSandbox(app, (path) => {
 const now = Date.now();
 const works = {
   // Конвейер задачи: сессию поднял дашборд, её и слушаем.
-  tmux: { id: "DK-397", kind: "task", via: "tmux", sect: "in-progress",
+  tmux: { id: "DK-397", kind: "task", via: "tmux", sect: "in-progress", own: true,
     title: "дашборд ведёт разговор", session: "aaaa1111-1111", started: now / 1000 - 600 },
   // Работа поднята мимо дашборда: сессии он не видит, а задача известна.
   registry: { id: "DK-470", kind: "task", via: "registry", sect: "in-progress",
@@ -78,11 +81,14 @@ for (const which of ["tmux", "registry"]) {
   }
   const reg = rowOf(works.registry);
   if (btns(reg).includes("Остановить")) fail("реестровой работе достался стоп");
-  // Приписки в строке больше нет: она занимала полстроки и ломала ряд, а
-  // знание уехало в подсказку строки, где лежат остальные метаданные
-  // (замечание пользователя).
-  if (dump(reg).includes("поднята мимо дашборда")) {
-    fail("приписка вернулась в строку: " + dump(reg));
+  // Происхождение сессии видно чипом: список один, вложенных табов «Дашборд» и
+  // «Прочие» больше нет, и различать строки надо в них самих.
+  const marks = allByClass(reg, "chip").map((c) => c.textContent);
+  if (!marks.includes("мимо дашборда")) {
+    fail("чужая сессия не помечена чипом: " + JSON.stringify(marks));
+  }
+  if (allByClass(rowOf(works.tmux), "chip").map((c) => c.textContent).includes("мимо дашборда")) {
+    fail("своя сессия помечена чужой");
   }
   if (!String(reg.title).includes("поднята мимо дашборда")) {
     fail("подсказка строки не говорит, почему стопа нет: " + reg.title);
@@ -130,65 +136,60 @@ for (const which of ["tmux", "registry"]) {
   }
 }
 
-// --- раздел разложен на два таба, признак тот же, что у подсказки ---
+// --- три таба на широком экране, список один, поиск по нему ---
 {
-  const projects = [{ name: "demo", prefix: "XR", works: [
+  const sessions = [
     { id: "XR-1", kind: "task", via: "tmux", title: "конвейер задачи", session: "aaaa1111",
-      own: true, model: "opus", sect: "in-progress" },
-    { id: "XR-2", kind: "goal", via: "registry", title: "цикл цели", sect: "in-progress" },
-    { kind: "session", via: "session", session: "bbbb2222", note: "окно человека" },
-  ] }];
+      own: true, model: "opus", sect: "in-progress", live: "busy" },
+    { id: "XR-2", kind: "goal", via: "registry", title: "цикл цели", sect: "in-progress",
+      live: "dead" },
+    { kind: "session", via: "session", session: "bbbb2222", note: "окно человека",
+      live: "idle" },
+  ];
   const groups = sandbox.document.getElementById("groups");
   const tabs = () => allByClass(groups, "ktab");
   const rows = () => allByClass(groups, "arow");
   const openTab = () => (tabs().find((t) => String(t.className).includes("onktab")) || {}).textContent;
 
-  sandbox.renderAgents(projects, "");
-  const names = tabs().map((t) => t.textContent.replace(/\d+$/, ""));
-  if (names.join("|") !== "Дашборд|Прочие") fail("табов раздела нет: " + JSON.stringify(names));
-  if (!openTab().startsWith("Дашборд")) fail("открыт не тот таб: " + openTab());
-  if (rows().length !== 1 || !dump(rows()[0]).includes("конвейер задачи")) {
-    fail("в табе дашборда не своя работа: " + dump(groups).slice(0, 200));
+  // Экран тут широкий: matchMedia мока отвечает «нет» на запрос телефона.
+  sandbox.renderSessions("demo", sessions, "");
+  const names = tabs().map((t) => t.textContent);
+  if (names.join("|") !== "Задачи|Сессии|Черновики") {
+    fail("на широком экране табов доски не три: " + JSON.stringify(names));
+  }
+  if (openTab() !== "Сессии") fail("подсвечен не таб сессий: " + openTab());
+  if (rows().length !== 3) {
+    fail("список сессий не единый: " + rows().length + " строк, " + dump(groups).slice(0, 300));
+  }
+  const said = dump(groups);
+  if (said.includes("Дашборд") || said.includes("Прочие")) {
+    fail("вложенные табы остались на экране: " + said.slice(0, 300));
+  }
+  // Своя и чужая стоят в одном списке, различает их чип.
+  const alien = rows().filter((r) => allByClass(r, "chip").some((c) => c.textContent === "мимо дашборда"));
+  if (alien.length !== 2) {
+    fail("чипом происхождения помечены не те строки: " + alien.map((r) => dump(r)).join(" | "));
   }
 
-  tabs()[1].handlers.click({ stopPropagation: () => {} });
-  const other = rows().map((r) => dump(r)).join(" ");
-  if (rows().length !== 2 || !other.includes("цикл цели") || !other.includes("окно человека")) {
-    fail("в табе прочих не те работы: " + other);
-  }
-  // Признак таба и признак подсказки один и тот же: разъехавшись, они сказали
-  // бы про одну строку разное.
-  for (const row of rows()) {
-    if (!String(row.title).includes("поднята мимо дашборда")) {
-      fail("чужая строка не объясняет себя подсказкой: " + row.title);
-    }
-  }
-
-  // --- поиск фильтрует сессии раздела, а не задачи доски ---
-  sandbox.renderAgents(projects, "цикл");
+  // Поиск фильтрует сессии таба, а не задачи доски.
+  sandbox.renderSessions("demo", sessions, "цикл");
   if (rows().length !== 1 || !dump(rows()[0]).includes("цикл цели")) {
-    fail("поиск не нашёл работу по заголовку: " + dump(groups).slice(0, 200));
+    fail("поиск не нашёл сессию по заголовку: " + dump(groups).slice(0, 200));
   }
-  sandbox.renderAgents(projects, "opus");
-  if (rows().length) fail("работа чужого таба нашлась не в своём: " + dump(groups).slice(0, 200));
-  tabs()[0].handlers.click({ stopPropagation: () => {} });
-  if (rows().length !== 1 || !dump(rows()[0]).includes("конвейер задачи")) {
-    fail("поиск по модели не нашёл свою работу: " + dump(groups).slice(0, 200));
-  }
-  for (const [q, what] of [["XR-1", "задаче"], ["demo", "проекту"], ["конвейер", "заголовку"]]) {
-    sandbox.renderAgents(projects, q);
+  for (const [q, what] of [["XR-1", "задаче"], ["opus", "модели"], ["конвейер", "заголовку"]]) {
+    sandbox.renderSessions("demo", sessions, q);
     if (!rows().length) fail("поиск по " + what + " (" + q + ") ничего не нашёл");
   }
-  sandbox.renderAgents(projects, "такого нет");
+  sandbox.renderSessions("demo", sessions, "такого нет");
   if (rows().length) fail("поиск нашёл лишнее по чепухе");
   if (!dump(groups).includes("ничего не нашлось")) {
-    fail("пустая выдача раздела молчит: " + dump(groups).slice(0, 200));
+    fail("пустая выдача таба молчит: " + dump(groups).slice(0, 200));
   }
 }
 
-// --- счётчик строк таба стоит отдельным словом ---
-// В снимке пользователя таб читался словом «Дашборд5»: число шло хвостом
-// подписи, без отступа и своего цвета.
+// --- счётчик сессий стоит на самом табе отдельным словом ---
+// Прежде число жило пунктом боковой колонки, а в снимке пользователя таб
+// читался словом «Дашборд5»: число шло хвостом подписи, без отступа и цвета.
 {
   const many = [];
   for (let i = 1; i <= 123; i += 1) {
@@ -198,20 +199,21 @@ for (const which of ["tmux", "registry"]) {
   const groups = sandbox.document.getElementById("groups");
   const tabs = () => allByClass(groups, "ktab");
 
-  sandbox.renderAgents([{ name: "demo", prefix: "XR", works: many }], "");
-  const own = tabs()[0];
-  const other = tabs()[1];
-  if (own.textContent !== "Дашборд") {
-    fail("число слиплось с подписью таба: " + JSON.stringify(own.textContent));
+  sandbox.renderSessions("demo", many, "");
+  const sess = tabs()[1];
+  if (sess.textContent !== "Сессии") {
+    fail("число слиплось с подписью таба: " + JSON.stringify(sess.textContent));
   }
-  const n = byClass(own, "n");
+  const n = byClass(sess, "n");
   if (!n || n.textContent !== "123") {
-    fail("трёхзначный счётчик таба не отдельным узлом: " + dump(own));
+    fail("трёхзначный счётчик таба не отдельным узлом: " + dump(sess));
   }
-  // Пустой таб число не пишет вовсе, и подпись остаётся подписью.
-  if (other.textContent !== "Прочие" || byClass(other, "n")) {
-    fail("пустой таб пишет счётчик: " + dump(other));
+  // Соседние табы числа не пишут вовсе: считается тут только список сессий.
+  if (byClass(tabs()[0], "n") || byClass(tabs()[2], "n")) {
+    fail("счётчик вылез на соседние табы: " + tabs().map(dump).join(" | "));
   }
+  sandbox.renderSessions("demo", [], "");
+  if (byClass(tabs()[1], "n")) fail("пустой таб пишет счётчик: " + dump(tabs()[1]));
 
   // Отступ и цвет счётчика живут в style.css: слитое с подписью число это как
   // раз отсутствие своего правила у .ktab .n.
@@ -226,11 +228,10 @@ for (const which of ["tmux", "registry"]) {
   }
 }
 
-// --- шапка раздела: приписки нет, а поле поиска называет сессии ---
-// Приписка «все активные задачи» спорила с отбором, который человек уже сделал
-// табом или поиском, и её убрали целиком (замечание пользователя). Поле шапки
-// тут фильтрует сессии раздела, поэтому и слова в нём про сессии, а на доске
-// про задачи.
+// --- старый адрес раздела ведёт на таб вместе с запросом ---
+// Раздел «Агенты» упразднён, а ссылки на него и память вкладки ломаться не
+// должны: адрес переезжает на таб сессий текущего проекта. Поле шапки тут
+// фильтрует сессии, поэтому и слова в нём про сессии, а на доске про задачи.
 {
   const psub = byId.get("psub");
   const hq = byId.get("hq");
@@ -239,26 +240,42 @@ for (const which of ["tmux", "registry"]) {
     await sandbox.refresh();
     await settle();
   };
+  const hashNow = () => sandbox.location.hash.replace(/^#/, "");
 
   await go("#/agents");
-  if (String(psub.textContent || "").trim()) {
-    fail("у заголовка раздела осталась приписка: " + JSON.stringify(psub.textContent));
+  if (hashNow() !== "demo/sess") {
+    fail("старый адрес раздела не переехал на таб: " + sandbox.location.hash);
+  }
+  if (String(psub.textContent || "").trim() !== "сессии проекта") {
+    fail("шапка не называет открытый таб: " + JSON.stringify(psub.textContent));
   }
   if (hq.placeholder !== "Поиск сессий") {
-    fail("поле раздела обещает не то, что ищет: " + JSON.stringify(hq.placeholder));
+    fail("поле таба обещает не то, что ищет: " + JSON.stringify(hq.placeholder));
+  }
+  if (!allByClass(sandbox.document.getElementById("groups"), "arow").length) {
+    fail("после переезда список сессий пуст: " + dump(sandbox.document.getElementById("groups")).slice(0, 300));
   }
 
   await go("#/agents/" + encodeURIComponent("цикл"));
-  if (String(psub.textContent || "").trim()) {
-    fail("приписка вернулась под поиском: " + JSON.stringify(psub.textContent));
+  // Адрес тут читается как есть: разбор хэша его расшифровывает, и сравнивать
+  // с закодированным значило бы сравнивать с чужой записью того же адреса.
+  if (decodeURIComponent(hashNow()) !== "demo/sess/цикл") {
+    fail("запрос при переезде потерялся: " + sandbox.location.hash);
   }
   if (hq.placeholder !== "Поиск сессий") {
-    fail("под поиском поле раздела заговорило о задачах: " + JSON.stringify(hq.placeholder));
+    fail("под поиском поле таба заговорило о задачах: " + JSON.stringify(hq.placeholder));
   }
   // Смена слов поля не трогает его значение: запрос по-прежнему приезжает из
   // адреса, а не остаётся от прежнего экрана.
   if (hq.value !== "цикл") {
-    fail("поле шапки не отражает запрос раздела: " + JSON.stringify(hq.value));
+    fail("поле шапки не отражает запрос таба: " + JSON.stringify(hq.value));
+  }
+
+  // Набранное в поле уходит в адрес таба, а не в выдачу по доске.
+  sandbox.findGo("конвейер");
+  await settle();
+  if (decodeURIComponent(hashNow()) !== "demo/sess/конвейер") {
+    fail("набранное в табе увело не туда: " + sandbox.location.hash);
   }
 
   await go("#demo");
@@ -266,8 +283,19 @@ for (const which of ["tmux", "registry"]) {
     fail("на доске поле заговорило о сессиях: " + JSON.stringify(hq.placeholder));
   }
   if (hq.value !== "") {
-    fail("уход с раздела оставил запрос в поле: " + JSON.stringify(hq.value));
+    fail("уход с таба оставил запрос в поле: " + JSON.stringify(hq.value));
   }
+  // На самой доске табов тоже три, и открыт первый.
+  const tabs = allByClass(sandbox.document.getElementById("groups"), "ktab");
+  if (tabs.map((t) => t.textContent).join("|") !== "Задачи|Сессии|Черновики") {
+    fail("на доске табов не три: " + JSON.stringify(tabs.map((t) => t.textContent)));
+  }
+  const on = tabs.find((t) => String(t.className).includes("onktab"));
+  if (!on || on.textContent !== "Задачи") fail("на доске подсвечен не таб задач: " + (on && on.textContent));
+  // Таб сессий уводит на свой адрес, а не переключает половины доски.
+  tabs[1].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (hashNow() !== "demo/sess") fail("таб сессий увёл не на свой адрес: " + sandbox.location.hash);
 }
 
 console.log("poc_agents: ok");

@@ -354,35 +354,30 @@ func TestStaticLogoIsHomeLink(t *testing.T) {
 	}
 }
 
-// Экран «Агенты» собран из ответа со списком проектов: своей ручки у него нет,
-// works приходят одним запросом, и каждая работа встаёт строкой с заголовком
-// задачи впереди.
+// Сессии живут табом доски, а не своим разделом: раздел «Агенты» упразднён, и
+// его пункта нет ни в колонке, ни в нижних вкладках. Работы приходят тем же
+// ответом, что и список проектов, и каждая встаёт строкой с заголовком задачи
+// впереди.
 func TestStaticAgentsScreen(t *testing.T) {
 	html := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`id="nav-agents"`, `id="tab-agents"`, `id="nav-agents-n"`} {
-		if !strings.Contains(html, want) {
-			t.Errorf("в static/index.html нет %q: пункт «Агенты» не ожил", want)
+	for _, gone := range []string{`id="nav-agents"`, `id="tab-agents"`, `id="nav-agents-n"`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("в static/index.html остался %q: раздел «Агенты» упразднён", gone)
 		}
 	}
-	if strings.Contains(html, `class="sitem off">Агенты`) {
-		t.Error("пункт «Агенты» остался погашенной заглушкой")
-	}
 	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, `sess: true, q: parts.slice(2).join("/")`) {
+		t.Error("хэша таба сессий нет: таб никуда не ведёт")
+	}
 	if !strings.Contains(app, `agents: true, q: parts.slice(2).join("/")`) {
-		t.Error("хэша экрана «Агенты» нет: раздел никуда не ведёт")
-	}
-	if !strings.Contains(funcBody(t, app, "function markNav("), `["agents", ["nav-agents", "tab-agents"]]`) {
-		t.Error("раздел «Агенты» не подсвечивается: открытый экран неотличим от доски")
-	}
-	if !strings.Contains(app, `for (const id of ["nav-agents", "tab-agents"]) {`) {
-		t.Error("пункт колонки и вкладка телефона не ведут на экран")
+		t.Error("старый адрес раздела перестал разбираться: ссылки на него сломаются")
 	}
 	refresh := funcBody(t, app, "async function paint(")
-	if !strings.Contains(refresh, `renderAgents(projects, rt.q || "")`) {
-		t.Error("экран «Агенты» не рисуется из ответа /api/projects")
+	if !strings.Contains(refresh, `renderSessions(current.name, current.works, rt.q || "")`) {
+		t.Error("таб сессий не рисуется из ответа /api/projects")
 	}
-	if strings.Contains(refresh, `"/agents") + "/board"`) {
-		t.Error("экран «Агенты» ходит за доской: works уже пришли со списком проектов")
+	if !strings.Contains(refresh, `goSame(current.name + "/sess" + q)`) {
+		t.Error("старый адрес раздела не переезжает на таб сессий")
 	}
 	row := funcBody(t, app, "function agentRow(")
 	if strings.Index(row, `el("span", "tt", w.title`) > strings.Index(row, "workChips(") {
@@ -440,11 +435,11 @@ func TestStaticAgentsRowGates(t *testing.T) {
 // и тогда, когда ни одной работы не идёт.
 func TestStaticAgentsEmpty(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	body := funcBody(t, app, "function renderAgents(")
-	for _, want := range []string{"Агентов сейчас нет.",
+	body := funcBody(t, app, "function renderSessions(")
+	for _, want := range []string{"Сессий проекта сейчас нет.",
 		"Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."} {
 		if !strings.Contains(body, want) {
-			t.Errorf("в пустоте экрана «Агенты» нет %q", want)
+			t.Errorf("в пустоте таба сессий нет %q", want)
 		}
 	}
 	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".empty b{") {
@@ -452,20 +447,14 @@ func TestStaticAgentsEmpty(t *testing.T) {
 	}
 }
 
-// Экран считает работы всех проектов сразу, тем же списком, что и счётчик у
-// пункта колонки; время работы берётся с её начала, а работа без начала
-// остаётся без времени, а не с нулём минут.
+// Подпись строки собирается из того, что о работе известно; время работы
+// берётся с её начала, а работа без начала остаётся без времени, а не с нулём
+// минут. Сквозного сбора работ всех досок тут больше нет: таб показывает
+// сессии своего проекта, они приезжают его работами.
 func TestStaticAgentsCollect(t *testing.T) {
-	heads := []string{"function allWorks(", "const SECT_WORD = {", "function workSub(",
-		"function workAge("}
-	projects := `[{name: "devkit", works: [{id: "DK-112", kind: "goal", via: "tmux"}]},` +
-		`{name: "xr", works: []},` +
-		`{name: "byblos", works: [{id: "BB-7", kind: "task", via: "registry"}, {kind: "session", via: "session", session: "abc", note: "задача не узнана"}]}]`
-	if got := jsEval(t, heads, "allWorks("+projects+").length"); got != "3" {
-		t.Errorf("собрано %s работ, ожидал 3 со всех проектов", got)
-	}
-	if got := jsEval(t, heads, `allWorks(`+projects+`).map((x) => x.project).join(",")`); got != "devkit,byblos,byblos" {
-		t.Errorf("проекты работ %q: список собран не по всем доскам", got)
+	heads := []string{"const SECT_WORD = {", "function workSub(", "function workAge("}
+	if strings.Contains(readFile(t, filepath.Join("static", "app.js")), "function allWorks(") {
+		t.Error("сквозной сбор работ вернулся: таб показывает сессии своего проекта")
 	}
 	cases := []struct{ expr, want string }{
 		// Статус со строки доски идёт в подписи русским словом, а работа без
@@ -858,15 +847,14 @@ func TestStaticBoardNarrowRow(t *testing.T) {
 // принадлежит карточке проекта: проектов на дашборде несколько, и полоса
 // кнопок внизу называла один из них, а до соседнего с главной было не добраться.
 func TestStaticBoardTabsAndHomePlus(t *testing.T) {
-	heads := []string{"function sectionTab(", "function sectionClass("}
+	heads := []string{"function boardKinds(", "function boardKindHash(", "function boardKindNow("}
 	cases := []struct{ expr, want string }{
-		{`sectionTab("in-progress")`, "sess"},
-		{`sectionTab("check")`, "sess"},
-		{`sectionTab("backlog")`, "back"},
-		{`sectionTab("blocked")`, "back"},
-		{`sectionClass("card", "backlog", "back")`, "card bsec onsec"},
-		{`sectionClass("card", "backlog", "sess")`, "card bsec"},
-		{`sectionClass("shead", "check", "sess")`, "shead bsec onsec"},
+		{`boardKinds().map((k) => k[1]).join(",")`, "Задачи,Сессии,Черновики"},
+		{`boardKindHash("demo", "tasks")`, "demo"},
+		{`boardKindHash("demo", "sess")`, "demo/sess"},
+		{`boardKindHash("demo", "drafts")`, "demo/drafts"},
+		{`boardKindNow("sess")`, "sess"},
+		{`boardKindNow("tasks")`, "tasks"},
 	}
 	for _, c := range cases {
 		if got := jsEval(t, heads, c.expr); got != c.want {
@@ -874,6 +862,14 @@ func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 		}
 	}
 	app := readFile(t, filepath.Join("static", "app.js"))
+	// Половин у доски больше нет: сессии уехали в свой таб, и все разделы стоят
+	// подряд на любой ширине.
+	for _, gone := range []string{"function sectionTab(", "function sectionClass(",
+		"function markBoardTab(", "let boardTab"} {
+		if strings.Contains(app, gone) {
+			t.Errorf("механика половин доски осталась в статике: %q", gone)
+		}
+	}
 	home := funcBody(t, app, "function renderHome(")
 	if !strings.Contains(home, "makePlus(p.name)") {
 		t.Error("у карточки проекта на главной нет плюса заведения")
@@ -896,20 +892,17 @@ func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 		t.Error("полоса-переключатель вернулась под табы доски")
 	}
 	bar := funcBody(t, app, "function boardKindBar(")
-	for _, want := range []string{"boardKinds()", "markBoardTab("} {
+	for _, want := range []string{"boardKinds()", "boardKindHash(project, key)"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("полоса табов собрана не полностью: нет %q", want)
 		}
 	}
 	kinds := funcBody(t, app, "function boardKinds(")
-	if !strings.Contains(kinds, "narrowScreen()") || !strings.Contains(kinds, `"Сессии"`) {
-		t.Error("таб сессий не привязан к узкому экрану: на ноутбуке живут «Агенты»")
+	if !strings.Contains(kinds, `"Сессии"`) {
+		t.Error("таба сессий нет среди табов доски")
 	}
-	// Черновики отсюда уехали в раздел меню со своим адресом, и полоса доски
-	// их больше не носит: третья кнопка в ней табом доски не была, а глаза
-	// мозолила (замечание пользователя).
-	if strings.Contains(bar, `"Черновики"`) {
-		t.Error("черновики вернулись в полосу разделов доски")
+	if strings.Contains(kinds, "narrowScreen()") {
+		t.Error("набор табов зависит от ширины экрана: их три на любой")
 	}
 }
 

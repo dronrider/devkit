@@ -61,34 +61,28 @@ const type = async (text) => {
   return panelOnly;
 };
 
-// --- раздел «Агенты»: поле фильтрует сессии и не уводит на доску ---
-await go("#/agents");
+// --- таб сессий: поле фильтрует сессии и не уводит в выдачу по доске ---
+await go("#demo/sess");
 {
   asked.length = 0;
   await type("цикл");
   if (sandbox.location.hash.includes("/find/")) {
-    fail("поиск раздела увёл в выдачу по доске: " + sandbox.location.hash);
+    fail("поиск таба увёл в выдачу по доске: " + sandbox.location.hash);
   }
-  if (!sandbox.location.hash.includes("agents")) {
-    fail("запрос раздела ушёл не в его адрес: " + sandbox.location.hash);
+  if (!decodeURIComponent(sandbox.location.hash).includes("demo/sess/цикл")) {
+    fail("запрос таба ушёл не в его адрес: " + sandbox.location.hash);
   }
   if (asked.some((p) => p.includes("/search"))) {
-    fail("раздел сходил в поиск по задачам: " + JSON.stringify(asked));
+    fail("таб сходил в поиск по задачам: " + JSON.stringify(asked));
   }
-  // Найденное лежит в соседнем табе, и раздел говорит об этом словами, а не
-  // молчит пустотой.
-  if (!dump(groups).includes("В соседнем табе нашлось 1")) {
-    fail("раздел не сказал, где нашлось: " + dump(groups).slice(0, 200));
-  }
-  allByClass(groups, "ktab")[1].handlers.click({ stopPropagation: () => {} });
   const rows = allByClass(groups, "arow");
   if (rows.length !== 1 || !dump(rows[0]).includes("цикл цели")) {
-    fail("раздел не отфильтровался: " + dump(groups).slice(0, 200));
+    fail("таб не отфильтровался: " + dump(groups).slice(0, 200));
   }
   // Запрос живёт в адресе: перерисовка экрана его не теряет.
   await sandbox.refresh();
   await settle();
-  if (!dump(groups).includes("цикл цели")) fail("запрос раздела не пережил перерисовку");
+  if (!dump(groups).includes("цикл цели")) fail("запрос таба не пережил перерисовку");
   if (field.value !== "цикл") fail("поле шапки потеряло набранное: " + field.value);
 }
 

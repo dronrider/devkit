@@ -669,7 +669,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
     .fab{display:flex}
   .cback:not([hidden]){display:block}
   .bbar{display:none}
-  .bsec:not(.onsec){display:none}
   .trow{display:flex;flex-direction:column;align-items:stretch;gap:5px;padding:12px 14px 12px 25px}
   /* телефон: заголовок строки идёт своей строкой во всю ширину, чипы под ним.
      В одном ряду с ним чипы ширины не отдают, и от длинного названия остаётся

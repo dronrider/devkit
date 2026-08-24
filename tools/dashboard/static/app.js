@@ -270,9 +270,10 @@ document.addEventListener("keydown", (ev) => {
 
 // Хэш это экран: пустой хэш главная (список проектов), "#проект" доска,
 // "#проект/DK-NNN" задача, "#проект/draft/DK-NNN" запись накопителя с
-// грумингом и его исходом, "#проект/feed" лента уведомлений. Экран «Агенты»
-// проекту не принадлежит и стоит за "#/agents": голое "#agents" отняло бы имя
-// у проекта, названного так же.
+// грумингом и его исходом, "#проект/sess" сессии проекта, "#проект/feed" лента
+// уведомлений. Прежний адрес раздела «Агенты» ("#/agents" с запросом хвостом)
+// никуда не ведёт сам по себе: он переезжает на таб сессий текущего проекта
+// вместе с набранным запросом.
 //
 // Панель разговора это хвост адреса, а не свой экран (LLD DK-430, решение 5):
 // "#проект/chat/<адрес>" открывает её над доской, "#проект/DK-NNN/chat/<адрес>"
@@ -318,6 +319,12 @@ function routeScreen(h) {
   }
   if (parts.length >= 2 && parts[1] === "drafts") {
     return { proj: parts[0], id: parts[2] || "", drafts: true };
+  }
+  // Сессии проекта это третий таб доски: свой адрес нужен ему по той же
+  // причине, что и накопителю, чтобы таб переживал обновление и кнопку
+  // «назад», а набранный запрос жил в адресе.
+  if (parts.length >= 2 && parts[1] === "sess") {
+    return { proj: parts[0], id: "", sess: true, q: parts.slice(2).join("/") };
   }
   // Запрос стоит в адресе (LLD DK-328): выдача становится ссылкой и переживает
   // кнопку «назад». Хвост собирается обратно, потому что косая черта в самом
@@ -415,11 +422,8 @@ function renderSidebar(projects, current) {
     sel.append(opt);
   }
   sel.onchange = () => { goKeepingChat(sel.value); };
-  // Счётчик у раздела «Агенты» считает тот же список, что рисует экран: два
-  // разных числа рядом читались бы как потерянная работа.
-  const live = allWorks(projects).length;
-  document.getElementById("nav-agents-n").textContent =
-    live ? live + " " + plural(live, "работа", "работы", "работ") : "";
+  // Счётчика работ в колонке больше нет: сессии переехали в таб доски, и число
+  // стоит на самом табе, рядом с тем списком, который оно считает.
 }
 
 // Ответ на нажатие всплывает карточкой поверх экрана, а не строкой над
@@ -517,10 +521,10 @@ function renderLive(project, works) {
   go.type = "button";
   go.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    goKeepingChat("/agents");
+    goKeepingChat(project + "/sess");
   });
   line.append(go);
-  line.title = "Работы всех досок разобраны в разделе «Агенты»";
+  line.title = "Сессии проекта разобраны в табе «Сессии» на доске";
   live.replaceChildren(line);
 }
 
@@ -1201,41 +1205,10 @@ function harnessSign() {
   return harnesses().map((h) => h.name).join(",") + "|" + ((harnessView && harnessView.note) || "");
 }
 
-// Разделы доски на телефоне разложены по двум табам: In progress и Check это
-// то, что уже двинулось и ведётся сессиями, Backlog и Blocked это очередь.
-// Четыре секции подряд на экране в 390 пикселей не читаются: до бэклога надо
-// прокрутить чужую работу, а сам список у бэклога длиннее всех.
-function sectionTab(key) {
-  return key === "backlog" || key === "blocked" ? "back" : "sess";
-}
-
-// Класс блока раздела: секция помечена своим табом и гасится стилями телефона,
-// когда открыт другой. Секции не выкидываются из разметки, потому что на
-// ноутбуке табов нет вовсе и там видны все сразу.
-function sectionClass(base, key, tab) {
-  return base + " bsec" + (sectionTab(key) === tab ? " onsec" : "");
-}
-
-// Какая половина доски открыта на телефоне: сессии (In progress и Check) либо
-// задачи (Backlog и Blocked). На ноутбуке видны обе, и признак там не при чём.
-// Умолчание это сессии: экран доски открывают, чтобы посмотреть на идущую
-// работу, а не на очередь.
-let boardTab = "sess";
-
-// Открытый таб отмечается по месту, без перерисовки доски: список уже собран,
-// и пересобирать его ради подсветки значило бы ронять прокрутку и фокус.
-function markBoardTab() {
-  const groups = document.getElementById("groups");
-  for (const node of groups.querySelectorAll(".bsec")) {
-    node.classList.toggle("onsec", node.dataset.tab === boardTab);
-  }
-  const bar = groups.querySelector(".ktabs");
-  if (!bar) return;
-  const now = boardKindNow("tasks");
-  for (const btn of bar.children) {
-    btn.classList.toggle("onktab", btn.dataset.kind === now);
-  }
-}
+// Половин у доски больше нет: сессии уехали в свой таб, и телефон показывает
+// все четыре раздела подряд, как их показывает ноутбук. Прежде In progress с
+// Check прятались за переключателем половин, и он отвечал на тот же вопрос,
+// что и полоса табов над ним (решение пользователя).
 
 // Заведение задачи на телефоне это плавающий плюс над нижними вкладками:
 // полоса кнопок съедала полэкрана ещё до первой строки доски.
@@ -1297,66 +1270,55 @@ function narrowScreen() {
   return Boolean(window.matchMedia && window.matchMedia("(max-width:900px)").matches);
 }
 
-// Табы экрана доски. На ноутбуке их два, задачи и накопитель. На телефоне
-// между ними встаёт третий, «Сессии»: прежде тем же самым занимался свой
-// переключатель под полосой табов, и два ряда переключателей подряд отвечали
-// на один вопрос, «что показать» (замечание пользователя). Раздел «Агенты»
-// живёт своей вкладкой и на телефоне, и на ноутбуке, третьего таба на широком
-// экране не просит.
+// Табы экрана доски: задачи, сессии проекта и накопитель черновиков. Три их на
+// любой ширине. Раздела «Агенты» с обзором всех досок сразу больше нет:
+// сессии это работа проекта, и место им на его доске, а сквозной обзор машины
+// живёт общим списком разговоров в панели (решение пользователя). У каждого
+// таба свой адрес: таб переживает обновление, кнопку «назад» и ссылку.
 function boardKinds() {
-  const kinds = [["tasks", "Задачи"], ["drafts", "Черновики"]];
-  if (narrowScreen()) kinds.splice(1, 0, ["sess", "Сессии"]);
-  return kinds;
+  return [["tasks", "Задачи"], ["sess", "Сессии"], ["drafts", "Черновики"]];
 }
 
-// Какой таб открыт: у накопителя свой адрес, а задачи с сессиями это два вида
-// одного экрана доски, и разводит их полоса секций (boardTab).
+// Адрес таба: у задач это сама доска, у остальных её хвост.
+function boardKindHash(project, key) {
+  if (key === "drafts") return project + "/drafts";
+  if (key === "sess") return project + "/sess";
+  return project;
+}
+
 function boardKindNow(kind) {
-  if (kind === "drafts") return "drafts";
-  return narrowScreen() && boardTab === "sess" ? "sess" : "tasks";
+  return kind === "drafts" || kind === "sess" ? kind : "tasks";
 }
 
-function boardKindBar(project, kind) {
+// works тут нужны ради счётчика на табе сессий: число переехало на него с
+// пункта боковой колонки вместе с самим разделом.
+function boardKindBar(project, kind, works) {
   const bar = el("div", "ktabs");
   const now = boardKindNow(kind);
   for (const [key, label] of boardKinds()) {
     const btn = el("button", "ktab" + (key === now ? " onktab" : ""), label);
     btn.type = "button";
     btn.dataset.kind = key;
+    const n = key === "sess" ? (works || []).length : 0;
+    if (n) btn.append(el("span", "n", String(n)));
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      // Открытое считается на нажатии, а не на сборке полосы: половины доски
-      // переключаются по месту, узлы кнопок при этом живут дальше, и знание,
-      // снятое при сборке, устаревало после первого же переключения.
-      if (key === boardKindNow(kind)) return;
-      if (key === "drafts") {
-        goKeepingChat(project + "/drafts");
-        return;
-      }
-      // Задачи и сессии это один экран: с накопителя туда ведёт переход, а на
-      // самом экране меняется только показанная половина, по месту и без
-      // перерисовки списка.
-      boardTab = key === "sess" ? "sess" : "back";
-      if (kind === "drafts") {
-        goKeepingChat(project);
-        return;
-      }
-      markBoardTab();
+      if (key === now) return;
+      goKeepingChat(boardKindHash(project, key));
     });
     bar.append(btn);
   }
   return bar;
 }
 
-function renderBoard(project, board) {
+function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   const items = [{
     key: "board-kind",
-    // Отпечаток несёт открытую половину и ширину экрана: от первой зависит
-    // подсветка таба, от второй сам их набор (на телефоне табов три). Без
-    // этого перерисовка оставляла бы на экране полосу, собранную по-старому.
-    sign: [project, boardKindNow("tasks"), narrowScreen()].join("|"),
-    make: () => boardKindBar(project, "tasks"),
+    // Отпечаток несёт открытый таб и число сессий: от первого зависит
+    // подсветка, от второго счётчик на табе сессий.
+    sign: [project, "tasks", (works || []).length].join("|"),
+    make: () => boardKindBar(project, "tasks", works),
   }];
   // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
   // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
@@ -1399,8 +1361,7 @@ function renderBoard(project, board) {
       key: "head-" + key,
       sign: sec.title + "|" + secRows.length,
       make: () => {
-        const head = el("div", sectionClass("shead", key, boardTab), sec.title);
-        head.dataset.tab = sectionTab(key);
+        const head = el("div", "shead", sec.title);
         // Backlog стоит по рангу, и счётчик говорит это же: надписью под
         // формой задачи порядок объяснять больше не надо.
         head.append(el("span", "n", secRows.length + (key === "backlog" ? ", по рангу" : "")));
@@ -1422,8 +1383,7 @@ function renderBoard(project, board) {
       key: "card-" + key,
       sign: rows.map((r) => r.key + "=" + r.sign).join("\n"),
       make: () => {
-        const card = el("div", sectionClass("card", key, boardTab));
-        card.dataset.tab = sectionTab(key);
+        const card = el("div", "card");
         sync(card, rows);
         return card;
       },
@@ -5573,6 +5533,14 @@ function chatLast() {
 // новому адресу, и панель переживает переход, вместо того чтобы закрываться на
 // каждом нажатии раздела (замечания 18 и 19). Панель это хвост, экран под ней
 // меняется сам по себе, и рвать разговор ради смены экрана незачем.
+// Замена адреса без новой записи в истории: так переезжают старые адреса на
+// новые места. Хвост разговора едет с ними, панель это хвост.
+function goSame(hash) {
+  const chat = route().chat;
+  const to = "#" + (chat ? hash + "/chat/" + chat : hash);
+  if (location.hash !== to) history.replaceState(history.state || {}, "", to);
+}
+
 function goKeepingChat(hash) {
   const chat = route().chat;
   location.hash = chat ? hash + "/chat/" + chat : hash;
@@ -8431,15 +8399,15 @@ function draftRow(project, d) {
 // Накопитель рисуется после ответа сервера, а не до него: очищенный заранее
 // экран моргал бы пустотой на каждом обновлении по фокусу окна, а список уезжал
 // бы к началу из-под пальца.
-async function renderDrafts(project) {
+async function renderDrafts(project, works) {
   const groups = document.getElementById("groups");
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
   const items = [{
     key: "board-kind",
-    sign: project + "|drafts",
+    sign: [project, "drafts", (works || []).length].join("|"),
     // Дорога назад к задачам это тот же таб, что и привёл сюда: хлебной
     // крошки над накопителем больше нет, она вела туда же вторым способом.
-    make: () => boardKindBar(project, "drafts"),
+    make: () => boardKindBar(project, "drafts", works),
   }, {
     key: "drafts-bar",
     sign: project,
@@ -8601,12 +8569,12 @@ const FIND_MIN = 2;
 
 function findGo(value) {
   const rt = route();
-  // В разделе «Агенты» поле фильтрует его собственные строки: доска тут ни при
-  // чём, и уводить отсюда в выдачу по задачам значит отвечать не на тот вопрос
+  // В табе сессий поле фильтрует его собственные строки: доска тут ни при чём,
+  // и уводить отсюда в выдачу по задачам значит отвечать не на тот вопрос
   // (замечание пользователя).
-  if (rt.agents) {
+  if (rt.sess) {
     const q = String(value).trim();
-    const base = "/agents" + (q ? "/" + encodeURIComponent(q) : "");
+    const base = rt.proj + "/sess" + (q ? "/" + encodeURIComponent(q) : "");
     // Пустой запрос это весь раздел, и адрес у него прежний: экран тут не
     // меняется, меняется только отбор строк.
     const hash = "#" + (rt.chat ? base + "/chat/" + rt.chat : base);
@@ -10147,19 +10115,18 @@ function renderHome(projects) {
 // Экран «Агенты» (макет «08 Агенты»): живые работы всех проектов одним
 // списком. Своей ручки у экрана нет: works приходят в ответе /api/projects
 // вместе со списком проектов, и второго похода на сервер экран не стоит.
-function allWorks(projects) {
-  const out = [];
-  for (const p of projects || []) {
-    for (const w of p.works || []) out.push({ project: p.name, work: w });
-  }
-  return out;
-}
-
 // Вид работы словами: чипы отвечают, кто её ведёт и чем она видна. Цель
 // названа целью и в интерактивном окне, потому что переписка открыта ровно у
 // неё.
 function workChips(project, w) {
   const chips = [el("span", "chip", project)];
+  // Происхождение сессии стоит чипом, а не одной лишь подсказкой строки:
+  // вложенных табов «Дашборд» и «Прочие» больше нет, список один, и различать
+  // их надо в самой строке (решение пользователя).
+  if (!agentOwn(w)) {
+    chips.push(withTip(el("span", "chip", "мимо дашборда"),
+      "сессия поднята не дашбордом: остановить работу можно там, где она поднята"));
+  }
   if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
   if (w.via === "registry") chips.push(el("span", "chip c-check", "сессия кончилась"));
   // Разговор о задаче назван собой: сессия живая и номер задачи у неё свой, но
@@ -10374,16 +10341,9 @@ function agentRow(project, w, now) {
   return row;
 }
 
-// Раздел «Агенты» разложен на два таба: свои сессии, поднятые дашбордом, и
-// прочие, поднятые мимо него (цикл цели из реестра, окно человека). Признак
-// один и приезжает работой (own): им же объясняется, почему у чужой строки нет
-// кнопки остановки, и разъехаться этим двум местам нельзя.
-let agentTab = "own";
-
-function agentTabs() {
-  return [["own", "Дашборд"], ["other", "Прочие"]];
-}
-
+// Своя работа это та, чью сессию поднял дашборд: признак приезжает работой
+// (own), им помечена строка чипом, и им же объясняется, почему у чужой строки
+// нет кнопки остановки.
 function agentOwn(w) {
   return Boolean(w && w.own);
 }
@@ -10458,44 +10418,27 @@ async function sweepIdle(project, box) {
   box.append(card);
 }
 
-function renderAgents(projects, q) {
+// Таб сессий на доске проекта. Список один: происхождение видно чипом в
+// строке, а вложенных табов «Дашборд» и «Прочие» тут больше нет, они делили
+// один короткий список надвое. Чужие проекты сюда не попадают вовсе: их сессии
+// видны переключением проекта, а сквозной обзор машины живёт общим списком
+// разговоров в панели (решение пользователя).
+function renderSessions(project, works, q) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
-  const all = allWorks(projects);
-  const found = all.filter((item) => agentMatch(item, q));
-  const list = found.filter((item) => agentOwn(item.work) === (agentTab === "own"));
+  const all = (works || []).map((w) => ({ project, work: w }));
+  const list = all.filter((item) => agentMatch(item, q));
+  groups.append(boardKindBar(project, "sess", works));
 
-  // Полоса табов та же, что на доске: два вида одного экрана, и переключаются
-  // они по месту.
-  const bar = el("div", "ktabs");
-  for (const [key, label] of agentTabs()) {
-    const btn = el("button", "ktab" + (key === agentTab ? " onktab" : ""), label);
-    btn.type = "button";
-    // Число строк таба отдельным узлом, а не хвостом подписи: слитое с ней, оно
-    // читалось словом («Дашборд5»), и вид ему даёт .ktab .n, как счётчику
-    // раздела в боковой колонке. Пустой таб число не пишет вовсе: ноль рядом с
-    // подписью это шум, а сама подпись читается и без него.
-    const n = found.filter((item) => agentOwn(item.work) === (key === "own")).length;
-    if (n) btn.append(el("span", "n", String(n)));
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      if (key === agentTab) return;
-      agentTab = key;
-      renderAgents(projects, q);
-    });
-    bar.append(btn);
-  }
-  groups.append(bar);
-
-  // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному мучительно,
-  // а строкой видна не всякая сессия машины.
+  // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному
+  // мучительно, а строкой видна не всякая сессия машины.
   const sweepBox = el("div", "swbox");
   const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
   withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + SWEEP_IDLE_HOURS +
     " ч. Перед снятием покажет список.");
   sweep.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    sweepIdle(shownProject || (list[0] || {}).project || "", sweepBox).catch(console.error);
+    sweepIdle(project, sweepBox).catch(console.error);
   });
   const sweepBar = el("div", "nbar");
   sweepBar.append(sweep, sweepBox);
@@ -10506,19 +10449,10 @@ function renderAgents(projects, q) {
     const empty = el("div", "empty");
     if (q) {
       empty.append(el("b", "", "По запросу ничего не нашлось."));
-      // Найденное в соседнем табе называется прямо: молчаливая пустота при
-      // непустой выдаче рядом читается как «нет нигде».
-      const near = found.length - list.length;
-      empty.append(document.createTextNode(near
-        ? "Ищем по заголовку работы, задаче, проекту и модели. В соседнем табе нашлось " +
-          near + " " + plural(near, "работа", "работы", "работ") + "."
-        : "Ищем по заголовку работы, задаче, проекту и модели."));
-    } else if (agentTab === "other") {
-      empty.append(el("b", "", "Чужих сессий сейчас нет."));
       empty.append(document.createTextNode(
-        "Сюда попадают работы, поднятые мимо дашборда: цикл цели из реестра и окно человека."));
+        "Ищем по заголовку работы, задаче и модели."));
     } else {
-      empty.append(el("b", "", "Агентов сейчас нет."));
+      empty.append(el("b", "", "Сессий проекта сейчас нет."));
       empty.append(document.createTextNode(
         "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
     }
@@ -10664,7 +10598,7 @@ function screenKey(rt) {
   // Разговора в ключе нет вовсе: панель это хвост адреса, она стоит своим
   // узлом и своими потоками, а экран под ней от её открытия не меняется и
   // собираться заново не должен.
-  return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts,
+  return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts, rt.sess,
     rt.find, rt.draft, rt.doc, rt.path, rt.lldList].join("|");
 }
 
@@ -10721,9 +10655,9 @@ async function paint() {
   // оно фильтрует сессии раздела (findGo), и «Поиск задач» обещал бы там выдачу
   // по доске. Значения поля это не касается, его правит синхронизация выше.
   if (hq) {
-    hq.placeholder = rt.agents ? "Поиск сессий" : "Поиск задач";
-    hq.setAttribute("aria-label", rt.agents
-      ? "Поиск по сессиям агентов"
+    hq.placeholder = rt.sess ? "Поиск сессий" : "Поиск задач";
+    hq.setAttribute("aria-label", rt.sess
+      ? "Поиск по сессиям проекта"
       : "Поиск по доске, черновикам и архиву");
   }
   const hqClear = document.getElementById("hq-clear");
@@ -10749,21 +10683,16 @@ async function paint() {
   // пришедший позже он перерисовал бы кнопку под пальцем. Ждать тут дёшево,
   // ходит запрос один раз на загрузку страницы.
   await loadHarnesses();
-  renderSidebar(projects, rt.home || rt.agents ? null : current);
+  renderSidebar(projects, rt.home ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");
-  if (rt.agents) {
-    // Экран собран из того же ответа, что и колонка: живые работы всех
-    // проектов приходят одним запросом, и доска ему не нужна.
-    headName("Агенты");
-    // Приписки у заголовка тут нет вовсе: охват называют табы «Дашборд» и
-    // «Прочие», а слова про все активные задачи спорили с отбором, который
-    // человек уже сделал табом или поиском (замечание пользователя).
-    document.getElementById("psub").textContent = "";
-    renderLive("", []);
-    markNav(rt);
-    renderAgents(projects, rt.q || "");
-    return;
+  // Раздела «Агенты» больше нет: сессии переехали в таб доски. Старый адрес
+  // ведёт туда же вместе с набранным запросом, чтобы ссылки и память вкладки
+  // не ломались от переезда.
+  if (rt.agents && current) {
+    const q = rt.q ? "/" + rt.q : "";
+    goSame(current.name + "/sess" + q);
+    return refresh();
   }
   if (rt.home) {
     headName("Проекты");
@@ -10797,7 +10726,15 @@ async function paint() {
     // за доской стоил бы подпроцесса taskctl на каждый фокус окна.
     document.getElementById("psub").textContent = "черновики";
     markNav(rt);
-    await renderDrafts(current.name);
+    await renderDrafts(current.name, current.works);
+    return;
+  }
+  if (rt.sess) {
+    // Списку сессий доска не нужна: работы приезжают тем же ответом, что и
+    // список проектов, и второго похода на сервер таб не стоит.
+    document.getElementById("psub").textContent = "сессии проекта";
+    markNav(rt);
+    renderSessions(current.name, current.works, rt.q || "");
     return;
   }
   if (rt.find) {
@@ -10857,7 +10794,7 @@ async function paint() {
   // осталось подсказкой на самом названии проекта: там его берут, когда надо.
   document.getElementById("psub").textContent = "задачи проекта";
   headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""));
-  renderBoard(current.name, board);
+  renderBoard(current.name, board, r.body.works || []);
 }
 
 // Заголовок раздела в шапке: имя и подсказка ставятся одним заходом. Порознь
@@ -10894,13 +10831,12 @@ function markNav(rt) {
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
   // Накопитель это таб доски, а не раздел: открытые черновики подсвечивают
   // «Доску», как её подсвечивает и экран записи.
-  const on = rt.home ? "home" : rt.agents ? "agents" : rt.feed ? "feed"
+  const on = rt.home ? "home" : rt.feed ? "feed"
     : rt.find ? "find" : rt.make ? "make"
     : rt.lldList || rt.doc ? "lld" : "board";
   for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
     ["board", ["nav-board", "tab-board"]],
     ["lld", ["nav-lld"]],
-    ["agents", ["nav-agents", "tab-agents"]],
     ["make", ["make-btn"]],
     ["feed", ["bell"]],
     ["find", ["find-btn"]]]) {
@@ -10936,12 +10872,6 @@ for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
     // переходом: лента уведомлений его больше не закрывает.
     goKeepingChat((shownProject || route().proj) + tail);
   });
-}
-
-// Раздел «Агенты» имени проекта не просит: он показывает работы всех досок
-// сразу, и хэш у него один на весь дашборд.
-for (const id of ["nav-agents", "tab-agents"]) {
-  document.getElementById(id).addEventListener("click", () => { goKeepingChat("/agents"); });
 }
 
 // Переход на главную это логотип в левом верхнем углу: на ноутбуке он стоит

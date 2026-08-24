@@ -1,11 +1,11 @@
-// Стенд экрана доски (ветка poc-chat): два таба и полоска работ.
+// Стенд экрана доски (ветка poc-chat): три таба и полоска работ.
 //
-// Накопитель черновиков переехал с отдельного раздела меню во второй таб
-// доски, а лента живых сессий над списком строк сменилась полоской с числом
-// работ и дорогой в раздел «Агенты» (решение пользователя). Предмет стенда в
-// том, что оба таба стоят на обоих экранах и переключают друг друга, старый
-// адрес накопителя открывает свой таб, а полоска считает работы и уводит в
-// раздел, не открывая разговоров.
+// Накопитель черновиков переехал с отдельного раздела меню в таб доски, следом
+// туда же переехали сессии, а лента живых сессий над списком строк сменилась
+// полоской с числом работ и дорогой в их таб (решение пользователя). Предмет
+// стенда в том, что три таба стоят на любом экране и переключают друг друга,
+// старый адрес накопителя открывает свой таб, а полоска считает работы и
+// уводит в сессии, не открывая разговоров.
 //
 // Зовётся: node testdata/poc_btabs.mjs static/app.js
 
@@ -50,20 +50,20 @@ const tabs = () => {
 };
 const openTab = () => (tabs().find((t) => String(t.className).includes("onktab")) || {}).textContent;
 
-// --- доска: два таба, открыт первый ---
+// --- доска: три таба, открыт первый ---
 await go("#demo");
 {
   const names = tabs().map((t) => t.textContent);
-  if (names.join("|") !== "Задачи|Черновики") {
+  if (names.join("|") !== "Задачи|Сессии|Черновики") {
     fail("табы доски не те: " + JSON.stringify(names));
   }
   if (openTab() !== "Задачи") fail("на доске подсвечен не тот таб: " + openTab());
   if (!dump(groups).includes("XR-1")) fail("строки доски не собрались");
 }
 
-// --- переход во второй таб открывает накопитель по своему адресу ---
+// --- переход в таб накопителя открывает его по своему адресу ---
 {
-  tabs()[1].handlers.click({ stopPropagation: () => {} });
+  tabs()[2].handlers.click({ stopPropagation: () => {} });
   await settle();
   if (sandbox.location.hash.replace(/^#/, "") !== "demo/drafts") {
     fail("таб черновиков увёл не на адрес накопителя: " + sandbox.location.hash);
@@ -94,11 +94,11 @@ await go("#demo");
   if (!said.includes("работает 2 агента")) fail("полоска не сосчитала работы: " + said);
   if (byClass(live, "lcard")) fail("лента карточек сессий вернулась на экран проекта");
   const link = byClass(live, "alink");
-  if (!link) fail("с полоски нет дороги в раздел агентов: " + said);
+  if (!link) fail("с полоски нет дороги в сессии: " + said);
   link.handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (sandbox.location.hash.replace(/^#/, "") !== "/agents") {
-    fail("полоска увела не в раздел агентов: " + sandbox.location.hash);
+  if (sandbox.location.hash.replace(/^#/, "") !== "demo/sess") {
+    fail("полоска увела не в таб сессий: " + sandbox.location.hash);
   }
   // Работ нет вовсе: полоска уходит с экрана целиком, пустая строка над доской
   // читалась бы недорисованной.
@@ -106,7 +106,7 @@ await go("#demo");
   if (live.children.length) fail("полоска осталась на экране без работ");
 }
 
-// --- телефон: третий таб «Сессии» вместо своего переключателя ---
+// --- телефон: те же три таба, и половин доски больше нет ---
 {
   // Узкий экран мерится тем же запросом, что и в статике.
   sandbox.window.matchMedia = (q) => ({ matches: String(q).includes("max-width:900px"),
@@ -117,34 +117,23 @@ await go("#demo");
     fail("на телефоне табы не те: " + JSON.stringify(names));
   }
   if (byClass(groups, "btabs")) fail("старый переключатель «Бэклог/Сессии» остался на экране");
-  const sect = (key) => allByClass(groups, "bsec").find((n) => n.dataset.tab === key);
-  const opened = (key) => String(sect(key).className).includes("onsec");
-
-  // Половины доски переключаются по месту: адрес тот же, список не
-  // пересобирается, и подсветка переезжает вместе с секциями.
-  const was = sandbox.location.hash;
-  tabs()[1].handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (sandbox.location.hash !== was) fail("таб сессий тронул адрес: " + sandbox.location.hash);
-  if (openTab() !== "Сессии") fail("подсветка не переехала на сессии: " + openTab());
-  if (!opened("sess") || opened("back")) fail("открыта не та половина доски");
-
-  tabs()[0].handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (openTab() !== "Задачи") fail("подсветка не переехала на задачи: " + openTab());
-  if (!opened("back") || opened("sess")) fail("половина задач не открылась");
-
-  // С накопителя «Сессии» возвращают на доску своим переходом.
-  await go("#demo/drafts");
-  if (tabs().length !== 3) fail("на телефоне накопитель показал не три таба");
-  tabs()[1].handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (sandbox.location.hash.replace(/^#/, "") !== "demo") {
-    fail("с накопителя сессии увели не на доску: " + sandbox.location.hash);
+  // Половин у доски больше нет: сессии уехали в свой таб, и все разделы стоят
+  // подряд, как на ноутбуке. Прежде In progress с Check прятались за
+  // переключателем половин, отвечавшим на тот же вопрос, что и полоса табов.
+  if (byClass(groups, "bsec")) {
+    fail("половины доски остались на экране: " + dump(groups).slice(0, 300));
   }
-  await sandbox.refresh();
+  const said = dump(groups);
+  if (!said.includes("XR-9") || !said.includes("XR-1")) {
+    fail("на телефоне видны не все разделы доски: " + said.slice(0, 300));
+  }
+
+  // Таб сессий и с телефона ведёт на свой адрес.
+  tabs()[1].handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (openTab() !== "Сессии") fail("после возврата открыт не таб сессий: " + openTab());
+  if (sandbox.location.hash.replace(/^#/, "") !== "demo/sess") {
+    fail("таб сессий с телефона увёл не туда: " + sandbox.location.hash);
+  }
   sandbox.window.matchMedia = () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} });
 }
 

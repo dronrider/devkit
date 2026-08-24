@@ -85,6 +85,28 @@ func TestCatchesRegression(t *testing.T) {
 	}
 }
 
+// TestRunsInDirNotRoot: команда теста гоняется в p.Dir, а не всегда в
+// корне репозитория. Воспроизводит go-модуль в подкаталоге (tools/<утилита>
+// вместо корня): команда ссылается на code.txt относительным путём, и без
+// смещения обоих прогонов на p.Dir (DK-367) она не находит файл ни разу, вне
+// зависимости от бага в самом code.txt.
+func TestRunsInDirNotRoot(t *testing.T) {
+	root := setupRepo(t)
+	gitT(t, root, "rm", "-q", "code.txt")
+	write(t, root, "modA/code.txt", "bug\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "код переехал в подкаталог")
+	write(t, root, "modA/code.txt", "fixed\n")
+	write(t, root, "modA/probe_test.sh", probe)
+	msg, err := Run(Params{Dir: filepath.Join(root, "modA"), Cmd: []string{"sh", "probe_test.sh"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "краснеет") || !strings.Contains(msg, "modA/probe_test.sh") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+}
+
 func TestUselessTestFails(t *testing.T) {
 	root := setupRepo(t)
 	write(t, root, "code.txt", "fixed\n")

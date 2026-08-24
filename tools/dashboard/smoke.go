@@ -1611,17 +1611,22 @@ func (s *smoke) stepDropDraft() (string, error) {
 	if want := "draft drop " + smokeDraft + " --reason " + reason; !strings.Contains(string(calls), want) {
 		return "", fmt.Errorf("taskctl draft drop позван не так, вызовы утилиты: %s", strings.TrimSpace(string(calls)))
 	}
-	// Исход груминга по следам: черновика нет, строки на доске нет, приписки
-	// нет, и ручка исхода обязана назвать это удалением, а не молчать.
-	var out struct {
-		State string `json:"state"`
-		Note  string `json:"note"`
+	// Исход разбора дашборд больше не пересказывает своей ручкой: разговор с
+	// агентом идёт в чате, а на доске исход виден по факту (решение
+	// пользователя). Удаление тут и проверяется по факту: файла записи нет, а
+	// сама запись ушла из накопителя.
+	var left struct {
+		Drafts []struct {
+			ID string `json:"id"`
+		} `json:"drafts"`
 	}
-	if err := s.call("GET", path+"/outcome", "", http.StatusOK, &out); err != nil {
+	if err := s.call("GET", "/api/projects/demo/drafts", "", http.StatusOK, &left); err != nil {
 		return "", err
 	}
-	if out.State != draftStateDropped {
-		return "", fmt.Errorf("исход удалённого черновика приехал как %q: %s", out.State, out.Note)
+	for _, d := range left.Drafts {
+		if d.ID == smokeDraft {
+			return "", fmt.Errorf("удалённая запись осталась в накопителе: %s", d.ID)
+		}
 	}
 	git := "коммит доски прошёл"
 	if v.Note != "" {
@@ -1629,8 +1634,8 @@ func (s *smoke) stepDropDraft() (string, error) {
 		// словами, а не проглочен.
 		git = "удаление на месте, git назван словами"
 	}
-	return fmt.Sprintf("%s; отказ без причины: %s; %s; исход по следам: %s",
-		v.Message, refusal.Error, git, out.Note), nil
+	return fmt.Sprintf("%s; отказ без причины: %s; %s; записи в накопителе больше нет",
+		v.Message, refusal.Error, git), nil
 }
 
 // stepDragRank: перетаскивание строки очереди, девятый сценарий цели DK-327.

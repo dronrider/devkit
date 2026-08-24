@@ -540,7 +540,6 @@ const drafts = [
 // стенд подставляет его ответ прямо. Груминг идёт, пока жива работа с тем же
 // ID, и стенд держит её отдельным признаком: ход разбора берётся снимком
 // tmux-сессии, тем же, что на экране агента.
-let draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md", note: "груминг записи не касался" };
 let grooming = false;
 // Чат груминга: он и есть ход разбора, и по нему экран решает, звать ли
 // разбор кнопкой или вести в стоящий чат.
@@ -723,6 +722,9 @@ const mail = { pending: [], delivered: [], live: false };
 const timers = [];
 let timerSeq = 0;
 
+// Все спрошенные адреса: по ним видно, за чем экран ходит, а за чем нет.
+const asked = [];
+
 const sandbox = {
   console: { log: () => {}, error: () => {}, warn: () => {} },
   setTimeout: (fn, ms) => {
@@ -781,6 +783,7 @@ const sandbox = {
   fetch: (path, init) => {
     const post = Boolean(init && init.method === "POST");
     if (post) posted.push(path);
+    asked.push(path);
     if (path === "/api/projects") {
       return reply({ projects: [{ name: "demo", works: groomWorks(), sections: { check: 1 } }] });
     }
@@ -827,7 +830,6 @@ const sandbox = {
     if (path.endsWith("/drafts")) return reply({ drafts });
     if (path.includes("/chats?task=")) return reply({ chats: groomChat ? [groomChat] : [] });
     if (path.includes("/chats")) return reply({ chats: chatList() });
-    if (path.endsWith("/outcome")) return reply(draftOut);
     if (path.endsWith("/groom") && post) {
       groomAsk = JSON.parse(init.body).ask || "";
       const gid = path.slice(path.indexOf("/drafts/") + "/drafts/".length, path.indexOf("/groom"));
@@ -1515,9 +1517,8 @@ if (sandbox.location.hash !== "demo/draft/XR-D2") {
 // двенадцатым кругом POC (замечание 15): разбор идёт живым чатом груминга, и
 // смотрят его там же, а не снимком tmux рядом. Собран экран той же формой, что
 // задача и заведение (общий formPage), поэтому груминг стоит кнопкой полосы
-// действий, там же, где у задачи «Выполнить», а не среди пометок. А вот исход
-// разбора вернулся: сервер его считает ручкой /outcome, и без карточки груминг
-// кончался для человека молча.
+// действий, там же, где у задачи «Выполнить», а не среди пометок. Исхода
+// разбора форма не пересказывает вовсе: он виден в чате и на доске.
 grooming = true;
 await go("#demo/draft/XR-D2");
 const dhead = find(groups, "draft-head");
@@ -1582,36 +1583,29 @@ if (find(groups, "draft-head") !== keptHead) {
 }
 groomChat = null;
 
-// Карточек исхода на форме нет ни одной, чем бы разбор ни кончился: разговор с
-// агентом всегда идёт в чате, там же виден и исход, а на доске он виден по
-// факту, строкой или её отсутствием (решение пользователя).
-for (const out of [
-  { state: "row", note: "груминг завёл строку: XR-D2 стоит на доске demo",
-    row: { id: "XR-D2", sect: "backlog" } },
-  { state: "attached", task: "XR-1", note: "груминг признал запись частью работы" },
-  { state: "deferred", deferred: "вчера", reason: "ждём ответа смежников",
-    note: "груминг отложил запись" },
-  { state: "dropped", note: "следов груминга нет ни одного" },
-  { state: "open", question: "Это про доску или про накопитель?", session: "gggg4444-4444",
-    note: "груминг вышел, не оставив следа на диске" },
-]) {
-  draftOut = out;
+// Карточек исхода на форме нет ни одной, и за исходом экран больше не ходит
+// вовсе: ручка `/drafts/{id}/outcome` снесена, разговор с агентом всегда идёт в
+// чате, там же виден и исход, а на доске он виден по факту, строкой или её
+// отсутствием (решение пользователя).
+{
+  asked.length = 0;
   await go("#demo/draft/XR-D2");
   const shown = dump(groups).replace(/\s+/g, " ");
   for (const gone of ["Черновик оформлен строкой", "Черновик приписан", "Черновик отложен",
     "Черновик удалён", "Груминг кончился", "Груминга не было", "Исход груминга",
-    "Открыть задачу", "Это про доску или про накопитель"]) {
+    "Открыть задачу"]) {
     if (shown.includes(gone)) {
-      fail("исход «" + out.state + "» пересказан на форме («" + gone + "»): " + shown.slice(0, 300));
+      fail("исход пересказан на форме («" + gone + "»): " + shown.slice(0, 300));
     }
+  }
+  if (asked.some((p) => p.includes("/outcome"))) {
+    fail("экран записи всё ещё ходит за исходом: " + JSON.stringify(asked));
   }
   // Сама запись при этом на месте: форма держит черновик и действия над ним.
   if (!shown.includes("текст записи")) {
     fail("вместе с карточками исхода пропала сама запись: " + shown.slice(0, 300));
   }
 }
-draftOut = { state: "open", file: "docs/tasks/drafts/XR-D2.md",
-  note: "груминг записи не касался" };
 
 // Панель разговора (DK-435): она стоит справа поверх любого экрана проекта и
 // живёт хвостом адреса. Лента, поле ввода и поток событий переживают

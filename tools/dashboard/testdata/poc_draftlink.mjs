@@ -36,7 +36,6 @@ const { sandbox, moves } = makeSandbox(app, (path) => {
       "строки на доске demo у неё пока нет", "XR-005");
   }
   if (path.includes("/tasks/XR-777")) return gone("на доске demo нет строки XR-777", "");
-  if (path.includes("/drafts/XR-005/outcome")) return { note: "груминга ещё не было" };
   if (path.includes("/drafts/XR-005")) {
     return { id: "XR-005", file: "docs/tasks/drafts/XR-005.md", text: draftText, order: "разбери запись" };
   }

@@ -33,12 +33,6 @@ const { sandbox, byId } = makeSandbox(app, (path) => {
   if (path.endsWith("/drafts")) {
     return { drafts: [now.waiting ? Object.assign({ waiting }, draft) : draft] };
   }
-  if (path.endsWith("/outcome")) {
-    // Груминг кончился, не оставив следа на диске: прежде ровно тут экран и
-    // показывал карточку вопроса с полем ответа.
-    return { state: "open", file: draft.file, question: "резать строку или поднять цену?",
-      session: "feedbeef-0003", note: "груминг вышел, не оставив следа на диске" };
-  }
   if (path.includes("/chats")) {
     return { chats: [{ id: "feedbeef-0003", state: "live", tmux: "task-XR-D2",
       project: "demo", tasks: ["XR-D2"], title: "разбор XR-D2" }], models: [] };

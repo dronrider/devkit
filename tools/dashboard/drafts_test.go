@@ -517,133 +517,6 @@ func makeDraft(t *testing.T, c *http.Client, e *testEnv, text string) string {
 	return v.ID
 }
 
-func draftOutcomeResp(t *testing.T, c *http.Client, e *testEnv, id string) map[string]any {
-	t.Helper()
-	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/"+id+"/outcome", "")
-	text := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("исход груминга %s: %d %s", id, resp.StatusCode, text)
-	}
-	var v map[string]any
-	if err := json.Unmarshal([]byte(text), &v); err != nil {
-		t.Fatalf("ответ об исходе не разобрался: %v\n%s", err, text)
-	}
-	return v
-}
-
-// Исход груминга читается следами на диске, а не гаданием: строка на доске,
-// раздел «Из черновика <ID>» в чужом файле задачи, пометка об отложенном и
-// пропавший файл это четыре разных ответа. До DK-321 экран накопителя не знал
-// ни одного из них.
-func TestDraftOutcomeTraces(t *testing.T) {
-	e, c, _ := draftsEnv(t)
-
-	// Разбора не было: запись лежит в накопителе как записана.
-	fresh := makeDraft(t, c, e, "груминг сюда ещё не заходил")
-	got := draftOutcomeResp(t, c, e, fresh)
-	if got["state"] != "open" {
-		t.Errorf("нетронутая запись приехала с исходом %v: %v", got["state"], got)
-	}
-	if file, _ := got["file"].(string); file != "docs/tasks/drafts/"+fresh+".md" {
-		t.Errorf("путь файла записи не назван: %v", got)
-	}
-
-	// Отложен: пометка с причиной лежит в разделе «Грумминг» файла черновика.
-	deferred := makeDraft(t, c, e, "мысль про повторный случай")
-	runTaskctl(t, e.proj, "draft", "defer", deferred, "ждём повторного случая с git status")
-	got = draftOutcomeResp(t, c, e, deferred)
-	if got["state"] != "deferred" {
-		t.Fatalf("отложенная запись приехала с исходом %v: %v", got["state"], got)
-	}
-	if reason, _ := got["reason"].(string); reason != "ждём повторного случая с git status" {
-		t.Errorf("причина отложенного не приехала: %v", got)
-	}
-	if when, _ := got["deferred"].(string); when == "" {
-		t.Errorf("дата пометки не приехала: %v", got)
-	}
-
-	// Похожая на пометку строка в свободном тексте записи исходом не считается:
-	// «отложен» ставит разбор разделом «Грумминг», а не человек прозой.
-	sneaky := makeDraft(t, c, e, "мысль про откладывание\n\nв прошлый раз пометка "+
-		"выглядела так:\n- 2026-08-10, отложен: ждём смежника")
-	got = draftOutcomeResp(t, c, e, sneaky)
-	if got["state"] != "open" {
-		t.Errorf("строка посреди прозы сошла за пометку разбора: %v", got)
-	}
-
-	// Приписан: текст уехал разделом в файл стоящей задачи, и в ответе стоит
-	// номер приёмника, а не одно «черновика нет».
-	attached := makeDraft(t, c, e, "то же самое, что XR-002")
-	runTaskctl(t, e.proj, "draft", "attach", attached, "XR-002")
-	got = draftOutcomeResp(t, c, e, attached)
-	if got["state"] != "attached" {
-		t.Fatalf("приписанная запись приехала с исходом %v: %v", got["state"], got)
-	}
-	if task, _ := got["task"].(string); task != "XR-002" {
-		t.Errorf("приёмник приписки не назван: %v", got)
-	}
-	if file, _ := got["task_file"].(string); file != "docs/tasks/XR-002.md" {
-		t.Errorf("файл приёмника не назван: %v", got)
-	}
-
-	// Оформлен: у черновика появилась строка на доске, и в ответе едет она сама.
-	// Ворота заведения спрашивают «## DoD» (DK-394), и промоутер дописывает
-	// раздел в черновик до add --id.
-	promoted := makeDraft(t, c, e, "мысль, из которой вышла задача")
-	draftPath := filepath.Join(e.proj, "docs", "tasks", "drafts", promoted+".md")
-	if err := os.WriteFile(draftPath, []byte(readFile(t, draftPath)+"\n## DoD\n\nЗадача сделана.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runTaskctl(t, e.proj, "add", "--id", promoted, "--title", "Из черновика", "--rank", "25+1+0+0+0", "--accept", "agent")
-	got = draftOutcomeResp(t, c, e, promoted)
-	if got["state"] != "row" {
-		t.Fatalf("оформленная запись приехала с исходом %v: %v", got["state"], got)
-	}
-	row, _ := got["row"].(map[string]any)
-	if id, _ := row["id"].(string); id != promoted {
-		t.Errorf("строка доски не приехала вместе с исходом: %v", got)
-	}
-
-	// Удалён: следов нет ни одного, и сказано про это словами, а не пустотой.
-	dropped := makeDraft(t, c, e, "мусор из одного слова show")
-	doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/drafts/"+dropped,
-		`{"reason": "промах мимо подкоманды"}`).Body.Close()
-	got = draftOutcomeResp(t, c, e, dropped)
-	if got["state"] != "dropped" {
-		t.Fatalf("удалённая запись приехала с исходом %v: %v", got["state"], got)
-	}
-	if note, _ := got["note"].(string); !strings.Contains(note, "коммит") {
-		t.Errorf("про причину удаления, уехавшую в коммит, экрану не сказано: %v", got)
-	}
-}
-
-// Груминг, кончившийся вопросом, следа на диске не оставляет, и вопрос лежит
-// только в транскрипте: ручка берёт последнее слово агента из чата той же
-// записи. Чат этот находится записью реестра: заказ дашборда ставит поднятой
-// сессии DEVKIT_TASK, хук старта пишет по нему привязку, а первую реплику
-// дашборд больше не разбирает.
-func TestDraftOutcomeQuestion(t *testing.T) {
-	e, c, _ := draftsEnv(t)
-	id := makeDraft(t, c, e, "две записи об одном и том же")
-	transcript := `{"type":"user","message":{"role":"user","content":"Проведи груминг ` + id + `"},"timestamp":"2026-08-13T10:00:00.000Z","gitBranch":"main"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Смотрю накопитель."}]},"timestamp":"2026-08-13T10:00:01.000Z"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Какой из двух дублей оставить?"}]},"timestamp":"2026-08-13T10:00:02.000Z"}
-`
-	writeSession(t, e.home, e.proj, "", "aaaabbbbcccc1111", transcript, time.Now())
-	writeBinds(t, e.home, bindRecord("2026-08-13T10:00:00", "aaaabbbbcccc1111", id, bindOrder))
-
-	got := draftOutcomeResp(t, c, e, id)
-	if got["state"] != "open" {
-		t.Fatalf("запись без следов разбора приехала с исходом %v: %v", got["state"], got)
-	}
-	if q, _ := got["question"].(string); q != "Какой из двух дублей оставить?" {
-		t.Errorf("последнее слово груминга не приехало: %v", got)
-	}
-	if sid, _ := got["session"].(string); sid != "aaaabbbbcccc1111" {
-		t.Errorf("чат, из которого взят вопрос, не назван: %v", got)
-	}
-}
-
 // Ответ на вопрос груминга уходит новой ходкой: уточнение едет в заказ той же
 // сессии разбора, писать в закончившуюся дашборд не умеет и не изображает.
 func TestDraftGroomAsk(t *testing.T) {
@@ -719,29 +592,6 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	}
 }
 
-// Пометка «отложен» читается только в разделе «Грумминг»: запись это свободный
-// текст человека, и строка того же вида посреди прозы выдавала бы за исход
-// разбора то, чего разбор не ставил (замечание ревью DK-321).
-func TestDraftDeferredOnlyInGroomSection(t *testing.T) {
-	free := "мысль про откладывание\n\nв прошлый раз пометка выглядела так:\n" +
-		"- 2026-08-10, отложен: ждём смежника\n"
-	if when, reason := draftDeferred(free); when != "" || reason != "" {
-		t.Errorf("похожая строка в свободном тексте сошла за пометку: %q %q", when, reason)
-	}
-	marked := free + "\n" + draftGroomHeading + "\n\n- 2026-08-12, отложен: ждём повторного случая\n"
-	when, reason := draftDeferred(marked)
-	if when != "2026-08-12" || reason != "ждём повторного случая" {
-		t.Errorf("пометка раздела прочиталась как %q %q", when, reason)
-	}
-	// Раздел кончается следующим заголовком того же уровня, и строка за ним
-	// принадлежит уже не разбору.
-	after := "черновик\n\n" + draftGroomHeading + "\n\n- разбор заходил, исхода нет\n\n" +
-		"## Хвост\n\n- 2026-08-13, отложен: не отсюда\n"
-	if when, _ := draftDeferred(after); when != "" {
-		t.Errorf("строка за концом раздела сошла за пометку: %q", when)
-	}
-}
-
 // Удаление черновика с экрана: причина обязательна и уезжает в коммит доски,
 // файла после команды нет. До DK-321 черновик снимался только терминалом.
 func TestDraftDrop(t *testing.T) {
@@ -808,35 +658,6 @@ func TestDraftDropAuthAndOrigin(t *testing.T) {
 	}
 	if !isFile(path) {
 		t.Errorf("отбитый запрос удалил файл %s", path)
-	}
-}
-
-// След приписки ищется точным номером и мимо накопителя: «Из черновика XR-05»
-// и «Из черновика XR-050» это разные записи, а заголовок внутри самого
-// черновика приёмником не считается.
-func TestDraftAttachedToExactID(t *testing.T) {
-	dir := t.TempDir()
-	tasks := filepath.Join(dir, "docs", "tasks")
-	if err := os.MkdirAll(filepath.Join(tasks, "drafts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	write := func(rel, body string) {
-		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("docs/tasks/XR-010.md", "# XR-010: приёмник\n\n## Из черновика XR-050 (записан 2026-08-05)\n\nтекст записи\n")
-	write("docs/tasks/drafts/XR-060.md", "мысль про приписку\n\n## Из черновика XR-060\n")
-
-	task, rel := draftAttachedTo(dir, "XR-050")
-	if task != "XR-010" || rel != "docs/tasks/XR-010.md" {
-		t.Errorf("приёмник приписки найден как %q (%q), жду XR-010", task, rel)
-	}
-	if task, _ := draftAttachedTo(dir, "XR-05"); task != "" {
-		t.Errorf("соседний номер XR-05 сошёл за приписку к %q", task)
-	}
-	if task, _ := draftAttachedTo(dir, "XR-060"); task != "" {
-		t.Errorf("заголовок внутри самого накопителя сошёл за приписку к %q", task)
 	}
 }
 

@@ -10,16 +10,12 @@
 import { makeSandbox, settle, dump, fail, appPathArg } from "./poc_dom.mjs";
 
 let grooming = true;
-let outcome = { state: "open", file: "docs/tasks/drafts/XR-D2.md",
-  note: "груминг записи не касался" };
-
 const { sandbox, byId, timers } = makeSandbox(appPathArg(), (path) => {
   if (path === "/api/projects") {
     return { projects: [{ name: "demo", sections: {},
       works: grooming ? [{ id: "XR-D2", via: "tmux", live: "busy",
         title: "запись накопителя" }] : [] }] };
   }
-  if (path.endsWith("/outcome")) return outcome;
   if (path.includes("/chats")) return { chats: [] };
   if (path.includes("/drafts/")) {
     return { file: "docs/tasks/drafts/XR-D2.md", text: "текст записи" };
@@ -55,7 +51,6 @@ if (!poll.length) fail("опрос конца груминга не заведё
 // кнопку разбора, руками экран никто не обновляет. Исхода форма не
 // пересказывает: он виден в чате и на доске.
 grooming = false;
-outcome = { state: "row", note: "груминг завёл строку: XR-D2 стоит на доске demo" };
 poll[poll.length - 1].fn();
 await settle();
 shown = dump(groups).replace(/\s+/g, " ");

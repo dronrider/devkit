@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/dronrider/devkit/internal/works"
 )
@@ -80,4 +82,103 @@ func (s *server) handleTmuxPane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"name": name, "text": string(out)})
+}
+
+// Вопрос клиента в панели tmux (замечание пользователя: «не хочу каждый раз
+// чинить что-то через тебя»). Клиент, поднятый в непривычном каталоге, встаёт
+// на вопросе о доверии («Yes, I trust this folder»), а следом на вопросе про
+// внешние импорты правил, и до ответа он не делает ни хода. Человек этих
+// вопросов не видит вовсе: панель дашборда показывает пустую ленту, реплика
+// висит недоставленной, а ответить можно было только руками в tmux. Тут снимок
+// панели разбирается на вопрос и варианты, и панель показывает их кнопками.
+
+// frameRunes это знаки рамки клиента: ими он отбивает свой блок, и текст
+// вопроса выше рамки уже не идёт. Знаки чужие, дашборд их только узнаёт.
+const frameRunes = "\u2500\u2014-\u2550"
+
+// tmuxAsk это разобранный вопрос: сам текст, варианты по порядку и номер того,
+// на котором стоит курсор клиента.
+type tmuxAsk struct {
+	Text    string   `json:"text,omitempty"`
+	Options []string `json:"options,omitempty"`
+	At      int      `json:"at,omitempty"`
+}
+
+// askOptionRe ловит строку варианта клиента: номер с точкой и текст, а перед
+// выбранным пунктом стоит знак курсора. Знаки тут чужие, их печатает клиент, и
+// сверяются они как есть.
+var askOptionRe = regexp.MustCompile("^\\s*(\u276f\\s*)?(\\d+)\\.\\s+(\\S.*?)\\s*$")
+
+// parseTmuxAsk разбирает снимок панели. Вопросом считается блок нумерованных
+// вариантов подряд, а текстом вопроса непустые строки над ним: клиент печатает
+// вопрос абзацем, а не одной строкой. Нет вариантов, значит и вопроса нет:
+// молчащий или работающий клиент сюда не попадает.
+func parseTmuxAsk(text string) tmuxAsk {
+	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	first, last := -1, -1
+	ask := tmuxAsk{}
+	for i, ln := range lines {
+		m := askOptionRe.FindStringSubmatch(ln)
+		if m == nil {
+			// Пустая строка внутри блока вариантов его не рвёт, а любая другая
+			// рвёт: варианты идут подряд.
+			if first >= 0 && strings.TrimSpace(ln) == "" {
+				continue
+			}
+			if first >= 0 {
+				break
+			}
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+		ask.Options = append(ask.Options, m[3])
+		if m[1] != "" {
+			ask.At = len(ask.Options)
+		}
+	}
+	if len(ask.Options) < 2 {
+		return tmuxAsk{}
+	}
+	_ = last
+	// Текст вопроса это всё, что клиент написал над вариантами до своей рамки:
+	// абзацы он разделяет пустыми строками, и обрывать сбор на первой из них
+	// значило бы оставить от вопроса одну последнюю строку («Security guide»
+	// вместо самого вопроса и каталога, живая проверка на застрявшей сессии).
+	var said []string
+	for i := first - 1; i >= 0 && len(said) < 8; i-- {
+		ln := strings.TrimSpace(lines[i])
+		if ln == "" {
+			continue
+		}
+		if strings.Trim(ln, frameRunes+" ") == "" {
+			break
+		}
+		said = append([]string{ln}, said...)
+	}
+	ask.Text = truncate(strings.Join(said, " "), 400)
+	return ask
+}
+
+// tmuxAskOf снимает панель сессии и разбирает её на вопрос. Ошибка тут не
+// поломка: сессии может уже не быть, и вопроса тогда нет.
+func tmuxAskOf(name string) tmuxAsk {
+	out, err := runProc("tmux", "capture-pane", "-p", "-t", "="+name+":")
+	if err != nil {
+		return tmuxAsk{}
+	}
+	return parseTmuxAsk(string(out))
+}
+
+// tmuxAnswer отвечает на вопрос клиента: номер пункта и Enter. Стрелками тут
+// не ходим нарочно, номер выбирает пункт сам, а лишние нажатия уехали бы в
+// чужой вопрос, если человек ответил быстрее.
+func tmuxAnswer(name string, option int) error {
+	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", strconv.Itoa(option)); err != nil {
+		return err
+	}
+	_, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Enter")
+	return err
 }

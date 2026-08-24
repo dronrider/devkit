@@ -1774,3 +1774,100 @@ func TestChatIdleWithoutPeerRecord(t *testing.T) {
 		t.Error("свежее «busy» реестра потеряно: идущий ход объявлен простоем")
 	}
 }
+
+// Ответ на вопрос клиента уходит из панели, а не из терминала: номер пункта
+// едет ему клавишами, и до отправки ручка сверяет, что вопрос вообще стоит и
+// что выбран существующий пункт. Ничего в конфиг подписки дашборд при этом не
+// пишет: решение остаётся человеку, меняется только место, где он его
+// принимает (решение пользователя).
+func TestChatAskAnswerSendsKeys(t *testing.T) {
+	e := newTestEnv(t)
+	sent := filepath.Join(e.home, "sent.log")
+	pane := " Quick safety check: доверяешь каталогу?\n\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n"
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(pane)+`;;
+send-keys) echo "$@" >> `+sent+`;;
+ls) printf 'chat-7\n';;
+esac
+exit 0`)
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-7"))
+	c := e.loggedClient(t)
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+
+	// Вопрос виден ручкой: текст и варианты по порядку.
+	var got struct {
+		Ask struct {
+			Text    string   `json:"text"`
+			Options []string `json:"options"`
+			At      int      `json:"at"`
+		} `json:"ask"`
+	}
+	resp := doReq(t, c, "GET", at, "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вопрос клиента: %d %s", resp.StatusCode, text)
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ не разобрался: %v\n%s", err, text)
+	}
+	if len(got.Ask.Options) != 2 || got.Ask.Options[0] != "Yes, I trust this folder" {
+		t.Fatalf("варианты приехали не те: %+v", got.Ask)
+	}
+
+	// Ответ уезжает клавишами: номер пункта и Enter.
+	resp = doReq(t, c, "POST", at, `{"option": 1}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	keys := readFile(t, sent)
+	if !strings.Contains(keys, "-t =chat-7: 1") || !strings.Contains(keys, "Enter") {
+		t.Errorf("ответ подан клиенту не клавишами: %s", keys)
+	}
+
+	// Несуществующий пункт отбивается словами, а не уезжает клиенту.
+	resp = doReq(t, c, "POST", at, `{"option": 9}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(text, "вариантов") {
+		t.Errorf("выбор мимо вариантов: %d %s", resp.StatusCode, text)
+	}
+	// Разговор без нашей tmux-сессии спрашивать нечем, и это сказано словами.
+	other := "bbbb2222-2222-4222-8222-222222222222"
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+other+"/ask", "")
+	if text := body(t, resp); resp.StatusCode != http.StatusConflict ||
+		!strings.Contains(text, "не живёт в нашей tmux") {
+		t.Errorf("вопрос у чужого окна: %d %s", resp.StatusCode, text)
+	}
+}
+
+// Доверие каталогу человек подтверждает клиенту сам, и подъём в незнакомом
+// каталоге встаёт на вопросе. Дашборд говорит об этом сразу, ответом на подъём,
+// и зовёт отвечать в панели: прежде человек минуту смотрел на пустую ленту, а
+// потом шёл в tmux (замечание пользователя).
+func TestTrustNoteBeforeRaise(t *testing.T) {
+	e := newTestEnv(t)
+	dir := "/дерево/проекта"
+	was := quotaTrust
+	t.Cleanup(func() { quotaTrust = was })
+
+	quotaTrust = func(home string) map[string]bool { return map[string]bool{} }
+	note := e.s.trustNote(nil, dir)
+	if note == "" {
+		t.Fatal("про недоверенный каталог дашборд промолчал")
+	}
+	for _, want := range []string{dir, "кнопками", "не надо"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("в словах про доверие нет %q: %q", want, note)
+		}
+	}
+	// Подписка названа своим именем: профили у них разные, и доверие тоже.
+	if got := e.s.trustNote(&Harness{Name: "вторая", Home: "/дом/второй"}, dir); !strings.Contains(got, "вторая") {
+		t.Errorf("слова не называют подписку: %q", got)
+	}
+
+	// Каталог доверен: молчание тут и означает, что подъём пройдёт без вопросов.
+	quotaTrust = func(home string) map[string]bool { return map[string]bool{dir: true} }
+	if got := e.s.trustNote(nil, dir); got != "" {
+		t.Errorf("доверенный каталог назван недоверенным: %q", got)
+	}
+}

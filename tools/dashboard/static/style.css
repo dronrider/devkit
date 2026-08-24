@@ -144,6 +144,12 @@ a:hover{text-decoration:underline}
 .tipq{width:18px;height:18px;flex:none;border-radius:50%;border:1px solid var(--line2);color:var(--tx3);font:600 10.5px var(--sans);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .tipq:hover{color:var(--tx);border-color:var(--tx3)}
 .dashed{border-bottom:1px dashed var(--line2);cursor:default}
+/* вопрос клиента в панели: он встал на выборе и до ответа не делает ни хода,
+   а человек видел пустую ленту и шёл отвечать руками в tmux */
+.cask{margin-top:10px;padding:12px 14px;border:1px solid var(--wait);border-radius:11px;background:color-mix(in oklab,var(--wait) 8%,transparent)}
+.caskh{font:600 12.5px var(--sans);color:var(--tx);margin-bottom:6px}
+.casks{font:400 12px/1.55 var(--sans);color:var(--tx2)}
+.caskr{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 /* мягко моргающая рамка кнопки чата: у задачи идёт работа, и разговор с ней
    есть где смотреть. Панель при этом не открывается сама: запуск, открывавший
    её, выбрасывал человека из чужого разговора */

@@ -158,3 +158,62 @@ func TestTmuxPaneHungAnsweredWithError(t *testing.T) {
 		t.Fatalf("зависший снимок: %d %s", resp.StatusCode, text)
 	}
 }
+
+// Клиент, поднятый в незнакомом каталоге, встаёт на вопросе о доверии и до
+// ответа не делает ни хода. Панель дашборда показывала при этом пустую ленту, а
+// ответить человек мог только руками в tmux (замечание пользователя). Снимок
+// панели разбирается на вопрос и варианты: по ним панель собирает кнопки.
+func TestParseTmuxAsk(t *testing.T) {
+	// Снимок снят с живой застрявшей сессии, слово в слово.
+	pane := strings.Join([]string{
+		"────────────────────────────────────────────",
+		" Accessing workspace:",
+		"",
+		" /Users/rider/projects/xr-proxy",
+		"",
+		" Quick safety check: Is this a project you created or one you trust?",
+		"",
+		" Claude Code'll be able to read, edit, and execute files here.",
+		"",
+		" Security guide",
+		"",
+		" ❯ 1. Yes, I trust this folder",
+		"   2. No, exit",
+		"",
+		" Enter to confirm · Esc to cancel",
+	}, "\n")
+
+	ask := parseTmuxAsk(pane)
+	if len(ask.Options) != 2 {
+		t.Fatalf("вариантов разобрано %d, жду два: %+v", len(ask.Options), ask)
+	}
+	if ask.Options[0] != "Yes, I trust this folder" || ask.Options[1] != "No, exit" {
+		t.Errorf("варианты разобраны не теми словами: %+v", ask.Options)
+	}
+	if ask.At != 1 {
+		t.Errorf("курсор клиента стоит на %d, жду на первом пункте", ask.At)
+	}
+	// Текст вопроса это весь абзац над вариантами, а не последняя его строка:
+	// без каталога и самого вопроса человек читал бы одно «Security guide»
+	// (живая проверка на застрявшей сессии).
+	for _, want := range []string{"xr-proxy", "Quick safety check", "Security guide"} {
+		if !strings.Contains(ask.Text, want) {
+			t.Errorf("в тексте вопроса нет %q: %q", want, ask.Text)
+		}
+	}
+
+	// Работающий клиент ни о чём не спрашивает: вопросом считается только блок
+	// вариантов, и нумерованный список в выводе команды за него не выдаётся.
+	work := strings.Join([]string{
+		" Всё идёт своим ходом:",
+		" 1. первый шаг сделан",
+		"",
+		" пишу дальше",
+	}, "\n")
+	if got := parseTmuxAsk(work); len(got.Options) != 0 {
+		t.Errorf("вывод работающего клиента принят за вопрос: %+v", got)
+	}
+	if got := parseTmuxAsk(""); len(got.Options) != 0 {
+		t.Errorf("пустой снимок принят за вопрос: %+v", got)
+	}
+}

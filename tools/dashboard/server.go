@@ -149,6 +149,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/notifications", s.auth(s.handleNotifications))
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
+	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAsk))
+	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAskAnswer))
 	mux.HandleFunc("GET /api/tmux", s.auth(s.handleTmuxList))
 	mux.HandleFunc("GET /api/tmux/{name}", s.auth(s.handleTmuxPane))
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {

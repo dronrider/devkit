@@ -1267,6 +1267,94 @@ func (s *server) chatStuck(sid string) string {
 	return ""
 }
 
+// handleChatAsk отдаёт вопрос, на котором стоит клиент разговора. Спрашивает
+// его панель: пока клиент ждёт ответа, ленты у разговора нет вовсе, и человек
+// видел пустоту вместо вопроса, а ответить мог только руками в tmux (замечание
+// пользователя: «не хочу каждый раз чинить что-то через тебя»). Снимок панели
+// стоит подпроцесса, поэтому ручка своя и зовётся она только там, где ленты
+// нет: разбирать панель на каждый список чатов было бы дорого.
+func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
+	found, sid, name, ok := s.chatTmuxOf(w, r)
+	if !ok {
+		return
+	}
+	ask := tmuxAskOf(name)
+	if len(ask.Options) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
+			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
+		return
+	}
+	_ = found
+	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name, "ask": ask})
+}
+
+// handleChatAskAnswer отвечает клиенту за человека: номер пункта уезжает в его
+// панель клавишами. Решение остаётся за человеком, дашборд ничего не
+// подтверждает за него и в конфиг подписки не пишет: меняется только место, где
+// человек нажимает.
+func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, sid, name, ok := s.chatTmuxOf(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Option int `json:"option"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	}
+	ask := tmuxAskOf(name)
+	if len(ask.Options) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"клиент %s больше ни о чём не спрашивает: отвечать нечего", name)})
+		return
+	}
+	if body.Option < 1 || body.Option > len(ask.Options) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+			"у вопроса %d вариантов, а выбран %d", len(ask.Options), body.Option)})
+		return
+	}
+	if err := tmuxAnswer(name, body.Option); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+			"ответ не подался в tmux-сессию %s: %s", name, procErr(err))})
+		return
+	}
+	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name,
+		body.Option, ask.Options[body.Option-1])
+	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
+		"option": body.Option, "said": ask.Options[body.Option-1],
+		"message": "ответ отправлен клиенту: " + ask.Options[body.Option-1]})
+}
+
+// chatTmuxOf находит tmux-сессию разговора: имя лежит записью реестра, и без
+// него ни спросить клиента, ни ответить ему нечем.
+func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, string, string, bool) {
+	found := s.findProject(w, r, "вопрос клиента")
+	if found == nil {
+		return nil, "", "", false
+	}
+	sid := r.PathValue("sid")
+	if !sessionIDRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return nil, "", "", false
+	}
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return nil, "", "", false
+	}
+	name := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid]).Tmux
+	if name == "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"разговор %s не живёт в нашей tmux: спрашивать его клиента неоткуда", sid)})
+		return nil, "", "", false
+	}
+	return found, sid, name, true
+}
+
 // chatRaiseSay поднимает новую сессию репликой человека: разговор в списке
 // есть, а сессии за ним нет ни живой, ни мёртвой. Такой чат заводит кнопка «+»
 // без задачи, и до этой ветки реплика в нём ложилась в журнал отправленного
@@ -1302,9 +1390,40 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
 	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
-	writeJSON(w, http.StatusOK, map[string]any{"way": "start", "tmux": sess, "model": model,
+	resp := map[string]any{"way": "start", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
-			"сессии у чата не было: реплика поднята заказом новой сессии в tmux %s", sess)})
+			"сессии у чата не было: реплика поднята заказом новой сессии в tmux %s", sess)}
+	// Доверие каталогу человек подтверждает клиенту сам, и до тех пор клиент
+	// стоит на вопросе, не делая ни хода. Сказать об этом надо сразу, а не
+	// оставлять человека перед пустой лентой на минуту: вопрос придёт в панель
+	// кнопками, и об этом тут же и написано.
+	if note := s.trustNote(s.chatHarnessOf(model), found.Path); note != "" {
+		resp["trust"] = note
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// trustNote отвечает словами, если клиент подписки ещё не знает этого каталога.
+// Доверие лежит в конфиге профиля (`~/.claude.json` его дома, поле записи
+// проекта), и читается оно тем же разбором, каким его читает выбор каталога для
+// снимка квоты. Пусто значит «клиент каталогу доверяет»: молчание тут и
+// означает, что подъём пройдёт без вопросов. Ничего в конфиг дашборд при этом
+// не пишет: решение остаётся человеку, меняется только место, где он его
+// принимает (решение пользователя).
+func (s *server) trustNote(h *Harness, dir string) string {
+	home := s.cfg.Home
+	if h != nil && h.Home != "" {
+		home = h.Home
+	}
+	if quotaTrust(home)[dir] {
+		return ""
+	}
+	who := "клиент"
+	if h != nil && h.Name != "" {
+		who = "клиент подписки " + h.Name
+	}
+	return fmt.Sprintf("%s этому каталогу ещё не доверяет (%s): сессия встанет на вопросе о доверии, "+
+		"ответить можно прямо тут кнопками, в терминал идти не надо", who, dir)
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём

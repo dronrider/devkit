@@ -7879,6 +7879,18 @@ function chatPanel(project, st) {
     const name = names.length ? names[names.length - 1] : st.lift;
     if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
   }
+  // Вопрос клиента кнопками: поднятый в незнакомом каталоге клиент встаёт на
+  // вопросе о доверии, а следом на вопросе про внешние импорты правил, и до
+  // ответа не делает ни хода. Человек этих вопросов не видел вовсе: лента
+  // пустая, реплика висит недоставленной, а ответить можно было только руками
+  // в tmux (замечание пользователя: «не хочу каждый раз чинить что-то через
+  // тебя»). Блок стоит над полем ввода и обновляется опросом, пока панель
+  // открыта.
+  const askBox = el("div", "cask");
+  askBox.hidden = true;
+  wrap.append(askBox);
+  watchClientAsk(project, st, askBox);
+
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
   // отправки, и родной уголок стоял поверх неё, а расти полю надо вверх, в
@@ -8233,6 +8245,64 @@ function chatPanel(project, st) {
     }).catch(console.error);
   }
   return wrap;
+}
+
+// Как часто панель переспрашивает клиента о вопросе, на котором он стоит.
+// Вопрос приходит не мгновенно: клиент рисует его через секунду-другую после
+// подъёма, и без опроса человек снова остался бы перед пустой лентой.
+const ASK_POLL = 3000;
+
+// Опрос вопроса клиента: пока панель открыта и вопрос не отвечен, она
+// переспрашивает сервер. Снимок панели tmux стоит подпроцесса, поэтому ходит
+// опрос только у разговора с живой tmux-сессией дашборда: у чужого окна
+// спрашивать нечего и нечем.
+function watchClientAsk(project, st, box) {
+  const sid = st.sid;
+  if (!sid || !st.entry || !st.entry.tmux) return;
+  let stop = false;
+  chatLive.push(() => { stop = true; });
+  const tick = async () => {
+    if (stop) return;
+    const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
+    if (stop) return;
+    const ask = (r.ok && r.body.ask) || null;
+    paintClientAsk(project, st, box, ask, tick);
+    if (!ask) setTimeout(() => { tick().catch(console.error); }, ASK_POLL);
+  };
+  tick().catch(console.error);
+}
+
+// Блок вопроса: сам вопрос словами и кнопка на каждый вариант. Ответ уезжает
+// клиенту клавишами, а дашборд ничего за человека не подтверждает и в конфиг
+// подписки не пишет: решение остаётся его, меняется только место, где он его
+// принимает.
+function paintClientAsk(project, st, box, ask, again) {
+  if (!ask || !(ask.options || []).length) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  box.hidden = false;
+  const head = el("div", "caskh");
+  head.append(el("b", "", "Клиент ждёт ответа"));
+  box.replaceChildren(head, el("div", "casks", ask.text || ""));
+  const row = el("div", "caskr");
+  (ask.options || []).forEach((word, i) => {
+    const btn = el("button", "btn btn-sm" + (i === 0 ? " btn-acc" : ""), word);
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      for (const b of row.children) b.disabled = true;
+      const r = await api(chatsURL(st.project || project) + "/" +
+        encodeURIComponent(st.sid) + "/ask", { method: "POST", body: { option: i + 1 } });
+      sayResult(r.body.message || r.body.error || "", !r.ok);
+      // Ответ отправлен, и панель продолжает ждать подъёма: следующий вопрос
+      // (внешние импорты правил идут вторыми) придёт сюда же.
+      box.replaceChildren(el("div", "casks", "ответ отправлен, ждём клиента..."));
+      setTimeout(() => { again().catch(console.error); }, ASK_POLL);
+    });
+    row.append(btn);
+  });
+  box.append(row);
 }
 
 // Какой разговор сейчас стоит в панели: «проект|адрес».

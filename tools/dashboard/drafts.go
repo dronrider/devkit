@@ -368,7 +368,7 @@ func (s *server) handleDraftDrop(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, удалять нечего", id, found.Name, rel)})
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "drop", id, "--reason", reason)
+	out, code, err := s.taskctlWrite(found.Path, "draft", "drop", id, "--reason", reason)
 	if err != nil {
 		s.logf("черновик %s в %s не удалился: %v", id, found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

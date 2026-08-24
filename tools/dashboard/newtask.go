@@ -64,7 +64,7 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	// Текст едет на вход подпроцесса, а не аргументом: аргумент проходит разбор
 	// флагов и стража подкоманд taskctl, и мысль из одного слова латиницей либо
 	// начатая с дефиса потерялась бы там целиком.
-	out, code, err := taskctlDoIn(found.Path, text, "draft")
+	out, code, err := s.taskctlWriteIn(found.Path, text, "draft")
 	if err != nil {
 		s.logf("черновик в %s не записался: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -191,7 +191,7 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Кривой ранг, пустой заголовок и незнакомый тип отбивает утилита своими
 	// словами: правду про формат строки держит она.
-	out, code, err := taskctlDo(found.Path, args...)
+	out, code, err := s.taskctlWrite(found.Path, args...)
 	if err != nil {
 		s.logf("строка в %s не завелась: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

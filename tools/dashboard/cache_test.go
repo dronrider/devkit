@@ -377,3 +377,48 @@ func readFileString(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// Своя правка снимает память ответа taskctl сразу. Отпечаток файла доски
+// сторожит чужие правки (агент в соседнем окне, git), а свои закрываются
+// сбросом: ответ ручки уже вернулся, человек смотрит на экран, и ждать, пока
+// память признает правку своей, ему нечем (замечание пользователя про
+// «приходится обновлять страницу» после заведения строки).
+func TestBoardMemoDroppedOnOwnWrite(t *testing.T) {
+	e := newTestEnv(t)
+	// Фикстура печатает доску из своего файла состояния и файла доски не
+	// трогает вовсе: так под проверкой оказывается сама память, а не отпечаток
+	// под ней.
+	state := filepath.Join(e.home, "board.json")
+	row := func(id string) string {
+		return `{"prefix":"XR","sections":[{"key":"backlog","title":"Backlog","rows":[` +
+			`{"id":"` + id + `","title":"строка","type":"task","r":30,"cost":"-"}]}]}`
+	}
+	if err := os.WriteFile(state, []byte(row("XR-001")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("cat %q", state))
+
+	if got, err := e.s.projectBoard(e.proj); err != nil || !strings.Contains(string(got), "XR-001") {
+		t.Fatalf("первый ответ доски %s (%v)", got, err)
+	}
+	// Доска сменилась мимо своего файла: память об этом не знает и держит
+	// прежний ответ. Это её штатная работа, и стенд её тут закрепляет.
+	if err := os.WriteFile(state, []byte(row("XR-010")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.s.projectBoard(e.proj); strings.Contains(string(got), "XR-010") {
+		t.Fatalf("память доски не сработала вовсе, стенд не про то: %s", got)
+	}
+
+	// Своя пишущая команда: после неё ответ обязан быть свежим.
+	if _, _, err := e.s.taskctlWrite(e.proj, "add", "--title", "Десятая"); err != nil {
+		t.Fatalf("пишущая команда не отработала: %v", err)
+	}
+	got, err := e.s.projectBoard(e.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "XR-010") {
+		t.Errorf("после своей правки доска пришла из памяти: %s", got)
+	}
+}

@@ -288,6 +288,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow.rwait .ttl{color:var(--tx2)}
 .trow{display:grid;grid-template-columns:66px 1fr auto;gap:7px;align-items:center;padding:11px 16px 11px 26px;border-top:1px solid var(--line);cursor:pointer}
 .trow:hover{background:var(--bg2)}
+/* Только что заведённая строка: полоса слева и подложка держатся до следующей
+   перерисовки списка, чтобы человек нашёл её глазами среди соседей. */
+.trow.fresh,.srow.fresh{background:var(--bg2);box-shadow:inset 3px 0 0 var(--acc)}
 .trow:first-child{border-top:none}
 /* кружок состояния висит слева от номера, в отступе строки: встань он в поток,
    номера строк с работой и без разъехались бы по колонке */

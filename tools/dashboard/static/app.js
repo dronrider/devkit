@@ -1030,7 +1030,7 @@ function rowAction(project, row, sect) {
 // ждут.
 function renderRow(project, row, sect, opts) {
   const quiet = Boolean(opts && opts.quiet);
-  const tr = el("div", "trow" + (quiet ? " rwait" : ""));
+  const tr = freshMark(el("div", "trow" + (quiet ? " rwait" : "")), row.id);
   // Кружок состояния живёт внутри ячейки номера, а не отдельной колонкой:
   // сетка строки трёхколоночная, и четвёртый элемент разъехался бы по ней.
   const idc = el("span", "id");
@@ -1082,7 +1082,22 @@ function renderRow(project, row, sect, opts) {
 // строки. У строки, где не изменилось ничего, узел переживает обновление
 // нетронутым вместе с фокусом на кнопке.
 function rowSign(row, sect) {
-  return JSON.stringify(row) + "|" + sect + "|" + harnessSign();
+  return JSON.stringify(row) + "|" + sect + "|" + harnessSign() + (freshRow === row.id ? "|fresh" : "");
+}
+
+// Только что заведённая строка. Заводят её с формы, а ищут потом глазами среди
+// соседей, и пометка отвечает на вопрос «где она»: у доски строка стоит по
+// рангу, у накопителя по времени, и в обоих списках новая запись оказывается не
+// там, куда смотрит человек (замечание пользователя). Метка одноразовая: её
+// снимает та же отрисовка, что её показала, и следующая перерисовка списка
+// оставляет строку обычной.
+let freshRow = "";
+
+function freshMark(node, id) {
+  if (!id || id !== freshRow) return node;
+  node.classList.add("fresh");
+  freshRow = "";
+  return node;
 }
 
 // Отпечаток списка подписок: им нарисована кнопка запуска, и строка, не
@@ -8044,7 +8059,7 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 // Строка накопителя ведёт на экран записи, а кнопка груминга остаётся и в ней:
 // накопитель разбирают пачкой, не заходя внутрь каждой записи (LLD DK-328).
 function draftRow(project, d) {
-  const row = el("div", "srow clicky");
+  const row = freshMark(el("div", "srow clicky"), d.id);
   row.append(el("span", "id", d.id));
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
   // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
@@ -8138,7 +8153,8 @@ async function renderDrafts(project) {
   // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
   // строки, что изменились, и список не уезжает из-под пальца.
   for (const d of drafts) {
-    rows.push({ key: d.id, sign: JSON.stringify(d), make: () => draftRow(project, d) });
+    rows.push({ key: d.id, sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : ""),
+      make: () => draftRow(project, d) });
   }
   items.push({
     key: "drafts-card",
@@ -9056,9 +9072,18 @@ function draftDone(project, done) {
     resetNewForm(project);
     renderNew(project);
   });
+  // Дорога в накопитель с самой карточки: записанное лежит там, а не на доске,
+  // и без этой кнопки за своей же записью человек шёл через доску и таб
+  // «Черновики» (замечание пользователя). Список читается свежим ответом, и
+  // запись в нём стоит помеченной.
+  const heap = el("button", "btn btn-acc", "В накопитель");
+  heap.addEventListener("click", () => {
+    goKeepingChat(project + "/drafts");
+    refresh().catch(console.error);
+  });
   const board = el("button", "btn", "На доску");
   board.addEventListener("click", () => { goKeepingChat(project); });
-  btns.append(again, board);
+  btns.append(again, heap, board);
   box.append(btns);
   card.append(box);
   groups.append(card);
@@ -9164,6 +9189,10 @@ function renderNew(project) {
         makeDraft(project, text, [send]).then((done) => {
           if (!done) return;
           resetNewForm(project);
+          // Записанное ищут в накопителе, и метка ведёт туда глаз: список стоит
+          // по времени, а свежая запись оказывается не там, куда человек
+          // смотрит.
+          freshRow = done.id || "";
           draftDone(project, done);
         }).catch(console.error);
         return;
@@ -9179,13 +9208,24 @@ function renderNew(project) {
         body.barrier = newForm.barrier;
         body.reason = newForm.reason.trim();
       }
-      makeTask(project, body, [send]).then((done) => {
+      makeTask(project, body, [send]).then(async (done) => {
         if (!done) return;
         resetNewForm(project);
         // Заведённая строка открывается сразу: с телефона следующий шаг это
-        // дописать постановку, а искать её глазами по Backlog неудобно.
-        if (done.id) goKeepingChat(project + "/" + done.id);
-        else renderNew(project);
+        // дописать постановку, а искать её глазами по Backlog неудобно. На
+        // доске она при этом уже стоит помеченной: возврат туда рисует список
+        // свежим ответом, а не тем, что дашборд помнил до заведения.
+        freshRow = done.id || "";
+        if (!done.id) {
+          renderNew(project);
+          return;
+        }
+        goKeepingChat(project + "/" + done.id);
+        // Перерисовка идёт своим ходом, а не событием адреса: адрес меняется не
+        // всегда (заводили со своего же экрана), и тогда события не приходит
+        // вовсе, а экран остаётся с прежними данными (замечание пользователя
+        // про «приходится обновлять страницу»).
+        await refresh();
       }).catch(console.error);
     },
   });

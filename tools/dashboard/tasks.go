@@ -288,6 +288,24 @@ func taskctlDo(dir string, args ...string) (string, int, error) {
 	return taskctlDoIn(dir, "", args...)
 }
 
+// taskctlWrite это taskctlDo для команд, которые доску меняют. Память ответа по
+// этому проекту снимается тем же движением: правка пришла нашей рукой, и ждать,
+// пока её заметит отпечаток файла, незачем. Сброс идёт и после отказа утилиты:
+// половина команд успевает тронуть доску до того, как ответить ненулевым кодом.
+func (s *server) taskctlWrite(dir string, args ...string) (string, int, error) {
+	out, code, err := taskctlDo(dir, args...)
+	s.forgetBoard(dir)
+	return out, code, err
+}
+
+// taskctlWriteIn это taskctlWrite с текстом на входе подпроцесса: так уезжает
+// запись накопителя.
+func (s *server) taskctlWriteIn(dir, stdin string, args ...string) (string, int, error) {
+	out, code, err := taskctlDoIn(dir, stdin, args...)
+	s.forgetBoard(dir)
+	return out, code, err
+}
+
 // taskctlDoIn это taskctlDo с текстом на входе подпроцесса: так уезжает текст
 // черновика (разбор аргументов и страж подкоманд его бы не пропустили).
 func taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
@@ -696,7 +714,7 @@ func closedTaskPaths(dir, id string) []string {
 // того, что и так проверено (DK-289). Агентский вид остаётся за сессией, там
 // закрытие это работа.
 func (s *server) closeFromCheck(w http.ResponseWriter, found *Project, id string) {
-	out, code, err := taskctlDo(found.Path, "close", id)
+	out, code, err := s.taskctlWrite(found.Path, "close", id)
 	if err != nil {
 		s.logf("закрытие %s в %s не удалось: %v", id, found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -793,7 +811,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": refusal})
 		return
 	}
-	out, code, err := taskctlDo(found.Path, args...)
+	out, code, err := s.taskctlWrite(found.Path, args...)
 	if err != nil {
 		s.logf("правка строки %s в %s не удалась: %v", id, found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -1008,7 +1026,7 @@ func (s *server) handleTaskDepRm(w http.ResponseWriter, r *http.Request) {
 // строку с незакрытой зависимостью и прочие рубежи держит утилита, её слова
 // и уезжают на экран.
 func (s *server) depChange(w http.ResponseWriter, found *Project, id, dep, sub string) {
-	out, code, err := taskctlDo(found.Path, "dep", sub, id, dep)
+	out, code, err := s.taskctlWrite(found.Path, "dep", sub, id, dep)
 	if err != nil {
 		s.logf("зависимость %s от %s в %s (%s) не прошла: %v", id, dep, found.Name, sub, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

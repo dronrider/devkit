@@ -548,7 +548,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 			// кольцо: у соседнего разговора задачи план свой, и смешанные они
 			// читались бы как один список.
 			if p, ok := paths[e.ID]; ok {
-				out.Plan = planOf(s.cfg.Home, e.ID, e.Tmux, p)
+				out.Plan = planOf(s.cfg.Home, e.ID, e.Tmux, p, s.now())
 			}
 			if pulseTesting(step.Tool + " " + step.About) {
 				testing = true

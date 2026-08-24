@@ -2108,3 +2108,94 @@ func TestOrderRulesNoteNamesAgentRules(t *testing.T) {
 		t.Fatalf("под подписью не сами инструкции: %q", note.Text)
 	}
 }
+
+// Работы сессии видны по машинному следу, а не по дисциплине агента. Кольцо
+// показывало план из файла, а файл пишет сам агент правилом заказа: раздал
+// работу и не переписал файл, значит кольцо врёт. Так было трижды. Боковые
+// журналы субагентов заводит харнес на каждый вызов, и каждый такой журнал это
+// работа: подпись у неё из заказа, состояние из того, пишется ли журнал ещё.
+func TestPlanTakesWorksFromSubLogs(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	// Ответ вызову субагента в транскрипте: он и говорит, что работа вернулась.
+	answered := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":`+
+		`[{"type":"tool_result","tool_use_id":"tool-done1","content":"готово"},`+
+		`{"type":"tool_result","tool_use_id":"tool-done1b","content":"готово"}]},"timestamp":%q}`,
+		now.Add(-time.Minute).Format(time.RFC3339)) + "\n"
+	path := writeSession(t, e.home, e.proj, "", "bbb-2", transcriptFixture+answered, now)
+
+	// Журнал брошенной работы: ответа не было, и журнал давно молчит.
+	old := writeSubLog(t, path, "old1", "первая ходка",
+		sideLine("сделал", now.Add(-2*time.Hour).Format(time.RFC3339)))
+	// Журнал идущей работы: ответа вызову нет, а журнал пишется.
+	fresh := writeSubLog(t, path, "new1", "вторая ходка",
+		sideLine("иду", now.Add(-5*time.Second).Format(time.RFC3339)))
+	// Журнал вернувшейся работы: ответ вызову пришёл, и журнал молчит.
+	done := writeSubLog(t, path, "done1", "третья ходка",
+		sideLine("отчитался", now.Add(-10*time.Minute).Format(time.RFC3339)))
+	// Журнал работы, которую продолжили репликой: ответ на первый вызов есть, а
+	// работа идёт дальше и пишет. Живой случай: сессия-диспетчер шлёт субагенту
+	// новое задание через SendMessage, и по одному ответу такая работа
+	// считалась бы закрытой прямо посреди хода.
+	again := writeSubLog(t, path, "done1b", "четвёртая ходка",
+		sideLine("продолжаю", now.Add(-3*time.Second).Format(time.RFC3339)))
+	for at, file := range map[time.Time]string{
+		now.Add(-2 * time.Hour):    old,
+		now.Add(-5 * time.Second):  fresh,
+		now.Add(-10 * time.Minute): done,
+		now.Add(-3 * time.Second):  again,
+	} {
+		if err := os.Chtimes(file, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Файла плана нет вовсе, и это не повод показывать пустоту.
+	plan := planOf(e.home, "bbb-2", "", path, now)
+	if len(plan) != 4 {
+		t.Fatalf("без файла плана работ из журналов %d, ждал четыре: %+v", len(plan), plan)
+	}
+	byText := map[string]string{}
+	for _, it := range plan {
+		byText[it.Text] = it.State
+	}
+	if byText["первая ходка"] != "completed" {
+		t.Errorf("брошенная работа названа состоянием %q, ждал completed: %+v", byText["первая ходка"], plan)
+	}
+	if byText["вторая ходка"] != "in_progress" {
+		t.Errorf("идущая работа названа состоянием %q, ждал in_progress: %+v", byText["вторая ходка"], plan)
+	}
+	// Свежий журнал сам по себе работы не продлевает: ответ вызову пришёл,
+	// значит она вернулась, чем бы её журнал ни занимался после.
+	if byText["третья ходка"] != "completed" {
+		t.Errorf("вернувшаяся работа названа состоянием %q, ждал completed: %+v", byText["третья ходка"], plan)
+	}
+	if byText["четвёртая ходка"] != "in_progress" {
+		t.Errorf("продолженная репликой работа названа состоянием %q, ждал in_progress: %+v",
+			byText["четвёртая ходка"], plan)
+	}
+
+	// Файл плана есть, но про вторую ходку в нём не написано: работа из журнала
+	// от этого не теряется, а встаёт наравне с пунктами.
+	if err := os.MkdirAll(planDir(e.home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := planPath(e.home, "bbb-2")
+	if err := os.WriteFile(file, []byte(`[{"text":"первая ходка","state":"pending"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan = planOf(e.home, "bbb-2", "", path, now)
+	if len(plan) != 4 {
+		t.Fatalf("работ в кольце %d, ждал четыре (пункт плана и три работы мимо него): %+v", len(plan), plan)
+	}
+	if plan[0].Text != "первая ходка" {
+		t.Errorf("пункт плана уехал с первого места: %+v", plan)
+	}
+	byText = map[string]string{}
+	for _, it := range plan {
+		byText[it.Text] = it.State
+	}
+	if byText["вторая ходка"] != "in_progress" {
+		t.Errorf("работа мимо плана потеряна или без состояния: %+v", plan)
+	}
+}

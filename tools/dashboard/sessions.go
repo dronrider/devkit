@@ -1609,7 +1609,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
 	// План сессии едет вместе с лентой: экран задачи показывает его блоком, а
 	// считать его на клиенте значило бы второй разбор транскрипта.
-	if plan := planOf(s.home(), sid, s.sessionTmux(sid), path); plan != nil {
+	if plan := planOf(s.home(), sid, s.sessionTmux(sid), path, s.now()); plan != nil {
 		resp["plan"] = plan
 	}
 	if total == 0 {
@@ -1752,7 +1752,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// каталоге не смотрятся вовсе.
 			if now := planStamp(s.home(), sid, tmux); now != planAt {
 				planAt = now
-				sendPlan(w, f, planOf(s.home(), sid, tmux, path))
+				sendPlan(w, f, planOf(s.home(), sid, tmux, path, s.now()))
 			}
 			// Новый субагент заводит свой файл, и каталог журналов меняется:
 			// по этой метке набор и пересматривается, без чтения мета-файлов
@@ -1842,7 +1842,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// не ленту, а блок плана и кольцо, поэтому в поток реплик его
 			// класть нечем.
 			if todo, _ := sessionPlan(raw); todo != nil {
-				sendPlan(w, f, planOf(s.home(), sid, tmux, path))
+				sendPlan(w, f, planOf(s.home(), sid, tmux, path, s.now()))
 			}
 		}
 	}
@@ -2292,11 +2292,189 @@ func readPlanFile(path string) ([]planItem, time.Time) {
 	return out, fi.ModTime()
 }
 
-// planOf сводит два источника плана: файл сессии и последний вызов TodoWrite в
-// её транскрипте. Побеждает свежий: харнес в обход разрешений TodoWrite не
-// даёт вовсе, и файл там единственная дорога, а где инструмент работает,
-// прежний способ остаётся живым.
-func planOf(home, sid, tmux, path string) []planItem {
+// subDoneLimit это потолок закрытых работ из журналов: у сессии, которая
+// делегирует третий день, журналов десятки, а кольцо отвечает на вопрос «чем
+// занята работа сейчас». Закрытые режутся до последних, живые не режутся вовсе.
+const subDoneLimit = 6
+
+// subStart это время первой записи бокового журнала, то есть время, когда
+// работа ушла субагенту. Порядок работ считается по нему, а не по имени файла:
+// в имени стоит id вызова, а не время. Головы файла хватает: первая запись
+// лежит в начале, а читать журнал целиком ради одной метки незачем.
+func subStart(file string) time.Time {
+	f, err := os.Open(file)
+	if err != nil {
+		return time.Time{}
+	}
+	defer f.Close()
+	head := make([]byte, 8<<10)
+	n, _ := f.Read(head)
+	for _, ln := range strings.Split(string(head[:n]), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		var rec struct {
+			Timestamp string `json:"timestamp"`
+		}
+		if json.Unmarshal([]byte(ln), &rec) != nil {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
+			return at
+		}
+	}
+	return time.Time{}
+}
+
+// subClosed собирает id вызовов, у которых в транскрипте сессии есть ответ.
+// Ответ пришёл, значит работа вернулась: это машинный признак закрытой работы,
+// и он точнее свежести журнала (субагент, который думает третью минуту, в
+// журнал не пишет, а работать не перестал).
+func subClosed(data []byte) map[string]bool {
+	out := map[string]bool{}
+	for _, ln := range strings.Split(string(data), "\n") {
+		if !strings.Contains(ln, "tool_result") {
+			continue
+		}
+		var rec struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(ln), &rec) != nil {
+			continue
+		}
+		var blocks []struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				out[b.ToolUseID] = true
+			}
+		}
+	}
+	return out
+}
+
+// subFresh и subStale это два срока молчания журнала. Первый отделяет работу,
+// которая прямо сейчас пишет, от закончившей: субагента продолжают репликой
+// (SendMessage), и ответ на первый вызов у него давно есть, а работает он
+// дальше, поэтому свежий журнал сильнее ответа. Второй срок закрывает работу,
+// у которой ответа не было вовсе: сессию сняли посреди хода, ответа уже не
+// будет, и висеть такой работе идущей вечно незачем.
+const (
+	subFresh = 2 * time.Minute
+	subStale = 30 * time.Minute
+)
+
+// subWorks собирает работы сессии из её боковых журналов. Знание тут машинное:
+// журнал на каждый вызов субагента заводит сам харнес, и показ перестаёт
+// зависеть от того, переписал ли агент файл плана. Держаться на его дисциплине
+// показ уже не может: работу раздали, файл не тронули, и кольцо врало
+// (замечание пользователя, случай третий). Подпись работе даёт заказ из
+// мета-файла, а состояние ответ на её вызов в транскрипте: есть ответ, работа
+// вернулась, нет ответа и журнал ещё пишется, работа идёт.
+func subWorks(path string, data []byte, now time.Time) []planItem {
+	logs := subLogs(path)
+	if len(logs) == 0 {
+		return nil
+	}
+	closed := subClosed(data)
+	type work struct {
+		item planItem
+		at   time.Time
+	}
+	list := make([]work, 0, len(logs))
+	for id, log := range logs {
+		quiet := subStale + time.Hour
+		if fi, err := os.Stat(log.File); err == nil {
+			quiet = now.Sub(fi.ModTime())
+		}
+		// Работа идёт, пока её журнал пишется; ответа на вызов при этом может и
+		// не быть (работа ещё не вернулась) и может быть (её продолжают
+		// репликой). Молчащая работа закрыта: ответом либо сроком.
+		state := "completed"
+		switch {
+		case quiet <= subFresh:
+			state = "in_progress"
+		case !closed[id] && quiet <= subStale:
+			state = "in_progress"
+		}
+		list = append(list, work{item: planItem{Text: truncate(log.Label, 200), State: state},
+			at: subStart(log.File)})
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].at.Before(list[j].at) })
+	// Закрытое режется, живое остаётся целиком: старая работа это история, а
+	// вопрос к кольцу про сейчас.
+	done := 0
+	for _, w := range list {
+		if w.item.State == "completed" {
+			done++
+		}
+	}
+	skip := done - subDoneLimit
+	out := make([]planItem, 0, len(list))
+	for _, w := range list {
+		if w.item.State == "completed" && skip > 0 {
+			skip--
+			continue
+		}
+		out = append(out, w.item)
+	}
+	return out
+}
+
+// planKey сводит текст пункта к сравнимому виду: пункт плана и заказ субагента
+// пишет один и тот же агент, но пробелы и регистр у них расходятся.
+func planKey(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+// withSubWorks дополняет план работами из журналов. Пункт, у которого нашлась
+// своя работа, берёт состояние у неё: журнал знает про ход работы больше, чем
+// список, переписанный руками агента. Работа, которой в плане нет вовсе, встаёт
+// наравне с пунктами: раздали и не записали это ровно тот случай, ради которого
+// журналы сюда и приехали.
+func withSubWorks(plan, subs []planItem) []planItem {
+	if len(subs) == 0 {
+		return plan
+	}
+	out := append([]planItem{}, plan...)
+	for _, sub := range subs {
+		key := planKey(sub.Text)
+		hit := -1
+		for i := range out {
+			own := planKey(out[i].Text)
+			if own == "" || key == "" {
+				continue
+			}
+			if own == key || strings.Contains(own, key) || strings.Contains(key, own) {
+				hit = i
+				break
+			}
+		}
+		if hit < 0 {
+			out = append(out, sub)
+			continue
+		}
+		if sub.State == "in_progress" {
+			out[hit].State = "in_progress"
+		}
+	}
+	return out
+}
+
+// planOf сводит три источника: файл плана сессии, последний вызов TodoWrite в
+// её транскрипте и работы из боковых журналов субагентов. Первые два это слова
+// агента, и побеждает свежий (харнес в обход разрешений TodoWrite не даёт
+// вовсе, и файл там единственная дорога, а где инструмент работает, прежний
+// способ остаётся живым). Третий это машинный след, и он не спорит со словами,
+// а дополняет их: работа, которую агент раздал и не записал, всё равно видна.
+func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 	var filePlan []planItem
 	var fileAt time.Time
 	// Домов тут два: настоящий дом человека, куда правило велит писать план, и
@@ -2317,18 +2495,22 @@ func planOf(home, sid, tmux, path string) []planItem {
 			filePlan, fileAt = plan, at
 		}
 	}
+	// Транскрипт читается один раз на оба вопроса: и про план из TodoWrite, и
+	// про закрытые вызовы субагентов.
 	data, err := os.ReadFile(path)
+	subs := subWorks(path, data, now)
 	if err != nil {
-		return filePlan
+		return withSubWorks(filePlan, subs)
 	}
 	todoPlan, todoAt := sessionPlan(data)
-	if filePlan == nil {
-		return todoPlan
+	said := filePlan
+	switch {
+	case filePlan == nil:
+		said = todoPlan
+	case todoPlan != nil && todoAt.After(fileAt):
+		said = todoPlan
 	}
-	if todoPlan == nil || !todoAt.After(fileAt) {
-		return filePlan
-	}
-	return todoPlan
+	return withSubWorks(said, subs)
 }
 
 // mainSrc это имя источника для самого транскрипта сессии в ключах записей.

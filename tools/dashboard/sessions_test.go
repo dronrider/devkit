@@ -1055,7 +1055,7 @@ func TestLiveWorksSessions(t *testing.T) {
 		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session",
 			Session: "live-task", Model: chatModelDefault},
 	}
-	if got := boardWorks(t, e); !reflect.DeepEqual(got, want) {
+	if got := bareWorks(boardWorks(t, e)); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
 	}
 }
@@ -1086,7 +1086,7 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 			sessions = append(sessions, w)
 		}
 	}
-	if !reflect.DeepEqual(sessions, want) {
+	if !reflect.DeepEqual(bareWorks(sessions), want) {
 		t.Errorf("работы из сессий:\n%+v\nожидал:\n%+v", sessions, want)
 	}
 }
@@ -1112,7 +1112,7 @@ func TestLiveWorksSessionForeignTask(t *testing.T) {
 			sessions = append(sessions, w)
 		}
 	}
-	if !reflect.DeepEqual(sessions, want) {
+	if !reflect.DeepEqual(bareWorks(sessions), want) {
 		t.Errorf("работа с чужой задачей:\n%+v\nожидал:\n%+v", sessions, want)
 	}
 }
@@ -1164,6 +1164,18 @@ func TestLiveWorksGroomOrderFollowsTmux(t *testing.T) {
 }
 
 // boardWorks читает живые работы проекта из ответа доски.
+// bareWorks снимает с работ состояние и время последнего хода: их считают живые
+// источники (реестр клиента, транскрипт, признак ожидания), в сверке состава
+// работ им не место, а своя проверка у них есть (TestWorkLiveState).
+func bareWorks(list []Work) []Work {
+	out := make([]Work, 0, len(list))
+	for _, w := range list {
+		w.Live, w.Moved = "", 0
+		out = append(out, w)
+	}
+	return out
+}
+
 func boardWorks(t *testing.T, e *testEnv) []Work {
 	t.Helper()
 	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects/demo/board", "")

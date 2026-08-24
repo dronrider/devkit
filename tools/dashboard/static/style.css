@@ -384,6 +384,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* подтверждение удаления по макету «12 Груминг черновика»: причина своей
    строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
 .dconfirm{display:flex;flex-direction:column;gap:10px;width:100%}
+/* пачка снятия простаивающих сессий: список того, что уйдёт, стоит под кнопкой */
+.swbox{width:100%}
+.swbox .dconfirm{padding:12px 0 2px}
 .dconfirm .drow{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .dwhyin{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
@@ -400,6 +403,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .arow:first-child{border-top:none}
 .arow .dot{margin-top:6px}
 .arow .dot-other{background:var(--check)}
+/* кружки состояния работы: зелёный только у идущего хода, ожидание янтарное,
+   простой серый. Зелёным горела всякая живая сессия, и молчащие часами окна
+   выглядели работающими */
+.dot-wait{background:var(--wait)}
+.dot-idle{background:var(--tx3)}
+@media (prefers-reduced-motion:no-preference){
+  .dot-wait{animation:dkwait 2.2s ease-out infinite}
+}
 .ab{flex:1;min-width:0}
 .ab .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .ab .l1 .tt{font:500 14px var(--sans);color:var(--tx)}

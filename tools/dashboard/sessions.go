@@ -491,6 +491,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 	works := []Work{}
 	cutoff := s.now().Add(-sessionLiveTTL)
 	binds := s.binds()
+	bySid, byTmux := s.livePeers()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.
 		if f.mod.Before(cutoff) {
@@ -561,9 +562,12 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		// Своя работа это та, чью tmux-сессию поднял дашборд: её имя лежит в
 		// записи реестра. У окна человека имени нет вовсе.
 		tmux := binds[f.ID].Tmux
+		name := strings.SplitN(tmux, ":", 2)[0]
+		live, moved := s.workState(projPath, task, f.ID, name, bySid, byTmux)
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: "session", Session: f.ID, Note: note, Talk: talk,
-			Own: tmux != "", Model: s.chatModel(f.ID, tmux)})
+			Own: tmux != "", Model: s.chatModel(f.ID, tmux),
+			Live: live, Moved: moved})
 	}
 	return works
 }

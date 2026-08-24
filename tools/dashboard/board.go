@@ -201,6 +201,99 @@ type Work struct {
 	// не берётся (leadsTask). На экране «Агенты» такая строка стоит наравне с
 	// остальными, ей нужны те же две дороги.
 	Talk bool `json:"talk,omitempty"`
+	// Live это состояние работы словом: busy (ход идёт), waiting (агент
+	// спросил и ждёт человека), idle (сессия жива, а хода нет дольше рубежа),
+	// dead (сессии не видно). Прежде экран красил зелёным всякую живую сессию,
+	// и три десятка окон, молчавших часами, выглядели работающими: по экрану
+	// нельзя было сказать, чем занята машина (замечание пользователя по
+	// снимку). Пусто у работы, о состоянии которой сказать нечего.
+	Live string `json:"live,omitempty"`
+	// Moved это время последнего хода в unix-секундах: по нему экран говорит
+	// давность словами. Ноль значит «времени не видно», и экран тогда молчит, а
+	// не показывает эпоху, как показывал её реестр без поля времени.
+	Moved int64 `json:"moved,omitempty"`
+}
+
+// Состояния работы. Слова машинные, человек их не читает: на экран они
+// переводятся подписью строки.
+const (
+	workBusy = "busy"
+	workWait = "waiting"
+	workIdle = "idle"
+	workDead = "dead"
+)
+
+// workIdleAfter это рубеж простоя: работа, чей последний ход старше него,
+// работой не считается, как бы жива ни была её сессия. Порог назван тут один
+// раз на весь дашборд: разъехавшись, кружок строки и слова подсказки мерили бы
+// простой по-разному.
+const workIdleAfter = 20 * time.Minute
+
+// livePeers раскладывает реестр живых сессий клиента по двум ключам: по id
+// сессии и по имени tmux. Имя в записи стоит полным адресом пары
+// («task-DK-499:@896.%896»), и ключом берётся его первое звено.
+func (s *server) livePeers() (bySid, byTmux map[string]peer) {
+	bySid = s.peers()
+	byTmux = map[string]peer{}
+	for _, p := range bySid {
+		if name := strings.SplitN(p.Tmux, ":", 2)[0]; name != "" {
+			byTmux[name] = p
+		}
+	}
+	return bySid, byTmux
+}
+
+// workState называет состояние работы и время её последнего хода. Источников
+// три, и они ранжированы: признак ожидания во входе разговора (его кладёт
+// taskctl ask, и он старше всего), транскрипт (по нему считается сам ход, и
+// только он честен у окон vscode, где состояния в реестре нет вовсе) и запись
+// реестра клиента с её состоянием и временем касания.
+func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[string]peer) (string, int64) {
+	now := s.now()
+	p, known := peer{}, false
+	if sid != "" {
+		p, known = bySid[sid]
+	}
+	if !known && tmux != "" {
+		p, known = byTmux[tmux]
+		if known && sid == "" {
+			sid = p.SessionID
+		}
+	}
+	// Время реестра приходит в миллисекундах, и нулевое значит «времени нет»:
+	// показанное как есть, оно превращалось в 1970 год.
+	moved := int64(0)
+	if known && p.Updated > 0 {
+		moved = p.Updated / 1000
+	}
+	busy := false
+	if sid != "" {
+		if info, ok := findSession(s.transcriptRoots(), projPath, sid); ok {
+			if at := info.mod.Unix(); at > moved {
+				moved = at
+			}
+			busy = sessionBusy(info.path, now)
+		}
+	}
+	if id != "" {
+		if _, waiting := askWaiting(projPath, id, now); waiting {
+			return workWait, moved
+		}
+	}
+	fresh := moved > 0 && now.Sub(time.Unix(moved, 0)) <= workIdleAfter
+	switch {
+	case busy:
+		return workBusy, moved
+	case known && p.Status == "busy" && fresh:
+		return workBusy, moved
+	case known && p.Status == "waiting":
+		return workWait, moved
+	case known || tmux != "":
+		// Сессия на месте, а хода в ней нет: работой это не считается, даже
+		// если реестр молчит о состоянии вовсе.
+		return workIdle, moved
+	}
+	return workDead, moved
 }
 
 // liveWorks собирает работы проекта. tmux-сессии на машине общие, к проекту
@@ -223,6 +316,17 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	rows, _ := parseBoardRows(board)
 	// Сессии, где клиент жив, а хода нет: строке они работы не дают.
 	talk := s.tmuxTalk(projectPath)
+	// Реестр живых сессий читается разом на все работы: по нему считается их
+	// состояние, и тридцать походов в каталог реестра тут ни к чему.
+	bySid, byTmux := s.livePeers()
+	// Обратная дорога от имени tmux к сессии: состояние работы считается по её
+	// транскрипту, а у работы, взятой из списка tmux, id сессии своего нет.
+	sidOf := map[string]string{}
+	for sid, rec := range s.binds() {
+		if name := strings.SplitN(rec.Tmux, ":", 2)[0]; name != "" {
+			sidOf[name] = sid
+		}
+	}
 	// Сессии спрашиваются со временем создания (tmuxList): по нему экран
 	// «Агенты» говорит, сколько работа идёт.
 	for _, sess := range tmuxList() {
@@ -230,11 +334,13 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if id == "" {
 			continue
 		}
+		live, moved := s.workState(projectPath, id, sidOf[sess.Name], sess.Name, bySid, byTmux)
 		list = append(list, Work{ID: id, Kind: kind, Title: rows[id].Title,
 			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created,
 			// Конвейерная сессия это сессия дашборда: он её и поднял, её имя
 			// собрано по его же образцу.
-			Own: true, Model: s.chatModel("", sess.Name), Talk: talk[sess.Name]})
+			Own: true, Model: s.chatModel("", sess.Name), Talk: talk[sess.Name],
+			Live: live, Moved: moved})
 		seen[kind+"-"+id] = true
 		busy[id] = true
 	}
@@ -242,8 +348,11 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if seen["goal-"+goal] {
 			continue
 		}
+		// Цикл цели из реестра поднят мимо дашборда, его сессии он не видит:
+		// состояние тут называется мёртвым нарочно, зелёным такая строка гореть
+		// не должна.
 		list = append(list, Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
-			Sect: rows[goal].Sect, Via: "registry"})
+			Sect: rows[goal].Sect, Via: "registry", Live: workDead})
 		busy[goal] = true
 	}
 	return append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
 )
 
 // funcBody вырезает тело функции статики по её началу: тесты разметки
@@ -1322,5 +1324,81 @@ func TestBoardRowFreeWhenTmuxIdle(t *testing.T) {
 	talk := workByID(projectWorks(t, e), "XR-002")
 	if talk == nil || !talk.Talk {
 		t.Fatalf("досчитавшая сессия пропала из работ или не помечена разговором: %+v", talk)
+	}
+}
+
+// writePeerAged кладёт запись реестра со временем последнего касания: время
+// там в миллисекундах, и нулевое значит «времени нет вовсе», как у части
+// записей на живой машине.
+func writePeerAged(t *testing.T, home, sid, tmux, status string, updated int64) {
+	t.Helper()
+	dir := filepath.Join(home, ".claude", "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"окно-1","kind":"interactive","tmux":%q,"status":%q,"updatedAt":%d}`,
+		pid, sid, tmux, status, updated)
+	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Экран красил зелёным всякую живую сессию, и три десятка окон, молчавших
+// часами, выглядели работающими: по экрану нельзя было сказать, чем занята
+// машина (замечание пользователя по снимку). Состояние работы приезжает полем
+// и разложено честно: ход идёт, ждут человека, сессия жива и молчит дольше
+// рубежа, сессии нет. Запись реестра без состояния и без времени живой не
+// считается.
+func TestWorkLiveState(t *testing.T) {
+	e, _, _ := runsEnv(t, "task-XR-002\t1\t1786000000\n")
+	// Время местное нарочно: признак ожидания пишется и читается в поясе
+	// машины (chat.WriteAsk), и час по UTC разъехался бы с ним на смещение.
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.Local)
+	e.s.now = func() time.Time { return now }
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	silent := now.Add(-3 * time.Hour)
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, silent)
+	writeBinds(t, e.home, listedBind(sid, "XR-002", "task-XR-002"))
+
+	live := func() *Work {
+		t.Helper()
+		w := workByID(boardWorks(t, e), "XR-002")
+		if w == nil {
+			t.Fatalf("работа XR-002 пропала из списка")
+		}
+		return w
+	}
+
+	// Реестр молчит и о состоянии, и о времени: живой такая работа выглядеть не
+	// должна, а время последнего хода берётся у транскрипта.
+	writePeerAged(t, e.home, sid, "task-XR-002:@1.%1", "", 0)
+	if got := live(); got.Live != workIdle || got.Moved != silent.Unix() {
+		t.Errorf("запись реестра без состояния дала %q, ход %d: ждал простой и время транскрипта %d",
+			got.Live, got.Moved, silent.Unix())
+	}
+
+	// Клиент ведёт ход прямо сейчас.
+	writePeerAged(t, e.home, sid, "task-XR-002:@1.%1", "busy", now.UnixMilli())
+	if got := live(); got.Live != workBusy {
+		t.Errorf("идущий ход посчитан состоянием %q, ждал %q", got.Live, workBusy)
+	}
+
+	// Реестр говорит busy, а касался записи три часа назад: работой это не
+	// считается, иначе зависшее окно горело бы зелёным вечно.
+	writePeerAged(t, e.home, sid, "task-XR-002:@1.%1", "busy", silent.UnixMilli())
+	if got := live(); got.Live != workIdle {
+		t.Errorf("протухшее busy посчитано состоянием %q, ждал %q", got.Live, workIdle)
+	}
+
+	// Агент спросил человека: ожидание старше всего, и висящий вызов
+	// инструмента ожидания за работу не выдаётся.
+	ask := chat.Ask{Until: now.Add(5 * time.Minute), Task: "XR-002", Session: sid,
+		Questions: []chat.Question{{Text: "резать строку или поднять цену"}}}
+	if err := chat.WriteAsk(e.proj, chat.TaskName("XR-002"), ask); err != nil {
+		t.Fatal(err)
+	}
+	if got := live(); got.Live != workWait {
+		t.Errorf("ожидание ответа посчитано состоянием %q, ждал %q", got.Live, workWait)
 	}
 }

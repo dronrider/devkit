@@ -10211,6 +10211,81 @@ function workTaskLink(project, id) {
   return link;
 }
 
+// Состояние работы словами и видом кружка. Зелёным горит только идущий ход:
+// прежде зелёным была всякая живая сессия, и три десятка окон, молчавших
+// часами, выглядели работающими (замечание пользователя по снимку). Само
+// состояние считает сервер (workState в board.go), тут оно только называется:
+// разъехавшись, кружок и слова мерили бы работу по-разному.
+const WORK_LIVE = {
+  busy: { word: "работает", chip: "c-run", dot: "pulse" },
+  waiting: { word: "ждёт ответа", chip: "c-wait", dot: "dot-wait" },
+  idle: { word: "простаивает", chip: "", dot: "dot-idle" },
+  dead: { word: "сессии нет", chip: "", dot: "dot-other" },
+};
+
+function workLive(w) {
+  return WORK_LIVE[w && w.live] || null;
+}
+
+// Давность последнего хода словами: по ней видно, живая работа или молчащая.
+// Времени может не быть вовсе (реестр без поля времени), и тогда экран молчит,
+// а не показывает эпоху.
+function workMoved(w, now) {
+  return w && w.moved ? pulseAge(w.moved, now) : "";
+}
+
+function workLiveChip(w, now) {
+  const said = workLive(w);
+  if (!said) return null;
+  const age = workMoved(w, now);
+  const text = said.word + (said.word === "работает" || !age ? "" : " " + age);
+  const chip = el("span", "chip" + (said.chip ? " " + said.chip : ""), text);
+  const tip = age ? "последний ход " + age + " назад" : "времени последнего хода не видно";
+  return withTip(chip, said.word + ": " + tip);
+}
+
+// Снятие сессии: живой ход это не повод держать окно вечно, и закрыть его надо
+// оттуда, где оно видно. Механика та же, что у снятия под перезапуск при смене
+// модели (drop) и у стопа конвейера, второй тут не заводится.
+async function closeSession(project, w) {
+  if (w.session) {
+    const r = await api(chatsURL(w.project || project) + "/" + encodeURIComponent(w.session) + "/stop",
+      { method: "POST", body: { drop: true } });
+    sayResult(r.body.message || r.body.error || "", !r.ok);
+    if (r.ok) await refresh();
+    return r.ok;
+  }
+  if (w.id) {
+    await stopRun(project, w.id);
+    return true;
+  }
+  return false;
+}
+
+// Кнопка закрытия с подтверждением для работающей сессии: снять идущий ход
+// молча нельзя, а простаивающую держать вторым нажатием незачем (решение
+// пользователя). Подтверждение живёт в самой кнопке: карточка поверх строки
+// увела бы список из-под пальца.
+function closeSessionBtn(project, w) {
+  const btn = el("button", "btn btn-sm btn-danger", "Закрыть");
+  const busy = w.live === "busy" || w.live === "waiting";
+  withTip(btn, busy
+    ? "Сессия занята: нажмите второй раз, чтобы снять её вместе с идущим ходом"
+    : "Снять tmux-сессию: разговор останется в транскрипте, продолжить его можно резюмом");
+  let armed = !busy;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!armed) {
+      armed = true;
+      btn.textContent = "Точно закрыть?";
+      return;
+    }
+    btn.disabled = true;
+    closeSession(project, w).catch(console.error).finally(() => { btn.disabled = false; });
+  });
+  return btn;
+}
+
 function agentRow(project, w, now) {
   const row = el("div", "arow");
   const addr = workChatAddr(w);
@@ -10224,7 +10299,8 @@ function agentRow(project, w, now) {
     row.classList.add("atalk");
     row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
   }
-  row.append(el("span", "dot" + (w.via === "registry" ? " dot-other" : " pulse")));
+  const said = workLive(w);
+  row.append(el("span", "dot " + (said ? said.dot : (w.via === "registry" ? "dot-other" : "pulse"))));
   const box = el("div", "ab");
   const line = el("div", "l1");
   // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
@@ -10232,6 +10308,9 @@ function agentRow(project, w, now) {
   // Подпись это задача, а у сессии без задачи заголовок чата, который сервер
   // берёт той же лестницей, что список чатов (замечание 1 восьмого круга).
   line.append(el("span", "tt", w.title || w.id || w.note || "чат без задачи"));
+  // Состояние стоит первым чипом: ради него на этот экран и заходят.
+  const liveChipNode = workLiveChip(w, now);
+  if (liveChipNode) line.append(liveChipNode);
   for (const chip of workChips(project, w)) line.append(chip);
   // Подпись собирается узлами, а не одной строкой: номер задачи в ней это
   // ссылка, и склеенный текст ссылкой быть не может.
@@ -10272,6 +10351,11 @@ function agentRow(project, w, now) {
       stopRun(project, w.id).catch(console.error);
     });
     acts.append(stop);
+  } else if (w.session && agentOwn(w)) {
+    // Сессия разговора живёт в нашей tmux, но конвейером не является: «Стоп»
+    // ей не адресован, а закрыть окно человеку было нечем вовсе (замечание
+    // пользователя: «я ничего не могу сделать с этими сессиями»).
+    acts.append(closeSessionBtn(project, w));
   }
   row.append(acts);
   return row;
@@ -10303,6 +10387,64 @@ function agentMatch(item, q) {
   return q.toLowerCase().split(/\s+/).filter(Boolean).every((word) => hay.includes(word));
 }
 
+// Порог пачки: сессии, молчащие дольше него, снимаются одним заходом. Он
+// крупнее рубежа простоя (там сессия перестаёт считаться работающей), потому
+// что тут её снимают насовсем, и час молчания это ещё не повод.
+const SWEEP_IDLE_HOURS = 2;
+
+// Что уйдёт пачкой: живые в нашей tmux разговоры машины, молчащие дольше
+// порога. Считается это по списку разговоров, а не по строкам экрана: строкой
+// видна не всякая сессия, а закрывать человек идёт как раз накопившиеся
+// молчащие окна (замечание пользователя: «31 сессия накопилась не за день»).
+function sweepPick(chats, now) {
+  const edge = now - SWEEP_IDLE_HOURS * 3600 * 1000;
+  return (chats || []).filter((c) => c.tmux && c.state === "live" &&
+    c.mtime && Date.parse(c.mtime) < edge);
+}
+
+async function sweepIdle(project, box) {
+  const r = await api(chatsURL(project) + "?all=1");
+  if (!r.ok) {
+    sayResult(r.body.error || "список разговоров не прочитался", true);
+    return;
+  }
+  const list = sweepPick(r.body.chats, Date.now());
+  box.replaceChildren();
+  if (!list.length) {
+    box.append(el("div", "hint", "Молчащих дольше " + SWEEP_IDLE_HOURS +
+      " ч сессий нет: снимать нечего."));
+    return;
+  }
+  // Список того, что будет снято, стоит перед нажатием, а не после: снятое
+  // обратно не поднимается, и человек должен видеть, с чем прощается.
+  const card = el("div", "dconfirm");
+  card.append(el("div", "dwhy", "Снять " + list.length + " " +
+    plural(list.length, "сессию", "сессии", "сессий") + ", молчащих дольше " +
+    SWEEP_IDLE_HOURS + " ч:"));
+  const names = el("div", "hint", list.map((c) => c.tmux).join(", "));
+  card.append(names);
+  const row = el("div", "drow");
+  const go = el("button", "btn btn-sm btn-danger", "Снять " + list.length);
+  const no = el("button", "btn btn-sm", "Отмена");
+  no.addEventListener("click", () => { box.replaceChildren(); });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    let done = 0;
+    for (const c of list) {
+      const stop = await api(chatsURL(c.project || project) + "/" +
+        encodeURIComponent(c.id) + "/stop", { method: "POST", body: { drop: true } });
+      if (stop.ok) done += 1;
+    }
+    box.replaceChildren();
+    sayResult("снято " + done + " из " + list.length + " " +
+      plural(list.length, "сессии", "сессий", "сессий"), done !== list.length);
+    await refresh();
+  });
+  row.append(go, no);
+  card.append(row);
+  box.append(card);
+}
+
 function renderAgents(projects, q) {
   const groups = document.getElementById("groups");
   groups.replaceChildren();
@@ -10331,6 +10473,20 @@ function renderAgents(projects, q) {
     bar.append(btn);
   }
   groups.append(bar);
+
+  // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному мучительно,
+  // а строкой видна не всякая сессия машины.
+  const sweepBox = el("div", "swbox");
+  const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
+  withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + SWEEP_IDLE_HOURS +
+    " ч. Перед снятием покажет список.");
+  sweep.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    sweepIdle(shownProject || (list[0] || {}).project || "", sweepBox).catch(console.error);
+  });
+  const sweepBar = el("div", "nbar");
+  sweepBar.append(sweep, sweepBox);
+  groups.append(sweepBar);
 
   const card = el("div", "card");
   if (!list.length) {

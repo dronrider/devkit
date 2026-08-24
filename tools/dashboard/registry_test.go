@@ -200,7 +200,7 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	// «Агенты», и у сессии без своей записи это модель по умолчанию.
 	want := Work{Kind: "session", Via: "session", Session: "talker",
 		Note: "а что там с XR-4", Model: chatModelDefault}
-	if works[0] != want {
+	if bareWorks(works)[0] != want {
 		t.Errorf("работа:\n%+v\nожидал:\n%+v", works[0], want)
 	}
 }
@@ -219,7 +219,7 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	// мимо дашборда, и в разделе «Агенты» ей место в табе прочих.
 	want := Work{ID: "XR-4", Kind: "task", Via: "session", Session: "worker",
 		Title: "Начатая задача", Sect: "in-progress", Model: chatModelDefault}
-	if len(works) != 1 || works[0] != want {
+	if len(works) != 1 || bareWorks(works)[0] != want {
 		t.Fatalf("работа:\n%+v\nожидал:\n%+v", works, want)
 	}
 }

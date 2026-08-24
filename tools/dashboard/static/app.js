@@ -479,6 +479,11 @@ async function startRun(project, id, harness, afterOk, tier) {
   const said = r.body.message || r.body.error || "";
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);
+    // Панель адресуется отдельно от экрана: приклеенный к экрану хвост
+    // «/chat/...» вставал вторым к хвосту уже открытой панели, адрес выходил
+    // из двух разговоров подряд, и панель объявляла его протухшим (снимок
+    // пользователя, «Чат не найден» после удачного запуска).
+    liftChat(project, id, r.body.session || "");
     sayResult(said, false);
     return;
   }
@@ -2465,7 +2470,7 @@ function taskActions(project, id, row, works) {
   // Проверенная строка с пользовательской приёмкой закрывается тут же, без
   // сессии агента, и вести после неё некуда.
   const closesWithoutSession = row.sect === "check" && row.accept === "user";
-  const afterOk = closesWithoutSession ? "" : taskChatHash(project, id);
+  const afterOk = closesWithoutSession ? "" : project + "/" + id;
   if (label === ACTION_BY_SECT["in-progress"]) {
     // Продолжение работы переехало в чат отдельной кнопкой рядом с отправкой
     // (замечание 10): продолжают её оттуда же, откуда разговаривают, а полоса
@@ -5574,6 +5579,17 @@ function chatBase() {
 // на прежнее место, а не перерисовывается сверху.
 let chatDepth = 0;
 
+// Адрес, которым панель толкнула историю в последний раз. Одного счётчика мало:
+// адрес с тех пор мог смениться помимо панели (ссылка из ленты, набранный
+// хвост, возврат кнопкой браузера), и «назад» уводил тогда не на экран под
+// панелью, а на прежний чужой. Крестик работает кнопкой «назад» только на том
+// самом адресе, который панель и толкнула.
+let chatPushed = "";
+
+function hashText() {
+  return decodeURIComponent(String(location.hash || "").replace(/^#/, ""));
+}
+
 // Адрес разговора над экраном задачи и над доской: панель это хвост, и то, что
 // под ней, открытие не трогает.
 function taskChatHash(project, id) {
@@ -5617,6 +5633,7 @@ function openChat(addr) {
   if (location.hash === to) return;
   history.pushState({ chat: addr }, "", to);
   chatDepth += 1;
+  chatPushed = to.replace(/^#/, "");
   // Полоска возврата уходит с экрана сразу, а не ответом сети: разговор уже
   // открывается, и звать обратно в него больше некуда.
   paintChatBack();
@@ -5647,6 +5664,9 @@ function switchChat(addr) {
   chatLastSet(addr);
   if (location.hash === to) return;
   history.replaceState({ chat: addr }, "", to);
+  // Замена стоит на той же записи истории: если её толкнула панель, то «назад»
+  // с переключённого разговора по-прежнему ведёт на экран под ним.
+  if (chatPushed) chatPushed = to.replace(/^#/, "");
   repaintChatOnly();
 }
 
@@ -5699,8 +5719,9 @@ function closeChat() {
   // Панель уходит с экрана сразу, до всякой истории и сети: экран под ней уже
   // нарисован, ждать от закрытия нечего вовсе.
   shutChatPanel();
-  if (chatDepth > 0) {
+  if (chatDepth > 0 && hashText() === chatPushed) {
     chatDepth -= 1;
+    chatPushed = "";
     history.back();
     return;
   }
@@ -5758,6 +5779,66 @@ function chatIsNew(addr) {
 function chatNewTask(addr) {
   const tail = String(addr || "").slice(CHAT_NEW.length + 1);
   return chatIsTask(tail) ? tail : "";
+}
+
+// Память подъёма конвейера. Кнопка «Выполнить» поднимает tmux-сессию, а имени в
+// реестре у неё ещё нет: она назовётся сама, первым своим ходом, через
+// несколько секунд. Адресовать панель этим разговором нечем, и до правки она
+// вставала на адрес несуществующего чата и объявляла его протухшим («Чат не
+// найден» сразу после удачного запуска, снимок пользователя). Тут ждёт имя
+// tmux: по нему панель узнаёт родившийся диалог и переезжает на него сама.
+// Память переживает перезагрузку вкладки, потому что опрос реестра умирает
+// вместе с ней, а сессия поднимается своим ходом.
+const LIFT_KEY = "devkit.chat.lift.";
+
+// Дольше этого срока ожидание не живёт: клиент, вставший на вопросе в своём
+// терминале, сессию так и не назовёт, и вечная плашка о подъёме врала бы.
+const LIFT_LIVE = 15 * 60 * 1000;
+
+function liftKey(project, addr) {
+  return LIFT_KEY + project + "/" + addr;
+}
+
+function chatLiftSet(project, addr, tmux) {
+  try {
+    localStorage.setItem(liftKey(project, addr), JSON.stringify({ tmux, born: Date.now() }));
+  } catch (err) {
+    // приватный режим браузера: ожидание живёт до перезагрузки
+  }
+}
+
+function chatLiftOf(project, addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(liftKey(project, addr)) || "null");
+    if (!raw || !raw.tmux) return "";
+    if (Date.now() - (raw.born || 0) > LIFT_LIVE) {
+      chatLiftDrop(project, addr);
+      return "";
+    }
+    return String(raw.tmux);
+  } catch (err) {
+    return "";
+  }
+}
+
+function chatLiftDrop(project, addr) {
+  try {
+    localStorage.removeItem(liftKey(project, addr));
+  } catch (err) {
+    // см. chatLiftSet
+  }
+}
+
+// Панель после удачного запуска: она встаёт тем же ожиданием, что и новый чат,
+// с плашкой о подъёме и опросом реестра, а пришивает себя к родившейся сессии
+// по имени tmux. Не назвал сервер сессии (закрытие строки Check, чужой запуск),
+// значит ждать нечего, и панель открывает разговоры самой задачи.
+function liftChat(project, id, sess) {
+  const addr = sess ? CHAT_NEW + ":" + id : id;
+  const full = chatAddr(project, addr);
+  if (sess) chatLiftSet(project, addr, sess);
+  openChat(full);
+  if (sess) chatSewLoop(project, sess, full, 1500, 60).catch(console.error);
 }
 
 // chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
@@ -5872,8 +5953,15 @@ async function chatState(project, addr, board) {
   // персиста реплики либо по самой первой реплике, и панель переезжает на
   // живой sid прямо в этой сборке, без перерисовки.
   if (st.fresh) {
-    const sewn = chatSewn(project, addr, st.chats);
+    // Подъём конвейера узнаётся тем же ключом, что и подъём с первой реплики:
+    // именем tmux-сессии. Разница только в том, откуда имя взялось, из ответа
+    // запуска или из персиста реплики.
+    const lift = chatLiftOf(project, addr);
+    const born = lift ? st.chats.find((c) => c.tmux === lift) : null;
+    const sewn = born ? born.id : chatSewn(project, addr, st.chats);
+    if (!sewn && lift) st.lift = lift;
     if (sewn) {
+      chatLiftDrop(project, addr);
       echoMove(project, addr, sewn);
       chatLastSet(sewn);
       history.replaceState({ chat: sewn }, "", "#" + chatBase() + "/chat/" + sewn);
@@ -6675,7 +6763,8 @@ function chatHead(project, st) {
   // нового чата диалога ещё нет по замыслу, протухший адрес назван находкой
   // честно, старый разговор глубже видимого списка подписан своим ID, а пустой
   // проект говорит про пустоту, не про поломку (замечания пользователя).
-  const picked = st.fresh ? "Новый чат"
+  const picked = st.lift ? "Сессия поднимается"
+    : st.fresh ? "Новый чат"
     : st.lost ? "Чат не найден"
     : st.entry ? chatTitle(st.entry)
     : st.sid ? "чат " + st.sid.slice(0, 8)
@@ -6968,6 +7057,14 @@ function chatWay(st) {
     return { kind: "gone", off: false, why: st.entry.gone, to: st.entry.goneTo || "" };
   }
   if (chatWaitsTask(st)) return { kind: "task", off: false, why: "" };
+  // Сессия конвейера поднимается: реплика отсюда ушла бы первым аргументом
+  // клиента и подняла бы вторую сессию рядом с той, которую только что
+  // запустили. Поле заперто на те секунды, пока сессия называет себя в реестре,
+  // а плашка о подъёме стоит над ним.
+  if (st.lift) {
+    return { kind: "lift", off: true,
+      hint: "сессия поднимается, ответить можно будет через несколько секунд", why: "" };
+  }
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   // Протухший адрес: писать некуда, и резюм по несуществующей сессии обещал бы
   // доставку, которой не будет. Причина стоит плашкой, ввод погашен.
@@ -7087,6 +7184,7 @@ async function chatSewLoop(project, name, addr, step, tries) {
     if (!addr || route().chat !== addr) return false;
     const hit = await chatByTmux(project, name);
     if (hit) {
+      chatLiftDrop(project, addr);
       echoMove(project, addr, hit.id);
       switchChat(hit.id);
       return true;
@@ -7749,16 +7847,17 @@ function chatPanel(project, st) {
   echo.onGone = () => busy.off();
   // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
   // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-  if (chatIsNew(st.addr) && echo.waiting()) busy.raise();
+  if (chatIsNew(st.addr) && (echo.waiting() || st.lift)) busy.raise();
   // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
   // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
   // только сессия назовётся, панель переедет на живой sid и покажет транскрипт
   // (пришивание, вторая половина chatSewn: там список, тут ещё не родившееся).
   if (chatIsNew(st.addr)) {
     const names = echo.raised();
-    if (names.length) {
-      chatSewLoop(project, names[names.length - 1], st.addr, 2000, 150).catch(console.error);
-    }
+    // Имя подъёма берётся у реплики, а нет её, так у запуска конвейера: ждут
+    // они одного и того же, сессии, которая вот-вот назовётся.
+    const name = names.length ? names[names.length - 1] : st.lift;
+    if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
   }
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -7771,7 +7870,12 @@ function chatPanel(project, st) {
   grip.setAttribute("role", "separator");
   grip.setAttribute("aria-label", "Высота поля ввода");
   const ta = el("textarea");
-  ta.placeholder = way.off ? "чат идёт в vscode, пишите там"
+  // Запертое поле называет свою причину одной строкой. Прежде тут стояло «чат
+  // идёт в vscode, пишите там»: отдельного случая окон vscode в разборе давно
+  // нет, и запертым полем кончается протухший адрес, куда писать некуда вовсе,
+  // так что подсказка отправляла человека в другой редактор ни за чем
+  // (замечание пользователя).
+  ta.placeholder = way.off ? (way.hint || "писать сюда некуда")
     : (way.kind === "task" ? "Ответ задаче " + st.task + "..." : "Написать агенту...");
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в чат");
@@ -8095,7 +8199,10 @@ function chatPanel(project, st) {
     // показать пустоту или ошибку загрузки.
     say(feed, "empty", "разговора с этим адресом в проекте нет");
   } else if (!st.sid) {
-    say(feed, "empty", st.fresh
+    say(feed, "empty", st.lift
+      ? "конвейер поднят, сессия " + st.lift + " вот-вот назовётся в реестре: " +
+        "разговор откроется сам, ждать нажатий не надо"
+      : st.fresh
       ? "новый чат: напишите первую реплику, она и поднимет сессию"
       : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
   } else {

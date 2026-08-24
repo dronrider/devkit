@@ -30,15 +30,30 @@ const transcriptFixture = `{"type":"queue-operation","operation":"enqueue","time
 // (прежде сервер его выбрасывал), ответ инструмента стоит своей записью, а
 // вызов несёт пояснение хода отдельным полем.
 var transcriptWant = []reply{
-	{Seq: 0, Key: "m:0", Role: "user", Time: "2026-08-10T10:00:01.000Z", Text: "возьми задачу XR-005 в работу"},
-	{Seq: 1, Key: "m:1", Role: "thinking", Time: "2026-08-10T10:00:02.000Z", Text: "куда смотреть", Spent: 1000},
-	{Seq: 2, Key: "m:2", Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
-	{Seq: 3, Key: "m:3", Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash",
+	{Seq: 0, Key: fixKey(1, 0), Role: "user", Time: "2026-08-10T10:00:01.000Z", Text: "возьми задачу XR-005 в работу"},
+	{Seq: 1, Key: fixKey(2, 0), Role: "thinking", Time: "2026-08-10T10:00:02.000Z", Text: "куда смотреть", Spent: 1000},
+	{Seq: 2, Key: fixKey(3, 0), Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
+	{Seq: 3, Key: fixKey(3, 1), Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash",
 		Note: "taskctl list | head -5", About: "Показать доску",
 		Text: "command: taskctl list | head -5\ndescription: Показать доску",
 		Args: map[string]string{"command": "taskctl list | head -5", "description": "Показать доску"}},
-	{Seq: 4, Key: "m:4", Role: roleToolOut, Time: "2026-08-10T10:00:04.000Z", Text: "ok"},
-	{Seq: 5, Key: "m:5", Role: "assistant", Time: "2026-08-10T10:00:06.000Z", Text: "Доска прочитана."},
+	{Seq: 4, Key: fixKey(4, 0), Role: roleToolOut, Time: "2026-08-10T10:00:04.000Z", Text: "ok"},
+	{Seq: 5, Key: fixKey(7, 0), Role: "assistant", Time: "2026-08-10T10:00:06.000Z", Text: "Доска прочитана."},
+}
+
+// fixKey это ключ записи фикстуры: смещение её строки в транскрипте и номер
+// блока внутри строки. Ключ считается от смещения, а не от номера записи,
+// потому что лента читается хвостом и номера записи не знает (feed.go), а
+// выписывать смещения руками значит переписывать их на каждую правку фикстуры.
+func fixKey(line, blk int) string {
+	off := 0
+	for i, ln := range strings.Split(transcriptFixture, "\n") {
+		if i == line {
+			break
+		}
+		off += len(ln) + 1
+	}
+	return fmt.Sprintf("m:%d.%d", off, blk)
 }
 
 // writeSession кладёт транскрипт в каталог ~/.claude/projects по раскладке
@@ -811,11 +826,11 @@ func TestSessionPagination(t *testing.T) {
 	if total != len(transcriptWant) || !reflect.DeepEqual(items, transcriptWant[4:]) {
 		t.Fatalf("хвост n=2: total=%d %+v", total, items)
 	}
-	if _, items = page("n=2&before=m:3"); !reflect.DeepEqual(items, transcriptWant[1:3]) {
-		t.Fatalf("страница before=m:3: %+v", items)
+	if _, items = page("n=2&before=" + fixKey(3, 1)); !reflect.DeepEqual(items, transcriptWant[1:3]) {
+		t.Fatalf("страница before=%s: %+v", fixKey(3, 1), items)
 	}
-	if _, items = page("n=2&before=m:1"); !reflect.DeepEqual(items, transcriptWant[:1]) {
-		t.Fatalf("страница before=m:1: %+v", items)
+	if _, items = page("n=2&before=" + fixKey(2, 0)); !reflect.DeepEqual(items, transcriptWant[:1]) {
+		t.Fatalf("страница before=%s: %+v", fixKey(2, 0), items)
 	}
 }
 
@@ -880,7 +895,7 @@ func TestSessionStreamEmptyNamed(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &item); err != nil {
 		t.Fatal(err)
 	}
-	want := reply{Seq: 0, Key: "m:0", Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
+	want := reply{Seq: 0, Key: "m:0.0", Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
 	if !reflect.DeepEqual(item, want) {
 		t.Fatalf("дострение после note: %+v, ожидал %+v", item, want)
 	}
@@ -935,7 +950,10 @@ func TestSessionStreamAppends(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &item); err != nil {
 		t.Fatal(err)
 	}
-	want := reply{Seq: 6, Key: "m:6", Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
+	// Ключ дописанной записи считается от её смещения в файле: строка легла
+	// сразу за фикстурой.
+	want := reply{Seq: 6, Key: fmt.Sprintf("m:%d.0", len(transcriptFixture)),
+		Role: "assistant", Time: "2026-08-10T10:00:07.000Z", Text: "Готово."}
 	if !reflect.DeepEqual(item, want) {
 		t.Fatalf("живое дострение: %+v, ожидал %+v", item, want)
 	}
@@ -1612,8 +1630,8 @@ func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
 	if item.Text != "смотрю дерево" || item.Sub == "" {
 		t.Fatalf("запись нового субагента не доехала: %+v", item)
 	}
-	if item.Key != "agent-new1:0" {
-		t.Fatalf("ключ записи нового журнала: %q, ожидал agent-new1:0", item.Key)
+	if item.Key != "agent-new1:0.0" {
+		t.Fatalf("ключ записи нового журнала: %q, ожидал agent-new1:0.0", item.Key)
 	}
 	// Вызов в транскрипте закрылся ответом, а журнал субагента пишется дальше:
 	// прежде стрим на этом ответе переставал его читать вовсе.
@@ -1633,8 +1651,11 @@ func TestSessionStreamPicksUpNewSubLog(t *testing.T) {
 	if item.Text != "продолжаю после ответа" {
 		t.Fatalf("после ответа инструмента журнал субагента перестал читаться: %+v", item)
 	}
-	if item.Key != "agent-new1:1" {
-		t.Fatalf("ключ дописанной записи: %q, ожидал agent-new1:1", item.Key)
+	// Дописанная запись зовётся своим смещением: первая строка журнала уже
+	// занимает своё место, и второй ключ начинается за ней.
+	next := fmt.Sprintf("agent-new1:%d.0", len(sideLine("смотрю дерево", "2026-08-10T10:00:08.000Z")))
+	if item.Key != next {
+		t.Fatalf("ключ дописанной записи: %q, ожидал %s", item.Key, next)
 	}
 }
 
@@ -1993,7 +2014,8 @@ func TestLeadSessionAnswersSignedAsDispatcher(t *testing.T) {
 	writeSubLog(t, lead, "1", "разбор находки", sideLine("нашёл причину", at))
 
 	who := func(path string) []string {
-		items := expandSubs(path, parseReplies(readBytes(t, path), 0))
+		forgetChunks()
+		items := sessionFeedOf(path, 0).items
 		var out []string
 		for _, it := range items {
 			if it.Role != "assistant" {

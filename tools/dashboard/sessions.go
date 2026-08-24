@@ -803,8 +803,29 @@ func parseReplies(data []byte, startSeq int) []reply {
 // состоит из записей isSidechain целиком, и для него отсев надо снимать, иначе
 // файл читается пустым (находка тринадцатого круга POC).
 func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
+	return parseRepliesSpan(data, startSeq, parseSpan{side: side})
+}
+
+// parseSpan описывает кусок журнала: чей он, с какого байта файла прочитан и
+// снимать ли отсев записей isSidechain. Названный источник значит, что разбор
+// сам проставляет записям устойчивый ключ «источник:смещение строки.номер
+// блока»: журналы только дописываются, и смещение строки в своём файле не
+// меняется никогда. Ключ по смещению, а не по номеру записи, потому что номер
+// записи известен только тому, кто прочитал файл с начала, а хвост ленты
+// читается кусками с конца (feed.go).
+type parseSpan struct {
+	src  string
+	off  int64
+	side bool
+}
+
+func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	var out []reply
 	seq := startSeq
+	// Место строки в файле и номер блока внутри строки: из них собирается ключ
+	// записи. Одна строка jsonl даёт несколько записей ленты (текст, вызов
+	// инструмента, его ответ), поэтому одного смещения ключу мало.
+	lineAt, blk := int64(0), 0
 	// prev это метка предыдущей разобранной записи: длительность размышления
 	// это расстояние от неё до метки самого размышления, потому что думать
 	// агент начинает сразу после того, что было до него.
@@ -821,10 +842,22 @@ func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 			prev = at
 		}
 		item.Seq = seq
+		if sp.src != "" {
+			item.Key = sp.src + ":" + strconv.FormatInt(sp.off+lineAt, 10) + "." + strconv.Itoa(blk)
+		}
+		blk++
 		seq++
 		out = append(out, item)
 	}
-	for _, ln := range strings.Split(string(data), "\n") {
+	text := string(data)
+	for pos := 0; pos <= len(text); {
+		ln := text[pos:]
+		lineAt, blk = int64(pos), 0
+		if cut := strings.IndexByte(ln, '\n'); cut >= 0 {
+			ln, pos = ln[:cut], pos+cut+1
+		} else {
+			pos = len(text) + 1
+		}
 		if strings.TrimSpace(ln) == "" {
 			continue
 		}
@@ -839,7 +872,7 @@ func parseRepliesOpt(data []byte, startSeq int, side bool) []reply {
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
 		}
-		if (rec.IsSidechain && !side) || (rec.Type != "user" && rec.Type != "assistant") {
+		if (rec.IsSidechain && !sp.side) || (rec.Type != "user" && rec.Type != "assistant") {
 			continue
 		}
 		var s string
@@ -1563,28 +1596,43 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		s.streamSession(w, r, sid, path, keys)
 		return
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("транскрипт не прочитался: %v", err)})
 		return
 	}
-	items := expandSubs(path, parseReplies(data, 0))
-	for _, key := range keys {
-		items = saidMerge(items, saidLoad(s.cfg.Home, key))
-	}
-	total := len(items)
+	n := intParam(r, "n", repliesDefault, repliesMax)
 	// «Раньше» режется по устойчивому ключу записи, а не по её месту в ленте:
 	// место плывёт от роста боковых журналов, и страницы истории налезали друг
 	// на друга. Число тут понимается как место и остаётся ради старых вкладок,
 	// открытых до этой правки.
-	items = beforeCut(items, r.URL.Query().Get("before"))
-	n := intParam(r, "n", repliesDefault, repliesMax)
-	if len(items) > n {
-		items = items[len(items)-n:]
+	before := r.URL.Query().Get("before")
+	// Лента собирается хвостом в запрошенное окно, а не чтением всех журналов
+	// разговора целиком (feed.go). Страница истории просит окно шире, пока её
+	// курсор в окно не попал: дальше начала разговора просить нечего.
+	want := n + feedSlack
+	var feed sessionFeed
+	var items []reply
+	for {
+		feed = sessionFeedOf(path, want)
+		items = feed.items
+		for _, key := range keys {
+			items = saidMerge(items, saidLoad(s.cfg.Home, key))
+		}
+		if feed.whole || !strings.Contains(before, ":") || hasKey(items, before) || want >= feedMost {
+			break
+		}
+		want *= feedGrow
 	}
+	total := len(items)
+	kept := beforeCut(items, before)
 	// Начало разговора называет сервер: считать его по номеру первой записи
-	// клиент больше не может, номера у него не свои.
-	start := len(items) > 0 && items[0].Seq == 0
+	// клиент больше не может, номера у него не свои. Начало это целиком
+	// собранная лента, у которой хвост не обрезан окном.
+	start := feed.whole && len(kept) > 0 && len(kept) <= n
+	if len(kept) > n {
+		kept = kept[len(kept)-n:]
+	}
+	items = kept
 	if items == nil {
 		items = []reply{}
 	}
@@ -1680,28 +1728,17 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 		saidTails = append(saidTails, &tailSrc{
 			file: saidFile(s.cfg.Home, key), src: saidSrc + key})
 	}
-	// Устойчивый ключ дописанной записи продолжает счёт своего файла, а не
-	// ленты: mainIdx и idx у бокового журнала это столько записей, сколько в
-	// файле уже разобрано.
-	mainIdx := 0
 	subs := map[string]*tailSrc{}
 	// known помнит журналы, заведённые до открытия потока: их хвост уже уехал
 	// в ленту, и дочитывать их надо с текущего конца. Журнал, появившийся
 	// позже, читается с начала: он пуст в момент появления, и всё в нём новое.
-	if data, err := os.ReadFile(path); err == nil {
-		data = lastComplete(data)
-		items := expandSubs(path, parseReplies(data, 0))
+	{
+		feed := sessionFeedOf(path, repliesDefault+feedSlack)
+		items := feed.items
 		for _, key := range keys {
 			items = saidMerge(items, saidLoad(s.cfg.Home, key))
 		}
 		seq = len(items)
-		counts := map[string]int{}
-		for _, item := range items {
-			if i := strings.LastIndex(item.Key, ":"); i > 0 {
-				counts[item.Key[:i]]++
-			}
-		}
-		mainIdx = counts[mainSrc]
 		for i, t := range saidTails {
 			// Номер записи журнала это её номер в файле, а не место в слитой
 			// ленте: слияние выбрасывает записи, у которых уже пришло эхо, и
@@ -1715,11 +1752,8 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 		}
 		for _, log := range subLogs(path) {
 			src := srcName(log.File)
-			t := &tailSrc{file: log.File, label: log.Label, src: src, idx: counts[src]}
-			if fi, err := os.Stat(log.File); err == nil {
-				t.off = fi.Size()
-			}
-			subs[log.File] = t
+			subs[log.File] = &tailSrc{file: log.File, label: log.Label,
+				src: src, off: feed.ends[src]}
 		}
 		if len(items) > repliesDefault {
 			items = items[len(items)-repliesDefault:]
@@ -1727,7 +1761,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 		for _, item := range items {
 			sseEvent(w, f, "", marshalReply(item))
 		}
-		offset = int64(len(data))
+		offset = feed.ends[mainSrc]
 	}
 	// Пустая лента называется первым событием, как в обычном ответе: молчащий
 	// поток неотличим от оборвавшегося. Дострение дальше идёт как обычно.
@@ -1795,20 +1829,18 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			sort.Strings(files)
 			for _, file := range files {
 				src := subs[file]
-				var lines []string
-				lines, src.off = newLines(src.file, src.off)
-				if len(lines) == 0 {
-					continue
-				}
-				for _, item := range parseRepliesOpt([]byte(strings.Join(lines, "\n")), seq, true) {
+				var list []reply
+				list, _, src.off = newChunk(src.file, src.src, src.off, true)
+				for _, item := range list {
 					item.Sub = src.label
-					item.Key = src.src + ":" + strconv.Itoa(src.idx)
-					src.idx++
 					// Заказ субагенту (первая запись журнала) уже показан
 					// карточкой вызова Agent, а пузыря человека в боковом
-					// журнале не бывает вовсе: там пишет не он.
+					// журнале не бывает вовсе: там пишет не он. Первая запись
+					// узнаётся по своему ключу: он считается от смещения строки
+					// в файле, и счёт разобранных записей стриму держать
+					// больше незачем.
 					if item.Role == "user" {
-						if src.idx == 1 {
+						if item.Key == src.src+":0.0" {
 							continue
 						}
 						item.Role = roleNote
@@ -1818,24 +1850,24 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 					if item.Role == roleNote && item.Note == dispatchWord("") {
 						continue
 					}
-					seq = item.Seq + 1
+					item.Seq = seq
+					seq++
 					sseEvent(w, f, "", marshalReply(item))
 				}
 			}
-			var lines []string
-			lines, offset = newLines(path, offset)
-			if len(lines) == 0 {
+			var list []reply
+			var raw []byte
+			list, raw, offset = newChunk(path, mainSrc, offset, false)
+			if len(raw) == 0 {
 				continue
 			}
-			raw := []byte(strings.Join(lines, "\n"))
 			// Субагент заводится посреди хода, и с ним сессия становится
 			// диспетчером: подпись её ответов считается на каждой порции, а не
 			// один раз на открытие потока.
 			lead := len(subLogs(path)) > 0
-			for _, item := range markLead(parseReplies(raw, seq), lead) {
-				item.Key = mainSrc + ":" + strconv.Itoa(mainIdx)
-				mainIdx++
-				seq = item.Seq + 1
+			for _, item := range markLead(list, lead) {
+				item.Seq = seq
+				seq++
 				sseEvent(w, f, "", marshalReply(item))
 			}
 			// План сессии живёт своим событием: он приходит целиком и меняет
@@ -2378,12 +2410,11 @@ const (
 // (замечание пользователя, случай третий). Подпись работе даёт заказ из
 // мета-файла, а состояние ответ на её вызов в транскрипте: есть ответ, работа
 // вернулась, нет ответа и журнал ещё пишется, работа идёт.
-func subWorks(path string, data []byte, now time.Time) []planItem {
+func subWorks(path string, closed map[string]bool, now time.Time) []planItem {
 	logs := subLogs(path)
 	if len(logs) == 0 {
 		return nil
 	}
-	closed := subClosed(data)
 	type work struct {
 		item planItem
 		at   time.Time
@@ -2495,14 +2526,12 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 			filePlan, fileAt = plan, at
 		}
 	}
-	// Транскрипт читается один раз на оба вопроса: и про план из TodoWrite, и
-	// про закрытые вызовы субагентов.
-	data, err := os.ReadFile(path)
-	subs := subWorks(path, data, now)
-	if err != nil {
-		return withSubWorks(filePlan, subs)
-	}
-	todoPlan, todoAt := sessionPlan(data)
+	// Транскрипт разбирается один раз на оба вопроса: и про план из TodoWrite,
+	// и про закрытые вызовы субагентов. Разбор лежит в памяти процесса и
+	// дочитывается с прошлого места (feed.go): кольцо ходит сюда каждым тиком.
+	tx := transcriptDigest(path)
+	subs := subWorks(path, tx.closed, now)
+	todoPlan, todoAt := tx.plan, tx.planAt
 	said := filePlan
 	switch {
 	case filePlan == nil:
@@ -2531,154 +2560,14 @@ func markLead(items []reply, lead bool) []reply {
 	if !lead {
 		return items
 	}
+	// Правка идёт по копии: разобранный кусок транскрипта лежит в памяти
+	// процесса и уезжает следующему заходу тем же (feed.go), а подпись
+	// считается на каждом заходе своя.
+	items = append([]reply(nil), items...)
 	for i := range items {
 		if items[i].Role == "assistant" && items[i].Who == "" && items[i].Sub == "" {
 			items[i].Who = whoLead
 		}
 	}
 	return items
-}
-
-// expandSubs вплетает записи боковых журналов в ленту по меткам времени.
-// Прежде они вставлялись за своим вызовом Task, а журнал, который пишется
-// прямо сейчас, целиком уезжал в хвост, и хвостовое окно ленты состояло из
-// него одного: у субагента, которого продолжают через SendMessage не первый
-// день, записей тысячи, а реплики человека и ответы сессии, шедшие с ними
-// вперемешку, оказывались за этой тысячей вверху. Слияние по времени ставит
-// каждый кусок работы туда, где он и шёл, а идущая сейчас работа сама
-// оказывается в хвосте.
-//
-// У каждой записи тут появляется устойчивый ключ «источник:номер»: файлы
-// только дописываются, и номер записи в своём файле не меняется никогда, а вот
-// место в слитой ленте плывёт. По ключу и режется «раньше». Выбирать «тот
-// самый живой журнал» тут больше нечего: стрим дочитывает все разом и
-// пересматривает их набор на каждом тике.
-func expandSubs(path string, items []reply) []reply {
-	type keyed struct {
-		it  reply
-		at  time.Time
-		src string
-		idx int
-	}
-	var all []keyed
-	// Метка времени есть не у каждой записи, поэтому ключ слияния тянется от
-	// предыдущей записи своего же потока. Назад время внутри источника не
-	// ходит: перескок метки (у боковых журналов он случается) переставил бы
-	// записи одного файла местами, а порядок внутри файла и есть порядок, в
-	// котором агент работал.
-	push := func(src string, list []reply) {
-		var prev time.Time
-		for i, it := range list {
-			at := prev
-			if t, err := time.Parse(time.RFC3339, it.Time); err == nil && t.After(prev) {
-				at = t
-			}
-			prev = at
-			it.Key = src + ":" + strconv.Itoa(i)
-			all = append(all, keyed{it: it, at: at, src: src, idx: i})
-		}
-	}
-	logs := subLogs(path)
-	push(mainSrc, markLead(items, len(logs) > 0))
-	// Порядок файлов у os.ReadDir свой, а лента должна собираться одинаково от
-	// захода к заходу, поэтому журналы обходятся по имени файла.
-	ids := make([]string, 0, len(logs))
-	for id := range logs {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return logs[ids[i]].File < logs[ids[j]].File })
-	for _, id := range ids {
-		log := logs[id]
-		data, err := os.ReadFile(log.File)
-		if err != nil {
-			continue
-		}
-		side := parseRepliesOpt(data, 0, true)
-		// Человек в боковой журнал не пишет, и пузыря человека там быть не
-		// может. Первая запись это заказ субагенту, тот же текст уже стоит
-		// карточкой вызова Agent, и вторым разом жёлтой простынёй он читался
-		// как реплика человека (жалоба пользователя). Остальные записи роли
-		// user это служебное: рамки диспетчера свои правила уже разобрали, а
-		// что осталось, идёт служебной строкой, а не пузырём.
-		if len(side) > 0 && side[0].Role == "user" {
-			side = side[1:]
-		}
-		// Финальный ответ субагента это последняя его запись с текстом: она и
-		// есть отчёт, который харнес пересказывает сводкой в своей вести.
-		for i := len(side) - 1; i >= 0; i-- {
-			if side[i].Role == "assistant" && strings.TrimSpace(side[i].Text) != "" {
-				side[i].Report = true
-				break
-			}
-		}
-		kept := side[:0]
-		for i := range side {
-			side[i].Sub = log.Label
-			if side[i].Role == "user" {
-				side[i].Role = roleNote
-			}
-			// Реплика диспетчера субагенту в слитой ленте стоит дважды: своей
-			// карточкой SendMessage в транскрипте сессии и рамкой в боковом
-			// журнале. Пара у неё есть всегда, и рамка тут чистый дубль
-			// (жалоба пользователя по снимку). Встречные рамки остаются: у
-			// реплики человека и чужой сессии карточки в ленте нет.
-			if side[i].Role == roleNote && side[i].Note == dispatchWord("") {
-				continue
-			}
-			kept = append(kept, side[i])
-		}
-		side = kept
-		push(srcName(log.File), side)
-	}
-	// Порядок полный и не зависит от того, что ещё лежит в ленте: время, потом
-	// источник, потом номер в файле. Иначе один и тот же заезд собирал бы ленту
-	// по-разному, и ключ «раньше» указывал бы в разные места.
-	sort.Slice(all, func(i, j int) bool {
-		if !all[i].at.Equal(all[j].at) {
-			return all[i].at.Before(all[j].at)
-		}
-		if all[i].src != all[j].src {
-			return all[i].src < all[j].src
-		}
-		return all[i].idx < all[j].idx
-	})
-	// Весть о конце фоновой работы и сам отчёт субагента это одно событие с
-	// двух сторон: строка харнеса со сводкой и полный текст в боковом журнале.
-	// В ленте они сходятся одним свёрнутым блоком, а сырой отчёт вторым
-	// элементом рядом больше не стоит (замечание пользователя по снимку).
-	drop := map[int]bool{}
-	for i := range all {
-		it := &all[i].it
-		if it.Role != roleNote || it.Mark != "agent" {
-			continue
-		}
-		pick := -1
-		for j := 0; j < i; j++ {
-			if all[j].it.Report && !drop[j] {
-				pick = j
-			}
-		}
-		if pick < 0 {
-			continue
-		}
-		head, sum := it.Note, it.Text
-		if head == "" {
-			head, sum = it.Text, ""
-		}
-		if strings.TrimSpace(sum) != "" {
-			head += ": " + sum
-		}
-		it.Note, it.Text = head, all[pick].it.Text
-		drop[pick] = true
-	}
-	out := make([]reply, 0, len(all))
-	for i, k := range all {
-		if drop[i] {
-			continue
-		}
-		k.it.Seq = len(out)
-		out = append(out, k.it)
-		_ = i
-	}
-	return out
 }

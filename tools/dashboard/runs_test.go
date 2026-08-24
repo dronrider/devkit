@@ -119,6 +119,80 @@ func TestRunStartGoal(t *testing.T) {
 	}
 }
 
+// Оболочка цикла берётся из своего дерева, а не из первого попавшегося корня.
+// Дашборд ветки POC звал goal-run.py из соседнего чекаута main, где флага
+// --tier нет вовсе: оболочка печатала справку и выходила, а человек видел её
+// целиком вместо поднятого цикла (живой случай на цели DK-446).
+func TestRunGoalShellFromOwnTree(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	// В корне конфига лежит чужой чекаут: он отвечает отказом на незнакомый
+	// флаг, ровно как оболочка из main.
+	writeGoalRunFake(t, filepath.Dir(e.proj), `import sys
+sys.stderr.write("usage: goal-run.py [-h] [--harness HARNESS] id\n"
+    "goal-run.py: error: unrecognized arguments: --tier pro\n")
+sys.exit(2)
+`)
+	// А своё дерево флаг знает: его называет DEVKIT_HOME, как у службы.
+	own := t.TempDir()
+	callsLog := filepath.Join(e.home, "goal-run.calls")
+	dir := filepath.Join(own, "kit", "skills", "goal-loop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "goal-run.py"),
+		[]byte(goalRunOKBody(callsLog)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", own)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск цели оболочкой своего дерева: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, callsLog); !strings.Contains(got, "XR-100 -C "+e.proj) {
+		t.Errorf("позвана оболочка не своего дерева: %q", got)
+	}
+	// Запасной путь остаётся: своего дерева нет, ищем по корням.
+	t.Setenv("DEVKIT_HOME", filepath.Join(own, "нет-такого"))
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	if text := body(t, resp); resp.StatusCode == http.StatusOK {
+		t.Errorf("без своего дерева оболочка по корням не искалась: %d %s", resp.StatusCode, text)
+	}
+}
+
+// Справку оболочки человеку не показываем: от неё ни причины, ни что делать.
+// Вместо портянки идут короткие слова с путём найденной оболочки, потому что
+// чинится случай выбором чекаута (замечание пользователя).
+func TestRunGoalShellHelpNotShown(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	writeGoalRunFake(t, filepath.Dir(e.proj), `import sys
+sys.stderr.write("usage: goal-run.py [-h] [--harness HARNESS] [-C DIR] id\n"
+    "\nЦикл цели: виток за витком, пока цель не закрыта\n\n"
+    "positional arguments:\n  id          ID цели\n\n"
+    "options:\n  -h, --help  show this help message and exit\n"
+    "goal-run.py: error: unrecognized arguments: --tier pro\n")
+sys.exit(2)
+`)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("запуск с непонятым флагом сошёл за удачу: %s", text)
+	}
+	if !strings.Contains(text, "не понимает переданных флагов") {
+		t.Errorf("причина не названа словами: %s", text)
+	}
+	if !strings.Contains(text, "goal-run.py") {
+		t.Errorf("путь найденной оболочки не назван: %s", text)
+	}
+	for _, gone := range []string{"positional arguments", "show this help", "options:"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("справка уехала человеку целиком (%q): %s", gone, text)
+		}
+	}
+}
+
 // Одиночная задача поднимается tmux-сессией task-<ID> с headless-сессией
 // конвейера, и заказ ей идёт по статусу строки: из Backlog «Выполни», из
 // In progress «Продолжай выполнение», из Check «Закрой». Слова эти те же, что

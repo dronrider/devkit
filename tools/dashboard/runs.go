@@ -52,9 +52,47 @@ func inRoots(roots []string, rel string) string {
 	return ""
 }
 
-// goalRunPath ищет оболочку цикла цели.
+// devkitOwnTree это чекаут devkit, из которого поднят сам дашборд. Служба
+// называет его переменной DEVKIT_HOME (тем же способом, каким ищет чекаут
+// смок), и спрашивается он раньше корней конфига: агентская часть devkit едет
+// вместе с кодом дашборда, ветка POC меняет их вместе, а в корнях рядом лежит
+// и чекаут main, где свежих флагов ещё нет.
+func devkitOwnTree() string {
+	return strings.TrimSpace(os.Getenv("DEVKIT_HOME"))
+}
+
+// goalRunPath ищет оболочку цикла цели: сперва в своём дереве, потом по корням
+// конфига. Порядок этот не косметика. Дашборд ветки POC звал оболочку из
+// первого попавшегося корня, то есть из main, где флага --tier нет вовсе:
+// оболочка печатала справку и выходила, а человек видел её целиком вместо
+// поднятого цикла (живой случай на цели DK-446). Всякая правка агентской части
+// расходилась бы с тем, что запускается на самом деле.
 func goalRunPath(roots []string) string {
+	if tree := devkitOwnTree(); tree != "" {
+		if p := filepath.Join(tree, filepath.FromSlash(goalRunRel)); isFile(p) {
+			return p
+		}
+	}
 	return inRoots(roots, goalRunRel)
+}
+
+// goalRunUnknownFlag узнаёт ответ оболочки, которая не поняла переданного:
+// argparse печатает справку и выходит кодом 2. Показывать эту портянку человеку
+// незачем, из неё не видно ни причины, ни что делать (замечание пользователя).
+func goalRunUnknownFlag(err error, said string) bool {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 2 {
+		return true
+	}
+	return strings.Contains(said, "unrecognized arguments") ||
+		strings.Contains(said, "usage: goal-run")
+}
+
+// goalRunFlagSaid это те самые короткие слова: путь найденной оболочки в них
+// стоит нарочно, потому что чинится случай выбором чекаута, а не правкой цели.
+func goalRunFlagSaid(path string) string {
+	return "версия оболочки цикла не понимает переданных флагов (" + path +
+		"): она из другого чекаута devkit, чем сам дашборд"
 }
 
 func isFile(path string) bool {
@@ -430,6 +468,10 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			// идёт, и это конфликт, а не поломка.
 			if errors.As(err, &ee) && ee.ExitCode() == 3 {
 				code = http.StatusConflict
+			} else if goalRunUnknownFlag(err, text) {
+				// Справку человеку не показываем: от неё ни причины, ни что
+				// делать, а сказать надо ровно одно, и с путём.
+				text = goalRunFlagSaid(gr)
 			}
 			s.logf("запуск цели %s в %s не удался: %s", id, found.Name, text)
 			writeJSON(w, code, map[string]string{"error": text})

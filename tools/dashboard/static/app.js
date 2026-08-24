@@ -3308,8 +3308,12 @@ function mentionAddr(where, text) {
 // Ссылка внутрь дашборда: адрес стоит в href, чтобы её можно было открыть
 // соседней вкладкой и скопировать, а нажатие идёт через goKeepingChat, иначе
 // хэш затёр бы хвост открытой панели и разговор закрывался бы сам собой.
-function mdGo(text, addr) {
-  const a = el("a", "mdgo", text);
+function mdGo(what, addr) {
+  // Подписью бывает и готовый узел: путь документа в обратных кавычках остаётся
+  // моноширинным, а ссылкой становится обёртка вокруг него.
+  const a = el("a", "mdgo");
+  if (typeof what === "string") a.textContent = what;
+  else a.append(what);
   a.href = "#" + addr;
   a.addEventListener("click", (ev) => {
     if (ev.preventDefault) ev.preventDefault();
@@ -3358,7 +3362,16 @@ function mdInline(text, into, where) {
     if (!m) break;
     if (m.index) mdText(rest.slice(0, m.index), into, where);
     if (m[1] !== undefined) {
-      into.append(el("code", "", m[1]));
+      // Код в обратных кавычках разбор не трогает: там команды и флаги. Одно
+      // исключение это путь документа репозитория: в кавычках его пишут и
+      // агенты, и человек, и это имя документа, а не команда, так что ссылка
+      // там ожидаема (замечание пользователя по снимку). Вид кода при этом
+      // остаётся, ссылкой становится обёртка. Блок кода тройными кавычками не
+      // трогается вовсе: он до строчного разбора не доходит.
+      const code = el("code", "", m[1]);
+      const said = String(m[1]).trim();
+      const addr = where && /\.md$/i.test(said) ? mentionAddr(where, said) : "";
+      into.append(addr ? mdGo(code, addr) : code);
     } else if (m[2] !== undefined) {
       into.append(mdLink(m[2], m[3], where));
     } else if (m[5] !== undefined) {

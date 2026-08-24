@@ -68,9 +68,33 @@ const bubble = (project, text) => {
   if (!dump(box).includes("UTF-8")) fail("текст с незнакомым префиксом потерялся: " + dump(box));
 }
 
+// --- путь документа в обратных кавычках становится ссылкой, оставаясь кодом ---
+//
+// Разметка кода ссылок не трогает нарочно: там команды и флаги. Путь документа
+// это исключение: так его пишут и агенты, и человек, и ссылки от него ждут
+// (замечание пользователя по снимку, «Документ: `docs/lld/DK-503-...md`»).
+{
+  const box = bubble("devkit", "Документ: `docs/lld/DK-503-exec-ceiling.md`, рядом DK-503.");
+  const got = links(box);
+  if (JSON.stringify(got) !== JSON.stringify([["docs/lld/DK-503-exec-ceiling.md",
+    "#devkit/doc/lld/DK-503-exec-ceiling.md"], ["DK-503", "#devkit/DK-503"]])) {
+    fail("путь документа в кавычках не стал ссылкой: " + JSON.stringify(got));
+  }
+  const a = allByClass(box, "mdgo")[0];
+  const mono = (a.children || []).some((k) => k && k.tagName === "CODE");
+  if (!mono) fail("ссылка на документ потеряла вид кода: " + JSON.stringify(dump(a)));
+}
+
+// --- код, который путём документа не является, не трогается ---
+{
+  const box = bubble("devkit", "Ключ `--flag` и вызов `someFunc()` рядом с `main.go`.");
+  if (links(box).length) fail("обычный код стал ссылкой: " + JSON.stringify(links(box)));
+}
+
 // --- ID внутри блока кода и обратных кавычек не трогается ---
 {
-  const box = bubble("devkit", "Смотри тут:\n\n```\ntaskctl show DK-397\n```\n\nи `DK-430` в строке.");
+  const box = bubble("devkit",
+    "Смотри тут:\n\n```\ntaskctl show DK-397\nсм. docs/lld/DK-503-exec-ceiling.md\n```\n\nи `DK-430` в строке.");
   if (links(box).length) {
     fail("ID из блока кода или обратных кавычек стал ссылкой: " + JSON.stringify(links(box)));
   }

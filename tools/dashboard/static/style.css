@@ -810,6 +810,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Упоминание задачи или документа в реплике: та же ссылка, но с пунктиром
    снизу, чтобы ID читался ссылкой и в потоке текста, где цвета мало. */
 .md a.mdgo{border-bottom:1px dotted var(--acc)}
+/* путь документа в обратных кавычках: ссылка, оставшаяся кодом на вид */
+.md a.mdgo code{color:inherit}
 .md a.mdgo:hover{text-decoration:none;border-bottom-style:solid}
 
 /* страница входа */

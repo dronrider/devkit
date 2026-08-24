@@ -5842,10 +5842,11 @@ function modelPick(project, st) {
     const pick = model.value;
     if (pick === shown) return;
     chatModelSet(pick);
-    if (!st.sid) {
-      sayResult("модель нового чата: " + pick);
-      return;
-    }
+    // Про удачную смену карточка не всплывает: выбранное имя стоит в самом
+    // списке, а у заведённого разговора про смену говорит разделитель ленты.
+    // Карточка поверх экрана повторяла это третий раз (замечание
+    // пользователя). Отказ карточкой остаётся: он ничем больше не виден.
+    if (!st.sid) return;
     modelSwitch(project, st, pick, isLive && !alien && !second).catch(console.error);
   });
   return box;
@@ -5858,6 +5859,12 @@ function modelPick(project, st) {
 // поднимается резюмом новой моделью: контекст резюм сохраняет, а на ходу
 // модель клиенту не подменить. Мёртвому разговору хватает записи: его поднимет
 // ближайший резюм.
+//
+// Удача идёт молча: про смену говорит разделитель в ленте («модель изменена:
+// fable -> opus»), его пишет в журнал разговора сама ручка модели, и карточка
+// поверх экрана говорила то же самое вторым голосом. Отказ карточкой остаётся:
+// разделителя на него не будет, и без карточки человек читал бы ленту старой
+// модели, думая, что сменил её.
 async function modelSwitch(project, st, pick, live) {
   const at = chatsURL(project) + "/" + encodeURIComponent(st.sid);
   const set = await api(at + "/model", { method: "POST", body: { model: pick } });
@@ -5866,11 +5873,9 @@ async function modelSwitch(project, st, pick, live) {
     return;
   }
   if (!live) {
-    sayResult(set.body.message || "");
     await repaintChat();
     return;
   }
-  sayResult("модель разговора теперь " + pick + ": поднимаю резюмом...");
   const drop = await api(at + "/stop", { method: "POST", body: { drop: true } });
   if (!drop.ok) {
     sayResult(drop.body.error || "сессия не снялась", true);
@@ -7940,8 +7945,13 @@ function draftRow(project, d) {
   meta.append(groomBox);
   row.append(meta);
   row.addEventListener("click", (ev) => {
-    if (ev.target === talk || (groomBox.children || []).includes(ev.target)) return;
-    if (ev.target === groomBox) return;
+    // Нажатым оказывается не сама кнопка, а её начинка (значок у чата,
+    // стрелка у выбора подписки), и спрашивать надо, лежит ли нажатое внутри
+    // кнопки, а не равно ли оно ей. Прежняя проверка звала includes у
+    // children, а children в браузере это HTMLCollection без методов массива:
+    // нажатие на строку накопителя падало с TypeError, не доходя до перехода,
+    // и запись не открывалась ни с доски, ни с телефонного таба.
+    if (talk.contains(ev.target) || groomBox.contains(ev.target)) return;
     goKeepingChat(project + "/draft/" + d.id);
   });
   return row;

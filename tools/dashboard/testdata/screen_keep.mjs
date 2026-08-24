@@ -195,6 +195,16 @@ function makeNode(tag) {
   node.querySelector = () => null;
   node.querySelectorAll = () => [];
   node.closest = () => null;
+  // Лежит ли узел внутри поддерева: обработчики строк спрашивают нажатое
+  // именно так, потому что приходит к ним не сама кнопка, а её начинка.
+  node.contains = (other) => {
+    if (!other || typeof other !== "object") return false;
+    if (other === node) return true;
+    for (const kid of node.children || []) {
+      if (kid && kid.contains && kid.contains(other)) return true;
+    }
+    return false;
+  };
   node.cloneNode = () => makeNode(node.tagName);
   Object.defineProperty(node, "firstChild", {
     get: () => node.children[0] || null,

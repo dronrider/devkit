@@ -148,6 +148,17 @@ export function makeNode(tag) {
     return [];
   };
   node.closest = (sel) => (String(sel).replace(/^\./, "") === node.className ? node : null);
+  // Лежит ли узел внутри этого поддерева. Обработчики строк спрашивают именно
+  // так: нажатым приходит не кнопка, а её начинка, и сравнение с самой кнопкой
+  // пропускало бы нажатие на значок внутри неё.
+  node.contains = (other) => {
+    if (!other || typeof other !== "object") return false;
+    if (other === node) return true;
+    for (const kid of node.children || []) {
+      if (kid && kid.contains && kid.contains(other)) return true;
+    }
+    return false;
+  };
   Object.defineProperty(node, "childElementCount", { get: () => node.children.length });
   // Высота считается по числу узлов внутри: прокрутка это предмет проверки, и
   // без модели высоты стенд не отличил бы вставшую ленту от съехавшей. Своя
@@ -163,11 +174,39 @@ export function makeNode(tag) {
   return node;
 }
 
+// browserKids переводит children поддерева в такую же коллекцию, какую отдаёт
+// браузер: индексы, length, item и обход циклом есть, а методов массива
+// (includes, map, filter) нет вовсе. Мок держит children массивом ради самих
+// стендов, и на этом послаблении в накопителе черновиков прошло нажатие строки
+// через children.includes: в стенде оно считалось, а на экране падало с
+// TypeError и запись не открывалась. Стенд, который смотрит за обработчиком
+// клика, зовёт это на собранном узле и судит по браузерным правилам.
+export function browserKids(node) {
+  if (!node || typeof node !== "object") return node;
+  const kids = node.children || [];
+  for (const kid of kids) browserKids(kid);
+  const col = {
+    length: kids.length,
+    item: (i) => kids[i] || null,
+    [Symbol.iterator]: () => kids[Symbol.iterator](),
+  };
+  kids.forEach((kid, i) => { col[i] = kid; });
+  Object.defineProperty(node, "children", { get: () => col, configurable: true });
+  return node;
+}
+
 // dump сводит поддерево к тексту: стенды судят по написанному на экране.
 export function dump(node) {
   if (!node) return "";
   const own = typeof node.textContent === "string" ? node.textContent : "";
-  return [own, ...(node.children || []).map(dump)].join(" ");
+  return [own, ...kidsOf(node).map(dump)].join(" ");
+}
+
+// kidsOf берёт детей списком, чем бы они ни были: у обычного узла мока это
+// массив, а у прошедшего browserKids коллекция браузерных правил, и методов
+// массива у неё нет.
+function kidsOf(node) {
+  return node && node.children ? Array.from(node.children) : [];
 }
 
 function byTag(node, name) {

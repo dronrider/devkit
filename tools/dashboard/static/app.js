@@ -7006,6 +7006,16 @@ function selPrefix(sel) {
 // сервере (outbox.go), а «отправляется...» в момент закрытия вкладки редкость,
 // и восстанавливать её значило бы слать второй раз то, что уже уехало.
 const ECHO_KEY = "devkit.chat.pend.";
+// Ключ записи очереди исходящих: он и есть имя реплики для сервера. Одна
+// запись это один ключ, сколько бы попыток она ни пережила, и по нему сервер
+// отбрасывает повтор, ответ на который до панели не доехал (живой случай: пять
+// одинаковых копий одной реплики в одной сессии).
+let msgSeq = 0;
+function msgKey() {
+  msgSeq += 1;
+  return "m-" + Date.now().toString(36) + "-" + msgSeq + "-" +
+    Math.floor(Math.random() * 1e6).toString(36);
+}
 // Шаг автодожима: первая пауза короткая, дальше удвоение до потолка, чтобы
 // сутки без связи не обернулись тысячами запросов. Те же числа, что у очереди
 // «Входящих» (OUTBOX_FIRST, OUTBOX_MAX): очередь одна по смыслу.
@@ -7026,6 +7036,9 @@ function echoRead(project, addr) {
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
+      // Ключ записи переживает перезагрузку вместе с ней: по нему сервер узнаёт
+      // повтор, а вкладка, поднятая заново, шлёт ту же запись, а не новую.
+      id: m.id ? String(m.id) : msgKey(),
     }));
   } catch (err) {
     // Приватное окно запрещает хранилище: панель тогда живёт без памяти о
@@ -7047,7 +7060,7 @@ function echoWrite(project, addr, list) {
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
-        why: m.why || "", tmux: m.tmux || "" }));
+        why: m.why || "", tmux: m.tmux || "", id: m.id || "" }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -7159,8 +7172,13 @@ function makeEcho(project, box, feedBox, addr, resend) {
     for (const m of bad) {
       const again = m.retry || resend;
       if (!again) continue;
+      // Пока попытка не разрешилась, второй её не заводится: неразрешённая
+      // отправка это не отказ, и слать поверх неё значило бы множить копии на
+      // ровном месте. Ключ записи едет в повтор, чтобы сервер узнал в нём ту же
+      // реплику, а не следующую.
+      if (m.flying) continue;
       drop(m);
-      again(m.text);
+      again(m.text, m.id);
     }
   };
   const plan = () => {
@@ -7210,8 +7228,9 @@ function makeEcho(project, box, feedBox, addr, resend) {
   if (addr) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
-      mine.push({ key: "local-" + seq, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux, retry: resend });
+      mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
+        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux,
+        retry: (again) => resend(again, rec.id) });
     }
     if (mine.length) {
       draw();
@@ -7241,9 +7260,11 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // wire это то, что ушло агенту (с префиксом выделения), и сверка эха идёт
     // по нему: в транскрипте лежит именно он. text это слова человека, их и
     // видно в пузыре.
-    add(text, retry, wire, sel, pic) {
+    add(text, retry, wire, sel, pic, id) {
       seq += 1;
-      const m = { key: "local-" + seq, text, wire: wire || text, sel, pic,
+      // Ключ записи держится за саму запись: повтор той же реплики едет с тем
+      // же ключом, иначе сервер видит не повтор, а новую реплику.
+      const m = { key: "local-" + seq, id: id || msgKey(), text, wire: wire || text, sel, pic,
         state: "wait", born: Date.now(), retry };
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -7374,7 +7395,7 @@ function chatPanel(project, st) {
   // Дожим неушедшего зовёт ту же отправку, что и кнопка: post объявлен ниже,
   // и ссылка на него берётся лениво, чтобы очередь поднялась вместе с панелью.
   const echo = makeEcho(project, pend, feed, st.addr || st.sid,
-    (again) => post(again, null, null));
+    (again, id) => post(again, null, null, id));
   chatLive.push(echo.clear, echo.stop);
 
   if (way.why) {
@@ -7551,14 +7572,14 @@ function chatPanel(project, st) {
     return { path: r.body.path, error: "" };
   };
 
-  const post = (text, sel, pic) => {
+  const post = (text, sel, pic, key) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
     // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
     // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
     const wire0 = sel ? selPrefix(sel) + text : text;
-    const m = echo.add(text, (again) => post(again, sel, pic), wire0, sel, pic);
+    const m = echo.add(text, (again, id) => post(again, sel, pic, id), wire0, sel, pic, key);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
@@ -7598,8 +7619,11 @@ function chatPanel(project, st) {
         return;
       }
       busy.on(st.sid);
+      // Ключ записи едет с каждой попыткой: по нему сервер отличает повтор от
+      // следующей реплики и второй раз ту же не доставляет.
+      m.flying = true;
       api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-        { method: "POST", body: { text: wire } })
+        { method: "POST", body: { text: wire, msg_id: m.id } })
         .then((r) => {
           if (!r.ok) {
             // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
@@ -7632,7 +7656,10 @@ function chatPanel(project, st) {
           echo.bad(m);
           console.error(err);
         })
-        .finally(done);
+        .finally(() => {
+          m.flying = false;
+          done();
+        });
     };
     // Не легло вложение, значит реплика не уходит вовсе: агент ответил бы на
     // половину сказанного, а человек считал бы, что картинку тот видит.

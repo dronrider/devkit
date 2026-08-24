@@ -275,3 +275,100 @@ func (s *server) saidSay(key, wire, way string) {
 		s.logf("реплика не легла в журнал разговора %s: %v", key, err)
 	}
 }
+
+// Повторы отправителя. Запись очереди исходящих панели везёт свой ключ в
+// каждой попытке, и по этому ключу дашборд отличает повтор от новой реплики.
+// Прежде такого ключа не было вовсе: каждая попытка приезжала отдельной
+// репликой, и живой случай пользователя это пять одинаковых копий подряд в
+// одной сессии, посланных с разницей в минуты. Правило из ленты («повтором
+// считать строку, лежащую во входе») тут не работает: копии уходят раньше, чем
+// первая ляжет в транскрипт, и каждая выглядит недоставленной.
+
+const (
+	// sayKeepFor это память о доставленных записях: дольше часа повторов не
+	// бывает, а вечная память росла бы вместе с разговором.
+	sayKeepFor = time.Hour
+	// sayKeepMax это потолок записей: память чистится по нему, чтобы длинный
+	// день переписки не копился в процессе без края.
+	sayKeepMax = 512
+)
+
+// sayClaim это судьба записи отправителя. Пустая дорога значит, что попытка
+// ещё идёт: второй такой же отправке ехать некуда, первая сама всё расскажет.
+type sayClaim struct {
+	at  time.Time
+	way string
+}
+
+func sayClaimKey(sid, msg string) string { return sid + "/" + msg }
+
+// prevWord называет судьбу занятой записи словами человека, а не полем.
+func prevWord(prev sayClaim) string {
+	if prev.way == "" {
+		return "отправляется"
+	}
+	return "доставлена дорогой " + prev.way
+}
+
+// chatSayStart занимает запись отправителя на время попытки. Второй ответ
+// значит повтор: вместе с ним приезжает судьба первой попытки.
+func (s *server) chatSayStart(sid, msg string) (sayClaim, bool) {
+	key := sayClaimKey(sid, msg)
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.says == nil {
+		s.says = map[string]sayClaim{}
+	}
+	if prev, ok := s.says[key]; ok && now.Sub(prev.at) < sayKeepFor {
+		return prev, false
+	}
+	s.sayPrune(now)
+	s.says[key] = sayClaim{at: now}
+	return sayClaim{}, true
+}
+
+// chatSayDone помнит доставленную запись: повтор такой уже никуда не поедет.
+func (s *server) chatSayDone(sid, msg, way string) {
+	if msg == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.says == nil {
+		s.says = map[string]sayClaim{}
+	}
+	s.says[sayClaimKey(sid, msg)] = sayClaim{at: s.now(), way: way}
+}
+
+// chatSayRelease отпускает запись, чья попытка кончилась ничем: отказ доставки
+// это повод повторить, и держать ключ занятым после него значило бы хоронить
+// реплику молча.
+func (s *server) chatSayRelease(sid, msg string) {
+	if msg == "" {
+		return
+	}
+	key := sayClaimKey(sid, msg)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if prev, ok := s.says[key]; ok && prev.way == "" {
+		delete(s.says, key)
+	}
+}
+
+// sayPrune чистит память о повторах. Зовётся под замком.
+func (s *server) sayPrune(now time.Time) {
+	if len(s.says) < sayKeepMax {
+		return
+	}
+	for key, rec := range s.says {
+		if now.Sub(rec.at) >= sayKeepFor {
+			delete(s.says, key)
+		}
+	}
+	// Не помогло, значит записи свежие: память сбрасывается целиком, и худшее,
+	// что случится, это повтор, приехавший вторым разом.
+	if len(s.says) >= sayKeepMax {
+		s.says = map[string]sayClaim{}
+	}
+}

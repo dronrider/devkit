@@ -1001,6 +1001,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
+		// первой отправки и у всех её повторов.
+		MsgID string `json:"msg_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
@@ -1011,6 +1014,24 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
 	}
+	// Повтор той же записи дальше не едет. Отправитель повторяет её, когда не
+	// увидел ответа ручки, а не увидеть его он может и после доставки: связь
+	// рвётся на обратном пути, панель считает реплику неушедшей и шлёт снова.
+	// Живой случай: одна реплика доехала до сессии пятью копиями подряд, пять
+	// отдельных отправок с разницей в минуты, и каждая легла в очередь клиента,
+	// потому что общего ключа у повторов не было вовсе.
+	claim := body.MsgID
+	if claim != "" {
+		if prev, taken := s.chatSayStart(sid, claim); !taken {
+			s.logf("повтор реплики чата %s отброшен: та же запись отправителя уже %s", sid, prevWord(prev))
+			writeJSON(w, http.StatusOK, map[string]any{"way": "dup", "was": prev.way,
+				"message": "эта реплика уже " + prevWord(prev) + ", повтор никуда не поехал"})
+			return
+		}
+		// Незакрытая попытка ключ отпускает: отказ доставки это повод повторить,
+		// и держать запись занятой после него значило бы хоронить реплику.
+		defer s.chatSayRelease(sid, claim)
+	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
 	if !ok {
 		// Транскрипта нет вовсе: разговор заведён, а сессии за ним никогда не
@@ -1018,7 +1039,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// ронял реплику в никуда, и человек писал в пустой чат по разу в день,
 		// не получая ответа (жалоба пользователя). Реплика человека и есть
 		// начало разговора: она поднимает сессию заказом.
-		s.chatRaiseSay(w, found, sid, text)
+		s.chatRaiseSay(w, found, sid, text, claim)
 		return
 	}
 	recs := sessions.LoadAll(s.cfg.Home)
@@ -1029,6 +1050,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if p, ok := s.peers()[sid]; ok {
 		err := peerSay(p.Sock, text)
 		if err == nil {
+			s.chatSayDone(sid, claim, "socket")
 			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			out := map[string]any{"way": "socket", "pid": p.PID, "where": peerWord(p)}
@@ -1082,6 +1104,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 				"реплика не подалась в tmux-сессию %s: %s", last.Tmux, procErr(err))})
 			return
 		}
+		s.chatSayDone(sid, claim, "send-keys")
 		s.saidSay(saidSessionKey(sid), text, "send-keys")
 		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, last.Tmux)
 		out := map[string]any{"way": "send-keys", "tmux": last.Tmux,
@@ -1139,6 +1162,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
+	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
+	// текст приедет и вводной, и повтором.
+	s.chatSayDone(sid, claim, "resume")
 	s.saidSay(saidSessionKey(sid), text, "resume")
 	s.logf("чат %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
 	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
@@ -1212,7 +1238,7 @@ func (s *server) chatStuck(sid string) string {
 // без адресата: агент не поднимался, ответа не приходило, и молчание было
 // неотличимо от работы. Дерево тут корень проекта, задача пустая, правило
 // плана приезжает заказом, как у любого подъёма.
-func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text string) {
+func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, claim string) {
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -1238,6 +1264,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text s
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
+	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
 	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
 	writeJSON(w, http.StatusOK, map[string]any{"way": "start", "tmux": sess, "model": model,

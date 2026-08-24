@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1066,7 +1067,10 @@ exit 0`)
 		t.Errorf("живой сосед со старым транскриптом назван клином: %+v", got)
 	}
 	// Свежий транскрипт снимает вопрос без зонда: разговор ходит.
-	e.s.probe = func(string, time.Duration) error { t.Error("зонд пошёл к разговору со свежим транскриптом"); return nil }
+	e.s.probe = func(string, time.Duration) error {
+		t.Error("зонд пошёл к разговору со свежим транскриптом")
+		return nil
+	}
 	e.s.mu.Lock()
 	e.s.deaf = map[string]deafEntry{}
 	e.s.mu.Unlock()
@@ -1451,5 +1455,181 @@ func TestLiveModelComesFromOurLaunch(t *testing.T) {
 
 	if got := find().LiveModel; got != "opus" {
 		t.Fatalf("живая модель разошлась с тем, чем дашборд поднял сессию: %q", got)
+	}
+}
+
+// Живой случай: одна реплика доехала до сессии пятью одинаковыми копиями
+// подряд. Пять отдельных отправок с разницей в минуты, у каждой своя запись, и
+// узнать в них повтор дашборду было нечем: ответ ручки до панели не доезжал,
+// панель считала реплику неушедшей и слала снова. Ключ записи отправителя
+// (msg_id) один и тот же у всех попыток, и по нему повтор дальше не едет.
+
+// countingSock это живой клиент, который считает пришедшие кадры: предмет
+// проверки в том, сколько раз реплика доехала до приёмной стороны, а не в том,
+// что ответила ручка.
+func countingSock(t *testing.T) (string, func() []string) {
+	t.Helper()
+	path := filepath.Join(sockTempDir(t), "count.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var mu sync.Mutex
+	got := []string{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				data, _ := io.ReadAll(c)
+				mu.Lock()
+				got = append(got, string(data))
+				mu.Unlock()
+			}(c)
+		}
+	}()
+	return path, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string{}, got...)
+	}
+}
+
+func sayBody(text, msg string) string {
+	return fmt.Sprintf(`{"text": %q, "msg_id": %q}`, text, msg)
+}
+
+// Повтор той же записи до сессии не доезжает: кадр у живого клиента один, а
+// ручка отвечает, что реплика уже доставлена. Соседняя запись едет как ехала:
+// дедупликация ловит повтор, а не всякую вторую реплику.
+func TestChatSayDedupsRepeatOfSameRecord(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
+	sock, frames := countingSock(t)
+	writePeerSock(t, e.home, sid, os.Getpid(), sock)
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "chat-XR-1-1|1|123";; esac
+exit 0`)
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"
+
+	first := doReq(t, c, "POST", at, sayBody("что там с задачей dk-481", "m-1"))
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("первая отправка не прошла: %d %s", first.StatusCode, body(t, first))
+	}
+	again := doReq(t, c, "POST", at, sayBody("что там с задачей dk-481", "m-1"))
+	said := body(t, again)
+	if again.StatusCode != http.StatusOK {
+		t.Fatalf("повтор ответил отказом, панель будет слать снова: %d %s", again.StatusCode, said)
+	}
+	if got := frames(); len(got) != 1 {
+		t.Fatalf("реплика доехала до сессии %d раз, а сказана один: %q", len(got), got)
+	}
+	if !strings.Contains(said, "уже") {
+		t.Fatalf("повтор не назван повтором: %s", said)
+	}
+
+	// Следующая реплика человека это не повтор: у неё своя запись и своя дорога.
+	next := doReq(t, c, "POST", at, sayBody("вопрос выше уже не актуален", "m-2"))
+	if next.StatusCode != http.StatusOK {
+		t.Fatalf("вторая реплика не прошла: %d %s", next.StatusCode, body(t, next))
+	}
+	if got := frames(); len(got) != 2 {
+		t.Fatalf("вторая реплика не доехала: кадров %d, %q", len(got), got)
+	}
+	// Панель старой версии ключа не везёт вовсе: её реплики едут как ехали.
+	old := doReq(t, c, "POST", at, `{"text": "реплика без ключа"}`)
+	if old.StatusCode != http.StatusOK {
+		t.Fatalf("реплика без ключа записи отбита: %d %s", old.StatusCode, body(t, old))
+	}
+	if got := frames(); len(got) != 3 {
+		t.Fatalf("реплика без ключа не доехала: кадров %d, %q", len(got), got)
+	}
+}
+
+// Окно «стоп -> реплика -> резюм»: человек пишет в момент, когда сессии уже
+// нет (её сняли сменой модели). Реплику увозит вводная резюма, и дожим той же
+// записи второго резюма не поднимает: иначе тот же текст приедет и вводной, и
+// повтором, а рядом заведётся второй агент.
+func TestChatSayRepeatAfterResumeRidesOnce(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "bbbb2222-2222-4222-8222-222222222222"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	// Сессии нет: tmux ls пуст, живого сокета у чата тоже нет.
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in ls) exit 1;; esac
+exit 0`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"
+
+	first := doReq(t, c, "POST", at, sayBody("держи реплику в момент смены модели", "m-9"))
+	said := body(t, first)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("реплика мёртвому чату не прошла: %d %s", first.StatusCode, said)
+	}
+	if !strings.Contains(said, "resume") {
+		t.Fatalf("реплика поехала не резюмом: %s", said)
+	}
+	raises := strings.Count(readFile(t, tmuxLog), "new-session")
+	if raises != 1 {
+		t.Fatalf("резюмов на первую отправку %d, ждали один", raises)
+	}
+
+	again := doReq(t, c, "POST", at, sayBody("держи реплику в момент смены модели", "m-9"))
+	dup := body(t, again)
+	if again.StatusCode != http.StatusOK {
+		t.Fatalf("повтор после резюма ответил отказом: %d %s", again.StatusCode, dup)
+	}
+	if got := strings.Count(readFile(t, tmuxLog), "new-session"); got != raises {
+		t.Fatalf("дожим поднял второй резюм: подъёмов %d, было %d", got, raises)
+	}
+	if !strings.Contains(dup, "уже") {
+		t.Fatalf("повтор после резюма не назван повтором: %s", dup)
+	}
+	// Реплика легла в журнал сказанного один раз: вводная резюма её уже увезла,
+	// и вторая запись сделала бы её вечной попутчицей всех следующих резюмов.
+	rows := saidLoad(e.home, saidSessionKey(sid))
+	seen := 0
+	for _, r := range rows {
+		if strings.Contains(r.Text, "держи реплику в момент смены модели") {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("реплика записана в журнал %d раз: %+v", seen, rows)
+	}
+}
+
+// Отказ доставки ключ отпускает: клин клиента это повод повторить, и запись,
+// не доехавшая ни разу, обязана уехать со второй попытки.
+func TestChatSayFailedAttemptStaysRepeatable(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "cccc3333-3333-4333-8333-333333333333"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-10*time.Minute))
+	writePeerSock(t, e.home, sid, os.Getpid(), deafSock(t))
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "chat-XR-1-1|1|123";; esac
+exit 0`)
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"
+	if resp := doReq(t, c, "POST", at, sayBody("ау", "m-5")); resp.StatusCode == http.StatusOK {
+		t.Fatalf("недоставленная реплика сошла за доставленную: %s", body(t, resp))
+	}
+
+	// Клин сняли, канал ожил: та же запись едет своей дорогой, а не считается
+	// доставленной по факту первой попытки.
+	sock, frames := countingSock(t)
+	writePeerSock(t, e.home, sid, os.Getpid(), sock)
+	e.s.mu.Lock()
+	e.s.deaf = map[string]deafEntry{}
+	e.s.mu.Unlock()
+	resp := doReq(t, c, "POST", at, sayBody("ау", "m-5"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("повтор после отказа не поехал: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if got := frames(); len(got) != 1 {
+		t.Fatalf("реплика после отказа доехала %d раз: %q", len(got), got)
 	}
 }

@@ -131,6 +131,43 @@ func TestOpenAppendsAndLoads(t *testing.T) {
 	}
 }
 
+// TestElapsedFindsLastMatchingKind: запись живёт «разработка» -> «ревью», и
+// Elapsed по Dev обязан найти первый этап, а не молчать из-за того, что живой
+// этап уже другого вида.
+func TestElapsedFindsLastMatchingKind(t *testing.T) {
+	rec := Record{Stages: []Stage{
+		{Kind: Dev, Start: at(10, 0)},
+		{Kind: Review, Start: at(12, 30)},
+	}}
+	d, ok := Elapsed(rec, Dev, at(11, 46))
+	if !ok || d != 106*time.Minute {
+		t.Fatalf("Elapsed(Dev) = %v,%v; ждал 106m,true", d, ok)
+	}
+}
+
+// TestElapsedPastCeiling проверяет заход, ушедший за плановый потолок:
+// вызывающий сравнивает длительность с потолком сам, Elapsed только считает.
+func TestElapsedPastCeiling(t *testing.T) {
+	rec := Record{Stages: []Stage{{Kind: Dev, Start: at(9, 10)}}}
+	d, ok := Elapsed(rec, Dev, at(11, 35))
+	if !ok || d != 145*time.Minute {
+		t.Fatalf("Elapsed(Dev) = %v,%v; ждал 145m,true", d, ok)
+	}
+}
+
+// TestElapsedNoMatchingStage: этапа искомого вида в записи нет вовсе (пустая
+// запись или только другие виды), и тогда второе значение false, а не
+// нулевая длительность, которую легко принять за «только что открыт».
+func TestElapsedNoMatchingStage(t *testing.T) {
+	if _, ok := Elapsed(Record{}, Dev, at(11, 0)); ok {
+		t.Fatal("пустая запись не должна находить этап")
+	}
+	rec := Record{Stages: []Stage{{Kind: Review, Start: at(10, 0)}}}
+	if _, ok := Elapsed(rec, Dev, at(11, 0)); ok {
+		t.Fatal("запись без этапа Dev не должна находить его")
+	}
+}
+
 func TestOpenRejectsUnknownKind(t *testing.T) {
 	home := t.TempDir()
 	if err := Open(home, "/proj", "T-001", "деплой", "", at(10, 0)); err == nil {

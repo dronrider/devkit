@@ -31,6 +31,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               с признаком, по которому получен;
                                               считается по меткам доски, git и
                                               файла задачи, смену статуса переживает
+  elapsed <ID>                                минуты с открытия этапа «разработка»
+                                              записи задачи против планового потолка
+                                              захода (по умолчанию 120 минут,
+                                              DEVKIT_EXEC_CEILING_MINUTES для
+                                              стендов), «в пределах» или «пройден:
+                                              сдавай хвост»; без открытого этапа не
+                                              падает, говорит об этом честно
   id                                          следующий свободный ID
   draft list [--json]                         накопитель черновиков: ID,
                                               заголовок, возраст, метка уровня
@@ -472,6 +479,12 @@ func main() {
 		} else {
 			msg, err = cmdProgress(root(*dir), pos[0])
 		}
+	case "elapsed":
+		fs := flag.NewFlagSet("elapsed", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "elapsed <ID>")
+		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: review add|resolve|show|stats ..."))

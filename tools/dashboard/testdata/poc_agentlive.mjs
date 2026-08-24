@@ -70,7 +70,9 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
 // --- кружок и слово состояния у каждой строки ---
 {
   const cases = [
-    ["идущая работа", "работает", "pulse"],
+    // Активное состояние зовётся «активна» на весь дашборд: словарь один, и
+    // прежние «работает» с «tmux-сессия активна» из него ушли.
+    ["идущая работа", "активна", "pulse"],
     ["спросил и ждёт", "ждёт ответа", "dot-wait"],
     ["молчащее окно", "простаивает", "dot-idle"],
   ];
@@ -91,6 +93,10 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
     fail("зелёным помечено не только работающее: " + green.map((r) => dump(r)).join(" | "));
   }
   // Давность последнего хода видна словами у молчащей строки.
+  const said = dump(groups);
+  if (/работает|tmux-сессия активна/.test(said)) {
+    fail("состояние названо мимо словаря: " + said.slice(0, 300));
+  }
   if (!/простаивает\s+3 ч/.test(dump(rowOf("молчащее окно")))) {
     fail("простой без давности хода: " + dump(rowOf("молчащее окно")));
   }
@@ -162,6 +168,34 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
     fail("пачка сняла не те сессии: " + JSON.stringify(stopped));
   }
   if (paths.includes("dddd4444-4444")) fail("пачка сняла свежую сессию: " + JSON.stringify(stopped));
+}
+
+// --- одно состояние одним словом во всех показах ---
+//
+// Прежде активная сессия звалась «работает» в табе, «tmux-сессия активна» на
+// форме задачи и «активна» в снимке tmux: три слова об одном (замечание
+// пользователя).
+{
+  const say = (node) => dump(node).replace(/\s+/g, " ").trim();
+  const onForm = sandbox.liveChip({ id: "XR-1", via: "tmux", live: "busy" });
+  if (!onForm || !say(onForm).includes("активна")) {
+    fail("форма задачи назвала состояние иначе: " + (onForm ? say(onForm) : "чипа нет"));
+  }
+  if (say(onForm).includes("tmux-сессия")) {
+    fail("на форме осталось «tmux-сессия активна»: " + say(onForm));
+  }
+  // Происхождение работы ушло в подсказку: это про то, кто её ведёт, а не про
+  // то, идёт ли она.
+  if (!String(onForm.title || "").includes("сессия дашборда")) {
+    fail("форма не говорит, чья это сессия: " + JSON.stringify(onForm.title));
+  }
+  const inList = sandbox.chatOption("demo", { id: "s1", state: "live", idle: false }, "");
+  if (!say(inList).includes("активна")) {
+    fail("список чатов назвал живую сессию иначе: " + say(inList));
+  }
+  // И в табе сессий то же слово, из того же словаря.
+  const inTab = sandbox.workLiveChip({ live: "busy" }, Date.now());
+  if (say(inTab) !== "активна") fail("таб сессий назвал состояние иначе: " + say(inTab));
 }
 
 console.log("poc_agentlive: ok");

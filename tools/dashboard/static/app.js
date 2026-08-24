@@ -483,11 +483,9 @@ async function startRun(project, id, harness, afterOk, tier) {
   const said = r.body.message || r.body.error || "";
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);
-    // Панель адресуется отдельно от экрана: приклеенный к экрану хвост
-    // «/chat/...» вставал вторым к хвосту уже открытой панели, адрес выходил
-    // из двух разговоров подряд, и панель объявляла его протухшим (снимок
-    // пользователя, «Чат не найден» после удачного запуска).
-    liftChat(project, id, r.body.session || "");
+    // Панель запуск не трогает вовсе: он оставляет след памятью подъёма, а
+    // кнопка чата задачи по ней моргает рамкой.
+    markRunLive(project, id, r.body.session || "");
     sayResult(said, false);
     return;
   }
@@ -503,30 +501,11 @@ async function stopRun(project, id) {
   if (r.ok) await refresh();
 }
 
-// Лента живых сессий с экрана проекта ушла: карточки занимали строку над самой
-// доской и повторяли раздел «Агенты», где та же работа разобрана подробнее.
-// Осталась полоска с числом работ и дорогой туда: сессии живут в двух местах,
-// в обзоре агентов и в разговоре (решение пользователя).
-function renderLive(project, works) {
-  const live = document.getElementById("live");
-  const n = (works || []).length;
-  if (!n) {
-    live.replaceChildren();
-    return;
-  }
-  const line = el("div", "lline");
-  line.append(el("span", "dot pulse"));
-  line.append(el("b", "", "работает " + n + " " + plural(n, "агент", "агента", "агентов")));
-  const go = el("button", "alink", "показать");
-  go.type = "button";
-  go.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    goKeepingChat(project + "/sess");
-  });
-  line.append(go);
-  line.title = "Сессии проекта разобраны в табе «Сессии» на доске";
-  live.replaceChildren(line);
-}
+// Полоски «работает N агентов» над доской больше нет вовсе. Она пережила два
+// переезда и обессмыслилась на втором: сессии стоят своим табом с числом на
+// нём, а строка над доской повторяла это число и уводила туда же вторым
+// способом (решение пользователя).
+
 
 // Признак идущей работы стоит в самой строке и приезжает её полем (row.run):
 // клиент ничего не сводит со списком работ, потому что сведённый по ID признак
@@ -596,14 +575,18 @@ function rowDot(project, row) {
 // Этап ожидания не нас: словарь этапов держит его этим словом (internal/stage).
 const STAGE_OUTSIDE = "снаружи";
 
-// Кто ведёт работу: та же тройка случаев, что была в шапке экрана агента.
-// Стоп у tmux-сессии дашборда живёт кнопкой полосы действий рядом, а у сессии
-// человека его нет вовсе: снимать чужое окно дашборду нечем.
+// Состояние работы на форме задачи: те же слова и тот же вид чипа, что в табе
+// сессий, потому что состояние одно на весь дашборд. Кто её ведёт (наша
+// tmux-сессия, окно человека, поднятое мимо дашборда), стоит подсказкой: это
+// про происхождение работы, а не про то, идёт ли она.
 function liveChip(work) {
   if (!work) return null;
-  if (work.via === "tmux") return el("span", "chip c-run", "tmux-сессия активна");
-  if (work.via === "session") return el("span", "chip c-check", "интерактивная сессия");
-  return el("span", "chip", "сессия кончилась");
+  const chip = workLiveChip(work, Date.now());
+  if (!chip) return null;
+  const who = work.via === "tmux" ? "сессия дашборда"
+    : work.via === "session" ? "интерактивная сессия"
+    : "сессии дашборда нет, работа поднята мимо него";
+  return withTip(chip, who);
 }
 
 // Этап работы строки: вид деятельности словом и сколько он идёт. Запись кладут
@@ -739,6 +722,18 @@ function actionLabel(sect) {
 // Статус задачи русским словом: ключи секций приходят с доски
 // (taskctl list --json), а на экране статус зовётся так, как о нём говорят.
 // Словарь один на весь клиент: два перевода одного ключа разошлись бы врозь.
+// Словарь состояний работы: одно слово на весь дашборд. Прежде одно и то же
+// состояние звалось в трёх местах по-разному («работает» в табе сессий,
+// «tmux-сессия активна» на форме задачи, «активна» в снимке tmux), и человек
+// читал их как разные вещи (замечание пользователя). Машинные состояния
+// приезжают полем live, а переводит их только этот словарь.
+const LIVE_WORD = {
+  busy: "активна",
+  waiting: "ждёт ответа",
+  idle: "простаивает",
+  dead: "сессии нет",
+};
+
 const SECT_WORD = {
   backlog: "в очереди",
   "in-progress": "в работе",
@@ -1290,16 +1285,25 @@ function boardKindNow(kind) {
   return kind === "drafts" || kind === "sess" ? kind : "tasks";
 }
 
-// works тут нужны ради счётчика на табе сессий: число переехало на него с
-// пункта боковой колонки вместе с самим разделом.
-function boardKindBar(project, kind, works) {
+// Числа на табах доски: задачи считает доска, сессии список работ, черновики
+// сервер чтением накопителя. Держатся они одним местом, потому что показать их
+// надо на любом из трёх экранов, а знает каждый экран только своё.
+let shownCounts = { tasks: 0, sess: 0, drafts: 0 };
+
+function countsSet(part) {
+  shownCounts = Object.assign({}, shownCounts, part || {});
+}
+
+function boardKindBar(project, kind) {
   const bar = el("div", "ktabs");
   const now = boardKindNow(kind);
   for (const [key, label] of boardKinds()) {
     const btn = el("button", "ktab" + (key === now ? " onktab" : ""), label);
     btn.type = "button";
     btn.dataset.kind = key;
-    const n = key === "sess" ? (works || []).length : 0;
+    // Число стоит баджем у каждого таба, а не у одного: вид один на все три,
+    // иначе счётчик читается как признак самого таба (замечание пользователя).
+    const n = shownCounts[key] || 0;
     if (n) btn.append(el("span", "n", String(n)));
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -1313,12 +1317,16 @@ function boardKindBar(project, kind, works) {
 
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
+  // Число задач считается по самой доске: секции у неё те же, что и на экране.
+  let rowsN = 0;
+  for (const sec of board.sections || []) rowsN += (sec.rows || []).length;
+  countsSet({ tasks: rowsN, sess: (works || []).length });
   const items = [{
     key: "board-kind",
-    // Отпечаток несёт открытый таб и число сессий: от первого зависит
-    // подсветка, от второго счётчик на табе сессий.
-    sign: [project, "tasks", (works || []).length].join("|"),
-    make: () => boardKindBar(project, "tasks", works),
+    // Отпечаток несёт открытый таб и числа на нём: от первого зависит
+    // подсветка, от вторых баджи.
+    sign: [project, "tasks", rowsN, (works || []).length, shownCounts.drafts].join("|"),
+    make: () => boardKindBar(project, "tasks"),
   }];
   // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
   // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
@@ -2361,7 +2369,8 @@ function barBtn(cls, label, ico) {
 
 // Продолжение работы задачи: сервер сам решает, будить живой разговор каналом
 // или поднимать резюм, а не нашедший разговора откатывается на прежний запуск
-// конвейера. Экран после удачи уходит в чат: смотреть за продолжением надо там.
+// конвейера. Экран после удачи остаётся на месте, а кнопка чата задачи
+// помечается активностью.
 async function continueTask(project, id) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/tasks/" + encodeURIComponent(id) + "/continue", { method: "POST", body: {} });
@@ -2370,15 +2379,12 @@ async function continueTask(project, id) {
     return;
   }
   // Сервер сам решил, что делать: разбудил живую сессию, поднял резюм или
-  // завёл первый чат. Экрану остаётся сказать это словами и открыть чат.
+  // завёл первый чат. Экрану остаётся сказать это словами и пометить, что у
+  // задачи пошла активность: панель тут не открывается по той же причине, что
+  // и на запуске, разговор человека этим переходом рвался бы.
   if (r.body.message) sayResult(r.body.message);
-  if (r.body.way === "fresh") {
-    // ID сессии рождается позже команды: чат встанет в списке первым ходом, а
-    // пока открывается список задачи.
-    openChat(chatAddr(project, id));
-    return;
-  }
-  openChat(chatAddr(project, r.body.session || id));
+  markRunLive(project, id, r.body.session || "");
+  await refresh();
 }
 
 function taskActions(project, id, row, works) {
@@ -2390,7 +2396,7 @@ function taskActions(project, id, row, works) {
   // фильтрует список по ней. Кнопка рядом с действиями строки заводила ещё
   // одну дорогу в то же место и путала разговор с работой.
   if (work && work.via === "tmux") {
-    const stop = barBtn("btn btn-danger", "Остановить агента", "i-stop");
+    const stop = barBtn("btn btn-danger", "Стоп", "i-stop");
     // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
     // они стояли указкой над всей полосой.
     withTip(stop, STOP_TIP);
@@ -4299,7 +4305,7 @@ function wireTmux(id, card, sub) {
     if (hit.created) {
       row.append(el("span", "", "создана " + new Date(hit.created * 1000).toTimeString().slice(0, 5)));
     }
-    row.append(el("span", "chip c-check", "активна"));
+    row.append(el("span", "chip c-check", LIVE_WORD.busy));
     const pr = await api("/api/tmux/" + encodeURIComponent(hit.name));
     snap.textContent = pr.ok ? (pr.body.text || "") : (pr.body.error || "");
     if (sub) sub.textContent = hit.name;
@@ -5810,17 +5816,33 @@ function chatLiftDrop(project, addr) {
   }
 }
 
-// Панель после удачного запуска: она встаёт тем же ожиданием, что и новый чат,
-// с плашкой о подъёме и опросом реестра, а пришивает себя к родившейся сессии
-// по имени tmux. Не назвал сервер сессии (закрытие строки Check, чужой запуск),
-// значит ждать нечего, и панель открывает разговоры самой задачи.
-function liftChat(project, id, sess) {
-  const addr = sess ? CHAT_NEW + ":" + id : id;
-  const full = chatAddr(project, addr);
-  if (sess) chatLiftSet(project, addr, sess);
-  openChat(full);
-  if (sess) chatSewLoop(project, sess, full, 1500, 60).catch(console.error);
+// Что делает удачный запуск с панелью: ничего. Прежде он открывал её сам, и
+// человек, разбиравший итоги задачи в одном разговоре, вылетал из него, стоило
+// нажать «Выполнить» у соседней задачи (замечание пользователя). Панель
+// открывает человек, а запуск оставляет след: имя поднятой сессии ложится в
+// память подъёма, и по ней кнопка чата этой задачи мягко моргает рамкой, пока
+// работа идёт. Откроет человек чат задачи сам, панель встретит его тем же
+// ожиданием подъёма, что и раньше.
+function markRunLive(project, id, sess) {
+  if (!sess) return;
+  chatLiftSet(project, CHAT_NEW + ":" + id, sess);
 }
+
+// Пошла ли у задачи активность: её работа идёт прямо сейчас либо запуск был
+// только что и сессия ещё поднимается. Второе видно памятью подъёма: между
+// нажатием и первым ходом сессии проходят секунды, и всё это время экран обязан
+// говорить, что нажатие сработало.
+function taskLively(project, id, works) {
+  if (!id) return false;
+  const w = (works || []).find((x) => x.id === id);
+  if (w && (w.live === WORK_BUSY || w.live === WORK_WAIT)) return true;
+  return Boolean(chatLiftOf(project, CHAT_NEW + ":" + id));
+}
+
+// Машинные имена состояний: их присылает сервер, и сравнивать с ними надо теми
+// же словами, что он пишет.
+const WORK_BUSY = "busy";
+const WORK_WAIT = "waiting";
 
 // chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
 // Узнавание двумя ключами по убыванию силы: имя tmux-сессии подъёма, если
@@ -6062,7 +6084,7 @@ function chatOption(project, c, current) {
   // Живой чат различается занятостью: работает агент или ждёт реплики.
   const busyNow = c.state === "live" && !c.idle;
   chips.append(el("span", "chip" + (busyNow ? " c-run" : ""),
-    busyNow ? "работает" : CHAT_STATE_WORD[c.state] || c.state));
+    busyNow ? LIVE_WORD.busy : CHAT_STATE_WORD[c.state] || c.state));
   if (c.model) chips.append(el("span", "chip", c.model));
   for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
   if (c.harness) chips.append(el("span", "chip", c.harness));
@@ -6928,10 +6950,17 @@ function chatStoppable(st) {
 // Ожидание ответа кнопка чата не помечает вовсе: признак живёт чипом у самой
 // строки (waitChip), и кружок на кнопке дублировал его, вися рядом криво
 // (замечание пользователя). Кнопка отвечает за одно, вход в разговор.
-function rowChatBtn(project, row) {
+// works приезжают тем же обходом, что нарисовал строку: у строки доски это
+// работы её проекта, у записи накопителя их нет вовсе, и тогда признак берётся
+// у последнего обхода экрана.
+function rowChatBtn(project, row, works) {
   const talk = el("button", "btn btn-sm btn-ico");
   talk.append(icon("i-chat"));
-  withTip(talk, "Чат по задаче");
+  // Мягко моргающая рамка: у задачи пошла работа, и разговор с ней есть где
+  // смотреть. Панель при этом никого никуда не уводит, человек решает сам.
+  const lively = taskLively(project, row.id, works || shownWorks);
+  if (lively) talk.classList.add("chatlive");
+  withTip(talk, lively ? "Чат по задаче: работа идёт" : "Чат по задаче");
   talk.setAttribute("aria-label", "Чат по задаче " + row.id);
   talk.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -8390,12 +8419,17 @@ function draftRow(project, d) {
 async function renderDrafts(project, works) {
   const groups = document.getElementById("groups");
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
+  // Число записей тут точнее счёта сервера: накопитель только что прочитан
+  // своей ручкой.
+  countsSet({ sess: (works || []).length,
+    drafts: ((r.ok && r.body.drafts) || []).length });
   const items = [{
     key: "board-kind",
-    sign: [project, "drafts", (works || []).length].join("|"),
+    sign: [project, "drafts", shownCounts.tasks, (works || []).length,
+      shownCounts.drafts].join("|"),
     // Дорога назад к задачам это тот же таб, что и привёл сюда: хлебной
     // крошки над накопителем больше нет, она вела туда же вторым способом.
-    make: () => boardKindBar(project, "drafts", works),
+    make: () => boardKindBar(project, "drafts"),
   }, {
     key: "drafts-bar",
     sign: project,
@@ -9157,7 +9191,10 @@ async function renderDraft(project, works, id) {
       const actions = [];
       if (groomChat) {
         const go = barBtn("btn", "Чат груминга", "i-chat");
-        withTip(go, "Разговор разбора записи");
+        // Та же рамка, что у кнопки чата задачи: разбор идёт, и смотреть за ним
+        // надо в разговоре. Сам разбор панель не открывает, как и запуск.
+        if (running) go.classList.add("chatlive");
+        withTip(go, running ? "Разговор разбора записи: разбор идёт" : "Разговор разбора записи");
         go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
         actions.push(go);
       } else if (!running) {
@@ -10117,10 +10154,9 @@ function workChips(project, w) {
       "сессия поднята не дашбордом: остановить работу можно там, где она поднята"));
   }
   if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
-  if (w.via === "registry") chips.push(el("span", "chip c-check", "сессия кончилась"));
-  // Разговор о задаче назван собой: сессия живая и номер задачи у неё свой, но
-  // строку она не ведёт, и кнопок конвейера на доске у той не появляется.
-  else if (w.talk) {
+  // Состояние работы («сессии нет» у поднятой мимо дашборда) сказано чипом
+  // состояния рядом, и второго чипа про то же тут больше нет.
+  if (w.talk) {
     chips.push(withTip(el("span", "chip", "разговор о задаче"),
       "чат задачу не ведёт: строка на доске от него своей не становится"));
   } else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
@@ -10186,10 +10222,10 @@ function workTaskLink(project, id) {
 // состояние считает сервер (workState в board.go), тут оно только называется:
 // разъехавшись, кружок и слова мерили бы работу по-разному.
 const WORK_LIVE = {
-  busy: { word: "работает", chip: "c-run", dot: "pulse" },
-  waiting: { word: "ждёт ответа", chip: "c-wait", dot: "dot-wait" },
-  idle: { word: "простаивает", chip: "", dot: "dot-idle" },
-  dead: { word: "сессии нет", chip: "", dot: "dot-other" },
+  busy: { word: LIVE_WORD.busy, chip: "c-run", dot: "pulse" },
+  waiting: { word: LIVE_WORD.waiting, chip: "c-wait", dot: "dot-wait" },
+  idle: { word: LIVE_WORD.idle, chip: "", dot: "dot-idle" },
+  dead: { word: LIVE_WORD.dead, chip: "", dot: "dot-other" },
 };
 
 function workLive(w) {
@@ -10207,7 +10243,7 @@ function workLiveChip(w, now) {
   const said = workLive(w);
   if (!said) return null;
   const age = workMoved(w, now);
-  const text = said.word + (said.word === "работает" || !age ? "" : " " + age);
+  const text = said.word + (said.word === LIVE_WORD.busy || !age ? "" : " " + age);
   const chip = el("span", "chip" + (said.chip ? " " + said.chip : ""), text);
   const tip = age ? "последний ход " + age + " назад" : "времени последнего хода не видно";
   return withTip(chip, said.word + ": " + tip);
@@ -10314,7 +10350,7 @@ function agentRow(project, w, now) {
   // (замечание пользователя). Знание уехало в подсказку строки, где и лежат
   // остальные метаданные.
   if (w.via === "tmux" && w.id) {
-    const stop = withTip(el("button", "btn btn-sm btn-danger", "Остановить"), STOP_TIP);
+    const stop = withTip(el("button", "btn btn-sm btn-danger", "Стоп"), STOP_TIP);
     stop.addEventListener("click", (ev) => {
       ev.stopPropagation();
       stopRun(project, w.id).catch(console.error);
@@ -10482,10 +10518,12 @@ function paintSessionRows(card, project, works, q) {
 
 function renderSessions(project, works, q) {
   const groups = document.getElementById("groups");
+  countsSet({ sess: (works || []).length });
   const nodes = sync(groups, [{
     key: "board-kind",
-    sign: [project, "sess", (works || []).length].join("|"),
-    make: () => boardKindBar(project, "sess", works),
+    sign: [project, "sess", shownCounts.tasks, (works || []).length,
+      shownCounts.drafts].join("|"),
+    make: () => boardKindBar(project, "sess"),
   }, {
     key: "sess-bar",
     sign: project,
@@ -10792,7 +10830,6 @@ async function paint() {
     // говорит, что это главная, а откуда они взялись, спрашивают у конфига, а
     // не у шапки (замечание пользователя).
     document.getElementById("psub").textContent = "";
-    renderLive("", []);
     markNav(rt);
     renderHome(projects);
     return;
@@ -10803,8 +10840,15 @@ async function paint() {
     showError((body.errors || []).join("; ") || "в корнях конфига не нашлось ни одной доски docs/TASKS.md");
     return;
   }
+  // Числа табов приезжают тем же ответом, что и список проектов: экран, на
+  // котором открыт один таб, о соседних сам ничего не знает.
+  const sects = current.sections || {};
+  countsSet({
+    tasks: Object.keys(sects).reduce((n, key) => n + (sects[key] || 0), 0),
+    sess: (current.works || []).length,
+    drafts: current.drafts || 0,
+  });
   headName(current.name);
-  renderLive(current.name, current.works);
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
@@ -10868,7 +10912,6 @@ async function paint() {
   const board = r.body.board || {};
   shownBoard = board;
   shownWorks = r.body.works || [];
-  renderLive(current.name, r.body.works);
   markNav(rt);
   if (rt.feed) {
     document.getElementById("psub").textContent = "уведомления";
@@ -10910,7 +10953,18 @@ function plural(n, one, few, many) {
 // доска на свой экран текущего проекта, открытый раздел подсвечен. Лента
 // разделом больше не стоит, вход в неё это колокольчик в шапке, и открытая
 // лента подсвечивает его.
+// Значок чатов в шапке моргает рамкой, когда у открытой задачи идёт работа: на
+// её форме своей кнопки чата нет, вход в разговор тут один, и след запуска
+// человек ищет глазами именно здесь.
+function markChatsLive(rt) {
+  const btn = document.getElementById("chats");
+  if (!btn) return;
+  const lively = Boolean(rt.proj && rt.id) && taskLively(rt.proj, rt.id, shownWorks);
+  btn.classList.toggle("chatlive", lively);
+}
+
 function markNav(rt) {
+  markChatsLive(rt);
   // На самой главной логотип погашен: он никуда не ведёт, и подсветка по
   // наведению обещала бы переход, которого нет.
   for (const id of ["logo-side", "logo-top"]) {

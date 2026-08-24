@@ -304,10 +304,10 @@ func TestStaticDraftsSection(t *testing.T) {
 	if !strings.Contains(funcBody(t, text, "function boardKindHash("), `"/drafts"`) {
 		t.Error("таб черновиков не ведёт на адрес накопителя")
 	}
-	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts", works)`) {
+	if !strings.Contains(funcBody(t, text, "async function renderDrafts("), `boardKindBar(project, "drafts")`) {
 		t.Error("накопитель открывается без табов доски: дороги назад к задачам нет")
 	}
-	if !strings.Contains(funcBody(t, text, "function renderBoard("), `boardKindBar(project, "tasks", works)`) {
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), `boardKindBar(project, "tasks")`) {
 		t.Error("на доске нет таба черновиков")
 	}
 	if strings.Contains(funcBody(t, text, "function renderBoard("), "draftsButton(") {
@@ -1113,5 +1113,51 @@ func TestDraftWaitingFromAsk(t *testing.T) {
 	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
 	if text := body(t, resp); strings.Contains(text, "ждёт ответа") {
 		t.Errorf("экран записи держит ожидание после ответа: %s", text)
+	}
+}
+
+// Число записей накопителя едет вместе со списком проектов: им подписан таб
+// черновиков на доске, а спрашивать ради баджа накопитель своей ручкой значило
+// бы ходить за ним с каждого экрана. Считается оно чтением каталога, без
+// подпроцесса taskctl.
+func TestProjectsCountDrafts(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	drafts := func() int {
+		t.Helper()
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects", "")
+		var got struct {
+			Projects []struct {
+				Name   string `json:"name"`
+				Drafts int    `json:"drafts"`
+			} `json:"projects"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range got.Projects {
+			if p.Name == "demo" {
+				return p.Drafts
+			}
+		}
+		t.Fatalf("проекта demo в списке нет: %+v", got)
+		return 0
+	}
+	if n := drafts(); n != 0 {
+		t.Errorf("пустой накопитель насчитал %d записей", n)
+	}
+	for _, text := range []string{"первая мысль", "вторая мысль"} {
+		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			`{"text": `+strconv.Quote(text)+`}`).Body.Close()
+	}
+	if n := drafts(); n != 2 {
+		t.Errorf("накопитель из двух записей насчитал %d", n)
+	}
+	// Посторонний файл записью не считается: накопитель это .md рядом с ними.
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "tasks", "drafts", ".DS_Store"),
+		[]byte("мусор"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := drafts(); n != 2 {
+		t.Errorf("посторонний файл посчитан записью: %d", n)
 	}
 }

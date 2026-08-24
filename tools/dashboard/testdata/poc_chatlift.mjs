@@ -1,4 +1,4 @@
-// Стенд панели после запуска задачи с формы (ветка poc-chat).
+// Стенд запуска задачи с формы и панели после него (ветка poc-chat).
 //
 // Человек пришёл на форму задачи из разговора и нажал «Выполнить»: панель
 // открывалась мёртвой, с заголовком «Чат не найден» и плашкой про снятую
@@ -66,10 +66,11 @@ const findTa = (node) => {
   return null;
 };
 
-// --- запуск с формы: адрес панели это ожидание подъёма, а не мёртвый чат ---
+// --- запуск с формы разговор не трогает, а помечает активность ---
 {
-  // Человек пришёл на форму из разговора: панель открыта, и её хвост стоит в
-  // адресе. Именно в этом случае адрес и складывался из двух разговоров.
+  // Человек разбирает итоги задачи в одном разговоре и жмёт «Выполнить» у
+  // соседней: панель обязана остаться на прежнем разговоре, иначе человека
+  // выбрасывает из чужого чата (замечание пользователя).
   sandbox.location.hash = "#demo/XR-002/chat/aaaa1111-1111";
   const acts = sandbox.taskActions("demo", "XR-002", row, []);
   let run = null;
@@ -80,12 +81,42 @@ const findTa = (node) => {
   run.handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!posted.length) fail("запуск не ушёл на сервер");
-  if (hashNow() !== "demo/XR-002/chat/new:XR-002") {
-    fail("панель после запуска адресована не ожиданием подъёма: " + sandbox.location.hash);
+  if (!hashNow().includes("/chat/aaaa1111-1111")) {
+    fail("запуск увёл панель с чужого разговора: " + sandbox.location.hash);
   }
-  if (store.get(liftKey) === undefined) fail("имя tmux подъёма не легло в память панели");
+  if (hashNow().includes("new:XR-002")) {
+    fail("запуск сам открыл панель нового чата: " + sandbox.location.hash);
+  }
+  // След запуска остаётся памятью подъёма: по ней моргает кнопка чата задачи,
+  // и по ней же панель, открытая человеком, встретит ожидание подъёма.
+  if (store.get(liftKey) === undefined) fail("имя tmux подъёма не легло в память");
   if (!String(store.get(liftKey)).includes(SESS)) {
     fail("память подъёма помнит не ту сессию: " + store.get(liftKey));
+  }
+}
+
+// --- кнопка чата задачи моргает рамкой, пока работа идёт ---
+{
+  const idle = sandbox.rowChatBtn("demo", { id: "XR-777" });
+  if (String(idle.className).includes("chatlive")) {
+    fail("кнопка чата спокойной задачи моргает: " + idle.className);
+  }
+  // Работа только запущена: сессия ещё не назвалась, а нажатие уже сработало,
+  // и сказать об этом надо сразу.
+  const justRun = sandbox.rowChatBtn("demo", { id: "XR-002" });
+  if (!String(justRun.className).includes("chatlive")) {
+    fail("после запуска кнопка чата задачи не помечена активностью: " + justRun.className);
+  }
+  // Идущая работа помечена и без памяти запуска: признак берётся у самой работы.
+  const running = sandbox.rowChatBtn("demo", { id: "XR-003" },
+    [{ id: "XR-003", kind: "task", via: "tmux", live: "busy" }]);
+  if (!String(running.className).includes("chatlive")) {
+    fail("кнопка чата идущей работы не помечена: " + running.className);
+  }
+  const done = sandbox.rowChatBtn("demo", { id: "XR-004" },
+    [{ id: "XR-003", kind: "task", via: "tmux", live: "busy" }]);
+  if (String(done.className).includes("chatlive")) {
+    fail("кнопка чата чужой задачи помечена активностью: " + done.className);
   }
 }
 

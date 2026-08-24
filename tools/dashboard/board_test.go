@@ -383,11 +383,15 @@ func TestStaticAgentsScreen(t *testing.T) {
 	if strings.Index(row, `el("span", "tt", w.title`) > strings.Index(row, "workChips(") {
 		t.Error("строка начинается не с заголовка задачи")
 	}
-	for _, want := range []string{"агент цели", "конвейер задачи", "сессия кончилась",
-		"интерактивная сессия"} {
+	for _, want := range []string{"агент цели", "конвейер задачи", "интерактивная сессия"} {
 		if !strings.Contains(funcBody(t, app, "function workChips("), want) {
 			t.Errorf("вид работы %q не назван чипом", want)
 		}
+	}
+	// Состояние работы чипом вида больше не называется: о нём говорит чип
+	// состояния рядом, словом из общего словаря.
+	if strings.Contains(funcBody(t, app, "function workChips("), "сессия кончилась") {
+		t.Error("состояние работы вернулось в чип вида: о нём говорит чип состояния")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, want := range []string{".arow{", ".aacts{", ".atime{", ".arow{flex-wrap:wrap"} {
@@ -420,11 +424,9 @@ func TestStaticAgentsRowGates(t *testing.T) {
 	if !strings.Contains(addr, "w.session || w.id") {
 		t.Error("адрес разговора строки собран не из сессии и задачи")
 	}
-	if !strings.Contains(row, `w.via === "tmux" && w.id`) || !strings.Contains(row, `"Остановить"`) {
+	// Снятие сессии зовётся одним словом на весь дашборд.
+	if !strings.Contains(row, `w.via === "tmux" && w.id`) || !strings.Contains(row, `"Стоп"`) {
 		t.Error("кнопка стопа стоит не у tmux-работы")
-	}
-	if strings.Index(row, `w.via === "registry"`) > strings.Index(row, `w.via === "tmux"`) {
-		t.Error("ветка реестровой работы стоит после стопа: кнопка достанется и ей")
 	}
 	if !strings.Contains(row, "сессия поднята мимо дашборда") {
 		t.Error("реестровая работа не объясняет, почему стопа у неё нет")

@@ -840,7 +840,7 @@ func TestStaticTaskActionBar(t *testing.T) {
 	if !strings.Contains(funcBody(t, app, "async function renderTask("), "taskActions(project, id, row, works)") {
 		t.Error("экран задачи не приносит в полосу своих действий")
 	}
-	if !strings.Contains(funcBody(t, app, "function taskActions("), "Остановить агента") {
+	if !strings.Contains(funcBody(t, app, "function taskActions("), `"Стоп"`) {
 		t.Error("в полосе действий задачи нет стопа живой работы")
 	}
 	for _, gone := range []string{"Правки нет", `el("div", "card act")`, "Изменённое уедет одной кнопкой"} {
@@ -931,10 +931,14 @@ func TestStaticTaskTips(t *testing.T) {
 			t.Errorf("в static/app.js осталась надпись-указка %q", gone)
 		}
 	}
-	// Стоп живёт на экране задачи и называется там одними словами: после
-	// DK-435 разговор ушёл в панель, и второй кнопки стопа рядом с ним нет.
-	if !strings.Contains(funcBody(t, app, "function taskActions("), `"Остановить агента"`) {
-		t.Error("на полосе действий задачи нет кнопки «Остановить агента»")
+	// Стоп живёт на экране задачи и зовётся одним словом на весь дашборд:
+	// «Остановить», «Стоп» и «Остановить агента» были тремя подписями одного
+	// действия (замечание пользователя).
+	if !strings.Contains(funcBody(t, app, "function taskActions("), `"Стоп"`) {
+		t.Error("на полосе действий задачи нет кнопки «Стоп»")
+	}
+	if strings.Contains(app, "Остановить агента") || strings.Contains(app, `"Остановить"`) {
+		t.Error("у стопа снова несколько подписей: слово одно на весь дашборд")
 	}
 }
 
@@ -1078,7 +1082,7 @@ func TestStaticTaskBarIcons(t *testing.T) {
 	// шапке, и вторая дорога туда же с полосы снята нарочно.
 	acts := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{
-		`barBtn("btn btn-danger", "Остановить агента", "i-stop")`,
+		`barBtn("btn btn-danger", "Стоп", "i-stop")`,
 		`barBtn("btn btn-acc", name, "i-play")`} {
 		if !strings.Contains(acts, want) {
 			t.Errorf("действие полосы осталось без значка: нет %q", want)

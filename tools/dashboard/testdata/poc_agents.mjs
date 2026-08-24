@@ -76,11 +76,17 @@ for (const which of ["tmux", "registry"]) {
 
 // --- стоп стоит только у своей tmux-работы ---
 {
-  if (!btns(rowOf(works.tmux)).includes("Остановить")) {
+  // Снятие сессии зовётся одним словом на весь дашборд: три подписи у одного
+  // действия («Остановить», «Стоп», «Остановить агента») человек читал как три
+  // разных (замечание пользователя).
+  if (!btns(rowOf(works.tmux)).includes("Стоп")) {
     fail("у своей работы пропал стоп: " + JSON.stringify(btns(rowOf(works.tmux))));
   }
   const reg = rowOf(works.registry);
-  if (btns(reg).includes("Остановить")) fail("реестровой работе достался стоп");
+  if (btns(reg).includes("Стоп")) fail("реестровой работе достался стоп");
+  if (btns(rowOf(works.tmux)).includes("Остановить")) {
+    fail("у стопа осталась старая подпись: " + JSON.stringify(btns(rowOf(works.tmux))));
+  }
   // Происхождение сессии видно чипом: список один, вложенных табов «Дашборд» и
   // «Прочие» больше нет, и различать строки надо в них самих.
   const marks = allByClass(reg, "chip").map((c) => c.textContent);
@@ -215,16 +221,36 @@ for (const which of ["tmux", "registry"]) {
   sandbox.renderSessions("demo", [], "");
   if (byClass(tabs()[1], "n")) fail("пустой таб пишет счётчик: " + dump(tabs()[1]));
 
-  // Отступ и цвет счётчика живут в style.css: слитое с подписью число это как
-  // раз отсутствие своего правила у .ktab .n.
+  // Вид баджа живёт в style.css: голая цифра вплотную к подписи читалась
+  // признаком самого таба, а не числом строк за ним.
   const css = readFileSync(join(dirname(app), "style.css"), "utf8");
   const rule = (css.match(/\.ktab \.n\{([^}]*)\}/) || [])[1];
-  if (!rule) fail("вида у счётчика таба нет: правила .ktab .n в style.css не нашлось");
+  if (!rule) fail("вида у баджа таба нет: правила .ktab .n в style.css не нашлось");
   if (!/margin-left:\s*[1-9]/.test(rule)) {
-    fail("счётчик таба стоит вплотную к подписи: " + rule);
+    fail("бадж стоит вплотную к подписи: " + rule);
   }
-  if (!rule.includes("var(--tx3)")) {
-    fail("счётчик таба не бледнее подписи: " + rule);
+  for (const want of ["border-radius", "background", "padding"]) {
+    if (!rule.includes(want)) fail("бадж собран не пилюлей (нет " + want + "): " + rule);
+  }
+}
+
+// --- бадж стоит у всех трёх табов одного вида ---
+{
+  const groups = sandbox.document.getElementById("groups");
+  const tabs = () => allByClass(groups, "ktab");
+  sandbox.countsSet({ tasks: 12, sess: 3, drafts: 7 });
+  sandbox.renderSessions("demo", [{ id: "XR-1", kind: "task", via: "tmux", own: true },
+    { id: "XR-2", kind: "task", via: "tmux", own: true },
+    { id: "XR-3", kind: "task", via: "tmux", own: true }], "");
+  const got = tabs().map((t) => (byClass(t, "n") || {}).textContent || "");
+  if (JSON.stringify(got) !== JSON.stringify(["12", "3", "7"])) {
+    fail("баджи табов собрались не по числам: " + JSON.stringify(got));
+  }
+  for (const t of tabs()) {
+    const n = byClass(t, "n");
+    if (!n || String(n.className) !== "n") {
+      fail("вид баджа разный у табов: " + (n ? n.className : "баджа нет"));
+    }
   }
 }
 

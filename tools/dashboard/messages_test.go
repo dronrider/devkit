@@ -661,7 +661,6 @@ func TestStaticChatHonesty(t *testing.T) {
 		"Идущий виток получит его за минуты",
 		"ждёт витка",
 		"Написать агенту...",
-		"Остановить агента",
 		"во «Входящих» пусто",
 	} {
 		if !strings.Contains(text, want) {

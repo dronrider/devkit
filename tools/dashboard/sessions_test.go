@@ -1205,34 +1205,27 @@ func TestRunStopInteractiveSession(t *testing.T) {
 	}
 }
 
-// Клиент показывает интерактивную работу как таковую: экран агента ставит
-// фишку, а разбор сессий живёт в табе «Сессии» на доске. Над доской от ленты
-// сессий осталась полоска с числом работ и дорогой в этот таб: карточки
-// повторяли его же, занимая строку над самой доской (решение пользователя).
+// Полоски «работает N агентов» над доской больше нет вовсе: сессии стоят своим
+// табом с числом на нём, а строка над доской повторяла это число и уводила туда
+// же вторым способом (решение пользователя). Признак живости при этом остался
+// на экране задачи и говорит словом из общего словаря состояний.
 func TestStaticInteractiveWork(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	live := funcBody(t, text, "function renderLive(")
-	for _, want := range []string{"работает ", `plural(n, "агент"`, `goKeepingChat(project + "/sess")`} {
-		if !strings.Contains(live, want) {
-			t.Errorf("в полоске работ нет %q", want)
-		}
+	if strings.Contains(text, "function renderLive(") {
+		t.Error("сборка полоски работ осталась в статике мёртвым кодом")
 	}
-	// Ни кнопки стопа, ни карточек с разговорами: и то и другое живёт в табе
-	// сессий, а полоска только считает и уводит туда.
-	if strings.Contains(live, "Стоп") || strings.Contains(live, "stopRun(") {
-		t.Error("на полоску работ вернулась кнопка стопа")
+	if strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="live"`) {
+		t.Error("узел полоски работ остался в разметке")
 	}
-	if strings.Contains(live, "openChat(") {
-		t.Error("полоска работ снова открывает разговоры: сессии живут своим табом и чатом")
-	}
-	// Признак живости переехал на экран задачи (DK-435): чип называет вид
-	// работы теми же словами, что и полоса.
 	chip := funcBody(t, text, "function liveChip(")
-	if !strings.Contains(chip, `work.via === "session"`) || !strings.Contains(chip, "интерактивная сессия") {
+	if !strings.Contains(chip, "workLiveChip(") {
+		t.Error("форма задачи называет состояние своими словами, мимо словаря")
+	}
+	if !strings.Contains(chip, "интерактивная сессия") {
 		t.Error("экран задачи не подписывает интерактивную сессию")
 	}
 	if !strings.Contains(funcBody(t, text, "async function renderTask("), "liveChip(work)") {
-		t.Error("признак живости не встал на экран задачи: работа видна только полосой")
+		t.Error("признак живости не встал на экран задачи")
 	}
 }
 
@@ -1240,12 +1233,6 @@ func TestStaticInteractiveWork(t *testing.T) {
 // разговора, а служебное имя сессии в подписи не стоит.
 func TestStaticWorkTitle(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	live := funcBody(t, text, "function renderLive(")
-	// Имён работ в полоске нет вовсе: она считает их и уводит в раздел, а
-	// служебное goal-<ID> о занятии агента не говорит ничего.
-	if strings.Contains(live, `"goal-"`) || strings.Contains(live, "w.title") {
-		t.Error("в полоске работ вернулись имена сессий: разбор живёт в разделе «Агенты»")
-	}
 	// Шапка панели зовёт чат его заголовком, а номер задачи стоит при нём
 	// лейблом и ведёт на её экран. Заголовка задачи с доски в шапке больше нет:
 	// место занял заголовок самого чата.

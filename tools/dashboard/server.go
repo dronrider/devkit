@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -398,8 +400,13 @@ type projectInfo struct {
 	// брать его оттуда дешевле, чем читать доску второй раз.
 	Prefix   string         `json:"prefix,omitempty"`
 	Sections map[string]int `json:"sections,omitempty"`
-	Works    []Work         `json:"works"`
-	Error    string         `json:"error,omitempty"`
+	// Drafts это число записей накопителя: им подписан таб черновиков на доске.
+	// Считается оно чтением каталога, а не подпроцессом taskctl: список
+	// проектов спрашивают на каждом обходе экрана, и лишняя утилита на проект
+	// стоила бы дороже самого ответа.
+	Drafts int    `json:"drafts,omitempty"`
+	Works  []Work `json:"works"`
+	Error  string `json:"error,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -441,7 +448,24 @@ func (s *server) projectSummary(p Project) projectInfo {
 		info.Sections[sec.Key] = len(sec.Rows)
 	}
 	info.Works = s.liveWorks(p.Path, view.Prefix, raw)
+	info.Drafts = countDrafts(p.Path)
 	return info
+}
+
+// countDrafts считает записи накопителя. Каталога может не быть вовсе, и это
+// обычный случай: проект без единого черновика.
+func countDrafts(projectPath string) int {
+	entries, err := os.ReadDir(filepath.Join(projectPath, "docs", "tasks", "drafts"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			n++
+		}
+	}
+	return n
 }
 
 // findProject находит проект из пути запроса; не найдя, сам отвечает 404 и

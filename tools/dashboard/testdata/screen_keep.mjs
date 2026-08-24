@@ -491,7 +491,10 @@ function boardBody() {
 }
 
 function works() {
-  return running ? [{ id: runningId, via: "tmux", title: "строка доски номер " + runningId.slice(3) }] : [];
+  // Состояние работы приезжает полем live, как его шлёт сервер: по нему экран
+  // и называет её словом из словаря.
+  return running ? [{ id: runningId, via: "tmux", live: "busy",
+    title: "строка доски номер " + runningId.slice(3) }] : [];
 }
 
 // Подписки машины и то, чем их назвали при запуске: выбор в кнопке проверяется
@@ -547,7 +550,8 @@ let groomAsk = null;
 let dropped = null;
 
 function groomWorks() {
-  return grooming ? [{ id: "XR-D2", via: "tmux", title: "вторая запись накопителя" }] : works();
+  return grooming ? [{ id: "XR-D2", via: "tmux", live: "busy",
+    title: "вторая запись накопителя" }] : works();
 }
 
 const talk = [
@@ -1223,8 +1227,12 @@ timers.length = 0;
 byId.get("flashes").replaceChildren();
 taskRun.handlers.click({ stopPropagation: () => {} });
 await settle();
-if (sandbox.location.hash !== "demo/XR-6/chat/XR-6") {
-  fail("удачный запуск с экрана задачи не увёл на её экран с разговором: " + sandbox.location.hash);
+// Запуск разговор не открывает вовсе: человек, разбиравший итоги соседней
+// задачи, вылетал из её чата на каждое нажатие «Выполнить» (замечание
+// пользователя). Экран остаётся на задаче, а след запуска виден рамкой у
+// кнопки её чата.
+if (sandbox.location.hash !== "demo/XR-6") {
+  fail("удачный запуск увёл с экрана задачи: " + sandbox.location.hash);
 }
 if (!dump(byId.get("flashes")).includes("сессия поднята")) {
   fail("переход на экран работы стёр карточку ответа на нажатие: " + dump(byId.get("flashes")));
@@ -1675,7 +1683,7 @@ if (doc.activeElement !== ta) fail("приход реплики отобрал �
 // перерисовки ровно эта плашка.
 running = true;
 rows[0].id = "XR-1";
-const chatWork = [{ id: "XR-1", via: "tmux", title: "Цель: дашборд без дёрганья" }];
+const chatWork = [{ id: "XR-1", via: "tmux", live: "busy", title: "Цель: дашборд без дёрганья" }];
 const wasWorks = works;
 sandbox.fetch = ((prev) => (path, init) => {
   if (path === "/api/projects") return reply({ projects: [{ name: "demo", works: chatWork }] });
@@ -1992,10 +2000,15 @@ if (String(byId.get("pname").title || "")) {
 if (!dump(groups).includes("Журнал витка")) {
   fail("журнал витка не переехал на экран задачи: " + dump(groups).slice(0, 300));
 }
-if (!dump(groups).includes("tmux-сессия активна")) {
+// Состояние работы названо словарным словом, одним на весь дашборд: прежде
+// форма задачи говорила «tmux-сессия активна», таб сессий «работает», а снимок
+// tmux «активна», и это читалось как три разных состояния.
+if (!dump(groups).includes("активна")) {
   fail("признака живости на экране задачи нет: " + dump(groups).slice(0, 300));
 }
-if (!barButton(groups, "Остановить агента")) {
+// Снятие сессии зовётся одним словом на весь дашборд: «Остановить агента»,
+// «Остановить» и «Стоп» были тремя подписями одного действия.
+if (!barButton(groups, "Стоп")) {
   fail("кнопки стопа на экране задачи нет: " + dump(groups).slice(0, 300));
 }
 if (!dump(groups).includes("разработка")) {

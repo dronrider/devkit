@@ -1,0 +1,1 @@
+{"code":200,"msg":"Operation successful","data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":12000,"currentValue":0,"remaining":12000,"percentage":0,"nextResetTime":null},{"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":60000,"currentValue":18974,"remaining":41026,"percentage":31,"nextResetTime":1788025928998}],"level":"pro"},"success":true}

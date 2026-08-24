@@ -243,6 +243,12 @@ func (b bucket) pace(now time.Time) float64 {
 // status у бакета. Зазор между порогами широкий сознательно: корректор должен
 // срабатывать на выраженный перекос, а не дёргать вердикт на каждом колебании.
 func (b bucket) status(now time.Time) string {
+	// Окно без сброса это нетронутое окно, а не протухшее: отсчёт в нём ещё не
+	// начат, остаток полный, и звать это протуханием значило бы резать вердикт
+	// там, где квота цела.
+	if b.Reset.IsZero() {
+		return statusNormal
+	}
 	if !b.Reset.After(now) {
 		return statusExpired
 	}
@@ -348,6 +354,16 @@ func (q *quotaSpec) parse(text string) snapshot {
 	return s
 }
 
+// bucketWhen словами говорит про сброс окна. Нетронутое окно сброса не имеет
+// вовсе, и печатать за него нулевую дату (0001-01-01) значило бы показывать
+// человеку мусор вместо честного «отсчёт не начат».
+func bucketWhen(b bucket) string {
+	if b.Reset.IsZero() {
+		return "отсчёт до сброса не начат"
+	}
+	return "сброс " + b.Reset.Format(quotaTimeLayout)
+}
+
 // parseBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
 func parseBucket(name, val string) (bucket, error) {
 	pct, rest, ok := strings.Cut(val, "%")
@@ -360,6 +376,13 @@ func parseBucket(name, val string) (bucket, error) {
 	}
 	rest = strings.TrimSpace(rest)
 	rest = strings.TrimSpace(strings.TrimPrefix(rest, "сброс"))
+	// Нетронутое окно сброса не имеет вовсе: пока из него не потратили ни
+	// кредита, отсчёт не начат, и съёмщик пишет один процент. Прежде такая
+	// строка была поломкой разбора, и снимок подписки не обновлялся целиком,
+	// пока в окне не появится расход (живой случай выката).
+	if rest == "" {
+		return bucket{Name: name, Used: float64(n) / 100}, nil
+	}
 	reset, err := parseQuotaTime(rest)
 	if err != nil {
 		return bucket{}, fmt.Errorf("дата сброса %q не разобрана", rest)
@@ -385,6 +408,10 @@ func (q *quotaSpec) write(s snapshot) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "taken = %s\n", s.Taken.Format(quotaTimeLayout))
 	for _, bk := range s.Buckets {
+		if bk.Reset.IsZero() {
+			fmt.Fprintf(&b, "%s = %d%%\n", bk.Name, int(math.Round(bk.Used*100)))
+			continue
+		}
 		fmt.Fprintf(&b, "%s = %d%% сброс %s\n", bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout))
 	}
 	dir := filepath.Dir(q.Path)
@@ -653,8 +680,8 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 		case status == statusSurplus && !s.fresh(now):
 			note = " (снимок протух, вверх не двигает)"
 		}
-		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",
-			bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout), bk.pace(now), status, note)
+		fmt.Fprintf(&b, "%s: потрачено %d%%, %s, pace %.1f, %s%s\n",
+			bk.Name, int(math.Round(bk.Used*100)), bucketWhen(bk), bk.pace(now), status, note)
 	}
 	if w := q.legacyWarn(); w != "" {
 		fmt.Fprintf(&b, "предупреждение: %s\n", w)

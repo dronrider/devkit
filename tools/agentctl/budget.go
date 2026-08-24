@@ -101,8 +101,8 @@ func budgetSummary(q *quotaSpec, c correction, why string, s snapshot, now time.
 		if !ok {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s: потрачено %d%%, сброс %s, pace %.1f, %s",
-			name, int(math.Round(b.Used*100)), b.Reset.Format(quotaTimeLayout), b.pace(now), b.status(now)))
+		parts = append(parts, fmt.Sprintf("%s: потрачено %d%%, %s, pace %.1f, %s",
+			name, int(math.Round(b.Used*100)), bucketWhen(b), b.pace(now), b.status(now)))
 	}
 	parts = append(parts, why)
 	return strings.Join(parts, "; ")

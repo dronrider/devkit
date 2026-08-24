@@ -656,6 +656,44 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		}
 	})
 
+	t.Run("нетронутое окно ложится в снимок без времени сброса", func(t *testing.T) {
+		// Пока из окна не потратили ни кредита, отсчёт до сброса не начат, и
+		// поле приезжает пустым. Прежде это было отказом, и снимок подписки не
+		// обновлялся целиком, пока в пятичасовом окне не появится расход: у
+		// пользователя он так и стоял рукописным (живой случай выката).
+		fresh := readFixture(t, "glm-quota-fresh-window.json")
+		quiet := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(fresh))
+		}))
+		defer quiet.Close()
+		home := t.TempDir()
+		writeFile(t, home, "settings.json",
+			`{"env": {"ANTHROPIC_BASE_URL": "`+quiet.URL+`/api/anthropic", "ANTHROPIC_AUTH_TOKEN": "`+token+`"}}`)
+		q := glmSpec(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
+		q.Home = home
+
+		snap, err := snapByScript(q, testNow)
+		if err != nil {
+			t.Fatalf("нетронутое окно уронило весь снимок: %v", err)
+		}
+		five, ok := snap.bucket("window5h_all")
+		if !ok {
+			t.Fatalf("нетронутое окно выпало из снимка: %+v", snap.Buckets)
+		}
+		if five.Used != 0 {
+			t.Errorf("у нетронутого окна расход %.2f, жду ноль", five.Used)
+		}
+		if !five.Reset.IsZero() {
+			t.Errorf("у нетронутого окна взялось время сброса: %v", five.Reset)
+		}
+		// Соседнее окно при этом на месте со своим сбросом: отсутствие одного
+		// поля не должно ронять весь снимок.
+		week, ok := snap.bucket("week_all")
+		if !ok || week.Reset.IsZero() {
+			t.Errorf("недельное окно пострадало: %+v", snap.Buckets)
+		}
+	})
+
 	t.Run("чужой токен это отказ, файл не тронут", func(t *testing.T) {
 		q := quotaHome(t, "не-тот-токен")
 		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")

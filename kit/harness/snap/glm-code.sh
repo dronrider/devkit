@@ -81,10 +81,18 @@ for lim in limits:
     ceiling, used = lim.get("usage"), lim.get("currentValue")
     if not ceiling or used is None:
         sys.exit("у окна %s нет расходов (usage=%s currentValue=%s)" % (name, ceiling, used))
-    if "nextResetTime" not in lim:
-        sys.exit("у окна %s нет времени сброса" % name)
     pct = min(100, int(used * 100 / ceiling + 0.5))
-    reset = datetime.datetime.fromtimestamp(lim["nextResetTime"] / 1000)
+    # Нетронутое окно времени сброса не имеет вовсе: пока из него не потратили
+    # ни кредита, отсчёт не начат, и поле приезжает пустым. Прежде это было
+    # отказом, и снимок подписки не обновлялся целиком, пока в пятичасовом окне
+    # не появится расход (живой случай выката). Бакет без сброса формат снимка
+    # держит, и остаток тут известен точно: он полный.
+    when = lim.get("nextResetTime")
+    if when is None:
+        print("%s = %d%%" % (name, pct))
+        seen.add(name)
+        continue
+    reset = datetime.datetime.fromtimestamp(when / 1000)
     print("%s = %d%% сброс %s" % (name, pct, reset.strftime("%Y-%m-%dT%H:%M")))
     seen.add(name)
 if seen != set(windows.values()):

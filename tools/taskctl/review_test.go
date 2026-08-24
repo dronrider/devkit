@@ -175,6 +175,36 @@ func TestReviewOutcomeMarkup(t *testing.T) {
 	}
 }
 
+// Замечание, цитирующее слово исхода не в хвосте resolve-формата, остаётся
+// открытым, а resolve на него не отбивается словами «уже закрыто» (DK-503,
+// DK-514): outcome ищет исход по позиции, где его пишет cmdReviewResolve, а
+// не по факту появления слова где-то в тексте.
+func TestReviewOutcomeQuotedWord(t *testing.T) {
+	root := setup(t)
+	content := "# XR-005\n\n## Ревью\n\n" +
+		"- замечание 18 цитировало текст сценария со словами «остаются закрытыми исходом «исправлено»»\n"
+	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rf, err := loadReview(taskFileAbs(root, "XR-005"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rf.notes) != 1 {
+		t.Fatalf("ожидал 1 элемент, разобрано %d", len(rf.notes))
+	}
+	if got := rf.notes[0].outcome(); got != "" {
+		t.Fatalf("замечание с цитатой должно быть открыто, outcome %q (текст: %s)", got, rf.notes[0].Text)
+	}
+	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatalf("resolve на замечание с цитатой должен пройти: %v", err)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	if !strings.Contains(got, ": исправлено\n") {
+		t.Errorf("в файле нет исхода после resolve:\n%s", got)
+	}
+}
+
 // Пустая строка между маркером замечания и абзацем со словом исхода закрывает
 // элемент: loadReview не прирастает к замечанию через пустую строку, иначе
 // исход чужого абзаца закрывал бы открытое замечание и расходился бы с shipctl,

@@ -20,9 +20,13 @@ func TestMain(m *testing.M) {
 // writeNotifyStub кладёт в root/hooks/notify.py поддельный уведомитель:
 // вместо реальной отправки он пишет свои аргументы (без argv[0]) построчно
 // в hooks/calls.log и завершается exitCode. Так move проверяется без риска
-// реального баннера и без зависимости от системного бэкенда.
+// реального баннера и без зависимости от системного бэкенда. DEVKIT_HOME
+// прибивается к корню стаба: она первая в поиске notifyScript, и чужое
+// значение из окружения сессии (например, POC-дерева) уводило бы вызов мимо
+// стаба в живой notify.py.
 func writeNotifyStub(t *testing.T, root string, exitCode int) string {
 	t.Helper()
+	t.Setenv("DEVKIT_HOME", root)
 	dir := filepath.Join(root, "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

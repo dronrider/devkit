@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -175,5 +176,22 @@ func TestHarnessesNeedsLogin(t *testing.T) {
 	resp := doReq(t, plainClient(), "GET", e.srv.URL+"/api/harnesses", "")
 	if got := resp.StatusCode; got != http.StatusUnauthorized {
 		t.Fatalf("список подписок без входа: %d, жду 401 (%s)", got, body(t, resp))
+	}
+}
+
+// Живой agentctl до стенда не дотягивается. У разработчика он лежит в том же
+// PATH, что и фикстуры, и на каждый запуск сам зовёт git полдюжины раз, а
+// тесты, которые считают подпроцессы, засчитывали эти вызовы своим. Краснело
+// это там, где машинный agentctl отказывал: раскладку с причиной вместо списка
+// дашборд не запоминает, и каждый запрос цепочки шёл в утилиту заново, унося с
+// собой её git (DK-512).
+func TestStandKeepsLiveAgentctlOut(t *testing.T) {
+	e := newTestEnv(t)
+	if got := binPath(agentctlBin); filepath.Dir(got) != e.bin {
+		t.Fatalf("agentctl стенда нашёлся по %q вместо %s: подпроцессы машинного бинаря уедут в счёт теста", got, e.bin)
+	}
+	v := e.s.harnesses()
+	if len(v.Harnesses) == 0 || v.Harnesses[0].Name != "перваяtest" {
+		t.Fatalf("раскладка подписок пришла мимо фикстуры стенда: %+v", v)
 	}
 }

@@ -36,6 +36,12 @@ LOG_KEEP = 500
 # Оси событий сессии, имена те же, что в `[hooks] events` профиля.
 NOTIFY = "notify"
 TURN_DONE = "turn-done"
+# Ось хода, кончившегося API-ошибкой, а не штатным стопом: часть сетевых
+# обрывов харнес ретраит сам, недокументированно и без участия devkit (DK-172,
+# docs/tasks/DK-172.md), и сюда доезжает только ход, у которого эти попытки
+# исчерпаны или ошибка неретраибельная. В повод кладётся тип ошибки из события
+# (server_error, rate_limit и прочие значения матчера StopFailure).
+TURN_FAILED = "turn-failed"
 SUBAGENT_DONE = "subagent-done"
 PROMPT_SUBMIT = "prompt-submit"
 # Ось завершённого хода инструмента, ею живёт доставка реплики в идущий виток.
@@ -124,6 +130,7 @@ def claude_code_write(event):
 CLAUDE_CODE_KINDS = {
     "Notification": NOTIFY,
     "Stop": TURN_DONE,
+    "StopFailure": TURN_FAILED,
     "SubagentStop": SUBAGENT_DONE,
     "UserPromptSubmit": PROMPT_SUBMIT,
 }
@@ -137,9 +144,11 @@ def claude_code_session(event):
     # остальных ответ модели последней репликой.
     message = event.get("message") if kind == NOTIFY else event.get("last_assistant_message")
     # Повод остаётся как пришёл: разбирается он уже уведомителем, и поле не той
-    # формы должно доехать до него, а не потеряться тут.
+    # формы должно доехать до него, а не потеряться тут. У упавшего хода поводом
+    # лежит тип API-ошибки, у остальных осей повод несёт notification_type.
+    reason = event.get("error") if kind == TURN_FAILED else event.get("notification_type")
     return Session(kind=kind,
-                   reason=event.get("notification_type") or "",
+                   reason=reason or "",
                    session=str(event.get("session_id") or "-")[:8],
                    cwd=text_of(event.get("cwd")),
                    transcript=text_of(event.get("transcript_path")),

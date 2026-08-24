@@ -12,7 +12,7 @@ import (
 )
 
 type Params struct {
-	Dir    string   // откуда искать корень репозитория
+	Dir    string   // откуда искать корень репозитория и где гонять команду теста
 	Base   string   // реф старого кода, пустой выбирается эвристикой
 	Tests  []string // явный список тестовых файлов вместо автопоиска
 	Inline []string // файлы, где правка и тест в одном файле (см. spliceInline)
@@ -278,6 +278,26 @@ func Run(p Params) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Команда теста гоняется в p.Dir, а не в root: go-модуль в подкаталоге
+	// (tools/<утилита>) самодостаточен и не нуждается в общем go.work на
+	// корне репозитория (DK-367), тот нужен только команде вида `go test
+	// ./...`, запущенной прямо из root. Второй прогон обязан сохранить то же
+	// смещение внутри временного worktree, иначе он снова упрётся в root, а
+	// не в копию модуля.
+	// EvalSymlinks нужен, чтобы совпасть с root: git rev-parse отдаёт
+	// разрешённый путь (/private/var/... на macOS вместо /var/...), а
+	// Abs его не резолвит, и Rel ниже посчитал бы мусор вместо смещения.
+	dirAbs, err := filepath.Abs(p.Dir)
+	if err != nil {
+		return "", err
+	}
+	if dirAbs, err = filepath.EvalSymlinks(dirAbs); err != nil {
+		return "", fmt.Errorf("%s: %v", p.Dir, err)
+	}
+	relDir, err := filepath.Rel(root, dirAbs)
+	if err != nil {
+		return "", err
+	}
 	base, err := pickBase(root, p.Base)
 	if err != nil {
 		return "", err
@@ -314,7 +334,7 @@ func Run(p Params) (string, error) {
 			return "", fmt.Errorf("инлайновый файл %s не найден в рабочем дереве", t)
 		}
 	}
-	if out, err := runCmd(root, p.Cmd); err != nil {
+	if out, err := runCmd(dirAbs, p.Cmd); err != nil {
 		return "", fmt.Errorf("тест не проходит на текущем коде, сначала чинить его:\n%s", cmdoutFrame(root, "test", out, 1))
 	}
 	tmp, err := os.MkdirTemp("", "regcheck-")
@@ -351,10 +371,11 @@ func Run(p Params) (string, error) {
 			return "", err
 		}
 	}
-	if oldOut, err := runCmd(wt, p.Cmd); err == nil {
-		// Второй прогон гоняется в worktree, который defer'ом удаляется вместе
-		// с деревом. Полный вывод должен жить в основном репозитории, иначе path
-		// будет вести в пустоту: dir здесь это root, а не wt.
+	if oldOut, err := runCmd(filepath.Join(wt, relDir), p.Cmd); err == nil {
+		// Второй прогон гоняется в том же смещении внутри worktree, который
+		// defer'ом удаляется вместе с деревом. Полный вывод должен жить в
+		// основном репозитории, иначе path будет вести в пустоту: dir здесь
+		// это root, а не wt.
 		return "", fmt.Errorf("тест зелёный и на старом коде (%s), регрессию он не ловит; "+
 			"если правка уже закоммичена, укажи базу без неё (--base main)\n%s",
 			base, cmdoutFrame(root, "test-old", oldOut, 0))

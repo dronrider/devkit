@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/stage"
@@ -118,18 +119,24 @@ func reviewItems(doc, heading string) []string {
 	return items
 }
 
+// resolvedTailRe узнаёт исход по месту, где его пишет taskctl review resolve
+// ("<текст>: исправлено" либо "<текст>: отклонено, причина"), а не по факту
+// появления слова где-то в тексте: цитата замечания, пересказывающая формат
+// команды, этому хвосту не соответствует и замечание не закрывает (DK-514).
+// Копия того же критерия, что в taskctl outcome, иначе merge и review show
+// разойдутся на одной строке.
+var resolvedTailRe = regexp.MustCompile(`: (исправлено|отклонено)(,.*)?$`)
+
 // reviewOutcome возвращает исход элемента раздела «Ревью»: «исправлено»,
 // «отклонено», «чисто» (вердикт без замечаний) или пусто у открытого заме-
 // чания. Порядок проверок исход -> чистый итог -> открыто тот же, что в taskctl
-// outcome: «исправлено: теперь без замечаний» остаётся закрытым.
+// outcome: «гибрид: исправлено, теперь без замечаний» остаётся закрытым.
 func reviewOutcome(item string) string {
 	low := strings.ToLower(item)
-	switch {
-	case strings.Contains(low, "исправлено"):
-		return "исправлено"
-	case strings.Contains(low, "отклонено"):
-		return "отклонено"
-	case strings.Contains(low, "без замечаний"), strings.Contains(low, "замечаний нет"):
+	if m := resolvedTailRe.FindStringSubmatch(low); m != nil {
+		return m[1]
+	}
+	if strings.Contains(low, "без замечаний") || strings.Contains(low, "замечаний нет") {
 		return "чисто"
 	}
 	return ""

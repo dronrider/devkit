@@ -41,6 +41,61 @@ func snapOf(age time.Duration, buckets ...bucket) snapshot {
 	return snapshot{Taken: testNow.Add(-age), Buckets: buckets}
 }
 
+// glmSpec это объявление квоты glm-code из настоящего профиля репозитория:
+// вторая подписка снимается сменным съёмщиком, и тестам важен сам профиль,
+// копия здесь разъехалась бы с тем, по чему работает машина.
+func glmSpec(t *testing.T, path string) *quotaSpec {
+	t.Helper()
+	home := t.TempDir()
+	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+home+`"
+`)
+	l, err := mergeLayers(filepath.Join(repoRoot(t), profileDirGroup, profileDirName), machine, "")
+	if err != nil {
+		t.Fatalf("слои харнесов: %v", err)
+	}
+	q := quotaSpecOf(l, "glm-code")
+	if q == nil {
+		t.Fatal("у glm-code нет объявления квоты: профиль вернулся к пустой секции [quota]")
+	}
+	q.Path, q.From = path, path
+	return q
+}
+
+// TestGlmCodeQuotaProfile: у второй подписки две шкалы, пятичасовая и недельная,
+// и обе ездят в снимке. Пока секция была пуста, сгоревшее пятичасовое окно
+// замечал пользователь по отказам, а не корректор; тест стоит на том, чтобы
+// секция не опустела снова и обе шкалы в ней остались.
+func TestGlmCodeQuotaProfile(t *testing.T) {
+	q := glmSpec(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
+	if q.Snap != snapScript || q.Script != "snap/glm-code.sh" {
+		t.Fatalf("остаток снимает не съёмщик из kit/harness/snap: %+v", q)
+	}
+	if !contains(q.Buckets, "window5h_all") || !contains(q.Buckets, "week_all") {
+		t.Fatalf("у снимка нет обеих шкал подписки: %v", q.Buckets)
+	}
+	if q.Required != "week_all" {
+		t.Fatalf("обязательный бакет %q, жду week_all", q.Required)
+	}
+	for _, tier := range tierNames {
+		if !contains(q.Spend[tier], "window5h_all") || !contains(q.Spend[tier], "week_all") {
+			t.Fatalf("ярус %s тратит не из обоих окон: %v", tier, q.Spend[tier])
+		}
+	}
+	if q.Home == "" {
+		t.Fatal("каталог машинного хозяйства не доехал до объявления квоты: съёмщику не найти токен")
+	}
+}
+
 const halfWindow = weekWindow / 2
 
 // Возрасты снимка по обе стороны порога свежести: от них зависит только сдвиг
@@ -238,6 +293,7 @@ func TestBucketWindow(t *testing.T) {
 		{"week_all", weekWindow},
 		{"week_max", weekWindow},
 		{"month_all", monthWindow},
+		{"window5h_all", window5hLen},
 	}
 	for _, c := range cases {
 		if got := bucketWindow(c.name); got != c.want {
@@ -257,6 +313,45 @@ func TestBucketWindow(t *testing.T) {
 	}
 	if bucketPrefix("day_all") != "" {
 		t.Fatal("незнакомый префикс принят за известный, окно вывелось бы молча")
+	}
+	// Пятичасовое окно второй подписки: 20% остатка за два часа до сброса это
+	// ровный дефицит, а с недельным окном те же числа дали бы многократный
+	// профицит, и сгоревшее окно выглядело бы запасом.
+	five := bucket{Name: "window5h_all", Used: 0.8, Reset: testNow.Add(2 * time.Hour)}
+	if five.status(testNow) != statusDeficit {
+		t.Fatalf("пятичасовое окно посчитано чужим окном: pace %.2f", five.pace(testNow))
+	}
+}
+
+// TestCorrectTierGlmWindows: у второй подписки каждое окно жгут все ярусы, и
+// корректор обязан видеть оба. Дефицит пятичасового окна сдвигает вниз при
+// спокойном недельном, а подъём требует профицита обоих: дорогая модель входит
+// в окно, которое сгорело 15 августа за одну задачу.
+func TestCorrectTierGlmWindows(t *testing.T) {
+	q := glmSpec(t, "")
+	// Дефицит: 80% потрачено, до сброса две пятых окна, pace 0.5.
+	burnt5h := bucket{Name: "window5h_all", Used: 0.8, Reset: testNow.Add(window5hLen * 2 / 5)}
+	// Профицит: нетронутое окно за пятую часть до сброса, pace 5.
+	fresh5h := bucket{Name: "window5h_all", Used: 0, Reset: testNow.Add(window5hLen / 5)}
+	calmWeek := bucketAt("week_all", 20, halfWindow)
+	richWeek := bucketAt("week_all", 5, 24*time.Hour)
+
+	c := correctTier(q, tierPro, false, snapOf(freshAge, burnt5h, calmWeek), testNow)
+	if !c.Down || c.Tier != tierBase || c.Note != "дефицит window5h_all" {
+		t.Fatalf("сгоревшее пятичасовое окно не сняло pro вниз: %+v", c)
+	}
+	c = correctTier(q, tierMini, false, snapOf(freshAge, burnt5h, calmWeek), testNow)
+	if c.Tier != tierMini || c.Note != "дефицит window5h_all" {
+		t.Fatalf("ниже mini сдвига нет, а причина пропала: %+v", c)
+	}
+	c = correctTier(q, tierBase, false, snapOf(freshAge, fresh5h, richWeek), testNow)
+	if c.Tier != tierPro || c.Note != "профицит window5h_all, week_all" {
+		t.Fatalf("профицит обоих окон не поднял base: %+v", c)
+	}
+	// Недельного профицита мало: пятичасовое окно в норме держит подъём.
+	c = correctTier(q, tierBase, false, snapOf(freshAge, bucketAt("window5h_all", 40, window5hLen/2), richWeek), testNow)
+	if c.shifted() || c.Note != "" {
+		t.Fatalf("подъём прошёл по одному недельному окну: %+v", c)
 	}
 }
 
@@ -691,5 +786,28 @@ func TestCmdQuotaLegacyPath(t *testing.T) {
 	}
 	if strings.Contains(out, "старому пути") {
 		t.Fatalf("после записи заметка про старый путь осталась:\n%s", out)
+	}
+}
+
+// TestLegacyPathBelongsToOwner: старый одиночный снимок снимался панелью первой
+// подписки, и чужой харнес обязан его не видеть: под пометкой своего имени он
+// читался бы как остаток не своей подписки.
+func TestLegacyPathBelongsToOwner(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacy := legacyQuotaPath()
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "taken = " + at(testNow) + "\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+	if err := os.WriteFile(legacy, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, from := snapshotSource("glm-code")
+	if from == legacy || path != quotaPath("glm-code") {
+		t.Fatalf("вторая подписка читает чужой старый снимок: path=%q from=%q", path, from)
+	}
+	if _, from := snapshotSource("claude-code"); from != legacy {
+		t.Fatalf("владелец не увидел свой старый снимок: %q", from)
 	}
 }

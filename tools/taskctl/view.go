@@ -187,6 +187,9 @@ func cmdList(root, sect string) (string, error) {
 		times = boardTimes(root)
 	}
 	var out []string
+	if note := staleBoardNote(root); note != "" {
+		out = append(out, note)
+	}
 	section := func(key string, limit int) {
 		sec := b.Sects[key]
 		head := fmt.Sprintf("%s (%d)", sectTitles[key], len(sec.Rows))
@@ -271,8 +274,12 @@ func cmdShow(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	note := staleBoardNote(root)
 	if row := b.find(id); row != nil {
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
+		if note != "" {
+			out = append([]string{note}, out...)
+		}
 		out = append(out, rowNotes(root, row.Sect, row, showTimes(root), true)...)
 		sides := depSides(b)
 		s := sides[id]
@@ -294,7 +301,11 @@ func cmdShow(root, id string) (string, error) {
 	}
 	for _, r := range arch.Rows {
 		if r.ID == id {
-			return fmt.Sprintf("%s в архиве (закрыта %s)\n%s", id, r.Cells[4], arch.Lines[r.LineIdx]), nil
+			text := fmt.Sprintf("%s в архиве (закрыта %s)\n%s", id, r.Cells[4], arch.Lines[r.LineIdx])
+			if note != "" {
+				text = note + "\n" + text
+			}
+			return text, nil
 		}
 	}
 	drafts, err := loadDrafts(root)
@@ -308,6 +319,9 @@ func cmdShow(root, id string) (string, error) {
 		}
 		head := fmt.Sprintf("%s черновик (записан %s), docs/tasks/drafts/%s.md, оформить: taskctl add --id %s ...",
 			id, ageWords(d.Age), id, id)
+		if note != "" {
+			head = note + "\n" + head
+		}
 		return head + "\n" + strings.TrimRight(string(text), "\n"), nil
 	}
 	return "", fmt.Errorf("%s нет ни на доске, ни в архиве, ни в черновиках", id)

@@ -306,3 +306,21 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-438 | Разговор с задачей: правило адресности, выбор дерева, ручка реплики и фильтр адресата у сторожка | task | P1 | 2026-08-19 | [tasks/archive/2026/DK-438.md](tasks/archive/2026/DK-438.md) |
 | DK-432 | Инструмент ожидания у задачи: вопрос задаётся из захода, а не последней репликой | task | P2 | 2026-08-19 | [tasks/archive/2026/DK-432.md](tasks/archive/2026/DK-432.md) |
 | DK-433 | Задача, ждущая человека, видна в API, в ленте и уведомлением | task | P2 | 2026-08-19 | [tasks/archive/2026/DK-433.md](tasks/archive/2026/DK-433.md) |
+| DK-043 | профиль Codex: детект, вклейка правил, headless-делегирование | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-043.md](tasks/archive/2026/DK-043.md) |
+| DK-044 | профиль OpenCode: детект, instructions, определения агентов | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-044.md](tasks/archive/2026/DK-044.md) |
+| DK-045 | профиль Gemini CLI: детект, контекстный файл, headless-делегирование | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-045.md](tasks/archive/2026/DK-045.md) |
+| DK-046 | профиль Cursor: детект, правила в .cursor/rules либо AGENTS.md | task | P3 | 2026-08-20 | [tasks/archive/2026/DK-046.md](tasks/archive/2026/DK-046.md) |
+| DK-460 | LLD: в корп-контуре ветка доходит до пуша только через ревью [приёмка: user] | LLD | P1 | 2026-08-22 | [tasks/archive/2026/DK-460.md](tasks/archive/2026/DK-460.md) |
+| DK-470 | LLD открывается со строки задачи в show и дашборде [режим: poc] [приёмка: user] | task | P1 | 2026-08-23 | [tasks/archive/2026/DK-470.md](tasks/archive/2026/DK-470.md) |
+| DK-269 | Отставание бокового дерева от main не видно и чинится руками | task | P1 | 2026-08-23 | [tasks/archive/2026/DK-269.md](tasks/archive/2026/DK-269.md) |
+| DK-448 | Скилл prompt-test: проверка промптов стендом obeycheck и подсказка ворот при промптах в диффе | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-448.md](tasks/archive/2026/DK-448.md) |
+| DK-434 | Непрерывная лента чата: подгрузка вверх без кнопки «раньше», позиция держится [приёмка: mixed] | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-434.md](tasks/archive/2026/DK-434.md) |
+| DK-435 | Панель чата справа: «Живой статус» сливается с «Чатом», tmux уходит, узкий экран тем же адресом [приёмка: mixed] | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-435.md](tasks/archive/2026/DK-435.md) |
+| DK-436 | Вкладка чатов задачи и новый чат с дашборда поверх живой сессии [приёмка: mixed] | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-436.md](tasks/archive/2026/DK-436.md) |
+| DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-367.md](tasks/archive/2026/DK-367.md) |
+| DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-172.md](tasks/archive/2026/DK-172.md) |
+| DK-181 | Съёмщик остатка второй подписки: quota --harness | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-181.md](tasks/archive/2026/DK-181.md) |
+| DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-357.md](tasks/archive/2026/DK-357.md), `2225d859` |
+| DK-506 | taskctl elapsed: минуты открытого этапа «разработка» против лимита жизненного цикла | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-506.md](tasks/archive/2026/DK-506.md) |
+| DK-459 | LLD: режим POC для работы с высокой неопределённостью результата [приёмка: user] | LLD | P1 | 2026-08-24 | [tasks/archive/2026/DK-459.md](tasks/archive/2026/DK-459.md) |
+| DK-512 | dashboard: память обхода корней не держит цепочку экрана, main красный | bug | P1 | 2026-08-24 | [tasks/archive/2026/DK-512.md](tasks/archive/2026/DK-512.md), `ff7a4ae7` |

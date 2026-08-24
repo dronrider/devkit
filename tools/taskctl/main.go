@@ -31,6 +31,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               с признаком, по которому получен;
                                               считается по меткам доски, git и
                                               файла задачи, смену статуса переживает
+  elapsed <ID>                                минуты с открытия этапа «разработка»
+                                              записи задачи против планового лимита
+                                              жизненного цикла (по умолчанию 120 минут,
+                                              DEVKIT_EXEC_CEILING_MINUTES для
+                                              стендов), «в пределах» или «пройден:
+                                              сдавай хвост»; без открытого этапа не
+                                              падает, говорит об этом честно
   id                                          следующий свободный ID
   draft list [--json]                         накопитель черновиков: ID,
                                               заголовок, возраст, метка уровня
@@ -109,6 +116,16 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."]             скелет доски в корне репозитория
+
+Держать дерево доски свежим:
+  catchup [--hook]                            догнать боковое дерево (detached HEAD,
+                                              чистое) до origin/main и напечатать,
+                                              сколько коммитов приехало; дерево на
+                                              ветке, не чистое и не позади отказывают
+                                              с причиной; list и show предупреждают
+                                              об отставании сами; --hook это режим
+                                              SessionStart-хука, молчащий вне боковых
+                                              деревьев
 
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
   review add <ID> "суть замечания"            дописать замечание, файл задачи
@@ -463,6 +480,12 @@ func main() {
 		} else {
 			msg, err = cmdProgress(root(*dir), pos[0])
 		}
+	case "elapsed":
+		fs := flag.NewFlagSet("elapsed", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "elapsed <ID>")
+		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: review add|resolve|show|stats ..."))
@@ -599,6 +622,12 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "id")
 		msg, err = cmdID(root(*dir))
+	case "catchup":
+		fs := flag.NewFlagSet("catchup", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		hook := fs.Bool("hook", false, "режим SessionStart-хука: молчать, когда догонять нечего или дерево не боковое")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "catchup [--hook]")
+		msg, err = cmdCatchup(root(*dir), *hook)
 	case "help":
 		fmt.Print(usageText)
 		return

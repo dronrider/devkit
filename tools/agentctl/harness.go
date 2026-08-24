@@ -128,7 +128,7 @@ var optionalSchema = []sectionSpec{
 
 var discoveryValues = []string{"auto", "manual"}
 
-var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "prompt-submit", "tool-done"}
+var knownEvents = []string{"write", "session-start", "notify", "subagent-done", "turn-done", "turn-failed", "prompt-submit", "tool-done"}
 
 // Свод машинного слоя. Ярусы в секции харнеса обязательны все четыре: сложенные
 // в одну модель соседние ярусы пишутся повторением значения, а пропуск ключа
@@ -1119,6 +1119,7 @@ func quotaSpecOf(l *layers, name string) *quotaSpec {
 	}
 	if s := l.Setup[name]; s != nil {
 		q.Budget = s.Budget
+		q.Home = s.Home
 	}
 	q.Path, q.From = snapshotSource(name)
 	return q
@@ -1142,7 +1143,11 @@ type harnessContext struct {
 	QuotaNote string
 }
 
-func resolveHarnessContext(start string) harnessContext {
+// want это явное имя харнеса от флага команды: пустая строка значит резолв по
+// шагам детекта. Командам quota имя нужно отдельным входом, потому что снимок
+// чужой подписки снимается из любой сессии, а активной вторая подписка бывает
+// только внутри собственного подпроцесса.
+func resolveHarnessContext(start, want string) harnessContext {
 	off := func(note string) harnessContext { return harnessContext{Models: tierModels{Note: note}} }
 	dir, err := harnessDir(start)
 	if err != nil {
@@ -1152,7 +1157,7 @@ func resolveHarnessContext(start string) harnessContext {
 	if err != nil {
 		return off(fmt.Sprintf("слои харнесов не прочитаны (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
-	r, err := resolveHarness(l, "", os.Getenv)
+	r, err := resolveHarness(l, want, os.Getenv)
 	if err != nil {
 		return off(fmt.Sprintf("харнес не определился (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
@@ -1185,8 +1190,8 @@ func (hc harnessContext) quotaWhy() string {
 
 // quotaSpecFor это точка входа команд quota: они читают и пишут снимок, и без
 // объявления харнеса им работать не с чем, поэтому тут отказ, а не прочерк.
-func quotaSpecFor(start string) (*quotaSpec, error) {
-	hc := resolveHarnessContext(start)
+func quotaSpecFor(start, want string) (*quotaSpec, error) {
+	hc := resolveHarnessContext(start, want)
 	if hc.Quota == nil {
 		return nil, fmt.Errorf("%s", hc.quotaWhy())
 	}

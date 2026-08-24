@@ -276,7 +276,7 @@ func cmdSpend(root, goalPath string, record bool, now time.Time) (string, error)
 		return "", err
 	}
 	text := string(data)
-	hc := resolveHarnessContext(root)
+	hc := resolveHarnessContext(root, "")
 	budget, err := parseGoalBudget(goalSection(text, goalBudgetSection), hc.Quota)
 	if err != nil {
 		return "", err

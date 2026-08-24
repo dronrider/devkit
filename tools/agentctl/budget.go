@@ -115,7 +115,7 @@ func budgetSummary(q *quotaSpec, c correction, why string, s snapshot, now time.
 // остатка. Первая строка машинная, вторая называет бакет, темп, статус и
 // причину потолка.
 func cmdBudget(root string, now time.Time) (string, error) {
-	hc := resolveHarnessContext(root)
+	hc := resolveHarnessContext(root, "")
 	if hc.Quota == nil {
 		// Снимать остаток нечем вовсе: причина уходит в строку, потому что
 		// потолок по умолчанию выглядел бы совершенно обычным.

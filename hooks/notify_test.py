@@ -78,6 +78,24 @@ class TestParseEvent(unittest.TestCase):
         self.assertEqual(title, "devkit-dk-034: ход закончен")
         self.assertEqual(body, "")
 
+    def test_turn_failed_is_loud_and_names_the_error(self):
+        # Тип ошибки hookio кладёт поводом из поля error, текст последней
+        # репликой: сюда доезжает только ход, у которого ретраи вотчдога
+        # исчерпаны или ошибка неретраибельная, и молчать про такое нельзя.
+        key, title, body, level = notify.parse_event(sess(
+            hook_event_name="StopFailure", error="server_error",
+            last_assistant_message="API Error: Unable to connect (ENOTFOUND)"))
+        self.assertEqual(key, notify.TURN_FAILED)
+        self.assertEqual(title, "devkit-dk-034: ход упал (server_error)")
+        self.assertEqual(body, "API Error: Unable to connect (ENOTFOUND)")
+        self.assertEqual(level, notify.LOUD)
+
+    def test_turn_failed_without_error_type(self):
+        # Событие без типа ошибки подписывается словом без уточнения, а не
+        # пустыми скобками.
+        title = notify.parse_event(sess(hook_event_name="StopFailure"))[1]
+        self.assertEqual(title, "devkit-dk-034: ход упал")
+
     def test_other_events(self):
         # UserPromptSubmit разбором не проходит: он только снимает отметку
         # ожидания.
@@ -489,6 +507,13 @@ class TestThrottle(unittest.TestCase):
                                      now + notify.WAIT_WINDOW, self.dir))
         # Окно ожидания шире минуты, иначе idle_prompt проскакивал бы следом.
         self.assertGreater(notify.WAIT_WINDOW, 60)
+
+    def test_turn_failed_key_is_its_own(self):
+        # Баннер конца хода, ушедший только что, не должен глушить весть о том,
+        # что следующий ход упал.
+        now = 1000.0
+        self.assertTrue(notify.allow("sess1", notify.TURN_DONE, now, self.dir))
+        self.assertTrue(notify.allow("sess1", notify.TURN_FAILED, now + 1, self.dir))
 
     def test_user_input_lets_the_next_turn_ring(self):
         # Пользователь вернулся к сессии, и конец следующего хода это новый
@@ -1453,6 +1478,19 @@ class TestLiveSamples(HookCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.sent(),
                          ["devkit: нужно разрешение|Claude needs your permission"])
+
+    def test_live_turn_failure_rings_from_a_real_root(self):
+        # Образец StopFailure снят стендом DK-172 (ход убит обрывом DNS): с
+        # настоящего корня упавший ход зовёт громко и называет тип ошибки, а
+        # не тонет в тишине, неотличимой от штатной работы.
+        event = json.loads(self.sample("turn-failed.json"))
+        event["cwd"] = "/Users/x/projects/devkit"
+        event["transcript_path"] = ""
+        r = self.hook(json.dumps(event))
+        self.assertEqual(r.returncode, 0)
+        sent = self.sent()
+        self.assertEqual(len(sent), 1, sent)
+        self.assertTrue(sent[0].startswith("devkit: ход упал (server_error)|API Error:"), sent)
 
     def test_live_file_write_is_not_a_notification(self):
         r = self.hook(self.sample("write-memory-index.json"))

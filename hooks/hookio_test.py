@@ -35,6 +35,11 @@ TOOLS = {
 SESSIONS = {
     "prompt-submit.json": (hookio.PROMPT_SUBMIT, "", None, None),
     "turn-done.json": (hookio.TURN_DONE, "", "Готово.", None),
+    # Тип API-ошибки едет поводом; тире в тексте пишет сам харнес, в ожидании
+    # оно стоит escape-последовательностью, чтобы не спорить с проверкой символов.
+    "turn-failed.json": (hookio.TURN_FAILED, "server_error",
+                         "API Error: Can't reach the API server \u2014 check "
+                         "your internet or DNS (ENOTFOUND)", None),
     "subagent-done.json": (hookio.SUBAGENT_DONE, "", "4", "general-purpose"),
     "notify-permission.json": (hookio.NOTIFY, "permission_prompt",
                                "Claude needs your permission", None),

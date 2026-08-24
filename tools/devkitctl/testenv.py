@@ -98,16 +98,20 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-longfile.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"}
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "%s"}
+]}], "StopFailure": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "SubagentStop": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "UserPromptSubmit": [{"hooks": [
   {"type": "command", "command": "%s"}
-]}]}}
+]}]},
+ "env": {"CLAUDE_CODE_RETRY_WATCHDOG": "1"}}
 """
 
 # Заглушка go: настоящая сборка шести модулей на четырёх парах стоила бы минуты
@@ -490,7 +494,7 @@ class Sandbox:
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
         write(home / ".claude" / "settings.json",
-              SETTINGS % (allow, deny, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
+              SETTINGS % (allow, deny, NOTIFY, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

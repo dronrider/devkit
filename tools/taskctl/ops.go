@@ -606,7 +606,17 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s%s%s%s%s\n%s", id, row.Sect, target, quenched, stages, tail, note, nextAfterMove(root, id, target)), nil
+	// Правка промптов доезжает до пользователя иначе, чем правка кода: она
+	// меняет поведение агентов, и проверяется прогоном стенда, а не тестами
+	// ветки. Повод называется тут, на последнем рубеже, где задача ещё на
+	// виду, и без отказа.
+	hint := ""
+	if target == SectCheck {
+		if h := promptHint(root, id); h != "" {
+			hint = h + "\n"
+		}
+	}
+	return fmt.Sprintf("%s: %s -> %s%s%s%s%s\n%s%s", id, row.Sect, target, quenched, stages, tail, note, hint, nextAfterMove(root, id, target)), nil
 }
 
 // relocate вырезает строку из её секции и вставляет line в секцию target,

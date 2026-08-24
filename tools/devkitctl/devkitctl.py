@@ -25,7 +25,10 @@
       правил свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута; рядом с чужим
-      go.work, где проект не перечислен, го-команды в ней обёрнуты GOWORK=off),
+      go.work, где проект не перечислен, го-команды в ней обёрнуты GOWORK=off;
+      в линкованном дереве задачи, worktree от shipctl start, конфиг выката не
+      заводится и не разбирается: он гитигнорнут и логически принадлежит
+      основному чекауту, DK-463),
       локальные markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
       файлы берутся из боковой директории, а сверх обычных проверок идут
       корп-: чистота корп-индекса, exclude-строка, цепочки на обоих хуках,
@@ -207,6 +210,11 @@ SESSION_HOOK = "quota-refresh.sh"
 # снимок квоты.
 TASK_HOOK = "session-task.py"
 NOTIFY_HOOK = "notify.py"
+# Догон бокового дерева доски (DK-269): тоже SessionStart, потому что чинить
+# дерево надо до того, как сессия прочла из него устаревшую доску. Категория
+# сообщения в hook_gaps своя: без хука отставание не видно вовсе, а это не то
+# же самое, что пустой реестр чатов.
+BOARD_HOOK = "board-catchup.sh"
 # Подхват реплики (DK-341): PostToolUse на пустом матчере, потому что реплику
 # надо доставлять на любом ходе идущего витка, а не на записи файла. Категория
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
@@ -217,7 +225,19 @@ CHAT_HOOK = "chat-in.py"
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
 # сперва убирает старую.
 RETIRED_HOOKS = {"inbox.py": CHAT_HOOK}
-NOTIFY_EVENTS = ("Notification", "Stop", "SubagentStop", "UserPromptSubmit")
+NOTIFY_EVENTS = ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit")
+# Ретрай-вотчдог харнеса (DK-172): найден strings бинаря 2.1.241 рядом с
+# CLAUDE_CODE_MAX_RETRIES, CLAUDE_ENABLE_STREAM_WATCHDOG и
+# CLAUDE_ENABLE_BYTE_WATCHDOG, публичной докой не описан. Разделяющий замер
+# стенда (ключ=1, ключ=0, ключа нет вовсе, один и тот же обрыв, подробности в
+# docs/tasks/DK-172.md) разницы в поведении не нашёл: харнес ретраит часть
+# сбоев сам и без ключа. Кладём его безвредным заделом на случай другой версии
+# или платформы, а не как подтверждённое решение проблемы (hooks/README.md,
+# «Возобновление после обрыва связи»). Ключ кладётся в секцию env тех же
+# настроек, где лежат хуки; значение, вписанное человеком (хоть "0"), доктор
+# не трогает: это его решение, а не пробел раскладки.
+WATCHDOG_KEY = "CLAUDE_CODE_RETRY_WATCHDOG"
+WATCHDOG_VALUE = "1"
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
@@ -235,8 +255,10 @@ HOOK_LAYOUT = (
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
+    ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
+    ("StopFailure", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/notify.py --hook claude-code"),
 )
@@ -1232,6 +1254,10 @@ def hook_gaps(text, settings):
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
                             "(hooks/README.md)" % (SESSION_HOOK, settings))
+        elif script == BOARD_HOOK:
+            findings.append("SessionStart-хук %s не подключён в %s: боковое дерево доски не "
+                            "догоняется на старте сессии, и устаревшая доска читается как свежая "
+                            "(hooks/README.md)" % (BOARD_HOOK, settings))
     if missing_post:
         findings.append("%s; правки текстов идут мимо проверок (hooks/README.md)"
                         % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_post,
@@ -1337,7 +1363,7 @@ def install_hooks(settings, gaps, devkit, stale=()):
                        ", ".join(RETIRED_HOOKS[n] for n in sorted(set(stale)))))
     if not done:
         return said
-    # Уведомитель висит на четырёх событиях сразу, и четыре строки про него это
+    # Уведомитель висит на пяти событиях сразу, и пять строк про него это
     # одна и та же новость: хуки подключены. Поэтому события собираются к своему
     # скрипту, а строка остаётся одна на всю раскладку.
     events = {}
@@ -1348,6 +1374,50 @@ def install_hooks(settings, gaps, devkit, stale=()):
     return said + ["%s %s в %s: %s" % ("включён" if n == 1 else "включено",
                                        HOOK_WORD[0] if n == 1 else say.counted(n, HOOK_WORD),
                                        settings, what)]
+
+
+def watchdog_gap(text, settings):
+    """Стоит ли в настройках харнеса env-ключ ретрай-вотчдога. Возврат
+    (пробел, находка): пробел чинит install_watchdog, находка без пробела
+    значит, что вписать ключ некуда и файл правится руками."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        # Про нечитаемый файл говорят проверки того же файла рубежом раньше,
+        # вторая строка о том же не нужна.
+        return False, ""
+    if not isinstance(data, dict):
+        return False, ""
+    env = data.get("env")
+    if isinstance(env, dict) and WATCHDOG_KEY in env:
+        return False, ""
+    if env is not None and not isinstance(env, dict):
+        return False, ("секция env в %s не объект json: ключ %s вписать некуда, поправить "
+                       "руками (hooks/README.md, «Возобновление после обрыва связи»)"
+                       % (settings, WATCHDOG_KEY))
+    return True, ("в %s нет env-ключа %s: недокументированный задел ретрай-вотчдога "
+                  "харнеса, стенд DK-172 разницы в поведении с ним не нашёл, но вреда от "
+                  "лишнего ключа тоже нет; вписать: devkitctl doctor --fix (hooks/README.md, "
+                  "«Возобновление после обрыва связи»)" % (settings, WATCHDOG_KEY))
+
+
+def install_watchdog(settings):
+    """Вписать env-ключ ретрай-вотчдога в настройки харнеса. Правка additive,
+    как у хуков и прав: чужие ключи и порядок остаются."""
+    data, bad = perms.load(settings)
+    if bad is not None:
+        return []
+    env = data.setdefault("env", {})
+    if not isinstance(env, dict) or WATCHDOG_KEY in env:
+        return []
+    env[WATCHDOG_KEY] = WATCHDOG_VALUE
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(settings.name + ".devkit-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(settings))
+    return ["вписан env-ключ %s=%s в %s: недокументированный задел ретрай-вотчдога харнеса "
+            "(hooks/README.md, «Возобновление после обрыва связи»)"
+            % (WATCHDOG_KEY, WATCHDOG_VALUE, settings)]
 
 
 def check_notify_hook(fix=False):
@@ -1430,6 +1500,15 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         else:
             findings += gap_findings
+        # Ретрай-вотчдог тем же файлом и тем же рубежом from_main: ключ виден
+        # каждой сессии на машине сразу, и ехать туда с непроверенной ветки ему
+        # нельзя так же, как хукам и правам.
+        wgap, wfinding = watchdog_gap(text, settings)
+        if wgap and fix and from_main:
+            fixed += install_watchdog(settings)
+            text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+        elif wfinding:
+            findings.append(wfinding)
         pf, pd = perms.check(settings, fix, None if from_main else main)
         findings += pf
         fixed += pd
@@ -1977,42 +2056,59 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
-        deploy, test, autonomous = read_deploy(root)
-        if deploy is None and fix:
-            fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
-            deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
-        elif deploy is not None and fix:
-            patched = patch_deploy(root)  # дописывает недостающие ключи болванки
-            if patched:
-                fixed += patched
-                deploy, test, autonomous = read_deploy(root)
-        if deploy is None:
-            findings.append("нет %s: команда выката не задана, shipctl merge оставит "
-                            "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
-        else:
-            # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
-            # отказывает честной строкой, и пустой deploy= это норма, а не
-            # находка: требовать команду выката значило бы звать чинить исправное.
-            if deploy == "" and local:
-                pass
-            elif deploy == "" and not autonomous:
-                findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
-                                "вписать команду выката" % DEPLOY_CONFIG)
-            elif deploy == "" and autonomous:
-                findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
-                                "а катить нечего); вписать команду выката либо снять autonomous" % DEPLOY_CONFIG)
-            if test == "":
-                findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
-                                "вызов, а процедура пачки сочинять его не умеет; вписать команду "
-                                "тестов проекта" % DEPLOY_CONFIG)
-            findings += check_gowork(root, deploy, test)
-            rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
-            if rc != 0:
-                if fix and ensure_gitignore(root, DEPLOY_IGNORE):
-                    fixed.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
-                else:
-                    findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
-                                    "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
+        # Линкованное дерево (worktree от shipctl start) отличается тем же
+        # способом, что check_agent_defs различает исполнение из ветки задачи:
+        # main_checkout это родитель git-common-dir, from_main_checkout ложно,
+        # когда root не совпадает с ним. Конфиг выката логически принадлежит
+        # основному чекауту (.devkit гитигнорнута и не переезжает в worktree),
+        # и весь блок (чтение, заведение болванки, дописывание ключей, разбор
+        # пустых deploy=/test=) стоит только на нём: замечание ревью DK-463
+        # показало, что gate только на scaffold_deploy не спасает от находок,
+        # когда deploy.local в worktree уже физически лежит (доехал с прежнего
+        # бага либо положен руками): блок целиком не выполняется вне основного
+        # чекаута, независимо от того, есть там файл или нет.
+        main_checkout = corp.checkout(root)
+        from_main_checkout = not main_checkout or Path(main_checkout).resolve() == Path(root).resolve()
+        if from_main_checkout:
+            deploy, test, autonomous = read_deploy(root)
+            if deploy is None and fix:
+                fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
+                deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
+            elif deploy is not None and fix:
+                patched = patch_deploy(root)  # дописывает недостающие ключи болванки
+                if patched:
+                    fixed += patched
+                    deploy, test, autonomous = read_deploy(root)
+            if deploy is None:
+                findings.append("нет %s: команда выката не задана, shipctl merge оставит "
+                                "выкат пользователю (болванку заводит devkitctl new или doctor --fix)"
+                                % DEPLOY_CONFIG)
+            else:
+                # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
+                # отказывает честной строкой, и пустой deploy= это норма, а не
+                # находка: требовать команду выката значило бы звать чинить исправное.
+                if deploy == "" and local:
+                    pass
+                elif deploy == "" and not autonomous:
+                    findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
+                                    "вписать команду выката" % DEPLOY_CONFIG)
+                elif deploy == "" and autonomous:
+                    findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
+                                    "а катить нечего); вписать команду выката либо снять autonomous"
+                                    % DEPLOY_CONFIG)
+                if test == "":
+                    findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
+                                    "вызов, а процедура пачки сочинять его не умеет; вписать команду "
+                                    "тестов проекта" % DEPLOY_CONFIG)
+                findings += check_gowork(root, deploy, test)
+                rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
+                if rc != 0:
+                    if fix and ensure_gitignore(root, DEPLOY_IGNORE):
+                        fixed.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
+                    else:
+                        findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
+                                        "утекут в git, добавить %s в .gitignore"
+                                        % (DEPLOY_CONFIG, DEPLOY_IGNORE))
         if (root / ".devkit").is_dir():
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", RUN_LOG])
             if rc != 0:

@@ -51,6 +51,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	bin := t.TempDir()
 	writeScript(t, bin, "taskctl", fmt.Sprintf("echo '%s'", boardFixtureJSON))
 	writeScript(t, bin, "tmux", "printf 'goal-XR-9\\ntask-XR-5\\nчужая-сессия\\n'")
+	// Фикстура подписок стоит в стенде с самого начала: живой agentctl лежит в
+	// PATH разработчика, сам ходит в git, и тесты, которые считают подпроцессы,
+	// засчитывали его вызовы своим (DK-512). Тесту, которому нужна другая
+	// раскладка, довольно переписать скрипт поверх.
+	writeAgentctlFake(t, bin, harnessJSONFixture)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	goals := filepath.Join(home, ".devkit", "goals")

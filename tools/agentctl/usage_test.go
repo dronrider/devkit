@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -513,6 +515,19 @@ func TestQuotaRefreshScript(t *testing.T) {
 		}
 	})
 
+	t.Run("каталог харнеса доезжает до съёмщика", func(t *testing.T) {
+		// Токен подписки лежит в настройках клиента внутри каталога машинного
+		// хозяйства, и съёмщик получает каталог переменной: своего пути к токену
+		// у него нет, иначе машинный конфиг разбирал бы каждый скрипт сам.
+		home := t.TempDir()
+		q := scriptSpec(t, "#!/bin/sh\n[ \"$DEVKIT_HARNESS_HOME\" = \""+home+"\" ] || { echo \"каталог харнеса не доехал: $DEVKIT_HARNESS_HOME\" >&2; exit 1; }\n"+
+			"printf '%s' \""+snapText+"\"\n")
+		q.Home = home
+		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+	})
+
 	t.Run("бюджет не задан", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+snapText+"\"\n")
 		q.BudgetBased = true
@@ -585,6 +600,101 @@ func TestQuotaRefreshScript(t *testing.T) {
 			!strings.Contains(err.Error(), "снимок не тронут") {
 			t.Fatalf("пропавший съёмщик прошёл молча: %v", err)
 		}
+	})
+}
+
+// TestGlmCodeSnapScript: съёмщик glm-code проверяется целиком, от settings.json
+// до текста снимка. Живой z.ai не нужен: локальный сервер отвечает образцом,
+// снятым с подписки живьём, и разбор едет по нему, а не по представлению о
+// чужой разметке.
+func TestGlmCodeSnapScript(t *testing.T) {
+	const token = "подписной-токен"
+	body := readFixture(t, "glm-quota.json")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path != "/api/monitor/usage/quota/limit":
+			http.NotFound(w, r)
+		case r.Header.Get("Authorization") != "Bearer "+token:
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			_, _ = w.Write([]byte(body))
+		}
+	}))
+	defer srv.Close()
+
+	// Эндпоинт мониторинга чужой для API сообщений: base URL клиента кончается
+	// на /api/anthropic, а съёмщик обязан дернуть origin, а не склеивать путь.
+	settings := func(tok string) string {
+		return `{"env": {"ANTHROPIC_BASE_URL": "` + srv.URL + `/api/anthropic", "ANTHROPIC_AUTH_TOKEN": "` + tok + `"}}`
+	}
+	quotaHome := func(t *testing.T, tok string) *quotaSpec {
+		t.Helper()
+		home := t.TempDir()
+		writeFile(t, home, "settings.json", settings(tok))
+		q := glmSpec(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
+		q.Home = home
+		return q
+	}
+
+	t.Run("живой ответ ложится в снимок обеими шкалами", func(t *testing.T) {
+		snap, err := snapByScript(quotaHome(t, token), testNow)
+		if err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		if len(snap.Warns) != 0 {
+			t.Fatalf("вывод съёмщика не разобран начисто: %v", snap.Warns)
+		}
+		five, ok := snap.bucket("window5h_all")
+		if !ok {
+			t.Fatalf("пятичасового окна в снимке нет: %+v", snap.Buckets)
+		}
+		week, _ := snap.bucket("week_all")
+		// Проценты берутся из сырых чисел, а не из поля percentage: панель z.ai
+		// обрезает вниз (198 из 12000 это 1), снимок округляет до ближайшего.
+		if five.Used != 0.02 || week.Used != 0.09 {
+			t.Fatalf("проценты %.2f и %.2f, жду 0.02 и 0.09", five.Used, week.Used)
+		}
+	})
+
+	t.Run("чужой токен это отказ, файл не тронут", func(t *testing.T) {
+		q := quotaHome(t, "не-тот-токен")
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "не прошёл") {
+			t.Fatalf("отказ эндпоинта прошёл как снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("незнакомое окно это отказ, а не догадка", func(t *testing.T) {
+		// Разметка z.ai не контракт: сменились коды окон, съёмщик обязан
+		// отказаться, потому что снимок с перепутанными окнами двигал бы
+		// вердикты в обратную сторону.
+		kept := body
+		body = strings.Replace(kept, `"unit":3`, `"unit":9`, 1)
+		defer func() { body = kept }()
+		q := quotaHome(t, token)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "незнакомое окно") {
+			t.Fatalf("незнакомая разметка принята за снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("окно дважды это отказ, а не две строки", func(t *testing.T) {
+		// Повторная запись того же окна молча дала бы вторую строку бакета,
+		// и парсер снимка взял бы первую без единого предупреждения.
+		kept := body
+		body = strings.Replace(kept, `"unit":6,"number":1`, `"unit":3,"number":5`, 1)
+		defer func() { body = kept }()
+		q := quotaHome(t, token)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "дважды") {
+			t.Fatalf("повтор окна принят за снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
 	})
 }
 

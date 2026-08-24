@@ -68,6 +68,7 @@ func stubEditor(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	return log
 }
 

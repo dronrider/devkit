@@ -38,12 +38,30 @@ class Stand(unittest.TestCase):
 class ComponentsTest(unittest.TestCase):
 
     def test_list_covers_the_checkout(self):
+        go_names = ["go:" + t for t in parallel.go_tools()]
         names = [name for name, _, _ in parallel.components()]
-        self.assertEqual(names[:8], ["go:" + t for t in parallel.GO_TOOLS])
+        self.assertEqual(names[:len(go_names)], go_names)
+        # cmdout выпадал из прежнего ручного списка (находка DK-367): без
+        # него местный прогон молча не покрывал модуль.
+        self.assertIn("go:cmdout", go_names)
         for name in ("hooks", "devkitctl", "skills", "check-skills",
                      "check-exec-bit", "goal-loop", "doctor"):
             self.assertIn(name, names)
-        self.assertEqual(len(names), 15)
+        self.assertEqual(len(names), len(go_names) + 7)
+
+    def test_go_tools_discovers_by_gomod_not_by_hand(self):
+        # Прежний список хранился в коде руками и разошёлся с деревом молча
+        # (cmdout выпал). Открытие по факту go.mod ловит любой новый модуль
+        # без правки списка и не путает каталог без go.mod с модулем.
+        root = Path(tempfile.mkdtemp(prefix="devkitctl-go-tools-test-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        for name in ("zeta", "alpha", "beta"):
+            d = root / "tools" / name
+            d.mkdir(parents=True)
+            (d / "go.mod").write_text("module example.com/" + name + "\n\ngo 1.26\n",
+                                       encoding="utf-8")
+        (root / "tools" / "not-a-module").mkdir(parents=True)
+        self.assertEqual(parallel.go_tools(root), ["alpha", "beta", "zeta"])
 
     def test_exec_bit_checker_is_in_the_chain(self):
         # Чекер бита выполнения шёл отдельным шагом старой цепочки test и
@@ -209,7 +227,7 @@ class MainTest(Stand):
             rc = parallel.main(["--list"])
         self.assertEqual(rc, 0)
         self.assertIn("go:taskctl", out.getvalue())
-        self.assertIn("компонентов: 15", out.getvalue())
+        self.assertIn("компонентов: %d" % len(parallel.components()), out.getvalue())
 
     def test_unstartable_component_exits_nonzero(self):
         # Полный проход через main: провал старта валит прогон кодом 1, а не

@@ -83,6 +83,22 @@ func (r Record) Live() (Stage, bool) {
 	return r.Stages[len(r.Stages)-1], true
 }
 
+// Elapsed отдаёт время с момента Start последнего этапа с совпавшим Kind
+// (LLD DK-503, решение 1): лимит жизненного цикла агента меряется временем,
+// а не числом обращений или объёмом контекста. Ищет от конца записи, а не
+// берёт только живой этап, потому что вызывающий (taskctl elapsed)
+// спрашивает конкретный вид деятельности, а живым к моменту вопроса может
+// стоять уже другой этап. Второе значение false, если этапа такого вида в
+// записи нет вовсе.
+func Elapsed(rec Record, kind string, now time.Time) (time.Duration, bool) {
+	for i := len(rec.Stages) - 1; i >= 0; i-- {
+		if rec.Stages[i].Kind == kind {
+			return now.Sub(rec.Stages[i].Start), true
+		}
+	}
+	return 0, false
+}
+
 // dirName это каталог записей внутри ~/.devkit.
 const dirName = "runs"
 

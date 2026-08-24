@@ -39,18 +39,26 @@ from pathlib import Path
 # Корень чекаута: раннер лежит в tools/devkitctl на две ступени глубже.
 ROOT = Path(__file__).resolve().parents[2]
 
-# Go-инструменты самопроверки: go test с -count=1 по DoD цели DK-166, кэш
-# сборки не чистится. Порядок в цепочке `test` был таким же. Go-компоненты
-# идут с GOWORK=off: чужой go.work выше по дереву (находка DK-115) уводил бы
-# go test из модуля утилиты.
-GO_TOOLS = ["taskctl", "shipctl", "agentctl", "trackctl", "regcheck",
-            "obeycheck", "secretctl", "dashboard"]
+
+def go_tools(root=ROOT):
+    """Имена go-модулей под tools/, отсортированные по имени.
+
+    Список ищется по факту наличия go.mod, а не хранится руками: хранёный
+    перечень уже расходился с деревом (находка DK-367, модуль cmdout выпал из
+    прежнего списка) и молчал об этом, пока кто-то не заметил глазами.
+    """
+    return sorted(p.parent.name for p in (root / "tools").glob("*/go.mod"))
 
 
 def components(root=ROOT):
-    """Перечень компонентов: (имя, cwd от корня, argv) в порядке запуска."""
+    """Перечень компонентов: (имя, cwd от корня, argv) в порядке запуска.
+
+    Go-компоненты идут с GOWORK=off: чужой go.work выше по дереву (находка
+    DK-115) уводил бы go test из модуля утилиты. -count=1 держит DoD цели
+    DK-166: кэш тестового прогона go обязан молчать.
+    """
     comps = [("go:" + tool, "tools/" + tool,
-              ["go", "test", "-count=1", "./..."]) for tool in GO_TOOLS]
+              ["go", "test", "-count=1", "./..."]) for tool in go_tools(root)]
     comps += [
         ("hooks", "hooks",
          [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"]),

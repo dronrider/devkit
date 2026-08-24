@@ -287,3 +287,88 @@ func TestCloseNonAgentSkipsVerificationGate(t *testing.T) {
 		t.Fatalf("не агентский вид закрывается без «Проверки»: %v", err)
 	}
 }
+
+// commitFile кладёт файл в main отдельным коммитом с заданной темой: так
+// выглядит коммит задачи, по теме которого подсказка и ищет промпты.
+func commitFile(t *testing.T, root, rel, subject string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("текст "+rel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", rel)
+	gitOut(t, root, "commit", "-q", "-m", subject)
+}
+
+// Задача правила скилл и файл правил: перевод в Check проходит, а в выводе
+// стоит строка про стенд. Подсказка ищет по коммитам с ID в теме, поэтому
+// работает и на слитой задаче, у которой диффа ветки против main уже нет.
+func TestMoveToCheckHintsPromptDiff(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	commitFile(t, root, "kit/skills/board-draft/SKILL.md", "feat(skills): XR-005 черновик доски")
+	commitFile(t, root, "RULES.md", "docs: XR-005 правило выноса")
+	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err != nil {
+		t.Fatalf("подсказка не должна отказывать: %v", err)
+	}
+	for _, want := range []string{"prompt-test", "«Проверка»", "kit/skills/board-draft/SKILL.md", "RULES.md"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в выводе нет %q:\n%s", want, out)
+		}
+	}
+	if s := sect(t, root, "XR-005"); s != SectCheck {
+		t.Fatalf("строка не доехала до Check: %s", s)
+	}
+}
+
+// Задача правила только код и свою доку: подсказке взяться неоткуда, и вывод
+// про стенд молчит.
+func TestMoveToCheckSilentWithoutPromptDiff(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	commitFile(t, root, "tools/taskctl/ops.go", "feat(taskctl): XR-005 подсказка ворот")
+	commitFile(t, root, "tools/taskctl/README.md", "docs(taskctl): XR-005 строка про подсказку")
+	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "prompt-test") {
+		t.Fatalf("подсказка без промптов в коммитах:\n%s", out)
+	}
+}
+
+// Чужая задача с похожим номером не считается своей: тема коммита XR-0051
+// подсказку XR-005 не поднимает.
+func TestMoveToCheckIgnoresLongerTaskID(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	commitFile(t, root, "kit/skills/board-draft/SKILL.md", "feat(skills): XR-0051 чужой скилл")
+	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "prompt-test") {
+		t.Fatalf("подсказку подняла чужая задача:\n%s", out)
+	}
+}
+
+func TestPromptPath(t *testing.T) {
+	yes := []string{"kit/skills/prompt-test/SKILL.md", "kit/agents/exec-high.md",
+		"RULES.md", "RULES.board.core.md", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md"}
+	no := []string{"tools/taskctl/gate.go", "docs/TASKS.md", "docs/tasks/XR-005.md",
+		"README.md", "docs/RULES.md", "kit/harness/claude-code.toml"}
+	for _, p := range yes {
+		if !promptPath(p) {
+			t.Fatalf("%s это промпт, а не опознан", p)
+		}
+	}
+	for _, p := range no {
+		if promptPath(p) {
+			t.Fatalf("%s промптом не считается", p)
+		}
+	}
+}

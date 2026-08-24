@@ -788,3 +788,26 @@ func TestCmdQuotaLegacyPath(t *testing.T) {
 		t.Fatalf("после записи заметка про старый путь осталась:\n%s", out)
 	}
 }
+
+// TestLegacyPathBelongsToOwner: старый одиночный снимок снимался панелью первой
+// подписки, и чужой харнес обязан его не видеть: под пометкой своего имени он
+// читался бы как остаток не своей подписки.
+func TestLegacyPathBelongsToOwner(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacy := legacyQuotaPath()
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "taken = " + at(testNow) + "\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+	if err := os.WriteFile(legacy, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, from := snapshotSource("glm-code")
+	if from == legacy || path != quotaPath("glm-code") {
+		t.Fatalf("вторая подписка читает чужой старый снимок: path=%q from=%q", path, from)
+	}
+	if _, from := snapshotSource("claude-code"); from != legacy {
+		t.Fatalf("владелец не увидел свой старый снимок: %q", from)
+	}
+}

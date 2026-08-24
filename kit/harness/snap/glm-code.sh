@@ -43,7 +43,9 @@ PY
 origin=$(printf '%s\n' "$pair" | sed -n 1p)
 token=$(printf '%s\n' "$pair" | sed -n 2p)
 
-resp=$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" \
+# Токен уезжает конфигом по пайпу, а не флагом: argv процесса виден в ps.
+resp=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | \
+	curl -fsS --max-time 30 --config - \
 	"$origin/api/monitor/usage/quota/limit") || {
 	echo "запрос остатка к $origin не прошёл: токен протух либо эндпоинт сменился" >&2
 	exit 1
@@ -52,8 +54,10 @@ resp=$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" \
 # Оба окна опознаются парой unit/number из ответа, а не расстоянием до сброса:
 # недельное окно перед своим сбросом короче живого пятичасового. Незнакомая
 # пара это отказ, а не догадка: снимок с перепутанными окнами двигал бы
-# вердикты в обратную сторону. Проценты считаются из сырых чисел, а не из
-# обрезанного полей percentage: панель округляет вниз.
+# вердикты в обратную сторону. Повтор окна это тоже отказ, а не молчаливая
+# вторая строка: парсер agentctl взял бы первую без предупреждения. Проценты
+# считаются из сырых чисел, а не из обрезанного поля percentage: панель
+# округляет вниз.
 python3 - "$resp" <<'PY'
 import datetime, json, sys
 
@@ -72,6 +76,8 @@ for lim in limits:
     if name is None:
         sys.exit("в ответе незнакомое окно unit=%s number=%s, разбор отказан"
                  % (lim.get("unit"), lim.get("number")))
+    if name in seen:
+        sys.exit("окно %s приехало в ответе дважды" % name)
     ceiling, used = lim.get("usage"), lim.get("currentValue")
     if not ceiling or used is None:
         sys.exit("у окна %s нет расходов (usage=%s currentValue=%s)" % (name, ceiling, used))

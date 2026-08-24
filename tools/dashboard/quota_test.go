@@ -449,36 +449,46 @@ func TestQuotaFailWords(t *testing.T) {
 	}
 }
 
-// Снимки, снятые в разное время, стоят рядом и читаются как одна картина на
-// один момент. Разъезд называется словами: сравнивать остаток, снятый минуту
-// назад, с остатком трёхчасовой давности нельзя.
-func TestQuotaSpreadWords(t *testing.T) {
+// Разницу в возрасте снимков дашборд словами не называет: давность подписана у
+// каждой подписки цифрой, и сравнение человек делает сам. Прежде тут стояла
+// плашка на весь блок, потом приписка «раньше остальных» у старшего снимка, и
+// оба раза лишнее слово мешало (решение пользователя).
+func TestQuotaAgePerHarnessWithoutSpread(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return quotaNow }
 	writeQuota(t, e.home, "свежая", "taken = 2026-08-11T13:28\nweek_all = 6% сброс 2026-08-17T15:00\n")
 	writeQuota(t, e.home, "старая", "taken = 2026-08-11T10:30\nweek_all = 31% сброс 2026-08-17T15:00\n")
 
 	view := getQuota(t, e)
-	if view.Spread == "" {
-		t.Fatalf("разъезд снимков не назван: %+v", view.Harnesses)
+	if len(view.Harnesses) != 2 {
+		t.Fatalf("подписок в ответе %d, жду две: %+v", len(view.Harnesses), view.Harnesses)
 	}
-	for _, want := range []string{"свежая", "старая", "разное время"} {
-		if !strings.Contains(view.Spread, want) {
-			t.Errorf("в словах про разъезд нет %q: %q", want, view.Spread)
+	// Давность есть у каждой подписки и своя.
+	for _, h := range view.Harnesses {
+		if h.Age == "" || h.AgeSec <= 0 {
+			t.Errorf("подписка %s приехала без давности снимка: %+v", h.Name, h)
 		}
 	}
-
-	// Снимки одного времени разъездом не считаются: слов тогда нет вовсе, и
-	// экран не пугает человека там, где всё в порядке.
-	writeQuota(t, e.home, "старая", "taken = 2026-08-11T13:26\nweek_all = 31% сброс 2026-08-17T15:00\n")
-	if got := getQuota(t, e); got.Spread != "" {
-		t.Errorf("снимки одного времени объявлены разъехавшимися: %q", got.Spread)
+	if view.Harnesses[0].AgeSec == view.Harnesses[1].AgeSec {
+		t.Errorf("давность у подписок совпала, стенд ничего не проверяет: %+v", view.Harnesses)
 	}
-
-	// Час разницы это тоже обычное дело: подписки снимаются по-разному, одну
-	// двигает тик демона, другую рука, и говорить тут не о чем.
-	writeQuota(t, e.home, "старая", "taken = 2026-08-11T12:26\nweek_all = 31% сброс 2026-08-17T15:00\n")
-	if got := getQuota(t, e); got.Spread != "" {
-		t.Errorf("часовая разница снимков объявлена разъездом: %q", got.Spread)
+	// Слов о разъезде в ответе нет ни в каком виде.
+	raw := getQuotaRaw(t, e)
+	for _, gone := range []string{"spread", "разное время", "раньше остальных"} {
+		if strings.Contains(raw, gone) {
+			t.Errorf("в ответе квоты осталось %q: %s", gone, raw)
+		}
 	}
+}
+
+// getQuotaRaw отдаёт ответ ручки текстом: по нему видно и то, чего в нём быть
+// не должно.
+func getQuotaRaw(t *testing.T, e *testEnv) string {
+	t.Helper()
+	c := e.loggedClient(t)
+	resp, err := c.Get(e.srv.URL + "/api/quota")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body(t, resp)
 }

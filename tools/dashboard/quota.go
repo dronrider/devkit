@@ -80,11 +80,6 @@ type QuotaView struct {
 	// молчание тут и означает, что снимок стар не потому, что его перестали
 	// снимать.
 	Fail *QuotaFail `json:"fail,omitempty"`
-	// Spread словами говорит, что снимки подписок сняты в разное время. Цифры
-	// двух подписок рядом читаются как одна картина на один момент, а сняты
-	// бывают с разницей в часы, и сравнивать их тогда нельзя (замечание
-	// пользователя).
-	Spread string `json:"spread,omitempty"`
 }
 
 // QuotaFail это причина, по которой снимок перестал обновляться. Прежде она
@@ -253,43 +248,13 @@ func humanAge(d time.Duration) string {
 func (s *server) handleQuota(w http.ResponseWriter, r *http.Request) {
 	view := readQuota(s.cfg.Home, s.now())
 	view.Fail = s.quotaFail()
-	view.Spread = quotaSpread(view.Harnesses)
 	writeJSON(w, http.StatusOK, view)
 }
 
-// quotaSpreadTerm это разница возрастов, с которой снимки считаются снятыми в
-// разное время. Два часа, а не полчаса: снимаются подписки по-разному (одну
-// двигает тик демона, другую рука), и получасовая разница это обычное дело, а
-// не повод о чём-то говорить. Приписка эта и так не прячет цифры, но и висеть
-// без дела ей незачем.
-const quotaSpreadTerm = 2 * time.Hour
-
-// quotaSpread говорит словами, что снимки сняты в разное время. Цифры двух
-// подписок стоят рядом и читаются как одна картина на один момент; сняты они
-// бывают с разницей в часы, и сравнивать их тогда нельзя.
-func quotaSpread(list []QuotaHarness) string {
-	young, old := -1, -1
-	for i, h := range list {
-		if h.AgeSec <= 0 {
-			continue
-		}
-		if young < 0 || h.AgeSec < list[young].AgeSec {
-			young = i
-		}
-		if old < 0 || h.AgeSec > list[old].AgeSec {
-			old = i
-		}
-	}
-	if young < 0 || old < 0 || young == old {
-		return ""
-	}
-	gap := time.Duration(list[old].AgeSec-list[young].AgeSec) * time.Second
-	if gap < quotaSpreadTerm {
-		return ""
-	}
-	return fmt.Sprintf("снимки сняты в разное время: %s %s назад, %s %s назад, и рядом их цифры не сравнить",
-		list[young].Name, list[young].Age, list[old].Name, list[old].Age)
-}
+// Разницы в возрасте снимков дашборд словами не называет: давность подписана
+// у каждой подписки цифрой, и сравнение человек делает сам. Приписка «раньше
+// остальных» у старшего снимка стояла лишним словом и путала (решение
+// пользователя).
 
 // Свежесть снимка квоты держит сам демон (замечание 21 двенадцатого круга
 // POC). Прежде снимок обновлял только хук старта сессии и рука, а переписка в

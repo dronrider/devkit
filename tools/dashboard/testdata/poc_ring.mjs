@@ -360,11 +360,17 @@ function ringOf(head) {
     fail("сегментов в окне " + segs.length + ", жду семь (пять закрытых и два незакрытых)");
   }
   // Счёт в центре идёт по тому же окну: иначе он рос бы бесконечно и ничего
-  // не значил.
-  const num = byClass(ring, "rnum");
-  if (!num || num.textContent !== "5/7") {
-    fail("счёт в центре не по окну: " + (num ? num.textContent : "числа нет"));
+  // не значил. Стоит он дробью в два яруса: выполнено сверху, всего снизу,
+  // между ними черта, и каждому числу достаётся вся ширина просвета, а не
+  // половина с косой чертой (решение пользователя).
+  const frac = byClass(ring, "rfrac");
+  if (!frac) fail("хода по этапам в середине кольца нет: " + dump(ring).slice(0, 200));
+  const nums = allByClass(frac, "rnum").map((n) => n.textContent);
+  if (JSON.stringify(nums) !== JSON.stringify(["5", "7"])) {
+    fail("дробь собралась не по окну: " + JSON.stringify(nums));
   }
+  if (!byClass(frac, "rbar")) fail("черты между ярусами дроби нет: " + dump(frac));
+  const num = allByClass(frac, "rnum")[0];
   // Полное число этапов за жизнь сессии остаётся в подсказке.
   const tip = String(ring.attrs["aria-label"] || "");
   if (!tip.includes("всего за сессию 22")) {
@@ -379,16 +385,34 @@ function ringOf(head) {
   }
   const long = [];
   for (let i = 1; i <= 47; i += 1) long.push({ text: "этап " + i, state: i <= 40 ? "completed" : "pending" });
-  const wideNum = byClass(pulseRingOf({ state: "working", count: 1, working: 1, plan: long, agents: [] }), "rnum");
-  if (!String(wideNum.className).includes("rlong")) {
-    fail("длинное значение не помечено мелким: " + wideNum.className + ", " + wideNum.textContent);
+  // Двузначные с обеих сторон: ярусы стоят один над другим и не наезжают, у
+  // верхнего своя высота, у нижнего своя, а черта между ними.
+  const wideRing = pulseRingOf({ state: "working", count: 1, working: 1, plan: long, agents: [] });
+  const wideNums = allByClass(byClass(wideRing, "rfrac"), "rnum");
+  if (wideNums.map((n) => n.textContent).join("/") !== "5/12") {
+    fail("дробь двузначных собралась не так: " + wideNums.map((n) => n.textContent).join("/"));
   }
+  const ys = wideNums.map((n) => Number(n.attrs.y));
+  if (!(ys[0] < 18 && ys[1] > 18)) {
+    fail("ярусы дроби сошлись на одной высоте: " + JSON.stringify(ys));
+  }
+  const bar = byClass(wideRing, "rbar");
+  const half = Math.abs(Number(bar.attrs.x2) - 18);
+  // Черта не касается дуги: радиус кольца пятнадцать, и её край обязан остаться
+  // заметно внутри.
+  if (half > 12) fail("черта дроби дотянулась до дуги кольца: полуширина " + half);
   const css = readFileSync(join(dirname(app), "style.css"), "utf8");
   const base = (css.match(/\.rnum\{font:[^}]*?(\d+(?:\.\d+)?)px/) || [])[1];
-  const small = (css.match(/\.rnum\.rlong\{font-size:(\d+(?:\.\d+)?)px/) || [])[1];
-  if (!base || Number(base) > 10) fail("цифры в кольце крупнее места: " + base);
-  if (!small || Number(small) >= Number(base)) {
-    fail("длинное значение не мельче короткого: " + small + " против " + base);
+  // Место дробь делит по высоте, а не по ширине, и потому шрифт тут крупнее
+  // прежнего строчного: мельче десяти он уже не читается, крупнее двенадцати
+  // не влезает в просвет кольца.
+  if (!base || Number(base) < 10) fail("цифры дроби мельче прежней строки: " + base);
+  if (Number(base) > 12) fail("цифры дроби не влезут в просвет кольца: " + base);
+  // Два яруса по высоте: их сумма с зазорами обязана уложиться в просвет
+  // кольца, иначе дробь упрётся в дугу.
+  const gap = Math.abs(ys[1] - ys[0]);
+  if (gap < Number(base) || gap > 14) {
+    fail("ярусы дроби стоят не по месту: расстояние " + gap + " при кегле " + base);
   }
 
   // Незакрытых этапов много: они остаются все, окно режет только закрытые.
@@ -399,8 +423,9 @@ function ringOf(head) {
   if (allByClass(wide, "seg").length !== 9) {
     fail("окно съело незакрытые этапы: сегментов " + allByClass(wide, "seg").length);
   }
-  if (byClass(wide, "rnum").textContent !== "5/9") {
-    fail("счёт незакрытых этапов не тот: " + byClass(wide, "rnum").textContent);
+  const wideFrac = allByClass(byClass(wide, "rfrac"), "rnum").map((n) => n.textContent);
+  if (wideFrac.join("/") !== "5/9") {
+    fail("счёт незакрытых этапов не тот: " + wideFrac.join("/"));
   }
 }
 

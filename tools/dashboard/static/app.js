@@ -6608,14 +6608,7 @@ function pulseRing(project, p) {
     // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
     // как второй разговор задачи стоит без хода второй час.
     const num = ringNumber(next, shown);
-    if (num) {
-      // Длинное значение мельче короткого: «12/47» крупным шрифтом задевало
-      // дугу кольца (замечание пользователя).
-      const node = svgEl("text", "rnum" + (num.length > 3 ? " rlong" : ""));
-      svgAttrs(node, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
-      node.textContent = num;
-      box.append(node);
-    }
+    if (num) box.append(ringNum(num));
     fillPop(pop, project, next);
     wrap.replaceChildren(box, pop);
     // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
@@ -6635,6 +6628,38 @@ function pulseRing(project, p) {
 // иначе он рос бы бесконечно и ничего не значил. Этапов нет вовсе, значит в
 // середине остаётся прежнее: ждущие у ждущего кольца, работающие у
 // работающего.
+// Число в середине кольца. Ход по этапам стоит дробью в два яруса: выполнено
+// сверху, всего снизу, между ними тонкая черта. В строку («5/7») каждое число
+// делило ширину с соседом и с косой чертой, и крупный шрифт задевал дугу, а
+// мелкий не читался (решение пользователя). В два яруса каждому числу
+// достаётся вся ширина просвета, и шрифт берётся крупнее. Прочие значения
+// (ждущие, работающие) это одно число, и ярус у него один.
+function ringNum(num) {
+  const parts = String(num).split("/");
+  if (parts.length !== 2) {
+    const one = svgEl("text", "rnum");
+    svgAttrs(one, { x: 18, y: 18, "text-anchor": "middle", "dominant-baseline": "central" });
+    one.textContent = num;
+    return one;
+  }
+  const g = svgEl("g", "rfrac");
+  // Ярусы стоят вплотную к черте: просвет кольца это круг радиусом около
+  // четырнадцати, и дробь целиком укладывается в его середину.
+  const top = svgEl("text", "rnum");
+  svgAttrs(top, { x: 18, y: 12.4, "text-anchor": "middle", "dominant-baseline": "central" });
+  top.textContent = parts[0];
+  const line = svgEl("line", "rbar");
+  // Черта чуть шире самого длинного яруса и заметно внутри дуги: этапов в окне
+  // не больше двенадцати, значит ярус это одна или две цифры.
+  const half = Math.max(parts[0].length, parts[1].length) > 1 ? 6 : 4.5;
+  svgAttrs(line, { x1: 18 - half, x2: 18 + half, y1: 18, y2: 18, "stroke-width": 0.9 });
+  const low = svgEl("text", "rnum");
+  svgAttrs(low, { x: 18, y: 23.6, "text-anchor": "middle", "dominant-baseline": "central" });
+  low.textContent = parts[1];
+  g.append(top, line, low);
+  return g;
+}
+
 function ringNumber(p, shown) {
   const list = shown || [];
   if (list.length) {

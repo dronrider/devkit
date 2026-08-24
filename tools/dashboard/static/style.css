@@ -901,11 +901,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .ringwrap.ghost:hover .ghost{stroke:var(--tx3);opacity:1}
 .ring .comet{stroke:none}
 .ring .halo{stroke:none}
-/* цифры в середине кольца: они стоят внутри дуги, и крупный шрифт задевал её
-   на двузначных значениях с обеих сторон («12/47»). Длинное значение мельче
-   короткого: место тут одно и то же, а знаков бывает по-разному */
-.rnum{font:600 9.5px var(--mono);fill:var(--tx)}
-.rnum.rlong{font-size:7.5px}
+/* число в середине кольца: ход по этапам стоит дробью в два яруса, и каждому
+   числу достаётся вся ширина просвета, а не половина с косой чертой. Оттого и
+   шрифт крупнее прежнего строчного */
+.rnum{font:600 10px var(--mono);fill:var(--tx)}
+.rbar{stroke:var(--tx3)}
 .r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}

@@ -649,6 +649,55 @@ class DeployTest(SandboxCase):
                           "повторный doctor всё ещё видит рабочее состояние цели")
 
 
+class DeployWorktreeTest(SandboxCase):
+    """Линкованное дерево задачи (worktree от shipctl start): .devkit
+    гитигнорнута и в него не переезжает, а doctor --fix заводил там болванку
+    deploy.local и тут же сам находил её пустые ключи (DK-463). Конфиг выката
+    логически принадлежит основному чекауту, в worktree его не заводят и не
+    разбирают, а в основном чекауте поведение прежнее.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.proj = cls.box.project("wproj")
+        boardbin = cls.box.root / "wboardbin"
+        boardbin.mkdir()
+        executable(boardbin / "taskctl", cls.box.board_taskctl())
+        cls.boardpath = "%s:%s" % (boardbin, cls.box.cleanpath)
+        cls.box.dkctl_run("new", "--prefix", "WP", "-C", str(cls.proj), path=cls.boardpath)
+        cls.deploy = cls.proj / ".devkit" / "deploy.local"
+        git(cls.proj, "add", "-A")
+        git(cls.proj, "commit", "-qm", "seed")
+        cls.wt = cls.box.root / "wproj-wt"
+        git(cls.proj, "worktree", "add", "-q", "-b", "wp-task", str(cls.wt))
+        cls.wtdeploy = cls.wt / ".devkit" / "deploy.local"
+
+    def sysdoctor(self, root, *args):
+        return self.box.doctor(root, *args, path=str(self.box.sys))
+
+    def test_fix_does_not_scaffold_deploy_in_linked_worktree(self):
+        # Гитигнорнутая .devkit не переезжает в worktree: болванка из основного
+        # чекаута там и так недоступна.
+        self.assertFalse(self.wtdeploy.exists(),
+                         ".devkit/deploy.local не должен переехать в worktree")
+        rc, out = self.sysdoctor(self.wt, "--fix")
+        self.assertFalse(self.wtdeploy.exists(),
+                         "doctor --fix завёл .devkit/deploy.local в linked worktree")
+        self.assertNotIn_("deploy=", out, "doctor --fix в worktree дал находку про deploy=")
+        self.assertNotIn_("test=", out, "doctor --fix в worktree дал находку про test=")
+        self.assertNotIn_(str(self.wtdeploy), out,
+                          "doctor --fix в worktree упомянул путь до deploy.local")
+
+    def test_main_checkout_behaviour_is_unchanged(self):
+        # Тот же прогон в основном чекауте всё ещё заводит и находит болванку,
+        # как раньше: правка не должна была тронуть этот путь.
+        self.assertTrue(self.deploy.is_file(), "new не завёл .devkit/deploy.local в чекауте")
+        rc, out = self.sysdoctor(self.proj)
+        self.assertIn_("пустой deploy=", out, "в основном чекауте пропала находка про deploy=")
+        self.assertIn_("пустой test=", out, "в основном чекауте пропала находка про test=")
+
+
 class MachineContourTest(SandboxCase):
     """Машинный контур: бинари, определения агентов, скиллы, снимок квоты и
     каталог сборки. Гоняется на отдельном проекте и отдельном HOME, чтобы правки

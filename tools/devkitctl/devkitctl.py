@@ -25,7 +25,10 @@
       правил свежи и не правлены руками, их импорты разворачиваются, git-хуки
       подключены, инварианты доски (taskctl lint), обвязка выката
       (.devkit/deploy.local есть, с командой и гитигнорнута; рядом с чужим
-      go.work, где проект не перечислен, го-команды в ней обёрнуты GOWORK=off),
+      go.work, где проект не перечислен, го-команды в ней обёрнуты GOWORK=off;
+      в линкованном дереве задачи, worktree от shipctl start, конфиг выката не
+      заводится и не разбирается: он гитигнорнут и логически принадлежит
+      основному чекауту, DK-463),
       локальные markdown-ссылки не битые; в корп-контуре (задан devkit.local) рабочие
       файлы берутся из боковой директории, а сверх обычных проверок идут
       корп-: чистота корп-индекса, exclude-строка, цепочки на обоих хуках,
@@ -2053,8 +2056,18 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
+        # Линкованное дерево (worktree от shipctl start) отличается тем же
+        # способом, что check_agent_defs различает исполнение из ветки задачи:
+        # main_checkout это родитель git-common-dir, from_main_checkout ложно,
+        # когда root не совпадает с ним. Конфиг выката логически принадлежит
+        # основному чекауту (.devkit гитигнорнута и не переезжает в worktree),
+        # и scaffold_deploy там заводил бы болванку, которую тут же сам находил
+        # бы пустой (DK-463): звать его и разбирать пустые ключи стоит только
+        # из основного чекаута.
+        main_checkout = corp.checkout(root)
+        from_main_checkout = not main_checkout or Path(main_checkout).resolve() == Path(root).resolve()
         deploy, test, autonomous = read_deploy(root)
-        if deploy is None and fix:
+        if deploy is None and fix and from_main_checkout:
             fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
             deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
         elif deploy is not None and fix:
@@ -2063,8 +2076,10 @@ def doctor(start, fix=False):
                 fixed += patched
                 deploy, test, autonomous = read_deploy(root)
         if deploy is None:
-            findings.append("нет %s: команда выката не задана, shipctl merge оставит "
-                            "выкат пользователю (болванку заводит devkitctl new или doctor --fix)" % DEPLOY_CONFIG)
+            if from_main_checkout:
+                findings.append("нет %s: команда выката не задана, shipctl merge оставит "
+                                "выкат пользователю (болванку заводит devkitctl new или doctor --fix)"
+                                % DEPLOY_CONFIG)
         else:
             # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
             # отказывает честной строкой, и пустой deploy= это норма, а не

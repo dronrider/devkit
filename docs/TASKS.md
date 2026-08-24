@@ -25,6 +25,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-463 | doctor --fix в дереве задачи заводит болванку deploy.local и сам её находит | bug | P2 | 35 (25+2+1+5+2) | S | [tasks/DK-463.md](tasks/DK-463.md) |
 | DK-331 | Раскладка скиллов везёт один SKILL.md, вычитка на машине без пар и словаря | bug | P2 | 39 (25+5+2+5+2) | S | [tasks/DK-331.md](tasks/DK-331.md) |
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [tasks/DK-311.md](tasks/DK-311.md) |
+| DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 37 (25+4+1+5+2) | S | [tasks/DK-176.md](tasks/DK-176.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -52,7 +53,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-428 | taskctl: бонус за цену и наследование ранга по цели считаются из строки, видны в list | task | P2 | 38 (25+7+2+0+4) | M | [tasks/DK-428.md](tasks/DK-428.md) |
 | DK-507 | exec-*: абзац лимита жизненного цикла и формат хвоста в «Ход работы» по DK-503 [после DK-511] | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-507.md](tasks/DK-507.md) |
 | DK-511 | board-ship, board-batch, board-task: pick --record перед каждым спавном исполнителя и флаг у agentctl run | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-511.md](tasks/DK-511.md) |
-| DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 37 (25+4+1+5+2) | S | [tasks/DK-176.md](tasks/DK-176.md) |
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 37 (25+8+2+0+2) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 37 (25+4+1+5+2) | - | [tasks/DK-315.md](tasks/DK-315.md) |

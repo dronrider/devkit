@@ -318,3 +318,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-435 | Панель чата справа: «Живой статус» сливается с «Чатом», tmux уходит, узкий экран тем же адресом [приёмка: mixed] | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-435.md](tasks/archive/2026/DK-435.md) |
 | DK-436 | Вкладка чатов задачи и новый чат с дашборда поверх живой сессии [приёмка: mixed] | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-436.md](tasks/archive/2026/DK-436.md) |
 | DK-367 | go test ./... из toplevel не раскрывается в модули tools, merge --test и regcheck падают | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-367.md](tasks/archive/2026/DK-367.md) |
+| DK-172 | Живая сессия переживает обрыв связи: возобновление без ручного ввода | task | P1 | 2026-08-24 | [tasks/archive/2026/DK-172.md](tasks/archive/2026/DK-172.md) |

@@ -385,6 +385,30 @@ func TestReviewNotesMarkup(t *testing.T) {
 	}
 }
 
+// Замечание, цитирующее слово исхода не в хвосте resolve-формата, остаётся
+// открытым для ворот слияния (DK-503, DK-514): reviewOutcome ищет исход по
+// позиции, где его пишет taskctl review resolve, а не по факту появления
+// слова где-то в тексте.
+func TestReviewNotesQuotedWord(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md",
+		"# XR-001: починка бага\n\n"+
+			"## Ревью\n\n"+
+			"- замечание 18 цитировало текст сценария со словами «остаются закрытыми исходом «исправлено»»\n")
+	open, err := openReviewNotes(root, "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("замечание с цитатой должно остаться открытым, получили: %v", open)
+	}
+	branchWithFix(t, root)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
+		!strings.Contains(err.Error(), "без исхода") {
+		t.Fatalf("merge должен отбиваться замечанием с цитатой, получили: %v", err)
+	}
+}
+
 func TestMergeRedTests(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)

@@ -1726,3 +1726,51 @@ exit 0`)
 		t.Fatalf("живой разговор объявлен снятым: %q", live.Gone)
 	}
 }
+
+// Разговор считается занятым только по доказательству. Прежде поле Idle
+// оставалось нулевым (то есть «занят») у разговора, чьей записи в реестре
+// клиента нет вовсе: процесс давно умер, tmux-сессия жива, и список рисовал
+// семичасовой разговор активным (замечание пользователя про сессию, в которой
+// давно никто не писал). Слову реестра при этом верят, пока запись свежа:
+// клиент, упавший посреди хода, оставляет своё «busy» навсегда.
+func TestChatIdleWithoutPeerRecord(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 24, 21, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1\n")
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	// Транскрипт молчит семь часов: ни свежей записи, ни висящего вызова.
+	old := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+		`[{"type":"text","text":"давно"}]},"timestamp":%q}`,
+		now.Add(-7*time.Hour).Format(time.RFC3339)) + "\n"
+	writeSession(t, e.home, e.proj, "", sid, sessionLine("поговорим", "main")+old, now.Add(-7*time.Hour))
+	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-XR-1"))
+
+	idleOf := func(what string) bool {
+		t.Helper()
+		for _, c := range e.s.chatEntries(e.proj, 20) {
+			if c.ID == sid {
+				return c.Idle
+			}
+		}
+		t.Fatalf("разговор пропал из списка (%s)", what)
+		return false
+	}
+
+	// Записи реестра нет вовсе: занятость доказать нечем, и разговор простаивает.
+	if !idleOf("без записи реестра") {
+		t.Error("разговор без записи реестра объявлен занятым: список рисует его активным")
+	}
+
+	// Запись есть, но её «busy» протухло: ход кончился семь часов назад.
+	writePeerAged(t, e.home, sid, "chat-XR-1:@1.%1", "busy", now.Add(-7*time.Hour).UnixMilli())
+	if !idleOf("протухшее busy") {
+		t.Error("протухшее «busy» реестра выдано за идущий ход")
+	}
+
+	// Свежая запись со словом busy: ход идёт, и это видно.
+	writePeerAged(t, e.home, sid, "chat-XR-1:@1.%1", "busy", now.Add(-time.Minute).UnixMilli())
+	if idleOf("свежее busy") {
+		t.Error("свежее «busy» реестра потеряно: идущий ход объявлен простоем")
+	}
+}

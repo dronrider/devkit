@@ -229,6 +229,18 @@ const (
 // простой по-разному.
 const workIdleAfter = 20 * time.Minute
 
+// peerFresh отвечает, свежа ли запись реестра клиента. Слову «busy» верят
+// только у свежей записи: клиент, упавший посреди хода, оставляет своё «busy» в
+// реестре навсегда, и по нему семичасовой разговор выходил активным (замечание
+// пользователя). Время в записи лежит в миллисекундах, нулевое значит «времени
+// нет», и такой записи не верят вовсе.
+func peerFresh(p peer, now time.Time) bool {
+	if p.Updated <= 0 {
+		return false
+	}
+	return now.Sub(time.Unix(p.Updated/1000, 0)) <= workIdleAfter
+}
+
 // livePeers раскладывает реестр живых сессий клиента по двум ключам: по id
 // сессии и по имени tmux. Имя в записи стоит полным адресом пары
 // («task-DK-499:@896.%896»), и ключом берётся его первое звено.
@@ -280,11 +292,10 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 			return workWait, moved
 		}
 	}
-	fresh := moved > 0 && now.Sub(time.Unix(moved, 0)) <= workIdleAfter
 	switch {
 	case busy:
 		return workBusy, moved
-	case known && p.Status == "busy" && fresh:
+	case known && p.Status == "busy" && peerFresh(p, now):
 		return workBusy, moved
 	case known && p.Status == "waiting":
 		return workWait, moved

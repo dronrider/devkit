@@ -835,15 +835,24 @@ function harnessRow(h) {
   head.append(el("b", "", h.name));
   if (h.default) head.append(el("span", "chip", "по умолчанию"));
   row.append(head);
-  const snap = (quotaView && (quotaView.harnesses || []).find((q) => q.name === h.name)) || null;
+  const snap = quotaEvery(quotaView).find((q) => q.name === h.name) || null;
   const buckets = snap ? (snap.buckets || []) : [];
-  if (!snap) {
-    row.append(el("span", "hnote", "снимка квоты нет, остаток неизвестен"));
+  if (!snap || snap.missing) {
+    // Выбор подписки опирается на честную картину: остаток без снимка это не
+    // ноль и не «столько же, сколько было», а неизвестность, и сказано это
+    // ровно так.
+    row.append(el("span", "hnote stale",
+      (snap && snap.note) || "снимка квоты нет, остаток неизвестен"));
     return row;
   }
   // Две полоски: столько же, сколько стоит в блоке квоты, и больше в строку
   // выбора не влезает даже на ноутбуке.
   for (const b of buckets.slice(0, 2)) row.append(quotaRow(b));
+  // Разъезд снимков назван и тут: подписки выбирают по остатку, и сравнивать
+  // цифры, снятые в разное время, нельзя.
+  if (quotaView && quotaView.spread) {
+    row.append(el("span", "hnote stale", "снимки подписок сняты в разное время"));
+  }
   if (!buckets.length) row.append(el("span", "hnote", snap.note || "бакетов в снимке нет"));
   // Возраст снимка стоит у каждой строки, а не у одной старой: остаток,
   // снятый час назад, и остаток, снятый минуту назад, это разные ответы на
@@ -10228,8 +10237,20 @@ const WORK_LIVE = {
   dead: { word: LIVE_WORD.dead, chip: "", dot: "dot-other" },
 };
 
+// Работа без состояния: сервер его не назвал (старая сборка, поломка разбора),
+// и назвать за него нечем. Неизвестность это не работа: прежде такая строка
+// горела зелёным кружком, потому что зелёный был умолчанием, и снимать её
+// предлагалось наравне с живой (замечание пользователя). Своих слов у
+// неизвестности нет ни одного лишнего: серый кружок и честная подпись.
+const WORK_UNKNOWN = { word: "состояние неизвестно", chip: "", dot: "dot-other" };
+
+function workKnown(w) {
+  return Boolean(w && WORK_LIVE[w.live]);
+}
+
 function workLive(w) {
-  return WORK_LIVE[w && w.live] || null;
+  if (!w) return null;
+  return WORK_LIVE[w.live] || WORK_UNKNOWN;
 }
 
 // Давность последнего хода словами: по ней видно, живая работа или молчащая.
@@ -10242,6 +10263,10 @@ function workMoved(w, now) {
 function workLiveChip(w, now) {
   const said = workLive(w);
   if (!said) return null;
+  if (said === WORK_UNKNOWN) {
+    return withTip(el("span", "chip", said.word),
+      "сервер не назвал состояния этой работы: ни «активна», ни «простаивает» тут не обещано");
+  }
   const age = workMoved(w, now);
   const text = said.word + (said.word === LIVE_WORD.busy || !age ? "" : " " + age);
   const chip = el("span", "chip" + (said.chip ? " " + said.chip : ""), text);
@@ -10257,7 +10282,14 @@ async function closeSession(project, w) {
     const r = await api(chatsURL(w.project || project) + "/" + encodeURIComponent(w.session) + "/stop",
       { method: "POST", body: { drop: true } });
     sayResult(r.body.message || r.body.error || "", !r.ok);
-    if (r.ok) await refresh();
+    if (r.ok) {
+      // Строка уходит из списка тем же ходом, а не следующим обходом экрана:
+      // сюда приходят разгребать живые работы, и снятая, оставшаяся стоять,
+      // читается как несработавшее нажатие (замечание пользователя, у него
+      // tmux-сессий стало меньше, а строка осталась).
+      dropSessionRow(w);
+      await refresh();
+    }
     return r.ok;
   }
   if (w.id) {
@@ -10265,6 +10297,38 @@ async function closeSession(project, w) {
     return true;
   }
   return false;
+}
+
+// Снятые сессии и время их снятия. Сервер узнаёт о снятии не мгновенно: он
+// смотрит список tmux, а тот успевает ответить по-старому, и строка возвращалась
+// следующим же обходом (замечание пользователя: tmux-сессий стало меньше, а
+// строка осталась). Память короткая: она держит строку снятой, пока сервер не
+// договорит своё, и сама рассасывается.
+const sessGone = new Map();
+const SESS_GONE_LIVE = 60 * 1000;
+
+function sessGoneMark(w) {
+  sessGone.set(workKey(w), Date.now());
+}
+
+function sessGoneHides(w) {
+  const born = sessGone.get(workKey(w));
+  if (!born) return false;
+  if (Date.now() - born > SESS_GONE_LIVE) {
+    sessGone.delete(workKey(w));
+    return false;
+  }
+  return true;
+}
+
+// Снятая строка уходит с экрана сразу: узел находится по тому же ключу, каким
+// его кладёт перерисовка списка, а память снятых держит её убранной, пока
+// сервер не перестанет её отдавать.
+function dropSessionRow(w) {
+  sessGoneMark(w);
+  const card = findKey(document.getElementById("groups"), "sess-card");
+  const node = card && findKey(card, workKey(w));
+  if (node && node.remove) node.remove();
 }
 
 // Кнопка закрытия с подтверждением для работающей сессии: снять идущий ход
@@ -10283,6 +10347,10 @@ function closeSessionBtn(project, w) {
     if (!armed) {
       armed = true;
       btn.textContent = "Точно закрыть?";
+      // Снятие сессии это не потеря разговора, и сказать это надо ровно тут:
+      // человек жмёт вторую кнопку, решая, не потеряет ли он написанное.
+      withTip(btn, "Снимется только сессия. Разговор останется в общем списке " +
+        "чатов и продолжится резюмом.");
       return;
     }
     btn.disabled = true;
@@ -10305,7 +10373,7 @@ function agentRow(project, w, now) {
     row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
   }
   const said = workLive(w);
-  row.append(el("span", "dot " + (said ? said.dot : (w.via === "registry" ? "dot-other" : "pulse"))));
+  row.append(el("span", "dot " + said.dot));
   const box = el("div", "ab");
   const line = el("div", "l1");
   // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
@@ -10356,10 +10424,11 @@ function agentRow(project, w, now) {
       stopRun(project, w.id).catch(console.error);
     });
     acts.append(stop);
-  } else if (w.session && agentOwn(w)) {
+  } else if (w.session && agentOwn(w) && workKnown(w)) {
     // Сессия разговора живёт в нашей tmux, но конвейером не является: «Стоп»
     // ей не адресован, а закрыть окно человеку было нечем вовсе (замечание
-    // пользователя: «я ничего не могу сделать с этими сессиями»).
+    // пользователя: «я ничего не могу сделать с этими сессиями»). Работе без
+    // состояния снятие не предлагается: неизвестно даже, идёт ли она.
     acts.append(closeSessionBtn(project, w));
   }
   row.append(acts);
@@ -10487,7 +10556,7 @@ function workSign(w, now) {
 // правка панели (замер poc_bench_chat).
 function paintSessionRows(card, project, works, q) {
   const list = sortSessions((works || []).map((w) => ({ project, work: w }))
-    .filter((item) => agentMatch(item, q)));
+    .filter((item) => agentMatch(item, q) && !sessGoneHides(item.work)));
   const now = Date.now();
   if (!list.length) {
     sync(card, [{
@@ -10619,9 +10688,18 @@ function quotaWhen(reset) {
   return m ? m[3] + "." + m[2] : "";
 }
 
+// Имя бакета для показа: приставка «window» у окна подписки занимала треть
+// строки и не влезала по ширине колонки, а сказать ей было нечего (замечание
+// пользователя). Ключи данных при этом прежние: режется только показ.
+function bucketWord(name) {
+  return String(name || "").replace(/^window/, "");
+}
+
 function quotaRow(b) {
   const row = el("div", "qrow");
-  row.append(el("em", "", b.name));
+  const name = el("em", "", bucketWord(b.name));
+  name.title = b.name;
+  row.append(name);
   const meter = el("span", "meter");
   const fill = el("i");
   fill.style.width = Math.max(0, Math.min(100, b.used_pct)) + "%";
@@ -10640,6 +10718,23 @@ function quotaRow(b) {
 // quotaNodes собирает узлы блока. Пустота тут говорит словами, какая она:
 // каталога снимков нет, каталог пуст и снимок без бакетов это три разных
 // причины, и молчащий блок был бы неотличим от отработавшего.
+// Все подписки машины со снимками и без: снимки приходят ответом ручки, а
+// список подписок тем же ответом, из которого собрана кнопка запуска. Подписка
+// без снимка это не пропуск строки, а неизвестный остаток, и сказано это
+// словами (замечание пользователя: цифры подписки без съёмщика выглядели
+// такими же свежими, как у снимаемой тиком демона).
+function quotaEvery(view) {
+  const list = ((view && view.harnesses) || []).slice();
+  const seen = new Set(list.map((h) => h.name));
+  for (const h of harnesses()) {
+    if (seen.has(h.name)) continue;
+    list.push({ name: h.name, missing: true, buckets: [],
+      note: "снимка нет: остаток неизвестен, снять командой agentctl quota refresh" });
+  }
+  list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return list;
+}
+
 function quotaNodes(view) {
   const out = [el("h4", "", "Квота подписок")];
   if (!view) {
@@ -10658,8 +10753,18 @@ function quotaNodes(view) {
     bad.title = [when, where].filter(Boolean).join(", ");
     out.push(bad);
   }
-  for (const h of view.harnesses || []) {
+  // Снимки разных подписок сняты в разное время: цифры рядом читаются как одна
+  // картина на один момент, и разъезд надо назвать словами.
+  if (view.spread) out.push(el("div", "qnote qfail", view.spread));
+  for (const h of quotaEvery(view)) {
     out.push(el("div", "qsub", h.name));
+    // Подписка без снимка стоит строкой со словами, а не пропуском: список
+    // снимков собирается по файлам каталога, и подписка без съёмщика не
+    // попадала в него вовсе, а молчание читалось как «всё в порядке».
+    if (h.missing) {
+      out.push(el("div", "qnote stale", h.note || "снимка нет: остаток неизвестен"));
+      continue;
+    }
     for (const b of h.buckets || []) out.push(quotaRow(b));
     // Возраст снимка виден цветом, а не словом «протух»: слово ничего не
     // говорило о том, насколько всё плохо, и стояло почти всегда (замечание 21).

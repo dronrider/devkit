@@ -448,3 +448,30 @@ func TestQuotaFailWords(t *testing.T) {
 		t.Fatalf("длинная причина не подрезана: %d знаков", len([]rune(got)))
 	}
 }
+
+// Снимки, снятые в разное время, стоят рядом и читаются как одна картина на
+// один момент. Разъезд называется словами: сравнивать остаток, снятый минуту
+// назад, с остатком трёхчасовой давности нельзя.
+func TestQuotaSpreadWords(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return quotaNow }
+	writeQuota(t, e.home, "свежая", "taken = 2026-08-11T13:28\nweek_all = 6% сброс 2026-08-17T15:00\n")
+	writeQuota(t, e.home, "старая", "taken = 2026-08-11T10:30\nweek_all = 31% сброс 2026-08-17T15:00\n")
+
+	view := getQuota(t, e)
+	if view.Spread == "" {
+		t.Fatalf("разъезд снимков не назван: %+v", view.Harnesses)
+	}
+	for _, want := range []string{"свежая", "старая", "разное время"} {
+		if !strings.Contains(view.Spread, want) {
+			t.Errorf("в словах про разъезд нет %q: %q", want, view.Spread)
+		}
+	}
+
+	// Снимки одного времени разъездом не считаются: слов тогда нет вовсе, и
+	// экран не пугает человека там, где всё в порядке.
+	writeQuota(t, e.home, "старая", "taken = 2026-08-11T13:26\nweek_all = 31% сброс 2026-08-17T15:00\n")
+	if got := getQuota(t, e); got.Spread != "" {
+		t.Errorf("снимки одного времени объявлены разъехавшимися: %q", got.Spread)
+	}
+}

@@ -488,12 +488,6 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 			// говорило занятое имя, и объявлять его снятым нельзя.
 			e.Gone, e.GoneTo = "", ""
 			e.Sock, e.PID, e.Where = p.Sock, p.PID, peerWord(p)
-			// Простой мерится транскриптом: поле реестра у сессий vscode
-			// пустое всегда, и по нему работающий агент выходил простаивающим.
-			e.Idle = !s.sessionBusy(f.path, s.now())
-			if p.Status == "busy" {
-				e.Idle = false
-			}
 			if p.Tmux != "" && e.Tmux == "" {
 				e.Tmux = strings.SplitN(p.Tmux, ":", 2)[0]
 			}
@@ -512,6 +506,17 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 			// у ответа на реплику: последняя запись сессии в журнале
 			// уведомителя это permission_prompt.
 			e.Stuck = stuckAskWord
+		}
+		// Занятость разговора считается для всех живых, а не только для тех, у
+		// кого нашлась запись в реестре клиента. Прежде поле Idle оставалось
+		// нулевым (то есть «занят») у разговора, чьей записи в реестре нет
+		// вовсе: процесс давно умер, tmux-сессия жива, и список рисовал
+		// семичасовой разговор активным (замечание пользователя про сессию,
+		// в которой давно никто не писал). Мера тут та же, что у работ:
+		// транскрипт старше всего, а слову реестра верят, пока запись свежа.
+		e.Idle = !s.sessionBusy(f.path, s.now())
+		if p, ok := live[f.ID]; ok && p.Status == "busy" && peerFresh(p, s.now()) {
+			e.Idle = false
 		}
 		switch {
 		case e.Sock != "":

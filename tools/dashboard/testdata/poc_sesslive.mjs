@@ -11,7 +11,7 @@
 // Зовётся: node testdata/poc_sesslive.mjs static/app.js
 
 import { readFileSync } from "node:fs";
-import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -37,7 +37,12 @@ const works = () => [
 // машине, пока человек смотрит на таб.
 const now = { works: works(), asked: 0 };
 
-const { sandbox, byId, timers } = makeSandbox(app, (path) => {
+const stopped = [];
+const { sandbox, byId, timers } = makeSandbox(app, (path, init) => {
+  if (init && init.method === "POST" && path.includes("/stop")) {
+    stopped.push({ path, body: init.body ? JSON.parse(init.body) : null });
+    return { way: "drop", message: "сессия снята" };
+  }
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: now.works }] };
   if (path === "/api/harnesses") return { harnesses: [{ name: "claude-code", bin: "claude", default: true }] };
   if (path === "/api/notifications") return { items: [] };
@@ -139,6 +144,64 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   if (byClass(groups, "card") !== card) fail("обновление пересобрало экран таба целиком");
   if (rows().find((r) => dump(r).includes("молчащее окно")) !== quiet) {
     fail("нетронутая строка пересобрана заново");
+  }
+}
+
+// --- работа без состояния: ни «активна», ни кнопки снятия ---
+//
+// Сервер состояния не назвал (старая сборка, поломка разбора), и назвать за
+// него нечем. Прежде зелёный кружок был умолчанием, и такая строка горела
+// работающей, а снимать её предлагалось наравне с живой (замечание
+// пользователя: сессия давнего разговора показана работающей и с кнопкой).
+{
+  now.works = [{ kind: "session", via: "session", session: "mute-1", own: true,
+    note: "сессия без состояния" }];
+  await tick();
+  const row = rows().find((r) => dump(r).includes("сессия без состояния"));
+  if (!row) fail("строка без состояния пропала с экрана: " + dump(groups).slice(0, 300));
+  const said = dump(row);
+  // Слово ищется чипом, а не подстрокой: «интерактивная сессия» содержит его
+  // внутри себя, и голый поиск по тексту ловил бы вид работы вместо состояния.
+  const chips = allByClass(row, "chip").map((c) => c.textContent);
+  if (chips.includes("активна")) {
+    fail("работа без состояния названа активной: " + JSON.stringify(chips));
+  }
+  if (!said.includes("состояние неизвестно")) {
+    fail("работа без состояния молчит вместо честных слов: " + said);
+  }
+  const dot = String((byClass(row, "dot") || {}).className || "");
+  if (dot.includes("pulse")) fail("работа без состояния горит зелёным: " + dot);
+  if (said.includes("Закрыть")) {
+    fail("снятие предложено работе, о которой неизвестно даже, идёт ли она: " + said);
+  }
+}
+
+// --- снятая сессия уходит из списка тем же ходом ---
+{
+  now.works = [
+    { kind: "session", via: "session", session: "keep-1", own: true, live: "idle",
+      note: "останется в списке", moved: sec(600) },
+    { kind: "session", via: "session", session: "gone-1", own: true, live: "idle",
+      note: "эту снимаем", moved: sec(900) },
+  ];
+  await tick();
+  const row = rows().find((r) => dump(r).includes("эту снимаем"));
+  if (!row) fail("строки для снятия нет: " + dump(groups).slice(0, 300));
+  const close = deepBtn(row, "Закрыть");
+  if (!close) fail("у простаивающей сессии нет кнопки снятия: " + dump(row));
+  // Сервер снял сессию, но своим списком работ он ответит только следующим
+  // заходом: строка обязана уйти сразу.
+  close.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (rows().some((r) => dump(r).includes("эту снимаем"))) {
+    fail("снятая строка осталась в списке: " + dump(groups).slice(0, 300));
+  }
+  if (!rows().some((r) => dump(r).includes("останется в списке"))) {
+    fail("снятие унесло с собой соседнюю строку");
+  }
+  // Разговор при этом не потерян: снималась сессия, а не он.
+  if (!stopped.some((x) => x.path.includes("gone-1/stop") && x.body && x.body.drop)) {
+    fail("снятие пошло не той ручкой: " + JSON.stringify(stopped));
   }
 }
 

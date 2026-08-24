@@ -1086,7 +1086,7 @@ if (meters.length !== 2) {
 if (!dump(hrows[0]).includes("52%") || !dump(hrows[0]).includes("снимок 3м назад")) {
   fail("строка подписки молчит про остаток или возраст снимка: " + dump(hrows[0]));
 }
-if (!dump(hrows[1]).includes("снимка квоты нет")) {
+if (!dump(hrows[1]).includes("снимка нет")) {
   fail("строка без снимка квоты об этом молчит: " + dump(hrows[1]));
 }
 if (!dump(pop).includes(harnessTwo.name)) {

@@ -323,3 +323,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-357 | shipctl: TestCodeOpensWindow красный из сессии второй подписки, тест наследует CLAUDE_CONFIG_DIR | bug | P2 | 2026-08-24 | [tasks/archive/2026/DK-357.md](tasks/archive/2026/DK-357.md), `2225d859` |
 | DK-506 | taskctl elapsed: минуты открытого этапа «разработка» против лимита жизненного цикла | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-506.md](tasks/archive/2026/DK-506.md) |
 | DK-459 | LLD: режим POC для работы с высокой неопределённостью результата [приёмка: user] | LLD | P1 | 2026-08-24 | [tasks/archive/2026/DK-459.md](tasks/archive/2026/DK-459.md) |
+| DK-512 | dashboard: память обхода корней не держит цепочку экрана, main красный | bug | P1 | 2026-08-24 | [tasks/archive/2026/DK-512.md](tasks/archive/2026/DK-512.md), `ff7a4ae7` |

@@ -8404,20 +8404,70 @@ function paintClientAsk(project, st, box, ask, again) {
   box.hidden = false;
   const head = el("div", "caskh");
   head.append(el("b", "", "Клиент ждёт ответа"));
-  box.replaceChildren(head, el("div", "casks", ask.text || ""));
+  box.replaceChildren(head);
+  // Полоса шагов многошагового опроса: без неё человек не понимает, почему
+  // после ответа приходит следующий вопрос, а не продолжение разговора.
+  const steps = ask.steps || [];
+  if (steps.length) {
+    const bar = el("div", "caskst");
+    for (const step of steps) {
+      bar.append(el("span", "cstep" + (step.done ? " on" : ""), step.name));
+    }
+    box.append(bar);
+  }
+  box.append(el("div", "casks", ask.text || ""));
   const row = el("div", "caskr");
-  (ask.options || []).forEach((word, i) => {
-    const btn = el("button", "btn btn-sm" + (i === 0 ? " btn-acc" : ""), word);
-    btn.addEventListener("click", async (ev) => {
+  // Ответ уезжает клавишами, какими его подал бы человек, и панель после этого
+  // перечитывает снимок: виджет бывает многошаговым, а флажок множественного
+  // выбора нажатие переключает, не закрывая вопроса. Показывать «ответ
+  // отправлен» и замирать нельзя: следующий шаг встал бы за спиной у человека.
+  const answer = async (i, text) => {
+    for (const b of row.children) b.disabled = true;
+    const order = { option: i + 1 };
+    if (text) order.text = text;
+    const r = await api(chatsURL(st.project || project) + "/" +
+      encodeURIComponent(st.sid) + "/ask", { method: "POST", body: order });
+    sayResult(r.body.message || r.body.error || "", !r.ok);
+    box.replaceChildren(el("div", "casks", "ответ отправлен, ждём клиента..."));
+    setTimeout(() => { again().catch(console.error); }, ASK_POLL);
+  };
+  (ask.options || []).forEach((opt, i) => {
+    // Свободный ответ это поле со своей кнопкой: выбор такого пункта открывает
+    // у клиента ввод, и слова человека едут туда следом.
+    if (opt.free) {
+      const free = el("div", "caskfree");
+      const field = el("input", "dwhyin");
+      field.type = "text";
+      field.placeholder = opt.text;
+      const send = el("button", "btn btn-sm", "Ответить своими словами");
+      const fire = () => {
+        const said = String(field.value || "").trim();
+        if (!said) {
+          sayResult("свободный ответ пустой: напишите словами, что передать клиенту", true);
+          return;
+        }
+        answer(i, said).catch(console.error);
+      };
+      send.addEventListener("click", (ev) => { ev.stopPropagation(); fire(); });
+      field.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          fire();
+        }
+      });
+      free.append(field, send);
+      row.append(free);
+      return;
+    }
+    // Флажок множественного выбора виден словом: нажатие его переключает, а не
+    // отвечает на вопрос, и человек должен понимать, что отмечено.
+    const mark = opt.mark === "on" ? "отмечено: " : "";
+    const btn = el("button", "btn btn-sm" +
+      (opt.submit ? " btn-acc" : "") + (opt.mark === "on" ? " on" : ""), mark + opt.text);
+    if (opt.submit) withTip(btn, "Кнопка самого виджета: она отправляет отмеченное и ведёт к следующему шагу");
+    btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      for (const b of row.children) b.disabled = true;
-      const r = await api(chatsURL(st.project || project) + "/" +
-        encodeURIComponent(st.sid) + "/ask", { method: "POST", body: { option: i + 1 } });
-      sayResult(r.body.message || r.body.error || "", !r.ok);
-      // Ответ отправлен, и панель продолжает ждать подъёма: следующий вопрос
-      // (внешние импорты правил идут вторыми) придёт сюда же.
-      box.replaceChildren(el("div", "casks", "ответ отправлен, ждём клиента..."));
-      setTimeout(() => { again().catch(console.error); }, ASK_POLL);
+      answer(i, "").catch(console.error);
     });
     row.append(btn);
   });

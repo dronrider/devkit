@@ -187,8 +187,13 @@ func TestParseTmuxAsk(t *testing.T) {
 	if len(ask.Options) != 2 {
 		t.Fatalf("вариантов разобрано %d, жду два: %+v", len(ask.Options), ask)
 	}
-	if ask.Options[0] != "Yes, I trust this folder" || ask.Options[1] != "No, exit" {
+	if ask.Options[0].Text != "Yes, I trust this folder" || ask.Options[1].Text != "No, exit" {
 		t.Errorf("варианты разобраны не теми словами: %+v", ask.Options)
+	}
+	// У вопроса доверия отвечают номером пункта: подсказки про стрелки под ним
+	// нет, и способ ответа берётся с самой панели.
+	if ask.Keys != askKeysDigit {
+		t.Errorf("способ ответа у вопроса доверия назван %q, жду номер пункта", ask.Keys)
 	}
 	if ask.At != 1 {
 		t.Errorf("курсор клиента стоит на %d, жду на первом пункте", ask.At)
@@ -215,5 +220,162 @@ func TestParseTmuxAsk(t *testing.T) {
 	}
 	if got := parseTmuxAsk(""); len(got.Options) != 0 {
 		t.Errorf("пустой снимок принят за вопрос: %+v", got)
+	}
+}
+
+// livePollPane это снимок живой панели с опросом агента, слово в слово (сессия
+// chat-2 проекта xr-proxy, живой случай пользователя). Панель дашборда не
+// показывала этот вопрос вовсе: пояснения под вариантами рвали блок, от него
+// оставался один пункт, и вопрос не доезжал. Человек писал реплики, они
+// доходили, а клиент их не читал, потому что ждал выбора.
+var livePollPane = strings.Join([]string{
+	"\u23fa Пока разведка идёт, уточню фактуру.",
+	strings.Repeat("\u2500", 56),
+	"\u2190  \u2610 Площадка  \u2610 Симптом  \u2714 Submit  \u2192",
+	"",
+	"Где именно MAX ломается под прокси?",
+	"",
+	"\u276f 1. [ ] На телефоне (Android-клиент)",
+	"  Туннель поднят приложением xr-android, MAX на том же телефоне",
+	"  2. [ ] На устройствах за роутером",
+	"  OpenWRT с xr-client, перехват TCP через TPROXY",
+	"  3. [ ] Везде одинаково",
+	"  И там, и там",
+	"  4. [ ] Type something",
+	"     Next",
+	strings.Repeat("\u2500", 56),
+	"  5. Chat about this",
+	"",
+	"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+	"",
+	"  @ dashboard\u276f",
+	"    Завёл черновик?",
+}, "\n")
+
+// Опрос агента с вариантами разбирается так же, как вопрос доверия: тот же
+// блок, те же кнопки. Пояснение под вариантом блок не рвёт, кнопка отправки
+// («Next») идёт остановкой курсора наравне с вариантами, а полоса шагов едет
+// своим полем, потому что она про многошаговость, а не про слова вопроса.
+func TestParseTmuxAskWidget(t *testing.T) {
+	ask := parseTmuxAsk(livePollPane)
+	if len(ask.Options) != 6 {
+		t.Fatalf("остановок разобрано %d, жду шесть (4 варианта, Next и Chat about this): %+v",
+			len(ask.Options), ask.Options)
+	}
+	if ask.Options[0].Text != "На телефоне (Android-клиент)" {
+		t.Errorf("флажок не отрезан от слов варианта: %q", ask.Options[0].Text)
+	}
+	for i, want := range []string{"off", "off", "off", "off", "", ""} {
+		if ask.Options[i].Mark != want {
+			t.Errorf("состояние флажка %d разобрано как %q, жду %q", i+1, ask.Options[i].Mark, want)
+		}
+	}
+	if !ask.Options[3].Free {
+		t.Errorf("свободный ответ не узнан: %+v", ask.Options[3])
+	}
+	if !ask.Options[4].Submit || ask.Options[4].Text != "Next" {
+		t.Errorf("кнопка отправки не узнана: %+v", ask.Options[4])
+	}
+	if ask.Options[5].Text != "Chat about this" {
+		t.Errorf("последний вариант потерялся: %+v", ask.Options[5])
+	}
+	if ask.At != 1 {
+		t.Errorf("курсор клиента стоит на %d, жду на первом варианте", ask.At)
+	}
+	// Способ ответа берётся с панели: под виджетом клиент сам пишет, что тут
+	// ходят стрелками.
+	if ask.Keys != askKeysArrows {
+		t.Errorf("способ ответа назван %q, жду стрелки", ask.Keys)
+	}
+	if ask.Text != "Где именно MAX ломается под прокси?" {
+		t.Errorf("текст вопроса разобран как %q", ask.Text)
+	}
+	// Полоса шагов едет своим полем: значки флажков в тексте вопроса человеку
+	// ни о чём не говорят.
+	if len(ask.Steps) != 3 || ask.Steps[0].Name != "Площадка" || ask.Steps[2].Name != "Submit" {
+		t.Fatalf("полоса шагов разобрана не так: %+v", ask.Steps)
+	}
+	if ask.Steps[0].Done || !ask.Steps[2].Done {
+		t.Errorf("пройденность шагов разобрана не так: %+v", ask.Steps)
+	}
+}
+
+// Ответ виджету подаётся теми клавишами, какими его подаёт человек: ход
+// стрелками от той остановки, где стоит курсор, и Enter. Номер пункта тут не
+// работает вовсе (проверено на живой панели), и слать его значило бы отвечать
+// в никуда.
+func TestTmuxAnswerWidgetKeys(t *testing.T) {
+	ask := parseTmuxAsk(livePollPane)
+	for _, tc := range []struct {
+		name   string
+		option int
+		text   string
+		keys   []string
+	}{
+		{"третий вариант", 3, "", []string{"Down", "Down", "Enter"}},
+		{"кнопка отправки", 5, "", []string{"Down", "Down", "Down", "Down", "Enter"}},
+		{"первый вариант с курсора", 1, "", []string{"Enter"}},
+		{"свободный ответ", 4, "везде, кроме роутера",
+			[]string{"Down", "Down", "Down", "Enter", "-l везде, кроме роутера", "Enter"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			sent := filepath.Join(e.home, "sent.log")
+			writeScript(t, e.bin, "tmux", `case "$1" in
+send-keys) shift; echo "$@" >> `+sent+`;;
+esac
+exit 0`)
+			t.Setenv("PATH", e.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := tmuxAnswer("chat-2", ask, tc.option, tc.text); err != nil {
+				t.Fatalf("ответ не подался: %v", err)
+			}
+			var got []string
+			for _, ln := range strings.Split(strings.TrimSpace(readFile(t, sent)), "\n") {
+				got = append(got, strings.TrimSpace(strings.TrimPrefix(ln, "-t =chat-2:")))
+			}
+			if strings.Join(got, "|") != strings.Join(tc.keys, "|") {
+				t.Errorf("клавиши поданы не те: %q, жду %q", got, tc.keys)
+			}
+		})
+	}
+}
+
+// Многошаговый опрос: ответ на шаг приводит следующий, и панель обязана
+// показать его так же, а не считать разговор продолженным. Для дашборда это
+// значит, что снимок следующего шага разбирается тем же разбором, со своей
+// полосой и своим курсором.
+func TestParseTmuxAskNextStep(t *testing.T) {
+	next := strings.Join([]string{
+		strings.Repeat("\u2500", 56),
+		"\u2190  \u2714 Площадка  \u2610 Симптом  \u2610 Submit  \u2192",
+		"",
+		"Что именно происходит с MAX?",
+		"",
+		"  1. [ ] Не открываются картинки",
+		"  Текст доходит, вложения нет",
+		"\u276f 2. [\u2714] Звонки не соединяются",
+		"  Сигналинг проходит, медиа нет",
+		"     Next",
+		"",
+		"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+	}, "\n")
+	ask := parseTmuxAsk(next)
+	if len(ask.Options) != 3 {
+		t.Fatalf("следующий шаг разобран в %d остановок, жду три: %+v", len(ask.Options), ask.Options)
+	}
+	if ask.At != 2 {
+		t.Errorf("курсор следующего шага стоит на %d, жду на втором", ask.At)
+	}
+	// Отмеченный флажок клиент печатает знаком галочки, а не буквой: живая
+	// проверка на своей сессии показала «[\u2714]», и без этого знака галочка
+	// оставалась в словах варианта («[\u2714] За роутером» кнопкой).
+	if ask.Options[1].Mark != "on" || ask.Options[1].Text != "Звонки не соединяются" {
+		t.Errorf("отмеченный флажок разобран не так: %+v", ask.Options[1])
+	}
+	if ask.Text != "Что именно происходит с MAX?" {
+		t.Errorf("текст следующего шага разобран как %q", ask.Text)
+	}
+	if len(ask.Steps) != 3 || !ask.Steps[0].Done || ask.Steps[1].Done {
+		t.Fatalf("полоса шагов следующего шага разобрана не так: %+v", ask.Steps)
 	}
 }

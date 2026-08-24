@@ -527,6 +527,11 @@ func newSmoke(dir string) (*smoke, error) {
 	s.restore = append(s.restore, setEnv(map[string]string{
 		"HOME": s.home,
 		"PATH": s.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		// Своё дерево devkit у прогона синтетическое: оболочка цикла лежит
+		// фикстурой в его корне, и переменная разработчика тут увела бы сервер
+		// к настоящей оболочке машины. Чекаут для уведомителя смок нашёл
+		// раньше, отдельным вопросом.
+		"DEVKIT_HOME": "",
 		// Уведомитель обязан дойти до журнала: выключатель и опрос фокуса
 		// сняты, а баннер уходит в пустышку.
 		"DEVKIT_NOTIFY_OFF":     "",

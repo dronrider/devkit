@@ -1829,9 +1829,13 @@ exit 0`)
 	// Вопрос виден ручкой: текст и варианты по порядку.
 	var got struct {
 		Ask struct {
-			Text    string   `json:"text"`
-			Options []string `json:"options"`
-			At      int      `json:"at"`
+			Text    string `json:"text"`
+			Options []struct {
+				Text string `json:"text"`
+				Free bool   `json:"free"`
+			} `json:"options"`
+			At   int    `json:"at"`
+			Keys string `json:"keys"`
 		} `json:"ask"`
 	}
 	resp := doReq(t, c, "GET", at, "")
@@ -1842,8 +1846,12 @@ exit 0`)
 	if err := json.Unmarshal([]byte(text), &got); err != nil {
 		t.Fatalf("ответ не разобрался: %v\n%s", err, text)
 	}
-	if len(got.Ask.Options) != 2 || got.Ask.Options[0] != "Yes, I trust this folder" {
+	if len(got.Ask.Options) != 2 || got.Ask.Options[0].Text != "Yes, I trust this folder" {
 		t.Fatalf("варианты приехали не те: %+v", got.Ask)
+	}
+	// Способ ответа приезжает вместе с вопросом: у доверия это номер пункта.
+	if got.Ask.Keys != "digit" {
+		t.Errorf("способ ответа приехал как %q, жду номер пункта", got.Ask.Keys)
 	}
 
 	// Ответ уезжает клавишами: номер пункта и Enter.

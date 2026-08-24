@@ -740,6 +740,9 @@ func dropComments(text string) string {
 // Оболочка ищется и в корне, который сам есть чекаут devkit, не только в
 // подкаталоге.
 func TestGoalRunPathRootItself(t *testing.T) {
+	// Переменная разработчика сюда не пускается: с ней поиск отвечал бы своим
+	// деревом, а предмет проверки это запасной путь по корням конфига.
+	t.Setenv("DEVKIT_HOME", "")
 	root := t.TempDir()
 	dir := filepath.Join(root, "kit", "skills", "goal-loop")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

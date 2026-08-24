@@ -57,6 +57,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	// раскладка, довольно переписать скрипт поверх.
 	writeAgentctlFake(t, bin, harnessJSONFixture)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Своё дерево devkit у стенда синтетическое, и переменная разработчика сюда
+	// не пускается: с ней сервер брал бы настоящую оболочку цикла вместо
+	// фикстуры, и прогон отвечал бы по машине, а не по стенду. Тест, которому
+	// своё дерево нужно, называет его сам.
+	t.Setenv("DEVKIT_HOME", "")
 
 	goals := filepath.Join(home, ".devkit", "goals")
 	if err := os.MkdirAll(goals, 0o755); err != nil {

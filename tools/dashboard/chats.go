@@ -1324,6 +1324,9 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Option int `json:"option"`
+		// Text это свободный ответ: вариант «Type something» открывает у
+		// клиента поле, и слова человека едут туда следом за выбором.
+		Text string `json:"text"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
@@ -1339,16 +1342,32 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 			"у вопроса %d вариантов, а выбран %d", len(ask.Options), body.Option)})
 		return
 	}
-	if err := tmuxAnswer(name, body.Option); err != nil {
+	pick := ask.Options[body.Option-1]
+	// Свободный ответ без слов клиенту не нужен: он откроет поле и встанет
+	// ждать, а человек будет думать, что ответил.
+	if pick.Free && strings.TrimSpace(body.Text) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+			"вариант «%s» это свободный ответ: без слов отправлять нечего", pick.Text)})
+		return
+	}
+	if !pick.Free && strings.TrimSpace(body.Text) != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+			"вариант «%s» слов не ждёт: текст едет только со свободным ответом", pick.Text)})
+		return
+	}
+	if err := tmuxAnswer(name, ask, body.Option, body.Text); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 			"ответ не подался в tmux-сессию %s: %s", name, procErr(err))})
 		return
 	}
-	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name,
-		body.Option, ask.Options[body.Option-1])
+	said := pick.Text
+	if pick.Free {
+		said = pick.Text + ": " + truncate(body.Text, 120)
+	}
+	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name, body.Option, said)
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
-		"option": body.Option, "said": ask.Options[body.Option-1],
-		"message": "ответ отправлен клиенту: " + ask.Options[body.Option-1]})
+		"option": body.Option, "said": said,
+		"message": "ответ отправлен клиенту: " + said})
 }
 
 // chatTmuxOf находит tmux-сессию разговора: имя лежит записью реестра, и без

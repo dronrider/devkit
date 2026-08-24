@@ -424,9 +424,18 @@ func TestStaticAgentsRowGates(t *testing.T) {
 	if !strings.Contains(addr, "w.session || w.id") {
 		t.Error("адрес разговора строки собран не из сессии и задачи")
 	}
-	// Снятие сессии зовётся одним словом на весь дашборд.
-	if !strings.Contains(row, `w.via === "tmux" && w.id`) || !strings.Contains(row, `"Стоп"`) {
-		t.Error("кнопка стопа стоит не у tmux-работы")
+	// Стоп стоит у идущего конвейера, а снятие окна у всякой своей сессии:
+	// разводит их признак разговора (talk), и оба вопроса решаются своими
+	// функциями, а не переписанным условием в строке.
+	if !strings.Contains(row, "workRunning(w)") || !strings.Contains(row, `"Стоп"`) {
+		t.Error("кнопка стопа стоит не у идущего конвейера")
+	}
+	if !strings.Contains(row, "workDrops(w)") || !strings.Contains(row, "closeSessionBtn(project, w)") {
+		t.Error("кнопки снятия нет у строки со своей tmux-сессией")
+	}
+	running := funcBody(t, app, "function workRunning(")
+	if !strings.Contains(running, `w.via === "tmux"`) || !strings.Contains(running, "!w.talk") {
+		t.Error("идущий конвейер узнаётся не по tmux-работе без разговора")
 	}
 	if !strings.Contains(row, "сессия поднята мимо дашборда") {
 		t.Error("реестровая работа не объясняет, почему стопа у неё нет")

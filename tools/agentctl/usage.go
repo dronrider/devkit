@@ -101,6 +101,7 @@ func parseUsagePanel(q *quotaSpec, text string, now time.Time) (snapshot, error)
 			}
 		}
 	}
+	inheritReset(q, found, gotPercent)
 	// Обязателен только общий бакет: дорогой показывают не все панели, у
 	// клиента 2.1.220 вместо Opus идёт Fable, а на другом тарифе может не
 	// оказаться и его.
@@ -123,6 +124,30 @@ func parseUsagePanel(q *quotaSpec, text string, now time.Time) (snapshot, error)
 		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s: панель могла измениться, снимок не тронут", q.Required)
 	}
 	return s, nil
+}
+
+// inheritReset достраивает дату сброса дорогому бакету по общему. Клиент
+// 2.1.235 перестал печатать строку сброса у недельного бакета, которого человек
+// ещё не касался: секция есть, полоска и «0% used» есть, а «Resets ...» под ними
+// нет (живой случай пользователя, снимок встал на четыре часа). Отказывать
+// целой панели из-за этого нечестно: недельные бакеты живут одним окном и
+// сбрасываются вместе, что видно на панелях, где строка есть у обоих. Поэтому
+// дата берётся у общего бакета, и только у него: на бакет с другим окном
+// (месячный потокенный бюджет) она не переносится, там pace соврал бы всемеро.
+func inheritReset(q *quotaSpec, found map[string]*bucket, gotPercent map[string]bool) {
+	donor, ok := found[q.Required]
+	if !ok || donor.Reset.IsZero() {
+		return
+	}
+	for name, b := range found {
+		if name == q.Required || !b.Reset.IsZero() || !gotPercent[name] {
+			continue
+		}
+		if bucketPrefix(name) != bucketPrefix(q.Required) {
+			continue
+		}
+		b.Reset = donor.Reset
+	}
 }
 
 // panelSection узнаёт заголовок бакета. Слово «current» в заголовке
@@ -390,11 +415,13 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	if err := waitPane(session, usagePanelTimeout, func(text string) bool {
 		s, err := parseUsagePanel(q, text, now)
 		if err != nil {
+			w.reject(err)
 			return false
 		}
 		return w.accept(s, time.Now())
 	}); err != nil {
-		return snapshot{}, fmt.Errorf("панель /usage не узналась за %s: разметка могла измениться, снимок не тронут (образцы панели лежат в tools/agentctl/testdata)", usagePanelTimeout)
+		return snapshot{}, fmt.Errorf("панель /usage не узналась за %s, разметка могла измениться (%s); снимок не тронут, образцы панели лежат в tools/agentctl/testdata",
+			usagePanelTimeout, w.why())
 	}
 	return w.snap, nil
 }
@@ -409,6 +436,7 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 type panelWaiter struct {
 	snap    snapshot
 	partial time.Time
+	last    error
 }
 
 func (w *panelWaiter) accept(s snapshot, at time.Time) bool {
@@ -421,6 +449,25 @@ func (w *panelWaiter) accept(s snapshot, at time.Time) bool {
 		return false
 	}
 	return at.Sub(w.partial) >= usagePartialGrace
+}
+
+// reject запоминает, обо что споткнулся разбор последнего кадра. Без этого
+// отказ по таймауту говорил одно и то же на любую поломку разметки, и человеку
+// оставалось лезть в панель руками, чтобы увидеть, какой именно строки не
+// хватило.
+func (w *panelWaiter) reject(err error) {
+	w.last = err
+}
+
+// why это причина отказа в человеческом виде. Берётся голова последней ошибки
+// разбора: за первым двоеточием у ошибок devkit идёт совет, а в плашку квоты
+// пролезает только начало строки.
+func (w *panelWaiter) why() string {
+	if w.last == nil {
+		return "разбор не дошёл до бакетов ни на одном кадре"
+	}
+	head, _, _ := strings.Cut(w.last.Error(), ": ")
+	return head
 }
 
 func capturePane(session string) (string, error) {

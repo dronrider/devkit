@@ -123,11 +123,48 @@ func TestParseUsagePanel(t *testing.T) {
 		}
 	})
 
-	t.Run("бакет без даты сброса это отказ", func(t *testing.T) {
+	t.Run("панель клиента 2.1.235: у нетронутого бакета нет строки сброса", func(t *testing.T) {
+		// Живой образец: секция Fable есть, «0% used» есть, а «Resets ...» под
+		// ними клиент не печатает. На прежнем разборе панель отказывала целиком,
+		// и снимок пользователя вставал на часы.
+		s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-noreset.txt"), testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		if len(s.Buckets) != 2 {
+			t.Fatalf("бакеты: %+v", s.Buckets)
+		}
+		all, _ := s.bucket("week_all")
+		fable, _ := s.bucket("week_max")
+		if all.Used != 0.02 || fable.Used != 0 {
+			t.Fatalf("проценты разобраны как %.2f и %.2f", all.Used, fable.Used)
+		}
+		// Недельные бакеты сбрасываются вместе, поэтому дата берётся у общего.
+		want := time.Date(2026, 8, 31, 15, 0, 0, 0, mustLoad(t, "Europe/Moscow"))
+		if !all.Reset.Equal(want) || !fable.Reset.Equal(want) {
+			t.Fatalf("сброс %v и %v, жду %v", all.Reset, fable.Reset, want)
+		}
+	})
+
+	t.Run("дорогой бакет без строки сброса берёт дату у общего", func(t *testing.T) {
 		panel := "Current week (all models)\n 34% used\n Resets in 2d\n" +
 			"Current week (Fable)\n 70% used\n"
+		s, err := parseUsagePanel(specAt(t, ""), panel, testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		all, _ := s.bucket("week_all")
+		fable, _ := s.bucket("week_max")
+		if !fable.Reset.Equal(all.Reset) || fable.Reset.IsZero() {
+			t.Fatalf("сброс дорогого бакета %v при общем %v", fable.Reset, all.Reset)
+		}
+	})
+
+	t.Run("без сброса у общего бакета достраивать нечем", func(t *testing.T) {
+		panel := "Current week (all models)\n 34% used\n" +
+			"Current week (Fable)\n 70% used\n"
 		if _, err := parseUsagePanel(specAt(t, ""), panel, testNow); err == nil {
-			t.Fatal("жду отказ: бакет без сброса разобрать нечем")
+			t.Fatal("жду отказ: даты сброса нет ни у одного бакета")
 		}
 	})
 
@@ -239,6 +276,24 @@ func TestPaneBlocker(t *testing.T) {
 	}
 	if why := paneBlocker("Welcome to Claude Code\n Please sign in to continue\n"); !strings.Contains(why, "не залогинен") {
 		t.Fatalf("экран входа не узнан: %q", why)
+	}
+}
+
+// TestPanelWhy: отказ по таймауту называет, обо что споткнулся разбор. Одна
+// фраза на любую поломку разметки оставляла человека без единой зацепки: панель
+// приходится открывать руками, чтобы увидеть, какой строки не хватило.
+func TestPanelWhy(t *testing.T) {
+	var w panelWaiter
+	if why := w.why(); !strings.Contains(why, "ни на одном кадре") {
+		t.Fatalf("до первого разбора причина %q", why)
+	}
+	_, err := parseUsagePanel(specAt(t, ""), "Current week (all models)\n [полоска без цифр]\n Resets in 2d\n", testNow)
+	if err == nil {
+		t.Fatal("панель без процента разобралась")
+	}
+	w.reject(err)
+	if why := w.why(); why != "у бакета week_all в панели не нашлось процента" {
+		t.Fatalf("причина отказа %q", why)
 	}
 }
 

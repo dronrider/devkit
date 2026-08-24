@@ -364,7 +364,14 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 					Type: "task", Cost: "-"}, rows, true
 			}
 		}
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": rowGone(found, id)})
+		gone := map[string]string{"error": rowGone(found, id)}
+		// Строки нет, а запись накопителя с тем же ID лежит на месте: экран
+		// задачи по этому слову уходит на экран записи, и упоминание ID в
+		// разговоре ведёт туда, куда человек метил.
+		if draftHere(found.Path, id) {
+			gone["draft"] = id
+		}
+		writeJSON(w, http.StatusNotFound, gone)
 		return nil, "", boardRow{}, nil, false
 	}
 	return found, id, row, rows, true
@@ -378,6 +385,14 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 func rowGone(found *Project, id string) string {
 	row, closed := archiveRows(found.Path)[id]
 	if !closed {
+		// Черновик до грумминга строки на доске не имеет вовсе, и «нет строки»
+		// про него сказано верно, но не про то: файл записи лежит на месте, и
+		// человек, нажавший на ID в разговоре, шёл именно к ней.
+		if draftHere(found.Path, id) {
+			_, rel := draftPathOf(found.Path, id)
+			return fmt.Sprintf("%s это запись накопителя (%s), строки на доске %s у неё пока нет",
+				id, rel, found.Name)
+		}
 		return fmt.Sprintf("на доске %s нет строки %s", found.Name, id)
 	}
 	when := ""

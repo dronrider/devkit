@@ -109,6 +109,16 @@ func draftPathOf(projectPath, id string) (abs, rel string) {
 	return filepath.Join(projectPath, filepath.FromSlash(rel)), rel
 }
 
+// draftHere отвечает на вопрос, лежит ли за этим ID запись накопителя. Спрашивает
+// его отказ экрана задачи: доска и архив дают строку, а до грумминга ID живёт
+// только файлом в docs/tasks/drafts/, и без этой проверки ссылка на черновик
+// упиралась в «нет строки».
+func draftHere(projectPath, id string) bool {
+	abs, _ := draftPathOf(projectPath, id)
+	st, err := os.Stat(abs)
+	return err == nil && !st.IsDir()
+}
+
 func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "черновик")
 	if found == nil {

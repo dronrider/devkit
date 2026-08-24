@@ -1008,3 +1008,45 @@ func TestDraftGroomOverIdleLeftover(t *testing.T) {
 		t.Errorf("новый разбор не поднялся: %s", got)
 	}
 }
+
+// Упоминание черновика в разговоре идёт голым ID, а строки на доске у записи
+// накопителя ещё нет: ссылка приводила на экран задачи, тот упирался в «нет
+// строки», и с виду ссылка не открывалась вовсе (замечание пользователя).
+// Отказ ручки задачи теперь называет запись накопителя отдельным полем, и по
+// нему экран уходит туда, куда человек метил.
+func TestTaskOfDraftIDNamesDraft(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "ссылка на черновик из чата не открывается"}`).Body.Close()
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-005", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ID черновика на ручке задачи: %d %s, ожидал 404", resp.StatusCode, text)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("отказ не разобрался: %v\n%s", err, text)
+	}
+	if got["draft"] != "XR-005" {
+		t.Fatalf("отказ не назвал запись накопителя: %s", text)
+	}
+	if !strings.Contains(got["error"], "запись накопителя") ||
+		!strings.Contains(got["error"], "docs/tasks/drafts/XR-005.md") {
+		t.Errorf("отказ по черновику сказан не своими словами: %s", text)
+	}
+
+	// ID, за которым нет ни строки, ни файла, черновиком не притворяется:
+	// экран остаётся на отказе, а не уезжает на пустую запись.
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-777", "")
+	text = body(t, resp)
+	// Разбор идёт в свежую карту: json.Unmarshal подмешивает поля в занятую, и
+	// поле прежнего ответа доехало бы сюда само собой.
+	var plain map[string]string
+	if err := json.Unmarshal([]byte(text), &plain); err != nil {
+		t.Fatalf("отказ не разобрался: %v\n%s", err, text)
+	}
+	if plain["draft"] != "" || !strings.Contains(plain["error"], "нет строки XR-777") {
+		t.Fatalf("ID без строки и без файла назван черновиком: %s", text)
+	}
+}

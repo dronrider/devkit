@@ -403,9 +403,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* подтверждение удаления по макету «12 Груминг черновика»: причина своей
    строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
 .dconfirm{display:flex;flex-direction:column;gap:10px;width:100%}
-/* пачка снятия простаивающих сессий: список того, что уйдёт, стоит под кнопкой */
-.swbox{width:100%}
-.swbox .dconfirm{padding:12px 0 2px}
 .dconfirm .drow{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .dwhyin{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
@@ -437,6 +434,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .aacts{display:flex;align-items:center;gap:9px;flex:none}
 .aacts .stale{max-width:210px;white-space:normal;text-align:right}
 .atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap}
+/* строка, у которой снимать нечего: вместо кнопки короткая приписка, разбор
+   в подсказке. Пустой хвост читался как недоделанный экран */
+.anone{font:400 11.5px var(--sans);color:var(--tx3);white-space:nowrap;cursor:default}
 .empty b{display:block;font:600 14px var(--sans);color:var(--tx2);margin-bottom:5px}
 
 /* экран заведения (#проект/new, макет «07 Заведение»): форма одна на задачу и

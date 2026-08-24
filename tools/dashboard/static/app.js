@@ -530,6 +530,9 @@ async function stopRun(project, id) {
     { method: "DELETE" });
   sayResult(r.body.message || r.body.error || "", !r.ok);
   if (r.ok) await refresh();
+  // Исход возвращается наружу: строку таба сессий снимает с экрана тот, кто
+  // звал, и делать это по неудавшейся ручке нельзя.
+  return r.ok;
 }
 
 // Полоски «работает N агентов» над доской больше нет вовсе. Она пережила два
@@ -10347,7 +10350,8 @@ function workLiveChip(w, now) {
   if (!said) return null;
   if (said === WORK_UNKNOWN) {
     return withTip(el("span", "chip", said.word),
-      "сервер не назвал состояния этой работы: ни «активна», ни «простаивает» тут не обещано");
+      "сервер не назвал состояния этой работы: ни «активна», ни «простаивает» тут не " +
+      "обещано, и снятие ей поэтому не предлагается");
   }
   const age = workMoved(w, now);
   const text = said.word + (said.word === LIVE_WORD.busy || !age ? "" : " " + age);
@@ -10375,8 +10379,12 @@ async function closeSession(project, w) {
     return r.ok;
   }
   if (w.id) {
-    await stopRun(project, w.id);
-    return true;
+    // У работы из tmux своего id сессии в ответе нет: его заполняет только
+    // транскрипт (Work.Session в board.go). Снимается такая сессия ручкой
+    // работы, а имя ей сервер собирает из вида и номера, task-DK-1.
+    const ok = await stopRun(project, w.id);
+    if (ok) dropSessionRow(w);
+    return ok;
   }
   return false;
 }
@@ -10420,10 +10428,14 @@ function dropSessionRow(w) {
 function closeSessionBtn(project, w) {
   const btn = el("button", "btn btn-sm btn-danger", "Закрыть");
   const busy = w.live === "busy" || w.live === "waiting";
-  withTip(btn, busy
+  // Работа из списка tmux приходит и без состояния (его называет транскрипт, а
+  // у конвейерной сессии его нет): такая держится вторым нажатием наравне с
+  // занятой, потому что снятое обратно не поднимается.
+  const known = workKnown(w);
+  withTip(btn, busy || !known
     ? "Сессия занята: нажмите второй раз, чтобы снять её вместе с идущим ходом"
     : "Снять tmux-сессию: разговор останется в транскрипте, продолжить его можно резюмом");
-  let armed = !busy;
+  let armed = !busy && known;
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     if (!armed) {
@@ -10499,22 +10511,69 @@ function agentRow(project, w, now) {
   // ряд, а сказать ей было нечего сверх того, что видно по отсутствию кнопки
   // (замечание пользователя). Знание уехало в подсказку строки, где и лежат
   // остальные метаданные.
-  if (w.via === "tmux" && w.id) {
+  if (workRunning(w)) {
     const stop = withTip(el("button", "btn btn-sm btn-danger", "Стоп"), STOP_TIP);
     stop.addEventListener("click", (ev) => {
       ev.stopPropagation();
       stopRun(project, w.id).catch(console.error);
     });
     acts.append(stop);
-  } else if (w.session && agentOwn(w) && workKnown(w)) {
-    // Сессия разговора живёт в нашей tmux, но конвейером не является: «Стоп»
-    // ей не адресован, а закрыть окно человеку было нечем вовсе (замечание
-    // пользователя: «я ничего не могу сделать с этими сессиями»). Работе без
-    // состояния снятие не предлагается: неизвестно даже, идёт ли она.
+  } else if (workDrops(w)) {
+    // Сессия живёт в нашей tmux, но ход в ней не идёт: «Стоп» ей не адресован,
+    // а закрыть окно человеку было нечем вовсе (замечание пользователя: «я
+    // ничего не могу сделать с этими сессиями»). Прежде кнопка стояла только у
+    // строки с id сессии, и разговорные сессии конвейера, которых у сервера
+    // большинство, оставались с одним «Стопом» от несуществующего хода.
     acts.append(closeSessionBtn(project, w));
+  } else if (!workKnown(w)) {
+    // Состояния сессии не видно, и объясняет это чип состояния со своей
+    // подсказкой: второй раз о том же в хвосте строки говорить незачем.
+  } else {
+    // Снимать нечего, и сказано это словами: пустой хвост строки читался как
+    // недоделанный экран, человек искал кнопку и не находил (замечание
+    // пользователя). Приписка короткая нарочно, разбор в подсказке: длинная
+    // занимала полстроки и ломала ряд.
+    // Слова тут не повторяют чип происхождения («мимо дашборда»), который в
+    // строке уже стоит: чип говорит, чья сессия, а приписка чего с ней нельзя.
+    acts.append(withTip(el("span", "anone", "снимать нечем"), workNoDropWhy(w)));
   }
   row.append(acts);
   return row;
+}
+
+// Идущий конвейер: работу подняла tmux-сессия дашборда, и ход в ней идёт.
+// Кнопка у такой строки называется «Стоп», потому что снимает она работу, а не
+// разговор. Разговорная сессия (talk) конвейером не считается: ход в ней
+// кончился, осталось живое окно, и снимают его закрытием.
+function workRunning(w) {
+  return Boolean(w && w.via === "tmux" && w.id && !w.talk);
+}
+
+// Есть ли у строки что снимать. Своей tmux-сессия бывает названа двумя
+// способами: у разговора это id сессии (его знает транскрипт), у конвейерной
+// работы имя вида task-DK-1, собранное из вида и номера, и id сессии ей не
+// нужен вовсе. Работа из списка tmux снимается при любом состоянии: сессия в
+// этом списке и есть доказательство, что снимать есть что. У разговора такого
+// доказательства нет, и работе без состояния снятие не предлагается:
+// неизвестно даже, идёт ли она (замечание пользователя про строку, показанную
+// работающей и с кнопкой). Окно, поднятое мимо дашборда (vscode, терминал,
+// цикл цели в другом месте), не снимается ничем: его tmux-имени дашборд не
+// знает.
+function workDrops(w) {
+  if (!w) return false;
+  if (w.via === "tmux" && w.id) return true;
+  return Boolean(w.session && agentOwn(w) && workKnown(w));
+}
+
+// Почему у строки нет действия: сказано подсказкой, чтобы человек не искал
+// кнопку, которой тут быть не может.
+function workNoDropWhy(w) {
+  if (w && w.via === "registry") {
+    return "Цикл цели поднят мимо дашборда: его tmux-сессии тут нет, " +
+      "и снять его можно там, где он запущен";
+  }
+  return "Эту сессию поднимал не дашборд (окно vscode, терминал): её имени в tmux " +
+    "он не знает, и закрыть окно можно только там, где оно открыто";
 }
 
 // Своя работа это та, чью сессию поднял дашборд: признак приезжает работой
@@ -10534,76 +10593,6 @@ function agentMatch(item, q) {
   const hay = [w.title, w.id, w.note, item.project, w.model, w.session,
     w.sect, w.kind].filter(Boolean).join(" ").toLowerCase();
   return q.toLowerCase().split(/\s+/).filter(Boolean).every((word) => hay.includes(word));
-}
-
-// Порог пачки: сессии, молчащие дольше него, снимаются одним заходом. Он
-// крупнее рубежа простоя (там сессия перестаёт считаться работающей), потому
-// что тут её снимают насовсем. Стоят тут сутки, а не пара часов: сессия
-// двухчасовой давности вполне живая, к ней возвращаются, а пачкой человек
-// закрывает как раз накопившиеся хвосты. Квоту простаивающие не тратят, только
-// память машины (решение пользователя).
-const SWEEP_IDLE_HOURS = 24;
-
-// Порог словами: сутки человек читает сутками, а не двадцатью четырьмя часами.
-// Берётся оно из того же числа, чтобы правка порога не оставила на кнопке
-// старое.
-function sweepSaid() {
-  const days = SWEEP_IDLE_HOURS / 24;
-  if (!Number.isInteger(days)) return SWEEP_IDLE_HOURS + " ч";
-  return days === 1 ? "суток" : days + " суток";
-}
-
-// Что уйдёт пачкой: живые в нашей tmux разговоры машины, молчащие дольше
-// порога. Считается это по списку разговоров, а не по строкам экрана: строкой
-// видна не всякая сессия, а закрывать человек идёт как раз накопившиеся
-// молчащие окна (замечание пользователя: «31 сессия накопилась не за день»).
-function sweepPick(chats, now) {
-  const edge = now - SWEEP_IDLE_HOURS * 3600 * 1000;
-  return (chats || []).filter((c) => c.tmux && c.state === "live" &&
-    c.mtime && Date.parse(c.mtime) < edge);
-}
-
-async function sweepIdle(project, box) {
-  const r = await api(chatsURL(project) + "?all=1");
-  if (!r.ok) {
-    sayResult(r.body.error || "список разговоров не прочитался", true);
-    return;
-  }
-  const list = sweepPick(r.body.chats, Date.now());
-  box.replaceChildren();
-  if (!list.length) {
-    box.append(el("div", "hint", "Молчащих дольше " + sweepSaid() +
-      " сессий нет: снимать нечего."));
-    return;
-  }
-  // Список того, что будет снято, стоит перед нажатием, а не после: снятое
-  // обратно не поднимается, и человек должен видеть, с чем прощается.
-  const card = el("div", "dconfirm");
-  card.append(el("div", "dwhy", "Снять " + list.length + " " +
-    plural(list.length, "сессию", "сессии", "сессий") + ", молчащих дольше " +
-    sweepSaid() + ":"));
-  const names = el("div", "hint", list.map((c) => c.tmux).join(", "));
-  card.append(names);
-  const row = el("div", "drow");
-  const go = el("button", "btn btn-sm btn-danger", "Снять " + list.length);
-  const no = el("button", "btn btn-sm", "Отмена");
-  no.addEventListener("click", () => { box.replaceChildren(); });
-  go.addEventListener("click", async () => {
-    go.disabled = true;
-    let done = 0;
-    for (const c of list) {
-      const stop = await api(chatsURL(c.project || project) + "/" +
-        encodeURIComponent(c.id) + "/stop", { method: "POST", body: { drop: true } });
-      if (stop.ok) done += 1;
-    }
-    box.replaceChildren();
-    sayResult("снято " + done + " из " + list.length + " " +
-      plural(list.length, "сессии", "сессий", "сессий"), done !== list.length);
-    await refresh();
-  });
-  row.append(go, no);
-  card.append(row);
-  box.append(card);
 }
 
 // Таб сессий на доске проекта. Список один: происхождение видно чипом в
@@ -10687,24 +10676,6 @@ function renderSessions(project, works, q) {
     sign: [project, "sess", shownCounts.tasks, (works || []).length,
       shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "sess"),
-  }, {
-    key: "sess-bar",
-    sign: project,
-    // Пачка стоит рядом с табами: закрывать накопившиеся окна по одному
-    // мучительно, а строкой видна не всякая сессия машины.
-    make: () => {
-      const sweepBox = el("div", "swbox");
-      const sweep = el("button", "btn btn-sm", "Закрыть простаивающие");
-      withTip(sweep, "Снимет tmux-сессии разговоров, молчащих дольше " + sweepSaid() +
-        ". Перед снятием покажет список.");
-      sweep.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        sweepIdle(project, sweepBox).catch(console.error);
-      });
-      const bar = el("div", "nbar");
-      bar.append(sweep, sweepBox);
-      return bar;
-    },
   }, {
     key: "sess-card",
     sign: "card",

@@ -971,9 +971,22 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	last := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid])
 	alive := tmuxAliveFn()
 	if body.Drop {
-		if last.Tmux == "" || !alive(last.Tmux) {
+		// Сессия, которой уже нет, это не отказ, а сделанное дело: человек жал
+		// закрытие, и закрыто оно и есть. Прежде сюда приходил 409 со словами
+		// «снимать под перезапуск нечего», экран показывал красную карточку, а
+		// строка оставалась стоять, и второе нажатие упиралось в тот же отказ
+		// (живой случай пользователя: tmux-сессии на машине давно не было).
+		// Разговор, который дашборд не поднимал вовсе, это другой случай: там
+		// снимать и правда нечего, и сказать об этом надо.
+		if last.Tmux != "" && !alive(last.Tmux) {
+			s.logf("сессия чата %s уже закрыта: tmux-сессии %s нет", sid, last.Tmux)
+			writeJSON(w, http.StatusOK, map[string]any{"way": "gone", "tmux": last.Tmux,
+				"message": "сессия уже закрыта"})
+			return
+		}
+		if last.Tmux == "" {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
-				"чат %s не живёт в нашей tmux: снимать под перезапуск нечего", sid)})
+				"чат %s не в нашей tmux: его окно поднимал не дашборд, снимать отсюда нечего", sid)})
 			return
 		}
 		if _, err := runProc("tmux", "kill-session", "-t", last.Tmux); err != nil {
@@ -990,9 +1003,17 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		s.killWedged(w, sid, last.Tmux, alive)
 		return
 	}
-	if last.Tmux == "" || !alive(last.Tmux) {
+	// Прерывать нечего по двум разным причинам, и звучат они по-разному. Наша
+	// сессия кончилась, значит и ход в ней кончился: это спокойная новость, а
+	// не сбой. Чужое окно дашборд не поднимал, и клавиатуры к нему у него нет.
+	if last.Tmux != "" && !alive(last.Tmux) {
+		writeJSON(w, http.StatusOK, map[string]any{"way": "gone", "tmux": last.Tmux,
+			"message": "ход уже не идёт: сессия закрыта"})
+		return
+	}
+	if last.Tmux == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
-			"чат %s не живёт в нашей tmux: прервать его ход отсюда нечем", sid)})
+			"чат %s не в нашей tmux: его окно поднимал не дашборд, прервать ход отсюда нечем", sid)})
 		return
 	}
 	if err := chatStop(last.Tmux); err != nil {

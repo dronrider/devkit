@@ -1175,12 +1175,43 @@ func TestChatStopDropEndsLiveSession(t *testing.T) {
 		t.Errorf("tmux-сессия не снята: %s", got)
 	}
 
-	// Без живой tmux снимать под перезапуск нечего: род отвечает отказом, а не
-	// молчаливой удачей.
+	// Нашей tmux-сессии уже нет: закрывать нечего, потому что закрыто. Прежде
+	// сюда приходил 409 со словами «снимать под перезапуск нечего», экран
+	// показывал карточку сбоя, а строка сессии оставалась стоять, и второе
+	// нажатие упиралось в тот же отказ (живой случай пользователя).
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{"drop": true}`)
-	if text := body(t, resp); resp.StatusCode != http.StatusConflict {
-		t.Errorf("снятие мимо tmux не отбито: %d %s", resp.StatusCode, text)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("снятие уже снятой сессии отбито отказом: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"gone"`) {
+		t.Errorf("ручка не назвала род исхода: %s", text)
+	}
+	if !strings.Contains(text, "уже закрыта") {
+		t.Errorf("исход сказан не по-человечески: %s", text)
+	}
+	if strings.Contains(text, "нечего") || strings.Contains(text, "error") {
+		t.Errorf("сделанное дело сказано словами отказа: %s", text)
+	}
+	// Прерывание хода отвечает тем же родом и теми же спокойными словами:
+	// сессии нет, значит и ход в ней не идёт.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"way":"gone"`) {
+		t.Errorf("прерывание хода в снятой сессии отбито отказом: %d %s", resp.StatusCode, text)
+	}
+	// Разговор, который дашборд не поднимал вовсе, это другой случай: там
+	// снимать и правда нечего, и сказано об этом отказом.
+	alien := "cccc3333-3333-4333-8333-333333333333"
+	writeSession(t, e.home, e.proj, "", alien, plainTalk, time.Now())
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+alien+"/stop", `{"drop": true}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("снятие чужого окна не отбито: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "поднимал не дашборд") {
+		t.Errorf("отказ чужому окну не назвал причины: %s", text)
 	}
 }
 

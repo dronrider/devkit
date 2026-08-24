@@ -4,9 +4,14 @@
 // молчащих часами окна выглядели работающими, а всего на машине их накопилось
 // три десятка, и закрыть их было нечем вовсе («я ничего не могу сделать с
 // этими сессиями»). Предмет стенда две половины: строка называет состояние
-// словом и красит кружок по нему, а закрытие снимает сессию той же ручкой,
-// какой её снимает смена модели, с подтверждением у занятой и пачкой для
-// молчащих.
+// словом и красит кружок по нему, а снятие идёт той же ручкой, какой сессию
+// снимает смена модели, с подтверждением у занятой.
+//
+// Пачки «Закрыть простаивающие» тут больше нет вовсе: она считала по
+// разговорам всей машины, а таб показывает сессии проекта, и предлагала снять
+// два с половиной десятка при пяти видимых, назвав их именами tmux, из которых
+// не видно, с чем прощаешься (решение пользователя). Массовое снятие вернётся
+// другим способом, если понадобится, а стенд держит рубеж: кнопки нет.
 //
 // Зовётся: node testdata/poc_agentlive.mjs static/app.js
 
@@ -19,18 +24,6 @@ const app = appPathArg();
 const hour = 3600 * 1000;
 const stamp = (ms) => new Date(Date.now() - ms).toISOString();
 
-// Порог пачки стенд берёт из самого кода, а не держит своё число: разъехавшись,
-// они молчат оба, а на экране остаётся кнопка, снимающая не то, что обещала.
-const edgeHours = Number((readFileSync(app, "utf8")
-  .match(/const SWEEP_IDLE_HOURS = (\d+(?:\.\d+)?);/) || [])[1]);
-if (!edgeHours) fail("порога пачки в коде не нашлось: править стенд вместе с ним");
-// Сутки это нижняя граница порога: сессия двухчасовой давности вполне живая, к
-// ней возвращаются, а пачкой закрывают накопившиеся хвосты (решение
-// пользователя).
-if (edgeHours < 24) {
-  fail("порог пачки меньше суток (" + edgeHours + " ч): под него попадают живые сессии");
-}
-
 const works = [
   { id: "XR-1", kind: "task", via: "tmux", title: "идущая работа", own: true,
     live: "busy", moved: Math.floor((Date.now() - 30 * 1000) / 1000) },
@@ -38,30 +31,40 @@ const works = [
     own: true, live: "waiting", moved: Math.floor((Date.now() - 5 * 60 * 1000) / 1000) },
   { kind: "session", via: "session", session: "bbbb2222-2222", note: "молчащее окно",
     own: true, live: "idle", moved: Math.floor((Date.now() - 3 * hour) / 1000) },
+  // Разговорная сессия конвейера: её подняла tmux дашборда, ход в ней кончился,
+  // своего id сессии у неё в ответе сервера нет. Таких на живой машине
+  // большинство, и кнопки снятия у них не было вовсе (замечание пользователя).
+  { id: "XR-5", kind: "task", via: "tmux", title: "договорившая сессия задачи",
+    own: true, talk: true, live: "idle", moved: Math.floor((Date.now() - 2 * hour) / 1000) },
+  // Две молчащие сессии про уход строки с экрана: одна снимается удачно, вторая
+  // отвечает «уже закрыта». Свои они у каждой проверки нарочно: снятая строка
+  // держится убранной памятью экрана, и переиспользовать её нельзя.
+  { kind: "session", via: "session", session: "eeee5555-5555", note: "молчащая вторая",
+    own: true, live: "idle", moved: Math.floor((Date.now() - 4 * hour) / 1000) },
+  { kind: "session", via: "session", session: "ffff6666-6666", note: "молчащая третья",
+    own: true, live: "idle", moved: Math.floor((Date.now() - 5 * hour) / 1000) },
+  // Окно человека: дашборд его не поднимал, tmux-имени не знает, снимать нечем.
+  { kind: "session", via: "session", session: "cccc3333-3333", note: "окно vscode",
+    live: "idle", moved: Math.floor((Date.now() - hour) / 1000) },
   { id: "XR-9", kind: "goal", via: "registry", title: "цикл цели мимо дашборда", live: "dead" },
 ];
 
-// Разговоры машины: два молчат дольше порога пачки, один свежий. Давность
-// отсчитывается от самого порога, поэтому его правка не роняет стенд ложно.
+// Разговоры машины: список нужен экрану сам по себе, порогов и пачек он больше
+// не обслуживает.
 const chats = [
   { id: "bbbb2222-2222", state: "live", tmux: "chat-XR-2-1", project: "demo",
-    mtime: stamp((edgeHours + 1) * hour) },
-  { id: "cccc3333-3333", state: "live", tmux: "chat-XR-3-1", project: "demo",
-    mtime: stamp(3 * edgeHours * hour) },
+    mtime: stamp(3 * hour) },
   { id: "dddd4444-4444", state: "live", tmux: "chat-XR-4-1", project: "demo",
     mtime: stamp(2 * 60 * 1000) },
-  // Свежесть по эту сторону порога: час молчания под пачку не идёт.
-  { id: "ffff6666-6666", state: "live", tmux: "chat-XR-6-1", project: "demo",
-    mtime: stamp((edgeHours - 1) * hour) },
-  { id: "eeee5555-5555", state: "dead", tmux: "", project: "demo",
-    mtime: stamp(3 * edgeHours * hour) },
 ];
 
 const stopped = [];
+// Чем ручка снятия отвечает: удачей, спокойным «уже закрыта» либо отказом.
+let stopSaid = { way: "drop", message: "сессия снята" };
 const { sandbox, byId } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST" && path.includes("/stop")) {
     stopped.push({ path, body: init.body ? JSON.parse(init.body) : null });
-    return { way: "drop", message: "сессия снята" };
+    return stopSaid;
   }
   if (init && init.method === "DELETE" && path.includes("/runs/")) {
     stopped.push({ path, body: null });
@@ -85,6 +88,15 @@ const go = async (hash) => {
 await go("#/agents");
 
 const rows = () => allByClass(groups, "arow");
+// Классы узла и всех его детей одной строкой: карточка сбоя помечена ими, а не
+// словами, и искать её текстом значило бы ловить чужую фразу.
+const collectClasses = (node) => {
+  let out = String(node.className || "");
+  for (const kid of node.children || []) {
+    if (kid && typeof kid === "object") out += " " + collectClasses(kid);
+  }
+  return out;
+};
 const rowOf = (what) => rows().find((r) => dump(r).includes(what));
 
 
@@ -165,46 +177,137 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   }
 }
 
-// --- пачка: список того, что уйдёт, стоит до нажатия ---
+// --- пачки на экране нет вовсе ---
+//
+// Кнопка «Закрыть простаивающие» считала по разговорам всей машины, а таб
+// показывает сессии проекта: при пяти видимых строках она предлагала снять два
+// с половиной десятка, назвав их именами tmux, по которым не видно, с чем
+// прощаешься (решение пользователя).
 {
   stopped.length = 0;
   await go("#/agents");
-  const sweep = deepBtn(groups, "Закрыть простаивающие");
-  if (!sweep) fail("кнопки пачки на экране нет: " + dump(groups).slice(0, 300));
-  // Порог назван словами и на кнопке, и в подтверждении: число берётся из кода,
-  // поэтому подсказка со старым порогом видна стенду, а не только глазу.
-  const days = edgeHours / 24;
-  const edgeSaid = Number.isInteger(days)
-    ? (days === 1 ? "суток" : days + " суток") : edgeHours + " ч";
-  if (!String(sweep.title || "").includes("дольше " + edgeSaid)) {
-    fail("подсказка кнопки назвала не тот порог: " + sweep.title);
+  if (deepBtn(groups, "Закрыть простаивающие")) {
+    fail("пачка вернулась на экран: " + dump(groups).slice(0, 300));
   }
-  sweep.handlers.click({ stopPropagation: () => {} });
+  const said = dump(groups).replace(/\s+/g, " ");
+  if (said.includes("простаивающие") || said.includes("Молчащих дольше")) {
+    fail("на экране остались слова пачки: " + said.slice(0, 300));
+  }
+  // Механики её тоже нет: пустой ручки экран не зовёт и списка чатов машины
+  // ради снятия не читает.
+  const src = readFileSync(app, "utf8");
+  for (const gone of ["sweepIdle", "sweepPick", "SWEEP_IDLE_HOURS", "sweepSaid"]) {
+    if (src.includes(gone)) fail("механика пачки осталась в коде: " + gone);
+  }
+}
+
+// --- кнопка снятия есть у всякой строки со своей tmux-сессией ---
+//
+// Разговорная сессия конвейера приезжает без id сессии (его заполняет только
+// транскрипт), и снималась она ручкой работы, а кнопки у неё не было вовсе:
+// на живой машине такими были почти все строки (замечание пользователя).
+{
+  stopped.length = 0;
+  await go("#/agents");
+  const row = rowOf("договорившая сессия задачи");
+  if (!row) fail("строки договорившей сессии на экране нет: " + dump(groups).slice(0, 300));
+  // «Стоп» ей не адресован: ход кончился, снимают тут окно.
+  if (deepBtn(row, "Стоп")) fail("договорившей сессии предложен стоп хода: " + dump(row));
+  const close = deepBtn(row, "Закрыть");
+  if (!close) fail("у сессии без id нет кнопки снятия: " + dump(row));
+  close.handlers.click({ stopPropagation: () => {} });
   await settle();
-  const box = byClass(groups, "swbox");
-  const said = dump(box);
-  if (!said.includes("дольше " + edgeSaid)) {
-    fail("подтверждение назвало не тот порог: " + said);
+  const last = stopped[stopped.length - 1];
+  if (!last || !last.path.includes("/runs/XR-5")) {
+    fail("снятие сессии без id пошло не той ручкой: " + JSON.stringify(stopped));
   }
-  if (!said.includes("chat-XR-2-1") || !said.includes("chat-XR-3-1")) {
-    fail("пачка не назвала, что снимет: " + said);
+  // И эта строка уходит тем же ходом: снятие ручкой работы прежде оставляло её
+  // стоять, а список сессий на живой машине из таких строк и состоит.
+  if (rowOf("договорившая сессия задачи")) {
+    fail("снятая ручкой работы строка осталась стоять: " + dump(groups).slice(0, 300));
   }
-  if (said.includes("chat-XR-4-1")) fail("в пачку попала свежая сессия: " + said);
-  if (said.includes("chat-XR-6-1")) {
-    fail("в пачку попала сессия по эту сторону порога: " + said);
-  }
-  if (stopped.length) fail("пачка сняла сессии до подтверждения: " + JSON.stringify(stopped));
-  const go2 = deepBtn(box, "Снять 2");
-  if (!go2) fail("в пачке нет кнопки снятия: " + said);
-  go2.handlers.click({ stopPropagation: () => {} });
+  sandbox.renderSessions("demo", works, "");
   await settle();
-  const paths = stopped.map((x) => x.path).join(" ");
-  if (!paths.includes("bbbb2222-2222/stop") || !paths.includes("cccc3333-3333/stop")) {
-    fail("пачка сняла не те сессии: " + JSON.stringify(stopped));
+  if (rowOf("договорившая сессия задачи")) {
+    fail("снятая ручкой работы строка вернулась опросом: " + dump(groups).slice(0, 300));
   }
-  if (paths.includes("dddd4444-4444") || paths.includes("ffff6666-6666")) {
-    fail("пачка сняла свежую сессию: " + JSON.stringify(stopped));
+  // Идущая работа остаётся при своём «Стопе»: снимают там ход, а не окно.
+  const busyRow = rowOf("идущая работа");
+  if (!deepBtn(busyRow, "Стоп")) fail("у идущей работы пропал стоп: " + dump(busyRow));
+}
+
+// --- строке, у которой снимать нечего, сказано почему ---
+{
+  await go("#/agents");
+  for (const [what, why] of [["окно vscode", "vscode"], ["цикл цели мимо дашборда", "поднят мимо"]]) {
+    const row = rowOf(what);
+    if (!row) fail("строки «" + what + "» на экране нет: " + dump(groups).slice(0, 300));
+    if (deepBtn(row, "Закрыть") || deepBtn(row, "Стоп")) {
+      fail("строке «" + what + "» предложено снятие, которого нет: " + dump(row));
+    }
+    const note = byClass(row, "anone");
+    if (!note) fail("строка «" + what + "» молчит о том, почему действия нет: " + dump(row));
+    if (!String(note.title || "").includes(why)) {
+      fail("подсказка «" + what + "» не объяснила причину: " + note.title);
+    }
+    // Приписка не повторяет чип происхождения, который стоит в той же строке:
+    // одни и те же слова дважды читаются как сбой отрисовки.
+    if (String(note.textContent).includes("мимо дашборда")) {
+      fail("приписка повторила чип строки: " + note.textContent);
+    }
   }
+}
+
+// --- удачное снятие убирает строку тем же ходом и опрос её не возвращает ---
+//
+// Сервер узнаёт о снятии не сразу: он смотрит список tmux, а тот успевает
+// ответить по-старому. Строка, вернувшаяся следующим опросом, читается как
+// несработавшее нажатие (замечание пользователя).
+{
+  stopped.length = 0;
+  stopSaid = { way: "drop", message: "сессия снята" };
+  await go("#/agents");
+  const row = rowOf("молчащая вторая");
+  if (!row) fail("строки молчащей сессии на экране нет: " + dump(groups).slice(0, 300));
+  deepBtn(row, "Закрыть").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (rowOf("молчащая вторая")) {
+    fail("снятая строка осталась стоять тем же ходом: " + dump(groups).slice(0, 300));
+  }
+  // Опрос приходит с прежним списком: сервер ещё не договорил.
+  sandbox.renderSessions("demo", works, "");
+  await settle();
+  if (rowOf("молчащая вторая")) {
+    fail("снятая строка вернулась опросом: " + dump(groups).slice(0, 300));
+  }
+}
+
+// --- сессии уже нет: это не сбой, а сделанное дело ---
+//
+// Живой случай: tmux-сессии на машине давно не было, ручка отвечала отказом
+// «снимать под перезапуск нечего», экран показывал красную карточку, а строка
+// оставалась стоять, и второе нажатие упиралось в тот же отказ. Человек решил,
+// что кнопка не работает (замечание пользователя).
+{
+  stopped.length = 0;
+  stopSaid = { way: "gone", message: "сессия уже закрыта" };
+  await go("#/agents");
+  const row = rowOf("молчащая третья");
+  if (!row) fail("строки молчащей сессии на экране нет: " + dump(groups).slice(0, 300));
+  deepBtn(row, "Закрыть").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (rowOf("молчащая третья")) {
+    fail("строка уже закрытой сессии осталась стоять: " + dump(groups).slice(0, 300));
+  }
+  const flashes = byId.get("flashes");
+  const said = dump(flashes).replace(/\s+/g, " ");
+  if (/\berr\b/.test(collectClasses(flashes))) {
+    fail("уже закрытая сессия показана карточкой сбоя: " + said);
+  }
+  if (said.includes("нечего") || said.includes("не живёт")) {
+    fail("спокойная новость сказана словами поломки: " + said);
+  }
+  stopSaid = { way: "drop", message: "сессия снята" };
 }
 
 // --- одно состояние одним словом во всех показах ---

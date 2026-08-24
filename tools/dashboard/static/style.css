@@ -915,7 +915,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    шрифт крупнее прежнего строчного */
 .rnum{font:600 10px var(--mono);fill:var(--tx)}
 .rbar{stroke:var(--tx3)}
-.r-working .comet{stroke:var(--acc);animation:ringrun 1.6s linear infinite}
+/* бегущая подсветка занятости: она идёт по самому кольцу, той же толщиной и
+   тем же радиусом, что деления этапов, поэтому взята полупрозрачной. Деления
+   под ней читаются, а второго тонкого круга внутри больше нет */
+.r-working .comet{stroke:var(--acc);opacity:0.55;animation:ringrun 1.6s linear infinite}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
 /* полный оборот по кольцу этапов: длина дуги при радиусе 15 */

@@ -6315,13 +6315,15 @@ const pulseSilentState = "silent";
 const RING_NS = "http://www.w3.org/2000/svg";
 const RING_R = 15;
 const RING_LEN = 2 * Math.PI * RING_R;
-// Бегущая подсветка занятости идёт по самому кольцу этапов, той же дугой, на
-// которой стоят сегменты: вторым кружком внутри она читалась отдельным
-// прибором, а не жизнью этой работы (замысел кольца, решение пользователя).
-// Длина её отрезка это доля кольца, а тонкая она нарочно, чтобы под ней были
-// видны сами сегменты.
+// Толщина кольца одна на всё, что по нему рисуется: и деления этапов, и
+// бегущая подсветка занятости берут её отсюда.
+const RING_W = 3.2;
+// Бегущая подсветка занятости идёт по самому кольцу этапов: тем же радиусом и
+// той же толщиной, что деления. Тонкой дугой внутри она читалась вторым
+// кружком, отдельным прибором рядом с кольцом, а не жизнью этой работы
+// (замечание пользователя). Сегменты под ней видны насквозь, за это отвечает
+// прозрачность в стилях. Длина отрезка это доля кольца.
 const RING_SPIN_PART = 0.14;
-const RING_SPIN_W = 1.4;
 
 function svgEl(tag, cls) {
   const node = document.createElementNS(RING_NS, tag);
@@ -6473,7 +6475,7 @@ function ringArc(cls, span, at) {
   const c = svgEl("circle", cls);
   svgAttrs(c, {
     cx: 18, cy: 18, r: RING_R, fill: "none",
-    "stroke-width": 3.2, "stroke-linecap": "butt",
+    "stroke-width": RING_W, "stroke-linecap": "butt",
     "stroke-dasharray": Math.max(span, 0.01).toFixed(2) + " " + (RING_LEN - span).toFixed(2),
     "stroke-dashoffset": (-at).toFixed(2),
   });
@@ -6612,11 +6614,11 @@ function pulseRing(project, p) {
     else ringTrack(g);
     // Бегущая подсветка: она и значит, что события текут. Крутит её анимация, а
     // не опрос, поэтому между заходами на сервер кольцо не замирает. Идёт она
-    // по кольцу этапов, поверх сегментов и тоньше их: сегменты под ней
-    // читаются, а дробь в середине она не задевает вовсе.
+    // тем же радиусом и той же толщиной, что деления, то есть подсвечивает
+    // само кольцо, а дробь в середине не задевает вовсе.
     const comet = svgEl("circle", "comet");
     svgAttrs(comet, {
-      cx: 18, cy: 18, r: RING_R, fill: "none", "stroke-width": RING_SPIN_W,
+      cx: 18, cy: 18, r: RING_R, fill: "none", "stroke-width": RING_W,
       "stroke-linecap": "round",
       "stroke-dasharray": (RING_LEN * RING_SPIN_PART).toFixed(2) + " " +
         (RING_LEN * (1 - RING_SPIN_PART)).toFixed(2),

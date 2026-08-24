@@ -186,9 +186,31 @@ function ringOf(head) {
     fail("подсветка идёт не по кольцу этапов: радиус " + comet.attrs.r +
       " против " + track.attrs.r);
   }
-  // Тоньше сегментов: под ней они обязаны читаться.
-  if (!(Number(comet.attrs["stroke-width"]) < Number(track.attrs["stroke-width"]))) {
-    fail("подсветка толще самих сегментов: " + comet.attrs["stroke-width"]);
+  // Той же толщины, что дуга этапов: подсветка это само кольцо, а не второй
+  // тонкий круг рядом с ним (решение пользователя).
+  if (Number(comet.attrs["stroke-width"]) !== Number(track.attrs["stroke-width"])) {
+    fail("подсветка не той толщины, что дуга кольца: " + comet.attrs["stroke-width"] +
+      " против " + track.attrs["stroke-width"]);
+  }
+  // Число делений на это не влияет: и один этап, и дюжина рисуются той же
+  // дугой, по которой идёт подсветка.
+  for (const count of [1, 3, 12]) {
+    const box = sandbox.document.createElement("div");
+    const plan = [];
+    for (let i = 0; i < count; i += 1) {
+      plan.push({ name: "этап " + (i + 1), state: i === 0 ? "in_progress" : "pending" });
+    }
+    sandbox.ringPlan(box, plan);
+    const segs = allByClass(box, "seg");
+    if (segs.length !== count) fail("делений вышло не по плану: " + segs.length + " при " + count);
+    for (const seg of segs) {
+      if (Number(seg.attrs["stroke-width"]) !== Number(comet.attrs["stroke-width"]) ||
+        Number(seg.attrs.r) !== Number(comet.attrs.r)) {
+        fail("при " + count + " делениях подсветка разошлась с дугой: " +
+          seg.attrs["stroke-width"] + "/" + seg.attrs.r + " против " +
+          comet.attrs["stroke-width"] + "/" + comet.attrs.r);
+      }
+    }
   }
   // Отрезок короткий: подсветка бежит, а не закрашивает кольцо целиком.
   const lit = Number(String(comet.attrs["stroke-dasharray"]).split(" ")[0]);
@@ -209,6 +231,16 @@ function ringOf(head) {
   }
   if (!/\.ring \.comet\{stroke:none\}/.test(css)) {
     fail("подсветка видна и на простое: " + css.slice(css.indexOf(".ring .comet"), 80));
+  }
+  // Толщиной она сравнялась с делениями, поэтому взята полупрозрачной: иначе
+  // под бегущим отрезком не видно, сколько этапов пройдено.
+  if (!/\.r-working \.comet\{[^}]*opacity:0?\.[0-9]+/.test(css)) {
+    fail("подсветка непрозрачна и закрывает деления под собой");
+  }
+  // Толщина живёт одним числом в разметке: правило в стилях развело бы её с
+  // делениями обратно, и на узком экране тоже.
+  if (/[^-\w]\.comet\{[^}]*stroke-width/.test(css)) {
+    fail("толщину подсветки правят стили, а не общее число кольца");
   }
   // В середине работающие, а не все: второй разговор задачи простаивает, и
   // сложенный с работающим он врал бы, что работа кипит вдвоём.

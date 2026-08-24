@@ -50,7 +50,7 @@ class ComponentsTest(unittest.TestCase):
         self.assertEqual(len(names), len(go_names) + 7)
 
     def test_go_tools_discovers_by_gomod_not_by_hand(self):
-        # Прежний список хранился в коде руками и разошёлся с деревом molча
+        # Прежний список хранился в коде руками и разошёлся с деревом молча
         # (cmdout выпал). Открытие по факту go.mod ловит любой новый модуль
         # без правки списка и не путает каталог без go.mod с модулем.
         root = Path(tempfile.mkdtemp(prefix="devkitctl-go-tools-test-"))

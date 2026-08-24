@@ -2061,49 +2061,54 @@ def doctor(start, fix=False):
         # main_checkout это родитель git-common-dir, from_main_checkout ложно,
         # когда root не совпадает с ним. Конфиг выката логически принадлежит
         # основному чекауту (.devkit гитигнорнута и не переезжает в worktree),
-        # и scaffold_deploy там заводил бы болванку, которую тут же сам находил
-        # бы пустой (DK-463): звать его и разбирать пустые ключи стоит только
-        # из основного чекаута.
+        # и весь блок (чтение, заведение болванки, дописывание ключей, разбор
+        # пустых deploy=/test=) стоит только на нём: замечание ревью DK-463
+        # показало, что gate только на scaffold_deploy не спасает от находок,
+        # когда deploy.local в worktree уже физически лежит (доехал с прежнего
+        # бага либо положен руками): блок целиком не выполняется вне основного
+        # чекаута, независимо от того, есть там файл или нет.
         main_checkout = corp.checkout(root)
         from_main_checkout = not main_checkout or Path(main_checkout).resolve() == Path(root).resolve()
-        deploy, test, autonomous = read_deploy(root)
-        if deploy is None and fix and from_main_checkout:
-            fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
-            deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
-        elif deploy is not None and fix:
-            patched = patch_deploy(root)  # дописывает недостающие ключи болванки
-            if patched:
-                fixed += patched
-                deploy, test, autonomous = read_deploy(root)
-        if deploy is None:
-            if from_main_checkout:
+        if from_main_checkout:
+            deploy, test, autonomous = read_deploy(root)
+            if deploy is None and fix:
+                fixed += scaffold_deploy(root)  # заводит файл и строку в .gitignore
+                deploy, test, autonomous = read_deploy(root)  # теперь файл есть, команды пустые
+            elif deploy is not None and fix:
+                patched = patch_deploy(root)  # дописывает недостающие ключи болванки
+                if patched:
+                    fixed += patched
+                    deploy, test, autonomous = read_deploy(root)
+            if deploy is None:
                 findings.append("нет %s: команда выката не задана, shipctl merge оставит "
                                 "выкат пользователю (болванку заводит devkitctl new или doctor --fix)"
                                 % DEPLOY_CONFIG)
-        else:
-            # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
-            # отказывает честной строкой, и пустой deploy= это норма, а не
-            # находка: требовать команду выката значило бы звать чинить исправное.
-            if deploy == "" and local:
-                pass
-            elif deploy == "" and not autonomous:
-                findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
-                                "вписать команду выката" % DEPLOY_CONFIG)
-            elif deploy == "" and autonomous:
-                findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
-                                "а катить нечего); вписать команду выката либо снять autonomous" % DEPLOY_CONFIG)
-            if test == "":
-                findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
-                                "вызов, а процедура пачки сочинять его не умеет; вписать команду "
-                                "тестов проекта" % DEPLOY_CONFIG)
-            findings += check_gowork(root, deploy, test)
-            rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
-            if rc != 0:
-                if fix and ensure_gitignore(root, DEPLOY_IGNORE):
-                    fixed.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
-                else:
-                    findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
-                                    "утекут в git, добавить %s в .gitignore" % (DEPLOY_CONFIG, DEPLOY_IGNORE))
+            else:
+                # В корп-контуре слияние и выкат ведёт процесс компании, shipctl там
+                # отказывает честной строкой, и пустой deploy= это норма, а не
+                # находка: требовать команду выката значило бы звать чинить исправное.
+                if deploy == "" and local:
+                    pass
+                elif deploy == "" and not autonomous:
+                    findings.append("%s: пустой deploy=, shipctl нечего выкатывать; "
+                                    "вписать команду выката" % DEPLOY_CONFIG)
+                elif deploy == "" and autonomous:
+                    findings.append("%s: autonomous = true при пустом deploy= (агенту доверен конвейер, "
+                                    "а катить нечего); вписать команду выката либо снять autonomous"
+                                    % DEPLOY_CONFIG)
+                if test == "":
+                    findings.append("%s: пустой test=, shipctl merge будет требовать --test на каждый "
+                                    "вызов, а процедура пачки сочинять его не умеет; вписать команду "
+                                    "тестов проекта" % DEPLOY_CONFIG)
+                findings += check_gowork(root, deploy, test)
+                rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", DEPLOY_CONFIG])
+                if rc != 0:
+                    if fix and ensure_gitignore(root, DEPLOY_IGNORE):
+                        fixed.append(".gitignore: добавлен %s" % DEPLOY_IGNORE)
+                    else:
+                        findings.append("%s не гитигнорнут: адрес и доступы из команды выката "
+                                        "утекут в git, добавить %s в .gitignore"
+                                        % (DEPLOY_CONFIG, DEPLOY_IGNORE))
         if (root / ".devkit").is_dir():
             rc, _ = run(["git", "-C", str(root), "check-ignore", "-q", RUN_LOG])
             if rc != 0:

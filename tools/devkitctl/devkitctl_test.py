@@ -697,6 +697,25 @@ class DeployWorktreeTest(SandboxCase):
         self.assertIn_("пустой deploy=", out, "в основном чекауте пропала находка про deploy=")
         self.assertIn_("пустой test=", out, "в основном чекауте пропала находка про test=")
 
+    def test_stale_deploy_file_in_worktree_gives_no_findings(self):
+        # Замечание ревью: gate только на scaffold_deploy не спасает, когда
+        # deploy.local в worktree уже физически лежит (доехал с прежним багом
+        # либо положен руками) с пустыми ключами. Разбор пустых deploy=/test=
+        # тоже обязан молчать вне основного чекаута, файл --fix не трогает.
+        write(self.wtdeploy, "deploy =\ntest =\nautonomous = false\n")
+        before = self.wtdeploy.read_bytes()
+        rc, out = self.sysdoctor(self.wt, "--fix")
+        self.assertNotIn_("пустой deploy=", out,
+                          "doctor --fix в worktree дал находку про пустой deploy= "
+                          "по уже лежащему файлу")
+        self.assertNotIn_("пустой test=", out,
+                          "doctor --fix в worktree дал находку про пустой test= "
+                          "по уже лежащему файлу")
+        self.assertNotIn_("дописан", out, "doctor --fix дописал ключи в worktree")
+        self.assertEqual(self.wtdeploy.read_bytes(), before,
+                         "doctor --fix изменил лежащий в worktree deploy.local")
+        self.wtdeploy.unlink()
+
 
 class MachineContourTest(SandboxCase):
     """Машинный контур: бинари, определения агентов, скиллы, снимок квоты и

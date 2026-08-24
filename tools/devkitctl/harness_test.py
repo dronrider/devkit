@@ -106,12 +106,17 @@ class AltSubProfileTest(unittest.TestCase):
             self.assertTrue([a for a in argv if mark in a],
                             "в команде подпроцесса нет %s: %s" % (mark, argv))
 
-    def test_quota_is_empty(self):
-        # Остаток второй подписки снимать пока нечем, и пустая секция это
-        # штатно молчащий корректор, а не пробел: объявленный script был бы
-        # обещанием, которого профиль не держит.
-        self.assertEqual(self.prof.table("quota"), {},
-                         "секция [quota] второй подписки непуста, а снимать остаток нечем")
+    def test_quota_is_swapped(self):
+        # Остаток снимает сменный съёмщик из профиля: эндпоинт мониторинга
+        # подписки отвечает тем же токеном, что клиент, и отдаёт оба окна
+        # сразу. Пустая секция была бы молчащим корректором, а заявка без
+        # script обещанием, которого профиль не держит.
+        self.assertEqual(self.prof.str_of("quota", "snap"), "script",
+                         "вторая подписка снимает остаток не сменным съёмщиком")
+        self.assertEqual(self.prof.str_of("quota", "script"), "snap/glm-code.sh",
+                         "съёмщик второй подписки объявлен не в snap/ профиля")
+        self.assertTrue(self.prof.arr_of("quota", "buckets"),
+                        "бакеты остатка не объявлены")
 
     def test_no_detect(self):
         # Изнутри сессии вторая подписка от первой переменными неотличима, и

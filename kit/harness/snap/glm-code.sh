@@ -1,0 +1,86 @@
+#!/bin/sh
+# Съёмщик остатка GLM Coding Plan (z.ai) для agentctl quota refresh. Контракт
+# съёмщика в docs/lld/DK-033-universal-kit.md, раздел «Контракт съёмщика»;
+# какое окно ответа каким бакетом становится, разобрано в LLD DK-090, раздел
+# «Остаток второй подписки».
+#
+# Токен и base URL берутся из settings.json каталога конфигурации харнеса
+# (переменная DEVKIT_HARNESS_HOME от agentctl): это тот же токен, которым
+# работает клиент, отдельного ключа у подписки нет. На stdout попадает только
+# текст снимка, токен не печатается.
+set -eu
+
+if [ -z "${DEVKIT_HARNESS_HOME:-}" ]; then
+	echo "переменная DEVKIT_HARNESS_HOME пуста: каталог конфигурации харнеса передаёт agentctl quota refresh" >&2
+	exit 1
+fi
+settings="$DEVKIT_HARNESS_HOME/settings.json"
+if [ ! -f "$settings" ]; then
+	echo "нет $settings: токен подписки живёт в настройках клиента этого каталога" >&2
+	exit 1
+fi
+
+# Две строки: origin для запроса и токен. Эндпоинт мониторинга чужой для API
+# сообщений, поэтому путь не склеивается с base URL, а берётся от origin.
+pair=$(python3 - "$settings" <<'PY'
+import json, sys, urllib.parse
+
+try:
+    env = json.load(open(sys.argv[1]))["env"]
+    split = urllib.parse.urlsplit(env["ANTHROPIC_BASE_URL"])
+    token = env["ANTHROPIC_AUTH_TOKEN"]
+except (OSError, ValueError, KeyError) as e:
+    sys.exit("в %s не нашлось пары ANTHROPIC_BASE_URL и ANTHROPIC_AUTH_TOKEN: %s"
+             % (sys.argv[1], e))
+if not split.scheme or not split.netloc:
+    sys.exit("в ANTHROPIC_BASE_URL нет хоста: %r" % env["ANTHROPIC_BASE_URL"])
+if not token:
+    sys.exit("ANTHROPIC_AUTH_TOKEN пуст")
+print("%s://%s" % (split.scheme, split.netloc))
+print(token)
+PY
+)
+origin=$(printf '%s\n' "$pair" | sed -n 1p)
+token=$(printf '%s\n' "$pair" | sed -n 2p)
+
+resp=$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" \
+	"$origin/api/monitor/usage/quota/limit") || {
+	echo "запрос остатка к $origin не прошёл: токен протух либо эндпоинт сменился" >&2
+	exit 1
+}
+
+# Оба окна опознаются парой unit/number из ответа, а не расстоянием до сброса:
+# недельное окно перед своим сбросом короче живого пятичасового. Незнакомая
+# пара это отказ, а не догадка: снимок с перепутанными окнами двигал бы
+# вердикты в обратную сторону. Проценты считаются из сырых чисел, а не из
+# обрезанного полей percentage: панель округляет вниз.
+python3 - "$resp" <<'PY'
+import datetime, json, sys
+
+windows = {(3, 5): "window5h_all", (6, 1): "week_all"}
+try:
+    limits = json.loads(sys.argv[1])["data"]["limits"]
+except (ValueError, KeyError, TypeError):
+    sys.exit("ответ не похож на квоту z.ai: %s" % sys.argv[1][:200])
+now = datetime.datetime.now().replace(second=0, microsecond=0)
+print("taken = " + now.strftime("%Y-%m-%dT%H:%M"))
+seen = set()
+for lim in limits:
+    if lim.get("type") != "CREDIT_LIMIT":
+        continue
+    name = windows.get((lim.get("unit"), lim.get("number")))
+    if name is None:
+        sys.exit("в ответе незнакомое окно unit=%s number=%s, разбор отказан"
+                 % (lim.get("unit"), lim.get("number")))
+    ceiling, used = lim.get("usage"), lim.get("currentValue")
+    if not ceiling or used is None:
+        sys.exit("у окна %s нет расходов (usage=%s currentValue=%s)" % (name, ceiling, used))
+    if "nextResetTime" not in lim:
+        sys.exit("у окна %s нет времени сброса" % name)
+    pct = min(100, int(used * 100 / ceiling + 0.5))
+    reset = datetime.datetime.fromtimestamp(lim["nextResetTime"] / 1000)
+    print("%s = %d%% сброс %s" % (name, pct, reset.strftime("%Y-%m-%dT%H:%M")))
+    seen.add(name)
+if seen != set(windows.values()):
+    sys.exit("в ответе не оба окна подписки: %s" % ", ".join(sorted(seen)))
+PY

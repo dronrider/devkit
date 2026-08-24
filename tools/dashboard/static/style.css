@@ -145,12 +145,9 @@ a:hover{text-decoration:underline}
 .tipq{width:18px;height:18px;flex:none;border-radius:50%;border:1px solid var(--line2);color:var(--tx3);font:600 10.5px var(--sans);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .tipq:hover{color:var(--tx);border-color:var(--tx3)}
 .dashed{border-bottom:1px dashed var(--line2);cursor:default}
-/* кружок ожидания на кнопке чата: разговор задал вопрос и ждёт человека. Цвет
-   тот же, каким помечено ожидание чипом строки, а моргает он той же дорожкой,
-   что и точка работы, только своим цветом */
-.wdot{width:7px;height:7px;border-radius:50%;background:var(--wait);flex:none}
+/* дорожка моргания ожидания: её берёт кружок состояния «ждёт ответа» в строке
+   сессии. На кнопке чата такого кружка нет, он дублировал чип ожидания */
 @media (prefers-reduced-motion:no-preference){
-  .wdot{animation:dkwait 2.2s ease-out infinite}
   @keyframes dkwait{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--wait) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
 }
 @media (prefers-reduced-motion:no-preference){

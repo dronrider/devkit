@@ -6925,30 +6925,14 @@ function chatStoppable(st) {
 //
 // Подпись у кнопки значком, а не словом: рядом стоит «Продолжить», и два
 // слова подряд слипались в кашу.
-// Кружок ожидания на кнопке чата: разговор задал вопрос и ждёт человека. Тот же
-// признак, что рисует чип ожидания на строке доски (waitChip), и второго тут не
-// заводится: груминг черновика спрашивает в разговоре и ждёт там же, а на форме
-// записи никаких вопросов больше нет вовсе (решение пользователя).
-function waitDot(w) {
-  if (!w || !w.state) return null;
-  return el("i", "wdot");
-}
-
-function waitBtnTip(w, what) {
-  if (!w || !w.state) return what;
-  const qs = w.questions || [];
-  return what + ": " + waitWords(w, Date.now()) + ", " + (w.note || "источник не назван") + "." +
-    (qs.length ? " Вопрос: " + qs.join("; ") : "");
-}
-
+// Ожидание ответа кнопка чата не помечает вовсе: признак живёт чипом у самой
+// строки (waitChip), и кружок на кнопке дублировал его, вися рядом криво
+// (замечание пользователя). Кнопка отвечает за одно, вход в разговор.
 function rowChatBtn(project, row) {
   const talk = el("button", "btn btn-sm btn-ico");
   talk.append(icon("i-chat"));
-  const dot = waitDot(row.waiting);
-  if (dot) talk.append(dot);
-  withTip(talk, waitBtnTip(row.waiting, "Чат по задаче"));
-  talk.setAttribute("aria-label", "Чат по задаче " + row.id +
-    (row.waiting && row.waiting.state ? ", " + row.waiting.state : ""));
+  withTip(talk, "Чат по задаче");
+  talk.setAttribute("aria-label", "Чат по задаче " + row.id);
   talk.addEventListener("click", (ev) => {
     ev.stopPropagation();
     openChat(chatAddr(project, row.id));
@@ -8367,6 +8351,10 @@ function draftRow(project, d) {
   meta.append(el("span", "stale", d.age_words || ""));
   if (d.prio) meta.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
+  // Разбор спросил и ждёт ответа: признак тот же и теми же словами, что у
+  // строки доски, своего у накопителя нет.
+  const waits = waitChip(d);
+  if (waits) meta.append(waits);
   // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
   // агентом надо тем же способом: кнопка та же, значок тот же, панель
   // открывается с привязкой к его ID (решение пользователя).
@@ -9161,14 +9149,15 @@ async function renderDraft(project, works, id) {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
       if (running) chips.push(el("span", "chip c-run", "груминг идёт"));
+      // Разбор спросил и ждёт ответа: чип тот же, что у строки накопителя и у
+      // строки доски. Кружка на кнопке чата тут больше нет, он дублировал этот
+      // же чип (замечание пользователя).
+      const waits = waitChip({ waiting });
+      if (waits) chips.push(waits);
       const actions = [];
       if (groomChat) {
         const go = barBtn("btn", "Чат груминга", "i-chat");
-        // Разбор спрашивает в разговоре и ждёт там же: кружок на кнопке и есть
-        // весь след вопроса на этом экране.
-        const dot = waitDot(waiting);
-        if (dot) go.append(dot);
-        withTip(go, waitBtnTip(waiting, "Разговор разбора записи"));
+        withTip(go, "Разговор разбора записи");
         go.addEventListener("click", () => { openChat(chatAddr(project, groomChat.id)); });
         actions.push(go);
       } else if (!running) {

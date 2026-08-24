@@ -6,8 +6,9 @@
 // перечитывал черновик заново. Груминг идёт живым разговором (решение 1 LLD
 // DK-354), и все вопросы задаются в нём: механика повторного захода с формы
 // снята (решение пользователя). Предмет стенда это две половины замены: на
-// форме записи вопросов нет вовсе, а ожидание ответа видно кружком на кнопке
-// чата, и там, и в строке накопителя.
+// форме записи вопросов нет вовсе, а ожидание ответа видно чипом у самой
+// записи, и на её экране, и в строке накопителя. На кнопке чата признака нет:
+// кружок там дублировал чип и висел криво (замечание пользователя).
 //
 // Зовётся: node testdata/poc_draftask.mjs static/app.js
 
@@ -56,7 +57,10 @@ const go = async (hash) => {
   await sandbox.refresh();
   await settle();
 };
-const dots = () => allByClass(groups, "wdot").length;
+// Признак ожидания это чип «ждёт ответа» у записи, а не отметка на кнопке.
+const waits = () => allByClass(groups, "c-wait").length;
+// Кнопка чата отвечает за одно, вход в разговор: ни кружка, ни слов о статусе.
+const chatBtns = () => allByClass(groups, "btn-ico");
 
 // --- экран записи: вопросов на форме нет, ожидание видно кружком ---
 {
@@ -72,7 +76,14 @@ const dots = () => allByClass(groups, "wdot").length;
   if (!said.includes("Груминг кончился без исхода")) {
     fail("исход разбора без следа не назван: " + said.slice(0, 400));
   }
-  if (!dots()) fail("ожидание ответа на экране записи ничем не помечено: " + said.slice(0, 400));
+  if (!waits()) fail("ожидание ответа на экране записи ничем не помечено: " + said.slice(0, 400));
+  if (!said.includes("ждёт ответа")) fail("чип ожидания молчит: " + said.slice(0, 400));
+  // На кнопке чата признака нет вовсе, и подсказка её про вход в разговор.
+  for (const btn of chatBtns()) {
+    if (allByClass(btn, "wdot").length || /ждёт ответа/.test(String(btn.title || ""))) {
+      fail("кнопка чата снова помечена ожиданием: " + JSON.stringify(btn.title));
+    }
+  }
 }
 
 // --- человек ответил: признак снялся, кружок погас ---
@@ -80,23 +91,28 @@ const dots = () => allByClass(groups, "wdot").length;
   now.waiting = false;
   await go("#demo");
   await go("#demo/draft/XR-D2");
-  if (dots()) fail("кружок ожидания горит после ответа: " + dump(groups).slice(0, 300));
+  if (waits()) fail("чип ожидания стоит после ответа: " + dump(groups).slice(0, 300));
 }
 
 // --- строка накопителя: тот же кружок на кнопке чата ---
 {
   now.waiting = true;
   await go("#demo/drafts");
-  if (!dots()) fail("в строке накопителя ожидание не помечено: " + dump(groups).slice(0, 400));
+  if (!waits()) fail("в строке накопителя ожидание не помечено: " + dump(groups).slice(0, 400));
   const row = byClass(groups, "srow");
   if (!row) fail("строки накопителя нет вовсе");
-  if (!allByClass(row, "wdot").length) {
-    fail("кружок ожидания встал не в строке записи: " + dump(groups).slice(0, 300));
+  if (!allByClass(row, "c-wait").length) {
+    fail("чип ожидания встал не в строке записи: " + dump(groups).slice(0, 300));
+  }
+  for (const btn of allByClass(row, "btn-ico")) {
+    if (allByClass(btn, "wdot").length) {
+      fail("на кнопке чата строки вернулся кружок: " + dump(row));
+    }
   }
   now.waiting = false;
   await go("#demo");
   await go("#demo/drafts");
-  if (dots()) fail("кружок в строке накопителя горит после ответа");
+  if (waits()) fail("чип в строке накопителя стоит после ответа");
 }
 
 console.log("poc_draftask: ok");

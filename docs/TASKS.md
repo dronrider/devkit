@@ -52,7 +52,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-428 | taskctl: бонус за цену и наследование ранга по цели считаются из строки, видны в list | task | P2 | 38 (25+7+2+0+4) | M | [tasks/DK-428.md](tasks/DK-428.md) |
 | DK-506 | taskctl elapsed: минуты открытого этапа «разработка» против потолка захода | task | P2 | 38 (25+8+1+0+4) | S | [tasks/DK-506.md](tasks/DK-506.md) |
 | DK-507 | exec-*: абзац потолка захода и формат хвоста в «Ход работы» по DK-503 [после DK-506, DK-511] | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-507.md](tasks/DK-507.md) |
-| DK-511 | board-ship, board-batch: повторный pick --record перед спавном исполнителя | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-511.md](tasks/DK-511.md) |
+| DK-511 | board-ship, board-batch, board-task: pick --record перед каждым спавном исполнителя | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-511.md](tasks/DK-511.md) |
 | DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 37 (25+4+1+5+2) | S | [tasks/DK-176.md](tasks/DK-176.md) |
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 37 (25+8+2+0+2) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |

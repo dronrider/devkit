@@ -21,7 +21,7 @@ func TestPluralMinutes(t *testing.T) {
 	}
 }
 
-// TestExecCeilingEnvOverride: окружение перебивает число потолка для стендов,
+// TestExecCeilingEnvOverride: окружение перебивает число лимита для стендов,
 // а битое значение не роняет команду и возвращает умолчание (LLD DK-503,
 // «оба числа печатаются в отказах и перебиваются окружением для стендов»).
 func TestExecCeilingEnvOverride(t *testing.T) {
@@ -47,12 +47,12 @@ func TestCmdElapsedNoOpenStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed без записи: %v", err)
 	}
-	if msg != "этап не открыт, потолок не проверить" {
+	if msg != "этап не открыт, лимит не проверить" {
 		t.Fatalf("cmdElapsed без записи = %q", msg)
 	}
 }
 
-// TestCmdElapsedWithinCeiling: этап открыт недавно, до потолка.
+// TestCmdElapsedWithinCeiling: этап открыт недавно, до лимита.
 func TestCmdElapsedWithinCeiling(t *testing.T) {
 	root := setup(t)
 	home := t.TempDir()
@@ -69,13 +69,13 @@ func TestCmdElapsedWithinCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want := "разработка открыта 46 минут назад (с 2026-08-24T13:55:00), потолок 120 минут: в пределах"
+	want := "разработка открыта 46 минут назад (с 2026-08-24T13:55:00), лимит 120 минут: в пределах"
 	if msg != want {
 		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
 	}
 }
 
-// TestCmdElapsedPastCeiling: этап открыт дольше потолка, команда велит сдать
+// TestCmdElapsedPastCeiling: этап открыт дольше лимита, команда велит сдать
 // хвост, а не молчит про превышение.
 func TestCmdElapsedPastCeiling(t *testing.T) {
 	root := setup(t)
@@ -93,13 +93,13 @@ func TestCmdElapsedPastCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want := "разработка открыта 145 минут назад (с 2026-08-24T09:10:00), потолок 120 минут пройден: сдавай хвост"
+	want := "разработка открыта 145 минут назад (с 2026-08-24T09:10:00), лимит 120 минут пройден: сдавай хвост"
 	if msg != want {
 		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
 	}
 }
 
-// TestCmdElapsedCustomCeiling: потолок из окружения меняет вердикт при той же
+// TestCmdElapsedCustomCeiling: лимит из окружения меняет вердикт при той же
 // длительности этапа.
 func TestCmdElapsedCustomCeiling(t *testing.T) {
 	root := setup(t)
@@ -118,8 +118,8 @@ func TestCmdElapsedCustomCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	if !strings.Contains(msg, "потолок 10 минут пройден: сдавай хвост") {
-		t.Fatalf("cmdElapsed с потолком из окружения = %q", msg)
+	if !strings.Contains(msg, "лимит 10 минут пройден: сдавай хвост") {
+		t.Fatalf("cmdElapsed с лимитом из окружения = %q", msg)
 	}
 }
 

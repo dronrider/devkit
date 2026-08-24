@@ -145,8 +145,8 @@ func TestElapsedFindsLastMatchingKind(t *testing.T) {
 	}
 }
 
-// TestElapsedPastCeiling проверяет заход, ушедший за плановый потолок:
-// вызывающий сравнивает длительность с потолком сам, Elapsed только считает.
+// TestElapsedPastCeiling проверяет заход, ушедший за плановый лимит:
+// вызывающий сравнивает длительность с лимитом сам, Elapsed только считает.
 func TestElapsedPastCeiling(t *testing.T) {
 	rec := Record{Stages: []Stage{{Kind: Dev, Start: at(9, 10)}}}
 	d, ok := Elapsed(rec, Dev, at(11, 35))

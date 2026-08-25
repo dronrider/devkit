@@ -333,3 +333,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-514 | taskctl review: замечание с цитатой слова «исправлено» закрывается само | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-514.md](tasks/archive/2026/DK-514.md), `51c506b1`, `cde635bd`, `6c095574` |
 | DK-520 | Метка уровня разбора обязательна при записи черновика | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-520.md](tasks/archive/2026/DK-520.md) |
 | DK-521 | Сторож прозы check-prose.py: метрики замера, пороги конфигом, хук записи | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-521.md](tasks/archive/2026/DK-521.md) |
+| DK-526 | Мера прозы: десять новых текстов проходят пороги check-prose.py | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-526.md](tasks/archive/2026/DK-526.md) |

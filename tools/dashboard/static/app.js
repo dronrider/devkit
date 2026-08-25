@@ -6849,9 +6849,13 @@ function pulseRing(project, p) {
     // Плана нет и все спят: кольца нет вовсе, вместо него тонкий контур той же
     // кликабельной зоны. Серый бублик обещал бы работу, которой нет, а вход в
     // список агентов нужен и тут.
-    const asleep = !next || next.state === pulseEmptyState || next.state === pulseSilentState;
+    // Парковка идёт сюда же: ожидание строки это её состояние, и бублик с
+    // числом обещал бы живую работу, которой нет вовсе.
+    const asleep = !next || next.state === pulseEmptyState || next.state === pulseSilentState ||
+      Boolean(next && next.parked);
     const ghost = !plan.length && asleep;
     wrap.className = "ringwrap r-" + ((next && next.state) || "empty") +
+      (next && next.parked ? " parked" : "") +
       (ghost ? " ghost" : "") + (open ? " open" : "");
     // Сегменты и счёт в центре идут по окну: сотня долек за три дня работы
     // сливалась в сплошную полосу и не говорила ни о чём.
@@ -6948,6 +6952,10 @@ function ringNumber(p, list) {
     return list.filter((it) => it.state === "completed").length + "/" + list.length;
   }
   if (!p) return "";
+  // Ждёт сама строка, а разговоров за ней нет: единица в середине читалась как
+  // счёт ждущих агентов, которых нет ни одного. Про блокировку тут говорят
+  // слова рядом с кольцом.
+  if (p.parked) return "";
   if (p.state === "waiting") return String(p.waiting || 1);
   return p.working > 0 ? String(p.working) : "";
 }
@@ -7047,15 +7055,28 @@ function pulseURL(project, st) {
   return "/api/projects/" + encodeURIComponent(project) + "/pulse?" + q.join("&");
 }
 
+// Блокировка строки словами рядом с кольцом. Прежде о ней сообщал один красный
+// ореол с цифрой в середине: он моргал, как тревога, и не говорил ни чем задача
+// заблокирована, ни что это вообще блокировка (замечание пользователя по
+// снимку DK-466). Блокировка это состояние, а не событие, и место ей в словах.
+function ringBlockSay(slot, p) {
+  if (slot.blockChip) {
+    slot.blockChip.remove();
+    slot.blockChip = null;
+  }
+  if (!p || !p.parked || !p.block) return;
+  const chip = withFull(el("span", "chip c-block cwhy", "блок: " + p.block), p.block);
+  slot.append(chip);
+  slot.blockChip = chip;
+}
+
 function wireRing(project, st, slot) {
   const put = (p) => {
     // Узел кольца переживает тик: пересборка снимала бы открытый список.
     const has = slot.children && slot.children[0];
-    if (has && has.ringFill) {
-      has.ringFill(p);
-      return;
-    }
-    slot.replaceChildren(pulseRing(project, p));
+    if (has && has.ringFill) has.ringFill(p);
+    else slot.replaceChildren(pulseRing(project, p));
+    ringBlockSay(slot, p);
   };
   const load = async () => {
     const r = await api(pulseURL(project, st));
@@ -7130,6 +7151,10 @@ function chatHead(project, st) {
     : st.lost ? "Чат не найден"
     : st.entry ? chatTitle(st.entry)
     : st.sid ? "чат " + st.sid.slice(0, 8)
+    // Панель, открытая по задаче, называется задачей. «Чатов пока нет» тут
+    // стояло парой с такой же строкой в ленте, и человек читал два сообщения о
+    // пустоте подряд там, где панель уже открыта (замечание пользователя).
+    : st.task ? "задача " + st.task
     : "Чатов пока нет";
   pick.append(withFull(el("b", "", picked), picked));
   const car = el("span", "cdcar");
@@ -7378,11 +7403,14 @@ function touchPointer() {
 }
 
 // Ответ задаче безадресной строкой: ручка та же, какой пользуется сторожок.
+// Отдаётся тело ответа целиком, а не одна удача: ручка говорит, есть ли у
+// задачи ведущая сессия, и от этого зависит, доставлена реплика или ждёт во
+// входе. Пусто значит отказ ручки.
 async function answerTask(project, id, text) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/tasks/" + encodeURIComponent(id) + "/message", { method: "POST", body: { text } });
   sayResult(r.body.message || r.body.error || (r.ok ? "ответ уехал" : "ответ не ушёл"), !r.ok);
-  return r.ok;
+  return r.ok ? (r.body || {}) : null;
 }
 
 // Ждёт ли ответа сама задача, а не разговор: строка стоит с вопросом, и живой
@@ -7830,6 +7858,13 @@ function echoRead(project, addr) {
 const ECHO_LOST_WHY = "доставка не подтверждена: реплика ушла, но эха из " +
   "транскрипта ещё нет";
 
+// Причина у реплики, которая легла во вход задачи и ждёт там. Ведущей сессии у
+// задачи нет ни одной, и забрать безадресную строку некому: подхват отдаёт её
+// только той сессии, что задачу ведёт. Слова эти сервер говорит и сам, а тут
+// они запасные, на случай ответа без причины.
+const TASK_NO_LEAD_WHY = "работа по задаче не идёт, отвечать некому, и реплика " +
+  "ждёт во входе задачи";
+
 function echoWrite(project, addr, list) {
   try {
     // Переживают выгрузку панели не только неушедшие: held ждёт эха из
@@ -7838,7 +7873,8 @@ function echoWrite(project, addr, list) {
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
-        why: m.why || "", tmux: m.tmux || "", id: m.id || "", to: m.to || "" }));
+        why: m.why || "", tmux: m.tmux || "", id: m.id || "", to: m.to || "",
+        task: m.task || "" }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -7930,6 +7966,16 @@ function makeEcho(project, box, feedBox, addr, resend) {
             switchChat(m.to);
           });
           wrap.append(away);
+        }
+        // Реплика лежит во входе задачи и ждёт её сессию: выход отсюда это
+        // сама задача, где работу и поднимают. Пузырь при этом остаётся, текст
+        // человека из него никуда не девается.
+        if (m.task) {
+          const lift = el("button", "linkish", "поднять работу по задаче");
+          lift.title = "Реплика уже лежит во входе задачи " + m.task +
+            ": сессия заберёт её первым же ходом.";
+          lift.addEventListener("click", () => { goFromChat(project + "/" + m.task); });
+          wrap.append(lift);
         }
       }
       // Местный пузырь встаёт в ту же разметку строки ленты, что и запись из
@@ -8088,13 +8134,16 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // Автодожим тут только множил бы очередь у вставшего клиента. Панель
     // узнаёт о причине хуком onHeld и гасит свою плашку работы: агент не
     // работает, и мигать о работе поверх причины значило бы врать.
-    held(m, why, to) {
+    held(m, why, to, task) {
       if (!mine.includes(m)) return;
       m.state = "held";
       m.why = why;
       // Адрес выхода едет в персист вместе с пузырём: перезагрузка страницы
       // не должна уносить дорогу к живому разговору.
       if (to !== undefined) m.to = to || "";
+      // Задача едет туда же: у реплики, которая ждёт во входе, выход это не
+      // соседний разговор, а сама задача, откуда поднимают работу.
+      if (task !== undefined) m.task = task || "";
       save();
       draw();
       if (out.onHeld) out.onHeld();
@@ -8259,8 +8308,7 @@ function chatPanel(project, st) {
   // нет, и запертым полем кончается протухший адрес, куда писать некуда вовсе,
   // так что подсказка отправляла человека в другой редактор ни за чем
   // (замечание пользователя).
-  ta.placeholder = way.off ? (way.hint || "писать сюда некуда")
-    : (way.kind === "task" ? "Ответ задаче " + st.task + "..." : "Написать агенту...");
+  ta.placeholder = way.off ? (way.hint || "писать сюда некуда") : "Написать агенту...";
   ta.disabled = Boolean(way.off);
   ta.setAttribute("aria-label", "Реплика в чат");
   // Вопрос строки, его источник и адрес ответа висят подсказкой на самом поле:
@@ -8418,7 +8466,19 @@ function chatPanel(project, st) {
         // поэтому панель после удачи не перерисовывается: перерисовка стирала
         // пузырь сразу же, и нажатие выглядело так, будто ничего не случилось.
         answerTask(project, st.task, wire)
-          .then((ok) => { if (ok) echo.sent(m); else echo.bad(m); })
+          .then((got) => {
+            if (!got) {
+              echo.bad(m);
+              return;
+            }
+            // Ведущей сессии у задачи нет: строка лежит во входе и ждёт её.
+            // Пузырь остаётся недоставленным с причиной и дорогой к задаче,
+            // откуда работу поднимают. Прежде тут стояло «доставлено», пузырь
+            // снимался через десять секунд, и реплика уходила безадресной в
+            // чужой ход (живой случай DK-466).
+            if (got.undelivered) echo.held(m, got.why || TASK_NO_LEAD_WHY, "", st.task);
+            else echo.sent(m);
+          })
           .catch((err) => { echo.bad(m); console.error(err); })
           .finally(done);
         return;
@@ -8600,6 +8660,11 @@ function chatPanel(project, st) {
         "разговор откроется сам, ждать нажатий не надо"
       : st.fresh
       ? "новый чат: напишите первую реплику, она и поднимет сессию"
+      // Про пустоту говорит либо заголовок панели, либо лента, но не оба
+      // разом: у задачи имя стоит в заголовке, и ленте остаётся одно короткое
+      // предложение про то, с чего начать.
+      : st.task
+      ? "разговоров по задаче ещё не было, напишите первую реплику"
       : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
   } else {
     wireChatFeed(project, feed, st.sid, (item) => {

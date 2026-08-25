@@ -156,6 +156,15 @@ type Pulse struct {
 	Working int `json:"working"`
 	Waiting int `json:"waiting,omitempty"`
 	Idle    int `json:"idle,omitempty"`
+	// Parked говорит, что ждёт сама строка, а живой сессии за ней нет ни
+	// одной. Это состояние задачи, а не событие в разговоре. Кольцо такое
+	// ожидание рисовало красным ореолом с цифрой, ореол моргал, как тревога, и
+	// не объяснял ничего (замечание пользователя по снимку DK-466).
+	Parked bool `json:"parked,omitempty"`
+	// Block это причина блокировки со строки доски, дословно. Ею подписан чип
+	// рядом с кольцом: раз уж ожидание видно, сказать про него надо словами.
+	// Пусто у строки, которая не заблокирована.
+	Block string `json:"block,omitempty"`
 	// About и Since это чем занят и когда последний раз подавал голос тот
 	// агент, по которому подписана шапка: самый свежий из живых.
 	Tool  string `json:"tool,omitempty"`
@@ -658,6 +667,11 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	if asking && out.Waiting == 0 {
 		out.Waiting = 1
 	}
+	// Ожидание без единой живой сессии идёт от самой строки. Экран говорит о
+	// нём словами и гасит тревогу кольца: моргать тут нечему, разговор никто не
+	// ведёт.
+	out.Parked = asking && out.Count == 0
+	out.Block = block
 	out.Flow = out.Working > 0
 
 	switch {

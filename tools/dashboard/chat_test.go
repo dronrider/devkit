@@ -2152,3 +2152,64 @@ exit 0`)
 		t.Fatalf("про разобранный виджет ушла жалоба в журнал: %v", lc.lines)
 	}
 }
+
+// Ведущей сессии у задачи нет ни одной: безадресную строку входа забирает
+// только та сессия, что задачу ведёт, и обещать тут доставку нельзя. Живой
+// случай DK-466: панель отчиталась доставкой, сняла пузырь, а строку подхватила
+// посторонняя живая сессия того же чекаута и прочитала чужой вопрос посреди
+// своего хода.
+func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
+	e, c := parkedEnv(t)
+	resp := postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"undelivered":true`) {
+		t.Errorf("ответ не назвал реплику недоставленной: %s", text)
+	}
+	if !strings.Contains(text, "отвечать некому") {
+		t.Errorf("ответ не назвал причину словами: %s", text)
+	}
+	// Текст человека при этом не теряется: строка лежит во входе и ждёт свою
+	// сессию.
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	if !strings.Contains(src, "а почему задача заблокирована") {
+		t.Fatalf("реплика пропала из входа задачи:\n%s", src)
+	}
+}
+
+// Обратный случай: ведущая сессия жива, строку заберёт она, и недоставленной
+// реплика не считается.
+func TestTaskMessageDeliveredWithLead(t *testing.T) {
+	e, c := parkedEnv(t)
+	sideTree(t, e.proj, "xr-7")
+	writeSession(t, e.home, e.proj, "-xr-7", "aaaa-7777", plainTalk, time.Now())
+
+	resp := postTaskMessage(t, c, e, "XR-7", "ответ ведущей сессии")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(text, `"undelivered":true`) {
+		t.Errorf("реплика названа недоставленной при живой ведущей сессии: %s", text)
+	}
+}
+
+// Реплика в задачу без ведущей сессии на экране: пузырь стоит недоставленным с
+// причиной, текст человека цел и переживает таймеры панели, а рядом выход к
+// задаче. Предмет проверки это собранная разметка, поэтому статика поднимается
+// в node с заглушкой DOM (стенд testdata/poc_tasknolead.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticTaskReplyWithoutLead(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд реплики без ведущей сессии пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_tasknolead.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("реплика задаче без ведущей сессии: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

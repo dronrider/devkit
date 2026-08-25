@@ -717,3 +717,21 @@ func TestPulseRemembersJournalSteps(t *testing.T) {
 		t.Fatalf("повторный опрос кольца стоит %v против первого %v", warm, cold)
 	}
 }
+
+// Панель, открытая по заблокированной задаче без разговоров: кольцо не моргает
+// тревогой, причина блока сказана словами, о пустоте говорится один раз, а
+// плашка поля нейтральная. Предмет проверки это собранная разметка, поэтому
+// статика поднимается в node с заглушкой DOM (стенд testdata/poc_taskpanel.mjs).
+// Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticTaskPanelBlocked(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд панели заблокированной задачи пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskpanel.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("панель заблокированной задачи: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

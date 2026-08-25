@@ -992,6 +992,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .r-working .comet{stroke:var(--acc);opacity:0.55;animation:ringrun 1.6s linear infinite}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
+/* Ждёт сама строка, а разговоров за ней нет: ореол стоит тихо. Моргание тут
+   читалось тревогой, хотя блокировка это состояние, а не событие. */
+.ringwrap.parked .halo{animation:none;opacity:0.28}
 /* полный оборот по кольцу этапов: длина дуги при радиусе 15 */
 @keyframes ringrun{from{stroke-dashoffset:0}to{stroke-dashoffset:-94.25}}
 @keyframes ringpulse{0%,100%{opacity:0.14;stroke-width:1.2}50%{opacity:0.85;stroke-width:2.8}}

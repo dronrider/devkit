@@ -352,7 +352,7 @@ func cmdStatus(root string) (string, error) {
 	case len(b.sects["check"]) > 0:
 		if len(smoked) > 0 {
 			free := "очередь свободна: smoke прогнан за " + strings.Join(smoked, ", ") +
-				", приёмка глазами за пользователем, выкат очередь не держит"
+				", выкат очередь не держит"
 			if len(b.sects["check"]) > len(smoked) {
 				free += "; остальные в Check без выкаченного кода"
 			}
@@ -363,6 +363,21 @@ func cmdStatus(root string) (string, error) {
 	default:
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
 	}
+	// Кто из Check ждёт человека, называется поимённо и с видом приёмки: до
+	// DK-516 status говорил про приёмку глазами одной фразой на всех, и по
+	// ней нельзя было отличить строку, за которой стоит пользователь, от
+	// строки, которую доведёт до Done тик сторожка.
+	waiting, agentSmoked, agentStuck, agentRest := checkParts(root, b, smoked)
+	if len(waiting) > 0 {
+		line := "ждут человека в Check: " + strings.Join(waiting, ", ") + ", приёмка глазами и закрытие за пользователем"
+		if len(agentSmoked) > 0 {
+			line += "; агентские " + strings.Join(agentSmoked, ", ") + " закроет тик devkitctl watch"
+		}
+		out = append(out, line)
+	} else if len(agentSmoked) > 0 {
+		out = append(out, "человека в Check никто не ждёт: агентские "+strings.Join(agentSmoked, ", ")+" закроет тик devkitctl watch")
+	}
+
 	// Решение по выкату берётся из resolveDeploy, а не из сырого конфига:
 	// иначе status и merge разъезжаются, как только логика меняется.
 	plan, err := resolveDeploy(root, "")
@@ -392,6 +407,7 @@ func cmdStatus(root string) (string, error) {
 	for _, r := range b.sects["check"] {
 		st.check = append(st.check, r.ID)
 	}
+	st.waiting, st.agentSmoked, st.agentStuck, st.agentRest = waiting, agentSmoked, agentStuck, agentRest
 	for _, f := range fails {
 		st.failed = append(st.failed, f.ID)
 	}

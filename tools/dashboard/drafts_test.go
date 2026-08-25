@@ -982,3 +982,27 @@ func TestProjectsCountDrafts(t *testing.T) {
 		t.Errorf("посторонний файл посчитан записью: %d", n)
 	}
 }
+
+// Строка накопителя показывает дату правки записи, а не её возраст днями: возраст
+// отвечал не на тот вопрос, а дата стоит в том же виде, что у строки доски
+// (замечание пользователя). Считает её сервер по файлу записи.
+func TestDraftsCarryMoved(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
+	file := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	when := time.Date(2026, 3, 17, 12, 0, 0, 0, time.Local)
+	if err := os.Chtimes(file, when, when); err != nil {
+		t.Fatalf("время правки записи не проставилось: %v", err)
+	}
+
+	list := draftsResp(t, c, e)
+	drafts, _ := list["drafts"].([]any)
+	if len(drafts) != 1 {
+		t.Fatalf("в накопителе %d черновиков, жду 1: %v", len(drafts), list)
+	}
+	first, _ := drafts[0].(map[string]any)
+	if moved, _ := first["moved"].(string); moved != "2026-03-17" {
+		t.Errorf("дата правки записи приехала как %q, жду 2026-03-17: %v", first["moved"], first)
+	}
+}

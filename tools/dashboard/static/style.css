@@ -397,9 +397,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .prog .run{background:var(--acc)}
 .srow{display:grid;grid-template-columns:66px 1fr auto;gap:7px;align-items:center;padding:9px 16px;border-top:1px solid var(--line);min-height:44px}
 .srow:first-child{border-top:none}
-/* строка накопителя: перед номером стоит отметка выбора, и колонок у неё на
-   одну больше, чем у прочих списков */
-.dsrow{grid-template-columns:auto 66px 1fr auto}
 /* отметка выбора черновика это кнопка с квадратом, а не флажок браузера: палец
    попадает в неё целиком, а состояние читается с самой кнопки */
 .dpick{display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;background:none;cursor:pointer}
@@ -409,7 +406,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* галочка рисуется углом рамки и меряется долями квадрата: тогда она едет за
    его размером на телефоне */
 .dpick.on .dbox::after{content:"";position:absolute;left:32%;top:8%;width:26%;height:56%;border:solid var(--bg0);border-width:0 2px 2px 0;transform:rotate(45deg)}
-/* полоса запуска разбора: подтверждение встаёт под кнопкой во всю ширину */
+/* полоса запуска разбора: кнопка и поле модели рядом, подтверждение под ними
+   во всю ширину */
+.grun{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.grun .btn{width:auto}
 .drun{width:100%}
 .drun .dconfirm{padding:12px 0 2px}
 .srow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -826,8 +826,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .swch div{min-height:44px;display:flex;align-items:center;justify-content:center}
   /* телефон: строка состава в две колонки, статус переносится под заголовок */
   .srow{grid-template-columns:minmax(60px,auto) 1fr;gap:6px}
-  /* телефон: отметка выбора крупнее под палец, а строка держит её колонкой */
-  .dsrow{grid-template-columns:auto minmax(60px,auto) 1fr}
+  /* телефон: отметка выбора крупнее под палец */
   .dpick{width:36px;height:36px}
   .dbox{width:20px;height:20px}
   .srow .st{white-space:normal}
@@ -1071,6 +1070,24 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .rank:hover .rfold,.rank.on .rfold{display:inline}
 /* колонка типа растёт под длинную подпись чипа, а не режет её */
 .srow{grid-template-columns:minmax(60px,auto) 1fr auto;gap:6px;padding:7px 12px}
+
+/* строка накопителя одним рядом: отметка выбора, важность, номер, наименование,
+   дата правки и кнопка чата. Колонки стоят тут, а не рядом с остальной
+   разметкой накопителя: правило .srow выше по силе не отличается, а лежит ниже
+   по файлу, и три его колонки перебивали пять здешних, отчего строка рвалась на
+   две. Колонка важности есть у всякой записи, пустая в том числе: иначе
+   соседние колонки съезжали бы на одну. */
+.dsrow{grid-template-columns:auto auto minmax(56px,auto) 1fr auto}
+/* приписки строки накопителя жмутся вправо одной строкой и на телефоне: у
+   строки доски они уезжают под заголовок, а тут это разорванная строка */
+.dsrow .sm{grid-column:auto;justify-content:flex-end;flex-wrap:nowrap;min-width:0}
+/* наименование ужимается многоточием, а не переносом: полный текст показывает
+   подсказка, и на узком экране строка остаётся одной */
+.dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsrow .dimp:empty{display:none}
+/* телефон: кнопка запуска разбора остаётся рядом с полем модели, а не растёт
+   во всю ширину полосы, как растут кнопки заведения */
+.grun .btn{width:auto}
 
 /* 20: поле названия задачи растёт по содержимому, а не держит пустую высоту */
 .fgrid textarea.oneline,textarea.tname{min-height:0;height:auto;overflow-y:hidden}

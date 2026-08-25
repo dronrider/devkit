@@ -45,6 +45,11 @@ func groomPrompt(id, ask string) string {
 // постановка задачи.
 const draftAskLimit = 4 << 10
 
+// draftDateLayout это вид даты правки записи: тот же, каким taskctl печатает
+// дату строки доски (поле moved), чтобы накопитель и доска говорили о времени
+// одинаково.
+const draftDateLayout = "2006-01-02"
+
 // draftSession это имя tmux-сессии грумминга. Префикс task- взят не для
 // красоты: грумминг кончается строкой доски с тем же ID (taskctl add --id), и
 // работа видна там же, где остальные работы проекта (liveWorks привязывает их
@@ -92,6 +97,19 @@ func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []jso
 		if err := json.Unmarshal(raw, &m); err != nil {
 			out = append(out, raw)
 			continue
+		}
+		// Дата правки записи теми же словами, что у строки доски: строка
+		// накопителя показывает дату, а не возраст днями (замечание
+		// пользователя). Считается она по файлу записи, как считает его
+		// возраст сам taskctl, и молчит там, где файла не видно.
+		var file string
+		json.Unmarshal(m["file"], &file)
+		if file != "" {
+			if info, err := os.Stat(filepath.Join(projPath, filepath.FromSlash(file))); err == nil {
+				if mark, err := json.Marshal(info.ModTime().Format(draftDateLayout)); err == nil {
+					m["moved"] = mark
+				}
+			}
 		}
 		var id string
 		json.Unmarshal(m["id"], &id)

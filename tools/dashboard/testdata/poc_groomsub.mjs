@@ -1,23 +1,25 @@
-// Стенд выбора подписки у груминга (ветка poc-chat).
+// Стенд выбора модели у груминга (ветка poc-chat).
 //
-// Разбор черновика это такая же работа агента, как конвейер задачи: выбор
-// подписки у него был только у задачи, а груминг всегда шёл подпиской по
-// умолчанию, и заплатить за него другой квотой было нечем (замечание
-// пользователя). Предмет стенда это составная кнопка разбора над списком:
-// широкая половина поднимает разбор подпиской по умолчанию, а выбранная из
-// списка едет в заказ именем. Стоит она над накопителем, а не в строке: строки
-// держат отметки выбора, и запуск один на выбранное (решение пользователя).
+// Разбор черновика это такая же работа агента, как конвейер задачи, и платится
+// он той же квотой: выбор был только у задачи, а груминг всегда шёл подпиской
+// по умолчанию (замечание пользователя). Спрашивать про подписку с ярусом
+// человек не хочет: рядом с кнопкой ему надо видеть, чем будет разбираться,
+// то есть имя модели (решение пользователя). Предмет стенда это полоса запуска
+// над накопителем: кнопка «Провести груминг» и поле модели рядом, а в заказ с
+// поля уезжают подписка и ярус, потому что имени модели ручка разбора не знает.
 //
 // Зовётся: node testdata/poc_groomsub.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, tag, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
 
 const harnesses = [
-  { name: "claude-code", bin: "claude", default: true },
-  { name: "glm-code", bin: "glm" },
+  { name: "claude-code", bin: "claude", default: true,
+    models: [{ tier: "base", model: "sonnet" }, { tier: "pro", model: "opus" }] },
+  { name: "glm-code", bin: "glm",
+    models: [{ tier: "base", model: "glm-5.3" }, { tier: "pro", model: "glm-5.4" }] },
 ];
 
 const posted = [];
@@ -47,11 +49,9 @@ if (!byClass(row, "dpick")) fail("в строке накопителя нет о
 const bar = sandbox.draftRunBar("demo", []);
 const pickOne = () => {
   sandbox.draftPickSet("XR-D1", true);
-  const split = byClass(bar, "split");
-  return { split, pop: split && byClass(split, "hpop"),
-    wide: deepBtn(bar, "Разобрать выбранное") };
+  return { btn: deepBtn(bar, "Провести груминг"), sel: tag(bar, "SELECT") };
 };
-if (!pickOne().wide) fail("кнопки разбора над списком нет вовсе: " + dump(bar));
+if (!pickOne().btn) fail("кнопки разбора над списком нет вовсе: " + dump(bar));
 // Подтверждение стоит между нажатием и подъёмом: сессий поднимется столько,
 // сколько выбрано, и сказать об этом надо до нажатия.
 const confirm = async (node) => {
@@ -63,43 +63,51 @@ const confirm = async (node) => {
   await settle();
 };
 
-// --- у разбора есть выбор подписки, как у запуска задачи ---
+// --- рядом с кнопкой видно, чем будет разбираться ---
 {
-  const { split, pop } = pickOne();
-  if (!split) fail("у разбора нет составной кнопки с выбором подписки: " + dump(bar));
-  if (!pop) fail("списка подписок у разбора нет: " + dump(split));
-  const names = allByClass(pop, "hrow").map((h) => dump(h).trim().split(/\s+/)[0]);
-  if (!names.includes("glm-code") || !names.includes("claude-code")) {
-    fail("в списке подписок разбора не обе подписки машины: " + JSON.stringify(names));
+  const { sel } = pickOne();
+  if (!sel) fail("поля модели рядом с кнопкой разбора нет: " + dump(bar));
+  const names = (sel.children || []).map((o) => dump(o).trim());
+  for (const want of ["opus", "sonnet", "glm-5.3", "glm-5.4"]) {
+    if (!names.includes(want)) {
+      fail("в поле модели нет модели раскладки " + want + ": " + JSON.stringify(names));
+    }
   }
+  // По умолчанию стоит модель подписки по умолчанию на ярусе разбора: верхний
+  // ярус клиента разбору не нужен (RUN_TIER).
+  if (sel.value !== "opus") fail("по умолчанию выбрана не модель разбора: " + sel.value);
 }
 
-// --- широкая половина поднимает разбор подпиской по умолчанию ---
-await confirm(pickOne().wide);
+// --- кнопка поднимает разбор моделью, которая видна рядом ---
+await confirm(pickOne().btn);
 if (!posted.length || !posted[0].path.includes("/groom")) {
-  fail("широкая половина не подняла разбор: " + JSON.stringify(posted));
+  fail("кнопка не подняла разбор: " + JSON.stringify(posted));
 }
-// Широкая половина едет подпиской по умолчанию, той же дорогой, что у запуска
-// задачи: имя её в заказе стоять может, а чужого имени там быть не должно.
-const wideName = (posted[0].body || {}).harness || "";
-if (wideName && wideName !== "claude-code") {
-  fail("широкая половина поднимает разбор не подпиской по умолчанию: " + wideName);
+// Наружу едут подписка и ярус: имени модели ручка разбора не знает, и ломать
+// эту передачу выбор модели не должен.
+if (!posted[0].body || posted[0].body.harness !== "claude-code" || posted[0].body.tier !== "pro") {
+  fail("модель по умолчанию не развернулась в подписку с ярусом: " + JSON.stringify(posted[0].body));
 }
 
-// --- выбранная подписка едет в заказ именем ---
-const pick = allByClass(pickOne().pop, "hrow").find((h) => dump(h).includes("glm-code"));
-await confirm(pick);
-const last = posted[posted.length - 1];
-if (!last.path.includes("/groom")) fail("выбор подписки не поднял разбор: " + JSON.stringify(posted));
-if (!last.body || last.body.harness !== "glm-code") {
-  fail("выбранная подписка не доехала до заказа разбора: " + JSON.stringify(last.body));
+// --- выбранная модель уезжает своей подпиской и своим ярусом ---
+{
+  const { sel } = pickOne();
+  sel.value = "glm-5.3";
+  sel.handlers.change({});
+  await settle();
+  await confirm(pickOne().btn);
+  const last = posted[posted.length - 1];
+  if (!last.path.includes("/groom")) fail("выбор модели не поднял разбор: " + JSON.stringify(posted));
+  if (!last.body || last.body.harness !== "glm-code" || last.body.tier !== "base") {
+    fail("выбранная модель доехала до заказа не своей парой: " + JSON.stringify(last.body));
+  }
 }
 
 // --- нажатие на разбор не уводит внутрь записи ---
 // Прежде кнопка стояла в строке, нажатие всплывало до её обработчика, и вместо
 // запуска открывалась форма записи (замечание пользователя).
 sandbox.location.hash = "#demo/drafts";
-await confirm(pickOne().wide);
+await confirm(pickOne().btn);
 if (sandbox.location.hash !== "#demo/drafts") {
   fail("запуск разбора увёл с накопителя: " + sandbox.location.hash);
 }

@@ -427,18 +427,11 @@ func TestStaticNewTaskForm(t *testing.T) {
 			t.Errorf("%s не открывает меню заведения", fn)
 		}
 	}
-	for _, fn := range []string{"function renderDrafts("} {
-		cut := strings.Index(text, fn)
-		if cut < 0 {
-			t.Fatalf("в static/app.js нет %s", fn)
-		}
-		part := text[cut:]
-		if stop := strings.Index(part, "\n}\n"); stop > 0 {
-			part = part[:stop]
-		}
-		if !strings.Contains(part, "newTaskButton(") {
-			t.Errorf("в %s нет кнопки заведения", fn)
-		}
+	// В накопителе своей кнопки заведения больше нет: тот же выбор «черновик
+	// или задача» живёт меню плюса рядом с полем поиска, и вторая кнопка на том
+	// же экране отвечала на уже заданный вопрос (решение пользователя).
+	if body := funcBody(t, text, "function renderDrafts("); strings.Contains(body, "newTaskButton(") {
+		t.Error("в таб черновиков вернулась своя кнопка заведения")
 	}
 	// С доски заведение это кнопка в шапке рядом с поиском: полоса кнопок над
 	// строками доски занимала место, ради которого экран и открыт.

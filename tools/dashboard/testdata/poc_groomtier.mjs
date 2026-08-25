@@ -1,15 +1,16 @@
-// Стенд яруса разбора черновика (ветка poc-chat).
+// Стенд кнопки запуска разбора (ветка poc-chat).
 //
-// Разбор поднимался клиентом без модели вовсе, то есть шёл дефолтом самого
-// клиента: у пользователя это верхний ярус, самая дорогая подписка, которую он
-// не выбирал (замечание пользователя). Ярус теперь назван: по умолчанию pro, а
-// другой берут осознанно тем же списком, в котором выбирают подписку. Про саму
-// команду отвечает сервер (TestDraftGroomTier), а предмет этого стенда кнопка:
-// что уезжает в заказ и откуда берётся список ярусов.
+// Кнопка звалась «Разобрать выбранное» и висела над списком всегда, гашеная при
+// пустом выборе, а чем поедет разбор, спрашивалось у неё подпиской и ярусом.
+// Человек называет эту работу грумингом и хочет видеть рядом с кнопкой модель,
+// а не лестницу, из которой её надо выводить (решение пользователя). Предмет
+// стенда это сама кнопка: имя, появление по выбору и то, что третьей механики
+// выбора рядом с ней не завелось. Куда уезжают подписка с ярусом, сторожит
+// poc_groomsub.
 //
 // Зовётся: node testdata/poc_groomtier.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, deepBtn, tag, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -18,7 +19,7 @@ const tiers = [{ tier: "mini", model: "haiku" }, { tier: "base", model: "sonnet"
   { tier: "pro", model: "opus" }, { tier: "max", model: "fable" }];
 const harnesses = [
   { name: "claude-code", bin: "claude", default: true, models: tiers },
-  { name: "glm-code", bin: "glm", models: [{ tier: "base", model: "glm-5.3" }, { tier: "pro", model: "glm-5.3" }] },
+  { name: "glm-code", bin: "glm", models: [{ tier: "base", model: "glm-5.3" }, { tier: "pro", model: "glm-5.4" }] },
 ];
 
 const posted = [];
@@ -36,95 +37,61 @@ const { sandbox } = makeSandbox(app, (path, init) => {
 await settle();
 await sandbox.loadHarnesses();
 
-const draft = { id: "XR-D1", title: "мысль с телефона", age_words: "вчера" };
-// Кнопка разбора стоит над списком, а не в строке: строки держат отметки
-// выбора, и запуск один на выбранное (решение пользователя). Полоса
-// пересобирается на всякую правку выбора, поэтому её узлы берутся заново.
-const barNode = sandbox.draftRunBar("demo", []);
-const rowOf = () => {
-  sandbox.draftPickSet(draft.id, true);
-  return barNode;
-};
-// Подтверждение стоит между нажатием и подъёмом: сколько сессий встанет,
-// сказано до нажатия.
-const confirm = async () => {
-  const go = deepBtn(barNode, "Поднять 1");
-  if (!go) fail("подтверждения перед подъёмом нет: " + dump(barNode));
+// Полоса пересобирается на всякую правку выбора, поэтому её узлы берутся
+// заново, а не держатся с прошлого раза.
+const bar = sandbox.draftRunBar("demo", []);
+const btn = () => deepBtn(bar, "Провести груминг");
+
+// --- при пустом выборе кнопки нет вовсе ---
+{
+  if (btn()) fail("кнопка запуска стоит при пустом выборе: " + dump(bar));
+  if (deepBtn(bar, "Разобрать выбранное")) fail("прежнее имя кнопки осталось: " + dump(bar));
+  if (!dump(bar).includes("Отметьте записи")) {
+    fail("при пустом выборе не сказано, откуда берётся разбор: " + dump(bar));
+  }
+}
+
+// --- отметка ставит кнопку, и зовётся она грумингом ---
+{
+  sandbox.draftPickSet("XR-D1", true);
+  if (!btn()) fail("отметка не поставила кнопку запуска: " + dump(bar));
+  if (deepBtn(bar, "Разобрать выбранное")) fail("прежнее имя кнопки вернулось: " + dump(bar));
+  if (!dump(bar).includes("Выбрано 1 запись")) {
+    fail("полоса не говорит, сколько записей выбрано: " + dump(bar));
+  }
+}
+
+// --- третьей механики выбора рядом с кнопкой нет ---
+// Подписка с ярусом выбираются составной кнопкой у запуска задачи, и разводить
+// у груминга свой такой же список незачем: у него выбор идёт полем модели.
+{
+  if (byClass(bar, "split") || byClass(bar, "hpop")) {
+    fail("у кнопки груминга завёлся свой список подписок: " + dump(bar));
+  }
+  const sel = tag(bar, "SELECT");
+  if (!sel) fail("поля модели рядом с кнопкой нет: " + dump(bar));
+  if (sel.value !== "opus") fail("рядом с кнопкой видна не модель разбора: " + sel.value);
+}
+
+// --- снятие отметки убирает кнопку обратно ---
+{
+  sandbox.draftPickSet("XR-D1", false);
+  if (btn()) fail("кнопка осталась после снятия последней отметки: " + dump(bar));
+}
+
+// --- разбор всё так же поднимается ярусом разбора, а не дефолтом клиента ---
+{
+  sandbox.draftPickSet("XR-D1", true);
+  btn().handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const go = deepBtn(bar, "Поднять 1");
+  if (!go) fail("подтверждения перед подъёмом нет: " + dump(bar));
   go.handlers.click({ stopPropagation: () => {} });
   await settle();
-};
-
-// --- ярусы берутся из раскладки машины, а не из головы ---
-{
-  const names = sandbox.harnessTiers();
-  if (JSON.stringify(names) !== JSON.stringify(["mini", "base", "pro", "max"])) {
-    fail("список ярусов собран не по раскладке машины: " + JSON.stringify(names));
-  }
-}
-
-// --- в списке кнопки разбора есть выбор яруса, и pro в нём выбран ---
-{
-  const row = rowOf();
-  const pop = byClass(row, "hpop");
-  if (!pop) fail("у кнопки разбора нет списка выбора: " + dump(row));
-  const picks = allByClass(pop, "tpick");
-  if (picks.length !== 4) fail("ярусов в списке " + picks.length + ", ждал четыре: " + dump(pop));
-  const on = picks.filter((p) => String(p.className).includes("on")).map((p) => dump(p).trim());
-  if (JSON.stringify(on) !== JSON.stringify(["pro"])) {
-    fail("по умолчанию выбран не pro: " + JSON.stringify(on));
-  }
-  if (!dump(pop).includes("Ярус: pro")) {
-    fail("подвал списка не говорит, каким ярусом поедет разбор: " + dump(pop));
-  }
-}
-
-// --- широкая половина поднимает разбор ярусом pro ---
-{
-  const row = rowOf();
-  const wide = deepBtn(row, "Разобрать выбранное");
-  wide.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  await confirm();
   const last = posted[posted.length - 1];
   if (!last || !last.path.includes("/groom")) fail("разбор не поднялся: " + JSON.stringify(posted));
   if (!last.body || last.body.tier !== "pro") {
-    fail("в заказ разбора не уехал ярус по умолчанию: " + JSON.stringify(last.body));
-  }
-}
-
-// --- выбранный ярус уезжает в заказ вместе с подпиской ---
-{
-  const row = rowOf();
-  const pop = byClass(row, "hpop");
-  const base = allByClass(pop, "tpick").find((p) => dump(p).trim() === "base");
-  base.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  // Выбор яруса сам работы не поднимает: он отвечает на другой вопрос.
-  const was = posted.length;
-  if (posted.length !== was) fail("выбор яруса сам поднял разбор");
-  const pick = allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"));
-  if (!pick) fail("в списке нет второй подписки: " + dump(pop));
-  pick.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  await confirm();
-  const last = posted[posted.length - 1];
-  if (!last.body || last.body.tier !== "base" || last.body.harness !== "glm-code") {
-    fail("выбранные ярус с подпиской не доехали до заказа: " + JSON.stringify(last.body));
-  }
-}
-
-// --- выбор яруса остаётся и с одной подпиской на машине ---
-{
-  harnesses.length = 1;
-  await sandbox.loadHarnesses();
-  const row = rowOf();
-  const pop = byClass(row, "hpop");
-  if (!pop) fail("с одной подпиской список выбора пропал вместе с ярусами: " + dump(row));
-  if (dump(pop).includes("На какой подписке")) {
-    fail("с одной подпиской список всё равно спрашивает про подписку: " + dump(pop));
-  }
-  if (allByClass(pop, "tpick").length !== 4) {
-    fail("ярусов с одной подпиской не осталось: " + dump(pop));
+    fail("в заказ разбора не уехал ярус разбора: " + JSON.stringify(last.body));
   }
 }
 

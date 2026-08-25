@@ -8698,8 +8698,6 @@ async function chatBoardOf(project) {
 // механику, что и конвейер задачи: сессия агента с заказом груминга, после
 // которого строка оказывается в Backlog. Сама запись со своим текстом, ходом
 // разбора и исходом живёт экраном ниже: одно место лучше двух.
-const DRAFTS_HINT = "Записанные мимо доски идеи: метаданных у них нет, ранг и " +
-  "тип выдаст груминг, он же заведёт строку.";
 const GROOM_HINT = "«Провести груминг» поднимает сессию разбора: она доведёт " +
   "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
   "видны на экране записи.";
@@ -8763,14 +8761,73 @@ function draftPickClear() {
   if (draftBarPaint) draftBarPaint();
 }
 
-// Полоса запуска разбора: одна кнопка на выбранное, с тем же выбором подписки
-// и яруса, что был у прежней кнопки в строке. Пока ничего не выбрано, кнопка
-// стоит гашеной: прятать её вовсе значило бы прятать и способ узнать, что
-// отметки вообще есть.
+// Полоса запуска разбора: одна кнопка на выбранное и поле модели рядом с ней.
+// Пока ничего не отмечено, кнопки нет вовсе: гашеная кнопка отвечала на вопрос,
+// которого никто не задавал, а что отметки бывают, говорит подпись рядом
+// (решение пользователя).
 function draftRunBar(project, works) {
   const bar = el("div", "nbar");
   draftRunBarFill(bar, project, works);
   return bar;
+}
+
+// Модель разбора живёт экраном, а не полосой: полоса пересобирается на всякую
+// отметку в списке, и выбор возвращался бы к умолчанию на каждое нажатие.
+let draftModel = "";
+
+// Плоская лестница моделей машины: подписка с ярусом развёрнуты в имя модели.
+// Собирается она из той же раскладки (agentctl harness), которой живёт выбор
+// подписки у запуска задачи: своего перечня имён у дашборда нет ни одного, и
+// новая подписка появляется в выборе сама. Повторы имени внутри подписки
+// отсеиваются: у второй подписки верхние ярусы сложены одной моделью, и две
+// одинаковые строки в списке читались бы ошибкой.
+function modelLadder() {
+  const out = [];
+  for (const h of harnesses()) {
+    const seen = [];
+    for (const m of h.models || []) {
+      if (!m.model || seen.includes(m.model)) continue;
+      seen.push(m.model);
+      out.push({ model: m.model, tier: m.tier || "", harness: h.name,
+        pin: Boolean(h.default) && m.tier === RUN_TIER });
+    }
+  }
+  return out;
+}
+
+// Чем поедет разбор: выбранное имя, а без выбора модель подписки по умолчанию
+// на ярусе RUN_TIER. Наружу едут подписка и ярус, как ехали раньше: ручка
+// разбора имени модели не знает вовсе, и знать ей его незачем.
+function modelLadderPick(name) {
+  const list = modelLadder();
+  return list.find((m) => m.model === name) || list.find((m) => m.pin) || list[0] || null;
+}
+
+// Поле выбора модели рядом с кнопкой: человек спрашивает «чем будет
+// разбираться», и ответ на это ярусом с подпиской заставлял его держать в
+// голове их раскладку. Ярус с подпиской остались тем, что уезжает в заказ.
+function draftModelPick() {
+  const list = modelLadder();
+  if (!list.length) return null;
+  const now = modelLadderPick(draftModel);
+  const sel = el("select", "cdsel");
+  sel.setAttribute("aria-label", "Модель разбора");
+  for (const m of list) {
+    const o = el("option", "", m.model);
+    o.value = m.model;
+    o.title = m.tier ? "ярус " + m.tier + ", подписка " + m.harness : "подписка " + m.harness;
+    if (now && m.model === now.model) o.selected = true;
+    sel.append(o);
+  }
+  if (now) sel.value = now.model;
+  const why = (m) => (m ? m.model + ": ярус " + m.tier + ", подписка " + m.harness
+    + ". Список из раскладки машины, agentctl harness." : "Модель разбора");
+  withTip(sel, why(now));
+  sel.addEventListener("change", () => {
+    draftModel = sel.value;
+    withTip(sel, why(modelLadderPick(draftModel)));
+  });
+  return sel;
 }
 
 function draftRunBarFill(bar, project, works) {
@@ -8779,17 +8836,28 @@ function draftRunBarFill(bar, project, works) {
   draftBarPaint = () => { draftRunBarFill(bar, project, works); };
   const picked = [...draftPick];
   const box = el("span", "drun");
-  const label = "Разобрать выбранное" + (picked.length ? " (" + picked.length + ")" : "");
-  const grp = runControl(project, "", (word) => {
-    const btn = el("button", "btn btn-sm btn-acc", word);
-    btn.disabled = picked.length === 0;
-    return btn;
-  }, label, false, GROOM_HINT, "", "",
-    (harness, tier) => draftGroomAsk(project, works, box, harness, tier),
-    harnessTiers());
-  bar.replaceChildren(grp, box, el("span", "hint",
-    picked.length ? "Каждая запись пойдёт своим разговором."
-      : "Отметьте записи в списке, и разбор поднимется на выбранные."));
+  if (!picked.length) {
+    bar.replaceChildren(box, el("span", "hint",
+      "Отметьте записи в списке, и разбор поднимется на выбранные."));
+    return;
+  }
+  const grp = el("span", "grun");
+  const btn = el("button", "btn btn-sm btn-acc", "Провести груминг");
+  withTip(btn, GROOM_HINT);
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    btn.disabled = true;
+    const now = modelLadderPick(draftModel);
+    const going = draftGroomAsk(project, works, box,
+      now ? now.harness : "", now ? now.tier : "");
+    Promise.resolve(going).catch(console.error).finally(() => { btn.disabled = false; });
+  });
+  grp.append(btn);
+  const sel = draftModelPick();
+  if (sel) grp.append(sel);
+  bar.replaceChildren(grp, box, el("span", "hint", "Выбрано " + picked.length + " " +
+    plural(picked.length, "запись", "записи", "записей") +
+    ", каждая пойдёт своим разговором."));
 }
 
 // Подтверждение перед подъёмом: сколько сессий встанет и что каждая пойдёт
@@ -8887,19 +8955,29 @@ function draftRow(project, d) {
     pickSay();
   });
   row.append(pick);
+  // Важность стоит своей колонкой перед номером, и колонка эта есть у всякой
+  // строки: без записи без уровня разбора соседние колонки съезжали бы на одну
+  // (порядок назвал пользователь).
+  const imp = el("span", "dimp");
+  if (d.prio) imp.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
+  row.append(imp);
   row.append(el("span", "id", d.id));
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
   // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
   // телефона иначе не прочитать, не заходя внутрь (замечание пользователя).
   row.append(withFull(el("span", "st", d.title || ""), d.title || ""));
   const meta = el("span", "sm");
-  meta.append(el("span", "stale", d.age_words || ""));
-  if (d.prio) meta.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
   // Разбор спросил и ждёт ответа: признак тот же и теми же словами, что у
   // строки доски, своего у накопителя нет.
   const waits = waitChip(d);
   if (waits) meta.append(waits);
+  // Дата правки записи вместо возраста днями и теми же словами, что у строки
+  // доски: возраст «3 дня» отвечал не на тот вопрос (замечание пользователя).
+  if (d.moved) {
+    meta.append(withTip(el("span", "stale dashed", d.moved),
+      "дата последней правки записи: разбор двигает её же"));
+  }
   // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
   // агентом надо тем же способом: кнопка та же, значок тот же, панель
   // открывается с привязкой к его ID (решение пользователя).
@@ -8936,14 +9014,6 @@ async function renderDrafts(project, works) {
     // Дорога назад к задачам это тот же таб, что и привёл сюда: хлебной
     // крошки над накопителем больше нет, она вела туда же вторым способом.
     make: () => boardKindBar(project, "drafts"),
-  }, {
-    key: "drafts-bar",
-    sign: project,
-    make: () => {
-      const bar = el("div", "nbar");
-      bar.append(newTaskButton(project, "Новая задача"), el("span", "hint", DRAFTS_HINT));
-      return bar;
-    },
   }, {
     key: "drafts-run",
     // Полоса запуска перерисовывается сама, изнутри: от выбора её подпись не

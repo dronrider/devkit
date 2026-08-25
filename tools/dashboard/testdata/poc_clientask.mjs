@@ -104,7 +104,9 @@ const panel = sandbox.chatPanel("demo", st);
 await settle();
 const boxOf = () => byClass(panel, "cask");
 const optsOf = () => allByClass(boxOf(), "caskopt");
-const tabsOf = () => allByClass(boxOf(), "cstep");
+// Табы шагов это та же полоса, что у доски (ktab в ktabs): своих кнопок в
+// рамках у опроса больше нет (решение пользователя).
+const tabsOf = () => allByClass(boxOf(), "ktab");
 // Ход панели после нажатия: она перечитывает снимок отложенным заходом.
 const settleMove = async () => {
   await settle();
@@ -229,15 +231,35 @@ const showAsk = async (next) => {
   const box = boxOf();
   const tabs = tabsOf();
   if (tabs.length !== 3) fail("шагов опроса не три: " + tabs.map((t) => t.textContent));
-  const openNow = tabs.filter((t) => String(t.className).includes("now")).map((t) => t.textContent);
+  const openNow = tabs.filter((t) => String(t.className).includes("onktab")).map((t) => t.textContent);
   if (JSON.stringify(openNow) !== JSON.stringify(["Место"])) {
     fail("открытый шаг не помечен: " + JSON.stringify(tabs.map((t) => t.className)));
   }
-  const done = tabs.filter((t) => String(t.className).includes("on")).map((t) => t.textContent);
+  const done = tabs.filter((t) => dump(t).includes("ответ есть")).map((t) => t.textContent);
   if (!done.includes("Сроки")) fail("отвеченный шаг не помечен: " + JSON.stringify(done));
-  // Переход по табу это не ответ: уезжает шаг, а не пункт.
+  // Полоса собрана той же механикой, что и полоса доски: своих кнопок в рамках
+  // (cstep) в блоке не осталось ни одной.
+  if (!byClass(box, "ktabs")) fail("полоса шагов собрана не как на доске: " + dump(box).slice(0, 200));
+  if (allByClass(box, "cstep").length) fail("прежние кнопки шагов остались в блоке");
+  // Переход по табу это не ответ: уезжает шаг, а не пункт. И виден он в тот же
+  // ход: до правки подчёркивание переезжало только со следующим снимком
+  // панели, то есть через полсекунды после нажатия (замечание пользователя).
   now.next = pollNext;
   tabs[1].handlers.click({ stopPropagation: () => {} });
+  {
+    const marked = tabsOf().filter((t) => String(t.className).includes("onktab"))
+      .map((t) => t.textContent);
+    if (JSON.stringify(marked) !== JSON.stringify(["Симптом"])) {
+      fail("нажатый шаг не отмечен в тот же ход: " + JSON.stringify(marked));
+    }
+    const said = dump(boxOf()).replace(/\s+/g, " ");
+    if (!said.includes("Симптом") || !said.includes("открывается")) {
+      fail("под переехавшим табом не встал каркас соседнего шага: " + said.slice(0, 300));
+    }
+    if (said.includes("Где именно MAX ломается")) {
+      fail("под новым табом остались варианты прежнего шага: " + said.slice(0, 300));
+    }
+  }
   await settleMove();
   if (JSON.stringify(now.orders) !== JSON.stringify([{ step: 2 }])) {
     fail("переход по табу ушёл не шагом: " + JSON.stringify(now.orders));
@@ -247,13 +269,13 @@ const showAsk = async (next) => {
   if (!dump(box).includes("Что именно происходит с MAX?")) {
     fail("после перехода по табу блок не показал новый шаг: " + dump(box).slice(0, 300));
   }
-  const nowTab = tabsOf().filter((t) => String(t.className).includes("now")).map((t) => t.textContent);
+  const nowTab = tabsOf().filter((t) => String(t.className).includes("onktab")).map((t) => t.textContent);
   if (JSON.stringify(nowTab) !== JSON.stringify(["Симптом"])) {
     fail("после перехода открытым помечен не тот шаг: " + JSON.stringify(nowTab));
   }
   // Нажатие на открытый таб никуда не ходит: переходить некуда.
   now.orders.length = 0;
-  tabsOf().find((t) => String(t.className).includes("now"))
+  tabsOf().find((t) => String(t.className).includes("onktab"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
   if (now.orders.length) fail("нажатие на открытый шаг ушло запросом: " + JSON.stringify(now.orders));
@@ -284,6 +306,37 @@ const showAsk = async (next) => {
   if (JSON.stringify(now.orders) !== JSON.stringify([{ option: 1 }])) {
     fail("отправка сводки ушла не тем пунктом: " + JSON.stringify(now.orders));
   }
+}
+
+// --- плашка ожидания гаснет, когда вопрос показан кнопками ---
+// Плашка звала человека в терминал командой tmux attach, пока ответить на
+// вопрос из панели было нечем. Теперь вопрос показан кнопками, и звать никуда
+// не надо: плашка гаснет, а остаётся она только там, где вопрос не прочитался
+// (решение пользователя).
+{
+  const stuckSt = { addr: SID, sid: SID, project: "demo", chats: [], models: [],
+    entry: { id: SID, state: "live", tmux: "chat-2", idle: true,
+      stuck: "ждёт ответа в терминале" } };
+  now.ask = ask;
+  const own = sandbox.chatPanel("demo", stuckSt);
+  await settle();
+  const plate = byClass(own, "stuckn");
+  if (!plate) fail("плашки ожидания нет вовсе: " + dump(own).slice(0, 300));
+  const said = dump(plate).replace(/\s+/g, " ");
+  if (said.includes("tmux attach")) {
+    fail("плашка всё ещё зовёт в терминал командой: " + said.slice(0, 200));
+  }
+  if (!said.includes("не прочитался")) {
+    fail("плашка не говорит, что вопрос не читается: " + said.slice(0, 200));
+  }
+  if (!plate.hidden) {
+    fail("плашка стоит рядом с собранным блоком вопроса: " + said.slice(0, 200));
+  }
+  // Вопрос перестал читаться: плашка возвращается, потому что сказать о
+  // стоящем клиенте больше нечем.
+  now.ask = null;
+  await settleMove();
+  if (plate.hidden) fail("плашка не вернулась, когда вопрос перестал читаться");
 }
 
 // --- спрашивать нечего: блока нет вовсе ---

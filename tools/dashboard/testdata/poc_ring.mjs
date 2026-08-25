@@ -424,24 +424,26 @@ function ringOf(head) {
   if (segs.length !== 7) {
     fail("сегментов в окне " + segs.length + ", жду семь (пять закрытых и два незакрытых)");
   }
-  // Счёт в центре идёт по тому же окну: иначе он рос бы бесконечно и ничего
-  // не значил. Стоит он дробью в два яруса: выполнено сверху, всего снизу,
-  // между ними черта, и каждому числу достаётся вся ширина просвета, а не
-  // половина с косой чертой (решение пользователя).
+  // Дробь в центре считается за сессию целиком, а не по окну показа: по окну
+  // числитель залипал на пятёрке навсегда (окно держит пять последних
+  // закрытых), и продвижения работы видно не было (решение пользователя).
+  // Стоит она в два яруса: выполнено сверху, всего снизу, между ними черта, и
+  // каждому числу достаётся вся ширина просвета, а не половина с косой чертой.
   const frac = byClass(ring, "rfrac");
   if (!frac) fail("хода по этапам в середине кольца нет: " + dump(ring).slice(0, 200));
   const nums = allByClass(frac, "rnum").map((n) => n.textContent);
-  if (JSON.stringify(nums) !== JSON.stringify(["5", "7"])) {
-    fail("дробь собралась не по окну: " + JSON.stringify(nums));
+  if (JSON.stringify(nums) !== JSON.stringify(["20", "22"])) {
+    fail("дробь собралась не за сессию целиком: " + JSON.stringify(nums));
   }
   if (!byClass(frac, "rbar")) fail("черты между ярусами дроби нет: " + dump(frac));
   const num = allByClass(frac, "rnum")[0];
-  // Полное число этапов за жизнь сессии остаётся в подсказке.
+  // Подсказка говорит обе вещи: сколько этапов за сессию и сколько из них
+  // видно сегментами.
   const tip = String(ring.attrs["aria-label"] || "");
-  if (!tip.includes("всего за сессию 22")) {
+  if (!tip.includes("этапов за сессию 20 из 22")) {
     fail("подсказка молчит о полном числе этапов: " + tip);
   }
-  if (!tip.includes("этапов 5 из 7")) fail("подсказка не назвала окно: " + tip);
+  if (!tip.includes("сегментами видно 7")) fail("подсказка не назвала окно показа: " + tip);
 
   // Цифры стоят внутри дуги: длинное значение мельче короткого, иначе «12/47»
   // задевает кольцо (замечание пользователя).
@@ -454,8 +456,13 @@ function ringOf(head) {
   // верхнего своя высота, у нижнего своя, а черта между ними.
   const wideRing = pulseRingOf({ state: "working", count: 1, working: 1, plan: long, agents: [] });
   const wideNums = allByClass(byClass(wideRing, "rfrac"), "rnum");
-  if (wideNums.map((n) => n.textContent).join("/") !== "5/12") {
+  if (wideNums.map((n) => n.textContent).join("/") !== "40/47") {
     fail("дробь двузначных собралась не так: " + wideNums.map((n) => n.textContent).join("/"));
+  }
+  // Двузначные с обеих сторон кегля не сбавляют: просвет кольца под них и
+  // мерялся.
+  if (String(byClass(wideRing, "rfrac").className).includes("rlong")) {
+    fail("двузначная дробь помечена длинной и ужалась зря");
   }
   const ys = wideNums.map((n) => Number(n.attrs.y));
   if (!(ys[0] < 18 && ys[1] > 18)) {
@@ -489,8 +496,27 @@ function ringOf(head) {
     fail("окно съело незакрытые этапы: сегментов " + allByClass(wide, "seg").length);
   }
   const wideFrac = allByClass(byClass(wide, "rfrac"), "rnum").map((n) => n.textContent);
-  if (wideFrac.join("/") !== "5/9") {
+  if (wideFrac.join("/") !== "9/13") {
     fail("счёт незакрытых этапов не тот: " + wideFrac.join("/"));
+  }
+
+  // Сессия с сотней этапов: трёхзначная дробь ужимается кеглем, иначе цифры
+  // упираются в дугу. Окно сегментов при этом прежнее.
+  const huge = [];
+  for (let i = 1; i <= 120; i += 1) huge.push({ text: "этап " + i, state: i <= 104 ? "completed" : "pending" });
+  const hugeRing = pulseRingOf({ state: "working", count: 1, working: 1, plan: huge, agents: [] });
+  const hugeFrac = byClass(hugeRing, "rfrac");
+  if (allByClass(hugeFrac, "rnum").map((n) => n.textContent).join("/") !== "104/120") {
+    fail("трёхзначная дробь собралась не так: " +
+      allByClass(hugeFrac, "rnum").map((n) => n.textContent).join("/"));
+  }
+  if (!String(hugeFrac.className).includes("rlong")) {
+    fail("трёхзначная дробь не помечена длинной: цифры упрутся в дугу");
+  }
+  const hugeCss = readFileSync(join(dirname(app), "style.css"), "utf8");
+  const small = (hugeCss.match(/\.rfrac\.rlong \.rnum\{font-size:(\d+(?:\.\d+)?)px/) || [])[1];
+  if (!small || Number(small) >= 10) {
+    fail("кегль длинной дроби не сбавлен: " + small);
   }
 }
 

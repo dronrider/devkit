@@ -5889,6 +5889,18 @@ function chatLiftOf(project, addr) {
   }
 }
 
+// Давность подъёма в миллисекундах: по ней таб сессий отличает «сессия ещё
+// поднимается» от «сессии нет». Минус один значит, что подъёма не помним вовсе.
+function chatLiftAge(project, addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(liftKey(project, addr)) || "null");
+    if (!raw || !raw.tmux || !raw.born) return -1;
+    return Date.now() - raw.born;
+  } catch (err) {
+    return -1;
+  }
+}
+
 function chatLiftDrop(project, addr) {
   try {
     localStorage.removeItem(liftKey(project, addr));
@@ -6689,7 +6701,12 @@ function pulseRing(project, p) {
     // В середине стоят работающие, а у ждущего кольца ждущие. Простаивающие
     // сюда не идут: сложенные с работающими они врали, что работа кипит, тогда
     // как второй разговор задачи стоит без хода второй час.
-    const num = ringNumber(next, shown);
+    // Дробь в середине считается за сессию целиком, а не по окну показа:
+    // числитель по окну залипал на пятёрке навсегда (окно держит пять
+    // последних закрытых), и продвижения работы по кольцу видно не было
+    // (решение пользователя). Окно осталось тем, чем и было, нарезкой
+    // сегментов: сотня долек за три дня работы сливалась в сплошную полосу.
+    const num = ringNumber(next, plan);
     if (num) box.append(ringNum(num));
     fillPop(pop, project, next);
     wrap.replaceChildren(box, pop);
@@ -6706,16 +6723,19 @@ function pulseRing(project, p) {
 // Что стоит в середине кольца: ход работы этапами, «выполнено/всего». Число
 // агентов там ничего не говорило человеку («отображение количества агентов
 // неинформативно», замечание пользователя): агент один и тот же, а знать надо,
-// сколько шагов работы позади. Счёт идёт по тому же окну, что и сегменты,
-// иначе он рос бы бесконечно и ничего не значил. Этапов нет вовсе, значит в
-// середине остаётся прежнее: ждущие у ждущего кольца, работающие у
-// работающего.
+// сколько шагов работы позади. Считается дробь за сессию целиком: по окну
+// показа числитель залипал на пятёрке навсегда, потому что окно держит ровно
+// пять последних закрытых этапов, и продвижение работы по кольцу было не
+// видно. Этапов нет вовсе, значит в середине остаётся прежнее: ждущие у
+// ждущего кольца, работающие у работающего.
 // Число в середине кольца. Ход по этапам стоит дробью в два яруса: выполнено
 // сверху, всего снизу, между ними тонкая черта. В строку («5/7») каждое число
 // делило ширину с соседом и с косой чертой, и крупный шрифт задевал дугу, а
 // мелкий не читался (решение пользователя). В два яруса каждому числу
 // достаётся вся ширина просвета, и шрифт берётся крупнее. Прочие значения
-// (ждущие, работающие) это одно число, и ярус у него один.
+// (ждущие, работающие) это одно число, и ярус у него один. Числа тут бывают
+// двузначными с обеих сторон (43/57 у сессии, которая делегирует третий день),
+// и просвет кольца под это и мерялся.
 function ringNum(num) {
   const parts = String(num).split("/");
   if (parts.length !== 2) {
@@ -6724,16 +6744,20 @@ function ringNum(num) {
     one.textContent = num;
     return one;
   }
-  const g = svgEl("g", "rfrac");
+  // Трёхзначный ярус в просвет кольца тем же кеглем не влезает, а сессии с
+  // сотней этапов бывают: такой дроби кегль сбавляется классом, и место ей
+  // считает та же вёрстка.
+  const wide = Math.max(parts[0].length, parts[1].length) > 2;
+  const g = svgEl("g", "rfrac" + (wide ? " rlong" : ""));
   // Ярусы стоят вплотную к черте: просвет кольца это круг радиусом около
   // четырнадцати, и дробь целиком укладывается в его середину.
   const top = svgEl("text", "rnum");
   svgAttrs(top, { x: 18, y: 12.4, "text-anchor": "middle", "dominant-baseline": "central" });
   top.textContent = parts[0];
   const line = svgEl("line", "rbar");
-  // Черта чуть шире самого длинного яруса и заметно внутри дуги: этапов в окне
-  // не больше двенадцати, значит ярус это одна или две цифры.
-  const half = Math.max(parts[0].length, parts[1].length) > 1 ? 6 : 4.5;
+  // Черта чуть шире самого длинного яруса и заметно внутри дуги: этапы считают
+  // за сессию целиком, и ярус это одна или две цифры.
+  const half = wide ? 7 : (Math.max(parts[0].length, parts[1].length) > 1 ? 6 : 4.5);
   svgAttrs(line, { x1: 18 - half, x2: 18 + half, y1: 18, y2: 18, "stroke-width": 0.9 });
   const low = svgEl("text", "rnum");
   svgAttrs(low, { x: 18, y: 23.6, "text-anchor": "middle", "dominant-baseline": "central" });
@@ -6742,8 +6766,10 @@ function ringNum(num) {
   return g;
 }
 
-function ringNumber(p, shown) {
-  const list = shown || [];
+// list тут это весь план сессии, а не окно показа: дробь считает сессию
+// целиком.
+function ringNumber(p, list) {
+  list = list || [];
   if (list.length) {
     return list.filter((it) => it.state === "completed").length + "/" + list.length;
   }
@@ -6752,16 +6778,18 @@ function ringNumber(p, shown) {
   return p.working > 0 ? String(p.working) : "";
 }
 
-// Этапы словами для подсказки: сколько их в окне и сколько всего за жизнь
-// сессии. Полное число тут и живёт: в кольце ему места нет, а знать его иногда
-// надо.
+// Этапы словами для подсказки: сколько их за сессию и сколько из них видно
+// сегментами. Дробь в середине говорит про сессию целиком, а дольками кольцо
+// показывает только окно, и без этих слов человек считал бы дольки, не сходясь
+// с дробью.
 function ringStages(plan, shown) {
-  const all = (plan || []).length;
+  const list = plan || [];
+  const all = list.length;
   if (!all) return "";
-  const list = shown || [];
   const done = list.filter((it) => it.state === "completed").length;
-  const said = "этапов " + done + " из " + list.length;
-  return all > list.length ? said + " в показе, всего за сессию " + all : said;
+  const said = "этапов за сессию " + done + " из " + all;
+  const seen = (shown || []).length;
+  return seen && seen < all ? said + ", сегментами видно " + seen + " последних" : said;
 }
 
 // Подпись кольца: сколько кого. Число в середине говорит про работающих, и без
@@ -7269,16 +7297,16 @@ const STUCK_ASK_WORD = "ждёт ответа в терминале";
 function stuckNote(project, st, word) {
   const note = el("div", "cnote stuckn");
   if (word === STUCK_ASK_WORD) {
-    // Вопрос задан в терминале (разрешение, доверие каталогу первого
-    // запуска), и ответить можно только там: плашка называет tmux-сессию
-    // дословно, чтобы человек знал, куда attach (живой случай chat-13 на
-    // второй подписке).
-    note.append(el("b", "", "Клиент ждёт ответа в терминале."));
+    // Вопрос клиента панель показывает кнопками и отвечает на него сама, и
+    // звать человека в терминал незачем. Плашка остаётся только на том случае,
+    // когда вопрос с панели не прочитался (виджет без подсказки навигации), и
+    // говорит она ровно об этом: гасит её сам блок вопроса, как только тот
+    // соберётся (решение пользователя).
+    note.append(el("b", "", "Клиент ждёт ответа, а вопрос не прочитался."));
     const tmux = (st.entry && st.entry.tmux) || "";
-    note.append(el("span", "", "Агент задал вопрос в своём окне (разрешение " +
-      "или доверие каталогу), и ответить можно только там." +
-      (tmux ? " Откройте сессию:" : "")));
-    if (tmux) note.append(el("code", "attachcmd", "tmux attach -t " + tmux));
+    note.append(el("span", "", "Агент стоит на вопросе, но собрать по нему кнопки " +
+      "панель не смогла: виджет не печатает подсказки навигации, по которой его узнают." +
+      (tmux ? " Сам вопрос виден в окне сессии " + tmux + "." : "")));
     return note;
   }
   note.append(el("b", "", "Чат завис (" + word + ")."));
@@ -8007,7 +8035,11 @@ function chatPanel(project, st) {
   // реплики уходят «успешно», а хода нет и не будет, пока зависший процесс не
   // снят. Выход из клина один и стоит тут же кнопкой (инцидент с чатом DK-460).
   const stuck = chatStuckWord(st);
-  if (stuck) wrap.append(stuckNote(project, st, stuck));
+  // Плашка ожидания и блок вопроса это два ответа на один вопрос человека, и
+  // стоять им вместе незачем: собранный блок гасит плашку, а вернётся она,
+  // только если вопрос перестанет читаться.
+  const stuckBox = stuck ? stuckNote(project, st, stuck) : null;
+  if (stuckBox) wrap.append(stuckBox);
   const busy = makeBusy(project, wrap);
   // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
   // работе поверх причины значило бы врать.
@@ -8039,7 +8071,7 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
-  watchClientAsk(project, st, askBox);
+  watchClientAsk(project, st, askBox, stuckBox);
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -8411,7 +8443,7 @@ const ASK_MOVE = 400;
 // переспрашивает сервер. Снимок панели tmux стоит подпроцесса, поэтому ходит
 // опрос только у разговора с живой tmux-сессией дашборда: у чужого окна
 // спрашивать нечего и нечем.
-function watchClientAsk(project, st, box) {
+function watchClientAsk(project, st, box, stuckBox) {
   const sid = st.sid;
   if (!sid || !st.entry || !st.entry.tmux) return;
   let stop = false;
@@ -8421,6 +8453,9 @@ function watchClientAsk(project, st, box) {
     const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
     if (stop) return;
     const ask = (r.ok && r.body.ask) || null;
+    // Плашка «клиент ждёт ответа» нужна ровно до того мига, как вопрос собран
+    // кнопками: дальше она повторяет блок и зовёт туда, куда идти не надо.
+    if (stuckBox) stuckBox.hidden = Boolean(ask && (ask.options || []).length);
     paintClientAsk(project, st, box, ask, tick);
     // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
     // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
@@ -8452,6 +8487,25 @@ const ASK_WORD = {
 //
 // Перерисовывается тут один этот блок, а не лента: ответ на шаг опроса не
 // повод собирать разговор заново (замечание пользователя).
+// Каркас соседнего шага: пока снимок панели не приехал, под переехавшим
+// подчёркиванием стоит имя шага и слова о том, что он открывается. Данных
+// соседнего шага у панели нет вовсе (виджет отдаёт только открытый), и рисовать
+// вместо них прежние варианты значило бы показывать чужой ответ как свой.
+function askStepShell(box, name) {
+  const keep = [];
+  for (const kid of box.children || []) {
+    const cls = String(kid.className || "");
+    if (cls.includes("caskh") || cls.includes("caskst")) keep.push(kid);
+  }
+  const shell = el("div", "caskwait");
+  shell.append(el("b", "", name || "Шаг"));
+  shell.append(el("span", "", "открывается..."));
+  box.replaceChildren(...keep, shell);
+  // Подпись снимка снимается: следующий ответ ручки обязан собрать блок
+  // заново, даже если сам снимок с прошлого раза не изменился.
+  box.dataset.ask = "";
+}
+
 function paintClientAsk(project, st, box, ask, again) {
   // Блок пересобирается только тогда, когда снимок и правда сменился: опрос
   // ходит по кругу, и сборка на каждый заход стирала бы набранное в поле
@@ -8498,19 +8552,34 @@ function paintClientAsk(project, st, box, ask, again) {
   // Шаги опроса это табы, и ходить по ним человек вправе свободно: ответ на
   // текущий шаг для перехода не нужен, ответы копятся у клиента (так устроен
   // сам виджет, проверено на живой панели).
+  // Полоса шагов это та же полоса табов, что у доски (задачи, сессии,
+  // черновики): подчёркивание открытого, тот же размер и отступы. Кнопки в
+  // рамках читались набором действий, а шаг опроса это место, где человек
+  // сейчас стоит (решение пользователя).
+  //
+  // Переход отмечается в тот же ход: нажатие шлёт клавиши в клиент и ждёт
+  // нового снимка панели, а это полсекунды, и всё это время подчёркнут был
+  // прежний таб. Теперь подчёркивание переезжает сразу, а под ним стоит
+  // каркас соседнего шага, пока снимок не приехал; приехавший снимок рисует
+  // блок начисто и всё расставляет по правде.
   const steps = ask.steps || [];
   if (steps.length) {
-    const bar = el("div", "caskst");
+    const bar = el("div", "ktabs caskst");
+    const tabs = [];
     steps.forEach((step, i) => {
-      const tab = el("button", "cstep" + (step.now ? " now" : "") + (step.done ? " on" : ""), step.name);
+      const tab = el("button", "ktab" + (step.now ? " onktab" : ""), step.name);
       tab.type = "button";
+      if (step.done) tab.append(el("span", "n", "ответ есть"));
       withTip(tab, step.now ? "Этот шаг открыт"
         : (step.done ? "Шаг отвечен: можно вернуться и поменять ответ" : "Перейти к этому шагу"));
       tab.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        if (step.now) return;
+        if (tab.classList.contains("onktab")) return;
+        for (const own of tabs) own.classList.toggle("onktab", own === tab);
+        askStepShell(box, step.name);
         send({ step: i + 1 }).then(afterMove).catch(console.error);
       });
+      tabs.push(tab);
       bar.append(tab);
     });
     box.append(bar);
@@ -10828,6 +10897,39 @@ async function closeSession(project, w) {
   return false;
 }
 
+// Машинное имя состояния «сессии не видно»: сервер называет им работу, чьей
+// tmux-сессии на машине нет.
+const WORK_DEAD = "dead";
+
+// Сколько после нажатия работа держится в табе, даже если сессии ещё не видно.
+// Между нажатием и первым ходом клиента проходят секунды, и всё это время
+// строка обязана стоять: пропавшая читалась бы как несработавшее нажатие.
+const SESS_LIFT_GRACE = 2 * 60 * 1000;
+
+// Таб сессий показывает живые работы. Разговор, чьей tmux-сессии не видно,
+// уходит из таба независимо от того, как она кончилась: снял ли её дашборд,
+// убил ли её человек снаружи, вышел ли клиент сам. Прежде уходили только
+// снятые из дашборда (память sessGone), а умершие сами висели строками «сессии
+// нет 7 мин» с припиской «снимать нечем», и сделать с ними было нечего
+// (снимок пользователя). Из общего списка чатов такой разговор никуда не
+// девается и открывается резюмом, как и раньше.
+//
+// Цикл цели из реестра тут не мёртв: его сессию дашборд не видит вовсе, а сам
+// цикл идёт (via registry), и прятать его строку значило бы врать о работе
+// машины. Только что поднятая работа держится льготным окном: она ещё не жива,
+// но и не мертва.
+function workShownLive(project, w) {
+  if (!w) return false;
+  if (w.via !== "session" || w.live !== WORK_DEAD) return true;
+  if (!w.id) return false;
+  const age = chatLiftAge(project, CHAT_NEW + ":" + w.id);
+  return age >= 0 && age < SESS_LIFT_GRACE;
+}
+
+function sessionsShown(project, works) {
+  return (works || []).filter((w) => workShownLive(project, w));
+}
+
 // Снятые сессии и время их снятия. Сервер узнаёт о снятии не мгновенно: он
 // смотрит список tmux, а тот успевает ответить по-старому, и строка возвращалась
 // следующим же обходом (замечание пользователя: tmux-сессий стало меньше, а
@@ -11077,7 +11179,7 @@ function workSign(w, now) {
 // обход всего экрана на каждый тик это ровно те тормоза, которые лечила
 // правка панели (замер poc_bench_chat).
 function paintSessionRows(card, project, works, q) {
-  const list = sortSessions((works || []).map((w) => ({ project, work: w }))
+  const list = sortSessions(sessionsShown(project, works).map((w) => ({ project, work: w }))
     .filter((item) => agentMatch(item, q) && !sessGoneHides(item.work)));
   const now = Date.now();
   if (!list.length) {
@@ -11109,10 +11211,13 @@ function paintSessionRows(card, project, works, q) {
 
 function renderSessions(project, works, q) {
   const groups = document.getElementById("groups");
-  countsSet({ sess: (works || []).length });
+  // Счётчик таба считает то же, что показывает список: бадж «5» над списком из
+  // двух строк отправлял бы человека искать пропавшие три.
+  const live = sessionsShown(project, works);
+  countsSet({ sess: live.length });
   const nodes = sync(groups, [{
     key: "board-kind",
-    sign: [project, "sess", shownCounts.tasks, (works || []).length,
+    sign: [project, "sess", shownCounts.tasks, live.length,
       shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "sess"),
   }, {

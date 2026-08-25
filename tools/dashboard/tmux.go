@@ -258,11 +258,11 @@ func parseTmuxAsk(text string) tmuxAsk {
 		if len(b.ask.Options) < 2 {
 			continue
 		}
-		if !askOnWidget(b) {
-			continue
-		}
 		ask := b.ask
 		said := askReadAbove(&ask, lines, raw, b.first)
+		if !askOnWidget(b, ask) {
+			continue
+		}
 		ask.Text = truncate(strings.Join(said, " "), 400)
 		if ask.Kind == askKindReview {
 			// У сводки свой заголовок: пересказ английских строк виджета
@@ -404,14 +404,19 @@ func askReadAbove(ask *tmuxAsk, lines, raw []string, first int) []string {
 // пунктов приехала в панель блоком «Клиент ждёт ответа», а следом тем же блоком
 // приехал список задач из ответа агента, обрезанный по ширине панели.
 //
-// Опора одна и обязательная: подсказка навигации, которую клиент печатает под
-// своим виджетом («Enter to confirm», «Tab/Arrow keys to navigate», «Esc to
-// cancel»). Нет её в снимке, значит опроса нет, и точка. Прочие следы виджета
-// (полоса шагов, сводка, флажки, свои кнопки) разбираются дальше и в блок
-// доезжают, но сами по себе блока не поднимают: показать чужой текст кнопками
-// хуже, чем промолчать.
-func askOnWidget(b askBlock) bool {
-	return b.hint
+// Опора только на то, что печатает сам виджет и чего в выводе агента не
+// бывает. Родов опоры два. Первый и обычный это подсказка навигации под
+// блоком («Enter to confirm», «Tab/Arrow keys to navigate»). Второй это сводка
+// ответов, которой виджет кончает опрос: своей подсказки она не печатает вовсе
+// (живой снимок сессии chat-98), а узнаётся не хуже, потому что несёт и свой
+// заголовок («Review your answers»), и пары «вопрос-ответ» значками виджета.
+// Без того и другого блока нет: показать чужой текст кнопками хуже, чем
+// промолчать.
+func askOnWidget(b askBlock, ask tmuxAsk) bool {
+	if b.hint {
+		return true
+	}
+	return ask.Kind == askKindReview && (len(ask.Said) > 0 || ask.Warn != "")
 }
 
 // askLine это разобранная строка виджета: сама остановка и признак курсора.

@@ -726,3 +726,61 @@ func TestParseTmuxAskPrintedAboveWidget(t *testing.T) {
 		t.Errorf("в текст вопроса уехал ответ агента: %q", ask.Text)
 	}
 }
+
+// liveReviewPane это сводка живого опроса, слово в слово со снимка панели
+// (сессия chat-98, опрос про чай, поднятый пользователем для проверки). Своей
+// подсказки навигации сводка не печатает вовсе, и рубеж подсказки прятал её
+// целиком: человек отвечал на оба вопроса и оставался перед пустой панелью,
+// хотя виджет ждал последнего нажатия.
+var liveReviewPane = strings.Join([]string{
+	"  варианта с короткими пояснениями: (1) какой чай заварить, (2) на сколько",
+	"  минут. Больше ничего не делай, дождись ответа и просто поблагодари.",
+	"",
+	strings.Repeat("\u2500", 60),
+	"\u2190  \u2612 Чай  \u2612 Время  \u2714 Submit  \u2192",
+	"",
+	"Review your answers",
+	"",
+	" \u25cf Какой чай заварить?",
+	"   \u2192 Чёрный",
+	" \u25cf На сколько минут заваривать?",
+	"   \u2192 3 минуты",
+	"",
+	"Ready to submit your answers?",
+	"",
+	"\u276f 1. Submit answers",
+	"  2. Cancel",
+	"",
+	"  @ dashboard\u276f",
+	"    Позови инструмент AskUserQuestion с двумя вопросами",
+}, "\n")
+
+// Сводка опроса узнаётся своими словами и парами ответов, а не подсказкой
+// навигации: подсказки под ней нет ни одной, и это проверено на живом снимке.
+// Рубеж от чужих списков сводка держит не хуже: заголовок, значки пар и полосу
+// шагов печатает сам виджет, в выводе агента их не бывает.
+func TestParseTmuxAskLiveReview(t *testing.T) {
+	ask := parseTmuxAsk(liveReviewPane)
+	if ask.Kind != askKindReview {
+		t.Fatalf("живая сводка опроса не узнана: %+v", ask)
+	}
+	if len(ask.Options) != 2 || ask.Options[0].Kind != pickSubmit {
+		t.Fatalf("кнопки сводки разобраны не так: %+v", ask.Options)
+	}
+	if len(ask.Said) != 2 || ask.Said[0].Q != "Какой чай заварить?" || ask.Said[0].A != "Чёрный" {
+		t.Fatalf("пары «вопрос-ответ» живой сводки разобраны не так: %+v", ask.Said)
+	}
+	if len(ask.Steps) != 3 || ask.Steps[2].Name != "Submit" {
+		t.Errorf("полоса шагов живой сводки разобрана не так: %+v", ask.Steps)
+	}
+	// Тот же рубеж, что и был: без слов сводки и без подсказки блока нет.
+	bare := strings.Replace(liveReviewPane, "Review your answers", "Вот что вышло", 1)
+	bare = strings.Replace(bare, "Ready to submit your answers?", "Что дальше?", 1)
+	bare = strings.Replace(bare, " \u25cf Какой чай заварить?", " Какой чай заварить?", 1)
+	bare = strings.Replace(bare, " \u25cf На сколько минут заваривать?", " На сколько минут заваривать?", 1)
+	bare = strings.Replace(bare, "   \u2192 Чёрный", "   Чёрный", 1)
+	bare = strings.Replace(bare, "   \u2192 3 минуты", "   3 минуты", 1)
+	if got := parseTmuxAsk(bare); len(got.Options) != 0 {
+		t.Errorf("тот же экран без слов виджета принят за вопрос: %+v", got)
+	}
+}

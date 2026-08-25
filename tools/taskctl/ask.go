@@ -297,13 +297,16 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 // файлом исхода, из которого его берёт экран черновика (LLD DK-354).
 func askPark(main string, p AskParams, d askDeps, qs []chat.Question, out []string, text, why string) (string, error) {
 	if p.Draft {
-		path, err := writeDraftQuestion(main, p.ID, qs)
-		if err != nil {
-			out = append(out, fmt.Sprintf("%s: %s, а файл исхода не записался: %v", p.ID, why, err))
-			return strings.Join(out, "\n"), nil
-		}
-		out = append(out, fmt.Sprintf("%s: %s, вопрос лежит файлом исхода %s: его берёт экран черновика, а снимает подъём следующего захода",
-			p.ID, why, path))
+		// Черновик доски не занимает, и парковать нечего. Файла исхода тут
+		// больше нет вовсе: его писали, чтобы экран черновика показал вопрос
+		// после смерти headless-сессии груминга, а груминг давно идёт живым
+		// чатом, карточки исхода с формы снесены и ручка исхода тоже. Читателя
+		// у файла не осталось ни одного, и он лежал мусором в .devkit
+		// (замечание пользователя). Вопрос человеку уже задан: он ушёл
+		// уведомителем и лежит репликой в разговоре.
+		out = append(out, fmt.Sprintf(
+			"%s: %s, запись накопителя доски не занимает: парковать нечего, вопрос остаётся в разговоре",
+			p.ID, why))
 		return strings.Join(out, "\n"), nil
 	}
 	if d.Park == nil {
@@ -342,20 +345,4 @@ func askReason(text string) string {
 		cut = cut[:i]
 	}
 	return cut + "..."
-}
-
-// writeDraftQuestion кладёт вопрос черновика файлом исхода (LLD DK-354): из
-// него экран черновика берёт вопрос после смерти сессии, а снимает файл подъём
-// следующего захода. Тело то же, что у признака ожидания: разбор один, и
-// читателю не приходится знать про два формата.
-func writeDraftQuestion(main, id string, qs []chat.Question) (string, error) {
-	path := filepath.Join(main, ".devkit", "draft-"+id+".question")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	body := chat.Ask{Until: time.Now(), Task: id, Questions: qs}.Text()
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
 }

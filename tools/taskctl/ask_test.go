@@ -258,7 +258,12 @@ func TestAskSaysWhenSessionIsUnknown(t *testing.T) {
 
 // Черновик доски не занимает, и парковать там нечего: вопрос остаётся файлом
 // исхода, из которого его берёт экран черновика.
-func TestAskDraftLeavesTheQuestionFile(t *testing.T) {
+// Ожидание по черновику доски не занимает и файлов на диск не кладёт. Файл
+// исхода `.devkit/draft-<ID>.question` писался, чтобы экран черновика показал
+// вопрос после смерти headless-сессии груминга; груминг давно идёт живым
+// чатом, читателя у файла не осталось ни одного, и он лежал мусором в .devkit
+// (замечание пользователя).
+func TestAskDraftLeavesNoFile(t *testing.T) {
 	root := setup(t)
 	st := newAskStand(t)
 	out, err := st.run(root, AskParams{ID: "XR-009", Question: "резать или ждать", Wait: 0, Draft: true})
@@ -268,15 +273,15 @@ func TestAskDraftLeavesTheQuestionFile(t *testing.T) {
 	if len(st.parked) != 0 {
 		t.Fatalf("черновик припарковали на доске: %v", st.parked)
 	}
-	body, err := os.ReadFile(filepath.Join(root, ".devkit", "draft-XR-009.question"))
-	if err != nil {
-		t.Fatalf("файла исхода нет: %v", err)
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "draft-XR-009.question")); !os.IsNotExist(err) {
+		t.Fatalf("файл вопроса всё ещё пишется на диск: %v", err)
 	}
-	if !strings.Contains(string(body), "резать или ждать") {
-		t.Fatalf("вопрос в файле исхода: %s", body)
+	if found, _ := filepath.Glob(filepath.Join(root, ".devkit", "*.question")); len(found) != 0 {
+		t.Fatalf("после ожидания в .devkit остались файлы вопроса: %v", found)
 	}
-	if !strings.Contains(out, "файлом исхода") {
-		t.Fatalf("агенту не сказали, где остался вопрос:\n%s", out)
+	// Агенту сказано, чем кончилось ожидание: вопрос задан и живёт разговором.
+	if !strings.Contains(out, "доски не занимает") {
+		t.Fatalf("агенту не сказали, чем кончилось ожидание по черновику:\n%s", out)
 	}
 }
 
@@ -408,8 +413,8 @@ func TestAskGuessesTheDraft(t *testing.T) {
 	if len(st.parked) != 0 {
 		t.Fatalf("парковку позвали по черновику: %v", st.parked)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".devkit", "draft-XR-D8.question")); err != nil {
-		t.Fatalf("вопрос не остался файлом исхода: %v", err)
+	if found, _ := filepath.Glob(filepath.Join(root, ".devkit", "*.question")); len(found) != 0 {
+		t.Fatalf("угаданный черновик оставил на диске файл вопроса: %v", found)
 	}
 	if !strings.Contains(out, "запись накопителя") {
 		t.Fatalf("агенту не сказали, что ждём по-черновому:\n%s", out)

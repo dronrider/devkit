@@ -11,6 +11,7 @@
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
+  hookio.toml_at(path)             конфиг проверки разобранным Doc и причина
   hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
   hookio.tree_root(cwd)            дерево работы: ближайший предок с .git
 
@@ -316,22 +317,33 @@ def harness_dir():
     return os.environ.get("DEVKIT_HARNESS_DIR") or os.path.join(ROOT, "kit", "harness")
 
 
-def profile(name, directory=None):
-    """Профиль харнеса разобранным Doc, None если файла нет или он битый.
-    Парсер один на весь devkit, второй копии формата тут не заводится."""
-    path = os.path.join(directory or harness_dir(), "%s.toml" % name)
+def toml_at(path):
+    """Файл формата профилей разобранным Doc и причина, если Doc пустой.
+    Парсер один на весь devkit, второй копии формата тут не заводится.
+
+    Кроме профилей харнеса этим же форматом живут конфиги проверок
+    (kit/prose.toml у сторожа прозы), и причина им нужна текстом: доктор
+    печатает её находкой, а «файла нет» и «файл битый» это разные починки."""
     sys.path.insert(0, os.path.join(ROOT, "tools", "devkitctl"))
     try:
         import harness
     except ImportError:
-        return None
+        return None, "парсер формата не найден рядом с devkit"
     finally:
         sys.path.pop(0)
     try:
         with open(path, encoding="utf-8") as f:
-            return harness.parse(os.path.basename(path), f.read())
-    except (OSError, harness.TomlError):
-        return None
+            return harness.parse(os.path.basename(path), f.read()), ""
+    except OSError:
+        return None, "файла нет: %s" % path
+    except harness.TomlError as e:
+        return None, "%s" % e
+
+
+def profile(name, directory=None):
+    """Профиль харнеса разобранным Doc, None если файла нет или он битый."""
+    path = os.path.join(directory or harness_dir(), "%s.toml" % name)
+    return toml_at(path)[0]
 
 
 def memory_index(name, directory=None):

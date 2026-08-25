@@ -51,6 +51,9 @@ jobs:
       - name: тесты оболочки цели
         run: python3 -m unittest discover -p '*_test.py'
         working-directory: kit/skills/goal-loop
+      - name: тесты корпуса прозы
+        run: python3 -m unittest discover -p '*_test.py'
+        working-directory: kit/skills/prose
       - name: запрещённые символы по всем файлам
         run: git ls-files -z | xargs -0 python3 hooks/check-symbols.py
       - name: бит исполнения test.sh по всему репозиторию

@@ -50,6 +50,16 @@ def go_tools(root=ROOT):
     return sorted(p.parent.name for p in (root / "tools").glob("*/go.mod"))
 
 
+def skill_suites(root=ROOT):
+    """Имена скиллов со своими тестами рядом с SKILL.md, по алфавиту.
+
+    Ищутся по факту наличия `*_test.py`, а не хранятся руками: с go-модулями
+    хранёный перечень уже разошёлся с деревом молча (находка DK-367), а у
+    скилла цена расхождения та же. Тесты нового скилла просто не гонялись бы, и
+    заметить это было бы некому."""
+    return sorted({p.parent.name for p in (root / "kit" / "skills").glob("*/*_test.py")})
+
+
 def components(root=ROOT):
     """Перечень компонентов: (имя, cwd от корня, argv) в порядке запуска.
 
@@ -68,11 +78,12 @@ def components(root=ROOT):
         ("check-skills", "kit/skills", [sys.executable, "check-skills.py"]),
         ("check-exec-bit", "hooks",
          [sys.executable, "check-exec-bit.py"]),
-        ("goal-loop", "kit/skills/goal-loop",
-         [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"]),
-        ("doctor", ".", [sys.executable, "tools/devkitctl/devkitctl.py",
-                         "doctor", "--layout"]),
     ]
+    comps += [(name, "kit/skills/" + name,
+               [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"])
+              for name in skill_suites(root)]
+    comps.append(("doctor", ".", [sys.executable, "tools/devkitctl/devkitctl.py",
+                                  "doctor", "--layout"]))
     return comps
 
 

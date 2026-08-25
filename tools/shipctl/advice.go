@@ -35,13 +35,19 @@ type pipelineState struct {
 	autonomous  bool
 }
 
-// checkParts делит строки Check на три части по виду приёмки и отметке smoke.
+// checkParts делит строки Check по виду приёмки и отметке smoke. Строка с
+// непогашенным провалом не попадает никуда: её называет отдельная строка
+// status, а закрыть её не даст ни человек, ни тик, пока прод не починен.
 // Вид читается из заголовка строки (LLD DK-292, решение 3), а прогнанный smoke
 // значит, что агентскую строку закроет тик сторожка (DK-516), и звать по ней
 // человека незачем.
 func checkParts(root string, b *board, smoked []string) (waiting, agentSmoked, agentStuck, agentRest []string) {
 	for _, r := range b.sects["check"] {
 		switch kind := accept.KindOf(r.Title); {
+		case failSufRe.MatchString(r.Title):
+			// Непогашенный провал держит очередь целиком, и про такую строку
+			// status кричит своей строкой. Ни человеку в приёмку, ни тику она
+			// сейчас не принадлежит: сперва чинится прод.
 		case kind != accept.Agent:
 			waiting = append(waiting, r.ID+" ("+kind+")")
 		case !slices.Contains(smoked, r.ID):

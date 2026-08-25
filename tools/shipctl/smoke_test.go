@@ -250,3 +250,24 @@ func readDoc(t *testing.T, root, id string) string {
 	}
 	return string(data)
 }
+
+// TestStatusSilentOnFailedCheck: строку с непогашенным провалом status тику не
+// обещает. Отбор `taskctl closable` её не отдаёт (сначала чинится прод), и
+// обещание закрытия расходилось бы с тем, что тик сделает на самом деле.
+func TestStatusSilentOnFailedCheck(t *testing.T) {
+	failRow := "| XR-009 | Ждёт проверки [провал: упал вход] | task | P2 | 30 (25+5+0+0+0) |  |\n"
+	root, _ := setup(t, rowInProg, failRow)
+	deployedCheckTask(t, root, "XR-009", "2026-08-02")
+	write(t, root, "docs/tasks/XR-009.md", readDoc(t, root, "XR-009")+"\n## Проверка\n\n- прогон пройден, вывод вложен.\n")
+
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(st, "закроет тик devkitctl watch") {
+		t.Fatalf("status обещает закрытие тиком строке с непогашенным провалом:\n%s", st)
+	}
+	if !strings.Contains(st, "провал проверки за XR-009") {
+		t.Fatalf("строка провала пропала из status:\n%s", st)
+	}
+}

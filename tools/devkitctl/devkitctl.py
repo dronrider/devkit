@@ -153,6 +153,7 @@
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import board
 import build
 import codemap
 import context
@@ -2114,6 +2115,10 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
+        # Связи, названные входом в файле задачи, обязаны стоять маркером
+        # «после», иначе диспетчер их не видит (DK-168). Разбор свой, а не
+        # через taskctl: находка нужна и там, где бинаря в PATH нет.
+        findings += board.check(root)
         # Линкованное дерево (worktree от shipctl start) отличается тем же
         # способом, что check_agent_defs различает исполнение из ветки задачи:
         # main_checkout это родитель git-common-dir, from_main_checkout ложно,

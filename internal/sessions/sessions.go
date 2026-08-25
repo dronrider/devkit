@@ -103,11 +103,28 @@ type Binds map[string]Bind
 
 // Parse сворачивает журнал целиком.
 func Parse(data []byte) Binds {
-	binds := Binds{}
+	byID := map[string][]Bind{}
+	order := []string{}
 	for _, ln := range strings.Split(string(data), "\n") {
-		if sid, b, ok := ParseLine(ln); ok {
-			binds[sid] = b
+		sid, b, ok := ParseLine(ln)
+		if !ok {
+			continue
 		}
+		if _, seen := byID[sid]; !seen {
+			order = append(order, sid)
+		}
+		byID[sid] = append(byID[sid], b)
+	}
+	binds := Binds{}
+	for _, sid := range order {
+		// Свёртка тут та же, что у Last: свежая запись выигрывает задачей и
+		// поводом, а поля не задачные (дерево, транскрипт, имя tmux-сессии)
+		// добираются из прежних. Записи по факту работы кладут утилиты доски,
+		// и про tmux им не известно ничего: взяв такую запись целиком, реестр
+		// забывал имя живой сессии, и дашборд переставал видеть, чем её
+		// снимать (живой случай: сессия chat-DK-397-1 показана «мимо
+		// дашборда» после чужого taskctl move).
+		binds[sid] = Last(byID[sid])
 	}
 	return binds
 }

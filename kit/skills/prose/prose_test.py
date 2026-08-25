@@ -329,6 +329,17 @@ class TestКорпусРепозитория(unittest.TestCase):
             for fragment in fragments:
                 self.assertIn("источник", fragment)
 
+    def test_два_запуска_без_seed_дают_разные_наборы(self):
+        # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом
+        # заходе сделала бы тексты однородными, а seed в тестах эту проверку
+        # обходит стороной. Двенадцать фрагментов из корпуса в 15 с лишним:
+        # совпадение двух подряд взятых наборов маловероятно, и повтор прогона
+        # ловит вырождение выборки.
+        corpus = os.path.join(prose.HERE, "corpus")
+        first = [f["body"] for _, _, f in prose.sample(corpus, "", 12, seed=None)]
+        second = [f["body"] for _, _, f in prose.sample(corpus, "", 12, seed=None)]
+        self.assertNotEqual(first, second)
+
     def test_выборка_по_живому_корпусу_разная(self):
         corpus = os.path.join(prose.HERE, "corpus")
         first = [f["body"] for _, _, f in prose.sample(corpus, "", 4, seed=1)]

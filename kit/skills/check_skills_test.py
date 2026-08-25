@@ -458,6 +458,76 @@ class TestRulesBacklink(SkillTree):
         self.assertTrue(any("test-standard: скилл не называет правило" in f for f in fails), fails)
 
 
+class TestProse(SkillTree):
+    """DK-523: скилл письма с горячим списком из пяти примет и четырьмя
+    точками вызова. Три точки лежат файлами, четвёртая (правка README) названа
+    в самом скилле."""
+
+    HOT = "\n".join("%d. Примета %d." % (i, i) for i in range(1, 6))
+    CALL = "python3 ~/projects/devkit/kit/skills/prose/prose.py sample --genre task"
+
+    def add_prose(self, hot=None, readme=True):
+        body = "## Горячий список\n\n%s\n\n## Кто зовёт\n\nПравка %s.\n" % (
+            self.HOT if hot is None else hot, "README" if readme else "входной страницы")
+        self.add_skill("prose", body=body)
+
+    def add_points(self, groom=True, task=True, xhigh=True):
+        self.add_skill("board-groom", body=self.CALL if groom else "без выборки")
+        self.add_skill("board-task", body=self.CALL if task else "без выборки")
+        d = os.path.join(self.root, "kit", "agents")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "exec-xhigh.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: exec-xhigh\ndescription: роль.\n---\n\n%s\n"
+                    % (self.CALL if xhigh else "без выборки"))
+
+    def test_полный_расклад_проходит(self):
+        self.add_prose()
+        self.add_points()
+        self.assertEqual(check_skills.check_prose(self.root), [])
+
+    def test_скилла_нет(self):
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, ["prose: скилл письма не заведён"])
+
+    def test_горячего_списка_нет(self):
+        self.add_skill("prose", body="## Кто зовёт\n\nПравка README.\n")
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("нет горячего списка" in f for f in fails), fails)
+
+    def test_примет_меньше_пяти(self):
+        self.add_prose(hot="\n".join("%d. Примета %d." % (i, i) for i in range(1, 5)))
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("примет в горячем списке 4" in f for f in fails), fails)
+
+    def test_readme_не_названа_точкой(self):
+        self.add_prose(readme=False)
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("правка README не названа" in f for f in fails), fails)
+
+    def test_точка_без_выборки(self):
+        self.add_prose()
+        self.add_points(groom=False)
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, ["board-groom: не зовёт выборку эталонов, "
+                                 "текст пишется без корпуса"])
+
+    def test_каждая_точка_ловится_своя(self):
+        self.add_prose()
+        self.add_points(groom=False, task=False, xhigh=False)
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(len(fails), 3, fails)
+        for who in ("board-groom", "board-task", "exec-xhigh"):
+            self.assertTrue(any(f.startswith(who + ":") for f in fails), fails)
+
+    def test_пропажа_файла_точки_не_дублируется(self):
+        self.add_prose()
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, [])
+
+
 class TestRunAndMain(SkillTree):
     def test_run_reports_all_categories(self):
         # Пустой каталог валит сразу несколько проверок разом: свой скилл не

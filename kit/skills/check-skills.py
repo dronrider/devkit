@@ -19,6 +19,8 @@ RULES_BACKLINK_RE = re.compile(r"RULES\.(board\.)?md")
 # Граница слова отсекает «асинхронный»: этим словом правило не сказано, а
 # отменено.
 SYNC_SPAWN_RE = re.compile(r"\bсинхронн")
+# Пункт горячего списка прозы: номер с точкой в начале строки.
+HOT_ITEM_RE = re.compile(r"\n\d+\. ")
 # Три разряда реакции на живую реплику и находка на каждый пропавший: в
 # находку берётся то слово, без которого разряда не сказать.
 LIVE_REPLY_GRADES = (
@@ -281,6 +283,40 @@ def check_proofread(here):
     return fails
 
 
+def check_prose(root):
+    # DK-523: корпус эталонов работает только там, где его позвали до первой
+    # написанной фразы. Точек три в файлах и четвёртая, правка README, названа
+    # в самом скилле: своего файла у неё нет, и потерять её проще всего.
+    # Горячий список из пяти примет держится там же: список короче пяти это
+    # потерянная примета замера, и заметить пропажу можно только по числам
+    # следующего замера, то есть через цикл.
+    fails = []
+    skills = os.path.join(root, "kit", "skills")
+    text = read(os.path.join(skills, "prose", "SKILL.md"))
+    if text is None:
+        fails.append("prose: скилл письма не заведён")
+        return fails
+    body = "\n" + text
+    hot = section(text, "## Горячий список")
+    if "\n## Горячий список" not in body:
+        fails.append("prose: нет горячего списка примет, в контекст письма едут одни фрагменты")
+    else:
+        n = len(HOT_ITEM_RE.findall("\n" + hot))
+        if n != 5:
+            fails.append("prose: примет в горячем списке %d, а замер DK-446 дал пять" % n)
+    if "README" not in text:
+        fails.append("prose: правка README не названа точкой вызова, а своего скилла у неё нет")
+    for path, who in ((os.path.join(skills, "board-groom", "SKILL.md"), "board-groom"),
+                      (os.path.join(skills, "board-task", "SKILL.md"), "board-task"),
+                      (os.path.join(root, "kit", "agents", "exec-xhigh.md"), "exec-xhigh")):
+        point = read(path)
+        if point is None:
+            continue  # пропажу файла ловят check_skills и check_background_rule
+        if "prose.py sample" not in point:
+            fails.append("%s: не зовёт выборку эталонов, текст пишется без корпуса" % who)
+    return fails
+
+
 def check_rules_backlink(here):
     # Скилл ссылается на правило, из которого выведен: расхождение процедуры
     # с правилом иначе замечается только чтением обоих подряд.
@@ -390,6 +426,7 @@ def run(here, root):
     fails += check_groom(here)
     fails += check_team(here)
     fails += check_proofread(here)
+    fails += check_prose(root)
     fails += check_rules_backlink(here)
     fails += check_background_rule(root)
     fails += check_sync_spawn(root)

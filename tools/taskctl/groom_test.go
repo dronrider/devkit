@@ -25,7 +25,7 @@ func today() string { return time.Now().Format(draftDateLayout) }
 // newDraft заводит черновик на синтетической доске и возвращает его ID.
 func newDraft(t *testing.T, root, text string) string {
 	t.Helper()
-	msg, err := cmdDraft(root, text, CommitOpts{})
+	msg, err := cmdDraft(root, text, "mid", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +159,11 @@ func TestDraftListShowsDeferMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFirst := fmt.Sprintf("%s (3 дня, отложен %s): первая идея", first, today())
+	wantFirst := fmt.Sprintf("%s (3 дня, средний, отложен %s): первая идея", first, today())
 	if !strings.Contains(out, wantFirst) {
 		t.Fatalf("draft list:\n%s\nждал строку: %s", out, wantFirst)
 	}
-	if !strings.Contains(out, second+" (сегодня): вторая идея") {
+	if !strings.Contains(out, second+" (сегодня, средний): вторая идея") {
 		t.Fatalf("неотложенный черновик печатается иначе, чем раньше:\n%s", out)
 	}
 
@@ -171,7 +171,7 @@ func TestDraftListShowsDeferMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(list, fmt.Sprintf("%s (сегодня), %s (3 дня, отложен)", second, first)) {
+	if !strings.Contains(list, fmt.Sprintf("%s (сегодня, средний), %s (3 дня, средний, отложен)", second, first)) {
 		t.Fatalf("хвост list:\n%s", list)
 	}
 }
@@ -191,7 +191,7 @@ func TestDraftAgeSurvivesDefer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, id+" (5 дней, отложен") {
+	if !strings.Contains(out, id+" (5 дней, средний, отложен") {
 		t.Fatalf("возраст сбит пометкой:\n%s", out)
 	}
 }
@@ -276,6 +276,9 @@ func TestDraftPrioMark(t *testing.T) {
 func TestDraftPrioSortsList(t *testing.T) {
 	root := setup(t)
 	low := newDraft(t, root, "низкий уровень")
+	// Немаркированный черновик теперь заводится только снятием метки: запись
+	// без уровня отбивается, а группа в сортировке остаётся ради тех, что
+	// записаны до DK-520.
 	plain := newDraft(t, root, "немаркированная идея")
 	first := newDraft(t, root, "первый высокий")
 	second := newDraft(t, root, "второй высокий")
@@ -285,6 +288,9 @@ func TestDraftPrioSortsList(t *testing.T) {
 		if _, err := cmdDraftPrio(root, id, level, false, CommitOpts{}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := cmdDraftPrio(root, plain, "", true, CommitOpts{}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := cmdDraftDefer(root, wait, "ждём повода", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
@@ -312,7 +318,7 @@ func TestDraftPrioSortsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	tail := fmt.Sprintf("%s (сегодня, высокий), %s (сегодня, высокий), %s (сегодня, средний), "+
-		"%s (сегодня, низкий), %s (сегодня), %s (сегодня, отложен)", first, second, mid, low, plain, wait)
+		"%s (сегодня, низкий), %s (сегодня), %s (сегодня, средний, отложен)", first, second, mid, low, plain, wait)
 	if !strings.Contains(list, tail) {
 		t.Fatalf("хвост list:\n%s\nждал: %s", list, tail)
 	}
@@ -493,7 +499,7 @@ func TestDraftPrioWrittenInBody(t *testing.T) {
 // дублируются.
 func TestAddPromotionDropsPrio(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "идея с уровнем", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "идея с уровнем", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdDraftPrio(root, "XR-008", "high", false, CommitOpts{}); err != nil {
@@ -857,7 +863,7 @@ func TestDraftSubcommandsNotTakenForText(t *testing.T) {
 		t.Fatalf("отказавший defer завёл черновик: %+v", drafts)
 	}
 
-	if out, err := runTaskctl(bin, root, "draft", "обычная запись черновика"); err != nil {
+	if out, err := runTaskctl(bin, root, "draft", "--prio", "mid", "обычная запись черновика"); err != nil {
 		t.Fatalf("запись черновика сломана новыми подкомандами: %v\n%s", err, out)
 	}
 	drafts, err = loadDrafts(root)

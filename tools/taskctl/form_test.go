@@ -129,7 +129,7 @@ const draftSCQA = "уведомитель шумит из песочницы\n\n
 func TestDraftPromotedByForm(t *testing.T) {
 	stageHome(t)
 	root := setup(t)
-	if _, err := cmdDraft(root, draftSCQA, CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, draftSCQA, "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
@@ -184,7 +184,7 @@ func TestDraftPromotedByForm(t *testing.T) {
 // после «Ранга» и до контрактной части.
 func TestDraftWithoutSubsectionsGoesToSituation(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\nхук берёт адрес из окружения, вторая сессия перебивает первую.", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\nхук берёт адрес из окружения, вторая сессия перебивает первую.", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")

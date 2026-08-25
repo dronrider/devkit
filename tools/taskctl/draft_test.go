@@ -46,7 +46,7 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdDraft(root, "уведомитель шумит из песочницы\nвторой строкой подробности", CommitOpts{})
+	msg, err := cmdDraft(root, "уведомитель шумит из песочницы\nвторой строкой подробности", "mid", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл черновика не создан: %v", err)
 	}
-	want := fmt.Sprintf("# XR-008: уведомитель шумит из песочницы\n\nзаписан %s\n\n## Черновик\n\n### Ситуация\n\nвторой строкой подробности\n\n### Осложнение\n\n### Вопрос\n\n### Гипотеза\n",
+	want := fmt.Sprintf("# XR-008: уведомитель шумит из песочницы\n\nзаписан %s\nприоритет: средний\n\n## Черновик\n\n### Ситуация\n\nвторой строкой подробности\n\n### Осложнение\n\n### Вопрос\n\n### Гипотеза\n",
 		time.Now().Format(draftDateLayout))
 	if string(data) != want {
 		t.Fatalf("содержимое черновика:\n%s\nожидал:\n%s", data, want)
@@ -69,7 +69,7 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatal("draft тронул docs/TASKS.md")
 	}
-	if _, err := cmdDraft(root, "   \n  ", CommitOpts{}); err == nil {
+	if _, err := cmdDraft(root, "   \n  ", "mid", CommitOpts{}); err == nil {
 		t.Fatal("пустой текст должен отбиваться")
 	}
 	finds, err := cmdLint(root)
@@ -86,7 +86,7 @@ func TestDraftWritesFileNotBoard(t *testing.T) {
 // бы занятый номер, и строка доски разошлась бы с файлом.
 func TestNextIDCountsDrafts(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "первая идея", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "первая идея", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	id, err := cmdID(root)
@@ -112,7 +112,7 @@ func TestNextIDCountsDrafts(t *testing.T) {
 // docs/tasks/<ID>.md, и ссылка в строке ведёт уже туда.
 func TestDraftPromotedByAdd(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
@@ -162,7 +162,7 @@ func TestDraftPromotedByAdd(t *testing.T) {
 func TestAddPromotesUntrackedDraft(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdDraft(root, "идея черновика", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "идея черновика", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// Черновик незакоммичен: cmdDraft с пустым CommitOpts не зовёт git, и
@@ -212,7 +212,7 @@ func TestAddPromotesUntrackedDraft(t *testing.T) {
 // черновик с прежнего места, иначе после ошибки его не найти ни там, ни там.
 func TestAddValidationKeepsDraft(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "идея", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "идея", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Кривой ранг", Type: "task", Rank: "3+1+1+0+1", Accept: "agent"}); err == nil {
@@ -234,10 +234,10 @@ func TestDraftListAndShow(t *testing.T) {
 	if out != "черновиков нет" {
 		t.Fatalf("пустой накопитель: %q", out)
 	}
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDraft(root, "вторая идея", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "вторая идея", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	ageDraft(t, root, "XR-008", 3)
@@ -245,15 +245,15 @@ func TestDraftListAndShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "XR-008 (3 дня): уведомитель шумит из песочницы") ||
-		!strings.Contains(out, "XR-009 (сегодня): вторая идея") {
+	if !strings.Contains(out, "XR-008 (3 дня, средний): уведомитель шумит из песочницы") ||
+		!strings.Contains(out, "XR-009 (сегодня, средний): вторая идея") {
 		t.Fatalf("draft list:\n%s", out)
 	}
 	list, err := cmdList(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(list, "Черновики (2, целиком: taskctl draft list): XR-008 (3 дня), XR-009 (сегодня)") {
+	if !strings.Contains(list, "Черновики (2, целиком: taskctl draft list): XR-008 (3 дня, средний), XR-009 (сегодня, средний)") {
 		t.Fatalf("list не называет черновики:\n%s", list)
 	}
 	if section, err := cmdList(root, "backlog"); err != nil {
@@ -294,10 +294,10 @@ func TestDraftListJSON(t *testing.T) {
 		t.Fatalf("пустой накопитель обязан быть пустым списком: %s", out)
 	}
 
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDraft(root, "вторая идея", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "вторая идея", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	ageDraft(t, root, "XR-008", 3)
@@ -379,7 +379,7 @@ func TestAgeWords(t *testing.T) {
 func TestDraftLongFirstLineRefused(t *testing.T) {
 	root := setup(t)
 	long := "уведомитель шумит из песочницы, потому что хук старта берёт адрес из окружения, а не из реестра чатов, и вторая сессия перебивает первую"
-	_, err := cmdDraft(root, long, CommitOpts{})
+	_, err := cmdDraft(root, long, "mid", CommitOpts{})
 	if err == nil {
 		t.Fatal("простыня записалась черновиком")
 	}
@@ -391,7 +391,7 @@ func TestDraftLongFirstLineRefused(t *testing.T) {
 	if _, serr := os.Stat(draftFile(root, "XR-008")); serr == nil {
 		t.Fatal("отбитый черновик всё равно лёг файлом")
 	}
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\n"+long, CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\n"+long, "mid", CommitOpts{}); err != nil {
 		t.Fatalf("черновик с заголовком не записался: %v", err)
 	}
 	data, err := os.ReadFile(draftFile(root, "XR-008"))
@@ -408,7 +408,7 @@ func TestDraftLongFirstLineRefused(t *testing.T) {
 // порогу.
 func TestDraftListShowsTitleNotBody(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\nтело идеи с подробностями", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\n\nтело идеи с подробностями", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	long := "старая простыня на весь экран, записанная до порога первой строки, с подробностями внутри той же строки"
@@ -462,5 +462,92 @@ func TestDraftListJSONKeepsFullTitle(t *testing.T) {
 	}
 	if text, _ := cmdDraftList(root); strings.Contains(text, long) {
 		t.Fatalf("печатный список не обрезал заголовок: %s", text)
+	}
+}
+
+// TestDraftDemandsPrio: запись без уровня разбора отказывает и учит форме
+// команды, а сам черновик не заводится. Метка задаёт очередь разбора, и
+// поставленная грумингом она появлялась тогда, когда разбор уже шёл (DK-520).
+func TestDraftDemandsPrio(t *testing.T) {
+	root := setup(t)
+	_, err := cmdDraft(root, "идея без уровня", "", CommitOpts{})
+	if err == nil {
+		t.Fatal("запись без --prio должна отбиваться")
+	}
+	if !strings.Contains(err.Error(), "taskctl draft --prio high|mid|low") {
+		t.Fatalf("подсказка не про форму команды: %v", err)
+	}
+	if _, err := cmdDraft(root, "идея с уровнем не из шкалы", "срочно", CommitOpts{}); err == nil ||
+		!strings.Contains(err.Error(), "не из шкалы") {
+		t.Fatalf("уровень мимо шкалы: %v", err)
+	}
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 0 {
+		t.Fatalf("отказавшая запись завела черновик: %+v", drafts)
+	}
+}
+
+// TestDraftKeepsPrioFromWrite: уровень с записи ложится в шапку той же строкой,
+// что и у draft prio, и виден в накопителе без всякого разбора.
+func TestDraftKeepsPrioFromWrite(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "уведомитель шумит из песочницы\nвторой строкой подробности", "high", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(draftFile(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("записан %s\nприоритет: высокий\n", time.Now().Format(draftDateLayout))
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("метка не в шапке:\n%s", data)
+	}
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 1 || drafts[0].Prio != "high" {
+		t.Fatalf("накопитель читает уровень иначе: %+v", drafts)
+	}
+	out, err := cmdDraftList(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "XR-008 (сегодня, высокий): уведомитель шумит из песочницы") {
+		t.Fatalf("draft list:\n%s", out)
+	}
+}
+
+// TestDraftPrioOnTitleOnly: черновик из одного заголовка это болванка без тела,
+// и метке в ней ложиться не на что, кроме строки «записан». Строка не должна
+// уехать в раздел «Черновик» и стать текстом идеи.
+func TestDraftPrioOnTitleOnly(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "болванка из одного заголовка", "low", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(draftFile(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, _, _ := strings.Cut(string(data), "## ")
+	if !strings.Contains(head, "приоритет: низкий") {
+		t.Fatalf("метка не в шапке болванки:\n%s", data)
+	}
+	if strings.Count(string(data), draftPrioPrefix) != 1 {
+		t.Fatalf("метка задвоилась:\n%s", data)
+	}
+	if _, err := cmdDraftPrio(root, "XR-008", "high", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(draftFile(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), draftPrioPrefix) != 1 || !strings.Contains(string(data), "приоритет: высокий") {
+		t.Fatalf("пересмотр уровня копит строки:\n%s", data)
 	}
 }

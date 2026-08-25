@@ -57,20 +57,24 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               ошибки назначения, пересмотры
 
 Менять доску:
-  draft ["текст"]                             записать сырую идею мимо доски:
+  draft --prio high|mid|low ["текст"]         записать сырую идею мимо доски:
                                               файл docs/tasks/drafts/<ID>.md,
                                               ID берётся сам, без текста читается
                                               stdin; первая строка идёт
                                               заголовком, её потолок 72 символа
-                                              (форма в TASKFORM.md); оформляет
-                                              черновик потом add --id <ID>
-                                              (файл переезжает в docs/tasks сам)
+                                              (форма в TASKFORM.md); уровень
+                                              разбора обязателен и ставится на
+                                              глаз, дальше его правит draft prio;
+                                              оформляет черновик потом add --id
+                                              <ID> (файл переезжает в docs/tasks
+                                              сам)
   draft defer <ID> "причина"                  отложить разобранный черновик:
                                               раздел «Грумминг» в его файле
   draft defer <ID> --clear                    снять пометку об отложенном
-  draft prio <ID> high|mid|low                пометить черновик уровнем разбора:
-                                              строка в шапке файла, сортировка
-                                              накопителя от высокого к низкому
+  draft prio <ID> high|mid|low                пересмотреть уровень разбора
+                                              записанного черновика: строка в
+                                              шапке файла, сортировка накопителя
+                                              от высокого к низкому
   draft prio <ID> --clear                     снять метку уровня разбора
   draft attach <ID> <TASK-ID>                 приписать черновик к стоящей
                                               строке: текст разделом в файл
@@ -371,6 +375,7 @@ func main() {
 		default:
 			fs := flag.NewFlagSet("draft", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
+			prio := fs.String("prio", "", "уровень разбора high|mid|low, обязателен")
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[1:])
@@ -382,7 +387,7 @@ func main() {
 					fail(gerr)
 				}
 			}
-			needArgs(pos, 0, 1, "draft [\"текст\"]")
+			needArgs(pos, 0, 1, "draft --prio high|mid|low [\"текст\"]")
 			text, viaStdin := "", false
 			if len(pos) == 1 {
 				text = pos[0]
@@ -394,7 +399,7 @@ func main() {
 				}
 				viaStdin = true
 			}
-			msg, err = cmdDraftFrom(root(*dir), text, viaStdin, c)
+			msg, err = cmdDraftFrom(root(*dir), text, *prio, viaStdin, c)
 		}
 	case "move":
 		fs := flag.NewFlagSet("move", flag.ExitOnError)

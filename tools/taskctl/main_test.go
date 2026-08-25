@@ -98,7 +98,7 @@ func TestFlagBeforePositional(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 
-	out, err := runCLI(t, "draft", "-C", root, "текст черновика после флага")
+	out, err := runCLI(t, "draft", "-C", root, "--prio", "mid", "текст черновика после флага")
 	if err != nil {
 		t.Fatalf("draft -C <dir> \"текст\": %v\n%s", err, out)
 	}

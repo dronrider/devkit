@@ -69,7 +69,7 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 		// draft строку доски не пишет, но номер берёт из той же сквозной
 		// нумерации: заведённый на фичеветке черновик основному чекауту не
 		// виден, и тот же ID уйдёт следующей задаче.
-		{"draft", func() (string, error) { return cmdDraft(wt, "идея из worktree", CommitOpts{}) }},
+		{"draft", func() (string, error) { return cmdDraft(wt, "идея из worktree", "mid", CommitOpts{}) }},
 		// Исходы разбора стоят под рубежом вместе с draft и по той же причине:
 		// накопитель общий и живёт в основном чекауте, а пометка, поставленная
 		// на фичеветке, основному чекауту не видна до слияния.

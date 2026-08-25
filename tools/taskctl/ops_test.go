@@ -606,7 +606,7 @@ func TestSetTitleKeepsBlockSuffix(t *testing.T) {
 // в дизайн-документе (LLD DK-133, решение 4).
 func TestAddDraftWithoutDoDRefused(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "разобрать, но не до конца", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "разобрать, но не до конца", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформляемая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})

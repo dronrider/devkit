@@ -151,7 +151,7 @@ func TestAddNonAgentRequiresBarrier(t *testing.T) {
 // клал скелет поверх перенесённого текста. Срабатывание от --link не зависит.
 func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "текст черновика под нарезку цели\n\nситуация из черновика", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "текст черновика под нарезку цели\n\nситуация из черновика", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
@@ -193,7 +193,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 		t.Fatalf("ссылка строки %q, жду на файл задачи: при --link ячейку занимает он", row.Link)
 	}
 	// Без --link итог тот же: текст цел, скелет не пишется, раздел дописан.
-	if _, err := cmdDraft(root, "второй черновик без ссылки\n\nситуация второго черновика", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "второй черновик без ссылки\n\nситуация второго черновика", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-009")
@@ -266,7 +266,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
 	root := setup(t)
 	quote := "```md\n## Приёмка\n\n- вид: user\n```\n"
-	if _, err := cmdDraft(root, "черновик про taskctl цитирует раздел:\n\n"+quote, CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "черновик про taskctl цитирует раздел:\n\n"+quote, "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")

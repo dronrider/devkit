@@ -38,6 +38,15 @@ def entry(text, kind="user", **extra):
     return rec
 
 
+def assistant_entry(text, ts):
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "message": {"role": "assistant",
+                    "content": [{"type": "text", "text": text}]},
+    }
+
+
 def tool_result_entry():
     return {
         "type": "user",
@@ -115,6 +124,34 @@ class TestCollect(JournalCase):
         self.assertEqual(stat["kept"], 2)
         self.assertEqual([t for _, _, t in got], [HUMAN, HUMAN2])
         self.assertEqual([w for w, _ in prose.dictionary(got, 1) if w == "массивом"], [])
+
+    def test_перенос_черновика_ассистента_отсеивается(self):
+        # Находка ревью DK-522. Ассистент в одном окне пишет промпт для
+        # соседнего окна, человек переносит его copy-paste, и в журнале
+        # второго окна текст лежит ролью user. Подпись у обеих записей одна,
+        # а запись ассистента раньше на минуту.
+        self.write("s1.jsonl", [assistant_entry(
+            "Вот промт для агента в соседнем окне.\n\n" + HUMAN,
+            "2026-08-11T16:08:33.000Z")])
+        self.write("s2.jsonl", [
+            entry(HUMAN, timestamp="2026-08-11T16:09:41.000Z"),
+            entry(HUMAN2, timestamp="2026-08-11T16:20:00.000Z"),
+        ])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["borrowed"], 1)
+        self.assertEqual([t for _, _, t in got], [HUMAN2])
+
+    def test_цитата_агента_позже_реплики_кандидата_не_режет(self):
+        # Обратный случай той же пары. Агент цитирует реплику человека в
+        # отчёте или в ревью. Отличает его только время, и без сверки времени
+        # отсев убрал бы всё, что агенты когда-либо цитировали.
+        self.write("s1.jsonl", [entry(HUMAN, timestamp="2026-08-11T16:09:41.000Z")])
+        self.write("s2.jsonl", [assistant_entry(
+            "Реплика пользователя, на которую я отвечаю:\n\n" + HUMAN,
+            "2026-08-25T15:50:27.000Z")])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["borrowed"], 0)
+        self.assertEqual([t for _, _, t in got], [HUMAN])
 
     def test_ответы_инструментов_и_мета_не_реплики(self):
         self.write("s1.jsonl", [
@@ -344,6 +381,19 @@ class TestКорпусРепозитория(unittest.TestCase):
                     источник.startswith("журнал сессии")
                     or источник.startswith("трекер"),
                     "%s: %s" % (genre, источник))
+
+    def test_один_текст_не_стоит_в_двух_жанрах(self):
+        # Одна и та же реплика стояла и в `task`, и в `readme` (находка
+        # второго круга DK-522). Выборка из четырёх жанров показала бы её
+        # дважды, а жанров в корпусе стало бы фактически три с половиной.
+        corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
+        места = {}
+        for genre, (_, fragments) in corpus.items():
+            for i, fragment in enumerate(fragments, 1):
+                места.setdefault(prose.signature(fragment["body"]), []).append(
+                    "%s #%d" % (genre, i))
+        повторы = {k: v for k, v in места.items() if len(v) > 1}
+        self.assertEqual(повторы, {})
 
     def test_два_запуска_без_seed_дают_разные_наборы(self):
         # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом

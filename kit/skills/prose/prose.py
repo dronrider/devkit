@@ -4,9 +4,10 @@
   prose.py collect [--journals DIR] [--min-words N] [--out DIR]
   prose.py sample [--genre ЖАНР] [--count N] [--seed S] [--corpus DIR]
 
-`collect` режет журналы сессий на реплики роли user, отсеивает короткие и
-служебные и складывает словарь. Выгрузка не коммитится: это личные тексты, в
-корпус из них едет только вычитанное пользователем.
+`collect` режет журналы сессий на реплики роли user, отсеивает короткие,
+служебные и перенесённые copy-paste черновики агента и складывает словарь.
+Выгрузка не коммитится: это личные тексты, в корпус из них едет только
+вычитанное пользователем.
 
 `sample` читает корпус из `corpus/` и печатает случайный набор фрагментов. Его
 зовёт скилл письма, поэтому набор на каждом заходе разный, а `--seed` делает
@@ -86,6 +87,10 @@ TAIL_MARKS = (
 )
 
 WORD_RE = re.compile(r"[а-яёА-ЯЁ]+")
+# В слове отпечатка буквы и цифры, латиница наравне с кириллицей. Длина
+# отпечатка в словах стоит здесь же, и тест ссылается на неё через это имя.
+NORM_RE = re.compile(r"[а-яёa-z0-9]+")
+SIGN_WORDS = 8
 FENCE_RE = re.compile(r"```.*?```", re.S)
 CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 LETTER_RE = re.compile(r"[а-яёА-ЯЁa-zA-Z]")
@@ -107,6 +112,22 @@ def journals(root):
             if name.endswith(".jsonl"):
                 out.append(os.path.join(path, name))
     return out
+
+
+def records(path):
+    """Записи журнала по одной. Битая строка пропускается. Журнал живой сессии
+    дописывается на ходу, и хвост бывает обрезан."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
 
 
 def reply_text(rec):
@@ -134,6 +155,68 @@ def reply_text(rec):
             return None
         parts.append(block.get("text", ""))
     return "\n".join(parts) if parts else None
+
+
+def assistant_text(rec):
+    """Текст ответа ассистента или None. Блоки не-текста (вызовы инструментов,
+    рассуждение) пропускаются, остальное склеивается в один кусок."""
+    if rec.get("type") != "assistant":
+        return None
+    message = rec.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "\n".join(parts) if parts else None
+
+
+def signature(text):
+    """Отпечаток начала текста это восемь первых слов, приведённых к нижнему
+    регистру и очищенных от знаков. Знаки снимаются потому, что текст едет
+    copy-paste, а обратные кавычки и тире по дороге теряются. Восьми слов
+    хватает, чтобы два разных абзаца не совпали, и мало, чтобы его не задела
+    правка хвоста."""
+    ws = NORM_RE.findall(text.lower())
+    if len(ws) < SIGN_WORDS:
+        return None
+    return " ".join(ws[:SIGN_WORDS])
+
+
+def borrowed(root, stamps):
+    """Подписи реплик, которые ассистент написал раньше человека.
+
+    Пользователь переносит черновик агента из окна в окно copy-paste, и в
+    журнале второго окна текст оседает ролью user (находка ревью DK-522:
+    промпт «Берём вариант 1 (DK-237 вперёд)» сочинён ассистентом в 16:08 и
+    вставлен человеком в 16:09). Такой текст в эталон брать нельзя. Ради
+    ухода от него и заведена цель DK-446.
+
+    Сравнение идёт по времени. Обратный случай выглядит так же. Агент
+    цитирует реплику человека в отчёте или в ревью, а запись ассистента
+    тогда идёт позже, и кандидата она не трогает.
+    """
+    out = set()
+    for path in journals(root):
+        for rec in records(path):
+            text = assistant_text(rec)
+            if not text:
+                continue
+            ts = rec.get("timestamp") or ""
+            for chunk in text.split("\n"):
+                sign = signature(chunk)
+                if sign is None:
+                    continue
+                first = stamps.get(sign)
+                if first is not None and ts < first:
+                    out.add(sign)
+    return out
 
 
 def clean(text):
@@ -187,40 +270,51 @@ def is_prose(text, min_words):
 
 
 def collect(root, min_words):
-    """Возврат (кандидаты, статистика). Кандидат это (журнал, дата, текст)."""
-    stat = {"journals": 0, "replies": 0, "service": 0, "short": 0, "kept": 0}
+    """Возврат (кандидаты, статистика). Кандидат это (журнал, дата, текст).
+
+    Журналы читаются дважды. Первый проход набирает реплики человека и
+    запоминает, когда каждая из них сказана впервые. Второй ищет тот же
+    текст словами ассистента раньше этого времени. Одним проходом не
+    обойтись. Черновик агента лежит в соседнем журнале, а какие подписи
+    искать, известно только после первого прохода."""
+    stat = {"journals": 0, "replies": 0, "service": 0, "short": 0,
+            "borrowed": 0, "kept": 0}
     seen = set()
-    out = []
+    rows = []
+    stamps = {}
     for path in journals(root):
         stat["journals"] += 1
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                text = reply_text(rec)
-                if text is None:
-                    continue
-                stat["replies"] += 1
-                if is_service(text):
-                    stat["service"] += 1
-                    continue
-                text = clean(text)
-                if not is_prose(text, min_words):
-                    stat["short"] += 1
-                    continue
-                key = text[:400]
-                if key in seen:
-                    continue
-                seen.add(key)
-                stat["kept"] += 1
-                out.append((os.path.basename(path), (rec.get("timestamp") or "")[:10], text))
+        for rec in records(path):
+            raw = reply_text(rec)
+            if raw is None:
+                continue
+            stat["replies"] += 1
+            if is_service(raw):
+                stat["service"] += 1
+                continue
+            text = clean(raw)
+            if not is_prose(text, min_words):
+                stat["short"] += 1
+                continue
+            key = text[:400]
+            if key in seen:
+                continue
+            seen.add(key)
+            stamp = rec.get("timestamp") or ""
+            # Подпись снимается с исходной реплики, а не с очищенной. В
+            # черновике ассистента ограды кода стоят на месте.
+            sign = signature(raw)
+            if sign is not None and (sign not in stamps or stamp < stamps[sign]):
+                stamps[sign] = stamp
+            rows.append((os.path.basename(path), stamp[:10], text, sign))
+    taken = borrowed(root, stamps) if stamps else set()
+    out = []
+    for name, date, text, sign in rows:
+        if sign is not None and sign in taken:
+            stat["borrowed"] += 1
+            continue
+        stat["kept"] += 1
+        out.append((name, date, text))
     return out, stat
 
 
@@ -360,6 +454,7 @@ def cmd_collect(args):
     print("реплик роли user: %d" % stat["replies"])
     print("служебных отсеяно: %d" % stat["service"])
     print("коротких и нерусских отсеяно: %d" % stat["short"])
+    print("переносов чужого черновика отсеяно: %d" % stat["borrowed"])
     print("кандидатов: %d" % stat["kept"])
     top = dictionary(candidates, args.min_hits)
     print("словарь: %d слов от %d реплик" % (len(top), args.min_hits))

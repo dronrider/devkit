@@ -192,7 +192,7 @@ func parseNotifyLine(line string) (Notification, bool) {
 // несколько строк, а событию нужна та, над которой она работала последней
 // (замечание 5 седьмого круга POC).
 func (s *server) bindNotifyTasks(list []Notification) {
-	recs := sessions.LoadAll(s.cfg.Home)
+	recs := s.bindsAll()
 	if len(recs) == 0 {
 		return
 	}

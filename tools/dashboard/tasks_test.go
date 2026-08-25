@@ -65,7 +65,18 @@ func buildTaskctl(t *testing.T) string {
 // подмена дома снаружи уводила его уведомитель мимо собственного журнала.
 func TestMain(m *testing.M) {
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
+	// Второй дом реестра на время прогона пустой. Дашборд читает реестры двух
+	// домов, своего и машинного (bindHomes), и без подмены прогон вычитывал бы
+	// живой ~/.devkit/sessions.log разработчика: тесты падали от чужих сессий,
+	// которых в их синтетическом доме нет и быть не должно. Тесты, которым
+	// нужен именно разъезд домов, подменяют шов сами.
+	spare, err := os.MkdirTemp("", "dash-spare-home")
+	if err != nil {
+		panic(err)
+	}
+	realHomeFn = func() string { return spare }
 	code := m.Run()
+	os.RemoveAll(spare)
 	if realTaskctlPath != "" {
 		os.RemoveAll(filepath.Dir(realTaskctlPath))
 	}

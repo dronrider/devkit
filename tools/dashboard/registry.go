@@ -79,12 +79,52 @@ func (s *server) bindsPath() string {
 	return sessions.Path(s.cfg.Home)
 }
 
+// bindHomes называет дома, чьи реестры читаются. Первый это дом дашборда, туда
+// пишут поднятые им сессии. Второй это дом машины, и нужен он там, где эти два
+// дома разошлись: сессия, поднятая мимо дашборда либо прежней сборкой без
+// подмены дома, оставляет запись у машины, а панель без неё слепа. Дорога та
+// же, какой читаются каталоги транскриптов и файлы планов: домов бывает
+// несколько, и знать про сессию надо из любого.
+func (s *server) bindHomes() []string {
+	out := []string{s.cfg.Home}
+	if home := realHomeFn(); home != "" && home != s.cfg.Home {
+		out = append(out, home)
+	}
+	return out
+}
+
+// realHomeFn это шов для тестов: дом машины у них свой, и настоящий трогать
+// нельзя. Боевой сервер зовёт realHome.
+var realHomeFn = realHome
+
+// bindsData склеивает журналы всех домов. Свёртку делает разбор: у записи есть
+// время, и свежая выигрывает независимо от того, из какого файла приехала.
+func (s *server) bindsData() []byte {
+	var out []byte
+	for _, home := range s.bindHomes() {
+		data, err := os.ReadFile(sessions.Path(home))
+		if err != nil {
+			continue
+		}
+		out = append(out, data...)
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			out = append(out, '\n')
+		}
+	}
+	return out
+}
+
 // binds читает реестр целиком. Файл капается по длине самим писателем
 // (hookio.append_capped), и памяти процесса тут не заводится: строка ложится
 // на каждом старте сессии, а устаревшая привязка врёт дороже, чем стоит чтение
 // сотни килобайт.
 func (s *server) binds() sessionBinds {
-	return sessions.Load(s.cfg.Home)
+	return sessions.Parse(s.bindsData())
+}
+
+// bindsAll это тот же склеенный журнал списком записей на сессию.
+func (s *server) bindsAll() map[string][]sessionBind {
+	return sessions.All(s.bindsData())
 }
 
 // task называет задачу сессии, подпись источника и разряд привязки. Запись

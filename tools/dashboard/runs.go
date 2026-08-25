@@ -294,13 +294,16 @@ func harnessTail(h *Harness) string {
 	return ", подписка " + h.Name
 }
 
-// Пары окружения конвейера те же, что у диалога (chatVars): задача и имя
+// Пары окружения конвейера те же, что у диалога: их собирает общая сборка
+// launchEnv, и своего набора у конвейера нет. Задача и имя
 // tmux-сессии для SessionStart-хука, настоящий HOME и заглушка опроса фокуса.
 // HOME тут не мелочь: tmux-сервер, поднятый демоном, наследует его подложный
 // дом, agentctl exec разворачивает в нём тильду раскладки харнеса, и
 // CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог демона, а клиент
 // отвечал «Not logged in» (живой случай, запуск DK-269 на второй подписке).
-func sessionCommand(agentctl string, h *Harness, prompt, id, sess, model string) string {
+// Окружение приходит доводом, а не собирается тут: собирает его одно место на
+// все дороги подъёма (launchEnv), и звать его в обход сервера некому.
+func sessionCommand(agentctl string, h *Harness, env, prompt, id, sess, model string) string {
 	if h == nil {
 		client := defaultClient
 		// Ярус называется явно: без флага клиент берёт свой дефолт, и работа
@@ -308,7 +311,7 @@ func sessionCommand(agentctl string, h *Harness, prompt, id, sess, model string)
 		if model != "" {
 			client += " --model " + shQuote(model)
 		}
-		return chatVars(id, sess) + client + " -p " + shQuote(prompt)
+		return env + client + " -p " + shQuote(prompt)
 	}
 	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
@@ -326,7 +329,7 @@ func sessionCommand(agentctl string, h *Harness, prompt, id, sess, model string)
 	if model != "" {
 		tier = " --model " + shQuote(model)
 	}
-	return chatVars(id, sess) + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
+	return env + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
 		shQuote(h.Bin) + " --permission-mode auto" + tier + " -p " + shQuote(prompt)
 }
 
@@ -520,8 +523,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), harness, runPrompt(row.Sect, id)+" "+planRuleFor(sess),
-			id, sess, model)); err != nil {
+		sessionCommand(binPath(agentctlBin), harness, s.launchEnv(id, sess),
+			runPrompt(row.Sect, id)+" "+planRuleFor(sess), id, sess, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

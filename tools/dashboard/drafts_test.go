@@ -1025,3 +1025,47 @@ func TestStaticGroomRunsWithoutConfirm(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Живой случай DK-482..486: разбор пачки поднял пять сессий, агенты работали, а
+// чаты в панели стояли пустыми. Записи этих сессий легли в реестр дома машины,
+// а дашборд со своим домом читал свой файл. Две половины починки: заказ разбора
+// собирает окружение той же общей сборкой, что и прочие дороги подъёма, и
+// поднятая сессия видна дашборду, в каком бы из двух домов ни оказалась её
+// запись.
+func TestDraftGroomOrderAndVisibility(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "накопитель черновиков не виден в панели"}`).Body.Close()
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг черновика: %d %s", resp.StatusCode, body(t, resp))
+	}
+	// Окружение заказа то же, что отдаёт общая сборка: своего набора у разбора
+	// нет ни одной пары.
+	want := e.s.launchEnv("XR-005", "task-XR-005")
+	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
+		t.Fatalf("заказ разбора собрал окружение по-своему:\n%s\nждал вхождение %q", got, want)
+	}
+
+	// Хук старта поднятой сессии пишет запись по своему HOME, то есть в дом
+	// машины. Дашборд обязан увидеть её и оттуда.
+	machine := t.TempDir()
+	was := realHomeFn
+	realHomeFn = func() string { return machine }
+	t.Cleanup(func() { realHomeFn = was })
+	writeBindsAt(t, machine, "2026-08-25T23:58:04 сессия 7749edb9-2222 задача XR-005 проект demo "+
+		"дерево "+e.proj+" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-005\n")
+
+	sid, rec := e.s.binds().Leads("XR-005")
+	if sid != "7749edb9-2222" {
+		t.Fatalf("сессия разбора не видна дашборду сразу после подъёма: %q", sid)
+	}
+	if rec.Tmux != "task-XR-005" {
+		t.Errorf("имя tmux-сессии разбора потерялось: %+v", rec)
+	}
+}

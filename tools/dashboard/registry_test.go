@@ -418,3 +418,80 @@ func TestRunLeavesLiveRegistryAlone(t *testing.T) {
 		t.Errorf("прогон унаследовал ID живой сессии %q: её записи станут записями прогона", sid)
 	}
 }
+
+// Заказ подъёма собирается одним местом на все четыре дороги: разговор,
+// конвейер задачи, цикл цели и разбор черновика. Прежде разбор звал сборку
+// сбоку, и стоило дорогам разойтись, как поднятые сессии пропадали из панели:
+// пять разборов DK-482..486 работали, а чаты в панели стояли пустыми.
+func TestLaunchEnvSameForEveryOrder(t *testing.T) {
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+	env := s.launchEnv("XR-7", "task-XR-7")
+	// Набор пар назван поимённо: молчаливое сравнение строк пропустило бы
+	// потерю переменной, о которой никто не помнит.
+	for _, want := range []string{"DEVKIT_NO_FOCUS=1", "HOME=", "DEVKIT_TASK='XR-7'",
+		"DEVKIT_TMUX='task-XR-7'"} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("в общей сборке окружения нет %s: %s", want, env)
+		}
+	}
+	orders := map[string]string{
+		"разговор": chatCmd(env, "opus", "", "привет", execRotateDefault, nil, "agentctl"),
+		"конвейер": sessionCommand("agentctl", nil, env, "выполни XR-7", "XR-7", "task-XR-7", "opus"),
+		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
+	}
+	for name, cmd := range orders {
+		if !strings.HasPrefix(cmd, env) {
+			t.Errorf("заказ вида %q собрал окружение по-своему:\n%s\nждал в начале:\n%s",
+				name, cmd, env)
+		}
+	}
+}
+
+// Дома у дашборда и у поднятой сессии разные: сессия получает дом машины (без
+// него раскладка подписок разворачивает тильду в тонкий каталог без логина), а
+// дашборд живёт своим. Реестр из-за этого разъезжается, и читать надо оба дома,
+// той же дорогой, какой читаются каталоги транскриптов.
+func TestBindsReadBothHomes(t *testing.T) {
+	own, machine := t.TempDir(), t.TempDir()
+	was := realHomeFn
+	realHomeFn = func() string { return machine }
+	t.Cleanup(func() { realHomeFn = was })
+	s := newServer(&Config{Home: own}, nil, nil)
+
+	// Запись сессии разбора легла в дом машины: туда её кладёт хук старта по
+	// своему HOME.
+	line := "2026-08-25T23:58:04 сессия 7749edb9-1111 задача DK-483 проект devkit " +
+		"дерево /tmp/devkit транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-483\n"
+	writeBindsAt(t, machine, line)
+	// А в своём доме лежит запись другой сессии: оба дома обязаны доехать.
+	writeBindsAt(t, own, "2026-08-25T20:00:00 сессия aaaa2222-2222 задача DK-400 проект devkit "+
+		"дерево /tmp/devkit транскрипт - источник заказ повод startup tmux task-DK-400\n")
+
+	got := s.binds()
+	if rec, ok := got["7749edb9-1111"]; !ok || rec.Task != "DK-483" {
+		t.Fatalf("сессия разбора из дома машины не видна дашборду: %+v", got)
+	}
+	if rec, ok := got["aaaa2222-2222"]; !ok || rec.Task != "DK-400" {
+		t.Errorf("своя запись потерялась при чтении двух домов: %+v", got)
+	}
+	if sid, _ := got.Leads("DK-483"); sid != "7749edb9-1111" {
+		t.Errorf("ведущая сессия задачи DK-483 не нашлась: %q", sid)
+	}
+	// Тот же склеенный журнал виден и списком записей на сессию: по нему панель
+	// узнаёт имя tmux и дорогу к разговору.
+	if recs := s.bindsAll()["7749edb9-1111"]; len(recs) != 1 || recs[0].Tmux != "task-DK-483" {
+		t.Errorf("список записей сессии разбора не собрался: %+v", recs)
+	}
+}
+
+// writeBindsAt кладёт журнал реестра в названный дом.
+func writeBindsAt(t *testing.T, home, text string) {
+	t.Helper()
+	path := sessions.Path(home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

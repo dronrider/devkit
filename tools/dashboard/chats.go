@@ -542,7 +542,7 @@ type chatWindow struct {
 // подписок) считается один раз, сколько бы проектов ни легло в обход, а
 // префикс доски берётся по проекту файла и помнится на заход.
 func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([]chatEntry, bool) {
-	recs := sessions.LoadAll(s.cfg.Home)
+	recs := s.bindsAll()
 	// Имя tmux сворачивается по последней записи всего реестра: клиент за
 	// диалогами доверия и импортов пересоздаёт сессию, и одно имя носят
 	// несколько записей подряд, а поверх этого имя переиспользуется между
@@ -880,7 +880,7 @@ func planRuleFor(sess string) string {
 
 // tmuxVarRe достаёт имя tmux-сессии из пар окружения заказа: правило плана
 // несёт его запасным адресом, а отдельным параметром имя не едет, пары уже
-// собраны chatVars.
+// собраны launchEnv.
 var tmuxVarRe = regexp.MustCompile(`DEVKIT_TMUX='([^']*)'`)
 
 func envTmux(env string) string {
@@ -972,16 +972,29 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 	return cmd
 }
 
-// chatVars это пары окружения диалога: задачу и имя tmux-сессии поднятая сессия
+// launchEnv это пары окружения поднятой сессии, одни на все четыре дороги
+// подъёма: разговор, конвейер задачи, цикл цели и разбор черновика. Своего
+// набора у дороги нет ни одного: разнобой тут стоит слепых панелей и потерянных
+// записей реестра. Прежде сборка звалась chatVars и жила у разговора, а
+// конвейер с разбором звали её сбоку.
+//
+// Задачу и имя tmux-сессии поднятая сессия
 // называет о себе в реестре сама, хуком старта.
-func chatVars(id, sess string) string {
+func (s *server) launchEnv(id, sess string) string {
 	env := "DEVKIT_TMUX=" + shQuote(sess) + " "
 	if id != "" {
 		env = "DEVKIT_TASK=" + shQuote(id) + " " + env
 	}
-	// Дом ставится явно: tmux-сервер, поднятый самим демоном, наследует его
-	// подложный HOME, и клиент в такой сессии не находит ни хуков, ни логина.
-	// Уже поднятый сервер держит настоящий дом сам, и лишним это не будет.
+	// Дом тут настоящий, машинный, а не дом самого дашборда. Причина в
+	// раскладке подписок: agentctl exec разворачивает тильду ключа home, и под
+	// подложным домом демона CLAUDE_CONFIG_DIR второй подписки указывает в
+	// тонкий каталог без логина. Хуки и логин клиента ищутся там же.
+	//
+	// Плата за это разъезд реестров: хук старта пишет запись в
+	// <настоящий дом>/.devkit/sessions.log, а дашборд со своим домом читает
+	// свой файл. Живой случай DK-482..486: пять сессий разбора работали, а
+	// чаты в панели стояли пустыми. Лечится это чтением обоих домов
+	// (bindHomes в registry.go), а не подменой дома у поднятой сессии.
 	if home := realHome(); home != "" {
 		env = "HOME=" + shQuote(home) + " " + env
 	}
@@ -1055,7 +1068,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -1202,7 +1215,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	last := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid])
+	last := sessions.Last(s.bindsAll()[sid])
 	alive := tmuxAliveFn()
 	if body.Drop {
 		// Сессия, которой уже нет, это не отказ, а сделанное дело: человек жал
@@ -1321,7 +1334,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.chatRaiseSay(w, found, sid, text, claim)
 		return
 	}
-	recs := sessions.LoadAll(s.cfg.Home)
+	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
 	// Первым делом канал самого клиента: живая сессия принимает реплику прямо в
 	// свой сокет и просыпается за секунды, чем бы она ни была поднята. Окно
@@ -1440,7 +1453,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(task, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -1754,7 +1767,7 @@ func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, s
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return nil, "", "", false
 	}
-	name := sessions.Last(sessions.LoadAll(s.cfg.Home)[sid]).Tmux
+	name := sessions.Last(s.bindsAll()[sid]).Tmux
 	if name == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
 			"разговор %s не живёт в нашей tmux: спрашивать его клиента неоткуда", sid)})
@@ -1778,7 +1791,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	recs := sessions.LoadAll(s.cfg.Home)
+	recs := s.bindsAll()
 	task := ""
 	if t := sessions.Touched(recs[sid]); len(t) > 0 {
 		task = t[0]
@@ -1789,7 +1802,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		chatCmd(chatVars(task, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -2019,7 +2032,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -2457,7 +2470,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(chatVars(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

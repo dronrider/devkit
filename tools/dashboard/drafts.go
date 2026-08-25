@@ -349,7 +349,8 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(id, sess, groomPrompt(id, ask)+" "+planRuleFor(sess), harness, model)); err != nil {
+		groomCmd(s.launchEnv(id, sess), groomPrompt(id, ask)+" "+planRuleFor(sess),
+			harness, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -379,7 +380,10 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 // её же обвязкой (agentctl exec), как у чата и у конвейера задачи: пары
 // окружения второй подписки собирает она, а не дашборд, и режим разрешений ей
 // называется флагом, иначе свежий профиль встал бы на первом же вопросе.
-func groomCmd(id, sess, prompt string, h *Harness, model string) string {
+// Окружение приходит доводом: собирает его одно место на все дороги подъёма
+// (launchEnv). Прежде разбор звал сборку сам, и стоило ей разойтись с прочими
+// дорогами, как сессии разбора пропадали из панели.
+func groomCmd(env, prompt string, h *Harness, model string) string {
 	client := defaultClient
 	if h != nil && !h.Default {
 		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
@@ -389,7 +393,7 @@ func groomCmd(id, sess, prompt string, h *Harness, model string) string {
 		// он бывает и верхним ярусом, за который человек платить не собирался.
 		client += " --model " + shQuote(model)
 	}
-	return chatVars(id, sess) + client + " " + shQuote(prompt)
+	return env + client + " " + shQuote(prompt)
 }
 
 // draftAsk достаёт уточнение из тела запроса. Тело бывает и пустым: кнопка

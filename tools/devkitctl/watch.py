@@ -44,6 +44,13 @@ in-progress`. Будит сторожок и только он, а будить 
 Живость решает реестр чатов `~/.devkit/sessions.log`: убитый ход ожидания не
 значит убитой сессии, окно в vscode работает дальше, и парковка встала бы под
 руками исполнителя. Живая сессия значит страховка молчит.
+
+Тем же тиком сторожок льёт поезд (LLD DK-306, решение 4): по каждому корню
+обхода он зовёт `shipctl -C <корень> ship --drain`, и поезд, оставшийся без
+получателя события «очередь освободилась», доезжает до прода сам. Разлив
+идемпотентен и молчит нулём на пустом поезде, занятой очереди и сломанном
+проде, а провал деплоя не поднимает код тика: уведомление шлёт сам shipctl
+через признак провала и taskctl fail.
 """
 import importlib.util
 import os
@@ -309,20 +316,24 @@ def lying_answer(root, task_id, now, hook=None):
     return None, addressed
 
 
-def taskctl_bin(which=None):
-    """Путь бинаря taskctl для пробуждения. launchd даёт сторожку системный
+def devkit_bin(name, which=None):
+    """Путь бинаря devkit для вызовов тика. launchd даёт сторожку системный
     PATH без каталога бинарей, поэтому за PATH стоят каталоги установки
     релиза, те же, что перебирает update."""
     which = shutil.which if which is None else which
-    found = which("taskctl")
+    found = which(name)
     if found:
         return found
     import update
     for d in update.BIN_DIRS:
-        cand = os.path.expanduser(os.path.join(d, "taskctl"))
+        cand = os.path.expanduser(os.path.join(d, name))
         if os.access(cand, os.X_OK):
             return cand
     return ""
+
+
+def taskctl_bin(which=None):
+    return devkit_bin("taskctl", which)
 
 
 # Умолчание ключа hook у wake: подхват грузится самим тиком. Отдельная метка
@@ -525,6 +536,39 @@ def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
     return lines
 
 
+NO_DRAIN = "разлив не нужен"
+
+
+def drain(root, call=None, shipctl=None):
+    """Разлив поезда корня (LLD DK-306, решения 2 и 4): тик зовёт
+    `shipctl -C <корень> ship --drain`, чтобы поезд, оставшийся без получателя
+    после перезагрузки или падения сессий, не стоял до ручного ship. Разлив
+    идемпотентен: пустой поезд, занятая очередь и сломанный прод выходят нулём
+    со строкой «разлив не нужен», и такой исход значимым не считается. Возврат
+    это строка отчёта и признак значимости: значимое (выкат или провал) идёт
+    в журнал сторожка, остальное только в отчёт тика, иначе журнал тонул бы
+    в пустом поезде каждые пять минут.
+
+    Провал вызова не поднимает код тика и не глушит остальные корни:
+    уведомление на провал деплоя шлёт сам shipctl через признак провала и
+    taskctl fail, и повторять его из сторожка значило бы звонить дважды."""
+    call = subprocess.run if call is None else call
+    bin = devkit_bin("shipctl") if shipctl is None else shipctl
+    name = os.path.basename(root.rstrip("/"))
+    if not bin:
+        return ("корень %s: бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
+                "поезд стоит до ручного ship" % name), True
+    try:
+        p = call([bin, "-C", root, "ship", "--drain"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ("корень %s: разлив не вышел, %s" % (name, e)), True
+    text = " ".join((p.stdout or "").split())
+    if p.returncode != 0:
+        return ("корень %s: разлив упал с кодом %d: %s" % (name, p.returncode, text)), True
+    return ("корень %s: %s" % (name, text)), NO_DRAIN not in (p.stdout or "")
+
+
 def shout(title, body, root, call=None, task=None):
     """Громкий зов уведомителем. Зовётся он из корня проекта, как из оболочки
     goal-run: по рабочему дереву уведомитель собирает заголовок баннера и цель
@@ -672,7 +716,7 @@ def heartbeat(home=None):
     return None
 
 
-def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
+def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
@@ -707,6 +751,18 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None):
         swept.add(root)
         for line in wake(root, now, call, taskctl) + park_stale(root, now, call, taskctl, home=home):
             out.write(line + "\n")
+            log_line(line, home)
+    # Разлив идёт тем же множеством корней отдельным проходом: событие
+    # «очередь освободилась» некому доставить после перезагрузки или падения
+    # сессий, и без сторожка поезд стоял бы до ручного ship (LLD DK-306,
+    # решение 4). Корень без доски пропускается: разливать там нечего, и
+    # строка об отказе только плодила бы шум.
+    for root in sorted(swept):
+        if not board_present(root):
+            continue
+        line, notable = drain(root, call, shipctl)
+        out.write(line + "\n")
+        if notable:
             log_line(line, home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:

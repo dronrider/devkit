@@ -407,9 +407,11 @@ class TestКорпусРепозитория(unittest.TestCase):
                 self.assertFalse(источник.startswith("журнал сессии"), где)
 
     def test_имена_чужих_продуктов_не_вернулись(self):
-        # Список это имена, что стояли в корпусе до обезличивания. Агент
-        # читает эталон прямо перед письмом и тащит из него слова вместе с
-        # манерой, поэтому в наших текстах заводились Ванесса и EDT. Правка
+        # Список это имена, что стояли в корпусе до правки. Агент читает
+        # эталон прямо перед письмом и тащит из него слова вместе с манерой,
+        # поэтому в наших текстах заводились Ванесса и EDT. Первая половина
+        # списка снята с цитат трекеров, вторая с реплик пользователя, где
+        # стояли чужой трекер, чужой набор скиллов и имена моделей. Правка
         # тут одна, а вернуть имя назад может любая следующая.
         имена = (
             r"Ванесс", r"VanessaExt", r"\bEDT\b", r"ИнтернетПочта",
@@ -417,14 +419,22 @@ class TestКорпусРепозитория(unittest.TestCase):
             r"libquotient", r"nginx", r"Django", r"Swagger", r"Telegram",
             r"T-Invest", r"Т-Инвестиции", r"\b1С\b", r"\bВК\b",
             r"воркспейс",
+            r"\bJira\b", r"brainstorm", r"writing-plans", r"\bOpus\b",
+            r"\bGLM\b", r"\bsonnet\b", r"\bFable\b", r"\bvscode\b",
         )
+        # ID задачи тянет за собой чужой проект и устаревает вместе с ним. В
+        # репликах пользователя он заменён словом «задача» или снят вовсе.
+        # Регистр тут важен, иначе под шаблон уедут utf-8 и sha-1.
+        ид = r"\b[A-Z]{2,4}-\d+\b"
         corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
         for genre, (_, fragments) in corpus.items():
             for i, fragment in enumerate(fragments, 1):
+                где = "%s #%d" % (genre, i)
                 for имя in имена:
                     self.assertIsNone(
-                        re.search(имя, fragment["body"]),
-                        "%s #%d: %s" % (genre, i, имя))
+                        re.search(имя, fragment["body"], re.I),
+                        "%s: %s" % (где, имя))
+                self.assertIsNone(re.search(ид, fragment["body"]), где)
 
     def test_один_текст_не_стоит_в_двух_жанрах(self):
         # Одна и та же реплика стояла и в `task`, и в `readme` (находка

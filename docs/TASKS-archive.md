@@ -330,3 +330,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-481 | dashboard: живой демон не видит токен после secret --rotate | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-481.md](tasks/archive/2026/DK-481.md) |
 | DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-311.md](tasks/archive/2026/DK-311.md) |
 | DK-463 | doctor --fix в дереве задачи заводит болванку deploy.local и сам её находит | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-463.md](tasks/archive/2026/DK-463.md) |
+| DK-514 | taskctl review: замечание с цитатой слова «исправлено» закрывается само | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-514.md](tasks/archive/2026/DK-514.md), `51c506b1`, `cde635bd`, `6c095574` |

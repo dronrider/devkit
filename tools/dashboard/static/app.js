@@ -11114,7 +11114,7 @@ function workMoved(w, now) {
 // возраст по последней реплике человека или агента, а не по времени правки
 // файла: транскрипт трогают и при мёртвом содержимом, и брошенный трое суток
 // назад разговор стоял простаивающим минуту (разбор пользователя).
-function workAge(w, now) {
+function workSaid(w, now) {
   const age = workMoved(w, now);
   if (w && w.silent) {
     return {
@@ -11138,7 +11138,7 @@ function workLiveChip(w, now) {
       "сервер не назвал состояния этой работы: ни «активна», ни «простаивает» тут не " +
       "обещано, и снятие ей поэтому не предлагается");
   }
-  const age = workAge(w, now);
+  const age = workSaid(w, now);
   const text = said.word + (said.word === LIVE_WORD.busy ? "" : age.tail);
   const chip = el("span", "chip" + (said.chip ? " " + said.chip : ""), text);
   return withTip(chip, said.word + ": " + age.tip);
@@ -11288,7 +11288,7 @@ function agentRow(project, w, now) {
   // «активна» рядом повторял то же самое третий раз и из строки убран
   // (разбор пользователя), а знание никуда не делось.
   const dot = el("span", "dot " + said.dot);
-  withTip(dot, said.word + ": " + workAge(w, now).tip);
+  withTip(dot, said.word + ": " + workSaid(w, now).tip);
   row.append(dot);
   const box = el("div", "ab");
   const line = el("div", "l1");
@@ -11477,7 +11477,7 @@ function workKey(w) {
 function workSign(w, now) {
   return [w.live || "", w.moved || 0, w.title || "", w.sect || "", w.note || "",
     w.model || "", w.harness || "", w.talk ? 1 : 0, w.silent ? 1 : 0,
-    workAge(w, now).tail].join("|");
+    workSaid(w, now).tail].join("|");
 }
 
 // Строки таба сессий: рисуются по месту, узел за узлом. Полная пересборка

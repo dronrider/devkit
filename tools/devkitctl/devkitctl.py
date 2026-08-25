@@ -1931,8 +1931,10 @@ def check_prose_config():
     rc, out = run([sys.executable, str(hook), "--config"])
     if rc == 0:
         return []
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return ["сторож прозы молчит: %s (hooks/README.md)"
+    # В выводе хука первая строка это шапка, а пробелы идут пунктами перечня:
+    # находке нужны пункты, шапку доктор говорит своими словами.
+    lines = [ln.strip()[2:] for ln in out.splitlines() if ln.strip().startswith("- ")]
+    return ["сторож прозы молчит на каждой записи, %s (hooks/README.md)"
             % ("; ".join(lines) if lines else "конфиг порогов не читается")]
 
 

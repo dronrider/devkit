@@ -189,7 +189,7 @@ def read_config(path=None):
     path = path or config_path()
     doc, why = hookio.toml_at(path)
     if doc is None:
-        return None, ["конфига порогов нет или он битый (%s): %s" % (path, why)]
+        return None, ["порогов не прочесть, %s" % why]
     gaps = []
     mode = doc.str_of("prose", "mode")
     if mode not in MODES:
@@ -346,7 +346,7 @@ def run_diff():
 def run_config():
     conf, gaps = read_config()
     if conf is None:
-        print("конфиг порогов прозы неполон (%s):" % config_path())
+        print("конфиг порогов прозы неполон:")
         for g in gaps:
             print("- %s" % g)
         return 1

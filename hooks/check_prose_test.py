@@ -246,7 +246,8 @@ class TestConfig(unittest.TestCase):
     def test_missing_config_is_a_finding(self):
         r = run("--config", env={prose.CONFIG_ENV: self.conf})
         self.assertEqual(r.returncode, 1)
-        self.assertIn("конфига порогов нет", r.stdout)
+        self.assertIn("порогов не прочесть", r.stdout)
+        self.assertIn(self.conf, r.stdout)
 
     def test_missing_metric_key_is_named(self):
         config(self.conf)

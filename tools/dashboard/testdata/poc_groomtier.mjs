@@ -82,11 +82,8 @@ const btn = () => deepBtn(bar, "Провести груминг");
 // --- разбор всё так же поднимается ярусом разбора, а не дефолтом клиента ---
 {
   sandbox.draftPickSet("XR-D1", true);
+  // Подтверждения перед подъёмом нет: нажатие поднимает разбор сразу.
   btn().handlers.click({ stopPropagation: () => {} });
-  await settle();
-  const go = deepBtn(bar, "Поднять 1");
-  if (!go) fail("подтверждения перед подъёмом нет: " + dump(bar));
-  go.handlers.click({ stopPropagation: () => {} });
   await settle();
   const last = posted[posted.length - 1];
   if (!last || !last.path.includes("/groom")) fail("разбор не поднялся: " + JSON.stringify(posted));

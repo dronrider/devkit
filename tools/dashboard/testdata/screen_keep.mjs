@@ -1284,7 +1284,9 @@ if (groups.scrollTop !== 120) {
 // Пока ничего не выбрано, запускать нечего, и кнопки нет вовсе: гашеная кнопка
 // отвечала на вопрос, которого никто не задавал, а что отметки бывают, говорит
 // подпись рядом (решение пользователя).
-const runBtn = () => button(groups, "Провести груминг");
+// Число выбранных стоит в самой подписи кнопки: подтверждения перед подъёмом
+// нет, и сказать, сколько сессий встанет, надо до нажатия.
+const runBtn = (n) => button(groups, "Провести груминг" + (n ? " (" + n + ")" : ""));
 {
   if (runBtn()) fail("кнопка запуска стоит при пустом выборе: " + dump(groups).slice(0, 400));
   const said = dump(groups).replace(/\s+/g, " ");
@@ -1304,22 +1306,17 @@ const runBtn = () => button(groups, "Провести груминг");
     byClass(row, "dpick").handlers.click({ stopPropagation: () => {} });
     await settle();
   }
-  const btn = runBtn();
-  if (!btn) fail("кнопка запуска не встала при выбранных записях: " + dump(groups).slice(0, 400));
+  const btn = runBtn(2);
+  if (!btn) fail("кнопка запуска не назвала число выбранных: " + dump(groups).slice(0, 400));
+  // Подтверждения нет вовсе: нажатие поднимает разбор сразу, а вопрос поверх
+  // сделанного выбора человек назвал лишним. Прежняя карточка вдобавок
+  // оставляла исходную кнопку доступной поверх себя.
   btn.handlers.click({ stopPropagation: () => {} });
   await settle();
-  // Подтверждение называет число сессий и говорит, что каждая пойдёт своим
-  // разговором: пачка это несколько подъёмов, а не одно действие.
   const said = dump(groups).replace(/\s+/g, " ");
-  if (!said.includes("Поднимется 2")) fail("подтверждение не назвало число сессий: " + said.slice(0, 400));
-  if (!said.includes("своим разговором")) {
-    fail("подтверждение молчит о том, что разговоров будет несколько: " + said.slice(0, 400));
+  for (const word of ["Поднимется", "Поднять 2", "Отмена"]) {
+    if (said.includes(word)) fail("подтверждение вернулось на экран: " + word);
   }
-  if (groomed.length) fail("разбор поднялся до подтверждения: " + JSON.stringify(groomed));
-  const go2 = button(groups, "Поднять 2");
-  if (!go2) fail("в подтверждении нет кнопки подъёма: " + said.slice(0, 400));
-  go2.handlers.click({ stopPropagation: () => {} });
-  await settle();
   if (JSON.stringify(groomed) !== JSON.stringify(["XR-D1", "XR-D3"])) {
     fail("подъём пошёл не по сессии на запись: " + JSON.stringify(groomed));
   }
@@ -1348,20 +1345,18 @@ const runBtn = () => button(groups, "Провести груминг");
     byClass(row, "dpick").handlers.click({ stopPropagation: () => {} });
     await settle();
   }
-  runBtn().handlers.click({ stopPropagation: () => {} });
-  await settle();
-  const said = dump(groups).replace(/\s+/g, " ");
-  if (!said.includes("разбор уже идёт")) {
-    fail("про идущий разбор не сказано ни слова: " + said.slice(0, 400));
-  }
-  if (!said.includes("XR-D2")) fail("не названо, какую запись пропускают: " + said.slice(0, 400));
-  const go2 = button(groups, "Поднять 1");
-  if (!go2) fail("пачка отказала целиком вместо пропуска идущего: " + said.slice(0, 400));
-  go2.handlers.click({ stopPropagation: () => {} });
+  runBtn(2).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (JSON.stringify(groomed) !== JSON.stringify(["XR-D1"])) {
     fail("поднялся не только непочатый разбор: " + JSON.stringify(groomed));
   }
+  // Про пропущенное сказано строкой итога, как у запуска задачи, а не
+  // карточкой поверх экрана.
+  const said = dump(byId.get("flashes")).replace(/\s+/g, " ");
+  if (!said.includes("пропущено")) {
+    fail("про идущий разбор не сказано ни слова: " + said.slice(0, 400));
+  }
+  if (!said.includes("XR-D2")) fail("не названо, какую запись пропускают: " + said.slice(0, 400));
   grooming = false;
   for (const t of timers.splice(0)) t.fn();
   byId.get("flashes").replaceChildren();

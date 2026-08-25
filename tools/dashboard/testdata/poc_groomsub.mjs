@@ -52,14 +52,10 @@ const pickOne = () => {
   return { btn: deepBtn(bar, "Провести груминг"), sel: tag(bar, "SELECT") };
 };
 if (!pickOne().btn) fail("кнопки разбора над списком нет вовсе: " + dump(bar));
-// Подтверждение стоит между нажатием и подъёмом: сессий поднимется столько,
-// сколько выбрано, и сказать об этом надо до нажатия.
+// Подтверждения между нажатием и подъёмом нет: выбор отметками это и есть
+// осознанное действие, а разбор поднимается прямо с нажатия.
 const confirm = async (node) => {
   node.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  const go = deepBtn(bar, "Поднять 1");
-  if (!go) fail("подтверждения перед подъёмом нет: " + dump(bar));
-  go.handlers.click({ stopPropagation: () => {} });
   await settle();
 };
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1622,4 +1623,65 @@ func TestStaticSessionAgeBySaid(t *testing.T) {
 		t.Fatalf("давность строки сессии: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Формы мерялись своими числами в каждом месте, и отступы разъезжались: между
+// описанием и рангом стояло двадцать точек, между прочими блоками
+// четырнадцать, а «выровнять» означало подогнать пять чисел на глаз (замечание
+// пользователя). Теперь шаг отступа и радиус названы лестницей в :root, и
+// сторож держит рубеж: блоки формы берут величины оттуда, а не пишут свои px.
+func TestStaticFormsUseSharedSteps(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	// Сама лестница обязана быть на месте: без неё правило ниже проверяло бы
+	// ссылки на несуществующие величины.
+	for _, name := range []string{"--sp1:", "--sp2:", "--sp3:", "--sp4:", "--fgap:",
+		"--rad1:", "--rad2:", "--rad3:"} {
+		if !strings.Contains(css, name) {
+			t.Fatalf("в :root нет величины %s: лестницу отступов и радиусов завести забыли", name)
+		}
+	}
+	// Блоки формы и её окружения: карточка, ранг, сетка описания, полосы и
+	// коробки правки.
+	blocks := []string{".card", ".tgrid", ".rcard", ".rtop", ".rbig", ".rcard .rtop",
+		".rcard .rbody", ".rcard .rbig", ".nbar", ".ktabs", ".rankbox", ".swch",
+		".dnote", ".chd", ".phd", ".pbd"}
+	// Свойства, которыми меряется рыхлость формы. Ширины и высоты сюда не идут:
+	// предмет тут ритм отступов и скругление рамки.
+	props := regexp.MustCompile(`(?:^|;)\s*(border-radius|margin-top|padding|gap)\s*:\s*([^;}]+)`)
+	px := regexp.MustCompile(`\b\d+(?:\.\d+)?px\b`)
+	for _, sel := range blocks {
+		for _, decl := range cssDecls(css, sel) {
+			for _, hit := range props.FindAllStringSubmatch(decl, -1) {
+				if px.MatchString(hit[2]) {
+					t.Errorf("блок формы %s пишет свои числа вместо общей лестницы: %s:%s",
+						sel, hit[1], strings.TrimSpace(hit[2]))
+				}
+			}
+		}
+	}
+}
+
+// cssDecls отдаёт тела правил ровно этого селектора: селектор ищется целиком,
+// поэтому «.card» не притягивает «.dcard» и «.card > .prow».
+func cssDecls(css, sel string) []string {
+	var out []string
+	for i := 0; i+len(sel) <= len(css); i++ {
+		if css[i:i+len(sel)] != sel {
+			continue
+		}
+		if i > 0 && !strings.ContainsRune(" \t\n{},>~", rune(css[i-1])) {
+			continue
+		}
+		rest := css[i+len(sel):]
+		cut := strings.IndexAny(rest, "{,")
+		if cut < 0 || rest[cut] == ',' || strings.TrimSpace(rest[:cut]) != "" {
+			continue
+		}
+		end := strings.IndexByte(rest[cut:], '}')
+		if end < 0 {
+			continue
+		}
+		out = append(out, rest[cut+1:cut+end])
+	}
+	return out
 }

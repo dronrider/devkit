@@ -9171,80 +9171,55 @@ function draftRunBarFill(bar, project, works) {
   // draftBarPaint, не трогая список.
   draftBarPaint = () => { draftRunBarFill(bar, project, works); };
   const picked = [...draftPick];
-  const box = el("span", "drun");
   if (!picked.length) {
-    bar.replaceChildren(box, el("span", "hint",
+    bar.replaceChildren(el("span", "hint",
       "Отметьте записи в списке, и разбор поднимется на выбранные."));
     return;
   }
   const grp = el("span", "grun");
-  const btn = el("button", "btn btn-sm btn-acc", "Провести груминг");
+  // Число стоит в самой подписи: подтверждения перед подъёмом больше нет, и
+  // сказать, сколько сессий встанет, надо на кнопке.
+  const btn = el("button", "btn btn-sm btn-acc", "Провести груминг (" + picked.length + ")");
   withTip(btn, GROOM_HINT);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    // Кнопка гаснет на время подъёма: пачка идёт по одной сессии, и второе
+    // нажатие подняло бы их дважды. Прежде тут стояло подтверждение карточкой,
+    // а исходная кнопка оставалась доступной поверх открытого вопроса
+    // (замечание пользователя по снимку).
     btn.disabled = true;
     const now = modelLadderPick(draftModel);
-    const going = draftGroomAsk(project, works, box,
-      now ? now.harness : "", now ? now.tier : "");
-    Promise.resolve(going).catch(console.error).finally(() => { btn.disabled = false; });
+    Promise.resolve(draftGroomStart(project, works, now ? now.harness : "", now ? now.tier : ""))
+      .catch(console.error).finally(() => { btn.disabled = false; });
   });
   grp.append(btn);
   const sel = draftModelPick();
   if (sel) grp.append(sel);
-  bar.replaceChildren(grp, box, el("span", "hint", "Выбрано " + picked.length + " " +
+  bar.replaceChildren(grp, el("span", "hint", "Выбрано " + picked.length + " " +
     plural(picked.length, "запись", "записи", "записей") +
     ", каждая пойдёт своим разговором."));
 }
 
-// Подтверждение перед подъёмом: сколько сессий встанет и что каждая пойдёт
-// своим разговором. Пачка тут не одно действие, а несколько подъёмов подряд, и
-// сказать об этом надо до нажатия, а не после (решение пользователя).
-async function draftGroomAsk(project, works, box, harness, tier) {
+// Подъём разбора на выбранные записи. Подтверждения перед ним нет: выбор
+// отметками это и есть осознанное действие человека, а второй вопрос поверх
+// него он назвал лишним. Записи, у которых разбор уже идёт, пропускаются, а не
+// роняют пачку отказом, и сказано про них строкой итога.
+async function draftGroomStart(project, works, harness, tier) {
   const picked = [...draftPick];
-  if (!picked.length) return false;
-  // Разбор части выбранного уже идёт: такие записи пропускаются, а не роняют
-  // всю пачку отказом.
+  if (!picked.length) return 0;
   const going = picked.filter((id) => taskLively(project, id, works));
   const todo = picked.filter((id) => !going.includes(id));
-  box.replaceChildren();
-  const card = el("div", "dconfirm");
   if (!todo.length) {
-    card.append(el("div", "dwhy", "Разбор идёт у всех выбранных записей (" +
-      going.join(", ") + "): поднимать нечего."));
-    const row = el("div", "drow");
-    const no = el("button", "btn btn-sm", "Понятно");
-    no.addEventListener("click", () => { box.replaceChildren(); });
-    row.append(no);
-    card.append(row);
-    box.append(card);
-    return false;
+    sayResult("разбор идёт у всех выбранных записей (" + going.join(", ") +
+      "): поднимать нечего", true);
+    return 0;
   }
-  card.append(el("div", "dwhy", "Поднимется " + todo.length + " " +
-    plural(todo.length, "сессия", "сессии", "сессий") + " разбора, по одной на запись: " +
-    "каждая пойдёт своим разговором."));
-  if (going.length) {
-    card.append(el("div", "hint", "У " + going.length + " " +
-      plural(going.length, "записи", "записей", "записей") + " разбор уже идёт (" +
-      going.join(", ") + "), их пропустим."));
-  }
-  const row = el("div", "drow");
-  const go = el("button", "btn btn-sm btn-acc", "Поднять " + todo.length);
-  const no = el("button", "btn btn-sm", "Отмена");
-  no.addEventListener("click", () => { box.replaceChildren(); });
-  go.addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    go.disabled = true;
-    await draftGroomRun(project, todo, box, harness, tier);
-  });
-  row.append(go, no);
-  card.append(row);
-  box.append(card);
-  return true;
+  return draftGroomRun(project, todo, harness, tier, going);
 }
 
 // Подъём идёт по одной сессии: ручка разбора поднимает свою, и слать их разом
 // значило бы драться за один и тот же tmux-замок.
-async function draftGroomRun(project, ids, box, harness, tier) {
+async function draftGroomRun(project, ids, harness, tier, skipped) {
   let done = 0;
   const bad = [];
   for (const id of ids) {
@@ -9253,10 +9228,14 @@ async function draftGroomRun(project, ids, box, harness, tier) {
     if (await groomDraft(project, id, "", harness, tier)) done += 1;
     else bad.push(id);
   }
-  box.replaceChildren();
   draftPickClear();
+  // Итог одной строкой, как у запуска задачи: сколько поднялось, что
+  // пропущено и что не поднялось вовсе.
+  const skip = skipped || [];
   sayResult("поднято " + done + " " + plural(done, "сессия", "сессии", "сессий") +
-    " разбора" + (bad.length ? ", не поднялось: " + bad.join(", ") : ""), bad.length > 0);
+    " разбора" +
+    (skip.length ? ", пропущено " + skip.length + " с идущим разбором: " + skip.join(", ") : "") +
+    (bad.length ? ", не поднялось: " + bad.join(", ") : ""), bad.length > 0);
   await refresh();
   return done;
 }

@@ -1006,3 +1006,22 @@ func TestDraftsCarryMoved(t *testing.T) {
 		t.Errorf("дата правки записи приехала как %q, жду 2026-03-17: %v", first["moved"], first)
 	}
 }
+
+// Разбор поднимается с одного нажатия: подтверждения перед ним нет, число
+// выбранных стоит в подписи кнопки, на время подъёма кнопка гаснет, а
+// пропущенные записи названы строкой итога. Предмет проверки это собранная
+// разметка и порядок вызовов, поэтому статика поднимается в node с заглушкой
+// DOM (стенд testdata/poc_groomnow.mjs). Без node шаг пропускается: узел
+// стенда, а не рабочей части.
+func TestStaticGroomRunsWithoutConfirm(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд запуска разбора пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_groomnow.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("запуск разбора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

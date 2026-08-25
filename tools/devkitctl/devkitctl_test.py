@@ -1946,7 +1946,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 4, post)
+        self.assertEqual(len(post), 5, post)
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.
@@ -2498,6 +2498,40 @@ class GoWorkFindingTest(SandboxCase):
         _, out = self.sysdoctor(proj)
         self.assertIn_("go.work", out,
                        "комментарий в use-блоке закрыл находку, хотя проект не перечислен")
+
+
+class ProseConfigTest(unittest.TestCase):
+    """Пропавший конфиг порогов прозы виден доктором. Без этой находки сторож
+    молчит на каждой записи, а молчание не отличить от чистого текста."""
+
+    def setUp(self):
+        self.was = os.environ.get("DEVKIT_PROSE_CONFIG")
+
+    def tearDown(self):
+        if self.was is None:
+            os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        else:
+            os.environ["DEVKIT_PROSE_CONFIG"] = self.was
+
+    def test_missing_config_is_a_finding(self):
+        os.environ["DEVKIT_PROSE_CONFIG"] = os.path.join(tempfile.mkdtemp(),
+                                                         "prose.toml")
+        found = devkitctl.check_prose_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("сторож прозы молчит", found[0])
+
+    def test_config_without_a_metric_is_a_finding(self):
+        path = os.path.join(tempfile.mkdtemp(), "prose.toml")
+        write(path, '[prose]\nmode = "warn"\nmin_words = 120\n'
+                    'suffixes = [".md"]\n[warn]\n[block]\n')
+        os.environ["DEVKIT_PROSE_CONFIG"] = path
+        found = devkitctl.check_prose_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("colon_mid", found[0])
+
+    def test_shipped_config_keeps_the_doctor_quiet(self):
+        os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        self.assertEqual(devkitctl.check_prose_config(), [])
 
 
 if __name__ == "__main__":

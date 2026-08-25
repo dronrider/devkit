@@ -184,7 +184,11 @@ from say import human_age
 from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent.parent
-POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
+POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
+                "check-prose.py")
+# Конфиг порогов сторожа прозы (DK-521). Полноту его смотрит сам хук режимом
+# --config: список метрик живёт в коде хука, и второй копии тут не заводится.
+PROSE_HOOK = "check-prose.py"
 # Хук чтения секретов через Bash (DK-228): PreToolUse на Bash, отдельной
 # категорией от пост-проверок текстов, и в hook_gaps сообщение про него своё.
 PRE_SCRIPTS = ("check-read-secret.py",)
@@ -249,6 +253,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-symbols.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-memory.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
@@ -1911,6 +1916,26 @@ def check_cmdout(root, fix):
             % len(stale)], []
 
 
+def check_prose_config():
+    """Конфиг порогов сторожа прозы (DK-521).
+
+    Смотрит не доктор, а сам хук режимом --config: перечень метрик и их ключи
+    живут в hooks/check-prose.py, и второй список тут разъехался бы с ним на
+    первой же новой метрике. Выход 1 это неполный конфиг, и хук печатает
+    строками, чего в нём нет. Без конфига сторож молчит на каждой записи, и
+    отличить это молчание от чистой прозы можно только отсюда.
+    """
+    hook = DEVKIT / "hooks" / PROSE_HOOK
+    if not hook.is_file():
+        return []
+    rc, out = run([sys.executable, str(hook), "--config"])
+    if rc == 0:
+        return []
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return ["сторож прозы молчит: %s (hooks/README.md)"
+            % ("; ".join(lines) if lines else "конфиг порогов не читается")]
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2043,6 +2068,9 @@ def doctor(start, fix=False):
     # находится до того, как кто-то на него переключится, а починить его
     # автоматике нечем, это правка в devkit.
     findings += harness.check_profiles(str(DEVKIT / "kit" / "harness"))
+    # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
+    # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
+    findings += check_prose_config()
     # Вес резидента считается и проекту (DK-190): карманы одни и те же, а судятся
     # в них разные. В чекауте devkit это его собственные карманы (ядро, ядро
     # доски, итог) и тело скилла, всё общее для всех проектов и проекту не

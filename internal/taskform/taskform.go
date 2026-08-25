@@ -181,3 +181,88 @@ func InsertIntoSection(content, heading string, lines ...string) string {
 	out = append(out, rows[end:]...)
 	return strings.Join(out, "\n")
 }
+
+// SmokeNote это начало строки отметки прогона smoke в разделе «Выкат»:
+// «smoke прогнан, <дата>». Пишет её `shipctl smoke`, читают двое, и префикса
+// довольно, чтобы отличить отметку от строк записи слияния и прозы.
+const SmokeNote = "smoke прогнан"
+
+// SmokeCovers возвращает true, если отметка прогона smoke действует на
+// последний выкат задачи (на входе текст её файла). Круг доработки после
+// возврата из Check дописывает в раздел «Выкат» новую строку слияния, и
+// отметка прошлого круга новый выкат не прикрывает: считается отметка,
+// стоящая после последней строки с коммитами. Раздела нет значит выкат
+// непроверенный, как и раздел без отметки.
+//
+// Разбор лежит тут, а не у shipctl, потому что читателей у отметки двое:
+// shipctl считает по ней очередь выката, а taskctl отбирает по ней строки
+// Check, которые вправе закрыть автоматика (LLD DK-400, решение 7). Вторая
+// копия разбора разошлась бы с первой на первой же правке формы.
+//
+// Читается мимо ограждённых блоков, как и вся форма: в раздел «Проверка»
+// вкладывается реальный вывод команд, и процитированная там отметка чужой
+// задачи освобождала бы очередь без прогона.
+func SmokeCovers(doc string) bool {
+	lastMerge, smoke := -1, -1
+	for i, ln := range sectionLines(doc, Merged) {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "- ") {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimPrefix(t, "- "), SmokeNote) {
+			smoke = i
+			continue
+		}
+		if _, list, ok := strings.Cut(t, ":"); ok && hasSha(list) {
+			lastMerge = i
+		}
+	}
+	return smoke > lastMerge
+}
+
+// sectionLines это строки названного раздела вне ограждённых блоков.
+func sectionLines(doc, heading string) []string {
+	lines := strings.Split(doc, "\n")
+	mask, _ := FenceMask(lines)
+	var out []string
+	in := false
+	for i, ln := range lines {
+		if mask[i] {
+			continue
+		}
+		if strings.HasPrefix(ln, "## ") {
+			in = strings.HasPrefix(ln, heading)
+			continue
+		}
+		if in {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// hasSha говорит, есть ли в перечне через запятую хотя бы один коммит: строкой
+// записи слияния считается строка с коммитами, а не любая проза с двоеточием.
+func hasSha(list string) bool {
+	for _, part := range strings.Split(list, ",") {
+		if IsSha(strings.TrimSpace(part)) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSha отсеивает прозу в строке записи: коммит это семь и больше знаков
+// шестнадцатеричного числа.
+func IsSha(s string) bool {
+	if len(s) < 7 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}

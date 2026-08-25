@@ -225,6 +225,11 @@ var askReviewRe = regexp.MustCompile(`(Review your answers|Ready to submit)`)
 // сверяются они как есть.
 var askFreeWords = []string{"type something", "type your own"}
 
+// askPromptRe узнаёт строку ввода клиента: знак курсора и следом слова, а не
+// номер варианта. Ею клиент отбивает свой блок от разговора, и блок вариантов
+// через неё не тянется: выше строки ввода лежит уже прочитанный текст.
+var askPromptRe = regexp.MustCompile("^\\s*\u276f\\s+\\S")
+
 // askGapMax это сколько строк подряд внутри блока вариантов не быть вариантом.
 // Пояснение под вариантом занимает строку, а кнопку отправки от последнего
 // варианта отделяет ещё и рамка: блок рвётся не всякой чужой строкой, иначе
@@ -243,26 +248,77 @@ func parseTmuxAsk(text string) tmuxAsk {
 	for i, ln := range raw {
 		lines[i] = askEscRe.ReplaceAllString(ln, "")
 	}
-	first := -1
+	// Блоков вариантов на панели бывает несколько: над виджетом стоит и вывод
+	// клиента, и эхо реплики человека, и оба они бывают нумерованными. Берётся
+	// нижний блок со следом виджета: на нём клиент и стоит, а верхние это
+	// прочитанный текст.
+	blocks := askBlocks(lines)
+	for i := len(blocks) - 1; i >= 0; i-- {
+		b := blocks[i]
+		if len(b.ask.Options) < 2 {
+			continue
+		}
+		if !askOnWidget(b) {
+			continue
+		}
+		ask := b.ask
+		said := askReadAbove(&ask, lines, raw, b.first)
+		ask.Text = truncate(strings.Join(said, " "), 400)
+		if ask.Kind == askKindReview {
+			// У сводки свой заголовок: пересказ английских строк виджета
+			// человеку ни к чему, а сами ответы стоят полем Said.
+			ask.Text = ""
+		}
+		return ask
+	}
+	return tmuxAsk{}
+}
+
+// askBlock это один блок вариантов панели: номер строки, с которой он начался,
+// сами остановки курсора и признак того, что кончился он подсказкой клиента.
+type askBlock struct {
+	first int
+	ask   tmuxAsk
+	hint  bool
+}
+
+// askBlocks режет панель на блоки вариантов. Блок рвётся чужими строками сверх
+// askGapMax и кончается подсказкой навигации; пустая строка и рамка его не
+// рвут, ими клиент отбивает кнопку отправки от последнего варианта.
+func askBlocks(lines []string) []askBlock {
+	var out []askBlock
+	cur := askBlock{first: -1, ask: tmuxAsk{Keys: askKeysDigit}}
 	gap := 0
-	ask := tmuxAsk{Keys: askKeysDigit}
+	shut := func(hint bool) {
+		if cur.first >= 0 {
+			cur.hint = hint
+			out = append(out, cur)
+		}
+		cur = askBlock{first: -1, ask: tmuxAsk{Keys: askKeysDigit}}
+		gap = 0
+	}
 	for i, ln := range lines {
-		if first >= 0 && askHintRe.MatchString(ln) {
+		if cur.first >= 0 && askHintRe.MatchString(ln) {
 			// Подсказка это конец виджета и заодно ответ на вопрос, чем в нём
 			// отвечают: про стрелки клиент пишет там, где номер не работает.
 			if askArrowsRe.MatchString(ln) {
-				ask.Keys = askKeysArrows
+				cur.ask.Keys = askKeysArrows
 			}
-			break
+			shut(true)
+			continue
 		}
 		pick, ok := parseAskLine(ln)
 		if !ok {
-			if first < 0 {
+			if cur.first < 0 {
+				continue
+			}
+			if askPromptRe.MatchString(ln) {
+				// Строка ввода клиента: блок кончился на ней, что бы ни
+				// стояло ниже.
+				shut(false)
 				continue
 			}
 			bare := strings.TrimSpace(ln)
-			// Пустая строка и рамка блок не рвут: рамкой клиент отбивает
-			// кнопку отправки от последнего варианта.
 			if bare == "" || strings.Trim(bare, frameRunes+" ") == "" {
 				continue
 			}
@@ -270,30 +326,34 @@ func parseTmuxAsk(text string) tmuxAsk {
 			// клиент печатает его строкой ниже и с отступом.
 			gap++
 			if gap > askGapMax {
-				break
+				shut(false)
+				continue
 			}
-			if len(ask.Options) > 0 {
-				last := &ask.Options[len(ask.Options)-1]
+			if len(cur.ask.Options) > 0 {
+				last := &cur.ask.Options[len(cur.ask.Options)-1]
 				last.Desc = strings.TrimSpace(last.Desc + " " + bare)
 			}
 			continue
 		}
 		gap = 0
-		if first < 0 {
-			first = i
+		if cur.first < 0 {
+			cur.first = i
 		}
 		if pick.cursor {
-			ask.At = len(ask.Options) + 1
+			cur.ask.At = len(cur.ask.Options) + 1
 		}
-		ask.Options = append(ask.Options, pick.pick)
+		cur.ask.Options = append(cur.ask.Options, pick.pick)
 	}
-	if len(ask.Options) < 2 {
-		return tmuxAsk{}
-	}
-	// Текст вопроса это всё, что клиент написал над вариантами до своей рамки:
-	// абзацы он разделяет пустыми строками, и обрывать сбор на первой из них
-	// значило бы оставить от вопроса одну последнюю строку («Security guide»
-	// вместо самого вопроса и каталога, живая проверка на застрявшей сессии).
+	shut(false)
+	return out
+}
+
+// askReadAbove читает то, что клиент написал над блоком: полосу шагов, сводку
+// ответов и сам текст вопроса. Текст это весь абзац до рамки, а не последняя
+// его строка: обрывать сбор на первой пустой строке значило бы оставить от
+// вопроса одно «Security guide» вместо самого вопроса и каталога (живая
+// проверка на застрявшей сессии).
+func askReadAbove(ask *tmuxAsk, lines, raw []string, first int) []string {
 	var said []string
 	for i := first - 1; i >= 0 && len(said) < 10; i-- {
 		ln := strings.TrimSpace(lines[i])
@@ -333,13 +393,25 @@ func parseTmuxAsk(text string) tmuxAsk {
 		}
 		said = append([]string{ln}, said...)
 	}
-	ask.Text = truncate(strings.Join(said, " "), 400)
-	if ask.Kind == askKindReview {
-		// У сводки свой заголовок: пересказ английских строк виджета человеку
-		// ни к чему, а сами ответы стоят полем Said.
-		ask.Text = ""
-	}
-	return ask
+	return said
+}
+
+// askOnWidget отвечает на вопрос, стоит ли клиент правда на своём виджете и
+// ждёт ли ввода. Никакой эвристики по форме строк тут нет и быть не может:
+// пронумерованным или маркированным списком клиент печатает и собственный
+// ответ, и эхо реплики человека, а строка ввода начинается с того же знака
+// курсора, что и выбранный вариант. Живых случая два: реплика человека из трёх
+// пунктов приехала в панель блоком «Клиент ждёт ответа», а следом тем же блоком
+// приехал список задач из ответа агента, обрезанный по ширине панели.
+//
+// Опора одна и обязательная: подсказка навигации, которую клиент печатает под
+// своим виджетом («Enter to confirm», «Tab/Arrow keys to navigate», «Esc to
+// cancel»). Нет её в снимке, значит опроса нет, и точка. Прочие следы виджета
+// (полоса шагов, сводка, флажки, свои кнопки) разбираются дальше и в блок
+// доезжают, но сами по себе блока не поднимают: показать чужой текст кнопками
+// хуже, чем промолчать.
+func askOnWidget(b askBlock) bool {
+	return b.hint
 }
 
 // askLine это разобранная строка виджета: сама остановка и признак курсора.
@@ -413,6 +485,12 @@ func parseAskSteps(ln, raw string) []tmuxStep {
 	for _, part := range strings.Split(ln, "  ") {
 		part = strings.TrimSpace(part)
 		if part == "" || part == "\u2190" || part == "\u2192" {
+			continue
+		}
+		// Шагом считается только кусок, начатый значком флажка: значок в
+		// середине строки это слова, а не полоса шагов, и без этой проверки
+		// полосой оказывался бы всякий абзац с галочкой.
+		if !strings.ContainsAny(string([]rune(part)[:1]), "\u2610\u2611\u2612\u2714\u2713") {
 			continue
 		}
 		done := strings.ContainsAny(part, "\u2611\u2612\u2714\u2713")

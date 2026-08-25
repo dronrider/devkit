@@ -420,6 +420,7 @@ func TestParseTmuxAskReview(t *testing.T) {
 		"Ready to submit your answers?",
 		"\u276f 1. Submit answers",
 		"  2. Cancel",
+		"Enter to confirm \u00b7 Esc to cancel",
 	}, "\n")
 	ask := parseTmuxAsk(pane)
 	if ask.Kind != askKindReview {
@@ -567,5 +568,161 @@ func TestParseTmuxAskNextStep(t *testing.T) {
 	}
 	if len(ask.Steps) != 3 || !ask.Steps[0].Done || ask.Steps[1].Done {
 		t.Fatalf("полоса шагов следующего шага разобрана не так: %+v", ask.Steps)
+	}
+}
+
+// liveEchoPane это строка ввода клиента с репликой человека из трёх пунктов:
+// живой случай, панель показала эту реплику блоком «Клиент ждёт ответа», взяв
+// заголовком кусок её же текста, а пунктами 2 и 3 варианты ответа. Клиент при
+// этом ничего не спрашивал: он ждал не выбора, а работы.
+var liveEchoPane = strings.Join([]string{
+	"  Разобрал накопитель, поднял три сессии груминга.",
+	"",
+	strings.Repeat("\u2500", 56),
+	"\u276f 1. Я просил убрать кнопку «Новая задача» из таба черновиков, она уже",
+	"  есть в меню плюса рядом с поиском",
+	"  2. Кнопку «Разобрать выбранное» переименовать в «Провести груминг»",
+	"  3. В раздел черновиков ты добавил галку, и строка разъехалась на две",
+	strings.Repeat("\u2500", 56),
+	"  auto mode on (shift+tab to cycle)",
+}, "\n")
+
+// livePrintedPane это ответ агента списком, слово в слово со снимка живой
+// панели (сессия chat-DK-181-1). Пункты тут это его собственный текст, и
+// вопросом клиента они не были ни разу.
+var livePrintedPane = strings.Join([]string{
+	"  Найденное исполнителем вне задачи, жду вашего слова, что заводить:",
+	"",
+	"  1. Хук check-reread отказал ревьюверу «файл уже прочитан в этой сессии»",
+	"  2. Фоновые субагенты порой глохли без уведомления о завершении",
+	"  3. Окружение машины: PATH резолвит agentctl в устаревшую копию",
+	"  4. Красный TestCodeOpensWindow под харнесом glm",
+	"",
+	"\u273b Churned for 15m 26s",
+	strings.Repeat("\u2500", 56),
+	"\u276f Заведи 1 и 2, по третьей отдельно разберёмся",
+	strings.Repeat("\u2500", 56),
+}, "\n")
+
+// liveThemePane это выбор темы клиента, слово в слово со снимка живой панели
+// (сессия chat-10). Подсказки навигации в снимке не видно вовсе: она уехала за
+// нижнюю кромку панели вместе с образцом раскраски. Виджет тут настоящий, а
+// блока по нему не будет, и это осознанный размен: галочка с курсором стоят и в
+// чужом тексте, а промолчать дешевле, чем показать человеку кнопки от списка,
+// который агент просто напечатал.
+var liveThemePane = strings.Join([]string{
+	" Let's get started.",
+	"",
+	" Choose the text style that looks best with your terminal",
+	" To change this later, run /theme",
+	"",
+	"   1. Auto (match terminal)",
+	" \u276f 2. Dark mode \u2714",
+	"   3. Light mode",
+	"   4. Dark mode (colorblind-friendly)",
+	"",
+	" \u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c",
+	"  1  function greet() {",
+	"  2 -  console.log(\"Hello, World!\");",
+	"  2 +  console.log(\"Hello, Claude!\");",
+	"  3  }",
+	" \u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c\u254c",
+	"  Syntax theme: Monokai Extended (ctrl+t to disable)",
+}, "\n")
+
+// liveListPane это ответ агента со списком задач, каким его показал второй
+// снимок пользователя: строки списка обрезаны по ширине панели терминала, а
+// панель дашборда сделала из них кнопки, взяв заголовком блока кусок того же
+// ответа. Список тут и нумерованный, и маркированный: под опрос попадал всякий
+// набор коротких строк подряд.
+var liveListPane = strings.Join([]string{
+	"  DK-517 (черновик): правило в RULES.md про порядок правки доски.",
+	"",
+	"  \u041fачка на выполнение, в порядке зависимостей:",
+	"",
+	"  1. DK-312 (S, ранг 62): рубеж длинного вывода Bash, cmdout забирает",
+	"  2. DK-313 (S, ранг 58): выжимка агенту вместо полного тела ответа",
+	"  3. DK-516 (M, ранг 71): парковка задачи машинным разрядом причины",
+	"  4. DK-517 (черновик): правило в RULES.md, оформить строкой после",
+	"",
+	"  Зависимости:",
+	"  - DK-312 раньше DK-313: хвост забирается до того, как режется",
+	"  - DK-516 раньше DK-517: правило пишется по машинному разряду",
+	"  - DK-517 последней",
+	"",
+	"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+	"\u276f ",
+	"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+}, "\n")
+
+// Блок «Клиент ждёт ответа» встаёт только там, где клиент правда стоит на
+// своём виджете. Пронумерованных строк для этого мало ни при каких условиях:
+// ими клиент печатает и эхо реплики человека, и собственный ответ, а знак
+// курсора стоит в начале строки ввода так же, как перед выбранным вариантом.
+func TestParseTmuxAskNotWidget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane string
+	}{
+		{"эхо реплики человека", liveEchoPane},
+		{"ответ агента списком", livePrintedPane},
+		{"список задач в ответе агента", liveListPane},
+		{"тот же список без подсказки навигации", liveThemePane},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseTmuxAsk(tc.pane); len(got.Options) != 0 {
+				t.Fatalf("панель принята за вопрос клиента: текст %q, варианты %+v",
+					got.Text, got.Options)
+			}
+		})
+	}
+}
+
+// Обратная сторона того же рубежа: настоящий виджет узнаётся по тому, что
+// печатает он сам. У выбора темы это галочка выбранного пункта, у вопроса
+// доверия и опроса подсказка навигации, у сводки её пары «вопрос-ответ».
+func TestParseTmuxAskStillWidget(t *testing.T) {
+	// Вопрос доверия каталогу: подсказка навигации стоит прямо под вариантами,
+	// как её и печатает клиент.
+	trust := parseTmuxAsk(strings.Join([]string{
+		" Quick safety check: Is this a project you created or one you trust?",
+		"",
+		" \u276f 1. Yes, I trust this folder",
+		"   2. No, exit",
+		"",
+		" Enter to confirm \u00b7 Esc to cancel",
+	}, "\n"))
+	if len(trust.Options) != 2 || trust.At != 1 {
+		t.Fatalf("вопрос доверия перестал узнаваться: %+v", trust)
+	}
+	if trust.Keys != askKeysDigit {
+		t.Errorf("способ ответа у вопроса доверия назван %q, жду номер пункта", trust.Keys)
+	}
+	poll := parseTmuxAsk(livePollPane)
+	if len(poll.Options) != 6 || poll.Keys != askKeysArrows {
+		t.Errorf("опрос агента перестал узнаваться: %+v", poll)
+	}
+}
+
+// Список агента над настоящим виджетом достаётся тексту разговора, а кнопками
+// становятся варианты самого виджета: блок берётся нижний, со следом клиента.
+func TestParseTmuxAskPrintedAboveWidget(t *testing.T) {
+	pane := livePrintedPane + "\n" + strings.Join([]string{
+		" Quick safety check: Is this a project you created or one you trust?",
+		"",
+		" \u276f 1. Yes, I trust this folder",
+		"   2. No, exit",
+		"",
+		" Enter to confirm \u00b7 Esc to cancel",
+	}, "\n")
+	ask := parseTmuxAsk(pane)
+	if len(ask.Options) != 2 {
+		t.Fatalf("вариантов разобрано %d, жду два варианта виджета: %+v", len(ask.Options), ask.Options)
+	}
+	if ask.Options[0].Text != "Yes, I trust this folder" {
+		t.Errorf("кнопками стали не варианты виджета: %+v", ask.Options)
+	}
+	if strings.Contains(ask.Text, "check-reread") {
+		t.Errorf("в текст вопроса уехал ответ агента: %q", ask.Text)
 	}
 }

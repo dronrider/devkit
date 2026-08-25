@@ -1835,6 +1835,7 @@ func TestChatAskPassesReviewItself(t *testing.T) {
 		"Ready to submit your answers?",
 		"\u276f 1. Submit answers",
 		"  2. Cancel",
+		"Enter to confirm \u00b7 Esc to cancel",
 	}, "\n")
 	half := strings.Replace(full, "Review your answers",
 		"Review your answers\n\u26a0 You have not answered all questions", 1)
@@ -1936,7 +1937,10 @@ exit 0`)
 func TestChatAskAnswerSendsKeys(t *testing.T) {
 	e := newTestEnv(t)
 	sent := filepath.Join(e.home, "sent.log")
-	pane := " Quick safety check: доверяешь каталогу?\n\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n"
+	// Подсказка навигации стоит под вариантами, как её печатает клиент: без неё
+	// блок вопроса не поднимается вовсе (askOnWidget).
+	pane := " Quick safety check: доверяешь каталогу?\n\n \u276f 1. Yes, I trust this folder\n" +
+		"   2. No, exit\n\n Enter to confirm \u00b7 Esc to cancel\n"
 	writeScript(t, e.bin, "tmux", `case "$1" in
 capture-pane) printf '%s' `+shQuote(pane)+`;;
 send-keys) echo "$@" >> `+sent+`;;
@@ -2030,5 +2034,43 @@ func TestTrustNoteBeforeRaise(t *testing.T) {
 	quotaTrust = func(home string) map[string]bool { return map[string]bool{dir: true} }
 	if got := e.s.trustNote(nil, dir); got != "" {
 		t.Errorf("доверенный каталог назван недоверенным: %q", got)
+	}
+}
+
+// Второй барьер после рубежа виджета: разобранный вопрос, чьи варианты уже
+// стоят в ленте репликой или ответом агента, это эхо вывода клиента. Панель
+// терминала режет длинные строки по ширине, поэтому вариант ищется в ленте
+// подстрокой, а совпасть должны все варианты, а не один.
+func TestAskEchoesFeed(t *testing.T) {
+	feed := []reply{
+		{Role: "assistant", Text: "Пачка на выполнение, в порядке зависимостей:\n" +
+			"1. DK-312 (S, ранг 62): рубеж длинного вывода Bash, cmdout забирает хвост\n" +
+			"2. DK-313 (S, ранг 58): выжимка агенту вместо полного тела ответа"},
+	}
+	echo := tmuxAsk{Options: []tmuxPick{
+		{Text: "DK-312 (S, ранг 62): рубеж длинного вывода Bash, cmdout забирает"},
+		{Text: "DK-313 (S, ранг 58): выжимка агенту вместо полного тела ответа"},
+	}}
+	if !askEchoesFeed(echo, feed) {
+		t.Errorf("список из ответа агента не узнан эхом ленты")
+	}
+	widget := tmuxAsk{Options: []tmuxPick{
+		{Text: "Yes, I trust this folder"},
+		{Text: "No, exit, this is not my project"},
+	}}
+	if askEchoesFeed(widget, feed) {
+		t.Errorf("вопрос виджета принят за эхо ленты")
+	}
+	// Один совпавший вариант это не эхо: у виджета бывает пункт со словами из
+	// разговора, и прятать из-за него весь блок нельзя.
+	half := tmuxAsk{Options: []tmuxPick{
+		{Text: "DK-312 (S, ранг 62): рубеж длинного вывода Bash, cmdout забирает"},
+		{Text: "Chat about this instead"},
+	}}
+	if askEchoesFeed(half, feed) {
+		t.Errorf("один совпавший вариант принят за эхо всей ленты")
+	}
+	if askEchoesFeed(echo, nil) {
+		t.Errorf("пустая лента объявлена эхом")
 	}
 }

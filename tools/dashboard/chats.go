@@ -1300,6 +1300,17 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ask := tmuxAskOf(name)
+	// Второй барьер после рубежа виджета: вопрос, чьи варианты уже стоят в
+	// ленте репликой человека или ответом агента, это эхо вывода, а не виджет.
+	// Лента тут читается только когда вопрос вообще разобрался, то есть редко.
+	if len(ask.Options) > 0 {
+		if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
+			if askEchoesFeed(ask, sessionFeedOf(info.path, askEchoTail).items) {
+				s.logf("вопрос клиента %s повторяет ленту разговора: показывать нечего", name)
+				ask = tmuxAsk{}
+			}
+		}
+	}
 	if len(ask.Options) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
@@ -1307,6 +1318,37 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = found
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name, "ask": ask})
+}
+
+// askEchoTail это сколько последних записей ленты сверяется с вопросом: эхо
+// стоит в панели терминала последним, и копать глубже незачем.
+const askEchoTail = 12
+
+// askEchoesFeed отвечает, повторяет ли разобранный вопрос то, что уже сказано в
+// ленте. Совпали варианты со словами реплики, значит клиент показывает не
+// виджет, а свой же вывод: панель терминала режет длинные строки по ширине,
+// поэтому вариант ищется в тексте ленты как подстрока, а не сверяется целиком.
+// Барьер строгий нарочно: чтобы счесть вопрос эхом, в ленте должны найтись все
+// его варианты, а не один.
+func askEchoesFeed(ask tmuxAsk, items []reply) bool {
+	if len(ask.Options) < 2 || len(items) == 0 {
+		return false
+	}
+	var said strings.Builder
+	for _, it := range items {
+		said.WriteString(it.Text)
+		said.WriteString("\n")
+	}
+	text := said.String()
+	for _, o := range ask.Options {
+		word := strings.TrimSpace(o.Text)
+		// Короткое слово в ленте находится случайно: варианту виджета длина
+		// тут не мешает, а «Да» встретится в любом разговоре.
+		if len([]rune(word)) < 12 || !strings.Contains(text, word) {
+			return false
+		}
+	}
+	return true
 }
 
 // handleChatAskAnswer отвечает клиенту за человека: номер пункта уезжает в его

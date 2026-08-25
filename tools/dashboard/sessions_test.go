@@ -694,7 +694,10 @@ func TestStaticSessionsAskedByTask(t *testing.T) {
 	if !strings.Contains(funcBody(t, text, "function chatsURL("), `"/chats"`) {
 		t.Error("адрес списка чатов собран мимо ручки /chats: брать список больше неоткуда")
 	}
-	if !strings.Contains(funcBody(t, text, "async function chatState("), `await api(chatsURL(project) + "?all=1")`) {
+	// Ключ keep едет тем же запросом: список приезжает окном свежести, и
+	// открытый разговор обязан пережить окно любого возраста.
+	if !strings.Contains(funcBody(t, text, "async function chatState("),
+		`await api(chatsURL(project) + "?all=1" + chatKeepArg(st))`) {
 		t.Error("панель берёт список чатов не общей ручкой машины (?all=1)")
 	}
 	if !strings.Contains(funcBody(t, text, "function chatVisible("), "(c.tasks || []).includes(st.task)") {

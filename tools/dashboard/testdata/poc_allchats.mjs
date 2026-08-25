@@ -52,7 +52,10 @@ const anchor = makeNode("div");
 sandbox.chatDropOpen("demo", st, anchor);
 const drop = anchor.children[anchor.children.length - 1];
 const rows = drop.children[1];
-if (rows.children.length !== 3) fail("в общем списке не все проекты: " + rows.children.length);
+// Строки считаются по своему классу: список идёт группами, и заголовки дней
+// стоят в той же коробке, что и строки разговоров.
+const rowsOf = (box) => box.querySelectorAll(".cdrow");
+if (rowsOf(rows).length !== 3) fail("в общем списке не все проекты: " + rowsOf(rows).length);
 const saidRows = dump(rows).replace(/\s+/g, " ");
 if (!saidRows.includes("other") || !saidRows.includes("demo")) {
   fail("принадлежность строк не видна: " + saidRows.slice(0, 300));
@@ -62,18 +65,18 @@ if (!saidRows.includes("other") || !saidRows.includes("demo")) {
 const find = drop.children[0];
 find.value = "other";
 find.handlers.input();
-if (rows.children.length !== 1 || !dump(rows).includes("чужой свежий разговор")) {
+if (rowsOf(rows).length !== 1 || !dump(rows).includes("чужой свежий разговор")) {
   fail("поиск по имени проекта не отобрал чужой разговор: " + dump(rows).slice(0, 300));
 }
 // Стёртый запрос возвращает весь список машины: отсечки за поиском нет.
 find.value = "";
 find.handlers.input();
-if (rows.children.length !== 3) fail("пустой запрос не вернул весь список: " + rows.children.length);
+if (rowsOf(rows).length !== 3) fail("пустой запрос не вернул весь список: " + rowsOf(rows).length);
 
 // --- переход на чужой разговор несёт проект в адресе ---
 find.value = "other";
 find.handlers.input();
-rows.children[0].handlers.click({});
+rowsOf(rows)[0].handlers.click({});
 if (!String(sandbox.location.hash).includes("other~ffff9999-9999")) {
   fail("адрес чужого разговора без проекта: " + sandbox.location.hash);
 }
@@ -89,13 +92,13 @@ const drop2 = anchor2.children[anchor2.children.length - 1];
 const find2 = drop2.children[0];
 if (find2.value !== "XR-1") fail("задача не встала запросом поиска: " + JSON.stringify(find2.value));
 const rows2 = drop2.children[1];
-if (rows2.children.length !== 1 || !dump(rows2).includes("свой разговор по XR-1")) {
+if (rowsOf(rows2).length !== 1 || !dump(rows2).includes("свой разговор по XR-1")) {
   fail("запрос задачи не отобрал её разговор: " + dump(rows2).slice(0, 300));
 }
 find2.value = "";
 find2.handlers.input();
-if (rows2.children.length !== 3) {
-  fail("за фильтром задачи оказалась отсечка, стёртый запрос не вернул список: " + rows2.children.length);
+if (rowsOf(rows2).length !== 3) {
+  fail("за фильтром задачи оказалась отсечка, стёртый запрос не вернул список: " + rowsOf(rows2).length);
 }
 
 console.log("ok: список чатов общий по машине, строки подписаны проектом, поиск знает проект, " +

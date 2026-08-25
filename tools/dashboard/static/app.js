@@ -6034,13 +6034,19 @@ async function chatState(project, addr, board) {
   } else if (addr && addr !== CHAT_BOARD) {
     st.sid = addr;
   }
-  const r = await api(chatsURL(project) + "?all=1");
+  const r = await api(chatsURL(project) + "?all=1" + chatKeepArg(st));
   if (!r.ok) {
     st.error = r.body.error || "список чатов не прочитался";
     return st;
   }
   st.chats = r.body.chats || [];
   st.note = r.body.note || "";
+  // Окно списка: сервер отдаёт свежие разговоры плюс живые, а days говорит,
+  // какое окно приехало, older говорит, что раньше есть ещё. Ниже по обоим
+  // полям рисуется «показать раньше», и по days же поиск понимает, что список
+  // приехал не весь.
+  st.days = r.body.days || 0;
+  st.older = Boolean(r.body.older);
   if (r.body.models) st.models = r.body.models;
   // Пришивание застрявшего нового адреса: первая реплика уходила в чат,
   // которого ещё не было, сессия родилась позже (клиент стоял на вопросе в
@@ -6121,6 +6127,83 @@ async function chatState(project, addr, board) {
     st.wait = row ? row.waiting : null;
   }
   return st;
+}
+
+// Разговоры, которые остаются в списке любого возраста: открытый панелью и
+// последний разговор задачи. Окно режет список по свежести, и без этой
+// оговорки адрес старой беседы выпадал бы из выпадашки, а кнопка задачи
+// заводила бы новый чат вместо её собственного.
+function chatKeepArg(st) {
+  const keep = [];
+  if (st.sid) keep.push(st.sid);
+  const last = st.task ? chatTaskLast(st.task) : "";
+  if (last && !keep.includes(last)) keep.push(last);
+  return keep.length ? "&keep=" + encodeURIComponent(keep.join(",")) : "";
+}
+
+// Лестница окон списка: первую ступень называет сервер (трое суток), а дальше
+// «показать раньше» ведёт по этим, и последняя это весь список машины. Порог
+// первого окна тут не повторяется нарочно, он живёт одним местом на сервере.
+const CHAT_WINDOW_DAYS = [7, 30, 0];
+
+function chatMoreDays(days) {
+  for (const step of CHAT_WINDOW_DAYS) {
+    if (step === 0 || step > days) return step;
+  }
+  return 0;
+}
+
+// chatLoadWindow перечитывает список другим окном: нулём приезжает весь список
+// машины, им живут и поиск, и последняя ступень «показать раньше».
+async function chatLoadWindow(project, st, days) {
+  const r = await api(chatsURL(project) + "?all=1&days=" + days + chatKeepArg(st));
+  if (!r.ok) return false;
+  st.chats = r.body.chats || [];
+  st.note = r.body.note || "";
+  st.days = r.body.days || 0;
+  st.older = Boolean(r.body.older);
+  return true;
+}
+
+// Подпись группы живых разговоров. Живые стоят своей группой сверху: разговор,
+// в котором прямо сейчас работает агент, ищут первым, и возраст его тут не
+// судья. Порядок по свежести это не ломает, внутри группы он тот же.
+const CHAT_LIVE_HEAD = "живые разговоры";
+
+// Заголовок дня в списке разговоров: сегодня и вчера словами, дальше датой.
+// Год приписывается только к чужому году: транскрипты с машины не исчезают, в
+// глубине списка лежат и прошлогодние разговоры, а у свежих год это шум.
+// Месяцы и ключ дня общие с лентой уведомителя, второго календаря панель не
+// заводит.
+function chatDayHead(day) {
+  const parts = String(day || "").split("-");
+  if (parts.length !== 3) return "без времени";
+  const now = new Date();
+  if (day === isoDay(now)) return "сегодня";
+  if (day === isoDay(new Date(now.getTime() - 86400000))) return "вчера";
+  const said = Number(parts[2]) + " " + (MONTHS[Number(parts[1]) - 1] || "");
+  return Number(parts[0]) === now.getFullYear() ? said : said + " " + parts[0];
+}
+
+// chatGroups раскладывает список по группам: живые сверху, дальше по дням,
+// сегодня, вчера и датой.
+function chatGroups(list) {
+  const out = [];
+  const live = list.filter((c) => c.state === "live");
+  if (live.length) out.push({ head: CHAT_LIVE_HEAD, rows: live });
+  let day = null;
+  let bag = null;
+  for (const c of list) {
+    if (c.state === "live") continue;
+    const key = c.mtime ? isoDay(new Date(c.mtime)) : "";
+    if (!bag || key !== day) {
+      day = key;
+      bag = { head: chatDayHead(key), rows: [] };
+      out.push(bag);
+    }
+    bag.rows.push(c);
+  }
+  return out;
 }
 
 // Что видно в списке: все диалоги проекта либо только диалоги задачи, если
@@ -6229,6 +6312,9 @@ function chatDropOpen(project, st, anchor) {
   find.setAttribute("aria-label", "Поиск чата");
   if (st.task && chatFilterOn()) find.value = st.task;
   const rows = el("div", "cdrows");
+  // Догрузка идёт одна за раз: поиск и «показать раньше» ходят за одним и тем
+  // же списком, и два запроса подряд перезаписывали бы друг друга.
+  let loading = false;
   const draw = () => {
     const q = find.value.trim().toLowerCase();
     const list = st.chats.filter((c) => {
@@ -6239,15 +6325,49 @@ function chatDropOpen(project, st, anchor) {
         (c.project || project).toLowerCase().includes(q);
     });
     rows.replaceChildren();
-    for (const c of list) rows.append(chatOption(project, c, st.sid));
+    for (const g of chatGroups(list)) {
+      rows.append(el("div", "cdday", g.head));
+      for (const c of g.rows) rows.append(chatOption(project, c, st.sid));
+    }
     if (!list.length) {
       // Пустому списку словами отвечает сервер, чем бы ни было поле поиска:
       // «ничего не нашлось» имеет смысл, только когда искали среди чего-то.
       rows.append(el("div", "hint", st.chats.length && q ? "по запросу ничего не нашлось" :
         (st.note || "чатов тут нет")));
     }
+    if (loading) rows.append(el("div", "hint", "ищем по всей машине..."));
+    // Окно снимается кнопкой в конце списка: следующая ступень догружается
+    // тем же запросом, что и весь список. За поиском кнопки нет вовсе, там
+    // список и так приехал целиком.
+    // Кнопка стоит, пока окно вообще есть: со снятым окном (days=0) глубже
+    // потолка ручки список не достаёт, и кнопке было бы нечего догружать.
+    if (!q && st.older && st.days && !loading) {
+      const more = el("button", "cdmore", "показать раньше");
+      more.addEventListener("click", () => {
+        if (loading) return;
+        loading = true;
+        draw();
+        chatLoadWindow(project, st, chatMoreDays(st.days)).then(() => {
+          loading = false;
+          draw();
+        });
+      });
+      rows.append(more);
+    }
   };
-  find.addEventListener("input", draw);
+  find.addEventListener("input", () => {
+    // Поиск общий по всей машине и окна не знает: набрали запрос, значит
+    // список догружается целиком, и дальше ищется по всему, что есть на
+    // машине. Один заход за панель: догруженное остаётся в состоянии.
+    if (find.value.trim() && st.days && !loading) {
+      loading = true;
+      chatLoadWindow(project, st, 0).then(() => {
+        loading = false;
+        draw();
+      });
+    }
+    draw();
+  });
   draw();
   box.append(find, rows);
   anchor.append(box);

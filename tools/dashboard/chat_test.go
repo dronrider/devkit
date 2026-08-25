@@ -51,7 +51,9 @@ func TestChatListAllProjects(t *testing.T) {
 	fresher := `{"type":"user","message":{"role":"user","content":"работа идёт"},"timestamp":"2026-08-18T10:00:01.000Z","gitBranch":"main"}` + "\n"
 	writeSession(t, e.home, e.proj, "", "aaaa-0001", plainTalk, time.Now().Add(-time.Hour))
 	writeSession(t, e.home, other, "", "bbbb-0002", fresher, time.Now())
-	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1", "")
+	// Окно свежести тут снято ключом days=0: предмет этого стенда общий список
+	// машины, а метки реплик в фикстурах старше окна по умолчанию.
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("общий список: %d", resp.StatusCode)
 	}

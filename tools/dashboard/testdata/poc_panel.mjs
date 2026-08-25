@@ -128,7 +128,11 @@ line.children[0].handlers.click({ stopPropagation: () => {} });
 const drop = line.children[line.children.length - 1];
 if (!String(drop.className).includes("cdrop")) fail("выпадающий список не открылся");
 const rows = drop.children[1];
-if (rows.children.length !== 2) fail("в списке не те строки: " + rows.children.length);
+// Строки считаются по своему классу: список идёт группами, и заголовки дней
+// стоят в той же коробке.
+if (rows.querySelectorAll(".cdrow").length !== 2) {
+  fail("в списке не те строки: " + rows.querySelectorAll(".cdrow").length);
+}
 // Фильтр по задаче это состояние поиска, а не жёсткая отсечка: задача стоит
 // запросом в поле, а запрос по чужому разговору находит его поверх фильтра.
 const find = drop.children[0];

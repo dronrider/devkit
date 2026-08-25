@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -333,7 +334,8 @@ func chatFilesOf(list []sessionInfo, name, path string) []chatFile {
 // разговор на четыре карточки.
 func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 	files := chatFilesOf(sessionFiles(s.transcriptRoots(), projPath), "", projPath)
-	return s.chatEntriesFrom(files, limit)
+	list, _ := s.chatEntriesFrom(files, limit, chatWindow{})
+	return list
 }
 
 // chatAllLimit это потолок общего списка машины: он выше проектного, потому
@@ -341,12 +343,49 @@ func (s *server) chatEntries(projPath string, limit int) []chatEntry {
 // перечитывал транскрипты машины целиком.
 const chatAllLimit = 160
 
+// chatWindowDays это окно списка по умолчанию: разговоры последних трёх суток
+// плюс живые любого возраста. Транскрипты с машины не исчезают, и общий список
+// копится сам собой (на живой машине сто сорок пять строк при сорока одной
+// живой), а человек ходит в него за сегодняшним разговором. Остальное
+// достаётся кнопкой «показать раньше» и поиском, который окна не знает вовсе.
+// Порог назван тут одним местом: и ручка, и её отказ считают от него.
+const chatWindowDays = 3
+
+// chatBlank отвечает, что показывать в разговоре нечего: ни одной
+// содержательной реплики, ни заголовка от харнеса. Так выглядит сессия,
+// которая поднялась и умерла, служебный подъём клиента и всякий транскрипт,
+// где до слов дело не дошло. Разбор тут общий с лентой и своего чтения не
+// заводит: Said это метка последней реплики, которую лента рисует пузырём
+// (saidReply поверх parseReplies, где служебные вставки уже вырезаны
+// splitService), а First это первая реплика человека без служебных обёрток.
+// Шапка на эту строку уже прочитана, и отсев не стоит ни одного лишнего
+// открытия файла.
+func chatBlank(head sessionHead) bool {
+	return head.Said == "" && strings.TrimSpace(head.First) == "" &&
+		strings.TrimSpace(head.Summary) == ""
+}
+
+// chatFresh отвечает, попадает ли разговор в окно списка. Нулевой рубеж это
+// «окна нет»: так список отдаётся поиску и кнопке «показать раньше».
+// Неразобранная метка оставляет строку на месте: спрятать разговор из-за
+// формата времени хуже, чем показать лишнюю строку.
+func chatFresh(mtime string, since time.Time) bool {
+	if since.IsZero() {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339, mtime)
+	if err != nil {
+		return true
+	}
+	return !at.Before(since)
+}
+
 // chatEntriesAll собирает диалоги всех проектов машины в один список:
 // переключение на чужой разговор не должно требовать смены проекта доски, а
 // принадлежность строки называет поле Project. Шапки читаются только у файлов
 // над общим потолком, свежие сверху, и лежат в той же памяти процесса, что и у
 // проектного списка.
-func (s *server) chatEntriesAll(limit int) []chatEntry {
+func (s *server) chatEntriesAll(limit int, win chatWindow) ([]chatEntry, bool) {
 	roots := s.transcriptRoots()
 	projects, _ := s.projects()
 	byPath := map[string]chatFile{}
@@ -372,14 +411,23 @@ func (s *server) chatEntriesAll(limit int) []chatEntry {
 		}
 		return files[i].ID < files[j].ID
 	})
-	return s.chatEntriesFrom(files, limit)
+	return s.chatEntriesFrom(files, limit, win)
+}
+
+// chatWindow это окно общего списка: рубеж свежести и разговоры, которые
+// остаются в списке любого возраста, потому что панель стоит на них прямо
+// сейчас. Нулевой рубеж значит «весь список»: так за ним ходят поиск и кнопка
+// «показать раньше».
+type chatWindow struct {
+	since time.Time
+	keep  map[string]bool
 }
 
 // chatEntriesFrom строит строки списка по готовому набору файлов. Общее
 // хозяйство захода (реестр записей, свёртка имён tmux, живые сессии, имена
 // подписок) считается один раз, сколько бы проектов ни легло в обход, а
 // префикс доски берётся по проекту файла и помнится на заход.
-func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
+func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([]chatEntry, bool) {
 	recs := sessions.LoadAll(s.cfg.Home)
 	// Имя tmux сворачивается по последней записи всего реестра: клиент за
 	// диалогами доверия и импортов пересоздаёт сессию, и одно имя носят
@@ -421,16 +469,44 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 		prefixes[projPath] = p
 		return p
 	}
+	// Живость файла до чтения шапки: окно пропускает живой разговор любого
+	// возраста, и решать это надо там, где транскрипт ещё не открывался. Мера
+	// та же, что у состояния строки ниже: запись в реестре клиента либо своё
+	// имя tmux, которого не занял разговор свежее.
+	liveFile := func(f chatFile) bool {
+		if _, ok := live[f.ID]; ok {
+			return true
+		}
+		name := sessions.Last(recs[f.ID]).Tmux
+		return name != "" && tmuxClaim[name] == f.ID && alive(name)
+	}
 	out := []chatEntry{}
-	for i, f := range files {
-		if limit > 0 && i >= limit {
+	older := false
+	read := 0
+	for _, f := range files {
+		if limit > 0 && read >= limit {
+			older = true
 			break
 		}
+		// Окно списка стоит перед чтением шапки, и в этом вся его цена: старый
+		// разговор не стоит ни одного открытия транскрипта. Время правки файла
+		// тут только сито, оно не раньше времени последней реплики, а точный
+		// отбор идёт ниже, по времени самого разговора.
+		if !win.since.IsZero() && !win.keep[f.ID] && f.mod.Before(win.since) && !liveFile(f) {
+			older = true
+			continue
+		}
+		read++
 		prefix := prefixOf(f.projPath)
 		head := s.sessionHeadCached(f.path, f.stamp)
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
 		if titleSession(head.First) || s.chatStoreRead(f.ID).Hidden {
+			continue
+		}
+		// Разговор, в котором никто ничего не сказал, в списке не строка, а
+		// помеха: он поднялся и умер, и открывать в нём нечего.
+		if chatBlank(head) {
 			continue
 		}
 		last := sessions.Last(recs[f.ID])
@@ -530,13 +606,21 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int) []chatEntry {
 		default:
 			e.State = chatDead
 		}
+		// Точный рубеж окна считается по времени разговора: файл трогает
+		// служебщина, и по времени правки в сегодняшний список пролезала бы
+		// беседа месячной давности. Живой разговор остаётся любого возраста,
+		// к нему идут отвечать.
+		if e.State != chatLive && !win.keep[f.ID] && !chatFresh(e.Mtime, win.since) {
+			older = true
+			continue
+		}
 		out = append(out, e)
 	}
 	// Порядок списка это порядок разговора, а не порядок касаний файла: пока
 	// сортировки тут не было, список стоял так, как его отдал обход каталога, то
 	// есть по времени правки транскриптов (замечание пользователя).
 	sortEntries(out)
-	return out
+	return out, older
 }
 
 func hasTask(list []string, id string) bool {
@@ -563,8 +647,22 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	// проекта доски; проектный список остаётся для точечных вопросов вроде
 	// поиска по имени tmux.
 	var list []chatEntry
+	older, days := false, 0
 	if r.URL.Query().Get("all") != "" {
-		list = s.chatEntriesAll(chatAllLimit)
+		// Окно списка: по умолчанию трое суток плюс живые, ключ days его
+		// двигает, а days=0 снимает вовсе. Нулём за списком ходит поиск: он
+		// общий по всей машине, и окна не знает ни на шаг.
+		days = chatWindowDays
+		if v := strings.TrimSpace(r.URL.Query().Get("days")); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				days = n
+			}
+		}
+		win := chatWindow{keep: chatKeepSet(r.URL.Query().Get("keep"))}
+		if days > 0 {
+			win.since = s.now().AddDate(0, 0, -days)
+		}
+		list, older = s.chatEntriesAll(chatAllLimit, win)
 	} else {
 		list = s.chatEntries(found.Path, chatListLimit)
 	}
@@ -592,11 +690,31 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 		list = []chatEntry{}
 	}
 	s.titleFill(list)
-	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts()}
+	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts(),
+		"days": days, "older": older}
 	if len(list) == 0 {
-		resp["note"] = "чатов тут пока нет: заведите новый кнопкой «+»"
+		if older {
+			resp["note"] = fmt.Sprintf("за последние %d сут. разговоров нет, а раньше они есть: "+
+				"откройте их кнопкой «показать раньше»", days)
+		} else {
+			resp["note"] = "чатов тут пока нет: заведите новый кнопкой «+»"
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// chatKeepSet разбирает ключ keep: ID разговоров через запятую, которые
+// остаются в списке любого возраста. Панель называет им открытый разговор и
+// последний разговор задачи, иначе окно уносило бы из списка то, на чём она
+// прямо сейчас стоит.
+func chatKeepSet(raw string) map[string]bool {
+	out := map[string]bool{}
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // chatNewName выбирает имя tmux-сессии диалога: chat-<ID>-<n> у диалога с

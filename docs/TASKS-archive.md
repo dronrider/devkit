@@ -335,3 +335,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-521 | Сторож прозы check-prose.py: метрики замера, пороги конфигом, хук записи | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-521.md](tasks/archive/2026/DK-521.md) |
 | DK-526 | Мера прозы: десять новых текстов проходят пороги check-prose.py | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-526.md](tasks/archive/2026/DK-526.md) |
 | DK-533 | Сторож прозы: хвост не ловит защищённую форму, пороги без RULES v1 | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-533.md](tasks/archive/2026/DK-533.md) |
+| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 2026-08-26 | [tasks/archive/2026/DK-313.md](tasks/archive/2026/DK-313.md) |

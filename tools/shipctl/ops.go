@@ -158,6 +158,16 @@ func taskFailClear(root, id string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// drainOr решает исход одного из трёх чистых отказов cmdShip под --drain:
+// без флага err уходит как обычная ошибка, под флагом печатается «разлив не
+// нужен: <причина>» и ship выходит нулём (LLD DK-306, решение 2).
+func drainOr(drain bool, err error) (string, error) {
+	if drain {
+		return "разлив не нужен: " + err.Error(), nil
+	}
+	return "", err
+}
+
 // taskFailSet ставит признак провала на строку id тем же путём, что taskctl
 // fail: shipctl только зовёт команду и коммитит результат. Notify уходит
 // изнутри cmdFail, отдельно его звать не нужно (LLD DK-306, решение 2).
@@ -1069,22 +1079,14 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	if fs := failedChecks(b); len(fs) > 0 {
-		err := fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0]))
-		if p.Drain {
-			return "разлив не нужен: " + err.Error(), nil
-		}
-		return "", err
+		return drainOr(p.Drain, fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0])))
 	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
 		return "", err
 	}
 	if len(busy) > 0 {
-		err := fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0])
-		if p.Drain {
-			return "разлив не нужен: " + err.Error(), nil
-		}
-		return "", err
+		return drainOr(p.Drain, fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0]))
 	}
 	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
@@ -1094,11 +1096,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays))
 	}
 	if len(train) == 0 {
-		err := fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)")
-		if p.Drain {
-			return "разлив не нужен: " + err.Error(), nil
-		}
-		return "", err
+		return drainOr(p.Drain, fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)"))
 	}
 	deploy, err := resolveDeploy(root, p.Deploy)
 	if err != nil {

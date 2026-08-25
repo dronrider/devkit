@@ -328,13 +328,16 @@ const showAsk = async (next) => {
   for (const word of ["не прочитался", "tmux attach", "ждёт ответа в терминале"]) {
     if (said.includes(word)) fail("слова плашки остались в панели: " + word);
   }
-  // Настоящий клин по-прежнему виден плашкой со своей кнопкой выхода: убран
-  // ровно третий род, а не весь механизм.
+  // Настоящий клин плашки тоже не рисует: он лечится сам, и предмет этого
+  // стенда только третий род. Само лечение сторожит testdata/poc_wedge.mjs.
   const wedgedSt = { addr: SID, sid: SID, project: "demo", chats: [], models: [],
-    entry: { id: SID, state: "live", tmux: "chat-2", idle: true, stuck: "терминал пропал" } };
+    entry: { id: SID, state: "live", tmux: "chat-2", idle: true,
+      stuck: "терминал пропал", heal: true } };
   const wedged = sandbox.chatPanel("demo", wedgedSt);
   await settle();
-  if (!byClass(wedged, "stuckn")) fail("плашка клина пропала вместе с третьим родом");
+  if (dump(wedged).includes("Продолжить")) {
+    fail("кнопка выхода из клина вернулась в панель: " + dump(wedged).slice(0, 300));
+  }
 }
 
 // --- спрашивать нечего: блока нет вовсе ---

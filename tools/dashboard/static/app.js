@@ -7482,61 +7482,51 @@ function chatWay(st) {
   return { kind: "resume", off: false, why: "" };
 }
 
-// Слово клина приезжает записью чата: считает его сервер, у которого есть и
-// реестр процессов, и список tmux-сессий, и время последнего хода.
-function chatStuckWord(st) {
-  return (st && st.entry && st.entry.stuck) || "";
-}
+// Клин лечится сам. Плашки с кнопкой «Продолжить» тут больше нет вовсе: чат
+// должен просто работать, а решение при твёрдом признаке клина одно и очевидно,
+// и спрашивать человека незачем (решение пользователя). Твёрдость признака
+// считает сервер полем heal, он же помнит перезапуски и не даёт лечить один
+// разговор дважды подряд: снятие процесса необратимо.
+//
+// Лечение это два шага в строгом порядке. Сначала снятие зависшего процесса
+// (Escape мёртвому терминалу подать некуда), потом резюм той же сессии.
+// Недоставленные реплики к вводной резюма приклеит сервер. Второй шаг идёт
+// только после удачи первого: резюм поверх живого зависшего клиента завёл бы
+// второго агента на тот же разговор.
 
-// Плашка клина: что случилось и одна кнопка выхода. Кнопка делает два шага
-// подряд, потому что человеку они видятся одним: снимает зависший процесс
-// (Escape мёртвому терминалу подать некуда) и поднимает разговор резюмом той же
-// сессии. Недоставленные реплики к вводной резюма приклеит сервер.
-// Слово третьего рода, дословно как на сервере (stuckAskWord): клиент стоит
-// на вопросе в своём терминале, это не клин, и снимать процесс тут нельзя.
-const STUCK_ASK_WORD = "ждёт ответа в терминале";
+// Разговоры, которые лечатся прямо сейчас. Панель пересобирается на каждой
+// перерисовке, и без памяти лечение уходило бы вторым заходом поверх первого.
+const HEALING = new Set();
 
-function stuckNote(project, st, word) {
-  const note = el("div", "cnote stuckn");
-  // Вопрос клиента панель показывает кнопками и отвечает на него сама, и
-  // плашки третьего рода тут больше нет вовсе: человеку она ничего не
-  // объясняла и ничего не предлагала, а вылезала и на отвеченном опросе
-  // (решение пользователя, живой случай chat-97). Что виджет не разобрался,
-  // это наш повод чинить разбор, и говорится он строкой в журнал дашборда, а
-  // не плашкой человеку. Признак ожидания в строке сессии остаётся как был.
-  if (word === STUCK_ASK_WORD) return null;
-  note.append(el("b", "", "Чат завис (" + word + ")."));
-  note.append(el("span", "", "Ход агента стоит, реплики копятся в очереди, " +
-    "которую уже некому разобрать. Нажмите продолжить: зависший процесс снимется, " +
-    "а разговор поднимется резюмом с того же места."));
-  const go = el("button", "btn btn-sm btn-acc", "Продолжить");
-  go.type = "button";
-  go.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    go.disabled = true;
-    unwedge(project, st).catch(console.error).finally(() => { go.disabled = false; });
-  });
-  note.append(go);
-  return note;
-}
-
-// Выход из клина: снятие процесса, потом резюм. Второй шаг идёт только после
-// удачи первого: подъём резюма поверх живого зависшего клиента завёл бы второго
-// агента на тот же разговор.
-async function unwedge(project, st) {
-  sayResult("снимаю зависший процесс...");
-  const kill = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/stop",
-    { method: "POST", body: { kill: true } });
-  if (!kill.ok) {
-    sayResult(kill.body.error || "процесс не снялся", true);
-    return;
+async function healWedge(project, st, busy) {
+  const sid = st && st.sid;
+  if (!sid || HEALING.has(sid)) return;
+  HEALING.add(sid);
+  try {
+    const url = chatsURL(project) + "/" + encodeURIComponent(sid);
+    const claim = await api(url + "/heal", { method: "POST", body: {} });
+    // Отказ молчит. Сервер уже сказал в ленту всё, что надо было сказать, а
+    // повторять это тревогой поверх ленты незачем.
+    if (!claim.ok || !claim.body.claim) return;
+    // Пока идёт лечение, состояние одно и честное. Прежде рядом с плашкой
+    // клина мигало «агент работает...», хотя ход стоял намертво (снимок
+    // пользователя).
+    busy.heal();
+    const kill = await api(url + "/stop", { method: "POST", body: { kill: true } });
+    if (!kill.ok) {
+      await api(url + "/heal", { method: "POST", body: { done: false } });
+      busy.off();
+      await repaintChat();
+      return;
+    }
+    const r = await api(url + "/say", { method: "POST", body: { text: CHAT_UNWEDGE } });
+    await api(url + "/heal", { method: "POST", body: { done: Boolean(r.ok) } });
+    if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
+    busy.off();
+    await repaintChat();
+  } finally {
+    HEALING.delete(sid);
   }
-  sayResult(kill.body.message || "процесс снят");
-  const r = await api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-    { method: "POST", body: { text: CHAT_UNWEDGE } });
-  sayResult(apiSaid(r), !r.ok);
-  if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
-  await repaintChat();
 }
 
 // Реплика, которой поднимается разговор после клина. Своих слов человек тут не
@@ -7679,6 +7669,15 @@ function makeBusy(project, box) {
     raise() {
       row.hidden = false;
       what.textContent = "сессия поднимается...";
+      stop = Date.now() + LIMIT;
+      if (poll) clearTimeout(poll);
+      poll = null;
+    },
+    // Разговор в клине перезапускается: состояние тут одно и честное. Опроса
+    // занятости нет, спрашивать нечего, процесс снимается прямо сейчас.
+    heal() {
+      row.hidden = false;
+      what.textContent = "разговор перезапускается...";
       stop = Date.now() + LIMIT;
       if (poll) clearTimeout(poll);
       poll = null;
@@ -8248,18 +8247,11 @@ function chatPanel(project, st) {
     note.append(el("span", "", way.why));
     wrap.append(note);
   }
-  // Клин виден плашкой над полем ввода: разговор в нём выглядит работающим,
-  // реплики уходят «успешно», а хода нет и не будет, пока зависший процесс не
-  // снят. Выход из клина один и стоит тут же кнопкой (инцидент с чатом DK-460).
-  const stuck = chatStuckWord(st);
-  // Плашка ожидания и блок вопроса это два ответа на один вопрос человека, и
-  // стоять им вместе незачем: собранный блок гасит плашку, а вернётся она,
-  // только если вопрос перестанет читаться.
-  // Плашки третьего рода тут больше нет: stuckNote отдаёт по нему пустоту, и
-  // гасить её блоку вопроса незачем. Клин остаётся плашкой со своей кнопкой.
-  const stuckBox = stuck ? stuckNote(project, st, stuck) : null;
-  if (stuckBox) wrap.append(stuckBox);
   const busy = makeBusy(project, wrap);
+  // Клин лечится сам и молча. Плашки над полем ввода тут больше нет: разговор
+  // должен просто работать, а постфактум в ленте остаётся одна спокойная
+  // строка, которую пишет сервер (решение пользователя).
+  if (st.entry && st.entry.heal) healWedge(project, st, busy).catch(console.error);
   // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
   // работе поверх причины значило бы врать.
   echo.onHeld = () => busy.off();

@@ -45,6 +45,10 @@ type server struct {
 	// Зонд стоит миллисекунды у живого и целый таймаут у клина, и дёргать его
 	// на каждую сборку списка чатов было бы дорого ровно там, где больно.
 	deaf map[string]deafEntry
+	// Память о самолечении клина: разговор -> когда его перезапустили. По ней
+	// клин лечится один раз подряд. Без памяти повторившийся клин заводил бы
+	// цикл перезапусков, а снятие процесса необратимо.
+	heal map[string]healEntry
 	// Шов зонда для тестов: боевой сервер зовёт peerProbe, тест подставляет
 	// свой ответ и не трогает настоящие сокеты машины.
 	probe func(sock string, wait time.Duration) error
@@ -101,6 +105,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
 		busy:  map[string]busyEntry{},
+		heal:  map[string]healEntry{},
 		probe: peerProbe}
 }
 
@@ -136,6 +141,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/chats", s.auth(s.handleChatList))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/say", s.auth(s.handleChatSay))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/stop", s.auth(s.handleChatStop))
+	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/heal", s.auth(s.handleChatHeal))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/status", s.auth(s.handleChatStatus))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShot))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShotGet))

@@ -2213,3 +2213,141 @@ func TestStaticTaskReplyWithoutLead(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// wedgedEnv поднимает разговор в твёрдом клине: транскрипт замер десять минут
+// назад, процесс жив, а tmux-сессии, в которой он был поднят, больше нет.
+func wedgedEnv(t *testing.T) (*testEnv, *http.Client, string, time.Time) {
+	t.Helper()
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
+	writePeer(t, e.home, sid, os.Getpid())
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	return e, c, sid, now
+}
+
+func postHeal(t *testing.T, c *http.Client, e *testEnv, sid, ask string) string {
+	t.Helper()
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/heal", ask)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("заявка на лечение: %d %s", resp.StatusCode, text)
+	}
+	return text
+}
+
+// Твёрдый клин виден полем heal: по нему панель и решает, лечить ли разговор
+// сама. Третий род стоящего чата (клиент спросил в терминале) таким полем не
+// помечается никогда: там нужен человек живьём, а снятие процесса необратимо.
+func TestChatEntryFirmWedgeIsHealable(t *testing.T) {
+	e, c, _, _ := wedgedEnv(t)
+	got := chatsOf(t, e, c)
+	if len(got) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один: %+v", len(got), got)
+	}
+	if !got[0].Heal {
+		t.Errorf("твёрдый клин не помечен лечимым: %+v", got[0])
+	}
+}
+
+// Клин лечится один раз подряд. Второй заход в то же окно получает отказ и
+// строку в ленте: перезапуск по кругу хуже самого клина, а снятие процесса
+// необратимо.
+func TestChatHealClaimOnceThenRefuses(t *testing.T) {
+	e, c, sid, now := wedgedEnv(t)
+
+	if text := postHeal(t, c, e, sid, "{}"); !strings.Contains(text, `"claim":true`) {
+		t.Fatalf("первая заявка на лечение отклонена: %s", text)
+	}
+	// Соседняя вкладка в ту же секунду: это то же лечение, а не второй клин, и
+	// говорить про повтор тут нечего.
+	text := postHeal(t, c, e, sid, "{}")
+	if strings.Contains(text, `"claim":true`) {
+		t.Errorf("вторая вкладка получила согласие и сняла бы процесс второй раз: %s", text)
+	}
+	if strings.Contains(text, "завис снова") {
+		t.Errorf("гонка вкладок названа повторным клином: %s", text)
+	}
+
+	// Клин повторился после перезапуска: отказ со словами, и слова эти ложатся
+	// в ленту разговора.
+	e.s.now = func() time.Time { return now.Add(5 * time.Minute) }
+	text = postHeal(t, c, e, sid, "{}")
+	if strings.Contains(text, `"claim":true`) {
+		t.Fatalf("повторный клин полез лечиться второй раз: %s", text)
+	}
+	if !strings.Contains(text, "завис снова") {
+		t.Errorf("повторный клин не назван словами: %s", text)
+	}
+	said := readFile(t, filepath.Join(e.home, "said", "sess-"+sid+".jsonl"))
+	if !strings.Contains(said, "больше не перезапускаю") {
+		t.Errorf("про повторный клин в ленте не сказано: %s", said)
+	}
+	if got := strings.Count(said, "больше не перезапускаю"); got != 1 {
+		t.Errorf("строк про повторный клин в ленте %d, ждал одну: %s", got, said)
+	}
+}
+
+// Заявка опирается на то, что сервер видит сам, а не на слова клиента: без
+// твёрдого признака клина согласия нет, и процесс никто не трогает.
+func TestChatHealRefusesWithoutFirmWedge(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	// Транскрипт свежий: хода нет секунды, и это пауза между ходами, а не клин.
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Second))
+	writePeer(t, e.home, sid, os.Getpid())
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+
+	text := postHeal(t, c, e, sid, "{}")
+	if strings.Contains(text, `"claim":true`) {
+		t.Fatalf("лечение согласовано без твёрдого признака клина: %s", text)
+	}
+	if !strings.Contains(text, "не трогаю") {
+		t.Errorf("отказ не сказал, что ничего не делается: %s", text)
+	}
+}
+
+// Отчёт о лечении кладёт в ленту одну спокойную строку, пометкой, как
+// разделитель смены модели. Карточки-тревоги тут нет: это запись о том, что
+// случилось, а не вопрос человеку.
+func TestChatHealDoneMarksFeed(t *testing.T) {
+	e, c, sid, _ := wedgedEnv(t)
+	postHeal(t, c, e, sid, `{"done": true}`)
+	said := readFile(t, filepath.Join(e.home, "said", "sess-"+sid+".jsonl"))
+	if !strings.Contains(said, "разговор перезапущен, продолжаю") {
+		t.Fatalf("строки о перезапуске в ленте нет: %s", said)
+	}
+	if !strings.Contains(said, `"kind":"mark"`) {
+		t.Errorf("строка о перезапуске легла не пометкой, а пузырём: %s", said)
+	}
+
+	postHeal(t, c, e, sid, `{"done": false}`)
+	said = readFile(t, filepath.Join(e.home, "said", "sess-"+sid+".jsonl"))
+	if !strings.Contains(said, "перезапустить не вышло") {
+		t.Errorf("провал лечения смолчал: %s", said)
+	}
+}
+
+// Клин в панели: плашки с кнопкой нет, твёрдый признак лечится сам двумя шагами
+// в правильном порядке, отказ сервера и сомнение не трогают ничего. Предмет
+// проверки это собранная разметка и порядок вызовов, поэтому статика
+// поднимается в node с заглушкой DOM (стенд testdata/poc_wedge.mjs). Без node
+// шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticWedgeHealsItself(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд самолечения клина пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_wedge.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("самолечение клина: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

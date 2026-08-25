@@ -156,6 +156,12 @@ type chatEntry struct {
 	// GoneTo это тот разговор, что занял имя: он и есть понятный выход.
 	Gone   string `json:"gone,omitempty"`
 	GoneTo string `json:"goneTo,omitempty"`
+	// Heal говорит, что признак клина твёрдый и разговор лечится сам. Твёрдых
+	// родов два, пропавший терминал и молчащий канал, и оба меряются стоящим
+	// транскриptom. Третий род это вопрос клиента в терминале, там человек
+	// нужен живьём, и трогать процесс нельзя. Пусто у всего, в чём есть
+	// сомнение: снятие процесса необратимо, и по догадке его не делают.
+	Heal bool `json:"heal,omitempty"`
 }
 
 // goneRestartWord это слова снятого разговора. Одни и те же в панели и в
@@ -243,6 +249,114 @@ func (s *server) markDeaf(sock string) {
 	s.mu.Lock()
 	s.deaf[sock] = deafEntry{ok: false, born: s.now()}
 	s.mu.Unlock()
+}
+
+// healWindow это окно памяти о самолечении. Клин, случившийся позже него, это
+// новая беда, и лечится она заново. Порог клина тут один на всё
+// (stuckLostTerm): раньше него твёрдого признака не бывает вовсе, потому что
+// свежий транскрипт снимает вопрос без зонда.
+const healWindow = 10 * stuckLostTerm
+
+// Слова, которыми лечение оседает в ленте разговора. Записью-пометкой, как
+// разделитель смены модели: это не тревога, а строка о том, что случилось.
+const (
+	healSaidWord  = "разговор перезапущен, продолжаю"
+	healFailWord  = "разговор перезапустить не вышло, продолжения не будет"
+	healAgainWord = "разговор завис снова сразу после перезапуска: больше не перезапускаю, посмотрите терминал"
+)
+
+// healEntry это память об одном вылеченном разговоре: когда лечили и сказали ли
+// уже про повтор.
+type healEntry struct {
+	at    time.Time
+	again bool
+}
+
+// healClaim решает, лечить ли клин этого разговора. Первый раз лечим, второй
+// подряд нет: снятие процесса необратимо, и перезапуск по кругу хуже самого
+// клина. Второй ответ это причина отказа, пустая у согласия. Третий говорит,
+// что про повтор надо сказать в ленте, и говорится это один раз.
+func (s *server) healClaim(sid string) (bool, string, bool) {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, hit := s.heal[sid]
+	if !hit || now.Sub(e.at) > healWindow {
+		s.heal[sid] = healEntry{at: now}
+		return true, "", false
+	}
+	// Соседняя вкладка заявила лечение секунду назад: это то же самое лечение,
+	// а не повторный клин. Молчим и не трогаем ничего.
+	if now.Sub(e.at) < stuckLostTerm {
+		return false, "лечение этого разговора уже идёт", false
+	}
+	say := !e.again
+	e.again = true
+	s.heal[sid] = e
+	return false, healAgainWord, say
+}
+
+// handleChatHeal это заявка на самолечение клина и отчёт о нём. Пустое тело
+// значит заявку: сервер сверяет твёрдый признак клина, помнит перезапуск и
+// отвечает согласием либо причиной отказа. Тело с полем done значит отчёт:
+// лечение кончилось, и в ленту ложится строка о том, чем именно.
+func (s *server) handleChatHeal(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "чат")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !sessionIDRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return
+	}
+	var body struct {
+		Done *bool `json:"done"`
+	}
+	json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	if body.Done != nil {
+		word := healSaidWord
+		if !*body.Done {
+			word = healFailWord
+		}
+		s.saidMark(saidSessionKey(sid), word)
+		s.logf("самолечение чата %s кончилось: %s", sid, word)
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "message": word})
+		return
+	}
+	// Признак клина спрашивается заново, а не берётся со слов клиента: снятие
+	// процесса необратимо, и заявка обязана опираться на то, что сервер видит
+	// сам.
+	if !s.chatHealable(found.Path, sid) {
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "claim": false,
+			"why": "твёрдого признака клина у разговора нет: не трогаю"})
+		return
+	}
+	ok, why, say := s.healClaim(sid)
+	if say {
+		s.saidMark(saidSessionKey(sid), healAgainWord)
+	}
+	if !ok {
+		s.logf("самолечение чата %s отклонено: %s", sid, why)
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "claim": false, "why": why})
+		return
+	}
+	s.logf("самолечение чата %s разрешено: клин твёрдый, перезапускаю", sid)
+	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "claim": true})
+}
+
+// chatHealable отвечает, стоит ли этот разговор в твёрдом клине прямо сейчас.
+func (s *server) chatHealable(projPath, sid string) bool {
+	for _, e := range s.chatEntries(projPath, chatListLimit) {
+		if e.ID == sid {
+			return e.Heal
+		}
+	}
+	return false
 }
 
 // chatStoreDir это каталог с настройками диалогов: модель живёт файлом при
@@ -574,8 +688,10 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// второй ловится зондом канала по стоящему транскрипту.
 		if lostTerminal(e.PID, e.Tmux, alive, f.mod, s.now()) {
 			e.Stuck = stuckLostTermWord
+			e.Heal = true
 		} else if e.Sock != "" && s.peerDeaf(e.Sock, f.mod) {
 			e.Stuck = stuckDeafWord
+			e.Heal = true
 		} else if (e.Sock != "" || (e.Tmux != "" && alive(e.Tmux))) && s.chatStuck(f.ID) != "" {
 			// Третий род: живой клиент стоит на вопросе в своём терминале
 			// (разрешение, доверие каталогу первого запуска). Мера та же, что

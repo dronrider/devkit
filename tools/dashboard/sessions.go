@@ -270,6 +270,11 @@ type sessionHead struct {
 	Branch string
 	First  string
 	Named  string
+	// Born это метка первой записи транскрипта, то есть когда разговор
+	// заведён. Спрашивают её там, где содержательных реплик не нашлось вовсе:
+	// давность такой сессии считается от её начала, а время правки файла в
+	// этот ответ не годится (его двигает всякое касание снаружи).
+	Born string
 	// Said это метка последней содержательной реплики транскрипта: слова
 	// человека или агента, те самые, что видны в ленте. Время правки файла на
 	// этот вопрос не отвечает: транскрипт трогает всякая служебщина (постановка
@@ -361,6 +366,20 @@ func saidReply(r reply) bool {
 	return strings.TrimSpace(r.Text) != ""
 }
 
+// saidUnix переводит метку транскрипта в unix-секунды. Второй ответ говорит,
+// что метки нет вовсе: ноль тут значит «времени не видно», и выдавать его за
+// начало эпохи экран не должен.
+func saidUnix(stamp string) (int64, bool) {
+	if stamp == "" {
+		return 0, false
+	}
+	at, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return 0, false
+	}
+	return at.Unix(), true
+}
+
 func readSessionHead(path string) (sessionHead, bool) {
 	var head sessionHead
 	f, err := os.Open(path)
@@ -378,12 +397,16 @@ func readSessionHead(path string) (sessionHead, bool) {
 			Type      string `json:"type"`
 			GitBranch string `json:"gitBranch"`
 			Summary   string `json:"summary"`
+			Timestamp string `json:"timestamp"`
 			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
+		}
+		if head.Born == "" && rec.Timestamp != "" {
+			head.Born = rec.Timestamp
 		}
 		if head.Summary == "" && rec.Type == "summary" {
 			head.Summary = firstLine(rec.Summary)
@@ -599,12 +622,12 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		// записи реестра. У окна человека имени нет вовсе.
 		tmux := binds[f.ID].Tmux
 		name := strings.SplitN(tmux, ":", 2)[0]
-		live, moved := s.workState(projPath, task, f.ID, name, bySid, byTmux)
+		live, moved, silent := s.workState(projPath, task, f.ID, name, bySid, byTmux)
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: "session", Session: f.ID, Note: note, Talk: talk,
 			Own: tmux != "", Model: s.chatModel(f.ID, tmux),
 			Harness: roots[f.root],
-			Live:    live, Moved: moved})
+			Live:    live, Moved: moved, Silent: silent})
 	}
 	return works
 }

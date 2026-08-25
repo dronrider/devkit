@@ -1411,11 +1411,14 @@ func TestWorkLiveState(t *testing.T) {
 	}
 
 	// Реестр молчит и о состоянии, и о времени: живой такая работа выглядеть не
-	// должна, а время последнего хода берётся у транскрипта.
+	// должна, а время последнего хода берётся у последней содержательной
+	// реплики транскрипта. Файл фикстуры трогали три часа назад, реплика в нём
+	// куда старше, и ждём тут именно её: касание файла ходом агента не считается.
+	said := time.Date(2026, 8, 10, 10, 0, 6, 0, time.UTC).Unix()
 	writePeerAged(t, e.home, sid, "task-XR-002:@1.%1", "", 0)
-	if got := live(); got.Live != workIdle || got.Moved != silent.Unix() {
-		t.Errorf("запись реестра без состояния дала %q, ход %d: ждал простой и время транскрипта %d",
-			got.Live, got.Moved, silent.Unix())
+	if got := live(); got.Live != workIdle || got.Moved != said {
+		t.Errorf("запись реестра без состояния дала %q, ход %d: ждал простой и время реплики %d (файл правлен %d)",
+			got.Live, got.Moved, said, silent.Unix())
 	}
 
 	// Клиент ведёт ход прямо сейчас.
@@ -1521,4 +1524,102 @@ func TestBoardBlockChipClipped(t *testing.T) {
 			t.Errorf("чип причины не режется кромкой: в .cwhy нет %s (%s)", want, rule)
 		}
 	}
+}
+
+// Транскрипт трогают снаружи и при мёртвом содержимом: у живого случая (сессия
+// adf6218c, разговор брошен трое суток назад) файл был правлен в тот же день, а
+// последние записи внутри трёхдневной давности и обе служебные. Давность работы
+// шла по времени правки файла, и экран говорил «простаивает 1 минуту» о работе,
+// которой не было трое суток.
+const staleSaidFixture = `{"type":"user","message":{"role":"user","content":"возьми задачу XR-005 в работу"},"timestamp":"2026-08-22T12:00:00.000Z","gitBranch":"main"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Взял, смотрю доску."}]},"timestamp":"2026-08-22T12:20:00.000Z"}
+`
+
+// Служебный хвост того же разговора: постановка реплики в очередь, отметки
+// харнеса с пустым телом и ход инструмента без вывода. Пузырём в ленте не стоит
+// ни одна из этих записей, и давность они двигать не должны.
+const serviceTailFixture = staleSaidFixture +
+	`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-25T16:00:00.000Z"}
+{"type":"system","subtype":"stop_hook_summary","message":{"role":"system","content":""},"timestamp":"2026-08-25T17:00:00.000Z"}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-08-25T17:08:00.000Z"}
+`
+
+// Разговор, где содержательных реплик нет вовсе: одни служебные записи.
+const noSaidFixture = `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-22T12:00:00.000Z"}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-08-22T12:20:00.000Z"}
+`
+
+// movedEnv поднимает сервер с одним транскриптом проекта и отдаёт ответ
+// workState по нему. Время правки файла ставится свежим нарочно: тест сторожит
+// ровно то, что давность его не слушает.
+func movedEnv(t *testing.T, body string, mtime, now time.Time) (string, int64, bool) {
+	t.Helper()
+	home := t.TempDir()
+	proj := filepath.Join(home, "projects", "xr")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sid := "adf6218c-fca0-4c7f-b908-e4af7854d7b9"
+	writeSession(t, home, proj, "", sid, body, mtime)
+	s := newServer(&Config{Home: home}, nil, nil)
+	s.now = func() time.Time { return now }
+	return s.workState(proj, "", sid, "task-XR-5", map[string]peer{}, map[string]peer{})
+}
+
+func TestWorkMovedFollowsSaidReply(t *testing.T) {
+	now := time.Date(2026, 8, 25, 17, 9, 0, 0, time.UTC)
+	live, moved, silent := movedEnv(t, staleSaidFixture, now.Add(-time.Minute), now)
+	want := time.Date(2026, 8, 22, 12, 20, 0, 0, time.UTC).Unix()
+	if moved != want {
+		t.Errorf("давность идёт не по последней реплике: moved %d, жду %d (правка файла %d)",
+			moved, want, now.Add(-time.Minute).Unix())
+	}
+	if silent {
+		t.Errorf("разговор с репликами помечен как разговор без реплик")
+	}
+	if live != workIdle {
+		t.Errorf("состояние живой сессии без хода: %q, жду %q", live, workIdle)
+	}
+}
+
+func TestWorkMovedIgnoresServiceRecords(t *testing.T) {
+	now := time.Date(2026, 8, 25, 17, 9, 0, 0, time.UTC)
+	_, moved, silent := movedEnv(t, serviceTailFixture, now.Add(-time.Minute), now)
+	want := time.Date(2026, 8, 22, 12, 20, 0, 0, time.UTC).Unix()
+	if moved != want {
+		t.Errorf("служебный хвост сдвинул давность: moved %d, жду %d", moved, want)
+	}
+	if silent {
+		t.Errorf("разговор с репликами помечен как разговор без реплик")
+	}
+}
+
+func TestWorkMovedSaysWhenNoReplies(t *testing.T) {
+	now := time.Date(2026, 8, 25, 17, 9, 0, 0, time.UTC)
+	_, moved, silent := movedEnv(t, noSaidFixture, now.Add(-time.Minute), now)
+	if !silent {
+		t.Errorf("разговор без реплик не назван таковым, экран скажет о нём давность как о ходе")
+	}
+	want := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC).Unix()
+	if moved != want {
+		t.Errorf("давность разговора без реплик идёт не от его начала: moved %d, жду %d", moved, want)
+	}
+}
+
+// Как строка сессии произносит давность: разговор с давними репликами мерится
+// ими, а не касанием файла, а разговор без реплик говорит об этом словами.
+// Предмет проверки это собранная разметка, поэтому статика поднимается в node с
+// заглушкой DOM (стенд testdata/poc_saidage.mjs). Без node шаг пропускается:
+// узел стенда, а не рабочей части.
+func TestStaticSessionAgeBySaid(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд давности строки сессии пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_saidage.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("давность строки сессии: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

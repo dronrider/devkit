@@ -220,6 +220,11 @@ type Work struct {
 	// давность словами. Ноль значит «времени не видно», и экран тогда молчит, а
 	// не показывает эпоху, как показывал её реестр без поля времени.
 	Moved int64 `json:"moved,omitempty"`
+	// Silent говорит, что содержательных реплик в транскрипте не нашлось вовсе:
+	// Moved тогда не ход, а начало разговора, и экран подписывает строку
+	// «реплик нет». Без этого признака касание файла выдавалось за ход, и
+	// разговор, брошенный трое суток назад, стоял простаивающим минуту.
+	Silent bool `json:"silent,omitempty"`
 }
 
 // Состояния работы. Слова машинные, человек их не читает: на экран они
@@ -263,12 +268,13 @@ func (s *server) livePeers() (bySid, byTmux map[string]peer) {
 	return bySid, byTmux
 }
 
-// workState называет состояние работы и время её последнего хода. Источников
-// три, и они ранжированы: признак ожидания во входе разговора (его кладёт
-// taskctl ask, и он старше всего), транскрипт (по нему считается сам ход, и
-// только он честен у окон vscode, где состояния в реестре нет вовсе) и запись
-// реестра клиента с её состоянием и временем касания.
-func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[string]peer) (string, int64) {
+// workState называет состояние работы, время её последнего хода и признак
+// разговора без реплик. Источников три, и они ранжированы: признак ожидания во
+// входе разговора (его кладёт taskctl ask, и он старше всего), транскрипт (по
+// нему считается сам ход, и только он честен у окон vscode, где состояния в
+// реестре нет вовсе) и запись реестра клиента с её состоянием и временем
+// касания.
+func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[string]peer) (string, int64, bool) {
 	now := s.now()
 	p, known := peer{}, false
 	if sid != "" {
@@ -286,33 +292,46 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 	if known && p.Updated > 0 {
 		moved = p.Updated / 1000
 	}
-	busy := false
+	busy, silent := false, false
 	if sid != "" {
 		if info, ok := findSession(s.transcriptRoots(), projPath, sid); ok {
-			if at := info.mod.Unix(); at > moved {
+			// Давность считается по последней содержательной реплике, а не по
+			// времени правки файла: транскрипт трогают и при мёртвом
+			// содержимом, и трёхсуточный разговор выходил простаивающим минуту
+			// (живой случай, сессия adf6218c). Разбор тот же, каким список
+			// чатов лечился от сортировки по касаниям (saidReply поверх
+			// parseReplies): служебные записи время не двигают.
+			head := s.sessionHeadCached(info.path, info.stamp)
+			if at, ok := saidUnix(head.Said); ok {
 				moved = at
+			} else {
+				// Реплик не нашлось вовсе. Экран говорит об этом словами и
+				// считает давность от начала разговора: касание файла тут
+				// выдало бы себя за ход агента.
+				silent = true
+				moved, _ = saidUnix(head.Born)
 			}
 			busy = s.sessionBusy(info.path, now)
 		}
 	}
 	if id != "" {
 		if _, waiting := askWaiting(projPath, id, now); waiting {
-			return workWait, moved
+			return workWait, moved, silent
 		}
 	}
 	switch {
 	case busy:
-		return workBusy, moved
+		return workBusy, moved, silent
 	case known && p.Status == "busy" && peerFresh(p, now):
-		return workBusy, moved
+		return workBusy, moved, silent
 	case known && p.Status == "waiting":
-		return workWait, moved
+		return workWait, moved, silent
 	case known || tmux != "":
 		// Сессия на месте, а хода в ней нет: работой это не считается, даже
 		// если реестр молчит о состоянии вовсе.
-		return workIdle, moved
+		return workIdle, moved, silent
 	}
-	return workDead, moved
+	return workDead, moved, silent
 }
 
 // harnessOfSession называет подписку сессии по дому её транскрипта. Пусто там,
@@ -370,7 +389,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if id == "" {
 			continue
 		}
-		live, moved := s.workState(projectPath, id, sidOf[sess.Name], sess.Name, bySid, byTmux)
+		live, moved, silent := s.workState(projectPath, id, sidOf[sess.Name], sess.Name, bySid, byTmux)
 		list = append(list, Work{ID: id, Kind: kind, Title: rows[id].Title,
 			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created,
 			// Конвейерная сессия это сессия дашборда: он её и поднял, её имя
@@ -379,7 +398,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 			// Подписка та же, что у транскрипта этой сессии: конвейер второй
 			// подписки пишет журнал в её дом, и по нему она и узнаётся.
 			Harness: s.harnessOfSession(projectPath, sidOf[sess.Name], roots),
-			Live:    live, Moved: moved})
+			Live:    live, Moved: moved, Silent: silent})
 		seen[kind+"-"+id] = true
 		busy[id] = true
 	}

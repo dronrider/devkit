@@ -758,6 +758,129 @@ class ParkStaleTest(Stand):
                          "признак в дереве задачи пропущен: %s" % self.call.calls)
 
 
+class CloseAgentTest(Stand):
+    """Тик доводит до Done агентскую строку Check: кого закрывать, отвечает
+    `taskctl closable`, закрытие идёт `taskctl close` с коммитом и пушем."""
+
+    class Answers:
+        """Подставной запускатель с ответом на каждую команду taskctl. Стенд
+        отвечает за обе стороны разговора: вердикт отбора приходит первым
+        вызовом, исход закрытия вторым."""
+
+        def __init__(self, verdict="", verdict_code=0, close_code=0, close_out="", board=None):
+            self.calls = []
+            self.verdict = verdict
+            self.verdict_code = verdict_code
+            self.close_code = close_code
+            self.close_out = close_out
+            self.board = board  # доска стенда: закрытие уносит с неё строку
+
+        def __call__(self, argv, **kw):
+            self.calls.append(list(argv))
+            if "closable" in argv:
+                return subprocess.CompletedProcess(argv, self.verdict_code, self.verdict, None)
+            if self.board is not None:
+                tid = argv[argv.index("close") + 1]
+                text = self.board.read_text(encoding="utf-8")
+                self.board.write_text(
+                    "\n".join(l for l in text.splitlines() if not l.startswith("| " + tid)) + "\n",
+                    encoding="utf-8")
+            return subprocess.CompletedProcess(argv, self.close_code, self.close_out, None)
+
+        def argv_with(self, needle):
+            return [a for a in self.calls if needle in a]
+
+    def setUp(self):
+        super().setUp()
+        self.check_rows(["DK-902", "DK-903"])
+
+    def check_rows(self, ids):
+        """Доска стенда, где перечисленные строки стоят в Check."""
+        rows = "".join(PARK_ROW % (i, "Готова к сдаче", i, i) + "\n" for i in ids)
+        text = PARK_HEAD % (ROW % (GOAL, GOAL, GOAL), "")
+        head, sep, tail = text.partition("## Check")
+        body, sep2, rest = tail.partition("\n\n## Backlog")
+        (self.proj / "docs" / "TASKS.md").write_text(
+            head + sep + body + "\n" + rows + sep2 + rest, encoding="utf-8")
+
+    def close(self, answers):
+        return watch.close_agent(str(self.proj), answers, TASKCTL)
+
+    def test_ready_row_is_closed_with_push(self):
+        # Вердикт назвал строку готовой: тик зовёт close тем же порядком, что
+        # страховка парковки зовёт move, с сообщением коммита и пушем доски.
+        a = self.Answers(verdict="DK-902\n")
+        lines = self.close(a)
+        closed = a.argv_with("close")
+        self.assertEqual(len(closed), 1, "готовая строка не закрыта: %s" % a.calls)
+        self.assertEqual(closed[0][closed[0].index("close"):closed[0].index("-m")],
+                         ["close", "DK-902"])
+        self.assertIn("--push", closed[0])
+        self.assertIn("закрыта тиком", lines[0])
+
+    def test_refused_rows_stay(self):
+        # Вердикт отказал всем: закрывать тик не пробует и молчит. Так стоят в
+        # Check виды user и mixed, строка без отметки smoke и строка с пустым
+        # разделом «Проверка».
+        a = self.Answers(verdict="закрывать автоматике нечего\nотказано:\n"
+                                 "  DK-902: вид приёмки user: приёмка за человеком\n"
+                                 "  DK-903: отметки smoke на последний выкат нет\n")
+        self.assertEqual(self.close(a), [])
+        self.assertEqual(a.argv_with("close"), [], "тик полез закрывать отказ: %s" % a.calls)
+
+    def test_ready_list_stops_at_refusals(self):
+        # Перечень отказов идёт следом за готовыми, и разбор ответа обязан
+        # кончиться на первой строке прозы: иначе тик закрыл бы чужую строку.
+        a = self.Answers(verdict="DK-902\nотказано:\n  DK-903: вид приёмки mixed: приёмка за человеком\n")
+        self.close(a)
+        closed = a.argv_with("close")
+        self.assertEqual([c[c.index("close") + 1] for c in closed], ["DK-902"],
+                         "закрыто не то, что назвал вердикт: %s" % a.calls)
+
+    def test_without_binary_tick_is_silent(self):
+        # Спросить вердикт нечем, а закрывать вслепую нельзя: строка дождётся
+        # живой сессии.
+        a = self.Answers(verdict="DK-902\n")
+        self.assertEqual(watch.close_agent(str(self.proj), a, ""), [])
+        self.assertEqual(a.calls, [])
+
+    def test_empty_check_asks_nobody(self):
+        # Пустой Check это самый частый случай тика, и лишний запуск бинаря
+        # каждые пять минут ему не нужен.
+        self.check_rows([])
+        a = self.Answers(verdict="")
+        self.assertEqual(self.close(a), [])
+        self.assertEqual(a.calls, [])
+
+    def test_refusal_of_close_is_reported(self):
+        # Строка осталась в Check, а close отказал: тик говорит об этом строкой
+        # отчёта и вернётся к ней следующим тиком.
+        a = self.Answers(verdict="DK-902\n", close_code=1, close_out="XR-1: в архиве уже есть")
+        lines = self.close(a)
+        self.assertIn("taskctl отказал", lines[0])
+        self.assertIn("в архиве уже есть", lines[0])
+
+    def test_unpushed_board_is_named(self):
+        # Закрытие прошло, а пуш нет: строка с доски ушла, и отчёт называет
+        # неуехавшую доску, чтобы её починил человек.
+        a = self.Answers(verdict="DK-902\n", close_code=1, close_out="пуш доски не прошёл",
+                         board=self.proj / "docs" / "TASKS.md")
+        lines = self.close(a)
+        self.assertIn("доска не уехала в origin", lines[0])
+
+    def test_tick_writes_the_closing_to_journal(self):
+        # Закрытие видно снаружи журналом сторожка: громкого зова у него нет
+        # намеренно, и журнал остаётся единственным следом.
+        self.entry(seen_minutes=1)
+        self.runlog(1)
+        a = self.Answers(verdict="DK-902\n")
+        out = io.StringIO()
+        watch.run(now=self.now, idle=None, home=self.home, out=out, call=a, taskctl=TASKCTL)
+        journal = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
+        self.assertIn("DK-902", journal)
+        self.assertIn("закрыта тиком", journal)
+
+
 class ConfigTest(Stand):
 
     def test_default_and_overrides(self):

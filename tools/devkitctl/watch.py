@@ -51,9 +51,15 @@ in-progress`. Будит сторожок и только он, а будить 
 идемпотентен и молчит нулём на пустом поезде, занятой очереди, сломанном
 проде и занятом чужим заходом конвейере, а провал деплоя не поднимает код
 тика: уведомление шлёт сам shipctl через признак провала и taskctl fail.
+
+Тем же тиком закрываются агентские задачи из Check (DK-516): строка вида agent
+с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
+сессии, а тех, кто из Check ждёт человека, тик не трогает вовсе. Отбор идёт
+вердиктом `taskctl closable`, закрытие командой `taskctl close`.
 """
 import importlib.util
 import os
+import re
 import shutil
 import say
 import subprocess
@@ -87,6 +93,11 @@ STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S")
 RUN_LOG = ".devkit/log"
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
+CHECK = "Check"
+BLOCKED = "Blocked"
+# Строка ответа `taskctl closable`: голый ID значит «закрывать можно», проза и
+# перечень отказов идут ниже и под этот вид не подходят.
+CLOSABLE_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 # Причина блока с машинным префиксом «вопрос:» паркует задачу вопросом человека
 # (LLD DK-400, решение 2): только такую строку будит лежащий в разговоре ответ,
 # «окружение:» и проза ждут своего молча.
@@ -257,25 +268,34 @@ def task_tree(root, task_id):
     return os.path.join(os.path.dirname(top), os.path.basename(top) + "-" + task_id.lower())
 
 
-def parked_rows(root):
-    """Задачи корня, припаркованные вопросом: список ID. Доска читается
-    напрямую, как и для раздела цели: сторожок работает и там, где бинари
-    devkit сломаны."""
+def section_rows(root, section, needle=""):
+    """ID задач корня, стоящих в названной секции доски, при непустом needle
+    только строки с этой подстрокой. Доска читается напрямую, а не через
+    `taskctl list`: сторожок работает и там, где бинари devkit сломаны.
+
+    Имя секции сверяется началом заголовка: у Check в заголовке стоит пояснение
+    («## Check (готово, ждёт проверки пользователем)»), и точное равенство
+    прошло бы мимо всей секции молча."""
     try:
         text = Path(root, BOARD).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    rows, in_blocked = [], False
+    rows, here = [], False
     for ln in text.splitlines():
         if ln.startswith("## "):
-            in_blocked = ln[3:].strip() == "Blocked"
+            here = ln[3:].strip().startswith(section)
             continue
-        if not in_blocked or not ln.startswith("|") or PARKED not in ln:
+        if not here or not ln.startswith("|") or (needle and needle not in ln):
             continue
         cell = ln.split("|")[1].strip() if ln.count("|") > 1 else ""
         if cell and cell != "ID" and not set(cell) <= set("-: "):
             rows.append(cell)
     return rows
+
+
+def parked_rows(root):
+    """Задачи корня, припаркованные вопросом: список ID."""
+    return section_rows(root, BLOCKED, PARKED)
 
 
 def lying_answer(root, task_id, now, hook=None):
@@ -343,23 +363,8 @@ LOAD_HOOK = object()
 
 
 def progress_rows(root):
-    """ID задач корня, стоящих в In progress. Доска читается напрямую, как и
-    для раздела цели: сторожок работает и там, где бинари devkit сломаны."""
-    try:
-        text = Path(root, BOARD).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    rows, here = [], False
-    for ln in text.splitlines():
-        if ln.startswith("## "):
-            here = ln[3:].strip() == IN_PROGRESS
-            continue
-        if not here or not ln.startswith("|"):
-            continue
-        cell = ln.split("|")[1].strip() if ln.count("|") > 1 else ""
-        if cell and cell != "ID" and not set(cell) <= set("-: "):
-            rows.append(cell)
-    return rows
+    """ID задач корня, стоящих в In progress."""
+    return section_rows(root, IN_PROGRESS)
 
 
 def session_alive(sid, now, home=None):
@@ -474,6 +479,69 @@ def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
             continue
         lines.append("задача %s в %s припаркована страховкой: ход ожидания убит, живой сессии за строкой нет"
                      % (tid, root))
+    return lines
+
+
+# -- закрытие агентской задачи из Check ---------------------------------------
+
+def close_agent(root, call=None, taskctl=None):
+    """Закрывает строки Check, которые вправе закрыть автоматика. Возврат это
+    строки отчёта, как у пробуждения и страховки.
+
+    Задачу вида agent прогоняет и закрывает сам агент, но сессия кончается
+    раньше закрытия чаще, чем доживает до него: слитая, выкаченная и
+    прогнанная строка стоит в Check до следующей живой сессии, и человек видит
+    вставший конвейер там, где делать ему нечего. Тик доводит такую строку до
+    Done сам.
+
+    Кого закрывать, отвечает `taskctl closable`, а не разбор доски тут:
+    вид приёмки, форма файла задачи и рубеж непустой «Проверки» живут у
+    taskctl, и вторая копия этих правил в питоне разошлась бы с первой на
+    первой же правке. Без бинаря тик молчит: спросить некого, а закрывать
+    вслепую нельзя.
+
+    Закрытие идёт `taskctl -C <корень> close <ID> -m ... --push`, как парковка
+    идёт своим move: за тиком никого нет, и правка доски, оставленная грязной
+    в основном чекауте, отбила бы следующий merge предполётом. Громкого зова
+    на закрытие нет намеренно: смысл тика в том, чтобы человека не дёргать.
+    """
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    if not bin or not section_rows(root, CHECK):
+        return []
+    try:
+        p = call([bin, "-C", root, "closable"], stdout=subprocess.PIPE,
+                 stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ["корень %s: спросить taskctl closable не вышло, %s" % (root, e)]
+    if p.returncode != 0:
+        return ["корень %s: taskctl closable отказал с кодом %d: %s"
+                % (root, p.returncode, (p.stdout or "").strip())]
+    lines = []
+    for ln in (p.stdout or "").splitlines():
+        tid = ln.strip()
+        if not CLOSABLE_ID.match(tid):
+            break
+        try:
+            r = call([bin, "-C", root, "close", tid,
+                      "-m", "docs(tasks): %s закрыта тиком сторожка" % tid, "--push"],
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            lines.append("задача %s в %s: закрыть не вышло, %s" % (tid, root, e))
+            continue
+        if r.returncode != 0 and tid in section_rows(root, CHECK):
+            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
+                         % (tid, root, r.returncode, (r.stdout or "").strip()))
+            continue
+        if r.returncode != 0:
+            # Строка из Check ушла, значит закрытие отработало, а споткнулся
+            # его хвост: доска не уехала в origin. Чинит её человек, следующий
+            # тик к закрытой строке не возвращается.
+            lines.append("задача %s в %s закрыта тиком, но доска не уехала в origin: %s"
+                         % (tid, root, (r.stdout or "").strip()))
+            continue
+        lines.append("задача %s в %s закрыта тиком: вид agent, smoke прогнан, "
+                     "раздел «Проверка» непуст" % (tid, root))
     return lines
 
 
@@ -742,6 +810,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for pline in park_stale(root, now, call, taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
+            for cline in close_agent(root, call, taskctl):
+                out.write(cline + "\n")
+                log_line(cline, home)
     # Разговор задачи живёт и вне цикла цели, поэтому корни задач обходятся
     # тем же порядком: пробуждение ответом и страховка брошенного ожидания не
     # спрашивают, ведут ли задачу целью.
@@ -749,7 +820,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if root in swept:
             continue
         swept.add(root)
-        for line in wake(root, now, call, taskctl) + park_stale(root, now, call, taskctl, home=home):
+        for line in (wake(root, now, call, taskctl)
+                     + park_stale(root, now, call, taskctl, home=home)
+                     + close_agent(root, call, taskctl)):
             out.write(line + "\n")
             log_line(line, home)
     # Разлив идёт тем же множеством корней отдельным проходом: событие

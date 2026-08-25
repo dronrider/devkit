@@ -51,7 +51,7 @@ func TestDraftsListAndText(t *testing.T) {
 		"дашборд не показывает накопитель черновиков",
 	} {
 		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`}`).Body.Close()
+			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
 	}
 	got := draftsResp(t, c, e)
 	list, _ := got["drafts"].([]any)
@@ -95,7 +95,7 @@ func TestDraftsListAndText(t *testing.T) {
 func TestDraftsCarryOrder(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
+		`{"text": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
 
 	list := draftsResp(t, c, e)
 	drafts, _ := list["drafts"].([]any)
@@ -124,10 +124,14 @@ func TestDraftsSortedByPrio(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	for _, text := range []string{"первая идея", "вторая идея", "третья идея"} {
 		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`}`).Body.Close()
+			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
 	}
 	runTaskctl(t, e.proj, "draft", "prio", "XR-005", "high")
 	runTaskctl(t, e.proj, "draft", "prio", "XR-007", "low")
+	// Немаркированным черновик остаётся только после снятия метки: запись без
+	// уровня отбивается (DK-520), а группа в порядке разбора нужна тем, что
+	// записаны раньше.
+	runTaskctl(t, e.proj, "draft", "prio", "XR-006", "--clear")
 
 	list := draftsResp(t, c, e)
 	drafts, _ := list["drafts"].([]any)
@@ -159,7 +163,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "дашборд не показывает накопитель черновиков"}`).Body.Close()
+		`{"text": "дашборд не показывает накопитель черновиков", "prio": "mid"}`).Body.Close()
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	text := body(t, resp)
@@ -253,7 +257,7 @@ func TestDraftGroomAuthAndOrigin(t *testing.T) {
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "мысль про накопитель"}`).Body.Close()
+		`{"text": "мысль про накопитель", "prio": "mid"}`).Body.Close()
 
 	url := e.srv.URL + "/api/projects/demo/drafts/XR-005/groom"
 	resp := doReq(t, plainClient(), "POST", url, "")
@@ -301,7 +305,7 @@ func TestDraftGroomForeignOriginLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	// Пишем черновик
 	req, _ := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/drafts",
-		strings.NewReader(`{"text": "новая мысль"}`))
+		strings.NewReader(`{"text": "новая мысль", "prio": "mid"}`))
 	req.Header.Set("Content-Type", "application/json")
 	c.Do(req)
 
@@ -408,7 +412,7 @@ exit 0`, gitLog))
 func makeDraft(t *testing.T, c *http.Client, e *testEnv, text string) string {
 	t.Helper()
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(text)+`}`)
+		`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`)
 	got := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("черновик %q не записался: %d %s", text, resp.StatusCode, got)

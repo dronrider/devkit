@@ -4515,6 +4515,12 @@ const ACCEPT_VALUES = ["agent", "mixed", "user"];
 // барьером «глаза», которого человек не называл.
 const BARRIER_PLACEHOLDER = "выбрать барьер";
 const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
+// Уровень разбора спрашивается прямо на записи (DK-520): груминг заходит по
+// накопителю сверху, и метка, поставленная им, появлялась бы тогда, когда
+// разбор уже идёт. Значение по умолчанию средний: обычная очередь.
+const PRIO_VALUES = ["high", "mid", "low"];
+const PRIO_HINT = "уровень разбора на глаз: high разбирать ближайшим заходом, " +
+  "mid обычная очередь, low когда-нибудь; потом его правит груминг";
 const ACCEPT_HINT = "Вид приёмки решает, кто проверяет задачу: агентский вид " +
   "закрывается прогоном, у остальных часть шагов остаётся человеку.";
 const ACCEPT_BARRIER_HINT = "Барьер называется из шести, и у каждого своя причина: " +
@@ -4531,7 +4537,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, text: "", type: "task", cost: "-",
-  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "" };
+  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", prio: "mid" };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -4543,6 +4549,7 @@ function resetNewForm(project) {
   newForm.accept = "agent";
   newForm.barrier = "";
   newForm.reason = "";
+  newForm.prio = "mid";
 }
 
 // Отправка гасит кнопки на время запроса: повторное нажатие на медленной
@@ -4556,11 +4563,11 @@ async function sendNew(btns, call) {
   }
 }
 
-async function makeDraft(project, text, btns) {
+async function makeDraft(project, text, prio, btns) {
   sayResult("запись черновика...");
   return sendNew(btns, async () => {
     const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts",
-      { method: "POST", body: { text } });
+      { method: "POST", body: { text, prio } });
     let said = r.body.message || r.body.error || "";
     if (r.ok && r.body.note) said += " (" + r.body.note + ")";
     sayResult(said, !r.ok);
@@ -4638,6 +4645,19 @@ function renderNew(project) {
   note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
   note.hidden = !newForm.draft;
   box.append(note);
+
+  // Уровень стоит у самого верха формы, рядом с пометкой про груминг: это
+  // единственное, что черновик спрашивает сверх текста.
+  const prioBox = el("div", "accbox");
+  const prioPick = pickField("уровень разбора", PRIO_VALUES, newForm.prio, (v) => {
+    newForm.prio = v;
+    touch();
+  });
+  prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора черновика");
+  prioBox.append(prioPick);
+  box.append(prioBox);
+  const prioHint = el("div", "hint", PRIO_HINT);
+  box.append(prioHint);
 
   const field = el("div", "");
   field.append(el("span", "flab", "Заголовок"));
@@ -4732,6 +4752,8 @@ function renderNew(project) {
     asTask.className = draft ? "" : "on";
     asDraft.className = draft ? "on" : "";
     note.hidden = !draft;
+    prioBox.hidden = !draft;
+    prioHint.hidden = !draft;
     typePick.hidden = draft;
     costPick.hidden = draft;
     typeOff.hidden = !draft;
@@ -4790,7 +4812,7 @@ function renderNew(project) {
     const text = ta.value.trim();
     if (!text || bad.textContent) return;
     if (newForm.draft) {
-      makeDraft(project, text, [send]).then((done) => {
+      makeDraft(project, text, newForm.prio, [send]).then((done) => {
         if (!done) return;
         resetNewForm(project);
         draftDone(project, done);

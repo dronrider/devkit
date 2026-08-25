@@ -84,6 +84,7 @@ def dispatcher_script(bodies):
 # Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
 # и после реза он обязан оставаться разбираемым.
 NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
+WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
 SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
@@ -92,6 +93,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose.py --hook"}
 ]}, {"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
+]}, {"matcher": "Agent", "hooks": [
+  {"type": "command", "command": "%s"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"}
 ]}, {"matcher": "Read", "hooks": [
@@ -104,10 +107,12 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "StopFailure": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "SubagentStop": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "UserPromptSubmit": [{"hooks": [
   {"type": "command", "command": "%s"}
@@ -495,7 +500,8 @@ class Sandbox:
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
         write(home / ".claude" / "settings.json",
-              SETTINGS % (allow, deny, NOTIFY, NOTIFY, NOTIFY, NOTIFY, NOTIFY))
+              SETTINGS % (allow, deny, WATCH, NOTIFY, NOTIFY, WATCH,
+                          NOTIFY, NOTIFY, WATCH, NOTIFY))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

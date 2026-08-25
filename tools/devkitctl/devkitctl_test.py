@@ -182,6 +182,23 @@ class ProjectFindingsTest(SandboxCase):
                        "нет находки про неподключённый уведомитель")
         write(self.settings, full)
 
+    def test_5c_agent_watchdog_events(self):
+        # Сторож фоновых субагентов висит на трёх событиях, и пропажа любого это
+        # находка: без запуска счёт работам не ведётся, без конца хода сдавать
+        # нечего, а сессия уходит спать с незабранным отчётом (DK-519).
+        full = read(self.settings)
+        drop_lines(self.settings, "agent-watch.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("сторож agent-watch.py не подключён на события PostToolUse, "
+                       "SubagentStop, Stop", out,
+                       "нет находки про неподключённого сторожа субагентов")
+        self.assertIn_("сессия уходит спать, считая его работающим", out,
+                       "находка не говорит, что ломается без сторожа")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("agent-watch.py не подключён", out,
+                          "подключённый сторож попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -1903,17 +1920,21 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук длинных чтений")
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*chat-in\.py на PostToolUse",
                          "--fix не разложил подхват реплики")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*agent-watch\.py на PostToolUse",
+                         "--fix не разложил сторожа фоновых субагентов")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
         post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
-        # PostToolUse: две группы, проверки текстов на своём матчере и подхват
-        # реплики на пустом. Матчер у него пустой не по недосмотру: реплику надо
+        # PostToolUse: три группы, проверки текстов на своём матчере, подхват
+        # реплики на пустом и сторож фоновых субагентов на инструменте
+        # делегирования. Матчер у подхвата пустой не по недосмотру: реплику надо
         # доставлять на любом ходе идущего витка, а не на записи файла.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit", None], hooks["PostToolUse"])
+                         ["Edit|Write|NotebookEdit", None, "Agent"], hooks["PostToolUse"])
+        self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 1, chat)
@@ -1930,6 +1951,12 @@ class HarnessHooksTest(SandboxCase):
         for event in ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))
+        # Сторож фоновых субагентов (DK-519) стоит рядом с уведомителем на конце
+        # хода и на конце субагента: уведомитель говорит наружу человеку, сторож
+        # внутрь сессии.
+        for event in ("SubagentStop", "Stop"):
+            cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
+            self.assertEqual(len([c for c in cmds if "agent-watch.py" in c]), 1, (event, cmds))
         # Ретрай-вотчдог (DK-172) ложится тем же --fix: env-ключ, с которым
         # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
         self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),

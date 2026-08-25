@@ -225,6 +225,13 @@ BOARD_HOOK = "board-catchup.sh"
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
 # так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
 CHAT_HOOK = "chat-in.py"
+# Сторож фоновых субагентов (DK-519): три события, потому что счёт работам
+# ведётся с их запуска (PostToolUse на инструменте делегирования), закрывается
+# их концом (SubagentStop), а сдаётся сессии на конце хода (Stop), пока она не
+# ушла спать с незабранным отчётом. Категория сообщения в hook_gaps своя:
+# потерянный отчёт субагента виден иначе, чем молчащий баннер уведомителя.
+WATCH_HOOK = "agent-watch.py"
+WATCH_EVENTS = ("PostToolUse", "SubagentStop", "Stop")
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -259,6 +266,9 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
+    ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
@@ -1258,13 +1268,21 @@ def hook_gaps(text, settings):
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
         # уведомитель там есть на всех событиях, либо нет ни на одном.
         notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
+    watch_events = hook_events(text, WATCH_HOOK)
+    if watch_events is None:
+        watch_events = set(WATCH_EVENTS) if WATCH_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
+    missing_watch = []
     for event, matcher, cmd in HOOK_LAYOUT:
         script = os.path.basename(cmd.split()[1])
         if script == NOTIFY_HOOK:
             if event in notify_events:
                 continue
             missing_notify.append(event)
+        elif script == WATCH_HOOK:
+            if event in watch_events:
+                continue
+            missing_watch.append(event)
         elif script in text:
             continue
         gaps.append((event, matcher, cmd))
@@ -1314,6 +1332,11 @@ def hook_gaps(text, settings):
                         "разрешения, и не говорит, что закончила ход или что субагент "
                         "отработал (hooks/README.md)"
                         % (NOTIFY_HOOK, ", ".join(missing_notify), settings))
+    if missing_watch:
+        findings.append("сторож %s не подключён на события %s в %s: отчёт фонового субагента "
+                        "теряется по дороге, и сессия уходит спать, считая его работающим "
+                        "(hooks/README.md)"
+                        % (WATCH_HOOK, ", ".join(missing_watch), settings))
     for old in sorted(n for n in RETIRED_HOOKS if n in text):
         stale.append(old)
         findings.append("хук %s в %s переименован в %s: строка зовёт файл, которого в чекауте "

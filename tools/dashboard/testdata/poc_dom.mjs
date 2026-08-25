@@ -381,8 +381,24 @@ export function makeSandbox(appPath, reply, opts) {
       } },
     },
     window: {
-      addEventListener: () => {},
-      removeEventListener: () => {},
+      // Обработчики окна стенд помнит, а сам их не зовёт: переход по адресу в
+      // браузере поднимает hashchange, и без этой памяти замерить его было
+      // нечем (стенд открытия формы по ссылке). Зовёт их стенд руками, там же,
+      // где браузер поднял бы событие: автоматический вызов подменял бы
+      // соседним стендам их собственный порядок отрисовки.
+      handlers: {},
+      addEventListener: (type, fn) => {
+        const bag = sandbox.window.handlers;
+        bag[type] = (bag[type] || []).concat(fn);
+      },
+      removeEventListener: (type, fn) => {
+        const bag = sandbox.window.handlers;
+        bag[type] = (bag[type] || []).filter((own) => own !== fn);
+      },
+      // Событие окна словом: стенд поднимает его так же, как браузер.
+      fire: (type, ev) => {
+        for (const fn of sandbox.window.handlers[type] || []) fn(ev || {});
+      },
       innerWidth: 1400,
       innerHeight: 900,
       matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),

@@ -784,10 +784,20 @@ let harnessView = null;
 // состояния клиент между обновлениями не держит нигде, и включённая на машине
 // подписка обязана появиться в кнопке без перезагрузки страницы. Стоит это
 // одного запроса, подпроцесс за ним держит память процесса на стороне сервера.
+// Ждёт его экран только в первый раз, когда показать всё равно нечего: дальше
+// список перечитывается в стороне, а кнопка собирается тем, что было верно
+// мгновение назад. Ожидание на каждом переходе стоило человеку круга по сети
+// перед формой задачи (замер poc_bench_task).
 async function loadHarnesses() {
-  const r = await api("/api/harnesses");
-  harnessView = r.ok ? r.body
-    : { harnesses: [], note: r.body.error || "список подписок не прочитан (" + r.status + ")" };
+  const going = api("/api/harnesses").then((r) => {
+    harnessView = r.ok ? r.body
+      : { harnesses: [], note: r.body.error || "список подписок не прочитан (" + r.status + ")" };
+  });
+  if (harnessView) {
+    going.catch(console.error);
+    return;
+  }
+  await going;
 }
 
 function harnesses() {
@@ -2973,9 +2983,30 @@ function goDraftInstead(project, id) {
   return refresh();
 }
 
-async function renderTask(project, works, id) {
+// Оболочка экрана задачи: хлебная крошка с номером и слова о том, что строка
+// читается. Рисуется она в тот же ход, что и нажатие, чтобы человек видел
+// ответ на своё нажатие сразу, а не через круг по сети (тот же приём, что у
+// переключения разговоров). Настоящий экран встаёт поверх неё, когда приедет
+// строка.
+function taskShell(project, id) {
   const groups = document.getElementById("groups");
-  const r = await api(taskPath(project, id));
+  const page = el("div", "tpage");
+  const crumb = el("div", "crumb");
+  const back = el("span", "crumb-back", "Доска " + project);
+  back.addEventListener("click", () => { goKeepingChat(project); });
+  crumb.append(back, el("span", "idsm", id));
+  const card = el("div", "card");
+  card.append(el("div", "hint", "Читаем " + id + "..."));
+  page.append(crumb, card);
+  groups.replaceChildren(page);
+}
+
+// pre это заказ строки, отправленный до сборки экрана: переход по ссылке шлёт
+// его в тот же ход, что и запрос списка проектов, и ждёт их вместе, а не по
+// очереди. Пусто у обычной перерисовки, и тогда строка заказывается тут.
+async function renderTask(project, works, id, pre) {
+  const groups = document.getElementById("groups");
+  const r = await (pre || api(taskPath(project, id)));
   // За ID стоит запись накопителя, а не строка доски: так приходит упоминание
   // черновика в разговоре, у которого своей строки ещё нет. Формы задачи для
   // него не существует, и экран уходит на запись, а не показывает отказ.
@@ -11355,6 +11386,10 @@ async function paint() {
     draftPick.clear();
     draftBarPaint = null;
   }
+  // Прежний экран нужен ниже: оболочку задачи ставит только переход, а
+  // обновление того же экрана (фокус окна, опрос) стирало бы ею уже собранную
+  // форму.
+  const wasScreen = shownScreen;
   shownScreen = screen;
   // Запрос в ключ экрана не входит нарочно (набор буквы это не переход), но
   // помнить набранное всё равно надо: по нему обновление отличает «сменился
@@ -11380,6 +11415,25 @@ async function paint() {
   if (hqClear) hqClear.hidden = !(hq && hq.value);
   shownBoard = null;
   shownWorks = [];
+  // Экран задачи по ссылке из ленты это самый частый переход дашборда, и ждать
+  // ради него полного обхода сети незачем: человек жаловался на две-три
+  // секунды до формы при ручках сервера в десятки миллисекунд (замер
+  // poc_bench_task). Оболочка встаёт в тот же ход, до единого запроса, а сама
+  // строка едет своей ручкой параллельно списку проектов, а не после него.
+  // Правку в форме оболочка не трогает: перерисовка стёрла бы набранное.
+  // Проект берётся из адреса, и первый заход по ссылке (открытая вкладка,
+  // закладка) идёт этой же дорогой: имя проекта в адресе уже есть, а не
+  // нашлось оно на машине, значит экран заменит собой отказ.
+  const quick = Boolean(rt.id && !rt.feed && rt.proj &&
+    (!shownProject || rt.proj === shownProject) &&
+    !(taskDraft.id === rt.id && taskDraft.dirty));
+  // Заказ, которого никто не дождался (ушли с экрана, не приехал список
+  // проектов), не должен падать необработанным обещанием: отказ едет тем же
+  // видом, каким его отдаёт api, и экран задачи покажет его словами.
+  const pre = quick ? api(taskPath(rt.proj, rt.id)).catch((err) => ({
+    ok: false, status: 0, body: { error: String((err && err.message) || err) },
+  })) : null;
+  if (quick && screen !== wasScreen) taskShell(rt.proj, rt.id);
   const list = await api("/api/projects");
   // Ответ мог приехать после ухода с экрана: обход идёт и по фокусу окна, и по
   // опросу, и рисовать им чужой экран нельзя (замечание пользователя про
@@ -11518,6 +11572,18 @@ async function paint() {
     await renderLld(current.name, rt.q);
     return;
   }
+  if (rt.id) {
+    // Экрану задачи доска не нужна: строку он читает своей ручкой, а живые
+    // работы приезжают тем же ответом, что и список проектов. Поход за доской
+    // стоил тут целого круга по сети и подпроцесса taskctl на каждый переход.
+    document.getElementById("psub").textContent = rt.id;
+    markNav(rt);
+    // Заказ отдаётся экрану только если он про тот же проект: имя из адреса и
+    // выбранный проект расходятся, когда в адресе стоит незнакомая доска.
+    await renderTask(current.name, current.works || [], rt.id,
+      current.name === rt.proj ? pre : null);
+    return;
+  }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
   if (!r.ok) {
     document.getElementById("psub").textContent = "";
@@ -11531,11 +11597,6 @@ async function paint() {
   if (rt.feed) {
     document.getElementById("psub").textContent = "уведомления";
     renderFeed(current.name);
-    return;
-  }
-  if (rt.id) {
-    document.getElementById("psub").textContent = rt.id;
-    await renderTask(current.name, r.body.works, rt.id);
     return;
   }
   // Путь доски и префикс ID строкой в шапке не стоят: имя файла с префиксом

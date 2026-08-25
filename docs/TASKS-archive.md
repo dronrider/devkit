@@ -327,3 +327,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-503 | LLD: лимит жизненного цикла агента и передача хвоста работы [приёмка: user] | LLD | P2 | 2026-08-25 | [tasks/archive/2026/DK-503.md](tasks/archive/2026/DK-503.md) |
 | DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-176.md](tasks/archive/2026/DK-176.md), `a3cd642c`, `a66102eb`, `f0710f3d` |
 | DK-331 | Раскладка скиллов везёт один SKILL.md, вычитка на машине без пар и словаря | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-331.md](tasks/archive/2026/DK-331.md) |
+| DK-481 | dashboard: живой демон не видит токен после secret --rotate | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-481.md](tasks/archive/2026/DK-481.md) |

@@ -258,18 +258,23 @@ def told_of(transcript, agent_id, tail=TAIL):
         return False
 
 
-def waited(transcript, agent_id, seconds, sleep=time.sleep):
-    """Дождаться вести харнеса. True значит, что она доехала сама и сдавать
-    нечего."""
-    deadline = seconds
+def waited(transcript, pending, seconds, sleep=time.sleep):
+    """Кто из работ дождался вести харнеса. Ожидание общее на всю пачку: пять
+    субагентов, кончившихся разом, не должны складывать задержку конца хода,
+    а срок у пачки один, самый длинный из остатков."""
+    left = seconds
+    pending = set(pending)
+    delivered = set()
     while True:
-        if told_of(transcript, agent_id):
-            return True
-        if deadline <= 0:
-            return False
-        step = min(POLL, deadline)
+        for agent_id in sorted(pending):
+            if told_of(transcript, agent_id):
+                delivered.add(agent_id)
+        pending -= delivered
+        if not pending or left <= 0:
+            return delivered
+        step = min(POLL, left)
         sleep(step)
-        deadline -= step
+        left -= step
 
 
 def lost_of(agents, jobs):
@@ -388,13 +393,12 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         return 0
     # Весть харнеса пережидается до замка: держать реестр запертым пять секунд
     # значило бы ронять правки соседних ходов той же сессии.
-    delivered = set()
+    left = {}
     for agent_id, entry in agents.items():
         if entry.get("state") != DONE or entry.get("told"):
             continue
-        left = grace(env) - max(0.0, now - float(entry.get("done") or 0))
-        if waited(event.transcript, agent_id, left, sleep):
-            delivered.add(agent_id)
+        left[agent_id] = grace(env) - max(0.0, now - float(entry.get("done") or 0))
+    delivered = waited(event.transcript, left, max(left.values()), sleep) if left else set()
     lines = update(path, event.session,
                    lambda a: handover_lines(a, event, delivered, env, now), now, sleep)
     if not lines:

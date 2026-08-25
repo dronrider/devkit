@@ -163,6 +163,18 @@ class Watch(unittest.TestCase):
         self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 1)
         self.assertAlmostEqual(self.sleeper.slept, watch.GRACE - 1, places=3)
 
+    def test_pack_of_finishes_waits_once(self):
+        # Замечание ревью: диспетчер поднимает исполнителей пачкой, и три конца
+        # подряд не должны складывать задержку конца хода. Срок у пачки один.
+        path = self.transcript("")
+        for n in range(3):
+            self.launch(agent_id="agent%d" % n, description="работа %d" % n)
+            self.finish(agent_id="agent%d" % n, message="готово %d" % n)
+        said = self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 1)
+        self.assertAlmostEqual(self.sleeper.slept, watch.GRACE - 1, places=3)
+        for n in range(3):
+            self.assertIn("работа %d" % n, said["reason"])
+
     def test_old_finish_is_handed_over_at_once(self):
         path = self.transcript("")
         self.launch()

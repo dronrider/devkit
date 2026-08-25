@@ -26,6 +26,7 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-522 | Корпус эталонов прозы: фрагменты из журналов и трекеров, словарь, жанры [приёмка: mixed] | task | P2 | 37 (25+5+3+0+4) | M | [tasks/DK-522.md](tasks/DK-522.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи | task | P2 | 38 (25+7+2+0+4) | S | [tasks/DK-312.md](tasks/DK-312.md) |
 | DK-168 | Связь из груминга обязательна: вход без маркера «после» это находка doctor | task | P2 | 36 (25+6+1+0+4) | S | [tasks/DK-168.md](tasks/DK-168.md) |
+| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 37 (25+6+2+0+4) | S | [tasks/DK-313.md](tasks/DK-313.md) |
 
 ## Check (готово, ждёт проверки пользователем)
 
@@ -56,7 +57,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-507 | exec-*: абзац лимита жизненного цикла и формат хвоста в «Ход работы» по DK-503 [после DK-511] | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-507.md](tasks/DK-507.md) |
 | DK-511 | board-ship, board-batch, board-task: pick --record перед каждым спавном исполнителя и флаг у agentctl run | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-511.md](tasks/DK-511.md) |
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 37 (25+8+2+0+2) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
-| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 37 (25+4+1+5+2) | - | [tasks/DK-315.md](tasks/DK-315.md) |
 | DK-364 | Назначение исполнителя с учётом остатков подписок | task | P2 | 37 (25+8+2+0+2) | M | [tasks/DK-364.md](tasks/DK-364.md) |
 | DK-477 | Минимум процедуры доски, переживающий сжатие контекста | task | P2 | 37 (25+6+3+0+3) | M | [tasks/DK-477.md](tasks/DK-477.md) |

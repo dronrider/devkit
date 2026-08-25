@@ -55,6 +55,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               agentctl budget, как у batch
   kinds                                       сводка по видам приёмки: счёт,
                                               ошибки назначения, пересмотры
+  closable                                    кого из Check вправе закрыть
+                                              автоматика: вид приёмки agent,
+                                              отметка smoke на последний выкат,
+                                              непустой раздел «Проверка».
+                                              Готовые идут голыми ID по строке,
+                                              остальные под строкой «отказано:»
+                                              с причиной
 
 Менять доску:
   draft --prio high|mid|low ["текст"]         записать сырую идею мимо доски:
@@ -616,6 +623,11 @@ func main() {
 		resource := fs.String("resource", "slot", "дефицитный ресурс: slot или quota")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "slot [--limit N] [--resource slot|quota]")
 		msg, err = cmdSlot(root(*dir), *limit, *resource)
+	case "closable":
+		fs := flag.NewFlagSet("closable", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "closable")
+		msg, err = cmdClosable(root(*dir))
 	case "kinds":
 		fs := flag.NewFlagSet("kinds", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

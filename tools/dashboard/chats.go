@@ -1327,6 +1327,9 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 		// Text это свободный ответ: вариант «Type something» открывает у
 		// клиента поле, и слова человека едут туда следом за выбором.
 		Text string `json:"text"`
+		// Step это переход на шаг опроса (счёт с единицы): шаги у клиента табы,
+		// и ходить по ним человек вправе свободно, не отвечая на текущий.
+		Step int `json:"step"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
@@ -1337,6 +1340,25 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 			"клиент %s больше ни о чём не спрашивает: отвечать нечего", name)})
 		return
 	}
+	// Переход по табам это не ответ: он ничего не выбирает, а только открывает
+	// другой шаг опроса. Ответы при этом копятся у самого клиента.
+	if body.Step > 0 {
+		if body.Step > len(ask.Steps) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
+				"у опроса %d шагов, а выбран %d", len(ask.Steps), body.Step)})
+			return
+		}
+		if err := tmuxStepTo(name, ask, body.Step); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+				"переход по шагам не подался в tmux-сессию %s: %s", name, procErr(err))})
+			return
+		}
+		s.logf("шаг опроса клиента %s в %s: %d (%s)", name, found.Name, body.Step,
+			ask.Steps[body.Step-1].Name)
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
+			"step": body.Step, "message": ""})
+		return
+	}
 	if body.Option < 1 || body.Option > len(ask.Options) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
 			"у вопроса %d вариантов, а выбран %d", len(ask.Options), body.Option)})
@@ -1345,12 +1367,12 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 	pick := ask.Options[body.Option-1]
 	// Свободный ответ без слов клиенту не нужен: он откроет поле и встанет
 	// ждать, а человек будет думать, что ответил.
-	if pick.Free && strings.TrimSpace(body.Text) == "" {
+	if pick.Kind == pickFree && strings.TrimSpace(body.Text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
 			"вариант «%s» это свободный ответ: без слов отправлять нечего", pick.Text)})
 		return
 	}
-	if !pick.Free && strings.TrimSpace(body.Text) != "" {
+	if pick.Kind != pickFree && strings.TrimSpace(body.Text) != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
 			"вариант «%s» слов не ждёт: текст едет только со свободным ответом", pick.Text)})
 		return
@@ -1361,13 +1383,47 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	said := pick.Text
-	if pick.Free {
+	if pick.Kind == pickFree {
 		said = pick.Text + ": " + truncate(body.Text, 120)
+	}
+	// Отвеченный последним шаг приводит сводку самого виджета, и второе
+	// подтверждение человеку не нужно: последний ответ и есть отправка
+	// (замечание пользователя). Проходит её дашборд сам и только когда
+	// отвечено всё: со своим предупреждением сводка остаётся на экране, иначе
+	// опрос уехал бы неполным.
+	if note := s.askPassReview(name); note != "" {
+		said += ", " + note
 	}
 	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name, body.Option, said)
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 		"option": body.Option, "said": said,
 		"message": "ответ отправлен клиенту: " + said})
+}
+
+// askPassReview проходит сводку опроса за человека. Пустая строка значит, что
+// проходить было нечего: либо сводки нет, либо она предупреждает о
+// неотвеченных вопросах, и тогда решать человеку.
+func (s *server) askPassReview(name string) string {
+	ask := tmuxAskOf(name)
+	if ask.Kind != askKindReview || ask.Warn != "" {
+		return ""
+	}
+	at := 0
+	for i, opt := range ask.Options {
+		if opt.Kind == pickSubmit {
+			at = i + 1
+			break
+		}
+	}
+	if at == 0 {
+		return ""
+	}
+	if err := tmuxAnswer(name, ask, at, ""); err != nil {
+		s.logf("сводка опроса %s не отправилась: %s", name, procErr(err))
+		return ""
+	}
+	s.logf("сводка опроса %s отправлена без второго подтверждения", name)
+	return "ответы отправлены"
 }
 
 // chatTmuxOf находит tmux-сессию разговора: имя лежит записью реестра, и без

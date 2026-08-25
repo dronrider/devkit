@@ -8371,6 +8371,11 @@ function chatPanel(project, st) {
 // подъёма, и без опроса человек снова остался бы перед пустой лентой.
 const ASK_POLL = 3000;
 
+// Через сколько панель перечитывает снимок после своего же хода. Клиент рисует
+// новый экран не мгновенно, а ждать целый шаг опроса (ASK_POLL) значит держать
+// человека перед прежним видом блока.
+const ASK_MOVE = 400;
+
 // Опрос вопроса клиента: пока панель открыта и вопрос не отвечен, она
 // переспрашивает сервер. Снимок панели tmux стоит подпроцесса, поэтому ходит
 // опрос только у разговора с живой tmux-сессией дашборда: у чужого окна
@@ -8386,7 +8391,10 @@ function watchClientAsk(project, st, box) {
     if (stop) return;
     const ask = (r.ok && r.body.ask) || null;
     paintClientAsk(project, st, box, ask, tick);
-    if (!ask) setTimeout(() => { tick().catch(console.error); }, ASK_POLL);
+    // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
+    // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
+    // на подписи снимка, поэтому лишних сборок блока это не даёт.
+    setTimeout(() => { tick().catch(console.error); }, ASK_POLL);
   };
   tick().catch(console.error);
 }
@@ -8395,82 +8403,196 @@ function watchClientAsk(project, st, box) {
 // клиенту клавишами, а дашборд ничего за человека не подтверждает и в конфиг
 // подписки не пишет: решение остаётся его, меняется только место, где он его
 // принимает.
+// Слова служебных пунктов виджета. Клиент печатает их по-английски, панель
+// говорит по-русски, и слова тут свои, а не пересказ: «Next» это переход к
+// следующему шагу опроса, «Submit» конец опроса, «Chat about this» выход из
+// опроса в обычный разговор (замечание пользователя про английские кнопки).
+const ASK_WORD = {
+  next: "Дальше",
+  submit: "Готово",
+  free: "Ответить своими словами",
+  chat: "Обсудить в чате",
+};
+
+// Блок вопроса: шаги табами, варианты списком, свободный ответ своей строкой.
+// Ответ уезжает клиенту клавишами, а дашборд ничего за человека не
+// подтверждает и в конфиг подписки не пишет: решение остаётся его, меняется
+// только место, где он его принимает.
+//
+// Перерисовывается тут один этот блок, а не лента: ответ на шаг опроса не
+// повод собирать разговор заново (замечание пользователя).
 function paintClientAsk(project, st, box, ask, again) {
+  // Блок пересобирается только тогда, когда снимок и правда сменился: опрос
+  // ходит по кругу, и сборка на каждый заход стирала бы набранное в поле
+  // своего ответа и мигала бы на ровном месте.
+  const sign = ask ? JSON.stringify(ask) : "";
+  if (box.dataset.ask === sign) return;
+  box.dataset.ask = sign;
   if (!ask || !(ask.options || []).length) {
     box.hidden = true;
     box.replaceChildren();
     return;
   }
   box.hidden = false;
+  const review = ask.kind === "review";
   const head = el("div", "caskh");
-  head.append(el("b", "", "Клиент ждёт ответа"));
+  head.append(el("b", "", review ? "Ответы опроса" : "Клиент ждёт ответа"));
   box.replaceChildren(head);
-  // Полоса шагов многошагового опроса: без неё человек не понимает, почему
-  // после ответа приходит следующий вопрос, а не продолжение разговора.
+
+  // Отправка чего угодно в клиент: пока она идёт, блок не гаснет и не
+  // подменяется словами «ждём клиента», а только перестаёт слушать нажатия.
+  // Прежде блок стирался на каждый ответ, и это читалось перезагрузкой.
+  let busy = false;
+  const send = async (order) => {
+    if (busy) return false;
+    busy = true;
+    box.classList.add("busy");
+    try {
+      const r = await api(chatsURL(st.project || project) + "/" +
+        encodeURIComponent(st.sid) + "/ask", { method: "POST", body: order });
+      if (!r.ok) sayResult(r.body.error || "ответ не ушёл", true);
+      else if (r.body.message) sayResult(r.body.message, false);
+      return r.ok;
+    } finally {
+      busy = false;
+      box.classList.remove("busy");
+    }
+  };
+  // После всякого хода панель перечитывает снимок и рисует блок заново по
+  // месту: виджет мог переключить таб, отметить флажок или показать сводку.
+  const afterMove = (ok) => {
+    if (ok) setTimeout(() => { again().catch(console.error); }, ASK_MOVE);
+  };
+
+  // Шаги опроса это табы, и ходить по ним человек вправе свободно: ответ на
+  // текущий шаг для перехода не нужен, ответы копятся у клиента (так устроен
+  // сам виджет, проверено на живой панели).
   const steps = ask.steps || [];
   if (steps.length) {
     const bar = el("div", "caskst");
-    for (const step of steps) {
-      bar.append(el("span", "cstep" + (step.done ? " on" : ""), step.name));
-    }
+    steps.forEach((step, i) => {
+      const tab = el("button", "cstep" + (step.now ? " now" : "") + (step.done ? " on" : ""), step.name);
+      tab.type = "button";
+      withTip(tab, step.now ? "Этот шаг открыт"
+        : (step.done ? "Шаг отвечен: можно вернуться и поменять ответ" : "Перейти к этому шагу"));
+      tab.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (step.now) return;
+        send({ step: i + 1 }).then(afterMove).catch(console.error);
+      });
+      bar.append(tab);
+    });
     box.append(bar);
   }
-  box.append(el("div", "casks", ask.text || ""));
-  const row = el("div", "caskr");
-  // Ответ уезжает клавишами, какими его подал бы человек, и панель после этого
-  // перечитывает снимок: виджет бывает многошаговым, а флажок множественного
-  // выбора нажатие переключает, не закрывая вопроса. Показывать «ответ
-  // отправлен» и замирать нельзя: следующий шаг встал бы за спиной у человека.
-  const answer = async (i, text) => {
-    for (const b of row.children) b.disabled = true;
-    const order = { option: i + 1 };
-    if (text) order.text = text;
-    const r = await api(chatsURL(st.project || project) + "/" +
-      encodeURIComponent(st.sid) + "/ask", { method: "POST", body: order });
-    sayResult(r.body.message || r.body.error || "", !r.ok);
-    box.replaceChildren(el("div", "casks", "ответ отправлен, ждём клиента..."));
-    setTimeout(() => { again().catch(console.error); }, ASK_POLL);
-  };
-  (ask.options || []).forEach((opt, i) => {
-    // Свободный ответ это поле со своей кнопкой: выбор такого пункта открывает
-    // у клиента ввод, и слова человека едут туда следом.
-    if (opt.free) {
-      const free = el("div", "caskfree");
-      const field = el("input", "dwhyin");
-      field.type = "text";
-      field.placeholder = opt.text;
-      const send = el("button", "btn btn-sm", "Ответить своими словами");
-      const fire = () => {
-        const said = String(field.value || "").trim();
-        if (!said) {
-          sayResult("свободный ответ пустой: напишите словами, что передать клиенту", true);
-          return;
-        }
-        answer(i, said).catch(console.error);
-      };
-      send.addEventListener("click", (ev) => { ev.stopPropagation(); fire(); });
-      field.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") {
-          ev.preventDefault();
-          fire();
-        }
+
+  // Сводка ответов: последний ответ и есть отправка, и второго опроса тут нет.
+  // Дашборд проходит сводку сам, когда отвечено всё; сюда она доезжает только
+  // с предупреждением клиента, и тогда решает человек.
+  if (review) {
+    if (ask.warn) box.append(el("div", "caskwarn", ask.warn));
+    const list = el("div", "casklist");
+    for (const said of ask.said || []) {
+      const row = el("div", "caskdone");
+      row.append(el("b", "", said.q || ""));
+      row.append(el("span", "caskwhy", said.a || ""));
+      list.append(row);
+    }
+    box.append(list);
+    const row = el("div", "caskr");
+    const at = (ask.options || []).findIndex((o) => o.kind === "submit");
+    if (at >= 0) {
+      const go = el("button", "btn btn-sm btn-acc", "Отправить ответы");
+      go.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        send({ option: at + 1 }).then(afterMove).catch(console.error);
       });
-      free.append(field, send);
-      row.append(free);
+      row.append(go);
+    }
+    box.append(row);
+    return;
+  }
+
+  box.append(el("div", "casks", ask.text || ""));
+  // Варианты идут списком, каждый своей строкой: отметка слева, слова рядом, а
+  // пояснение клиента второй строкой мельче. Прежде они стояли рядом кнопками
+  // вперемешку со свободным ответом, и читать их было нечем.
+  const list = el("div", "casklist");
+  const row = el("div", "caskr");
+  let freeAt = -1;
+  (ask.options || []).forEach((opt, i) => {
+    if (opt.kind === "free") {
+      freeAt = i;
       return;
     }
-    // Флажок множественного выбора виден словом: нажатие его переключает, а не
-    // отвечает на вопрос, и человек должен понимать, что отмечено.
-    const mark = opt.mark === "on" ? "отмечено: " : "";
-    const btn = el("button", "btn btn-sm" +
-      (opt.submit ? " btn-acc" : "") + (opt.mark === "on" ? " on" : ""), mark + opt.text);
-    if (opt.submit) withTip(btn, "Кнопка самого виджета: она отправляет отмеченное и ведёт к следующему шагу");
-    btn.addEventListener("click", (ev) => {
+    // Кнопки самого виджета стоят под списком, а не в нём: они не варианты.
+    if (opt.kind === "next" || opt.kind === "submit" || opt.kind === "chat") {
+      const btn = el("button", "btn btn-sm" + (opt.kind === "chat" ? "" : " btn-acc"),
+        ASK_WORD[opt.kind] || opt.text);
+      withTip(btn, opt.kind === "chat"
+        ? "Выйти из опроса и обсудить его в разговоре"
+        : "Кнопка самого опроса: она отправляет отмеченное");
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        send({ option: i + 1 }).then(afterMove).catch(console.error);
+      });
+      row.append(btn);
+      return;
+    }
+    const line = el("button", "caskopt" + (opt.mark === "on" ? " on" : ""));
+    line.type = "button";
+    // Отмеченный вариант виден отметкой, а не словом «отмечено» в тексте.
+    if (opt.mark) line.append(el("span", "caskbox"));
+    const words = el("span", "caskwords");
+    words.append(el("span", "casklabel", opt.text));
+    if (opt.desc) words.append(el("span", "caskwhy", opt.desc));
+    line.append(words);
+    line.setAttribute("aria-pressed", opt.mark === "on" ? "true" : "false");
+    line.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      answer(i, "").catch(console.error);
+      send({ option: i + 1 }).then(afterMove).catch(console.error);
     });
-    row.append(btn);
+    list.append(line);
   });
+  box.append(list);
+
+  // Свободный ответ: пункт списка, а поле под списком и только после выбора.
+  // Прежде поле стояло в ряду вариантов и просилось быть заполненным всегда
+  // (замечание пользователя).
+  if (freeAt >= 0) {
+    const pick = el("button", "caskopt caskown");
+    pick.type = "button";
+    pick.append(el("span", "caskwords", ASK_WORD.free));
+    const free = el("div", "caskfree");
+    free.hidden = true;
+    const field = el("input", "dwhyin");
+    field.type = "text";
+    field.placeholder = "Свой ответ";
+    const say = el("button", "btn btn-sm btn-acc", "Отправить");
+    const fire = () => {
+      const said = String(field.value || "").trim();
+      if (!said) {
+        sayResult("свой ответ пустой: напишите словами, что передать клиенту", true);
+        return;
+      }
+      send({ option: freeAt + 1, text: said }).then(afterMove).catch(console.error);
+    };
+    say.addEventListener("click", (ev) => { ev.stopPropagation(); fire(); });
+    field.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        fire();
+      }
+    });
+    free.append(field, say);
+    pick.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      free.hidden = !free.hidden;
+      pick.classList.toggle("on", !free.hidden);
+      if (!free.hidden && field.focus) field.focus();
+    });
+    list.append(pick);
+    box.append(free);
+  }
   box.append(row);
 }
 

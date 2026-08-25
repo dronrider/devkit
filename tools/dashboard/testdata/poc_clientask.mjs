@@ -11,9 +11,11 @@
 //
 // Тот же блок показывает и опрос агента с вариантами (живой случай: агент
 // спросил в сессии chat-2, панель не показала вопрос вовсе, человек писал
-// реплики, а клиент их не читал, потому что ждал выбора). У опроса своя
-// механика: полоса шагов, флажки, свободный ответ полем и кнопка отправки
-// самого виджета.
+// реплики, а клиент их не читал, потому что ждал выбора). Вид опроса разобран
+// по снимку пользователем и переделан: шаги это табы, по которым ходят
+// свободно, варианты идут списком с пояснениями, свободный ответ живёт своей
+// строкой под списком и только после выбора, слова кнопок русские, а сводку
+// ответов дашборд проходит сам.
 //
 // Зовётся: node testdata/poc_clientask.mjs static/app.js
 
@@ -31,49 +33,60 @@ const ask = {
   keys: "digit",
 };
 
-// Опрос агента, как его отдаёт разбор живой панели: шаги, флажки, свободный
-// ответ и кнопка отправки виджета.
+// Опрос агента, как его отдаёт разбор живой панели: шаги табами, варианты с
+// пояснениями и флажками, свободный ответ, кнопки самого виджета.
 const poll = {
   text: "Где именно MAX ломается под прокси?",
   options: [
-    { text: "На телефоне (Android-клиент)", mark: "off" },
-    { text: "На устройствах за роутером", mark: "off" },
-    { text: "Везде одинаково", mark: "on" },
-    { text: "Type something", mark: "off", free: true },
-    { text: "Next", submit: true },
-    { text: "Chat about this" },
+    { text: "На телефоне (Android-клиент)", mark: "off", desc: "Туннель поднят приложением" },
+    { text: "На устройствах за роутером", mark: "off", desc: "OpenWRT с перехватом TCP" },
+    { text: "Везде одинаково", mark: "on", desc: "И там, и там" },
+    { text: "Type something", mark: "off", kind: "free" },
+    { text: "Next", kind: "next" },
+    { text: "Chat about this", kind: "chat" },
   ],
   at: 1,
   keys: "arrows",
-  steps: [{ name: "Площадка" }, { name: "Симптом" }, { name: "Submit", done: true }],
+  steps: [{ name: "Место", now: true }, { name: "Симптом" }, { name: "Сроки", done: true }],
 };
 
-// Следующий шаг опроса: он приходит после ответа, и панель обязана показать
-// его так же, а не считать разговор продолженным.
+// Следующий шаг опроса: приходит переходом по табу либо ответом.
 const pollNext = {
   text: "Что именно происходит с MAX?",
   options: [
     { text: "Не открываются картинки", mark: "off" },
-    { text: "Звонки не соединяются", mark: "off" },
-    { text: "Next", submit: true },
+    { text: "Звонки не соединяются", mark: "on" },
+    { text: "Next", kind: "next" },
   ],
   at: 1,
   keys: "arrows",
-  steps: [{ name: "Площадка", done: true }, { name: "Симптом" }, { name: "Submit" }],
+  steps: [{ name: "Место", done: true }, { name: "Симптом", now: true }, { name: "Сроки" }],
+};
+
+// Сводка опроса: её виджет показывает, когда отвечено не всё. Отвечено всё,
+// значит сводку проходит сервер, и до панели она не доезжает вовсе.
+const review = {
+  kind: "review",
+  warn: "You have not answered all questions",
+  said: [{ q: "Что именно?", a: "Картинки" }, { q: "Когда началось?", a: "Вчера" }],
+  options: [{ text: "Submit answers", kind: "submit" }, { text: "Cancel" }],
+  at: 1,
+  keys: "digit",
+  steps: [{ name: "Место" }, { name: "Симптом", done: true }, { name: "Сроки", done: true, now: true }],
 };
 
 // Что отдаёт ручка вопроса и что у неё спросили: стенд правит первое и смотрит
 // второе.
-const now = { ask, answered: [], next: null };
+const now = { ask, orders: [], next: null };
 
 const { sandbox, timers } = makeSandbox(app, (path, init) => {
   if (path.includes("/ask") && init && init.method === "POST") {
-    now.answered.push(JSON.parse(init.body));
-    // Многошаговый опрос: ответ на шаг приводит следующий, а не заканчивает
-    // разговор. Обычный вопрос после ответа просто гаснет.
-    now.ask = now.next || null;
-    now.next = null;
-    return { message: "ответ отправлен клиенту" };
+    now.orders.push(JSON.parse(init.body));
+    if (now.next) {
+      now.ask = now.next;
+      now.next = null;
+    }
+    return { message: "" };
   }
   if (path.includes("/ask")) return now.ask ? { session: SID, tmux: "chat-2", ask: now.ask }
     : { session: SID, tmux: "chat-2", note: "клиент chat-2 ни о чём не спрашивает" };
@@ -85,128 +98,198 @@ const { sandbox, timers } = makeSandbox(app, (path, init) => {
 const st = { addr: SID, sid: SID, project: "demo", chats: [], entry: { id: SID, state: "live",
   tmux: "chat-2", idle: true }, models: [] };
 
-// --- вопрос приходит блоком с кнопками ---
+// Панель поднимается один раз на стенд: предмет проверки в том числе и то, что
+// блок правится по месту, а не пересобирается вместе с лентой.
 const panel = sandbox.chatPanel("demo", st);
 await settle();
+const boxOf = () => byClass(panel, "cask");
+const optsOf = () => allByClass(boxOf(), "caskopt");
+const tabsOf = () => allByClass(boxOf(), "cstep");
+// Ход панели после нажатия: она перечитывает снимок отложенным заходом.
+const settleMove = async () => {
+  await settle();
+  for (const t of timers.splice(0)) t.fn();
+  await settle();
+};
+// Подмена вопроса на стенде: панель перечитывает снимок сама, но только пока
+// вопроса нет, поэтому смена вида идёт через паузу молчания клиента.
+const showAsk = async (next) => {
+  now.ask = null;
+  await settleMove();
+  now.ask = next;
+  await settleMove();
+};
+
+// --- вопрос доверия: тот же блок, кнопки по вариантам ---
 {
-  const box = byClass(panel, "cask");
+  const box = boxOf();
   if (!box || box.hidden) fail("блока вопроса в панели нет: " + dump(panel).slice(0, 300));
   const said = dump(box).replace(/\s+/g, " ");
   if (!said.includes("Клиент ждёт ответа")) fail("блок не назвал себя: " + said);
   if (!said.includes("xr-proxy")) fail("в блоке нет самого вопроса: " + said);
-  const btns = allByClass(byClass(box, "caskr"), "btn").map((b) => b.textContent);
-  if (JSON.stringify(btns) !== JSON.stringify(ask.options.map((o) => o.text))) {
-    fail("кнопки собрались не по вариантам клиента: " + JSON.stringify(btns));
+  const words = optsOf().map((o) => dump(o).replace(/\s+/g, " ").trim());
+  if (words.length !== 2 || !words[0].includes("Yes, I trust this folder")) {
+    fail("варианты собрались не списком: " + JSON.stringify(words));
   }
+  optsOf()[0].handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (JSON.stringify(now.orders) !== JSON.stringify([{ option: 1 }])) {
+    fail("ответ ушёл не тем пунктом: " + JSON.stringify(now.orders));
+  }
+  // Блок не стирается на время ответа: прежде на его месте появлялись слова
+  // «ответ отправлен, ждём клиента», и это читалось перезагрузкой.
+  if (dump(box).includes("ждём клиента")) fail("блок подменился словами ожидания: " + dump(box));
 }
 
-// --- нажатие шлёт ответ клиенту и ожидание не роняет ---
+// --- опрос: варианты списком, пояснения второй строкой, отметка без слов ---
 {
-  const box = byClass(panel, "cask");
-  const yes = deepBtn(box, "Yes, I trust this folder");
-  if (!yes) fail("кнопки согласия нет: " + dump(box));
-  yes.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (JSON.stringify(now.answered) !== JSON.stringify([{ option: 1 }])) {
-    fail("ответ ушёл не тем пунктом: " + JSON.stringify(now.answered));
-  }
-  // Панель после ответа продолжает ждать клиента, а не гаснет молча.
-  if (!dump(box).includes("ждём клиента")) {
-    fail("после ответа панель молчит: " + dump(box));
-  }
-}
-
-// --- опрос агента с вариантами: тот же блок, кнопка на каждый вариант ---
-{
-  now.ask = poll;
-  now.answered.length = 0;
-  const panel2 = sandbox.chatPanel("demo", st);
-  await settle();
-  const box = byClass(panel2, "cask");
-  if (!box || box.hidden) fail("опрос агента не показан панелью вовсе: " + dump(panel2).slice(0, 300));
+  now.orders.length = 0;
+  await showAsk(poll);
+  const box = boxOf();
   const said = dump(box).replace(/\s+/g, " ");
-  if (!said.includes("Где именно MAX ломается")) fail("в блоке нет самого вопроса: " + said);
-  // Полоса шагов стоит: без неё непонятно, почему после ответа приходит
-  // следующий вопрос, а не продолжение разговора.
-  const steps = allByClass(byClass(box, "caskst") || box, "cstep").map((n) => n.textContent);
-  if (JSON.stringify(steps) !== JSON.stringify(["Площадка", "Симптом", "Submit"])) {
-    fail("полоса шагов опроса не собралась: " + JSON.stringify(steps));
+  if (!said.includes("Где именно MAX ломается")) fail("в блоке нет вопроса опроса: " + said);
+  const rows = optsOf();
+  // Три варианта, свободный ответ строкой списка, а кнопки виджета не в нём.
+  const labels = rows.map((r) => (byClass(r, "casklabel") || byClass(r, "caskwords")).textContent);
+  if (JSON.stringify(labels.slice(0, 3)) !== JSON.stringify(
+    ["На телефоне (Android-клиент)", "На устройствах за роутером", "Везде одинаково"])) {
+    fail("варианты собрались не списком: " + JSON.stringify(labels));
   }
-  // Кнопка на каждый вариант, включая кнопку отправки самого виджета. У
-  // свободного ответа кнопки нет, у него поле.
-  const btns = allByClass(byClass(box, "caskr"), "btn").map((b) => b.textContent);
-  for (const want of ["На телефоне (Android-клиент)", "Next", "Chat about this"]) {
-    if (!btns.some((b) => b.includes(want))) {
-      fail("в блоке нет кнопки «" + want + "»: " + JSON.stringify(btns));
-    }
+  // Пояснение клиента видно второй строкой, а не теряется.
+  const why = byClass(rows[0], "caskwhy");
+  if (!why || why.textContent !== "Туннель поднят приложением") {
+    fail("пояснение варианта не показано: " + dump(rows[0]));
   }
-  // Отмеченный флажок виден словом: человек должен понимать, что уже выбрано.
-  if (!btns.some((b) => b.includes("отмечено: Везде одинаково"))) {
-    fail("отмеченный вариант не назван отмеченным: " + JSON.stringify(btns));
+  // Отмеченный вариант помечен отметкой, а не словом «отмечено» в тексте.
+  if (said.includes("отмечено")) fail("отметка сказана отладочным словом: " + said);
+  const on = rows.filter((r) => String(r.className).includes("on"))
+    .map((r) => (byClass(r, "casklabel") || byClass(r, "caskwords")).textContent);
+  if (JSON.stringify(on) !== JSON.stringify(["Везде одинаково"])) {
+    fail("отмеченный вариант не помечен отметкой: " + JSON.stringify(on));
   }
-  // Выбор уезжает пунктом по порядку остановок, а клавиши подбирает сервер.
-  deepBtn(box, "На устройствах за роутером").handlers.click({ stopPropagation: () => {} });
+  if (!byClass(rows[2], "caskbox")) fail("у варианта с флажком нет самой отметки: " + dump(rows[2]));
+  // Выбор уезжает пунктом по порядку остановок.
+  rows[1].handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (JSON.stringify(now.answered) !== JSON.stringify([{ option: 2 }])) {
-    fail("выбор ушёл не тем пунктом: " + JSON.stringify(now.answered));
+  if (JSON.stringify(now.orders) !== JSON.stringify([{ option: 2 }])) {
+    fail("выбор ушёл не тем пунктом: " + JSON.stringify(now.orders));
   }
 }
 
-// --- свободный ответ: поле в блоке, текст уезжает тем же пунктом ---
+// --- слова кнопок русские, английских в блоке не осталось ---
 {
-  now.ask = poll;
-  now.answered.length = 0;
-  const panel3 = sandbox.chatPanel("demo", st);
-  await settle();
-  const box = byClass(panel3, "cask");
+  now.orders.length = 0;
+  await showAsk(poll);
+  const said = dump(boxOf()).replace(/\s+/g, " ");
+  for (const gone of ["Next", "Submit", "Type something", "Chat about this"]) {
+    if (said.includes(gone)) fail("в блоке осталось английское слово «" + gone + "»: " + said);
+  }
+  for (const want of ["Дальше", "Ответить своими словами", "Обсудить в чате"]) {
+    if (!said.includes(want)) fail("в блоке нет русского слова «" + want + "»: " + said);
+  }
+}
+
+// --- свободный ответ: поле под списком и только после выбора ---
+{
+  now.orders.length = 0;
+  await showAsk(poll);
+  const box = boxOf();
   const free = byClass(box, "caskfree");
-  if (!free) fail("у свободного ответа нет поля: " + dump(box).slice(0, 300));
+  if (!free) fail("строки свободного ответа в блоке нет: " + dump(box).slice(0, 300));
+  if (!free.hidden) fail("поле свободного ответа стоит раскрытым до выбора: " + dump(free));
+  // Поле стоит под списком, а не в ряду вариантов.
+  if (byClass(byClass(box, "casklist"), "caskfree")) {
+    fail("поле свободного ответа вкорячено в список вариантов: " + dump(box).slice(0, 300));
+  }
+  const pick = optsOf().find((r) => dump(r).includes("Ответить своими словами"));
+  if (!pick) fail("в списке нет пункта свободного ответа: " + dump(box).slice(0, 300));
+  pick.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (free.hidden) fail("выбор своего ответа не раскрыл поле");
   const field = tag(free, "INPUT");
-  if (!field) fail("в свободном ответе нет самого поля: " + dump(free));
-  // Пустой текст клиенту не уезжает: он открыл бы поле и встал ждать.
-  deepBtn(free, "Ответить своими словами").handlers.click({ stopPropagation: () => {} });
+  if (!field || field.placeholder !== "Свой ответ") {
+    fail("подсказка поля не «Свой ответ»: " + (field ? field.placeholder : "поля нет"));
+  }
+  deepBtn(free, "Отправить").handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (now.answered.length) fail("пустой свободный ответ уехал клиенту: " + JSON.stringify(now.answered));
-  field.value = "ломается только на телефоне после обновления";
-  deepBtn(free, "Ответить своими словами").handlers.click({ stopPropagation: () => {} });
+  if (now.orders.length) fail("пустой свой ответ уехал клиенту: " + JSON.stringify(now.orders));
+  field.value = "ломается только на телефоне";
+  deepBtn(free, "Отправить").handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (JSON.stringify(now.answered) !== JSON.stringify([
-    { option: 4, text: "ломается только на телефоне после обновления" }])) {
-    fail("свободный ответ уехал не так: " + JSON.stringify(now.answered));
+  if (JSON.stringify(now.orders) !== JSON.stringify([
+    { option: 4, text: "ломается только на телефоне" }])) {
+    fail("свой ответ уехал не так: " + JSON.stringify(now.orders));
   }
 }
 
-// --- многошаговый опрос: после ответа панель показывает следующий шаг ---
+// --- шаги это табы: переход не требует ответа и ленту не пересобирает ---
 {
-  now.ask = poll;
-  now.answered.length = 0;
-  now.next = pollNext;
-  const panel4 = sandbox.chatPanel("demo", st);
-  await settle();
-  const box = byClass(panel4, "cask");
-  deepBtn(box, "Next").handlers.click({ stopPropagation: () => {} });
-  await settle();
-  // Панель не замирает на «ответ отправлен»: она перечитывает снимок, и
-  // следующий шаг встаёт на место прежнего.
-  for (const t of timers.splice(0)) t.fn();
-  await settle();
-  const said = dump(box).replace(/\s+/g, " ");
-  if (!said.includes("Что именно происходит с MAX?")) {
-    fail("следующий шаг опроса панель не показала: " + said.slice(0, 300));
+  now.orders.length = 0;
+  await showAsk(poll);
+  const box = boxOf();
+  const tabs = tabsOf();
+  if (tabs.length !== 3) fail("шагов опроса не три: " + tabs.map((t) => t.textContent));
+  const openNow = tabs.filter((t) => String(t.className).includes("now")).map((t) => t.textContent);
+  if (JSON.stringify(openNow) !== JSON.stringify(["Место"])) {
+    fail("открытый шаг не помечен: " + JSON.stringify(tabs.map((t) => t.className)));
   }
-  const steps = allByClass(byClass(box, "caskst") || box, "cstep")
-    .filter((n) => String(n.className).includes("on")).map((n) => n.textContent);
-  if (JSON.stringify(steps) !== JSON.stringify(["Площадка"])) {
-    fail("полоса шагов не отметила пройденный шаг: " + JSON.stringify(steps));
+  const done = tabs.filter((t) => String(t.className).includes("on")).map((t) => t.textContent);
+  if (!done.includes("Сроки")) fail("отвеченный шаг не помечен: " + JSON.stringify(done));
+  // Переход по табу это не ответ: уезжает шаг, а не пункт.
+  now.next = pollNext;
+  tabs[1].handlers.click({ stopPropagation: () => {} });
+  await settleMove();
+  if (JSON.stringify(now.orders) !== JSON.stringify([{ step: 2 }])) {
+    fail("переход по табу ушёл не шагом: " + JSON.stringify(now.orders));
+  }
+  // Блок тот же самый узел: правится он по месту, лента не пересобирается.
+  if (boxOf() !== box) fail("блок опроса пересобран заново вместо правки по месту");
+  if (!dump(box).includes("Что именно происходит с MAX?")) {
+    fail("после перехода по табу блок не показал новый шаг: " + dump(box).slice(0, 300));
+  }
+  const nowTab = tabsOf().filter((t) => String(t.className).includes("now")).map((t) => t.textContent);
+  if (JSON.stringify(nowTab) !== JSON.stringify(["Симптом"])) {
+    fail("после перехода открытым помечен не тот шаг: " + JSON.stringify(nowTab));
+  }
+  // Нажатие на открытый таб никуда не ходит: переходить некуда.
+  now.orders.length = 0;
+  tabsOf().find((t) => String(t.className).includes("now"))
+    .handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (now.orders.length) fail("нажатие на открытый шаг ушло запросом: " + JSON.stringify(now.orders));
+}
+
+// --- сводка: итог с одной кнопкой, а не ещё один опрос ---
+{
+  now.orders.length = 0;
+  await showAsk(review);
+  const box = boxOf();
+  const said = dump(box).replace(/\s+/g, " ");
+  if (!said.includes("Ответы опроса")) fail("сводка не назвала себя: " + said);
+  // Ответы стоят сводкой, а не вариантами выбора.
+  const rows = allByClass(box, "caskdone").map((r) => dump(r).replace(/\s+/g, " ").trim());
+  if (rows.length !== 2 || !rows[0].includes("Что именно?") || !rows[0].includes("Картинки")) {
+    fail("сводка ответов не собралась: " + JSON.stringify(rows));
+  }
+  if (!said.includes("not answered all questions")) {
+    fail("предупреждение сводки потерялось: " + said);
+  }
+  // Кнопка одна, и она по-русски.
+  const btns = allByClass(byClass(box, "caskr"), "btn").map((b) => b.textContent);
+  if (JSON.stringify(btns) !== JSON.stringify(["Отправить ответы"])) {
+    fail("у сводки не одна русская кнопка: " + JSON.stringify(btns));
+  }
+  deepBtn(box, "Отправить ответы").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (JSON.stringify(now.orders) !== JSON.stringify([{ option: 1 }])) {
+    fail("отправка сводки ушла не тем пунктом: " + JSON.stringify(now.orders));
   }
 }
 
 // --- спрашивать нечего: блока нет вовсе ---
 {
-  now.ask = null;
-  const quiet = sandbox.chatPanel("demo", st);
-  await settle();
-  const box = byClass(quiet, "cask");
+  await showAsk(null);
+  const box = boxOf();
   if (box && !box.hidden) fail("блок вопроса стоит у молчащего клиента: " + dump(box));
 }
 
@@ -227,4 +310,5 @@ await settle();
   }
 }
 
-console.log("poc_clientask: ok");
+console.log("poc_clientask: вопрос блоком в панели, опрос табами и списком, " +
+  "свой ответ строкой под списком, слова русские, сводка итогом с одной кнопкой");

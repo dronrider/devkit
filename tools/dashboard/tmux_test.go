@@ -270,11 +270,11 @@ func TestParseTmuxAskWidget(t *testing.T) {
 			t.Errorf("состояние флажка %d разобрано как %q, жду %q", i+1, ask.Options[i].Mark, want)
 		}
 	}
-	if !ask.Options[3].Free {
+	if ask.Options[3].Kind != pickFree {
 		t.Errorf("свободный ответ не узнан: %+v", ask.Options[3])
 	}
-	if !ask.Options[4].Submit || ask.Options[4].Text != "Next" {
-		t.Errorf("кнопка отправки не узнана: %+v", ask.Options[4])
+	if ask.Options[4].Kind != pickNext || ask.Options[4].Text != "Next" {
+		t.Errorf("кнопка виджета не узнана: %+v", ask.Options[4])
 	}
 	if ask.Options[5].Text != "Chat about this" {
 		t.Errorf("последний вариант потерялся: %+v", ask.Options[5])
@@ -297,6 +297,196 @@ func TestParseTmuxAskWidget(t *testing.T) {
 	}
 	if ask.Steps[0].Done || !ask.Steps[2].Done {
 		t.Errorf("пройденность шагов разобрана не так: %+v", ask.Steps)
+	}
+}
+
+// livePollTabs это снимок живой панели с опросом из трёх шагов, слово в слово
+// (своя одноразовая сессия с тем же виджетом). Открытый шаг клиент помечает
+// только заливкой, поэтому снимок снят с раскраской: без неё панель не знает,
+// на каком табе стоит человек.
+var livePollTabs = strings.Join([]string{
+	strings.Repeat("\u2500", 56),
+	"\u001b[39m\u2190  \u001b[38;5;16m\u001b[48;5;153m \u2610 Место \u001b[39m\u001b[49m " +
+		" \u2610 Тип неисправности  \u2612 Сроки  \u2714 Submit  \u2192\u001b[39m",
+	"",
+	"Где ломается?",
+	"",
+	"\u276f 1. [ ] На телефоне",
+	"  Проблема только на мобильном устройстве",
+	"  2. [ ] За роутером",
+	"  Проблема в конкретной сети",
+	"  3. [\u2714] Везде",
+	"  Проблема видна на всех устройствах",
+	"  4. [ ] Type something",
+	"     Next",
+	strings.Repeat("\u2500", 56),
+	"  5. Chat about this",
+	"",
+	"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+}, "\n")
+
+// Шаги опроса это табы: по ним ходят свободно, ответа на текущий шаг для
+// перехода не нужно, а ответы копятся (проверено на живой панели). Открытый
+// таб, отвеченные табы, пояснения под вариантами и служебные пункты виджета
+// разбираются каждый своим полем: экран показывает их по-своему и по-русски.
+func TestParseTmuxAskTabs(t *testing.T) {
+	ask := parseTmuxAsk(livePollTabs)
+	if len(ask.Steps) != 4 {
+		t.Fatalf("шагов разобрано %d, жду четыре: %+v", len(ask.Steps), ask.Steps)
+	}
+	if !ask.Steps[0].Now || ask.Steps[1].Now {
+		t.Errorf("открытый шаг разобран не тот: %+v", ask.Steps)
+	}
+	if ask.Steps[0].Done || !ask.Steps[2].Done {
+		t.Errorf("отвеченность шагов разобрана не так: %+v", ask.Steps)
+	}
+	if ask.Steps[1].Name != "Тип неисправности" {
+		t.Errorf("имя шага разобрано с мусором: %q", ask.Steps[1].Name)
+	}
+	// Пояснение под вариантом это его поле, а не отдельная строка блока: без
+	// него выбор делается вслепую, а в панели пояснения терялись вовсе.
+	if ask.Options[0].Desc != "Проблема только на мобильном устройстве" {
+		t.Errorf("пояснение варианта не разобрано: %+v", ask.Options[0])
+	}
+	if ask.Options[0].Text != "На телефоне" {
+		t.Errorf("слова варианта склеились с пояснением: %q", ask.Options[0].Text)
+	}
+	if ask.Options[2].Mark != "on" {
+		t.Errorf("отмеченный флажок разобран как %q", ask.Options[2].Mark)
+	}
+	// Служебные пункты названы видом, а не словами: слова у них английские, и
+	// показывает их экран своими.
+	for i, want := range []string{"", "", "", pickFree, pickNext, pickChat} {
+		if ask.Options[i].Kind != want {
+			t.Errorf("вид пункта %d разобран как %q, жду %q", i+1, ask.Options[i].Kind, want)
+		}
+	}
+	if ask.Text != "Где ломается?" {
+		t.Errorf("текст вопроса разобран как %q", ask.Text)
+	}
+}
+
+// Вопрос с одиночным выбором клиент печатает без флажков вовсе, а свободный
+// ответ у него зовётся с точкой на конце. Ни то, ни другое разбор не роняет.
+func TestParseTmuxAskSingle(t *testing.T) {
+	pane := strings.Join([]string{
+		"\u001b[39m\u2190  \u2612 Место  \u001b[48;5;153m \u2610 Симптом \u001b[49m  \u2714 Submit  \u2192",
+		"",
+		"Что именно?",
+		"",
+		"\u276f 1. Картинки",
+		"     Проблемы с загрузкой изображений",
+		"  2. Звонки",
+		"     Проблемы со звуком",
+		"  3. Type something.",
+		strings.Repeat("\u2500", 56),
+		"  4. Chat about this",
+		"",
+		"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+	}, "\n")
+	ask := parseTmuxAsk(pane)
+	if len(ask.Options) != 4 {
+		t.Fatalf("остановок разобрано %d, жду четыре: %+v", len(ask.Options), ask.Options)
+	}
+	if ask.Options[0].Mark != "" {
+		t.Errorf("у вопроса без флажков появилось состояние: %+v", ask.Options[0])
+	}
+	// Отвеченный вариант одиночного выбора клиент помечает галочкой в конце
+	// строки: знак этот состояние, а не часть слов (живая проверка).
+	picked := parseTmuxAsk(strings.Replace(pane, "1. Картинки", "1. Картинки \u2714", 1))
+	if picked.Options[0].Text != "Картинки" || picked.Options[0].Mark != "on" {
+		t.Errorf("галочка одиночного выбора разобрана не так: %+v", picked.Options[0])
+	}
+	if ask.Options[2].Kind != pickFree {
+		t.Errorf("свободный ответ с точкой на конце не узнан: %+v", ask.Options[2])
+	}
+	if !ask.Steps[1].Now {
+		t.Errorf("открытый шаг разобран не тот: %+v", ask.Steps)
+	}
+}
+
+// Сводкой виджет кончает опрос. Панель показывает её итогом с одной кнопкой, а
+// не ещё одним опросом (замечание пользователя), и для этого сводка разбирается
+// своим видом: пары «вопрос-ответ», предупреждение и кнопка отправки.
+func TestParseTmuxAskReview(t *testing.T) {
+	pane := strings.Join([]string{
+		"\u001b[39m\u2190  \u2610 Место  \u2612 Симптом  \u2612 Сроки \u001b[48;5;153m \u2714 Submit \u001b[49m \u2192",
+		"Review your answers",
+		"\u26a0 You have not answered all questions",
+		" \u25cf Что именно?",
+		"   \u2192 Картинки",
+		" \u25cf Когда началось?",
+		"   \u2192 Вчера",
+		"Ready to submit your answers?",
+		"\u276f 1. Submit answers",
+		"  2. Cancel",
+	}, "\n")
+	ask := parseTmuxAsk(pane)
+	if ask.Kind != askKindReview {
+		t.Fatalf("сводка не узнана: %+v", ask)
+	}
+	if ask.Warn == "" || !strings.Contains(ask.Warn, "not answered all") {
+		t.Errorf("предупреждение сводки не разобрано: %q", ask.Warn)
+	}
+	if len(ask.Said) != 2 || ask.Said[0].Q != "Что именно?" || ask.Said[0].A != "Картинки" {
+		t.Fatalf("пары «вопрос-ответ» разобраны не так: %+v", ask.Said)
+	}
+	if ask.Said[1].Q != "Когда началось?" || ask.Said[1].A != "Вчера" {
+		t.Errorf("вторая пара сводки разобрана не так: %+v", ask.Said[1])
+	}
+	if ask.Options[0].Kind != pickSubmit {
+		t.Errorf("кнопка отправки сводки не узнана: %+v", ask.Options[0])
+	}
+	// Английские строки виджета в текст вопроса не идут: у сводки свой вид и
+	// свои слова на экране.
+	if ask.Text != "" {
+		t.Errorf("сводка приехала ещё и текстом вопроса: %q", ask.Text)
+	}
+}
+
+// Переход по табам идёт стрелками от открытого шага: столько нажатий, сколько
+// шагов между ними, и ни одного лишнего. Ответа на текущий шаг для перехода не
+// нужно.
+func TestTmuxStepToKeys(t *testing.T) {
+	ask := parseTmuxAsk(livePollTabs)
+	for _, tc := range []struct {
+		name string
+		step int
+		keys []string
+	}{
+		{"вперёд на два", 3, []string{"Right", "Right"}},
+		{"на соседний", 2, []string{"Right"}},
+		{"на свой же", 1, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			sent := filepath.Join(e.home, "sent.log")
+			writeScript(t, e.bin, "tmux", `case "$1" in
+send-keys) shift; echo "$@" >> `+sent+`;;
+esac
+exit 0`)
+			t.Setenv("PATH", e.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := tmuxStepTo("chat-2", ask, tc.step); err != nil {
+				t.Fatalf("переход не подался: %v", err)
+			}
+			var got []string
+			for _, ln := range strings.Split(strings.TrimSpace(readFile(t, sent)), "\n") {
+				if strings.TrimSpace(ln) == "" {
+					continue
+				}
+				got = append(got, strings.TrimSpace(strings.TrimPrefix(ln, "-t =chat-2:")))
+			}
+			if strings.Join(got, "|") != strings.Join(tc.keys, "|") {
+				t.Errorf("клавиши перехода не те: %q, жду %q", got, tc.keys)
+			}
+		})
+	}
+	// Открытого шага не видно, значит и считать переход не от чего: молча
+	// нажимать стрелки вслепую нельзя, уедет в чужой вопрос.
+	blind := ask
+	blind.Steps = []tmuxStep{{Name: "Место"}, {Name: "Симптом"}}
+	if err := tmuxStepTo("chat-2", blind, 2); err == nil {
+		t.Error("переход без открытого шага не отбит")
 	}
 }
 

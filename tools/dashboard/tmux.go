@@ -103,42 +103,68 @@ type tmuxAsk struct {
 	Options []tmuxPick `json:"options,omitempty"`
 	At      int        `json:"at,omitempty"`
 	// Keys называет способ ответа: askKeysDigit это выбор номером (так устроен
-	// вопрос доверия каталогу), askKeysArrows это ход стрелками и Enter (так
-	// устроен опрос агента с вариантами). Способ читается с самой панели, а не
+	// вопрос доверия каталогу и сводка опроса), askKeysArrows это ход стрелками
+	// и Enter (так устроен сам опрос). Способ читается с самой панели, а не
 	// угадывается: клиент печатает подсказку навигации под виджетом.
 	Keys string `json:"keys,omitempty"`
-	// Steps это полоса шагов многошагового опроса, как её печатает клиент:
-	// ответ на шаг приводит следующий, и без полосы человек не понимает, почему
-	// разговор не продолжился.
+	// Steps это шаги опроса. У клиента они табы: между ними ходят стрелками
+	// влево-вправо, ответа на текущий шаг для перехода не требуется, а ответы
+	// копятся (проверено на живой панели).
 	Steps []tmuxStep `json:"steps,omitempty"`
+	// Kind называет вид экрана: askKindReview это сводка ответов, которой
+	// виджет кончает опрос. Пусто у обычного вопроса.
+	Kind string `json:"kind,omitempty"`
+	// Said это сводка: вопрос и ответ на него, как их печатает сам виджет.
+	Said []tmuxSaid `json:"said,omitempty"`
+	// Warn это предупреждение сводки («не на все вопросы отвечено»): по нему
+	// видно, что отправлять рано.
+	Warn string `json:"warn,omitempty"`
 }
 
 // tmuxPick это одна остановка курсора в виджете. Кроме самих вариантов ими
-// бывают кнопка отправки («Next» многошагового опроса) и вариант со свободным
-// ответом («Type something»): курсор встаёт на них наравне с вариантами, и
-// счёт шагов до цели обязан их учитывать (проверено на живой панели).
+// бывают кнопки самого виджета и вариант со свободным ответом: курсор встаёт на
+// них наравне с вариантами, и счёт шагов до цели обязан их учитывать
+// (проверено на живой панели).
 type tmuxPick struct {
 	Text string `json:"text"`
-	// Mark это состояние флажка: on либо off у виджета с множественным
+	// Desc это пояснение под вариантом, как его печатает клиент. Экран
+	// показывает его второй строкой мельче: без пояснений выбор делается
+	// вслепую, а в панели они прежде терялись вовсе.
+	Desc string `json:"desc,omitempty"`
+	// Mark это состояние флажка: on либо off у вопроса с множественным
 	// выбором, пусто там, где флажков нет вовсе.
 	Mark string `json:"mark,omitempty"`
-	// Free значит свободный ответ: выбор такого пункта открывает поле, и текст
-	// человека едет клиенту следом.
-	Free bool `json:"free,omitempty"`
-	// Submit значит кнопку отправки виджета: сама по себе она не вариант, но
-	// курсор на ней останавливается, и без неё многошаговый опрос не сдвинуть.
-	Submit bool `json:"submit,omitempty"`
+	// Kind это служебный вид пункта: pickNext и pickSubmit это кнопки самого
+	// виджета, pickFree свободный ответ, pickChat выход в разговор. Пусто у
+	// обычного варианта. Слова этих пунктов клиент печатает по-английски, и
+	// показывает их экран своими словами, а не пересказом: вид называется тут,
+	// перевод живёт на экране.
+	Kind string `json:"kind,omitempty"`
 }
 
-// tmuxStep это шаг опроса: имя и признак пройденного.
+// tmuxSaid это строка сводки: вопрос и данный на него ответ.
+type tmuxSaid struct {
+	Q string `json:"q"`
+	A string `json:"a"`
+}
+
+// tmuxStep это шаг опроса: имя, признак отвеченного и признак того, что
+// открыт сейчас именно он.
 type tmuxStep struct {
 	Name string `json:"name"`
 	Done bool   `json:"done,omitempty"`
+	Now  bool   `json:"now,omitempty"`
 }
 
 const (
 	askKeysDigit  = "digit"
 	askKeysArrows = "arrows"
+	askKindReview = "review"
+
+	pickNext   = "next"
+	pickSubmit = "submit"
+	pickFree   = "free"
+	pickChat   = "chat"
 )
 
 // askOptionRe ловит строку варианта клиента: номер с точкой и текст, а перед
@@ -152,7 +178,11 @@ var askOptionRe = regexp.MustCompile("^\\s*(\u276f\\s*)?(\\d+)\\.\\s+(\\S.*?)\\s
 // «[\u2714]»), и знаки эти чужие, сверяются как есть.
 var askMarkRe = regexp.MustCompile("^\\[( |x|X|\\*|\u2714|\u2713)\\]\\s*(.*)$")
 
-// askSubmitRe узнаёт кнопку отправки виджета. Слова тут чужие, их печатает
+// askTailRe отрезает галочку выбранного варианта у вопроса с одиночным
+// выбором: там клиент ставит её в конце строки, а не флажком в начале.
+var askTailRe = regexp.MustCompile("^(.*?)\\s+[\u2714\u2713]$")
+
+// askSubmitRe узнаёт кнопки самого виджета. Слова тут чужие, их печатает
 // клиент, и список закрытый нарочно: всякая безымянная строка в кнопки не
 // годится, иначе ими станут пояснения под вариантами.
 var askSubmitRe = regexp.MustCompile("^\\s*(\u276f\\s*)?(Next|Submit|Done|Continue)\\s*$")
@@ -171,9 +201,29 @@ var askArrowsRe = regexp.MustCompile(`(Arrow keys|to navigate|Tab/)`)
 // галочки, обрамляя стрелками перехода между шагами.
 var askStepRe = regexp.MustCompile("[\u2610\u2611\u2612\u2714\u2713]")
 
+// askNowRe находит подсвеченный кусок строки: открытый шаг клиент красит
+// фоном, и в простом снимке (без -e) он неотличим от остальных. Оттого снимок
+// и снимается с раскраской: без неё панель не знала бы, какой шаг открыт, и
+// переход по табам считать было бы не от чего.
+var askNowRe = regexp.MustCompile("\u001b\\[48;5;\\d+m(.*?)\u001b\\[49m")
+
+// askEscRe вычищает раскраску из строки: дальше разбору нужны одни слова.
+var askEscRe = regexp.MustCompile("\u001b\\[[0-9;]*[A-Za-z]")
+
+// askSaidQRe и askSaidARe разбирают сводку ответов: вопрос помечен кружком,
+// ответ стрелкой. Знаки чужие, печатает их клиент.
+var askSaidQRe = regexp.MustCompile("^\\s*\u25cf\\s*(.+?)\\s*$")
+var askSaidARe = regexp.MustCompile("^\\s*\u2192\\s*(.+?)\\s*$")
+
+// askWarnRe узнаёт предупреждение сводки.
+var askWarnRe = regexp.MustCompile("^\\s*\u26a0\\s*(.+?)\\s*$")
+
+// askReviewRe узнаёт саму сводку: ею виджет кончает опрос.
+var askReviewRe = regexp.MustCompile(`(Review your answers|Ready to submit)`)
+
 // askFreeWords это слова варианта со свободным ответом. Их печатает клиент, и
 // сверяются они как есть.
-var askFreeWords = []string{"type something", "type your own", "other"}
+var askFreeWords = []string{"type something", "type your own"}
 
 // askGapMax это сколько строк подряд внутри блока вариантов не быть вариантом.
 // Пояснение под вариантом занимает строку, а кнопку отправки от последнего
@@ -188,7 +238,11 @@ const askGapMax = 3
 // одной строкой. Нет вариантов, значит и вопроса нет: молчащий или работающий
 // клиент сюда не попадает.
 func parseTmuxAsk(text string) tmuxAsk {
-	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	raw := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	lines := make([]string, len(raw))
+	for i, ln := range raw {
+		lines[i] = askEscRe.ReplaceAllString(ln, "")
+	}
 	first := -1
 	gap := 0
 	ask := tmuxAsk{Keys: askKeysDigit}
@@ -206,15 +260,21 @@ func parseTmuxAsk(text string) tmuxAsk {
 			if first < 0 {
 				continue
 			}
+			bare := strings.TrimSpace(ln)
 			// Пустая строка и рамка блок не рвут: рамкой клиент отбивает
 			// кнопку отправки от последнего варианта.
-			bare := strings.TrimSpace(ln)
 			if bare == "" || strings.Trim(bare, frameRunes+" ") == "" {
 				continue
 			}
+			// Всё прочее внутри блока это пояснение под последним вариантом:
+			// клиент печатает его строкой ниже и с отступом.
 			gap++
 			if gap > askGapMax {
 				break
+			}
+			if len(ask.Options) > 0 {
+				last := &ask.Options[len(ask.Options)-1]
+				last.Desc = strings.TrimSpace(last.Desc + " " + bare)
 			}
 			continue
 		}
@@ -235,7 +295,7 @@ func parseTmuxAsk(text string) tmuxAsk {
 	// значило бы оставить от вопроса одну последнюю строку («Security guide»
 	// вместо самого вопроса и каталога, живая проверка на застрявшей сессии).
 	var said []string
-	for i := first - 1; i >= 0 && len(said) < 8; i-- {
+	for i := first - 1; i >= 0 && len(said) < 10; i-- {
 		ln := strings.TrimSpace(lines[i])
 		if ln == "" {
 			continue
@@ -244,14 +304,41 @@ func parseTmuxAsk(text string) tmuxAsk {
 			break
 		}
 		// Полоса шагов это не слова вопроса: она едет своим полем, иначе в
-		// тексте вопроса оказывались бы значки флажков.
-		if steps := parseAskSteps(ln); len(steps) > 0 {
+		// тексте вопроса оказывались бы значки флажков. Открытый шаг виден
+		// только в раскрашенном снимке, поэтому берётся исходная строка.
+		if steps := parseAskSteps(ln, raw[i]); len(steps) > 0 {
 			ask.Steps = steps
+			continue
+		}
+		if m := askWarnRe.FindStringSubmatch(ln); m != nil {
+			ask.Warn = m[1]
+			ask.Kind = askKindReview
+			continue
+		}
+		if m := askSaidARe.FindStringSubmatch(ln); m != nil {
+			ask.Said = append([]tmuxSaid{{A: m[1]}}, ask.Said...)
+			continue
+		}
+		if m := askSaidQRe.FindStringSubmatch(ln); m != nil {
+			if len(ask.Said) > 0 && ask.Said[0].Q == "" {
+				ask.Said[0].Q = m[1]
+			} else {
+				ask.Said = append([]tmuxSaid{{Q: m[1]}}, ask.Said...)
+			}
+			continue
+		}
+		if askReviewRe.MatchString(ln) {
+			ask.Kind = askKindReview
 			continue
 		}
 		said = append([]string{ln}, said...)
 	}
 	ask.Text = truncate(strings.Join(said, " "), 400)
+	if ask.Kind == askKindReview {
+		// У сводки свой заголовок: пересказ английских строк виджета человеку
+		// ни к чему, а сами ответы стоят полем Said.
+		ask.Text = ""
+	}
 	return ask
 }
 
@@ -262,7 +349,7 @@ type askLine struct {
 }
 
 // parseAskLine разбирает строку панели в остановку курсора: нумерованный
-// вариант либо кнопку отправки.
+// вариант либо кнопку самого виджета.
 func parseAskLine(ln string) (askLine, bool) {
 	if m := askOptionRe.FindStringSubmatch(ln); m != nil {
 		out := askLine{cursor: m[1] != "", pick: tmuxPick{Text: m[3]}}
@@ -272,27 +359,55 @@ func parseAskLine(ln string) (askLine, bool) {
 				out.pick.Mark = "on"
 			}
 			out.pick.Text = strings.TrimSpace(mark[2])
+		} else if tail := askTailRe.FindStringSubmatch(out.pick.Text); tail != nil {
+			// У вопроса с одиночным выбором флажков нет вовсе, а выбранный
+			// вариант клиент помечает галочкой в конце строки (живая проверка).
+			// Знак этот состояние, а не часть слов.
+			out.pick.Mark = "on"
+			out.pick.Text = strings.TrimSpace(tail[1])
 		}
-		low := strings.ToLower(out.pick.Text)
-		for _, word := range askFreeWords {
-			if strings.Contains(low, word) {
-				out.pick.Free = true
-				break
-			}
-		}
+		out.pick.Kind = pickKindOf(out.pick.Text)
 		return out, true
 	}
 	if m := askSubmitRe.FindStringSubmatch(ln); m != nil {
-		return askLine{cursor: m[1] != "", pick: tmuxPick{Text: m[2], Submit: true}}, true
+		kind := pickNext
+		if m[2] != "Next" {
+			kind = pickSubmit
+		}
+		return askLine{cursor: m[1] != "", pick: tmuxPick{Text: m[2], Kind: kind}}, true
 	}
 	return askLine{}, false
 }
 
+// pickKindOf называет служебный вид пункта по словам клиента.
+func pickKindOf(text string) string {
+	low := strings.ToLower(strings.TrimRight(strings.TrimSpace(text), "."))
+	for _, word := range askFreeWords {
+		if strings.Contains(low, word) {
+			return pickFree
+		}
+	}
+	switch {
+	case strings.Contains(low, "chat about this"):
+		return pickChat
+	case low == "submit answers":
+		return pickSubmit
+	case low == "cancel":
+		return ""
+	}
+	return ""
+}
+
 // parseAskSteps разбирает полосу шагов. Пустой список значит, что строка это не
-// полоса, а обычные слова вопроса.
-func parseAskSteps(ln string) []tmuxStep {
+// полоса, а обычные слова вопроса. raw это та же строка с раскраской: открытый
+// шаг клиент помечает только фоном.
+func parseAskSteps(ln, raw string) []tmuxStep {
 	if !askStepRe.MatchString(ln) {
 		return nil
+	}
+	now := ""
+	if m := askNowRe.FindStringSubmatch(raw); m != nil {
+		now = strings.TrimSpace(askEscRe.ReplaceAllString(m[1], ""))
 	}
 	var out []tmuxStep
 	for _, part := range strings.Split(ln, "  ") {
@@ -305,7 +420,7 @@ func parseAskSteps(ln string) []tmuxStep {
 		if name == "" {
 			continue
 		}
-		out = append(out, tmuxStep{Name: name, Done: done})
+		out = append(out, tmuxStep{Name: name, Done: done, Now: now != "" && part == now})
 	}
 	if len(out) < 2 {
 		return nil
@@ -316,11 +431,40 @@ func parseAskSteps(ln string) []tmuxStep {
 // tmuxAskOf снимает панель сессии и разбирает её на вопрос. Ошибка тут не
 // поломка: сессии может уже не быть, и вопроса тогда нет.
 func tmuxAskOf(name string) tmuxAsk {
-	out, err := runProc("tmux", "capture-pane", "-p", "-t", "="+name+":")
+	// Снимок берётся с раскраской (-e): открытый шаг опроса клиент помечает
+	// только фоном, и без раскраски панель не знала бы, на каком табе стоит
+	// человек, а переход по табам считать было бы не от чего.
+	out, err := runProc("tmux", "capture-pane", "-p", "-e", "-t", "="+name+":")
 	if err != nil {
 		return tmuxAsk{}
 	}
 	return parseTmuxAsk(string(out))
+}
+
+// tmuxStepTo переводит опрос на шаг step (счёт с единицы): шаги у клиента это
+// табы, между которыми ходят стрелками влево-вправо, и ответа на текущий шаг
+// для перехода не нужно (проверено на живой панели).
+func tmuxStepTo(name string, ask tmuxAsk, step int) error {
+	at := "=" + name + ":"
+	now := 0
+	for i, s := range ask.Steps {
+		if s.Now {
+			now = i + 1
+		}
+	}
+	if now == 0 {
+		return fmt.Errorf("открытый шаг опроса не виден: переходить не от чего")
+	}
+	move, key := step-now, "Right"
+	if move < 0 {
+		move, key = -move, "Left"
+	}
+	for i := 0; i < move; i++ {
+		if _, err := runProc("tmux", "send-keys", "-t", at, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // tmuxAnswer отвечает на вопрос клиента. Способ ответа берётся у самого

@@ -1811,6 +1811,128 @@ func TestChatIdleWithoutPeerRecord(t *testing.T) {
 // что выбран существующий пункт. Ничего в конфиг подписки дашборд при этом не
 // пишет: решение остаётся человеку, меняется только место, где он его
 // принимает (решение пользователя).
+// Сводку опроса дашборд проходит сам: последний ответ и есть отправка, и
+// второе подтверждение человеку не нужно (замечание пользователя по снимку).
+// Проходится она только когда отвечено всё: со своим предупреждением сводка
+// остаётся человеку, иначе опрос уехал бы неполным.
+func TestChatAskPassesReviewItself(t *testing.T) {
+	poll := strings.Join([]string{
+		"\u001b[39m\u2190  \u001b[48;5;153m \u2610 Место \u001b[49m  \u2714 Submit  \u2192",
+		"",
+		"Где ломается?",
+		"",
+		"\u276f 1. [ ] На телефоне",
+		"  2. [ ] За роутером",
+		"     Next",
+		"",
+		"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+	}, "\n")
+	full := strings.Join([]string{
+		"\u001b[39m\u2190  \u2612 Место \u001b[48;5;153m \u2714 Submit \u001b[49m \u2192",
+		"Review your answers",
+		" \u25cf Где ломается?",
+		"   \u2192 На телефоне",
+		"Ready to submit your answers?",
+		"\u276f 1. Submit answers",
+		"  2. Cancel",
+	}, "\n")
+	half := strings.Replace(full, "Review your answers",
+		"Review your answers\n\u26a0 You have not answered all questions", 1)
+
+	for _, tc := range []struct {
+		name   string
+		review string
+		passed bool
+	}{
+		{"отвечено всё", full, true},
+		{"отвечено не всё", half, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			sent := filepath.Join(e.home, "sent.log")
+			// Первый снимок это сам опрос, дальнейшие сводка: ровно так панель
+			// выглядит после ответа на последний шаг.
+			seen := filepath.Join(e.home, "seen")
+			writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane)
+  if [ -f `+seen+` ]; then printf '%s' `+shQuote(tc.review)+`; else printf '%s' `+shQuote(poll)+`; touch `+seen+`; fi;;
+send-keys) shift; echo "$@" >> `+sent+`;;
+ls) printf 'chat-7\n';;
+esac
+exit 0`)
+			sid := "aaaa1111-1111-4111-8111-111111111111"
+			writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-7"))
+			c := e.loggedClient(t)
+			at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+
+			resp := doReq(t, c, "POST", at, `{"option": 2}`)
+			text := body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("ответ на шаг опроса: %d %s", resp.StatusCode, text)
+			}
+			keys := readFile(t, sent)
+			// Сам ответ уехал стрелкой и Enter.
+			if !strings.Contains(keys, "Down") || !strings.Contains(keys, "Enter") {
+				t.Fatalf("ответ на шаг не подался клавишами: %s", keys)
+			}
+			// Проход сводки виден вторым Enter и словами в ответе ручки.
+			passed := strings.Count(keys, "Enter") > 1
+			if passed != tc.passed {
+				t.Errorf("сводка пройдена=%v, жду %v: %s", passed, tc.passed, keys)
+			}
+			if strings.Contains(text, "ответы отправлены") != tc.passed {
+				t.Errorf("про проход сводки сказано не так: %s", text)
+			}
+		})
+	}
+}
+
+// Шаги опроса это табы, и переход по ним это не ответ: уезжают стрелки, а
+// выбранного пункта нет вовсе. Человеку это даёт ходить по вопросам свободно,
+// как в самом виджете (замечание пользователя).
+func TestChatAskStepSwitch(t *testing.T) {
+	pane := strings.Join([]string{
+		"\u001b[39m\u2190  \u001b[48;5;153m \u2610 Место \u001b[49m  \u2610 Симптом  \u2714 Submit  \u2192",
+		"",
+		"Где ломается?",
+		"",
+		"\u276f 1. [ ] На телефоне",
+		"  2. [ ] За роутером",
+		"     Next",
+		"",
+		"Enter to select \u00b7 Tab/Arrow keys to navigate \u00b7 Esc to cancel",
+	}, "\n")
+	e := newTestEnv(t)
+	sent := filepath.Join(e.home, "sent.log")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(pane)+`;;
+send-keys) shift; echo "$@" >> `+sent+`;;
+ls) printf 'chat-7\n';;
+esac
+exit 0`)
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-7"))
+	c := e.loggedClient(t)
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+
+	resp := doReq(t, c, "POST", at, `{"step": 2}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("переход по шагу: %d %s", resp.StatusCode, text)
+	}
+	keys := strings.TrimSpace(readFile(t, sent))
+	if !strings.Contains(keys, "Right") {
+		t.Errorf("переход не подался стрелкой: %q", keys)
+	}
+	if strings.Contains(keys, "Enter") {
+		t.Errorf("переход по табу отправил ответ клиенту: %q", keys)
+	}
+	// Шага за пределами полосы нет, и молчать об этом нельзя.
+	resp = doReq(t, c, "POST", at, `{"step": 9}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("переход на несуществующий шаг не отбит: %d %s", resp.StatusCode, text)
+	}
+}
+
 func TestChatAskAnswerSendsKeys(t *testing.T) {
 	e := newTestEnv(t)
 	sent := filepath.Join(e.home, "sent.log")

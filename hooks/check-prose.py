@@ -64,7 +64,17 @@ MIN_PARAGRAPH = 16
 
 COLON_RE = re.compile(r":\s+[а-яё]")
 ARGUE_RE = re.compile(r"\b(иначе|потому|чтобы|а не)\b", re.I)
-TAIL_RE = re.compile(r"\bа не\b", re.I)
+# Хвост это запятая, «а не» и договорённое отрицание. Без запятой «а не»
+# союз, а не хвост: так пишут имя самой метрики («хвост «а не»») и вопрос
+# «а не проще ли».
+TAIL_RE = re.compile(r",\s+а не\b", re.I)
+# Кавычки и обратные апострофы: внутри лежит чужая фраза или имя приметы, и
+# шаблон автора там не меряется. Инлайн-код разбор прозы снимает раньше, а
+# апострофы тут стоят для прямого вызова счётчика.
+QUOTED_RE = re.compile(r"«[^»\n]*»|\"[^\"\n]*\"|`[^`\n]*`")
+# Полная форма «не X, а не Y» это лексика пользователя: DK-524 сняла её из
+# довода, и хвостом она тоже не считается.
+FULL_FORM_RE = re.compile(r"\bне [^,.;:]{1,40}, а не\b", re.I)
 FINAL_RE = re.compile(r"(это и есть|то есть|значит|и есть|вот и|ровно то|"
                       r"в этом и|именно)", re.I)
 
@@ -148,8 +158,15 @@ def colon_rate(t):
     return per_1000(sum(1 for s, _ in t.sentences if COLON_RE.search(s)), t.words)
 
 
+def tails(sent):
+    """Хвосты «..., а не Y» в предложении, без цитат и без полной формы."""
+    body = QUOTED_RE.sub(" ", sent)
+    body = FULL_FORM_RE.sub(" ", body)
+    return len(TAIL_RE.findall(body))
+
+
 def tail_rate(t):
-    return per_1000(sum(len(TAIL_RE.findall(s)) for s, _ in t.sentences), t.words)
+    return per_1000(sum(tails(s) for s, _ in t.sentences), t.words)
 
 
 def final_share(t):

@@ -28,7 +28,6 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-397 | Цель: дашборд ведёт разговор вокруг задачи [приёмка: mixed] | task | P1 | 63 (50+8+3+0+2) | XL | [tasks/DK-397.md](tasks/DK-397.md) |
 | DK-514 | taskctl review: замечание с цитатой слова «исправлено» закрывается само | bug | P2 | 35 (25+2+1+5+2) | S | [tasks/DK-514.md](tasks/DK-514.md) |
 | DK-463 | doctor --fix в дереве задачи заводит болванку deploy.local и сам её находит | bug | P2 | 35 (25+2+1+5+2) | S | [tasks/DK-463.md](tasks/DK-463.md) |
-| DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 38 (25+8+1+0+4) | S | [tasks/DK-311.md](tasks/DK-311.md) |
 
 ## Backlog
 
@@ -45,14 +44,14 @@ R = Серьёзность(0-75) + Ценность(0-10) + Неопределё
 | DK-307 | Цикл цели в одном окне, исполнители на любом операторе | task | P2 | 39 (25+8+4+0+2) | L | [tasks/DK-307.md](tasks/DK-307.md) |
 | DK-498 | Merge-ворота краснеют в сессии glm-харнеса: редактору окна наследуется CLAUDE_CONFIG_DIR | bug | P2 | 39 (25+5+1+5+3) | - | [tasks/DK-498.md](tasks/DK-498.md) |
 | DK-161 | Цель: цикл цели ловит дефекты до выката, а человека спрашивает до старта | task | P2 | 38 (25+8+3+0+2) | XL | [tasks/DK-161.md](tasks/DK-161.md) |
-| DK-312 | taskctl close зовёт ship --drain после закрытия задачи [после DK-311] | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
+| DK-312 | taskctl close зовёт ship --drain после закрытия задачи | task | P2 | 38 (25+7+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-379 | Сторож делегирования: расход вложенных субагентов виден и ограничен | task | P2 | 38 (25+8+3+0+2) | M | [tasks/DK-379.md](tasks/DK-379.md) |
 | DK-411 | dashboard: экран задачи и колонка проектов пересобираются на каждый фокус окна | bug | P2 | 38 (25+4+2+5+2) | M | [tasks/DK-411.md](tasks/DK-411.md) |
 | DK-428 | taskctl: бонус за цену и наследование ранга по цели считаются из строки, видны в list | task | P2 | 38 (25+7+2+0+4) | M | [tasks/DK-428.md](tasks/DK-428.md) |
 | DK-507 | exec-*: абзац лимита жизненного цикла и формат хвоста в «Ход работы» по DK-503 [после DK-511] | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-507.md](tasks/DK-507.md) |
 | DK-511 | board-ship, board-batch, board-task: pick --record перед каждым спавном исполнителя и флаг у agentctl run | task | P2 | 38 (25+8+1+0+4) | M | [tasks/DK-511.md](tasks/DK-511.md) |
 | DK-183 | Цель: ревью оставляет след и закрывается за два круга | task | P2 | 37 (25+8+2+0+2) | XL | [tasks/DK-183.md](tasks/DK-183.md) |
-| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md [после DK-311] | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
+| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 37 (25+6+2+0+4) | S | [lld/DK-306-merge-queue.md](lld/DK-306-merge-queue.md) |
 | DK-315 | hooks: flaky test quota_refresh роняет merge под нагрузкой, race в awaited | bug | P2 | 37 (25+4+1+5+2) | - | [tasks/DK-315.md](tasks/DK-315.md) |
 | DK-364 | Назначение исполнителя с учётом остатков подписок | task | P2 | 37 (25+8+2+0+2) | M | [tasks/DK-364.md](tasks/DK-364.md) |
 | DK-477 | Минимум процедуры доски, переживающий сжатие контекста | task | P2 | 37 (25+6+3+0+3) | M | [tasks/DK-477.md](tasks/DK-477.md) |

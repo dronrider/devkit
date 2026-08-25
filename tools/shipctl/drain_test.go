@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,48 @@ func TestShipDrainBrokenProdNoop(t *testing.T) {
 	}
 	if !strings.Contains(msg, "разлив не нужен") || !strings.Contains(msg, "провал проверки за XR-003") {
 		t.Fatalf("сообщение о сломанном проде: %q", msg)
+	}
+}
+
+// TestShipDrainBusyLockNoop: тик сторожка, попавший в окно чужого merge,
+// ship или разлива от close, получает от acquireLock отказ занятости.
+// Решение 2 LLD DK-306 зовёт такой исход штатной состыковкой («первый
+// выкатывает поезд, второй заходит в пустой поезд и отступает»), поэтому
+// под --drain он выходит нулём с маркером «разлив не нужен», а не валит
+// тик строкой «разлив упал» в журнале сторожка.
+func TestShipDrainBusyLockNoop(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	unlock, err := acquireLock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	msg, err := cmdShip(root, ShipParams{Drain: true})
+	if err != nil {
+		t.Fatalf("разлив при занятом конвейере должен отступать нулём: %v", err)
+	}
+	if !strings.Contains(msg, "разлив не нужен") || !strings.Contains(msg, "конвейер занят") {
+		t.Fatalf("сообщение о занятом конвейере: %q", msg)
+	}
+}
+
+// TestShipDrainLockAnomalyStaysError: занятость под --drain глушится, а
+// аномальные отказы замка (не открылся, не устоялся за N попыток) нет: это
+// поломка окружения, и она попадает в журнал сторожка провалом, а не тихой
+// состыковкой. Замок, который не открывается, заводится каталогом на его
+// пути: open с O_RDWR на каталог отказывает.
+func TestShipDrainLockAnomalyStaysError(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	if err := os.Mkdir(filepath.Join(root, lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cmdShip(root, ShipParams{Drain: true})
+	if err == nil || !strings.Contains(err.Error(), "замок") {
+		t.Fatalf("аномальный отказ замка под --drain должен остаться ошибкой: %v", err)
 	}
 }
 

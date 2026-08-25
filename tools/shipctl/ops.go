@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -158,9 +159,12 @@ func taskFailClear(root, id string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// drainOr решает исход одного из трёх чистых отказов cmdShip под --drain:
+// drainOr решает исход одного из четырёх чистых отказов cmdShip под --drain:
 // без флага err уходит как обычная ошибка, под флагом печатается «разлив не
-// нужен: <причина>» и ship выходит нулём (LLD DK-306, решение 2).
+// нужен: <причина>» и ship выходит нулём (LLD DK-306, решение 2). Чистые
+// отказы это пустой поезд, занятая очередь, сломанный прод и занятый чужим
+// заходом конвейер; аномальные отказы замка (не открылся, не устоялся) в их
+// числе не являются и глушатся только занятым конвейером.
 func drainOr(drain bool, err error) (string, error) {
 	if drain {
 		return "разлив не нужен: " + err.Error(), nil
@@ -1064,6 +1068,12 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	unlock, err := acquireLock(root)
 	if err != nil {
+		// Занятость конвейера под --drain это состыковка с чужим заходом
+		// (merge, ship, разлив от close), а не поломка: сторожок, чей тик
+		// попал в чужое окно, отступает тихо. Аномалии замка глушить нельзя.
+		if errors.Is(err, errLockBusy) {
+			return drainOr(p.Drain, err)
+		}
 		return "", err
 	}
 	defer unlock()

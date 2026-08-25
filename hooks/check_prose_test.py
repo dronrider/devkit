@@ -101,6 +101,18 @@ class TestMetrics(unittest.TestCase):
                              "Ранг считается формулой из четырёх слагаемых.\n")
         self.assertEqual(v["argued"], 50.0)
 
+    def test_full_form_not_x_but_y_is_not_argued(self):
+        """Полная форма «не X, а Y» доводом не считается (DK-524).
+
+        Замер DK-446 дал у неё 1,5 на тысячу слов у агентов против 2,3 у
+        людей. Это лексика пользователя, и находка на ней означала бы, что
+        сторож правит его же фразу.
+        """
+        _, v = prose.measure("Доску правит не редактор, а утилита. "
+                             "Ранг считается формулой из четырёх слагаемых.\n")
+        self.assertEqual(v["argued"], 0.0)
+        self.assertEqual(v["but_not_tail"], 0.0)
+
     def test_colon_in_the_middle(self):
         t, v = prose.measure("Доска ведётся утилитой: строка не разъезжается. "
                              "Ранг считается формулой.\n")
@@ -184,6 +196,15 @@ class TestHook(unittest.TestCase):
         r = self.hook("hooks/testdata/claude-code/sample.md", COLONS)
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout, "")
+
+    def test_proofread_corpus_is_skipped(self):
+        """Сторожевой корпус вычитки полон плохих фраз нарочно (DK-524)."""
+        config(self.conf, warn={"colon_mid": 5})
+        for path in ("kit/skills/proofread/corpus.md",
+                     "kit/skills/prose/corpus/task.md"):
+            r = self.hook(path, COLONS)
+            self.assertEqual(r.returncode, 0, path)
+            self.assertEqual(r.stdout, "", path)
 
     def test_without_config_hook_keeps_quiet(self):
         r = self.hook("docs/tasks/DK-001.md", COLONS)
@@ -286,6 +307,32 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(gaps, [])
         _, values = prose.measure(p.stdout)
         self.assertEqual(prose.findings(values, conf), [])
+
+
+class TestChecklist(unittest.TestCase):
+    """Сторож и вычитка называют одни и те же приметы (DK-524, DoD 4).
+
+    Разъехавшись, они дают агенту два разных списка: сторож считает одно, а
+    вычитка правит другое, и текст чинится по кругу.
+    """
+
+    def setUp(self):
+        self.skill = os.path.join(os.path.dirname(HERE), "kit", "skills",
+                                  "proofread", "SKILL.md")
+        with open(self.skill, encoding="utf-8") as f:
+            self.text = f.read()
+
+    def test_skill_names_every_metric_key(self):
+        for m in prose.METRICS:
+            self.assertIn("`%s`" % m.key, self.text, m.key)
+
+    def test_skill_points_are_numbered_by_the_guard_order(self):
+        """Порядок пунктов чек-листа совпадает с порядком метрик сторожа."""
+        seen = [m.key for m in prose.METRICS
+                if "`%s`" % m.key in self.text]
+        at = [self.text.index("`%s`" % k) for k in seen]
+        self.assertEqual(at, sorted(at))
+        self.assertEqual(len(seen), len(prose.METRICS))
 
 
 class TestPreCommit(unittest.TestCase):

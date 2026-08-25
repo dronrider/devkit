@@ -7,6 +7,11 @@
 «..., а не Y», вывод-афоризм в конце абзаца. Модели проверка не зовёт и
 смысла не понимает, она считает частоты и сверяет их с порогами.
 
+Те же приметы стоят первыми пятью пунктами чек-листа вычитки
+(kit/skills/proofread/SKILL.md), ключ метрики выписан рядом с пунктом.
+Список у сторожа и у вычитки один: сторож меряет плотность по файлу, вычитка
+правит саму фразу.
+
 Пороги и режим лежат в конфиге (kit/prose.toml), своих чисел код не держит:
 без конфига сторож молчит, а про пропажу говорит `devkitctl doctor`. Путь
 конфига переопределяет DEVKIT_PROSE_CONFIG.
@@ -59,7 +64,6 @@ MIN_PARAGRAPH = 16
 
 COLON_RE = re.compile(r":\s+[а-яё]")
 ARGUE_RE = re.compile(r"\b(иначе|потому|чтобы|а не)\b", re.I)
-NOT_Y_RE = re.compile(r"\bне [^,.;:]{1,40}, а ", re.I)
 TAIL_RE = re.compile(r"\bа не\b", re.I)
 FINAL_RE = re.compile(r"(это и есть|то есть|значит|и есть|вот и|ровно то|"
                       r"в этом и|именно)", re.I)
@@ -127,9 +131,13 @@ def long_share(t):
 
 
 def argued(sent):
-    """Довод в той же фразе: причина, цель, противопоставление или двоеточие."""
-    return bool(ARGUE_RE.search(sent) or NOT_Y_RE.search(sent)
-                or COLON_RE.search(sent))
+    """Довод в той же фразе: причина, цель или двоеточие.
+
+    Полная форма «не X, а Y» за довод не считается. Замер DK-446 дал у неё
+    1,5 на тысячу слов у агентов против 2,3 у людей: это лексика
+    пользователя, и счёт её доводом красил его же фразу (DK-524).
+    """
+    return bool(ARGUE_RE.search(sent) or COLON_RE.search(sent))
 
 
 def argue_share(t):
@@ -253,7 +261,12 @@ def report(found, where, words):
 
 
 def is_prose(path, conf):
-    if not path or "testdata" in path.split("/"):
+    # Корпус образцов меряется не сам по себе: в сторожевом корпусе вычитки
+    # плохие фразы лежат нарочно, и находка на них это не поломка текста.
+    if not path:
+        return False
+    parts = path.split("/")
+    if "testdata" in parts or "corpus" in parts or parts[-1] == "corpus.md":
         return False
     return any(path.endswith(s) for s in conf.suffixes)
 

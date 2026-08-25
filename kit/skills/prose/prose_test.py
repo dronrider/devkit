@@ -84,6 +84,38 @@ class TestCollect(JournalCase):
         self.assertEqual(stat["service"], 4)
         self.assertEqual([t for _, _, t in got], [HUMAN])
 
+    def test_заготовки_стенда_и_запросы_хука_отсеиваются(self):
+        # Заготовки obeycheck и вставки хука приходят ролью user и по длине
+        # проходят все пороги: узнаются они только по началу строки.
+        self.write("s1.jsonl", [
+            entry("ЗАДАНИЕ: " + HUMAN),
+            entry("ДИАЛОГ: " + HUMAN2),
+            entry("ВОПРОС ПОЛЬЗОВАТЕЛЯ: " + HUMAN),
+            entry("ОТВЕТ АССИСТЕНТА: " + HUMAN2),
+            entry("[devkit-title] назови разговор тремя словами, вот его начало: "
+                  + HUMAN),
+            entry("Разговор завис на вопросе про доску, разбуди сессию и повтори "
+                  "последний шаг, иначе очередь встанет и задача уедет в парковку."),
+            entry(HUMAN),
+        ])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["service"], 6)
+        self.assertEqual([t for _, _, t in got], [HUMAN])
+
+    def test_приписка_хука_режется_а_реплика_остаётся(self):
+        # Приписку про план работ хук добавляет в хвост чужой реплики, и без
+        # отреза её слова («веди», «массивом») лезут в верх словаря.
+        tail = ("\n\nВеди план работ файлом ~/.devkit/plans/<ID сессии>.json: "
+                "до первого шага положи туда список этапов задачи массивом "
+                "объектов, по ходу помечай текущий пункт.")
+        long_tail = ("\n\nДолгие дела (поиск по диску, сборка, установка) "
+                     "гоняй фоном, чтобы ход не упирался в ожидание.")
+        self.write("s1.jsonl", [entry(HUMAN + tail), entry(HUMAN2 + long_tail)])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["kept"], 2)
+        self.assertEqual([t for _, _, t in got], [HUMAN, HUMAN2])
+        self.assertEqual([w for w, _ in prose.dictionary(got, 1) if w == "массивом"], [])
+
     def test_ответы_инструментов_и_мета_не_реплики(self):
         self.write("s1.jsonl", [
             tool_result_entry(),

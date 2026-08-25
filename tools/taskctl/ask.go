@@ -71,6 +71,10 @@ type askDeps struct {
 	// git-дерева нет вовсе.
 	Main string
 	Home string
+	// IsDraft отвечает, стоит ли за ID запись накопителя, а не строка доски.
+	// Полем тут потому же, почему и остальные: тест гоняет ожидание на
+	// временных корнях, где накопителя может не быть вовсе.
+	IsDraft func(id string) bool
 }
 
 // liveDeps собирает боевой набор: часы машины, настоящий сон, уведомитель
@@ -97,6 +101,18 @@ func liveDeps(root string) askDeps {
 		},
 		Main: main,
 		Home: stage.Home(),
+		// Вид записи спрашивается у самого дерева: файл черновика лежит на
+		// известном месте, и читать ради этого доску незачем.
+		IsDraft: func(id string) bool {
+			if id == "" {
+				return false
+			}
+			if _, err := os.Stat(filepath.Join(root, draftRel(id))); err == nil {
+				return true
+			}
+			_, err := os.Stat(filepath.Join(main, draftRel(id)))
+			return err == nil
+		},
 	}
 }
 
@@ -182,14 +198,30 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 	if main == "" {
 		main = stage.MainRoot(root)
 	}
-	name := chat.TaskName(p.ID)
-	if p.Draft {
-		name = chat.DraftName(p.ID)
+	// Черновик узнаётся сам, а не по флагу: заказ груминга зовёт ожидание тем
+	// же `taskctl ask <ID>`, что и задача, и требовать от агента помнить про
+	// вид записи значит ловить отказ парковки посреди захода (живой случай
+	// DK-517: два захода по восемь минут, оба кончились «нет на доске», а
+	// вопросы дошли до человека только текстом в чат).
+	guessed := false
+	if !p.Draft && d.IsDraft != nil && d.IsDraft(p.ID) {
+		p.Draft = true
+		guessed = true
 	}
+	// Вход у ожидания один и тот же и у задачи, и у черновика: панель дашборда
+	// кладёт ответ человека в task-<ID> (sessionChatName), и слушать черновику
+	// свой draft-<ID> значило бы ждать на адресе, куда никто не пишет. Разводит
+	// эти два случая не адрес, а исход по сроку: задача паркуется строкой,
+	// черновик оставляет вопрос файлом исхода.
+	name := chat.TaskName(p.ID)
 	text := askText(qs)
 	sid, note := askSession(p, d.Home, env)
 	var out []string
 	out = append(out, fmt.Sprintf("%s: вопрос человеку, %s", p.ID, note))
+	if guessed {
+		out = append(out, fmt.Sprintf(
+			"%s это запись накопителя, а не строка доски: ждём тем же входом, а не дождавшись, оставим вопрос файлом исхода", p.ID))
+	}
 	for _, q := range qs {
 		out = append(out, "  ? "+q.Text)
 		for _, o := range q.Options {

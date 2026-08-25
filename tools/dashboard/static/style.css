@@ -106,6 +106,10 @@ a:hover{text-decoration:underline}
 .groups{flex:1;overflow-y:auto;padding-bottom:24px}
 .empty{padding:12px 16px;font:400 13px var(--sans);color:var(--tx3)}
 .error{padding:12px 16px;font:400 13px var(--sans);color:var(--block)}
+/* потеря связи это не поломка, а временная тишина (типовой случай это наш же
+   перезапуск при выкате): строка одна и спокойная, без красноты сбоя, а
+   перечисление причин живёт подсказкой */
+.lostline{padding:12px 16px;font:400 13px var(--sans);color:var(--tx3)}
 
 /* общие элементы */
 .card{background:var(--bg1);border:1px solid var(--line);border-radius:12px}

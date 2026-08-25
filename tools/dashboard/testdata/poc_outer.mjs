@@ -9,6 +9,7 @@
 //
 // Зовётся: node testdata/poc_outer.mjs static/app.js
 
+import { readFileSync } from "node:fs";
 import { makeSandbox, settle, dump, byClass, deepBtn, tag, fail, appPathArg }
   from "./poc_dom.mjs";
 
@@ -36,7 +37,10 @@ const live = () => ({
   models: [], fresh: false, error: "", note: "",
 });
 
-// --- 502 доходит до человека объяснением, а не кодом ---
+// --- одиночный отказ связи молчит: реплику дожимает очередь ---
+// Про первый неудачный заход человеку сообщать нечего: это штатная жизнь
+// ноутбука, а пузырь и так помечен и держит кнопку повтора (замечание
+// пользователя про уведомление о штатной ситуации).
 {
   gate = 502;
   asked.length = 0;
@@ -44,6 +48,25 @@ const live = () => ({
   tag(panel, "TEXTAREA").value = "посмотри ленту";
   deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
   await settle();
+  const quiet = dump(sandbox.document.getElementById("flashes")).replace(/\s+/g, " ");
+  if (quiet.trim()) fail("одиночный отказ связи родил уведомление: " + quiet.slice(0, 200));
+  if (!dump(byClass(panel, "mlocal")).includes("посмотри ленту")) {
+    fail("пузырь неушедшей реплики пропал: " + dump(byClass(panel, "mlocal")));
+  }
+}
+
+// --- устойчивый отказ доходит до человека объяснением, а не кодом ---
+{
+  gate = 502;
+  asked.length = 0;
+  const tries = Number((readFileSync(app, "utf8").match(/const LOST_TRIES = (\d+)/) || [])[1]);
+  if (!tries) fail("порога молчания нет в статике: константы LOST_TRIES не нашлось");
+  const panel = sandbox.chatPanel("demo", live());
+  for (let i = 0; i < tries; i += 1) {
+    tag(panel, "TEXTAREA").value = "посмотри ленту";
+    deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
+    await settle();
+  }
   const said = dump(sandbox.document.getElementById("flashes")).replace(/\s+/g, " ");
   if (!asked.some((p) => p.endsWith("/say"))) fail("реплика не уходила вовсе: " + JSON.stringify(asked));
   // Названы обе стороны: ворота на сервере и дашборд на машине человека.

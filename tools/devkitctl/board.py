@@ -30,6 +30,11 @@ SUFFIX_RES = (
 INPUT_PHRASE_RE = re.compile(r"как вход\b|вход этой задачи")
 ID_RE = re.compile(r"\b[A-Z]+-\d+\b")
 
+# Цитата в «ёлочках» не называет вход: журнал задачи цитирует чужие фразы
+# (находки doctor, разборы), и маска внутри цитаты бьёт файл задачи по нему
+# самому. Настоящие формулировки в корпусе стоят вне кавычек.
+QUOTE_RE = re.compile(r"«[^«»]*»")
+
 
 def row_deps(title):
     """Список зависимостей из ячейки заголовка, разбор как в taskctl."""
@@ -56,13 +61,15 @@ def named_inputs(text, own, rows):
 
     Абзац, а не строка: проза переносится, и фраза про вход часто едет
     строкой ниже названного ID. Живые только: вход из закрытой задачи
-    диспетчеру уже не мешает.
+    диспетчеру уже не мешает. Цитаты в «ёлочках» вырезаются до поиска:
+    пересказ чужой фразы это не называние входа.
     """
     named = set()
     for para in re.split(r"\n\s*\n", text):
-        if not INPUT_PHRASE_RE.search(para):
+        bare = QUOTE_RE.sub(" ", para)
+        if not INPUT_PHRASE_RE.search(bare):
             continue
-        named.update(tid for tid in ID_RE.findall(para) if tid != own and tid in rows)
+        named.update(tid for tid in ID_RE.findall(bare) if tid != own and tid in rows)
     return named
 
 

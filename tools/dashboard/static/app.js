@@ -134,14 +134,33 @@ function anchorKey(groups, focus) {
 
 // Место на экране целиком: прокрутка списка, фокус и якорь. Список прокручен
 // внутри себя (.groups), а не окном, поэтому мерится он, а не страница.
+// Сколько раз человек листал список. Обновление идёт через сеть, и пока ответ
+// летит, палец успевает увести список: вернуть тогда прежнее место значит
+// дёрнуть экран из-под пальца, и читать список на ходу становится нельзя
+// (замечание пользователя). Считается тут именно человеческое листание:
+// перерисовка свою прокрутку двигает синхронно, а событие о ней браузер шлёт
+// позже, когда возвращать уже нечего.
+let scrollSeen = 0;
+
+// Слушатель ставится один раз на узел списка: узел живёт всю страницу, а
+// экраны в нём сменяются.
+function wireScrollWatch() {
+  const groups = document.getElementById("groups");
+  if (!groups || groups.dataset.scrollwired) return;
+  groups.dataset.scrollwired = "1";
+  groups.addEventListener("scroll", () => { scrollSeen += 1; });
+}
+
 function viewSnap() {
   const groups = document.getElementById("groups");
+  wireScrollWatch();
   const focus = focusSnap();
   const key = anchorKey(groups, focus);
   const at = key ? findKey(groups, key) : null;
   return {
     groups,
     top: groups ? groups.scrollTop : 0,
+    seen: scrollSeen,
     focus,
     key,
     at: at ? at.getBoundingClientRect().top : 0,
@@ -151,6 +170,13 @@ function viewSnap() {
 function viewBack(snap) {
   if (!snap || !snap.groups) return;
   const groups = snap.groups;
+  // Человек листал, пока летел ответ: место у списка теперь его, а не наше.
+  // Возврат снимка тут и есть тот рывок, на который жалуются («экран
+  // дёргается в момент обновления»).
+  if (snap.seen !== undefined && scrollSeen !== snap.seen) {
+    focusBack(snap.focus);
+    return;
+  }
   // Прокрутку возвращать приходится тем экранам, которые собираются целиком:
   // опустевший список сбрасывает её в ноль. Перерисованный по месту её и не
   // терял, и присваивание тут ничего не меняет.
@@ -694,8 +720,12 @@ function rowChips(project, row) {
   // состояние съедали строку, в которой и так тесно (замечание пользователя).
   // На экране задачи чип остаётся: там место есть, и читают его глазами, а не
   // наводят мышь.
-  if (row.fail) chips.push(el("span", "chip c-block", "провал: " + row.fail));
-  if (row.block) chips.push(el("span", "chip c-block", "блок: " + row.block));
+  // Причина провала и причина блока это фразы человека, а не слово-метка: в
+  // строке они режутся кромкой, а целиком приходят подсказкой. Нерезаный чип
+  // уносил строку за край экрана, и раздел уезжал вбок горизонтальной
+  // прокруткой (замечание пользователя про мобильный вид).
+  if (row.fail) chips.push(withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail));
+  if (row.block) chips.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const check = checkChip(row);
   if (check) chips.push(check);
   return chips;
@@ -1367,6 +1397,23 @@ function boardKindBar(project, kind) {
   }
   return bar;
 }
+
+// Отпечаток нарисованной доски: строки как они есть, число живых работ (по
+// нему стоит бадж таба) и список подписок (из него собрана кнопка запуска). Всё
+// прочее в ответе ручки экрана не касается, и класть его в отпечаток значит
+// перерисовывать список от чужого движения: время последнего хода работы
+// меняется каждые несколько секунд, а строки задач от него не зависят.
+function boardPaintSign(board, works) {
+  const rows = [];
+  for (const sec of board.sections || []) {
+    for (const row of sec.rows || []) rows.push(JSON.stringify(row));
+  }
+  return rows.join("\n") + "|" + ((works || []).length) + "|" + harnessSign() +
+    "|" + (freshRow || "");
+}
+
+// Что нарисовано на доске сейчас: экран и отпечаток его данных.
+let boardPainted = { screen: "", sign: "" };
 
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
@@ -3079,8 +3126,8 @@ async function renderTask(project, works, id, pre) {
   if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
-  if (row.fail) tail.push(el("span", "chip c-block", "провал: " + row.fail));
-  if (row.block) tail.push(el("span", "chip c-block", "блок: " + row.block));
+  if (row.fail) tail.push(withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail));
+  if (row.block) tail.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const check = checkChip(row);
   if (check) tail.push(check);
 
@@ -6744,6 +6791,13 @@ function planList(plan) {
       : it.state === "in_progress" ? ">" : ""));
     row.append(el("span", "ptext2",
       it.state === "in_progress" && it.active ? it.active : it.text));
+    // Работа субагента помечена: в файле плана такого пункта нет вовсе, он
+    // собран по боковому журналу розданной работы, и человек, сверяющий кольцо
+    // с планом, иначе читает его чужим (живой разбор сессии devkit-2e).
+    if (it.src === "sub") {
+      row.append(withTip(el("span", "psub", "субагент"),
+        "пункт собран по боковому журналу розданной работы, а не написан планом сессии"));
+    }
     box.append(row);
   }
   return box;
@@ -7416,19 +7470,13 @@ const STUCK_ASK_WORD = "ждёт ответа в терминале";
 
 function stuckNote(project, st, word) {
   const note = el("div", "cnote stuckn");
-  if (word === STUCK_ASK_WORD) {
-    // Вопрос клиента панель показывает кнопками и отвечает на него сама, и
-    // звать человека в терминал незачем. Плашка остаётся только на том случае,
-    // когда вопрос с панели не прочитался (виджет без подсказки навигации), и
-    // говорит она ровно об этом: гасит её сам блок вопроса, как только тот
-    // соберётся (решение пользователя).
-    note.append(el("b", "", "Клиент ждёт ответа, а вопрос не прочитался."));
-    const tmux = (st.entry && st.entry.tmux) || "";
-    note.append(el("span", "", "Агент стоит на вопросе, но собрать по нему кнопки " +
-      "панель не смогла: виджет не печатает подсказки навигации, по которой его узнают." +
-      (tmux ? " Сам вопрос виден в окне сессии " + tmux + "." : "")));
-    return note;
-  }
+  // Вопрос клиента панель показывает кнопками и отвечает на него сама, и
+  // плашки третьего рода тут больше нет вовсе: человеку она ничего не
+  // объясняла и ничего не предлагала, а вылезала и на отвеченном опросе
+  // (решение пользователя, живой случай chat-97). Что виджет не разобрался,
+  // это наш повод чинить разбор, и говорится он строкой в журнал дашборда, а
+  // не плашкой человеку. Признак ожидания в строке сессии остаётся как был.
+  if (word === STUCK_ASK_WORD) return null;
   note.append(el("b", "", "Чат завис (" + word + ")."));
   note.append(el("span", "", "Ход агента стоит, реплики копятся в очереди, " +
     "которую уже некому разобрать. Нажмите продолжить: зависший процесс снимется, " +
@@ -8158,6 +8206,8 @@ function chatPanel(project, st) {
   // Плашка ожидания и блок вопроса это два ответа на один вопрос человека, и
   // стоять им вместе незачем: собранный блок гасит плашку, а вернётся она,
   // только если вопрос перестанет читаться.
+  // Плашки третьего рода тут больше нет: stuckNote отдаёт по нему пустоту, и
+  // гасить её блоку вопроса незачем. Клин остаётся плашкой со своей кнопкой.
   const stuckBox = stuck ? stuckNote(project, st, stuck) : null;
   if (stuckBox) wrap.append(stuckBox);
   const busy = makeBusy(project, wrap);
@@ -8191,7 +8241,7 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
-  watchClientAsk(project, st, askBox, stuckBox);
+  watchClientAsk(project, st, askBox);
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -8575,7 +8625,7 @@ const ASK_MOVE = 400;
 // переспрашивает сервер. Снимок панели tmux стоит подпроцесса, поэтому ходит
 // опрос только у разговора с живой tmux-сессией дашборда: у чужого окна
 // спрашивать нечего и нечем.
-function watchClientAsk(project, st, box, stuckBox) {
+function watchClientAsk(project, st, box) {
   const sid = st.sid;
   if (!sid || !st.entry || !st.entry.tmux) return;
   let stop = false;
@@ -8585,9 +8635,6 @@ function watchClientAsk(project, st, box, stuckBox) {
     const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
     if (stop) return;
     const ask = (r.ok && r.body.ask) || null;
-    // Плашка «клиент ждёт ответа» нужна ровно до того мига, как вопрос собран
-    // кнопками: дальше она повторяет блок и зовёт туда, куда идти не надо.
-    if (stuckBox) stuckBox.hidden = Boolean(ask && (ask.options || []).length);
     paintClientAsk(project, st, box, ask, tick);
     // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
     // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
@@ -10878,24 +10925,43 @@ function renderHome(projects) {
 // Вид работы словами: чипы отвечают, кто её ведёт и чем она видна. Цель
 // названа целью и в интерактивном окне, потому что переписка открыта ровно у
 // неё.
-function workChips(project, w) {
-  const chips = [el("span", "chip", project)];
-  // Происхождение сессии стоит чипом, а не одной лишь подсказкой строки:
-  // вложенных табов «Дашборд» и «Прочие» больше нет, список один, и различать
-  // их надо в самой строке (решение пользователя).
+// Чипы строки сессии: только то, чего не говорит ничто другое в той же
+// строке. Прежде их было шесть, и разбор с человеком снёс пять: проект
+// повторял таб доски, «агент цели» повторял название работы, «интерактивная
+// сессия» не значила ничего (headless-заходов в списке и так не видно),
+// «разговор о задаче» ушёл словом к номеру задачи, а состояние несут кружок и
+// давность. Осталось то, ради чего на таб и заходят: чем работа идёт
+// (подписка и модель) и почему у неё нет кнопки закрытия.
+function workChips(w) {
+  const chips = [];
+  // Внешняя сессия это единственный намёк на то, почему у строки нет кнопки:
+  // слова тут те же, что в хвосте строки, чтобы одно и то же не объяснялось
+  // двумя разными способами (решение пользователя).
   if (!agentOwn(w)) {
-    chips.push(withTip(el("span", "chip", "мимо дашборда"),
-      "сессия поднята не дашбордом: остановить работу можно там, где она поднята"));
+    chips.push(withTip(el("span", "chip", "внешняя"), workNoDropSay(w).tip));
   }
-  if (w.kind === "goal") chips.push(el("span", "chip c-goal", "агент цели"));
-  // Состояние работы («сессии нет» у поднятой мимо дашборда) сказано чипом
-  // состояния рядом, и второго чипа про то же тут больше нет.
-  if (w.talk) {
-    chips.push(withTip(el("span", "chip", "разговор о задаче"),
-      "чат задачу не ведёт: строка на доске от него своей не становится"));
-  } else if (w.via === "session") chips.push(el("span", "chip", "интерактивная сессия"));
-  else if (w.kind !== "goal") chips.push(el("span", "chip", "конвейер задачи"));
+  // Чем работа идёт: подписка и модель. Ради этого на таб и заходят, когда на
+  // машине две подписки: работа на glm и работа на подписке по умолчанию
+  // выглядели одинаково, а платятся разной квотой (замечание пользователя).
+  // Подписка стоит только там, где она известна честно: у окна, поднятого мимо
+  // дашборда в чужом доме, её взять неоткуда, и тогда остаётся одна модель.
+  if (w.harness) {
+    chips.push(withTip(el("span", "chip", w.harness),
+      "подписка, чьей квотой платится работа: узнана по дому её журнала"));
+  }
+  if (w.model) {
+    chips.push(withTip(el("span", "chip", w.model),
+      w.harness ? "модель работы на подписке " + w.harness : "модель работы"));
+  }
   return chips;
+}
+
+// Род работы словом у номера задачи: разговор о задаче её не ведёт, строка на
+// доске от него своей не становится. Прежде это был чип, и он читался плохо: у
+// ведущей работы парного чипа не было вовсе, и разница висела в воздухе
+// (разбор пользователя).
+function workKindWord(w) {
+  return w && w.talk ? "разговор" : "";
 }
 
 // Подпись под заголовком: ID, статус со строки доски, чем работа видна и имя
@@ -11131,16 +11197,22 @@ function agentRow(project, w, now) {
   const addr = workChatAddr(w);
   const tips = [];
   if (addr) tips.push("Открыть разговор этой работы");
-  if (!agentOwn(w)) {
-    tips.push("сессия поднята мимо дашборда: остановить работу можно там, где она поднята");
-  }
+  // Слова про внешнюю сессию тут те же, что у чипа и у хвоста строки: одно и
+  // то же не должно объясняться тремя способами (решение пользователя).
+  if (!agentOwn(w)) tips.push(workNoDropSay(w).tip);
   if (tips.length) row.title = tips.join(". ");
   if (addr) {
     row.classList.add("atalk");
     row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
   }
   const said = workLive(w);
-  row.append(el("span", "dot " + said.dot));
+  // Кружок несёт состояние цветом и бегом, и он же говорит его словами: чип
+  // «активна» рядом повторял то же самое третий раз и из строки убран
+  // (разбор пользователя), а знание никуда не делось.
+  const dot = el("span", "dot " + said.dot);
+  const dotAge = workMoved(w, now);
+  withTip(dot, said.word + (dotAge ? ", последний ход " + dotAge + " назад" : ""));
+  row.append(dot);
   const box = el("div", "ab");
   const line = el("div", "l1");
   // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
@@ -11148,14 +11220,20 @@ function agentRow(project, w, now) {
   // Подпись это задача, а у сессии без задачи заголовок чата, который сервер
   // берёт той же лестницей, что список чатов (замечание 1 восьмого круга).
   line.append(el("span", "tt", w.title || w.id || w.note || "чат без задачи"));
-  // Состояние стоит первым чипом: ради него на этот экран и заходят.
-  const liveChipNode = workLiveChip(w, now);
+  // Состояние стоит первым чипом, кроме идущей работы: у неё состояние несут
+  // бегущий кружок строки и время работы справа, и слово «активна» между ними
+  // было третьим указателем на одно и то же (разбор пользователя).
+  const liveChipNode = workLive(w) === WORK_LIVE.busy ? null : workLiveChip(w, now);
   if (liveChipNode) line.append(liveChipNode);
-  for (const chip of workChips(project, w)) line.append(chip);
+  for (const chip of workChips(w)) line.append(chip);
   // Подпись собирается узлами, а не одной строкой: номер задачи в ней это
   // ссылка, и склеенный текст ссылкой быть не может.
   const sub = el("div", "l2");
   if (w.id) sub.append(workTaskLink(project, w.id));
+  // Род работы стоит словом сразу у номера: «DK-397, разговор» против номера
+  // без приписки у той работы, которая задачу ведёт.
+  const kind = workKindWord(w);
+  if (w.id && kind) sub.append(document.createTextNode(", " + kind));
   const tail = workSub(w);
   if (tail) sub.append(document.createTextNode((w.id ? ", " : "") + tail));
   box.append(line, sub);
@@ -11202,13 +11280,14 @@ function agentRow(project, w, now) {
     // Состояния сессии не видно, и объясняет это чип состояния со своей
     // подсказкой: второй раз о том же в хвосте строки говорить незачем.
   } else {
-    // Снимать нечего, и сказано это словами: пустой хвост строки читался как
+    // Кнопки нет, и сказано это словами: пустой хвост строки читался как
     // недоделанный экран, человек искал кнопку и не находил (замечание
-    // пользователя). Приписка короткая нарочно, разбор в подсказке: длинная
-    // занимала полстроки и ломала ряд.
-    // Слова тут не повторяют чип происхождения («мимо дашборда»), который в
-    // строке уже стоит: чип говорит, чья сессия, а приписка чего с ней нельзя.
-    acts.append(withTip(el("span", "anone", "снимать нечем"), workNoDropWhy(w)));
+    // пользователя). Слова объясняют, где работу закрывают, а не то, чего
+    // дашборд не может: «снимать нечем» человек читать не умел. Приписка
+    // короткая нарочно, разбор в подсказке: длинная занимала полстроки и
+    // ломала ряд.
+    const say = workNoDropSay(w);
+    acts.append(withTip(el("span", "anone", say.word), say.tip));
   }
   row.append(acts);
   return row;
@@ -11240,13 +11319,30 @@ function workDrops(w) {
 
 // Почему у строки нет действия: сказано подсказкой, чтобы человек не искал
 // кнопку, которой тут быть не может.
-function workNoDropWhy(w) {
+// Что стоит в хвосте строки вместо кнопки и что об этом сказано подсказкой.
+// Прежде там стояло «снимать нечем»: слова эти человеку ничего не объясняли
+// («совершенно непонятная формулировка»), а сказать надо не о бессилии
+// дашборда, а о том, где эту работу закрывают. Случаев три, и они разные.
+function workNoDropSay(w) {
   if (w && w.via === "registry") {
-    return "Цикл цели поднят мимо дашборда: его tmux-сессии тут нет, " +
-      "и снять его можно там, где он запущен";
+    return {
+      word: "идёт вне дашборда",
+      tip: "Цикл цели запущен вне дашборда: его tmux-сессии дашборд не видит, " +
+        "и остановить цикл можно там, где он запущен",
+    };
   }
-  return "Эту сессию поднимал не дашборд (окно vscode, терминал): её имени в tmux " +
-    "он не знает, и закрыть окно можно только там, где оно открыто";
+  if (!agentOwn(w)) {
+    return {
+      word: "поднята вне дашборда",
+      tip: "Сессию поднимал не дашборд (окно vscode, свой терминал): закрывается " +
+        "она в своём окне, там же, где открыта",
+    };
+  }
+  return {
+    word: "имени сессии нет в реестре",
+    tip: "Сессию поднимал дашборд, но имени её tmux-сессии в реестре не осталось: " +
+      "закрыть её отсюда нечем, а в своём окне она закрывается как обычно",
+  };
 }
 
 // Своя работа это та, чью сессию поднял дашборд: признак приезжает работой
@@ -11303,7 +11399,7 @@ function workKey(w) {
 
 function workSign(w, now) {
   return [w.live || "", w.moved || 0, w.title || "", w.sect || "", w.note || "",
-    w.model || "", w.talk ? 1 : 0, workMoved(w, now)].join("|");
+    w.model || "", w.harness || "", w.talk ? 1 : 0, workMoved(w, now)].join("|");
 }
 
 // Строки таба сессий: рисуются по месту, узел за узлом. Полная пересборка
@@ -11688,6 +11784,10 @@ async function paint() {
   // обновление того же экрана (фокус окна, опрос) стирало бы ею уже собранную
   // форму.
   const wasScreen = shownScreen;
+  // Переход это всегда сборка заново: под тем же ключом экрана лежит теперь
+  // разметка соседнего раздела (доска сменилась накопителем и вернулась), и
+  // отпечаток прошлой отрисовки к ней не относится.
+  if (screen !== wasScreen) boardPainted = { screen: "", sign: "" };
   shownScreen = screen;
   // Запрос в ключ экрана не входит нарочно (набор буквы это не переход), но
   // помнить набранное всё равно надо: по нему обновление отличает «сменился
@@ -11910,6 +12010,18 @@ async function paint() {
   // осталось подсказкой на самом названии проекта: там его берут, когда надо.
   document.getElementById("psub").textContent = "задачи проекта";
   headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""));
+  // Данные те же, что и в прошлый заход: списка не касаемся вовсе. Строку
+  // задачи двигает человек, а не время, и перебирать сотню строк каждые
+  // три секунды (столько ходит круг у живой работы) незачем: перерисовка по
+  // месту дёшева, но не бесплатна, а пока она идёт, список стоит под пальцем
+  // (замечание пользователя про дёрганье при листании).
+  const paintSign = boardPaintSign(board, r.body.works || []);
+  const groupsBox = document.getElementById("groups");
+  if (boardPainted.screen === screen && boardPainted.sign === paintSign &&
+    groupsBox && groupsBox.children.length) {
+    return;
+  }
+  boardPainted = { screen, sign: paintSign };
   renderBoard(current.name, board, r.body.works || []);
 }
 

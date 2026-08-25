@@ -383,15 +383,43 @@ func TestStaticAgentsScreen(t *testing.T) {
 	if strings.Index(row, `el("span", "tt", w.title`) > strings.Index(row, "workChips(") {
 		t.Error("строка начинается не с заголовка задачи")
 	}
-	for _, want := range []string{"агент цели", "конвейер задачи", "интерактивная сессия"} {
-		if !strings.Contains(funcBody(t, app, "function workChips("), want) {
-			t.Errorf("вид работы %q не назван чипом", want)
+	// Состав чипов строки разобран с человеком и урезан до того, чего не
+	// говорит ничто другое в той же строке: проект повторял таб доски, «агент
+	// цели» повторял название работы, «интерактивная сессия» не значила ничего
+	// (headless-заходов в списке и так не видно), «разговор о задаче» ушёл
+	// словом к номеру задачи, а состояние несут кружок и давность.
+	chips := funcBody(t, app, "function workChips(")
+	for _, gone := range []string{"агент цели", "конвейер задачи", "интерактивная сессия",
+		"разговор о задаче", "мимо дашборда", `el("span", "chip", project)`} {
+		if strings.Contains(chips, gone) {
+			t.Errorf("чип %q вернулся в строку сессии: состав разобран с человеком", gone)
+		}
+	}
+	for _, want := range []string{`"внешняя"`, "w.harness", "w.model"} {
+		if !strings.Contains(chips, want) {
+			t.Errorf("в строке сессии нет %s: остаться должны подписка, модель и признак внешней", want)
 		}
 	}
 	// Состояние работы чипом вида больше не называется: о нём говорит чип
 	// состояния рядом, словом из общего словаря.
-	if strings.Contains(funcBody(t, app, "function workChips("), "сессия кончилась") {
+	if strings.Contains(chips, "сессия кончилась") {
 		t.Error("состояние работы вернулось в чип вида: о нём говорит чип состояния")
+	}
+	// Род работы стоит словом у номера задачи, а не чипом.
+	if !strings.Contains(funcBody(t, app, "function workKindWord("), `"разговор"`) {
+		t.Error("род работы не назван словом у номера задачи")
+	}
+	// Идущая работа слова в строке не носит: о ней говорят кружок и время.
+	if !strings.Contains(funcBody(t, app, "function agentRow("), "WORK_LIVE.busy ? null") {
+		t.Error("чип «активна» вернулся в строку сессии: состояние несут кружок и давность")
+	}
+	// Одно и то же не объясняется двумя способами: и чип, и хвост строки, и
+	// подсказка самой строки берут слова у одного места.
+	if strings.Count(app, "workNoDropSay(") < 3 {
+		t.Error("объяснение отсутствия кнопки разъехалось по разным местам")
+	}
+	if strings.Contains(app, `"снимать нечем"`) {
+		t.Error("прежняя непонятная приписка «снимать нечем» вернулась в строку")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, want := range []string{".arow{", ".aacts{", ".atime{", ".arow{flex-wrap:wrap"} {
@@ -437,7 +465,10 @@ func TestStaticAgentsRowGates(t *testing.T) {
 	if !strings.Contains(running, `w.via === "tmux"`) || !strings.Contains(running, "!w.talk") {
 		t.Error("идущий конвейер узнаётся не по tmux-работе без разговора")
 	}
-	if !strings.Contains(row, "сессия поднята мимо дашборда") {
+	// Почему у строки нет стопа, объясняет одно место на все три точки показа
+	// (чип, хвост строки, подсказка самой строки): разные слова про одно и то
+	// же человек читал как разные причины.
+	if !strings.Contains(row, "workNoDropSay(w).tip") {
 		t.Error("реестровая работа не объясняет, почему стопа у неё нет")
 	}
 }
@@ -1409,5 +1440,85 @@ func TestWorkLiveState(t *testing.T) {
 	}
 	if got := live(); got.Live != workWait {
 		t.Errorf("ожидание ответа посчитано состоянием %q, ждал %q", got.Live, workWait)
+	}
+}
+
+// Тело страницы вбок не ездит никогда, а широкое содержимое ужимается внутри
+// своего места. Раздел доски это свой скроллер (.groups просит overflow-y, а
+// браузер делает прокручиваемой и вторую ось), и уезжал вбок именно он:
+// причина блока приезжает целой фразой человека, а чип её не резал вовсе
+// (замечание пользователя про мобильный вид, живая строка DK-466 уносила
+// раздел на 385 точек). Тем же способом уносил раздел неразрывный путь в
+// подписи сессии и в тексте вопроса клиента.
+//
+// Меряется настоящим движком и на всех трёх табах доски: разбором правил
+// стилей такое не берётся, ширина складывается из сетки, чипов и слов.
+func TestBoardNarrowNoSideScroll(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("движка нет: замер ширины пропущен")
+	}
+	dir, page := chromeStand(t, "narrow_scroll.js")
+	for _, tab := range []struct{ key, word string }{
+		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
+		{"ask", "вопрос клиента"},
+	} {
+		for _, win := range []string{"390,844", "430,932"} {
+			got := chromeMeasure(t, chrome, dir, page, win, tab.key)
+			if got["gclient"] <= 0 {
+				t.Fatalf("замер %s на %s не собрался: %v", tab.word, win, got)
+			}
+			if got["over"] > 0 {
+				// widest это на сколько дальше правой кромки раздела уехала
+				// самая широкая коробка: по нему видно, что ужимать. Имя
+				// виноватого стенд кладёт в заголовок окна полем who, его
+				// читают глазами при разборе.
+				t.Errorf("на экране %s раздел «%s» ездит вбок на %d точек "+
+					"(самая широкая коробка за кромкой на %d): содержимое обязано "+
+					"ужиматься внутри своего места", win, tab.word, got["over"], got["widest"])
+			}
+			// Тело страницы не ездит вбок ни при каких условиях.
+			if got["doc"] > got["screen"] {
+				t.Errorf("на экране %s (%s) вбок поехала сама страница: %d при окне %d",
+					win, tab.word, got["doc"], got["screen"])
+			}
+		}
+	}
+}
+
+// Причина блока и причина провала приезжают в строку целой фразой человека, и
+// чип с ними обязан резаться кромкой своего места: нерезаный уносил раздел
+// доски в горизонтальную прокрутку на 385 точек при окне 390 (замер живой
+// доски devkit, строка DK-466). Полный текст при этом не теряется, он уходит
+// в подсказку.
+//
+// Замер настоящим движком (TestBoardNarrowNoSideScroll) эту пару не
+// воспроизводит: в одиночной строке стенда чип ужимается сам, а на живой доске
+// он вставал во всю длину. Поэтому тут сторожится сам рубеж: класс на месте и
+// в разметке, и в стилях.
+func TestBoardBlockChipClipped(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block)`,
+		`withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail)`,
+	} {
+		if !strings.Contains(app, want) {
+			t.Errorf("причина в строке доски идёт нерезаным чипом без подсказки: нет %q", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	rule := ""
+	if at := strings.Index(css, ".cwhy{"); at >= 0 {
+		if end := strings.Index(css[at:], "}"); end > 0 {
+			rule = css[at : at+end]
+		}
+	}
+	if rule == "" {
+		t.Fatal("правила .cwhy в стилях нет: чип причины резать нечем")
+	}
+	for _, want := range []string{"max-width:100%", "overflow:hidden", "text-overflow:ellipsis"} {
+		if !strings.Contains(rule, want) {
+			t.Errorf("чип причины не режется кромкой: в .cwhy нет %s (%s)", want, rule)
+		}
 	}
 }

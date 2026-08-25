@@ -90,13 +90,13 @@ for (const which of ["tmux", "registry"]) {
   // Происхождение сессии видно чипом: список один, вложенных табов «Дашборд» и
   // «Прочие» больше нет, и различать строки надо в них самих.
   const marks = allByClass(reg, "chip").map((c) => c.textContent);
-  if (!marks.includes("мимо дашборда")) {
+  if (!marks.includes("внешняя")) {
     fail("чужая сессия не помечена чипом: " + JSON.stringify(marks));
   }
-  if (allByClass(rowOf(works.tmux), "chip").map((c) => c.textContent).includes("мимо дашборда")) {
+  if (allByClass(rowOf(works.tmux), "chip").map((c) => c.textContent).includes("внешняя")) {
     fail("своя сессия помечена чужой");
   }
-  if (!String(reg.title).includes("поднята мимо дашборда")) {
+  if (!String(reg.title).includes("вне дашборда")) {
     fail("подсказка строки не говорит, почему стопа нет: " + reg.title);
   }
 }
@@ -172,7 +172,7 @@ for (const which of ["tmux", "registry"]) {
     fail("вложенные табы остались на экране: " + said.slice(0, 300));
   }
   // Своя и чужая стоят в одном списке, различает их чип.
-  const alien = rows().filter((r) => allByClass(r, "chip").some((c) => c.textContent === "мимо дашборда"));
+  const alien = rows().filter((r) => allByClass(r, "chip").some((c) => c.textContent === "внешняя"));
   if (alien.length !== 2) {
     fail("чипом происхождения помечены не те строки: " + alien.map((r) => dump(r)).join(" | "));
   }

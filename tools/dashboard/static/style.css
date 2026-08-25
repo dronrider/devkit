@@ -116,6 +116,10 @@ a:hover{text-decoration:underline}
 .chip{display:inline-flex;align-items:center;gap:6px;height:21px;padding:0 8px;border-radius:6px;font:500 11.5px var(--sans);background:var(--bg3);color:var(--tx2);white-space:nowrap}
 .c-check{background:color-mix(in oklab,var(--check) 16%,transparent);color:var(--check)}
 .c-block{background:color-mix(in oklab,var(--block) 16%,transparent);color:var(--block)}
+/* причина провала и блока это фраза человека, а не слово-метка: в строке она
+   режется кромкой своего места, а целиком приходит подсказкой. Нерезаный чип
+   с целым предложением уносил строку за край экрана, и раздел ездил вбок */
+.cwhy{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:21px}
 .c-goal{background:color-mix(in oklab,var(--goal) 16%,transparent);color:var(--goal)}
 /* ожидание человека: свой цвет, а не цвет блока, потому что припаркованная
    строка носит оба чипа сразу и они не должны сливаться */
@@ -474,7 +478,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .ab{flex:1;min-width:0}
 .ab .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .ab .l1 .tt{font:500 14px var(--sans);color:var(--tx)}
-.ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3)}
+/* подпись сессии несёт путь и команду без пробелов: неразрывный кусок шире
+   строки уносил раздел в горизонтальную прокрутку, поэтому такие слова
+   разрываются по месту */
+.ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3);overflow-wrap:anywhere}
 .aacts{display:flex;align-items:center;gap:9px;flex:none}
 .aacts .stale{max-width:210px;white-space:normal;text-align:right}
 .atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap}
@@ -536,7 +543,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .turn{margin-bottom:14px}
 .turn .th{font:500 11.5px var(--mono);color:var(--tx3);margin-bottom:5px}
 .turn .tb{font:400 13px/1.6 var(--sans);color:var(--tx);overflow-wrap:anywhere}
-.tool{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin:8px 0;font:400 12px var(--mono);color:var(--tx2);overflow:hidden}
+.tool{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;margin:var(--feedgap) 0 0;font:400 12px var(--mono);color:var(--tx2);overflow:hidden}
 .tool b{font-weight:600;color:var(--tx);flex:none}
 .tool span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .think{font:400 12px var(--sans);color:var(--tx3);margin:8px 0}
@@ -549,6 +556,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* экран переписки (макет «04 Переписка»): пузыри реплик, свои справа,
    ожидающие витка тем же тоном; поле ввода с честной надписью */
 .chatwrap{max-width:760px;margin-top:16px;padding-bottom:8px}
+/* Промежуток между записями ленты один на все их виды: реплика, ход
+   инструмента и заголовок дня стояли с разными отступами (14, 8 и 14 точек), и
+   лента читалась рвано, а над свежей репликой зиял лишний воздух (замечание
+   пользователя). Токен тут один, и правится он одним местом. */
+:root{--feedgap:9px}
 .msgs{display:flex;flex-direction:column}
 /* лента чата своей прокруткой: экран открывается концом разговора, и поле
    ввода под лентой видно сразу, без листания страницы вниз */
@@ -557,11 +569,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .chatfeed{max-height:52vh;overflow-y:auto}
 .chatfeed .mlist{margin-top:auto}
 .mlist{display:flex;flex-direction:column}
-.day{display:flex;align-items:center;gap:12px;font:500 11px var(--sans);color:var(--tx3);margin-top:14px}
+/* первая запись ленты воздуха сверху не просит: он там ничего не отделяет */
+.mlist>:first-child{margin-top:0}
+.day{display:flex;align-items:center;gap:12px;font:500 11px var(--sans);color:var(--tx3);margin-top:var(--feedgap)}
 .day i{flex:1;height:1px;background:var(--line)}
 /* пузырь реплики шириной со всю запись ленты: соседние блоки ходов инструментов
    занимают колонку целиком, и узкий пузырь рядом с ними ломал общий край */
-.msg{max-width:100%;display:flex;flex-direction:column;gap:5px;margin-top:14px}
+.msg{max-width:100%;display:flex;flex-direction:column;gap:5px;margin-top:var(--feedgap)}
 .msg .bb{padding:12px 16px;border-radius:13px;font:400 13.5px/1.6 var(--sans);color:var(--tx);background:var(--bg1);border:1px solid var(--line);overflow-wrap:anywhere}
 /* переносы строк внутри пузыря видны: разбор реплики уже расставил их в абзацах
    (mdRender), а HTML без pre-wrap схлопывал их в пробелы, и список из реплики
@@ -964,6 +978,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* число в середине кольца: ход по этапам стоит дробью в два яруса, и каждому
    числу достаётся вся ширина просвета, а не половина с косой чертой. Оттого и
    шрифт крупнее прежнего строчного */
+/* пометка работы субагента в списке плана: в файле плана такого пункта нет,
+   он собран по боковому журналу розданной работы */
+.psub{margin-left:6px;padding:0 5px;border-radius:5px;background:var(--bg3);font:500 9.5px var(--sans);color:var(--tx3);white-space:nowrap}
 .rnum{font:600 10px var(--mono);fill:var(--tx)}
 /* дробь за сессию бывает трёхзначной с обеих сторон (сотня этапов за три дня
    делегирования): такому ярусу кегль сбавлен, иначе цифры упираются в дугу */
@@ -1495,6 +1512,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .caskst{margin:0 0 8px;flex-wrap:wrap}
 /* каркас соседнего шага: встаёт под переехавшим подчёркиванием, пока едет
    снимок панели клиента */
+/* текст вопроса клиента приходит его словами, и путь без пробелов в нём
+   обычное дело: длинное слово разрывается, а не уносит блок вбок */
+.casks{overflow-wrap:anywhere}
 .caskwait{display:flex;align-items:baseline;gap:7px;padding:8px 0 4px;color:var(--tx3);font:400 12.5px var(--sans)}
 .caskwait b{font:600 12.5px var(--sans);color:var(--tx2)}
 /* «ответ есть» у отвеченного шага это подпись, а не счётчик: цифры у шага нет */

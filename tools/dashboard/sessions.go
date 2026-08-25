@@ -142,6 +142,38 @@ func harnessRoots(view HarnessView) map[string]string {
 	return out
 }
 
+// harnessRootsOwn это та же карта домов, дополненная домами, где журнал ведёт
+// подписка по умолчанию: настоящий дом человека и дом самого дашборда, если он
+// свой (второй экземпляр POC живёт под своим HOME). Вывод тут не догадка:
+// вторая подписка всегда уводит журналы в своё хозяйство каталогом
+// конфигурации, и транскрипт, лежащий вне её дома, ей принадлежать не может.
+// Без этого подписка оставалась пустой у всех работ, кроме второй, то есть
+// ровно там, где её чаще всего и спрашивают (замечание пользователя про строки
+// таба сессий).
+func (s *server) harnessRootsOwn() map[string]string {
+	view := s.harnesses()
+	out := harnessRoots(view)
+	def := ""
+	for _, h := range view.Harnesses {
+		if h.Default {
+			def = h.Name
+		}
+	}
+	if def == "" {
+		return out
+	}
+	for _, home := range []string{realHome(), s.cfg.Home} {
+		if home == "" {
+			continue
+		}
+		root := filepath.Join(home, ".claude", "projects")
+		if _, taken := out[root]; !taken {
+			out[root] = def
+		}
+	}
+	return out
+}
+
 // sessionInfo это строка списка сессий: id, время последней записи, ветка и
 // первая реплика человека, по ней сессию узнают в списке. Tree это боковое
 // дерево, в котором шёл разговор (у главного дерева пусто): двух разговоров
@@ -489,6 +521,10 @@ const groomOrderPrefix = "Проведи груминг "
 // карточка о той же задаче читалась бы как два агента вместо одного.
 func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow, busy map[string]bool) []Work {
 	works := []Work{}
+	// Подписка работы узнаётся по дому её транскрипта, тем же способом, каким
+	// её узнаёт список чатов: своего поля у неё нет ни в реестре, ни в имени
+	// tmux-сессии.
+	roots := s.harnessRootsOwn()
 	cutoff := s.now().Add(-sessionLiveTTL)
 	binds := s.binds()
 	bySid, byTmux := s.livePeers()
@@ -567,7 +603,8 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: "session", Session: f.ID, Note: note, Talk: talk,
 			Own: tmux != "", Model: s.chatModel(f.ID, tmux),
-			Live: live, Moved: moved})
+			Harness: roots[f.root],
+			Live:    live, Moved: moved})
 	}
 	return works
 }
@@ -2253,7 +2290,17 @@ type planItem struct {
 	Text   string `json:"text"`
 	State  string `json:"state"`
 	Active string `json:"active,omitempty"`
+	// Src называет источник пункта, когда это не слова агента: sub значит, что
+	// пункт собран по боковому журналу субагента, а не написан планом. Пусто у
+	// пунктов самого плана. Без этого человек, сверяющий кольцо с файлом
+	// плана, видит в нём пункты, которых в файле нет, и читает это чужим
+	// планом (живой разбор сессии devkit-2e).
+	Src string `json:"src,omitempty"`
 }
+
+// planSrcSub это пункт, собранный по боковому журналу субагента: своих слов в
+// плане у него нет, он машинный след розданной работы.
+const planSrcSub = "sub"
 
 // planFromInput разбирает поле todos вызова TodoWrite.
 func planFromInput(input map[string]any) []planItem {
@@ -2668,7 +2715,9 @@ func withSubWorks(plan []planItem, subs []subWork) []planItem {
 			}
 		}
 		if hit < 0 {
-			out = append(out, sub.item)
+			own := sub.item
+			own.Src = planSrcSub
+			out = append(out, own)
 			continue
 		}
 		if sub.item.State == "in_progress" {
@@ -2687,6 +2736,10 @@ func withSubWorks(plan []planItem, subs []subWork) []planItem {
 func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 	var filePlan []planItem
 	var fileAt time.Time
+	// Начало сессии берётся у её же журнала первой записью: по нему запасной
+	// файл плана отличает свой от чужого, оставшегося под тем же именем
+	// tmux-сессии.
+	born := subStart(path)
 	// Домов тут два: настоящий дом человека, куда правило велит писать план, и
 	// дом самого дашборда. У второго экземпляра (POC) они разные, и смотреть
 	// надо в оба: свежий файл и побеждает.
@@ -2698,8 +2751,18 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		// Запасной адрес правила плана: сессия без CLAUDE_CODE_SESSION_ID
 		// (контур второй подписки) пишет план файлом имени своей tmux-сессии,
 		// а файла по sid у неё не заводится вовсе.
+		//
+		// Имя tmux-сессии это не имя разговора: дашборд переиспользует их
+		// (chat-1, chat-2, task-DK-100), и файл по такому имени вполне может
+		// быть чужим, оставшимся от прошлого жильца имени. Своим он считается
+		// только когда написан после начала самой сессии: раньше её начала
+		// написать её план было некому. Файл по sid этой проверки не просит,
+		// имя сессии не переиспользуется.
 		if plan == nil && tmux != "" {
-			plan, at = readPlanFile(planPath(dir, tmux))
+			own, ownAt := readPlanFile(planPath(dir, tmux))
+			if own != nil && (born.IsZero() || !ownAt.Before(born)) {
+				plan, at = own, ownAt
+			}
 		}
 		if plan != nil && at.After(fileAt) {
 			filePlan, fileAt = plan, at

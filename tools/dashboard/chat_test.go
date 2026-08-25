@@ -2076,3 +2076,79 @@ func TestAskEchoesFeed(t *testing.T) {
 		t.Errorf("пустая лента объявлена эхом")
 	}
 }
+
+// Клиент, по всем признакам стоящий на вопросе, а вопрос с панели не собрался:
+// плашки об этом человеку больше нет вовсе (она ничего не объясняла и ничего
+// не предлагала, а вылезала и на уже отвеченном опросе), и факт уходит строкой
+// в журнал дашборда. Это наш сигнал чинить разбор.
+func TestAskQuietGoesToLog(t *testing.T) {
+	e, c := chatEnv(t)
+	lc := &logCapture{}
+	e.s.logf = lc.log
+	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-25T14:59:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+	// Панель клиента без виджета: слова есть, а разбирать в кнопки нечего.
+	quiet := " Работаю дальше, вопросов нет.\n\n\u276f \n"
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(quiet)+`;;
+ls) printf 'chat-13\t1\t1786000000\n';;
+esac
+exit 0`)
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	text := body(t, doReq(t, c, "GET", at, ""))
+	if strings.Contains(text, `"ask"`) {
+		t.Fatalf("из нечитаемой панели собрался вопрос: %s", text)
+	}
+	if !lc.contains(t, "виджета в снимке панели не разобрать") {
+		t.Fatalf("про молчащий виджет не сказано в журнал: %v", lc.lines)
+	}
+	// Панель переспрашивает вопрос каждые несколько секунд: журнал не должен
+	// забиваться одной и той же строкой.
+	was := len(lc.lines)
+	body(t, doReq(t, c, "GET", at, ""))
+	if len(lc.lines) != was {
+		t.Fatalf("вторая строка про тот же молчащий виджет: %v", lc.lines[was:])
+	}
+	// Окно вышло: сказать снова можно, разбор так и не чинили.
+	e.s.now = func() time.Time { return now.Add(askQuietWindow + time.Minute) }
+	body(t, doReq(t, c, "GET", at, ""))
+	if len(lc.lines) == was {
+		t.Fatalf("после окна про молчащий виджет не сказано ни разу: %v", lc.lines)
+	}
+}
+
+// Разобранный виджет в журнал не пишется: чинить нечего, а строка про каждый
+// живой опрос забила бы журнал.
+func TestAskParsedStaysQuietInLog(t *testing.T) {
+	e, c := chatEnv(t)
+	lc := &logCapture{}
+	e.s.logf = lc.log
+	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-25T14:59:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+	pane := " Quick safety check: доверяешь каталогу?\n\n \u276f 1. Yes, I trust this folder\n" +
+		"   2. No, exit\n\n Enter to confirm \u00b7 Esc to cancel\n"
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(pane)+`;;
+ls) printf 'chat-13\t1\t1786000000\n';;
+esac
+exit 0`)
+
+	text := body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", ""))
+	if !strings.Contains(text, `"ask"`) {
+		t.Fatalf("живой виджет не разобрался: %s", text)
+	}
+	if lc.contains(t, "не разобрать") {
+		t.Fatalf("про разобранный виджет ушла жалоба в журнал: %v", lc.lines)
+	}
+}

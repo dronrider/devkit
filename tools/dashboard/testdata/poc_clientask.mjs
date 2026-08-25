@@ -308,35 +308,33 @@ const showAsk = async (next) => {
   }
 }
 
-// --- плашка ожидания гаснет, когда вопрос показан кнопками ---
-// Плашка звала человека в терминал командой tmux attach, пока ответить на
-// вопрос из панели было нечем. Теперь вопрос показан кнопками, и звать никуда
-// не надо: плашка гаснет, а остаётся она только там, где вопрос не прочитался
-// (решение пользователя).
+// --- нечитаемый виджет не рождает в ленте ничего ---
+// Плашка «клиент ждёт ответа, а вопрос не прочитался» стояла над диалогом и
+// человеку не говорила ничего: ни объяснения, ни действия, а вылезала и на уже
+// отвеченном опросе (решение пользователя, живой случай chat-97). Теперь этот
+// род стоящего чата в ленте не рисуется вовсе, а факт «виджет не разобрался»
+// уходит строкой в журнал дашборда (сторожит TestAskQuietGoesToLog).
 {
   const stuckSt = { addr: SID, sid: SID, project: "demo", chats: [], models: [],
     entry: { id: SID, state: "live", tmux: "chat-2", idle: true,
       stuck: "ждёт ответа в терминале" } };
-  now.ask = ask;
+  now.ask = null;
   const own = sandbox.chatPanel("demo", stuckSt);
   await settle();
-  const plate = byClass(own, "stuckn");
-  if (!plate) fail("плашки ожидания нет вовсе: " + dump(own).slice(0, 300));
-  const said = dump(plate).replace(/\s+/g, " ");
-  if (said.includes("tmux attach")) {
-    fail("плашка всё ещё зовёт в терминал командой: " + said.slice(0, 200));
+  if (byClass(own, "stuckn")) {
+    fail("плашка нечитаемого вопроса вернулась в ленту: " + dump(byClass(own, "stuckn")));
   }
-  if (!said.includes("не прочитался")) {
-    fail("плашка не говорит, что вопрос не читается: " + said.slice(0, 200));
+  const said = dump(own).replace(/\s+/g, " ");
+  for (const word of ["не прочитался", "tmux attach", "ждёт ответа в терминале"]) {
+    if (said.includes(word)) fail("слова плашки остались в панели: " + word);
   }
-  if (!plate.hidden) {
-    fail("плашка стоит рядом с собранным блоком вопроса: " + said.slice(0, 200));
-  }
-  // Вопрос перестал читаться: плашка возвращается, потому что сказать о
-  // стоящем клиенте больше нечем.
-  now.ask = null;
-  await settleMove();
-  if (plate.hidden) fail("плашка не вернулась, когда вопрос перестал читаться");
+  // Настоящий клин по-прежнему виден плашкой со своей кнопкой выхода: убран
+  // ровно третий род, а не весь механизм.
+  const wedgedSt = { addr: SID, sid: SID, project: "demo", chats: [], models: [],
+    entry: { id: SID, state: "live", tmux: "chat-2", idle: true, stuck: "терминал пропал" } };
+  const wedged = sandbox.chatPanel("demo", wedgedSt);
+  await settle();
+  if (!byClass(wedged, "stuckn")) fail("плашка клина пропала вместе с третьим родом");
 }
 
 // --- спрашивать нечего: блока нет вовсе ---

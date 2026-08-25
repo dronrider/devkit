@@ -198,8 +198,10 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	}
 	// Модель работы приезжает вместе с ней: по ней фильтруется раздел
 	// «Агенты», и у сессии без своей записи это модель по умолчанию.
+	// Подписка приезжает вместе с работой: узнаётся она по дому транскрипта, а
+	// журнал этой сессии лежит в доме прогона, то есть у подписки по умолчанию.
 	want := Work{Kind: "session", Via: "session", Session: "talker",
-		Note: "а что там с XR-4", Model: chatModelDefault}
+		Note: "а что там с XR-4", Model: chatModelDefault, Harness: "перваяtest"}
 	if bareWorks(works)[0] != want {
 		t.Errorf("работа:\n%+v\nожидал:\n%+v", works[0], want)
 	}
@@ -218,7 +220,8 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	// Своей она не считается: имени tmux-сессии в записи нет, значит подняли её
 	// мимо дашборда, и в разделе «Агенты» ей место в табе прочих.
 	want := Work{ID: "XR-4", Kind: "task", Via: "session", Session: "worker",
-		Title: "Начатая задача", Sect: "in-progress", Model: chatModelDefault}
+		Title: "Начатая задача", Sect: "in-progress", Model: chatModelDefault,
+		Harness: "перваяtest"}
 	if len(works) != 1 || bareWorks(works)[0] != want {
 		t.Fatalf("работа:\n%+v\nожидал:\n%+v", works, want)
 	}
@@ -401,5 +404,17 @@ func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
 	}
 	if _, hit := own["XR-9"]; !hit {
 		t.Errorf("исполнительская сессия строку не присвоила: %+v", own)
+	}
+}
+
+// Прогон стендов дашборда не пишет в живой реестр сессий. Стенды зовут
+// настоящий taskctl, тот отмечает работу сессии строкой в реестре, и берётся
+// ID сессии из окружения: прогон из живого разговора дописывал её именем
+// записи деревьями /var/folders/... в живой ~/.devkit/sessions.log, реестр
+// забывал имя tmux этой сессии, и дашборд переставал видеть, чем её снимать
+// (живой случай chat-DK-397-1). ID снимает TestMain на весь бинарь прогона.
+func TestRunLeavesLiveRegistryAlone(t *testing.T) {
+	if sid := os.Getenv("CLAUDE_CODE_SESSION_ID"); sid != "" {
+		t.Errorf("прогон унаследовал ID живой сессии %q: её записи станут записями прогона", sid)
 	}
 }

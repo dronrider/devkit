@@ -1055,9 +1055,9 @@ func TestLiveWorksSessions(t *testing.T) {
 		// Окна человека дашборд не поднимал: имени tmux-сессии у них нет, и
 		// своими они не считаются.
 		{Kind: "session", Via: "session", Session: "live-plain", Note: "поправь вёрстку карточки",
-			Model: chatModelDefault},
+			Model: chatModelDefault, Harness: "перваяtest"},
 		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session",
-			Session: "live-task", Model: chatModelDefault},
+			Session: "live-task", Model: chatModelDefault, Harness: "перваяtest"},
 	}
 	if got := bareWorks(boardWorks(t, e)); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
@@ -1079,9 +1079,9 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 	// работы клиент открывает переписку, и обычной задаче она не положена.
 	want := []Work{
 		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Sect: "backlog", Via: "session",
-			Session: "win-new", Model: chatModelDefault},
+			Session: "win-new", Model: chatModelDefault, Harness: "перваяtest"},
 		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Sect: "in-progress", Via: "session",
-			Session: "win-goal", Model: chatModelDefault},
+			Session: "win-goal", Model: chatModelDefault, Harness: "перваяtest"},
 	}
 	got := boardWorks(t, e)
 	var sessions []Work
@@ -1109,7 +1109,7 @@ func TestLiveWorksSessionForeignTask(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-ab-9", "win-foreign", plainSessionFixture, now.Add(-time.Minute))
 
 	want := []Work{{Kind: "session", Via: "session", Session: "win-foreign",
-		Note: "поправь вёрстку карточки", Model: chatModelDefault}}
+		Note: "поправь вёрстку карточки", Model: chatModelDefault, Harness: "перваяtest"}}
 	var sessions []Work
 	for _, w := range boardWorks(t, e) {
 		if w.Via == "session" {
@@ -2404,12 +2404,23 @@ func TestSubStampMovesOnJournalWrite(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, now)
 	log := writeSubLog(t, path, "one", "первая ходка", sideLine("иду", now.Format(time.RFC3339)))
+	// Время морозится у всего каталога, а не у одного журнала: рядом лежит
+	// мета-файл вызова, и его настоящее время правки идёт в метку наравне с
+	// журналом. Без этого стенд зеленел только до того часа суток, когда живые
+	// часы машины перегоняли синтетический now, а дальше падал на ровном месте.
+	dir := subDir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.Chtimes(filepath.Join(dir, e.Name()), now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.Chtimes(log, now, now); err != nil {
 		t.Fatal(err)
 	}
-	// Каталог метится своим временем: без его фиксации стенд ловил бы правку
-	// каталога вместо правки журнала.
-	dir := subDir(path)
 	if err := os.Chtimes(dir, now, now); err != nil {
 		t.Fatal(err)
 	}
@@ -2436,5 +2447,93 @@ func TestSubStampMovesOnJournalWrite(t *testing.T) {
 	writeSubLog(t, path, "two", "вторая ходка", sideLine("иду", later.Format(time.RFC3339)))
 	if got := subStamp(path); got == moved {
 		t.Errorf("новый журнал метку не двинул: %q", got)
+	}
+}
+
+// Работа субагента в кольце помечена источником: в файле плана такого пункта
+// нет вовсе, он собран по боковому журналу розданной работы. Без пометки
+// человек, сверяющий кольцо с ~/.devkit/plans, читает эти пункты чужим планом
+// (живой разбор сессии devkit-2e: кольцо «8 из 9», а в файле шесть закрытых
+// пунктов и ни одного открытого).
+func TestPlanMarksSubagentWorks(t *testing.T) {
+	own := []planItem{{Text: "Разбор", State: "completed"}}
+	subs := []subWork{{item: planItem{Text: "Ревью DK-520", State: "in_progress"}, alias: "review-high"}}
+	got := withSubWorks(own, subs)
+	if len(got) != 2 {
+		t.Fatalf("работа субагента не встала в план: %+v", got)
+	}
+	if got[0].Src != "" {
+		t.Errorf("пункт самого плана помечен источником: %+v", got[0])
+	}
+	if got[1].Src != planSrcSub {
+		t.Errorf("работа субагента не помечена источником: %+v", got[1])
+	}
+}
+
+// План и этапы кольца принадлежат ровно своей сессии: ни один пункт чужой в её
+// кольцо не попадает ни при каких совпадениях имён. Имя tmux-сессии дашборд
+// переиспользует (chat-1, task-DK-100), и файл плана по такому имени вполне
+// бывает чужим, оставшимся от прошлого жильца имени. Живой случай: у сессии
+// devkit-2e кольцо показывало «8 из 9» с чужим на вид незакрытым пунктом, и
+// первым подозрением было именно совпадение имени.
+func TestPlanKeepsToItsOwnSession(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	mine := writeSession(t, home, proj, "", "aaa-своя", transcriptFixture, time.Now())
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Чужой план под тем же именем tmux: он написан до того, как началась наша
+	// сессия, то есть её планом быть не может.
+	stale := planPath(home, "chat-семь")
+	if err := os.WriteFile(stale, []byte(`[{"text":"Ревью, слияние, закрытие","state":"in_progress"},`+
+		`{"text":"Полный прогон тестов","state":"completed"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// Свой файл по sid: всё закрыто, незакрытых пунктов у сессии нет.
+	if err := os.WriteFile(planPath(home, "aaa-своя"),
+		[]byte(`[{"text":"Разбор","state":"completed"},{"text":"Правка","state":"completed"}]`),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.Local)
+	plan := planOf(home, "aaa-своя", "chat-семь", mine, now)
+	for _, it := range plan {
+		if strings.Contains(it.Text, "Ревью, слияние") {
+			t.Fatalf("в кольцо своей сессии попал пункт чужой: %+v", plan)
+		}
+		if it.State != "completed" {
+			t.Errorf("у сессии с закрытым планом висит незакрытый пункт: %+v", it)
+		}
+	}
+
+	// Своего файла не стало (сессия второй подписки не знает своего ID): чужой
+	// файл под тем же именем ей всё равно не достаётся.
+	if err := os.Remove(planPath(home, "aaa-своя")); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range planOf(home, "aaa-своя", "chat-семь", mine, now) {
+		if strings.Contains(it.Text, "Ревью, слияние") {
+			t.Fatalf("чужой план по имени tmux достался сессии: %+v", it)
+		}
+	}
+
+	// А свой файл по имени tmux достаётся: он написан после начала сессии, и
+	// запасной адрес правила плана работает, как работал.
+	if err := os.WriteFile(stale, []byte(`[{"text":"Своя работа","state":"in_progress"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fresh := time.Date(2026, 8, 10, 10, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(stale, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	got := planOf(home, "aaa-своя", "chat-семь", mine, now)
+	if len(got) == 0 || got[0].Text != "Своя работа" {
+		t.Fatalf("свой план по имени tmux потерялся: %+v", got)
 	}
 }

@@ -196,6 +196,14 @@ type Work struct {
 	// Model это модель работы, как её знает дашборд: по ней фильтруется список
 	// раздела. Пусто у работы, чью модель взять неоткуда.
 	Model string `json:"model,omitempty"`
+	// Harness это подписка, чьей квотой работа платится. Узнаётся она по дому
+	// транскрипта: у второй подписки клиент поднимается своим каталогом
+	// конфигурации и пишет журнал туда (тем же способом её узнаёт список
+	// чатов). Пусто там, где подписка честно неизвестна: окно, поднятое мимо
+	// дашборда в чужом доме, и работа реестра целей, чьей сессии дашборд не
+	// видит вовсе. Выдумывать её нельзя: человек смотрит на этот чип ровно
+	// затем, чтобы отличить работу на glm от работы на подписке по умолчанию.
+	Harness string `json:"harness,omitempty"`
 	// Talk отличает разговор о задаче от работы над ней: чат живой и номер
 	// задачи у него свой, но строку он не присваивает, и признак работы с него
 	// не берётся (leadsTask). На экране «Агенты» такая строка стоит наравне с
@@ -307,6 +315,20 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 	return workDead, moved
 }
 
+// harnessOfSession называет подписку сессии по дому её транскрипта. Пусто там,
+// где сессии не нашлось или её дом не совпал ни с одной подпиской раскладки:
+// выдумывать подписку нельзя, чип с ней человек читает как факт.
+func (s *server) harnessOfSession(projPath, sid string, roots map[string]string) string {
+	if sid == "" || len(roots) == 0 {
+		return ""
+	}
+	info, ok := findSession(s.transcriptRoots(), projPath, sid)
+	if !ok {
+		return ""
+	}
+	return roots[info.root]
+}
+
 // liveWorks собирает работы проекта. tmux-сессии на машине общие, к проекту
 // они привязываются префиксом ID с его доски; разбор имён и записи реестра
 // целей живут в общем каркасе internal/works: тем же признаком занятости
@@ -330,6 +352,9 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	// Реестр живых сессий читается разом на все работы: по нему считается их
 	// состояние, и тридцать походов в каталог реестра тут ни к чему.
 	bySid, byTmux := s.livePeers()
+	// Подписка узнаётся по дому транскрипта: своего поля у неё нет ни в
+	// реестре, ни в имени tmux-сессии.
+	roots := s.harnessRootsOwn()
 	// Обратная дорога от имени tmux к сессии: состояние работы считается по её
 	// транскрипту, а у работы, взятой из списка tmux, id сессии своего нет.
 	sidOf := map[string]string{}
@@ -350,8 +375,11 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created,
 			// Конвейерная сессия это сессия дашборда: он её и поднял, её имя
 			// собрано по его же образцу.
-			Own: true, Model: s.chatModel("", sess.Name), Talk: talk[sess.Name],
-			Live: live, Moved: moved})
+			Own: true, Model: s.chatModel(sidOf[sess.Name], sess.Name), Talk: talk[sess.Name],
+			// Подписка та же, что у транскрипта этой сессии: конвейер второй
+			// подписки пишет журнал в её дом, и по нему она и узнаётся.
+			Harness: s.harnessOfSession(projectPath, sidOf[sess.Name], roots),
+			Live:    live, Moved: moved})
 		seen[kind+"-"+id] = true
 		busy[id] = true
 	}

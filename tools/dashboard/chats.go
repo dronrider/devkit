@@ -1398,10 +1398,14 @@ func (s *server) chatStuck(sid string) string {
 		if !ok || len(n.Session) < 8 || !strings.HasPrefix(sid, n.Session) {
 			continue
 		}
-		if n.Reason == "permission_prompt" {
-			return "агент ждёт разрешения в своём окне: реплика встала в очередь и хода не даёт"
+		if n.Reason != "permission_prompt" {
+			return ""
 		}
-		return ""
+		// Время хода тут не судья: запись транскрипта ложится и перед самым
+		// вопросом (вызов инструмента, которым вопрос и вызван), и «ход свежее
+		// вопроса» ответа на вопрос не доказывает. Закрывает запись следующее
+		// событие сессии, и так это работало до сих пор.
+		return "агент ждёт разрешения в своём окне: реплика встала в очередь и хода не даёт"
 	}
 	return ""
 }
@@ -1418,24 +1422,56 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ask := tmuxAskOf(name)
+	info, hasInfo := findSession(s.transcriptRoots(), found.Path, sid)
 	// Второй барьер после рубежа виджета: вопрос, чьи варианты уже стоят в
 	// ленте репликой человека или ответом агента, это эхо вывода, а не виджет.
 	// Лента тут читается только когда вопрос вообще разобрался, то есть редко.
-	if len(ask.Options) > 0 {
-		if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
-			if askEchoesFeed(ask, sessionFeedOf(info.path, askEchoTail).items) {
-				s.logf("вопрос клиента %s повторяет ленту разговора: показывать нечего", name)
-				ask = tmuxAsk{}
-			}
+	if len(ask.Options) > 0 && hasInfo {
+		if askEchoesFeed(ask, sessionFeedOf(info.path, askEchoTail).items) {
+			s.logf("вопрос клиента %s повторяет ленту разговора: показывать нечего", name)
+			ask = tmuxAsk{}
 		}
 	}
 	if len(ask.Options) == 0 {
+		// Клиент, по всем признакам стоящий на вопросе, а вопрос с панели не
+		// собрался: это повод чинить разбор, и говорится он строкой в журнал,
+		// а не плашкой человеку (решение пользователя). Плашка тут ничего не
+		// объясняла и ничего не предлагала, а вылезала и на уже отвеченном
+		// опросе.
+		s.askQuietLog(sid, name)
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
 		return
 	}
-	_ = found
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name, "ask": ask})
+}
+
+// askQuietWindow это как часто один и тот же молчащий виджет попадает в
+// журнал. Панель переспрашивает вопрос каждые несколько секунд, и без окна
+// журнал забило бы одной и той же строкой.
+const askQuietWindow = 5 * time.Minute
+
+// askQuietLog пишет в журнал дашборда, что клиент похоже ждёт ответа, а
+// виджета панель не разобрала. Это наш сигнал чинить разбор: человеку про это
+// сказать нечего, он и так видит своё окно.
+func (s *server) askQuietLog(sid, name string) {
+	if s.chatStuck(sid) == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.askQuiet == nil {
+		s.askQuiet = map[string]time.Time{}
+	}
+	last, seen := s.askQuiet[sid]
+	now := s.now()
+	if seen && now.Sub(last) < askQuietWindow {
+		s.mu.Unlock()
+		return
+	}
+	s.askQuiet[sid] = now
+	s.mu.Unlock()
+	s.logf("клиент %s похоже ждёт ответа, а виджета в снимке панели не разобрать: "+
+		"разбор надо чинить, человеку показывать нечего", name)
 }
 
 // askEchoTail это сколько последних записей ленты сверяется с вопросом: эхо

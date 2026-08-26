@@ -38,6 +38,28 @@ def sess(**kw):
     return hookio.parse_session(hookio.DEFAULT, event(**kw))
 
 
+
+# Маркеры заказа дашборда в окружении прогона уводят стенд: DEVKIT_NO_FOCUS
+# гасит опрос фокуса, а DEVKIT_TASK дописывает задачу в заголовок. Набор падал
+# ровно так, будучи запущен из сессии, поднятой дашбордом, и предмет проверки
+# тут ни при чём. Окружение чистится на весь модуль, а не в каждом стенде:
+# заводить эту оговорку заново на каждый новый стенд никто не станет.
+DROP_ENV = ("DEVKIT_TASK", "DEVKIT_TMUX", "DEVKIT_NO_FOCUS")
+_clean_env = None
+
+
+def setUpModule():
+    global _clean_env
+    keep = {k: v for k, v in os.environ.items() if k not in DROP_ENV}
+    _clean_env = mock.patch.dict(os.environ, keep, clear=True)
+    _clean_env.start()
+
+
+def tearDownModule():
+    if _clean_env is not None:
+        _clean_env.stop()
+
+
 class TestParseEvent(unittest.TestCase):
     def test_action_reasons(self):
         for kind, label in (("permission_prompt", "нужно разрешение"),
@@ -62,13 +84,40 @@ class TestParseEvent(unittest.TestCase):
                                               "devkit-dk-034: ход закончен", ""))
         self.assertEqual(level, notify.LOUD)
 
-    def test_turn_done_body_from_last_message(self):
-        # hookio уже кладёт last_assistant_message в message, тело собираем так
-        # же, как у субагента: первая строка ответа.
-        body = notify.parse_event(sess(
+    def test_turn_done_title_says_what_happened(self):
+        # Заголовок называет суть, а не служебное слово: «ход закончен» не
+        # говорит человеку ничего (замечание пользователя по снимку). Вся суть
+        # уехала в заголовок, и телом она вторым разом не повторяется.
+        title, body = notify.parse_event(sess(
             hook_event_name="Stop",
-            last_assistant_message="Готово, тесты зелёные\nдальше детали"))[2]
-        self.assertEqual(body, "Готово, тесты зелёные")
+            last_assistant_message="Готово, тесты зелёные\nдальше детали"))[1:3]
+        self.assertEqual(title, "devkit-dk-034: Готово, тесты зелёные")
+        # Суть уехала в заголовок, и телом она не повторяется: там подробности.
+        self.assertEqual(body, "дальше детали")
+
+    def test_turn_done_heading_keeps_the_details(self):
+        # Реплика с заголовком markdown: сверху «Итог», разбор строкой ниже.
+        title, body = notify.parse_event(sess(
+            hook_event_name="Stop",
+            last_assistant_message="## Итог\nСтрока DK-9 заведена и запушена."))[1:3]
+        self.assertEqual(title, "devkit-dk-034: Итог")
+        self.assertEqual(body, "Строка DK-9 заведена и запушена.")
+
+    def test_turn_done_title_is_short_and_body_carries_the_rest(self):
+        # Живой случай снимка: реплика с рангом, файлом и коммитом. В заголовок
+        # едет первая часть предложения, остальное телом.
+        said = ("Строка заведена и запушена: **DK-509**, тип `bug`, P2, ранг 36 "
+                "(25+3+1+5+2), цена S, файл задачи `docs/tasks/DK-509.md`, "
+                "коммит `6e2125b0`. `taskctl lint` молчит.")
+        title, body = notify.parse_event(sess(
+            hook_event_name="Stop", last_assistant_message=said))[1:3]
+        self.assertEqual(title, "devkit-dk-034: Строка заведена и запушена")
+        self.assertTrue(body.startswith("DK-509, тип bug"), body)
+        for mark in ("*", "`"):
+            self.assertNotIn(mark, title + body)
+        self.assertLessEqual(len(body), notify.BODY_LIMIT)
+        # Режется тело по концу предложения, а не посреди слова.
+        self.assertTrue(body.endswith(".") or body.endswith("..."), body)
 
     def test_turn_done_empty_message_keeps_bare_title(self):
         # Пустая реплика оставляет прежний вид баннера: тело пустое, ломать
@@ -77,6 +126,48 @@ class TestParseEvent(unittest.TestCase):
             hook_event_name="Stop", last_assistant_message=""))[1:3]
         self.assertEqual(title, "devkit-dk-034: ход закончен")
         self.assertEqual(body, "")
+
+    def test_card_has_no_markup_in_any_reason(self):
+        # Вид один на все роды: заголовок называет событие, тело идёт без
+        # разметки. Реплику агент пишет markdown, и звёздочки с обратными
+        # кавычками в карточке видны как есть (замечание пользователя).
+        said = "Готово: **DK-9**, файл `docs/tasks/DK-9.md`, ссылка [доска](http://x)."
+        cards = [
+            notify.parse_event(sess(notification_type="permission_prompt", message=said)),
+            notify.parse_event(sess(hook_event_name="Stop", last_assistant_message=said)),
+            notify.parse_event(sess(hook_event_name="SubagentStop", agent_type="exec-low",
+                                    last_assistant_message=said)),
+            notify.parse_event(sess(hook_event_name="Stop", error="server_error",
+                                    last_assistant_message=said)),
+        ]
+        for _, title, body, _ in cards:
+            for mark in ("**", "`", "](", "[", "*"):
+                self.assertNotIn(mark, title, title)
+                self.assertNotIn(mark, body, body)
+            self.assertIn("доска", title + body)
+            self.assertLessEqual(len(body), notify.BODY_LIMIT)
+
+    def test_body_is_cut_by_sentence(self):
+        # Длинное тело режется по концу предложения, а не посреди слова.
+        said = ("Первое предложение про строку доски. Второе предложение про файл "
+                "задачи и коммит. Третье предложение про прогон, оно уже лишнее и "
+                "в карточку не влезает никак, потому что тело кончается раньше.")
+        body = notify.parse_event(sess(notification_type="idle_prompt", message=said))[2]
+        self.assertLessEqual(len(body), notify.BODY_LIMIT)
+        self.assertTrue(body.endswith("."), body)
+        self.assertNotIn("Третье предложение", body)
+        self.assertTrue(body.startswith("Первое предложение"), body)
+
+    def test_title_names_the_task_of_the_order(self):
+        # Груминг и конвейер дашборд поднимает в общем чекауте на main, задачу
+        # там не называют ни имя дерева, ни ветка. Заказ её называет
+        # переменной, и в заголовке она нужна: при пяти агентах «devkit» не
+        # разобрать.
+        with mock.patch.dict(os.environ, {"DEVKIT_TASK": "DK-509"}):
+            title = notify.parse_event(sess(
+                hook_event_name="Stop", cwd="/Users/x/projects/devkit",
+                last_assistant_message="Строка заведена."))[1]
+        self.assertEqual(title, "devkit (DK-509): Строка заведена")
 
     def test_turn_failed_is_loud_and_names_the_error(self):
         # Тип ошибки hookio кладёт поводом из поля error, текст последней
@@ -960,7 +1051,7 @@ class TestHookReasons(HookCase):
     def test_turn_done_is_loud(self):
         r = self.hook(self.event("Stop", session="sess-turn"))
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.sent(), ["devkit-dk-034: первая строка|вторая"])
         self.assertIn("повод turn_done уровень громкий", self.journal())
 
     def test_user_prompt_sends_nothing(self):
@@ -1014,14 +1105,14 @@ class TestHookFocusProcess(HookCase):
         self.look_at("Разбор задачи - devkit")
         r = self.hook(self.event("Stop", session="sess-away"), focus=True)
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.sent(), ["devkit-dk-034: первая строка|вторая"])
 
     def test_silent_poll_gets_the_call(self):
         # Нет разрешения на управление компьютером или не macOS: зовём, и отказ
         # виден в журнале, иначе «звонит всегда» разбирать нечем.
         r = self.hook(self.event("Stop", session="sess-blind"), focus=True)
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.sent(), ["devkit-dk-034: первая строка|вторая"])
         self.assertIn("фокус не определился, зовём", self.journal())
 
     def test_switch_off_skips_the_poll(self):
@@ -1029,7 +1120,7 @@ class TestHookFocusProcess(HookCase):
         r = self.hook(self.event("Stop", session="sess-nofocus"), focus=True,
                       DEVKIT_NOTIFY_FOCUS="off")
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.sent(), ["devkit-dk-034: первая строка|вторая"])
         self.assertEqual(self.asked_size(), 0)
 
     def test_poll_is_only_about_the_turn(self):
@@ -1248,7 +1339,7 @@ class TestHookSandbox(HookCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.sent(), [])
         self.assertIn("повод turn_done уровень громкий", self.journal())
-        self.assertIn("текст «%s: ход закончен»" % os.path.basename(self.tmp),
+        self.assertIn("текст «%s: первая строка» «вторая»" % os.path.basename(self.tmp),
                       self.journal())
 
     def test_sandbox_skips_the_focus_poll(self):
@@ -1268,7 +1359,7 @@ class TestHookSandbox(HookCase):
         # и до правки. Ловит мутацию «sandbox_reason истинен всегда».
         r = self.hook(self.event("Stop", session="sess-real"))
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.sent(), ["devkit-dk-034: ход закончен|первая строка"])
+        self.assertEqual(self.sent(), ["devkit-dk-034: первая строка|вторая"])
 
 
 class TestArgumentMode(HookCase):

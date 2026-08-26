@@ -14,6 +14,7 @@
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,11 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "chat-in.py")
 STAMP = "%Y-%m-%dT%H:%M:%S"
+# Слово строки доставки читается из самого хука. Оно уже переименовывалось
+# («разговор» стало «чат»), и стенд, повторявший его своими буквами, отстал от
+# кода и падал на ровном месте.
+with open(HOOK, encoding="utf-8") as _f:
+    SAY_WORD = re.search(r'^SAY_WORD = "([^"]+)"', _f.read(), re.M).group(1)
 
 GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
 
@@ -186,7 +192,7 @@ class DeliveryTest(GoalCase):
         self.assertIn("2026-08-15 14:03, из дашборда: посмотри ещё на DK-1", s.marks_text())
         self.assertIn("c0ffee-1111-2222-3333-444455556666", s.marks_text())
         # Доставку видно снаружи: строка в журнале цикла и строка в своём журнале.
-        self.assertIn("разговор: витку доставлена реплика", s.cycle_text())
+        self.assertIn("%s: витку доставлена реплика" % SAY_WORD, s.cycle_text())
         self.assertIn("доставлено строк 1", s.journal())
 
     def test_empty_incoming_says_nothing(self):
@@ -202,7 +208,7 @@ class DeliveryTest(GoalCase):
         s.incoming("2026-08-15 14:03, из дашборда: да")
         self.added(s.run())
         self.silent(s.run())
-        self.assertEqual(s.cycle_text().count("разговор:"), 1)
+        self.assertEqual(s.cycle_text().count("%s:" % SAY_WORD), 1)
 
     def test_same_text_sent_again_after_the_turn_took_it(self):
         # Повтор той же реплики через час: строка «Входящих» другая (в ней

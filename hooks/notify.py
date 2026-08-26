@@ -86,7 +86,12 @@ WINDOW = 30          # окно троттлинга: один повод одн
 RUN_DEPTH = "DEVKIT_RUN_DEPTH"
 TRANSCRIPT_SCAN = 20 # сколько записей транскрипта смотрим ради cwd сессии
 STALE = 24 * 3600    # брошенное состояние троттлинга старше суток убирается
-BODY_LIMIT = 200
+# Тело это две-три строки баннера: подробности человек читает в чате, а карточка
+# нужна, чтобы позвать (замечание пользователя по снимку).
+BODY_LIMIT = 160
+# Заголовок баннера места имеет меньше тела, и длинная суть в нём обрезается
+# системой без спроса.
+TITLE_LIMIT = 60
 
 # Уровень повода. Он же слово журнала: жалоба «важное не отличается от
 # фонового» разбирается по строке, а не на глаз.
@@ -166,21 +171,115 @@ TERMINAL_BUNDLES = {
 }
 
 
-def short(text, limit=BODY_LIMIT):
-    # Тело уведомления это одна строка: у баннера две строки места, а
-    # last_assistant_message субагента бывает на экран.
+# Разметка реплики агента в карточке уведомления. Агент отвечает markdown, и в
+# баннере звёздочки с обратными кавычками стоят как есть: «Строка заведена:
+# **DK-509**, тип `bug`» (замечание пользователя по снимку). Карточка это зов, а
+# не документ, и разметку тут не рисуют, а срезают до чистого текста.
+MD_FENCE_RE = re.compile(r"```+[^\n]*")
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+MD_LEAD_RE = re.compile(r"^\s*(?:[-*+]\s+|>\s+|#{1,6}\s+|\d+[.)]\s+)")
+MD_BOLD_RE = re.compile(r"(\*{1,3}|_{1,3})(\S(?:.*?\S)?)\1")
+MD_CODE_RE = re.compile(r"`+([^`]*)`+")
+# Конец предложения: точка, восклицательный или вопросительный знак, за
+# которыми пробел либо конец строки. Точка внутри слова (docs/tasks/DK-509.md)
+# концом не считается, иначе тело резалось бы по имени файла.
+SENT_END_RE = re.compile(r"[.!?](?=\s|$)")
+# Разделители частей предложения: по ним режется слишком длинная суть.
+CLAUSE_MARKS = (": ", "; ", ", ")
+# Короче этого куска резать по разделителю незачем: «Готово» вместо «Готово,
+# тесты зелёные» сути не называет.
+CLAUSE_MIN = 15
+
+
+def plain(text):
+    """Текст без разметки: markdown агента, срезанный до слов."""
     if not isinstance(text, str):
-        # Поле события пришло числом или объектом. Уведомление из-за этого не
-        # теряется: повод известен, а тело собирается из того, что дали.
         text = "" if text is None else str(text)
-    line = ""
+    out = []
+    for raw in text.splitlines():
+        line = MD_FENCE_RE.sub("", raw)
+        line = MD_LEAD_RE.sub("", line)
+        line = MD_LINK_RE.sub(r"\1", line)
+        line = MD_CODE_RE.sub(r"\1", line)
+        line = MD_BOLD_RE.sub(r"\2", line)
+        out.append(" ".join(line.split()))
+    return "\n".join(out)
+
+
+def cut_words(text, limit):
+    """Кусок текста по границе слова с многоточием."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 3].rstrip()
+    at = cut.rfind(" ")
+    if at > limit // 3:
+        cut = cut[:at].rstrip(" ,;:")
+    return cut + "..."
+
+
+def cut_sentence(text, limit):
+    """Кусок текста по границе предложения. Целое предложение читается, а
+    оборванное на полуслове человек дочитывает в чате (замечание пользователя
+    по снимку: текст резался посреди слова)."""
+    if len(text) <= limit:
+        return text
+    end = 0
+    for m in SENT_END_RE.finditer(text):
+        if m.end() > limit:
+            break
+        end = m.end()
+    if end:
+        return text[:end].strip()
+    return cut_words(text, limit)
+
+
+def first_line(text):
+    """Первая непустая строка текста."""
     for raw in text.splitlines():
         if raw.strip():
-            line = " ".join(raw.split())
-            break
-    if len(line) > limit:
-        line = line[:limit - 3] + "..."
-    return line
+            return raw.strip()
+    return ""
+
+
+def short(text, limit=BODY_LIMIT):
+    # Тело уведомления это две-три строки баннера: last_assistant_message
+    # субагента бывает на экран, и целиком он сюда не едет.
+    return cut_sentence(first_line(plain(text)), limit)
+
+
+def gist(text, limit=TITLE_LIMIT):
+    """Суть события одной короткой фразой для заголовка. Берётся первое
+    предложение реплики, а слишком длинное режется по своему разделителю:
+    «Строка заведена и запушена» вместо простыни с рангом и коммитом."""
+    said = first_line(plain(text))
+    if not said:
+        return ""
+    m = SENT_END_RE.search(said)
+    if m:
+        said = said[:m.start()].strip()
+    if len(said) <= limit:
+        return said
+    for mark in CLAUSE_MARKS:
+        at = said.find(mark)
+        if CLAUSE_MIN <= at <= limit:
+            return said[:at].strip()
+    return cut_words(said, limit)
+
+
+def rest_after_gist(text, head):
+    """Хвост реплики после того, что уехало в заголовок. Кончилась первая
+    строка заголовком, значит подробности идут со следующей: реплика вида
+    «## Итог» с разбором ниже иначе оставила бы карточку без тела."""
+    lines = [ln for ln in plain(text).splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    said = lines[0]
+    if not head or not said.startswith(head):
+        return said
+    tail = said[len(head):].lstrip(" .,:;-")
+    if tail:
+        return tail
+    return lines[1] if len(lines) > 1 else ""
 
 
 def tree_name(path):
@@ -240,6 +339,18 @@ def task_id(label):
     return label.upper() if TASK_ID_RE.match(label) else ""
 
 
+def env_task(env=None):
+    """Задача из заказа дашборда. Сессию груминга и конвейера он поднимает с
+    DEVKIT_TASK, а работают они в общем чекауте на main, и ни имя дерева, ни
+    ветка задачи там не называют. Без этого баннер груминга DK-509 звался
+    просто «devkit», и при пяти агентах разобрать его было нельзя."""
+    env = os.environ if env is None else env
+    return task_id((env.get(TASK_ENV) or "").strip())
+
+
+TASK_ENV = "DEVKIT_TASK"
+
+
 def event_target(cwd, root=None):
     """Задача и проект события парой. Дерево задачи названо «проект-ID», и
     оттуда читаются оба поля; у обычного чекаута задача лежит на ветке, а
@@ -259,7 +370,7 @@ def event_target(cwd, root=None):
     return task, project
 
 
-def session_label(cwd, root=None):
+def session_label(cwd, root=None, env=None):
     # Какая из сессий позвала, видно по имени рабочего дерева: у worktree задачи
     # в имени лежит её ID. Без этого при пяти агентах баннер бесполезен.
     # Работал субагент в дереве задачи, значит в заголовке стоит и окно, где его
@@ -270,7 +381,7 @@ def session_label(cwd, root=None):
         # без пары root/cwd вовсе): вместо неё пробуем ветку того же дерева,
         # сессия в основном чекауте обычно на ней и работает.
         label = name or "сессия"
-        task = task_label(root or cwd)
+        task = task_label(root or cwd) or env_task(env)
         return "%s (%s)" % (label, task) if task else label
     if not name:
         return home
@@ -325,9 +436,14 @@ def parse_event(sess, root=None):
         body = short(sess.message)
     elif sess.kind == hookio.TURN_DONE:
         # Конец хода главной сессии. Текст события это последняя реплика
-        # (hookio кладёт её в message из last_assistant_message), тело собираем
-        # так же, как у субагента; пустая реплика оставляет прежний вид баннера.
-        key, label, body = TURN_DONE, TURN_REASON, short(sess.message)
+        # (hookio кладёт её в message из last_assistant_message), и заголовок
+        # берётся из неё же: «ход закончен» не говорит, что случилось
+        # (замечание пользователя по снимку). Тело несёт хвост той же реплики,
+        # а вся суть, уехавшая в заголовок, вторым разом не повторяется. Пустая
+        # реплика оставляет прежний вид баннера.
+        key = TURN_DONE
+        label = gist(sess.message) or TURN_REASON
+        body = short(rest_after_gist(sess.message, label))
     elif sess.kind == hookio.TURN_FAILED:
         # Тип ошибки лежит поводом (hookio кладёт его из error), текст ошибки
         # последней репликой. Свой ключ, а не WAIT_KEY: баннер конца хода,

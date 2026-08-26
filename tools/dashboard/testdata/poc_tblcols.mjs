@@ -7,10 +7,10 @@
 // перерисовку.
 //
 // Отдельно сторожатся три вещи, без которых жест обещает больше, чем делает:
-// ширина доезжает до самой строки, а не только до шапки (правило сетки строки
-// обязано читать те же переменные); растяжимую колонку тянут за её границу
-// соседней, иначе строка вылезает за карточку; ручка стоит у всякой границы,
-// кроме последней, справа от которой двигать нечего.
+// ширина доезжает до colgroup, откуда её читает движок (колонка у шапки со
+// строкой одна, и дальше ширина едет сама); растяжимую колонку тянут за её
+// границу соседней, иначе таблица вылезает за карточку; ручка стоит у всякой
+// границы, кроме последней, справа от которой двигать нечего.
 //
 // Зовётся: node testdata/poc_tblcols.mjs static/app.js
 
@@ -92,7 +92,7 @@ const drag = (grip, from, to) => {
     fail("колонка номера не поехала за курсором: " + varOf("--tc-tasks-id") + ", было " + was);
   }
   // Ширина живёт своим ключом хранилища и переживает уход с экрана.
-  const kept = JSON.parse(sandbox.localStorage.getItem("devkit.dash.tasks.cols") || "{}");
+  const kept = JSON.parse(sandbox.localStorage.getItem("devkit.dash.tasks.tblcols") || "{}");
   if (kept.id !== was + 40) {
     fail("ширина не записалась в память раздела: " + JSON.stringify(kept));
   }
@@ -142,11 +142,11 @@ const drag = (grip, from, to) => {
 
 // --- мусор в памяти ширин список не роняет ---
 {
-  sandbox.localStorage.setItem("devkit.dash.tasks.cols", "{не json");
+  sandbox.localStorage.setItem("devkit.dash.tasks.tblcols", "{не json");
   await go("#demo/sess");
   await go("#demo");
   if (!head("tasks")) fail("шапка не собралась после мусора в памяти ширин");
-  if (px("--tc-tasks-id") !== 60) {
+  if (px("--tc-tasks-id") !== 84) {
     fail("мусор в памяти не откатил ширину к умолчанию: " + varOf("--tc-tasks-id"));
   }
 }
@@ -188,28 +188,55 @@ const drag = (grip, from, to) => {
   }
 }
 
-// --- ширина доезжает до строки, а не только до шапки ---
-// Переменные кладёт скрипт, а читает их правило сетки в стилях: разойдись эти
-// два места именами, шапка ездила бы отдельно от списка.
+// --- ширина доезжает до самой таблицы, а не только до шапки ---
+// Переменные кладёт скрипт, а читает их colgroup: разойдись эти два места
+// именами, тяга правила бы переменную, которой никто не спрашивает. Колонка
+// одна на шапку и на строку, поэтому доехав до colgroup, ширина доезжает и до
+// списка.
 {
-  for (const [sel, name] of [[".trow", "--tc-tasks-"], [".dsrow", "--tc-drafts-"],
-    [".arow", "--tc-sess-"]]) {
-    let saw = false;
-    const re = new RegExp("(?:^|[\\n}])\\s*\\" + sel + "\\s*\\{([^}]*)\\}", "g");
-    for (const m of CSS.matchAll(re)) {
-      if (m[1].includes("grid-template-columns") && m[1].includes(name)) saw = true;
+  if (typeof sandbox.tblColgroup !== "function") {
+    fail("колонок таблице не описано вовсе: colgroup не собирается, и ширины некуда положить");
+  }
+  for (const [kind, keys] of [["tasks", ["id", "rank", "date", "act"]],
+    ["drafts", ["prio", "id", "date", "act"]],
+    ["sess", ["live", "age", "moved", "act"]]]) {
+    const group = sandbox.tblColgroup(kind);
+    const cols = (group.children || []).filter((c) => c.tagName === "COL");
+    const said = cols.map((c) => String((c.style || {}).width || ""));
+    for (const key of keys) {
+      if (!said.some((w) => w.includes("--tc-" + kind + "-" + key))) {
+        fail("колонка " + key + " раздела " + kind + " не читает свою ширину: " +
+          JSON.stringify(said));
+      }
     }
-    if (!saw) fail("сетка строки " + sel + " не читает ширины " + name + ": тяга до списка не доедет");
+    // Растяжимой колонке ширины не назначено вовсе: остаток строки движок
+    // отдаёт ей, а число тут увело бы таблицу за край карточки.
+    if (said.filter((w) => !w).length !== 1) {
+      fail("растяжимая колонка раздела " + kind + " не одна: " + JSON.stringify(said));
+    }
+  }
+  // Раскладку колонок считает движок по colgroup, а не наши правила сетки.
+  if (!/\.tbl\{[^}]*table-layout:fixed/.test(CSS.replace(/\s+/g, " "))) {
+    fail("таблица не просит движок считать колонки по colgroup: table-layout:fixed нет");
   }
 }
 
 // --- на телефоне тянуть нечего, и ручка там погашена ---
-// Строка узкого экрана раскладывается по областям, колонок в ней нет вовсе.
+// Таблица на узком экране переводится в блочный вид: строка раскладывается по
+// областям, колонок в ней нет вовсе, и границе неоткуда взяться.
 {
   const blocks = [...CSS.matchAll(/@media \(max-width:900px\)\{([\s\S]*?)\n\}/g)];
   if (!blocks.length) fail("правил узкого экрана в стилях не нашлось");
-  const off = blocks.some((m) => /\.tblg\{display:none\}/.test(m[1].replace(/\s+/g, "")));
-  if (!off) fail("на узком экране ручка тяги осталась: правила .tblg{display:none} нет");
+  const flat = blocks.map((m) => m[1].replace(/\s+/g, ""));
+  if (!flat.some((one) => /\.tblg\{display:none\}/.test(one))) {
+    fail("на узком экране ручка тяги осталась: правила .tblg{display:none} нет");
+  }
+  if (!flat.some((one) => /\.tbl\{display:block/.test(one))) {
+    fail("на узком экране таблица осталась таблицей: правила .tbl{display:block} нет");
+  }
+  if (!flat.some((one) => /\.tbl>colgroup\{display:none\}/.test(one))) {
+    fail("на узком экране колонки colgroup остались в силе: строка не ляжет по областям");
+  }
 }
 
 console.log("poc_tblcols: ok");

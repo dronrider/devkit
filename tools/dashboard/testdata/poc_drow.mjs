@@ -1,16 +1,14 @@
 // Стенд строки накопителя одним рядом (ветка poc-chat).
 //
 // После отметки выбора строка разъехалась на две: колонок в разметке стало на
-// одну больше, чем ставит правило .srow, а лежит оно ниже по файлу и той же
+// одну больше, чем ставило правило .srow, а лежало оно ниже по файлу и той же
 // силы, поэтому перебивало колонки накопителя. Заодно строка показывала
 // возраст записи днями («3 дня»), хотя на доске в этом месте стоит дата правки
 // (замечание пользователя). Предмет стенда это порядок ячеек слева направо
-// (отметка, важность, номер, наименование, дата, чат), дата вместо дней и
-// сходимость числа колонок с числом ячеек. С табличным видом (POC DK-397) дата
-// стоит своей ячейкой, а не припиской в хвосте: по ней сортирует шапка, и
-// колонки, которой нет в сетке, шапка обещать не вправе. Колонки считаются по
-// широкой раскладке: узкая лежит своим правилом в @media и колонок держит
-// меньше нарочно, там строка ложится в два ряда.
+// (отметка с важностью, номер, наименование, дата, чат), дата вместо дней и
+// сходимость числа колонок с числом ячеек. С табличным видом (POC DK-397)
+// строка это настоящая строка таблицы, колонки описаны в colgroup, и спорить о
+// сетке больше нечему: расставляет колонки движок.
 //
 // Зовётся: node testdata/poc_drow.mjs static/app.js
 
@@ -32,34 +30,6 @@ const { sandbox } = makeSandbox(app, (path2, init) => {
   return {};
 });
 await settle();
-
-// Широкая раскладка это стили без блоков @media: узкие правила лежат там и
-// колонок держат меньше нарочно, а спор .srow с .dsrow идёт как раз в общей
-// части файла.
-function wideCss(css) {
-  let out = "";
-  let at = 0;
-  while (at < css.length) {
-    const start = css.indexOf("@media", at);
-    if (start < 0) {
-      out += css.slice(at);
-      break;
-    }
-    out += css.slice(at, start);
-    let depth = 0;
-    let i = css.indexOf("{", start);
-    if (i < 0) break;
-    for (; i < css.length; i += 1) {
-      if (css[i] === "{") depth += 1;
-      else if (css[i] === "}") {
-        depth -= 1;
-        if (!depth) break;
-      }
-    }
-    at = i + 1;
-  }
-  return out;
-}
 
 const row = browserKids(sandbox.draftRow("demo", draft));
 const kids = [...row.children];
@@ -100,37 +70,37 @@ const cls = (node) => String((node && node.className) || "");
   }
   // Кнопка чата стоит последней, после даты: порядок назвал пользователь.
   const meta = kids[4];
-  const last = (meta.children || [])[(meta.children || []).length - 1];
+  const inner = (byClass(meta, "cin") || meta).children || [];
+  const last = inner[inner.length - 1];
   if (!cls(last).includes("btn")) fail("последней в строке стоит не кнопка чата: " + dump(meta));
 }
 
-// --- колонок в разметке столько же, сколько ячеек в строке ---
-// Правило .srow лежит ниже по файлу и той же силы, что .dsrow: колонки
-// накопителя обязаны стоять после него, иначе строка рвётся на две.
+// --- строка это строка таблицы, а ячейки её ячейки ---
+// Прежде накопитель стоял своей сеткой, и подписи в шапке приходилось
+// приставлять к ячейкам руками. Теперь колонку у подписи со строкой считает
+// движок, а для этого разметка обязана быть настоящей таблицей.
 {
-  const css = wideCss(fs.readFileSync(path.join(path.dirname(app), "style.css"), "utf8"));
-  // Последнее по файлу правило селектора: при равной силе побеждает оно, и
-  // спорят тут ровно два селектора строки накопителя.
-  const lastRule = (sel) => {
-    let out = null;
-    const re = new RegExp("(?:^|[\\n}])\\s*\\" + sel + "\\s*\\{([^}]*)\\}", "g");
-    for (const m of css.matchAll(re)) {
-      const grid = /grid-template-columns:([^;}]*)/.exec(m[1]);
-      if (grid) out = { at: m.index, cols: grid[1].trim(), sel };
-    }
-    return out;
-  };
-  const own = lastRule(".dsrow");
-  const common = lastRule(".srow");
-  if (!own) fail("колонок строке накопителя не задано вовсе");
-  if (common && common.at > own.at) {
-    fail("колонки строки накопителя перебиты правилом " + common.sel + " (" + common.cols +
-      "): строка порвётся на две");
+  if (row.tagName !== "TR") fail("строка накопителя не строка таблицы: " + row.tagName);
+  const bad = kids.filter((k) => k.tagName !== "TD").map((k) => k.tagName);
+  if (bad.length) fail("ячейки строки накопителя не ячейки таблицы: " + JSON.stringify(bad));
+}
+
+// --- колонок в разметке столько же, сколько ячеек в строке ---
+// Ширины колонок едут в colgroup, и разойдись оно со строкой числом колонок,
+// подписи в шапке встали бы мимо ячеек.
+{
+  const group = sandbox.tblColgroup("drafts");
+  const cols = (group.children || []).filter((c) => c.tagName === "COL");
+  if (cols.length !== kids.length) {
+    fail("колонок в colgroup " + cols.length + ", а ячеек в строке " + kids.length +
+      ": подписи встанут мимо");
   }
-  const count = own.cols.split(/\s+(?![^(]*\))/).filter(Boolean).length;
-  if (count !== kids.length) {
-    fail("колонок " + count + " (" + own.cols + "), а ячеек в строке " + kids.length +
-      ": строка порвётся на две");
+  // Ширина колонки читается из переменной раздела: тягу границы держит она, и
+  // без неё правка ширины до строки не доедет.
+  const wide = cols.filter((c) => String((c.style || {}).width || "").includes("--tc-drafts-"));
+  if (wide.length !== cols.length - 1) {
+    fail("ширины колонок накопителя не читают переменных раздела: " +
+      JSON.stringify(cols.map((c) => (c.style || {}).width || "")));
   }
 }
 
@@ -141,8 +111,8 @@ const cls = (node) => String((node && node.className) || "");
   if (!rule || !rule[1].includes("text-overflow:ellipsis")) {
     fail("наименование записи на узком экране рвётся переносом, а не режется кромкой");
   }
-  const meta = /\.dsrow \.sm\{([^}]*)\}/.exec(css);
-  if (!meta || !meta[1].includes("grid-column:auto")) {
+  const meta = /\.dsrow \.sm>\.cin\{([^}]*)\}/.exec(css);
+  if (!meta || !meta[1].includes("flex-wrap:nowrap")) {
     fail("приписки строки накопителя уезжают под заголовок второй строкой");
   }
 }

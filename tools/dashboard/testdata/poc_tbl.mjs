@@ -53,7 +53,12 @@ const { sandbox, byId } = makeSandbox(app, (path) => {
       works };
   }
   if (path.endsWith("/works")) return { works };
-  if (path.endsWith("/drafts")) return { drafts: [] };
+  // Запись накопителя тут одна и нужна ради разметки: порядок и колонки
+  // накопителя разобраны своим стендом (poc_dsort.mjs).
+  if (path.endsWith("/drafts")) {
+    return { drafts: [{ id: "XR-D1", title: "мысль с телефона", prio: "mid",
+      written: "2026-08-10", moved: "2026-08-10" }] };
+  }
   if (path.includes("/chats")) return { chats: [], models: [] };
   if (path === "/api/quota") return { harnesses: [] };
   return {};
@@ -216,7 +221,7 @@ const sessTitles = () => allByClass(groups, "arow")
 {
   const row = allByClass(groups, "arow")[0];
   const kids = [...row.children].map((k) => String(k.className || "").split(" ")[0]);
-  if (JSON.stringify(kids) !== JSON.stringify(["dot", "ab", "atime", "amoved", "aacts"])) {
+  if (JSON.stringify(kids) !== JSON.stringify(["live", "ab", "atime", "amoved", "aacts"])) {
     fail("ячейки строки сессии идут не тем порядком: " + JSON.stringify(kids));
   }
   const close = byClass(row, "sclose");
@@ -253,6 +258,55 @@ const sessTitles = () => allByClass(groups, "arow")
   if (JSON.stringify(sessTitles()) !==
     JSON.stringify(["буквой позже", "буквой средне", "буквой раньше"])) {
     fail("порядок по активности не развернулся: " + JSON.stringify(sessTitles()));
+  }
+}
+
+// --- вид собран настоящей таблицей, а не своей сеткой ---
+// Два прежних захода собирали таблицу из двух сеток: шапка одной, строки
+// другой, ширины связывались переменными. Подписи вставали мимо ячеек, потому
+// что сеток было две. Тут разметка настоящая, и колонку у подписи со строкой
+// считает движок: шапка и строки обязаны лежать в одной таблице.
+{
+  for (const [hash, kind, rowCls] of [["#demo", "tasks", "trow"], ["#demo/sess", "sess", "arow"],
+    ["#demo/drafts", "drafts", "dsrow"]]) {
+    await go(hash);
+    const h = head(kind);
+    if (!h) fail("шапки раздела " + kind + " нет вовсе");
+    if (h.tagName !== "TR") fail("шапка раздела " + kind + " не строка таблицы: " + h.tagName);
+    const thead = h.parentNode;
+    if (!thead || thead.tagName !== "THEAD") {
+      fail("шапка раздела " + kind + " лежит мимо thead: " + (thead && thead.tagName));
+    }
+    const table = thead.parentNode;
+    if (!table || table.tagName !== "TABLE") {
+      fail("шапка раздела " + kind + " лежит мимо таблицы: " + (table && table.tagName));
+    }
+    const bad = [...h.children].filter((c) => c.tagName !== "TH").map((c) => c.tagName);
+    if (bad.length) fail("ячейки шапки раздела " + kind + " не th: " + JSON.stringify(bad));
+    // Колонки описаны в colgroup: оттуда движок берёт ширины, и правит их тяга
+    // границы. Своих правил сетки у строки больше нет.
+    const group = [...(table.children || [])].find((k) => k.tagName === "COLGROUP");
+    if (!group) fail("в таблице раздела " + kind + " нет colgroup: колонкам неоткуда взять ширину");
+    const cols = [...(group.children || [])].filter((c) => c.tagName === "COL");
+    if (cols.length !== h.children.length) {
+      fail("в разделе " + kind + " колонок " + cols.length + ", а ячеек шапки " +
+        h.children.length);
+    }
+    // Строка лежит в той же таблице, что и шапка: разойдись они таблицами,
+    // колонки снова считались бы двумя раскладками.
+    const row = allByClass(groups, rowCls)[0];
+    if (!row) fail("строки раздела " + kind + " на экране нет");
+    if (row.tagName !== "TR") fail("строка раздела " + kind + " не строка таблицы: " + row.tagName);
+    const cells = [...row.children].filter((c) => c.tagName !== "TD").map((c) => c.tagName);
+    if (cells.length) fail("ячейки строки раздела " + kind + " не td: " + JSON.stringify(cells));
+    if (row.children.length !== h.children.length) {
+      fail("в разделе " + kind + " ячеек строки " + row.children.length + ", а колонок шапки " +
+        h.children.length + ": подписи встанут мимо");
+    }
+    const body = row.parentNode;
+    if (!body || body.tagName !== "TBODY" || body.parentNode !== table) {
+      fail("строка раздела " + kind + " лежит в другой таблице, чем её шапка");
+    }
   }
 }
 

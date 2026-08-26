@@ -359,40 +359,42 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .c-after:hover{background:color-mix(in oklab,var(--run) 26%,transparent);color:var(--tx)}
 
 /* строки задач: сетка на ноутбуке, две строки на телефоне */
-.shead{display:flex;align-items:baseline;gap:9px;padding:22px 4px 9px;font:600 13px var(--sans);color:var(--tx)}
+.shead{display:flex;align-items:baseline;gap:9px;padding:15px 24px 9px;font:600 13px var(--sans);color:var(--tx)}
 .shead .n{font:500 11.5px var(--mono);color:var(--tx3)}
 /* ярусы секции Blocked: подпись яруса стоит внутри карточки строкой над своим
    куском списка. Нижний ярус тихий: строка ждёт чужую задачу, человека там не
    ждут, и спорить подачей с настоящими парковками ей нечем */
-.btier{display:flex;align-items:baseline;gap:8px;padding:9px 16px 8px 26px;border-top:1px solid var(--line);font:600 11.5px var(--sans);color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em}
-.btier:first-child{border-top:none}
+.btier{display:flex;align-items:baseline;gap:8px;padding:9px 16px 8px 24px;font:600 11.5px var(--sans);color:var(--tx2);text-transform:uppercase;letter-spacing:0.06em}
 .btier.quiet{color:var(--tx3)}
 .btier .n{font:500 11px var(--mono);color:var(--tx3);text-transform:none;letter-spacing:0}
 .trow.rwait .ttl{color:var(--tx2)}
-.trow{display:grid;grid-template-columns:var(--tc-tasks-id,60px) minmax(120px,1fr) var(--tc-tasks-rank,44px) var(--tc-tasks-date,92px) var(--tc-tasks-act,246px);gap:7px;align-items:center;padding:11px 16px 11px 26px;border-top:1px solid var(--line);cursor:pointer}
-.trow:hover{background:var(--bg2)}
+.trow{cursor:pointer}
+.trow:hover>td{background:var(--bg2)}
 /* Только что заведённая строка: полоса слева и подложка держатся до следующей
    перерисовки списка, чтобы человек нашёл её глазами среди соседей. */
-.trow.fresh,.srow.fresh{background:var(--bg2);box-shadow:inset 3px 0 0 var(--acc)}
-.trow:first-child{border-top:none}
+.trow.fresh>td,.dsrow.fresh>td{background:var(--bg2)}
+.trow.fresh>td:first-child,.dsrow.fresh>td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
 /* кружок состояния висит слева от номера, в отступе строки: встань он в поток,
    номера строк с работой и без разъехались бы по колонке */
-.trow .id{position:relative;display:flex;align-items:center}
-.trow .id .sdot{position:absolute;left:-17px}
-.trow .tt{font:400 13.5px var(--sans);color:var(--tx);display:flex;align-items:center;gap:8px;min-width:0}
+.trow .id{position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* кружок состояния висит слева от номера, в отступе ячейки: встань он в поток,
+   номера строк с работой и без разъехались бы по колонке */
+.trow .id .sdot{position:absolute;top:calc(50% - 4.5px);left:8px}
+.trow .tt{font:400 13.5px var(--sans);color:var(--tx)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
-.trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end;min-width:0}
+.trow .meta>.cin{gap:10px;justify-content:flex-end}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
 /* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
    приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Прокрутку
    под взятой строкой стили не держат: touch-action браузер читает в момент
    касания, а строка берётся долгим нажатием, и класс приезжает уже после. Палец
    отбирает у списка обработчик touchmove в app.js */
-.trow.dragrow{background:var(--bg3);position:relative;z-index:1}
+.trow.dragrow>td{background:var(--bg3)}
 .trow.dimrow{opacity:0.4}
 .trow.litrow .rank,.trow.litrow .c-p1{background:color-mix(in oklab,var(--acc) 24%,transparent);border-radius:6px}
-.dtag{grid-column:1/-1;font:600 12px var(--mono);color:var(--acc);padding-top:4px}
+/* ярлык пересчёта ранга едет в ячейке названия своей строкой под ней */
+.dtag{display:block;font:600 12px var(--mono);color:var(--acc);padding-top:4px}
 .gslot{display:flex;align-items:center;min-height:22px;padding:2px 16px;font:500 11.5px var(--mono);color:var(--tx3)}
 .gslot.glive{border-top:1px dashed var(--line2)}
 .gslot.gnow{color:var(--acc);border-top:1px solid var(--acc);background:color-mix(in oklab,var(--acc) 10%,transparent)}
@@ -431,7 +433,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    во всю ширину */
 .grun{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .grun .btn{width:auto}
-.srow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .st,.dsrow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow.done .st{color:var(--tx3)}
 .srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
 /* экран выдачи поиска (#проект/find/<запрос>): поле во всю ширину стоит на
@@ -477,9 +479,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* экран «Агенты» (#/agents, макет «08 Агенты»): работы всех досок одним
    списком, заголовок задачи первым, время и действия справа */
-.arow{display:grid;grid-template-columns:var(--tc-sess-live,92px) minmax(140px,1fr) var(--tc-sess-age,92px) var(--tc-sess-moved,108px) var(--tc-sess-act,110px);align-items:start;gap:14px;padding:15px 18px;border-top:1px solid var(--line)}
-.arow:first-child{border-top:none}
-.arow .dot{margin-top:6px}
+.arow>td{vertical-align:top;padding-top:15px;padding-bottom:15px}
+/* кружок состояния лежит в ячейке колонки: инлайновому span ширина с высотой
+   не указ, и без блочной подачи он пропадал с экрана вовсе */
+.arow .dot{display:inline-block;margin-top:6px}
 .arow .dot-other{background:var(--check)}
 /* кружки состояния работы: зелёный только у идущего хода, ожидание янтарное,
    простой серый. Зелёным горела всякая живая сессия, и молчащие часами окна
@@ -489,14 +492,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 @media (prefers-reduced-motion:no-preference){
   .dot-wait{animation:dkwait 2.2s ease-out infinite}
 }
-.ab{flex:1;min-width:0}
+.ab{min-width:0;overflow:hidden}
 .ab .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .ab .l1 .tt{font:500 14px var(--sans);color:var(--tx)}
 /* подпись сессии несёт путь и команду без пробелов: неразрывный кусок шире
    строки уносил раздел в горизонтальную прокрутку, поэтому такие слова
    разрываются по месту */
 .ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3);overflow-wrap:anywhere}
-.aacts{display:flex;align-items:center;gap:9px;flex:none}
+.arow .aacts>.cin{gap:9px;justify-content:flex-end}
 .aacts .stale{max-width:210px;white-space:normal;text-align:right}
 .atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;padding-top:3px}
 .empty b{display:block;font:600 14px var(--sans);color:var(--tx2);margin-bottom:5px}
@@ -771,14 +774,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
     .fab{display:flex}
   .cback:not([hidden]){display:block}
   .bbar{display:none}
-  .trow{display:flex;flex-direction:column;align-items:stretch;gap:5px;padding:12px 14px 12px 25px}
   /* телефон: заголовок строки идёт своей строкой во всю ширину, чипы под ним.
      В одном ряду с ним чипы ширины не отдают, и от длинного названия остаётся
      столбик обрубков по букве */
-  .trow .tt{order:2;flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:6px}
   .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
   .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
-  .trow .meta{order:1;justify-content:flex-start;flex-wrap:wrap}
+  .trow .meta>.cin{justify-content:flex-start;flex-wrap:wrap}
   /* телефон: сумма ранга и действие строки с пальцем в 44 пикселя, действие
      прижато к правому краю */
   .rsum{min-width:44px;min-height:44px;text-align:left}
@@ -789,7 +791,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .trow .meta .btn-ico{margin-left:auto;width:36px}
   .trow .meta .btn-ico + .btn,
   .trow .meta .btn-ico + .split{margin-left:6px}
-  .trow .meta > .btn:first-of-type{margin-left:auto}
+  .trow .meta .cin>.btn:first-of-type{margin-left:auto}
   /* телефон: составная кнопка целиком уходит вправо, стрелка держит палец в
      44 пикселя по ширине, а список подписок не выходит за край экрана */
   .trow .meta .split{margin-left:auto}
@@ -883,8 +885,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .flash:not(:first-child){display:none}
   .flash .nx{width:44px;height:44px}
   /* телефон: работа встаёт карточкой, кнопки в ряд с пальцем в 44 пикселя */
-  .arow{flex-wrap:wrap;gap:10px 12px;padding:14px 15px}
-  .aacts{width:100%;flex-wrap:wrap}
   .aacts .btn{flex:1;min-height:44px}
   .aacts .stale{max-width:none;text-align:left}
   .pbd{max-height:60vh}
@@ -1129,30 +1129,21 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* 14: колонка ранга больше не шире описания. Разбор слагаемых свёрнут всегда, и
    раскрывает его наведение либо нажатие: на широком экране это подсказка, на
    телефоне нажатие, которое уже было. */
-.trow{grid-template-columns:var(--tc-tasks-id,60px) minmax(120px,1fr) var(--tc-tasks-rank,44px) var(--tc-tasks-date,92px) var(--tc-tasks-act,246px);gap:6px;padding:8px 12px 8px 24px}
 .rank{max-width:none}
 .rank .rfold{display:none}
 .rank:hover .rfold,.rank.on .rfold{display:inline}
 /* колонка типа растёт под длинную подпись чипа, а не режет её */
 .srow{grid-template-columns:minmax(60px,auto) 1fr auto;gap:6px;padding:7px 12px}
 
-/* строка накопителя одним рядом: отметка выбора, важность, номер, наименование,
-   дата правки и кнопка чата. Колонки стоят тут, а не рядом с остальной
-   разметкой накопителя: правило .srow выше по силе не отличается, а лежит ниже
-   по файлу, и три его колонки перебивали пять здешних, отчего строка рвалась на
-   две. Колонка важности есть у всякой записи, пустая в том числе: иначе
-   соседние колонки съезжали бы на одну. */
-.dsrow{grid-template-columns:var(--tc-drafts-prio,112px) var(--tc-drafts-id,60px) minmax(120px,1fr) var(--tc-drafts-date,92px) var(--tc-drafts-act,38px)}
 /* приписки строки накопителя жмутся вправо одной строкой и на телефоне: у
    строки доски они уезжают под заголовок, а тут это разорванная строка */
-.dsrow .sm{grid-column:auto;justify-content:flex-end;flex-wrap:nowrap;min-width:0}
+.dsrow .sm>.cin{justify-content:flex-end;flex-wrap:nowrap;gap:9px}
 /* наименование ужимается многоточием, а не переносом: полный текст показывает
    подсказка, и на узком экране строка остаётся одной. Приписки едут в той же
-   ячейке: колонка названия растёт по наведению, и стоять поодаль им негде */
-.dtt{display:flex;align-items:center;gap:8px;min-width:0}
+   ячейке: колонка названия и так забирает остаток строки, и стоять поодаль им
+   негде */
 .dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .dtt .rchips{display:flex;align-items:center;gap:7px;flex:none}
-.dwhen{display:flex;align-items:center;justify-content:flex-start;min-width:0;overflow:hidden}
 /* телефон: кнопка запуска разбора остаётся рядом с полем модели, а не растёт
    во всю ширину полосы, как растут кнопки заведения */
 .grun .btn{width:auto}
@@ -1304,6 +1295,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* 14: строка черновика кликается целиком, и курсор обязан это показывать */
 .dlist .srow,.srow.clicky{cursor:pointer}
 .dlist .srow:hover,.srow.clicky:hover{background:var(--bg2)}
+.dsrow.clicky{cursor:pointer}
+.dsrow.clicky:hover>td{background:var(--bg2)}
 
 /* 9: номер задачи и название на одной горизонтали. Поле заголовка растёт по
    содержимому, поэтому равняются они по первой строке, а не по центру блока */
@@ -1648,56 +1641,71 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    один: шапка колонок, нажатие на подпись правит порядок, направление видно
    значком, границу колонки тянут мышью.
 
-   Имя классов своё (tblh, а не thead): словом thead в этой же таблице стилей
-   зовётся шапка экрана задачи, и общее имя перебивало её раскладку.
+   Два прежних захода собирали этот вид из своих сеток: шапка одним гридом,
+   строки другим, ширины связывались переменными. Подписи всё равно вставали
+   мимо ячеек, потому что сеток было две и стыковали их руками. Тут таблица
+   настоящая: colgroup, thead, tbody, и общую колонку у подписи со строкой
+   считает движок.
 
-   Шапка ростом со строку и с симметричными отступами по вертикали: полторы
-   строки высоты с разными полями сверху и снизу человек забраковал. Высота
-   стоит числом в одном месте, боковые отступы у раздела свои и равны отступам
-   его строки, иначе подпись стоит мимо своей ячейки. */
+   Имя классов своё (tblh, а не thead): словом thead в этой же таблице стилей
+   зовётся шапка экрана задачи, и общее имя перебивало её раскладку. */
 :root{--tblh:40px}
-.tblh{--tblgap:6px;display:grid;align-items:center;gap:var(--tblgap);height:var(--tblh);
-  background:var(--bg2);border-bottom:1px solid var(--line);
-  border-radius:var(--rad3) var(--rad3) 0 0}
-.tblc{position:relative;display:flex;align-items:center;min-width:0;height:100%}
+.tbl{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;
+  background:var(--bg1);border:1px solid var(--line);border-radius:var(--rad3)}
+/* Боковые отступы у шапки и у строки одни и те же одним правилом на обе:
+   разойдись они, подпись встала бы мимо своей ячейки, а это ровно та беда,
+   ради которой вид и переписан. */
+.tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:5px;padding-right:5px}
+.tbl th:first-child,.tbl td:first-child{padding-left:24px}
+.tbl th:last-child,.tbl td:last-child{padding-right:16px}
+.tbl td{vertical-align:middle;padding-top:11px;padding-bottom:11px;
+  border-top:1px solid var(--line)}
+.tbl thead+tbody>tr:first-child>td{border-top:none}
+/* Ряд начинки живёт вложенной коробкой, а не самой ячейкой: table-cell с чужим
+   display перестаёт быть ячейкой таблицы, движок заворачивает её в безымянную,
+   и колонка уезжает. */
+.tbl td>.cin{display:flex;align-items:center;gap:8px;min-width:0}
+
+/* Шапка ростом со строку и с симметричными отступами: полторы строки высоты с
+   разными полями сверху и снизу человек забраковал. Рост держит одно число,
+   вертикальных отступов у ячейки шапки нет вовсе, и разойтись им негде. */
+.tblh th{position:relative;height:var(--tblh);padding-top:0;padding-bottom:0;
+  vertical-align:middle;background:var(--bg2);border-bottom:1px solid var(--line)}
+.tblh th:first-child{border-top-left-radius:var(--rad3)}
+.tblh th:last-child{border-top-right-radius:var(--rad3)}
 .tbln,.tbll{font:600 10.5px var(--sans);letter-spacing:0.05em;text-transform:uppercase;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tbln{color:var(--tx3)}
-.tblb{display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;height:24px;padding:0;
-  border:none;background:none;cursor:pointer;color:var(--tx3);text-align:left}
+.tblb{display:inline-flex;align-items:center;gap:4px;max-width:100%;height:24px;padding:0;
+  border:none;background:none;cursor:pointer;color:var(--tx3);text-align:left;
+  vertical-align:middle}
 .tblb:hover{color:var(--tx)}
 .tblb svg{width:12px;height:12px;flex:none}
 .tblb.tblon{color:var(--tx2)}
 
-/* ручка тяги стоит посреди зазора между колонками, а не съедает подпись:
-   зазор у раздела свой, отсюда и счёт от переменной. Полоска видна всегда
-   слабой чертой, под курсором наливается цветом */
-.tblg{position:absolute;top:0;right:calc(var(--tblgap) / -2 - 4px);width:8px;height:100%;
+/* ручка тяги стоит на самой границе колонок и ростом с шапку: полоска видна
+   всегда слабой чертой, под курсором наливается цветом */
+.tblg{position:absolute;top:0;right:-4px;width:8px;height:100%;
   cursor:col-resize;touch-action:none;z-index:2}
 .tblg::after{content:"";position:absolute;left:3px;top:9px;bottom:9px;width:2px;
   border-radius:1px;background:var(--line2)}
 .tblg:hover::after,.tblg.on::after{top:0;bottom:0;background:var(--acc)}
 .tbldrag{user-select:none;cursor:col-resize}
 
-/* шапка задач стоит над карточками секций, а не внутри одной: карточек четыре,
-   и шапка над каждой перевешивала бы список из двух строк. Стоит она отдельной
-   полосой в тех же тонах и с той же рамкой, что карточка списка: подписи,
-   висевшие в воздухе без фона и рамки, читались не как шапка таблицы, а как
-   случайные слова над доской (замечание пользователя). Рамка у полосы та же,
-   что у карточки, и боковые отступы поэтому равны отступам строки */
-.tblh.h-tasks{grid-template-columns:var(--tc-tasks-id,60px) minmax(120px,1fr)
-  var(--tc-tasks-rank,44px) var(--tc-tasks-date,92px) var(--tc-tasks-act,246px);
-  padding:0 12px 0 24px;background:var(--bg1);border:1px solid var(--line);
-  border-radius:var(--rad3)}
-.tblh.h-drafts{grid-template-columns:var(--tc-drafts-prio,112px) var(--tc-drafts-id,60px)
-  minmax(120px,1fr) var(--tc-drafts-date,92px) var(--tc-drafts-act,38px);padding:0 12px}
-.tblh.h-sess{--tblgap:14px;grid-template-columns:var(--tc-sess-live,92px) minmax(140px,1fr)
-  var(--tc-sess-age,92px) var(--tc-sess-moved,108px) var(--tc-sess-act,110px);padding:0 18px}
+/* полоса во всю ширину таблицы: заголовок секции, ярус Blocked, щель жеста и
+   слово пустого списка. Своих отступов у ячейки нет, их держит начинка */
+.tbl .band>td{padding:0;border-top:none}
+.tbl .secband>td{background:var(--bg2);border-top:1px solid var(--line)}
+.tbl thead+tbody>tr.secband:first-child>td{border-top:none}
 
-/* отметка выбора и уровень разбора одной ячейкой накопителя */
-.dsrow .dimp{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden}
-/* дата последней активности сессии: колонка своя, а не приписка в хвосте */
-.arow .amoved{display:flex;align-items:center;min-width:0;overflow:hidden;padding-top:2px}
+/* колонка состояния сессии: ячейка держит ширину колонки, кружку своя ширина */
+.arow .live{white-space:nowrap}
+/* отметка выбора и уровень разбора одной ячейкой накопителя: квадрат отметки
+   не жмётся под длинное слово уровня, иначе флажки в списке разъезжаются */
+.dpick{vertical-align:middle;flex:none}
+.dsrow .dimp .chip{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* возраст и дата последней активности стоят вровень с заголовком работы */
+.arow .atime,.arow .amoved{min-width:0;overflow:hidden;padding-top:16px}
 
 /* крестик закрытия сессии: взведённая кнопка видна наливом, а вопрос стоит
    подсказкой. Слово «Точно закрыть?» на значок не помещается */
@@ -1708,47 +1716,76 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    наведения схлопывались в ноль) правил ту же беду, что теперь правит тяга
    границы, и делал это за человека и рывком */
 @media (min-width:901px){
-  .trow .twhen,.dsrow .dimp,.dsrow .dwhen{min-width:0;overflow:hidden}
+  .trow .twhen,.trow .tt,.dsrow .dimp,.dsrow .dwhen,.dsrow .dtt{overflow:hidden}
   .trow .rank{min-width:0}
 }
 
-/* телефон: сетка колонок в ширину не влезает ни в 390, ни в 430 точек, и шапка
-   там ложится рядом чипов с переносом, а колонки без сортировки из неё уходят
-   вовсе. Тянуть там нечего: строка раскладывается по областям, и колонок в ней
-   нет. Сама строка ложится тем же ритмом: номер с рангом и датой одной
-   строкой, название своей, кнопки своей */
+/* телефон: колонок в 390 и 430 точек не встаёт ни одна раскладка, и таблица
+   переводится в блочный вид, как это и принято. Строка ложится по областям
+   (номер с рангом и датой одной строкой, название своей, кнопки своей), а
+   шапка ложится рядом чипов сортировки: подписывать там нечего, колонок нет.
+   Тянуть границу тоже нечего, и ручка погашена. */
 @media (max-width:900px){
-  .tblh{display:flex;flex-wrap:wrap;gap:6px;height:auto;padding:8px 12px}
+  /* Селекторы тут повторяют путь от таблицы не для красоты: правило вида
+     «.tbl>tbody>tr» сильнее одиночного «.trow», и раскладку строки оно
+     перебивало, отчего ячейки вставали столбиком. */
+  .tbl{display:block}
+  .tbl>colgroup{display:none}
+  .tbl>thead,.tbl>tbody{display:block}
+  .tbl th,.tbl td{display:block;padding-left:0;padding-right:0;border-top:none}
+  /* боковые отступы крайних ячеек снимаются тем же по силе правилом, что их
+     ставит: на широком экране они держат кромку таблицы, а тут строка
+     раскладывается по областям и отступ держит она сама */
+  .tbl th:first-child,.tbl td:first-child{padding-left:0}
+  .tbl th:last-child,.tbl td:last-child{padding-right:0}
+  .tbl>tbody>tr{display:block;border-top:1px solid var(--line)}
+  .tbl>thead+tbody>tr:first-child{border-top:none}
+  .tbl>thead>tr.tblh{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;
+    background:var(--bg2);border-bottom:1px solid var(--line)}
+  .tblh th{height:auto;background:none;border-bottom:none;width:auto}
   .tblh .tbln{display:none}
-  .tblc{height:auto}
   .tblg{display:none}
-  .tblb{height:32px;padding:0 10px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1)}
+  .tblb{height:32px;padding:0 10px;border:1px solid var(--line2);border-radius:8px;
+    background:var(--bg1)}
   .tblb.tblon{border-color:var(--acc);color:var(--tx)}
-  .trow{display:grid;grid-template-columns:auto auto 1fr;gap:6px 10px;padding:12px 14px 12px 25px;align-items:center}
-  .trow .id{grid-column:1;grid-row:1}
+  .tbl .shead{padding:13px 14px 8px}
+  .tbl .btier{padding:9px 14px 8px}
+  .tbl>tbody>tr.trow{display:grid;grid-template-columns:auto auto 1fr;gap:6px 10px;
+    padding:12px 14px 12px 25px;align-items:center}
+  /* кружок висит слева от номера, в отступе строки, и кромка ячейки его не
+     режет: на широком экране он стоит внутри отступа, а тут снаружи */
+  .trow .id{grid-column:1;grid-row:1;overflow:visible}
+  .trow .id .sdot{top:calc(50% - 4.5px);left:-17px}
   .trow .rank{grid-column:2;grid-row:1;min-width:0}
-  .trow .twhen{grid-column:3;grid-row:1;justify-content:flex-start;min-width:0;overflow:hidden}
-  .trow .tt{grid-column:1 / -1;grid-row:2;flex-direction:column;align-items:flex-start;gap:6px}
-  .trow .meta{grid-column:1 / -1;grid-row:3;justify-content:flex-start;flex-wrap:wrap}
+  .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
+  .trow .tt{grid-column:1 / -1;grid-row:2}
+  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .meta{grid-column:1 / -1;grid-row:3}
+  .trow .meta>.cin{justify-content:flex-start;flex-wrap:wrap}
   /* накопитель ложится тем же ритмом, что и строка доски: отметка с важностью,
      номер и дата первой строкой, название второй во всю ширину. Приписки едут
      под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */
-  .dsrow{grid-template-columns:auto auto 1fr auto;gap:6px 10px}
-  .dsrow .dimp{grid-column:1;grid-row:1;flex-wrap:nowrap}
+  .tbl>tbody>tr.dsrow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 10px;
+    padding:10px 14px;align-items:center}
+  .dsrow .dimp{grid-column:1;grid-row:1}
+  .dsrow .dimp>.cin{flex-wrap:nowrap}
   .dsrow .id{grid-column:2;grid-row:1}
-  .dsrow .dwhen{grid-column:3;grid-row:1;justify-content:flex-end;min-width:0}
+  .dsrow .dwhen{grid-column:3;grid-row:1;min-width:0;text-align:right}
   .dsrow .sm{grid-column:4;grid-row:1}
-  .dsrow .dtt{grid-column:1 / -1;grid-row:2;display:block;overflow:hidden}
+  .dsrow .dtt{grid-column:1 / -1;grid-row:2;overflow:hidden}
+  .dsrow .dtt>.cin{display:block}
   .dsrow .dtt .st{display:block;white-space:normal;line-height:1.35}
   .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;max-width:100%}
   .dsrow .dtt .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   /* сессии: состояние, работа и возраст одной строкой, дата активности второй,
      кнопки под ними */
-  .arow{grid-template-columns:18px 1fr auto;gap:8px 12px;padding:14px 15px}
-  .arow .dot{justify-self:start}
-  .arow .dot{grid-column:1;grid-row:1}
+  .tbl>tbody>tr.arow{display:grid;grid-template-columns:18px 1fr auto;gap:8px 12px;
+    padding:14px 15px}
+  .arow>td{padding-top:0;padding-bottom:0;vertical-align:baseline}
+  .arow .live{grid-column:1;grid-row:1}
   .arow .ab{grid-column:2;grid-row:1}
-  .arow .atime{grid-column:3;grid-row:1;text-align:right}
-  .arow .amoved{grid-column:2 / -1;grid-row:2;justify-content:flex-end;padding-top:0}
-  .aacts{grid-column:1 / -1;grid-row:3;width:100%;flex-wrap:wrap}
+  .arow .atime{grid-column:3;grid-row:1;text-align:right;padding-top:0}
+  .arow .amoved{grid-column:2 / -1;grid-row:2;text-align:right;padding-top:0}
+  .arow .aacts{grid-column:1 / -1;grid-row:3;width:100%}
+  .arow .aacts>.cin{flex-wrap:wrap;justify-content:flex-start}
 }

@@ -731,9 +731,11 @@ function checkChip(row) {
 // в строке ест столько же, сколько заголовок. На ноутбуке слагаемые приходят
 // подсказкой при наведении, на телефоне наведения нет, поэтому та же сумма
 // разворачивает их нажатием.
-function rankCell(row) {
+// Ранг стоит и ячейкой строки доски, и припиской в выдаче поиска, а это две
+// разные разметки: в таблице это td, в обычном списке span.
+function rankCell(row, tag) {
   const parts = (row.r_parts || []).join("+");
-  const cell = el("span", "rank");
+  const cell = el(tag || "span", "rank");
   const sum = el("button", "rsum", String(row.r));
   sum.type = "button";
   cell.append(sum);
@@ -1174,15 +1176,16 @@ function rowAction(project, row, sect) {
 // ждут.
 function renderRow(project, row, sect, opts) {
   const quiet = Boolean(opts && opts.quiet);
-  const tr = freshMark(el("div", "trow" + (quiet ? " rwait" : "")), row.id);
-  // Кружок состояния живёт внутри ячейки номера, а не отдельной колонкой:
-  // сетка строки трёхколоночная, и четвёртый элемент разъехался бы по ней.
-  const idc = el("span", "id");
+  const tr = freshMark(el("tr", "trow" + (quiet ? " rwait" : "")), row.id);
+  // Кружок состояния живёт внутри ячейки номера, а не отдельной колонкой: у
+  // колонки была бы своя подпись в шапке, а сказать о ней нечего, кружок и так
+  // читается рядом с номером.
+  const idc = el("td", "id");
   const dot = rowDot(project, row);
   if (dot) idc.append(dot);
   idc.append(el("span", "", row.id));
   tr.append(idc);
-  const tt = el("span", "tt");
+  const { cell: ttc, box: tt } = tblCell("tt");
   tt.append(withFull(el("span", "ttl", row.title), row.title));
   // Чипы лежат своей коробкой, а не россыпью рядом с заголовком: на телефоне
   // они уходят под него отдельной строкой, и заголовку достаётся вся ширина.
@@ -1194,24 +1197,24 @@ function renderRow(project, row, sect, opts) {
     for (const chip of chips) box.append(chip);
     tt.append(box);
   }
-  tr.append(tt);
+  tr.append(ttc);
   // Ранг и дата стоят своими колонками, а не приписками в хвосте: по ним
-  // сортирует шапка, и колонка, которой нет в сетке, подписи в шапке не
+  // сортирует шапка, и колонка, которой нет в таблице, подписи в шапке не
   // соответствует ничем.
-  tr.append(rankCell(row));
+  tr.append(rankCell(row, "td"));
   // Дата последней правки вместо возраста днями: считает её taskctl по git
   // blame, клиент только показывает. Слова «правка» рядом с датой нет,
   // объяснение пришло подсказкой по наведению.
-  const when = el("span", "twhen");
+  const when = el("td", "twhen");
   if (row.moved) {
     when.append(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
   tr.append(when);
-  const meta = el("span", "meta");
+  const { cell: metac, box: meta } = tblCell("meta");
   meta.append(rowChatBtn(project, row));
   meta.append(rowAction(project, row, sect));
-  tr.append(meta);
+  tr.append(metac);
   tr.addEventListener("click", () => {
     // После броска строки браузер шлёт клик тем же нажатием: перетаскивание не
     // уводит внутрь задачи.
@@ -1294,9 +1297,11 @@ function blockedItems(project, parked, held) {
       key: "tier-" + (quiet ? "tasks" : "human"),
       sign: label + "|" + list.length,
       make: () => {
+        const band = tblBand("tasks", "btier-band");
         const head = el("div", "btier" + (quiet ? " quiet" : ""), label);
         head.append(el("span", "n", String(list.length)));
-        return head;
+        band.cell.append(head);
+        return band.tr;
       },
     });
     for (const row of list) {
@@ -1378,14 +1383,16 @@ function countsSet(part) {
 // и уводила раздел в горизонтальную прокрутку.
 const TBL_COLS = {
   tasks: [
-    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 60 },
+    // Колонка номера шире прочих на отступ строки: в нём висит кружок
+    // состояния, и ширина колонки этот отступ включает.
+    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 84 },
     { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
     { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 44 },
     { key: "date", label: "Дата", by: "дате", first: "desc", w: 92 },
     { key: "act", label: "", w: 246 },
   ],
   sess: [
-    { key: "live", label: "Состояние", by: "состоянию", first: "asc", w: 92 },
+    { key: "live", label: "Состояние", by: "состоянию", first: "asc", w: 136 },
     { key: "title", label: "Работа", by: "названию работы", first: "asc", flex: true },
     { key: "age", label: "Идёт", by: "времени работы", first: "desc", w: 92 },
     // Дата последней содержательной реплики. Возраст в колонке «Идёт» отвечает
@@ -1421,10 +1428,13 @@ const TBL_SORT_KEY = {
   drafts: "devkit.dash.drafts.sort",
 };
 
+// Ключ памяти ширин свой у каждого раздела. Имя сменилось вместе с переходом
+// на таблицу: прежние числа мерили колонку своей сетки, где боковые отступы
+// строки лежали снаружи, и в таблице те же числа дали бы другую картинку.
 const TBL_WIDE_KEY = {
-  tasks: "devkit.dash.tasks.cols",
-  sess: "devkit.dash.sess.cols",
-  drafts: "devkit.dash.drafts.cols",
+  tasks: "devkit.dash.tasks.tblcols",
+  sess: "devkit.dash.sess.tblcols",
+  drafts: "devkit.dash.drafts.tblcols",
 };
 
 // Накопитель помнил свой порядок словом ещё до шапки (DK-353, кнопка о двух
@@ -1595,18 +1605,69 @@ function tblGrip(sect, aim, onDone) {
   return grip;
 }
 
+// Таблица раздела. Списки стояли на своей сетке: шапка одним гридом, строки
+// другим, ширины связывались переменными, и подписи всё равно вставали мимо
+// ячеек. Теперь это настоящая таблица браузера, и колонки раскладывает движок:
+// table-layout:fixed читает ширины из colgroup, а место ячейки в строке от
+// места подписи в шапке не отличается ничем, потому что колонка у них одна.
+function tblTable(sect) {
+  return el("table", "tbl t-" + sect);
+}
+
+// Колонки таблицы. Ширины лежат переменными корня (tblWidthsPut выше), и col
+// читает их оттуда: тяга границы правит переменную, а таблица встаёт заново
+// сама, без пересборки разметки. Растяжимой колонке ширины не назначается
+// вовсе, остаток строки движок отдаёт ей.
+function tblColgroup(sect) {
+  const group = el("colgroup");
+  for (const col of TBL_COLS[sect] || []) {
+    const one = el("col", "cw-" + col.key);
+    if (!col.flex) {
+      one.style.width = "var(--tc-" + sect + "-" + col.key + ", " + col.w + "px)";
+    }
+    group.append(one);
+  }
+  return group;
+}
+
+// Полоса во всю ширину таблицы: заголовок секции, подпись яруса, щель жеста и
+// слово пустого списка стоят строкой с одной ячейкой на все колонки. Начинка
+// кладётся в ячейку, а не в саму строку: подача у этих полос прежняя, и своих
+// стилей им заводить не надо.
+function tblBand(sect, cls) {
+  const tr = el("tr", "band" + (cls ? " " + cls : ""));
+  const cell = el("td", "bcell");
+  cell.setAttribute("colspan", String((TBL_COLS[sect] || []).length));
+  tr.append(cell);
+  return { tr, cell };
+}
+
+// Ячейка строки с начинкой в ряд. Флексом сама ячейка быть не может: table-cell
+// с чужим display перестаёт быть ячейкой таблицы, движок заворачивает её в
+// безымянную, и колонка уезжает. Поэтому ряд живёт вложенной коробкой, а
+// ячейка остаётся ячейкой.
+function tblCell(cls) {
+  const cell = el("td", cls);
+  const box = el("span", "cin");
+  cell.append(box);
+  return { cell, box };
+}
+
 // Шапка колонок. Направление рисуется значком свёртки: своих стрелок у статики
 // нет, а этот набор уже лежит в разметке и читается тем же жестом, вверх это
-// по возрастанию. Ячейка шапки ростом со строку и стоит теми же колонками, что
-// строка: подписи обязаны стоять над своими ячейками, иначе шапка обещает
-// колонки, которых в строке нет.
+// по возрастанию. Ячейка шапки это th той же колонки, что и ячейка строки:
+// подпись стоит над своей ячейкой не по нашему счёту точек, а потому что
+// колонка у них общая.
 function tblHead(sect, onPick) {
   const now = tblSort(sect);
   tblWidthsPut(sect);
-  const head = el("div", "tblh h-" + sect);
+  const head = el("thead");
+  const row = el("tr", "tblh h-" + sect);
+  head.append(row);
   const cols = TBL_COLS[sect] || [];
   cols.forEach((col, at) => {
-    const cell = el("div", "tblc");
+    const cell = el("th", "tblc");
+    cell.setAttribute("scope", "col");
     if (!col.first) {
       cell.append(el("span", "tbln", col.label || ""));
     } else {
@@ -1632,9 +1693,25 @@ function tblHead(sect, onPick) {
     // областям и колонок там нет вовсе (css гасит саму ручку).
     const aim = at + 1 < cols.length ? tblGripAim(cols, at) : null;
     if (aim) cell.append(tblGrip(sect, aim));
-    head.append(cell);
+    row.append(cell);
   });
   return head;
+}
+
+// Тело таблицы под шапкой. Разделов у доски четыре, и каждый идёт своим tbody:
+// перерисовка по ключам ходит внутрь одного тела, а соседние секции стоят
+// нетронутыми.
+function tblBodyItem(key, sign, items, cls) {
+  return {
+    key,
+    sign,
+    make: () => {
+      const body = el("tbody", cls || "");
+      sync(body, items);
+      return body;
+    },
+    fill: (body) => { sync(body, items); },
+  };
 }
 
 // Сравнение двух строк по колонке. Наружу отдаётся готовая функция сортировки:
@@ -1727,10 +1804,16 @@ function renderBoard(project, board, works) {
     // подсветка, от вторых баджи.
     sign: [project, "tasks", rowsN, (works || []).length, shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "tasks"),
+  }];
+  // Доска это одна таблица на все четыре секции, а не таблица на секцию: шапка
+  // колонок тогда одна, стоит она в той же таблице, что и строки, и колонки у
+  // них общие. Секция идёт своим tbody с заголовком-полосой сверху.
+  const parts = [{
+    key: "cols",
+    sign: "cols",
+    make: () => tblColgroup("tasks"),
   }, {
-    // Шапка колонок одна на все секции: карточек у доски четыре, и шапка над
-    // каждой стояла бы над одной-двумя строками, перевешивая сам список.
-    key: "tasks-head",
+    key: "head",
     sign: tblHeadSign("tasks"),
     make: () => tblHead("tasks", () => { renderBoard(project, board, works); }),
   }];
@@ -1771,40 +1854,54 @@ function renderBoard(project, board, works) {
     const parked = key === "blocked" ? sec.rows || [] : [];
     const secRows = key === "backlog" ? freeRows
       : key === "blocked" ? parked.concat(heldRows) : sec.rows || [];
-    items.push({
-      key: "head-" + key,
+    const rows = [{
+      key: "shead",
       sign: sec.title + "|" + secRows.length,
       make: () => {
+        const band = tblBand("tasks", "secband");
         const head = el("div", "shead", sec.title);
         // Backlog стоит по рангу, и счётчик говорит это же: надписью под
         // формой задачи порядок объяснять больше не надо.
         head.append(el("span", "n", secRows.length + (key === "backlog" ? ", по рангу" : "")));
-        return head;
+        band.cell.append(head);
+        return band.tr;
       },
-    });
-    const rows = key === "blocked"
+    }];
+    for (const item of key === "blocked"
       ? blockedItems(project, tasksSorted(parked), tasksSorted(heldRows))
       : tasksSorted(secRows).map((row) => ({
         key: row.id,
         sign: rowSign(row, key),
         make: () => renderRow(project, row, key),
-      }));
-    if (!rows.length) {
-      rows.push({ key: "empty", sign: "", make: () => el("div", "empty", "Нет.") });
+      }))) {
+      rows.push(item);
     }
-    // Отпечаток карточки собран из отпечатков строк: не изменилась ни одна,
-    // значит в карточку можно не заходить вовсе.
-    items.push({
-      key: "card-" + key,
-      sign: rows.map((r) => r.key + "=" + r.sign).join("\n"),
-      make: () => {
-        const card = el("div", "card");
-        sync(card, rows);
-        return card;
-      },
-      fill: (card) => { sync(card, rows); },
-    });
+    if (rows.length === 1) {
+      rows.push({
+        key: "empty",
+        sign: "",
+        make: () => {
+          const band = tblBand("tasks", "bempty");
+          band.cell.append(el("div", "empty", "Нет."));
+          return band.tr;
+        },
+      });
+    }
+    // Отпечаток тела собран из отпечатков строк: не изменилась ни одна, значит
+    // внутрь секции можно не заходить вовсе.
+    parts.push(tblBodyItem("sec-" + key, rows.map((r) => r.key + "=" + r.sign).join("\n"),
+      rows, "tsec"));
   }
+  items.push({
+    key: "board-table",
+    sign: parts.map((p) => p.key + "=" + p.sign).join("\n"),
+    make: () => {
+      const table = tblTable("tasks");
+      sync(table, parts);
+      return table;
+    },
+    fill: (table) => { sync(table, parts); },
+  });
   items.push({ key: "board-fab", sign: project, make: () => newTaskFab(project) });
   sync(groups, items);
 }
@@ -2065,11 +2162,15 @@ function dragDraw() {
       // Дальше края коридора подписывать нечего: там уже приглушено.
       return;
     }
+    // Щель это строка таблицы во всю ширину: между строками секции вставить
+    // коробку больше нельзя, там живут только строки.
+    const band = tblBand("tasks", "gslot-band");
     const mark = el("div", cls, text);
+    band.cell.append(mark);
     const at = gap < rest.length ? findKey(drag.card, rest[gap].id) : null;
-    drag.card.insertBefore(mark, at);
+    drag.card.insertBefore(band.tr, at);
     drag.slots[gap] = mark;
-    drag.marks.push(mark);
+    drag.marks.push(band.tr);
   });
   // Середины строк снимаются один раз, после расстановки щелей: дальше картинка
   // стоит на месте, и щель под пальцем считается по снимку, а не по едущей
@@ -2080,8 +2181,13 @@ function dragDraw() {
     const box = node.getBoundingClientRect();
     return box.top + box.height / 2;
   });
+  // Ярлык пересчёта едет в ячейке названия: приписать его самой строке нельзя,
+  // в строке таблицы живут только ячейки.
   drag.tag = el("span", "dtag", "");
-  drag.tr.append(drag.tag);
+  // Ярлык стоит в ячейке названия своей строкой под ней, а не в ряду с
+  // заголовком: в ряду он отнимал бы у названия половину колонки.
+  const box = drag.tr.querySelector(".tt");
+  (box || drag.tr).append(drag.tag);
 }
 
 function dragAim(y) {
@@ -10066,7 +10172,7 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 // накопитель разбирают пачкой, и отметка выбора стоит в строке, а кнопка
 // запуска одна над списком (LLD DK-328, решение пользователя).
 function draftRow(project, d) {
-  const row = freshMark(el("div", "srow clicky dsrow"), d.id);
+  const row = freshMark(el("tr", "dsrow clicky"), d.id);
   // Отметка выбора это кнопка, а не флажок браузера: палец попадает в неё
   // целиком, а состояние читается с самой кнопки, а не с её начинки.
   const pick = el("button", "dpick" + (draftPick.has(d.id) ? " on" : ""));
@@ -10091,17 +10197,17 @@ function draftRow(project, d) {
   // добавить к ней значок направления (замечание пользователя). Ячейка есть у
   // всякой записи, у записи без уровня в том числе: иначе соседние колонки
   // съезжали бы на одну.
-  const imp = el("span", "dimp");
+  const { cell: impc, box: imp } = tblCell("dimp");
   imp.append(pick);
   if (d.prio) imp.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
-  row.append(imp);
-  row.append(el("span", "id", d.id));
+  row.append(impc);
+  row.append(el("td", "id", d.id));
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
   // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
   // телефона иначе не прочитать, не заходя внутрь (замечание пользователя).
   // Живёт он в своей ячейке вместе с приписками: колонка названия растёт по
   // наведению, и приписки обязаны ехать вместе с ней, а не стоять поодаль.
-  const tt = el("span", "dtt");
+  const { cell: ttc, box: tt } = tblCell("dtt");
   tt.append(withFull(el("span", "st", d.title || ""), d.title || ""));
   const chips = [];
   if (d.deferred) chips.push(el("span", "chip", "отложен " + d.deferred));
@@ -10114,23 +10220,23 @@ function draftRow(project, d) {
     for (const chip of chips) box.append(chip);
     tt.append(box);
   }
-  row.append(tt);
+  row.append(ttc);
   // Дата правки записи вместо возраста днями и теми же словами, что у строки
   // доски: возраст «3 дня» отвечал не на тот вопрос (замечание пользователя).
   // Колонка у неё своя: по ней список и сортируется нажатием в шапке.
-  const when = el("span", "dwhen");
+  const when = el("td", "dwhen");
   if (d.moved) {
     when.append(withTip(el("span", "stale dashed", d.moved),
       "дата последней правки записи: разбор двигает её же"));
   }
   row.append(when);
-  const meta = el("span", "sm");
+  const { cell: metac, box: meta } = tblCell("sm");
   // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
   // агентом надо тем же способом: кнопка та же, значок тот же, панель
   // открывается с привязкой к его ID (решение пользователя).
   const talk = rowChatBtn(project, d);
   meta.append(talk);
-  row.append(meta);
+  row.append(metac);
   row.addEventListener("click", (ev) => {
     // Нажатым оказывается не сама кнопка, а её начинка (значок у чата,
     // стрелка у выбора подписки), и спрашивать надо, лежит ли нажатое внутри
@@ -10205,22 +10311,20 @@ async function renderDrafts(project, works) {
   // хватает, и второй запрос ради перестановки был бы лишним.
   let cardNode = null;
   const rowsFor = () => {
-    // Шапка колонок вместо слова «Черновики» с числом: и слово, и число уже
-    // стоят табом над списком, а место над колонками занимали зря. Порядок
-    // правится нажатием на подпись, тем же приёмом, что у доски и сессий.
     const out = [];
-    if (drafts.length) {
-      out.push({
-        key: "drafts-head",
-        sign: tblHeadSign("drafts"),
-        make: () => tblHead("drafts", () => { paintRows(); }),
-      });
-    }
-    // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
+    // Пустой накопитель говорит словами сервера: пустая таблица неотличима от
     // неотрисованной.
     if (!drafts.length) {
       const note = r.body.note || "черновиков нет";
-      out.push({ key: "empty", sign: note, make: () => el("div", "empty", note) });
+      out.push({
+        key: "empty",
+        sign: note,
+        make: () => {
+          const band = tblBand("drafts", "bempty");
+          band.cell.append(el("div", "empty", note));
+          return band.tr;
+        },
+      });
     }
     // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
     // строки, что изменились, и список не уезжает из-под пальца.
@@ -10235,20 +10339,37 @@ async function renderDrafts(project, works) {
     }
     return out;
   };
-  const paintRows = () => { if (cardNode) sync(cardNode, rowsFor()); };
-  const rows = rowsFor();
+  // Шапка колонок вместо слова «Черновики» с числом: и слово, и число уже
+  // стоят табом над списком, а место над колонками занимали зря. Порядок
+  // правится нажатием на подпись, тем же приёмом, что у доски и сессий.
+  const partsFor = () => {
+    const rows = rowsFor();
+    const parts = [{ key: "cols", sign: "cols", make: () => tblColgroup("drafts") }];
+    if (drafts.length) {
+      parts.push({
+        key: "drafts-head",
+        sign: tblHeadSign("drafts"),
+        make: () => tblHead("drafts", () => { paintRows(); }),
+      });
+    }
+    parts.push(tblBodyItem("drafts-body",
+      rows.map((row) => row.key + "=" + row.sign).join("\n"), rows));
+    return parts;
+  };
+  const paintRows = () => { if (cardNode) sync(cardNode, partsFor()); };
+  const parts = partsFor();
   items.push({
     key: "drafts-card",
-    sign: rows.map((row) => row.key + "=" + row.sign).join("\n"),
+    sign: parts.map((part) => part.key + "=" + part.sign).join("\n"),
     make: () => {
-      const card = el("div", "card");
-      cardNode = card;
-      sync(card, rowsFor());
-      return card;
+      const table = tblTable("drafts");
+      cardNode = table;
+      sync(table, partsFor());
+      return table;
     },
-    fill: (card) => {
-      cardNode = card;
-      sync(card, rowsFor());
+    fill: (table) => {
+      cardNode = table;
+      sync(table, partsFor());
     },
   });
   if (drafts.length) {
@@ -12119,7 +12240,7 @@ function closeSessionBtn(project, w) {
 }
 
 function agentRow(project, w, now) {
-  const row = el("div", "arow");
+  const row = el("tr", "arow");
   const addr = workChatAddr(w);
   const tips = [];
   if (addr) tips.push("Открыть разговор этой работы");
@@ -12137,8 +12258,12 @@ function agentRow(project, w, now) {
   // (разбор пользователя), а знание никуда не делось.
   const dot = el("span", "dot " + said.dot);
   withTip(dot, said.word + ": " + workSaid(w, now).tip);
-  row.append(dot);
-  const box = el("div", "ab");
+  // Кружок лежит в ячейке колонки состояния, а не сам ею работает: ячейка
+  // держит ширину колонки, а кружку своя ширина в девять точек.
+  const live = el("td", "live");
+  live.append(dot);
+  row.append(live);
+  const box = el("td", "ab");
   const line = el("div", "l1");
   // Заголовок задачи идёт первым: имя сессии goal-DK-112 о занятии агента не
   // говорит ничего, и место ему в подписи.
@@ -12166,7 +12291,7 @@ function agentRow(project, w, now) {
 
   // Возраст сессии стоит своей колонкой между работой и действиями: по нему
   // сортирует шапка, и внутри хвоста с кнопками он ездил бы вместе с ними.
-  const when = el("div", "atime");
+  const when = el("td", "atime");
   const age = workAge(w.started, now);
   if (age) when.textContent = age;
   row.append(when);
@@ -12174,14 +12299,14 @@ function agentRow(project, w, now) {
   // вопрос, он про то, сколько сессия живёт, а не про то, когда в ней последний
   // раз что-то сказали (замечание пользователя). Точное время и давность
   // стоят подсказкой: в колонке им места нет, а день читается сразу.
-  const act = el("div", "amoved");
+  const act = el("td", "amoved");
   if (w.moved) {
     const said = workSaid(w, now);
     act.append(withTip(el("span", "stale dashed", workMovedDay(w.moved)),
       "последняя содержательная реплика " + workMovedTime(w.moved) + ", " + said.tip));
   }
   row.append(act);
-  const acts = el("div", "aacts");
+  const { cell: actsc, box: acts } = tblCell("aacts");
   // Разговор есть у любой строки: и у работы из реестра, чью сессию дашборд не
   // видит, и у сессии без задачи. Вход в чат один на цель и задачу, это одна и
   // та же панель, а ручку для реплики выбирает она сама (DK-435). Панель
@@ -12223,7 +12348,7 @@ function agentRow(project, w, now) {
     // слов и не отнимает у строки колонку (решение пользователя).
     acts.append(closeSessionBtn(project, w));
   }
-  row.append(acts);
+  row.append(actsc);
   return row;
 }
 
@@ -12327,23 +12452,21 @@ function workSign(w, now) {
 // экрана тут запрещена ценой: список живой, он перерисовывается по кругу, и
 // обход всего экрана на каждый тик это ровно те тормоза, которые лечила
 // правка панели (замер poc_bench_chat).
-function paintSessionRows(card, project, works, q) {
+function paintSessionRows(table, project, works, q) {
   const list = sortSessions(sessionsShown(project, works).map((w) => ({ project, work: w }))
     .filter((item) => agentMatch(item, q) && !sessGoneHides(item.work)));
   const now = Date.now();
-  // Шапка едет вместе со строками, а не выше по экрану: живой опрос
-  // перерисовывает карточку по кругу, и шапка, положенная мимо него, теряла бы
-  // подсветку выбранной колонки на первом же тике.
-  const head = list.length ? [{
-    key: "sess-head",
-    sign: tblHeadSign("sess"),
-    make: () => tblHead("sess", () => { paintSessionRows(card, project, works, q); }),
-  }] : [];
-  if (!list.length) {
-    sync(card, [{
+  const rows = list.map((item) => ({
+    key: workKey(item.work),
+    sign: workSign(item.work, now),
+    make: () => agentRow(item.project, item.work, now),
+  }));
+  if (!rows.length) {
+    rows.push({
       key: "sess-empty",
       sign: q ? "q" : "all",
       make: () => {
+        const band = tblBand("sess", "bempty");
         const empty = el("div", "empty");
         if (q) {
           empty.append(el("b", "", "По запросу ничего не нашлось."));
@@ -12354,16 +12477,25 @@ function paintSessionRows(card, project, works, q) {
           empty.append(document.createTextNode(
             "Запустите задачу с доски: кнопка «В работу» есть в строке задачи и на её экране."));
         }
-        return empty;
+        band.cell.append(empty);
+        return band.tr;
       },
-    }]);
-    return;
+    });
   }
-  sync(card, head.concat(list.map((item) => ({
-    key: workKey(item.work),
-    sign: workSign(item.work, now),
-    make: () => agentRow(item.project, item.work, now),
-  }))));
+  // Шапка едет вместе со строками, а не выше по экрану: живой опрос
+  // перерисовывает таблицу по кругу, и шапка, положенная мимо него, теряла бы
+  // подсветку выбранной колонки на первом же тике. Пустому списку шапка не
+  // нужна: подписывать нечего.
+  const parts = [{ key: "cols", sign: "cols", make: () => tblColgroup("sess") }];
+  if (list.length) {
+    parts.push({
+      key: "sess-head",
+      sign: tblHeadSign("sess"),
+      make: () => tblHead("sess", () => { paintSessionRows(table, project, works, q); }),
+    });
+  }
+  parts.push(tblBodyItem("sess-body", rows.map((r) => r.key + "=" + r.sign).join("\n"), rows));
+  sync(table, parts);
 }
 
 function renderSessions(project, works, q) {
@@ -12378,11 +12510,11 @@ function renderSessions(project, works, q) {
       shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "sess"),
   }, {
-    // Шапка колонок стоит внутри карточки первой строкой: списка тут один, и
-    // ширина у шапки со строками ровно одна, без поправки на рамку.
+    // Шапка и строки живут одной таблицей: список тут один, и колонка у
+    // подписи со строкой общая.
     key: "sess-card",
     sign: "card",
-    make: () => el("div", "card"),
+    make: () => tblTable("sess"),
   }]);
   paintSessionRows(nodes[nodes.length - 1], project, works, q);
   watchSessions(project, q);

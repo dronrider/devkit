@@ -57,10 +57,10 @@ const groups = byId.get("groups");
 await settle();
 sandbox.renderBoard("demo", board);
 
-const cards = allByClass(groups, "card");
+const cards = allByClass(groups, "tsec");
 const heads = allByClass(groups, "shead");
 if (heads.length !== 3 || cards.length !== 3) {
-  fail("секций на экране " + heads.length + ", карточек " + cards.length + ", ждал по три");
+  fail("секций на экране " + heads.length + ", тел таблицы " + cards.length + ", ждал по три");
 }
 const [runHead, backHead, blockHead] = heads;
 const [, backCard, blockCard] = cards;
@@ -115,7 +115,7 @@ if (!dump(parked).includes("ждём ответа смежников")) {
   const only = { prefix: "XR", sections: board.sections.map((sec) => (sec.key === "blocked"
     ? { key: "blocked", title: "Blocked", rows: [] } : sec)) };
   sandbox.renderBoard("demo", only);
-  const card = allByClass(groups, "card")[2];
+  const card = allByClass(groups, "tsec")[2];
   const one = allByClass(card, "btier");
   if (one.length !== 1 || !dump(one[0]).includes("ждут задач")) {
     fail("одинокий ярус остался без подписи: " + one.map(dump).join(" | "));

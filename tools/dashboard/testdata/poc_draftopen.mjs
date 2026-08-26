@@ -109,7 +109,7 @@ function press(row, target, why) {
   await sandbox.renderDrafts("demo");
   await settle();
   const groups = byId.get("groups");
-  const rows = allByClass(groups, "srow");
+  const rows = allByClass(groups, "dsrow");
   if (rows.length !== drafts.length) {
     fail("на телефонном табе «Черновики» строк " + rows.length + ", ждал " + drafts.length);
   }

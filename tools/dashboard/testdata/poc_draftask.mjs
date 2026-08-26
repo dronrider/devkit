@@ -105,7 +105,7 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   now.waiting = true;
   await go("#demo/drafts");
   if (!waits()) fail("в строке накопителя ожидание не помечено: " + dump(groups).slice(0, 400));
-  const row = byClass(groups, "srow");
+  const row = byClass(groups, "dsrow");
   if (!row) fail("строки накопителя нет вовсе");
   if (!allByClass(row, "c-wait").length) {
     fail("чип ожидания встал не в строке записи: " + dump(groups).slice(0, 300));

@@ -31,21 +31,30 @@ const POP = `
       </div>`;
 
 const ROW = `
-    <div class="trow">
-      <span class="id">DK-319</span>
-      <span class="tt"><span class="ttl">Сообщение цели при стоящем цикле не пропадает молча</span></span>
-      <span class="meta">
-        <span class="rank"><button class="rsum">40</button></span>
+    <tr class="trow">
+      <td class="id">DK-319</td>
+      <td class="tt"><span class="cin"><span class="ttl">Сообщение цели при стоящем цикле не пропадает молча</span></span></td>
+      <td class="rank"><button class="rsum">40</button></td>
+      <td class="twhen"><span class="stale dashed">2026-08-20</span></td>
+      <td class="meta"><span class="cin">
         <span class="split">
           <button class="btn btn-sm btn-acc">Выполнить</button>
           <button class="btn btn-sm btn-acc more2"><span class="car"></span></button>` + POP + `
         </span>
-      </span>
-    </div>`;
+      </span></td>
+    </tr>`;
 
+// Строка живёт в настоящей таблице раздела (POC DK-397): места кнопке отводит
+// колонка, и мерить её вне таблицы значило бы мерить не то.
 document.getElementById("groups").innerHTML = `
-  <div class="shead">Backlog<span class="n">1</span></div>
-  <div class="card">` + ROW + `</div>`;
+  <table class="tbl t-tasks">
+    <colgroup><col style="width:60px"><col><col style="width:44px">
+      <col style="width:92px"><col style="width:246px"></colgroup>
+    <tbody class="tsec">
+      <tr class="band secband"><td class="bcell" colspan="5">
+        <div class="shead">Backlog<span class="n">1</span></div></td></tr>` + ROW + `
+    </tbody>
+  </table>`;
 
 function box(sel) {
   const node = document.querySelector(sel);

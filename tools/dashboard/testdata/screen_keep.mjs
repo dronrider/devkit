@@ -917,7 +917,7 @@ await settle();
 
 // Доска: прокрутка и фокус на кнопке переживают обновление по фокусу окна.
 await go("#demo");
-const card = find(groups, "card-backlog");
+const card = find(groups, "sec-backlog");
 if (!card) fail("доска не собралась: карточки Backlog на экране нет");
 // Заголовок раздела: путь доски с префиксом ID стоял строкой рядом с названием
 // проекта и отвечал на вопрос, которого никто не задавал (замечание
@@ -958,7 +958,7 @@ if (doc.activeElement !== act) {
 if (find(groups, "XR-3") !== third) {
   fail("строка без изменений пересобрана заново: узел уехал из-под пальца");
 }
-if (find(groups, "card-backlog") !== card) {
+if (find(groups, "sec-backlog") !== card) {
   fail("карточка секции пересобрана заново, хотя строки в ней те же");
 }
 
@@ -1690,7 +1690,7 @@ if (panelNode.hidden) fail("панель разговора не открыла�
 const talkBox = byClass(livePin(), "chatwrap");
 if (!talkBox) fail("тело панели не собралось: " + dump(cpin).slice(0, 300));
 // Экран под панелью остался доской: панель это хвост адреса, а не свой экран.
-if (!find(groups, "card-backlog")) {
+if (!find(groups, "sec-backlog")) {
   fail("открытие панели пересобрало экран под ней: доски больше нет");
 }
 
@@ -1903,7 +1903,7 @@ if (!dump(groups).includes("XR-1")) {
 }
 await go("#demo/session/" + loose.id);
 if (panelNode.hidden) fail("старый адрес разговора сессии не открыл панель");
-if (!find(groups, "card-backlog")) {
+if (!find(groups, "sec-backlog")) {
   fail("старый адрес разговора сессии открыл не доску: " + dump(groups).slice(0, 200));
 }
 // Разговор без узнанной задачи: заголовок берётся из первой реплики. Подписи
@@ -2374,7 +2374,7 @@ for (const row of line) {
 sortBoard();
 running = false;
 await go("#demo");
-const bcard = layout(find(groups, "card-backlog"));
+const bcard = layout(find(groups, "sec-backlog"));
 const held = find(bcard, "XR-6");
 if (!held) fail("строки XR-6 в очереди нет: " + dump(bcard).slice(0, 200));
 const midOf = (id) => {
@@ -2461,7 +2461,7 @@ timers.length = 0;
 await go("#demo");
 
 // Долгое нажатие: строка взялась, коридор нарисован прямо на списке.
-const card2 = layout(find(groups, "card-backlog"));
+const card2 = layout(find(groups, "sec-backlog"));
 const row6 = find(card2, "XR-6");
 const grab = (name, y, extra) => row6.handlers[name](Object.assign({
   pointerId: 1, pointerType: "touch", clientY: y, cancelable: true,
@@ -2501,7 +2501,7 @@ for (const want of ["ранг 37", "ранг 35", "места нет", "выше
 // бы её из-под пальца вместе с коридором.
 await sandbox.refresh();
 await settle();
-if (find(groups, "card-backlog") !== card2 || !row6.classList.contains("dragrow")) {
+if (find(groups, "sec-backlog") !== card2 || !row6.classList.contains("dragrow")) {
   fail("обновление пересобрало список под пальцем");
 }
 if (!card2.children.filter((kid) => String(kid.className).includes("gslot")).length) {
@@ -2572,7 +2572,7 @@ if (rows.find((r) => r.id === "XR-6").r !== 30) {
 // и запроса за собой не тянет.
 for (const t of timers.splice(0)) t.fn();
 await go("#demo");
-const cardM = layout(find(groups, "card-backlog"));
+const cardM = layout(find(groups, "sec-backlog"));
 const rowM = find(cardM, "XR-6");
 const midM = (id) => {
   const box = find(cardM, id).getBoundingClientRect();
@@ -2603,7 +2603,7 @@ if (patched.length !== idleWas) {
 for (const t of timers.splice(0)) t.fn();
 byId.get("flashes").replaceChildren();
 await go("#demo");
-const card3 = layout(find(groups, "card-backlog"));
+const card3 = layout(find(groups, "sec-backlog"));
 const row6b = find(card3, "XR-6");
 const mid3 = (id) => {
   const box = find(card3, id).getBoundingClientRect();

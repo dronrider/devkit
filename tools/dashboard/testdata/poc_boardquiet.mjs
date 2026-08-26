@@ -51,8 +51,8 @@ await sandbox.refresh();
 await settle();
 
 const rowNode = (id) => {
-  for (const card of allByClass(groups, "card")) {
-    for (const kid of card.children || []) {
+  for (const body of allByClass(groups, "tsec")) {
+    for (const kid of body.children || []) {
       if (dump(kid).includes(id + " ")) return kid;
       if (String((kid.dataset || {}).pkey || "") === id) return kid;
     }

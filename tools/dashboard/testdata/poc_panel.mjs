@@ -859,6 +859,42 @@ async function feedOf(items, sid) {
     fail("реплика субагенту нарисована без текста: " + said2);
   }
   if (!byClass(dispatch, "tbox")) fail("у реплики субагенту нет блока: " + said2);
+  // Отправка человеку в панель это реплика разговора, а не ход инструмента:
+  // грумер DK-509 ответил каналом, и в ленте стояла строка «Пояснение вопроса
+  // -> uds:...sock», по которой человек вопроса не увидел вовсе (замечание
+  // пользователя). Такой ход помечает сервер полем human.
+  const toMan = sandbox.toolPair(
+    { role: "tool", tool: "SendMessage", human: true, note: "Пояснение вопроса по DK-509",
+      args: { to: "uds:/tmp/cc-socks/52214.sock", summary: "Пояснение вопроса по DK-509",
+        message: "Поясняю вопрос попроще. Снимки чужого вывода править нельзя." } },
+    { role: "toolout", text: '{"success":true,"message":"отправлено"}' });
+  const saidMan = dump(toMan);
+  if (!byClass(toMan, "msg") || !byClass(toMan, "bb")) {
+    fail("отправка человеку нарисована не пузырём разговора: " + saidMan.slice(0, 300));
+  }
+  if (!saidMan.includes("Поясняю вопрос попроще")) {
+    fail("в пузыре нет самого сообщения: " + saidMan.slice(0, 300));
+  }
+  if (saidMan.includes("uds:/tmp/cc-socks") || saidMan.includes("success")) {
+    fail("служебная обвязка уехала в пузырь: " + saidMan.slice(0, 300));
+  }
+  if (saidMan.includes("SendMessage")) {
+    fail("пузырь подписан именем инструмента: " + saidMan.slice(0, 300));
+  }
+  // Служебное не потеряно: адрес доставки и ответ канала лежат подсказкой
+  // подписи.
+  const foot = byClass(toMan, "mm");
+  if (!foot || !String(foot.title || "").includes("uds:/tmp/cc-socks/52214.sock")) {
+    fail("адрес доставки не сохранён подсказкой: " + JSON.stringify(foot && foot.title));
+  }
+  // Кружок такой записи не синий: работы никому не передавали.
+  if (sandbox.isDeleg({ role: "tool", tool: "SendMessage", human: true })) {
+    fail("отправка человеку помечена передачей работы субагенту");
+  }
+  if (!sandbox.isDeleg({ role: "tool", tool: "SendMessage" })) {
+    fail("обычная реплика субагенту перестала быть передачей работы");
+  }
+
   // Задание субагенту приезжает тем же блоком: заказ бывает на две страницы, и
   // строкой без разворота он загромождал ленту.
   const task = sandbox.toolPair(

@@ -194,7 +194,7 @@ func peerSay(sock, text string) error {
 		return fmt.Errorf("сокет %s не отозвался: %v", sock, err)
 	}
 	defer conn.Close()
-	from := "uds:" + filepath.Join(sockDir, fmt.Sprintf("%d.sock", os.Getpid()))
+	from := peerSelfAddr()
 	frame, err := peerFrame(text, from)
 	if err != nil {
 		return err
@@ -243,13 +243,23 @@ func peerWord(p peer) string {
 // на адрес отправителя, и без слушателя её ответ падает с ENOENT, а ход
 // уходит впустую на пересылку. Ответ дашборду не нужен вовсе (он и так придёт
 // в ленту транскриптом), поэтому соединение просто вычитывается досуха.
+// peerSelfPath это путь своего конца канала, а peerSelfAddr тот же путь
+// адресом канала, каким его видит агент. Считается он из номера процесса, и
+// точка тут одна на всех: слушателя канала, подпись отправителя и разбор
+// транскрипта, где по этому адресу узнаётся отправка человеку в панель.
+func peerSelfPath() string {
+	return filepath.Join(sockDir, fmt.Sprintf("%d.sock", os.Getpid()))
+}
+
+func peerSelfAddr() string { return "uds:" + peerSelfPath() }
+
 // Сокет живёт, пока живёт процесс, и снимается на выходе.
 func peerListen(logf func(string, ...any)) func() {
 	if err := os.MkdirAll(sockDir, 0o700); err != nil {
 		logf("свой сокет канала не поднялся: каталог %s не создался: %v", sockDir, err)
 		return func() {}
 	}
-	path := filepath.Join(sockDir, fmt.Sprintf("%d.sock", os.Getpid()))
+	path := peerSelfPath()
 	// Остаток от процесса с тем же номером мешает слушать: bind по занятому
 	// пути отказывает, а номера в системе переиспользуются.
 	os.Remove(path)

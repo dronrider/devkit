@@ -236,7 +236,8 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				// брал свой дефолт, а он бывает верхним ярусом, которого
 				// задаче никто не назначал.
 				" claude --model 'модель-pro' -p '" + tc.prompt + " " + planRule +
-				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + tc.id + ".json.'"
+				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + tc.id + ".json. " +
+				channelRule + "'"
 			if !strings.Contains(got, want) {
 				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 			}
@@ -293,7 +294,8 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 		" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
 		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
 		"' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto -p 'Выполни XR-002 " + planRule +
-		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json.'"
+		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json. " +
+		channelRule + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 	}
@@ -332,7 +334,8 @@ func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 	}
 	got := readFile(t, tmuxLog)
 	if !strings.Contains(got, " claude -p 'Выполни XR-002 "+planRule+
-		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json.'") {
+		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json. "+
+		channelRule+"'") {
 		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
 	}
 	if strings.Contains(got, "agentctl exec") {
@@ -1072,7 +1075,8 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
 			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude --model 'модель-pro' -p '"+tc.prompt+" "+planRule+
-				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-"+tc.id+".json.'") {
+				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-"+tc.id+".json. "+
+				channelRule+"'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
 			}
 		})

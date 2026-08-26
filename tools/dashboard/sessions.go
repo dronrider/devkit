@@ -693,6 +693,9 @@ type reply struct {
 	// Shot это путь картинки, приложенной к реплике: агент читает её сам, а
 	// лента показывает миниатюру.
 	Shot string `json:"shot,omitempty"`
+	// Human помечает ход, которым агент обратился к человеку: отправка в панель
+	// каналом сессий это реплика разговора, а не служебный ход инструмента.
+	Human bool `json:"human,omitempty"`
 	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
 	// весь бегущий лог пишется туда, а не в транскрипт сессии.
 	Sub string `json:"sub,omitempty"`
@@ -894,6 +897,10 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	// это расстояние от неё до метки самого размышления, потому что думать
 	// агент начинает сразу после того, что было до него.
 	var prev time.Time
+	// Адреса, с которых в этот разговор приходил человек панелью. Свой сокет
+	// стоит тут с самого начала, а прежние приезжают из самой переписки: по ним
+	// узнаётся ответная отправка агента человеку.
+	dash := map[string]bool{peerSelfAddr(): true}
 	add := func(item reply) {
 		if item.Role == roleThink {
 			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
@@ -941,6 +948,9 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 		}
 		var s string
 		if json.Unmarshal(rec.Message.Content, &s) == nil {
+			if sock := dashSock(s); sock != "" {
+				dash[sock] = true
+			}
 			addUser(add, rec.Type, rec.Timestamp, s)
 			continue
 		}
@@ -961,6 +971,9 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
+				if sock := dashSock(b.Text); sock != "" {
+					dash[sock] = true
+				}
 				addUser(add, rec.Type, rec.Timestamp, b.Text)
 			case "thinking":
 				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
@@ -969,9 +982,15 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 				// его рисует панель, разворот кликом.
 				add(reply{Role: roleThink, Time: rec.Timestamp, Text: b.Thinking})
 			case "tool_use":
+				// Отправка в панель это обращение к человеку: агент отвечает
+				// ему тем же каналом, которым пришла реплика, и в ленте такому
+				// ходу место пузырём разговора. Узнаётся он по адресу
+				// доставки, а не по имени инструмента: тем же SendMessage
+				// агент говорит и с субагентом, и это служебный ход.
 				add(reply{Role: "tool", Time: rec.Timestamp, Tool: b.Name,
 					Note: toolNote(b.Input), About: toolAbout(b.Input),
-					Text: toolBody(b.Input), Args: toolArgs(b.Input), ToolID: b.ID})
+					Text: toolBody(b.Input), Args: toolArgs(b.Input), ToolID: b.ID,
+					Human: b.Name == sendTool && dash[sendToTarget(b.Input)]})
 			case "tool_result":
 				// Вывод инструмента показывается как есть, обрезанным по длине:
 				// по нему видно, что агент делает, а свёрнутая строка «Bash»
@@ -1006,6 +1025,11 @@ const roleToolOut = "toolout"
 var peerWrapRe = regexp.MustCompile(`(?s)<cross-session-message\b([^>]*)>(.*?)</cross-session-message>`)
 
 var peerFromRe = regexp.MustCompile(`from-name="([^"]*)"`)
+
+// peerAddrRe вынимает адрес отправителя рамки. По нему узнаётся обратная
+// сторона разговора: агент отвечает человеку в тот же сокет, и ход отправки с
+// этим адресом это реплика, а не служебный ход.
+var peerAddrRe = regexp.MustCompile(`\bfrom="([^"]*)"`)
 
 // dashboardPeer это имя отправителя, каким подписывается сам дашборд: реплику
 // с него пишет человек, дашборд только несёт.
@@ -1132,6 +1156,39 @@ func unwrapPeer(text string) (string, string, bool) {
 		name = f[1]
 	}
 	return strings.TrimSpace(m[2]), name, true
+}
+
+// dashSock вынимает адрес дашборда из рамки, которой он принёс реплику
+// человека. Адрес считается по самой переписке, а не по своему номеру процесса:
+// дашборд перезапускается, сокет у него каждый раз новый, а разговор с прежним
+// адресом в транскрипте лежит и читается дальше.
+func dashSock(text string) string {
+	m := peerWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return ""
+	}
+	f := peerFromRe.FindStringSubmatch(m[1])
+	if f == nil || f[1] != dashboardPeer {
+		return ""
+	}
+	a := peerAddrRe.FindStringSubmatch(m[1])
+	if a == nil {
+		return ""
+	}
+	return a[1]
+}
+
+// sendTool это инструмент межсессионной отправки, а sendToTarget называет, куда
+// уехало сообщение: харнес зовёт поле to, а в части заказов recipient.
+const sendTool = "SendMessage"
+
+func sendToTarget(input map[string]any) string {
+	for _, key := range []string{"to", "recipient"} {
+		if s, ok := input[key].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // Служебные вставки харнеса в репликах роли user. Харнес кладёт их туда же, где

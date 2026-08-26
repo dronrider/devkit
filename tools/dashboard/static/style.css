@@ -1389,6 +1389,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    и возврат в него показывает готовый узел. Прячется он content-visibility:
    браузер держит отрисовку скрытого поддерева, и повторный показ не платит за
    раскладку, а заодно при узле остаются прокрутка и раскрытые блоки. */
+/* Пикер мест: подсветка наведённого элемента рамкой и фишка выбранного места
+   в строке вложений. Рамка рисуется контуром, чтобы не двигать раскладку. */
+.pickhi{outline:2px solid var(--acc);outline-offset:1px;cursor:crosshair}
+.cpickchip b{color:var(--acc)}
 .cslot{display:flex;flex-direction:column;min-height:0}
 .cslot.off{content-visibility:hidden;contain-intrinsic-size:0}
 .cunread{display:flex;flex-direction:column;gap:4px;padding:4px 0 0}

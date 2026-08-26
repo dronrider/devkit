@@ -4731,6 +4731,10 @@ function selFold(file, text) {
   return foldEl("selq", "выделение", text, file, text);
 }
 
+function pickFold(screen, text) {
+  return foldEl("selq", "место экрана", text, screen, text);
+}
+
 // Блок работы субагента: заголовок с подписью и счётом ходов, внутри та же
 // лента. Свёрнут по умолчанию, разворачивается кликом; последняя строка видна
 // в заголовке, чтобы по ней было видно, чем субагент занят прямо сейчас.
@@ -5040,8 +5044,12 @@ function chatItem(item) {
     if (item.time) bits.push(localTime(item.time));
     if (item.note) bits.push(item.note);
     if (item.sel) bits.push("с выделением");
+    if (item.pick) bits.push("с местом экрана");
     const wrap = chatBubble(who, item.text, bits.join(", "));
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
+    // Места экрана стоят при пузыре своим свёрнутым блоком: в самой реплике им
+    // места нет, а терять описатель незачем, по нему находят место в коде.
+    if (item.pick) wrap.append(pickFold(item.pickScreen || "", item.pick));
     if (item.shot) {
       // Картинка лежит файлом на машине, и браузеру её отдаёт ручка вложений.
       const thumb = shotThumb(shotURL(item.shot), baseName(item.shot));
@@ -8115,6 +8123,77 @@ function shotPrefix(path) {
   return '<screenshot file="' + path + '">\nвставлен снимок экрана\n</screenshot>\n';
 }
 
+// Пикер элементов экрана. Замечание про место на экране человек описывает
+// словами («та строка с рангом слева»), и исполнитель ищет это место в app.js
+// наугад. Пикер даёт ткнуть в само место: в реплику уезжает описатель, по
+// которому место находится грепом по говорящим классам.
+//
+// В реплику едет не живой узел, а снимок, снятый в момент нажатия: экран
+// перерисовывается каждые несколько секунд, и ссылка на узел к отправке уже
+// протухла бы.
+const PICK_TEXT_MAX = 120;
+
+// pickAttrs собирает говорящие атрибуты узла: id, data-поля и ID задачи. У
+// строк задач он и различает двадцать одинаковых строк.
+function pickAttrs(node) {
+  const out = [];
+  if (node.id) out.push("id=" + node.id);
+  const data = node.dataset || {};
+  for (const name of Object.keys(data)) {
+    const said = String(data[name] || "");
+    if (said) out.push("data-" + name + "=" + foldPeek(said, 40));
+  }
+  return out;
+}
+
+function pickWord(node) {
+  const cls = String(node.className || "").trim().split(/\s+/).filter(Boolean);
+  return (node.tagName || "div").toLowerCase() + (cls.length ? "." + cls.join(".") : "");
+}
+
+// pickOf снимает описатель узла: сам узел, его говорящие атрибуты, обрезанный
+// текст, пара уровней родителей и экран из адреса.
+function pickOf(node) {
+  const chain = [];
+  let up = node.parentNode;
+  for (let i = 0; i < 2 && up && up.tagName; i += 1) {
+    chain.push(pickWord(up));
+    up = up.parentNode;
+  }
+  const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
+  return {
+    what: pickWord(node),
+    attrs: pickAttrs(node),
+    text: foldPeek(text, PICK_TEXT_MAX),
+    chain,
+    screen: String(location.hash || "").replace(/^#/, ""),
+  };
+}
+
+// pickSay это одна строка описателя, какой её увидит агент.
+function pickSay(pick) {
+  const bits = [pick.what];
+  if (pick.attrs.length) bits.push(pick.attrs.join(" "));
+  if (pick.text) bits.push("«" + pick.text + "»");
+  if (pick.chain.length) bits.push("внутри " + pick.chain.join(" < "));
+  return bits.join(", ");
+}
+
+// Блок описателей стоит префиксом реплики, той же дорогой, что и выделение
+// текста. Вид блока свой: выделение это чужие слова, а тут места экрана.
+function pickPrefix(list) {
+  const screen = (list[0] && list[0].screen) || "";
+  return '<picked screen="' + screen + '">\n' +
+    list.map((p) => "- " + pickSay(p)).join("\n") + "\n</picked>\n";
+}
+
+// pickZone отвечает, можно ли ткнуть в этот узел. Панель разговора из зоны
+// выбора исключена: там стоят сами фишки и поле ввода, и тыкать в них незачем.
+function pickZone(node) {
+  if (!node || !node.tagName) return false;
+  return !(node.closest && node.closest("#cpanel"));
+}
+
 function selPrefix(sel) {
   return '<selection file="' + sel.file + '">\n' + sel.text + "\n</selection>\n";
 }
@@ -8665,6 +8744,8 @@ function chatPanel(project, st) {
   row.append(clips);
   let pinnedSel = null;
   let shot = chatShotRead(st.addr);
+  // Места экрана, выбранные пикером: описатели, снятые в момент нажатия.
+  let picks = [];
   const drawClips = () => {
     // Отрисовка блоков заодно и запоминает вложение: меняют его только тут же
     // рядом, и держать запись в трёх местах незачем.
@@ -8678,6 +8759,21 @@ function chatPanel(project, st) {
       off.append(icon("close"));
       off.title = "Убрать выделение";
       off.addEventListener("click", () => { pinnedSel = null; drawClips(); });
+      chip.append(off);
+      clips.append(chip);
+    }
+    for (const pick of picks) {
+      const chip = el("div", "cclip cpickchip");
+      chip.append(el("b", "", "место"));
+      chip.append(withFull(el("span", "", foldPeek(pickSay(pick), 40)), pickSay(pick)));
+      const off = el("button", "cclipx");
+      off.append(icon("close"));
+      off.title = "Убрать место";
+      off.setAttribute("aria-label", off.title);
+      off.addEventListener("click", () => {
+        picks = picks.filter((p) => p !== pick);
+        drawClips();
+      });
       chip.append(off);
       clips.append(chip);
     }
@@ -8702,6 +8798,61 @@ function chatPanel(project, st) {
       clips.append(chip);
     }
   };
+  // Пикер мест: кнопка включает выбор, наведение подсвечивает элемент рамкой,
+  // нажатие кладёт его описатель в набор и гасится (иначе сработало бы само
+  // место), Esc и повторное нажатие кнопки выходят.
+  const pickBtn = el("button", "cdbtn");
+  pickBtn.append(icon("i-pick"));
+  let picking = false;
+  let lit = null;
+  const litOff = () => {
+    if (lit && lit.classList) lit.classList.remove("pickhi");
+    lit = null;
+  };
+  const pickOver = (ev) => {
+    const node = ev && ev.target;
+    if (!pickZone(node)) return;
+    litOff();
+    lit = node;
+    if (node.classList) node.classList.add("pickhi");
+  };
+  const pickHit = (ev) => {
+    const node = ev && ev.target;
+    if (!pickZone(node)) return;
+    // Нажатие гасится: человек показывает место, а не жмёт то, что под ним.
+    if (ev.preventDefault) ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
+    picks = picks.concat([pickOf(node)]);
+    drawClips();
+  };
+  const pickKey = (ev) => {
+    if (ev && ev.key === "Escape") pickSet(false);
+  };
+  function pickSet(on) {
+    picking = on;
+    pickBtn.className = "cdbtn" + (on ? " on" : "");
+    pickBtn.title = on
+      ? "Выбор места на экране идёт: нажмите на элемент, Esc выходит"
+      : "Показать место на экране: включить выбор";
+    pickBtn.setAttribute("aria-label", pickBtn.title);
+    if (on) {
+      document.addEventListener("mouseover", pickOver);
+      document.addEventListener("click", pickHit, true);
+      document.addEventListener("keydown", pickKey);
+      return;
+    }
+    litOff();
+    document.removeEventListener("mouseover", pickOver);
+    document.removeEventListener("click", pickHit, true);
+    document.removeEventListener("keydown", pickKey);
+  }
+  pickSet(false);
+  pickBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    pickSet(!picking);
+  });
+  chatLive.push(() => pickSet(false));
+
   // Выделение подхватывается, пока человек его держит: снял выделение и начал
   // печатать, значит оно уже не при чём.
   const catchSel = () => {
@@ -8718,6 +8869,7 @@ function chatPanel(project, st) {
   drawClips();
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
+  row.append(pickBtn);
   row.append(modelPick(project, st));
   if (st.task) {
     const go = el("button", "cgo");
@@ -8759,14 +8911,15 @@ function chatPanel(project, st) {
     return { path: r.body.path, error: "" };
   };
 
-  const post = (text, sel, pic, key) => {
+  const post = (text, sel, pic, key, took) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
     // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
     // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
-    const wire0 = sel ? selPrefix(sel) + text : text;
-    const m = echo.add(text, (again, id) => post(again, sel, pic, id), wire0, sel, pic, key);
+    const spots = took && took.length ? pickPrefix(took) : "";
+    const wire0 = spots + (sel ? selPrefix(sel) + text : text);
+    const m = echo.add(text, (again, id) => post(again, sel, pic, id, took), wire0, sel, pic, key);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
@@ -8913,9 +9066,13 @@ function chatPanel(project, st) {
     // Выделенный в постановке кусок уезжает вместе с репликой: человек
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC).
-    post(text, pinnedSel || grabSelection(), shot);
+    post(text, pinnedSel || grabSelection(), shot, null, picks);
     pinnedSel = null;
     shot = null;
+    picks = [];
+    // Выбор кончился вместе с репликой: места уехали, и держать экран в режиме
+    // выбора незачем.
+    pickSet(false);
     drawClips();
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают

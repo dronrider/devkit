@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,5 +113,38 @@ func TestOrderRulesCarryChannelEverywhere(t *testing.T) {
 		if !strings.Contains(order, channelRule) {
 			t.Errorf("в заказе «%s» нет правила канала: %s", name, order)
 		}
+	}
+}
+
+// Места экрана, выбранные пикером, едут префиксом реплики и в пузыре не
+// стоят: человек тычет в элемент вместо описания словами, а описатель нужен
+// агенту, не читателю ленты.
+func TestFeedCutsPickedBlock(t *testing.T) {
+	said := "<picked screen=\"demo/board\">\n" +
+		"- div.trow.task, id=row-XR-7 data-task=XR-7, «XR-7 строка задачи», внутри div.tbody < section.card\n" +
+		"</picked>\nвот тут ранг не читается"
+	data := `{"type":"user","message":{"role":"user","content":` +
+		strconv.Quote(said) + `},"timestamp":"2026-08-26T09:00:00.000Z"}` + "\n"
+	list := parseReplies([]byte(data), 0)
+	if len(list) != 1 {
+		t.Fatalf("реплика с местами разобралась не одной записью: %+v", list)
+	}
+	got := list[0]
+	if got.Text != "вот тут ранг не читается" {
+		t.Errorf("блок мест остался в словах человека: %q", got.Text)
+	}
+	if !strings.Contains(got.Pick, "data-task=XR-7") {
+		t.Errorf("описатель места не доехал до ленты: %q", got.Pick)
+	}
+	if got.PickScreen != "demo/board" {
+		t.Errorf("экран выбора потерялся: %q", got.PickScreen)
+	}
+}
+
+// Блок мест не годится в заголовок разговора: его кладёт панель, а не человек.
+func TestChatTitleSkipsPickedBlock(t *testing.T) {
+	said := "<picked screen=\"demo/board\">\n- div.trow.task\n</picked>\nпочини эту строку"
+	if got := cutFirstWraps(said); got != "почини эту строку" {
+		t.Errorf("заголовок разговора взят вместе с блоком мест: %q", got)
 	}
 }

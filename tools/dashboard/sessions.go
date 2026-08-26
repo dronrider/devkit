@@ -690,6 +690,11 @@ type reply struct {
 	// Code носит открытый файл (замечание 3 девятого круга POC).
 	Sel     string `json:"sel,omitempty"`
 	SelFile string `json:"selFile,omitempty"`
+	// Pick это места экрана, выбранные пикером, а PickScreen называет экран, с
+	// которого их взяли. В ленте это свёрнутый блок при пузыре, а агенту оно
+	// уезжает префиксом реплики, той же дорогой, что и выделение.
+	Pick       string `json:"pick,omitempty"`
+	PickScreen string `json:"pickScreen,omitempty"`
 	// Shot это путь картинки, приложенной к реплике: агент читает её сам, а
 	// лента показывает миниатюру.
 	Shot string `json:"shot,omitempty"`
@@ -1421,19 +1426,15 @@ func addUser(add func(reply), role, at, text string) {
 		return
 	}
 	if inner, name, wrapped := unwrapPeer(text); wrapped {
-		shot, rest0 := cutShot(inner)
-		sel, file, rest := cutSelection(rest0)
-		add(reply{Role: role, Time: at, Text: rest, Note: peerSource(name),
-			Who: peerAuthor(name), Sel: sel, SelFile: file, Shot: shot})
+		w := cutWraps(inner)
+		add(reply{Role: role, Time: at, Text: w.rest, Note: peerSource(name),
+			Who: peerAuthor(name), Sel: w.sel, SelFile: w.file, Shot: w.shot,
+			Pick: w.pick, PickScreen: w.screen})
 		return
 	}
-	if shot, rest0 := cutShot(text); shot != "" {
-		sel, file, rest := cutSelection(rest0)
-		add(reply{Role: role, Time: at, Text: rest, Sel: sel, SelFile: file, Shot: shot})
-		return
-	}
-	if sel, file, rest := cutSelection(text); sel != "" {
-		add(reply{Role: role, Time: at, Text: rest, Sel: sel, SelFile: file})
+	if w := cutWraps(text); w.shot != "" || w.pick != "" || w.sel != "" {
+		add(reply{Role: role, Time: at, Text: w.rest, Sel: w.sel, SelFile: w.file,
+			Shot: w.shot, Pick: w.pick, PickScreen: w.screen})
 		return
 	}
 	said, notes := splitService(text)
@@ -1463,6 +1464,12 @@ var skillBodyRe = regexp.MustCompile(`\A\s*Base directory for this skill:\s`)
 // целиком, потому что править их некому и незачем.
 var selWrapRe = regexp.MustCompile(`(?s)\A<selection file="([^"]*)">\n(.*?)\n</selection>\n?`)
 
+// pickWrapRe ловит приложенные к реплике места экрана. Человек тычет в элемент
+// пикером вместо описания словами, и в реплику уезжает описатель: тег с
+// классами, говорящие атрибуты, обрезанный текст и пара уровней родителей.
+// Блок стоит префиксом, как выделение, и вид у него свой.
+var pickWrapRe = regexp.MustCompile(`(?s)\A<picked screen="([^"]*)">\n(.*?)\n</picked>\n?`)
+
 // shotWrapRe ловит приложенную картинку. Стоит она первым префиксом, перед
 // выделением: так реплика читается сверху вниз, сначала что показали, потом что
 // выделили, потом слова.
@@ -1481,6 +1488,10 @@ func cutFirstWraps(text string) string {
 			text = strings.TrimLeft(text[len(m):], "\n")
 			continue
 		}
+		if m := pickWrapRe.FindString(text); m != "" {
+			text = strings.TrimLeft(text[len(m):], "\n")
+			continue
+		}
 		return text
 	}
 }
@@ -1496,6 +1507,36 @@ func cutShot(text string) (string, string) {
 
 // cutSelection отрезает префикс выделения от слов человека. Пустое выделение
 // значит, что реплика приехала без него, и это обычный случай.
+// wraps это приложенное к реплике, снятое с её начала: снимок экрана, места
+// пикера и выделенный кусок текста. Порядок съёма один на все дороги реплики,
+// потому что кладёт префиксы панель в том же порядке.
+type wraps struct {
+	shot   string
+	pick   string
+	screen string
+	sel    string
+	file   string
+	rest   string
+}
+
+func cutWraps(text string) wraps {
+	var w wraps
+	w.shot, w.rest = cutShot(text)
+	w.pick, w.screen, w.rest = cutPicked(w.rest)
+	w.sel, w.file, w.rest = cutSelection(w.rest)
+	return w
+}
+
+// cutPicked отрезает от реплики блок выбранных мест: в пузыре остаются слова
+// человека, а сами описатели встают при пузыре свёрнутым блоком.
+func cutPicked(text string) (pick, screen, rest string) {
+	m := pickWrapRe.FindStringSubmatch(text)
+	if m == nil {
+		return "", "", text
+	}
+	return m[2], m[1], strings.TrimSpace(text[len(m[0]):])
+}
+
 func cutSelection(text string) (sel, file, rest string) {
 	m := selWrapRe.FindStringSubmatch(text)
 	if m == nil {

@@ -378,7 +378,10 @@ func TestStaticNewTaskForm(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		"Новая задача",
-		"Записать черновик",
+		// Пара кнопок записи черновика (DK-370, LLD DK-354 решение 5):
+		// одиночной «Записать черновик» и промежуточного экрана между ними
+		// нет, обе дороги закрыты возвратами самих кнопок.
+		"Сохранить и грумить",
 		"Что нужно сделать и зачем",
 		"Завести задачу",
 		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
@@ -519,5 +522,48 @@ func TestStaticNewFormSwitch(t *testing.T) {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет правила %q", want)
 		}
+	}
+}
+
+// Пара кнопок на форме записи (DK-370, LLD DK-354 решение 5): «Сохранить»
+// возвращает в накопитель, «Сохранить и грумить» той же ручкой пишет запись и
+// поднимает разбор. Промежуточного экрана «Черновик записан» между формой и
+// списком нет вовсе.
+func TestStaticDraftSaveButtons(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`saveLabel: draft ? "Сохранить" : "Завести задачу"`,
+		`label: "Сохранить и грумить"`,
+		"const DRAFT_GO_HINT",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("пара кнопок записи собрана не тем блоком: нет %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"function draftDone(",
+		`"Записать черновик"`,
+		`"Записать ещё"`,
+	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("промежуточный экран записи остался в коде: нашлось %q", gone)
+		}
+	}
+	// Обе кнопки живут и гаснут вместе: рубеж у них один, ручка одна, и
+	// разошедшийся вид сказал бы неправду о том, что можно нажать.
+	form := funcBody(t, text, "function formPage(")
+	for _, want := range []string{"more.disabled = save.disabled", "more.hidden = save.hidden"} {
+		if !strings.Contains(form, want) {
+			t.Errorf("вторая кнопка сохранения живёт своим рубежом: нет %q", want)
+		}
+	}
+	// Разбор поднимается той же ручкой, что и с накопителя, и уводит на экран
+	// записи с ходом разбора.
+	made := funcBody(t, text, "function renderNew(")
+	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id)`) {
+		t.Error("«Сохранить и грумить» не поднимает разбор с переходом на экран записи")
+	}
+	if !strings.Contains(made, `goKeepingChat(project + "/drafts")`) {
+		t.Error("«Сохранить» не возвращает в накопитель")
 	}
 }

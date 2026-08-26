@@ -2835,13 +2835,27 @@ function formPage(cfg) {
   // что с первого касания, и кнопка там стоит всегда.
   const bar = el("div", "card abar");
   const save = barBtn("btn btn-acc", cfg.saveLabel || "Сохранить", "i-done");
+  // Вторая кнопка сохранения: тот же рубеж и та же ручка, но своя дорога после
+  // записи. Форма записи черновика стоит на паре «Сохранить» и «Сохранить и
+  // грумить», и обе кнопки живут и гаснут вместе.
+  const more = cfg.saveMore
+    ? barBtn("btn btn-acc", cfg.saveMore.label, cfg.saveMore.icon || "i-play")
+    : null;
   const drop = barBtn("btn", "Отменить правку", "close");
   const sep = el("span", "div");
   const bad = el("div", "error", "");
   save.hidden = true;
   drop.hidden = true;
   sep.hidden = true;
-  bar.append(save, drop, sep);
+  bar.append(save);
+  if (more) {
+    more.hidden = true;
+    bar.append(more);
+    more.addEventListener("click", () => {
+      if (!more.disabled && cfg.saveMore.onSave) cfg.saveMore.onSave();
+    });
+  }
+  bar.append(drop, sep);
   // Кнопки уезжают в командную панель, а подписи причин остаются полосой: в
   // углу строки статуса им не поместиться, а без них погашенная кнопка молчит
   // о том, чего ждёт.
@@ -2857,6 +2871,7 @@ function formPage(cfg) {
   drop.addEventListener("click", () => { if (cfg.onDrop) cfg.onDrop(); });
   out.bar = bar;
   out.save = save;
+  out.saveMore = more;
   out.bad = bad;
 
   // Полоса в разметку не встаёт, пока показывать в ней нечего: прятать её
@@ -2872,7 +2887,7 @@ function formPage(cfg) {
     }
     // Мера пустоты теперь одна: правка. Действия уехали в командную панель, и
     // полоса живёт ради «Сохранить», «Отменить правку» и отказа.
-    if (!notes.length && save.hidden && !bad.textContent) {
+    if (!notes.length && save.hidden && (!more || more.hidden) && !bad.textContent) {
       if (placed) {
         bar.remove();
         placed = false;
@@ -2901,6 +2916,10 @@ function formPage(cfg) {
     bad.textContent = refusal;
     save.disabled = !dirty || Boolean(refusal);
     save.hidden = !dirty;
+    if (more) {
+      more.disabled = save.disabled;
+      more.hidden = save.hidden;
+    }
     drop.hidden = !dirty || Boolean(cfg.always);
     sep.hidden = drop.hidden;
     placeBar(false);
@@ -10673,6 +10692,12 @@ const DRAFT_NOTE = "Задачи на доске у него нет, в рабо
   "ранг и тип выдаст разбор накопителя, он же заведёт задачу.";
 const DRAFT_HINT = "Ляжет в docs/tasks/drafts/, ID выдаст taskctl. " +
   "На доске его не будет, пока груминг не заведёт задачу.";
+// Куда ведёт каждая кнопка записи, словами (LLD DK-354, решение 5). Прежде
+// между ними стояла карточка «Черновик записан» с кнопками «Записать ещё» и
+// «На доску»: обе её дороги теперь закрыты возвратами самих кнопок.
+const DRAFT_GO_HINT = "«Сохранить» вернёт в накопитель, оттуда же пишется " +
+  "следующая запись. «Сохранить и грумить» поднимет разбор и откроет экран " +
+  "записи с его ходом.";
 const FULL_HINT = "Встанет в Backlog сразу, место выведется из ранга. " +
   "Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой. " +
   "После заведения откроется карточка задачи.";
@@ -10759,42 +10784,6 @@ function makeTask(project, body, btns) {
   return makeNew(project, "/tasks", body, btns, "заведение задачи...");
 }
 
-// Подтверждение записанного черновика: ID, путь файла и что с ним будет
-// дальше. Уводить с экрана некуда, строки на доске у черновика нет.
-function draftDone(project, done) {
-  const groups = document.getElementById("groups");
-  groups.replaceChildren();
-  const card = el("div", "card nform");
-  card.append(el("div", "nfhead", "Черновик " + (done.id || "") + " записан"));
-  const box = el("div", "nfbody");
-  box.append(el("div", "hint", done.file
-    ? "Файл " + done.file + " лежит в накопителе, на доске задачи у него нет."
-    : "Файл лежит в накопителе, на доске задачи у него нет."));
-  box.append(el("div", "hint",
-    "Разберёт его груминг: он выдаст ранг с типом и заведёт задачу (taskctl add --id)."));
-  const btns = el("div", "tbtns");
-  const again = el("button", "btn btn-acc", "Записать ещё");
-  again.addEventListener("click", () => {
-    resetNewForm(project);
-    renderNew(project);
-  });
-  // Дорога в накопитель с самой карточки: записанное лежит там, а не на доске,
-  // и без этой кнопки за своей же записью человек шёл через доску и таб
-  // «Черновики» (замечание пользователя). Список читается свежим ответом, и
-  // запись в нём стоит помеченной.
-  const heap = el("button", "btn btn-acc", "В накопитель");
-  heap.addEventListener("click", () => {
-    goKeepingChat(project + "/drafts");
-    refresh().catch(console.error);
-  });
-  const board = el("button", "btn", "На доску");
-  board.addEventListener("click", () => { goKeepingChat(project); });
-  btns.append(again, heap, board);
-  box.append(btns);
-  card.append(box);
-  groups.append(card);
-}
-
 // kind это вид заводимого: draft либо task. Форма собирается только своими
 // полями, и переключателя над ней больше нет: вид выбран до неё, на своём
 // экране.
@@ -10851,8 +10840,31 @@ function renderNew(project, kind) {
   // выбирает заказ.
   const hint = el("div", "hint", draft ? DRAFT_HINT : FULL_HINT);
   const runHint = el("div", "hint", NEW_RUN_HINT);
+  const goHint = el("div", "hint", DRAFT_GO_HINT);
 
   let view = null;
+  // Обе кнопки записи ходят одной ручкой и расходятся только дорогой после
+  // неё. «Сохранить» возвращает в накопитель, и следующая запись начинается
+  // оттуда же, с плюса на списке. «Сохранить и грумить» поднимает разбор без
+  // лишних вопросов и открывает экран записи, где виден его ход.
+  const saveDraft = (groom) => {
+    const text = newForm.title.trim();
+    if (!text) return;
+    const btns = [view.save, view.saveMore].filter(Boolean);
+    makeDraft(project, text, btns).then(async (done) => {
+      if (!done) return;
+      resetNewForm(project);
+      // Записанное ищут в накопителе, и метка ведёт туда глаз: свежая запись
+      // оказывается не там, куда человек смотрит.
+      freshRow = done.id || "";
+      if (groom && done.id) {
+        await groomDraft(project, done.id, project + "/draft/" + done.id);
+        return;
+      }
+      goKeepingChat(project + "/drafts");
+      await refresh();
+    }).catch(console.error);
+  };
   view = formPage({
     key: "new", project, id: "",
     crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
@@ -10865,8 +10877,13 @@ function renderNew(project, kind) {
     titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: true,
     titleLabel: draft ? "текст черновика" : "заголовок задачи",
     form: newForm, edit: true, always: true,
-    saveLabel: draft ? "Записать черновик" : "Завести задачу",
-    actions: draft ? [hint] : [hint, runHint],
+    saveLabel: draft ? "Сохранить" : "Завести задачу",
+    // У черновика кнопок сохранения две, и расходятся они только дорогой
+    // после записи (LLD DK-354, решение 5). Промежуточной карточки с
+    // «Записать ещё» и «На доску» между ними нет: обе её дороги закрыты
+    // возвратами самих кнопок.
+    saveMore: draft ? { label: "Сохранить и грумить", onSave: () => { saveDraft(true); } } : null,
+    actions: draft ? [hint, goHint] : [hint, runHint],
     check: () => {
       if (view) paint();
       // Рубежи те же, что у ручек: поправка на баг не про новую работу, строки
@@ -10885,15 +10902,7 @@ function renderNew(project, kind) {
       if (!text) return;
       const send = view.save;
       if (newForm.draft) {
-        makeDraft(project, text, [send]).then((done) => {
-          if (!done) return;
-          resetNewForm(project);
-          // Записанное ищут в накопителе, и метка ведёт туда глаз: список стоит
-          // по времени, а свежая запись оказывается не там, куда человек
-          // смотрит.
-          freshRow = done.id || "";
-          draftDone(project, done);
-        }).catch(console.error);
+        saveDraft(false);
         return;
       }
       const body = {

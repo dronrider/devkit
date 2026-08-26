@@ -99,21 +99,17 @@ if (allByClass(groups, "fresh").length) {
   fail("метка свежей строки не снялась следующей перерисовкой");
 }
 
-// --- черновик: с карточки записи есть дорога в накопитель ---
+// --- черновик: «Сохранить» само возвращает в накопитель ---
+//
+// Промежуточной карточки с кнопкой «В накопитель» между формой и списком
+// больше нет (DK-370): запись уводит туда сама.
 sandbox.location.hash = "#demo/new/draft";
 await sandbox.refresh();
 await settle();
 fill("свежая мысль");
-const write = deepBtn(groups, "Записать черновик");
+const write = deepBtn(groups, "Сохранить");
 if (!write) fail("кнопки записи черновика нет: " + dump(groups).slice(0, 300));
 write.handlers.click({ stopPropagation: () => {} });
-await settle();
-const toHeap = deepBtn(groups, "В накопитель");
-if (!toHeap) {
-  fail("с карточки записанного черновика нет дороги в накопитель: " +
-    dump(groups).replace(/\s+/g, " ").slice(0, 400));
-}
-toHeap.handlers.click({ stopPropagation: () => {} });
 await settle();
 
 // --- запись стоит в накопителе и помечена свежей ---

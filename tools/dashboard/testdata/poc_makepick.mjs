@@ -132,7 +132,9 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   if (byId.get("psub").textContent !== "новый черновик") {
     fail("шапка не назвала, что заводим: " + byId.get("psub").textContent);
   }
-  if (!deepBtn(groups, "Записать черновик")) fail("кнопки записи черновика нет: " + shown.slice(0, 200));
+  for (const want of ["Сохранить", "Сохранить и грумить"]) {
+    if (!deepBtn(groups, want)) fail("кнопки «" + want + "» на форме черновика нет: " + shown.slice(0, 200));
+  }
 }
 
 // --- форма задачи несёт свои поля и не говорит про груминг ---
@@ -164,7 +166,7 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   area.value = "ссылка на черновик из чата не открывается";
   area.handlers.input({});
   await settle();
-  deepBtn(groups, "Записать черновик").handlers.click({ stopPropagation: () => {} });
+  deepBtn(groups, "Сохранить").handlers.click({ stopPropagation: () => {} });
   await settle();
   const last = posted[posted.length - 1];
   if (!last || !last.path.endsWith("/drafts")) {

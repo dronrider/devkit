@@ -777,8 +777,15 @@ func TestStaticTaskEditHonesty(t *testing.T) {
 	if strings.Contains(text, `"Править"`) {
 		t.Error("в static/app.js осталась отдельная кнопка «Править»: правка снова разваливается на два похода")
 	}
-	if n := strings.Count(text, `"Сохранить"`); n != 1 {
-		t.Errorf("кнопок сохранения в static/app.js %d, жду одну на всю форму", n)
+	// Кнопка сохранения на форме правки одна. Подпись её по умолчанию стоит в
+	// formPage, а вторая «Сохранить» в файле это подпись формы записи
+	// черновика, где кнопок пара (DK-370).
+	form := funcBody(t, text, "function formPage(")
+	if n := strings.Count(form, `"Сохранить"`); n != 1 {
+		t.Errorf("кнопок сохранения в форме %d, жду одну на всю форму", n)
+	}
+	if !strings.Contains(text, `saveLabel: draft ? "Сохранить" : "Завести задачу"`) {
+		t.Error("вторая надпись «Сохранить» в static/app.js это не подпись формы записи черновика")
 	}
 }
 

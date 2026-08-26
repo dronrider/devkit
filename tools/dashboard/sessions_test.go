@@ -1050,10 +1050,16 @@ func TestLiveWorksSessions(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-xr-5", "live-dup", transcriptFixture, now.Add(-3*time.Minute))
 	writeSession(t, e.home, e.proj, "-xr-88", "stale", transcriptFixture, now.Add(-30*time.Minute))
 
+	// Своей работу делает запись реестра с именем tmux-сессии, а не образец
+	// имени: её кладёт подъём дашборда, и записана она только у goal-XR-9.
+	// Сессию task-XR-5 с тем же образцом имени завела рука в терминале, и
+	// своей она не считается (жалоба пользователя на признак без опоры).
+	writeBinds(t, e.home, bindTmux("2026-08-11T11:00:00",
+		"aaaa9999-9999-4999-8999-999999999999", "XR-9", "goal-XR-9"))
+
 	want := []Work{
-		// Конвейерные сессии поднял дашборд: они свои, и модель у них его.
-		{ID: "XR-9", Kind: "goal", Via: "tmux", Own: true, Model: chatModelDefault},
-		{ID: "XR-5", Kind: "task", Via: "tmux", Own: true, Model: chatModelDefault},
+		{ID: "XR-9", Kind: "goal", Via: "tmux", Own: true, Tmux: "goal-XR-9", Model: chatModelDefault},
+		{ID: "XR-5", Kind: "task", Via: "tmux", Model: chatModelDefault},
 		{ID: "XR-112", Kind: "goal", Via: "registry"},
 		// Окна человека дашборд не поднимал: имени tmux-сессии у них нет, и
 		// своими они не считаются.

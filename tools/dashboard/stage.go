@@ -41,8 +41,8 @@ func rowStage(stages map[string]stageMark, run, id string) (string, int64) {
 		return "", 0
 	}
 	// Оборванный этап на экран не идёт: сессии, которая его вела, нет ни живой,
-	// ни нашей вовсе (признаки gone и other).
-	if stage.NeedsSession(mark.Kind) && (run == "" || run == runGone || run == runOther) {
+	// ни нашей вовсе (признак gone и пустой признак).
+	if stage.NeedsSession(mark.Kind) && (run == "" || run == runGone) {
 		return "", 0
 	}
 	return mark.Kind, mark.Since

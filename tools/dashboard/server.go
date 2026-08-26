@@ -544,16 +544,15 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	// нужно знать про себя, и сводить одно к другому на клиенте значило
 	// собирать состояние строки из двух ответов сразу (DK-317).
 	works := s.liveWorks(found.Path, view.Prefix, raw)
-	// Исполнители строк: сперва привязанные сессии, потом те, у кого привязки
-	// нет, а хвост транскрипта работает этим ID. Второй разбор идёт только по
-	// строкам, которые иначе объявили бы взятыми в другом месте, и стоит чтения
-	// хвоста у живых сессий без задачи.
+	// Исполнители строк: сессии, привязанные к задаче реестром. Второго разбора,
+	// поиска исполнителя по хвостам транскриптов, тут больше нет: он спасал
+	// строки от признака other, а тот снят вместе с плашкой «исполнителя не
+	// видно», и хвосты живых сессий читались зря.
 	mine := s.taskChats(found.Path)
-	worked := s.taskWorkers(found.Path, orphanRows(raw, works, mine))
 	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
-		"board": boardRuns(raw, works, mine, worked, s.liveStages(found.Path),
+		"board": boardRuns(raw, works, mine, s.liveStages(found.Path),
 			s.waitLookup(found.Path)),
 		"works":  works,
 		"errors": []string{},

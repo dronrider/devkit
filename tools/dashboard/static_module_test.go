@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,5 +29,42 @@ func TestStaticAppParsesAsModule(t *testing.T) {
 	}
 	if out, err := exec.Command(node, "--check", path).CombinedOutput(); err != nil {
 		t.Fatalf("app.js не разбирается как модуль, браузер его не исполнит: %v\n%s", err, out)
+	}
+}
+
+// Приписки, которые говорили за экран неправду, сняты все разом, и стенд
+// сторожит их отсутствие: вернувшись, они врут снова.
+//
+// «Исполнителя не видно» стояла на признаке other и попадала ровно в задачи,
+// которые человек вёл из дашборда; «поднята вне дашборда» и «идёт вне
+// дашборда» объясняли словами то, что теперь говорит собой погашенная кнопка
+// закрытия; чип «сессии нет» занимал место в каждой строке In progress и не
+// звал ни к какому действию (замечания пользователя, разбор в board.go и
+// tasks.go).
+func TestStaticDropsLyingSays(t *testing.T) {
+	app, err := os.ReadFile(filepath.Join("static", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css, err := os.ReadFile(filepath.Join("static", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{
+		`"исполнителя не видно"`,
+		"Исполнителя задачи на этой машине не видно",
+		`"поднята вне дашборда"`,
+		`"идёт вне дашборда"`,
+		`el("span", "chip", "сессии нет")`,
+		`row.run === "other"`,
+	} {
+		if strings.Contains(string(app), gone) {
+			t.Errorf("в app.js вернулась снятая приписка: %s", gone)
+		}
+	}
+	// Класс приписки убран вместе с ней: мёртвое правило переживает разметку и
+	// возвращает её следующей правкой.
+	if strings.Contains(string(css), ".anone") {
+		t.Error("в style.css остался класс .anone от снятой приписки")
 	}
 }

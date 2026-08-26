@@ -605,6 +605,12 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 					kind = "goal"
 				}
 			}
+			if title == "" {
+				// Строки на доске нет (задача закрыта и уехала в архив):
+				// работа подписывается заголовком своего разговора, а не
+				// голым номером (workTitle в board.go).
+				title, _ = s.titleFor(f.ID, head.Summary, head.First, false)
+			}
 		}
 		if task == "" {
 			// Разговор без задачи подписывается своим заголовком, а не
@@ -625,7 +631,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		live, moved, silent := s.workState(projPath, task, f.ID, name, bySid, byTmux)
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: "session", Session: f.ID, Note: note, Talk: talk,
-			Own: tmux != "", Model: s.chatModel(f.ID, tmux),
+			Own: name != "", Tmux: name, Model: s.chatModel(f.ID, tmux),
 			Harness: roots[f.root],
 			Live:    live, Moved: moved, Silent: silent})
 	}

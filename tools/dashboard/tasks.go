@@ -90,15 +90,7 @@ type boardRow struct {
 // интерактивное окно человека; gone это строка в работе, за которой живой
 // сессии нет.
 const (
-	runGone = "gone"
-	// runOther это строка в работе, чьего исполнителя на этой машине не видно:
-	// ни живой сессии, ни привязанного транскрипта, ни сессии, чей хвост
-	// работает этим ID. Причин у этого две, и обе честные: задачу взяли в
-	// другом месте либо ведут её сессией без привязки. Запускать такую строку
-	// отсюда всё равно нельзя, это конфликт двух исполнителей (замечание
-	// пользователя про DK-460), но утверждать «другая машина» нельзя тоже
-	// (жалоба на DK-481).
-	runOther  = "other"
+	runGone   = "gone"
 	sectRun   = "in-progress"
 	sectCheck = "check"
 )
@@ -118,27 +110,28 @@ func runMarks(works []Work) map[string]string {
 }
 
 // rowRun называет признак строки: у живой работы это то, чем она видна, у
-// строки из In progress без живой работы gone. Оборванный конвейер иначе
-// выглядит штатной очередью: строка стоит в работе, кнопка предлагает
-// продолжить, и сказать, идёт ли кто-то по ней прямо сейчас, нечем (хвост
-// DK-314).
-func rowRun(live, mine, worked map[string]string, id, key string) string {
+// строки из In progress с нашими кончившимися сессиями gone. Оборванный
+// конвейер иначе выглядит штатной очередью: строка стоит в работе, кнопка
+// предлагает продолжить, и сказать, идёт ли кто-то по ней прямо сейчас, нечем
+// (хвост DK-314).
+//
+// Третьего ответа, other («исполнителя не видно»), тут больше нет. Он стоял на
+// том, что дашборд не узнал сессии, и попадал ровно в те задачи, которые
+// человек вёл из дашборда: работа шла в боковом дереве, привязки к строке не
+// заводила, и экран объявлял её взятой на другой машине, а плашка формы
+// говорила это целым абзацем. По этой машине «взяли в другом месте» не
+// проверяется вовсе, а отсутствие исполнителя человек и так видит по
+// отсутствию живой работы (решение пользователя).
+func rowRun(live, mine map[string]string, id, key string) string {
 	if via, hit := live[id]; hit {
 		return via
 	}
+	// Наши сессии задачи есть, просто ни одна не жива: работа наша, и с ней
+	// можно разговаривать и продолжать.
 	if key == sectRun {
-		// Наши сессии задачи есть, просто ни одна не жива: работа наша, и с
-		// ней можно разговаривать и продолжать.
 		if _, ours := mine[id]; ours {
 			return runGone
 		}
-		// Привязки нет, но кто-то на этой машине по строке работает: сессия без
-		// задачи, чей хвост коммитит и говорит этим ID. Объявлять такую строку
-		// взятой в другом месте это враньё (жалоба на DK-481).
-		if _, hit := worked[id]; hit {
-			return runGone
-		}
-		return runOther
 	}
 	return ""
 }
@@ -149,7 +142,7 @@ func rowRun(live, mine, worked map[string]string, id, key string) string {
 // правки, пометки) он не знает вовсе, а разбор в типизированную строку их бы
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
-func boardRuns(raw json.RawMessage, works []Work, mine, worked map[string]string,
+func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 	stages map[string]stageMark, wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -172,7 +165,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine, worked map[string]string
 			json.Unmarshal(row["id"], &id)
 			json.Unmarshal(row["title"], &title)
 			json.Unmarshal(row["accept"], &accept)
-			run := rowRun(live, mine, worked, id, key)
+			run := rowRun(live, mine, id, key)
 			// Подписка задачи едет строкой Check: закрытие пойдёт той же, на
 			// которой работу начинали, и кнопка называет её человеку до
 			// нажатия, а не спрашивает выбором.
@@ -510,10 +503,9 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		mine := s.taskChats(found.Path)
 		works := s.liveWorks(found.Path, view.Prefix, raw)
 		// Экран задачи судит о строке тем же способом, что список: иначе одна и
-		// та же задача называлась бы взятой в другом месте на одном экране и
-		// своей на другом.
-		worked := s.taskWorkers(found.Path, orphanRows(raw, works, mine))
-		row.Run = rowRun(runMarks(works), mine, worked, id, row.Sect)
+		// та же задача выглядела бы своей на одном экране и брошенной на
+		// другом.
+		row.Run = rowRun(runMarks(works), mine, id, row.Sect)
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}
@@ -1061,36 +1053,3 @@ func (s *server) depChange(w http.ResponseWriter, found *Project, id, dep, sub s
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// orphanRows называет строки, у которых исполнителя пока не нашлось: они стоят
-// в работе, живой работы за ними нет и привязанной сессии тоже. Ровно про них
-// и стоит спрашивать хвосты сессий без привязки, остальные уже объяснены.
-func orphanRows(raw json.RawMessage, works []Work, mine map[string]string) []string {
-	live := runMarks(works)
-	var out []string
-	var doc struct {
-		Sections []struct {
-			Key  string `json:"key"`
-			Rows []struct {
-				ID string `json:"id"`
-			} `json:"rows"`
-		} `json:"sections"`
-	}
-	if json.Unmarshal(raw, &doc) != nil {
-		return out
-	}
-	for _, sec := range doc.Sections {
-		if sec.Key != sectRun {
-			continue
-		}
-		for _, row := range sec.Rows {
-			if row.ID == "" || mine[row.ID] != "" {
-				continue
-			}
-			if _, hit := live[row.ID]; hit {
-				continue
-			}
-			out = append(out, row.ID)
-		}
-	}
-	return out
-}

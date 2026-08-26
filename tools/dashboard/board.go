@@ -187,12 +187,21 @@ type Work struct {
 	// первым, и время работы из них не выводится. Ноль значит «начала не
 	// видно», и строка тогда остаётся без времени, а не с нулём минут.
 	Started int64 `json:"started,omitempty"`
-	// Own говорит, дашбордова ли это работа: её tmux-сессию поднял он сам и
-	// знает её имя. Не своя это цикл цели, заведённый в другом месте, и окно
-	// человека: распоряжаться ими дашборд не может, и в разделе «Агенты» они
-	// стоят своим табом (решение пользователя). Тот же признак объясняет
-	// подсказкой, почему у строки нет кнопки остановки.
+	// Own говорит, дашбордова ли это работа. Стоит он ровно на одном факте, на
+	// имени в Tmux, и врозь эти два поля не ездят: признак без имени это
+	// заявление, которое нечем ни проверить, ни исполнить.
 	Own bool `json:"own,omitempty"`
+	// Tmux это имя tmux-сессии работы, названное записью реестра. Имя там
+	// оказывается от того, кто сессию поднял (DEVKIT_TMUX из launchEnv), и
+	// потому оно же и есть доказательство подъёма: сессию task-DK-1 заводит и
+	// рука в терминале, и shipctl, а запись с именем кладёт только подъём
+	// дашборда. Прежде своей считалась всякая сессия, чьё имя легло под
+	// образец конвейера, и признак стоял на форме имени, а не на факте
+	// (жалоба пользователя: «own=true, а данных, на которых он держится,
+	// нет»). Пусто там, где сессию поднимал не дашборд либо её имя не пережило
+	// реестра: закрыть такую работу отсюда нечем, и кнопка закрытия у неё
+	// гасится.
+	Tmux string `json:"tmux,omitempty"`
 	// Model это модель работы, как её знает дашборд: по ней фильтруется список
 	// раздела. Пусто у работы, чью модель взять неоткуда.
 	Model string `json:"model,omitempty"`
@@ -376,28 +385,41 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	roots := s.harnessRootsOwn()
 	// Обратная дорога от имени tmux к сессии: состояние работы считается по её
 	// транскрипту, а у работы, взятой из списка tmux, id сессии своего нет.
+	binds := s.binds()
 	sidOf := map[string]string{}
-	for sid, rec := range s.binds() {
+	for sid, rec := range binds {
 		if name := strings.SplitN(rec.Tmux, ":", 2)[0]; name != "" {
 			sidOf[name] = sid
 		}
 	}
 	// Сессии спрашиваются со временем создания (tmuxList): по нему экран
 	// «Агенты» говорит, сколько работа идёт.
-	for _, sess := range tmuxList() {
+	sessions := tmuxList()
+	alive := map[string]bool{}
+	for _, sess := range sessions {
+		alive[sess.Name] = true
+	}
+	launched := launchedBy(binds, alive)
+	for _, sess := range sessions {
 		id, kind := works.SessionTask(sess.Name, prefix)
 		if id == "" {
 			continue
 		}
-		live, moved, silent := s.workState(projectPath, id, sidOf[sess.Name], sess.Name, bySid, byTmux)
-		list = append(list, Work{ID: id, Kind: kind, Title: rows[id].Title,
-			Sect: rows[id].Sect, Via: "tmux", Started: sess.Created,
-			// Конвейерная сессия это сессия дашборда: он её и поднял, её имя
-			// собрано по его же образцу.
-			Own: true, Model: s.chatModel(sidOf[sess.Name], sess.Name), Talk: talk[sess.Name],
+		sid := sidOf[sess.Name]
+		live, moved, silent := s.workState(projectPath, id, sid, sess.Name, bySid, byTmux)
+		// Своей сессия считается по записи реестра, а не по образцу имени:
+		// разбор этой развилки лежит при поле Tmux.
+		own := ""
+		if sid != "" {
+			own = sess.Name
+		}
+		list = append(list, Work{ID: id, Kind: kind,
+			Title: s.workTitle(projectPath, rows[id].Title, sid),
+			Sect:  rows[id].Sect, Via: "tmux", Started: sess.Created,
+			Own: own != "", Tmux: own, Model: s.chatModel(sid, sess.Name), Talk: talk[sess.Name],
 			// Подписка та же, что у транскрипта этой сессии: конвейер второй
 			// подписки пишет журнал в её дом, и по нему она и узнаётся.
-			Harness: s.harnessOfSession(projectPath, sidOf[sess.Name], roots),
+			Harness: s.harnessOfSession(projectPath, sid, roots),
 			Live:    live, Moved: moved, Silent: silent})
 		seen[kind+"-"+id] = true
 		busy[id] = true
@@ -406,14 +428,79 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if seen["goal-"+goal] {
 			continue
 		}
-		// Цикл цели из реестра поднят мимо дашборда, его сессии он не видит:
-		// состояние тут называется мёртвым нарочно, зелёным такая строка гореть
-		// не должна.
-		list = append(list, Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
-			Sect: rows[goal].Sect, Via: "registry", Live: workDead})
+		// Своей tmux-сессии goal-<ID> у цикла бывает и нет: витки идут живым
+		// чатом дашборда, и носитель у работы тогда чужой, chat-<ID>-<n>. По
+		// одному носителю цикл и объявлялся чужим, хотя человек вёл его прямо
+		// отсюда (жалоба пользователя на DK-446). Спрашивается поэтому не имя
+		// носителя, а поднимал ли работу дашборд, и говорит это запись реестра
+		// о задаче цели.
+		w := Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
+			Sect: rows[goal].Sect, Via: "registry", Live: workDead}
+		if l, ok := launched[goal]; ok {
+			w.Session, w.Tmux, w.Own = l.sid, l.tmux, true
+			w.Model = s.chatModel(l.sid, l.tmux)
+			w.Harness = s.harnessOfSession(projectPath, l.sid, roots)
+			w.Live, w.Moved, w.Silent = s.workState(projectPath, goal, l.sid, l.tmux, bySid, byTmux)
+		}
+		w.Title = s.workTitle(projectPath, w.Title, w.Session)
+		list = append(list, w)
 		busy[goal] = true
 	}
 	return append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
+}
+
+// workLaunch это подъём работы дашбордом: сессия, которая её ведёт, и имя её
+// tmux-сессии.
+type workLaunch struct {
+	sid  string
+	tmux string
+	at   string
+}
+
+// launchedBy называет работы, поднятые дашбордом, по записям реестра сессий.
+// Имя tmux-сессии в записи кладёт хук старта из DEVKIT_TMUX, а переменную эту
+// ставит подъём дашборда (launchEnv), и другого писателя у неё нет: запись с
+// именем и есть доказательство подъёма. Живым считается имя, чья сессия сейчас
+// на месте, потому что признак этот отвечает и на второй вопрос, есть ли чем
+// работу закрыть; умершая сессия обещала бы кнопку, которой нечего снимать.
+//
+// Работу ведёт последняя запись: сессию перезапускают резюмом, и старое имя
+// осталось бы в реестре рядом с новым. Совпадение времени разводится id
+// сессии, чтобы два обхода одной карты давали один ответ.
+func launchedBy(binds sessionBinds, alive map[string]bool) map[string]workLaunch {
+	out := map[string]workLaunch{}
+	for sid, rec := range binds {
+		name := strings.SplitN(rec.Tmux, ":", 2)[0]
+		if rec.Task == "" || name == "" || !alive[name] {
+			continue
+		}
+		if cur, ok := out[rec.Task]; ok &&
+			(cur.at > rec.Time || (cur.at == rec.Time && cur.sid < sid)) {
+			continue
+		}
+		out[rec.Task] = workLaunch{sid: sid, tmux: name, at: rec.Time}
+	}
+	return out
+}
+
+// workTitle называет работу словами. Первым идёт заголовок строки доски, а
+// когда строки нет, работа подписывается заголовком своего разговора, той же
+// лестницей, какой его называет список чатов (titleFor). Строки не бывает у
+// закрытой задачи, уехавшей в архив, и заголовок у такой работы был, но
+// доезжал только до окна чата, а в списке стоял голый номер (замечание
+// пользователя). Своего разбора тут не заводится нарочно: разойдясь, соседние
+// экраны звали бы один разговор по-разному.
+func (s *server) workTitle(projPath, said, sid string) string {
+	if said != "" || sid == "" {
+		return said
+	}
+	info, ok := findSession(s.transcriptRoots(), projPath, sid)
+	if !ok {
+		return ""
+	}
+	head := s.sessionHeadCached(info.path, info.stamp)
+	name, _ := s.titleFor(sid, head.Summary, head.First, false)
+	return name
 }
 
 // tmuxTalk называет tmux-сессии, где клиент жив, а хода в них нет. Груминг

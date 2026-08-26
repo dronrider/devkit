@@ -68,7 +68,7 @@ func TestStaticBoardRowActions(t *testing.T) {
 func TestStaticRowRunFromRowData(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	act := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.run", `row.run === "other"`, `row.run !== "tmux"`} {
+	for _, want := range []string{"row.run", `row.run !== "gone"`, `row.run !== "tmux"`} {
 		if !strings.Contains(act, want) {
 			t.Errorf("в rowAction нет %q: признак работы снова собирается на клиенте", want)
 		}
@@ -79,11 +79,12 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 	if sign := funcBody(t, text, "function rowSign("); strings.Contains(sign, "works") {
 		t.Error("отпечаток строки собран со списком работ: признак работы входит в него полем строки")
 	}
-	chip := funcBody(t, text, "function runChip(")
-	for _, want := range []string{`row.run === "gone"`, "сессии нет"} {
-		if !strings.Contains(chip, want) {
-			t.Errorf("в признаке работы нет %q: оборванный конвейер снова неотличим от очереди", want)
-		}
+	// Своего чипа у признака работы нет вовсе: приписка «сессии нет» стояла в
+	// каждой строке In progress без живой сессии, места занимала, а звать было
+	// не к чему (замечание пользователя). Оборванный конвейер от очереди
+	// отличает кружок у номера, он же и берёт признак.
+	if strings.Contains(text, "function runChip(") {
+		t.Error("чип признака работы вернулся в строку доски")
 	}
 	// Идущая работа сказана кружком у номера, а не чипом со словом: одно и то
 	// же состояние стояло в строке дважды (POC ветки poc-chat).
@@ -95,9 +96,6 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 	}
 	if !strings.Contains(funcBody(t, text, "function renderRow("), "rowDot(project, row)") {
 		t.Error("строка доски рисуется без кружка состояния: на экране его снова нет")
-	}
-	if !strings.Contains(funcBody(t, text, "function rowChips("), "runChip(row)") {
-		t.Error("строка доски рисуется без признака работы: на экране его снова нет")
 	}
 }
 
@@ -414,9 +412,9 @@ func TestStaticAgentsScreen(t *testing.T) {
 	if !strings.Contains(funcBody(t, app, "function agentRow("), "WORK_LIVE.busy ? null") {
 		t.Error("чип «активна» вернулся в строку сессии: состояние несут кружок и давность")
 	}
-	// Одно и то же не объясняется двумя способами: и чип, и хвост строки, и
-	// подсказка самой строки берут слова у одного места.
-	if strings.Count(app, "workNoDropSay(") < 3 {
+	// Одно и то же не объясняется двумя способами: чип, подсказка строки и
+	// погашенная кнопка закрытия берут слова у одного места.
+	if strings.Count(app, "WORK_FOREIGN_TIP") < 3 {
 		t.Error("объяснение отсутствия кнопки разъехалось по разным местам")
 	}
 	if strings.Contains(app, `"снимать нечем"`) {
@@ -459,18 +457,23 @@ func TestStaticAgentsRowGates(t *testing.T) {
 	if !strings.Contains(row, "workRunning(w)") || !strings.Contains(row, `"Стоп"`) {
 		t.Error("кнопка стопа стоит не у идущего конвейера")
 	}
-	if !strings.Contains(row, "workDrops(w)") || !strings.Contains(row, "closeSessionBtn(project, w)") {
+	if !strings.Contains(row, "closeSessionBtn(project, w)") {
 		t.Error("кнопки снятия нет у строки со своей tmux-сессией")
+	}
+	// Гасит себя кнопка сама, по признаку работы: слов вместо неё в строке
+	// больше нет, и решение «есть ли что закрывать» живёт одним местом.
+	if !strings.Contains(funcBody(t, app, "function closeSessionBtn("), "workDrops(w)") {
+		t.Error("кнопка закрытия не гасится по признаку «есть чем закрыть»")
 	}
 	running := funcBody(t, app, "function workRunning(")
 	if !strings.Contains(running, `w.via === "tmux"`) || !strings.Contains(running, "!w.talk") {
 		t.Error("идущий конвейер узнаётся не по tmux-работе без разговора")
 	}
-	// Почему у строки нет стопа, объясняет одно место на все три точки показа
-	// (чип, хвост строки, подсказка самой строки): разные слова про одно и то
+	// Почему у строки нет закрытия, объясняет одно место на все точки показа
+	// (чип, подсказка строки, погашенная кнопка): разные слова про одно и то
 	// же человек читал как разные причины.
-	if !strings.Contains(row, "workNoDropSay(w).tip") {
-		t.Error("реестровая работа не объясняет, почему стопа у неё нет")
+	if !strings.Contains(row, "WORK_FOREIGN_TIP") {
+		t.Error("чужая работа не объясняет, почему закрытия у неё нет")
 	}
 }
 
@@ -639,9 +642,10 @@ func boardRows(t *testing.T, e *testEnv) map[string]boardRunRow {
 func TestBoardRowsCarryRun(t *testing.T) {
 	e, _, _ := runsEnv(t, "task-XR-004\t1\t1786000000\n")
 	rows := boardRows(t, e)
-	// Наших сессий у XR-100 нет ни одной: работу взяли в другом месте, и
-	// признак это говорит прямо (замечание пользователя про чужую машину).
-	want := map[string]string{"XR-004": "tmux", "XR-100": "other", "XR-003": "", "XR-002": ""}
+	// Наших сессий у XR-100 нет ни одной, и признака у строки нет тоже:
+	// прежнее other («исполнителя не видно») снято, отсутствие исполнителя
+	// человек видит по отсутствию живой работы (решение пользователя).
+	want := map[string]string{"XR-004": "tmux", "XR-100": "", "XR-003": "", "XR-002": ""}
 	for id, run := range want {
 		if got, hit := rows[id]; !hit || got.Run != run {
 			t.Errorf("признак работы строки %s %q, ожидал %q", id, got.Run, run)
@@ -1240,13 +1244,13 @@ func TestStaticTactsRowHeights(t *testing.T) {
 	}
 }
 
-// Разговорный чат задачу не присваивает: строка, которую ведут на другой
-// машине, остаётся чужой, пока у неё нет исполнительской сессии. Прежде
+// Разговорный чат задачу не присваивает: строка остаётся без признака работы,
+// пока у неё нет исполнительской сессии. Прежде
 // сервер считал своей всякую сессию с привязкой к задаче, и первый же чат по
 // DK-460 возвращал на строку кнопки конвейера (жалоба пользователя). Критерий
 // один (leadsTask), и проверяется он тем же путём, каким его видит экран:
 // ответом ручки доски.
-func TestBoardTalkChatKeepsRunOther(t *testing.T) {
+func TestBoardTalkChatDoesNotTakeRow(t *testing.T) {
 	e, _, _ := runsEnv(t, "")
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	e.s.now = func() time.Time { return now }
@@ -1258,8 +1262,8 @@ func TestBoardTalkChatKeepsRunOther(t *testing.T) {
 	}
 
 	bind("chat-XR-100-1")
-	if got := boardRows(t, e)["XR-100"]; got.Run != runOther {
-		t.Errorf("строку присвоил разговорный чат: run=%q, ожидал %q", got.Run, runOther)
+	if got := boardRows(t, e)["XR-100"]; got.Run != "" {
+		t.Errorf("строку присвоил разговорный чат: run=%q, ожидал пустой признак", got.Run)
 	}
 	// Сам разговор при этом остаётся живой работой раздела «Агенты» и знает
 	// свою задачу: у строки там две дороги, в задачу и в чат.
@@ -1271,7 +1275,7 @@ func TestBoardTalkChatKeepsRunOther(t *testing.T) {
 	// Исполнительская сессия ту же строку присваивает: имя tmux-сессии и
 	// говорит, кто её ведёт.
 	bind("task-XR-100")
-	if got := boardRows(t, e)["XR-100"]; got.Run == runOther {
+	if got := boardRows(t, e)["XR-100"]; got.Run == "" {
 		t.Errorf("исполнительская сессия строку не присвоила: run=%q", got.Run)
 	}
 	if lead := workByID(projectWorks(t, e), "XR-100"); lead == nil || lead.Talk {
@@ -1684,4 +1688,115 @@ func cssDecls(css, sel string) []string {
 		out = append(out, rest[cut+1:cut+end])
 	}
 	return out
+}
+
+// bindTmux собирает строку реестра с именем tmux-сессии: имя это и есть след
+// подъёма дашбордом, ради него стенды сюда и ходят.
+func bindTmux(stamp, sid, task, tmux string) string {
+	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo "+
+		"транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n", stamp, sid, task, tmux)
+}
+
+// Своей работа считается по записи реестра, а не по образцу имени сессии.
+// Прежде своей объявлялась всякая tmux-сессия вида task-<ID>, хотя завести её
+// может и рука в терминале, и shipctl: признак стоял на форме имени, а данных
+// под ним не было никаких (жалоба пользователя, own=true при пустой сессии).
+// Записи с именем кладёт только подъём дашборда, через DEVKIT_TMUX.
+func TestLiveWorksOwnStandsOnBindRecord(t *testing.T) {
+	e, _, _ := runsEnv(t, `task-XR-004\t1\t1000\n`)
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+
+	// Реестр пуст: сессию заводили мимо дашборда.
+	writeBinds(t, e.home, "")
+	got := workByID(boardWorks(t, e), "XR-004")
+	if got == nil {
+		t.Fatal("работа XR-004 пропала из списка")
+	}
+	if got.Own || got.Tmux != "" {
+		t.Errorf("сессия без записи реестра объявлена своей: own=%v tmux=%q", got.Own, got.Tmux)
+	}
+
+	// Запись с именем: работу поднял дашборд, и признак опирается на имя.
+	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-004", "task-XR-004"))
+	got = workByID(boardWorks(t, e), "XR-004")
+	if got == nil || !got.Own || got.Tmux != "task-XR-004" {
+		t.Errorf("работа с записью реестра не признана своей: %+v", got)
+	}
+}
+
+// Цикл цели ходит не только своей tmux-сессией goal-<ID>: витки идут и живым
+// чатом дашборда, и носитель работы тогда чужой, chat-<ID>-<n>. Прежде такая
+// цель приезжала мёртвой и без признака происхождения вовсе, а экран писал
+// «идёт вне дашборда», хотя человек вёл разговор ровно отсюда (жалоба
+// пользователя на DK-446).
+func TestLiveWorksRegistryGoalKnowsItsChat(t *testing.T) {
+	e, _, _ := runsEnv(t, `chat-XR-112-1\t1\t1000\n`)
+	sid := "bbbb2222-2222-4222-8222-222222222222"
+
+	// Носителя нет: цикл и правда подняли в другом месте.
+	writeBinds(t, e.home, "")
+	got := workByID(boardWorks(t, e), "XR-112")
+	if got == nil || got.Own || got.Tmux != "" || got.Session != "" {
+		t.Fatalf("цель без своего чата объявлена своей: %+v", got)
+	}
+
+	// Чат цели поднят дашбордом: цель узнаётся своей через него.
+	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-112", "chat-XR-112-1"))
+	got = workByID(boardWorks(t, e), "XR-112")
+	if got == nil {
+		t.Fatal("цель XR-112 пропала из списка")
+	}
+	if !got.Own || got.Tmux != "chat-XR-112-1" || got.Session != sid {
+		t.Errorf("цель, которую ведёт чат дашборда, не признана своей: %+v", got)
+	}
+}
+
+// Имя мёртвой tmux-сессии своей работы не делает: закрывать по нему нечего, а
+// признак own обещает человеку живую кнопку закрытия.
+func TestLiveWorksOwnIgnoresDeadTmuxName(t *testing.T) {
+	e, _, _ := runsEnv(t, `chat-XR-112-1\t1\t1000\n`)
+	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00",
+		"cccc3333-3333-4333-8333-333333333333", "XR-112", "chat-XR-112-9"))
+	got := workByID(boardWorks(t, e), "XR-112")
+	if got == nil || got.Own || got.Tmux != "" {
+		t.Errorf("цель признана своей по имени сессии, которой на машине нет: %+v", got)
+	}
+}
+
+// Работа, чьей строки на доске нет (задача закрыта и уехала в архив),
+// подписывается заголовком своего разговора. Прежде в списке стоял голый
+// номер, хотя заголовок у разговора был и внутри чата его видно (замечание
+// пользователя): лестница заголовка тут та же, что у списка чатов.
+func TestLiveWorksTitleFallsBackToChat(t *testing.T) {
+	e, _, _ := runsEnv(t, `task-XR-777\t1\t1000\n`)
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	writeSession(t, e.home, e.proj, "", sid,
+		`{"type":"summary","summary":"Краснота регрессионного теста"}`+"\n"+transcriptFixture,
+		time.Now())
+	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-777", "task-XR-777"))
+	got := workByID(boardWorks(t, e), "XR-777")
+	if got == nil {
+		t.Fatal("работа XR-777 пропала из списка")
+	}
+	if got.Title != "Краснота регрессионного теста" {
+		t.Errorf("работа без строки на доске подписана %q, ждал заголовок разговора", got.Title)
+	}
+}
+
+// То же и у работы, узнанной транскриптом: заголовок разговора доезжает до
+// строки, а не остаётся в окне чата.
+func TestSessionWorkTitleFallsBackToChat(t *testing.T) {
+	e, _, _ := runsEnv(t, `chat-XR-777-1\t1\t1000\n`)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid,
+		`{"type":"summary","summary":"Разбор накопителя черновиков"}`+"\n"+transcriptFixture,
+		time.Now())
+	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-777", "chat-XR-777-1"))
+	got := workByID(boardWorks(t, e), "XR-777")
+	if got == nil {
+		t.Fatal("работа XR-777 пропала из списка")
+	}
+	if got.Title != "Разбор накопителя черновиков" {
+		t.Errorf("разговор без строки на доске подписан %q, ждал его заголовок", got.Title)
+	}
 }

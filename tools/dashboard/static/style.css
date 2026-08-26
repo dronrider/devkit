@@ -500,10 +500,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3);overflow-wrap:anywhere}
 .aacts{display:flex;align-items:center;gap:9px;flex:none}
 .aacts .stale{max-width:210px;white-space:normal;text-align:right}
-.atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap}
-/* строка, у которой снимать нечего: вместо кнопки короткая приписка, разбор
-   в подсказке. Пустой хвост читался как недоделанный экран */
-.anone{font:400 11.5px var(--sans);color:var(--tx3);white-space:nowrap;cursor:default}
+.atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;padding-top:3px}
 .empty b{display:block;font:600 14px var(--sans);color:var(--tx2);margin-bottom:5px}
 
 /* экран заведения (#проект/new, макет «07 Заведение»): форма одна на задачу и

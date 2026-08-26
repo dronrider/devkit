@@ -28,13 +28,15 @@ const WHY = "вопрос: DK-466: ветка dk-466 отрезана от main,
 // Шапка колонок раздела (POC DK-397): подписи стоят той же сеткой, что и
 // строка, и на телефоне обязаны лечь рядом чипов с переносом, а не унести
 // раздел вбок.
-const head = (kind, cols) => `<div class="thead h-${kind}">` + cols.map((c) =>
-  (c ? `<button class="thc thb" type="button"><span class="thl">${c}</span></button>`
-    : `<span class="thc thn"></span>`)).join("") + `</div>`;
+const head = (kind, cols) => `<div class="tblh h-${kind}">` + cols.map((c, at) =>
+  `<div class="tblc">` +
+  (c ? `<button class="tblb" type="button"><span class="tbll">${c}</span></button>`
+    : `<span class="tbln"></span>`) +
+  (at + 1 < cols.length ? `<span class="tblg"></span>` : "") + `</div>`).join("") + `</div>`;
 
 const TASK_HEAD = head("tasks", ["Номер", "Задача", "Ранг", "Дата", ""]);
-const SESS_HEAD = head("sess", ["Состояние", "Работа", "Идёт", ""]);
-const DRAFT_HEAD = head("drafts", ["", "Приоритет", "Номер", "Задача", "Дата", ""]);
+const SESS_HEAD = head("sess", ["Состояние", "Работа", "Идёт", "Активность", ""]);
+const DRAFT_HEAD = head("drafts", ["Приоритет", "Номер", "Задача", "Дата", ""]);
 
 const TASK_ROWS = `
   <div class="shead bsec onsec">Blocked<span class="n">1</span></div>
@@ -65,6 +67,7 @@ const SESS_ROWS = `
         <div class="l2"><a href="#demo/DK-479">DK-479</a>, Bash: ${SOLID}</div>
       </div>
       <span class="atime">3 ч 40 мин</span>
+      <div class="amoved"><span class="stale dashed">2026-08-22</span></div>
       <div class="aacts">
         <button class="btn btn-sm btn-ico">i</button>
         <button class="btn btn-sm btn-danger btn-ico sclose">x</button></div>
@@ -75,8 +78,8 @@ const DRAFT_ROWS = `
   <div class="card">
     ${DRAFT_HEAD}
     <div class="srow clicky dsrow">
-      <button class="dpick"><span class="dbox"></span></button>
-      <span class="dimp"><span class="chip">средний</span></span>
+      <span class="dimp"><button class="dpick"><span class="dbox"></span></button>
+        <span class="chip">средний</span></span>
       <span class="id">DK-410</span>
       <span class="dtt"><span class="st">${LONG} ${SOLID}</span>
         <span class="rchips"><span class="chip">отложен 2026-09-01</span>

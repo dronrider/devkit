@@ -1113,6 +1113,21 @@ func TestStaticBoardTableHead(t *testing.T) {
 			t.Errorf("в колонках разделов нет %q", want)
 		}
 	}
+	// Дата последней активности сессии стоит колонкой: возраст в колонке
+	// «Идёт» отвечает на другой вопрос (замечание пользователя).
+	if !strings.Contains(cols, `label: "Активность"`) {
+		t.Error("в колонках сессий нет даты последней активности")
+	}
+	// Отметка выбора и приоритет живут одной колонкой накопителя: врозь они
+	// занимали две, и подпись «Приоритет» переставала влезать.
+	if strings.Contains(cols, `key: "pick"`) {
+		t.Error("отметка выбора осталась своей колонкой накопителя")
+	}
+	// Подсказка сортировки говорит по-русски: прежнее «Поставить список по
+	// колонке» человек читать отказался.
+	if strings.Contains(text, `"Поставить список`) {
+		t.Error("подсказка колонки осталась прежней: «Поставить список по»")
+	}
 	heap := funcBody(t, text, "async function renderDrafts(")
 	if !strings.Contains(heap, `tblHead("drafts"`) {
 		t.Error("шапки колонок в накопителе нет")
@@ -1135,20 +1150,26 @@ func TestStaticBoardTableHead(t *testing.T) {
 	if strings.Contains(css, ".chd .dsort{") {
 		t.Error("стили кнопки порядка остались без самой кнопки")
 	}
-	for _, want := range []string{".thead.h-tasks{", ".thead.h-sess{", ".thead.h-drafts{"} {
+	// Имя классов у шапки своё (tblh): словом thead в этой же таблице стилей
+	// зовётся шапка экрана задачи, и общее имя перебивало ей раскладку.
+	if strings.Contains(css, ".thead{display:grid") {
+		t.Error("шапка колонок зовётся общим именем thead и ломает шапку экрана задачи")
+	}
+	for _, want := range []string{".tblh.h-tasks{", ".tblh.h-sess{", ".tblh.h-drafts{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("шапка раздела стоит не своей сеткой колонок: нет %q", want)
 		}
 	}
-	// Наведение отдаёт колонке названия место соседних: названия у задач
-	// длинные, и в своей ширине от них оставался обрубок.
-	if !strings.Contains(css, ".trow:hover{grid-template-columns:") ||
-		!strings.Contains(css, ".dsrow:hover{grid-template-columns:") {
-		t.Error("колонка названия не растёт по наведению")
+	// Ширину колонки правит человек тягой границы, а не наведение мыши.
+	// Прежний приём схлопывал ранг с датой в ноль на время наведения и правил
+	// ту же беду за человека и рывком.
+	if strings.Contains(css, ".trow:hover{grid-template-columns:") ||
+		strings.Contains(css, ".dsrow:hover{grid-template-columns:") {
+		t.Error("ширины колонок всё ещё подменяются наведением мыши")
 	}
 	// Телефон: сетка колонок туда не влезает, и шапка ложится рядом чипов с
 	// переносом, иначе раздел уезжает горизонтальной прокруткой.
-	narrow := strings.Index(css, "@media (max-width:900px){\n  .thead{display:flex")
+	narrow := strings.Index(css, "@media (max-width:900px){\n  .tblh{display:flex")
 	if narrow < 0 {
 		t.Error("на узком экране шапка держит сетку колонок и унесёт страницу вбок")
 	}

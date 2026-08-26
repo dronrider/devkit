@@ -16,7 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { makeSandbox, browserKids, settle, dump, fail, appPathArg }
+import { makeSandbox, browserKids, settle, dump, byClass, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -67,31 +67,39 @@ const cls = (node) => String((node && node.className) || "");
 
 // --- порядок ячеек слева направо ---
 {
-  const want = ["dpick", "dimp", "id", "dtt", "dwhen", "sm"];
+  const want = ["dimp", "id", "dtt", "dwhen", "sm"];
   const got = kids.map((k) => want.find((w) => cls(k).split(" ").includes(w)) || cls(k) || "?");
   if (JSON.stringify(got) !== JSON.stringify(want)) {
     fail("ячейки строки идут не тем порядком: " + JSON.stringify(got) + ", жду " + JSON.stringify(want));
   }
 }
 
-// --- важность стоит перед номером своей ячейкой ---
+// --- отметка выбора и важность живут одной колонкой ---
+// Врозь они занимали две, и подпись «Приоритет» в шапке переставала влезать,
+// стоило сортировке добавить к ней значок направления (замечание пользователя).
 {
-  const imp = kids[1];
+  const imp = kids[0];
   if (!dump(imp).includes("средний")) {
-    fail("важность записи не встала перед номером: " + dump(row));
+    fail("важность записи не встала первой ячейкой: " + dump(row));
+  }
+  if (!byClass(imp, "dpick")) {
+    fail("отметка выбора уехала из колонки важности: " + dump(imp));
+  }
+  if (kids.some((k, at) => at && byClass(k, "dpick"))) {
+    fail("отметка выбора осталась своей колонкой: " + JSON.stringify(kids.map(cls)));
   }
 }
 
 // --- дата правки вместо возраста днями, и стоит она своей ячейкой ---
 {
-  const when = kids[4];
+  const when = kids[3];
   const said = dump(when).replace(/\s+/g, " ");
   if (!said.includes("2026-08-20")) fail("даты правки записи в своей ячейке нет: " + said);
   for (const days of ["3 дня", "вчера", "неделю назад"]) {
     if (said.includes(days)) fail("возраст днями остался в строке: " + said);
   }
   // Кнопка чата стоит последней, после даты: порядок назвал пользователь.
-  const meta = kids[5];
+  const meta = kids[4];
   const last = (meta.children || [])[(meta.children || []).length - 1];
   if (!cls(last).includes("btn")) fail("последней в строке стоит не кнопка чата: " + dump(meta));
 }

@@ -1364,30 +1364,45 @@ function countsSet(part) {
 // разворачивает порядок, направление видно значком. Состав колонок у раздела
 // свой, потому что и строки у них разные.
 //
-// Колонка без first это не сортируемое место строки: отметка выбора у
-// накопителя и хвост с кнопками. Пустая ячейка в шапке им всё равно нужна,
-// иначе подписи съезжают мимо своих колонок.
+// Ширину колонки человек правит сам: границу в шапке тянут мышью, и ширины
+// запоминаются разделом. Растяжимая колонка одна, она и подбирает остаток.
+//
+// Колонка описывается тут целиком: подпись в шапку, слово для подсказки
+// («Сортировать по рангу», а не по имени колонки в именительном), первое
+// направление порядка и ширина в точках. Колонка без first это место строки,
+// которое не сортируют: хвост с кнопками. Ширины отсюда едут переменными
+// корня, и по ним стоят и шапка, и строка (tblWidthsPut ниже).
+//
+// Ровно одна колонка раздела растяжимая (flex): она забирает остаток строки, и
+// тяга границы правит не её, а соседнюю. Иначе строка вылезала бы за карточку
+// и уводила раздел в горизонтальную прокрутку.
 const TBL_COLS = {
   tasks: [
-    { key: "id", label: "Номер", first: "asc" },
-    { key: "title", label: "Задача", first: "asc" },
-    { key: "rank", label: "Ранг", first: "desc" },
-    { key: "date", label: "Дата", first: "desc" },
-    { key: "act", label: "" },
+    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 60 },
+    { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
+    { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 44 },
+    { key: "date", label: "Дата", by: "дате", first: "desc", w: 92 },
+    { key: "act", label: "", w: 246 },
   ],
   sess: [
-    { key: "live", label: "Состояние", first: "asc" },
-    { key: "title", label: "Работа", first: "asc" },
-    { key: "age", label: "Идёт", first: "desc" },
-    { key: "act", label: "" },
+    { key: "live", label: "Состояние", by: "состоянию", first: "asc", w: 92 },
+    { key: "title", label: "Работа", by: "названию работы", first: "asc", flex: true },
+    { key: "age", label: "Идёт", by: "времени работы", first: "desc", w: 92 },
+    // Дата последней содержательной реплики. Возраст в колонке «Идёт» отвечает
+    // на другой вопрос: он про то, сколько сессия живёт, а не про то, когда в
+    // ней последний раз что-то сказали (замечание пользователя).
+    { key: "moved", label: "Активность", by: "последней активности", first: "desc", w: 108 },
+    { key: "act", label: "", w: 110 },
   ],
   drafts: [
-    { key: "pick", label: "" },
-    { key: "prio", label: "Приоритет", first: "desc" },
-    { key: "id", label: "Номер", first: "asc" },
-    { key: "title", label: "Задача", first: "asc" },
-    { key: "date", label: "Дата", first: "desc" },
-    { key: "act", label: "" },
+    // Отметка выбора и уровень разбора живут одной колонкой: врозь они
+    // занимали две, и подпись «Приоритет» переставала влезать, стоило шапке
+    // добавить к ней значок направления (замечание пользователя).
+    { key: "prio", label: "Приоритет", by: "приоритету", first: "desc", w: 112 },
+    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 60 },
+    { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
+    { key: "date", label: "Дата", by: "дате", first: "desc", w: 92 },
+    { key: "act", label: "", w: 38 },
   ],
 };
 
@@ -1404,6 +1419,12 @@ const TBL_SORT_KEY = {
   tasks: "devkit.dash.tasks.sort",
   sess: "devkit.dash.sess.sort",
   drafts: "devkit.dash.drafts.sort",
+};
+
+const TBL_WIDE_KEY = {
+  tasks: "devkit.dash.tasks.cols",
+  sess: "devkit.dash.sess.cols",
+  drafts: "devkit.dash.drafts.cols",
 };
 
 // Накопитель помнил свой порядок словом ещё до шапки (DK-353, кнопка о двух
@@ -1438,6 +1459,62 @@ function keepTblSort(sect, now) {
   }
 }
 
+// Пределы тяги. Меньше нижнего в колонке не остаётся даже подписи, выше
+// верхнего одна колонка съедает строку целиком, и растяжимой не остаётся
+// ничего.
+const TBL_COL_MIN = 32;
+const TBL_COL_MAX = 460;
+
+// Ширины колонок раздела, какими их оставил человек. Чужие ключи и мусор из
+// хранилища отбрасываются молча: ширина это удобство, и падать из-за неё
+// список не должен.
+function tblWidths(sect) {
+  const out = {};
+  let got = "";
+  try {
+    got = localStorage.getItem(TBL_WIDE_KEY[sect]) || "";
+  } catch (err) {
+    got = "";
+  }
+  let said = null;
+  try {
+    said = got ? JSON.parse(got) : null;
+  } catch (err) {
+    said = null;
+  }
+  for (const col of TBL_COLS[sect] || []) {
+    if (col.flex) continue;
+    const px = said && Number(said[col.key]);
+    out[col.key] = Number.isFinite(px) && px > 0
+      ? Math.min(TBL_COL_MAX, Math.max(TBL_COL_MIN, Math.round(px)))
+      : col.w;
+  }
+  return out;
+}
+
+function keepTblWidths(sect, widths) {
+  try {
+    localStorage.setItem(TBL_WIDE_KEY[sect], JSON.stringify(widths));
+  } catch (err) {
+    // Как и с порядком: запрет записи оставляет ширины живущими до ухода с
+    // экрана, а таблица работает.
+  }
+}
+
+// Ширины кладутся переменными корня, а не в разметку строк: строк на экране
+// сотня, а перерисовка списка идёт по кругу, и вписывать сетку в каждую
+// значило бы переписывать её на каждом тике опроса. Правило сетки лежит в css
+// один раз и читает эти переменные, а узкий экран их просто не спрашивает.
+function tblWidthsPut(sect) {
+  const widths = tblWidths(sect);
+  const root = document.documentElement;
+  if (!root || !root.style || !root.style.setProperty) return widths;
+  for (const key of Object.keys(widths)) {
+    root.style.setProperty("--tc-" + sect + "-" + key, widths[key] + "px");
+  }
+  return widths;
+}
+
 // Что станет с порядком от нажатия на подпись: чужая колонка открывается своим
 // первым направлением, своя разворачивается.
 function tblSortNext(sect, col) {
@@ -1448,8 +1525,6 @@ function tblSortNext(sect, col) {
   return { col, dir: now.dir === "asc" ? "desc" : "asc" };
 }
 
-const TBL_DIR_WORD = { asc: "по возрастанию", desc: "по убыванию" };
-
 // Отпечаток шапки: от порядка зависит и подсветка колонки, и значок
 // направления, и без него шапка держала бы значок там, где он уже не стоит.
 function tblHeadSign(sect) {
@@ -1457,35 +1532,108 @@ function tblHeadSign(sect) {
   return sect + "|" + now.col + "|" + now.dir;
 }
 
+// Какую колонку двигает граница между i-й и следующей. Растяжимая колонка
+// ширины не имеет вовсе, и граница у неё правит соседнюю справа обратным
+// ходом: курсор всё равно едет туда, куда его тянут, а остаток строки
+// подбирает растяжимая.
+function tblGripAim(cols, at) {
+  const own = cols[at];
+  const next = cols[at + 1];
+  if (own && !own.flex) return { key: own.key, sign: 1 };
+  if (next && !next.flex) return { key: next.key, sign: -1 };
+  return null;
+}
+
+// Тяга границы колонки. Ширина считается от той, что была на нажатии, а не от
+// замера узла: замерять сетку по ходу движения значит гонять раскладку на
+// каждый пиксель, а число у нас и так своё.
+function tblGrip(sect, aim, onDone) {
+  const grip = el("span", "tblg");
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-label", "Потянуть границу колонки");
+  let from = 0;
+  let was = 0;
+  const move = (ev) => {
+    const px = Math.min(TBL_COL_MAX,
+      Math.max(TBL_COL_MIN, was + (Number(ev.clientX) - from) * aim.sign));
+    const widths = tblWidths(sect);
+    widths[aim.key] = Math.round(px);
+    keepTblWidths(sect, widths);
+    tblWidthsPut(sect);
+  };
+  const up = () => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    if (grip.classList) grip.classList.remove("on");
+    // Пока граница едет, курсор ходит по подписям колонок, и браузер выделяет
+    // их текст синим: тяга выглядела бы выделением строки, а не тягой.
+    if (document.body && document.body.classList) document.body.classList.remove("tbldrag");
+    if (onDone) onDone();
+  };
+  grip.addEventListener("pointerdown", (ev) => {
+    if (ev.stopPropagation) ev.stopPropagation();
+    if (ev.preventDefault) ev.preventDefault();
+    from = Number(ev.clientX) || 0;
+    was = tblWidths(sect)[aim.key] || 0;
+    grip.classList.add("on");
+    if (document.body && document.body.classList) document.body.classList.add("tbldrag");
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+  // Двойное нажатие возвращает колонке её ширину по умолчанию: промахнувшись
+  // тягой, человек иначе подгонял бы точки обратно на глаз.
+  grip.addEventListener("dblclick", (ev) => {
+    if (ev.stopPropagation) ev.stopPropagation();
+    const def = (TBL_COLS[sect] || []).find((c) => c.key === aim.key);
+    if (!def) return;
+    const widths = tblWidths(sect);
+    widths[aim.key] = def.w;
+    keepTblWidths(sect, widths);
+    tblWidthsPut(sect);
+    if (onDone) onDone();
+  });
+  return grip;
+}
+
 // Шапка колонок. Направление рисуется значком свёртки: своих стрелок у статики
 // нет, а этот набор уже лежит в разметке и читается тем же жестом, вверх это
-// по возрастанию.
+// по возрастанию. Ячейка шапки ростом со строку и стоит теми же колонками, что
+// строка: подписи обязаны стоять над своими ячейками, иначе шапка обещает
+// колонки, которых в строке нет.
 function tblHead(sect, onPick) {
   const now = tblSort(sect);
-  const head = el("div", "thead h-" + sect);
-  for (const col of TBL_COLS[sect] || []) {
+  tblWidthsPut(sect);
+  const head = el("div", "tblh h-" + sect);
+  const cols = TBL_COLS[sect] || [];
+  cols.forEach((col, at) => {
+    const cell = el("div", "tblc");
     if (!col.first) {
-      head.append(el("span", "thc thn", col.label || ""));
-      continue;
+      cell.append(el("span", "tbln", col.label || ""));
+    } else {
+      const on = now.col === col.key;
+      const btn = el("button", "tblb" + (on ? " tblon" : ""));
+      btn.type = "button";
+      btn.append(el("span", "tbll", col.label));
+      if (on) btn.append(icon(now.dir === "asc" ? "i-unfold" : "i-fold"));
+      // Подсказка говорит, что случится от нажатия, и говорит по-русски:
+      // прежнее «Поставить список по колонке» человек читать отказался.
+      const say = on ? "Развернуть порядок" : "Сортировать по " + col.by;
+      withTip(btn, say);
+      btn.setAttribute("aria-label", say);
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        keepTblSort(sect, tblSortNext(sect, col.key));
+        onPick();
+      });
+      cell.append(btn);
     }
-    const on = now.col === col.key;
-    const btn = el("button", "thc thb" + (on ? " thon" : ""));
-    btn.type = "button";
-    btn.append(el("span", "thl", col.label));
-    if (on) btn.append(icon(now.dir === "asc" ? "i-unfold" : "i-fold"));
-    const say = on
-      ? "Список стоит по колонке «" + col.label + "» " + TBL_DIR_WORD[now.dir] +
-        ". Нажатие развернёт порядок"
-      : "Поставить список по колонке «" + col.label + "» " + TBL_DIR_WORD[col.first];
-    withTip(btn, say);
-    btn.setAttribute("aria-label", say);
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      keepTblSort(sect, tblSortNext(sect, col.key));
-      onPick();
-    });
-    head.append(btn);
-  }
+    // Граница тянется у всякой колонки, кроме последней: справа от неё двигать
+    // нечего. Жест живёт широким экраном, на узком строка раскладывается по
+    // областям и колонок там нет вовсе (css гасит саму ручку).
+    const aim = at + 1 < cols.length ? tblGripAim(cols, at) : null;
+    if (aim) cell.append(tblGrip(sect, aim));
+    head.append(cell);
+  });
   return head;
 }
 
@@ -1513,6 +1661,7 @@ function tblSorted(list, sect, valueOf, tieOf) {
     return tieOf ? tieOf(a, b, now.dir) : 0;
   });
 }
+
 
 function boardKindBar(project, kind) {
   const bar = el("div", "ktabs");
@@ -9937,11 +10086,13 @@ function draftRow(project, d) {
     draftPickSet(d.id, !draftPick.has(d.id));
     pickSay();
   });
-  row.append(pick);
-  // Важность стоит своей колонкой перед номером, и колонка эта есть у всякой
-  // строки: без записи без уровня разбора соседние колонки съезжали бы на одну
-  // (порядок назвал пользователь).
+  // Отметка выбора и уровень разбора стоят одной колонкой. Врозь они занимали
+  // две, и подпись «Приоритет» в шапке переставала влезать, стоило сортировке
+  // добавить к ней значок направления (замечание пользователя). Ячейка есть у
+  // всякой записи, у записи без уровня в том числе: иначе соседние колонки
+  // съезжали бы на одну.
   const imp = el("span", "dimp");
+  imp.append(pick);
   if (d.prio) imp.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   row.append(imp);
   row.append(el("span", "id", d.id));
@@ -11771,6 +11922,23 @@ function workMoved(w, now) {
   return w && w.moved ? pulseAge(w.moved, now) : "";
 }
 
+// День последней содержательной реплики и её время. Метка приезжает секундами
+// unix, а колонка активности говорит днём: точное время уходит в подсказку,
+// потому что в колонке шириной в сотню точек его не показать.
+function workMovedDay(moved) {
+  const at = new Date(Number(moved) * 1000);
+  if (!moved || isNaN(at.getTime())) return "";
+  const two = (n) => String(n).padStart(2, "0");
+  return at.getFullYear() + "-" + two(at.getMonth() + 1) + "-" + two(at.getDate());
+}
+
+function workMovedTime(moved) {
+  const at = new Date(Number(moved) * 1000);
+  if (!moved || isNaN(at.getTime())) return "";
+  return workMovedDay(moved) + " " + at.toLocaleTimeString([],
+    { hour: "2-digit", minute: "2-digit" });
+}
+
 // Давность работы словами и подсказкой. У разговора с репликами это возраст
 // последнего хода, а у разговора, где содержательных реплик не нашлось вовсе,
 // честное «реплик нет» со временем начала в подсказке. Сервер считает этот
@@ -12002,6 +12170,17 @@ function agentRow(project, w, now) {
   const age = workAge(w.started, now);
   if (age) when.textContent = age;
   row.append(when);
+  // Дата последней активности своей колонкой: возраст слева отвечает на другой
+  // вопрос, он про то, сколько сессия живёт, а не про то, когда в ней последний
+  // раз что-то сказали (замечание пользователя). Точное время и давность
+  // стоят подсказкой: в колонке им места нет, а день читается сразу.
+  const act = el("div", "amoved");
+  if (w.moved) {
+    const said = workSaid(w, now);
+    act.append(withTip(el("span", "stale dashed", workMovedDay(w.moved)),
+      "последняя содержательная реплика " + workMovedTime(w.moved) + ", " + said.tip));
+  }
+  row.append(act);
   const acts = el("div", "aacts");
   // Разговор есть у любой строки: и у работы из реестра, чью сессию дашборд не
   // видит, и у сессии без задачи. Вход в чат один на цель и задачу, это одна и
@@ -12122,6 +12301,9 @@ function sortSessions(list) {
     // встаёт самая давняя, у неё и спрашивают, что висит дольше всех. Работа
     // без времени начала идёт хвостом, возрастом её мерить нечем.
     if (col === "age") return w.started ? now - Number(w.started) : -1;
+    // Последняя содержательная реплика. Работа, о которой не сказано ничего,
+    // идёт хвостом при убывании, как всякое отсутствие значения.
+    if (col === "moved") return Number(w.moved) || 0;
     return workOrder(w);
   };
   return tblSorted(list, "sess", valueOf,

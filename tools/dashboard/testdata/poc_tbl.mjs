@@ -66,15 +66,15 @@ const go = async (hash) => {
   await settle();
 };
 
-const head = (kind) => allByClass(groups, "thead")
+const head = (kind) => allByClass(groups, "tblh")
   .find((h) => String(h.className).split(" ").includes("h-" + kind)) || null;
-const col = (kind, label) => allByClass(head(kind) || {}, "thb")
+const col = (kind, label) => allByClass(head(kind) || {}, "tblb")
   .find((btn) => dump(btn).includes(label)) || null;
 const click = async (btn) => {
   btn.handlers.click({ stopPropagation: () => {} });
   await settle();
 };
-const on = (btn) => Boolean(btn) && String(btn.className).split(" ").includes("thon");
+const on = (btn) => Boolean(btn) && String(btn.className).split(" ").includes("tblon");
 
 // --- доска: шапка колонок над секциями ---
 {
@@ -86,8 +86,8 @@ const on = (btn) => Boolean(btn) && String(btn.className).split(" ").includes("t
   }
   // Шапка одна на все секции: карточек у доски четыре, и шапка над каждой
   // перевешивала бы список из двух строк.
-  if (allByClass(groups, "thead").length !== 1) {
-    fail("шапок у доски больше одной: " + allByClass(groups, "thead").length);
+  if (allByClass(groups, "tblh").length !== 1) {
+    fail("шапок у доски больше одной: " + allByClass(groups, "tblh").length);
   }
   // Своего порядка экран доске не назначает: строки стоят так, как их сложила
   // сама доска, и подсвеченной колонки при первом заходе нет.
@@ -173,7 +173,7 @@ const boardIds = () => allByClass(groups, "trow")
   await go("#demo/sess");
   const h = head("sess");
   if (!h) fail("шапки колонок у сессий нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 400));
-  for (const label of ["Состояние", "Работа", "Идёт"]) {
+  for (const label of ["Состояние", "Работа", "Идёт", "Активность"]) {
     if (!col("sess", label)) fail("в шапке сессий нет колонки «" + label + "»: " + dump(h));
   }
   if (!on(col("sess", "Состояние"))) {
@@ -216,7 +216,7 @@ const sessTitles = () => allByClass(groups, "arow")
 {
   const row = allByClass(groups, "arow")[0];
   const kids = [...row.children].map((k) => String(k.className || "").split(" ")[0]);
-  if (JSON.stringify(kids) !== JSON.stringify(["dot", "ab", "atime", "aacts"])) {
+  if (JSON.stringify(kids) !== JSON.stringify(["dot", "ab", "atime", "amoved", "aacts"])) {
     fail("ячейки строки сессии идут не тем порядком: " + JSON.stringify(kids));
   }
   const close = byClass(row, "sclose");
@@ -229,6 +229,63 @@ const sessTitles = () => allByClass(groups, "arow")
   }
   if (!String(close.attrs["aria-label"] || "").includes("Закрыть")) {
     fail("у крестика нет подписи для чтения с экрана: " + JSON.stringify(close.attrs));
+  }
+}
+
+// --- дата последней активности стоит своей колонкой и правит порядок ---
+// Возраст в колонке «Идёт» отвечает на другой вопрос: он про то, сколько
+// сессия живёт, а не про то, когда в ней последний раз что-то сказали
+// (замечание пользователя).
+{
+  const moved = () => allByClass(groups, "arow")
+    .map((row) => String(dump(byClass(row, "amoved")) || "").trim());
+  if (moved().some((said) => !/\d{4}-\d{2}-\d{2}/.test(said))) {
+    fail("даты последней активности в строке сессии нет: " + JSON.stringify(moved()));
+  }
+  // Порядок по ней настоящий: у трёх работ метки 9000, 7000 и 5000 секунд, и
+  // убыванием сверху встаёт самая свежая.
+  await click(col("sess", "Активность"));
+  if (JSON.stringify(sessTitles()) !==
+    JSON.stringify(["буквой раньше", "буквой средне", "буквой позже"])) {
+    fail("сессии не встали по последней активности: " + JSON.stringify(sessTitles()));
+  }
+  await click(col("sess", "Активность"));
+  if (JSON.stringify(sessTitles()) !==
+    JSON.stringify(["буквой позже", "буквой средне", "буквой раньше"])) {
+    fail("порядок по активности не развернулся: " + JSON.stringify(sessTitles()));
+  }
+}
+
+// --- подсказка сортировки говорит по-русски ---
+// «Поставить список по колонке» человек читать отказался: подсказка обязана
+// называть действие и колонку так, как её называют вслух.
+{
+  const tips = [];
+  for (const kind of ["tasks", "sess"]) {
+    await go(kind === "tasks" ? "#demo" : "#demo/sess");
+    for (const btn of allByClass(head(kind) || {}, "tblb")) tips.push(String(btn.title || ""));
+  }
+  if (!tips.length) fail("подписей колонок не нашлось вовсе");
+  for (const said of tips) {
+    if (said.includes("Поставить список")) {
+      fail("подсказка колонки осталась прежней: " + said);
+    }
+    if (!/^(Сортировать по |Развернуть порядок)/.test(said)) {
+      fail("подсказка колонки говорит не о сортировке: " + said);
+    }
+  }
+  if (!tips.includes("Сортировать по рангу")) {
+    fail("колонка ранга не назвала себя в подсказке: " + JSON.stringify(tips));
+  }
+  if (!tips.includes("Развернуть порядок")) {
+    fail("у выбранной колонки нет подсказки про разворот: " + JSON.stringify(tips));
+  }
+  // Подпись для чтения с экрана та же, что и подсказка: слепому читателю
+  // достаётся то же самое, а не имя класса.
+  const btn = col("sess", "Работа");
+  if (btn.attrs["aria-label"] !== btn.title) {
+    fail("подпись колонки для чтения с экрана разошлась с подсказкой: " +
+      btn.attrs["aria-label"] + " против " + btn.title);
   }
 }
 

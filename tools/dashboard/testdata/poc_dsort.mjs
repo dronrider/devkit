@@ -64,7 +64,7 @@ const shownIds = () => allByClass(groups, "dsrow")
   });
 
 // Подпись колонки в шапке накопителя.
-const col = (label) => allByClass(byClass(groups, "thead") || {}, "thb")
+const col = (label) => allByClass(byClass(groups, "tblh") || {}, "tblb")
   .find((btn) => dump(btn).includes(label)) || null;
 
 const click = async (btn) => {
@@ -99,7 +99,7 @@ const click = async (btn) => {
 
 // --- шапка колонок вместо заголовка ---
 {
-  const head = byClass(groups, "thead");
+  const head = byClass(groups, "tblh");
   if (!head) fail("шапки колонок у накопителя нет: " + dump(groups).slice(0, 300));
   if (!String(head.className).split(" ").includes("h-drafts")) {
     fail("шапка накопителя не своей раскладки: " + head.className);
@@ -110,13 +110,24 @@ const click = async (btn) => {
   // Открытая колонка подсвечена и несёт значок направления: без него порядок
   // читается только перебором строк.
   const now = col("Дата");
-  if (!String(now.className).split(" ").includes("thon")) {
+  if (!String(now.className).split(" ").includes("tblon")) {
     fail("колонка, по которой стоит список, не подсвечена: " + now.className);
   }
   if (!tag(now, "I")) fail("направление порядка не показано значком: " + dump(now));
   const idle = col("Задача");
-  if (String(idle.className).split(" ").includes("thon") || tag(idle, "I")) {
+  if (String(idle.className).split(" ").includes("tblon") || tag(idle, "I")) {
     fail("значок направления стоит у колонки, по которой список не стоит: " + dump(idle));
+  }
+  // Ячеек в шапке столько же, сколько в строке, и отметка выбора своей
+  // колонки не занимает: врозь с приоритетом они занимали две, и подпись
+  // «Приоритет» переставала влезать (замечание пользователя).
+  const row = allByClass(groups, "dsrow")[0];
+  if ((head.children || []).length !== (row.children || []).length) {
+    fail("колонок в шапке " + (head.children || []).length + ", а ячеек в строке " +
+      (row.children || []).length + ": подписи встанут мимо");
+  }
+  if (!byClass(row.children[0], "dpick")) {
+    fail("отметка выбора не стоит в одной колонке с приоритетом: " + dump(row.children[0]));
   }
 }
 
@@ -131,8 +142,8 @@ const click = async (btn) => {
   if (JSON.stringify(got) !== JSON.stringify(["XR-D1", "XR-D3", "XR-D2"])) {
     fail("список не встал по важности, высокие сверху: " + JSON.stringify(got));
   }
-  if (!String(col("Приоритет").className).split(" ").includes("thon")) {
-    fail("шапка не назвала новую колонку: " + dump(byClass(groups, "thead")));
+  if (!String(col("Приоритет").className).split(" ").includes("tblon")) {
+    fail("шапка не назвала новую колонку: " + dump(byClass(groups, "tblh")));
   }
 }
 

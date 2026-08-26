@@ -4756,6 +4756,138 @@ function safePair(make, call, out) {
   }
 }
 
+// Чипы непрочитанных ответов. В плотном потоке замечаний ответ агента тонет
+// среди ходов инструментов: человек спрашивает, куда лёг ответ, и ищет его
+// прокруткой (замечание пользователя). Реплики человека отслеживаются сами,
+// без пометки «это вопрос», а ответом считается первый пузырь агента после
+// реплики по порядку ленты.
+const CHAT_READ_KEY = "devkit.chat.read.";
+
+// Сколько ключей прочитанного помнит вкладка на разговор. Список растёт с
+// каждым ответом, а нужен он только свежему хвосту ленты.
+const CHAT_READ_KEEP = 200;
+
+function chatReadList(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CHAT_READ_KEY + addr) || "[]");
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function chatReadAdd(addr, key) {
+  const keep = chatReadList(addr).filter((k) => k !== key);
+  keep.push(key);
+  try {
+    localStorage.setItem(CHAT_READ_KEY + addr,
+      JSON.stringify(keep.slice(-CHAT_READ_KEEP)));
+  } catch (err) {
+    // Приватный режим браузера запрещает запись: прочитанное тогда живёт до
+    // перезагрузки, и это лучше упавшего экрана.
+  }
+}
+
+// Реплика человека в ленте: чужие слова, приехавшие каналом от другого агента,
+// подписаны своим автором и вопросом человека не являются.
+function chatIsAsk(item) {
+  return Boolean(item && item.role === "user" && item.text && !item.who);
+}
+
+// Ответ агента это его текстовый пузырь: ходы инструментов, размышления и
+// служебные вставки в счёт не идут. Отправка человеку каналом рисуется тем же
+// пузырём и ответом тоже считается.
+function chatIsAnswer(item) {
+  if (!item || !item.text) return false;
+  if (item.role === "assistant") return true;
+  return item.role === "tool" && Boolean(item.human);
+}
+
+// chatAskPairs связывает реплики человека с ответами. Пачка реплик подряд ждёт
+// одного ответа: агент отвечает на них разом, и все чипы такой пачки ведут в
+// один якорь. Реплика без ответа чипа не даёт вовсе: пока агент работает,
+// показывать нечего.
+function chatAskPairs(list) {
+  const out = [];
+  let asks = [];
+  for (const item of list || []) {
+    if (chatIsAsk(item)) {
+      asks.push(item);
+      continue;
+    }
+    if (!chatIsAnswer(item) || !asks.length) continue;
+    for (const ask of asks) out.push({ ask, answer: item });
+    asks = [];
+  }
+  return out;
+}
+
+// makeUnread ведёт полоску чипов над строкой отправки: считает пары по ленте,
+// гасит показанное само и помнит прочитанное во вкладке.
+function makeUnread(addr, feed, box) {
+  let pairs = [];
+  // Показ ответа на экране гасит чип сам: человек его прочёл, и напоминать
+  // больше не о чем. Наблюдателя может не быть вовсе (старый браузер), тогда
+  // чип гасится нажатием и крестиком.
+  const eye = typeof IntersectionObserver === "function"
+    ? new IntersectionObserver((rows) => {
+      let hit = false;
+      for (const row of rows) {
+        if (!row.isIntersecting) continue;
+        const key = row.target && row.target.dataset ? row.target.dataset.pkey : "";
+        if (!key) continue;
+        chatReadAdd(addr, key);
+        hit = true;
+      }
+      if (hit) paint();
+    }, { root: feed, threshold: 0.4 })
+    : null;
+  // Узел ответа ищется по ключу каждый раз заново: пузырь агента растёт
+  // кусками потока, и на дописанном тексте лента пересобирает его узел.
+  const nodeOf = (key) => findKey(feed, key);
+  const paint = () => {
+    const read = chatReadList(addr);
+    const live = pairs.filter((p) => !read.includes(itemKey(p.answer)));
+    box.replaceChildren();
+    box.hidden = !live.length;
+    if (eye) eye.disconnect();
+    for (const pair of live) {
+      const key = itemKey(pair.answer);
+      const chip = el("div", "cuchip");
+      const said = el("button", "cuask", foldPeek(pair.ask.text, 60));
+      said.title = "Показать ответ на: " + foldPeek(pair.ask.text, 200);
+      said.setAttribute("aria-label", said.title);
+      said.addEventListener("click", () => {
+        const node = nodeOf(key);
+        if (node) node.scrollIntoView({ block: "center" });
+        chatReadAdd(addr, key);
+        paint();
+      });
+      const off = el("button", "cuoff");
+      off.append(icon("close"));
+      off.title = "Скрыть напоминание";
+      off.setAttribute("aria-label", off.title);
+      off.addEventListener("click", () => {
+        chatReadAdd(addr, key);
+        paint();
+      });
+      chip.append(said, off);
+      box.append(chip);
+      const node = eye ? nodeOf(key) : null;
+      if (node) eye.observe(node);
+    }
+  };
+  return {
+    draw: (list) => {
+      pairs = chatAskPairs(list);
+      paint();
+    },
+    stop: () => {
+      if (eye) eye.disconnect();
+    },
+  };
+}
+
 // Ключ записи в ленте: устойчивый ключ сервера («источник:номер в файле»),
 // а у ответа без него старый номер. По этому же ключу лента отсеивает
 // повторы и просит следующую страницу истории.
@@ -8400,6 +8532,15 @@ function chatPanel(project, st) {
   wrap.append(askBox);
   watchClientAsk(project, st, askBox);
 
+  // Полоска непрочитанных ответов стоит над строкой отправки: ответ агента
+  // тонет в плотном потоке замечаний, и человек искал его прокруткой
+  // (замечание пользователя). Чип ведёт к ответу, показ ответа гасит чип сам.
+  const unreadBox = el("div", "cunread");
+  unreadBox.hidden = true;
+  wrap.append(unreadBox);
+  const unread = makeUnread(st.addr, feed, unreadBox);
+  chatLive.push(unread.stop);
+
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
   // отправки, и родной уголок стоял поверх неё, а расти полю надо вверх, в
@@ -8779,6 +8920,7 @@ function chatPanel(project, st) {
       busy.saw(item);
     }, (list) => {
       echo.reconcile(list);
+      unread.draw(list);
     }).catch(console.error);
   }
   return wrap;

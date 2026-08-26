@@ -282,6 +282,10 @@ export function makeSandbox(appPath, reply, opts) {
   const streams = [];
   const asked = [];
   const posted = [];
+  // Наблюдатели видимости, заведённые кодом панели. Стенд показывает узел
+  // руками (seen), потому что раскладки в моке нет вовсе и «попал на экран»
+  // тут событие, а не измеренная геометрия.
+  const eyes = [];
 
   // Ответ мока умеет и text(): дашборд читает тело текстом и только потом
   // разбирает его как JSON, потому что перед ним стоит внешний вход, который
@@ -452,6 +456,18 @@ export function makeSandbox(appPath, reply, opts) {
         if (this.onload) this.onload();
       }
     },
+    // Наблюдатель видимости: панель вешает его на ответы агента, а стенд
+    // сообщает о показе через seen().
+    IntersectionObserver: class {
+      constructor(fn) {
+        this.fn = fn;
+        this.nodes = [];
+        eyes.push(this);
+      }
+      observe(node) { this.nodes.push(node); }
+      unobserve(node) { this.nodes = this.nodes.filter((n) => n !== node); }
+      disconnect() { this.nodes = []; }
+    },
     fetch: (path, init) => {
       asked.push(path);
       if (init && init.method === "POST") posted.push(path);
@@ -468,7 +484,14 @@ export function makeSandbox(appPath, reply, opts) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(appPath, "utf8"), sandbox, { filename: "app.js" });
-  return { sandbox, byId, moves, store, timers, streams, asked, posted };
+  // seen сообщает наблюдателям, что узел показался на экране: так стенд
+  // проигрывает прокрутку до ответа.
+  const seen = (node) => {
+    for (const eye of eyes) {
+      if (eye.nodes.includes(node)) eye.fn([{ target: node, isIntersecting: true }], eye);
+    }
+  };
+  return { sandbox, byId, moves, store, timers, streams, asked, posted, seen };
 }
 
 // settle прокручивает микрозадачи: ответы стенда готовы сразу, и обработчикам

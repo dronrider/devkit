@@ -1383,6 +1383,16 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* 3 и 4: блоки вложений слева в строке отправки */
 .crow{display:flex;align-items:center;gap:8px}
+/* Полоска непрочитанных ответов над строкой отправки: узкие чипы стопкой,
+   каждый ведёт к своему ответу, крестик гасит напоминание. */
+.cunread{display:flex;flex-direction:column;gap:4px;padding:4px 0 0}
+.cuchip{display:flex;align-items:center;gap:4px;min-width:0;border:1px solid var(--line2);border-radius:8px;background:var(--bg1)}
+.cuask{flex:1;min-width:0;text-align:left;padding:4px 8px;border:none;background:transparent;color:var(--tx2);font:400 11.5px var(--sans);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cuask::before{content:"ответ на ";color:var(--tx3)}
+.cuask:hover{color:var(--tx)}
+.cuoff{flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-right:3px;border:none;border-radius:6px;background:transparent;color:var(--tx3);cursor:pointer;padding:0}
+.cuoff svg{width:12px;height:12px}
+.cuoff:hover{background:var(--bg3);color:var(--tx)}
 .cclips{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap}
 .cclip{display:flex;align-items:center;gap:6px;max-width:230px;padding:3px 6px;border:1px solid var(--line2);border-radius:8px;background:var(--bg2)}
 .cclip b{font:600 10.5px var(--sans);color:var(--acc);flex:none}

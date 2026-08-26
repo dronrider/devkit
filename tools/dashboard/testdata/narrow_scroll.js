@@ -25,9 +25,20 @@ const SOLID = "tools/dashboard/testdata/poc_clientask.mjs:GOWORK=off/go/test/./t
 // пользователя про мобильный вид).
 const WHY = "вопрос: DK-466: ветка dk-466 отрезана от main, а весь чат-контур задачи живёт только в ветке poc-chat";
 
+// Шапка колонок раздела (POC DK-397): подписи стоят той же сеткой, что и
+// строка, и на телефоне обязаны лечь рядом чипов с переносом, а не унести
+// раздел вбок.
+const head = (kind, cols) => `<div class="thead h-${kind}">` + cols.map((c) =>
+  (c ? `<button class="thc thb" type="button"><span class="thl">${c}</span></button>`
+    : `<span class="thc thn"></span>`)).join("") + `</div>`;
+
+const TASK_HEAD = head("tasks", ["Номер", "Задача", "Ранг", "Дата", ""]);
+const SESS_HEAD = head("sess", ["Состояние", "Работа", "Идёт", ""]);
+const DRAFT_HEAD = head("drafts", ["", "Приоритет", "Номер", "Задача", "Дата", ""]);
+
 const TASK_ROWS = `
   <div class="shead bsec onsec">Blocked<span class="n">1</span></div>
-  <div class="card bsec onsec"><div class="trow"><span class="id"><span class="sdot sd-wait"></span><span>DK-466</span></span><span class="tt"><span class="ttl">Дашборд: истёкший логин чата виден состоянием и чинится перезапуском</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">M</span><span class="chip c-block cwhy">блок: вопрос: DK-466: ветка dk-466 отрезана от main, а весь чат-контур задачи живёт только в ветке poc-chat. В main...</span></span></span><span class="meta"><span class="rank"><button class="rsum" type="button" aria-expanded="false">62</button><span class="rfold">50+5+3+0+4</span></span><span class="stale dashed">2026-08-22</span><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-.9 0-1.8-.1-2.6-.4L5 20.5l1.2-3.2C4.8 16.1 4 14.4 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"></path></svg></button><span class="split"><button class="btn btn-sm btn-acc">Выполнить</button><button class="btn btn-sm btn-acc more2" aria-expanded="false"><span class="car"></span></button><div class="hpop" hidden=""><span class="hph">На какой подписке запустить</span><button class="hrow on" type="button"><span class="h1"><b>claude-code</b><span class="chip">по умолчанию</span></span><div class="qrow"><em>week_all</em><span class="meter"><i style="width: 14%;"></i></span><b>14%</b><span class="qres">до 31.08</span></div><div class="qrow"><em>week_max</em><span class="meter"><i style="width: 1%;"></i></span><b>1%</b><span class="qres">до 31.08</span></div><span class="hnote qage q-fresh">снимок 10м назад</span></button><button class="hrow" type="button"><span class="h1"><b>glm-code</b></span><div class="qrow"><em>5h_all</em><span class="meter"><i style="width: 0%;"></i></span><b>0%</b></div><div class="qrow"><em>week_all</em><span class="meter"><i style="width: 32%;"></i></span><b>32%</b><span class="qres">до 29.08</span></div><span class="hnote qage q-old">снимок 13ч 26м назад</span></button><span class="hph">Каким ярусом</span><div class="tbar"><button class="tpick on" type="button">вердикт</button><button class="tpick" type="button">mini</button><button class="tpick" type="button">base</button><button class="tpick" type="button">pro</button><button class="tpick" type="button">max</button></div><span class="hfoot">Список включённых подписок машины, agentctl harness. Выбор действует на один запуск. Ярус называет вердикт agentctl pick.</span></div></span></span></div><div class="btier quiet">ждут задач<span class="n">17</span></div></div>
+  <div class="card bsec onsec"><div class="trow"><span class="id"><span class="sdot sd-wait"></span><span>DK-466</span></span><span class="tt"><span class="ttl">Дашборд: истёкший логин чата виден состоянием и чинится перезапуском</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">M</span><span class="chip c-block cwhy">блок: вопрос: DK-466: ветка dk-466 отрезана от main, а весь чат-контур задачи живёт только в ветке poc-chat. В main...</span></span></span><span class="rank"><button class="rsum" type="button" aria-expanded="false">62</button><span class="rfold">50+5+3+0+4</span></span><span class="twhen"><span class="stale dashed">2026-08-22</span></span><span class="meta"><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-.9 0-1.8-.1-2.6-.4L5 20.5l1.2-3.2C4.8 16.1 4 14.4 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"></path></svg></button><span class="split"><button class="btn btn-sm btn-acc">Выполнить</button><button class="btn btn-sm btn-acc more2" aria-expanded="false"><span class="car"></span></button><div class="hpop" hidden=""><span class="hph">На какой подписке запустить</span><button class="hrow on" type="button"><span class="h1"><b>claude-code</b><span class="chip">по умолчанию</span></span><div class="qrow"><em>week_all</em><span class="meter"><i style="width: 14%;"></i></span><b>14%</b><span class="qres">до 31.08</span></div><div class="qrow"><em>week_max</em><span class="meter"><i style="width: 1%;"></i></span><b>1%</b><span class="qres">до 31.08</span></div><span class="hnote qage q-fresh">снимок 10м назад</span></button><button class="hrow" type="button"><span class="h1"><b>glm-code</b></span><div class="qrow"><em>5h_all</em><span class="meter"><i style="width: 0%;"></i></span><b>0%</b></div><div class="qrow"><em>week_all</em><span class="meter"><i style="width: 32%;"></i></span><b>32%</b><span class="qres">до 29.08</span></div><span class="hnote qage q-old">снимок 13ч 26м назад</span></button><span class="hph">Каким ярусом</span><div class="tbar"><button class="tpick on" type="button">вердикт</button><button class="tpick" type="button">mini</button><button class="tpick" type="button">base</button><button class="tpick" type="button">pro</button><button class="tpick" type="button">max</button></div><span class="hfoot">Список включённых подписок машины, agentctl harness. Выбор действует на один запуск. Ярус называет вердикт agentctl pick.</span></div></span></span></div><div class="btier quiet">ждут задач<span class="n">17</span></div></div>
   <div class="shead bsec onsec">Backlog<span class="n">1, по рангу</span></div>
   <div class="card bsec onsec">
     <div class="trow">
@@ -35,14 +46,15 @@ const TASK_ROWS = `
       <span class="tt"><span class="ttl">${LONG} ${SOLID}</span>
         <span class="rchips"><span class="chip">M</span>
         <span class="chip c-check">без выката, сценарий пользовательский</span></span></span>
-      <span class="meta"><span class="rank on"><button class="rsum">62</button><span class="rfold">25+6+1+0+2</span></span>
-        <span class="stale dashed">2026-08-20</span>
-        <button class="btn btn-sm btn-acc">Выполнить</button></span>
+      <span class="rank on"><button class="rsum">62</button><span class="rfold">25+6+1+0+2</span></span>
+      <span class="twhen"><span class="stale dashed">2026-08-20</span></span>
+      <span class="meta"><button class="btn btn-sm btn-acc">Выполнить</button></span>
     </div>
   </div>`;
 
 const SESS_ROWS = `
   <div class="card">
+    ${SESS_HEAD}
     <div class="arow atalk">
       <span class="dot pulse"></span>
       <div class="ab">
@@ -52,24 +64,25 @@ const SESS_ROWS = `
           <span class="chip">мимо дашборда</span></div>
         <div class="l2"><a href="#demo/DK-479">DK-479</a>, Bash: ${SOLID}</div>
       </div>
-      <div class="aacts"><span class="atime">3 ч 40 мин</span>
+      <span class="atime">3 ч 40 мин</span>
+      <div class="aacts">
         <button class="btn btn-sm btn-ico">i</button>
-        <span class="anone">снимать нечем</span></div>
+        <button class="btn btn-sm btn-danger btn-ico sclose">x</button></div>
     </div>
   </div>`;
 
 const DRAFT_ROWS = `
-  <div class="chd"><b>Черновики</b><span class="cnt">81 запись</span><button class="dsort" type="button">свежие сверху</button></div>
   <div class="card">
+    ${DRAFT_HEAD}
     <div class="srow clicky dsrow">
       <button class="dpick"><span class="dbox"></span></button>
       <span class="dimp"><span class="chip">средний</span></span>
       <span class="id">DK-410</span>
-      <span class="st">${LONG} ${SOLID}</span>
-      <span class="sm"><span class="chip">отложен 2026-09-01</span>
-        <span class="chip c-wait">ждёт ответа</span>
-        <span class="stale dashed">2026-08-17</span>
-        <button class="btn btn-sm btn-ico">i</button></span>
+      <span class="dtt"><span class="st">${LONG} ${SOLID}</span>
+        <span class="rchips"><span class="chip">отложен 2026-09-01</span>
+        <span class="chip c-wait">ждёт ответа</span></span></span>
+      <span class="dwhen"><span class="stale dashed">2026-08-17</span></span>
+      <span class="sm"><button class="btn btn-sm btn-ico">i</button></span>
     </div>
   </div>`;
 
@@ -101,8 +114,8 @@ const TABS = `
   </div>`;
 
 const parts = new URLSearchParams(location.search).get("bar") || "tasks";
-const body = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
-  drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK }[parts] || TABS + TASK_ROWS;
+const body = { tasks: TABS + TASK_HEAD + TASK_ROWS, sess: TABS + SESS_ROWS,
+  drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK }[parts] || TABS + TASK_HEAD + TASK_ROWS;
 document.getElementById("groups").innerHTML = body;
 document.getElementById("pname").textContent = "devkit";
 document.getElementById("psub").textContent = "задачи проекта";

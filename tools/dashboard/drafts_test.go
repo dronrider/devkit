@@ -1075,38 +1075,81 @@ func TestDraftGroomOrderAndVisibility(t *testing.T) {
 	}
 }
 
-// Порядок накопителя на экране (DK-353): свежие записи сверху, кнопка о двух
-// положениях в шапке карточки и память выбора в localStorage. Порядок самих
-// утилит при этом прежний, по возрастанию ID: груминг читает накопитель
-// вместе с хвостом доски, и перестановка сбила бы ему пачку.
-func TestStaticDraftsOrder(t *testing.T) {
+// Табличный вид трёх разделов доски (DK-353, POC DK-397): шапка колонок вместо
+// заголовка карточки, порядок нажатием на подпись и память выбора в
+// localStorage своим ключом на раздел. Порядок самих утилит при этом прежний,
+// по возрастанию ID: груминг читает накопитель вместе с хвостом доски, и
+// перестановка сбила бы ему пачку.
+func TestStaticBoardTableHead(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
-		`const DRAFT_SORT_KEY = "devkit.dash.drafts.sort"`,
-		`const DRAFT_SORT_MODES = ["fresh", "title"]`,
-		"свежие сверху",
-		"по заголовку",
+		`const TBL_SORT_KEY = {`,
+		`drafts: "devkit.dash.drafts.sort"`,
+		`tasks: "devkit.dash.tasks.sort"`,
+		`sess: "devkit.dash.sess.sort"`,
+		`const TBL_SORT_OLD = { fresh: "date:desc", title: "title:asc" }`,
+		"function tblHead(",
+		"function tblSortNext(",
 		"function draftsSorted(",
-		"function draftSortBtn(",
+		"function tasksSorted(",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("порядок накопителя собран не тем блоком: нет %q", want)
+			t.Errorf("табличный вид собран не тем блоком: нет %q", want)
+		}
+	}
+	// Кнопка о двух положениях снята вместе со своими стилями: её работу
+	// забрала шапка, а оставленная рядом отвечала бы на тот же вопрос вторым
+	// способом.
+	for _, gone := range []string{"draftSortBtn(", "DRAFT_SORT_MODES", "свежие сверху"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("кнопка порядка о двух положениях осталась в клиенте: есть %q", gone)
+		}
+	}
+	// Колонка важности есть только у накопителя, ранг только у доски,
+	// состояние только у сессий: приём один, состав колонок свой.
+	cols := funcBody(t, text, "const TBL_COLS = {")
+	for _, want := range []string{`label: "Приоритет"`, `label: "Ранг"`, `label: "Состояние"`} {
+		if !strings.Contains(cols, want) {
+			t.Errorf("в колонках разделов нет %q", want)
 		}
 	}
 	heap := funcBody(t, text, "async function renderDrafts(")
-	if !strings.Contains(heap, "draftsSorted(drafts, draftSort())") {
+	if !strings.Contains(heap, `tblHead("drafts"`) {
+		t.Error("шапки колонок в накопителе нет")
+	}
+	if !strings.Contains(heap, "draftsSorted(drafts)") {
 		t.Error("список накопителя рисуется порядком ответа сервера, а не выбранным")
 	}
-	if !strings.Contains(heap, "draftSortBtn(") {
-		t.Error("кнопки порядка в шапке накопителя нет")
+	if !strings.Contains(funcBody(t, text, "function renderBoard("), `tblHead("tasks"`) {
+		t.Error("шапки колонок над доской нет")
+	}
+	if !strings.Contains(funcBody(t, text, "function paintSessionRows("), `tblHead("sess"`) {
+		t.Error("шапки колонок у сессий нет")
 	}
 	// Перестановка идёт на месте, без второго похода за списком: данных для
 	// порядка в уже полученном ответе хватает.
-	if strings.Contains(funcBody(t, text, "function draftSortBtn("), "api(") {
-		t.Error("кнопка порядка ходит на сервер: список перебирается на клиенте")
+	if strings.Contains(funcBody(t, text, "function tblHead("), "api(") {
+		t.Error("шапка ходит на сервер: список перебирается на клиенте")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	if !strings.Contains(css, ".chd .dsort{") {
-		t.Error("у кнопки порядка нет своего места в шапке карточки")
+	if strings.Contains(css, ".chd .dsort{") {
+		t.Error("стили кнопки порядка остались без самой кнопки")
+	}
+	for _, want := range []string{".thead.h-tasks{", ".thead.h-sess{", ".thead.h-drafts{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("шапка раздела стоит не своей сеткой колонок: нет %q", want)
+		}
+	}
+	// Наведение отдаёт колонке названия место соседних: названия у задач
+	// длинные, и в своей ширине от них оставался обрубок.
+	if !strings.Contains(css, ".trow:hover{grid-template-columns:") ||
+		!strings.Contains(css, ".dsrow:hover{grid-template-columns:") {
+		t.Error("колонка названия не растёт по наведению")
+	}
+	// Телефон: сетка колонок туда не влезает, и шапка ложится рядом чипов с
+	// переносом, иначе раздел уезжает горизонтальной прокруткой.
+	narrow := strings.Index(css, "@media (max-width:900px){\n  .thead{display:flex")
+	if narrow < 0 {
+		t.Error("на узком экране шапка держит сетку колонок и унесёт страницу вбок")
 	}
 }

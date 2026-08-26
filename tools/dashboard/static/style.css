@@ -369,7 +369,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .btier.quiet{color:var(--tx3)}
 .btier .n{font:500 11px var(--mono);color:var(--tx3);text-transform:none;letter-spacing:0}
 .trow.rwait .ttl{color:var(--tx2)}
-.trow{display:grid;grid-template-columns:66px 1fr auto;gap:7px;align-items:center;padding:11px 16px 11px 26px;border-top:1px solid var(--line);cursor:pointer}
+.trow{display:grid;grid-template-columns:66px 1fr 44px 82px 246px;gap:7px;align-items:center;padding:11px 16px 11px 26px;border-top:1px solid var(--line);cursor:pointer}
 .trow:hover{background:var(--bg2)}
 /* Только что заведённая строка: полоса слева и подложка держатся до следующей
    перерисовки списка, чтобы человек нашёл её глазами среди соседей. */
@@ -382,7 +382,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow .tt{font:400 13.5px var(--sans);color:var(--tx);display:flex;align-items:center;gap:8px;min-width:0}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
-.trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.trow .meta{display:flex;align-items:center;gap:10px;justify-content:flex-end;min-width:0}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
 /* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
    приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Прокрутку
@@ -412,8 +412,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .chd .cnt{font:500 12px var(--mono);color:var(--tx3)}
 /* порядок накопителя: кнопка о двух положениях уходит к правому краю шапки и
    на телефоне переносится под счётчик, а не выдавливает его за край */
-.chd .dsort{margin-left:auto;flex:none;padding:3px 10px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx3);font:500 12px var(--sans);cursor:pointer;white-space:nowrap}
-.chd .dsort:hover{color:var(--tx);border-color:var(--acc)}
 .prog{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;display:flex;flex:1;max-width:300px;min-width:120px}
 .prog i{display:block;height:100%}
 .prog .done{background:var(--run)}
@@ -479,7 +477,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* экран «Агенты» (#/agents, макет «08 Агенты»): работы всех досок одним
    списком, заголовок задачи первым, время и действия справа */
-.arow{display:flex;align-items:flex-start;gap:14px;padding:15px 18px;border-top:1px solid var(--line)}
+.arow{display:grid;grid-template-columns:78px 1fr 92px 110px;align-items:start;gap:14px;padding:15px 18px;border-top:1px solid var(--line)}
 .arow:first-child{border-top:none}
 .arow .dot{margin-top:6px}
 .arow .dot-other{background:var(--check)}
@@ -1131,7 +1129,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* 14: колонка ранга больше не шире описания. Разбор слагаемых свёрнут всегда, и
    раскрывает его наведение либо нажатие: на широком экране это подсказка, на
    телефоне нажатие, которое уже было. */
-.trow{grid-template-columns:60px 1fr auto;gap:6px;padding:8px 12px 8px 24px}
+.trow{grid-template-columns:60px 1fr 44px 82px 246px;gap:6px;padding:8px 12px 8px 24px}
 .rank{max-width:none}
 .rank .rfold{display:none}
 .rank:hover .rfold,.rank.on .rfold{display:inline}
@@ -1144,14 +1142,17 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    по файлу, и три его колонки перебивали пять здешних, отчего строка рвалась на
    две. Колонка важности есть у всякой записи, пустая в том числе: иначе
    соседние колонки съезжали бы на одну. */
-.dsrow{grid-template-columns:auto auto minmax(56px,auto) 1fr auto}
+.dsrow{grid-template-columns:34px 76px 60px 1fr 82px 38px}
 /* приписки строки накопителя жмутся вправо одной строкой и на телефоне: у
    строки доски они уезжают под заголовок, а тут это разорванная строка */
 .dsrow .sm{grid-column:auto;justify-content:flex-end;flex-wrap:nowrap;min-width:0}
 /* наименование ужимается многоточием, а не переносом: полный текст показывает
-   подсказка, и на узком экране строка остаётся одной */
-.dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dsrow .dimp:empty{display:none}
+   подсказка, и на узком экране строка остаётся одной. Приписки едут в той же
+   ячейке: колонка названия растёт по наведению, и стоять поодаль им негде */
+.dtt{display:flex;align-items:center;gap:8px;min-width:0}
+.dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dtt .rchips{display:flex;align-items:center;gap:7px;flex:none}
+.dwhen{display:flex;align-items:center;justify-content:flex-start;min-width:0;overflow:hidden}
 /* телефон: кнопка запуска разбора остаётся рядом с полем модели, а не растёт
    во всю ширину полосы, как растут кнопки заведения */
 .grun .btn{width:auto}
@@ -1640,4 +1641,78 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   /* строка главной: длинная приписка состояния режется многоточием, а не
      распирает список до горизонтальной прокрутки под строками */
   .prow .stale{min-width:0;overflow:hidden;text-overflow:ellipsis}
+}
+
+/* ---- табличный вид трёх разделов доски (POC DK-397) ----
+   Задачи, сессии и накопитель это три списка об одном, и приём у них теперь
+   один: шапка колонок, нажатие на подпись правит порядок, направление видно
+   значком. Подписи стоят той же сеткой, что и строка раздела, иначе шапка
+   обещала бы колонки, которых в строке нет. */
+.thead{display:grid;align-items:center;gap:6px;padding:10px 12px 8px 24px}
+.thc{min-width:0;font:600 10.5px var(--sans);letter-spacing:0.05em;text-transform:uppercase;color:var(--tx3);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thb{display:flex;align-items:center;gap:4px;height:22px;padding:0;border:none;background:none;cursor:pointer;color:var(--tx3)}
+.thb:hover{color:var(--tx)}
+.thb .thl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thb svg{width:12px;height:12px;flex:none}
+.thb.thon{color:var(--tx2)}
+/* шапка задач стоит над карточками секций, а не внутри одной: карточек четыре,
+   и шапка над каждой перевешивала бы список из двух строк. Рамка карточки
+   съедает точку с каждой стороны, отсюда поправка отступов */
+.thead.h-tasks{grid-template-columns:60px 1fr 44px 82px 246px;padding:12px 13px 8px 25px}
+.thead.h-drafts{grid-template-columns:34px 76px 60px 1fr 82px 38px;padding:9px 12px 8px;border-bottom:1px solid var(--line)}
+.thead.h-sess{grid-template-columns:78px 1fr 92px 110px;gap:14px;padding:11px 18px 9px;border-bottom:1px solid var(--line)}
+
+/* крестик закрытия сессии: взведённая кнопка видна наливом, а вопрос стоит
+   подсказкой. Слово «Точно закрыть?» на значок не помещается */
+.sclose.armed{background:color-mix(in oklab,var(--block) 22%,transparent);border-color:var(--block);color:var(--block)}
+
+/* широкий экран: наведение отдаёт колонке названия место соседних колонок.
+   Названия у задач длинные, и в своей ширине от них оставался обрубок; ранг с
+   датой на время наведения уступают, а по уходу возвращаются на место */
+@media (min-width:901px){
+  .trow .twhen,.dsrow .dimp,.dsrow .dwhen{min-width:0;overflow:hidden}
+  .trow .rank{min-width:0}
+  .trow:hover{grid-template-columns:60px 1fr 44px 0 246px}
+  .trow:hover .rchips,.dsrow:hover .rchips{display:none}
+  /* у накопителя важность остаётся: сортировка по ней и есть предмет колонки,
+     и прятать её на наведении значило бы прятать ответ на заданный вопрос */
+  .dsrow:hover{grid-template-columns:34px 76px 60px 1fr 0 38px}
+}
+@media (min-width:901px) and (prefers-reduced-motion:no-preference){
+  .trow,.dsrow{transition:grid-template-columns 120ms ease}
+}
+
+/* телефон: сетка колонок в ширину не влезает ни в 390, ни в 430 точек, и шапка
+   там ложится рядом чипов с переносом, а колонки без сортировки из неё уходят
+   вовсе. Сама строка раскладывается по областям: номер с рангом и датой одной
+   строкой, название своей, кнопки своей */
+@media (max-width:900px){
+  .thead{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px}
+  .thead .thn{display:none}
+  .thb{height:32px;padding:0 10px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1)}
+  .thb.thon{border-color:var(--acc);color:var(--tx)}
+  .trow{display:grid;grid-template-columns:auto auto 1fr;gap:6px 10px;padding:12px 14px 12px 25px;align-items:center}
+  .trow .id{grid-column:1;grid-row:1}
+  .trow .rank{grid-column:2;grid-row:1;min-width:0}
+  .trow .twhen{grid-column:3;grid-row:1;justify-content:flex-start;min-width:0;overflow:hidden}
+  .trow .tt{grid-column:1 / -1;grid-row:2;flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .meta{grid-column:1 / -1;grid-row:3;justify-content:flex-start;flex-wrap:wrap}
+  /* накопитель ложится тем же ритмом, что и строка доски: отметка, важность,
+     номер и дата первой строкой, название второй во всю ширину. Приписки едут
+     под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */
+  .dsrow{grid-template-columns:34px auto minmax(48px,auto) 1fr auto}
+  .dsrow .dimp{min-width:0;overflow:hidden}
+  .dsrow .dwhen{grid-column:4;grid-row:1;justify-content:flex-end;min-width:0}
+  .dsrow .sm{grid-column:5;grid-row:1}
+  .dsrow .dtt{grid-column:1 / -1;grid-row:2;display:block;overflow:hidden}
+  .dsrow .dtt .st{display:block;white-space:normal;line-height:1.35}
+  .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;max-width:100%}
+  .dsrow .dtt .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  /* сессии: состояние, работа и возраст одной строкой, кнопки под ними */
+  .arow{grid-template-columns:18px 1fr auto;gap:8px 12px;padding:14px 15px}
+  .arow .dot{justify-self:start}
+  .arow .dot{grid-column:1;grid-row:1}
+  .arow .ab{grid-column:2;grid-row:1}
+  .arow .atime{grid-column:3;grid-row:1;text-align:right}
+  .aacts{grid-column:1 / -1;grid-row:2;width:100%;flex-wrap:wrap}
 }

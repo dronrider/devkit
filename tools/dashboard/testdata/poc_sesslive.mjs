@@ -180,7 +180,8 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   }
   const dot = String((byClass(row, "dot") || {}).className || "");
   if (dot.includes("pulse")) fail("работа без состояния горит зелёным: " + dot);
-  if (said.includes("Закрыть")) {
+  const shut = byClass(row, "sclose");
+  if (shut && !shut.disabled) {
     fail("снятие предложено работе, о которой неизвестно даже, идёт ли она: " + said);
   }
 }
@@ -196,7 +197,7 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   await tick();
   const row = rows().find((r) => dump(r).includes("эту снимаем"));
   if (!row) fail("строки для снятия нет: " + dump(groups).slice(0, 300));
-  const close = deepBtn(row, "Закрыть");
+  const close = deepBtn(row, "sclose");
   if (!close) fail("у простаивающей сессии нет кнопки снятия: " + dump(row));
   // Сервер снял сессию, но своим списком работ он ответит только следующим
   // заходом: строка обязана уйти сразу.

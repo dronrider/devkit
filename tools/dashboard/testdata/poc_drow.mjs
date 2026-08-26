@@ -6,7 +6,11 @@
 // возраст записи днями («3 дня»), хотя на доске в этом месте стоит дата правки
 // (замечание пользователя). Предмет стенда это порядок ячеек слева направо
 // (отметка, важность, номер, наименование, дата, чат), дата вместо дней и
-// сходимость числа колонок с числом ячеек.
+// сходимость числа колонок с числом ячеек. С табличным видом (POC DK-397) дата
+// стоит своей ячейкой, а не припиской в хвосте: по ней сортирует шапка, и
+// колонки, которой нет в сетке, шапка обещать не вправе. Колонки считаются по
+// широкой раскладке: узкая лежит своим правилом в @media и колонок держит
+// меньше нарочно, там строка ложится в два ряда.
 //
 // Зовётся: node testdata/poc_drow.mjs static/app.js
 
@@ -29,13 +33,41 @@ const { sandbox } = makeSandbox(app, (path2, init) => {
 });
 await settle();
 
+// Широкая раскладка это стили без блоков @media: узкие правила лежат там и
+// колонок держат меньше нарочно, а спор .srow с .dsrow идёт как раз в общей
+// части файла.
+function wideCss(css) {
+  let out = "";
+  let at = 0;
+  while (at < css.length) {
+    const start = css.indexOf("@media", at);
+    if (start < 0) {
+      out += css.slice(at);
+      break;
+    }
+    out += css.slice(at, start);
+    let depth = 0;
+    let i = css.indexOf("{", start);
+    if (i < 0) break;
+    for (; i < css.length; i += 1) {
+      if (css[i] === "{") depth += 1;
+      else if (css[i] === "}") {
+        depth -= 1;
+        if (!depth) break;
+      }
+    }
+    at = i + 1;
+  }
+  return out;
+}
+
 const row = browserKids(sandbox.draftRow("demo", draft));
 const kids = [...row.children];
 const cls = (node) => String((node && node.className) || "");
 
 // --- порядок ячеек слева направо ---
 {
-  const want = ["dpick", "dimp", "id", "st", "sm"];
+  const want = ["dpick", "dimp", "id", "dtt", "dwhen", "sm"];
   const got = kids.map((k) => want.find((w) => cls(k).split(" ").includes(w)) || cls(k) || "?");
   if (JSON.stringify(got) !== JSON.stringify(want)) {
     fail("ячейки строки идут не тем порядком: " + JSON.stringify(got) + ", жду " + JSON.stringify(want));
@@ -50,15 +82,16 @@ const cls = (node) => String((node && node.className) || "");
   }
 }
 
-// --- дата правки вместо возраста днями ---
+// --- дата правки вместо возраста днями, и стоит она своей ячейкой ---
 {
-  const meta = kids[4];
-  const said = dump(meta).replace(/\s+/g, " ");
-  if (!said.includes("2026-08-20")) fail("даты правки записи в строке нет: " + said);
+  const when = kids[4];
+  const said = dump(when).replace(/\s+/g, " ");
+  if (!said.includes("2026-08-20")) fail("даты правки записи в своей ячейке нет: " + said);
   for (const days of ["3 дня", "вчера", "неделю назад"]) {
     if (said.includes(days)) fail("возраст днями остался в строке: " + said);
   }
   // Кнопка чата стоит последней, после даты: порядок назвал пользователь.
+  const meta = kids[5];
   const last = (meta.children || [])[(meta.children || []).length - 1];
   if (!cls(last).includes("btn")) fail("последней в строке стоит не кнопка чата: " + dump(meta));
 }
@@ -67,7 +100,7 @@ const cls = (node) => String((node && node.className) || "");
 // Правило .srow лежит ниже по файлу и той же силы, что .dsrow: колонки
 // накопителя обязаны стоять после него, иначе строка рвётся на две.
 {
-  const css = fs.readFileSync(path.join(path.dirname(app), "style.css"), "utf8");
+  const css = wideCss(fs.readFileSync(path.join(path.dirname(app), "style.css"), "utf8"));
   // Последнее по файлу правило селектора: при равной силе побеждает оно, и
   // спорят тут ровно два селектора строки накопителя.
   const lastRule = (sel) => {

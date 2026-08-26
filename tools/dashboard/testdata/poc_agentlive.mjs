@@ -162,7 +162,7 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
 // --- закрытие молчащей сессии: одно нажатие, ручка та же, что у смены модели ---
 {
   const row = rowOf("молчащее окно");
-  const close = deepBtn(row, "Закрыть");
+  const close = deepBtn(row, "sclose");
   if (!close) fail("у молчащей сессии нет кнопки закрытия: " + dump(row));
   close.handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -177,13 +177,18 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   stopped.length = 0;
   await go("#/agents");
   const row = rowOf("спросил и ждёт");
-  const close = deepBtn(row, "Закрыть");
+  const close = deepBtn(row, "sclose");
   if (!close) fail("у ждущей сессии нет кнопки закрытия: " + dump(row));
   close.handlers.click({ stopPropagation: () => {} });
   await settle();
   if (stopped.length) fail("занятая сессия снялась без подтверждения: " + JSON.stringify(stopped));
-  if (!dump(close).includes("Точно закрыть?")) {
-    fail("кнопка не спросила подтверждения: " + dump(close));
+  // Крестик подписи не держит, и взведённое состояние видно классом с
+  // подсказкой: слово «Точно закрыть?» на значок не помещается.
+  if (!String(close.className).split(" ").includes("armed")) {
+    fail("кнопка не взвелась подтверждением: " + close.className);
+  }
+  if (!String(close.title || "").includes("Точно закрыть?")) {
+    fail("взведённая кнопка не спросила подтверждения: " + close.title);
   }
   close.handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -228,7 +233,7 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   if (!row) fail("строки договорившей сессии на экране нет: " + dump(groups).slice(0, 300));
   // «Стоп» ей не адресован: ход кончился, снимают тут окно.
   if (deepBtn(row, "Стоп")) fail("договорившей сессии предложен стоп хода: " + dump(row));
-  const close = deepBtn(row, "Закрыть");
+  const close = deepBtn(row, "sclose");
   if (!close) fail("у сессии без id нет кнопки снятия: " + dump(row));
   close.handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -261,7 +266,8 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
     ["цикл цели мимо дашборда", "там, где он запущен"]]) {
     const row = rowOf(what);
     if (!row) fail("строки «" + what + "» на экране нет: " + dump(groups).slice(0, 300));
-    if (deepBtn(row, "Закрыть") || deepBtn(row, "Стоп")) {
+    const shut = byClass(row, "sclose");
+    if ((shut && !shut.disabled) || deepBtn(row, "Стоп")) {
       fail("строке «" + what + "» предложено снятие, которого нет: " + dump(row));
     }
     const note = byClass(row, "anone");
@@ -288,7 +294,7 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   await go("#/agents");
   const row = rowOf("молчащая вторая");
   if (!row) fail("строки молчащей сессии на экране нет: " + dump(groups).slice(0, 300));
-  deepBtn(row, "Закрыть").handlers.click({ stopPropagation: () => {} });
+  deepBtn(row, "sclose").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (rowOf("молчащая вторая")) {
     fail("снятая строка осталась стоять тем же ходом: " + dump(groups).slice(0, 300));
@@ -313,7 +319,7 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   await go("#/agents");
   const row = rowOf("молчащая третья");
   if (!row) fail("строки молчащей сессии на экране нет: " + dump(groups).slice(0, 300));
-  deepBtn(row, "Закрыть").handlers.click({ stopPropagation: () => {} });
+  deepBtn(row, "sclose").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (rowOf("молчащая третья")) {
     fail("строка уже закрытой сессии осталась стоять: " + dump(groups).slice(0, 300));

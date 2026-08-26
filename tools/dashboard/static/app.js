@@ -1195,15 +1195,20 @@ function renderRow(project, row, sect, opts) {
     tt.append(box);
   }
   tr.append(tt);
-  const meta = el("span", "meta");
-  meta.append(rankCell(row));
+  // Ранг и дата стоят своими колонками, а не приписками в хвосте: по ним
+  // сортирует шапка, и колонка, которой нет в сетке, подписи в шапке не
+  // соответствует ничем.
+  tr.append(rankCell(row));
   // Дата последней правки вместо возраста днями: считает её taskctl по git
   // blame, клиент только показывает. Слова «правка» рядом с датой нет,
   // объяснение пришло подсказкой по наведению.
+  const when = el("span", "twhen");
   if (row.moved) {
-    meta.append(withTip(el("span", "stale dashed", row.moved),
+    when.append(withTip(el("span", "stale dashed", row.moved),
       "дата последней правки задачи на доске: перевод в статус двигает её же"));
   }
+  tr.append(when);
+  const meta = el("span", "meta");
   meta.append(rowChatBtn(project, row));
   meta.append(rowAction(project, row, sect));
   tr.append(meta);
@@ -1217,7 +1222,10 @@ function renderRow(project, row, sect, opts) {
   // ручной и от ранга не зависит, там жест обещал бы то, чего не делает.
   // Перетаскивание живёт в самой очереди: ждущая задач строка нарисована в
   // Blocked, и жест там обещал бы место в списке, которого она не занимает.
-  if (sect === "backlog" && !quiet) wireDrag(project, tr, row);
+  // Своим порядком очередь стоит только тогда, когда её не переставила шапка:
+  // в списке по чужой колонке место строки ничего не обещает, и жест двигал бы
+  // ценность вслепую.
+  if (sect === "backlog" && !quiet && !tblSort("tasks").col) wireDrag(project, tr, row);
   return tr;
 }
 
@@ -1226,7 +1234,8 @@ function renderRow(project, row, sect, opts) {
 // строки. У строки, где не изменилось ничего, узел переживает обновление
 // нетронутым вместе с фокусом на кнопке.
 function rowSign(row, sect) {
-  return JSON.stringify(row) + "|" + sect + "|" + harnessSign() + (freshRow === row.id ? "|fresh" : "");
+  return JSON.stringify(row) + "|" + sect + "|" + harnessSign() +
+    (freshRow === row.id ? "|fresh" : "") + "|" + tblHeadSign("tasks");
 }
 
 // Только что заведённая строка. Заводят её с формы, а ищут потом глазами среди
@@ -1347,6 +1356,164 @@ function countsSet(part) {
   shownCounts = Object.assign({}, shownCounts, part || {});
 }
 
+// Табличный вид трёх разделов доски (POC DK-397). Задачи, сессии и накопитель
+// это три списка об одном и том же, и выглядели они по-разному: у накопителя
+// над списком стояло слово «Черновики» с числом, повторявшее таб, а порядок
+// правила кнопка о двух положениях. Приём тут классический и один на все три:
+// шапка колонок, нажатие на подпись сортирует по колонке, второе нажатие
+// разворачивает порядок, направление видно значком. Состав колонок у раздела
+// свой, потому что и строки у них разные.
+//
+// Колонка без first это не сортируемое место строки: отметка выбора у
+// накопителя и хвост с кнопками. Пустая ячейка в шапке им всё равно нужна,
+// иначе подписи съезжают мимо своих колонок.
+const TBL_COLS = {
+  tasks: [
+    { key: "id", label: "Номер", first: "asc" },
+    { key: "title", label: "Задача", first: "asc" },
+    { key: "rank", label: "Ранг", first: "desc" },
+    { key: "date", label: "Дата", first: "desc" },
+    { key: "act", label: "" },
+  ],
+  sess: [
+    { key: "live", label: "Состояние", first: "asc" },
+    { key: "title", label: "Работа", first: "asc" },
+    { key: "age", label: "Идёт", first: "desc" },
+    { key: "act", label: "" },
+  ],
+  drafts: [
+    { key: "pick", label: "" },
+    { key: "prio", label: "Приоритет", first: "desc" },
+    { key: "id", label: "Номер", first: "asc" },
+    { key: "title", label: "Задача", first: "asc" },
+    { key: "date", label: "Дата", first: "desc" },
+    { key: "act", label: "" },
+  ],
+};
+
+// Порядок, каким раздел открывается впервые. У доски он пустой нарочно: строки
+// стоят так, как их сложила сама доска (очередь по рангу, прочие секции руками),
+// и подменять этот порядок своим экран не вправе, пока человек не попросил.
+const TBL_DEFAULT = {
+  tasks: { col: "", dir: "" },
+  sess: { col: "live", dir: "asc" },
+  drafts: { col: "date", dir: "desc" },
+};
+
+const TBL_SORT_KEY = {
+  tasks: "devkit.dash.tasks.sort",
+  sess: "devkit.dash.sess.sort",
+  drafts: "devkit.dash.drafts.sort",
+};
+
+// Накопитель помнил свой порядок словом ещё до шапки (DK-353, кнопка о двух
+// положениях), и ключ хранилища у него тот же. Прежние значения переводятся в
+// колонку с направлением: иначе выбор человека сбросился бы на первой же
+// отрисовке нового вида.
+const TBL_SORT_OLD = { fresh: "date:desc", title: "title:asc" };
+
+function tblSort(sect) {
+  const def = TBL_DEFAULT[sect] || { col: "", dir: "" };
+  let got = "";
+  try {
+    got = localStorage.getItem(TBL_SORT_KEY[sect]) || "";
+  } catch (err) {
+    got = "";
+  }
+  if (TBL_SORT_OLD[got]) got = TBL_SORT_OLD[got];
+  const at = got.indexOf(":");
+  const col = at < 0 ? "" : got.slice(0, at);
+  const dir = at < 0 ? "" : got.slice(at + 1);
+  const known = (TBL_COLS[sect] || []).some((c) => c.key === col && c.first);
+  if (!known || (dir !== "asc" && dir !== "desc")) return { col: def.col, dir: def.dir };
+  return { col, dir };
+}
+
+function keepTblSort(sect, now) {
+  try {
+    localStorage.setItem(TBL_SORT_KEY[sect], now.col ? now.col + ":" + now.dir : "");
+  } catch (err) {
+    // Приватное окно браузера запрещает запись: выбор тогда живёт до ухода с
+    // экрана, а список работает.
+  }
+}
+
+// Что станет с порядком от нажатия на подпись: чужая колонка открывается своим
+// первым направлением, своя разворачивается.
+function tblSortNext(sect, col) {
+  const now = tblSort(sect);
+  const def = (TBL_COLS[sect] || []).find((c) => c.key === col);
+  if (!def || !def.first) return now;
+  if (now.col !== col) return { col, dir: def.first };
+  return { col, dir: now.dir === "asc" ? "desc" : "asc" };
+}
+
+const TBL_DIR_WORD = { asc: "по возрастанию", desc: "по убыванию" };
+
+// Отпечаток шапки: от порядка зависит и подсветка колонки, и значок
+// направления, и без него шапка держала бы значок там, где он уже не стоит.
+function tblHeadSign(sect) {
+  const now = tblSort(sect);
+  return sect + "|" + now.col + "|" + now.dir;
+}
+
+// Шапка колонок. Направление рисуется значком свёртки: своих стрелок у статики
+// нет, а этот набор уже лежит в разметке и читается тем же жестом, вверх это
+// по возрастанию.
+function tblHead(sect, onPick) {
+  const now = tblSort(sect);
+  const head = el("div", "thead h-" + sect);
+  for (const col of TBL_COLS[sect] || []) {
+    if (!col.first) {
+      head.append(el("span", "thc thn", col.label || ""));
+      continue;
+    }
+    const on = now.col === col.key;
+    const btn = el("button", "thc thb" + (on ? " thon" : ""));
+    btn.type = "button";
+    btn.append(el("span", "thl", col.label));
+    if (on) btn.append(icon(now.dir === "asc" ? "i-unfold" : "i-fold"));
+    const say = on
+      ? "Список стоит по колонке «" + col.label + "» " + TBL_DIR_WORD[now.dir] +
+        ". Нажатие развернёт порядок"
+      : "Поставить список по колонке «" + col.label + "» " + TBL_DIR_WORD[col.first];
+    withTip(btn, say);
+    btn.setAttribute("aria-label", say);
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      keepTblSort(sect, tblSortNext(sect, col.key));
+      onPick();
+    });
+    head.append(btn);
+  }
+  return head;
+}
+
+// Сравнение двух строк по колонке. Наружу отдаётся готовая функция сортировки:
+// раздел даёт свой съёмник значений, а направление и разбор равных одни на все
+// три списка.
+function tblSorted(list, sect, valueOf, tieOf) {
+  const now = tblSort(sect);
+  if (!now.col) return list.slice();
+  const dir = now.dir === "asc" ? 1 : -1;
+  return list.slice().sort((a, b) => {
+    const av = valueOf(a, now.col);
+    const bv = valueOf(b, now.col);
+    let by = 0;
+    if (typeof av === "string" || typeof bv === "string") {
+      by = String(av || "").localeCompare(String(bv || ""), "ru");
+    } else {
+      by = (Number(av) || 0) - (Number(bv) || 0);
+    }
+    if (by) return by * dir;
+    // Равные значения разбираются вторым ключом раздела, а не оставляются на
+    // произвол движка: список, переставляющийся сам по себе между обновлениями,
+    // читается как поломка. Направление уезжает туда же: у дня записи второй
+    // ключ это её номер, и в перевёрнутом списке он обязан перевернуться тоже.
+    return tieOf ? tieOf(a, b, now.dir) : 0;
+  });
+}
+
 function boardKindBar(project, kind) {
   const bar = el("div", "ktabs");
   const now = boardKindNow(kind);
@@ -1385,6 +1552,20 @@ function boardPaintSign(board, works) {
 // Что нарисовано на доске сейчас: экран и отпечаток его данных.
 let boardPainted = { screen: "", sign: "" };
 
+function taskValue(row, col) {
+  if (col === "title") return String(row.title || "");
+  if (col === "rank") return Number(row.r) || 0;
+  if (col === "date") return String(row.moved || "");
+  return rowNum(row.id);
+}
+
+// Строки секции в том порядке, какой выбрала шапка. Пустая колонка это порядок
+// самой доски, и тогда список не трогается вовсе: очередь стоит по рангу,
+// прочие секции руками, и подменять это своим порядком экран не вправе.
+function tasksSorted(rows) {
+  return tblSorted(rows, "tasks", taskValue, (a, b) => rowNum(a.id) - rowNum(b.id));
+}
+
 function renderBoard(project, board, works) {
   const groups = document.getElementById("groups");
   // Число задач считается по самой доске: секции у неё те же, что и на экране.
@@ -1397,6 +1578,12 @@ function renderBoard(project, board, works) {
     // подсветка, от вторых баджи.
     sign: [project, "tasks", rowsN, (works || []).length, shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "tasks"),
+  }, {
+    // Шапка колонок одна на все секции: карточек у доски четыре, и шапка над
+    // каждой стояла бы над одной-двумя строками, перевешивая сам список.
+    key: "tasks-head",
+    sign: tblHeadSign("tasks"),
+    make: () => tblHead("tasks", () => { renderBoard(project, board, works); }),
   }];
   // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
   // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
@@ -1446,8 +1633,9 @@ function renderBoard(project, board, works) {
         return head;
       },
     });
-    const rows = key === "blocked" ? blockedItems(project, parked, heldRows)
-      : secRows.map((row) => ({
+    const rows = key === "blocked"
+      ? blockedItems(project, tasksSorted(parked), tasksSorted(heldRows))
+      : tasksSorted(secRows).map((row) => ({
         key: row.id,
         sign: rowSign(row, key),
         make: () => renderRow(project, row, key),
@@ -9473,40 +9661,11 @@ async function chatBoardOf(project) {
 // разбора и исходом живёт экраном ниже: одно место лучше двух.
 // Порядок накопителя на экране это дело экрана, а не утилиты: taskctl печатает
 // записи по возрастанию ID, и груминг читает их этим порядком, а человек
-// приходит за тем, что записал последним, и ждёт его первой строкой. Положений
-// два, и ходят они по кругу одной кнопкой, тем же приёмом, каким показ
-// архивных разговоров. Сортировка по ID совпала бы с датой (номера растут по
-// времени записи), поэтому вторым порядком стоит заголовок.
-const DRAFT_SORT_KEY = "devkit.dash.drafts.sort";
-const DRAFT_SORT_MODES = ["fresh", "title"];
-const DRAFT_SORT_WORD = { fresh: "свежие сверху", title: "по заголовку" };
-const DRAFT_SORT_TIP = {
-  fresh: "Записи идут от свежих к старым. Нажатие поставит их по заголовку",
-  title: "Записи идут по заголовку по алфавиту. Нажатие вернёт свежие наверх",
-};
-
-function draftSort() {
-  try {
-    const got = localStorage.getItem(DRAFT_SORT_KEY);
-    return DRAFT_SORT_MODES.includes(got) ? got : DRAFT_SORT_MODES[0];
-  } catch (err) {
-    return DRAFT_SORT_MODES[0];
-  }
-}
-
-function keepDraftSort(mode) {
-  try {
-    localStorage.setItem(DRAFT_SORT_KEY, mode);
-  } catch (err) {
-    // Приватное окно браузера запрещает запись: выбор тогда живёт до ухода с
-    // экрана, но список работает.
-  }
-}
-
-function draftSortNext(mode) {
-  const at = DRAFT_SORT_MODES.indexOf(mode);
-  return DRAFT_SORT_MODES[(at + 1) % DRAFT_SORT_MODES.length];
-}
+// приходит за тем, что записал последним, и ждёт его первой строкой. Правит
+// порядок шапка колонок, общая у трёх разделов доски (tblHead выше). Кнопка о
+// двух положениях, стоявшая тут до POC, свою работу шапке и отдала: два
+// порядка на всю карточку отвечали не на тот вопрос, а по важности записи
+// список не строился вовсе.
 
 // День записи одной строкой. У записи без строки «записан» поле written пустое,
 // и день выводится из возраста, который taskctl меряет правкой файла: иначе
@@ -9526,41 +9685,21 @@ function draftNum(d) {
   return m ? Number(m[1]) : 0;
 }
 
-function draftsSorted(drafts, mode) {
-  const out = [...drafts];
-  if (mode === "title") {
-    out.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ru"));
-    return out;
-  }
-  out.sort((a, b) => {
-    const at = draftDay(a);
-    const bt = draftDay(b);
-    if (at !== bt) return at < bt ? 1 : -1;
-    return draftNum(b) - draftNum(a);
-  });
-  return out;
+// Уровень разбора числом: им и стоит колонка важности. Записи без уровня
+// приходят с пустым полем, и лежат они ниже всех названных при убывании и выше
+// при возрастании, как и всякое отсутствие значения.
+const DRAFT_PRIO_N = { high: 3, mid: 2, low: 1 };
+
+function draftValue(d, col) {
+  if (col === "prio") return DRAFT_PRIO_N[d.prio] || 0;
+  if (col === "id") return draftNum(d);
+  if (col === "title") return String(d.title || "");
+  return draftDay(d);
 }
 
-// Кнопка порядка стоит в шапке карточки, справа от счётчика, и говорит,
-// как список лежит сейчас. Своё положение она рисует сама: перебор всего
-// списка ради подписи одной кнопки был бы лишней работой на каждое нажатие.
-function draftSortBtn(onPick) {
-  const btn = el("button", "dsort");
-  btn.type = "button";
-  const say = () => {
-    const mode = draftSort();
-    btn.textContent = DRAFT_SORT_WORD[mode];
-    withTip(btn, DRAFT_SORT_TIP[mode]);
-    btn.setAttribute("aria-label", "Порядок записей: " + DRAFT_SORT_WORD[mode]);
-  };
-  say();
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    keepDraftSort(draftSortNext(draftSort()));
-    say();
-    onPick();
-  });
-  return btn;
+function draftsSorted(drafts) {
+  return tblSorted(drafts, "drafts", draftValue,
+    (a, b, dir) => (draftNum(b) - draftNum(a)) * (dir === "asc" ? -1 : 1));
 }
 
 const GROOM_HINT = "«Провести груминг» поднимает сессию разбора: она доведёт " +
@@ -9809,19 +9948,32 @@ function draftRow(project, d) {
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
   // подсказка с полным текстом тут нужна ровно так же: длинную мысль с
   // телефона иначе не прочитать, не заходя внутрь (замечание пользователя).
-  row.append(withFull(el("span", "st", d.title || ""), d.title || ""));
-  const meta = el("span", "sm");
-  if (d.deferred) meta.append(el("span", "chip", "отложен " + d.deferred));
+  // Живёт он в своей ячейке вместе с приписками: колонка названия растёт по
+  // наведению, и приписки обязаны ехать вместе с ней, а не стоять поодаль.
+  const tt = el("span", "dtt");
+  tt.append(withFull(el("span", "st", d.title || ""), d.title || ""));
+  const chips = [];
+  if (d.deferred) chips.push(el("span", "chip", "отложен " + d.deferred));
   // Разбор спросил и ждёт ответа: признак тот же и теми же словами, что у
   // строки доски, своего у накопителя нет.
   const waits = waitChip(d);
-  if (waits) meta.append(waits);
+  if (waits) chips.push(waits);
+  if (chips.length) {
+    const box = el("span", "rchips");
+    for (const chip of chips) box.append(chip);
+    tt.append(box);
+  }
+  row.append(tt);
   // Дата правки записи вместо возраста днями и теми же словами, что у строки
   // доски: возраст «3 дня» отвечал не на тот вопрос (замечание пользователя).
+  // Колонка у неё своя: по ней список и сортируется нажатием в шапке.
+  const when = el("span", "dwhen");
   if (d.moved) {
-    meta.append(withTip(el("span", "stale dashed", d.moved),
+    when.append(withTip(el("span", "stale dashed", d.moved),
       "дата последней правки записи: разбор двигает её же"));
   }
+  row.append(when);
+  const meta = el("span", "sm");
   // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
   // агентом надо тем же способом: кнопка та же, значок тот же, панель
   // открывается с привязкой к его ID (решение пользователя).
@@ -9902,19 +10054,17 @@ async function renderDrafts(project, works) {
   // хватает, и второй запрос ради перестановки был бы лишним.
   let cardNode = null;
   const rowsFor = () => {
-    const head = {
-      key: "drafts-head",
-      sign: drafts.length + "|" + draftSort(),
-      make: () => {
-        const line = el("div", "chd");
-        line.append(el("b", "", "Черновики"));
-        line.append(el("span", "cnt", drafts.length + " " +
-          plural(drafts.length, "запись", "записи", "записей")));
-        if (drafts.length) line.append(draftSortBtn(() => { paintRows(); }));
-        return line;
-      },
-    };
-    const out = [head];
+    // Шапка колонок вместо слова «Черновики» с числом: и слово, и число уже
+    // стоят табом над списком, а место над колонками занимали зря. Порядок
+    // правится нажатием на подпись, тем же приёмом, что у доски и сессий.
+    const out = [];
+    if (drafts.length) {
+      out.push({
+        key: "drafts-head",
+        sign: tblHeadSign("drafts"),
+        make: () => tblHead("drafts", () => { paintRows(); }),
+      });
+    }
     // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
     // неотрисованной.
     if (!drafts.length) {
@@ -9923,7 +10073,7 @@ async function renderDrafts(project, works) {
     }
     // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
     // строки, что изменились, и список не уезжает из-под пальца.
-    for (const d of draftsSorted(drafts, draftSort())) {
+    for (const d of draftsSorted(drafts)) {
       // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
       // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
       // подписи строка осталась бы отмеченной при пустом выборе.
@@ -11846,9 +11996,13 @@ function agentRow(project, w, now) {
   box.append(line, sub);
   row.append(box);
 
-  const acts = el("div", "aacts");
+  // Возраст сессии стоит своей колонкой между работой и действиями: по нему
+  // сортирует шапка, и внутри хвоста с кнопками он ездил бы вместе с ними.
+  const when = el("div", "atime");
   const age = workAge(w.started, now);
-  if (age) acts.append(el("span", "atime", age));
+  if (age) when.textContent = age;
+  row.append(when);
+  const acts = el("div", "aacts");
   // Разговор есть у любой строки: и у работы из реестра, чью сессию дашборд не
   // видит, и у сессии без задачи. Вход в чат один на цель и задачу, это одна и
   // та же панель, а ручку для реплики выбирает она сама (DK-435). Панель
@@ -11955,12 +12109,23 @@ function workOrder(w) {
   return said === undefined ? WORK_LIVE_ORDER.idle : said;
 }
 
+// Порядок раздела правит шапка колонок, как правит его у доски и накопителя.
+// Умолчание тут прежнее, по состоянию: список отвечает на вопрос «чем машина
+// занята сейчас». Второй ключ на все колонки один, свежий ход выше: молчащий
+// второй день разговор стоять над идущим ходом не должен ни в каком порядке.
 function sortSessions(list) {
-  return list.slice().sort((a, b) => {
-    const byLive = workOrder(a.work) - workOrder(b.work);
-    if (byLive) return byLive;
-    return (b.work.moved || 0) - (a.work.moved || 0);
-  });
+  const now = Math.floor(Date.now() / 1000);
+  const valueOf = (item, col) => {
+    const w = item.work;
+    if (col === "title") return String(w.title || w.id || w.note || "");
+    // Колонка «Идёт» это возраст сессии, а не время её начала: убыванием тут
+    // встаёт самая давняя, у неё и спрашивают, что висит дольше всех. Работа
+    // без времени начала идёт хвостом, возрастом её мерить нечем.
+    if (col === "age") return w.started ? now - Number(w.started) : -1;
+    return workOrder(w);
+  };
+  return tblSorted(list, "sess", valueOf,
+    (a, b) => (b.work.moved || 0) - (a.work.moved || 0));
 }
 
 // Ключ строки: сессия, а у работы без своей сессии её вид с задачей. По нему
@@ -11984,6 +12149,14 @@ function paintSessionRows(card, project, works, q) {
   const list = sortSessions(sessionsShown(project, works).map((w) => ({ project, work: w }))
     .filter((item) => agentMatch(item, q) && !sessGoneHides(item.work)));
   const now = Date.now();
+  // Шапка едет вместе со строками, а не выше по экрану: живой опрос
+  // перерисовывает карточку по кругу, и шапка, положенная мимо него, теряла бы
+  // подсветку выбранной колонки на первом же тике.
+  const head = list.length ? [{
+    key: "sess-head",
+    sign: tblHeadSign("sess"),
+    make: () => tblHead("sess", () => { paintSessionRows(card, project, works, q); }),
+  }] : [];
   if (!list.length) {
     sync(card, [{
       key: "sess-empty",
@@ -12004,11 +12177,11 @@ function paintSessionRows(card, project, works, q) {
     }]);
     return;
   }
-  sync(card, list.map((item) => ({
+  sync(card, head.concat(list.map((item) => ({
     key: workKey(item.work),
     sign: workSign(item.work, now),
     make: () => agentRow(item.project, item.work, now),
-  })));
+  }))));
 }
 
 function renderSessions(project, works, q) {
@@ -12023,6 +12196,8 @@ function renderSessions(project, works, q) {
       shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "sess"),
   }, {
+    // Шапка колонок стоит внутри карточки первой строкой: списка тут один, и
+    // ширина у шапки со строками ровно одна, без поправки на рамку.
     key: "sess-card",
     sign: "card",
     make: () => el("div", "card"),

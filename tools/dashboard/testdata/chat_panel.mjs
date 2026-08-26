@@ -554,13 +554,31 @@ chatsNote = wasNote;
 }
 
 // --- привязка разговора к задаче рукой ---
+//
+// Кнопка называет то, чего разговору не хватает. У свободного чата это
+// привязка. У привязанного она уже сделана и видна чипом задачи, и предлагать
+// её второй раз нечем: там кнопка про смену и снятие (замечание пользователя по
+// снимку, где чип задачи стоял рядом с кнопкой «привязать»).
+const bindBtn = (head) => byClass(head, "chline").children.find(
+  (k) => String(k.className).includes("cdbtn") &&
+    String((k.attrs && k.attrs.title) || k.title || "").includes("ривяз"));
+const bindTip = (head) => {
+  const btn = bindBtn(head);
+  return String((btn && ((btn.attrs && btn.attrs.title) || btn.title)) || "");
+};
+
+// Свободный чат: кнопка предлагает привязку, и меню её же делает.
 {
-  st = await sandbox.chatState("demo", mine.id, board);
+  const was = chatRegistry;
+  chatRegistry = () => [Object.assign({}, mine, { tasks: [] })];
+  st = await sandbox.chatState("demo", mine.id, null);
   const head = sandbox.chatHead("demo", st);
   const line = byClass(head, "chline");
-  const bind = line.children.find((k) => String(k.className).includes("cdbtn") &&
-    String(k.attrs && k.attrs.title || k.title || "").includes("привяз"));
-  if (!bind) fail("кнопки привязки к задаче в шапке нет: " + dump(head));
+  const bind = bindBtn(head);
+  if (!bind) fail("кнопки привязки у свободного чата нет: " + dump(head));
+  if (!bindTip(head).includes("привязать к задаче")) {
+    fail("свободному чату не предложена привязка: " + JSON.stringify(bindTip(head)));
+  }
   sandbox.chatDropShut();
   bind.handlers.click({ stopPropagation: () => {} });
   const menu = byClass(line, "cdbind");
@@ -569,12 +587,51 @@ chatsNote = wasNote;
   if (!field) fail("поля номера задачи в окне привязки нет: " + dump(menu));
   field.value = "xr-7";
   posted.length = 0;
-  button(menu, "Привязать").handlers.click({ stopPropagation: () => {} });
+  const go = button(menu, "Привязать");
+  if (!go) fail("в окне свободного чата нет кнопки привязки: " + dump(menu));
+  go.handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!posted.some((path) => path.includes("/sessions/" + mine.id + "/task"))) {
     fail("привязка не позвала ручку задачи сессии: " + JSON.stringify(posted));
   }
   if (bound !== "XR-7") fail("номер задачи уехал не прописными: " + JSON.stringify(bound));
+  sandbox.chatDropShut();
+  chatRegistry = was;
+}
+
+// Привязанный чат: сделанного второй раз не предлагают.
+{
+  st = await sandbox.chatState("demo", mine.id, board);
+  const head = sandbox.chatHead("demo", st);
+  const line = byClass(head, "chline");
+  if (!st.task) fail("стенд взял чат без задачи, а предмет тут привязанный");
+  const tip = bindTip(head);
+  if (tip.includes("привязать к задаче")) {
+    fail("привязанному чату всё ещё предлагают привязку: " + JSON.stringify(tip));
+  }
+  if (!tip.includes("сменить или снять")) {
+    fail("у привязанного чата не сказано, что тут делают: " + JSON.stringify(tip));
+  }
+  sandbox.chatDropShut();
+  bindBtn(head).handlers.click({ stopPropagation: () => {} });
+  const menu = byClass(line, "cdbind");
+  if (!menu) fail("окно привязки не открылось: " + dump(line));
+  if (button(menu, "Привязать")) {
+    fail("в окне привязанного чата осталась кнопка «Привязать»: " + dump(menu));
+  }
+  for (const label of ["Сменить", "Снять привязку"]) {
+    if (!button(menu, label)) fail("в окне привязанного чата нет кнопки «" + label + "»: " + dump(menu));
+  }
+  // Снятие уезжает пустым значением той же ручкой.
+  posted.length = 0;
+  bound = null;
+  button(menu, "Снять привязку").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!posted.some((path) => path.includes("/sessions/" + mine.id + "/task"))) {
+    fail("снятие привязки не позвало ручку: " + JSON.stringify(posted));
+  }
+  if (bound !== "") fail("снятие уехало не пустым значением: " + JSON.stringify(bound));
+  sandbox.chatDropShut();
 }
 
 // --- очередь исходящих: неушедшее переживает перезагрузку и дожимается само ---

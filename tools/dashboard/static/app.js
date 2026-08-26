@@ -6212,11 +6212,6 @@ async function chatLoadWindow(project, st, days) {
   return true;
 }
 
-// Подпись группы живых разговоров. Живые стоят своей группой сверху: разговор,
-// в котором прямо сейчас работает агент, ищут первым, и возраст его тут не
-// судья. Порядок по свежести это не ломает, внутри группы он тот же.
-const CHAT_LIVE_HEAD = "живые разговоры";
-
 // Заголовок дня в списке разговоров: сегодня и вчера словами, дальше датой.
 // Год приписывается только к чужому году: транскрипты с машины не исчезают, в
 // глубине списка лежат и прошлогодние разговоры, а у свежих год это шум.
@@ -6233,11 +6228,13 @@ function chatDayHead(day) {
 }
 
 // chatGroups раскладывает список по группам: живые сверху, дальше по дням,
-// сегодня, вчера и датой.
+// сегодня, вчера и датой. Группа живых идёт без подписи: она и так первая, а
+// идущий разговор виден по состоянию в самой строке. Отделяет её заголовок
+// следующей группы, слова в узком списке заняли бы строку впустую.
 function chatGroups(list) {
   const out = [];
   const live = list.filter((c) => c.state === "live");
-  if (live.length) out.push({ head: CHAT_LIVE_HEAD, rows: live });
+  if (live.length) out.push({ head: "", rows: live });
   let day = null;
   let bag = null;
   for (const c of list) {
@@ -6373,7 +6370,7 @@ function chatDropOpen(project, st, anchor) {
     });
     rows.replaceChildren();
     for (const g of chatGroups(list)) {
-      rows.append(el("div", "cdday", g.head));
+      if (g.head) rows.append(el("div", "cdday", g.head));
       for (const c of g.rows) rows.append(chatOption(project, c, st.sid));
     }
     if (!list.length) {
@@ -7095,10 +7092,16 @@ function wireRing(project, st, slot) {
 const CHAT_BIND_HINT = "Привязка ложится в реестр чатов: разговор станет работой " +
   "этой задачи и встанет в её ленту. Пустое значение снимает привязку.";
 
+// Меню привязки говорит про то, что тут можно сделать, а не про механику
+// вообще. У разговора без задачи это привязка, у привязанного смена и снятие.
+// Прежде меню было одно на оба случая, звалось «К какой задаче этот разговор» и
+// первой кнопкой предлагало «Привязать» разговору, у которого чип задачи уже
+// стоял: человек читал это как предложение сделать сделанное (замечание
+// пользователя).
 function chatBindOpen(project, st, line) {
   chatDropShut();
   const menu = el("div", "cdrop cdbind");
-  menu.append(el("div", "dwhy", "К какой задаче этот разговор"));
+  menu.append(el("div", "dwhy", st.task ? "Привязка к " + st.task : "К какой задаче этот разговор"));
   const field = el("input", "cbindin");
   field.type = "text";
   field.value = st.task || "";
@@ -7109,7 +7112,7 @@ function chatBindOpen(project, st, line) {
     chatDropShut();
     bindSession(project, st.sid, task).catch(console.error);
   };
-  const go = el("button", "btn btn-sm btn-acc", "Привязать");
+  const go = el("button", "btn btn-sm btn-acc", st.task ? "Сменить" : "Привязать");
   go.addEventListener("click", (ev) => {
     ev.stopPropagation();
     send(field.value.trim().toUpperCase());
@@ -7200,6 +7203,12 @@ function chatHead(project, st) {
 
   // Привязка к задаче стоит рядом с заведением нового чата: обе про то, чей
   // это разговор. У пустого адреса привязывать нечего, сессии ещё нет.
+  //
+  // Кнопка называет то, чего не хватает. У свободного чата это привязка, и
+  // кнопка подсвечена. У привязанного привязка уже сделана и видна чипом
+  // задачи, поэтому предлагать её второй раз нечем: кнопка тут говорит про
+  // смену и снятие, а слова «привязать к задаче» из неё ушли (замечание
+  // пользователя по снимку).
   if (st.sid) {
     const bind = el("button", "cdbtn" + (st.task ? "" : " warn"));
     bind.append(icon("i-in"));
@@ -7208,7 +7217,7 @@ function chatHead(project, st) {
     // плашкой под заголовком, а плашка занимала строку под то, что и так
     // сказано значком (замечание пользователя).
     const said = (st.entry && st.entry.note) ? " (" + st.entry.note + ")" : "";
-    bind.title = st.task ? "Разговор привязан к " + st.task + said + ": сменить или снять"
+    bind.title = st.task ? "Привязка к " + st.task + said + ": сменить или снять"
       : "Свободный чат" + said + ": привязать к задаче рукой";
     bind.setAttribute("aria-label", bind.title);
     bind.addEventListener("click", (ev) => {

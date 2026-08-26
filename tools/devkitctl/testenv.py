@@ -91,6 +91,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"}
 ]}, {"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
+]}, {"hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --touch claude-code"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"}
 ]}, {"matcher": "Read", "hooks": [

@@ -207,7 +207,12 @@ SESSION_HOOK = "quota-refresh.sh"
 # записать «эта сессия ведёт задачу» можно только в момент её рождения, когда ID
 # сессии уже есть. Категория сообщения в hook_gaps своя: без записи дашборд
 # возвращается к угадыванию по транскрипту, а это не то же самое, что протухший
-# снимок квоты.
+# снимок квоты. Тот же файл вторым хуком стоит на PostToolUse с флагом --touch
+# (DK-539): правка файла в боковом дереве задачи дописывает привязку по факту
+# работы, когда утилиты доски не звались вовсе и заказ дашборда взять неоткуда.
+# Матчер пустой, как у CHAT_HOOK: событие фильтрует список WORK_TOOLS сам
+# скрипт, а матчер Edit|Write|NotebookEdit без MultiEdit срезал бы часть правок
+# молча.
 TASK_HOOK = "session-task.py"
 NOTIFY_HOOK = "notify.py"
 # Догон бокового дерева доски (DK-269): тоже SessionStart, потому что чинить
@@ -255,6 +260,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
+    ("PostToolUse", "", "python3 %s/hooks/session-task.py --touch claude-code"),
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1226,12 +1232,18 @@ def hook_gaps(text, settings):
         notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
     for event, matcher, cmd in HOOK_LAYOUT:
-        script = os.path.basename(cmd.split()[1])
+        parts = cmd.split()
+        script = os.path.basename(parts[1])
+        # Ключ отличает вызовы одного файла на разных событиях (session-task.py
+        # стоит на SessionStart с --hook и на PostToolUse с --touch, DK-539):
+        # проверка по голому имени файла сочла бы второй вызов уже включённым
+        # по первому.
+        key = "%s %s" % (script, parts[2]) if len(parts) > 2 else script
         if script == NOTIFY_HOOK:
             if event in notify_events:
                 continue
             missing_notify.append(event)
-        elif script in text:
+        elif key in text:
             continue
         gaps.append((event, matcher, cmd))
         if script in POST_SCRIPTS:
@@ -1246,6 +1258,11 @@ def hook_gaps(text, settings):
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
                             "(hooks/README.md)" % (CHAT_HOOK, settings))
+        elif script == TASK_HOOK and event == "PostToolUse":
+            findings.append("PostToolUse-хук %s --touch не подключён в %s: правка файла в боковом "
+                            "дереве задачи не оставляет отметку в журнале сессий, и работа вне "
+                            "утилит доски остаётся для дашборда невидимой (hooks/README.md)"
+                            % (TASK_HOOK, settings))
         elif script == TASK_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: реестр чатов пуст, и дашборд "
                             "возвращается к угадыванию задачи по транскрипту, а разговор о задаче "

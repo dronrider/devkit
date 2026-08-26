@@ -145,11 +145,28 @@ class ProjectFindingsTest(SandboxCase):
     def test_4b_session_task_hook(self):
         # Реестр чатов стоит на том же событии, что освежение квоты, и находка
         # про него своя: без записи дашборд угадывает задачу по транскрипту.
-        drop_lines(self.settings, "session-task")
+        # Needle держит --hook, а не голое имя файла: тот же скрипт вторым
+        # вызовом стоит на PostToolUse (--touch, DK-539), и голое имя срезало бы
+        # обе строки разом.
+        drop_lines(self.settings, "session-task.py --hook")
         _, out = self.box.doctor(self.proj)
         self.assertIn_("SessionStart-хук session-task.py", out,
                        "нет находки про хук реестра чатов")
         self.assertIn_("реестр чатов", out, "находка не говорит, что ломается без хука")
+
+    def test_4b2_session_task_touch_hook(self):
+        # Отметка работы по факту правки (DK-539) стоит на ходе инструмента, а
+        # не на рождении сессии, и находка про неё своя: без хука правка файла в
+        # боковом дереве задачи не попадает в журнал сессий вовсе. --fix этой
+        # раскладки проверен отдельно, в HarnessHooksTest: тут цепочка режет
+        # settings.json построчно, а --fix переписал бы файл целиком и увёл
+        # следующие шаги цепочки от их собственных строк.
+        drop_lines(self.settings, "session-task.py --touch")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("PostToolUse-хук session-task.py --touch", out,
+                       "нет находки про хук отметки работы")
+        self.assertIn_("не оставляет отметку в журнале сессий", out,
+                       "находка не говорит, что ломается без хука отметки работы")
 
     def test_4c_board_catchup_hook(self):
         # Догон бокового дерева доски стоит на том же старте сессии, и находка
@@ -1853,6 +1870,13 @@ class HarnessHooksTest(SandboxCase):
         # неотличим от штатной тишины.
         self.assertRegex(out, r"подхват реплики chat-in\.py не подключён на событии PostToolUse",
                          "доктор не заметил неподключённый подхват реплики")
+        # Отметка работы по факту правки (DK-539) говорит своей категорией,
+        # отдельной от рождения сессии на SessionStart: без неё правка файла в
+        # боковом дереве задачи не попадает в журнал вовсе.
+        self.assertRegex(out, r"PostToolUse-хук session-task\.py --touch не подключён",
+                         "доктор не заметил неподключённый хук отметки работы")
+        self.assertIn_("не оставляет отметку в журнале сессий", out,
+                       "находка не говорит, что ломается без хука отметки работы")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
@@ -1864,21 +1888,28 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук длинных чтений")
         self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*chat-in\.py на PostToolUse",
                          "--fix не разложил подхват реплики")
+        self.assertRegex(out,
+                         r"включено \d+ хуков харнеса в[^\n]*session-task\.py на SessionStart, PostToolUse",
+                         "--fix не разложил хук отметки работы")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
         post = [h["command"] for g in hooks["PostToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
+        self.assertEqual(len([c for c in post if "session-task.py --touch" in c]), 1, post)
         # PostToolUse: две группы, проверки текстов на своём матчере и подхват
-        # реплики на пустом. Матчер у него пустой не по недосмотру: реплику надо
-        # доставлять на любом ходе идущего витка, а не на записи файла.
+        # реплики с отметкой работы на пустом. Матчер у неё пустой не по
+        # недосмотру: реплику надо доставлять на любом ходе идущего витка, а не
+        # на записи файла, и отметку работы (DK-539) режет своим списком
+        # WORK_TOOLS сам скрипт, а не матчер.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
                          ["Edit|Write|NotebookEdit", None], hooks["PostToolUse"])
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
-        self.assertEqual(len(chat), 1, chat)
+        self.assertEqual(len(chat), 2, chat)
         self.assertIn("chat-in.py", chat[0])
+        self.assertIn("session-task.py --touch", chat[1])
         # PreToolUse: две группы на двух матчерах, Bash (чтение секретов) и Read
         # (два рубежа: повторные чтения и длинные чтения). Каждая своим скриптом,
         # порядок как в HOOK_LAYOUT.
@@ -1907,7 +1938,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 4, post)
+        self.assertEqual(len(post), 5, post)
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.

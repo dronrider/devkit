@@ -29,6 +29,12 @@ const { sandbox, byId, timers, posted } = makeSandbox(appPathArg(), (path) => {
 await settle();
 
 const pin = byId.get("cpin");
+// В контейнере панели живёт пул слотов: показан один, прочие спрятаны и лежат
+// готовыми к возврату. Стенд смотрит на показанный, спрятанное это память
+// пула, а не экран.
+const livePin = () => (pin.children || []).find(
+  (n) => String(n.className || "").includes("cslot") &&
+    !String(n.className || "").split(" ").includes("off")) || pin;
 
 // --- недоставленное в живом чате: отмена снимает пузырь и дожим ---
 sandbox.localStorage.setItem("devkit.chat.pend.demo/" + SID,
@@ -37,7 +43,7 @@ sandbox.location.hash = "#demo/chat/" + SID;
 await sandbox.refresh();
 await settle();
 
-let box = byClass(pin, "mlocal");
+let box = byClass(livePin(), "mlocal");
 if (!box || !dump(box).includes(BAD)) fail("недоставленный пузырь не восстановился: " + dump(pin).slice(0, 200));
 const undoBtn = (function find(node) {
   if (node.tagName === "BUTTON" && dump(node).trim() === "отменить") return node;
@@ -71,7 +77,7 @@ await settle();
 // Просроченное «отправляется» дозревает своим таймером до причины с кнопками.
 for (const t of timers.splice(0)) t.fn();
 await settle();
-box = byClass(pin, "mlocal");
+box = byClass(livePin(), "mlocal");
 if (!box || !dump(box).includes(NEW)) fail("пузырь первой реплики не восстановился");
 const undo2 = (function find(node) {
   if (node.tagName === "BUTTON" && dump(node).trim() === "отменить") return node;
@@ -91,7 +97,7 @@ if (sandbox.localStorage.getItem("devkit.chat.pend.demo/new")) {
 if (!dump(pin).includes("новый чат: напишите первую реплику")) {
   fail("панель не вернулась в чистое состояние нового чата: " + dump(pin).slice(0, 300));
 }
-const busy = byClass(pin, "busyrow");
+const busy = byClass(livePin(), "busyrow");
 if (busy && !busy.hidden) fail("плашка подъёма сессии горит после отмены");
 
 console.log("ok: отмена снимает недоставленную реплику из очереди и персиста, " +

@@ -1385,6 +1385,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .crow{display:flex;align-items:center;gap:8px}
 /* Полоска непрочитанных ответов над строкой отправки: узкие чипы стопкой,
    каждый ведёт к своему ответу, крестик гасит напоминание. */
+/* Слот разговора в контейнере панели: открытый чат не сносится, а прячется,
+   и возврат в него показывает готовый узел. Прячется он content-visibility:
+   браузер держит отрисовку скрытого поддерева, и повторный показ не платит за
+   раскладку, а заодно при узле остаются прокрутка и раскрытые блоки. */
+.cslot{display:flex;flex-direction:column;min-height:0}
+.cslot.off{content-visibility:hidden;contain-intrinsic-size:0}
 .cunread{display:flex;flex-direction:column;gap:4px;padding:4px 0 0}
 .cuchip{display:flex;align-items:center;gap:4px;min-width:0;border:1px solid var(--line2);border-radius:8px;background:var(--bg1)}
 .cuask{flex:1;min-width:0;text-align:left;padding:4px 8px;border:none;background:transparent;color:var(--tx2);font:400 11.5px var(--sans);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -5989,6 +5989,71 @@ function closeChat() {
   history.pushState({}, "", "#" + chatBase());
 }
 
+// Пул панелей разговоров. Переключение чата пересобирало панель заново, и
+// возврат в уже открытый разговор стоил похода в сеть за состоянием: человек
+// смотрел на «чат открывается...» там, где всё уже было нарисовано. Открытая
+// панель теперь не сносится, а прячется, и возврат показывает готовый узел.
+//
+// Прячется слот через content-visibility, а не display:none: браузер держит
+// отрисовку скрытого поддерева, и повторный показ не платит за раскладку.
+// Бонусом при узле остаются позиция прокрутки и раскрытые блоки.
+//
+// Свежесть спрятанного никто не сторожит: опроса по спрятанным чатам нет
+// вовсе, живые потоки уходящего разговора гасит closeChatLive, а дельта
+// доезжает обычным путём, уже после мгновенного показа.
+const CHAT_POOL_MAX = 6;
+
+// Ключ разговора -> узел слота. Порядок вставки это и есть свежесть: ключ
+// показанного переставляется в конец, вытесняется давний.
+const chatPool = new Map();
+
+// chatSlotKeys перечисляет разговоры пула от давнего к свежему. Снаружи по
+// нему видно, что именно лежит готовым и что вытеснено.
+function chatSlotKeys() {
+  return Array.from(chatPool.keys());
+}
+
+function chatSlotFace(node, on) {
+  node.className = "cslot" + (on ? "" : " off");
+  node.setAttribute("aria-hidden", on ? "false" : "true");
+}
+
+// chatSlotShow показывает слот ключа и прячет остальные. Пустой ключ прячет
+// все: так уходит закрытая панель, не теряя готовых узлов.
+function chatSlotShow(key) {
+  for (const [k, node] of chatPool) chatSlotFace(node, k === key);
+}
+
+// chatSlotPut кладёт свежесобранный разговор в слот и показывает его. Слот с
+// тем же ключом переиспользуется: узел стоит на месте, меняется его начинка.
+function chatSlotPut(pin, key, kids) {
+  let node = chatPool.get(key);
+  if (!node) {
+    node = el("div", "cslot");
+    pin.append(node);
+  }
+  node.replaceChildren(...kids);
+  chatPool.delete(key);
+  chatPool.set(key, node);
+  // Вытеснение по давности: узел сносится совсем, и такой чат вернётся
+  // обычным путём, сборкой заново.
+  while (chatPool.size > CHAT_POOL_MAX) {
+    const old = chatPool.keys().next().value;
+    const dead = chatPool.get(old);
+    chatPool.delete(old);
+    if (dead && dead.remove) dead.remove();
+  }
+  // Плашки ожидания в контейнере панели живут до готового разговора: с приходом
+  // слота им там делать нечего.
+  for (const kid of Array.from(pin.children || [])) {
+    if (kid !== node && !String(kid.className || "").includes("cslot")) {
+      if (kid.remove) kid.remove();
+    }
+  }
+  chatSlotShow(key);
+  return node;
+}
+
 // Снятие панели по месту: узел прячется, живые потоки разговора закрываются, а
 // экран под панелью остаётся как был.
 function shutChatPanel() {
@@ -6000,7 +6065,12 @@ function shutChatPanel() {
   chatOpen = "";
   chatFill = null;
   chatShown = { project: "", sid: "", task: "" };
-  pin.replaceChildren();
+  // Готовые узлы остаются в пуле: закрытую панель открывают тем же разговором,
+  // и сносить его ради закрытия значит платить за возврат второй раз.
+  chatSlotShow("");
+  for (const kid of Array.from(pin.children || [])) {
+    if (!String(kid.className || "").includes("cslot") && kid.remove) kid.remove();
+  }
   panel.hidden = true;
 }
 
@@ -9237,7 +9307,7 @@ async function paintChat(project, addr, board, works) {
       closeChatLive();
       chatDropShut();
       chatOpen = "";
-      pin.replaceChildren();
+      chatSlotShow("");
     }
     // Закрытая панель никого не заглушает: молчат уведомления только того
     // разговора, который человек видит.
@@ -9258,7 +9328,13 @@ async function paintChat(project, addr, board, works) {
   // между ними мигал пустой «чат открывается...» (снимок пользователя).
   // Отклик при этом виден в тот же ход (его сторожит замер poc_bench_chat):
   // над прежним разговором встаёт строка перехода, а не пустота вместо него.
-  if (!pin.children.length) {
+  // Возврат в уже открытый разговор виден сразу: готовый узел показывается
+  // тем же ходом, без похода в сеть за состоянием. Свежесть догоняет ниже,
+  // обычной сборкой, и меняет начинку того же слота.
+  const kept = chatPool.has(key);
+  if (kept) {
+    chatSlotShow(key);
+  } else if (!chatPool.size) {
     pin.replaceChildren(el("div", "empty", "чат открывается..."));
   } else if (!String((pin.children[0] || {}).className || "").includes("cswap")) {
     pin.prepend(el("div", "empty cswap", "открывается другой разговор..."));
@@ -9275,7 +9351,7 @@ async function paintChat(project, addr, board, works) {
   // Открытый чат закрепляется за задачей: следующее открытие панели с её
   // экрана вернёт этот же чат, а не первый из списка.
   if (st.task && st.sid) chatTaskLastSet(st.task, st.sid);
-  pin.replaceChildren(chatHead(project, st), chatPanel(project, st));
+  chatSlotPut(pin, key, [chatHead(project, st), chatPanel(project, st)]);
 }
 
 // Доска панели: над экранами, которые её не читают (накопитель, поиск, лента),

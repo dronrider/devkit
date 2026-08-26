@@ -41,6 +41,12 @@ const { sandbox, byId, streams } = makeSandbox(appPathArg(), (path) => {
 await settle();
 
 const pin = byId.get("cpin");
+// В контейнере панели живёт пул слотов: показан один, прочие спрятаны и лежат
+// готовыми к возврату. Стенд смотрит на показанный, спрятанное это память
+// пула, а не экран.
+const livePin = () => (pin.children || []).find(
+  (n) => String(n.className || "").includes("cslot") &&
+    !String(n.className || "").split(" ").includes("off")) || pin;
 const count = (text) => dump(pin).split(text).length - 1;
 
 // --- пришивание: реплика не пропадает и не двоится ---
@@ -69,7 +75,7 @@ await settle();
 if (count(FIRST) !== 1) {
   fail("после эха из потока копий " + count(FIRST) + ", ждал одну");
 }
-const pend1 = byClass(pin, "mlocal");
+const pend1 = byClass(livePin(), "mlocal");
 if (pend1 && dump(pend1).includes(FIRST)) {
   fail("местный пузырь не снят эхом из потока");
 }
@@ -164,7 +170,7 @@ older3 = { items: [
   { key: "said-sess-" + SID3 + ":5", role: "user", text: SAY, time: "2026-08-23T09:30:00+03:00" },
   { key: "m:11", role: "tool", text: "command: ls -la", time: "2026-08-23T09:30:05+03:00" },
 ], start: true };
-const feed3 = byClass(pin, "chatfeed");
+const feed3 = byClass(livePin(), "chatfeed");
 if (!feed3 || !feed3.handlers.scroll) fail("лента панели без слушателя прокрутки");
 feed3.scrollTop = 0;
 feed3.handlers.scroll();
@@ -173,7 +179,7 @@ if (says() !== 1) {
   fail("после страницы истории копий реплики " + says() + ", ждал одну: " +
     "своя копия обязана сняться сверкой по всей ленте");
 }
-const pend3 = byClass(pin, "mlocal");
+const pend3 = byClass(livePin(), "mlocal");
 if (pend3 && dump(pend3).includes(SAYBIT)) fail("пузырь отправки остался вторым экземпляром реплики");
 
 // Та же запись журнала под другим ключом (поток и обычный ответ считали номера

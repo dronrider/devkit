@@ -1673,10 +1673,16 @@ groomChat = null;
 // живёт хвостом адреса. Лента, поле ввода и поток событий переживают
 // обновление экрана под ней, а пришедшая реплика не трогает соседних.
 const cpin = byId.get("cpin");
+// В контейнере панели живёт пул слотов: показан один, прочие спрятаны и лежат
+// готовыми к возврату. Стенд смотрит на показанный, спрятанное это память
+// пула, а не экран.
+const livePin = () => (cpin.children || []).find(
+  (n) => String(n.className || "").includes("cslot") &&
+    !String(n.className || "").split(" ").includes("off")) || cpin;
 const panelNode = byId.get("cpanel");
 await go("#demo/chat/XR-1");
 if (panelNode.hidden) fail("панель разговора не открылась по адресу с хвостом");
-const talkBox = byClass(cpin, "chatwrap");
+const talkBox = byClass(livePin(), "chatwrap");
 if (!talkBox) fail("тело панели не собралось: " + dump(cpin).slice(0, 300));
 // Экран под панелью остался доской: панель это хвост адреса, а не свой экран.
 if (!find(groups, "card-backlog")) {
@@ -1699,7 +1705,7 @@ const opened = streams.length;
 await sandbox.refresh();
 await settle();
 
-if (byClass(cpin, "chatwrap") !== talkBox) {
+if (byClass(livePin(), "chatwrap") !== talkBox) {
   fail("обновление экрана пересобрало панель целиком");
 }
 if (tag(talkBox, "TEXTAREA") !== ta || ta.value !== "набранный ответ") {
@@ -1739,7 +1745,7 @@ sandbox.fetch = ((prev) => (path, init) => {
 await sandbox.refresh();
 await settle();
 
-if (byClass(cpin, "chatwrap") !== talkBox) {
+if (byClass(livePin(), "chatwrap") !== talkBox) {
   fail("поднявшаяся работа пересобрала панель");
 }
 if (doc.activeElement !== ta) fail("обновление отобрало фокус у поля ввода");
@@ -1753,7 +1759,7 @@ for (const via of ["registry", "session"]) {
   chatWork[0].via = via;
   await sandbox.refresh();
   await settle();
-  if (byClass(cpin, "chatwrap") !== talkBox) {
+  if (byClass(livePin(), "chatwrap") !== talkBox) {
     fail("работа via " + via + " пересобрала панель разговора");
   }
 }
@@ -1774,7 +1780,7 @@ if (!dump(pendbox).includes("стой, не туда")) {
 if (!dump(pendbox).includes("доставлено") && !dump(pendbox).includes("отправляется")) {
   fail("местный пузырь молчит о судьбе реплики: " + dump(pendbox));
 }
-if (byClass(cpin, "chatwrap") !== talkBox) fail("отправка пересобрала панель целиком");
+if (byClass(livePin(), "chatwrap") !== talkBox) fail("отправка пересобрала панель целиком");
 if (doc.activeElement !== ta) fail("отправка отобрала фокус у поля ввода");
 // Эхо из транскрипта снимает местный пузырь: реплика уже стоит в ленте, и два
 // одинаковых пузыря подряд читались как отправленная дважды.
@@ -1791,7 +1797,7 @@ if (dump(pendbox).includes("стой, не туда")) {
 // ли живую сессию каналом или поднимать резюм (ручка /continue). Прежде тут
 // стояла плашка «Цикл цели не идёт» с подъёмом витка, и отвечала она только за
 // цели, а с задачей продолжать разговор было нечем.
-const goOn = byClass(cpin, "cgo");
+const goOn = byClass(livePin(), "cgo");
 if (!goOn) fail("в панели нечем продолжить работу задачи: " + dump(cpin).slice(0, 300));
 if (!String(goOn.title).includes("XR-1")) {
   fail("кнопка продолжения не назвала задачу: " + goOn.title);
@@ -1870,7 +1876,7 @@ if (!dump(cpin).includes("ход открытого разговора")) {
 // остаётся тем же самым.
 // Крестик ищется подписью, а не первой попавшейся кнопкой шапки: слева от
 // него стоят выбор диалога, новый чат и модель.
-const shut = barButton(byClass(cpin, "chead"), "Закрыть панель");
+const shut = barButton(byClass(livePin(), "chead"), "Закрыть панель");
 if (!shut) fail("в шапке панели нет крестика: закрыть её нечем");
 shut.handlers.click({ stopPropagation: () => {} });
 await settle();
@@ -1899,7 +1905,7 @@ if (!find(groups, "card-backlog")) {
 // «задача не распознана» с привязкой рукой в шапке больше нет (замечание 21
 // POC): узнают разговор по первой реплике, а отчёт о том, чего дашборд не
 // узнал, места в шапке не стоил.
-const looseHead = byClass(cpin, "chead");
+const looseHead = byClass(livePin(), "chead");
 if (!dump(looseHead).includes(loose.first)) {
   fail("шапка панели взята не из первой реплики: " + dump(looseHead));
 }
@@ -1922,7 +1928,7 @@ headExtra.reply = "";
 headExtra.replyNote = "дерева сессии больше нет: разговор кончился, и продолжить его некому";
 await go("#demo");
 await go("#demo/chat/" + loose.id);
-const offWrap = byClass(cpin, "chatwrap");
+const offWrap = byClass(livePin(), "chatwrap");
 const offTa = tag(offWrap, "TEXTAREA");
 if (!offTa) fail("в панели кончившегося разговора нет поля ввода: " + dump(offWrap).slice(0, 200));
 if (offTa.disabled) fail("поле ввода погашено, хотя реплике есть куда ехать");
@@ -1938,7 +1944,7 @@ sessions = [mine];
 rows[0].title = "Живая задача без цели";
 await go("#demo");
 await go("#demo/chat/XR-1");
-const taskWrap = byClass(cpin, "chatwrap");
+const taskWrap = byClass(livePin(), "chatwrap");
 const taskTa = tag(taskWrap, "TEXTAREA");
 if (!taskTa || taskTa.disabled) {
   fail("у живого разговора обычной задачи погашено поле ввода: " + dump(find(taskWrap, "chat-note")));
@@ -1974,7 +1980,7 @@ if (sandbox.location.hash.replace(/^#/, "") !==
 await sandbox.refresh();
 await settle();
 if (panelNode.hidden) fail("переход в поиск закрыл панель разговора");
-if (!byClass(cpin, "chatwrap")) {
+if (!byClass(livePin(), "chatwrap")) {
   fail("тело панели ушло с экрана выдачи: " + dump(cpin).slice(0, 200));
 }
 const foundRow = find(groups, "find-card-board");

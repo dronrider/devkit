@@ -3,6 +3,7 @@
 
   prose.py collect [--journals DIR] [--min-words N] [--out DIR]
   prose.py sample [--genre ЖАНР] [--count N] [--words N] [--seed S] [--corpus DIR]
+  prose.py repocheck [--repo DIR] [--corpus DIR] [--dump FILE]
 
 `collect` режет журналы сессий на реплики роли user, отсеивает короткие,
 служебные и перенесённые copy-paste черновики агента и складывает словарь.
@@ -13,13 +14,20 @@
 зовёт скилл письма, поэтому набор на каждом заходе разный, а `--seed` делает
 прогон воспроизводимым для теста.
 
-Выход 0 всё в порядке, 1 нечего показать (журналов нет, жанр пустой).
+`repocheck` сверяет фрагменты с текстами самого репозитория: скиллами,
+определениями агентов, правилами, файлами задач и LLD. Ловит он перенос,
+которого не видит отпечаток по журналам: текст, написанный агентом в файл, а
+оттуда скопированный человеком в чат.
+
+Выход 0 всё в порядке, 1 нечего показать (журналов нет, жанр пустой) либо
+`repocheck` нашёл совпадение.
 """
 import argparse
 import json
 import os
 import random
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -193,6 +201,26 @@ def signature(text):
     return " ".join(ws[:SIGN_WORDS])
 
 
+# Третье сито: шаблон. Диспетчер собирает промпт по образцу и раздаёт его в
+# новые окна, человек только копирует. В журнале такой текст лежит ролью user,
+# словами ассистента он нигде не звучал, и первые два сита его пропускают.
+# Отличает шаблон повтор: один и тот же текст лежит в двух десятках журналов, и
+# меняется в нём только ID задачи. Находка приёмки DK-522 на фрагменте про
+# груминг, который стоял в кандидатах жанра `skill`.
+TEMPLATE_JOURNALS = 3
+
+
+def template_key(text, size=SIGN_WORDS):
+    """Ключ шаблона: первые слова без чисел, приведённые к нижнему регистру.
+
+    Числа выброшены нарочно. У раздачи одного промпта по задачам различается
+    только номер, и с ним отпечаток у каждой копии свой."""
+    ws = [w for w in NORM_RE.findall(text.lower()) if not w.isdigit()]
+    if len(ws) < size:
+        return None
+    return " ".join(ws[:size])
+
+
 def borrowed(root, stamps):
     """Подписи реплик, которые ассистент написал раньше человека.
 
@@ -221,6 +249,152 @@ def borrowed(root, stamps):
                 if first is not None and ts < first:
                     out.add(sign)
     return out
+
+
+# Второе сито происхождения. Агент пишет текст в файл репозитория, человек
+# копирует его оттуда в чат, и в журнале текст лежит ролью user. Отпечаток по
+# журналам такой перенос не видит: словами ассистента в ленте он не звучал.
+# Дыру нашла приёмка DK-522 на фрагменте про груминг, где слог был прямо из
+# наших скиллов.
+SHINGLE_WORDS = 7
+# Каталоги и файлы, которые пишет агент. Скилл `prose` из них исключён целиком.
+# Корпус сам состоит из проверяемых фрагментов, и каждый совпал бы с собой, а
+# словарь рядом собран из тех же реплик и даёт находку на каждую вторую.
+REPO_DIRS = ("kit/skills", "kit/agents", "docs")
+REPO_FILES = ("RULES.md", "RULES.core.md", "RULES.board.md", "RULES.board.core.md",
+              "AGENTS.md", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md", "README.md")
+CORPUS_MARK = os.path.join("skills", "prose")
+
+
+def repo_texts(root):
+    """Пути текстов репозитория, которые пишет агент."""
+    out = []
+    for name in REPO_FILES:
+        path = os.path.join(root, name)
+        if os.path.isfile(path):
+            out.append(path)
+    for d in REPO_DIRS:
+        for base, _, files in os.walk(os.path.join(root, d)):
+            if CORPUS_MARK in base:
+                continue
+            for name in sorted(files):
+                if name.endswith(".md"):
+                    out.append(os.path.join(base, name))
+    return sorted(out)
+
+
+def shingles(text, size=SHINGLE_WORDS):
+    """Скользящие цепочки из size слов, приведённых к нижнему регистру.
+
+    Семь слов это порог, ниже которого совпадают общие места («в этом случае
+    можно будет потом»), а выше не ловится короткая вставка."""
+    ws = NORM_RE.findall(text.lower())
+    return [tuple(ws[i:i + size]) for i in range(len(ws) - size + 1)]
+
+
+def repo_index(root, size=SHINGLE_WORDS):
+    """Цепочка слов -> путь файла, где она встретилась первой."""
+    index = {}
+    for path in repo_texts(root):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        rel = os.path.relpath(path, root)
+        for chain in shingles(text, size):
+            index.setdefault(chain, rel)
+    return index
+
+
+def borrowed_from_repo(index, text, size=SHINGLE_WORDS):
+    """Совпадения текста с текстами репозитория: список (фраза, файл).
+
+    Соседние цепочки склеиваются в одну фразу, иначе одно длинное совпадение
+    печатается десятком строк."""
+    ws = NORM_RE.findall(text.lower())
+    hits = []
+    for i, chain in enumerate(shingles(text, size)):
+        path = index.get(chain)
+        if path:
+            hits.append((i, path))
+    out = []
+    start = prev = None
+    path = None
+    for i, p in hits:
+        if path == p and prev is not None and i == prev + 1:
+            prev = i
+            continue
+        if path is not None:
+            out.append((" ".join(ws[start:prev + size]), path))
+        start = prev = i
+        path = p
+    if path is not None:
+        out.append((" ".join(ws[start:prev + size]), path))
+    out.sort(key=lambda pair: -len(pair[0]))
+    return out
+
+
+def raw_phrase(text, chain):
+    """Кусок исходного текста, отвечающий цепочке слов, или пустая строка.
+
+    Нужен, чтобы спросить у git дату самой фразы, а не всего файла. Отпечаток
+    цепочки нормализован, а `git log -S` ищет литерал, поэтому цепочку
+    приходится разворачивать обратно в текст файла со всеми знаками."""
+    lowered = text.lower()
+    spans = [m.span() for m in NORM_RE.finditer(lowered)]
+    words = [lowered[a:b] for a, b in spans]
+    n = len(chain)
+    for i in range(len(words) - n + 1):
+        if tuple(words[i:i + n]) == chain:
+            return text[spans[i][0]:spans[i + n - 1][1]]
+    return ""
+
+
+def phrase_date(root, path, raw):
+    """Дата коммита, которым фраза появилась в файле, в виде ГГГГ-ММ-ДД.
+
+    Дата файла для вердикта слишком груба: файл цели заведён раньше реплики, а
+    абзац с ответами человека дописан в него позже. Пустая строка, если фразу
+    по истории не нашли, тогда решает дата файла."""
+    if not raw:
+        return ""
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "log", "--format=%as", "-S", raw, "--", path],
+            capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    dates = [line.strip() for line in out.stdout.split("\n") if line.strip()]
+    return dates[-1] if dates else ""
+
+
+def file_dates(root, path):
+    """Даты первого и последнего коммита файла в виде ГГГГ-ММ-ДД."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "log", "--format=%as", "--", path],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return "", ""
+    dates = [line.strip() for line in out.stdout.split("\n") if line.strip()]
+    if not dates:
+        return "", ""
+    return dates[-1], dates[0]
+
+
+def taken_from_repo(added, said):
+    """Файл был заведён раньше реплики, значит текст мог уехать из него в чат.
+
+    Обратный случай выглядит так же по словам: агент цитирует человека в файле
+    задачи, и совпадение то же самое. Различает их дата, и только она."""
+    if not added or not said:
+        return None
+    if added < said:
+        return True
+    if added > said:
+        return False
+    return None
 
 
 def clean(text):
@@ -285,10 +459,11 @@ def collect(root, min_words):
     обойтись. Черновик агента лежит в соседнем журнале, а какие подписи
     искать, известно только после первого прохода."""
     stat = {"journals": 0, "replies": 0, "service": 0, "short": 0,
-            "borrowed": 0, "kept": 0}
+            "borrowed": 0, "template": 0, "kept": 0}
     seen = set()
     rows = []
     stamps = {}
+    templates = {}
     for path in journals(root):
         stat["journals"] += 1
         for rec in records(path):
@@ -303,6 +478,12 @@ def collect(root, min_words):
             if not is_prose(text, min_words):
                 stat["short"] += 1
                 continue
+            # Ключ шаблона считается до отсева повторов: раздача одного
+            # промпта по задачам даёт разные тексты, и в `seen` они не
+            # схлопываются.
+            шаблон = template_key(text)
+            if шаблон is not None:
+                templates.setdefault(шаблон, set()).add(os.path.basename(path))
             key = text[:400]
             if key in seen:
                 continue
@@ -319,6 +500,10 @@ def collect(root, min_words):
     for name, date, text, sign in rows:
         if sign is not None and sign in taken:
             stat["borrowed"] += 1
+            continue
+        шаблон = template_key(text)
+        if шаблон is not None and len(templates.get(шаблон, ())) >= TEMPLATE_JOURNALS:
+            stat["template"] += 1
             continue
         stat["kept"] += 1
         out.append((name, date, text))
@@ -495,6 +680,7 @@ def cmd_collect(args):
     print("служебных отсеяно: %d" % stat["service"])
     print("коротких и нерусских отсеяно: %d" % stat["short"])
     print("переносов чужого черновика отсеяно: %d" % stat["borrowed"])
+    print("шаблонных раздач отсеяно: %d" % stat["template"])
     print("кандидатов: %d" % stat["kept"])
     top = dictionary(candidates, args.min_hits)
     print("словарь: %d слов от %d реплик" % (len(top), args.min_hits))
@@ -505,6 +691,68 @@ def cmd_collect(args):
         print("журналов не нашлось: проверь путь %s" % root, file=sys.stderr)
         return 1
     return 0
+
+
+def check_texts(index, root, items):
+    """Находки второго сита по списку (имя, дата, текст).
+
+    Возврат списка словарей с полями находки. Дату файла спрашиваем у git, и
+    только она отличает перенос от цитаты человека в агентском файле."""
+    out = []
+    for name, said, text in items:
+        for phrase, path in borrowed_from_repo(index, text):
+            chain = tuple(phrase.split()[:SHINGLE_WORDS])
+            raw = ""
+            try:
+                with open(os.path.join(root, path), encoding="utf-8",
+                          errors="replace") as f:
+                    raw = raw_phrase(f.read(), chain)
+            except OSError:
+                pass
+            added, last = file_dates(root, path)
+            появилась = phrase_date(root, path, raw) or added
+            out.append({"кандидат": name, "сказано": said, "файл": path,
+                        "фраза": phrase, "заведён": added, "правлен": last,
+                        "появилась": появилась,
+                        "перенос": taken_from_repo(появилась, said)})
+    return out
+
+
+def cmd_repocheck(args):
+    root = os.path.abspath(os.path.expanduser(args.repo))
+    index = repo_index(root)
+    items = []
+    if args.dump:
+        for num, journal, date, text in read_dump(args.dump):
+            items.append(("выгрузка #%d, %s" % (num, journal), date, text))
+    else:
+        corpus = read_corpus(args.corpus)
+        for genre in sorted(corpus):
+            title, fragments = corpus[genre]
+            for i, f in enumerate(fragments, 1):
+                said = ""
+                m = re.search(r"(\d{4}-\d{2}-\d{2})", f.get("источник", ""))
+                if m:
+                    said = m.group(1)
+                items.append(("%s #%d (%s)" % (genre, i, f.get("источник", "")),
+                              said, f["body"]))
+    print("текстов репозитория: %d, цепочек: %d" % (len(repo_texts(root)), len(index)))
+    hits = check_texts(index, root, items)
+    for hit in hits:
+        if hit["перенос"] is True:
+            вердикт = "файл раньше реплики, разобрать"
+        elif hit["перенос"] is False:
+            вердикт = "файл позже реплики, цитата человека"
+        elif hit["появилась"] and hit["сказано"]:
+            вердикт = "тот же день, разобрать"
+        else:
+            вердикт = "даты нет, разобрать глазами"
+        print("\n%s\n  файл: %s (фраза в файле с %s, файл заведён %s), %s"
+              "\n  фраза: «%s»"
+              % (hit["кандидат"], hit["файл"], hit["появилась"] or "?",
+                 hit["заведён"] or "?", вердикт, hit["фраза"]))
+    print("\nпроверено: %d, находок: %d" % (len(items), len(hits)))
+    return 1 if hits else 0
 
 
 def cmd_sample(args):
@@ -526,6 +774,12 @@ def main(argv=None):
     p.add_argument("--min-hits", type=int, default=8)
     p.add_argument("--out", default="")
     p.set_defaults(func=cmd_collect)
+
+    p = sub.add_parser("repocheck", help="сверка фрагментов с текстами репозитория")
+    p.add_argument("--repo", default=os.path.join(HERE, "..", "..", ".."))
+    p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))
+    p.add_argument("--dump", default="")
+    p.set_defaults(func=cmd_repocheck)
 
     p = sub.add_parser("sample", help="случайный набор фрагментов корпуса")
     p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))

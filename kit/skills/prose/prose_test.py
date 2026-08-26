@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -163,6 +164,31 @@ class TestCollect(JournalCase):
             "2026-08-25T15:50:27.000Z")])
         got, stat = prose.collect(self.root, 25)
         self.assertEqual(stat["borrowed"], 0)
+        self.assertEqual([t for _, _, t in got], [HUMAN])
+
+    def test_шаблонная_раздача_отсеивается(self):
+        # Диспетчер собирает промпт по образцу и раздаёт его в новые окна,
+        # человек только копирует. Словами ассистента такой текст в ленте не
+        # звучит, и отпечаток переноса его не видит. Отличает шаблон повтор:
+        # один текст в двух десятках журналов, меняется только ID задачи.
+        шаблон = ("Проведи груминг %s. Вопросы задавай в этом же разговоре, "
+                  "командой утилиты, и жди ответа в ней: вопросом заход не "
+                  "кончай, а не дождавшись, отложи запись с причиной этой "
+                  "задачи и её разбора.")
+        for i, номер in enumerate(("DK-482", "DK-505", "DK-516"), 1):
+            self.write("s%d.jsonl" % i, [entry(шаблон % номер)])
+        self.write("s9.jsonl", [entry(HUMAN)])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["template"], 3)
+        self.assertEqual([t for _, _, t in got], [HUMAN])
+
+    def test_повтор_реплики_в_двух_журналах_шаблоном_не_считается(self):
+        # Порог в три журнала стоит нарочно: одну и ту же мысль человек
+        # переносит из окна в окно, и это ещё его текст.
+        self.write("s1.jsonl", [entry(HUMAN)])
+        self.write("s2.jsonl", [entry(HUMAN)])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["template"], 0)
         self.assertEqual([t for _, _, t in got], [HUMAN])
 
     def test_ответы_инструментов_и_мета_не_реплики(self):
@@ -391,6 +417,114 @@ class TestБюджетВыборки(CorpusCase):
             self.assertEqual(len(picked), 1, seed)
 
 
+class TestСитоРепозитория(unittest.TestCase):
+    """Агент пишет текст в файл репозитория, человек копирует его оттуда в чат,
+    и в журнале текст лежит ролью user. Дерево тут синтетическое: живой
+    репозиторий меняется каждый коммит, и тест на нём недетерминирован."""
+
+    СКИЛЛ = ("Шаг скилла. Вопросы задавай в этом же разговоре командой утилиты "
+             "и жди ответа в ней, вопросом заход не кончай, а не дождавшись "
+             "отложи запись с причиной.")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="prose-repo-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.write("kit/skills/board-groom/SKILL.md", self.СКИЛЛ)
+        self.write("kit/skills/prose/corpus/task.md",
+                   "Совсем другой текст корпуса про доску задач и её строки.")
+        self.write("kit/skills/prose/dictionary.md",
+                   "Словарь пользователя, собранный из тех же реплик корпуса.")
+
+    def write(self, rel, text):
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_дословный_кусок_в_семь_слов_находится(self):
+        index = prose.repo_index(self.root)
+        hits = prose.borrowed_from_repo(
+            index, "Вопросы задавай в этом же разговоре командой утилиты и жди "
+                   "ответа в ней.")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1], os.path.join("kit", "skills", "board-groom",
+                                                  "SKILL.md"))
+        self.assertIn("вопросы задавай в этом же разговоре", hits[0][0])
+
+    def test_совпадение_короче_порога_не_ловится(self):
+        # Шесть общих слов это общее место, а не перенос.
+        index = prose.repo_index(self.root)
+        self.assertEqual(
+            prose.borrowed_from_repo(index, "Вопросы задавай в этом же разговоре "
+                                            "почтой."), [])
+
+    def test_скилл_prose_в_сито_не_попадает(self):
+        # Корпус сам состоит из проверяемых фрагментов, и без исключения каждый
+        # совпал бы с собой. Словарь рядом собран из тех же реплик и давал
+        # находку на каждую вторую, поэтому скилл исключён целиком.
+        index = prose.repo_index(self.root)
+        self.assertEqual(
+            prose.borrowed_from_repo(index, "Совсем другой текст корпуса про "
+                                            "доску задач и её строки."), [])
+        self.assertEqual(
+            prose.borrowed_from_repo(index, "Словарь пользователя, собранный из "
+                                            "тех же реплик корпуса."), [])
+
+    def test_фраза_разворачивается_обратно_в_текст_файла(self):
+        # Отпечаток нормализован, а `git log -S` ищет литерал.
+        chain = tuple("вопросы задавай в этом же разговоре командой".split())
+        self.assertEqual(prose.raw_phrase(self.СКИЛЛ, chain),
+                         "Вопросы задавай в этом же разговоре командой")
+
+    def test_цитата_человека_в_файле_различается_датой(self):
+        self.assertIs(prose.taken_from_repo("2026-08-17", "2026-08-19"), True)
+        self.assertIs(prose.taken_from_repo("2026-08-19", "2026-08-17"), False)
+        self.assertIsNone(prose.taken_from_repo("2026-08-19", "2026-08-19"))
+        self.assertIsNone(prose.taken_from_repo("", "2026-08-19"))
+
+
+class TestДатаФразы(unittest.TestCase):
+    """Дата файла для вердикта груба: файл цели заведён раньше реплики, а абзац
+    с ответами человека дописан в него позже. Дату берём у самой фразы."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="prose-git-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.git("init", "-q")
+
+    def git(self, *args, date=None):
+        env = dict(os.environ)
+        env.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        if date:
+            env["GIT_AUTHOR_DATE"] = date
+            env["GIT_COMMITTER_DATE"] = date
+        subprocess.run(["git", "-C", self.root, "-c", "commit.gpgsign=false"]
+                       + list(args), check=True, capture_output=True, env=env)
+
+    def commit(self, text, date):
+        with open(os.path.join(self.root, "цель.md"), "w", encoding="utf-8") as f:
+            f.write(text)
+        self.git("add", "цель.md")
+        self.git("commit", "-qm", "правка", date=date)
+
+    def test_дата_берётся_у_фразы_а_не_у_файла(self):
+        self.commit("Заголовок цели и первый абзац разбора.\n", "2026-08-17T10:00:00")
+        self.commit("Заголовок цели и первый абзац разбора.\n"
+                    "Ответы пользователя: окно чатов открывается по клику на значок.\n",
+                    "2026-08-19T10:00:00")
+        self.assertEqual(prose.file_dates(self.root, "цель.md")[0], "2026-08-17")
+        self.assertEqual(
+            prose.phrase_date(self.root, "цель.md",
+                              "окно чатов открывается по клику на значок"),
+            "2026-08-19")
+
+    def test_фразы_нет_в_истории_даты_нет(self):
+        self.commit("Заголовок цели.\n", "2026-08-17T10:00:00")
+        self.assertEqual(prose.phrase_date(self.root, "цель.md", "чего тут нет"), "")
+
+
 class TestCli(JournalCase):
     def run_main(self, argv):
         out, err = io.StringIO(), io.StringIO()
@@ -536,8 +670,8 @@ class TestКорпусРепозитория(unittest.TestCase):
     def test_два_запуска_без_seed_дают_разные_наборы(self):
         # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом
         # заходе сделала бы тексты однородными, а seed в тестах эту проверку
-        # обходит стороной. Фрагментов в корпусе 50 (lld 12, readme 14, skill 6,
-        # task 18), и набор режется бюджетом слов, поэтому сравниваются наборы,
+        # обходит стороной. Фрагментов в корпусе 52 (lld 12, readme 14, skill 7,
+        # task 19), и набор режется бюджетом слов, поэтому сравниваются наборы,
         # а не их длина: совпадение двух подряд взятых маловероятно, и повтор
         # прогона ловит вырождение выборки.
         corpus = os.path.join(prose.HERE, "corpus")

@@ -75,6 +75,10 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("ответ taskctl draft list --json не разобрался: %v", err)})
 		return
 	}
+	// Разобранные черновики оставляют за собой мёртвые разговоры, и уборка идёт
+	// отсюда: экран накопителя это то место, где груминг заказывают и где
+	// смотрят на его исход.
+	s.groomSweep(found.Path)
 	resp := map[string]any{"project": found.Name, "drafts": s.draftsWithOrder(found.Path, v.Drafts)}
 	if len(v.Drafts) == 0 {
 		// Пустой список без слов неотличим от неотрисованного раздела.

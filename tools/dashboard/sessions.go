@@ -1807,6 +1807,10 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	head := s.sessionHeadCached(path, info.stamp)
 	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
 	keys := saidKeys(sid, info.Task, info.Bound)
+	// Чтение ленты это и есть показ разговора человеку: панель читает её,
+	// пока разговор открыт на экране. Отметка нужна автоматике уборки, она по
+	// ней отличает непрочитанный ответ от прочитанного.
+	s.chatSeenMark(sid)
 	if r.URL.Query().Get("stream") == "1" {
 		s.streamSession(w, r, sid, path, keys)
 		return

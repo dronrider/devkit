@@ -378,6 +378,12 @@ type chatStore struct {
 	// Hidden убирает чат из списков насовсем: им помечены пробные чаты, поднятые
 	// ради проверки дашборда, у которых метки в промпте не было.
 	Hidden bool `json:"hidden,omitempty"`
+	// Seen это момент, когда человек последний раз смотрел разговор, в
+	// unix-секундах. Ставит её чтение ленты панелью: лента читается ровно
+	// тогда, когда разговор открыт у человека на экране. По ней автоматика и
+	// отличает непрочитанный ответ от прочитанного, своей отметки прочтения у
+	// нас нет.
+	Seen int64 `json:"seen,omitempty"`
 	// Archived это уборка разговора рукой: отработавший чат мозолит глаза в
 	// списке, а окно по свежести его не прячет, он свежий (замечание
 	// пользователя про десяток чатов после разбора накопителя). Признак лежит
@@ -410,6 +416,25 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, key+".json"), data, 0o644)
+}
+
+// chatSeenStep это шаг отметки показа: панель перечитывает ленту каждые
+// несколько секунд, и писать файл на каждый заход незачем.
+const chatSeenStep = 30 * time.Second
+
+// chatSeenMark отмечает, что разговор сейчас смотрят. Зовёт её чтение ленты, и
+// частые заходы отсекаются шагом: точность тут нужна до минут, а не до секунд.
+func (s *server) chatSeenMark(sid string) {
+	if sid == "" || !chatKeyRe.MatchString(sid) {
+		return
+	}
+	now := s.now()
+	st := s.chatStoreRead(sid)
+	if st.Seen > 0 && now.Sub(time.Unix(st.Seen, 0)) < chatSeenStep {
+		return
+	}
+	st.Seen = now.Unix()
+	s.chatStoreWrite(sid, st)
 }
 
 // chatKeyRe сито ключа настроек: ключом бывает ID сессии либо имя tmux-сессии,
@@ -1909,37 +1934,51 @@ func (s *server) handleChatArchive(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"archived\": true}"})
 		return
 	}
-	st := s.chatStoreRead(sid)
-	st.Archived = body.Archived
-	if err := s.chatStoreWrite(sid, st); err != nil {
+	done, err := s.chatArchive(sid, body.Archived)
+	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("архив не записался: %v", err)})
 		return
 	}
-	resp := map[string]any{"session": sid, "archived": st.Archived}
-	if !st.Archived {
+	resp := map[string]any{"session": sid, "archived": body.Archived, "message": done.message}
+	if done.tmux != "" {
+		resp["dropped"], resp["tmux"] = done.dropped, done.tmux
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// archDone это исход уборки: слова для человека и судьба живой сессии.
+type archDone struct {
+	message string
+	dropped bool
+	tmux    string
+}
+
+// chatArchive это сама механика уборки, одна на руку и на автоматику: признак
+// ложится в память диалога, а живая сессия убранного снимается той же точкой,
+// что и стоп под перезапуск. Отказ tmux уборку не отменяет, признак уже лёг, и
+// про несостоявшееся снятие сказано словами.
+func (s *server) chatArchive(sid string, on bool) (archDone, error) {
+	st := s.chatStoreRead(sid)
+	st.Archived = on
+	if err := s.chatStoreWrite(sid, st); err != nil {
+		return archDone{}, err
+	}
+	if !on {
 		s.logf("чат %s возвращён из архива", sid)
-		resp["message"] = "разговор вернулся в список"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return archDone{message: "разговор вернулся в список"}, nil
 	}
 	last := sessions.Last(s.bindsAll()[sid])
-	if last.Tmux != "" && tmuxAliveFn()(last.Tmux) {
-		if err := chatKill(last.Tmux); err != nil {
-			s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)
-			resp["message"] = fmt.Sprintf("разговор убран в архив, но сессия %s не снялась: %s",
-				last.Tmux, procErr(err))
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-		s.logf("чат %s убран в архив, сессия %s снята", sid, last.Tmux)
-		resp["dropped"], resp["tmux"] = true, last.Tmux
-		resp["message"] = "разговор убран в архив, сессия снята"
-		writeJSON(w, http.StatusOK, resp)
-		return
+	if last.Tmux == "" || !tmuxAliveFn()(last.Tmux) {
+		s.logf("чат %s убран в архив", sid)
+		return archDone{message: "разговор убран в архив"}, nil
 	}
-	s.logf("чат %s убран в архив", sid)
-	resp["message"] = "разговор убран в архив"
-	writeJSON(w, http.StatusOK, resp)
+	if err := chatKill(last.Tmux); err != nil {
+		s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)
+		return archDone{tmux: last.Tmux, message: fmt.Sprintf(
+			"разговор убран в архив, но сессия %s не снялась: %s", last.Tmux, procErr(err))}, nil
+	}
+	s.logf("чат %s убран в архив, сессия %s снята", sid, last.Tmux)
+	return archDone{dropped: true, tmux: last.Tmux, message: "разговор убран в архив, сессия снята"}, nil
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём

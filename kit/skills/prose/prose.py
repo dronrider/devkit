@@ -787,15 +787,19 @@ def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET):
 
 
 def render(picked):
+    """Выборка текстом, шапкой едут источник, роль и пометка.
+
+    Пометка это оговорка вычитки, вроде «резкость оценки, лексику не
+    копировать». Без неё резкий фрагмент попадает в контекст письма как
+    образец целиком, вместе с бранью, ради которой его как раз и оставили
+    резким (находка ревью DK-522)."""
     out = []
     for genre, title, fragment in picked:
         head = "## %s (%s)" % (title, genre)
-        source = fragment.get("источник", "")
-        role = fragment.get("роль", "")
-        if source:
-            head += "\nисточник: " + source
-        if role:
-            head += "\nроль: " + role
+        for field in ("источник", "роль", "пометка"):
+            value = fragment.get(field, "")
+            if value:
+                head += "\n%s: %s" % (field, value)
         out.append(head + "\n\n" + fragment["body"])
     return "\n\n".join(out)
 

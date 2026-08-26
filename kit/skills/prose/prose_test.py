@@ -343,13 +343,14 @@ class CorpusCase(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="prose-corpus-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
-    def genre(self, name, title, bodies):
+    def genre(self, name, title, bodies, пометка=""):
         path = os.path.join(self.dir, name + ".md")
+        mark = "пометка: %s\n" % пометка if пометка else ""
         with open(path, "w", encoding="utf-8") as f:
             f.write("# %s\n\nВводная проза жанра, во фрагменты не едет.\n\n" % title)
             for i, body in enumerate(bodies, 1):
-                f.write("## %d\nисточник: трекер, issues/%d\nроль: репортёр\n\n%s\n\n"
-                        % (i, i, body))
+                f.write("## %d\nисточник: трекер, issues/%d\nроль: репортёр\n%s\n%s\n\n"
+                        % (i, i, mark, body))
         return path
 
 
@@ -415,6 +416,21 @@ class TestSample(CorpusCase):
         text = prose.render(prose.sample(self.dir, "task", 2, seed=3))
         self.assertIn("## постановка (task)", text)
         self.assertIn("источник: трекер", text)
+
+    def test_пометка_едет_вместе_с_фрагментом(self):
+        """Оговорка вычитки адресована тому, кто читает выборку перед письмом.
+
+        В корпусе резкие постановки помечены словами «резкость оценки, лексику
+        не копировать». Потеряй render() это поле, и фрагмент приедет в
+        контекст письма образцом целиком, вместе с бранью."""
+        self.genre("readme", "вход README", ["Вход %d." % i for i in range(1, 4)],
+                   пометка="резкость оценки, лексику не копировать")
+        text = prose.render(prose.sample(self.dir, "readme", 3, seed=1))
+        self.assertEqual(text.count("пометка: резкость оценки, лексику не копировать"), 3)
+
+    def test_фрагмент_без_пометки_её_не_печатает(self):
+        text = prose.render(prose.sample(self.dir, "task", 2, seed=3))
+        self.assertNotIn("пометка:", text)
 
 
 class TestБюджетВыборки(CorpusCase):

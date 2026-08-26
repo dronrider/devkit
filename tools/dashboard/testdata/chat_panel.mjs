@@ -585,6 +585,18 @@ const bindTip = (head) => {
   if (!menu) fail("окно привязки не открылось: " + dump(line));
   const field = tag(menu, "INPUT");
   if (!field) fail("поля номера задачи в окне привязки нет: " + dump(menu));
+  // Окно просит задачу и молчит про механику: абзац про реестр чатов и про
+  // снятие пустым значением снят, снятие делает кнопка (замечание пользователя).
+  const said = dump(menu).replace(/\s+/g, " ");
+  if (!said.includes("Укажите задачу для привязки")) {
+    fail("окно не просит задачу словами пользователя: " + said.slice(0, 300));
+  }
+  if (/реестр чатов|Пустое значение|встанет в её ленту/.test(said)) {
+    fail("в окне привязки осталось пояснение про механику: " + said.slice(0, 300));
+  }
+  if (byClass(menu, "hint")) {
+    fail("под кнопками окна привязки осталась подсказка: " + said.slice(0, 300));
+  }
   field.value = "xr-7";
   posted.length = 0;
   const go = button(menu, "Привязать");
@@ -616,6 +628,10 @@ const bindTip = (head) => {
   bindBtn(head).handlers.click({ stopPropagation: () => {} });
   const menu = byClass(line, "cdbind");
   if (!menu) fail("окно привязки не открылось: " + dump(line));
+  // У привязанного чата в шапке стоит сама привязка, а пояснения нет и тут.
+  if (byClass(menu, "hint")) {
+    fail("под кнопками окна привязанного чата осталась подсказка: " + dump(menu).slice(0, 300));
+  }
   if (button(menu, "Привязать")) {
     fail("в окне привязанного чата осталась кнопка «Привязать»: " + dump(menu));
   }

@@ -6,7 +6,7 @@
 //
 // Зовётся: node testdata/poc_chatday.mjs static/app.js
 
-import { makeSandbox, makeNode, dump, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, makeNode, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
 
 const app = appPathArg();
 const board = { prefix: "XR", sections: [{ key: "in-progress", rows: [] }] };
@@ -40,7 +40,7 @@ const st = await sandbox.chatState("demo", "board", board);
 const anchor = makeNode("div");
 sandbox.chatDropOpen("demo", st, anchor);
 const drop = anchor.children[anchor.children.length - 1];
-const rows = drop.children[1];
+const rows = byClass(drop, "cdrows");
 
 // --- заголовки дней стоят в списке, у группы живых заголовка нет ---
 const heads = rows.querySelectorAll(".cdday").map((n) => n.textContent);

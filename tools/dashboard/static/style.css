@@ -938,10 +938,25 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cdrop input{height:30px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx);font:400 12.5px var(--sans);padding:0 9px;outline:none}
 .cdrop input:focus{border-color:var(--acc)}
 .cdrows{display:flex;flex-direction:column;gap:5px;overflow-y:auto;min-height:0}
-.cdrow{display:flex;flex-direction:column;gap:4px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--bg1);cursor:pointer}
+/* Поиск и кнопка архивных стоят одной строкой: кнопка узкая и держит свой
+   размер, поле занимает остаток. */
+.cdtop{display:flex;align-items:center;gap:6px}
+.cdtop input{flex:1;min-width:0}
+.cdarchbtn{flex:none;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx3);cursor:pointer;padding:0}
+.cdarchbtn svg{width:16px;height:16px}
+.cdarchbtn:hover{color:var(--tx);border-color:var(--acc)}
+.cdarchbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+.cdrow{position:relative;display:flex;flex-direction:column;gap:4px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--bg1);cursor:pointer}
+/* Уборка в архив стоит в углу строки, а не отдельной строкой меню: список
+   узкий, и каждая лишняя строка тут дороже значка. */
+.cdarch{position:absolute;top:5px;right:5px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:none;border-radius:6px;background:transparent;color:var(--tx3);cursor:pointer;padding:0}
+.cdarch svg{width:14px;height:14px}
+.cdarch:hover{background:var(--bg3);color:var(--tx)}
+/* Убранный разговор виден и в общем списке: приглушённая строка плюс чип. */
+.cdrow.arch{opacity:0.72}
 .cdrow:hover{border-color:var(--line2);background:var(--bg2)}
 .cdrow.on{border-color:var(--acc);background:var(--bg2)}
-.cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere}
+.cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere;padding-right:24px}
 .cdday{padding:5px 2px 1px;font:600 10.5px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
 .cdrows .cdday:first-child{padding-top:1px}
 .cdmore{margin-top:2px;padding:7px 9px;border:1px dashed var(--line2);border-radius:9px;background:transparent;color:var(--tx2);font:400 12px var(--sans);cursor:pointer}

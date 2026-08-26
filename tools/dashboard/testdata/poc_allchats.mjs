@@ -6,7 +6,7 @@
 //
 // Зовётся: node testdata/poc_allchats.mjs static/app.js
 
-import { makeSandbox, makeNode, settle, dump, fail, appPathArg }
+import { makeSandbox, makeNode, settle, dump, tag, byClass, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -51,7 +51,7 @@ if (st.sid !== "aaaa1111-1111") {
 const anchor = makeNode("div");
 sandbox.chatDropOpen("demo", st, anchor);
 const drop = anchor.children[anchor.children.length - 1];
-const rows = drop.children[1];
+const rows = byClass(drop, "cdrows");
 // Строки считаются по своему классу: список идёт группами, и заголовки дней
 // стоят в той же коробке, что и строки разговоров.
 const rowsOf = (box) => box.querySelectorAll(".cdrow");
@@ -62,7 +62,7 @@ if (!saidRows.includes("other") || !saidRows.includes("demo")) {
 }
 
 // --- поиск находит разговор по имени проекта ---
-const find = drop.children[0];
+const find = tag(drop, "INPUT");
 find.value = "other";
 find.handlers.input();
 if (rowsOf(rows).length !== 1 || !dump(rows).includes("чужой свежий разговор")) {
@@ -89,7 +89,7 @@ if (stTask.sid !== "aaaa1111-1111") fail("задачный адрес откры
 const anchor2 = makeNode("div");
 sandbox.chatDropOpen("demo", stTask, anchor2);
 const drop2 = anchor2.children[anchor2.children.length - 1];
-const find2 = drop2.children[0];
+const find2 = tag(drop2, "INPUT");
 if (find2.value !== "XR-1") fail("задача не встала запросом поиска: " + JSON.stringify(find2.value));
 const rows2 = drop2.children[1];
 if (rowsOf(rows2).length !== 1 || !dump(rows2).includes("свой разговор по XR-1")) {

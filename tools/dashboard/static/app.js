@@ -6014,6 +6014,17 @@ const CHAT_FILTER_KEY = "devkit.chat.filter";
 // Последняя выбранная модель: новый диалог заводится ею же, иначе выбор
 // приходилось бы повторять на каждом «+».
 const CHAT_MODEL_KEY = "devkit.chat.model";
+// Что делать со скрытыми в архив: не показывать (умолчание), показывать вместе
+// со всеми, показывать только их. Положение живёт в localStorage и переживает
+// перезагрузку страницы: разбирают накопитель заходами, и выставлять вид списка
+// заново на каждом заходе человеку незачем.
+const CHAT_ARCH_KEY = "devkit.chat.arch";
+const CHAT_ARCH_MODES = ["off", "all", "only"];
+const CHAT_ARCH_WORD = {
+  off: "Архивные скрыты: показать все",
+  all: "Показаны все разговоры, включая архивные: оставить только архивные",
+  only: "Показаны только архивные: вернуться к списку без них",
+};
 
 function chatFilterOn() {
   try {
@@ -6030,6 +6041,49 @@ function chatFilterSet(on) {
     // Приватный режим браузера запрещает запись: переключатель тогда живёт
     // до перезагрузки, и это лучше упавшего окна.
   }
+}
+
+function chatArchMode() {
+  try {
+    const got = localStorage.getItem(CHAT_ARCH_KEY);
+    return CHAT_ARCH_MODES.includes(got) ? got : CHAT_ARCH_MODES[0];
+  } catch (err) {
+    return CHAT_ARCH_MODES[0];
+  }
+}
+
+function chatArchSet(mode) {
+  try {
+    localStorage.setItem(CHAT_ARCH_KEY, mode);
+  } catch (err) {
+    // Приватный режим браузера запрещает запись: положение тогда живёт до
+    // перезагрузки, и это лучше упавшего окна.
+  }
+}
+
+// Кнопка одна, положений три, и ходят они по кругу в том порядке, в каком их
+// спрашивают: сперва спрятать, потом посмотреть всё, потом разобрать сам архив.
+function chatArchNext(mode) {
+  const at = CHAT_ARCH_MODES.indexOf(mode);
+  return CHAT_ARCH_MODES[(at + 1) % CHAT_ARCH_MODES.length];
+}
+
+// chatArchShown режет список по выбранному положению. Через него же проходит
+// поиск: ищут в том наборе, который сейчас на экране, иначе запрос вытаскивал
+// бы убранное обратно.
+function chatArchShown(list, mode) {
+  if (mode === "all") return list;
+  if (mode === "only") return list.filter((c) => c.archived);
+  return list.filter((c) => !c.archived);
+}
+
+// archiveChat убирает разговор в архив и возвращает обратно той же ручкой.
+// Живую сессию убранного снимает сервер, тут о ней речи нет.
+async function archiveChat(project, sid, on) {
+  const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/archive",
+    { method: "POST", body: { archived: on } });
+  if (!r.ok) sayResult(r.body.error || "архив не записался", true);
+  return r.ok;
 }
 
 function chatModelPref() {
@@ -6280,9 +6334,30 @@ function chatWhen(c) {
 // Строка выпадающего списка: заголовок, время, состояние и задачи, которых
 // разговор касался. Задач бывает несколько: одна сессия двигает не одну
 // строку, и привязка тут один ко многим.
-function chatOption(project, c, current) {
-  const row = el("div", "cdrow" + (c.id === current ? " on" : ""));
+function chatOption(project, c, current, done) {
+  const row = el("div", "cdrow" + (c.id === current ? " on" : "") + (c.archived ? " arch" : ""));
   row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
+  // Уборка стоит в самой строке: убирают пачкой и как раз из списка, и ходить
+  // за этим в панель значило бы открывать каждый разговор по очереди
+  // (замечание пользователя про десяток отработавших чатов).
+  const put = el("button", "cdarch");
+  put.append(icon(c.archived ? "i-out" : "i-box"));
+  put.title = c.archived ? "Вернуть из архива" : "Убрать в архив";
+  put.setAttribute("aria-label", put.title);
+  put.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const on = !c.archived;
+    // Строка уходит сразу, не дожидаясь ответа: ответ тут только про запись,
+    // а список уже показывает то, что человек попросил.
+    c.archived = on;
+    if (done) done();
+    archiveChat(project, c.id, on).then((ok) => {
+      if (ok) return;
+      c.archived = !on;
+      if (done) done();
+    });
+  });
+  row.append(put);
   const chips = el("div", "cchips");
   // Принадлежность видна первой: список общий по машине, и без имени проекта
   // строки разных досок неотличимы. Свой проект тоже назван, пустое место у
@@ -6292,6 +6367,7 @@ function chatOption(project, c, current) {
   const busyNow = c.state === "live" && !c.idle;
   chips.append(el("span", "chip" + (busyNow ? " c-run" : ""),
     busyNow ? LIVE_WORD.busy : CHAT_STATE_WORD[c.state] || c.state));
+  if (c.archived) chips.append(el("span", "chip", "в архиве"));
   if (c.model) chips.append(el("span", "chip", c.model));
   for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
   if (c.harness) chips.append(el("span", "chip", c.harness));
@@ -6337,18 +6413,31 @@ function chatDropOpen(project, st, anchor) {
   chatDropShut();
   popupsShut(null);
   const box = el("div", "cdrop");
+  const top = el("div", "cdtop");
   const find = el("input");
   find.type = "text";
   find.placeholder = "Поиск чата";
   find.setAttribute("aria-label", "Поиск чата");
   if (st.task && chatFilterOn()) find.value = st.task;
+  // Архивные показывает кнопка справа от поиска: три её положения это три
+  // разных списка, и поиск идёт по тому, который выбран.
+  const arch = el("button", "cdarchbtn");
+  const paintArch = () => {
+    const mode = chatArchMode();
+    arch.replaceChildren(icon("i-box"));
+    arch.className = "cdarchbtn" + (mode === "off" ? "" : " on");
+    arch.title = CHAT_ARCH_WORD[mode];
+    arch.setAttribute("aria-label", arch.title);
+    arch.setAttribute("data-mode", mode);
+  };
   const rows = el("div", "cdrows");
   // Догрузка идёт одна за раз: поиск и «показать раньше» ходят за одним и тем
   // же списком, и два запроса подряд перезаписывали бы друг друга.
   let loading = false;
   const draw = () => {
     const q = find.value.trim().toLowerCase();
-    const list = st.chats.filter((c) => {
+    paintArch();
+    const list = chatArchShown(st.chats, chatArchMode()).filter((c) => {
       if (!q) return true;
       return (c.title || "").toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q) ||
@@ -6358,13 +6447,17 @@ function chatDropOpen(project, st, anchor) {
     rows.replaceChildren();
     for (const g of chatGroups(list)) {
       if (g.head) rows.append(el("div", "cdday", g.head));
-      for (const c of g.rows) rows.append(chatOption(project, c, st.sid));
+      for (const c of g.rows) rows.append(chatOption(project, c, st.sid, draw));
     }
     if (!list.length) {
       // Пустому списку словами отвечает сервер, чем бы ни было поле поиска:
       // «ничего не нашлось» имеет смысл, только когда искали среди чего-то.
-      rows.append(el("div", "hint", st.chats.length && q ? "по запросу ничего не нашлось" :
-        (st.note || "чатов тут нет")));
+      // Пустой архив это свой случай: разговоры есть, просто убранных среди них
+      // нет, и молчать об этом значит показывать пустоту без причины.
+      let said = st.note || "чатов тут нет";
+      if (st.chats.length && q) said = "по запросу ничего не нашлось";
+      else if (st.chats.length && chatArchMode() === "only") said = "в архиве пусто";
+      rows.append(el("div", "hint", said));
     }
     if (loading) rows.append(el("div", "hint", "ищем по всей машине..."));
     // Окно снимается кнопкой в конце списка: следующая ступень догружается
@@ -6399,8 +6492,14 @@ function chatDropOpen(project, st, anchor) {
     }
     draw();
   });
+  arch.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    chatArchSet(chatArchNext(chatArchMode()));
+    draw();
+  });
   draw();
-  box.append(find, rows);
+  top.append(find, arch);
+  box.append(top, rows);
   anchor.append(box);
   chatDropSet(box);
   find.focus();

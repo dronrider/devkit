@@ -133,6 +133,9 @@ type chatEntry struct {
 	// следующий раз. Расходятся они у чужого окна: там модель выбрана в самом
 	// клиенте, и выбор дашборда до резюма не действует.
 	LiveModel string `json:"liveModel,omitempty"`
+	// Archived это убранный в архив разговор: список его прячет, пока человек
+	// не попросит показать архивные, а сам признак живёт памятью диалога.
+	Archived bool `json:"archived,omitempty"`
 	// Own говорит, дашбордова ли это сессия: только у своей смена модели
 	// действует сразу следующим подъёмом, чужую до резюма не переубедить.
 	Own bool `json:"own,omitempty"`
@@ -375,6 +378,12 @@ type chatStore struct {
 	// Hidden убирает чат из списков насовсем: им помечены пробные чаты, поднятые
 	// ради проверки дашборда, у которых метки в промпте не было.
 	Hidden bool `json:"hidden,omitempty"`
+	// Archived это уборка разговора рукой: отработавший чат мозолит глаза в
+	// списке, а окно по свежести его не прячет, он свежий (замечание
+	// пользователя про десяток чатов после разбора накопителя). Признак лежит
+	// на сервере, а не во вкладке: он переживает перезапуск дашборда и виден с
+	// любого экрана. Дорога назад та же: снятый признак возвращает строку.
+	Archived bool `json:"archived,omitempty"`
 	// From называет диалог, продолжением которого поднят этот: `claude --resume`
 	// заводит новую сессию со своим транскриптом, и без этой ссылки история
 	// разговора рвалась бы на две строки списка.
@@ -615,7 +624,8 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		head := s.sessionHeadCached(f.path, f.stamp)
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
-		if titleSession(head.First) || s.chatStoreRead(f.ID).Hidden {
+		store := s.chatStoreRead(f.ID)
+		if titleSession(head.First) || store.Hidden {
 			continue
 		}
 		// Разговор, в котором никто ничего не сказал, в списке не строка, а
@@ -644,8 +654,9 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
 			Tmux:      last.Tmux, Tree: f.suffix, Branch: head.Branch,
-			Harness: names[f.root],
-			Model:   s.chatModel(f.ID, last.Tmux),
+			Harness:  names[f.root],
+			Model:    s.chatModel(f.ID, last.Tmux),
+			Archived: store.Archived,
 		}
 		// Устаревшее имя снимается: живую tmux-сессию под этим именем ведёт
 		// другая, более свежая запись реестра, и мерить ею живость этого
@@ -1171,6 +1182,14 @@ func chatSend(name, text string) error {
 // журнал субагента продолжал расти, а после второго встал.
 const chatStopPause = 400 * time.Millisecond
 
+// chatKill снимает tmux-сессию разговора целиком. Точка одна на всех зовущих:
+// её зовёт и стоп под перезапуск, и уборка в архив, и подмена в тестах держится
+// за неё же.
+var chatKill = func(name string) error {
+	_, err := runProc("tmux", "kill-session", "-t", name)
+	return err
+}
+
 func chatStop(name string) error {
 	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape"); err != nil {
 		return err
@@ -1236,7 +1255,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 				"чат %s не в нашей tmux: его окно поднимал не дашборд, снимать отсюда нечего", sid)})
 			return
 		}
-		if _, err := runProc("tmux", "kill-session", "-t", last.Tmux); err != nil {
+		if err := chatKill(last.Tmux); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"tmux-сессия %s не снялась: %s", last.Tmux, procErr(err))})
 			return
@@ -1845,6 +1864,71 @@ func (s *server) trustNote(h *Harness, dir string) string {
 	}
 	return fmt.Sprintf("%s этому каталогу ещё не доверяет (%s): сессия встанет на вопросе о доверии, "+
 		"ответить можно прямо тут кнопками, в терминал идти не надо", who, dir)
+}
+
+// handleChatArchive убирает разговор в архив и возвращает обратно. Архив это
+// уборка рукой: список прячет убранное, пока человек не попросит показать
+// архивные, а окно по свежести тут не помощник, убирают как раз свежее
+// (замечание пользователя про десяток отработавших чатов после разбора
+// накопителя).
+//
+// Живая сессия убранного разговора снимается той же точкой, что и стоп под
+// перезапуск: убирают отработавший чат, и оставлять за ним живой клиент значит
+// держать процесс, за которым больше не следят. Снятие тут дело
+// сопутствующее, и отказ tmux уборку не отменяет: признак уже лёг, а про
+// несостоявшееся снятие сказано в ответе.
+func (s *server) handleChatArchive(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "архив чата")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id чата", sid)})
+		return
+	}
+	var body struct {
+		Archived bool `json:"archived"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"archived\": true}"})
+		return
+	}
+	st := s.chatStoreRead(sid)
+	st.Archived = body.Archived
+	if err := s.chatStoreWrite(sid, st); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("архив не записался: %v", err)})
+		return
+	}
+	resp := map[string]any{"session": sid, "archived": st.Archived}
+	if !st.Archived {
+		s.logf("чат %s возвращён из архива", sid)
+		resp["message"] = "разговор вернулся в список"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	last := sessions.Last(s.bindsAll()[sid])
+	if last.Tmux != "" && tmuxAliveFn()(last.Tmux) {
+		if err := chatKill(last.Tmux); err != nil {
+			s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)
+			resp["message"] = fmt.Sprintf("разговор убран в архив, но сессия %s не снялась: %s",
+				last.Tmux, procErr(err))
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		s.logf("чат %s убран в архив, сессия %s снята", sid, last.Tmux)
+		resp["dropped"], resp["tmux"] = true, last.Tmux
+		resp["message"] = "разговор убран в архив, сессия снята"
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	s.logf("чат %s убран в архив", sid)
+	resp["message"] = "разговор убран в архив"
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём

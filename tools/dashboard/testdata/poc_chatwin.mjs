@@ -6,7 +6,7 @@
 //
 // Зовётся: node testdata/poc_chatwin.mjs static/app.js
 
-import { makeSandbox, makeNode, settle, dump, deepBtn, fail, appPathArg }
+import { makeSandbox, makeNode, settle, dump, tag, byClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -62,7 +62,7 @@ if (st.chats.length !== 2) fail("в состоянии не окно серве�
 const anchor = makeNode("div");
 sandbox.chatDropOpen("demo", st, anchor);
 const drop = anchor.children[anchor.children.length - 1];
-const rows = drop.children[1];
+const rows = byClass(drop, "cdrows");
 const rowsOf = () => rows.querySelectorAll(".cdrow");
 if (rowsOf().length !== 2) fail("список показал не окно: " + rowsOf().length);
 
@@ -80,7 +80,7 @@ if (!dump(rows).includes("беседа пятидневной давности")
 }
 
 // --- поиск идёт по всей машине, а не по загруженному окну ---
-const find = drop.children[0];
+const find = tag(drop, "INPUT");
 find.value = "релиза";
 find.handlers.input();
 await settle();

@@ -24,25 +24,30 @@ const app = appPathArg();
 const hour = 3600 * 1000;
 const stamp = (ms) => new Date(Date.now() - ms).toISOString();
 
+// Имя tmux-сессии (tmux) едет у каждой работы, которую поднимал дашборд: на
+// нём стоит и признак own, и закрытие, и врозь эти два поля не ездят. Работа
+// без имени закрывается только там, где открыта, и кнопка у неё погашена.
 const works = [
   { id: "XR-1", kind: "task", via: "tmux", title: "идущая работа", own: true,
-    live: "busy", moved: Math.floor((Date.now() - 30 * 1000) / 1000) },
+    tmux: "task-XR-1-1", live: "busy", moved: Math.floor((Date.now() - 30 * 1000) / 1000) },
   { id: "XR-2", kind: "task", via: "session", session: "aaaa1111-1111", title: "спросил и ждёт",
-    own: true, live: "waiting", moved: Math.floor((Date.now() - 5 * 60 * 1000) / 1000) },
+    own: true, tmux: "chat-XR-2-1",
+    live: "waiting", moved: Math.floor((Date.now() - 5 * 60 * 1000) / 1000) },
   { kind: "session", via: "session", session: "bbbb2222-2222", note: "молчащее окно",
-    own: true, live: "idle", moved: Math.floor((Date.now() - 3 * hour) / 1000) },
+    own: true, tmux: "chat-bbbb-1", live: "idle", moved: Math.floor((Date.now() - 3 * hour) / 1000) },
   // Разговорная сессия конвейера: её подняла tmux дашборда, ход в ней кончился,
   // своего id сессии у неё в ответе сервера нет. Таких на живой машине
   // большинство, и кнопки снятия у них не было вовсе (замечание пользователя).
   { id: "XR-5", kind: "task", via: "tmux", title: "договорившая сессия задачи",
-    own: true, talk: true, live: "idle", moved: Math.floor((Date.now() - 2 * hour) / 1000) },
+    own: true, tmux: "task-XR-5-1", talk: true, live: "idle",
+    moved: Math.floor((Date.now() - 2 * hour) / 1000) },
   // Две молчащие сессии про уход строки с экрана: одна снимается удачно, вторая
   // отвечает «уже закрыта». Свои они у каждой проверки нарочно: снятая строка
   // держится убранной памятью экрана, и переиспользовать её нельзя.
   { kind: "session", via: "session", session: "eeee5555-5555", note: "молчащая вторая",
-    own: true, live: "idle", moved: Math.floor((Date.now() - 4 * hour) / 1000) },
+    own: true, tmux: "chat-eeee-1", live: "idle", moved: Math.floor((Date.now() - 4 * hour) / 1000) },
   { kind: "session", via: "session", session: "ffff6666-6666", note: "молчащая третья",
-    own: true, live: "idle", moved: Math.floor((Date.now() - 5 * hour) / 1000) },
+    own: true, tmux: "chat-ffff-1", live: "idle", moved: Math.floor((Date.now() - 5 * hour) / 1000) },
   // Окно человека: дашборд его не поднимал, tmux-имени не знает, снимать нечем.
   { kind: "session", via: "session", session: "cccc3333-3333", note: "окно vscode",
     live: "idle", moved: Math.floor((Date.now() - hour) / 1000) },
@@ -256,31 +261,37 @@ const rowOf = (what) => rows().find((r) => dump(r).includes(what));
   if (!deepBtn(busyRow, "Стоп")) fail("у идущей работы пропал стоп: " + dump(busyRow));
 }
 
-// --- строке без кнопки сказано, где эту работу закрывают ---
-// Прежде там стояло «снимать нечем»: слова про бессилие дашборда человеку
-// ничего не объясняли («совершенно непонятная формулировка»), и сказано теперь
-// то, что делать (решение пользователя).
+// --- работу, которую закрыть нечем, называет собой погашенная кнопка ---
+// Приписок в хвосте строки («поднята вне дашборда», «идёт вне дашборда») тут
+// больше нет: они были третьим способом сказать одно и то же после чипа
+// «внешняя» и подсказки строки, а трёх разных объяснений одного бессилия
+// человек читал как три разных беды. Погашенная кнопка говорит «действия нет»
+// короче любых слов и не отнимает у строки колонку (решение пользователя).
 {
   await go("#/agents");
-  for (const [what, why] of [["окно vscode", "в своём окне"],
-    ["цикл цели мимо дашборда", "там, где он запущен"]]) {
+  for (const what of ["окно vscode", "цикл цели мимо дашборда"]) {
     const row = rowOf(what);
     if (!row) fail("строки «" + what + "» на экране нет: " + dump(groups).slice(0, 300));
     const shut = byClass(row, "sclose");
-    if ((shut && !shut.disabled) || deepBtn(row, "Стоп")) {
+    if (!shut) fail("у строки «" + what + "» пропала кнопка закрытия: " + dump(row));
+    if (!shut.disabled || deepBtn(row, "Стоп")) {
       fail("строке «" + what + "» предложено снятие, которого нет: " + dump(row));
     }
-    const note = byClass(row, "anone");
-    if (!note) fail("строка «" + what + "» молчит о том, почему действия нет: " + dump(row));
-    if (!String(note.title || "").includes(why)) {
-      fail("подсказка «" + what + "» не объяснила причину: " + note.title);
+    // Разбор живёт в подсказке кнопки: слова одни на все случаи чужой работы.
+    if (!String(shut.title || "").includes("там же, где открыта")) {
+      fail("погашенная кнопка «" + what + "» не сказала, где эту работу закрывают: " + shut.title);
     }
-    // Приписка не повторяет чип происхождения, который стоит в той же строке:
-    // одни и те же слова дважды читаются как сбой отрисовки.
-    if (String(note.textContent).includes("мимо дашборда")) {
-      fail("приписка повторила чип строки: " + note.textContent);
+    const said = dump(row);
+    for (const gone of ["поднята вне дашборда", "идёт вне дашборда", "снимать нечем",
+      "имени сессии нет в реестре"]) {
+      if (said.includes(gone)) fail("снятая приписка вернулась в строку «" + what + "»: " + said);
     }
   }
+  // У строки, чью сессию поднял дашборд, та же кнопка живая: гасит её
+  // отсутствие имени tmux-сессии, а не вид работы и не состояние.
+  const still = rowOf("молчащая вторая");
+  const mine = still && byClass(still, "sclose");
+  if (!mine || mine.disabled) fail("своей работе закрытие погашено: " + dump(still || groups));
 }
 
 // --- удачное снятие убирает строку тем же ходом и опрос её не возвращает ---

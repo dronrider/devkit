@@ -25,17 +25,19 @@ const sec = (ago) => Math.floor((Date.now() - ago * 1000) / 1000);
 
 // Четыре сессии по одной на состояние плюс вторая работающая: по ней видно,
 // что внутри группы порядок идёт по свежести хода.
+// Имя tmux-сессии (tmux) едет у каждой работы, которую поднимал дашборд: на
+// нём стоит и признак own, и закрытие, и врозь эти два поля не ездят.
 const works = () => [
   { kind: "session", via: "session", session: "idle-1", note: "молчащее окно",
-    own: true, live: "idle", moved: sec(3 * 3600) },
+    own: true, tmux: "chat-idle-1", live: "idle", moved: sec(3 * 3600) },
   { kind: "session", via: "session", session: "dead-1", note: "снятая сессия",
-    own: true, live: "dead", moved: sec(9 * 3600) },
+    own: true, tmux: "chat-dead-1", live: "dead", moved: sec(9 * 3600) },
   { kind: "session", via: "session", session: "busy-2", note: "второй ход",
-    own: true, live: "busy", moved: sec(120) },
+    own: true, tmux: "chat-busy-2", live: "busy", moved: sec(120) },
   { kind: "session", via: "session", session: "wait-1", note: "спросил и ждёт",
-    own: true, live: "waiting", moved: sec(300) },
+    own: true, tmux: "chat-wait-1", live: "waiting", moved: sec(300) },
   { kind: "session", via: "session", session: "busy-1", note: "первый ход",
-    own: true, live: "busy", moved: sec(5) },
+    own: true, tmux: "chat-busy-1", live: "busy", moved: sec(5) },
 ];
 
 // Ответ ручки работ стенд подменяет по ходу: так выглядит происходящее на
@@ -156,15 +158,17 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   }
 }
 
-// --- работа без состояния: ни «активна», ни кнопки снятия ---
+// --- работа без состояния: «активной» она не зовётся, а снимается с оглядкой ---
 //
 // Сервер состояния не назвал (старая сборка, поломка разбора), и назвать за
 // него нечем. Прежде зелёный кружок был умолчанием, и такая строка горела
-// работающей, а снимать её предлагалось наравне с живой (замечание
-// пользователя: сессия давнего разговора показана работающей и с кнопкой).
+// работающей (замечание пользователя: сессия давнего разговора показана
+// работающей и с кнопкой). Закрытие у неё есть: имя tmux-сессии приехало, и
+// снимать есть что. Держится оно вторым нажатием наравне с занятой, потому
+// что снятое обратно не поднимается.
 {
   now.works = [{ kind: "session", via: "session", session: "mute-1", own: true,
-    note: "сессия без состояния" }];
+    tmux: "chat-mute-1", note: "сессия без состояния" }];
   await tick();
   const row = rows().find((r) => dump(r).includes("сессия без состояния"));
   if (!row) fail("строка без состояния пропала с экрана: " + dump(groups).slice(0, 300));
@@ -181,18 +185,31 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   const dot = String((byClass(row, "dot") || {}).className || "");
   if (dot.includes("pulse")) fail("работа без состояния горит зелёным: " + dot);
   const shut = byClass(row, "sclose");
-  if (shut && !shut.disabled) {
-    fail("снятие предложено работе, о которой неизвестно даже, идёт ли она: " + said);
+  if (!shut) fail("у работы без состояния пропало закрытие: " + said);
+  stopped.length = 0;
+  shut.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (stopped.length) {
+    fail("работа, о которой неизвестно даже, идёт ли она, снялась без подтверждения: " +
+      JSON.stringify(stopped));
+  }
+  if (!String(shut.className).split(" ").includes("armed")) {
+    fail("кнопка не взвелась подтверждением: " + shut.className);
+  }
+  shut.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!stopped.some((x) => x.path.includes("mute-1/stop"))) {
+    fail("подтверждённое снятие не ушло: " + JSON.stringify(stopped));
   }
 }
 
 // --- снятая сессия уходит из списка тем же ходом ---
 {
   now.works = [
-    { kind: "session", via: "session", session: "keep-1", own: true, live: "idle",
-      note: "останется в списке", moved: sec(600) },
-    { kind: "session", via: "session", session: "gone-1", own: true, live: "idle",
-      note: "эту снимаем", moved: sec(900) },
+    { kind: "session", via: "session", session: "keep-1", own: true, tmux: "chat-keep-1",
+      live: "idle", note: "останется в списке", moved: sec(600) },
+    { kind: "session", via: "session", session: "gone-1", own: true, tmux: "chat-gone-1",
+      live: "idle", note: "эту снимаем", moved: sec(900) },
   ];
   await tick();
   const row = rows().find((r) => dump(r).includes("эту снимаем"));
@@ -223,10 +240,10 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   now.works = [
     { kind: "session", via: "session", session: "alive-1", own: false, live: "idle",
       note: "окно в редакторе", moved: sec(120) },
-    { kind: "session", via: "session", session: "dead-a", own: true, live: "dead",
-      note: "моя тестовая сессия", moved: sec(420) },
-    { kind: "session", via: "session", session: "dead-b", own: true, live: "dead",
-      note: "вторая тестовая", moved: sec(430) },
+    { kind: "session", via: "session", session: "dead-a", own: true, tmux: "chat-dead-a",
+      live: "dead", note: "моя тестовая сессия", moved: sec(420) },
+    { kind: "session", via: "session", session: "dead-b", own: true, tmux: "chat-dead-b",
+      live: "dead", note: "вторая тестовая", moved: sec(430) },
     { kind: "session", via: "session", session: "dead-c", own: false, live: "dead",
       note: "старый чат glm", moved: sec(900) },
     { id: "XR-9", kind: "goal", title: "Цель: панель разговора", via: "registry", live: "dead" },
@@ -241,15 +258,18 @@ if (!poll) fail("частоты опроса таба нет в статике: 
   if (!said.includes("окно в редакторе")) {
     fail("живое окно мимо дашборда пропало из таба: " + said.slice(0, 300));
   }
-  // Приписка осталась ровно там, где она по делу: сессия жива, а снять её
-  // нечем.
-  // Приписка объясняет, где эту работу закрывают, а не то, чего дашборд не
-  // может: «снимать нечем» человек читать не умел (решение пользователя).
-  if (!said.includes("поднята вне дашборда")) {
-    fail("у живого внешнего окна пропала приписка про закрытие: " + said.slice(0, 300));
+  // Сессия жива, а снять её нечем, и говорит это сама кнопка: она стоит в
+  // строке погашенной. Приписок в хвосте («поднята вне дашборда», «снимать
+  // нечем») тут больше нет, они повторяли чип «внешняя» и подсказку строки.
+  const outer = rows().find((r) => dump(r).includes("окно в редакторе"));
+  const shut = outer && byClass(outer, "sclose");
+  if (!shut) fail("у живого внешнего окна пропала кнопка закрытия: " + said.slice(0, 300));
+  if (!shut.disabled) fail("внешнему окну предложено закрытие, которого нет: " + dump(outer));
+  if (!String(shut.title || "").includes("там же, где открыта")) {
+    fail("погашенная кнопка не сказала, где это окно закрывают: " + shut.title);
   }
-  if (said.includes("снимать нечем")) {
-    fail("прежняя непонятная приписка вернулась: " + said.slice(0, 300));
+  for (const gone of ["поднята вне дашборда", "идёт вне дашборда", "снимать нечем"]) {
+    if (said.includes(gone)) fail("снятая приписка вернулась в строку: " + said.slice(0, 300));
   }
   // Цикл цели из реестра дашборд не видит вовсе, а идёт он на машине.
   if (!said.includes("Цель: панель разговора")) {
@@ -268,7 +288,7 @@ if (!poll) fail("частоты опроса таба нет в статике: 
 {
   now.works = [
     { id: "XR-7", kind: "task", title: "только что поднятая", via: "session",
-      session: "lift-1", own: true, live: "dead", moved: sec(5) },
+      session: "lift-1", own: true, tmux: "task-XR-7-1", live: "dead", moved: sec(5) },
   ];
   sandbox.markRunLive("demo", "XR-7", "task-XR-7-1");
   await tick();

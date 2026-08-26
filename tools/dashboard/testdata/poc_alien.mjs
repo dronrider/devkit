@@ -1,11 +1,12 @@
-// Стенд чужой работы (ветка poc-chat): строка задачи, которую ведут на другой
-// машине.
+// Стенд строки без узнанного исполнителя (ветка poc-chat): задача стоит в
+// работе, а живой работы за ней на этой машине не видно.
 //
-// Прежнее правило прятало у такой строки всё разом, и вместе с запуском
-// конвейера пропадал вход в разговор: обсудить чужую задачу с дашборда было
-// негде (замечание пользователя). Предмет стенда в том, что скрыт остался
-// только конвейер: подпись про чужую машину на месте, кнопки запуска и
-// продолжения нет, а кнопка чата есть и ведёт в панель этой задачи.
+// Стенд начинался с чужой машины: строке с признаком other дашборд прятал
+// конвейер и подписывал её словами «исполнителя не видно». Признака этого
+// больше нет, и приписки тоже: попадали они ровно в те задачи, которые человек
+// вёл из дашборда, а «взяли в другом месте» по этой машине не проверяется
+// вовсе. Предмет стенда теперь обратный: снятого нет, конвейер строке возвращён,
+// а кнопка чата стоит у неё, как и у всякой другой строки доски.
 //
 // Зовётся: node testdata/poc_alien.mjs static/app.js
 
@@ -15,37 +16,42 @@ import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
 const app = appPathArg();
 const { sandbox } = makeSandbox(app, () => ({}));
 
-const alien = { id: "DK-460", title: "релогин не будит живые сессии",
-  sect: "in-progress", run: "other" };
+// Наших сессий у строки нет ни одной: признак работы приезжает пустым.
+const nolead = { id: "DK-460", title: "релогин не будит живые сессии",
+  sect: "in-progress" };
 const ours = { id: "DK-397", title: "дашборд агентской разработки",
   sect: "in-progress", run: "tmux" };
 
 // Кнопка чата в строке: подписи у неё нет вовсе, значок и подсказка.
 const chatBtn = (row) => allByClass(row, "btn").find((b) => String(b.title) === "Чат по задаче");
 
-// --- у чужой работы остались подпись и чат, конвейера нет ---
+// --- приписки про чужую машину нет, конвейер и чат на месте ---
 {
-  const row = sandbox.renderRow("demo", alien, "in-progress");
+  const row = sandbox.renderRow("demo", nolead, "in-progress");
   const said = dump(row);
-  if (!said.includes("исполнителя не видно")) {
-    fail("подпись про чужую машину пропала: " + said);
+  for (const gone of ["исполнителя не видно", "ведёт другая сессия", "другой машине"]) {
+    if (said.includes(gone)) fail("снятая подпись про чужую машину вернулась: " + said);
   }
-  if (!chatBtn(row)) fail("кнопки чата у чужой работы нет: " + said);
+  if (byClass(row, "stale")) fail("строка подписалась чужой машиной: " + said);
+  if (!chatBtn(row)) fail("кнопки чата у строки нет: " + said);
+  // Второму исполнителю тут взяться неоткуда: живой работы за строкой нет, и
+  // конвейер ей возвращён.
   const btns = allByClass(row, "btn").map((b) => b.textContent);
-  for (const gone of ["Выполнить", "Продолжить", "Проверить", "Стоп"]) {
-    if (btns.includes(gone)) fail("у чужой работы осталась кнопка конвейера: " + gone);
+  if (!btns.includes("Продолжить")) {
+    fail("у строки без узнанного исполнителя пропал конвейер: " + JSON.stringify(btns));
   }
+  if (btns.includes("Стоп")) fail("строке без живой работы предложен стоп: " + JSON.stringify(btns));
 }
 
 // --- чат ведёт в панель именно этой задачи ---
 {
-  const row = sandbox.renderRow("demo", alien, "in-progress");
+  const row = sandbox.renderRow("demo", nolead, "in-progress");
   chatBtn(row).handlers.click({ stopPropagation: () => {} });
   await settle();
   // Экрана проекта под панелью в стенде нет, и адрес собирается с проектом
   // внутри, как это делает раздел «Агенты».
   if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes("DK-460")) {
-    fail("чат чужой задачи открыл не её разговор: " + sandbox.location.hash);
+    fail("чат задачи открыл не её разговор: " + sandbox.location.hash);
   }
 }
 
@@ -59,7 +65,7 @@ const chatBtn = (row) => allByClass(row, "btn").find((b) => String(b.title) === 
     ["проверка", { id: "DK-3", title: "на проверке", sect: "check", accept: "mixed" }, "check"],
     ["блок", { id: "DK-4", title: "стоит", sect: "blocked", block: "ждём ключ" }, "blocked"],
     ["своя живая", ours, "in-progress"],
-    ["чужая машина", alien, "in-progress"],
+    ["без узнанного исполнителя", nolead, "in-progress"],
   ];
   for (const [what, row, sect] of cases) {
     const node = sandbox.renderRow("demo", row, sect);

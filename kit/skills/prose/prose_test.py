@@ -191,6 +191,38 @@ class TestCollect(JournalCase):
         self.assertEqual(stat["template"], 0)
         self.assertEqual([t for _, _, t in got], [HUMAN])
 
+    def test_чужая_типографика_помечается_а_не_режется(self):
+        # У человека нет ни длинного тире, ни лапок, ни многоточия одним
+        # символом: правила запрещают, и клавиатурная привычка тоже. Модель
+        # ставит их сама, и знак внутри реплики роли user это след вставки.
+        # Отсеивать нельзя, знак мог приехать из скопированного пути, поэтому
+        # кандидат помечается и решает человек.
+        вставка = (HUMAN2 + " Практики \u2014 это INVEST, \u201cExample "
+                   "Mapping\u201d и \u2026 дальше по списку.")
+        self.write("s1.jsonl", [entry(HUMAN), entry(вставка)])
+        got, stat = prose.collect(self.root, 25)
+        self.assertEqual(stat["kept"], 2)
+        self.assertEqual(stat["typo"], 1)
+        self.assertEqual(prose.typo_marks(HUMAN), [])
+        self.assertEqual(prose.typo_marks(вставка),
+                         ["длинное тире", "лапки", "многоточие одним символом"])
+
+    def test_пометка_типографики_видна_в_выгрузке(self):
+        # Пометку читает человек, и стоять она должна рядом с текстом.
+        self.write("s1.jsonl", [entry(HUMAN + " Дальше \u2192 по списку.")])
+        out_dir = os.path.join(self.root, "dump")
+        candidates, _ = prose.collect(self.root, 25)
+        prose.write_dump(out_dir, candidates, [])
+        with open(os.path.join(out_dir, "replies.md"), encoding="utf-8") as f:
+            выгрузка = f.read()
+        self.assertIn("типографика: стрелка", выгрузка)
+        # В тело кандидата пометка не едет, иначе она уходит в корпус вместе
+        # с текстом.
+        прочитано = prose.read_dump(os.path.join(out_dir, "replies.md"))
+        self.assertEqual(len(прочитано), 1)
+        self.assertTrue(прочитано[0][3].startswith("Смотри, тут вот какая штука"))
+        self.assertNotIn("типографика", прочитано[0][3])
+
     def test_ответы_инструментов_и_мета_не_реплики(self):
         self.write("s1.jsonl", [
             tool_result_entry(),
@@ -670,7 +702,7 @@ class TestКорпусРепозитория(unittest.TestCase):
     def test_два_запуска_без_seed_дают_разные_наборы(self):
         # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом
         # заходе сделала бы тексты однородными, а seed в тестах эту проверку
-        # обходит стороной. Фрагментов в корпусе 52 (lld 12, readme 14, skill 7,
+        # обходит стороной. Фрагментов в корпусе 54 (lld 12, readme 14, skill 9,
         # task 19), и набор режется бюджетом слов, поэтому сравниваются наборы,
         # а не их длина: совпадение двух подряд взятых маловероятно, и повтор
         # прогона ловит вырождение выборки.

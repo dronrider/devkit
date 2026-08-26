@@ -221,6 +221,38 @@ def template_key(text, size=SIGN_WORDS):
     return " ".join(ws[:size])
 
 
+# Четвёртое сито: типографика. У человека в текстах нет ни длинного тире, ни
+# лапок, ни многоточия одним символом, ни Unicode-стрелок. Правила проекта их
+# запрещают, и клавиатурная привычка тоже, а модель ставит их сама. Символ
+# внутри реплики роли user это след вставки из чужого ответа. Сито не
+# отсеивает, а помечает: знак мог приехать и из скопированного пути, и решать
+# тут человеку. Находка приёмки DK-522 на смешанном фрагменте, где рамка была
+# своя, а список практик пришёл copy-paste.
+TYPO_MARKS = (
+    ("\u2014", "длинное тире"),
+    ("\u2013", "короткое тире"),
+    ("\u201c", "лапки"),
+    ("\u201d", "лапки"),
+    ("\u201e", "лапки"),
+    ("\u2018", "лапки"),
+    ("\u2019", "лапки"),
+    ("\u2026", "многоточие одним символом"),
+    ("\u2192", "стрелка"),
+    ("\u2190", "стрелка"),
+    ("\u21d2", "стрелка"),
+    ("\u2194", "стрелка"),
+)
+
+
+def typo_marks(text):
+    """Знаки чужой типографики в тексте, по имени и без повторов."""
+    out = []
+    for знак, имя in TYPO_MARKS:
+        if знак in text and имя not in out:
+            out.append(имя)
+    return out
+
+
 def borrowed(root, stamps):
     """Подписи реплик, которые ассистент написал раньше человека.
 
@@ -459,7 +491,7 @@ def collect(root, min_words):
     обойтись. Черновик агента лежит в соседнем журнале, а какие подписи
     искать, известно только после первого прохода."""
     stat = {"journals": 0, "replies": 0, "service": 0, "short": 0,
-            "borrowed": 0, "template": 0, "kept": 0}
+            "borrowed": 0, "template": 0, "typo": 0, "kept": 0}
     seen = set()
     rows = []
     stamps = {}
@@ -506,6 +538,8 @@ def collect(root, min_words):
             stat["template"] += 1
             continue
         stat["kept"] += 1
+        if typo_marks(text):
+            stat["typo"] += 1
         out.append((name, date, text))
     return out, stat
 
@@ -539,7 +573,13 @@ def read_dump(path):
     out = []
     for i, m in enumerate(heads):
         end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-        body = text[m.end():end].strip()
+        lines = text[m.end():end].split("\n")
+        # Пометка типографики стоит сразу под заголовком, в тело она не едет.
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        if lines and lines[0].startswith("типографика:"):
+            lines.pop(0)
+        body = "\n".join(lines).strip()
         out.append((int(m.group(1)), m.group(2), m.group(3).strip(), body))
     return out
 
@@ -551,7 +591,11 @@ def write_dump(out_dir, candidates, words_top):
         f.write("# Кандидаты в корпус\n\n")
         f.write("Выгрузка сборщика, не коммитится. Отбирает пользователь.\n\n")
         for i, (journal, date, text) in enumerate(candidates, 1):
-            f.write("## %d. %s, %s\n\n%s\n\n" % (i, journal, date or "без даты", text))
+            head = "## %d. %s, %s\n" % (i, journal, date or "без даты")
+            знаки = typo_marks(text)
+            if знаки:
+                head += "типографика: %s\n" % ", ".join(знаки)
+            f.write(head + "\n" + text + "\n\n")
     words_file = os.path.join(out_dir, "dictionary.md")
     with open(words_file, "w", encoding="utf-8") as f:
         f.write("# Словарь по репликам\n\n")
@@ -681,6 +725,7 @@ def cmd_collect(args):
     print("коротких и нерусских отсеяно: %d" % stat["short"])
     print("переносов чужого черновика отсеяно: %d" % stat["borrowed"])
     print("шаблонных раздач отсеяно: %d" % stat["template"])
+    print("с чужой типографикой, помечено: %d" % stat["typo"])
     print("кандидатов: %d" % stat["kept"])
     top = dictionary(candidates, args.min_hits)
     print("словарь: %d слов от %d реплик" % (len(top), args.min_hits))

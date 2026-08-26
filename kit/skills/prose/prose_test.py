@@ -676,6 +676,14 @@ class TestКорпусРепозитория(unittest.TestCase):
         # репликах пользователя он заменён словом «задача» или снят вовсе.
         # Регистр тут важен, иначе под шаблон уедут utf-8 и sha-1.
         ид = r"\b[A-Z]{2,4}-\d+\b"
+        # Имя файла или страницы это адрес нашего дерева. В чужом проекте
+        # такого файла нет, а эталон учит агента поминать его в тексте, и
+        # взамен в корпусе стоит описание: «файл доски», «страница про форму
+        # задачи». Имена утилит под шаблон не идут, они без расширения и едут
+        # вместе с корпусом. Поля шапки шаблон не смотрит, там `источник`
+        # везёт ссылку на страницу первоисточника вместе с её именем.
+        файл = (r"\b[\w.-]*\w\.(?:md|py|go|toml|sh|json|jsonl|yaml|yml"
+                r"|cfg|ini|txt)\b")
         corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
         for genre, (_, fragments) in corpus.items():
             for i, fragment in enumerate(fragments, 1):
@@ -685,6 +693,7 @@ class TestКорпусРепозитория(unittest.TestCase):
                         re.search(имя, fragment["body"], re.I),
                         "%s: %s" % (где, имя))
                 self.assertIsNone(re.search(ид, fragment["body"]), где)
+                self.assertIsNone(re.search(файл, fragment["body"]), где)
 
     def test_один_текст_не_стоит_в_двух_жанрах(self):
         # Одна и та же реплика стояла и в `task`, и в `readme` (находка

@@ -29,6 +29,17 @@ HUMAN2 = (
 )
 
 
+С_ЗАГОЛОВКАМИ = (
+    "Оставляю свои замечания по задаче, их накопилось много и все они про одно.\n"
+    "## 1. Лента уведомлений\n"
+    "Открывается прямо в основном меню, а привычное место для неё вверху "
+    "страницы, значком колокольчика.\n"
+    "## 2. Скорость\n"
+    "Стартовая страница дашборда открывается несколько секунд, для "
+    "современного приложения это просто недопустимо."
+)
+
+
 def entry(text, kind="user", **extra):
     rec = {
         "type": kind,
@@ -202,6 +213,41 @@ class TestCollect(JournalCase):
         got, _ = prose.collect(self.root, 25)
         self.assertEqual(len(got), 2)
 
+    def test_команда_в_обратных_кавычках_остаётся(self):
+        # Раньше инлайн-код менялся на слово CODE, и метка оседала прямо в теле
+        # кандидата («вопросы задавай командой CODE»). Имя команды это часть
+        # речи человека, и фрагмент приходилось чинить руками по журналу.
+        text = HUMAN + " Зови `taskctl ask DK-1 --question \"...\"` и жди ответа."
+        self.write("s1.jsonl", [entry(text)])
+        got, _ = prose.collect(self.root, 25)
+        self.assertIn("`taskctl ask", got[0][2])
+        self.assertNotIn("CODE", got[0][2])
+
+    def test_заголовок_внутри_реплики_не_режет_кандидата(self):
+        # Развёрнутая постановка человека идёт со своими заголовками markdown.
+        # Выгрузка размечена такими же, и по одному «## N» она резалась посреди
+        # текста: кандидат распадался надвое, а у второго куска пропадало
+        # начало. Заголовок кандидата опознаётся вместе с именем журнала.
+        self.write("s1.jsonl", [entry(С_ЗАГОЛОВКАМИ), entry(HUMAN2)])
+        out_dir = os.path.join(self.root, "dump")
+        candidates, _ = prose.collect(self.root, 25)
+        prose.write_dump(out_dir, candidates, [])
+        got = prose.read_dump(os.path.join(out_dir, "replies.md"))
+        self.assertEqual(len(got), 2)
+        self.assertEqual([n for n, _, _, _ in got], [1, 2])
+        self.assertTrue(got[0][3].startswith("Оставляю свои замечания"))
+        self.assertIn("## 2. Скорость", got[0][3])
+        self.assertTrue(got[1][3].startswith("Не годится так."))
+
+    def test_выгрузка_помнит_журнал_и_дату(self):
+        self.write("s1.jsonl", [entry(HUMAN)])
+        out_dir = os.path.join(self.root, "dump")
+        candidates, _ = prose.collect(self.root, 25)
+        prose.write_dump(out_dir, candidates, [])
+        got = prose.read_dump(os.path.join(out_dir, "replies.md"))
+        self.assertEqual(got[0][1], "s1.jsonl")
+        self.assertEqual(got[0][2], "2026-08-20")
+
     def test_ограда_кода_режется_а_проза_вокруг_остаётся(self):
         text = HUMAN + "\n\n```\ngit -C /tmp log --oneline\n```\n\n" + HUMAN2
         self.write("s1.jsonl", [entry(text)])
@@ -313,6 +359,38 @@ class TestSample(CorpusCase):
         self.assertIn("источник: трекер", text)
 
 
+class TestБюджетВыборки(CorpusCase):
+    """Фрагменты в корпусе разной длины, и четыре длинных подряд кладут в
+    контекст письма простыню. Набор держит бюджет слов."""
+
+    def setUp(self):
+        super().setUp()
+        длинный = " ".join(["слово"] * 300)
+        короткие = [" ".join(["слово"] * 40) for _ in range(6)]
+        self.genre("task", "постановка", [длинный] + короткие)
+
+    def размеры(self, picked):
+        return [len(prose.words(f["body"])) for _, _, f in picked]
+
+    def test_длинный_фрагмент_вытесняет_короткие(self):
+        for seed in range(10):
+            picked = prose.sample(self.dir, "task", 4, seed, budget=100)
+            слов = self.размеры(picked)
+            if 300 in слов:
+                self.assertEqual(len(picked), 1, seed)
+            else:
+                self.assertLessEqual(sum(слов), 100, seed)
+
+    def test_короткие_добираются_до_потолка_числа(self):
+        picked = prose.sample(self.dir, "task", 2, seed=3, budget=10000)
+        self.assertEqual(len(picked), 2)
+
+    def test_первый_фрагмент_едет_даже_длиннее_бюджета(self):
+        for seed in range(5):
+            picked = prose.sample(self.dir, "task", 4, seed, budget=10)
+            self.assertEqual(len(picked), 1, seed)
+
+
 class TestCli(JournalCase):
     def run_main(self, argv):
         out, err = io.StringIO(), io.StringIO()
@@ -367,23 +445,25 @@ class TestКорпусРепозитория(unittest.TestCase):
             for fragment in fragments:
                 self.assertIn("источник", fragment)
 
-    def test_фрагменты_только_из_журналов_трекеров_и_страниц(self):
-        # Источников у корпуса три. Два названы в цели DK-446, это реплики
-        # пользователя из журналов сессий и issue русскоязычных трекеров.
-        # Третий назвал пользователь на приёмке DK-522, это входные страницы
-        # чужих проектов: жанру `readme` трекеры материала не дают.
-        # Тексты самого devkit сюда попадали, и приёмка их отбраковала:
-        # по сторожу прозы девять таких абзацев давали 30% довода в той же
-        # фразе и 4,9 хвоста «а не» на 1000 слов, то есть агентскую колонку
-        # замера. Без этой проверки следующая правка вернёт их молча.
+    def test_источник_фрагмента_одного_из_четырёх_видов(self):
+        # Источников у корпуса четыре. Два названы в цели DK-446, это реплики
+        # пользователя из журналов сессий и issue русскоязычных трекеров. Два
+        # назвал пользователь на приёмке DK-522: входные страницы чужих
+        # проектов (жанру `readme` трекеры материала не дают) и первая версия
+        # файла задачи DK-459, написанная им целиком.
+        # Тексты devkit, написанные агентами, сюда попадали, и приёмка их
+        # отбраковала: по сторожу прозы девять таких абзацев давали 30% довода
+        # в той же фразе и 4,9 хвоста «а не» на 1000 слов, то есть агентскую
+        # колонку замера. Файл задачи это исключение, проверенное поиском по
+        # 418 первым версиям задач и 223 первым версиям черновиков. Без этой
+        # проверки следующая правка вернёт агентские абзацы молча.
+        виды = ("журнал сессии", "трекер", "страница проекта", "файл задачи")
         corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
         for genre, (_, fragments) in corpus.items():
             for fragment in fragments:
                 источник = fragment["источник"]
                 self.assertTrue(
-                    источник.startswith("журнал сессии")
-                    or источник.startswith("трекер")
-                    or источник.startswith("страница проекта"),
+                    any(источник.startswith(вид) for вид in виды),
                     "%s: %s" % (genre, источник))
 
     def test_переписанный_фрагмент_выведен_из_под_сверки(self):
@@ -452,9 +532,10 @@ class TestКорпусРепозитория(unittest.TestCase):
     def test_два_запуска_без_seed_дают_разные_наборы(self):
         # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом
         # заходе сделала бы тексты однородными, а seed в тестах эту проверку
-        # обходит стороной. Двенадцать фрагментов из 37 (lld 9, readme 10,
-        # skill 6, task 12): совпадение двух подряд взятых наборов
-        # маловероятно, и повтор прогона ловит вырождение выборки.
+        # обходит стороной. Фрагментов в корпусе 40 (lld 9, readme 10, skill 6,
+        # task 15), и набор режется бюджетом слов, поэтому сравниваются наборы,
+        # а не их длина: совпадение двух подряд взятых маловероятно, и повтор
+        # прогона ловит вырождение выборки.
         corpus = os.path.join(prose.HERE, "corpus")
         first = [f["body"] for _, _, f in prose.sample(corpus, "", 12, seed=None)]
         second = [f["body"] for _, _, f in prose.sample(corpus, "", 12, seed=None)]

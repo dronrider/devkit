@@ -2,7 +2,7 @@
 """Корпус эталонов прозы: сборщик реплик пользователя и выборка фрагментов.
 
   prose.py collect [--journals DIR] [--min-words N] [--out DIR]
-  prose.py sample [--genre ЖАНР] [--count N] [--seed S] [--corpus DIR]
+  prose.py sample [--genre ЖАНР] [--count N] [--words N] [--seed S] [--corpus DIR]
 
 `collect` режет журналы сессий на реплики роли user, отсеивает короткие,
 служебные и перенесённые copy-paste черновики агента и складывает словарь.
@@ -91,6 +91,10 @@ WORD_RE = re.compile(r"[а-яёА-ЯЁ]+")
 # отпечатка в словах стоит здесь же, и тест ссылается на неё через это имя.
 NORM_RE = re.compile(r"[а-яёa-z0-9]+")
 SIGN_WORDS = 8
+# Бюджет слов на набор выборки. Четыре коротких фрагмента укладываются в
+# него целиком, а один длинный съедает его почти весь, и это то поведение,
+# ради которого бюджет заведён.
+WORD_BUDGET = 400
 FENCE_RE = re.compile(r"```.*?```", re.S)
 CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 LETTER_RE = re.compile(r"[а-яёА-ЯЁa-zA-Z]")
@@ -222,13 +226,16 @@ def borrowed(root, stamps):
 def clean(text):
     """Реплика без оград кода и без хвостов вставок. Ограды режутся, потому что
     в корпус едет проза, а не листинг, но реплику с кодом целиком не выбрасываем:
-    вокруг листинга обычно и лежит нужный абзац."""
+    вокруг листинга обычно и лежит нужный абзац.
+
+    Команда в обратных кавычках остаётся как есть. Раньше она менялась на слово
+    CODE, и в кандидатах оседали фразы вроде «вопросы задавай командой CODE»:
+    имя команды это часть речи человека, а не листинг."""
     for mark in TAIL_MARKS:
         cut = text.find(mark)
         if cut > 0:
             text = text[:cut]
     text = FENCE_RE.sub(" ", text)
-    text = re.sub(r"`[^`\n]*`", "CODE", text)
     return text.strip()
 
 
@@ -333,6 +340,25 @@ def dictionary(candidates, min_hits):
     return pairs
 
 
+# Заголовок кандидата в выгрузке опознаётся целиком, вместе с именем журнала.
+# В длинной реплике человека попадаются свои заголовки markdown («## 2. Что
+# делать»), и по одному «## N» выгрузка режется посреди текста.
+DUMP_HEAD_RE = re.compile(r"(?m)^## (\d+)\. (\S+\.jsonl), (.+)$")
+
+
+def read_dump(path):
+    """Кандидаты из выгрузки сборщика: список (номер, журнал, дата, текст)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    heads = list(DUMP_HEAD_RE.finditer(text))
+    out = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        body = text[m.end():end].strip()
+        out.append((int(m.group(1)), m.group(2), m.group(3).strip(), body))
+    return out
+
+
 def write_dump(out_dir, candidates, words_top):
     os.makedirs(out_dir, exist_ok=True)
     replies = os.path.join(out_dir, "replies.md")
@@ -415,8 +441,14 @@ def read_corpus(corpus_dir):
     return out
 
 
-def sample(corpus_dir, genre, count, seed):
-    """Возврат списка (жанр, имя жанра, фрагмент)."""
+def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET):
+    """Возврат списка (жанр, имя жанра, фрагмент).
+
+    Фрагменты в корпусе разной длины, от двадцати пяти слов до четырёхсот, и
+    четыре длинных подряд кладут в контекст письма простыню. Поэтому набор
+    держит бюджет слов: берётся, пока хватает бюджета, а `count` остаётся
+    потолком числа фрагментов. Один длинный фрагмент вытесняет три коротких.
+    Первый фрагмент едет всегда, даже когда он один длиннее бюджета."""
     corpus = read_corpus(corpus_dir)
     if genre:
         if genre not in corpus:
@@ -427,10 +459,18 @@ def sample(corpus_dir, genre, count, seed):
         for key, (title, fragments) in corpus.items():
             pool.extend((key, title, f) for f in fragments)
     rnd = random.Random(seed)
-    if count >= len(pool):
-        rnd.shuffle(pool)
-        return pool
-    return rnd.sample(pool, count)
+    rnd.shuffle(pool)
+    picked = []
+    spent = 0
+    for item in pool:
+        if len(picked) >= count:
+            break
+        size = len(words(item[2]["body"]))
+        if picked and budget and spent + size > budget:
+            continue
+        picked.append(item)
+        spent += size
+    return picked
 
 
 def render(picked):
@@ -468,7 +508,7 @@ def cmd_collect(args):
 
 
 def cmd_sample(args):
-    picked = sample(args.corpus, args.genre, args.count, args.seed)
+    picked = sample(args.corpus, args.genre, args.count, args.seed, args.words)
     if not picked:
         print("в корпусе нечего показать: %s" % args.corpus, file=sys.stderr)
         return 1
@@ -491,6 +531,7 @@ def main(argv=None):
     p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))
     p.add_argument("--genre", default="")
     p.add_argument("--count", type=int, default=4)
+    p.add_argument("--words", type=int, default=WORD_BUDGET)
     p.add_argument("--seed", type=int, default=None)
     p.set_defaults(func=cmd_sample)
 

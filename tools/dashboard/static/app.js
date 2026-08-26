@@ -448,23 +448,36 @@ function projectState(p) {
 function renderSidebar(projects, current) {
   const nav = document.getElementById("projects");
   const sel = document.getElementById("pselect");
-  nav.replaceChildren();
-  sel.replaceChildren();
-  for (const p of projects) {
-    const item = el("div", "sitem" + (current && p.name === current.name ? " on" : ""));
+  // Колонка живёт на том же слое, что доска и лента: обновление по фокусу окна
+  // перебирало её целиком, и открытая выпадашка шапки схлопывалась под рукой
+  // вместе с колонкой (DK-411). Отпечаток строки это её вид: имя, подсветка
+  // выбранного проекта, кружок состояния и число рядом.
+  const here = current ? current.name : "";
+  sync(nav, projects.map((p) => {
     const st = projectState(p);
-    item.append(el("span", "pdot" + (st.cls ? " " + st.cls : "")));
-    item.append(document.createTextNode(p.name));
-    const n = el("span", "n", st.short);
-    item.append(n);
-    item.addEventListener("click", () => { goKeepingChat(p.name); });
-    nav.append(item);
-
-    const opt = el("option", "", p.name);
-    opt.value = p.name;
-    opt.selected = current && p.name === current.name;
-    sel.append(opt);
-  }
+    return {
+      key: p.name,
+      sign: [p.name === here ? "on" : "", st.cls || "", st.short || ""].join("|"),
+      make: () => {
+        const item = el("div", "sitem" + (p.name === here ? " on" : ""));
+        item.append(el("span", "pdot" + (st.cls ? " " + st.cls : "")));
+        item.append(document.createTextNode(p.name));
+        item.append(el("span", "n", st.short));
+        item.addEventListener("click", () => { goKeepingChat(p.name); });
+        return item;
+      },
+    };
+  }));
+  sync(sel, projects.map((p) => ({
+    key: p.name,
+    sign: p.name === here ? "on" : "",
+    make: () => {
+      const opt = el("option", "", p.name);
+      opt.value = p.name;
+      opt.selected = p.name === here;
+      return opt;
+    },
+  })));
   sel.onchange = () => { goKeepingChat(sel.value); };
   // Счётчика работ в колонке больше нет: сессии переехали в таб доски, и число
   // стоит на самом табе, рядом с тем списком, который оно считает.
@@ -1979,6 +1992,10 @@ function withTip(node, text) {
 // черновиком правки и снимается сохранением.
 const taskDraft = { id: "", dirty: false, seen: "", edit: false };
 
+// Ключ узла экрана задачи в списке: по нему обновление находит нарисованное и
+// сверяет отпечаток, вместо того чтобы собирать экран заново.
+const TASK_PKEY = "task-page";
+
 // Правки строки, зависимостей и файла: всё уходит в API, а тот зовёт taskctl.
 // Ответ показывается словами, и удача, и отказ утилиты (кривая разбивка
 // ранга, цикл зависимостей). После удачной правки экран перечитывает данные:
@@ -3032,7 +3049,34 @@ function taskShell(project, id) {
   const card = el("div", "card");
   card.append(el("div", "hint", "Читаем " + id + "..."));
   page.append(crumb, card);
-  groups.replaceChildren(page);
+  // Оболочка встаёт тем же ключом, что и настоящий экран, и с отпечатком,
+  // какого у данных не бывает: приехавшая строка сменит её одной подменой
+  // узла, а не пересборкой коробки.
+  groups.replaceChildren(keyed(page, TASK_PKEY, "shell"));
+}
+
+// Отпечаток нарисованного экрана задачи: весь ответ ручки, из которого он и
+// собран. Ручка отдаёт строку, текст постановки, связи и зависимости, и всё
+// это читается с диска, поэтому от времени отпечаток не зависит: возврат в
+// окно при нетронутой задаче даёт ту же строку, а значит и рисовать нечего.
+// Живая работа приезжает списком проектов, и её признаки берутся полями, а не
+// целым объектом: время последнего хода меняется каждые несколько секунд, а
+// экран от него не зависит (тот же выбор, что у доски).
+function taskPaintSign(project, id, r, works) {
+  const work = (works || []).find((w) => w.id === id);
+  return [project, id, r.ok ? "ok" : "no" + r.status,
+    JSON.stringify(r.body || null),
+    work ? [work.live || "", work.via || "", work.model || "", work.harness || ""].join(",") : "",
+    harnessSign()].join("|");
+}
+
+// Узел экрана среди детей коробки: экран лежит прямым ребёнком, и искать его
+// обходом поддерева незачем.
+function paintedNode(box, key) {
+  for (const kid of (box && box.children) || []) {
+    if (kid.dataset && kid.dataset.pkey === key) return kid;
+  }
+  return null;
 }
 
 // pre это заказ строки, отправленный до сборки экрана: переход по ссылке шлёт
@@ -3054,7 +3098,19 @@ async function renderTask(project, works, id, pre) {
     if (r.ok && taskSeen(r.body) !== taskDraft.seen) taskStale(project, works, id);
     return;
   }
-  groups.replaceChildren();
+  // Экран уже нарисован из этих же данных: обновление по фокусу окна не
+  // трогает тогда ничего вовсе. Пересборка уводила из-под руки всё сразу,
+  // место чтения длинного файла цели, раскрытый аккордеон и каретку в поле
+  // правки (DK-411).
+  const sign = taskPaintSign(project, id, r, works);
+  const shown = paintedNode(groups, TASK_PKEY);
+  if (shown && (shown.dataset.psign || "") === sign) return;
+  // Экран собирается заново, значит и живые потоки его уходят вместе с ним:
+  // журнал витка и план агента поднимутся заново на новом узле.
+  closeAgentLive();
+  // Готовый узел встаёт на место прежнего одной подменой, а не на опустевшей
+  // коробке: список тогда не теряет прокрутку.
+  const place = (page) => { sync(groups, [{ key: TASK_PKEY, sign, make: () => page }]); };
   const board = { text: "Доска " + project, go: () => { goKeepingChat(project); } };
 
   if (!r.ok) {
@@ -3066,7 +3122,7 @@ async function renderTask(project, works, id, pre) {
     card.append(el("div", "error", r.body.error || "задача не прочиталась"));
     page.append(crumb, card);
     crumb.append(back);
-    groups.append(page);
+    place(page);
     return;
   }
   const detail = r.body;
@@ -3084,7 +3140,7 @@ async function renderTask(project, works, id, pre) {
   // найденную строку выглядело сломанным (замечание 4).
   if (row.closed) {
     crumbChips.push(el("span", "chip c-check", "закрыта " + row.closed));
-    groups.append(formPage({
+    place(formPage({
       key: "task", project, id, detail, crumb: [board], crumbChips,
       num: row.id, titleText: row.title || id,
       form: { text: detail.text || "" },
@@ -3176,7 +3232,7 @@ async function renderTask(project, works, id, pre) {
       renderTask(project, works, id).catch(console.error);
     },
   });
-  groups.append(view.page);
+  place(view.page);
 
   // План агента блоком под постановкой: те же пункты, что делениями на кольце
   // в шапке разговора. Плана нет, значит блока нет вовсе: заглушка «плана нет»
@@ -12334,7 +12390,11 @@ async function paint() {
   // обновлении: экран черновика держит хвост груминга, и рвать его ради
   // перечитанной доски незачем (DK-316). Панель разговора живёт своим списком
   // потоков и сюда не входит вовсе.
-  if (screen !== shownScreen || !rt.draft) closeAgentLive();
+  // Экран задачи держит свои потоки так же, как экран черновика: журнал витка
+  // и план агента живут, пока экран стоит. Обновление по фокусу окна экран не
+  // пересобирает (DK-411), и рвать ради него журнал незачем; собирая экран
+  // заново, renderTask снимает потоки сам.
+  if (screen !== shownScreen || !(rt.draft || rt.id)) closeAgentLive();
   // Выбор черновиков это намерение сейчас, а не настройка: смена экрана его
   // снимает. Перерисовка того же экрана (обновление по фокусу окна, ответ
   // сервера) выбор переживает, иначе отметки таяли бы под рукой.

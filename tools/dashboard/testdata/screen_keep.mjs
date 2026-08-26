@@ -823,7 +823,11 @@ const sandbox = {
         row: Object.assign({}, r, { sect, section: sect }, order ? { order } : {}),
         after: [], blocks: [],
         file: "docs/tasks/" + id + ".md",
-        text: "# " + id + "\n\nпостановка задачи",
+        // Постановка со служебным разделом: такие разделы экран сворачивает
+        // строкой с объёмом, и раскрытый раздел это одно из того, что человек
+        // терял на пересборке экрана (DK-411).
+        text: "# " + id + "\n\nпостановка задачи\n\n## Журнал\n\n" +
+          "запись журнала раз\nзапись журнала два\n",
       });
     }
     if (path === "/api/harnesses") return reply(harnessBody());
@@ -2064,6 +2068,102 @@ if (!dump(groups).includes("разработка")) {
   fail("этап работы не встал на экран задачи: " + dump(groups).slice(0, 300));
 }
 chatWork.pop();
+await go("#demo");
+
+// Возвращение в окно на экране задачи (DK-411): обновление по фокусу идёт тем
+// же слоем частичной перерисовки, что и на доске. Строка не менялась, значит
+// собирать нечего: узлы экрана остаются теми же, прокрутка стоит там, где её
+// оставили, каретка из поля правки не выпадает, а раскрытый служебный раздел
+// файла не захлопывается. До DK-411 фокус окна звал полную пересборку, и
+// терялось это всё разом.
+await go("#demo/XR-3");
+const tcrumb = find(groups, "task-crumb");
+if (!tcrumb) fail("экран задачи не собрался: " + dump(groups).slice(0, 300));
+
+// Раскрыть служебный раздел файла.
+const jfold = byClass(groups, "ffold");
+if (!jfold) fail("свёрнутого раздела на экране задачи нет: " + dump(groups).slice(0, 400));
+jfold.children[0].handlers.click({});
+await settle();
+if (!dump(jfold).includes("запись журнала раз")) {
+  fail("раздел не раскрылся кликом: " + dump(jfold).slice(0, 300));
+}
+
+// Войти в правку карандашом и поставить каретку в середину текста.
+const pen = barButton(groups, "Править задачу");
+if (!pen) fail("карандаша на экране задачи нет: " + dump(groups).slice(0, 400));
+pen.handlers.click({});
+await settle();
+const area = byClass(groups, "fbody");
+const edit = tag(byClass(groups, "fcard") || groups, "TEXTAREA");
+if (!edit || edit.hidden) fail("поле правки не показалось: " + dump(groups).slice(0, 400));
+edit.focus();
+edit.selectionStart = 7;
+edit.selectionEnd = 7;
+groups.scrollTop = 260;
+
+// Тот самый возврат в окно: слушатель фокуса зовётся так же, как его зовёт
+// браузер.
+const askedBefore = asked.length;
+for (const fn of sandbox.window.listeners.focus || []) fn();
+await settle();
+
+if (find(groups, "task-crumb") !== tcrumb) {
+  fail("возврат в окно пересобрал экран задачи: узел уехал из-под руки");
+}
+if (groups.scrollTop !== 260) {
+  fail("возврат в окно сбил прокрутку экрана задачи: " + groups.scrollTop + " вместо 260");
+}
+if (doc.activeElement !== edit) {
+  fail("возврат в окно отобрал фокус у поля правки: " + dump(doc.activeElement));
+}
+if (edit.selectionStart !== 7) {
+  fail("каретка выпала из поля правки: " + edit.selectionStart + " вместо 7");
+}
+// Раздел ищется на экране заново: снятый с дерева узел помнит своё раскрытое
+// тело и один сам по себе ничего не доказывает.
+const foldNow = byClass(groups, "ffold");
+if (foldNow !== jfold || !dump(foldNow).includes("запись журнала раз")) {
+  fail("возврат в окно захлопнул раскрытый раздел файла: " + dump(foldNow).slice(0, 300));
+}
+if (area && area.hidden === true && !edit.hidden) {
+  fail("правка закрылась сама: " + dump(groups).slice(0, 300));
+}
+// За строкой экран сходил, а вот план агента заново не заказывал: узел тот же,
+// и живые потоки его никто не рвал.
+const askedNow = asked.slice(askedBefore);
+if (askedNow.some((a) => a.includes("/pulse?task="))) {
+  fail("возврат в окно переподнял живые потоки экрана задачи: " + askedNow.join(" "));
+}
+
+// Колонка проектов на том же слое: строка проекта переживает возврат в окно
+// тем же узлом.
+const nav = byId.get("projects");
+const navItem = nav.children[0];
+if (!navItem) fail("колонка проектов пуста");
+for (const fn of sandbox.window.listeners.focus || []) fn();
+await settle();
+if (nav.children[0] !== navItem) {
+  fail("возврат в окно пересобрал колонку проектов");
+}
+
+// Правка, уехавшая под руками, экран всё-таки перерисовывает: слой держит
+// место, а не старые данные.
+const xr3 = rows.find((x) => x.id === "XR-3");
+const xr3Was = xr3.title;
+xr3.title = "заголовок сменился на доске";
+for (const fn of sandbox.window.listeners.focus || []) fn();
+await settle();
+if (find(groups, "task-crumb") === tcrumb) {
+  fail("уехавшая строка не перерисовала экран задачи: слой держит старые данные");
+}
+// Заголовок задачи правится полем, и новый текст лежит в его значении, а не в
+// разметке.
+const titleField = byClass(find(groups, "task-head") || groups, "tedit");
+if (!titleField || titleField.value !== "заголовок сменился на доске") {
+  fail("новый заголовок не встал на экран: " + (titleField && titleField.value));
+}
+xr3.title = xr3Was;
 await go("#demo");
 
 // Ответ на нажатие: он приходит карточкой поверх экрана и не двигает

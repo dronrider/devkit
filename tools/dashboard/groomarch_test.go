@@ -47,9 +47,10 @@ func archived(t *testing.T, srv *server, sid string) bool {
 func TestGroomSweepArchivesFinished(t *testing.T) {
 	e, _ := chatEnv(t)
 	sid := "aaaa1111-1111-4111-8111-111111111111"
-	// Разговор старый: свежий хвост считался бы непрочитанным.
 	groomChat(t, e, sid, "XR-4", time.Now().Add(-2*time.Hour))
-	// Черновика нет вовсе, а строка XR-4 стоит на доске фикстуры.
+	// Человек разговор открывал: непрочитанного в нём нет. Черновика нет
+	// вовсе, а строка XR-4 стоит на доске фикстуры.
+	e.s.chatSeenMark(sid)
 	e.s.groomSweep(e.proj)
 	if !archived(t, e.s, sid) {
 		t.Error("разговор с твёрдым исходом остался в списке: человеку опять убирать руками")
@@ -81,15 +82,16 @@ func TestGroomSweepKeepsWaiting(t *testing.T) {
 	}
 }
 
-// Свежий ответ агента в разговоре, который человек с тех пор не открывал,
-// считается непрочитанным: убрать такой значит спрятать ответ.
+// Ответ агента, которого человек не видел, уборку останавливает. Разговор,
+// который ни разу не открывали, считается непрочитанным весь: возраст хвоста
+// тут не мера, вопрос к человеку висит в чате и через сутки.
 func TestGroomSweepKeepsUnread(t *testing.T) {
 	e, _ := chatEnv(t)
 	sid := "dddd4444-4444-4444-8444-444444444444"
-	groomChat(t, e, sid, "XR-4", time.Now().Add(-time.Minute))
+	groomChat(t, e, sid, "XR-4", time.Now().Add(-2*time.Hour))
 	e.s.groomSweep(e.proj)
 	if archived(t, e.s, sid) {
-		t.Error("разговор со свежим непрочитанным ответом убран в архив")
+		t.Error("разговор, который ни разу не открывали, убран в архив вместе с ответом")
 	}
 
 	// Человек открыл разговор: отметка показа встала, и непрочитанного больше
@@ -98,6 +100,20 @@ func TestGroomSweepKeepsUnread(t *testing.T) {
 	e.s.groomSweep(e.proj)
 	if !archived(t, e.s, sid) {
 		t.Error("прочитанный разговор с твёрдым исходом всё равно остался в списке")
+	}
+}
+
+// Ответ пришёл после показа: человек его не видел, и уборка ждёт.
+func TestGroomSweepKeepsAnswerAfterSeen(t *testing.T) {
+	e, _ := chatEnv(t)
+	sid := "ffff6666-6666-4666-8666-666666666666"
+	groomChat(t, e, sid, "XR-4", time.Now().Add(-2*time.Hour))
+	e.s.chatSeenMark(sid)
+	// Свежая запись поверх показа: агент сказал что-то после ухода человека.
+	groomChat(t, e, sid, "XR-4", time.Now())
+	e.s.groomSweep(e.proj)
+	if archived(t, e.s, sid) {
+		t.Error("разговор со свежим ответом поверх показа убран в архив")
 	}
 }
 

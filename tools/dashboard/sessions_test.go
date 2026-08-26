@@ -33,7 +33,10 @@ const transcriptFixture = `{"type":"queue-operation","operation":"enqueue","time
 var transcriptWant = []reply{
 	{Seq: 0, Key: fixKey(1, 0), Role: "user", Time: "2026-08-10T10:00:01.000Z", Text: "возьми задачу XR-005 в работу"},
 	{Seq: 1, Key: fixKey(2, 0), Role: "thinking", Time: "2026-08-10T10:00:02.000Z", Text: "куда смотреть", Spent: 1000},
-	{Seq: 2, Key: fixKey(3, 0), Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску."},
+	// Ответ агента цитирует реплику, на которую отвечает: пару считает разбор,
+	// и в ленту она едет полями цитаты.
+	{Seq: 2, Key: fixKey(3, 0), Role: "assistant", Time: "2026-08-10T10:00:03.000Z", Text: "Беру XR-005, смотрю доску.",
+		Quote: "возьми задачу XR-005 в работу", QuoteKey: fixKey(1, 0)},
 	{Seq: 3, Key: fixKey(3, 1), Role: "tool", Time: "2026-08-10T10:00:03.000Z", Tool: "Bash",
 		Note: "taskctl list | head -5", About: "Показать доску",
 		Text: "command: taskctl list | head -5\ndescription: Показать доску",

@@ -4463,9 +4463,12 @@ function dayEl(date) {
 // Подпись сидит внутри пузыря, справа внизу: снаружи она занимала свою строку
 // на каждое сообщение и растягивала ленту вдвое (замечание 6 двенадцатого
 // круга POC). Пустая подпись не рисуется вовсе.
-function chatBubble(who, text, meta, tip) {
+function chatBubble(who, text, meta, tip, quote) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   const bb = el("div", "bb");
+  // Цитата стоит первой строкой пузыря, над словами: так её ставят
+  // мессенджеры, и так она читается ответом на названное.
+  if (quote) bb.append(quote);
   // Упоминания задач и документов в реплике становятся ссылками, и ведут они в
   // проект этой ленты: разговор бывает чужой, а адрес на доске свой.
   bb.append(mdRender(text, chatFeedAt()));
@@ -4544,7 +4547,8 @@ function humanSend(call, out, args) {
   const text = args.message || args.content || call.text || "";
   const said = ["доставка " + (args.to || args.recipient || "каналом сессий"),
     out && out.text ? out.text : ""].filter(Boolean).join("; ");
-  return chatBubble("агент", text, "каналом панели", said);
+  return chatBubble("агент", text, "каналом панели", said,
+    call.quote ? quoteEl(call) : null);
 }
 
 // Ход командой: заголовок с пояснением и блок из двух строк, вход и выход со
@@ -4760,137 +4764,44 @@ function safePair(make, call, out) {
   }
 }
 
-// Чипы непрочитанных ответов. В плотном потоке замечаний ответ агента тонет
-// среди ходов инструментов: человек спрашивает, куда лёг ответ, и ищет его
-// прокруткой (замечание пользователя). Реплики человека отслеживаются сами,
-// без пометки «это вопрос», а ответом считается первый пузырь агента после
-// реплики по порядку ленты.
-const CHAT_READ_KEY = "devkit.chat.read.";
+// Цитата ответа. Механика «ответ на сообщение» решается так же, как в
+// мессенджерах: узкой строкой внутри самого пузыря, а не полосой над полем
+// ввода. Пару «реплика человека -> первый текстовый пузырь агента после неё»
+// считает сервер, панель рисует готовое (поля quote, quoteKey, quoteMany).
+//
+// Лента, в которую ведёт цитата: разговор на экране один, и ссылка на его
+// ленту нужна обработчику нажатия, живущему в пузыре.
+let chatFeedBox = null;
 
-// Сколько ключей прочитанного помнит вкладка на разговор. Список растёт с
-// каждым ответом, а нужен он только свежему хвосту ленты.
-const CHAT_READ_KEEP = 200;
+// Сколько горит подсветка исходной реплики после перехода по цитате.
+const QUOTE_LIT = 1000;
 
-function chatReadList(addr) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(CHAT_READ_KEY + addr) || "[]");
-    return Array.isArray(raw) ? raw.map(String) : [];
-  } catch (err) {
-    return [];
-  }
-}
-
-function chatReadAdd(addr, key) {
-  const keep = chatReadList(addr).filter((k) => k !== key);
-  keep.push(key);
-  try {
-    localStorage.setItem(CHAT_READ_KEY + addr,
-      JSON.stringify(keep.slice(-CHAT_READ_KEEP)));
-  } catch (err) {
-    // Приватный режим браузера запрещает запись: прочитанное тогда живёт до
-    // перезагрузки, и это лучше упавшего экрана.
-  }
-}
-
-// Реплика человека в ленте: чужие слова, приехавшие каналом от другого агента,
-// подписаны своим автором и вопросом человека не являются.
-function chatIsAsk(item) {
-  return Boolean(item && item.role === "user" && item.text && !item.who);
-}
-
-// Ответ агента это его текстовый пузырь: ходы инструментов, размышления и
-// служебные вставки в счёт не идут. Отправка человеку каналом рисуется тем же
-// пузырём и ответом тоже считается.
-function chatIsAnswer(item) {
-  if (!item || !item.text) return false;
-  if (item.role === "assistant") return true;
-  return item.role === "tool" && Boolean(item.human);
-}
-
-// chatAskPairs связывает реплики человека с ответами. Пачка реплик подряд ждёт
-// одного ответа: агент отвечает на них разом, и все чипы такой пачки ведут в
-// один якорь. Реплика без ответа чипа не даёт вовсе: пока агент работает,
-// показывать нечего.
-function chatAskPairs(list) {
-  const out = [];
-  let asks = [];
-  for (const item of list || []) {
-    if (chatIsAsk(item)) {
-      asks.push(item);
-      continue;
+// quoteEl это строка цитаты в пузыре ответа: кусок реплики человека с
+// обрезкой, нажатие ведёт к ней в ленте и подсвечивает её на секунду.
+function quoteEl(item) {
+  const said = String(item.quote || "");
+  const box = el("div", "qref");
+  box.append(el("span", "qbar"));
+  box.append(el("span", "qtext", said));
+  const many = item.quoteMany ? "; реплик было несколько, показана последняя" : "";
+  box.title = "Ответ на: " + said + many;
+  box.setAttribute("role", "button");
+  box.setAttribute("aria-label", box.title);
+  box.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const node = chatFeedBox && item.quoteKey ? findKey(chatFeedBox, "k-" + item.quoteKey) : null;
+    if (!node) return;
+    node.scrollIntoView({ block: "center" });
+    // Подсветка гаснет сама: она отвечает на вопрос «куда меня увели», и
+    // держать её дольше секунды значит красить ленту без повода.
+    if (node.classList) {
+      node.classList.add("lit");
+      setTimeout(() => { node.classList.remove("lit"); }, QUOTE_LIT);
     }
-    if (!chatIsAnswer(item) || !asks.length) continue;
-    for (const ask of asks) out.push({ ask, answer: item });
-    asks = [];
-  }
-  return out;
+  });
+  return box;
 }
 
-// makeUnread ведёт полоску чипов над строкой отправки: считает пары по ленте,
-// гасит показанное само и помнит прочитанное во вкладке.
-function makeUnread(addr, feed, box) {
-  let pairs = [];
-  // Показ ответа на экране гасит чип сам: человек его прочёл, и напоминать
-  // больше не о чем. Наблюдателя может не быть вовсе (старый браузер), тогда
-  // чип гасится нажатием и крестиком.
-  const eye = typeof IntersectionObserver === "function"
-    ? new IntersectionObserver((rows) => {
-      let hit = false;
-      for (const row of rows) {
-        if (!row.isIntersecting) continue;
-        const key = row.target && row.target.dataset ? row.target.dataset.pkey : "";
-        if (!key) continue;
-        chatReadAdd(addr, key);
-        hit = true;
-      }
-      if (hit) paint();
-    }, { root: feed, threshold: 0.4 })
-    : null;
-  // Узел ответа ищется по ключу каждый раз заново: пузырь агента растёт
-  // кусками потока, и на дописанном тексте лента пересобирает его узел.
-  const nodeOf = (key) => findKey(feed, key);
-  const paint = () => {
-    const read = chatReadList(addr);
-    const live = pairs.filter((p) => !read.includes(itemKey(p.answer)));
-    box.replaceChildren();
-    box.hidden = !live.length;
-    if (eye) eye.disconnect();
-    for (const pair of live) {
-      const key = itemKey(pair.answer);
-      const chip = el("div", "cuchip");
-      const said = el("button", "cuask", foldPeek(pair.ask.text, 60));
-      said.title = "Показать ответ на: " + foldPeek(pair.ask.text, 200);
-      said.setAttribute("aria-label", said.title);
-      said.addEventListener("click", () => {
-        const node = nodeOf(key);
-        if (node) node.scrollIntoView({ block: "center" });
-        chatReadAdd(addr, key);
-        paint();
-      });
-      const off = el("button", "cuoff");
-      off.append(icon("close"));
-      off.title = "Скрыть напоминание";
-      off.setAttribute("aria-label", off.title);
-      off.addEventListener("click", () => {
-        chatReadAdd(addr, key);
-        paint();
-      });
-      chip.append(said, off);
-      box.append(chip);
-      const node = eye ? nodeOf(key) : null;
-      if (node) eye.observe(node);
-    }
-  };
-  return {
-    draw: (list) => {
-      pairs = chatAskPairs(list);
-      paint();
-    },
-    stop: () => {
-      if (eye) eye.disconnect();
-    },
-  };
-}
 
 // Ключ записи в ленте: устойчивый ключ сервера («источник:номер в файле»),
 // а у ответа без него старый номер. По этому же ключу лента отсеивает
@@ -5045,7 +4956,7 @@ function chatItem(item) {
     if (item.note) bits.push(item.note);
     if (item.sel) bits.push("с выделением");
     if (item.pick) bits.push("с местом экрана");
-    const wrap = chatBubble(who, item.text, bits.join(", "));
+    const wrap = chatBubble(who, item.text, bits.join(", "), "", item.quote ? quoteEl(item) : null);
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
     // Места экрана стоят при пузыре своим свёрнутым блоком: в самой реплике им
     // места нет, а терять описатель незачем, по нему находят место в коде.
@@ -8629,6 +8540,12 @@ function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
   const feed = el("div", "msgs chatfeed");
+  // Переход по цитате ищет исходную реплику в ленте этого разговора: панель на
+  // экране одна, и ссылка на её ленту живёт тут.
+  chatFeedBox = feed;
+  chatLive.push(() => {
+    if (chatFeedBox === feed) chatFeedBox = null;
+  });
   // Свои реплики, ещё не вернувшиеся из транскрипта, стоят сразу под лентой:
   // они и есть её продолжение, просто эха у них пока нет.
   const pend = el("div", "msgs mlocal");
@@ -8680,15 +8597,6 @@ function chatPanel(project, st) {
   askBox.hidden = true;
   wrap.append(askBox);
   watchClientAsk(project, st, askBox);
-
-  // Полоска непрочитанных ответов стоит над строкой отправки: ответ агента
-  // тонет в плотном потоке замечаний, и человек искал его прокруткой
-  // (замечание пользователя). Чип ведёт к ответу, показ ответа гасит чип сам.
-  const unreadBox = el("div", "cunread");
-  unreadBox.hidden = true;
-  wrap.append(unreadBox);
-  const unread = makeUnread(st.addr, feed, unreadBox);
-  chatLive.push(unread.stop);
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -9147,7 +9055,6 @@ function chatPanel(project, st) {
       busy.saw(item);
     }, (list) => {
       echo.reconcile(list);
-      unread.draw(list);
     }).catch(console.error);
   }
   return wrap;

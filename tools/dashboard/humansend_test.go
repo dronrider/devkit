@@ -148,3 +148,88 @@ func TestChatTitleSkipsPickedBlock(t *testing.T) {
 		t.Errorf("заголовок разговора взят вместе с блоком мест: %q", got)
 	}
 }
+
+// Ответ агента цитирует реплику, на которую отвечает: механика «ответ на
+// сообщение» стоит в самом пузыре, как в мессенджерах, и пару считает сервер.
+// Ходы инструментов между репликой и ответом пару не рвут.
+func TestFeedQuotesAskInAnswer(t *testing.T) {
+	said := func(role, text string) string {
+		return `{"type":"` + role + `","message":{"role":"` + role + `","content":` +
+			strconv.Quote(text) + `},"timestamp":"2026-08-26T09:00:00.000Z"}` + "\n"
+	}
+	data := said("user", "почему стенд зелёный на старом коде") +
+		sendLine("agent-42", "задание субагенту", "разбери находку") +
+		said("assistant", "проверка стояла не на том поле")
+	list := parseRepliesSpan([]byte(data), 0, parseSpan{src: "s"})
+
+	var answer *reply
+	var ask *reply
+	for i := range list {
+		if list[i].Role == "assistant" && list[i].Text != "" {
+			answer = &list[i]
+		}
+		if list[i].Role == "user" && list[i].Text != "" {
+			ask = &list[i]
+		}
+	}
+	if answer == nil || ask == nil {
+		t.Fatalf("реплика с ответом не разобрались: %+v", list)
+	}
+	if answer.Quote != "почему стенд зелёный на старом коде" {
+		t.Errorf("ответ не цитирует реплику человека: %q", answer.Quote)
+	}
+	if answer.QuoteKey != ask.Key || ask.Key == "" {
+		t.Errorf("цитата ведёт не к исходной реплике: %q против %q", answer.QuoteKey, ask.Key)
+	}
+	if answer.QuoteMany {
+		t.Error("одна реплика названа пачкой")
+	}
+	if ask.Quote != "" {
+		t.Errorf("реплика человека получила цитату сама на себя: %q", ask.Quote)
+	}
+	// Ход инструмента цитаты не носит: он не ответ.
+	for _, r := range list {
+		if r.Role == "tool" && r.Quote != "" {
+			t.Errorf("ход инструмента получил цитату: %+v", r)
+		}
+	}
+}
+
+// Пачка реплик с одним ответом: цитируется последняя, и о пачке сказано
+// признаком. Ответ без реплики перед ним цитаты не носит вовсе.
+func TestFeedQuotesLastOfPack(t *testing.T) {
+	said := func(role, text string) string {
+		return `{"type":"` + role + `","message":{"role":"` + role + `","content":` +
+			strconv.Quote(text) + `},"timestamp":"2026-08-26T09:00:00.000Z"}` + "\n"
+	}
+	data := said("user", "первое замечание") + said("user", "второе замечание") +
+		said("user", "третье замечание") + said("assistant", "разобрал все три") +
+		said("assistant", "и ещё добавлю")
+	list := parseRepliesSpan([]byte(data), 0, parseSpan{src: "s"})
+
+	var first, second *reply
+	for i := range list {
+		if list[i].Role != "assistant" {
+			continue
+		}
+		if first == nil {
+			first = &list[i]
+			continue
+		}
+		if second == nil {
+			second = &list[i]
+		}
+	}
+	if first == nil || second == nil {
+		t.Fatalf("два ответа не разобрались: %+v", list)
+	}
+	if first.Quote != "третье замечание" {
+		t.Errorf("цитируется не последняя реплика пачки: %q", first.Quote)
+	}
+	if !first.QuoteMany {
+		t.Error("о пачке реплик не сказано: подсказке цитаты нечего сообщить")
+	}
+	if second.Quote != "" || second.QuoteKey != "" {
+		t.Errorf("второй ответ подряд цитирует уже отвеченное: %q", second.Quote)
+	}
+}

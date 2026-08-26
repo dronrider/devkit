@@ -701,6 +701,13 @@ type reply struct {
 	// Human помечает ход, которым агент обратился к человеку: отправка в панель
 	// каналом сессий это реплика разговора, а не служебный ход инструмента.
 	Human bool `json:"human,omitempty"`
+	// Quote это кусок реплики человека, на которую отвечает агент, а QuoteKey
+	// её ключ в ленте. В пузыре ответа она стоит узкой строкой сверху, и по ней
+	// же в ленту переходят, как это принято в мессенджерах. QuoteMany говорит,
+	// что реплик в пачке было несколько и цитируется последняя.
+	Quote     string `json:"quote,omitempty"`
+	QuoteKey  string `json:"quoteKey,omitempty"`
+	QuoteMany bool   `json:"quoteMany,omitempty"`
 	// Sub подписывает запись бокового журнала субагента: работа ушла ему, и
 	// весь бегущий лог пишется туда, а не в транскрипт сессии.
 	Sub string `json:"sub,omitempty"`
@@ -906,6 +913,10 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	// стоит тут с самого начала, а прежние приезжают из самой переписки: по ним
 	// узнаётся ответная отправка агента человеку.
 	dash := map[string]bool{peerSelfAddr(): true}
+	// Реплика человека, которая ждёт ответа, и счёт таких реплик подряд. Агент
+	// отвечает на пачку замечаний одним сообщением, и цитируется последняя из
+	// пачки, а о самой пачке говорит признак.
+	askText, askKey, askAt := "", "", 0
 	add := func(item reply) {
 		if item.Role == roleThink {
 			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
@@ -923,6 +934,16 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 		}
 		blk++
 		seq++
+		switch {
+		case askedReply(item):
+			askText, askKey = item.Text, item.Key
+			askAt++
+		case answerReply(item) && askAt > 0:
+			item.Quote = peekRunes(askText, quotePeek)
+			item.QuoteKey = askKey
+			item.QuoteMany = askAt > 1
+			askText, askKey, askAt = "", "", 0
+		}
 		out = append(out, item)
 	}
 	text := string(data)
@@ -1161,6 +1182,38 @@ func unwrapPeer(text string) (string, string, bool) {
 		name = f[1]
 	}
 	return strings.TrimSpace(m[2]), name, true
+}
+
+// askedReply отвечает, реплика ли это человека. Чужие слова, приехавшие
+// каналом от другого агента, подписаны своим автором и вопросом не считаются.
+func askedReply(r reply) bool {
+	return r.Role == "user" && r.Text != "" && r.Who == ""
+}
+
+// answerReply отвечает, ответ ли это агента человеку. Ходы инструментов,
+// размышления и служебные вставки в счёт не идут, а отправка человеку каналом
+// идёт наравне с обычным пузырём: она и есть ответ.
+func answerReply(r reply) bool {
+	if r.Text == "" {
+		return false
+	}
+	if r.Role == "assistant" {
+		return true
+	}
+	return r.Role == "tool" && r.Human
+}
+
+// quotePeek обрезает цитату: в пузыре она стоит одной строкой, и везти в
+// панель весь абзац человека незачем.
+const quotePeek = 200
+
+func peekRunes(text string, max int) string {
+	said := strings.Join(strings.Fields(text), " ")
+	runes := []rune(said)
+	if len(runes) <= max {
+		return said
+	}
+	return strings.TrimSpace(string(runes[:max])) + "..."
 }
 
 // dashSock вынимает адрес дашборда из рамки, которой он принёс реплику

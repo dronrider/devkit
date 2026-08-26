@@ -113,9 +113,13 @@ function press(row, target, why) {
   if (rows.length !== drafts.length) {
     fail("на телефонном табе «Черновики» строк " + rows.length + ", ждал " + drafts.length);
   }
-  const row = browserKids(rows[1]);
-  const title = allByClass(row, "st")[0];
-  press(row, title, "на строку телефонного таба");
+  // Строка ищется по номеру, а не по месту в списке: порядок накопителя
+  // выбирает человек (DK-353), и второй строкой лежит то, что он выбрал.
+  const found = rows.map(browserKids)
+    .find((r) => String((byClass(r, "id") || {}).textContent || "") === "XR-D2");
+  if (!found) fail("записи XR-D2 на телефонном табе нет: " + dump(groups).slice(0, 300));
+  const title = allByClass(found, "st")[0];
+  press(found, title, "на строку телефонного таба");
   await settle();
   if (!String(sandbox.location.hash).includes("draft/XR-D2")) {
     fail("на телефоне строка накопителя не открыла запись: " + sandbox.location.hash);

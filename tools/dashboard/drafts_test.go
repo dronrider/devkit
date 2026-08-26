@@ -1074,3 +1074,39 @@ func TestDraftGroomOrderAndVisibility(t *testing.T) {
 		t.Errorf("имя tmux-сессии разбора потерялось: %+v", rec)
 	}
 }
+
+// Порядок накопителя на экране (DK-353): свежие записи сверху, кнопка о двух
+// положениях в шапке карточки и память выбора в localStorage. Порядок самих
+// утилит при этом прежний, по возрастанию ID: груминг читает накопитель
+// вместе с хвостом доски, и перестановка сбила бы ему пачку.
+func TestStaticDraftsOrder(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{
+		`const DRAFT_SORT_KEY = "devkit.dash.drafts.sort"`,
+		`const DRAFT_SORT_MODES = ["fresh", "title"]`,
+		"свежие сверху",
+		"по заголовку",
+		"function draftsSorted(",
+		"function draftSortBtn(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("порядок накопителя собран не тем блоком: нет %q", want)
+		}
+	}
+	heap := funcBody(t, text, "async function renderDrafts(")
+	if !strings.Contains(heap, "draftsSorted(drafts, draftSort())") {
+		t.Error("список накопителя рисуется порядком ответа сервера, а не выбранным")
+	}
+	if !strings.Contains(heap, "draftSortBtn(") {
+		t.Error("кнопки порядка в шапке накопителя нет")
+	}
+	// Перестановка идёт на месте, без второго похода за списком: данных для
+	// порядка в уже полученном ответе хватает.
+	if strings.Contains(funcBody(t, text, "function draftSortBtn("), "api(") {
+		t.Error("кнопка порядка ходит на сервер: список перебирается на клиенте")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	if !strings.Contains(css, ".chd .dsort{") {
+		t.Error("у кнопки порядка нет своего места в шапке карточки")
+	}
+}

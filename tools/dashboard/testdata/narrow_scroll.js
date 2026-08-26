@@ -59,7 +59,7 @@ const SESS_ROWS = `
   </div>`;
 
 const DRAFT_ROWS = `
-  <div class="chd"><b>Черновики</b><span class="cnt">81</span></div>
+  <div class="chd"><b>Черновики</b><span class="cnt">81 запись</span><button class="dsort" type="button">свежие сверху</button></div>
   <div class="card">
     <div class="srow clicky dsrow">
       <button class="dpick"><span class="dbox"></span></button>

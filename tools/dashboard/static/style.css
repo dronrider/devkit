@@ -410,6 +410,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .chd{display:flex;align-items:center;gap:var(--sp3);padding:var(--sp3) var(--sp4) var(--sp2);flex-wrap:wrap}
 .chd b{font:600 13px var(--sans);color:var(--tx)}
 .chd .cnt{font:500 12px var(--mono);color:var(--tx3)}
+/* порядок накопителя: кнопка о двух положениях уходит к правому краю шапки и
+   на телефоне переносится под счётчик, а не выдавливает его за край */
+.chd .dsort{margin-left:auto;flex:none;padding:3px 10px;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx3);font:500 12px var(--sans);cursor:pointer;white-space:nowrap}
+.chd .dsort:hover{color:var(--tx);border-color:var(--acc)}
 .prog{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;display:flex;flex:1;max-width:300px;min-width:120px}
 .prog i{display:block;height:100%}
 .prog .done{background:var(--run)}

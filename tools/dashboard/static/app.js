@@ -9432,6 +9432,98 @@ async function chatBoardOf(project) {
 // механику, что и конвейер задачи: сессия агента с заказом груминга, после
 // которого строка оказывается в Backlog. Сама запись со своим текстом, ходом
 // разбора и исходом живёт экраном ниже: одно место лучше двух.
+// Порядок накопителя на экране это дело экрана, а не утилиты: taskctl печатает
+// записи по возрастанию ID, и груминг читает их этим порядком, а человек
+// приходит за тем, что записал последним, и ждёт его первой строкой. Положений
+// два, и ходят они по кругу одной кнопкой, тем же приёмом, каким показ
+// архивных разговоров. Сортировка по ID совпала бы с датой (номера растут по
+// времени записи), поэтому вторым порядком стоит заголовок.
+const DRAFT_SORT_KEY = "devkit.dash.drafts.sort";
+const DRAFT_SORT_MODES = ["fresh", "title"];
+const DRAFT_SORT_WORD = { fresh: "свежие сверху", title: "по заголовку" };
+const DRAFT_SORT_TIP = {
+  fresh: "Записи идут от свежих к старым. Нажатие поставит их по заголовку",
+  title: "Записи идут по заголовку по алфавиту. Нажатие вернёт свежие наверх",
+};
+
+function draftSort() {
+  try {
+    const got = localStorage.getItem(DRAFT_SORT_KEY);
+    return DRAFT_SORT_MODES.includes(got) ? got : DRAFT_SORT_MODES[0];
+  } catch (err) {
+    return DRAFT_SORT_MODES[0];
+  }
+}
+
+function keepDraftSort(mode) {
+  try {
+    localStorage.setItem(DRAFT_SORT_KEY, mode);
+  } catch (err) {
+    // Приватное окно браузера запрещает запись: выбор тогда живёт до ухода с
+    // экрана, но список работает.
+  }
+}
+
+function draftSortNext(mode) {
+  const at = DRAFT_SORT_MODES.indexOf(mode);
+  return DRAFT_SORT_MODES[(at + 1) % DRAFT_SORT_MODES.length];
+}
+
+// День записи одной строкой. У записи без строки «записан» поле written пустое,
+// и день выводится из возраста, который taskctl меряет правкой файла: иначе
+// записи с телефона собирались бы кучей в хвосте списка.
+function draftDay(d) {
+  if (d.written) return String(d.written);
+  const days = Number(d.age_days);
+  const at = new Date();
+  at.setDate(at.getDate() - (Number.isFinite(days) ? days : 0));
+  return at.toISOString().slice(0, 10);
+}
+
+// Номер записи из её ID: внутри одного дня он и решает порядок, потому что
+// растёт по времени записи.
+function draftNum(d) {
+  const m = /(\d+)\s*$/.exec(String(d.id || ""));
+  return m ? Number(m[1]) : 0;
+}
+
+function draftsSorted(drafts, mode) {
+  const out = [...drafts];
+  if (mode === "title") {
+    out.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "ru"));
+    return out;
+  }
+  out.sort((a, b) => {
+    const at = draftDay(a);
+    const bt = draftDay(b);
+    if (at !== bt) return at < bt ? 1 : -1;
+    return draftNum(b) - draftNum(a);
+  });
+  return out;
+}
+
+// Кнопка порядка стоит в шапке карточки, справа от счётчика, и говорит,
+// как список лежит сейчас. Своё положение она рисует сама: перебор всего
+// списка ради подписи одной кнопки был бы лишней работой на каждое нажатие.
+function draftSortBtn(onPick) {
+  const btn = el("button", "dsort");
+  btn.type = "button";
+  const say = () => {
+    const mode = draftSort();
+    btn.textContent = DRAFT_SORT_WORD[mode];
+    withTip(btn, DRAFT_SORT_TIP[mode]);
+    btn.setAttribute("aria-label", "Порядок записей: " + DRAFT_SORT_WORD[mode]);
+  };
+  say();
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    keepDraftSort(draftSortNext(draftSort()));
+    say();
+    onPick();
+  });
+  return btn;
+}
+
 const GROOM_HINT = "«Провести груминг» поднимает сессию разбора: она доведёт " +
   "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
   "видны на экране записи.";
@@ -9766,43 +9858,58 @@ async function renderDrafts(project, works) {
   for (const id of [...draftPickSays.keys()]) {
     if (!here.has(id)) draftPickSays.delete(id);
   }
-  const rows = [{
-    key: "drafts-head",
-    sign: String(drafts.length),
-    make: () => {
-      const head = el("div", "chd");
-      head.append(el("b", "", "Черновики"));
-      head.append(el("span", "cnt", drafts.length + " " +
-        plural(drafts.length, "запись", "записи", "записей")));
-      return head;
-    },
-  }];
-  // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
-  // неотрисованной.
-  if (!drafts.length) {
-    const note = r.body.note || "черновиков нет";
-    rows.push({ key: "empty", sign: note, make: () => el("div", "empty", note) });
-  }
-  // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
-  // строки, что изменились, и список не уезжает из-под пальца.
-  for (const d of drafts) {
-    // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
-    // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
-    // подписи строка осталась бы отмеченной при пустом выборе.
-    rows.push({ key: d.id,
-      sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : "") +
-        (draftPick.has(d.id) ? "|pick" : ""),
-      make: () => draftRow(project, d) });
-  }
+  // Карточка списка держится в переменной: переключение порядка перебирает её
+  // строки на месте, не ходя за ними на сервер. Данных для порядка в ответе
+  // хватает, и второй запрос ради перестановки был бы лишним.
+  let cardNode = null;
+  const rowsFor = () => {
+    const head = {
+      key: "drafts-head",
+      sign: drafts.length + "|" + draftSort(),
+      make: () => {
+        const line = el("div", "chd");
+        line.append(el("b", "", "Черновики"));
+        line.append(el("span", "cnt", drafts.length + " " +
+          plural(drafts.length, "запись", "записи", "записей")));
+        if (drafts.length) line.append(draftSortBtn(() => { paintRows(); }));
+        return line;
+      },
+    };
+    const out = [head];
+    // Пустой накопитель говорит словами сервера: пустая карточка неотличима от
+    // неотрисованной.
+    if (!drafts.length) {
+      const note = r.body.note || "черновиков нет";
+      out.push({ key: "empty", sign: note, make: () => el("div", "empty", note) });
+    }
+    // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
+    // строки, что изменились, и список не уезжает из-под пальца.
+    for (const d of draftsSorted(drafts, draftSort())) {
+      // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
+      // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
+      // подписи строка осталась бы отмеченной при пустом выборе.
+      out.push({ key: d.id,
+        sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : "") +
+          (draftPick.has(d.id) ? "|pick" : ""),
+        make: () => draftRow(project, d) });
+    }
+    return out;
+  };
+  const paintRows = () => { if (cardNode) sync(cardNode, rowsFor()); };
+  const rows = rowsFor();
   items.push({
     key: "drafts-card",
     sign: rows.map((row) => row.key + "=" + row.sign).join("\n"),
     make: () => {
       const card = el("div", "card");
-      sync(card, rows);
+      cardNode = card;
+      sync(card, rowsFor());
       return card;
     },
-    fill: (card) => { sync(card, rows); },
+    fill: (card) => {
+      cardNode = card;
+      sync(card, rowsFor());
+    },
   });
   if (drafts.length) {
     items.push({

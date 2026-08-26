@@ -597,6 +597,84 @@ class TestCli(JournalCase):
         self.assertIn("нечего показать", err)
 
 
+# Синтетика пятого сита. Первый текст держит все три приметы разом: двоеточие
+# в середине фразы, довод «иначе» и хвост «а не». Второй везёт одну полную
+# форму «не X, а Y» и больше ничего: это лексика пользователя, и ронять его
+# сито не должно (`task` #21 живого корпуса). Третий чист.
+ТРИ_ПРИМЕТЫ = ("Правило тут одно: доску правит утилита. "
+               "В редактор ходить не надо, иначе строка разъедется. "
+               "Правим строку, а не файл.")
+ПОЛНАЯ_ФОРМА = ("Активацию должно запретить, а не заблокировать получение "
+                "ресурсов. Пользователь открывает форму и видит список задач. "
+                "Список берётся из памяти браузера. Ширина колонки считается "
+                "по последней раскладке. Кнопка стоит справа сверху.")
+ЧИСТЫЙ = ("Пользователь открывает форму и видит список задач. "
+          "Список берётся из памяти браузера. "
+          "Ширина колонки считается по последней раскладке.")
+
+
+class TestСитоПрозы(CorpusCase):
+    """Пятое сито: эталон человеческой прозы не может быть тем, что наш
+    сторож прозы заворачивает как агентское. Четыре сита происхождения на
+    этом тексте молчали, человек ловил его глазами трижды подряд (DK-522)."""
+
+    def test_сторож_прочёлся(self):
+        # Без хука сито молчит, и тогда все проверки ниже проходят пустыми.
+        module, limits = prose.guard()
+        self.assertIsNotNone(module, "hooks/check-prose.py не прочёлся")
+        self.assertEqual(sorted(limits), sorted(prose.GUARD_METRICS))
+
+    def test_три_приметы_помечаются(self):
+        приметы = prose.agent_marks(ТРИ_ПРИМЕТЫ)
+        self.assertEqual(len(приметы), 3, приметы)
+        self.assertTrue(prose.agent_prose(ТРИ_ПРИМЕТЫ))
+
+    def test_полная_форма_не_х_а_у_не_помечается(self):
+        # Замер цели DK-446 относит полную форму к лексике пользователя: у
+        # людей её 2,3 на тысячу слов против 1,5 у агентов. Одной приметы для
+        # пометки мало ровно поэтому.
+        приметы = prose.agent_marks(ПОЛНАЯ_ФОРМА)
+        self.assertEqual([имя for имя, _, _ in приметы],
+                         ["хвост «..., а не Y»"], приметы)
+        self.assertFalse(prose.agent_prose(ПОЛНАЯ_ФОРМА))
+
+    def test_чистый_текст_молчит(self):
+        self.assertEqual(prose.agent_marks(ЧИСТЫЙ), [])
+        self.assertFalse(prose.agent_prose(ЧИСТЫЙ))
+
+    def test_prosecheck_печатает_помеченный_фрагмент(self):
+        self.genre("task", "постановка", [ЧИСТЫЙ, ТРИ_ПРИМЕТЫ, ПОЛНАЯ_ФОРМА])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prose.main(["prosecheck", "--corpus", self.dir])
+        text = out.getvalue()
+        self.assertEqual(code, 1, text)
+        self.assertIn("task #2", text)
+        self.assertNotIn("task #1", text)
+        self.assertNotIn("task #3", text)
+        self.assertIn("проверено: 3, помечено: 1", text)
+
+    def test_collect_считает_помеченных_и_пишет_строку_выгрузки(self):
+        root = tempfile.mkdtemp(prefix="prose-guard-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        project = os.path.join(root, "-Users-x-projects-devkit")
+        os.makedirs(project)
+        with open(os.path.join(project, "s1.jsonl"), "w", encoding="utf-8") as f:
+            for текст in (ТРИ_ПРИМЕТЫ, ПОЛНАЯ_ФОРМА):
+                f.write(json.dumps(entry(текст), ensure_ascii=False) + "\n")
+        out_dir = os.path.join(root, "dump")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prose.main(["collect", "--journals", root, "--min-words", "5",
+                               "--min-hits", "1", "--out", out_dir])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn("с агентской прозой, помечено: 1", out.getvalue())
+        with open(os.path.join(out_dir, "replies.md"), encoding="utf-8") as f:
+            выгрузка = f.read()
+        self.assertIn("проза: довод в той же фразе", выгрузка)
+        self.assertEqual(выгрузка.count("проза: "), 1)
+
+
 class TestКорпусРепозитория(unittest.TestCase):
     """Корпус, который едет с devkit: у каждого жанра свой файл и не меньше
     трёх фрагментов, иначе выборка скилла письма выродится в один и тот же
@@ -711,8 +789,8 @@ class TestКорпусРепозитория(unittest.TestCase):
     def test_два_запуска_без_seed_дают_разные_наборы(self):
         # Так скилл письма и зовут, без --seed. Одинаковая выборка на каждом
         # заходе сделала бы тексты однородными, а seed в тестах эту проверку
-        # обходит стороной. Фрагментов в корпусе 57 (lld 12, readme 14, skill 10,
-        # task 21), и набор режется бюджетом слов, поэтому сравниваются наборы,
+        # обходит стороной. Фрагментов в корпусе 66 (lld 18, readme 15, skill 9,
+        # task 24), и набор режется бюджетом слов, поэтому сравниваются наборы,
         # а не их длина: совпадение двух подряд взятых маловероятно, и повтор
         # прогона ловит вырождение выборки.
         corpus = os.path.join(prose.HERE, "corpus")

@@ -23,6 +23,7 @@
 `repocheck` нашёл совпадение.
 """
 import argparse
+import importlib.util
 import json
 import os
 import random
@@ -251,6 +252,83 @@ def typo_marks(text):
         if знак in text and имя not in out:
             out.append(имя)
     return out
+
+
+# Пятое сито: текст, который наш сторож прозы считает агентским. Первые четыре
+# смотрят, откуда текст приехал, и на трёх находках подряд оказались слепы:
+# человек ловил агентскую фразу глазами там, где журналы, репозиторий, повтор
+# и типографика молчали (последняя находка это `skill` #4, приёмка DK-522).
+# Зацепка тут не в происхождении, а в самом тексте: эталон человеческой прозы
+# не может быть тем, что `hooks/check-prose.py` заворачивает как агентское.
+#
+# Считает приметы сам хук, своих счётчиков сито не заводит. Взяты три метрики,
+# по которым замер цели DK-446 развёл колонки дальше всего, и порог у каждой
+# это блокирующий порог конфига, то есть агентская колонка замера.
+GUARD_METRICS = ("argued", "colon_mid", "but_not_tail")
+# Помечает не одна примета, а две. Одна метрика выше агентской колонки на
+# коротком фрагменте это частота, скачущая от одной фразы: в живом корпусе
+# таких шесть, и все шесть тексты человека. Полная форма «не X, а Y» это
+# лексика пользователя, и на ней одной фрагмент не падает (`task` #21, хвост
+# 11,0 при пороге 5). У отвергнутого `skill` #4 приметы все три разом.
+GUARD_MARKS = 2
+_guard = []
+
+
+def guard():
+    """Возврат (модуль сторожа, пороги) или (None, None), когда его нет.
+
+    Хук лежит в `hooks/check-prose.py`, имя с дефисом обычным импортом не
+    берётся. Пороги приезжают из `kit/prose.toml` тем же чтением, что у самого
+    хука: разъехавшись, они перестали бы значить агентскую колонку замера."""
+    if _guard:
+        return _guard[0]
+    root = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+    hooks = os.path.join(root, "hooks")
+    path = os.path.join(hooks, "check-prose.py")
+    try:
+        if hooks not in sys.path:
+            sys.path.insert(0, hooks)
+        spec = importlib.util.spec_from_file_location("check_prose", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        conf, gaps = module.read_config()
+        if conf is None:
+            raise RuntimeError("; ".join(gaps))
+        limits = {k: conf.block[k] for k in GUARD_METRICS}
+    except (OSError, ImportError, AttributeError, RuntimeError):
+        _guard.append((None, None))
+        return _guard[0]
+    _guard.append((module, limits))
+    return _guard[0]
+
+
+def agent_marks(text):
+    """Приметы агентской прозы в тексте: список (название, значение, порог).
+
+    Пустой список значит, что сторож смолчал. None значит, что сторожа нет и
+    сито не работало: молчание сита и его отсутствие это разные вещи."""
+    module, limits = guard()
+    if module is None:
+        return None
+    _, values = module.measure(text)
+    out = []
+    for key in GUARD_METRICS:
+        if values[key] > limits[key]:
+            out.append((module.BY_KEY[key].title, values[key], limits[key]))
+    return out
+
+
+def agent_prose(text):
+    """Правда, когда сторож насчитал две приметы из трёх."""
+    marks = agent_marks(text)
+    return bool(marks) and len(marks) >= GUARD_MARKS
+
+
+def marks_line(marks):
+    """Строка про приметы для выгрузки и отчёта."""
+    return ", ".join("%s %s при пороге %d"
+                     % (имя, ("%.1f" % v).replace(".", ","), порог)
+                     for имя, v, порог in marks)
 
 
 def borrowed(root, stamps):
@@ -491,7 +569,8 @@ def collect(root, min_words):
     обойтись. Черновик агента лежит в соседнем журнале, а какие подписи
     искать, известно только после первого прохода."""
     stat = {"journals": 0, "replies": 0, "service": 0, "short": 0,
-            "borrowed": 0, "template": 0, "typo": 0, "kept": 0}
+            "borrowed": 0, "template": 0, "typo": 0, "agent": 0, "kept": 0,
+            "guard": agent_marks("") is not None}
     seen = set()
     rows = []
     stamps = {}
@@ -540,6 +619,8 @@ def collect(root, min_words):
         stat["kept"] += 1
         if typo_marks(text):
             stat["typo"] += 1
+        if agent_prose(text):
+            stat["agent"] += 1
         out.append((name, date, text))
     return out, stat
 
@@ -595,6 +676,9 @@ def write_dump(out_dir, candidates, words_top):
             знаки = typo_marks(text)
             if знаки:
                 head += "типографика: %s\n" % ", ".join(знаки)
+            приметы = agent_marks(text)
+            if приметы and len(приметы) >= GUARD_MARKS:
+                head += "проза: %s\n" % marks_line(приметы)
             f.write(head + "\n" + text + "\n\n")
     words_file = os.path.join(out_dir, "dictionary.md")
     with open(words_file, "w", encoding="utf-8") as f:
@@ -726,6 +810,10 @@ def cmd_collect(args):
     print("переносов чужого черновика отсеяно: %d" % stat["borrowed"])
     print("шаблонных раздач отсеяно: %d" % stat["template"])
     print("с чужой типографикой, помечено: %d" % stat["typo"])
+    if stat["guard"]:
+        print("с агентской прозой, помечено: %d" % stat["agent"])
+    else:
+        print("сторож прозы не прочёлся, сито агентской прозы не работало")
     print("кандидатов: %d" % stat["kept"])
     top = dictionary(candidates, args.min_hits)
     print("словарь: %d слов от %d реплик" % (len(top), args.min_hits))
@@ -763,24 +851,59 @@ def check_texts(index, root, items):
     return out
 
 
-def cmd_repocheck(args):
-    root = os.path.abspath(os.path.expanduser(args.repo))
-    index = repo_index(root)
+def items_of(args):
+    """Список (имя, дата, текст) по выгрузке сборщика или по корпусу.
+
+    Оба сита, что смотрят на готовый текст, ходят по одному и тому же
+    материалу: либо кандидаты из выгрузки, либо фрагменты корпуса."""
     items = []
     if args.dump:
         for num, journal, date, text in read_dump(args.dump):
             items.append(("выгрузка #%d, %s" % (num, journal), date, text))
-    else:
-        corpus = read_corpus(args.corpus)
-        for genre in sorted(corpus):
-            title, fragments = corpus[genre]
-            for i, f in enumerate(fragments, 1):
-                said = ""
-                m = re.search(r"(\d{4}-\d{2}-\d{2})", f.get("источник", ""))
-                if m:
-                    said = m.group(1)
-                items.append(("%s #%d (%s)" % (genre, i, f.get("источник", "")),
-                              said, f["body"]))
+        return items
+    corpus = read_corpus(args.corpus)
+    for genre in sorted(corpus):
+        _, fragments = corpus[genre]
+        for i, f in enumerate(fragments, 1):
+            said = ""
+            m = re.search(r"(\d{4}-\d{2}-\d{2})", f.get("источник", ""))
+            if m:
+                said = m.group(1)
+            items.append(("%s #%d (%s)" % (genre, i, f.get("источник", "")),
+                          said, f["body"]))
+    return items
+
+
+def cmd_prosecheck(args):
+    """Пятое сито по готовому тексту, командой рядом с `repocheck`.
+
+    Сито помечает, а не режет: решает человек, как и с типографикой. Возврат 1
+    при находках, чтобы прогон было видно и в скрипте."""
+    module, limits = guard()
+    if module is None:
+        print("сторож прозы не прочёлся: жду hooks/check-prose.py и "
+              "kit/prose.toml рядом с ним", file=sys.stderr)
+        return 2
+    items = items_of(args)
+    print("пороги агентской колонки: %s"
+          % ", ".join("%s %d" % (module.BY_KEY[k].title, limits[k])
+                      for k in GUARD_METRICS))
+    помечено = 0
+    for имя, _, text in items:
+        приметы = agent_marks(text)
+        if len(приметы) < GUARD_MARKS:
+            continue
+        помечено += 1
+        print("\n%s\n  примет %d из %d: %s"
+              % (имя, len(приметы), len(GUARD_METRICS), marks_line(приметы)))
+    print("\nпроверено: %d, помечено: %d" % (len(items), помечено))
+    return 1 if помечено else 0
+
+
+def cmd_repocheck(args):
+    root = os.path.abspath(os.path.expanduser(args.repo))
+    index = repo_index(root)
+    items = items_of(args)
     print("текстов репозитория: %d, цепочек: %d" % (len(repo_texts(root)), len(index)))
     hits = check_texts(index, root, items)
     for hit in hits:
@@ -825,6 +948,12 @@ def main(argv=None):
     p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))
     p.add_argument("--dump", default="")
     p.set_defaults(func=cmd_repocheck)
+
+    p = sub.add_parser("prosecheck",
+                       help="сверка фрагментов со сторожем прозы")
+    p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))
+    p.add_argument("--dump", default="")
+    p.set_defaults(func=cmd_prosecheck)
 
     p = sub.add_parser("sample", help="случайный набор фрагментов корпуса")
     p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))

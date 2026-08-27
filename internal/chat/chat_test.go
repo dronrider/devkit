@@ -47,6 +47,35 @@ func TestPutSkipsTheLyingCopy(t *testing.T) {
 	}
 }
 
+// Отмена снимает свою строку и не трогает чужие: человек отменил недоставленную
+// реплику в панели, и во входе её остаться не должно, иначе она уедет агенту
+// первым же ходом (живой случай DK-466).
+func TestDropTakesOwnLineOnly(t *testing.T) {
+	tree := t.TempDir()
+	mustPut(t, tree, "task-XR-1", TaskLine(at(), "отменяемая реплика"))
+	mustPut(t, tree, "task-XR-1", TaskLine(at(), "чужая реплика"))
+	gone, err := Drop(tree, "task-XR-1", "отменяемая реплика")
+	if err != nil || gone != 1 {
+		t.Fatalf("снято строк %d: %v", gone, err)
+	}
+	rest := ReadLines(Path(tree, "task-XR-1"))
+	if len(rest) != 1 || Said(rest[0]) != "чужая реплика" {
+		t.Fatalf("во входе осталось %v, ожидал одну чужую реплику", rest)
+	}
+	// Второй отмены той же реплике не досталось: строку уже сняли, и молчание
+	// тут честнее ошибки.
+	if gone, err := Drop(tree, "task-XR-1", "отменяемая реплика"); err != nil || gone != 0 {
+		t.Fatalf("повторная отмена сняла %d строк: %v", gone, err)
+	}
+	// Опустевший вход убирается целиком, как убирает его подхват.
+	if _, err := Drop(tree, "task-XR-1", "чужая реплика"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(Path(tree, "task-XR-1")); !os.IsNotExist(err) {
+		t.Fatalf("опустевший вход остался: %v", err)
+	}
+}
+
 // Ждущий забирает своё и только своё: безадресную строку и адресованную себе.
 // Реплика чужой сессии остаётся лежать, её разнесёт подхват своим ходом.
 func TestTakeLeavesForeignLines(t *testing.T) {

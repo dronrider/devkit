@@ -192,6 +192,41 @@ func Put(tree, name, text, line string) (lying string, err error) {
 	return "", nil
 }
 
+// Drop снимает из входа разговора строки с этой репликой. Человек отменил
+// недоставленное, и лежать ему в очереди больше незачем: отмена в панели без
+// этого убирала пузырь с экрана, а строка оставалась во входе и уезжала агенту
+// первым же ходом. Сверка та же, что у Put: своя копия узнаётся по хвосту
+// строки. Возвращает число снятых строк, ноль значит, что реплику уже забрал
+// подхват.
+func Drop(tree, name, text string) (int, error) {
+	src := Path(tree, name)
+	if len(ReadLines(src)) == 0 {
+		return 0, nil
+	}
+	lock, err := Lock(filepath.Join(Root(tree), name+LockSuffix))
+	if err != nil {
+		return 0, err
+	}
+	defer lock.Close()
+	lines := ReadLines(src)
+	keep := make([]string, 0, len(lines))
+	gone := 0
+	for _, l := range lines {
+		if strings.HasSuffix(l, ": "+text) || l == text {
+			gone++
+			continue
+		}
+		keep = append(keep, l)
+	}
+	if gone == 0 {
+		return 0, nil
+	}
+	if err := writeLines(src, keep); err != nil {
+		return 0, fmt.Errorf("вход разговора не переписался: %v", err)
+	}
+	return gone, nil
+}
+
 // Take забирает из входа строки, которые причитаются ждущей сессии sid:
 // безадресные и адресованные ей самой. Остальные остаются лежать, их разнесёт
 // подхват своим ходом. Пустой возврат значит, что говорить пока нечего.

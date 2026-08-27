@@ -391,7 +391,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow .tt{font:400 13.5px var(--sans);color:var(--tx)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
-.trow .meta>.cin{gap:10px;justify-content:flex-end}
+/* Кнопки жмутся к началу колонки, а не к её концу: место у каждой своё, и
+   кнопка работы обязана стоять на одном и том же месте во всякой строке. С
+   прижимом вправо она уезжала на ширину кнопки там, где у строки не было трёх
+   точек, и глаз ловил именно это (замечание пользователя про непонятную
+   главную кнопку). */
+.trow .meta>.cin{gap:8px;justify-content:flex-start}
 /* действия строки: главная кнопка, «Стоп» у идущей работы и три точки с
    остальным. Ряд стоит своей коробкой, а не россыпью в ячейке, потому что от
    него отсчитывается место выпавшего меню */

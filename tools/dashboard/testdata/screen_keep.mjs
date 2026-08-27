@@ -1176,8 +1176,8 @@ for (const [list, note, why] of [
 // Фокус переживает подъём работы (DK-349, DK-316): кнопки строки лежат одним
 // рядом на одной глубине, и позиционный путь focusSnap/focusBack
 // (app.js:82-113) после смены состава кнопок попадает в кнопку той же строки, а
-// не мимо неё. Главной кнопкой у поднятой работы становится чат, и фокус
-// остаётся на первой кнопке ряда, то есть на нём.
+// не мимо неё. Первой в ряду стоит кнопка работы, и у поднятой работы это
+// «Стоп»: место у кнопок своё, меняется только то, что они делают.
 harnessList = [harnessOne];
 harnessNote = "";
 running = false;
@@ -1198,8 +1198,8 @@ const degLive = find(groups, "XR-6");
 const degStop = button(degLive, "Стоп");
 if (!degStop) fail("вырожденная строка не показала Стоп после запуска: " + dump(degLive));
 const degTalk = button(degLive, "Чат по задаче XR-6");
-if (!degTalk) fail("у поднятой работы пропала главная кнопка чата: " + dump(degLive));
-if (doc.activeElement !== degTalk) {
+if (!degTalk) fail("у поднятой работы пропала кнопка чата: " + dump(degLive));
+if (doc.activeElement !== degStop) {
   fail("подъём работы увёл фокус мимо кнопок строки: " + dump(doc.activeElement));
 }
 running = false;

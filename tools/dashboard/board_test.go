@@ -116,9 +116,13 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 // 2026-08-13 21:21).
 func TestStaticRowActionGuardsSecondPress(t *testing.T) {
 	act := funcBody(t, readFile(t, filepath.Join("static", "app.js")), "function rowAction(")
-	for _, want := range []string{"btn.disabled = true", "btn.disabled = false"} {
-		if !strings.Contains(act, want) {
-			t.Errorf("в rowAction нет %q: второе нажатие снова уйдёт вторым запуском", want)
+	// Кнопка работы делает три разных дела (стоп, продолжение, запуск), и
+	// погашена обязана быть каждое: считается не наличие строки, а число, иначе
+	// новая ветка приезжала бы без защиты молча.
+	for _, want := range []string{"main.disabled = true", "main.disabled = false"} {
+		if got := strings.Count(act, want); got < 3 {
+			t.Errorf("в rowAction %q стоит %d раз при трёх делах кнопки работы: "+
+				"второе нажатие снова уйдёт вторым запуском", want, got)
 		}
 	}
 }
@@ -1632,6 +1636,46 @@ func TestBoardTableHeadFitsRow(t *testing.T) {
 		}
 		if got["gripw"] <= 0 {
 			t.Errorf("в разделе «%s» ручка тяги нулевой ширины: мышью в неё не попасть", tab.word)
+		}
+	}
+}
+
+// Кнопка работы стоит на одном и том же месте во всякой строке доски, и ряд
+// кнопок влезает в свою колонку. Пользователь забраковал прежний вид словами
+// «логика главной кнопки непонятна»: главную кнопку выбирало невидимое
+// состояние строки, у одних строк In progress первой стояла кнопка чата, у
+// других запуск. Кнопки развели по местам, но одного порядка в разметке мало:
+// прижатый вправо ряд уезжал на ширину кнопки там, где трёх точек у строки не
+// было, и глаз ловил именно это.
+//
+// Разбором стилей такое не берётся: место кнопки складывается из ширины
+// колонки, отступов ячейки, зазоров ряда и того, куда ряд жмётся.
+func TestBoardRowActionsAligned(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("движка нет: замер колонки действий пропущен")
+	}
+	dir, page := chromeStand(t, "tbl_acts.js", tblColsJSON(t))
+	for _, win := range []string{"1400,900", "1100,900"} {
+		got := chromeMeasure(t, chrome, dir, page, win, "tasks")
+		if got["rows"] != 2 {
+			t.Fatalf("замер на окне %s не собрался: %v", win, got)
+		}
+		t.Logf("окно %s: %v", win, got)
+		if got["btns0"] != 2 || got["btns1"] != 3 {
+			t.Fatalf("стенд собрал не тот состав кнопок (%d и %d): замер говорил бы "+
+				"о другой строке", got["btns0"], got["btns1"])
+		}
+		if got["workoff"] != 0 {
+			t.Errorf("на окне %s кнопка работы разъехалась между строками на %d точек: "+
+				"место у неё обязано быть одно, иначе по строке не сказать, что даст нажатие",
+				win, got["workoff"])
+		}
+		// Колонка вмещает свой ряд кнопок: вылезший за кромку ряд наезжает на
+		// дату соседней колонки.
+		if got["spill"] > 0 {
+			t.Errorf("на окне %s ряд кнопок вылез за колонку на %d точек при её ширине %d",
+				win, got["spill"], got["cellw"])
 		}
 	}
 }

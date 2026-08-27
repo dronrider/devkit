@@ -155,20 +155,19 @@ console.log("экран задачи: пустая полоса действий
 // третьего ответа, other («исполнителя не видно»), у признака больше нет, он
 // попадал ровно в те задачи, которые человек вёл из дашборда.
 {
-  // Продолжение работы уехало под три точки: главной кнопкой у строки с
-  // разговором стоит чат, а места в колонке под четыре кнопки нет.
-  const opened = (box) => {
-    const dots = byClass(box, "rdots");
-    if (!dots) fail("у строки нет кнопки с тремя точками: " + dump(box));
-    dots.handlers.click({ stopPropagation: () => {} });
-    return byClass(box, "rmenu");
+  // Продолжение работы стоит кнопкой работы, первой в колонке: место кнопки от
+  // состояния строки не зависит, а зависит от него только то, что она делает.
+  const work = (box) => {
+    const btn = byClass(box, "rmain") || byClass(box, "rstop");
+    if (!btn) fail("у строки нет кнопки работы: " + dump(box));
+    return btn;
   };
   const ours = sandbox.rowAction("demo", { id: "XR-1", title: "наша работа", run: "gone" }, "in-progress");
-  if (!deepBtn(opened(ours), "Продолжить")) {
+  if (work(ours).attrs["aria-label"] !== "Продолжить") {
     fail("у нашей кончившейся сессии нет продолжения: " + dump(ours));
   }
   const live = sandbox.rowAction("demo", { id: "XR-1", title: "живой чат", run: "session" }, "in-progress");
-  if (!deepBtn(opened(live), "Продолжить")) {
+  if (work(live).attrs["aria-label"] !== "Продолжить") {
     fail("у живого чата задачи нет продолжения: " + dump(live));
   }
   if (dump(live).includes("ведёт другая сессия")) {
@@ -221,9 +220,10 @@ console.log("строка доски: своя работа продолжает
 // это был бы второй исполнитель на ту же строку (жалоба на DK-460).
 {
   const ours = sandbox.rowAction("demo", { id: "XR-9", title: "грумили", run: "gone" }, "in-progress");
-  byClass(ours, "rdots").handlers.click({ stopPropagation: () => {} });
-  const go = deepBtn(byClass(ours, "rmenu"), "Продолжить");
-  if (!go) fail("у кончившейся сессии пропало продолжение: " + dump(ours));
+  const go = byClass(ours, "rmain");
+  if (!go || go.attrs["aria-label"] !== "Продолжить") {
+    fail("у кончившейся сессии пропало продолжение: " + dump(ours));
+  }
   posted.length = 0;
   go.handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -235,7 +235,7 @@ console.log("строка доски: своя работа продолжает
   }
 }
 
-// --- строка Check: одна кнопка, без выбора подписки ---
+// --- строка Check: кнопка приёмки, и выбор запуска тот же, что у прочих ---
 {
   const row = { id: "XR-5", title: "проверенная", sect: "check", accept: "mixed", harness: "glm" };
   const bar = sandbox.rowAction("demo", row, "check");
@@ -243,11 +243,16 @@ console.log("строка доски: своя работа продолжает
   if (!btn || btn.attrs["aria-label"] !== "Проверить и закрыть") {
     fail("кнопки «Проверить и закрыть» на строке Check нет: " + dump(bar));
   }
-  // Подписка у проверенной строки прикреплена, и выбирать её меню не
-  // предлагает: список отвечал бы не на тот вопрос.
-  byClass(bar, "rdots").handlers.click({ stopPropagation: () => {} });
-  if (allByClass(byClass(bar, "rmenu"), "hrow").length) {
-    fail("выбор подписки остался у строки Check: " + dump(bar));
+  // Подписок на машине этого стенда нет вовсе, и выбирать нечего ни одной
+  // строке. Сторожится тут именно это: набор кнопок у строки Check тот же, что
+  // у строки очереди, и прикреплённая подписка его больше не режет (замечание
+  // пользователя о разном выборе по секциям).
+  const kinds = (box) => allByClass(box, "btn").map((b) => String(b.className)
+    .split(" ").filter((c) => c.startsWith("r")).join(".")).join(" | ");
+  const queue = sandbox.rowAction("demo", { id: "XR-8", title: "в очереди" }, "backlog");
+  if (kinds(bar) !== kinds(queue)) {
+    fail("набор кнопок у Check и у очереди разный: «" + kinds(bar) + "» против «" +
+      kinds(queue) + "»");
   }
   if (!String(btn.title || "").includes("glm")) {
     fail("подсказка не называет подписку задачи: " + btn.title);

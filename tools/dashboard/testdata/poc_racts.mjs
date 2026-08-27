@@ -3,12 +3,17 @@
 // В колонке стояли четыре кнопки разом: составная кнопка запуска с выбором
 // подписки и яруса, чат, «Продолжить» и «Стоп». Колонка занимала 246 точек,
 // больше, чем номер, ранг и дата вместе, а выбор подписки человек делает раз в
-// десяток запусков. Кнопка теперь одна главная и всегда та, что нужна строке:
-// у задачи с разговором это чат, у нетронутой очереди запуск. Рядом остаётся
-// «Стоп» у идущей работы, остальное лежит под тремя точками.
+// десяток запусков, и всё лишнее уехало под три точки.
 //
-// Предмет стенда: чем работает главная кнопка, виден ли стоп, закрывается ли
-// меню тремя путями и не пропало ли со строки хоть одно действие.
+// Следом выяснилось, что главную кнопку выбирало невидимое состояние строки: у
+// одних строк In progress стоял чат, у других запуск, и разницу давала запись
+// работы, которая на строке ничем не подписана («логика главной кнопки
+// непонятна», замечание пользователя). Теперь место кнопки не зависит ни от
+// чего: слева кнопка работы, справа кнопка разговора, дальше три точки.
+//
+// Предмет стенда: порядок кнопок один у всякой строки, кнопка работы делает то,
+// что обещает подписью, чат стоит у каждой строки, меню закрывается тремя
+// путями и ни одно действие со строки не пропало.
 //
 // Зовётся: node testdata/poc_racts.mjs static/app.js
 
@@ -41,6 +46,7 @@ const fresh = { id: "XR-1", title: "нетронутая очередь", sect: 
 const talked = { id: "XR-2", title: "наша сессия кончилась", sect: "in-progress", run: "gone" };
 const living = { id: "XR-3", title: "живой чат задачи", sect: "in-progress", run: "session" };
 const busy = { id: "XR-4", title: "идёт конвейером", sect: "in-progress", run: "tmux" };
+const check = { id: "XR-7", title: "на приёмке", sect: "check", accept: "human" };
 
 const main = (box) => byClass(box, "rmain");
 const dots = (box) => byClass(box, "rdots");
@@ -51,30 +57,66 @@ const chat = (box) => allByClass(box, "btn")
 const press = (node) => node.handlers.click({ stopPropagation: () => {} });
 const last = () => calls[calls.length - 1];
 
-// --- главная кнопка меняется по состоянию строки ---
+// --- места кнопок одни и те же у всякой строки ---
+//
+// Первой стоит кнопка работы, второй кнопка разговора. Прежде первой была то
+// одна, то другая, и решала это запись работы за строкой, которой на строке не
+// видно.
 {
-  const box = sandbox.rowAction("demo", fresh, "backlog");
-  if (!main(box)) fail("у строки без разговора главная кнопка не запуск: " + dump(box));
-  if (chat(box) === main(box)) fail("нетронутой очереди подана кнопка чата вместо запуска");
-  if (String(main(box).attrs["aria-label"]) !== "Выполнить") {
-    fail("запуск не назван подписью для чтения с экрана: " + main(box).attrs["aria-label"]);
-  }
-  for (const row of [talked, living, busy]) {
-    const one = sandbox.rowAction("demo", row, "in-progress");
-    if (main(one)) fail("у строки с разговором главной осталась кнопка запуска: " + row.id);
-    const talk = chat(one);
-    if (!talk) fail("у строки с разговором нет кнопки чата: " + dump(one));
-    if (one.children[0] !== talk) {
-      fail("чат у строки с разговором стоит не главной кнопкой: " + row.id);
+  for (const [row, sect] of [[fresh, "backlog"], [talked, "in-progress"],
+    [living, "in-progress"], [busy, "in-progress"], [check, "check"]]) {
+    const box = sandbox.rowAction("demo", row, sect);
+    const work = main(box) || stop(box);
+    if (!work) fail("у строки нет кнопки работы: " + row.id + ", " + dump(box));
+    if (box.children[0] !== work) {
+      fail("кнопка работы стоит не первой: " + row.id + ", " + dump(box));
+    }
+    const talk = chat(box);
+    if (!talk) fail("у строки нет кнопки разговора: " + row.id + ", " + dump(box));
+    if (box.children[1] !== talk) {
+      fail("кнопка разговора стоит не второй: " + row.id + ", " + dump(box));
     }
   }
 }
 
-// --- у идущей работы рядом с главной кнопкой стоит стоп ---
+// --- кнопка работы делает то, что обещает подписью ---
+{
+  // Нетронутая очередь: запуск конвейером.
+  const box = sandbox.rowAction("demo", fresh, "backlog");
+  if (String(main(box).attrs["aria-label"]) !== "Выполнить") {
+    fail("запуск не назван подписью для чтения с экрана: " + main(box).attrs["aria-label"]);
+  }
+  // Строка Check зовётся своим словом: приёмка это не «Выполнить».
+  const done = sandbox.rowAction("demo", check, "check");
+  if (String(main(done).attrs["aria-label"]) !== "Проверить и закрыть") {
+    fail("у строки Check кнопка работы названа не приёмкой: " + main(done).attrs["aria-label"]);
+  }
+  // Разговор за строкой уже есть: кнопка зовётся «Продолжить» и ходит своей
+  // ручкой, а не заводит второго исполнителя конвейером (жалоба на DK-460).
+  for (const row of [talked, living]) {
+    const one = sandbox.rowAction("demo", row, "in-progress");
+    if (String(main(one).attrs["aria-label"]) !== "Продолжить") {
+      fail("у строки с разговором кнопка работы названа не продолжением: " + row.id);
+    }
+    calls.length = 0;
+    press(main(one));
+    await settle();
+    if (!last() || !last().path.endsWith("/continue")) {
+      fail("продолжение пошло не той ручкой: " + row.id + ", " + JSON.stringify(calls));
+    }
+    if (calls.some((c) => c.path.endsWith("/runs"))) {
+      fail("продолжение завело второго исполнителя конвейером: " + row.id);
+    }
+  }
+}
+
+// --- у идущей работы кнопкой работы стоит стоп ---
 {
   const box = sandbox.rowAction("demo", busy, "in-progress");
   const off = stop(box);
   if (!off) fail("у идущей работы пропал стоп: " + dump(box));
+  if (box.children[0] !== off) fail("стоп стоит не на месте кнопки работы: " + dump(box));
+  if (main(box)) fail("у идущей работы рядом со стопом остался запуск: " + dump(box));
   if (String(off.attrs["aria-label"]) !== "Стоп") {
     fail("стоп не назван подписью для чтения с экрана: " + off.attrs["aria-label"]);
   }
@@ -93,7 +135,7 @@ const last = () => calls[calls.length - 1];
   }
 }
 
-// --- колонка держит две кнопки, а не четыре ---
+// --- колонка держит три кнопки, а не четыре ---
 {
   const wide = (key) => {
     const col = allByClass(sandbox.tblColgroup("tasks"), "cw-" + key)[0];
@@ -101,7 +143,9 @@ const last = () => calls[calls.length - 1];
     if (!m) fail("ширина колонки «" + key + "» не читается из colgroup");
     return Number(m[1]);
   };
-  if (wide("act") > 110) fail("колонка действий шире рубежа: " + wide("act"));
+  // Рубеж стоит по трём кнопкам значками с зазорами и боковыми отступами
+  // ячейки: больше в колонке нечему стоять.
+  if (wide("act") > 140) fail("колонка действий шире рубежа: " + wide("act"));
   if (wide("act") > wide("rank") + wide("date")) {
     fail("колонка действий снова шире ранга с датой вместе: " + wide("act"));
   }
@@ -111,8 +155,8 @@ const last = () => calls[calls.length - 1];
     // Считаются кнопки самой колонки: пункты меню лежат под тремя точками и
     // места в строке не занимают.
     const shown = allByClass(box, "btn").filter((b) => !byClass(menu(box) || box, b.className));
-    if (allByClass(box, "btn").length > 2) {
-      fail("в колонке снова больше двух кнопок (" + row.id + "): " +
+    if (allByClass(box, "btn").length > 3) {
+      fail("в колонке снова больше трёх кнопок (" + row.id + "): " +
         allByClass(box, "btn").map((b) => b.className).join(" | "));
     }
     if (!shown.length) fail("строка осталась вовсе без действия: " + row.id);
@@ -150,22 +194,28 @@ const last = () => calls[calls.length - 1];
 
 // --- ни одно действие со строки не пропало ---
 {
-  // Очередь: запуск главной кнопкой, чат и выбор подписки с ярусом в меню.
+  // Очередь: запуск кнопкой работы, разговор своей кнопкой, выбор подписки с
+  // уровнем модели под тремя точками.
   const box = sandbox.rowAction("demo", fresh, "backlog");
   calls.length = 0;
   press(main(box));
   await settle();
   if (!last() || last().way !== "POST" || !last().path.endsWith("/runs")) {
-    fail("запуск главной кнопкой не ушёл: " + JSON.stringify(calls));
+    fail("запуск кнопкой работы не ушёл: " + JSON.stringify(calls));
   }
   if (last().body.tier) fail("дашборд назвал ярус за вердикт: " + JSON.stringify(last().body));
+  // Пункт «Чат по задаче» из меню убран: он открывал ровно тот же разговор, что
+  // и кнопка рядом, и человек считал его входом в новый чат (замечание
+  // пользователя).
   press(dots(box));
-  const talk = deepBtn(menu(box), "Чат по задаче");
-  if (!talk) fail("чата в меню очереди нет: " + dump(menu(box)));
-  press(talk);
+  if (deepBtn(menu(box), "Чат по задаче")) {
+    fail("чат вернулся вторым входом в меню: " + dump(menu(box)));
+  }
+  press(dots(box));
+  press(chat(box));
   await settle();
   if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes("XR-1")) {
-    fail("чат из меню открыл не тот разговор: " + sandbox.location.hash);
+    fail("кнопка разговора открыла не тот чат: " + sandbox.location.hash);
   }
   // Подписка с ярусом: выбор яруса, потом строка подписки, и запуск уезжает
   // обоими ответами разом.
@@ -180,21 +230,15 @@ const last = () => calls[calls.length - 1];
   }
   if (!menu(two).hidden) fail("запуск из меню его не закрыл");
 
-  // Работа наша, но конвейером не идёт: продолжение лежит в меню и ходит своей
-  // ручкой, а не заводит второго исполнителя запуском.
-  for (const row of [talked, living]) {
-    const one = sandbox.rowAction("demo", row, "in-progress");
-    press(dots(one));
-    const go = deepBtn(menu(one), "Продолжить");
-    if (!go) fail("продолжения работы в меню нет: " + row.id + ", " + dump(menu(one)));
-    calls.length = 0;
-    press(go);
+  // Разговор открывается со всякой строки, чем бы она ни была занята: правило
+  // «чат есть у каждой задачи» объясняется одной фразой.
+  for (const [row, sect] of [[talked, "in-progress"], [living, "in-progress"],
+    [busy, "in-progress"], [check, "check"]]) {
+    const one = sandbox.rowAction("demo", row, sect);
+    press(chat(one));
     await settle();
-    if (!last() || !last().path.endsWith("/continue")) {
-      fail("продолжение пошло не той ручкой: " + JSON.stringify(calls));
-    }
-    if (calls.some((c) => c.path.endsWith("/runs"))) {
-      fail("продолжение завело второго исполнителя конвейером: " + row.id);
+    if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes(row.id)) {
+      fail("кнопка разговора у строки " + row.id + " открыла не тот чат: " + sandbox.location.hash);
     }
   }
 }
@@ -208,9 +252,11 @@ const last = () => calls[calls.length - 1];
   if (!String(btn.title || "").includes("сначала XR-1")) {
     fail("причина блока не названа подсказкой: " + btn.title);
   }
-  press(dots(box));
-  if (!deepBtn(menu(box), "Чат по задаче")) {
-    fail("у заблокированной строки пропал чат: " + dump(menu(box)));
+  // Разговор у неё остаётся своей кнопкой: строку нельзя запустить, но спросить
+  // по ней есть о чём.
+  if (!chat(box)) fail("у заблокированной строки пропал чат: " + dump(box));
+  if (box.children[1] !== chat(box)) {
+    fail("у заблокированной строки чат стоит не на своём месте: " + dump(box));
   }
 }
 

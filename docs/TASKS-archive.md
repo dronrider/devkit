@@ -337,3 +337,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-533 | Сторож прозы: хвост не ловит защищённую форму, пороги без RULES v1 | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-533.md](tasks/archive/2026/DK-533.md) |
 | DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 2026-08-26 | [tasks/archive/2026/DK-313.md](tasks/archive/2026/DK-313.md) |
 | DK-522 | Корпус эталонов прозы: фрагменты из журналов и трекеров, словарь, жанры [приёмка: mixed] | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-522.md](tasks/archive/2026/DK-522.md) |
+| DK-525 | Мимикрия в правилах шлёт к корпусу эталонов, а не к текстам проекта | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-525.md](tasks/archive/2026/DK-525.md) |

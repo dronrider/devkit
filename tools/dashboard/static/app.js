@@ -1644,6 +1644,76 @@ function keepTblSort(sect, now) {
 // ничего.
 const TBL_COL_MIN = 32;
 const TBL_COL_MAX = 460;
+// Нижний предел растяжимой колонки. Своей ширины у неё нет, она подбирает
+// остаток строки, и без этого предела соседи забирали остаток до нуля: таблица
+// с table-layout:fixed становится шире карточки на всю сумму колонок, кнопки
+// уезжают на фон страницы, а номер задачи режется слева (снимок пользователя).
+const TBL_FLEX_MIN = 160;
+// Запасная мера места, когда мерить нечего: боковая колонка проекта и поля
+// страницы. Настоящее место меряется живым списком, это число работает до
+// первой сборки экрана.
+const TBL_ROOM_SIDE = 320;
+
+// Место, в которое таблица обязана уложиться: она стоит во всю ширину списка
+// разделов, и сумма колонок больше этой ширины уводит строку за карточку.
+// Меряется живой список, а не окно: панель разговора, боковая колонка и поля
+// страницы съедают своё, и складывать их числами тут значило бы держать копию
+// раскладки.
+function tblRoom() {
+  const box = typeof document !== "undefined" && document.getElementById
+    ? document.getElementById("groups")
+    : null;
+  const live = box ? Number(box.clientWidth) || 0 : 0;
+  if (live > 0) return live;
+  const win = typeof window !== "undefined" && Number(window.innerWidth) || 0;
+  return win > 0 ? Math.max(TBL_COL_MIN, win - TBL_ROOM_SIDE) : 0;
+}
+
+// Сколько места остаётся колонке key, если прочие стоят как стоят. Растяжимой
+// оставляется её нижний предел: место при тяге берётся у соседей, а не у
+// таблицы, и упор границы это ровно тот случай, когда брать больше не у кого.
+function tblCap(sect, widths, key) {
+  const cols = TBL_COLS[sect] || [];
+  const room = tblRoom();
+  if (!room) return TBL_COL_MAX;
+  let others = 0;
+  let flex = 0;
+  for (const col of cols) {
+    if (col.flex) {
+      flex = TBL_FLEX_MIN;
+      continue;
+    }
+    if (col.key !== key) others += Number(widths[col.key]) || 0;
+  }
+  return Math.max(TBL_COL_MIN, room - flex - others);
+}
+
+// Уложить ширины в место таблицы. Нужно это на чтении: числа в памяти человек
+// натянул на широком мониторе, а открыть страницу может на узкой, и тогда
+// сохранённое не влезает ни в какую тягу. Лишнее снимается долями с тех
+// колонок, которым есть что отдать, чтобы ужималась широкая, а не узкая.
+function tblFitWidths(sect, widths) {
+  const cols = (TBL_COLS[sect] || []);
+  const keys = cols.filter((col) => !col.flex).map((col) => col.key);
+  const room = tblRoom();
+  if (!room || !keys.length) return widths;
+  const left = room - (cols.some((col) => col.flex) ? TBL_FLEX_MIN : 0);
+  const sum = () => keys.reduce((was, key) => was + widths[key], 0);
+  // Проходов немного и они конечны: каждый либо снимает всё лишнее, либо
+  // упирает часть колонок в нижний предел и уменьшает делимое.
+  for (let pass = 0; pass < 8; pass++) {
+    const over = sum() - left;
+    if (over <= 0) break;
+    const give = keys.filter((key) => widths[key] > TBL_COL_MIN);
+    const free = give.reduce((was, key) => was + widths[key] - TBL_COL_MIN, 0);
+    if (!free) break;
+    for (const key of give) {
+      const part = Math.ceil(over * (widths[key] - TBL_COL_MIN) / free);
+      widths[key] = Math.max(TBL_COL_MIN, widths[key] - Math.min(part, over));
+    }
+  }
+  return widths;
+}
 
 // Ширины колонок раздела, какими их оставил человек. Чужие ключи и мусор из
 // хранилища отбрасываются молча: ширина это удобство, и падать из-за неё
@@ -1669,7 +1739,10 @@ function tblWidths(sect) {
       ? Math.min(TBL_COL_MAX, Math.max(TBL_COL_MIN, Math.round(px)))
       : col.w;
   }
-  return out;
+  // Память держит то, что человек натянул, а место называет экран: ужимает
+  // чтение, а не запись, иначе один заход с ноутбука обрезал бы ширины
+  // навсегда.
+  return tblFitWidths(sect, out);
 }
 
 function keepTblWidths(sect, widths) {
@@ -1685,6 +1758,10 @@ function keepTblWidths(sect, widths) {
 // сотня, а перерисовка списка идёт по кругу, и вписывать сетку в каждую
 // значило бы переписывать её на каждом тике опроса. Правило сетки лежит в css
 // один раз и читает эти переменные, а узкий экран их просто не спрашивает.
+function tblWidthsAll() {
+  for (const sect of Object.keys(TBL_COLS)) tblWidthsPut(sect);
+}
+
 function tblWidthsPut(sect) {
   const widths = tblWidths(sect);
   const root = document.documentElement;
@@ -1743,9 +1820,13 @@ function tblGrip(sect, aim, onDone) {
   let from = 0;
   let was = 0;
   const move = (ev) => {
-    const px = Math.min(TBL_COL_MAX,
-      Math.max(TBL_COL_MIN, was + (Number(ev.clientX) - from) * aim.sign));
     const widths = tblWidths(sect);
+    // Верхний упор считается по месту таблицы, а не одним числом на все
+    // колонки: тяга обязана останавливаться там, где растяжимой колонке
+    // остаётся её нижний предел, иначе строка вылезает за карточку.
+    const cap = Math.min(TBL_COL_MAX, tblCap(sect, widths, aim.key));
+    const px = Math.min(cap,
+      Math.max(TBL_COL_MIN, was + (Number(ev.clientX) - from) * aim.sign));
     widths[aim.key] = Math.round(px);
     keepTblWidths(sect, widths);
     tblWidthsPut(sect);
@@ -6173,6 +6254,10 @@ function chatClamp(w) {
 function putChatWidth(w) {
   const px = chatClamp(w);
   document.documentElement.style.setProperty("--cw", px + "px");
+  // Панель отнимает ширину у доски рядом, и место таблицы становится другим:
+  // колонки укладываются в него тут же, иначе строка вылезала бы за карточку
+  // на всё время, пока панель открыта.
+  tblWidthsAll();
   return px;
 }
 
@@ -13453,6 +13538,11 @@ window.addEventListener("hashchange", () => {
 // Доска перечитывается по фокусу окна, как решил LLD: событийного источника
 // у неё нет, а постоянный опрос ест батарею телефона.
 window.addEventListener("focus", () => { refresh().catch(console.error); });
+// Место под таблицу меняется не одной перерисовкой: окно тянут за угол, экран
+// поворачивают, панель разговора забирает половину ширины. Ширины при этом
+// перекладываются на месте, без пересборки списка: числа лежат переменными
+// корня, и поставить их заново дешевле, чем собрать строки.
+window.addEventListener("resize", tblWidthsAll);
 // Поле поиска в шапке живёт разметкой, а не сборкой экрана: шапка стоит над
 // любым из них, и перерисовка доски поле не задевает.
 wireFindField(document.getElementById("hq"), document.getElementById("hq-clear"));

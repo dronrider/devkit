@@ -70,7 +70,9 @@ const cls = (node) => String((node && node.className) || "");
   }
   // Кнопка чата стоит последней, после даты: порядок назвал пользователь.
   const meta = kids[4];
-  const inner = (byClass(meta, "cin") || meta).children || [];
+  // Кнопки хвоста лежат общей коробкой racts, той же, что у строки доски.
+  const rack = byClass(meta, "racts") || byClass(meta, "cin") || meta;
+  const inner = rack.children || [];
   const last = inner[inner.length - 1];
   if (!cls(last).includes("btn")) fail("последней в строке стоит не кнопка чата: " + dump(meta));
 }

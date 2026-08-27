@@ -113,6 +113,14 @@ func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []jso
 				if mark, err := json.Marshal(info.ModTime().Format(draftDateLayout)); err == nil {
 					m["moved"] = mark
 				}
+				// Точное время правки едет рядом с днём: в ячейке стоит день, а
+				// подсказка показывает час с минутой и давность («идиотская
+				// подпись» вместо точной даты, замечание пользователя). День
+				// остаётся отдельным полем: по нему список сортируется, и
+				// разбирать секунды ради порядка незачем.
+				if mark, err := json.Marshal(info.ModTime().Unix()); err == nil {
+					m["moved_at"] = mark
+				}
 			}
 		}
 		var id string

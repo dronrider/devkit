@@ -2116,6 +2116,68 @@ func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
 	}
 }
 
+// Повтор недоставленной реплики: строка уже лежит в очереди задачи, и ответ
+// обязан сказать это, оставшись при том же признаке недоставки. Живой случай
+// DK-466: повтор уходил мимо общего разбора, без undelivered, панель считала
+// реплику доставленной, снимала пузырь, и лента пустела совсем.
+func TestTaskMessageRepeatStaysUndelivered(t *testing.T) {
+	e, c := parkedEnv(t)
+	first := body(t, postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована"))
+	if !strings.Contains(first, `"undelivered":true`) {
+		t.Fatalf("первая отправка не названа недоставленной: %s", first)
+	}
+	resp := postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("повтор: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"undelivered":true`) {
+		t.Errorf("повтор назван доставленным, панель снимет пузырь и опустеет: %s", text)
+	}
+	if !strings.Contains(text, `"repeat":true`) {
+		t.Errorf("повтор не назван повтором: %s", text)
+	}
+	if !strings.Contains(text, "уже лежит") {
+		t.Errorf("ответ не говорит человеку, что реплика уже в очереди: %s", text)
+	}
+	// Второй строки повтор не завёл: очередь по-прежнему из одной реплики.
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	if got := strings.Count(src, "а почему задача заблокирована"); got != 1 {
+		t.Fatalf("строк в очереди %d, ожидалась одна:\n%s", got, src)
+	}
+}
+
+// Отмена недоставленной реплики снимает её из очереди задачи: убрать пузырь с
+// экрана мало, лежащая строка уехала бы агенту первым же ходом.
+func TestTaskMessageDeleteDropsLine(t *testing.T) {
+	e, c := parkedEnv(t)
+	postTaskMessage(t, c, e, "XR-7", "отменяемая реплика").Body.Close()
+	postTaskMessage(t, c, e, "XR-7", "остающаяся реплика").Body.Close()
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/tasks/XR-7/message",
+		`{"text": "отменяемая реплика"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отмена: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"dropped":1`) {
+		t.Errorf("ответ не назвал снятую строку: %s", text)
+	}
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	if strings.Contains(src, "отменяемая реплика") {
+		t.Fatalf("отменённая реплика осталась в очереди:\n%s", src)
+	}
+	if !strings.Contains(src, "остающаяся реплика") {
+		t.Fatalf("отмена снесла чужую строку:\n%s", src)
+	}
+	// Отмена того, чего уже нет, это не ошибка: строку забрал ход агента, и так
+	// человеку и сказано.
+	again := body(t, doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/tasks/XR-7/message",
+		`{"text": "отменяемая реплика"}`))
+	if !strings.Contains(again, `"dropped":0`) || !strings.Contains(again, "уже нет") {
+		t.Errorf("повторная отмена отвечает не тем: %s", again)
+	}
+}
+
 // Обратный случай: ведущая сессия жива, строку заберёт она, и недоставленной
 // реплика не считается.
 func TestTaskMessageDeliveredWithLead(t *testing.T) {
@@ -2131,6 +2193,24 @@ func TestTaskMessageDeliveredWithLead(t *testing.T) {
 	if strings.Contains(text, `"undelivered":true`) {
 		t.Errorf("реплика названа недоставленной при живой ведущей сессии: %s", text)
 	}
+}
+
+// Повтор и отмена недоставленной реплики на экране: пузырь остаётся на месте и
+// говорит, что реплика уже в очереди, а отмена снимает её и из самой очереди.
+// Предмет проверки это поведение панели, поэтому статика поднимается в node с
+// заглушкой DOM (стенд testdata/poc_taskretry.mjs). Без node шаг пропускается:
+// узел стенда, а не рабочей части.
+func TestStaticTaskRetryKeepsBubble(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд повтора реплики пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskretry.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("повтор недоставленной реплики: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }
 
 // Реплика в задачу без ведущей сессии на экране: пузырь стоит недоставленным с

@@ -36,6 +36,34 @@
   --rad1:6px;
   --rad2:8px;
   --rad3:10px;
+  /* Вид строки списка. Три раздела доски собирались разными заходами и
+     разошлись по мелочам: зазор кнопок в хвосте стоял 8 точек у задач и 9 у
+     сессий с черновиками, заголовок строки шёл кеглем 13.5, 14 и 13, чипы
+     стояли через 8 точек и через 7 («стиль отображения контента разный на всех
+     табах», замечание пользователя). Дальше величина у них одна, и правит её
+     одно число, а не три правила разделов. */
+  --rowpy:11px;   /* вертикальный отступ ячейки */
+  --rowpx:12px;   /* боковой отступ ячейки */
+  --rowpl:24px;   /* отступ первой ячейки: в нём висит кружок состояния */
+  --rowpr:16px;   /* отступ последней ячейки, кромка карточки */
+  --rowgap:8px;   /* зазор внутри ряда ячейки */
+  --actgap:8px;   /* зазор между кнопками в хвосте строки */
+  --chipgap:8px;  /* зазор между чипами */
+  --rowfs:13.5px; /* кегль заголовка строки */
+  --rowfw:400;    /* насыщенность заголовка строки */
+  --subfs:11px;   /* кегль подписи: дата, приписка под заголовком */
+  --icob:30px;    /* кнопка со значком */
+  --icosvg:16px;  /* сам значок внутри неё */
+  /* Поля и зазоры строки в телефонной раскладке: там ячейки раскладываются по
+     областям, и поля держит сама строка. Число тут тоже одно на три раздела:
+     прежде строки стояли полями 12/14, 10/14 и 14/15. */
+  --rowmpy:12px;
+  --rowmpx:14px;
+  --rowmgy:6px;
+  --rowmgx:10px;
+  /* Левое поле строки доски: в нём висит кружок состояния, и место под него
+     шире обычного поля. */
+  --rowmpl:25px;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -211,10 +239,14 @@ a:hover{text-decoration:underline}
 /* мягко моргающая рамка кнопки чата: у задачи идёт работа, и разговор с ней
    есть где смотреть. Панель при этом не открывается сама: запуск, открывавший
    её, выбрасывал человека из чужого разговора */
-.chatlive{border-color:var(--run)}
+/* Моргание кнопки разговора красится основным цветом пульта, тем же, каким
+   красится кнопка запуска (--acc): на зелёном --run метка терялась на тёмном
+   фоне строки, и человек её не замечал. Такт медленный нарочно, две с половиной
+   секунды на полный оборот: заметно, но не мельтешит. */
+.chatlive{border-color:var(--acc)}
 @media (prefers-reduced-motion:no-preference){
-  .chatlive{animation:dklive 2.6s ease-in-out infinite}
-  @keyframes dklive{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--run) 40%,transparent)}55%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .chatlive{animation:dklive 2.5s ease-in-out infinite}
+  @keyframes dklive{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--acc) 70%,transparent);border-color:var(--acc)}55%{box-shadow:0 0 0 6px transparent;border-color:color-mix(in oklab,var(--acc) 50%,var(--line2))}100%{box-shadow:0 0 0 0 transparent;border-color:var(--acc)}}
 }
 /* дорожка моргания ожидания: её берёт кружок состояния «ждёт ответа» в строке
    сессии. На кнопке чата такого кружка нет, он дублировал чип ожидания */
@@ -388,22 +420,24 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* кружок состояния висит слева от номера, в отступе ячейки: встань он в поток,
    номера строк с работой и без разъехались бы по колонке */
 .trow .id .sdot{position:absolute;top:calc(50% - 4.5px);left:8px}
-.trow .tt{font:400 13.5px var(--sans);color:var(--tx)}
+.trow .tt{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
+/* Коробка чипов одна на все разделы: у задач, у записи накопителя и у строки
+   сессии чипы стоят одинаково и одним зазором. */
+.rchips{display:flex;align-items:center;gap:var(--chipgap);flex:none}
 /* Кнопки жмутся к началу колонки, а не к её концу: место у каждой своё, и
    кнопка работы обязана стоять на одном и том же месте во всякой строке. С
    прижимом вправо она уезжала на ширину кнопки там, где у строки не было трёх
    точек, и глаз ловил именно это (замечание пользователя про непонятную
    главную кнопку). */
-.trow .meta>.cin{gap:8px;justify-content:flex-start}
+.trow .meta>.cin{gap:var(--actgap);justify-content:flex-start}
 /* действия строки: главная кнопка, «Стоп» у идущей работы и три точки с
    остальным. Ряд стоит своей коробкой, а не россыпью в ячейке, потому что от
    него отсчитывается место выпавшего меню */
-.racts{display:inline-flex;position:relative;align-items:center;gap:8px}
+.racts{display:inline-flex;position:relative;align-items:center;gap:var(--actgap)}
 .racts .pmenu{right:0;top:34px}
 .racts .pmenu.up{top:auto;bottom:calc(100% + 6px)}
-.stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
+.stale{font:400 var(--subfs) var(--sans);color:var(--tx3);white-space:nowrap}
 /* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
    приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Прокрутку
    под взятой строкой стили не держат: touch-action браузер читает в момент
@@ -452,7 +486,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    во всю ширину */
 .grun{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .grun .btn{width:auto}
-.srow .st,.dsrow .st{font:400 13px var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .st,.dsrow .st{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow.done .st{color:var(--tx3)}
 .srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
 /* экран выдачи поиска (#проект/find/<запрос>): поле во всю ширину стоит на
@@ -498,10 +532,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* экран «Агенты» (#/agents, макет «08 Агенты»): работы всех досок одним
    списком, заголовок задачи первым, время и действия справа */
-.arow>td{vertical-align:top;padding-top:15px;padding-bottom:15px}
 /* кружок состояния лежит в ячейке колонки: инлайновому span ширина с высотой
    не указ, и без блочной подачи он пропадал с экрана вовсе */
-.arow .dot{display:inline-block;margin-top:6px}
+/* Кружок хода висит в боковом отступе ячейки, как висит кружок строки доски:
+   колонке тогда не нужна ширина под него, ей хватает своих полей, и кружки
+   двух разделов стоят на одной вертикали. */
+.arow .live{position:relative}
+.arow .live .dot{position:absolute;left:8px;top:calc(50% - 4.5px)}
+.arow .dot{display:inline-block}
 .arow .dot-other{background:var(--check)}
 /* кружки состояния работы: зелёный только у идущего хода, ожидание янтарное,
    простой серый. Зелёным горела всякая живая сессия, и молчащие часами окна
@@ -512,15 +550,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .dot-wait{animation:dkwait 2.2s ease-out infinite}
 }
 .ab{min-width:0;overflow:hidden}
-.ab .l1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.ab .l1 .tt{font:500 14px var(--sans);color:var(--tx)}
+.ab .l1{display:flex;align-items:center;gap:var(--rowgap);flex-wrap:wrap}
+.ab .l1 .tt{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx)}
 /* подпись сессии несёт путь и команду без пробелов: неразрывный кусок шире
    строки уносил раздел в горизонтальную прокрутку, поэтому такие слова
    разрываются по месту */
-.ab .l2{margin-top:5px;font:400 12px var(--sans);color:var(--tx3);overflow-wrap:anywhere}
-.arow .aacts>.cin{gap:9px;justify-content:flex-end}
+.ab .l2{margin-top:var(--sp1);font:400 var(--subfs) var(--sans);color:var(--tx3);overflow-wrap:anywhere}
+.arow .aacts>.cin{justify-content:flex-end}
 .aacts .stale{max-width:210px;white-space:normal;text-align:right}
-.atime{font:500 12px var(--mono);color:var(--tx2);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;padding-top:3px}
 .empty b{display:block;font:600 14px var(--sans);color:var(--tx2);margin-bottom:5px}
 
 /* экран заведения (#проект/new, макет «07 Заведение»): форма одна на задачу и
@@ -802,7 +839,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   /* телефон: заголовок строки идёт своей строкой во всю ширину, чипы под ним.
      В одном ряду с ним чипы ширины не отдают, и от длинного названия остаётся
      столбик обрубков по букве */
-  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
   .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
   .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
   .trow .meta>.cin{justify-content:flex-start;flex-wrap:wrap}
@@ -1155,13 +1192,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 /* приписки строки накопителя жмутся вправо одной строкой и на телефоне: у
    строки доски они уезжают под заголовок, а тут это разорванная строка */
-.dsrow .sm>.cin{justify-content:flex-end;flex-wrap:nowrap;gap:9px}
+.dsrow .sm>.cin{justify-content:flex-end;flex-wrap:nowrap}
 /* наименование ужимается многоточием, а не переносом: полный текст показывает
    подсказка, и на узком экране строка остаётся одной. Приписки едут в той же
    ячейке: колонка названия и так забирает остаток строки, и стоять поодаль им
    негде */
 .dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.dtt .rchips{display:flex;align-items:center;gap:7px;flex:none}
 /* телефон: кнопка запуска разбора остаётся рядом с полем модели, а не растёт
    во всю ширину полосы, как растут кнопки заведения */
 .grun .btn{width:auto}
@@ -1596,8 +1632,8 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 /* полоска работ вместо ленты сессий на экране проекта */
 
 /* кнопка чата в строке доски: значок вместо слова, рядом стоит «Продолжить» */
-.btn-ico{width:30px;padding:0;flex:none}
-.btn-ico svg{width:16px;height:16px}
+.btn-ico{width:var(--icob);padding:0;flex:none}
+.btn-ico svg{width:var(--icosvg);height:var(--icosvg)}
 
 /* плашка клина: разговор выглядит живым, а хода в нём нет */
 
@@ -1685,16 +1721,16 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    ячейки, и в пять точек подпись читалась приклеенной к разделителю
    («текст колонок стоит слишком близко к разделителю», замечание
    пользователя). Число сторожит рубеж tblSideMin в board_test.go. */
-.tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:12px;padding-right:12px}
-.tbl th:first-child,.tbl td:first-child{padding-left:24px}
-.tbl th:last-child,.tbl td:last-child{padding-right:16px}
-.tbl td{vertical-align:middle;padding-top:11px;padding-bottom:11px;
+.tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:var(--rowpx);padding-right:var(--rowpx)}
+.tbl th:first-child,.tbl td:first-child{padding-left:var(--rowpl)}
+.tbl th:last-child,.tbl td:last-child{padding-right:var(--rowpr)}
+.tbl td{vertical-align:middle;padding-top:var(--rowpy);padding-bottom:var(--rowpy);
   border-top:1px solid var(--line)}
 .tbl thead+tbody>tr:first-child>td{border-top:none}
 /* Ряд начинки живёт вложенной коробкой, а не самой ячейкой: table-cell с чужим
    display перестаёт быть ячейкой таблицы, движок заворачивает её в безымянную,
    и колонка уезжает. */
-.tbl td>.cin{display:flex;align-items:center;gap:8px;min-width:0}
+.tbl td>.cin{display:flex;align-items:center;gap:var(--rowgap);min-width:0}
 
 /* Шапка ростом со строку и с симметричными отступами: полторы строки высоты с
    разными полями сверху и снизу человек забраковал. Рост держит одно число,
@@ -1715,6 +1751,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 
 /* ручка тяги стоит на самой границе колонок и ростом с шапку: полоска видна
    всегда слабой чертой, под курсором наливается цветом */
+/* Колонка состояния подписи не носит: шапка у неё это кнопка порядка со
+   значком, и левое поле ей достаточно обычного, а не расширенного под кружок. */
+.h-sess .tblc:first-child{padding-left:var(--rowpx)}
 .tblg{position:absolute;top:0;right:-4px;width:8px;height:100%;
   cursor:col-resize;touch-action:none;z-index:2}
 .tblg::after{content:"";position:absolute;left:3px;top:9px;bottom:9px;width:2px;
@@ -1735,7 +1774,7 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .dpick{vertical-align:middle;flex:none}
 .dsrow .dimp .chip{min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* возраст и дата последней активности стоят вровень с заголовком работы */
-.arow .atime,.arow .amoved{min-width:0;overflow:hidden;padding-top:16px}
+.arow .amoved{min-width:0;overflow:hidden}
 
 /* крестик закрытия сессии: взведённая кнопка видна наливом, а вопрос стоит
    подсказкой. Слово «Точно закрыть?» на значок не помещается */
@@ -1788,8 +1827,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
      как они стоят у записи накопителя. Отдельной строкой под названием они
      держали целую полосу под два значка, и строка доски росла втрое
      (замечание пользователя про раздутую строку в мобильном виде). */
-  .tbl>tbody>tr.trow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 10px;
-    padding:12px 14px 12px 25px;align-items:center}
+  .tbl>tbody>tr.trow{display:grid;grid-template-columns:auto auto 1fr auto;
+    gap:var(--rowmgy) var(--rowmgx);
+    padding:var(--rowmpy) var(--rowmpx) var(--rowmpy) var(--rowmpl);align-items:center}
   /* кружок висит слева от номера, в отступе строки, и кромка ячейки его не
      режет: на широком экране он стоит внутри отступа, а тут снаружи */
   .trow .id{grid-column:1;grid-row:1;overflow:visible}
@@ -1797,14 +1837,15 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .rank{grid-column:2;grid-row:1;min-width:0}
   .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
   .trow .tt{grid-column:1 / -1;grid-row:2}
-  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:6px}
+  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
   .trow .meta{grid-column:4;grid-row:1}
   .trow .meta>.cin{justify-content:flex-end;flex-wrap:nowrap}
   /* накопитель ложится тем же ритмом, что и строка доски: отметка с важностью,
      номер и дата первой строкой, название второй во всю ширину. Приписки едут
      под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */
-  .tbl>tbody>tr.dsrow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 10px;
-    padding:10px 14px;align-items:center}
+  .tbl>tbody>tr.dsrow{display:grid;grid-template-columns:auto auto 1fr auto;
+    gap:var(--rowmgy) var(--rowmgx);
+    padding:var(--rowmpy) var(--rowmpx);align-items:center}
   .dsrow .dimp{grid-column:1;grid-row:1}
   .dsrow .dimp>.cin{flex-wrap:nowrap}
   .dsrow .id{grid-column:2;grid-row:1}
@@ -1813,17 +1854,20 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .dsrow .dtt{grid-column:1 / -1;grid-row:2;overflow:hidden}
   .dsrow .dtt>.cin{display:block}
   .dsrow .dtt .st{display:block;white-space:normal;line-height:1.35}
-  .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;max-width:100%}
+  .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:var(--rowmgy);margin-top:var(--rowmgy);max-width:100%}
   .dsrow .dtt .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   /* сессии: состояние, работа и возраст одной строкой, дата активности второй,
      кнопки под ними */
-  .tbl>tbody>tr.arow{display:grid;grid-template-columns:18px 1fr auto;gap:8px 12px;
-    padding:14px 15px}
+  .tbl>tbody>tr.arow{display:grid;grid-template-columns:18px 1fr auto;
+    gap:var(--rowmgy) var(--rowmgx);
+    padding:var(--rowmpy) var(--rowmpx)}
   .arow>td{padding-top:0;padding-bottom:0;vertical-align:baseline}
   .arow .live{grid-column:1;grid-row:1}
   .arow .ab{grid-column:2;grid-row:1}
-  .arow .atime{grid-column:3;grid-row:1;text-align:right;padding-top:0}
-  .arow .amoved{grid-column:2 / -1;grid-row:2;text-align:right;padding-top:0}
+  .arow .amoved{grid-column:3;grid-row:1;text-align:right}
   .arow .aacts{grid-column:1 / -1;grid-row:3;width:100%}
   .arow .aacts>.cin{flex-wrap:wrap;justify-content:flex-start}
+  /* кнопки в телефонной строке тянутся во всю ширину: коробка хвоста отдаёт им
+     свою ширину, а зазор между ними тот же, что и на широком экране */
+  .arow .aacts .racts{width:100%}
 }

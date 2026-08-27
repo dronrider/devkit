@@ -1181,11 +1181,33 @@ function rowTalks(row) {
 // конвейеру не привязан, и правило от этого объясняется одной фразой, «чат есть
 // у каждой задачи». Прежде она то стояла главной, то пряталась в меню, и один и
 // тот же пункт «Чат по задаче» открывал ровно тот же разговор, что и кнопка.
+// Работа строки среди тех, что видит экран: разговор о задаче работой не
+// считается, он строку не ведёт.
+function rowWork(row, works) {
+  if (!row || !row.id) return null;
+  return (works || shownWorks || []).find((w) => w && w.id === row.id && !w.talk) || null;
+}
+
+// Идёт ли работа строки прямо сейчас нашей tmux-сессией. Спрашивается это у
+// состояния работы, а не у пути, которым её узнали: цель приезжает реестром
+// (via=registry), и по этому пути у идущей цели вместо «Стопа» вставало
+// «Продолжить», а нажатие увело бы вводную продолжения в живую сессию посреди
+// её хода (замечание пользователя, цель DK-446).
+function rowOurRun(row, works) {
+  if (row && row.run === "tmux") return true;
+  const w = rowWork(row, works);
+  return Boolean(w && w.own && w.tmux && w.live === WORK_BUSY);
+}
+
 function rowAction(project, row, sect) {
   const grp = el("span", "racts");
   const live = row.run && row.run !== "gone";
-  // Работа наша и идёт нашей tmux-сессией: её снимают со строки.
-  const ours = live && row.run === "tmux";
+  // Работа наша и идёт нашей сессией: её снимают со строки.
+  const ours = rowOurRun(row);
+  // Ход идёт, но сессия не наша: снимать нечего, а продолжение уехало бы в
+  // живой ход посторонней сессии. Кнопка тут стоит погашенной с причиной.
+  const work = rowWork(row);
+  const busy = !ours && Boolean(work) && work.live === WORK_BUSY;
   const talks = rowTalks(row);
   // Пункты меню собираются до кнопки: пусто в меню значит, что и трёх точек у
   // строки нет.
@@ -1206,6 +1228,14 @@ function rowAction(project, row, sect) {
       main.disabled = true;
       stopRun(project, row.id).catch(console.error).finally(() => { main.disabled = false; });
     });
+  } else if (busy) {
+    const label = actionLabel(sect);
+    main = el("button", "btn btn-sm btn-ico rmain");
+    main.append(icon("i-play"));
+    main.disabled = true;
+    main.setAttribute("aria-label", label);
+    withTip(main, label + ": по строке идёт ход, и вводная продолжения уехала бы в живую "
+      + "сессию посреди него. Сессия эта не наша, и снять её отсюда нечем.");
   } else if (talks) {
     const label = actionLabel(sect);
     main = el("button", "btn btn-sm btn-acc btn-ico rmain");
@@ -1362,7 +1392,7 @@ function renderRow(project, row, sect, opts) {
   const when = el("td", "twhen");
   if (row.moved) {
     when.append(withTip(el("span", "stale dashed", row.moved),
-      "дата последней правки задачи на доске: перевод в статус двигает её же"));
+      whenTip(row.moved)));
   }
   tr.append(when);
   const { cell: metac, box: meta } = tblCell("meta");
@@ -1554,17 +1584,18 @@ const TBL_COLS = {
     { key: "act", label: "", w: 136 },
   ],
   sess: [
-    // Колонка зовётся «Ход», а не «Состояние»: несёт она кружок в девять точек,
-    // а длинному слову с значком порядка нужна была шапка в 136 точек, и колонка
-    // раздувалась под собственную подпись, а не под содержимое.
-    { key: "live", label: "Ход", by: "ходу работы", first: "asc", w: 80 },
+    // У колонки состояния подписи нет вовсе, как у колонки действий: несёт она
+    // кружок в девять точек, а слово в шапке требовало под себя восьмидесяти,
+    // и пользователь сказал, что под эту колонку занято слишком много места.
+    // Сортировка осталась: шапка тут кнопка без слова, а что она делает,
+    // говорит подсказка. Сам кружок стоит в отступе ячейки ровно там же, где
+    // стоит кружок строки доски.
+    { key: "live", label: "", by: "ходу работы", first: "asc", w: 36 },
     { key: "title", label: "Работа", by: "названию работы", first: "asc", flex: true },
-    // Возраст сессии бывает и «меньше минуты», и «123 ч 45 мин»: ширина стоит
-    // по самому длинному из них, иначе колонка режет собственный ответ.
-    { key: "age", label: "Идёт", by: "времени работы", first: "desc", w: 120 },
-    // Дата последней содержательной реплики. Возраст в колонке «Идёт» отвечает
-    // на другой вопрос: он про то, сколько сессия живёт, а не про то, когда в
-    // ней последний раз что-то сказали (замечание пользователя).
+    // Дата последней содержательной реплики. Колонки возраста сессии рядом
+    // больше нет: «Идёт» и «Активность» человек прочитал как одно и то же, а
+    // полезна вторая (сессия висит третьи сутки и замолчала час назад). Возраст
+    // не потерян, он уехал в подсказку этой же даты.
     { key: "moved", label: "Активность", by: "последней активности", first: "desc", w: 124 },
     // Действия сессии те же двумя значками, что и у строки доски: чат и снятие.
     { key: "act", label: "", w: 92 },
@@ -1928,6 +1959,9 @@ function tblHead(sect, onPick) {
   cols.forEach((col, at) => {
     const cell = el("th", "tblc");
     cell.setAttribute("scope", "col");
+    // Ключ колонки стоит в разметке: по нему колонку находят стенды и правила
+    // стилей, а подпись у колонки состояния пустая, и звать её больше нечем.
+    cell.setAttribute("data-col", col.key);
     if (!col.first) {
       cell.append(el("span", "tbln", col.label || ""));
     } else {
@@ -1938,7 +1972,11 @@ function tblHead(sect, onPick) {
       if (on) btn.append(icon(now.dir === "asc" ? "i-unfold" : "i-fold"));
       // Подсказка говорит, что случится от нажатия, и говорит по-русски:
       // прежнее «Поставить список по колонке» человек читать отказался.
-      const say = on ? "Развернуть порядок" : "Сортировать по " + col.by;
+      // Колонка без подписи говорит подсказкой, что она такое: слова в шапке у
+      // неё нет вовсе, и «развернуть порядок» само по себе ничего не называет.
+      const say = on
+        ? (col.label ? "Развернуть порядок" : "Развернуть порядок по " + col.by)
+        : "Сортировать по " + col.by;
       withTip(btn, say);
       btn.setAttribute("aria-label", say);
       btn.addEventListener("click", (ev) => {
@@ -3816,8 +3854,7 @@ async function renderTask(project, works, id, pre) {
   const crumbChips = [el("span", "idsm", row.id)];
   if (row.section) crumbChips.push(el("span", "chip", row.section));
   if (row.moved) {
-    crumbChips.push(withTip(el("span", "stale dashed", row.moved),
-      "дата последней правки задачи на доске: перевод в статус двигает её же"));
+    crumbChips.push(withTip(el("span", "stale dashed", row.moved), whenTip(row.moved)));
   }
 
   // Закрытая задача открывается чтением: строки на доске у неё нет, править
@@ -4042,6 +4079,65 @@ function localDayKey(stamp) {
   const d = new Date(stamp);
   if (!stamp || isNaN(d.getTime())) return String(stamp || "").slice(0, 10);
   return d.toDateString();
+}
+
+// Метка времени из того, что приехало с сервера: сессии и накопитель шлют
+// unix-секунды, доска шлёт голый день («2026-08-20»), потому что дату строки
+// считает taskctl по git blame и времени в ней нет. Точность едет вместе с
+// меткой: чего сервер не сказал, того подсказка не выдумывает.
+function whenStamp(mark) {
+  if (typeof mark === "number" || /^\d+$/.test(String(mark || ""))) {
+    const secs = Number(mark);
+    if (!secs) return null;
+    const at = new Date(secs * 1000);
+    return isNaN(at.getTime()) ? null : { at, exact: true };
+  }
+  const said = String(mark || "");
+  const day = /^(\d{4})-(\d{2})-(\d{2})/.exec(said);
+  if (!day) return null;
+  const at = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+  return isNaN(at.getTime()) ? null : { at, exact: said.length > 10 };
+}
+
+// Давность словами: чем ближе метка, тем она полезнее, и дальше месяца
+// подсказка про неё молчит, там читается сама дата.
+function whenAgo(stamp, now) {
+  const from = Number(now) || Date.now();
+  const mins = Math.floor((from - stamp.at.getTime()) / 60000);
+  if (mins < 0) return "";
+  const days = Math.floor(mins / 60 / 24);
+  if (!stamp.exact) {
+    if (days <= 0) return "сегодня";
+    if (days === 1) return "вчера";
+    return days <= 30 ? days + " " + plural(days, "день", "дня", "дней") + " назад" : "";
+  }
+  if (mins < 1) return "только что";
+  if (mins < 60) return mins + " " + plural(mins, "минуту", "минуты", "минут") + " назад";
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + " " + plural(hours, "час", "часа", "часов") + " назад";
+  return days <= 30 ? days + " " + plural(days, "день", "дня", "дней") + " назад" : "";
+}
+
+// Подсказка даты одна на все списки: точная дата со временем и давность
+// словами. Прежде подсказка объясняла, что это за дата («перевод в статус
+// двигает её же»), а к дате человек наводится за точностью: в ячейке стоит
+// день, времени не видно нигде, а что это за дата, сказано в заголовке колонки
+// (замечание пользователя).
+// Месяц берётся словом из общего списка MONTHS (он же у заголовков дней ленты):
+// подсказка говорит по-русски при любой раскладке браузера, а
+// toLocaleDateString на английской машине отдавал бы «August 20, 2026» рядом с
+// русским «8 дней назад».
+function whenTip(mark, now) {
+  const stamp = whenStamp(mark);
+  if (!stamp) return "";
+  const at = stamp.at;
+  const two = (n) => String(n).padStart(2, "0");
+  const day = at.getDate() + " " + MONTHS[at.getMonth()] + " " + at.getFullYear();
+  const said = stamp.exact
+    ? day + " в " + two(at.getHours()) + ":" + two(at.getMinutes())
+    : day;
+  const ago = whenAgo(stamp, now);
+  return ago ? said + ", " + ago : said;
 }
 
 // Ссылка из реплики: кликается только http и https, а javascript: и data:
@@ -8331,20 +8427,29 @@ function chatStoppable(st) {
 // works приезжают тем же обходом, что нарисовал строку: у строки доски это
 // работы её проекта, у записи накопителя их нет вовсе, и тогда признак берётся
 // у последнего обхода экрана.
-function rowChatBtn(project, row, works) {
-  const talk = el("button", "btn btn-sm btn-ico");
+// Кнопка разговора одна на все три раздела: тот же значок той же величины, та
+// же подсказка по наведению, тот же класс. Строка сессии строила её своим
+// куском кода, и значок чата у неё жил своей жизнью (замечание пользователя про
+// разный вид табов).
+function chatIconBtn(tip, aria, open, lively) {
+  const talk = el("button", "btn btn-sm btn-ico rchat");
   talk.append(icon("i-chat"));
-  // Мягко моргающая рамка: у задачи пошла работа, и разговор с ней есть где
-  // смотреть. Панель при этом никого никуда не уводит, человек решает сам.
-  const lively = taskLively(project, row.id, works || shownWorks);
+  // Мягко моргающая рамка: работа пошла, и разговор с ней есть где смотреть.
+  // Панель при этом никого никуда не уводит, человек решает сам.
   if (lively) talk.classList.add("chatlive");
-  withTip(talk, lively ? "Чат по задаче: работа идёт" : "Чат по задаче");
-  talk.setAttribute("aria-label", "Чат по задаче " + row.id);
+  withTip(talk, tip);
+  talk.setAttribute("aria-label", aria);
   talk.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    openChat(chatAddr(project, row.id));
+    open();
   });
   return talk;
+}
+
+function rowChatBtn(project, row, works) {
+  const lively = taskLively(project, row.id, works || shownWorks);
+  return chatIconBtn(lively ? "Чат по задаче: работа идёт" : "Чат по задаче",
+    "Чат по задаче " + row.id, () => { openChat(chatAddr(project, row.id)); }, lively);
 }
 
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
@@ -8386,6 +8491,16 @@ function touchPointer() {
 // Отдаётся тело ответа целиком, а не одна удача: ручка говорит, есть ли у
 // задачи ведущая сессия, и от этого зависит, доставлена реплика или ждёт во
 // входе. Пусто значит отказ ручки.
+// Снятие лежащей во входе задачи реплики: отмена в панели убирает её не только
+// с экрана, но и из очереди. Без этого отменённая реплика уезжала агенту первым
+// же ходом, а человек считал её снятой (живой случай DK-466).
+async function dropTaskLine(project, id, text) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/tasks/" + encodeURIComponent(id) + "/message", { method: "DELETE", body: { text } });
+  sayResult(r.body.message || r.body.error || (r.ok ? "реплика снята" : "снять не вышло"), !r.ok);
+  return r.ok;
+}
+
 async function answerTask(project, id, text) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/tasks/" + encodeURIComponent(id) + "/message", { method: "POST", body: { text } });
@@ -8999,6 +9114,10 @@ function makeEcho(project, box, feedBox, addr, resend) {
         // и снять его можно было только повтором (замечание пользователя).
         const undo = el("button", "linkish", "отменить");
         undo.addEventListener("click", () => {
+          // Реплика, которая лежит во входе задачи, снимается и оттуда: убрать
+          // пузырь с экрана мало, строка в очереди уехала бы агенту первым же
+          // ходом, а человек считал бы её отменённой.
+          if (m.task) dropTaskLine(project, m.task, m.wire || m.text).catch(console.error);
           drop(m);
           // Пустая очередь нового чата гасит плашку подъёма: отменённая
           // первая реплика возвращает панель в чистое состояние.
@@ -10543,7 +10662,7 @@ function draftRow(project, d) {
   const when = el("td", "dwhen");
   if (d.moved) {
     when.append(withTip(el("span", "stale dashed", d.moved),
-      "дата последней правки записи: разбор двигает её же"));
+      whenTip(d.moved_at || d.moved)));
   }
   row.append(when);
   const { cell: metac, box: meta } = tblCell("sm");
@@ -10551,7 +10670,9 @@ function draftRow(project, d) {
   // агентом надо тем же способом: кнопка та же, значок тот же, панель
   // открывается с привязкой к его ID (решение пользователя).
   const talk = rowChatBtn(project, d);
-  meta.append(talk);
+  const acts = el("span", "racts");
+  acts.append(talk);
+  meta.append(acts);
   row.append(metac);
   row.addEventListener("click", (ev) => {
     // Нажатым оказывается не сама кнопка, а её начинка (значок у чата,
@@ -12590,8 +12711,17 @@ function agentRow(project, w, now) {
   // бегущий кружок строки и время работы справа, и слово «активна» между ними
   // было третьим указателем на одно и то же (разбор пользователя).
   const liveChipNode = workLive(w) === WORK_LIVE.busy ? null : workLiveChip(w, now);
-  if (liveChipNode) line.append(liveChipNode);
-  for (const chip of workChips(w)) line.append(chip);
+  // Чипы лежат той же коробкой, что у строки доски и у записи накопителя:
+  // россыпью рядом с заголовком они стояли своим зазором и на телефоне не
+  // умели уехать под него отдельной строкой.
+  const chips = [];
+  if (liveChipNode) chips.push(liveChipNode);
+  for (const chip of workChips(w)) chips.push(chip);
+  if (chips.length) {
+    const chipbox = el("span", "rchips");
+    for (const chip of chips) chipbox.append(chip);
+    line.append(chipbox);
+  }
   // Подпись собирается узлами, а не одной строкой: номер задачи в ней это
   // ссылка, и склеенный текст ссылкой быть не может.
   const sub = el("div", "l2");
@@ -12605,38 +12735,31 @@ function agentRow(project, w, now) {
   box.append(line, sub);
   row.append(box);
 
-  // Возраст сессии стоит своей колонкой между работой и действиями: по нему
-  // сортирует шапка, и внутри хвоста с кнопками он ездил бы вместе с ними.
-  const when = el("td", "atime");
-  const age = workAge(w.started, now);
-  if (age) when.textContent = age;
-  row.append(when);
-  // Дата последней активности своей колонкой: возраст слева отвечает на другой
-  // вопрос, он про то, сколько сессия живёт, а не про то, когда в ней последний
-  // раз что-то сказали (замечание пользователя). Точное время и давность
-  // стоят подсказкой: в колонке им места нет, а день читается сразу.
+  // Дата последней активности одной колонкой: возраст сессии стоял слева своей
+  // колонкой «Идёт», и человек прочитал две колонки как одну («показывают
+  // похоже одно и то же»). Полезна из них вторая, а возраст уехал в подсказку
+  // рядом с точным временем реплики.
   const act = el("td", "amoved");
   if (w.moved) {
+    const age = workAge(w.started, now);
     const said = workSaid(w, now);
     act.append(withTip(el("span", "stale dashed", workMovedDay(w.moved)),
-      "последняя содержательная реплика " + workMovedTime(w.moved) + ", " + said.tip));
+      whenTip(w.moved, now) + (age ? ", сессия идёт " + age : "") +
+      (w.silent ? ", " + said.tip : "")));
   }
   row.append(act);
-  const { cell: actsc, box: acts } = tblCell("aacts");
+  const { cell: actsc, box: actsbox } = tblCell("aacts");
+  // Хвост строки собран той же коробкой, что у строки доски: зазор кнопок
+  // держит одно правило на все три раздела, а не своё в каждом.
+  const acts = el("span", "racts");
+  actsbox.append(acts);
   // Разговор есть у любой строки: и у работы из реестра, чью сессию дашборд не
   // видит, и у сессии без задачи. Вход в чат один на цель и задачу, это одна и
   // та же панель, а ручку для реплики выбирает она сама (DK-435). Панель
   // встаёт хвостом поверх текущего раздела, а не уводит на доску.
   if (addr) {
-    const talk = el("button", "btn btn-sm btn-ico");
-    talk.append(icon("i-chat"));
-    withTip(talk, "Чат агента");
-    talk.setAttribute("aria-label", "Чат агента " + (w.id || w.session || ""));
-    talk.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      openChat(chatAddr(project, addr));
-    });
-    acts.append(talk);
+    acts.append(chatIconBtn("Чат агента", "Чат агента " + (w.id || w.session || ""),
+      () => { openChat(chatAddr(project, addr)); }));
   }
   // Работа из реестра поднята мимо дашборда, и кнопки остановки у неё нет.
   // Словами это в строке больше не стоит: приписка занимала полстроки и ломала

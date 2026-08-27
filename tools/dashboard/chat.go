@@ -261,6 +261,12 @@ func tmuxAliveFn() func(string) bool {
 // уехала посторонней сессии того же чекаута (живой случай DK-466).
 const taskNoLeadWhy = "работа по задаче не идёт, отвечать некому, и реплика ждёт во входе задачи"
 
+// Причина у повтора: строка человека уже стоит в очереди задачи, и вторую ей
+// заводить незачем. Отказ повтора это подтверждение, а не ошибка, и пузырь в
+// панели от него не пропадает (живой случай DK-466).
+const taskInQueueWhy = "реплика уже лежит в очереди задачи и ждёт первого хода её сессии: " +
+	"второй строки не завожу"
+
 // taskLead отвечает, ведёт ли задачу хоть одна живая сессия. Признак тут тот
 // же, каким подхват решает, отдавать ли ей безадресную строку: разговор жив и
 // задача у него своя. Окно vscode считается живым наравне с tmux, как считает
@@ -279,6 +285,55 @@ func (s *server) taskLead(projPath, id string) bool {
 		}
 	}
 	return false
+}
+
+// handleTaskMessageDelete снимает лежащую во входе задачи реплику: человек
+// отменил недоставленное в панели. Без этой ручки отмена убирала пузырь с
+// экрана, а строка оставалась в очереди и уезжала агенту первым же ходом
+// (живой случай DK-466).
+func (s *server) handleTaskMessageDelete(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, _, _, ok := s.taskRow(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	text := strings.Join(strings.Fields(body.Text), " ")
+	if text == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустую реплику отменять нечем: жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	name := chat.TaskName(id)
+	gone, err := chat.Drop(found.Path, name, text)
+	if err != nil {
+		if errors.Is(err, chat.ErrLocked) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "чат держит соседний прогон: попробуйте ещё раз"})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	// Строки уже нет: её забрал подхват, и отмена опоздала. Это не ошибка, а
+	// то, что человеку надо знать: реплика уехала агенту.
+	if gone == 0 {
+		s.logf("отмена реплики задаче %s в %s: строки во входе %s уже нет", id, found.Name, name)
+		writeJSON(w, http.StatusOK, map[string]any{"task": id, "chat": name, "dropped": 0,
+			"message": "реплики во входе задачи уже нет: её забрал ход агента"})
+		return
+	}
+	s.logf("реплика задаче %s снята из чата %s в %s", id, name, found.Name)
+	writeJSON(w, http.StatusOK, map[string]any{"task": id, "chat": name, "dropped": gone,
+		"message": "реплика снята из очереди задачи"})
 }
 
 // handleTaskMessagePost кладёт реплику человека во вход задачи основного
@@ -330,19 +385,25 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	if lying != "" {
-		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в чате %s", id, found.Name, name)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"task": id, "chat": name, "line": lying,
-			"message": fmt.Sprintf("такая реплика уже лежит в чате %s: второй не завожу, задача прочитает одну", name)})
-		return
-	}
+	repeat := lying != ""
 	resp := map[string]any{
 		"task": id, "chat": name, "tree": found.Path, "line": line,
 		"message": fmt.Sprintf(
 			"реплика легла в чат %s основного чекаута без адресата: её возьмёт первый же ход сессии задачи", name),
 	}
-	if parkedByAsk(row) {
+	switch {
+	case repeat:
+		// Повтор это не отказ, а подтверждение: та же реплика уже лежит в
+		// очереди задачи, и второй строки ей не надо. Прежде этот ответ уходил
+		// мимо общего разбора, без признака доставки, и панель считала реплику
+		// доставленной: пузырь снимался, а лента пустела совсем (живой случай
+		// DK-466, повтор недоставленной реплики).
+		resp["line"] = lying
+		resp["repeat"] = true
+		resp["message"] = fmt.Sprintf(
+			"такая реплика уже лежит в чате %s: второй строки не завожу, задача прочитает одну", name)
+		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в чате %s", id, found.Name, name)
+	case parkedByAsk(row):
 		resp["parked"] = true
 		resp["message"] = fmt.Sprintf(
 			"реплика легла в чат %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
@@ -354,12 +415,21 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !s.taskLead(found.Path, id) {
 		resp["undelivered"] = true
 		resp["why"] = taskNoLeadWhy
+		if repeat {
+			resp["why"] = taskInQueueWhy
+		}
 		// Прежние слова остаются на месте, а приписка добавляет к ним главное:
 		// адресата пока нет. Парковка и пробуждение сторожком тут по-прежнему
 		// правда, и стирать их ради приписки нельзя.
 		resp["message"] = fmt.Sprintf("%s. Ведущей сессии у задачи нет, и реплика ждёт во входе",
 			resp["message"])
 		s.logf("реплика задаче %s в %s легла в чат %s без ведущей сессии", id, found.Name, name)
+	}
+	if repeat {
+		// Второй записи о сказанном повтор не заводит: слова человека уже
+		// записаны первой попыткой.
+		writeJSON(w, http.StatusOK, resp)
+		return
 	}
 	s.saidSay(saidTaskKey(id), text, "вход задачи")
 	s.logf("реплика задаче %s в %s легла в чат %s", id, found.Name, name)

@@ -214,7 +214,7 @@ const drag = (grip, from, to) => {
 
 // --- тяга есть у всех трёх разделов ---
 {
-  for (const [hash, kind, count] of [["#demo/sess", "sess", 5], ["#demo/drafts", "drafts", 5]]) {
+  for (const [hash, kind, count] of [["#demo/sess", "sess", 4], ["#demo/drafts", "drafts", 5]]) {
     await go(hash);
     const list = cells(kind);
     if (list.length !== count) {
@@ -245,7 +245,7 @@ const drag = (grip, from, to) => {
   }
   for (const [kind, keys] of [["tasks", ["id", "rank", "date", "act"]],
     ["drafts", ["prio", "id", "date", "act"]],
-    ["sess", ["live", "age", "moved", "act"]]]) {
+    ["sess", ["live", "moved", "act"]]]) {
     const group = sandbox.tblColgroup(kind);
     const cols = (group.children || []).filter((c) => c.tagName === "COL");
     const said = cols.map((c) => String((c.style || {}).width || ""));

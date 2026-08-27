@@ -80,6 +80,10 @@ const click = async (btn) => {
   await settle();
 };
 const on = (btn) => Boolean(btn) && String(btn.className).split(" ").includes("tblon");
+// Кнопка порядка колонки состояния: подписи у колонки нет, и находится она по
+// подписи для чтения с экрана.
+const liveCol = () => allByClass(head("sess") || {}, "tblb")
+  .find((btn) => String(btn.attrs["aria-label"] || "").includes("ходу работы")) || null;
 
 // --- доска: шапка колонок над секциями ---
 {
@@ -178,10 +182,13 @@ const boardIds = () => allByClass(groups, "trow")
   await go("#demo/sess");
   const h = head("sess");
   if (!h) fail("шапки колонок у сессий нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 400));
-  for (const label of ["Ход", "Работа", "Идёт", "Активность"]) {
+  for (const label of ["Работа", "Активность"]) {
     if (!col("sess", label)) fail("в шапке сессий нет колонки «" + label + "»: " + dump(h));
   }
-  if (!on(col("sess", "Ход"))) {
+  // У колонки состояния подписи нет вовсе: она несёт кружок, а слово в шапке
+  // требовало под себя восемьдесят точек. Кнопка порядка у неё осталась, и
+  // ищется она подписью для чтения с экрана.
+  if (!on(liveCol())) {
     fail("сессии открылись не по состоянию: " + dump(h));
   }
 }
@@ -221,7 +228,7 @@ const sessTitles = () => allByClass(groups, "arow")
 {
   const row = allByClass(groups, "arow")[0];
   const kids = [...row.children].map((k) => String(k.className || "").split(" ")[0]);
-  if (JSON.stringify(kids) !== JSON.stringify(["live", "ab", "atime", "amoved", "aacts"])) {
+  if (JSON.stringify(kids) !== JSON.stringify(["live", "ab", "amoved", "aacts"])) {
     fail("ячейки строки сессии идут не тем порядком: " + JSON.stringify(kids));
   }
   const close = byClass(row, "sclose");
@@ -238,9 +245,9 @@ const sessTitles = () => allByClass(groups, "arow")
 }
 
 // --- дата последней активности стоит своей колонкой и правит порядок ---
-// Возраст в колонке «Идёт» отвечает на другой вопрос: он про то, сколько
-// сессия живёт, а не про то, когда в ней последний раз что-то сказали
-// (замечание пользователя).
+// Колонки возраста сессии рядом больше нет: «Идёт» и «Активность» человек
+// прочитал как одно и то же, а полезна вторая (сессия висит третьи сутки и
+// замолчала час назад). Возраст уехал в подсказку этой же даты.
 {
   const moved = () => allByClass(groups, "arow")
     .map((row) => String(dump(byClass(row, "amoved")) || "").trim());

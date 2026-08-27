@@ -133,6 +133,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePost))
 	mux.HandleFunc("PUT /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePut))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/message", s.auth(s.handleTaskMessagePost))
+	mux.HandleFunc("DELETE /api/projects/{p}/tasks/{id}/message", s.auth(s.handleTaskMessageDelete))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/deps", s.auth(s.handleTaskDepAdd))
 	mux.HandleFunc("DELETE /api/projects/{p}/tasks/{id}/deps/{dep}", s.auth(s.handleTaskDepRm))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/continue", s.auth(s.handleTaskContinue))

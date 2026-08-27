@@ -28,8 +28,11 @@ const head = (kind, list) => `<thead><tr class="tblh h-${kind}">` + list.map((c,
 
 const TASK_COLS = [{ label: "Номер", w: 88 }, { label: "Задача" }, { label: "Ранг", w: 58 },
   { label: "Дата", w: 92 }, { label: "", w: 246 }];
-const SESS_COLS = [{ label: "Ход", w: 76 }, { label: "Работа" }, { label: "Идёт", w: 104 },
-  { label: "Активность", w: 108 }, { label: "", w: 110 }];
+// У колонки состояния подписи нет: она несёт кружок, и слово в шапке требовало
+// под себя восемьдесят точек. Колонки возраста сессии тоже нет, её сняли: она
+// показывала то же, что и активность рядом.
+const SESS_COLS = [{ label: "", w: 36 }, { label: "Работа" },
+  { label: "Активность", w: 124 }, { label: "", w: 92 }];
 const DRAFT_COLS = [{ label: "Приоритет", w: 132 }, { label: "Номер", w: 70 },
   { label: "Задача" }, { label: "Дата", w: 92 }, { label: "", w: 38 }];
 
@@ -56,7 +59,6 @@ const SESS = `<table class="tbl t-sess">${cols("sess", SESS_COLS)}${head("sess",
         <div class="l1"><span class="tt">Груминг задачи DK-452 на доске</span></div>
         <div class="l2">DK-452, разговор</div>
       </td>
-      <td class="atime">3 ч 40 мин</td>
       <td class="amoved"><span class="stale dashed">2026-08-22</span></td>
       <td class="aacts"><span class="cin"><button class="btn btn-sm btn-ico">i</button></span></td>
     </tr>
@@ -82,6 +84,7 @@ const sel = document.getElementById("pselect");
 if (sel) sel.innerHTML = "<option>devkit</option>";
 
 const ROW = { tasks: "trow", sess: "arow", drafts: "dsrow" }[kind];
+const LIST = { tasks: TASK_COLS, sess: SESS_COLS, drafts: DRAFT_COLS }[kind] || TASK_COLS;
 const headNode = document.querySelector(".tblh");
 const rowNode = document.querySelector("." + ROW);
 const css = getComputedStyle(headNode.children[0]);
@@ -100,6 +103,9 @@ const cells = [...headNode.children];
 const kids = [...rowNode.children];
 for (let at = 0; at < Math.min(cells.length, kids.length); at++) {
   off = Math.max(off, Math.round(Math.abs(leftOf(cells[at]) - leftOf(kids[at]))));
+  // Кромка написанного меряется там, где написано хоть что-то: у колонки без
+  // подписи выравнивать нечего, а поле она держит своё, под кружок в отступе.
+  if (!(LIST[at] || {}).label) continue;
   offin = Math.max(offin, Math.round(Math.abs(inner(cells[at]) - inner(kids[at]))));
 }
 

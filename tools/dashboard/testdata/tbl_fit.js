@@ -58,23 +58,25 @@ const CELLS = {
   },
   sess: {
     live: `<td class="live"><span class="dot pulse" data-fit="live"></span></td>`,
-    title: `<td class="ab"><div class="l1"><span class="tt">Груминг задачи DK-452 на доске проекта</span></div>` +
+    title: `<td class="ab"><div class="l1"><span class="tt">Груминг задачи DK-452 на доске проекта</span>` +
+      `<span class="rchips"><span class="chip c-run">идёт</span></span></div>` +
       `<div class="l2">DK-452, разговор</div></td>`,
-    age: `<td class="atime" data-fit="age" data-alt="123 ч 45 мин|59 мин">меньше минуты</td>`,
     moved: `<td class="amoved"><span class="stale dashed" data-fit="moved">2026-08-22</span></td>`,
-    act: `<td class="aacts"><span class="cin"><button class="btn btn-sm btn-ico">` +
-      `<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button>` +
-      `<button class="btn btn-sm btn-ico sclose"><svg viewBox="0 0 24 24">` +
-      `<path d="M6 9l6 6 6-6"></path></svg></button></span></td>`,
+    act: `<td class="aacts"><span class="cin"><span class="racts">` +
+      `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
+      `<button class="btn btn-sm btn-danger btn-ico sclose"><svg viewBox="0 0 24 24">` +
+      `</svg></button></span></span></td>`,
   },
   drafts: {
     prio: `<td class="dimp"><span class="cin"><button class="dpick"><span class="dbox"></span></button>` +
       `<span class="chip" data-fit="prio" data-alt="средний|низкий">высокий</span></span></td>`,
     id: `<td class="id"><span data-fit="id">DK-410</span></td>`,
-    title: `<td class="dtt"><span class="cin"><span class="st">Линт не видит файл задачи, заведённой руками</span></span></td>`,
+    title: `<td class="dtt"><span class="cin"><span class="st">Линт не видит файл задачи, заведённой руками</span>` +
+      `<span class="rchips"><span class="chip">отложен 20 авг</span></span></span></td>`,
     date: `<td class="dwhen"><span class="stale dashed" data-fit="date">2026-08-17</span></td>`,
-    act: `<td class="sm"><span class="cin"><button class="btn btn-sm btn-ico">` +
-      `<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg></button></span></td>`,
+    act: `<td class="sm"><span class="cin"><span class="racts">` +
+      `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
+      `</span></span></td>`,
   },
 };
 
@@ -128,4 +130,49 @@ cols.forEach((c, at) => {
   out.push("head_" + c.key + "=" + over(label));
   out.push("w_" + c.key + "=" + Math.round(cell.getBoundingClientRect().width));
 });
+// --- вид строки: величины, которые обязаны совпадать у трёх разделов ---
+// Разделы собирались разными заходами и разошлись по виду: размеры значков,
+// высота строки, отступы ячеек, кегль подписей (замечание пользователя «стиль
+// отображения контента разный на всех табах»). Разбором стилей такое не
+// берётся: величина складывается из правила раздела, общего правила таблицы и
+// медиазапроса раздела, поэтому меряется готовая раскладка.
+const cs = (node, prop) => {
+  if (!node) return 0;
+  const said = getComputedStyle(node).getPropertyValue(prop);
+  return Math.round(parseFloat(said) || 0);
+};
+const box = (node) => (node ? Math.round(node.getBoundingClientRect().width) : 0);
+const high = (node) => (node ? Math.round(node.getBoundingClientRect().height) : 0);
+const cellsAll = [...row.children];
+const lastCell = cellsAll[cellsAll.length - 1];
+const look = {
+  rowh: high(row),
+  padl: cs(cellsAll[0], "padding-left"),
+  padr: cs(lastCell, "padding-right"),
+  padt: cs(lastCell, "padding-top"),
+  padb: cs(lastCell, "padding-bottom"),
+  align: { top: 1, middle: 2, baseline: 3, bottom: 4 }[
+    getComputedStyle(cellsAll[0]).verticalAlign] || 0,
+  actgap: cs(lastCell.querySelector(".cin") || lastCell, "gap"),
+};
+// Кнопка-значок в хвосте строки: её величина, величина самого значка и рамка.
+const ico = lastCell.querySelector(".btn-ico") || lastCell.querySelector("button");
+look.ico = box(ico);
+look.icoh = high(ico);
+look.icosvg = box(ico && ico.querySelector("svg"));
+look.icorad = cs(ico, "border-radius");
+// Заголовок строки, вспомогательный текст и чип: у каждого раздела свой узел,
+// но кегль у них общий по смыслу («это заголовок», «это подпись»).
+const TTL = { tasks: ".ttl", sess: ".l1 .tt", drafts: ".st" }[kind];
+const ttl = document.querySelector("." + ROW + " " + TTL);
+look.ttlfs = cs(ttl, "font-size");
+look.ttlw = Math.round(parseFloat(getComputedStyle(ttl).fontWeight) || 0);
+const sub = document.querySelector("." + ROW + " .stale");
+look.subfs = cs(sub, "font-size");
+const chip = document.querySelector("." + ROW + " .chip");
+look.chiph = high(chip);
+look.chipfs = cs(chip, "font-size");
+look.chipgap = cs(document.querySelector("." + ROW + " .rchips"), "gap");
+for (const key of Object.keys(look)) out.push("l_" + key + "=" + look[key]);
+
 document.title = out.join(" ");

@@ -438,7 +438,7 @@ func TestStaticAgentsScreen(t *testing.T) {
 	css := readFile(t, filepath.Join("static", "style.css"))
 	// Строка сессии стоит колонками таблицы на ноутбуке и раскладывается по
 	// областям на телефоне: собран экран обоими форм-факторами.
-	for _, want := range []string{".arow>td{", ".arow .aacts>.cin{", ".atime{",
+	for _, want := range []string{".arow .aacts>.cin{", ".arow .live{", ".amoved{",
 		".arow{display:grid"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет %q: экран не собран на обоих форм-факторах", want)
@@ -2110,12 +2110,13 @@ func TestBoardTableLabelsNotCut(t *testing.T) {
 			continue
 		}
 		// Колонка хода несёт кружок в девять точек, и раздуваться ей нечем. Пока
-		// в шапке стояло слово «Состояние», она занимала 136 точек, больше любой
-		// колонки со словами, и место это ело у названия работы. Сторожится не
-		// число (число правит человек тягой границы), а порядок: колонка под
-		// значок уже колонки под текст.
+		// у неё была собственная подпись, она занимала сперва 136 точек со
+		// словом «Состояние», потом 80 со словом «Ход», и место это ело у
+		// названия работы. Подписи у неё теперь нет вовсе, а сторожится не число
+		// (число правит человек тягой границы), а порядок: колонка под значок
+		// уже колонки под текст.
 		for _, near := range []struct{ key, word string }{
-			{"age", "Идёт"}, {"moved", "Активность"}, {"act", "хвост с кнопками"},
+			{"moved", "Активность"}, {"act", "хвост с кнопками"},
 		} {
 			if got["w_live"] >= got["w_"+near.key] {
 				t.Errorf("колонка хода шире колонки «%s»: %d против %d, "+
@@ -2124,6 +2125,221 @@ func TestBoardTableLabelsNotCut(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Моргание кнопки разговора красится основным цветом пульта, тем же, каким
+// красится кнопка запуска: на зелёном --run метка терялась на тёмном фоне
+// строки («анимация плохо видна», замечание пользователя). Цвет берётся
+// переменной, а не числом: со сменой темы он не должен разъехаться с кнопкой.
+func TestChatLiveBlinkUsesAccent(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	// Кнопка запуска и есть источник цвета: разойдись эти два места, «взять тот
+	// же цвет» снова стало бы подгонкой на глаз.
+	if !strings.Contains(css, ".btn-acc{background:var(--acc)") {
+		t.Fatal("кнопка запуска красится не переменной --acc: брать моргание не с чего")
+	}
+	rule := regexp.MustCompile(`\.chatlive\{([^}]*)\}`).FindStringSubmatch(css)
+	if rule == nil {
+		t.Fatal("правила .chatlive в стилях нет: метка живого разговора пропала")
+	}
+	if !strings.Contains(rule[1], "var(--acc)") {
+		t.Errorf("рамка живого разговора красится не основным цветом: %s", rule[1])
+	}
+	frames := regexp.MustCompile(`@keyframes dklive\{([^@]*?)\}\s*\n`).FindStringSubmatch(css)
+	if frames == nil {
+		t.Fatal("дорожки моргания dklive в стилях нет")
+	}
+	if !strings.Contains(frames[1], "var(--acc)") {
+		t.Errorf("моргание идёт не основным цветом: %s", frames[1])
+	}
+	if strings.Contains(rule[1], "var(--run)") || strings.Contains(frames[1], "var(--run)") {
+		t.Errorf("моргание осталось зелёным --run, на фоне строки его не видно: %s %s",
+			rule[1], frames[1])
+	}
+	// Такт: заметно, но не мельтешит. Быстрее полутора секунд метка дёргается,
+	// медленнее четырёх её принимают за неподвижную рамку.
+	said := regexp.MustCompile(`\.chatlive\{animation:dklive ([0-9.]+)s`).FindStringSubmatch(css)
+	if said == nil {
+		t.Fatal("у моргания нет такта: правила animation в .chatlive не нашлось")
+	}
+	secs, err := strconv.ParseFloat(said[1], 64)
+	if err != nil {
+		t.Fatalf("такт моргания не читается числом: %q", said[1])
+	}
+	if secs < 1.5 || secs > 4 {
+		t.Errorf("такт моргания %.1f с: заметно и не мельтеша это от полутора до четырёх", secs)
+	}
+}
+
+// Кнопку работы в строке выбирает живость нашей сессии, а не путь, которым
+// работу узнали: у идущей цели (via=registry) вместо «Стопа» стояло
+// «Продолжить», и нажатие увело бы вводную продолжения в живой ход. Сторожит
+// стенд testdata/poc_rowrun.mjs.
+func TestStaticRowRunButton(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд кнопки работы пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_rowrun.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кнопка работы в строке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Раздел сессий держал две колонки под то, что человек прочитал как одно: про
+// «Идёт» и «Активность» он сказал, что они показывают похоже одно и то же, а
+// про колонку хода, что под неё занято слишком много места, восемь десятков
+// точек под кружок в девять.
+// Сторожит стенд testdata/poc_sesscol.mjs: подписи у колонки состояния
+// нет, ширина её меньше порога, сортировка по ней жива, колонки возраста нет, а
+// сам возраст стоит в подсказке даты активности.
+func TestStaticSessionColumns(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд колонок сессий пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_sesscol.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("колонки раздела сессий: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Подсказка даты объясняла, что это за дата, вместо того чтобы показать её
+// точнее («идиотская подпись», замечание пользователя): в ячейке стоит день, а
+// часа не видно нигде. Сторожит стенд testdata/poc_datetip.mjs все четыре
+// места, где дата стоит: строку доски, крошки экрана задачи, запись накопителя
+// и строку сессии.
+func TestStaticDateTips(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд подсказок даты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_datetip.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("подсказки даты: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Три раздела доски собирались разными заходами и разошлись по виду: размеры
+// значков, высота строки, отступы ячеек, кегль подписей, зазоры между кнопками
+// («стиль отображения контента разный на всех табах, иконки даже везде разного
+// размера», замечание пользователя). Величина складывается из правила раздела,
+// общего правила таблицы и медиазапроса, и разбором стилей такое не берётся:
+// меряется готовая раскладка, а сравниваются разделы между собой.
+func TestBoardTabsSameLook(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("движка нет: замер вида разделов пропущен")
+	}
+	dir, page := chromeStand(t, "tbl_fit.js", tblColsJSON(t))
+	got := map[string]map[string]int{}
+	for _, kind := range []string{"tasks", "sess", "drafts"} {
+		got[kind] = chromeMeasure(t, chrome, dir, page, "1400,900", kind)
+		t.Logf("вид раздела %s: %v", kind, look(got[kind]))
+	}
+	// Что обязано совпадать: отступы ячейки, величина кнопки-значка и самого
+	// значка, зазор кнопок в хвосте, кегль заголовка и подписи, чип.
+	for _, one := range []struct{ key, word string }{
+		{"l_padl", "боковой отступ первой ячейки"},
+		{"l_padr", "боковой отступ последней ячейки"},
+		{"l_padt", "верхний отступ ячейки"},
+		{"l_padb", "нижний отступ ячейки"},
+		{"l_align", "выравнивание ячейки по вертикали"},
+		{"l_actgap", "зазор между кнопками в хвосте строки"},
+		{"l_ico", "ширина кнопки-значка"},
+		{"l_icoh", "высота кнопки-значка"},
+		{"l_icosvg", "величина значка"},
+		{"l_icorad", "скругление кнопки-значка"},
+		{"l_ttlfs", "кегль заголовка строки"},
+		{"l_ttlw", "насыщенность заголовка строки"},
+		{"l_subfs", "кегль подписи"},
+	} {
+		want := got["tasks"][one.key]
+		for _, kind := range []string{"sess", "drafts"} {
+			if got[kind][one.key] != want {
+				t.Errorf("%s: у задач %d, у раздела %s %d. Вид у трёх разделов один",
+					one.word, want, kind, got[kind][one.key])
+			}
+		}
+	}
+	// Чип и его коробка это тот же чип и та же коробка во всех трёх разделах:
+	// у сессий чипы стояли россыпью рядом с заголовком, без коробки и своим
+	// зазором.
+	for _, one := range []struct{ key, word string }{
+		{"l_chiph", "высота чипа"}, {"l_chipfs", "кегль чипа"},
+		{"l_chipgap", "зазор чипов в коробке"},
+	} {
+		want := got["tasks"][one.key]
+		for _, kind := range []string{"sess", "drafts"} {
+			if got[kind][one.key] != want {
+				t.Errorf("%s: у задач %d, у раздела %s %d", one.word, want,
+					kind, got[kind][one.key])
+			}
+		}
+	}
+}
+
+// Своих чисел у раздела быть не должно: отступ ячейки, зазор ряда, кегль
+// подписи и величина значка живут лестницей в :root, как живут там шаг формы и
+// радиус. Пока число стояло прямо в правиле раздела, «свести вид» означало
+// подогнать три правила на глаз, и они расходились от каждой правки.
+func TestBoardTabsUseSharedSteps(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, name := range []string{"--rowpy:", "--rowpx:", "--rowgap:", "--actgap:",
+		"--chipgap:", "--rowfs:", "--subfs:", "--icob:", "--icosvg:"} {
+		if !strings.Contains(css, name) {
+			t.Fatalf("в :root нет величины %s: лестницу вида строки завести забыли", name)
+		}
+	}
+	// Правила разделов: строка доски, строка сессии, запись накопителя и их
+	// ячейки. Величины вида в них обязаны приезжать переменной.
+	marks := []string{".trow", ".arow", ".dsrow", ".aacts", ".dtt", ".dimp", ".dwhen",
+		".twhen", ".amoved", ".atime", ".racts", ".rchips", ".ab ", ".ab."}
+	watch := regexp.MustCompile(`(?:^|;)\s*(padding|padding-top|padding-bottom|padding-left|` +
+		`padding-right|gap|row-gap|column-gap|font|font-size)\s*:\s*([^;}]+)`)
+	num := regexp.MustCompile(`\d+(\.\d+)?px`)
+	rules := regexp.MustCompile(`(?s)([^{}]+)\{([^{}]*)\}`)
+	for _, rule := range rules.FindAllStringSubmatch(css, -1) {
+		sel := strings.TrimSpace(rule[1])
+		if strings.HasPrefix(sel, "@") || strings.Contains(sel, ":root") {
+			continue
+		}
+		named := false
+		for _, mark := range marks {
+			if strings.Contains(sel+" ", mark) {
+				named = true
+				break
+			}
+		}
+		if !named {
+			continue
+		}
+		for _, said := range watch.FindAllStringSubmatch(rule[2], -1) {
+			if num.MatchString(said[2]) {
+				t.Errorf("правило %q держит своё число: %s: %s. Величины вида строки "+
+					"берутся лестницей :root, иначе разделы разъезжаются",
+					sel, said[1], strings.TrimSpace(said[2]))
+			}
+		}
+	}
+}
+
+// look отбирает из замера величины вида: в журнале рядом с ними ширины колонок
+// только мешают.
+func look(vals map[string]int) map[string]int {
+	out := map[string]int{}
+	for name, val := range vals {
+		if strings.HasPrefix(name, "l_") {
+			out[strings.TrimPrefix(name, "l_")] = val
+		}
+	}
+	return out
 }
 
 // Сторож замера ширины сам обязан быть под сторожем: без него стенд узкой

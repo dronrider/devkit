@@ -12,18 +12,36 @@ const app = appPathArg();
 const board = { prefix: "XR", sections: [{ key: "in-progress", rows: [] }] };
 const hour = 3600 * 1000;
 const stamp = (ms) => new Date(Date.now() - ms).toISOString();
+// Метки сегодняшних разговоров считаются от полуночи, а не часами назад: стенд
+// гоняется в любой час, и «два часа назад» в первом часу ночи это вчера, отчего
+// группа «сегодня» пропадала, а стенд краснел на ровном месте.
+const midnight = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const today = (mins) => new Date(
+  Math.max(midnight() + (60 - mins) * 1000, Date.now() - mins * 60000)).toISOString();
+// Прошлые дни считаются календарём и берутся полднем: час прогона на них не
+// влияет вовсе.
+const daysBack = (n) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+};
 
 // Живой разговор тут старше всех прочих: группа живых стоит сверху и в этом
 // смысл, к идущему разговору идут отвечать, а не искать его в глубине.
 const chats = [
   { id: "aaaa1111-1111", project: "demo", title: "сегодняшний разговор",
-    mtime: stamp(2 * hour), state: "dead", tasks: [] },
+    mtime: today(1), state: "dead", tasks: [] },
   { id: "bbbb2222-2222", project: "demo", title: "второй сегодняшний",
-    mtime: stamp(5 * hour), state: "dead", tasks: [] },
+    mtime: today(2), state: "dead", tasks: [] },
   { id: "cccc3333-3333", project: "demo", title: "вчерашняя беседа",
-    mtime: stamp(26 * hour), state: "dead", tasks: [] },
+    mtime: daysBack(1), state: "dead", tasks: [] },
   { id: "dddd4444-4444", project: "demo", title: "позавчерашняя беседа",
-    mtime: stamp(50 * hour), state: "dead", tasks: [] },
+    mtime: daysBack(2), state: "dead", tasks: [] },
   { id: "eeee5555-5555", project: "demo", title: "старый, но живой",
     mtime: stamp(200 * hour), state: "live", idle: true, tasks: [] },
 ];

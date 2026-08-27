@@ -1666,8 +1666,13 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   background:var(--bg1);border:1px solid var(--line);border-radius:var(--rad3)}
 /* Боковые отступы у шапки и у строки одни и те же одним правилом на обе:
    разойдись они, подпись встала бы мимо своей ячейки, а это ровно та беда,
-   ради которой вид и переписан. */
-.tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:5px;padding-right:5px}
+   ради которой вид и переписан.
+
+   Двенадцать точек, а не пять: границу колонки движок рисует ровно по кромке
+   ячейки, и в пять точек подпись читалась приклеенной к разделителю
+   («текст колонок стоит слишком близко к разделителю», замечание
+   пользователя). Число сторожит рубеж tblSideMin в board_test.go. */
+.tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:12px;padding-right:12px}
 .tbl th:first-child,.tbl td:first-child{padding-left:24px}
 .tbl th:last-child,.tbl td:last-child{padding-right:16px}
 .tbl td{vertical-align:middle;padding-top:11px;padding-bottom:11px;

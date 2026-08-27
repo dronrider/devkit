@@ -103,8 +103,35 @@ for (let at = 0; at < Math.min(cells.length, kids.length); at++) {
   offin = Math.max(offin, Math.round(Math.abs(inner(cells[at]) - inner(kids[at]))));
 }
 
+// Боковой отступ подписи. Пользователь забраковал шапку словами «текст колонок
+// стоит слишком близко к разделителю, не хватает отступа»: граница колонки
+// рисуется ровно по кромке ячейки, и всё, что отделяет от неё подпись, это
+// боковой отступ. Меряется он у внутренних колонок (у крайних свои поля,
+// держащие кромку таблицы) и меряется у шапки со строкой порознь: разойдись
+// они, подпись встала бы над своей колонкой, но не над своим текстом.
+const side = (nodes) => {
+  const out = { min: Infinity, sym: 0 };
+  nodes.forEach((cell, at) => {
+    if (at === 0 || at === nodes.length - 1) return;
+    const cs = getComputedStyle(cell);
+    const left = Math.round(parseFloat(cs.paddingLeft));
+    const right = Math.round(parseFloat(cs.paddingRight));
+    out.min = Math.min(out.min, left, right);
+    out.sym = Math.max(out.sym, Math.abs(left - right));
+  });
+  if (!Number.isFinite(out.min)) out.min = 0;
+  return out;
+};
+const sideHead = side(cells);
+const sideRow = side(kids);
+
 const out = [
   "screen=" + document.documentElement.clientWidth,
+  // Боковой отступ подписи в шапке и содержимого в строке: числа обязаны
+  // сойтись друг с другом, а внутри каждого сойтись слева с справа.
+  "sideh=" + sideHead.min,
+  "sidec=" + sideRow.min,
+  "sidesym=" + Math.max(sideHead.sym, sideRow.sym),
   "cells=" + cells.length,
   "kids=" + kids.length,
   "headh=" + Math.round(headNode.getBoundingClientRect().height),

@@ -224,9 +224,17 @@ class TestMachineLines(unittest.TestCase):
                        "ширины уходят агенту")
     ACCEPT_OUTCOME_LOOKALIKE = "- Отчёт готов: результат годится для показа."
 
-    MACHINE = (STAGE, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME)
+    DEPLOY_MERGE = "- 2026-08-27 слито: 70b2db5d, 5d2e6e36, e35fb942"
+    DEPLOY_MERGE_LOOKALIKE = "- Слияние прошло тяжело: конфликтов было пять."
+
+    DEPLOY_SMOKE = "- smoke прогнан, 2026-08-27"
+    DEPLOY_SMOKE_LOOKALIKE = "- Smoke прогнали, а число в лог не попало."
+
+    MACHINE = (STAGE, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME,
+               DEPLOY_MERGE, DEPLOY_SMOKE)
     LOOKALIKE = (STAGE_LOOKALIKE, RANK_LOOKALIKE, ACCEPT_KIND_LOOKALIKE,
-                 ACCEPT_BARRIER_LOOKALIKE, ACCEPT_OUTCOME_LOOKALIKE)
+                 ACCEPT_BARRIER_LOOKALIKE, ACCEPT_OUTCOME_LOOKALIKE,
+                 DEPLOY_MERGE_LOOKALIKE, DEPLOY_SMOKE_LOOKALIKE)
 
     def test_machine_lines_are_recognized(self):
         for line in self.MACHINE:
@@ -246,8 +254,21 @@ class TestMachineLines(unittest.TestCase):
     def test_lookalike_lines_count_toward_metrics(self):
         body = "\n".join(self.LOOKALIKE) + "\n"
         t, v = prose.measure(body)
-        self.assertEqual(len(t.sentences), 5)
+        self.assertEqual(len(t.sentences), 7)
         self.assertGreater(v["colon_mid"], 0.0)
+
+    def test_outcome_indent_distinguishes_machine_from_example(self):
+        """DK-550, замечание ревью: отступ, а не текст, несёт весь смысл.
+
+        ACCEPTANCE.md приводит читателю тот же синтаксис «обход: исход,
+        причина» верхним уровнем, примером, а не записью реального обхода.
+        Настоящий обход стоит только вложенным пунктом под строкой барьера,
+        ровно двумя пробелами, как того требует acceptBypassRe у taskctl.
+        """
+        nested = "  - headless-браузер с замером: годится, ширины уходят агенту"
+        top_level = "- headless-браузер с замером: годится, ширины уходят агенту"
+        self.assertTrue(prose.is_machine_line(nested))
+        self.assertFalse(prose.is_machine_line(top_level))
 
 
 class TestHook(unittest.TestCase):

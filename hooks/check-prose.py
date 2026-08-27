@@ -101,23 +101,42 @@ RANK_WORDS = ("Серьёзность", "Ценность", "Неопредел�
               "Поправка на баг", "Рычаг")
 RANK_LINE_RE = re.compile(r"^-\s+(?:%s)\s+\d+:\s" % "|".join(RANK_WORDS))
 
+# «Выкат»: shipctl пишет в файл задачи напрямую, минуя taskctl
+# (tools/shipctl/record.go). recordMerge дописывает строку слитых коммитов
+# «- <дата> слито: <sha>[, <sha>...]» (record.go:150), cmdSmoke дописывает
+# отметку прогона «- smoke прогнан, <дата>» (record.go:243, smokeNote). Обе
+# строки без точки на конце, как их строит сам код.
+DEPLOY_MERGE_RE = re.compile(
+    r"^-\s+\d{4}-\d{2}-\d{2}\s+слито:\s+[0-9a-f]{7,}(?:,\s*[0-9a-f]{7,})*\s*$")
+DEPLOY_SMOKE_RE = re.compile(r"^-\s+smoke прогнан,\s*\d{4}-\d{2}-\d{2}\s*$")
+
 # «Приёмка»: формат ACCEPTANCE.md, те же регулярки, что у самого taskctl
 # (tools/taskctl/accept.go: acceptBarrierLineRe, acceptBypassRe;
 # tools/taskctl/ops.go: шаблон «- вид: %s»; tools/taskctl/kinds.go:
-# revisionLineRe): строка вида, строка барьера и строка обхода с исходом
-# «годится» или «не годится».
+# revisionLineRe): строка вида и строка барьера стоят верхним уровнем,
+# строка обхода с исходом «годится» или «не годится» стоит только вложенным
+# пунктом под барьером, ровно двумя пробелами (acceptBypassRe у taskctl
+# требует тот же отступ). Отступ и отличает машинную запись обхода от
+# примеров того же синтаксиса, которые ACCEPTANCE.md приводит для читателя
+# верхним уровнем (DK-550, замечание ревью).
 ACCEPT_KIND_RE = re.compile(r"^-\s+вид:\s")
 ACCEPT_BARRIER_RE = re.compile(r"^-\s+барьер\s+«[^»]*»:")
-ACCEPT_OUTCOME_RE = re.compile(r"^-\s+.*:\s*(?:не\s+)?годится\b")
+ACCEPT_OUTCOME_RE = re.compile(r"^  - .*:\s*(?:не\s+)?годится\b")
 
-MACHINE_LINE_RES = (STAGE_LINE_RE, RANK_LINE_RE, ACCEPT_KIND_RE,
-                     ACCEPT_BARRIER_RE, ACCEPT_OUTCOME_RE)
+# Регулярки верхнего уровня разбирают строку после strip(): у настоящей
+# записи отступа нет, а strip() не портит хвост. ACCEPT_OUTCOME_RE особняком:
+# ему нужен исходный, не обрезанный отступ, чтобы отличить вложенный обход от
+# такого же текста без вложенности.
+TOP_LEVEL_MACHINE_RES = (STAGE_LINE_RE, RANK_LINE_RE, DEPLOY_MERGE_RE,
+                          DEPLOY_SMOKE_RE, ACCEPT_KIND_RE, ACCEPT_BARRIER_RE)
 
 
 def is_machine_line(line):
     """Строка файла задачи, которую дописывает утилита, а не человек."""
     s = line.strip()
-    return any(r.match(s) for r in MACHINE_LINE_RES)
+    if any(r.match(s) for r in TOP_LEVEL_MACHINE_RES):
+        return True
+    return bool(ACCEPT_OUTCOME_RE.match(line))
 
 
 Text = collections.namedtuple("Text", "words sentences paragraphs")

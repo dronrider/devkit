@@ -178,10 +178,10 @@ const boardIds = () => allByClass(groups, "trow")
   await go("#demo/sess");
   const h = head("sess");
   if (!h) fail("шапки колонок у сессий нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 400));
-  for (const label of ["Состояние", "Работа", "Идёт", "Активность"]) {
+  for (const label of ["Ход", "Работа", "Идёт", "Активность"]) {
     if (!col("sess", label)) fail("в шапке сессий нет колонки «" + label + "»: " + dump(h));
   }
-  if (!on(col("sess", "Состояние"))) {
+  if (!on(col("sess", "Ход"))) {
     fail("сессии открылись не по состоянию: " + dump(h));
   }
 }

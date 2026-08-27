@@ -1369,7 +1369,7 @@ func findChrome() string {
 // а вместо статики стенд из testdata. Страница берётся рабочая, потому что
 // замер должен считать тот же каскад, что и браузер человека; своя разметка
 // вокруг стенда врала бы отступами шапки и нижних вкладок.
-func chromeStand(t *testing.T, probeName string) (string, string) {
+func chromeStand(t *testing.T, probeName string, inject ...string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	page := filepath.Join(dir, "stand.html")
@@ -1386,8 +1386,15 @@ func chromeStand(t *testing.T, probeName string) (string, string) {
 		t.Fatal(err)
 	}
 	html = strings.Replace(html, "/assets/style.css", "file://"+css, 1)
+	// Стенду бывает нужна опора из кода экрана (ширины колонок, словари): её
+	// кладёт тест отдельным скриптом перед стендом, чтобы стенд не держал у себя
+	// копию чисел, которая разойдётся с app.js.
+	before := ""
+	for _, one := range inject {
+		before += "<script>" + one + "</script>"
+	}
 	html = strings.Replace(html, `<script type="module" src="/assets/app.js"></script>`,
-		`<script src="file://`+probe+`"></script>`, 1)
+		before+`<script src="file://`+probe+`"></script>`, 1)
 	if !strings.Contains(html, probe) {
 		t.Fatal("замерочный скрипт не встал на место app.js: разметка index.html разъехалась с тестом")
 	}

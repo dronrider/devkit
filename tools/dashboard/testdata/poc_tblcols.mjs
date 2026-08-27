@@ -62,6 +62,18 @@ const cells = (kind) => [...((head(kind) || {}).children || [])];
 const varOf = (name) => sandbox.document.documentElement.style.props[name] || "";
 const px = (name) => Number(String(varOf(name)).replace("px", ""));
 
+// Ширина по умолчанию читается из самой разметки: colgroup ставит колонке
+// «var(--tc-tasks-rank, 58px)», и запасное значение это и есть умолчание из
+// TBL_COLS. Копия числа в стенде разошлась бы с кодом молча, а стенд об этом
+// не сказал бы: он сторожил бы прежнее умолчание.
+const defw = (key) => {
+  const col = allByClass(groups, "cw-" + key)[0];
+  const said = String(((col || {}).style || {}).width || "");
+  const m = /,\s*(\d+)px\)/.exec(said);
+  if (!m) fail("умолчание ширины колонки «" + key + "» не читается из colgroup: " + said);
+  return Number(m[1]);
+};
+
 // Тяга: нажатие на ручке, ход мыши, отпускание. Ход идёт через обработчики
 // документа, как их и вешает жест: браузер шлёт pointermove не в ручку, а туда,
 // куда уехал курсор.
@@ -135,7 +147,7 @@ const drag = (grip, from, to) => {
 {
   const grip = byClass(cells("tasks")[2], "tblg");
   grip.handlers.dblclick({ stopPropagation: () => {} });
-  if (px("--tc-tasks-rank") !== 44) {
+  if (px("--tc-tasks-rank") !== defw("rank")) {
     fail("двойное нажатие не вернуло ширину по умолчанию: " + varOf("--tc-tasks-rank"));
   }
 }
@@ -146,7 +158,7 @@ const drag = (grip, from, to) => {
   await go("#demo/sess");
   await go("#demo");
   if (!head("tasks")) fail("шапка не собралась после мусора в памяти ширин");
-  if (px("--tc-tasks-id") !== 84) {
+  if (px("--tc-tasks-id") !== defw("id")) {
     fail("мусор в памяти не откатил ширину к умолчанию: " + varOf("--tc-tasks-id"));
   }
 }

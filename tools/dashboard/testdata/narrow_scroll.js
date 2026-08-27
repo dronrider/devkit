@@ -37,11 +37,11 @@ const head = (kind, list) => `<thead><tr class="tblh h-${kind}">` + list.map((c,
     : `<span class="tbln"></span>`) +
   (at + 1 < list.length ? `<span class="tblg"></span>` : "") + `</th>`).join("") + `</tr></thead>`;
 
-const TASK_COLS = [{ label: "Номер", w: 60 }, { label: "Задача" }, { label: "Ранг", w: 44 },
+const TASK_COLS = [{ label: "Номер", w: 88 }, { label: "Задача" }, { label: "Ранг", w: 58 },
   { label: "Дата", w: 92 }, { label: "", w: 246 }];
-const SESS_COLS = [{ label: "Состояние", w: 92 }, { label: "Работа" }, { label: "Идёт", w: 92 },
+const SESS_COLS = [{ label: "Ход", w: 76 }, { label: "Работа" }, { label: "Идёт", w: 104 },
   { label: "Активность", w: 108 }, { label: "", w: 110 }];
-const DRAFT_COLS = [{ label: "Приоритет", w: 112 }, { label: "Номер", w: 60 },
+const DRAFT_COLS = [{ label: "Приоритет", w: 132 }, { label: "Номер", w: 70 },
   { label: "Задача" }, { label: "Дата", w: 92 }, { label: "", w: 38 }];
 
 const band = (inside) => `<tr class="band secband"><td class="bcell" colspan="5">${inside}</td></tr>`;

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1878,5 +1879,125 @@ func TestSessionWorkTitleFallsBackToChat(t *testing.T) {
 	}
 	if got.Title != "Разбор накопителя черновиков" {
 		t.Errorf("разговор без строки на доске подписан %q, ждал его заголовок", got.Title)
+	}
+}
+
+// tblColsJSON вычитывает TBL_COLS прямо из static/app.js: стенд замера
+// раскладывает колонки теми же ширинами, какими их раскладывает экран. Копия
+// чисел в стенде разошлась бы с кодом молча, и замер сторожил бы вымысел.
+func tblColsJSON(t *testing.T) string {
+	t.Helper()
+	app := readFile(t, filepath.Join("static", "app.js"))
+	at := strings.Index(app, "const TBL_COLS = {")
+	if at < 0 {
+		t.Fatal("в static/app.js нет TBL_COLS: описание колонок переехало, стенд замера ослеп")
+	}
+	end := strings.Index(app[at:], "\n};")
+	if end < 0 {
+		t.Fatal("описание TBL_COLS не кончается: разметку блока сменили")
+	}
+	block := app[at : at+end]
+	sect := regexp.MustCompile(`(?m)^  (\w+): \[`)
+	one := regexp.MustCompile(`\{ key: "(\w+)"[^}]*\}`)
+	field := func(src, name string) string {
+		m := regexp.MustCompile(name + `: "([^"]*)"`).FindStringSubmatch(src)
+		if m == nil {
+			return ""
+		}
+		return m[1]
+	}
+	out := map[string][]map[string]any{}
+	names := sect.FindAllStringSubmatchIndex(block, -1)
+	if len(names) == 0 {
+		t.Fatal("в TBL_COLS не нашлось ни одного раздела")
+	}
+	for at, name := range names {
+		tail := len(block)
+		if at+1 < len(names) {
+			tail = names[at+1][0]
+		}
+		body := block[name[1]:tail]
+		key := block[name[2]:name[3]]
+		for _, col := range one.FindAllString(body, -1) {
+			w := 0
+			if m := regexp.MustCompile(`w: (\d+)`).FindStringSubmatch(col); m != nil {
+				w, _ = strconv.Atoi(m[1])
+			}
+			out[key] = append(out[key], map[string]any{
+				"key":   field(col, "key"),
+				"label": field(col, "label"),
+				"first": field(col, "first") != "",
+				"flex":  strings.Contains(col, "flex: true"),
+				"w":     w,
+			})
+		}
+		if len(out[key]) == 0 {
+			t.Fatalf("в разделе %q описание колонок не разобралось", key)
+		}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "window.TBLFIT = " + string(raw) + ";"
+}
+
+// Колонка обязана вмещать собственное содержимое. Длинное название задачи
+// режется многоточием, и это верно: под название колонки не хватит никогда. А
+// короткая метка (чип уровня разбора, номер, дата, подпись кнопки, слово в
+// шапке) обрубается только от нехватки ширины, и «средн» вместо «средний» это
+// дефект колонки, а не кромка.
+//
+// Пользователь поймал это на снимке накопителя: чип уровня резался по правому
+// краю в обоих словах. Разбором стилей такое не берётся, ширину слова считает
+// шрифт, поэтому меряет настоящий движок и меряет тем же, чем видит человек:
+// написанное шире того места, где оно стоит.
+func TestBoardTableLabelsNotCut(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("движка нет: замер меток пропущен")
+	}
+	dir, page := chromeStand(t, "tbl_fit.js", tblColsJSON(t))
+	for _, tab := range []struct{ key, word string }{
+		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
+	} {
+		got := chromeMeasure(t, chrome, dir, page, "1400,900", tab.key)
+		if got["cols"] == 0 {
+			t.Fatalf("замер раздела «%s» не собрался: %v", tab.word, got)
+		}
+		t.Logf("раздел «%s»: %v", tab.word, got)
+		for name, cut := range got {
+			col, ok := strings.CutPrefix(name, "cut_")
+			if !ok {
+				continue
+			}
+			// Точка допуска на округление: ширины движок отдаёт целыми, а
+			// считает дробными, и лишняя точка тут не обрубок.
+			if cut > 1 {
+				t.Errorf("в разделе «%s» колонка %q режет своё содержимое, не хватает %d точек: "+
+					"короткая метка обрубается только от нехватки ширины", tab.word, col, cut)
+			}
+			if head := got["head_"+col]; head > 1 {
+				t.Errorf("в разделе «%s» колонка %q режет собственную подпись в шапке, "+
+					"не хватает %d точек", tab.word, col, head)
+			}
+		}
+		if tab.key != "sess" {
+			continue
+		}
+		// Колонка хода несёт кружок в девять точек, и раздуваться ей нечем. Пока
+		// в шапке стояло слово «Состояние», она занимала 136 точек, больше любой
+		// колонки со словами, и место это ело у названия работы. Сторожится не
+		// число (число правит человек тягой границы), а порядок: колонка под
+		// значок уже колонки под текст.
+		for _, near := range []struct{ key, word string }{
+			{"age", "Идёт"}, {"moved", "Активность"}, {"act", "хвост с кнопками"},
+		} {
+			if got["w_live"] >= got["w_"+near.key] {
+				t.Errorf("колонка хода шире колонки «%s»: %d против %d, "+
+					"а несёт она кружок, а не слова",
+					near.word, got["w_live"], got["w_"+near.key])
+			}
+		}
 	}
 }

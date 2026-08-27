@@ -12,6 +12,21 @@
 import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
+// Выбор яруса с подпиской живёт в меню строки под тремя точками, а главная
+// кнопка запускает работу тем, что в этом меню выбрано. Меню открывается
+// нажатием, как это делает человек.
+const openMenu = (box) => {
+  const dots = byClass(box, "rdots");
+  if (!dots) fail("у строки нет кнопки с тремя точками: " + dump(box));
+  dots.handlers.click({ stopPropagation: () => {} });
+  return byClass(box, "rmenu");
+};
+const runBtn = (box) => {
+  const btn = byClass(box, "rmain");
+  if (!btn) fail("у строки нет главной кнопки запуска: " + dump(box));
+  return btn;
+};
+
 const app = appPathArg();
 
 const tiers = [{ tier: "mini", model: "haiku" }, { tier: "base", model: "sonnet" },
@@ -43,7 +58,7 @@ const last = () => posted[posted.length - 1];
 // --- у задачи первым стоит вердикт и он выбран ---
 {
   const box = sandbox.rowAction("demo", task, "backlog");
-  const pop = byClass(box, "hpop");
+  const pop = openMenu(box);
   if (!pop) fail("у кнопки запуска нет списка выбора: " + dump(box));
   const picks = allByClass(pop, "tpick").map((p) => dump(p).trim());
   if (picks[0] !== "вердикт") fail("первым ярусом стоит не вердикт: " + JSON.stringify(picks));
@@ -60,7 +75,7 @@ const last = () => posted[posted.length - 1];
 // --- запуск без выбора уезжает без яруса: его назовёт вердикт ---
 {
   const box = sandbox.rowAction("demo", task, "backlog");
-  deepBtn(box, "Выполнить").handlers.click({ stopPropagation: () => {} });
+  runBtn(box).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!last() || !last().path.endsWith("/runs")) fail("запуск не ушёл: " + JSON.stringify(posted));
   if (last().body.tier) {
@@ -71,11 +86,11 @@ const last = () => posted[posted.length - 1];
 // --- выбор человека перебивает вердикт ---
 {
   const box = sandbox.rowAction("demo", task, "backlog");
-  const pop = byClass(box, "hpop");
+  const pop = openMenu(box);
   allByClass(pop, "tpick").find((p) => dump(p).trim() === "base")
     .handlers.click({ stopPropagation: () => {} });
   await settle();
-  deepBtn(box, "Выполнить").handlers.click({ stopPropagation: () => {} });
+  runBtn(box).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!last().body || last().body.tier !== "base") {
     fail("выбранный человеком ярус не доехал до заказа: " + JSON.stringify(last().body));
@@ -85,7 +100,7 @@ const last = () => posted[posted.length - 1];
 // --- у цели вердикта нет, по умолчанию pro ---
 {
   const box = sandbox.rowAction("demo", goal, "backlog");
-  const pop = byClass(box, "hpop");
+  const pop = openMenu(box);
   const picks = allByClass(pop, "tpick").map((p) => dump(p).trim());
   if (picks.includes("вердикт")) {
     fail("у цели предложен вердикт, которого на весь цикл нет: " + JSON.stringify(picks));
@@ -95,7 +110,7 @@ const last = () => posted[posted.length - 1];
   if (JSON.stringify(on) !== JSON.stringify(["pro"])) {
     fail("у цели по умолчанию выбран не pro: " + JSON.stringify(on));
   }
-  deepBtn(box, "Выполнить").handlers.click({ stopPropagation: () => {} });
+  runBtn(box).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!last().body || last().body.tier !== "pro" || last().body.id !== "XR-100") {
     fail("ярус цели не доехал до заказа: " + JSON.stringify(last().body));
@@ -105,7 +120,7 @@ const last = () => posted[posted.length - 1];
 // --- ярус и подписка едут вместе ---
 {
   const box = sandbox.rowAction("demo", task, "backlog");
-  const pop = byClass(box, "hpop");
+  const pop = openMenu(box);
   allByClass(pop, "tpick").find((p) => dump(p).trim() === "max")
     .handlers.click({ stopPropagation: () => {} });
   await settle();

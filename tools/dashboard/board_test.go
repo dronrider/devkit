@@ -44,10 +44,20 @@ func funcBody(t *testing.T, text, head string) string {
 func TestStaticBoardRowActions(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"stopRun(project, row.id)", "runControl(project, row.id",
-		"ev.stopPropagation()", `"Стоп"`, "actionLabel(sect)", "ведёт другая сессия"} {
+	for _, want := range []string{"stopRun(project, row.id)", "startRun(project, row.id",
+		"continueTask(project, row.id)", "rowChatBtn(project, row)",
+		"ev.stopPropagation()", `"Стоп"`, "actionLabel(sect)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: действие со строки не доведено", want)
+		}
+	}
+	// Кнопка в колонке одна главная, а всё, кроме стопа идущей работы, лежит под
+	// тремя точками: колонка действий занимала больше места, чем номер, ранг и
+	// дата вместе (замер пользователя).
+	for _, want := range []string{`el("span", "racts")`, `"btn btn-sm btn-ico rdots"`,
+		`el("div", "pmenu rmenu")`, "popupHold(menu, shutMenu)", "popupsShut(null)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в rowAction нет %q: действия строки снова стоят рядом все разом", want)
 		}
 	}
 	if strings.Contains(body, "api(") {
@@ -69,7 +79,7 @@ func TestStaticBoardRowActions(t *testing.T) {
 func TestStaticRowRunFromRowData(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	act := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.run", `row.run !== "gone"`, `row.run !== "tmux"`} {
+	for _, want := range []string{"row.run", `row.run !== "gone"`, `row.run === "tmux"`} {
 		if !strings.Contains(act, want) {
 			t.Errorf("в rowAction нет %q: признак работы снова собирается на клиенте", want)
 		}
@@ -151,7 +161,7 @@ func TestStaticActionLabelBySection(t *testing.T) {
 	// Заблокированная маркером строка действия не получает: кнопка стоит
 	// погашенной с причиной, а запуск с неё не уходит.
 	body := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.after && row.after.length", "wait.disabled = true", "сначала "} {
+	for _, want := range []string{"row.after && row.after.length", "main.disabled = true", "сначала "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: заблокированная задача снова уходит в конвейер", want)
 		}
@@ -979,11 +989,20 @@ func TestStaticRunSplitLayout(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "function runControl(")
 	for _, want := range []string{`el("span", "split")`, `el("div", "hpop")`,
-		`el("span", "hph", "На какой подписке запустить")`, `wide.className + " more2"`,
-		`el("span", "car")`, `el("span", "hfoot"`} {
+		"runPickBody(pop, {", `wide.className + " more2"`, `el("span", "car")`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("кнопка собрана не тем блоком (нет %q): замер на стендовой разметке "+
 				"перестал говорить о рабочей кнопке", want)
+		}
+	}
+	// Начинка списка (шапка, строки подписок, полоса ярусов и подвал) собрана
+	// одной функцией на два места: всплывашку составной кнопки и меню строки
+	// доски.
+	pick := funcBody(t, app, "function runPickBody(")
+	for _, want := range []string{`el("span", "hph", "На какой подписке запустить")`,
+		"harnessRow(h)", `el("div", "tbar")`, `el("span", "hfoot"`} {
+		if !strings.Contains(pick, want) {
+			t.Fatalf("тело выбора запуска собрано не тем блоком (нет %q)", want)
 		}
 	}
 	row := funcBody(t, app, "function harnessRow(")
@@ -1037,7 +1056,9 @@ func TestStaticRunSplitLayout(t *testing.T) {
 		t.Errorf("список подписок вылез за край телефона: ширина %d при экране %d",
 			narrow["pop-w"], narrow["screen"])
 	}
-	if narrow["seam"] != 0 {
+	// Наезд в пиксель тут значит то же, что и на ноутбуке: рамка есть у каждой
+	// половины, и сложенные встык они рисуют одну линию, а не зазор.
+	if narrow["seam"] != 0 && narrow["seam"] != -1 {
 		t.Errorf("на телефоне между половинами кнопки зазор в %d пикселей", narrow["seam"])
 	}
 

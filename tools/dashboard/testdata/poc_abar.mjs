@@ -155,12 +155,20 @@ console.log("экран задачи: пустая полоса действий
 // третьего ответа, other («исполнителя не видно»), у признака больше нет, он
 // попадал ровно в те задачи, которые человек вёл из дашборда.
 {
+  // Продолжение работы уехало под три точки: главной кнопкой у строки с
+  // разговором стоит чат, а места в колонке под четыре кнопки нет.
+  const opened = (box) => {
+    const dots = byClass(box, "rdots");
+    if (!dots) fail("у строки нет кнопки с тремя точками: " + dump(box));
+    dots.handlers.click({ stopPropagation: () => {} });
+    return byClass(box, "rmenu");
+  };
   const ours = sandbox.rowAction("demo", { id: "XR-1", title: "наша работа", run: "gone" }, "in-progress");
-  if (!deepBtn(ours, "Продолжить")) {
+  if (!deepBtn(opened(ours), "Продолжить")) {
     fail("у нашей кончившейся сессии нет продолжения: " + dump(ours));
   }
   const live = sandbox.rowAction("demo", { id: "XR-1", title: "живой чат", run: "session" }, "in-progress");
-  if (!deepBtn(live, "Продолжить")) {
+  if (!deepBtn(opened(live), "Продолжить")) {
     fail("у живого чата задачи нет продолжения: " + dump(live));
   }
   if (dump(live).includes("ведёт другая сессия")) {
@@ -168,10 +176,13 @@ console.log("экран задачи: пустая полоса действий
   }
   // Наших сессий у строки нет ни одной: приписки про ненайденного исполнителя
   // тут больше нет, и кнопка запуска строке возвращена. Второму исполнителю
-  // взяться неоткуда, живой работы за ней не видно.
+  // взяться неоткуда, живой работы за ней не видно. Разговора за такой строкой
+  // тоже нет, и главной кнопкой у неё стоит сам запуск.
   const none = sandbox.rowAction("demo", { id: "XR-2", title: "без наших сессий" }, "in-progress");
-  const run = deepBtn(none, "Продолжить");
-  if (!run) fail("у строки без наших сессий пропал конвейер: " + dump(none));
+  const run = byClass(none, "rmain");
+  if (!run || run.attrs["aria-label"] !== "Продолжить") {
+    fail("у строки без наших сессий пропал конвейер: " + dump(none));
+  }
   if (dump(none).includes("исполнителя не видно")) {
     fail("снятая приписка про чужую машину вернулась: " + dump(none));
   }
@@ -183,7 +194,7 @@ console.log("экран задачи: пустая полоса действий
   }
   // Backlog не трогали: там запуск как был.
   const back = sandbox.rowAction("demo", { id: "XR-3", title: "новая" }, "backlog");
-  if (!tag(back, "BUTTON")) fail("в Backlog пропала кнопка запуска: " + dump(back));
+  if (!byClass(back, "rmain")) fail("в Backlog пропала кнопка запуска: " + dump(back));
 }
 
 // --- чип проверенной строки говорит человеку, ждут ли его ---
@@ -210,7 +221,8 @@ console.log("строка доски: своя работа продолжает
 // это был бы второй исполнитель на ту же строку (жалоба на DK-460).
 {
   const ours = sandbox.rowAction("demo", { id: "XR-9", title: "грумили", run: "gone" }, "in-progress");
-  const go = deepBtn(ours, "Продолжить");
+  byClass(ours, "rdots").handlers.click({ stopPropagation: () => {} });
+  const go = deepBtn(byClass(ours, "rmenu"), "Продолжить");
   if (!go) fail("у кончившейся сессии пропало продолжение: " + dump(ours));
   posted.length = 0;
   go.handlers.click({ stopPropagation: () => {} });
@@ -227,10 +239,15 @@ console.log("строка доски: своя работа продолжает
 {
   const row = { id: "XR-5", title: "проверенная", sect: "check", accept: "mixed", harness: "glm" };
   const bar = sandbox.rowAction("demo", row, "check");
-  const btn = deepBtn(bar, "Проверить и закрыть");
-  if (!btn) fail("кнопки «Проверить и закрыть» на строке Check нет: " + dump(bar));
-  if (dump(bar).includes("Выбрать подписку") || byClass(bar, "hpop")) {
-    fail("выпадашка подписки осталась на кнопке Check: " + dump(bar));
+  const btn = byClass(bar, "rmain");
+  if (!btn || btn.attrs["aria-label"] !== "Проверить и закрыть") {
+    fail("кнопки «Проверить и закрыть» на строке Check нет: " + dump(bar));
+  }
+  // Подписка у проверенной строки прикреплена, и выбирать её меню не
+  // предлагает: список отвечал бы не на тот вопрос.
+  byClass(bar, "rdots").handlers.click({ stopPropagation: () => {} });
+  if (allByClass(byClass(bar, "rmenu"), "hrow").length) {
+    fail("выбор подписки остался у строки Check: " + dump(bar));
   }
   if (!String(btn.title || "").includes("glm")) {
     fail("подсказка не называет подписку задачи: " + btn.title);
@@ -240,7 +257,7 @@ console.log("строка доски: своя работа продолжает
   }
   const auto = sandbox.rowAction("demo",
     { id: "XR-6", title: "агентская", sect: "check", accept: "agent", harness: "claude-code" }, "check");
-  const abtn = deepBtn(auto, "Проверить и закрыть");
+  const abtn = byClass(auto, "rmain");
   if (!abtn || !String(abtn.title || "").includes("claude-code")) {
     fail("у агентской приёмки та же кнопка с подписью не собралась: " + dump(auto));
   }

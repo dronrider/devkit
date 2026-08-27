@@ -334,10 +334,13 @@ function barButton(node, label) {
   return null;
 }
 
-// Кнопка с такой подписью где-нибудь в поддереве.
+// Кнопка с такой подписью где-нибудь в поддереве. Подпись у кнопок строки
+// доски лежит не текстом, а меткой для чтения с экрана: они собраны значками, а
+// слово ушло в подсказку.
 function button(node, label) {
   if (!node) return null;
-  if (node.tagName === "BUTTON" && node.textContent === label) return node;
+  if (node.tagName === "BUTTON" &&
+    (node.textContent === label || node.attrs["aria-label"] === label)) return node;
   for (const kid of node.children || []) {
     const hit = button(kid, label);
     if (hit) return hit;
@@ -367,6 +370,19 @@ function byClass(node, cls) {
     if (hit) return hit;
   }
   return null;
+}
+
+// Все узлы с таким классом: строк подписки в меню несколько, и число их само
+// по себе предмет проверки.
+function allByClass(node, cls) {
+  const out = [];
+  const walk = (n) => {
+    if (!n) return;
+    if (String(n.className || "").split(" ").includes(cls)) out.push(n);
+    for (const kid of n.children || []) walk(kid);
+  };
+  walk(node);
+  return out;
 }
 
 // Раскладка коробки: её дети получают вертикаль, всем прочим узлам дерева
@@ -970,7 +986,8 @@ const goalRow = find(groups, "XR-1");
 if (dump(goalRow).includes("сессии нет")) {
   fail("чип «сессии нет» вернулся в строку доски: " + dump(goalRow));
 }
-// Кнопка запуска цели (isGoal) это одиночная кнопка, не обёрнута в split (DK-349).
+// Составной кнопки запуска в строке больше нет вовсе: выбор подписки уехал в
+// меню под тремя точками (DK-349 про глубину узлов тем и снят).
 if (byClass(goalRow, "split")) fail("кнопка запуска цели обёрнута в split: " + dump(goalRow));
 
 // Нажатие кнопки: строка обновляется на месте, экран не уезжает, а фокус
@@ -999,6 +1016,9 @@ if (!String(button(now, "Стоп").className).includes("btn-danger")) {
 }
 // Стоп это одиночная кнопка без узкой части, не обёрнута в split (DK-349).
 if (byClass(now, "split")) fail("стоп в строке обёрнут в split: " + dump(now));
+// Главной кнопкой у поднятой работы стоит чат, а стоп идёт рядом с ним: за
+// разговором с идущей работой ходят чаще, чем снимают её.
+if (byClass(now, "rmain")) fail("у идущей работы главной осталась кнопка запуска: " + dump(now));
 // Признак выполнения стоит кружком у номера, а не словом в чипе: зелёная
 // точка с подсказкой вместо чипа «работает» (POC ветки poc-chat).
 const dot = byClass(now, "sdot");
@@ -1038,13 +1058,13 @@ if (byClass(find(groups, "XR-4"), "sdot")) {
   if (kinds({ id: "XR-9", run: "gone" })) fail("оборванный конвейер получил кружок");
   if (kinds({ id: "XR-9" })) fail("строка без работы получила кружок");
 }
-if (doc.activeElement.textContent !== "Стоп") {
+if (!String(doc.activeElement.className || "").includes("btn")) {
   fail("после нажатия фокус ушёл со строки: " + dump(doc.activeElement));
 }
 
-// Выбор подписки в самой кнопке запуска (DK-326). Широкая часть поднимает
-// работу на подписке по умолчанию, узкая открывает список, а строка списка
-// запускает работу на своей подписке без второго нажатия. Проверяется тело
+// Выбор подписки при запуске (DK-326) живёт в меню строки. Главная кнопка
+// поднимает работу на подписке по умолчанию, три точки открывают меню, а строка
+// подписки запускает работу на своей без второго нажатия. Проверяется тело
 // запроса: нарисованный список без доехавшего имени это ровно та поломка,
 // ради которой задача и заведена.
 if (started[started.length - 1].harness !== harnessOne.name) {
@@ -1055,20 +1075,15 @@ running = false;
 await sandbox.refresh();
 await settle();
 const pickRow = find(groups, "XR-5");
-const grp = byClass(pickRow, "split");
-if (!grp) fail("у строки нет составной кнопки запуска: " + dump(pickRow));
-// Вид кнопки держит макет «11 Подписка при запуске»: половины одного цвета,
-// узкая часть с галочкой-рамкой, стык без зазора. До DK-336 узкая часть была
-// отдельной кнопкой со значком и отступом.
-const more = grp.children[1];
-if (!String(more.className).includes("more2") || !String(more.className).includes("btn-acc")) {
-  fail("узкая часть кнопки не по макету: " + more.className);
-}
-if (!byClass(more, "car")) fail("в узкой части нет галочки-рамки: " + dump(more));
-const pop = byClass(grp, "hpop");
-if (!pop || !pop.hidden) fail("список подписок открыт до нажатия на стрелку");
+const grp = byClass(pickRow, "racts");
+if (!grp) fail("у строки нет ряда действий: " + dump(pickRow));
+if (!byClass(grp, "rmain")) fail("у свободной строки нет главной кнопки запуска: " + dump(grp));
+const more = byClass(grp, "rdots");
+if (!more) fail("у строки нет кнопки с тремя точками: " + dump(grp));
+const pop = byClass(grp, "rmenu");
+if (!pop || !pop.hidden) fail("меню строки открыто до нажатия");
 more.handlers.click({ stopPropagation: () => {} });
-if (pop.hidden) fail("стрелка не открыла список подписок");
+if (pop.hidden) fail("три точки не открыли меню строки");
 // Шапка, две подписки и подвал: макет держит все три части, и без шапки с
 // подвалом список не говорит ни что выбирают, ни откуда он взялся.
 if (!dump(byClass(pop, "hph")).includes("На какой подписке запустить")) {
@@ -1077,7 +1092,7 @@ if (!dump(byClass(pop, "hph")).includes("На какой подписке зап
 if (!dump(byClass(pop, "hfoot")).includes("agentctl harness")) {
   fail("подвал списка не называет источник и срок выбора: " + dump(pop));
 }
-const hrows = pop.children.filter((kid) => String(kid.className).includes("hrow"));
+const hrows = allByClass(pop, "hrow");
 if (hrows.length !== 2) {
   fail("в списке подписок " + hrows.length + " строк, ждал две: " + dump(pop));
 }
@@ -1124,10 +1139,12 @@ for (const [list, note, why] of [
   await settle();
   const one = find(groups, "XR-6");
   if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
-  // Одиночная кнопка запуска без стрелки не обёрнута в split (DK-349): CSS
-  // правило .split .btn:not(.more2) обрезает правые углы, и вырожденный
-  // случай (одна подписка / непрочитанный список) не должен его ловить.
   if (byClass(one, "split")) fail("кнопка запуска при " + why + " обёрнута в split: " + dump(one));
+  // Выбирать нечего, и меню строке не нужно: под тремя точками остаётся один
+  // чат, а вот выбора подписки с ярусом там уже нет.
+  if (allByClass(one, "hrow").length) {
+    fail("при " + why + " в меню строки предложен выбор подписки: " + dump(one));
+  }
   const only = button(one, "Выполнить");
   if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
   if (!String(only.title).includes(why)) {
@@ -1145,12 +1162,11 @@ for (const [list, note, why] of [
   running = false;
 }
 
-// Симметрия глубины между вырожденным Run и Стоп (DK-349, DK-316): обе кнопки
-// без узкой части лежат в .meta на одной глубине, и позиционный путь
-// focusSnap/focusBack (app.js:82-113) при переходе между ними не промахивается
-// мимо кнопки. Проверка идёт на XR-6 (одна подписка), а не на XR-3: там Run
-// составной и обёрнут в .split той же глубины, что раньше был Стоп, и промах
-// такой парой не ловится.
+// Фокус переживает подъём работы (DK-349, DK-316): кнопки строки лежат одним
+// рядом на одной глубине, и позиционный путь focusSnap/focusBack
+// (app.js:82-113) после смены состава кнопок попадает в кнопку той же строки, а
+// не мимо неё. Главной кнопкой у поднятой работы становится чат, и фокус
+// остаётся на первой кнопке ряда, то есть на нём.
 harnessList = [harnessOne];
 harnessNote = "";
 running = false;
@@ -1170,8 +1186,10 @@ await settle();
 const degLive = find(groups, "XR-6");
 const degStop = button(degLive, "Стоп");
 if (!degStop) fail("вырожденная строка не показала Стоп после запуска: " + dump(degLive));
-if (doc.activeElement !== degStop) {
-  fail("переход Run -> Стоп на вырожденной строке промахнулся мимо кнопки: " + dump(doc.activeElement));
+const degTalk = button(degLive, "Чат по задаче XR-6");
+if (!degTalk) fail("у поднятой работы пропала главная кнопка чата: " + dump(degLive));
+if (doc.activeElement !== degTalk) {
+  fail("подъём работы увёл фокус мимо кнопок строки: " + dump(doc.activeElement));
 }
 running = false;
 degStop.handlers.click({ stopPropagation: () => {} });

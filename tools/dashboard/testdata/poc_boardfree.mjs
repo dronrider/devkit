@@ -54,8 +54,10 @@ const rowOf = () => {
 {
   const row = rowOf();
   if (!row) fail("строки XR-002 на доске нет вовсе: " + dump(groups).slice(0, 300));
-  if (!deepBtn(row, "Стоп")) fail("у идущей работы нет «Стопа»: " + dump(row));
-  if (deepBtn(row, "Запустить") || byClass(row, "split")) {
+  // Стоп стоит значком рядом с главной кнопкой строки, и узнают его классом:
+  // подписи у кнопки нет вовсе, она уехала в подсказку.
+  if (!byClass(row, "rstop")) fail("у идущей работы нет «Стопа»: " + dump(row));
+  if (byClass(row, "rmain") || byClass(row, "split")) {
     fail("у идущей работы оказалась кнопка запуска: " + dump(row));
   }
 }
@@ -72,15 +74,15 @@ poll[poll.length - 1].fn();
 await settle();
 {
   const row = rowOf();
-  if (deepBtn(row, "Стоп")) {
+  if (byClass(row, "rstop")) {
     fail("«Стоп» висит на строке после конца работы: " + dump(row));
   }
-  if (!byClass(row, "split") && !deepBtn(row, "btn-acc")) {
+  if (!byClass(row, "rmain")) {
     fail("строка не вернулась к своим кнопкам: " + dump(row));
   }
-  // Запуск с выбором подписки на месте: составная кнопка с той же половиной.
-  const pop = byClass(row, "hpop");
-  if (!pop || !dump(pop).includes("glm-code")) {
+  // Выбор подписки на месте, просто лежит он в меню под тремя точками.
+  const menu = byClass(row, "rmenu");
+  if (!menu || !dump(menu).includes("glm-code")) {
     fail("у свободной строки нет выбора подписки: " + dump(row));
   }
 }

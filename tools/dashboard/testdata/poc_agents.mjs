@@ -48,7 +48,10 @@ const works = {
 };
 
 const rowOf = (w) => sandbox.agentRow("demo", w, now);
-const btns = (row) => allByClass(row, "btn").map((b) => b.textContent);
+// Кнопки строки узнаются подписью для чтения с экрана: подписей словом у них
+// больше нет, все они стоят значками, а слово ушло в подсказку.
+const btns = (row) => allByClass(row, "btn")
+  .map((b) => b.attrs["aria-label"] || b.textContent);
 // Кнопка чата тут значком, как в строке доски: подписи у неё нет, узнаётся она
 // подсказкой.
 const chatBtn = (row) => allByClass(row, "btn").find((b) => String(b.title) === "Чат агента");

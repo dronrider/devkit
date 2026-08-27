@@ -30,31 +30,28 @@ const POP = `
         <span class="hfoot">Список включённых подписок машины, agentctl harness. Выбор действует на один запуск.</span>
       </div>`;
 
-const ROW = `
-    <tr class="trow">
-      <td class="id">DK-319</td>
-      <td class="tt"><span class="cin"><span class="ttl">Сообщение цели при стоящем цикле не пропадает молча</span></span></td>
-      <td class="rank"><button class="rsum">40</button></td>
-      <td class="twhen"><span class="stale dashed">2026-08-20</span></td>
-      <td class="meta"><span class="cin">
-        <span class="split">
-          <button class="btn btn-sm btn-acc">Выполнить</button>
-          <button class="btn btn-sm btn-acc more2"><span class="car"></span></button>` + POP + `
-        </span>
-      </span></td>
-    </tr>`;
+const PANEL = `
+  <div class="card tpage">
+    <div class="tchips">
+      <span class="chip">задача</span><span class="chip">S</span>
+      <span class="gap"></span>
+      <div class="tmodes">
+        <div class="tacts">
+          <span class="split">
+            <button class="btn btn-acc"><svg viewBox="0 0 24 24"></svg><span class="lb">Выполнить</span></button>
+            <button class="btn btn-acc more2"><span class="car"></span></button>` + POP + `
+          </span>
+        </div>
+        <button class="btn btn-ico tpen"><svg viewBox="0 0 24 24"></svg></button>
+      </div>
+    </div>
+  </div>`;
 
-// Строка живёт в настоящей таблице раздела (POC DK-397): места кнопке отводит
-// колонка, и мерить её вне таблицы значило бы мерить не то.
-document.getElementById("groups").innerHTML = `
-  <table class="tbl t-tasks">
-    <colgroup><col style="width:60px"><col><col style="width:44px">
-      <col style="width:92px"><col style="width:246px"></colgroup>
-    <tbody class="tsec">
-      <tr class="band secband"><td class="bcell" colspan="5">
-        <div class="shead">Backlog<span class="n">1</span></div></td></tr>` + ROW + `
-    </tbody>
-  </table>`;
+// Составная кнопка стоит командной панелью экрана задачи и полосой запуска
+// накопителя: из строки доски она ушла, там осталась одна главная кнопка, а
+// выбор подписки уехал в меню под тремя точками. Меряется она там, где стоит:
+// замер вне своего места говорил бы о вёрстке, которой на экране не бывает.
+document.getElementById("groups").innerHTML = PANEL;
 
 function box(sel) {
   const node = document.querySelector(sel);

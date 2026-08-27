@@ -384,6 +384,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trow .tt .rchips{display:flex;align-items:center;gap:8px;flex:none}
 .trow .meta>.cin{gap:10px;justify-content:flex-end}
+/* действия строки: главная кнопка, «Стоп» у идущей работы и три точки с
+   остальным. Ряд стоит своей коробкой, а не россыпью в ячейке, потому что от
+   него отсчитывается место выпавшего меню */
+.racts{display:inline-flex;position:relative;align-items:center;gap:8px}
+.racts .pmenu{right:0;top:34px}
+.racts .pmenu.up{top:auto;bottom:calc(100% + 6px)}
 .stale{font:400 11px var(--sans);color:var(--tx3);white-space:nowrap}
 /* перетаскивание строки очереди (LLD DK-328, решение 1): взятая строка,
    приглушённая зона за коридором, щели с рангом и ярлык пересчёта. Прокрутку
@@ -785,17 +791,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
      прижато к правому краю */
   .rsum{min-width:44px;min-height:44px;text-align:left}
   .trow .meta .btn{height:36px}
-  /* Вправо уезжает первая из кнопок, а не каждая: с двумя «margin-left:auto»
-     свободное место делилось между ними, и длинное действие вылезало за край
-     экрана (кнопка чата встала в строку значком). */
-  .trow .meta .btn-ico{margin-left:auto;width:36px}
-  .trow .meta .btn-ico + .btn,
-  .trow .meta .btn-ico + .split{margin-left:6px}
-  .trow .meta .cin>.btn:first-of-type{margin-left:auto}
-  /* телефон: составная кнопка целиком уходит вправо, стрелка держит палец в
-     44 пикселя по ширине, а список подписок не выходит за край экрана */
-  .trow .meta .split{margin-left:auto}
-  .trow .meta .split .btn{margin-left:0}
+  /* телефон: вправо уезжает весь ряд действий, а не каждая кнопка по себе.
+     Кнопки в нём значками, и палец держит 36 точек по ширине */
+  .trow .meta .racts{margin-left:auto}
+  .trow .meta .btn-ico{width:36px}
   .split .more2{width:44px}
   .hpop{width:min(326px,86vw)}
   /* телефон: полоса действий задачи собрана значками с пальцем в 44 пикселя
@@ -1523,6 +1522,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* палец крупнее курсора: на телефоне пункт меню выше и просторнее */
 .pmrow{padding:7px 9px;border-radius:6px;font:400 12.5px var(--sans);color:var(--tx);cursor:pointer}
 .pmrow:hover{background:var(--bg2)}
+/* пункт меню это кнопка: жмут его пальцем и с клавиатуры, и читалка экрана
+   обязана назвать его кнопкой, а не подписью */
+button.pmrow{display:block;width:100%;text-align:left;border:none;background:none;font:400 12.5px var(--sans)}
+/* меню строки шире меню плюса: в нём лежат не только пункты, но и выбор
+   подписки с ярусом, а строка подписки несёт имя с моделью */
+.rmenu{min-width:250px}
+.rmenu .rpick{display:block}
 /* Блок «Связи» экрана задачи (круг 2 POC DK-470): задачи стоят под дизайнами
    с небольшим отступом, дорожки те же, что у строк выдачи поиска */
 .dcard .lrel{margin-top:8px;border-top:1px solid var(--line);padding-top:2px}

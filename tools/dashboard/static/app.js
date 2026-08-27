@@ -953,6 +953,71 @@ function checkTip(row) {
   return how ? who + " " + how : who;
 }
 
+// Тело выбора запуска: строки подписок, полоса ярусов и подвал под ними. Живёт
+// оно в двух местах, во всплывашке составной кнопки и в меню строки доски, и
+// собрано одной функцией нарочно: разъехавшись, эти два выбора отвечали бы на
+// один вопрос по-разному.
+//
+// into это коробка, куда всё кладётся, fire зовётся именем выбранной подписки,
+// а tell выбранным ярусом: ярус живёт у того, кто кнопку собрал, потому что
+// запускает работу и широкая половина кнопки, мимо этого списка.
+function runPickBody(into, opts) {
+  const list = opts.list || [];
+  const pickHarness = Boolean(opts.pickHarness);
+  const tierList = opts.tiers || [];
+  let tier = opts.tier || "";
+  if (pickHarness) {
+    into.append(el("span", "hph", "На какой подписке запустить"));
+    for (const h of list) {
+      const row = harnessRow(h);
+      row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        opts.fire(h.name);
+      });
+      into.append(row);
+    }
+  }
+  // Полоса ярусов: выбор тут не запускает работу, а меняет вес модели, которым
+  // она поедет. Запускают её потом широкой половиной либо строкой подписки, и
+  // список от выбора яруса не закрывается: человек выбирает два ответа подряд.
+  if (tierList.length > 1) {
+    into.append(el("span", "hph", "Каким ярусом"));
+    const bar = el("div", "tbar");
+    const marks = [];
+    for (const name of tierList) {
+      const btn = el("button", "tpick" + (name === tier ? " on" : ""), name);
+      btn.type = "button";
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        tier = name;
+        opts.tell(name);
+        for (const m of marks) m.classList.toggle("on", m === btn);
+        tierNote();
+      });
+      marks.push(btn);
+      bar.append(btn);
+    }
+    into.append(bar);
+  }
+  // Подвал говорит, откуда список и насколько выбор действует: без этих двух
+  // строк человек не знает, чем список пополнить и не запомнил ли дашборд его
+  // выбор на будущее.
+  const foot = el("span", "hfoot", "");
+  // Подвал говорит и про ярус: выбранное имя иначе видно только подсветкой, а
+  // человек, открывший список второй раз, спрашивает «чем поедет».
+  const tierNote = () => {
+    const said = pickHarness
+      ? "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."
+      : "Ярусы из раскладки машины, agentctl harness. Выбор действует на один запуск.";
+    const how = tier === TIER_VERDICT
+      ? " Ярус называет вердикт agentctl pick."
+      : (tier ? " Ярус: " + tier + "." : "");
+    foot.textContent = said + how;
+  };
+  tierNote();
+  into.append(foot);
+}
+
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
@@ -1007,7 +1072,6 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   grp.append(wide);
   const pop = el("div", "hpop");
   pop.hidden = true;
-  if (pickHarness) pop.append(el("span", "hph", "На какой подписке запустить"));
   // Список подписок стоит на общем учёте всплывашек: закрывают его те же три
   // пути, что и список кольца.
   let held = null;
@@ -1016,56 +1080,18 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     more.setAttribute("aria-expanded", "false");
     held = null;
   };
-  if (pickHarness) {
-    for (const h of list) {
-      const row = harnessRow(h);
-      row.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        popupDrop(held);
-        shut();
-        fire(wide, h.name);
-      });
-      pop.append(row);
-    }
-  }
-  // Полоса ярусов: выбор тут не запускает работу, а меняет вес модели, которым
-  // она поедет. Запускают её потом широкой половиной либо строкой подписки, и
-  // список от выбора яруса не закрывается: человек выбирает два ответа подряд.
-  if (tierList.length > 1) {
-    pop.append(el("span", "hph", "Каким ярусом"));
-    const bar = el("div", "tbar");
-    const marks = [];
-    for (const name of tierList) {
-      const btn = el("button", "tpick" + (name === tier ? " on" : ""), name);
-      btn.type = "button";
-      btn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        tier = name;
-        for (const m of marks) m.classList.toggle("on", m === btn);
-        tierNote();
-      });
-      marks.push(btn);
-      bar.append(btn);
-    }
-    pop.append(bar);
-  }
-  // Подвал говорит, откуда список и насколько выбор действует: без этих двух
-  // строк человек не знает, чем список пополнить и не запомнил ли дашборд его
-  // выбор на будущее.
-  const foot = el("span", "hfoot", "");
-  // Подвал говорит и про ярус: выбранное имя иначе видно только подсветкой, а
-  // человек, открывший список второй раз, спрашивает «чем поедет».
-  const tierNote = () => {
-    const said = pickHarness
-      ? "Список включённых подписок машины, agentctl harness. Выбор действует на один запуск."
-      : "Ярусы из раскладки машины, agentctl harness. Выбор действует на один запуск.";
-    const how = tier === TIER_VERDICT
-      ? " Ярус называет вердикт agentctl pick."
-      : (tier ? " Ярус: " + tier + "." : "");
-    foot.textContent = said + how;
-  };
-  tierNote();
-  pop.append(foot);
+  runPickBody(pop, {
+    list,
+    pickHarness,
+    tiers: tierList,
+    tier,
+    fire: (name) => {
+      popupDrop(held);
+      shut();
+      fire(wide, name);
+    },
+    tell: (name) => { tier = name; },
+  });
   const more = el("button", wide.className + " more2");
   more.append(el("span", "car"));
   more.setAttribute("aria-label", "Выбрать подписку");
@@ -1107,67 +1133,191 @@ function noRoomBelow(node) {
 // принимается до неё, поэтому тут запас по макету.
 const HPOP_ROOM = 260;
 
+// Пункт меню строки: та же кнопка, что и в меню плюса, только со своим
+// действием. Кнопкой, а не подписью, потому что жмут её и пальцем, и с
+// клавиатуры, и читалка экрана обязана назвать её кнопкой.
+function menuRow(label, tip, go) {
+  const opt = el("button", "pmrow", label);
+  opt.type = "button";
+  if (tip) withTip(opt, tip);
+  opt.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    go(opt);
+  });
+  return opt;
+}
+
+// Есть ли за строкой разговор. От этого зависит, чем работает главная кнопка
+// строки: у задачи с разговором это вход в чат, у нетронутой очереди запуск.
+// Спрашивается это у самой строки (row.run): работа за ней идёт, шла нашей
+// сессией или кончилась вместе с ней, значит чату есть что показать. У строки
+// без единой сессии кнопка чата открывала бы пустой разговор, а нужен ей
+// запуск, и он самое частое действие очереди (решение пользователя).
+function rowTalks(row) {
+  return Boolean(row && row.run);
+}
+
 // Действие прямо со строки: поднять конвейер или снять живую сессию, не заходя
 // внутрь задачи. Ручки те же, что у экрана задачи (POST и DELETE runs), и
 // ответ выходит в ту же строку результата. Что со строкой сейчас, говорит её
 // признак работы, а не поиск по списку работ.
+//
+// Кнопка тут одна главная, и какая она, решает состояние строки: с разговором
+// это чат, без разговора запуск. Рядом с ней остаётся только «Стоп» у идущей
+// работы: жмут его, когда агент делает не то, и прятать такое в меню нельзя.
+// Всё остальное (продолжение работы, выбор подписки с ярусом, вторая из пары
+// «чат и запуск») уехало под кнопку с тремя точками: колонка действий занимала
+// больше места, чем номер, ранг и дата вместе, а выбор подписки человек делает
+// раз в десяток запусков (разбор частот с пользователем).
+//
+// Приписки про ненайденного исполнителя тут больше нет, как нет и other, на
+// котором она стояла: строку без живой работы человек и так видит по
+// отсутствию кружка, а слова про другую машину попадали ровно в те задачи,
+// которые он вёл из дашборда (жалоба пользователя). Подпись «ведёт другая
+// сессия» снята по той же причине.
 function rowAction(project, row, sect) {
-  // Приписки про ненайденного исполнителя тут больше нет, как нет и other,
-  // на котором она стояла: строку без живой работы человек и так видит по
-  // отсутствию кружка, а слова про другую машину попадали ровно в те задачи,
-  // которые он вёл из дашборда (жалоба пользователя).
+  const grp = el("span", "racts");
   const live = row.run && row.run !== "gone";
-  // Работа наша, просто идёт не нашей tmux-сессией, а живым чатом: подпись
-  // «ведёт другая сессия» врала, а вход в разговор прятала. Кнопки тут те же,
-  // что доступны в панели: разговор и продолжение.
-  if (live && row.run !== "tmux") return rowChatActions(project, row);
-  if (!live && row.after && row.after.length) {
-    // Заблокированную маркером задачу конвейер брать не должен, и кнопка
-    // говорит это сама: погашенная с причиной понятнее исчезнувшей.
-    const wait = el("button", "btn btn-sm", actionLabel(sect));
-    wait.disabled = true;
-    return withTip(wait, "сначала " + row.after.join(", "));
+  // Работа наша и идёт нашей tmux-сессией: её снимают со строки.
+  const ours = live && row.run === "tmux";
+  const talks = rowTalks(row);
+  // Пункты меню собираются до кнопки: пусто в меню значит, что и трёх точек у
+  // строки нет. У идущей работы так и выходит, там всё на виду.
+  const opts = [];
+  // Закрывалка меню объявлена раньше самого меню: зовёт её и строка подписки
+  // внутри него, а собирается меню последним, когда известен весь состав.
+  let shutMenu = () => {};
+  let main;
+  if (talks) {
+    main = rowChatBtn(project, row);
+    // Работа наша, просто идёт живым чатом или уже кончилась: снимать нечем, а
+    // продолжать есть чем, и продолжение это подъём хода той же сессии, а не
+    // второй исполнитель конвейером (жалоба на DK-460).
+    if (!ours) {
+      opts.push(menuRow("Продолжить работу",
+        "Поднять ход в том же разговоре: сервер разбудит живую сессию или поднимет резюм",
+        (btn) => {
+          btn.disabled = true;
+          continueTask(project, row.id).catch(console.error).finally(() => { btn.disabled = false; });
+        }));
+    }
+  } else {
+    // Разговора за строкой нет, и главная кнопка тут запуск. Вход в чат уехал
+    // в меню: пустой разговор у нетронутой очереди открывают редко.
+    opts.push(menuRow("Чат по задаче", "Открыть разговор по задаче " + row.id,
+      () => { openChat(chatAddr(project, row.id)); }));
+    const label = actionLabel(sect);
+    if (row.after && row.after.length) {
+      // Заблокированную маркером задачу конвейер брать не должен, и кнопка
+      // говорит это сама: погашенная с причиной понятнее исчезнувшей.
+      main = el("button", "btn btn-sm btn-ico rmain");
+      main.append(icon("i-play"));
+      main.disabled = true;
+      main.setAttribute("aria-label", label);
+      withTip(main, label + ": сначала " + row.after.join(", "));
+    } else {
+      // Строка списка остаётся на доске и после нажатия (DK-316): экран не
+      // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
+      // равно виден по наведению.
+      const pin = checkPin(Object.assign({ sect: sect }, row));
+      const hint = pin ? checkTip(Object.assign({ sect: sect }, row))
+        : orderHint(row.order, row.accept, sect, row.id);
+      // Ярус выбирается там же, где подписка. У задачи по умолчанию стоит
+      // вердикт: назначает исполнителя и ярус agentctl pick, а не глаз
+      // диспетчера, и человек его лишь переопределяет. У цели вердикта на весь
+      // цикл нет, там умолчание pro.
+      const goal = /^Цель:/.test(row.title);
+      const tierList = goal ? harnessTiers() : [TIER_VERDICT].concat(harnessTiers());
+      let tier = goal ? RUN_TIER : TIER_VERDICT;
+      // Наружу вердикт едет пустым полем: имени такого яруса в раскладке нет,
+      // его называет сервер.
+      const tierOut = () => (tier === TIER_VERDICT ? "" : tier);
+      const list = harnesses();
+      const pickHarness = !pin && list.length >= 2;
+      main = el("button", "btn btn-sm btn-acc btn-ico rmain");
+      main.append(icon("i-play"));
+      main.setAttribute("aria-label", label);
+      // Причина, по которой выбирать не из чего, стоит в подсказке самой
+      // кнопки: списка подписок у такой строки нет вовсе, и сказать об этом
+      // больше негде.
+      const why = pickHarness || pin ? "" : harnessWhy();
+      withTip(main, [label + ".", hint, why].filter(Boolean).join(" "));
+      const fire = (harness) => {
+        main.disabled = true;
+        startRun(project, row.id, harness, "", tierOut())
+          .catch(console.error).finally(() => { main.disabled = false; });
+      };
+      main.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        fire(pin || harnessDefault());
+      });
+      // Выбирать есть что, когда подписок на машине больше одной либо когда у
+      // запуска свой выбор яруса: с одной подпиской и одним ярусом список
+      // отвечал бы на вопрос, которого никто не задавал.
+      if (pickHarness || tierList.length > 1) {
+        const box = el("span", "rpick");
+        runPickBody(box, {
+          list,
+          pickHarness,
+          tiers: tierList,
+          tier,
+          fire: (name) => { shutMenu(); fire(name); },
+          tell: (name) => { tier = name; },
+        });
+        opts.push(box);
+      }
+    }
   }
-  // Наши сессии есть, но все кончились: запускать конвейер поверх них нечего,
-  // разговор продолжается той же кнопкой, что в панели.
-  if (row.run === "gone") return rowChatActions(project, row);
-  if (!live) {
-    // Строка списка остаётся на доске и после нажатия (DK-316): экран не
-    // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
-    // равно виден по наведению.
-    const pin = checkPin(Object.assign({ sect: sect }, row));
-    const hint = pin ? checkTip(Object.assign({ sect: sect }, row))
-      : orderHint(row.order, row.accept, sect, row.id);
-    // Ярус выбирается там же, где подписка. У задачи по умолчанию стоит
-    // вердикт: назначает исполнителя и ярус agentctl pick, а не глаз
-    // диспетчера, и человек его лишь переопределяет. У цели вердикта на весь
-    // цикл нет, там умолчание pro.
-    const goal = /^Цель:/.test(row.title);
-    const tiers = goal
-      ? { list: harnessTiers(), now: RUN_TIER }
-      : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT };
-    return runControl(project, row.id, (label) => el("button", "btn btn-sm btn-acc", label),
-      actionLabel(sect), goal, hint, "", pin, null, tiers);
+  grp.append(main);
+  if (ours) {
+    const stop = el("button", "btn btn-sm btn-danger btn-ico rstop");
+    stop.append(icon("i-stop"));
+    stop.setAttribute("aria-label", "Стоп");
+    withTip(stop, "Стоп: " + STOP_TIP);
+    stop.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      // Кнопка гаснет до ответа: пока стоп идёт, строка выглядит прежней, и
+      // второе нажатие уходило вторым запросом.
+      stop.disabled = true;
+      stopRun(project, row.id).catch(console.error).finally(() => { stop.disabled = false; });
+    });
+    grp.append(stop);
   }
-  const btn = el("button", "btn btn-sm btn-danger", "Стоп");
-  btn.addEventListener("click", (ev) => {
+  if (!opts.length) return grp;
+  let held = null;
+  // Меню строки закрывается теми же тремя путями, что и остальные всплывашки
+  // дашборда: повторным нажатием по своей кнопке, кликом мимо и Escape.
+  const menu = el("div", "pmenu rmenu");
+  menu.hidden = true;
+  for (const opt of opts) menu.append(opt);
+  const dots = el("button", "btn btn-sm btn-ico rdots");
+  shutMenu = () => {
+    menu.hidden = true;
+    dots.setAttribute("aria-expanded", "false");
+    held = null;
+  };
+  dots.append(icon("i-dots"));
+  dots.setAttribute("aria-label", "Ещё действия");
+  dots.setAttribute("aria-expanded", "false");
+  withTip(dots, "Ещё действия строки");
+  dots.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    // Кнопка гаснет до ответа: пока стоп идёт, строка выглядит прежней, и
-    // второе нажатие уходило вторым запросом.
-    btn.disabled = true;
-    stopRun(project, row.id).catch(console.error).finally(() => { btn.disabled = false; });
+    if (!menu.hidden) {
+      popupDrop(held);
+      shutMenu();
+      return;
+    }
+    // Соседняя всплывашка уходит с открытием этой: два раскрытых списка разом
+    // экран не показывает ни в одном месте дашборда.
+    popupsShut(null);
+    menu.hidden = false;
+    dots.setAttribute("aria-expanded", "true");
+    held = popupHold(menu, shutMenu);
+    // Вверх меню раскрывается там, где под кнопкой не хватает места: строка
+    // стоит низко, и раскрытое вниз оно уезжает под нижние вкладки.
+    menu.classList.toggle("up", noRoomBelow(dots));
   });
-  // Стоп это всегда одиночная кнопка без стрелки: обёртка без класса split
-  // ради стиля не нужна (CSS достаёт кнопку descendant-селектором, .trow
-  // .meta .btn), но нужна ради глубины. Составная кнопка запуска держит
-  // span.split (wide, more, pop), и позиционный путь focusSnap/focusBack
-  // (строки 82-113, DK-316) считает индексы по глубине от .meta: голая кнопка
-  // тут стояла бы на уровень выше составного Run, и переход между ними
-  // промахивался бы мимо кнопки. Вырожденный Run (runControl, ниже) той же
-  // причины ради тоже обёрнут в такой же пустой span, а не отдаёт голую
-  // кнопку: глубина одна для всех сочетаний Run/Стоп на одной строке.
-  const grp = el("span");
-  grp.append(btn);
+  grp.append(dots, menu);
   return grp;
 }
 
@@ -1212,7 +1362,6 @@ function renderRow(project, row, sect, opts) {
   }
   tr.append(when);
   const { cell: metac, box: meta } = tblCell("meta");
-  meta.append(rowChatBtn(project, row));
   meta.append(rowAction(project, row, sect));
   tr.append(metac);
   tr.addEventListener("click", () => {
@@ -1389,7 +1538,11 @@ const TBL_COLS = {
     { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
     { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 58 },
     { key: "date", label: "Дата", by: "дате", first: "desc", w: 92 },
-    { key: "act", label: "", w: 246 },
+    // Колонка действий держит две кнопки значками и отступ карточки справа:
+    // главную и либо «Стоп» у идущей работы, либо три точки с остальным. Прежде
+    // тут стояла составная кнопка запуска с выбором подписки и яруса, и колонка
+    // выходила шире номера, ранга и даты вместе (замер пользователя).
+    { key: "act", label: "", w: 92 },
   ],
   sess: [
     // Колонка зовётся «Ход», а не «Состояние»: несёт она кружок в девять точек,
@@ -1404,7 +1557,8 @@ const TBL_COLS = {
     // на другой вопрос: он про то, сколько сессия живёт, а не про то, когда в
     // ней последний раз что-то сказали (замечание пользователя).
     { key: "moved", label: "Активность", by: "последней активности", first: "desc", w: 108 },
-    { key: "act", label: "", w: 110 },
+    // Действия сессии те же двумя значками, что и у строки доски: чат и снятие.
+    { key: "act", label: "", w: 92 },
   ],
   drafts: [
     // Отметка выбора и уровень разбора живут одной колонкой: врозь они
@@ -8079,20 +8233,6 @@ function rowChatBtn(project, row, works) {
   return talk;
 }
 
-// Продолжение разговора: сам вход в чат стоит у строки отдельной кнопкой, тут
-// остаётся только подъём хода.
-function rowChatActions(project, row) {
-  const grp = el("span");
-  const go = el("button", "btn btn-sm btn-acc", "Продолжить");
-  go.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    go.disabled = true;
-    continueTask(project, row.id).catch(console.error).finally(() => { go.disabled = false; });
-  });
-  grp.append(go);
-  return grp;
-}
-
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
 // сессию: следующая реплика попадёт в тот же разговор с его памятью, а полное
 // завершение живёт на экране задачи и в кнопке остановки конвейера.
@@ -12335,7 +12475,11 @@ function agentRow(project, w, now) {
   // (замечание пользователя). Знание уехало в подсказку строки, где и лежат
   // остальные метаданные.
   if (workRunning(w)) {
-    const stop = withTip(el("button", "btn btn-sm btn-danger", "Стоп"), STOP_TIP);
+    // Стоп значком, как и в строке доски: слово рядом с чатом и крестиком
+    // забирало колонку под подпись, а знание уехало в подсказку.
+    const stop = withTip(el("button", "btn btn-sm btn-danger btn-ico rstop"), "Стоп: " + STOP_TIP);
+    stop.append(icon("i-stop"));
+    stop.setAttribute("aria-label", "Стоп");
     stop.addEventListener("click", (ev) => {
       ev.stopPropagation();
       stopRun(project, w.id).catch(console.error);

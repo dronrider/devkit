@@ -283,6 +283,26 @@ def check_proofread(here):
     return fails
 
 
+def check_proofread_spawn(here):
+    # DK-548: скилл кладёт процедуру в ход тому, кто его позвал, а текст читает
+    # субагент. Прогон стенда 2026-08-27 показал, чем кончается ход, когда
+    # порядок не назван. Сессия звала скилл, отвечала «вычитка запущена» и
+    # кончала ход, приняв скилл за фоновую задачу. Ни правок, ни строки следа в
+    # файле после такого хода нет, а таблица стенда называет это непозванной
+    # вычиткой.
+    fails = []
+    text = read(os.path.join(here, "proofread", "SKILL.md"))
+    if text is None:
+        return fails  # пропажу скилла отдельно ловит check_proofread
+    if not SYNC_SPAWN_RE.search(text):
+        fails.append("proofread: спавн субагента не назван синхронным, "
+                     "ход кончится словами «вычитка запущена»")
+    if "Agent" not in text:
+        fails.append("proofread: не назван инструмент, "
+                     "которым позвавший поднимает субагента")
+    return fails
+
+
 def check_prose(root):
     # DK-523: корпус эталонов работает только там, где его позвали до первой
     # написанной фразы. Точек три в файлах и четвёртая, правка README, названа
@@ -426,6 +446,7 @@ def run(here, root):
     fails += check_groom(here)
     fails += check_team(here)
     fails += check_proofread(here)
+    fails += check_proofread_spawn(here)
     fails += check_prose(root)
     fails += check_rules_backlink(here)
     fails += check_background_rule(root)

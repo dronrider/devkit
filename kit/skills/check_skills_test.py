@@ -654,6 +654,52 @@ class TestSyncSpawn(SkillTree):
         self.assertTrue(any("спавн субагента не назван синхронным" in f for f in fails), fails)
 
 
+class TestProofreadSpawn(SkillTree):
+    """DK-548: вычитку делает субагент, и поднимает его тот, кто позвал скилл.
+    Без этих слов сессия принимает скилл за фоновую задачу, отвечает «вычитка
+    запущена» и кончает ход, оставив файл нетронутым."""
+
+    GOOD = ("Субагента поднимает позвавший, синхронным спавном инструментом "
+            "`Agent`, и ждёт отчёта в том же ходе.")
+
+    def write_proofread(self, body):
+        self.add_skill("proofread", body=body + "\n" + "\n".join(["тело"] * 12))
+
+    def test_passes_when_caller_spawns_synchronously(self):
+        self.write_proofread(self.GOOD)
+        self.assertEqual(check_skills.check_proofread_spawn(self.here), [])
+
+    def test_fails_when_spawn_not_named_sync(self):
+        # Текст до правки DK-548: субагент назван, порядок его запуска нет.
+        self.write_proofread("Вычитку гонит субагент со свежим контекстом, "
+                             "инструмент `Agent`.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван синхронным" in f for f in fails), fails)
+
+    def test_fails_when_tool_missing(self):
+        self.write_proofread("Субагента поднимает позвавший, синхронным спавном.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван инструмент" in f for f in fails), fails)
+
+    def test_async_word_is_not_the_rule(self):
+        self.write_proofread("Спавн асинхронный, инструмент `Agent`.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван синхронным" in f for f in fails), fails)
+
+    def test_skill_missing_is_not_double_reported(self):
+        # Пропажу скилла ловит check_proofread, здесь молчание.
+        self.assertEqual(check_skills.check_proofread_spawn(self.here), [])
+
+    def test_run_reports_proofread_spawn(self):
+        self.write_proofread("Вычитку гонит субагент со свежим контекстом.")
+        fails, _ = check_skills.run(self.here, self.root)
+        self.assertTrue(any("proofread: спавн субагента не назван синхронным" in f
+                            for f in fails), fails)
+
+
 class TestLiveReply(SkillTree):
     """DK-343: реплика человека доезжает до идущего витка, и правило реакции на
     неё тремя разрядами держится текстом goal-loop. Тут же зов оболочки: права

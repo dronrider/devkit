@@ -57,6 +57,7 @@ func params(t *testing.T, scen []Scenario, first, second string) Params {
 		End:       endSession,
 		AgentDef:  "exec-medium",
 		Devkit:    devkitRoot(t),
+		UserHome:  fakeHome(t),
 		Timeout:   time.Minute,
 	}
 }

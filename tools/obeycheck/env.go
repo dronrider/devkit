@@ -93,12 +93,75 @@ func copyTree(from, to string, skip func(rel string) bool) error {
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o755)
 		}
+		// Ссылку переносим ссылкой, а не содержимым: затравка может принести
+		// свою связку ключей, и копировать связку целиком было бы и дорого, и
+		// не тем, чего от затравки ждут.
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			return os.Symlink(target, dst)
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
 		return copyFile(path, dst, info.Mode())
 	})
+}
+
+// Связка ключей дома пользователя. Харнес авторизуется через неё, и временный
+// дом получает на связку ссылку, а не копию ключей: дамп связки пришлось бы
+// снимать командой security, а она из неинтерактивной сессии поднимает
+// системный диалог доступа и вешает прогон.
+const keychainRel = "Library/Keychains"
+
+// userHomeDir отдаёт дом пользователя, откуда берётся связка. Непустое
+// значение приходит из теста: живая связка машины тесту не нужна, и зависеть
+// от того, залогинен ли пользователь, он не должен.
+func userHomeDir(override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	return os.UserHomeDir()
+}
+
+// checkAuth смотрит, поднимется ли сессия во временном доме, до того как
+// собрано хоть одно окружение. Без этой проверки негодная авторизация видна
+// только пробным прогоном, и выглядит она как поведение агента: сессия не
+// стартует, проверки на отрицание зеленеют, а клетки краснеют не по делу.
+func checkAuth(userHome, homeSeed string) error {
+	kc := filepath.Join(userHome, keychainRel)
+	if homeSeed != "" {
+		if !dirExists(homeSeed) {
+			return fmt.Errorf("затравки HOME %s нет или это не каталог, а временный дом собирается из неё; "+
+				"починить: дать существующий каталог флагом --home-seed или убрать флаг, "+
+				"тогда временный дом сошлётся на связку ключей %s", homeSeed, kc)
+		}
+		return nil
+	}
+	fi, err := os.Lstat(kc)
+	if err != nil {
+		return fmt.Errorf("связки ключей %s нет, а временный дом ссылается на неё, иначе харнес в нём не авторизуется; "+
+			"починить: залогиниться харнесом на этой машине (claude, дальше /login) "+
+			"или дать готовый дом флагом --home-seed <каталог>", kc)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		if _, err := os.Stat(kc); err != nil {
+			target, _ := os.Readlink(kc)
+			return fmt.Errorf("связка ключей %s это ссылка в никуда, ведёт на %s, и авторизации во временном доме не будет; "+
+				"починить: поправить ссылку или дать готовый дом флагом --home-seed <каталог>", kc, target)
+		}
+	}
+	if !dirExists(kc) {
+		return fmt.Errorf("связка ключей %s это не каталог, и сослаться временному дому не на что; "+
+			"починить: поправить раскладку дома или дать готовый дом флагом --home-seed <каталог>", kc)
+	}
+	return nil
 }
 
 const hookSettings = `{
@@ -119,7 +182,7 @@ const hookSettings = `{
 // makeEnv собирает окружение одного прогона: синтетический проект под гитом с
 // доской, парой файлов кода и хуками devkit, поверх него раскладка правил, и
 // временный HOME с настройками харнеса и определениями субагентов.
-func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
+func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 	e := &runEnv{
 		Root:       root,
 		Home:       filepath.Join(root, "home"),
@@ -154,6 +217,18 @@ func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
 		}
 		if err := copyTree(homeSeed, e.Home, nil); err != nil {
 			return nil, fmt.Errorf("затравка HOME %s: %v", homeSeed, err)
+		}
+	}
+	// Ссылка на связку ключей кладётся после затравки: у затравки свой готовый
+	// дом, и перекрывать его нечем. Уборка отдельного шага не просит, каталог
+	// прогона сносится целиком, а os.RemoveAll идёт по ссылке не внутрь, а
+	// мимо, и связка пользователя остаётся цела.
+	if link := filepath.Join(e.Home, keychainRel); !pathExists(link) {
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(filepath.Join(userHome, keychainRel), link); err != nil {
+			return nil, fmt.Errorf("ссылка на связку ключей: %v", err)
 		}
 	}
 	if lh := filepath.Join(layout, "home"); dirExists(lh) {
@@ -210,6 +285,13 @@ func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// pathExists отвечает и про битую ссылку: она в раскладке дома значит «занято»
+// ровно так же, как живой каталог.
+func pathExists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // seedRepo заводит историю синтетического проекта: три коммита с разными

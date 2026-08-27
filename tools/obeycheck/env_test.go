@@ -7,6 +7,51 @@ import (
 	"testing"
 )
 
+// Раскладка скиллов отсеивает служебное так же, как боевая раскладка машины
+// (skill_files() в tools/devkitctl/devkitctl.py): __pycache__ и точечные файлы
+// заводит прогон тестов и файловый менеджер, а не автор скилла, и в дом
+// прогона они уезжать не должны (DK-546).
+func TestSkillLayoutSkipsNoise(t *testing.T) {
+	src := t.TempDir()
+	for _, d := range []string{
+		filepath.Join(src, "board-task"),
+		filepath.Join(src, "board-task", "__pycache__"),
+	} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join("board-task", "SKILL.md"):             "тело скилла",
+		filepath.Join("board-task", "__pycache__", "x.pyc"): "байткод прогона теста",
+		filepath.Join("board-task", ".DS_Store"):            "файловый менеджер",
+		"check-skills.py":                                   "самопроверка скиллов",
+		"check_skills_test.py":                              "тест самопроверки",
+	}
+	for rel, body := range files {
+		if err := os.WriteFile(filepath.Join(src, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := filepath.Join(t.TempDir(), "skills")
+	if err := copyTree(src, dst, skipSkillNoise); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "board-task", "SKILL.md")); err != nil {
+		t.Fatalf("скилл не доехал: %v", err)
+	}
+	for _, bad := range []string{
+		filepath.Join(dst, "board-task", "__pycache__"),
+		filepath.Join(dst, "board-task", ".DS_Store"),
+		filepath.Join(dst, "check-skills.py"),
+		filepath.Join(dst, "check_skills_test.py"),
+	} {
+		if _, err := os.Stat(bad); err == nil {
+			t.Fatalf("мусор доехал в дом прогона: %s", bad)
+		}
+	}
+}
+
 // fakeHome собирает дом пользователя со связкой ключей. Живой дом машины тестам
 // не годится: связку они бы читали настоящую, а зелень зависела бы от того,
 // залогинен ли пользователь.

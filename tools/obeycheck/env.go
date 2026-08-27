@@ -281,15 +281,9 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 	}
 	// Скиллы едут тем же порядком, что и определения субагентов: готовому дому
 	// из --home-seed есть чем их принести самому, и раскладка тогда уступает.
-	// kit/skills держит рядом с оболочками ещё и свою самопроверку
-	// (check-skills.py и её тест), лежащую не в подкаталоге; она скиллом не
-	// является, и настоящая раскладка машины (tools/devkitctl) её тоже не
-	// копирует.
 	skills := filepath.Join(claude, "skills")
 	if !dirExists(skills) {
-		if err := copyTree(filepath.Join(devkit, "kit", "skills"), skills, func(rel string) bool {
-			return rel == "check-skills.py" || rel == "check_skills_test.py"
-		}); err != nil {
+		if err := copyTree(filepath.Join(devkit, "kit", "skills"), skills, skipSkillNoise); err != nil {
 			return nil, err
 		}
 	}
@@ -299,6 +293,25 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// skipSkillNoise отсеивает при раскладке в дом прогона то же самое, что
+// skill_files() в tools/devkitctl/devkitctl.py отсеивает на боевой машине:
+// служебное (__pycache__, точечные файлы вроде .DS_Store) заводит прогон
+// тестов и файловый менеджер, а не автор скилла. Заодно снимает самопроверку
+// kit/skills/check-skills.py с её тестом: она лежит прямо в kit/skills, не в
+// подкаталоге со своим SKILL.md, скиллом не является, и реальная раскладка её
+// тоже не копирует.
+func skipSkillNoise(rel string) bool {
+	if rel == "check-skills.py" || rel == "check_skills_test.py" {
+		return true
+	}
+	for _, part := range strings.Split(rel, "/") {
+		if part == "__pycache__" || strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // pathExists отвечает и про битую ссылку: она в раскладке дома значит «занято»

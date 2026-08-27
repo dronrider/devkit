@@ -132,20 +132,54 @@ const drag = (grip, from, to) => {
   }
 }
 
+// --- у всякой колонки со своей шириной своя ручка ---
+// Колонку действий было не ужать вовсе: границы правили колонку слева от себя,
+// у последней колонки границы справа нет, и ручка ей не доставалась, а
+// соседнюю двигали сразу две границы (замечание пользователя). Сторожится
+// счёт: границ столько же, сколько колонок со своей шириной, и каждая ручка
+// правит свою.
+{
+  await go("#demo");
+  const list = cells("tasks");
+  const keys = ["id", "title", "rank", "date", "act"];
+  const moved = [];
+  list.forEach((cell, at) => {
+    const grip = byClass(cell, "tblg");
+    if (!grip) return;
+    const was = keys.map((key) => px("--tc-tasks-" + key) || 0);
+    drag(grip, 400, 420);
+    const now = keys.map((key) => px("--tc-tasks-" + key) || 0);
+    const hit = keys.filter((key, i) => now[i] !== was[i]);
+    if (hit.length !== 1) {
+      fail("ручка у границы " + at + " сдвинула колонок: " + JSON.stringify(hit));
+    }
+    moved.push(hit[0]);
+  });
+  const want = keys.filter((key) => key !== "title");
+  if ([...moved].sort().join(",") !== [...want].sort().join(",")) {
+    fail("ручки правят колонки " + moved.join(",") + ", а своя ширина есть у " + want.join(","));
+  }
+  if (!moved.includes("act")) fail("колонку действий не ужать: своей ручки у неё нет");
+  // Память ширин после обхода портит следующие случаи: сбрасываем её.
+  sandbox.localStorage.setItem("devkit.dash.tasks.tblcols", "{}");
+  await go("#demo/sess");
+  await go("#demo");
+}
+
 // --- пределы: колонка не схлопывается в ноль и не съедает строку ---
 {
-  const grip = byClass(cells("tasks")[2], "tblg");
+  const grip = byClass(cells("tasks")[1], "tblg");
   drag(grip, 500, 100);
+  const wide = px("--tc-tasks-rank");
+  if (!(wide <= 460)) fail("колонка съела строку целиком: " + wide + " точек");
+  drag(grip, 100, 3000);
   const small = px("--tc-tasks-rank");
   if (!(small >= 32)) fail("колонку удалось схлопнуть до " + small + " точек");
-  drag(grip, 100, 3000);
-  const big = px("--tc-tasks-rank");
-  if (!(big <= 460)) fail("колонка съела строку целиком: " + big + " точек");
 }
 
 // --- двойное нажатие возвращает ширину по умолчанию ---
 {
-  const grip = byClass(cells("tasks")[2], "tblg");
+  const grip = byClass(cells("tasks")[1], "tblg");
   grip.handlers.dblclick({ stopPropagation: () => {} });
   if (px("--tc-tasks-rank") !== defw("rank")) {
     fail("двойное нажатие не вернуло ширину по умолчанию: " + varOf("--tc-tasks-rank"));

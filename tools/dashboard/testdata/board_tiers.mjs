@@ -62,8 +62,21 @@ const heads = allByClass(groups, "shead");
 if (heads.length !== 3 || cards.length !== 3) {
   fail("секций на экране " + heads.length + ", тел таблицы " + cards.length + ", ждал по три");
 }
-const [runHead, backHead, blockHead] = heads;
-const [, backCard, blockCard] = cards;
+// Секции берутся по имени, а не по месту в списке: порядок секций на экране
+// правит человек (Blocked стоит выше Backlog), и стенд про ярусы от этого
+// порядка зависеть не должен.
+const at = (title) => heads.findIndex((h) => dump(h).trim().startsWith(title));
+const seat = (title) => {
+  const i = at(title);
+  if (i < 0) fail("секции «" + title + "» нет на экране: " + heads.map(dump).join(" | "));
+  return { head: heads[i], card: cards[i] };
+};
+const runHead = seat("In progress").head;
+const { head: backHead, card: backCard } = seat("Backlog");
+const { head: blockHead, card: blockCard } = seat("Blocked");
+if (at("Blocked") > at("Backlog")) {
+  fail("Blocked встал ниже Backlog: парковки прячутся под очередью");
+}
 const ids = (card) => allByClass(card, "trow").map((tr) => dump(byClass(tr, "id")).trim());
 
 // --- очередь: только то, что можно запустить ---
@@ -115,7 +128,8 @@ if (!dump(parked).includes("ждём ответа смежников")) {
   const only = { prefix: "XR", sections: board.sections.map((sec) => (sec.key === "blocked"
     ? { key: "blocked", title: "Blocked", rows: [] } : sec)) };
   sandbox.renderBoard("demo", only);
-  const card = allByClass(groups, "tsec")[2];
+  const card = allByClass(groups, "tsec")[
+    allByClass(groups, "shead").findIndex((h) => dump(h).trim().startsWith("Blocked"))];
   const one = allByClass(card, "btier");
   if (one.length !== 1 || !dump(one[0]).includes("ждут задач")) {
     fail("одинокий ярус остался без подписи: " + one.map(dump).join(" | "));

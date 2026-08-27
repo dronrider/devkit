@@ -1749,7 +1749,11 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .tbl{display:block}
   .tbl>colgroup{display:none}
   .tbl>thead,.tbl>tbody{display:block}
-  .tbl th,.tbl td{display:block;padding-left:0;padding-right:0;border-top:none}
+  /* Вертикальных отступов у ячейки тут тоже нет: строка раскладывается по
+     областям, и держит поля она сама. С ними каждая из пяти ячеек добавляла
+     свои одиннадцать точек сверху и снизу, и строка вырастала до двух с
+     половиной сотен (замер на 390). */
+  .tbl th,.tbl td{display:block;padding:0;border-top:none}
   /* боковые отступы крайних ячеек снимаются тем же по силе правилом, что их
      ставит: на широком экране они держат кромку таблицы, а тут строка
      раскладывается по областям и отступ держит она сама */
@@ -1767,7 +1771,11 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .tblb.tblon{border-color:var(--acc);color:var(--tx)}
   .tbl .shead{padding:13px 14px 8px}
   .tbl .btier{padding:9px 14px 8px}
-  .tbl>tbody>tr.trow{display:grid;grid-template-columns:auto auto 1fr;gap:6px 10px;
+  /* Две строки, а не три: кнопки стоят в первой, справа от даты, ровно так же,
+     как они стоят у записи накопителя. Отдельной строкой под названием они
+     держали целую полосу под два значка, и строка доски росла втрое
+     (замечание пользователя про раздутую строку в мобильном виде). */
+  .tbl>tbody>tr.trow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 10px;
     padding:12px 14px 12px 25px;align-items:center}
   /* кружок висит слева от номера, в отступе строки, и кромка ячейки его не
      режет: на широком экране он стоит внутри отступа, а тут снаружи */
@@ -1777,8 +1785,8 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
   .trow .tt{grid-column:1 / -1;grid-row:2}
   .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:6px}
-  .trow .meta{grid-column:1 / -1;grid-row:3}
-  .trow .meta>.cin{justify-content:flex-start;flex-wrap:wrap}
+  .trow .meta{grid-column:4;grid-row:1}
+  .trow .meta>.cin{justify-content:flex-end;flex-wrap:nowrap}
   /* накопитель ложится тем же ритмом, что и строка доски: отметка с важностью,
      номер и дата первой строкой, название второй во всю ширину. Приписки едут
      под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */

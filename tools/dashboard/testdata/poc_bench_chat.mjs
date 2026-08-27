@@ -81,10 +81,14 @@ const before = text(pin);
 const n0 = asked.length;
 const t1 = Date.now();
 sandbox.switchChat("bbbb2222-2222");
-const sync = text(pin) !== before;
+// Отклик в тот же ход это либо готовое содержимое (разговор лежит в пуле), либо
+// полоска хода над панелью: словами о переходе панель больше не говорит, они
+// мелькали поверх живого разговора (жалоба пользователя).
+const loading = () => String(panel.className || "").includes("cload");
+const sync = text(pin) !== before || loading();
 // Первый отклик это любая смена того, что человек видит: очистка ленты со
 // словом ожидания либо уже собранный чат.
-const react = await until(() => text(pin) !== before);
+const react = await until(() => text(pin) !== before || loading());
 const done = await until(() => text(pin).includes("второй разговор"));
 const all = Date.now() - t1;
 

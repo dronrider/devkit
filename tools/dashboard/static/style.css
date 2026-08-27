@@ -645,6 +645,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    режет её. На узком экране она занимает его целиком тем же адресом:
    отдельного маршрута для телефона нет, ужимать чат в колонку на 375 точках
    незачем, там он нечитаем. */
+/* переход в ещё не открытый разговор: тонкая полоска бежит над панелью, пока
+   едет ответ сервера. Прежде тут стояла надпись поверх живого содержимого, а
+   она врала о переходе, который идёт тем же ходом (пул панелей) */
+.cpanel.cload::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;z-index:40;
+  background:linear-gradient(90deg,transparent,var(--acc),transparent);animation:cload 1s linear infinite}
+@keyframes cload{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .cpanel{position:relative;flex:none;width:var(--cw,420px);display:flex;flex-direction:row;border-left:1px solid var(--line);background:var(--bg1);overflow:hidden}
 .cpanel[hidden]{display:none}
 /* хват ширины: горячая зона шире видимой полоски, чтобы в неё попадали не

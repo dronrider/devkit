@@ -4569,10 +4569,16 @@ async function wireFeed(project, sid, opts) {
   const keep = opts.talk || (() => true);
   const tail = opts.tail || CHAT_TAIL;
   const page = opts.page || CHAT_PAGE;
-  const atStart = el("div", "feed-start", FEED_START);
-  atStart.hidden = true;
-  const box = el("div", opts.list || "");
-  opts.box.replaceChildren(atStart, box);
+  // Возврат в открытый разговор поднимает ленту на её же узлах: записи стоят,
+  // где стояли, и приехавшая дельта дописывается по ключам (sync ниже). Прежде
+  // лента чистилась тут всегда, и вернувшийся человек смотрел на пустоту, пока
+  // едет ответ сервера.
+  const had = opts.keep ? opts.box.querySelector(".feed-start") : null;
+  const list = opts.keep ? opts.box.querySelector("." + (opts.list || "mlist")) : null;
+  const atStart = had || el("div", "feed-start", FEED_START);
+  if (!had) atStart.hidden = true;
+  const box = list || el("div", opts.list || "");
+  if (!had || !list) opts.box.replaceChildren(atStart, box);
 
   // Снятая лента помечает себя сама, а не только общим списком остановок:
   // поток поднимается после ответа сервера, и уход с ленты застаёт кусок на
@@ -5416,6 +5422,10 @@ function safePair(make, call, out) {
 // ленту нужна обработчику нажатия, живущему в пузыре.
 let chatFeedBox = null;
 
+// Подъём живого у собранной панели: её отдаёт chatPanel наружу, а слот пула
+// держит его при себе и зовёт, когда человек возвращается в этот разговор.
+let chatArm = null;
+
 // Сколько горит подсветка исходной реплики после перехода по цитате.
 const QUOTE_LIT = 1000;
 
@@ -5692,13 +5702,14 @@ function shotURL(path) {
     "/shot?name=" + encodeURIComponent(name);
 }
 
-function wireChatFeed(project, feed, sid, onItem, onFeed) {
+function wireChatFeed(project, feed, sid, onItem, onFeed, keep) {
   chatShotProject = project;
   chatShotSid = sid;
   chatFeedIn(project);
   return wireFeed(project, sid, {
     onItem,
     onFeed,
+    keep,
     box: feed,
     scroll: feed,
     list: "mlist",
@@ -9169,21 +9180,15 @@ function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
   const feed = el("div", "msgs chatfeed");
-  // Переход по цитате ищет исходную реплику в ленте этого разговора: панель на
-  // экране одна, и ссылка на её ленту живёт тут.
-  chatFeedBox = feed;
-  chatLive.push(() => {
-    if (chatFeedBox === feed) chatFeedBox = null;
-  });
   // Свои реплики, ещё не вернувшиеся из транскрипта, стоят сразу под лентой:
   // они и есть её продолжение, просто эха у них пока нет.
   const pend = el("div", "msgs mlocal");
   wrap.append(feed, pend);
-  // Дожим неушедшего зовёт ту же отправку, что и кнопка: post объявлен ниже,
-  // и ссылка на него берётся лениво, чтобы очередь поднялась вместе с панелью.
-  const echo = makeEcho(project, pend, feed, st.addr || st.sid,
-    (again, id) => post(again, null, null, id));
-  chatLive.push(echo.clear, echo.stop);
+  // Очередь своих реплик поднимает arm() внизу: она же поднимает её заново,
+  // когда человек возвращается в этот разговор. Отправка и лента берут echo
+  // по ссылке в момент нажатия, поэтому переподнятая очередь доезжает до них
+  // сама.
+  let echo = null;
 
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
@@ -9195,26 +9200,6 @@ function chatPanel(project, st) {
   // должен просто работать, а постфактум в ленте остаётся одна спокойная
   // строка, которую пишет сервер (решение пользователя).
   if (st.entry && st.entry.heal) healWedge(project, st, busy).catch(console.error);
-  // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
-  // работе поверх причины значило бы врать.
-  echo.onHeld = () => busy.off();
-  // Отменённая последняя реплика гасит плашку подъёма: ждать больше нечего,
-  // и новый чат возвращается в чистое состояние.
-  echo.onGone = () => busy.off();
-  // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
-  // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-  if (chatIsNew(st.addr) && (echo.waiting() || st.lift)) busy.raise();
-  // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
-  // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
-  // только сессия назовётся, панель переедет на живой sid и покажет транскрипт
-  // (пришивание, вторая половина chatSewn: там список, тут ещё не родившееся).
-  if (chatIsNew(st.addr)) {
-    const names = echo.raised();
-    // Имя подъёма берётся у реплики, а нет её, так у запуска конвейера: ждут
-    // они одного и того же, сессии, которая вот-вот назовётся.
-    const name = names.length ? names[names.length - 1] : st.lift;
-    if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
-  }
   // Вопрос клиента кнопками: поднятый в незнакомом каталоге клиент встаёт на
   // вопросе о доверии, а следом на вопросе про внешние импорты правил, и до
   // ответа не делает ни хода. Человек этих вопросов не видел вовсе: лента
@@ -9225,7 +9210,6 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
-  watchClientAsk(project, st, askBox);
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -9399,8 +9383,6 @@ function chatPanel(project, st) {
       drawClips();
     }
   };
-  document.addEventListener("selectionchange", catchSel);
-  chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
   // Возврат на разговор показывает то, что при нём приложено: черновик уже
   // вернулся в поле, картинка возвращается блоком.
   drawClips();
@@ -9660,32 +9642,93 @@ function chatPanel(project, st) {
   box.append(grip, ta, row);
   wrap.append(box);
 
-  chatLive.push(busy.off);
-  if (st.error) {
-    say(feed, "error", st.error);
-  } else if (st.lost) {
-    // Ленту потерянного адреса не открыть, и честнее сказать это словами, чем
-    // показать пустоту или ошибку загрузки.
-    say(feed, "empty", "разговора с этим адресом в проекте нет");
-  } else if (!st.sid) {
-    say(feed, "empty", st.lift
-      ? "конвейер поднят, сессия " + st.lift + " вот-вот назовётся в реестре: " +
-        "разговор откроется сам, ждать нажатий не надо"
-      : st.fresh
-      ? "новый чат: напишите первую реплику, она и поднимет сессию"
-      // Про пустоту говорит либо заголовок панели, либо лента, но не оба
-      // разом: у задачи имя стоит в заголовке, и ленте остаётся одно короткое
-      // предложение про то, с чего начать.
-      : st.task
-      ? "разговоров по задаче ещё не было, напишите первую реплику"
-      : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
-  } else {
-    wireChatFeed(project, feed, st.sid, (item) => {
-      busy.saw(item);
-    }, (list) => {
-      echo.reconcile(list);
-    }).catch(console.error);
-  }
+  // Живое панели поднимается тут, одной функцией на два случая: первую сборку
+  // и возврат в этот же разговор из пула. Уход с разговора гасит его потоки
+  // (closeChatLive), и прежде поднять их обратно можно было только пересборкой
+  // всей панели: она стоила второй перерисовки, а лента, собранная заново,
+  // мигала пустотой между показом и приездом дельты (жалоба пользователя).
+  // Разметка при возврате остаётся прежней, поднимаются только потоки, а
+  // дельта ленты дописывается по ключам в тот же список.
+  //
+  // again это возврат: одноразовое (лечение клина, пришивание нового чата,
+  // слова пустой ленты) при нём не повторяется, оно уже сделано и стоит на
+  // экране.
+  const arm = (again) => {
+    // Переход по цитате ищет исходную реплику в ленте этого разговора: панель
+    // на экране одна, и ссылка на её ленту живёт тут.
+    chatFeedBox = feed;
+    chatLive.push(() => {
+      if (chatFeedBox === feed) chatFeedBox = null;
+    });
+    // Дожим неушедшего зовёт ту же отправку, что и кнопка. Очередь поднимается
+    // заново: остановленная закрытием, она больше не дожимает и не принимает
+    // реплик, и вернувшийся в разговор человек писал бы в мёртвую очередь.
+    echo = makeEcho(project, pend, feed, st.addr || st.sid,
+      (more, id) => post(more, null, null, id));
+    chatLive.push(echo.clear, echo.stop);
+    // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
+    // работе поверх причины значило бы врать.
+    echo.onHeld = () => busy.off();
+    // Отменённая последняя реплика гасит плашку подъёма: ждать больше нечего,
+    // и новый чат возвращается в чистое состояние.
+    echo.onGone = () => busy.off();
+    chatLive.push(busy.off);
+    // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
+    // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
+    if (chatIsNew(st.addr) && (echo.waiting() || st.lift)) busy.raise();
+    // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
+    // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
+    // только сессия назовётся, панель переедет на живой sid и покажет
+    // транскрипт (пришивание, вторая половина chatSewn).
+    if (!again && chatIsNew(st.addr)) {
+      const names = echo.raised();
+      // Имя подъёма берётся у реплики, а нет её, так у запуска конвейера: ждут
+      // они одного и того же, сессии, которая вот-вот назовётся.
+      const name = names.length ? names[names.length - 1] : st.lift;
+      if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
+    }
+    // Клин лечится сам и молча. Плашки над полем ввода тут больше нет: разговор
+    // должен просто работать, а постфактум в ленте остаётся одна спокойная
+    // строка, которую пишет сервер (решение пользователя).
+    if (!again && st.entry && st.entry.heal) healWedge(project, st, busy).catch(console.error);
+    // Выделение подхватывается, пока человек его держит.
+    document.addEventListener("selectionchange", catchSel);
+    chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
+    watchClientAsk(project, st, askBox);
+    if (st.error) {
+      if (!again) say(feed, "error", st.error);
+    } else if (st.lost) {
+      // Ленту потерянного адреса не открыть, и честнее сказать это словами, чем
+      // показать пустоту или ошибку загрузки.
+      if (!again) say(feed, "empty", "разговора с этим адресом в проекте нет");
+    } else if (!st.sid) {
+      if (!again) {
+        say(feed, "empty", st.lift
+          ? "конвейер поднят, сессия " + st.lift + " вот-вот назовётся в реестре: " +
+            "разговор откроется сам, ждать нажатий не надо"
+          : st.fresh
+          ? "новый чат: напишите первую реплику, она и поднимет сессию"
+          // Про пустоту говорит либо заголовок панели, либо лента, но не оба
+          // разом: у задачи имя стоит в заголовке, и ленте остаётся одно
+          // короткое предложение про то, с чего начать.
+          : st.task
+          ? "разговоров по задаче ещё не было, напишите первую реплику"
+          : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
+      }
+    } else {
+      // keep это возврат: лента поднимается на том же узле, старые записи
+      // остаются на местах, а приехавшая дельта дописывается по ключам.
+      wireChatFeed(project, feed, st.sid, (item) => {
+        busy.saw(item);
+      }, (list) => {
+        echo.reconcile(list);
+      }, again).catch(console.error);
+    }
+  };
+  arm(false);
+  // Панель отдаёт свой подъём наружу: слот пула запомнит его и позовёт, когда
+  // человек вернётся в этот разговор.
+  chatArm = arm;
   return wrap;
 }
 
@@ -10024,13 +10067,30 @@ async function paintChat(project, addr, board, works) {
   // Возврат в уже открытый разговор виден сразу: готовый узел показывается
   // тем же ходом, без похода в сеть за состоянием. Свежесть догоняет ниже,
   // обычной сборкой, и меняет начинку того же слота.
-  const kept = chatPool.has(key);
+  const kept = chatPool.get(key);
   if (kept) {
+    // Возврат в открытый разговор окончателен: готовый узел показывается тем
+    // же ходом, и пересборки за ним не идёт. Заново поднимаются только живые
+    // потоки панели, а дельта ленты дописывается в тот же список по ключам.
+    // Прежде следом ехала полная пересборка, и панель мигала дважды на одно
+    // нажатие (жалоба пользователя).
     chatSlotShow(key);
+    panel.classList.remove("cload");
+    if (kept.arm) {
+      chatShown = Object.assign({ project: "", sid: "", task: "" }, kept.shown || {});
+      kept.arm(true);
+      return;
+    }
   } else if (!chatPool.size) {
+    // Плашка ожидания только у пустой панели: разговор правда поднимается
+    // впервые, и показать вместо него нечего.
     pin.replaceChildren(el("div", "empty", "чат открывается..."));
-  } else if (!String((pin.children[0] || {}).className || "").includes("cswap")) {
-    pin.prepend(el("div", "empty cswap", "открывается другой разговор..."));
+  } else {
+    // Переход в ещё не открытый разговор: прежнее содержимое стоит до готового
+    // нового, а о ходе говорит полоска над панелью. Словами тут больше не
+    // говорят: надпись об открытии мелькала поверх живого разговора и врала
+    // там, где переход шёл тем же ходом (жалоба пользователя).
+    panel.classList.add("cload");
   }
   const rows = board || await chatBoardOf(project);
   const st = await chatState(project, addr, rows);
@@ -10044,7 +10104,13 @@ async function paintChat(project, addr, board, works) {
   // Открытый чат закрепляется за задачей: следующее открытие панели с её
   // экрана вернёт этот же чат, а не первый из списка.
   if (st.task && st.sid) chatTaskLastSet(st.task, st.sid);
-  chatSlotPut(pin, key, [chatHead(project, st), chatPanel(project, st)]);
+  const slot = chatSlotPut(pin, key, [chatHead(project, st), chatPanel(project, st)]);
+  panel.classList.remove("cload");
+  // Слот помнит, чем поднять своё живое и что в нём стоит: возврат в этот
+  // разговор обходится показом и подъёмом, без похода в сеть за состоянием.
+  slot.arm = chatArm;
+  slot.shown = chatShown;
+  chatArm = null;
 }
 
 // Доска панели: над экранами, которые её не читают (накопитель, поиск, лента),

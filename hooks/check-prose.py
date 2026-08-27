@@ -78,6 +78,48 @@ FULL_FORM_RE = re.compile(r"\bне [^,.;:]{1,40}, а не\b", re.I)
 FINAL_RE = re.compile(r"(это и есть|то есть|значит|и есть|вот и|ровно то|"
                       r"в этом и|именно)", re.I)
 
+# Машинные записи файла задачи: их дописывает код, а не человек, и двоеточие
+# в них стоит по формату, а не как довод (DK-550). В счёт метрик прозы они не
+# идут, ровно как таблицы и заголовки.
+#
+# «Ход работы»: единственное место записи это internal/stage.Lines
+# (tools/taskctl/stage.go: flushStages зовёт его на каждый перевод статуса),
+# строка вида «- <Метка>: <заметка>, <дата> <часы>[-<часы>].». Метка это Kind
+# с заглавной буквы: Разработка и Ревью заметку строит tools/agentctl/pick.go
+# (recordStage), Снаружи собирает сам tools/taskctl/stage.go (openOutside),
+# Уточнение собирает tools/taskctl/ask.go. Формат общий для всех четырёх, и
+# разбирать их разными регулярками смысла нет.
+STAGE_LABELS = ("Разработка", "Ревью", "Снаружи", "Уточнение")
+STAGE_LINE_RE = re.compile(
+    r"^-\s+(?:%s):\s.*,\s*\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}(?:-\d{2}:\d{2})?\.\s*$"
+    % "|".join(STAGE_LABELS))
+
+# «Ранг»: TASKFORM.md (раздел «Ранг» в таблице форм) требует по строке на
+# слагаемое формулы, имена слагаемых из RANKING.md, вида
+# «- <Слагаемое> <число>: <причина>.».
+RANK_WORDS = ("Серьёзность", "Ценность", "Неопределённость",
+              "Поправка на баг", "Рычаг")
+RANK_LINE_RE = re.compile(r"^-\s+(?:%s)\s+\d+:\s" % "|".join(RANK_WORDS))
+
+# «Приёмка»: формат ACCEPTANCE.md, те же регулярки, что у самого taskctl
+# (tools/taskctl/accept.go: acceptBarrierLineRe, acceptBypassRe;
+# tools/taskctl/ops.go: шаблон «- вид: %s»; tools/taskctl/kinds.go:
+# revisionLineRe): строка вида, строка барьера и строка обхода с исходом
+# «годится» или «не годится».
+ACCEPT_KIND_RE = re.compile(r"^-\s+вид:\s")
+ACCEPT_BARRIER_RE = re.compile(r"^-\s+барьер\s+«[^»]*»:")
+ACCEPT_OUTCOME_RE = re.compile(r"^-\s+.*:\s*(?:не\s+)?годится\b")
+
+MACHINE_LINE_RES = (STAGE_LINE_RE, RANK_LINE_RE, ACCEPT_KIND_RE,
+                     ACCEPT_BARRIER_RE, ACCEPT_OUTCOME_RE)
+
+
+def is_machine_line(line):
+    """Строка файла задачи, которую дописывает утилита, а не человек."""
+    s = line.strip()
+    return any(r.match(s) for r in MACHINE_LINE_RES)
+
+
 Text = collections.namedtuple("Text", "words sentences paragraphs")
 # Метрика: ключ в конфиге, как называется в выводе, единица и подсказка, чем
 # такую фразу переписывают. Порядок перечня это порядок строк отчёта.
@@ -96,7 +138,8 @@ def prose(text):
     text = FENCE_RE.sub("", text)
     text = INLINE_RE.sub("CODE", text)
     lines = [ln for ln in text.split("\n")
-             if not ln.strip().startswith("|") and not ln.strip().startswith("#")]
+             if not ln.strip().startswith("|") and not ln.strip().startswith("#")
+             and not is_machine_line(ln)]
     return TAG_RE.sub("", "\n".join(lines))
 
 

@@ -197,6 +197,59 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(len(t.sentences), 1)
 
 
+class TestMachineLines(unittest.TestCase):
+    """DK-550: машинные записи файла задачи не считаются прозой.
+
+    К каждой машинной строке (источник в hooks/check-prose.py, комментарий
+    у соответствующей регулярки) стоит парой похожая строка, которую написал
+    человек: тот же префикс, но без хвоста, который строит код. Проверка
+    держит оба конца: машинная строка мимо счёта, похожая строка в счёте.
+    """
+
+    STAGE = ("- Разработка: субагент opus/high по вердикту pick "
+             "(квота: week_all 42%, снимок 3м назад), "
+             "2026-08-27 13:53-14:08.")
+    STAGE_LOOKALIKE = "- Разработка: сроки жмут, а бюджет невелик."
+
+    RANK = "- Неопределённость 1: место известно, открыт был только выбор."
+    RANK_LOOKALIKE = "- Неопределённость есть, но она невелика."
+
+    ACCEPT_KIND = "- вид: mixed"
+    ACCEPT_KIND_LOOKALIKE = "- Вид на будущее: доделать позже."
+
+    ACCEPT_BARRIER = "- барьер «глаза»: вид экрана на телефоне"
+    ACCEPT_BARRIER_LOOKALIKE = "- Барьер на глазах: пример виден сразу."
+
+    ACCEPT_OUTCOME = ("  - headless-браузер с замером: годится, "
+                       "ширины уходят агенту")
+    ACCEPT_OUTCOME_LOOKALIKE = "- Отчёт готов: результат годится для показа."
+
+    MACHINE = (STAGE, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME)
+    LOOKALIKE = (STAGE_LOOKALIKE, RANK_LOOKALIKE, ACCEPT_KIND_LOOKALIKE,
+                 ACCEPT_BARRIER_LOOKALIKE, ACCEPT_OUTCOME_LOOKALIKE)
+
+    def test_machine_lines_are_recognized(self):
+        for line in self.MACHINE:
+            self.assertTrue(prose.is_machine_line(line), line)
+
+    def test_lookalike_lines_are_not_machine(self):
+        for line in self.LOOKALIKE:
+            self.assertFalse(prose.is_machine_line(line), line)
+
+    def test_machine_lines_do_not_count_toward_metrics(self):
+        body = "\n".join(("Раздел ведёт запись работы.",) + self.MACHINE) + "\n"
+        t, v = prose.measure(body)
+        self.assertEqual(len(t.sentences), 1)
+        self.assertEqual(t.words, 4)
+        self.assertEqual(v["colon_mid"], 0.0)
+
+    def test_lookalike_lines_count_toward_metrics(self):
+        body = "\n".join(self.LOOKALIKE) + "\n"
+        t, v = prose.measure(body)
+        self.assertEqual(len(t.sentences), 5)
+        self.assertGreater(v["colon_mid"], 0.0)
+
+
 class TestHook(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

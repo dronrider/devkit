@@ -279,6 +279,20 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 			return nil, err
 		}
 	}
+	// Скиллы едут тем же порядком, что и определения субагентов: готовому дому
+	// из --home-seed есть чем их принести самому, и раскладка тогда уступает.
+	// kit/skills держит рядом с оболочками ещё и свою самопроверку
+	// (check-skills.py и её тест), лежащую не в подкаталоге; она скиллом не
+	// является, и настоящая раскладка машины (tools/devkitctl) её тоже не
+	// копирует.
+	skills := filepath.Join(claude, "skills")
+	if !dirExists(skills) {
+		if err := copyTree(filepath.Join(devkit, "kit", "skills"), skills, func(rel string) bool {
+			return rel == "check-skills.py" || rel == "check_skills_test.py"
+		}); err != nil {
+			return nil, err
+		}
+	}
 	return e, nil
 }
 

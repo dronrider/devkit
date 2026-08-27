@@ -18,6 +18,7 @@ type runEnv struct {
 	Project    string // синтетический проект, он же рабочая директория агента
 	Origin     string // фиктивный origin: голый репозиторий рядом с проектом
 	Transcript string // сюда пишется вывод прогона, по нему работают проверки
+	Bin        string // команды, которые стенд даёт проверке сценария
 	Seed       string // коммит, с которого агент начал: по нему видно, что он сделал
 }
 
@@ -189,6 +190,10 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 		Project:    filepath.Join(root, "project"),
 		Origin:     filepath.Join(root, "origin.git"),
 		Transcript: filepath.Join(root, "transcript"),
+		Bin:        filepath.Join(root, "bin"),
+	}
+	if err := writePhrase(e.Bin); err != nil {
+		return nil, err
 	}
 	for _, d := range []string{e.Home, e.Project} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -383,4 +388,23 @@ func (e *runEnv) environ(devkit, layout, scenario string, repeat int) []string {
 		// secretctl: см. tools/secretctl/backend.go, defaultBackend.
 		"SECRETCTL_BACKEND=file",
 	)
+}
+
+// checkEnviron это окружение проверки сценария: то же, что у прогона, плюс
+// каталог с командами стенда в начале PATH. Агенту эти команды не достаются:
+// проверка судит его работу, и знать про судью он не должен.
+func (e *runEnv) checkEnviron(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	seen := false
+	for _, kv := range env {
+		if name, val, _ := strings.Cut(kv, "="); name == "PATH" {
+			kv = "PATH=" + e.Bin + string(os.PathListSeparator) + val
+			seen = true
+		}
+		out = append(out, kv)
+	}
+	if !seen {
+		out = append(out, "PATH="+e.Bin)
+	}
+	return out
 }

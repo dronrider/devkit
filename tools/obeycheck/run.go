@@ -115,7 +115,7 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 	if runErr != nil && cmd.ProcessState == nil {
 		return a, fmt.Errorf("команда прогона %q не запустилась: %v", strings.Join(p.Agent, " "), runErr)
 	}
-	out, err := shOut(e.Project, env, s.Check, p.Timeout)
+	out, err := shOut(e.Project, e.checkEnviron(env), s.Check, p.Timeout)
 	if err == nil {
 		a.Green = true
 		// Зелёная проверка при упавшей команде прогона это повод посмотреть

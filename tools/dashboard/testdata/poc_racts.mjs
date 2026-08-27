@@ -214,7 +214,7 @@ const last = () => calls[calls.length - 1];
   }
 }
 
-// --- строка Check: подписка прикреплена, и выбирать её меню не предлагает ---
+// --- строка Check: подписка прикреплена, но выбор тот же, что у прочих ---
 {
   const row = { id: "XR-6", title: "проверенная", sect: "check", accept: "mixed", harness: "glm-code" };
   const box = sandbox.rowAction("demo", row, "check");
@@ -226,8 +226,18 @@ const last = () => calls[calls.length - 1];
     fail("подсказка приёмки не говорит ни про подписку, ни про приёмку: " + btn.title);
   }
   press(dots(box));
-  if (allByClass(menu(box), "hrow").length) {
-    fail("прикреплённой подписке предложен выбор другой: " + dump(menu(box)));
+  // Прежде список подписок у строки Check снимался целиком, и меню отвечало на
+  // один вопрос вместо двух: «выбор яруса и подписки различается по секциям»
+  // (замечание пользователя). Прикрепление осталось умолчанием, а не запретом,
+  // и подсвечена в списке та подписка, которой задачу вели.
+  const list = allByClass(menu(box), "hrow");
+  if (list.length !== 2) {
+    fail("у строки Check список подписок не собрался: " + dump(menu(box)));
+  }
+  const lit = list.filter((r) => String(r.className).split(" ").includes("on"))
+    .map((r) => dump(byClass(r, "hname")).trim());
+  if (lit.join(",") !== "glm-code") {
+    fail("у строки Check подсвечена не своя подписка: " + lit.join(","));
   }
 }
 

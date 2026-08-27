@@ -1000,16 +1000,33 @@ func TestStaticRunSplitLayout(t *testing.T) {
 	// доски.
 	pick := funcBody(t, app, "function runPickBody(")
 	for _, want := range []string{`el("span", "hph", "На какой подписке запустить")`,
-		"harnessRow(h)", `el("div", "tbar")`, `el("span", "hfoot"`} {
+		`el("span", "hph", "Уровень модели")`, "harnessRow(h, opts.pin", `el("div", "tbar")`} {
 		if !strings.Contains(pick, want) {
 			t.Fatalf("тело выбора запуска собрано не тем блоком (нет %q)", want)
 		}
 	}
+	// Подвал под списком снят целиком: он объяснял, откуда ярусы и надолго ли
+	// выбор, и пользователь забраковал его прямой оценкой. Подпись полосы
+	// зовётся «Уровень модели»: слово «ярус» живёт в правилах доски, а тут на
+	// него отвечают именами моделей.
+	for _, gone := range []string{"hfoot", "agentctl harness", "Каким ярусом"} {
+		if strings.Contains(pick, gone) {
+			t.Errorf("в тело выбора запуска вернулось %q", gone)
+		}
+	}
+	// Строка списка подписок это одна полоса: имя и два процента остатка.
+	// Прежняя везла ещё чип, две полоски-градусника с датами сброса и возраст
+	// снимка, и меню раздувалось вчетверо (замечание пользователя).
 	row := funcBody(t, app, "function harnessRow(")
-	for _, want := range []string{`"hrow" + (h.default ? " on" : "")`, `el("span", "h1")`,
-		`el("span", "chip", "по умолчанию")`, `el("span", "hnote"`, "quotaRow(b)"} {
+	for _, want := range []string{`el("b", "hname", h.name)`, `el("span", "hq")`,
+		`el("span", "hq hnote stale"`, "withTip(row,"} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("строка списка подписок собрана не тем блоком (нет %q)", want)
+		}
+	}
+	for _, gone := range []string{"quotaRow(b)", `el("span", "h1")`, "по умолчанию\")"} {
+		if strings.Contains(row, gone) {
+			t.Errorf("в строку списка подписок вернулось %q", gone)
 		}
 	}
 	dir, page := chromeStand(t, "split_run.js")

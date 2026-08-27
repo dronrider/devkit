@@ -1084,33 +1084,44 @@ const pop = byClass(grp, "rmenu");
 if (!pop || !pop.hidden) fail("меню строки открыто до нажатия");
 more.handlers.click({ stopPropagation: () => {} });
 if (pop.hidden) fail("три точки не открыли меню строки");
-// Шапка, две подписки и подвал: макет держит все три части, и без шапки с
-// подвалом список не говорит ни что выбирают, ни откуда он взялся.
+// Шапка и две подписки. Подвала под списком нет вовсе: он объяснял, откуда
+// список и надолго ли выбор, и пользователь забраковал его прямой оценкой.
 if (!dump(byClass(pop, "hph")).includes("На какой подписке запустить")) {
   fail("у списка подписок нет шапки: " + dump(pop));
 }
-if (!dump(byClass(pop, "hfoot")).includes("agentctl harness")) {
-  fail("подвал списка не называет источник и срок выбора: " + dump(pop));
+if (byClass(pop, "hfoot")) fail("подвал списка вернулся: " + dump(pop));
+if (dump(pop).includes("agentctl harness")) {
+  fail("приписка про раскладку машины вернулась в список: " + dump(pop));
 }
 const hrows = allByClass(pop, "hrow");
 if (hrows.length !== 2) {
   fail("в списке подписок " + hrows.length + " строк, ждал две: " + dump(pop));
 }
 if (!String(hrows[0].className).includes("on") || String(hrows[1].className).includes("on")) {
-  fail("подписка по умолчанию в списке не подсвечена: " + hrows.map((r) => r.className).join(" | "));
+  fail("подписка запуска в списке не подсвечена: " + hrows.map((r) => r.className).join(" | "));
 }
-if (!byClass(hrows[0], "chip") || !dump(hrows[0]).includes("по умолчанию")) {
-  fail("признак «по умолчанию» стоит не чипом: " + dump(hrows[0]));
+// Строка подписки это одна полоса: имя и два процента остатка, и ничего
+// больше. Прежняя везла ещё чип «по умолчанию», две полоски-градусника с
+// датами сброса и возраст снимка, и меню от этого раздувалось вчетверо
+// (замечание пользователя). Признак умолчания остался подсветкой, а даты с
+// возрастом ушли в подсказку строки.
+if (byClass(hrows[0], "chip")) fail("чип вернулся в строку подписки: " + dump(hrows[0]));
+if (byClass(hrows[0], "qrow") || byClass(hrows[0], "meter")) {
+  fail("полоска-градусник вернулась в строку подписки: " + dump(hrows[0]));
 }
-// Остаток квоты в строке: подписку выбирают ровно из-за него. Полоски идут те
-// же, что в блоке квоты, а возраст снимка стоит у каждой строки, не только у
-// протухшей.
-const meters = (hrows[0].children || []).filter((kid) => String(kid.className).includes("qrow"));
-if (meters.length !== 2) {
-  fail("в строке подписки не две полоски остатка: " + dump(hrows[0]));
+if (dump(hrows[0]).includes("снимок 3м назад")) {
+  fail("возраст снимка вернулся в строку подписки: " + dump(hrows[0]));
 }
-if (!dump(hrows[0]).includes("52%") || !dump(hrows[0]).includes("снимок 3м назад")) {
-  fail("строка подписки молчит про остаток или возраст снимка: " + dump(hrows[0]));
+const quotas = allByClass(hrows[0], "hq");
+if (quotas.length !== 2) {
+  fail("в строке подписки не два числа остатка: " + dump(hrows[0]));
+}
+if (!dump(hrows[0]).includes("52%") || !dump(hrows[0]).includes("week_all")) {
+  fail("строка подписки молчит про остаток: " + dump(hrows[0]));
+}
+// Подсказка везёт всё, что ушло со строки: возраст снимка и дату сброса.
+if (!String(hrows[0].title || "").includes("снимок 3м назад")) {
+  fail("подсказка строки потеряла возраст снимка: " + hrows[0].title);
 }
 if (!dump(hrows[1]).includes("снимка нет")) {
   fail("строка без снимка квоты об этом молчит: " + dump(hrows[1]));

@@ -264,15 +264,23 @@ a:hover{text-decoration:underline}
 .hpop[hidden]{display:none}
 .hph{display:block;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;
   color:var(--tx3);padding:9px 11px 8px}
-.hrow{display:flex;flex-direction:column;gap:8px;width:100%;padding:10px 11px;border:none;
+/* Одна полоса на подписку: имя слева, остаток двумя числами справа. Столбиком
+   тут стояли имя с чипом, две полоски-градусника с датами и возраст снимка, и
+   меню от этого раздувалось вчетверо (замечание пользователя). */
+.hrow{display:flex;flex-direction:row;align-items:center;gap:10px;width:100%;padding:8px 11px;border:none;
   border-radius:9px;min-height:44px;justify-content:center;text-align:left;background:none;
   color:var(--tx);cursor:pointer}
 .hrow.on{background:var(--bg3)}
 .hrow:hover{background:var(--bg3)}
-.hrow .h1{display:flex;align-items:center;gap:8px}
-.hrow .h1 b{font:600 13px var(--mono);color:var(--tx)}
-.hrow .h1 .chip{background:var(--bg0);color:var(--tx2)}
-.hrow .qrow{margin-bottom:0}
+.hrow .hname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font:600 13px var(--mono);color:var(--tx);text-align:left}
+.hrow .hq{display:flex;align-items:baseline;gap:5px;flex:none;
+  font:500 11px var(--mono);color:var(--tx2)}
+.hrow .hq em{font-style:normal;color:var(--tx3)}
+.hrow .hq b{font-weight:600;min-width:28px;text-align:right}
+/* Причина пустого остатка приезжает целой фразой сервера: в одну полосу она не
+   влезает и режется кромкой, а полностью стоит подсказкой строки. */
+.hrow .hnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hnote{font:400 11px var(--sans);color:var(--tx3)}
 .hfoot{padding:9px 11px 6px;border-top:1px solid var(--line);margin-top:4px;
   font:400 11px/1.5 var(--sans);color:var(--tx3)}

@@ -14,20 +14,25 @@ const params = new URLSearchParams(location.search);
 // кнопкой есть место, вверх на телефоне, где под ней нижние вкладки.
 const up = params.get("bar") === "up";
 
+// Строка подписки это одна полоса: имя и два процента остатка. Полоски-
+// градусники, даты сброса, чип умолчания и возраст снимка со строки сняты, они
+// стоят подсказкой (замечание пользователя про жирный блок выбора).
 const POP = `
       <div class="hpop${up ? " up" : ""}">
         <span class="hph">На какой подписке запустить</span>
-        <button class="hrow on" type="button">
-          <span class="h1"><b>claude-code</b><span class="chip">по умолчанию</span></span>
-          <div class="qrow"><em>week_all</em><span class="meter"><i style="width:52%"></i></span><b>52%</b></div>
-          <div class="qrow"><em>week_max</em><span class="meter"><i style="width:50%"></i></span><b>50%</b></div>
-          <span class="hnote">снимок 3м назад</span>
+        <button class="hrow on" type="button" title="claude-code, подписка по умолчанию">
+          <b class="hname">claude-code</b>
+          <span class="hq"><em>week_all</em><b>52%</b></span>
+          <span class="hq"><em>week_max</em><b>50%</b></span>
         </button>
         <button class="hrow" type="button">
-          <span class="h1"><b>glm-code</b></span>
-          <span class="hnote">снимка квоты нет, остаток неизвестен</span>
+          <b class="hname">glm-code</b>
+          <span class="hq hnote">снимка квоты нет</span>
         </button>
-        <span class="hfoot">Список включённых подписок машины, agentctl harness. Выбор действует на один запуск.</span>
+        <span class="hph">Уровень модели</span>
+        <div class="tbar"><button class="tpick on" type="button">вердикт</button>
+          <button class="tpick" type="button">base</button>
+          <button class="tpick" type="button">pro</button></div>
       </div>`;
 
 const PANEL = `

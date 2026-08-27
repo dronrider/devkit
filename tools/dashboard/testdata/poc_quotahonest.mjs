@@ -144,12 +144,17 @@ function byTag(node) {
     buckets: [{ name: "window5h_all", used_pct: 7 }] }];
   await sandbox.refreshQuota();
   await settle();
-  const second = dump(sandbox.harnessRow({ name: "glm-code" })).replace(/\s+/g, " ");
+  const node = sandbox.harnessRow({ name: "glm-code" });
+  const second = dump(node).replace(/\s+/g, " ");
   if (second.includes("раньше остальных") || second.includes("разное время")) {
     fail("список выбора подписки заговорил о разъезде: " + second);
   }
-  if (!second.includes("снимок 3 ч назад")) {
-    fail("возраст снимка в списке выбора пропал: " + second);
+  // Возраст снимка со строки ушёл в подсказку: строка держит одну полосу, и
+  // место на ней занимают имя с остатком (замечание пользователя про жирный
+  // блок выбора). Пропасть возраст при этом не имеет права, подписку выбирают
+  // по свежему остатку.
+  if (!String(node.title || "").includes("снимок 3 ч назад")) {
+    fail("возраст снимка в списке выбора пропал: " + node.title);
   }
   if (!second.includes("7%")) fail("выбор подписки потерял остаток: " + second);
 }

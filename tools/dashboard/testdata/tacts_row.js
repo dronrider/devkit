@@ -22,7 +22,8 @@ const PANEL = `
           <button class="btn btn-acc more2" id="arrow"><span class="car"></span></button>
           <div class="hpop"${open ? "" : " hidden"}>
             <span class="hph">На какой подписке запустить</span>
-            <span class="hfoot">Список включённых подписок машины, agentctl harness.</span>
+            <button class="hrow on" type="button"><b class="hname">claude-code</b>
+              <span class="hq"><em>week_all</em><b>52%</b></span></button>
           </div>
         </span>
         <button class="btn" id="plain">Провести груминг</button>

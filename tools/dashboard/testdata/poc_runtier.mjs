@@ -12,13 +12,13 @@
 import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
-// Выбор яруса с подпиской живёт в меню строки под тремя точками, а главная
-// кнопка запускает работу тем, что в этом меню выбрано. Меню открывается
-// нажатием, как это делает человек.
+// Выбор яруса с подпиской живёт всплывашкой самой кнопки запуска, а нажатие
+// кнопки запускает работу тем, что в этой всплывашке выбрано. Открывается она
+// правой кнопкой мыши и долгим нажатием, как это делает человек.
 const openMenu = (box) => {
-  const dots = byClass(box, "rdots");
-  if (!dots) fail("у строки нет кнопки с тремя точками: " + dump(box));
-  dots.handlers.click({ stopPropagation: () => {} });
+  const btn = byClass(box, "rmain");
+  if (!btn) fail("у строки нет кнопки запуска: " + dump(box));
+  btn.handlers.contextmenu({ preventDefault: () => {}, stopPropagation: () => {} });
   return byClass(box, "rmenu");
 };
 const runBtn = (box) => {

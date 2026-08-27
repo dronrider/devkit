@@ -3,14 +3,14 @@
 // «Логика главной кнопки непонятна» (замечание пользователя): в одной секции у
 // одних строк первой стояла кнопка чата, у других запуск, и решала это запись
 // работы за строкой, которой на строке не видно. Кнопки развели по местам:
-// слева работа, справа разговор, дальше три точки, и три точки бывают не у
-// всякой строки.
+// слева работа, справа разговор, и это весь состав. Трёх точек в строке больше
+// нет, и состав кнопок от состояния строки не зависит вовсе.
 //
 // Разбором стилей это не берётся: место кнопки складывается из ширины колонки,
 // боковых отступов ячейки, зазоров ряда и того, куда ряд жмётся. Меряется тут
-// одно число: на сколько разъехались по горизонтали кнопки работы у строки с
-// тремя точками и у строки без них. Ноль значит, что колонка кнопок стоит
-// столбиком и палец с глазом всегда находят её на одном месте.
+// одно число: на сколько разъехались по горизонтали кнопки работы у идущей
+// строки и у стоящей. Ноль значит, что колонка кнопок стоит столбиком и палец с
+// глазом всегда находят её на одном месте.
 //
 // Разметку скрипт кладёт руками той же вёрсткой, какой её собирает app.js.
 // Ширины колонок приезжают из TBL_COLS отдельным скриптом (window.TBLFIT):
@@ -30,16 +30,17 @@ const head = (kind) => `<thead><tr class="tblh h-${kind}">` + (FIT[kind] || []).
 
 const ICO = (cls) => `<button class="btn btn-sm btn-ico ${cls}"><svg viewBox="0 0 24 24"></svg></button>`;
 
-// Две строки одной секции: у первой за строкой есть разговор, и трёх точек ей
-// не нужно; у второй разговора нет, и под тремя точками лежит выбор запуска.
+// Две строки одной секции: у первой за строкой идёт работа и кнопкой работы
+// стоит стоп, у второй строка стоит и кнопкой работы стоит запуск. Состав от
+// этого не меняется: кнопки две и там, и там.
 const row = (id, dots) => `
     <tr class="trow">
       <td class="id"><span>${id}</span></td>
       <td class="tt"><span class="cin"><span class="ttl">строка доски ${id}</span></span></td>
       <td class="rank"><button class="rsum" type="button">40</button></td>
       <td class="twhen"><span class="stale dashed">2026-08-26</span></td>
-      <td class="meta"><span class="cin"><span class="racts">${ICO("rmain")}${ICO("")}${
-  dots ? ICO("rdots") : ""}</span></span></td>
+      <td class="meta"><span class="cin"><span class="racts">${
+  dots ? ICO("rstop btn-danger") : ICO("rmain")}${ICO("rchat")}</span></span></td>
     </tr>`;
 
 document.getElementById("groups").innerHTML =
@@ -51,7 +52,7 @@ if (sel) sel.innerHTML = "<option>devkit</option>";
 
 const rows = [...document.querySelectorAll("tr.trow")];
 const workX = rows.map((tr) => Math.round(
-  tr.querySelector(".rmain").getBoundingClientRect().left));
+  (tr.querySelector(".rmain") || tr.querySelector(".rstop")).getBoundingClientRect().left));
 const cell = rows.map((tr) => Math.round(tr.querySelector(".meta").getBoundingClientRect().width));
 const btns = rows.map((tr) => tr.querySelectorAll(".racts .btn").length);
 // Влезает ли ряд кнопок в свою колонку: правый край последней кнопки против

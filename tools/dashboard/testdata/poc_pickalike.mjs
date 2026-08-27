@@ -53,13 +53,14 @@ await settle();
 const rowOf = (id) => allByClass(groups, "trow")
   .find((tr) => dump(byClass(tr, "id")).trim() === id) || null;
 
-// Меню строки раскрывается тремя точками, и выбор запуска живёт внутри него.
+// Выбор запуска раскрывается правой кнопкой на самой кнопке запуска: трёх
+// точек у строки больше нет, под ними лежал ровно этот выбор.
 const pickOf = (id) => {
   const tr = rowOf(id);
   if (!tr) fail("строки " + id + " нет на доске");
-  const dots = byClass(tr, "rdots");
-  if (!dots) fail("у строки " + id + " нет кнопки с тремя точками: " + dump(tr));
-  dots.handlers.click({ stopPropagation: () => {} });
+  const btn = byClass(tr, "rmain");
+  if (!btn) fail("у строки " + id + " нет кнопки запуска: " + dump(tr));
+  btn.handlers.contextmenu({ preventDefault: () => {}, stopPropagation: () => {} });
   const box = byClass(tr, "rpick");
   if (!box) fail("в меню строки " + id + " нет выбора запуска: " + dump(tr));
   return box;

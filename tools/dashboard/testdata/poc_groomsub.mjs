@@ -115,9 +115,10 @@ if (sandbox.location.hash !== "#demo/drafts") {
 {
   const goal = { id: "XR-7", title: "Цель: панель разговора", sect: "backlog" };
   const box = sandbox.rowAction("demo", goal, "backlog");
-  // Выбор подписки уехал в меню строки: место у кнопки заняла главная, а
-  // подписку с ярусом человек выбирает раз в десяток запусков.
-  byClass(box, "rdots").handlers.click({ stopPropagation: () => {} });
+  // Выбор подписки живёт всплывашкой кнопки запуска: подписку с ярусом человек
+  // выбирает раз в десяток запусков, и своей кнопки в строке ей не надо.
+  byClass(box, "rmain").handlers.contextmenu({
+    preventDefault: () => {}, stopPropagation: () => {} });
   const split = byClass(box, "rmenu");
   if (!split) fail("у строки цели нет выбора подписки: " + dump(box));
   const list = allByClass(split, "hrow").map((h) => dump(h).trim().split(/\s+/)[0]);

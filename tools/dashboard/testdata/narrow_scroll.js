@@ -61,7 +61,7 @@ const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", 
       <td class="tt"><span class="cin"><span class="ttl">Дашборд: истёкший логин чата виден состоянием и чинится перезапуском</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">M</span><span class="chip c-block cwhy">блок: ${WHY}</span></span></span></td>
       <td class="rank"><button class="rsum" type="button" aria-expanded="false">62</button><span class="rfold">50+5+3+0+4</span></td>
       <td class="twhen"><span class="stale dashed">2026-08-22</span></td>
-      <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico rdots"><svg data-ico="i-dots" viewBox="0 0 24 24"></svg></button></span></span></td>
+      <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button></span></span></td>
     </tr>
     ${band('<div class="btier quiet">ждут задач<span class="n">17</span></div>')}
     ${band('<div class="shead">Backlog<span class="n">1, по рангу</span></div>')}

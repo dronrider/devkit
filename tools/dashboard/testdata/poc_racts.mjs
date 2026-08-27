@@ -9,11 +9,16 @@
 // одних строк In progress стоял чат, у других запуск, и разницу давала запись
 // работы, которая на строке ничем не подписана («логика главной кнопки
 // непонятна», замечание пользователя). Теперь место кнопки не зависит ни от
-// чего: слева кнопка работы, справа кнопка разговора, дальше три точки.
+// чего: слева кнопка работы, справа кнопка разговора, и это весь состав.
 //
-// Предмет стенда: порядок кнопок один у всякой строки, кнопка работы делает то,
-// что обещает подписью, чат стоит у каждой строки, меню закрывается тремя
-// путями и ни одно действие со строки не пропало.
+// Трёх точек в строке больше нет: под ними лежал ровно выбор подписки с
+// уровнем, и стояли они у одной строки, а у соседней нет, смотря по тому,
+// нашлось ли что положить внутрь (замечание пользователя). Выбор открывается
+// правой кнопкой и долгим нажатием на самой кнопке запуска.
+//
+// Предмет стенда: порядок и число кнопок одни у всякой строки, кнопка работы
+// делает то, что обещает подписью, чат стоит у каждой строки, выбор запуска
+// закрывается тремя путями и ни одно действие со строки не пропало.
 //
 // Зовётся: node testdata/poc_racts.mjs static/app.js
 
@@ -30,7 +35,7 @@ const harnesses = [
 ];
 
 const calls = [];
-const { sandbox } = makeSandbox(app, (path, init) => {
+const { sandbox, timers } = makeSandbox(app, (path, init) => {
   const way = init && init.method ? init.method : "GET";
   if (way !== "GET") calls.push({ way, path, body: init.body ? JSON.parse(init.body) : null });
   if (path === "/api/harnesses") return { harnesses };
@@ -49,7 +54,15 @@ const busy = { id: "XR-4", title: "идёт конвейером", sect: "in-pro
 const check = { id: "XR-7", title: "на приёмке", sect: "check", accept: "human" };
 
 const main = (box) => byClass(box, "rmain");
-const dots = (box) => byClass(box, "rdots");
+// Выбор запуска открывается правой кнопкой мыши на кнопке запуска и долгим
+// нажатием пальцем: своей кнопки у него больше нет.
+const dots = (box) => {
+  const btn = main(box);
+  if (!btn) return null;
+  return { handlers: { click: () => {
+    btn.handlers.contextmenu({ preventDefault: () => {}, stopPropagation: () => {} });
+  } }, attrs: btn.attrs };
+};
 const stop = (box) => byClass(box, "rstop");
 const menu = (box) => byClass(box, "rmenu");
 const chat = (box) => allByClass(box, "btn")
@@ -135,7 +148,7 @@ const last = () => calls[calls.length - 1];
   }
 }
 
-// --- колонка держит три кнопки, а не четыре ---
+// --- колонка держит две кнопки, и это весь состав ---
 {
   const wide = (key) => {
     const col = allByClass(sandbox.tblColgroup("tasks"), "cw-" + key)[0];
@@ -143,31 +156,31 @@ const last = () => calls[calls.length - 1];
     if (!m) fail("ширина колонки «" + key + "» не читается из colgroup");
     return Number(m[1]);
   };
-  // Рубеж стоит по трём кнопкам значками с зазорами и боковыми отступами
+  // Рубеж стоит по двум кнопкам значками с зазором и боковыми отступами
   // ячейки: больше в колонке нечему стоять.
-  if (wide("act") > 140) fail("колонка действий шире рубежа: " + wide("act"));
+  if (wide("act") > 104) fail("колонка действий шире рубежа: " + wide("act"));
   if (wide("act") > wide("rank") + wide("date")) {
     fail("колонка действий снова шире ранга с датой вместе: " + wide("act"));
   }
   for (const [row, sect] of [[fresh, "backlog"], [talked, "in-progress"],
     [living, "in-progress"], [busy, "in-progress"]]) {
     const box = sandbox.rowAction("demo", row, sect);
-    // Считаются кнопки самой колонки: пункты меню лежат под тремя точками и
-    // места в строке не занимают.
-    const shown = allByClass(box, "btn").filter((b) => !byClass(menu(box) || box, b.className));
-    if (allByClass(box, "btn").length > 3) {
-      fail("в колонке снова больше трёх кнопок (" + row.id + "): " +
-        allByClass(box, "btn").map((b) => b.className).join(" | "));
+    // Считаются кнопки самой колонки: строки выбора запуска лежат во
+    // всплывашке кнопки и места в строке не занимают.
+    const shown = (box.children || []).filter((k) => String(k.className || "").includes("btn"));
+    if (shown.length !== 2) {
+      fail("в колонке не две кнопки (" + row.id + "): " +
+        shown.map((b) => b.className).join(" | "));
     }
-    if (!shown.length) fail("строка осталась вовсе без действия: " + row.id);
+    if (byClass(box, "rdots")) fail("три точки вернулись в строку: " + row.id);
   }
 }
 
-// --- меню открывается и закрывается тремя путями ---
+// --- выбор запуска открывается и закрывается тремя путями ---
 {
   const box = sandbox.rowAction("demo", fresh, "backlog");
   const btn = dots(box);
-  if (!btn) fail("кнопки с тремя точками у строки нет: " + dump(box));
+  if (!btn) fail("кнопки запуска у строки нет: " + dump(box));
   if (!menu(box).hidden) fail("меню строки открыто до нажатия");
   // Повторное нажатие по своей кнопке.
   press(btn);
@@ -240,6 +253,37 @@ const last = () => calls[calls.length - 1];
     if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes(row.id)) {
       fail("кнопка разговора у строки " + row.id + " открыла не тот чат: " + sandbox.location.hash);
     }
+  }
+}
+
+// --- долгое нажатие открывает выбор и не запускает работу ---
+//
+// Правая кнопка это мышь, а пальцем то же самое делают удержанием. Отпускание
+// после удержания запуска не даёт: иначе выбор подписки оборачивался бы стартом
+// на умолчании, ровно тем, мимо которого человек и тянулся.
+{
+  const box = sandbox.rowAction("demo", fresh, "backlog");
+  const btn = main(box);
+  if (!menu(box).hidden) fail("выбор запуска открыт до нажатия");
+  btn.handlers.pointerdown({ clientX: 0 });
+  // Срок удержания вышел: стенд проигрывает его теми же таймерами песочницы.
+  for (const t of timers.splice(0)) t.fn();
+  if (menu(box).hidden) fail("долгое нажатие не открыло выбор запуска");
+  if (String(btn.attrs["aria-expanded"]) !== "true") {
+    fail("раскрытие не сказано читалке экрана: " + btn.attrs["aria-expanded"]);
+  }
+  calls.length = 0;
+  btn.handlers.pointerup({});
+  press(btn);
+  await settle();
+  if (calls.length) {
+    fail("отпускание после долгого нажатия запустило работу: " + JSON.stringify(calls));
+  }
+  // Обычное короткое нажатие после этого работает как раньше.
+  press(btn);
+  await settle();
+  if (!last() || !last().path.endsWith("/runs")) {
+    fail("короткое нажатие после долгого не запустило работу: " + JSON.stringify(calls));
   }
 }
 

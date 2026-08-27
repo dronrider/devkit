@@ -22,16 +22,10 @@ const nolead = { id: "DK-460", title: "релогин не будит живые
 const ours = { id: "DK-397", title: "дашборд агентской разработки",
   sect: "in-progress", run: "tmux" };
 
-// Кнопка чата в строке: подписи у неё нет вовсе, значок и подсказка. У строки
-// с разговором она стоит главной кнопкой, у нетронутой очереди лежит пунктом
-// меню под тремя точками, и ищется в обоих местах разом.
-const chatBtn = (row) => {
-  const dots = byClass(row, "rdots");
-  if (dots) dots.handlers.click({ stopPropagation: () => {} });
-  return allByClass(row, "btn").find((b) => String(b.title) === "Чат по задаче")
-    || allByClass(row, "pmrow").find((b) => b.textContent === "Чат по задаче")
-    || null;
-};
+// Кнопка чата в строке: подписи у неё нет вовсе, значок и подсказка. Стоит она
+// второй кнопкой у всякой строки, чем бы та ни была занята.
+const chatBtn = (row) => allByClass(row, "btn")
+  .find((b) => String(b.title) === "Чат по задаче") || null;
 
 // --- приписки про чужую машину нет, конвейер и чат на месте ---
 {

@@ -1193,9 +1193,12 @@ function rowAction(project, row, sect) {
   // живой ход посторонней сессии. Кнопка тут стоит погашенной с причиной.
   const busy = !ours && Boolean(row.run_busy);
   const talks = rowTalks(row);
-  // Пункты меню собираются до кнопки: пусто в меню значит, что и трёх точек у
-  // строки нет.
-  const opts = [];
+  // Выбор подписки и уровня собирается до кнопки: он живёт всплывашкой самой
+  // кнопки запуска, а не отдельным меню строки.
+  let pick = null;
+  // Долгое нажатие уже открыло выбор: отпускание пальца после него запуска не
+  // даёт, иначе выбор подписки оборачивался бы стартом на умолчании.
+  let longPress = false;
   // Закрывалка меню объявлена раньше самого меню: зовёт её и строка подписки
   // внутри него, а собирается меню последним, когда известен весь состав.
   let shutMenu = () => {};
@@ -1271,7 +1274,12 @@ function rowAction(project, row, sect) {
       // кнопки: списка подписок у такой строки нет вовсе, и сказать об этом
       // больше негде.
       const why = pickHarness ? "" : harnessWhy();
-      withTip(main, [label + ".", hint, why].filter(Boolean).join(" "));
+      // Дорога к выбору подписки названа тут же: всплывашка открывается долгим
+      // нажатием и правой кнопкой, и сама себя она не показывает.
+      const more = (pickHarness || tierList.length > 1)
+        ? "Долгое нажатие или правая кнопка: подписка и уровень модели."
+        : "";
+      withTip(main, [label + ".", hint, why, more].filter(Boolean).join(" "));
       const fire = (harness) => {
         main.disabled = true;
         startRun(project, row.id, harness, "", tierOut())
@@ -1279,6 +1287,10 @@ function rowAction(project, row, sect) {
       };
       main.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        if (longPress) {
+          longPress = false;
+          return;
+        }
         fire(pin || harnessDefault());
       });
       // Выбирать есть что, когда подписок на машине больше одной либо когда у
@@ -1295,31 +1307,33 @@ function rowAction(project, row, sect) {
           fire: (name) => { shutMenu(); fire(name); },
           tell: (name) => { tier = name; },
         });
-        opts.push(box);
+        pick = box;
       }
     }
   }
   grp.append(main);
   grp.append(rowChatBtn(project, row));
-  if (!opts.length) return grp;
+  if (!pick) return grp;
   let held = null;
-  // Меню строки закрывается теми же тремя путями, что и остальные всплывашки
-  // дашборда: повторным нажатием по своей кнопке, кликом мимо и Escape.
+  // Выбор подписки и уровня открывается долгим нажатием на самой кнопке
+  // запуска и правой кнопкой мыши. Трёх точек у строки больше нет: в меню
+  // лежал ровно этот выбор и ничего сверх него, поэтому у одной строки точки
+  // стояли, а у соседней нет, смотря по тому, нашлось ли что положить внутрь
+  // (замечание пользователя). Действия строки от этого стали одинаковыми у
+  // всех: кнопка работы слева, разговор справа.
+  //
+  // Закрывается всплывашка теми же тремя путями, что и прочие в дашборде:
+  // повторным нажатием, кликом мимо и Escape.
   const menu = el("div", "pmenu rmenu");
   menu.hidden = true;
-  for (const opt of opts) menu.append(opt);
-  const dots = el("button", "btn btn-sm btn-ico rdots");
+  menu.append(pick);
   shutMenu = () => {
     menu.hidden = true;
-    dots.setAttribute("aria-expanded", "false");
+    main.setAttribute("aria-expanded", "false");
     held = null;
   };
-  dots.append(icon("i-dots"));
-  dots.setAttribute("aria-label", "Ещё действия");
-  dots.setAttribute("aria-expanded", "false");
-  withTip(dots, "Ещё действия строки");
-  dots.addEventListener("click", (ev) => {
-    ev.stopPropagation();
+  main.setAttribute("aria-expanded", "false");
+  const openPick = () => {
     if (!menu.hidden) {
       popupDrop(held);
       shutMenu();
@@ -1329,15 +1343,42 @@ function rowAction(project, row, sect) {
     // экран не показывает ни в одном месте дашборда.
     popupsShut(null);
     menu.hidden = false;
-    dots.setAttribute("aria-expanded", "true");
+    main.setAttribute("aria-expanded", "true");
     held = popupHold(menu, shutMenu);
-    // Вверх меню раскрывается там, где под кнопкой не хватает места: строка
-    // стоит низко, и раскрытое вниз оно уезжает под нижние вкладки.
-    menu.classList.toggle("up", noRoomBelow(dots));
+    // Вверх список раскрывается там, где под кнопкой не хватает места: строка
+    // стоит низко, и раскрытый вниз он уезжает под нижние вкладки.
+    menu.classList.toggle("up", noRoomBelow(main));
+  };
+  main.addEventListener("contextmenu", (ev) => {
+    if (ev.preventDefault) ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
+    openPick();
   });
-  grp.append(dots, menu);
+  // Долгое нажатие: то же самое пальцем, правой кнопки на телефоне нет.
+  let hold = null;
+  const drop = () => {
+    if (hold) clearTimeout(hold);
+    hold = null;
+  };
+  main.addEventListener("pointerdown", () => {
+    longPress = false;
+    drop();
+    hold = setTimeout(() => {
+      hold = null;
+      longPress = true;
+      openPick();
+    }, ROW_PICK_HOLD);
+  });
+  for (const name of ["pointerup", "pointerleave", "pointercancel"]) {
+    main.addEventListener(name, drop);
+  }
+  grp.append(menu);
   return grp;
 }
+
+// Сколько держать кнопку запуска, чтобы открылся выбор подписки. Полсекунды:
+// короче срабатывало на обычном нажатии, дольше человек отпускал раньше.
+const ROW_PICK_HOLD = 500;
 
 // opts.quiet это тихая подача строки, ждущей чужой задачи: она стоит в Blocked
 // нижним ярусом и не должна спорить с парковками, у которых человека и правда
@@ -1559,13 +1600,12 @@ const TBL_COLS = {
     { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
     { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 72 },
     { key: "date", label: "Дата", by: "дате", first: "desc", w: 92 },
-    // Колонка действий держит три кнопки значками и отступ карточки справа:
-    // кнопку работы, кнопку разговора и три точки с остальным. Место у каждой
-    // своё и от состояния строки не зависит, потому колонка и стоит по трём
-    // (замечание пользователя: «логика главной кнопки непонятна»). Прежде тут
-    // стояла составная кнопка запуска с выбором подписки и яруса, и колонка
-    // выходила шире номера, ранга и даты вместе (замер пользователя).
-    { key: "act", label: "", w: 136 },
+    // Колонка действий держит две кнопки значками и отступ карточки справа:
+    // кнопку работы и кнопку разговора. Три точки отсюда ушли: под ними лежал
+    // ровно выбор подписки с уровнем, и стояли они у одной строки, а у соседней
+    // нет (замечание пользователя). Выбор открывается долгим нажатием на самой
+    // кнопке запуска, а состав действий стал одинаковым у всех строк.
+    { key: "act", label: "", w: 100 },
   ],
   sess: [
     // У колонки состояния подписи нет вовсе, как у колонки действий: несёт она

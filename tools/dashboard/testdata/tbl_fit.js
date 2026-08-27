@@ -47,13 +47,12 @@ const CELLS = {
       `<span class="rchips"><span class="chip">M</span></span></span></td>`,
     rank: `<td class="rank"><button class="rsum" type="button" data-fit="rank">100</button></td>`,
     date: `<td class="twhen"><span class="stale dashed" data-fit="date">2026-08-20</span></td>`,
-    // Хвост строки это три кнопки значками: работа, разговор и три точки. Слов
-    // на них нет вовсе, и мерить тут надо не обрубок подписи, а то, влезает ли
-    // сам ряд: колонка стоит ровно по нему.
+    // Хвост строки это две кнопки значками: работа и разговор. Слов на них нет
+    // вовсе, и мерить тут надо не обрубок подписи, а то, влезает ли сам ряд:
+    // колонка стоит ровно по нему.
     act: `<td class="meta"><span class="cin"><span class="racts" data-fit="act">` +
       `<button class="btn btn-sm btn-ico rmain"><svg viewBox="0 0 24 24"></svg></button>` +
-      `<button class="btn btn-sm btn-ico"><svg viewBox="0 0 24 24"></svg></button>` +
-      `<button class="btn btn-sm btn-ico rdots"><svg viewBox="0 0 24 24"></svg></button>` +
+      `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
       `</span></span></td>`,
   },
   sess: {

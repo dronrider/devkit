@@ -14,6 +14,7 @@
 
 Зовётся: python3 testdata/poc_browser.py <база> <токен> <проект> <сессия>...
 """
+import glob
 import hashlib
 import hmac
 import http.server
@@ -29,7 +30,35 @@ import time
 import urllib.error
 import urllib.request
 
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+FULL_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+# Шапки окон на macOS: полный Chrome окно уже пятисот точек не открывает вовсе и
+# молча рисует пятьсот. Снимок «на 390» приезжал пятисотточечным, и телефонная
+# вёрстка на нём выглядела вылезающей за экран, хотя вылезать ей было некуда
+# (разбор POC DK-397: разъезд «не чинился» правками ровно потому, что его не
+# было). chrome-headless-shell честно открывает любую ширину, и первым берётся
+# он. Тот же порядок держит findChrome в go-стендах.
+def find_chrome():
+    named = os.environ.get("DASHBOARD_CHROME")
+    if named and os.path.exists(named):
+        return named
+    for one in ("~/Library/Caches/ms-playwright/chromium_headless_shell-*/"
+                "chrome-headless-shell-*/chrome-headless-shell",
+                "~/.cache/ms-playwright/chromium_headless_shell-*/"
+                "chrome-headless-shell-*/chrome-headless-shell"):
+        found = sorted(glob.glob(os.path.expanduser(one)))
+        if found:
+            return found[-1]
+    return FULL_CHROME
+
+
+CHROME = find_chrome()
+
+
+# Режим у полного Chrome и у оболочки зовётся по-разному: оболочка знает только
+# голое --headless, а полный Chrome спорит со старым и новым.
+def headless_flag(mode="old"):
+    return "--headless" if CHROME.endswith("chrome-headless-shell") else "--headless=" + mode
 
 
 def cookie(secret, days=30):

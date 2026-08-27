@@ -20,7 +20,7 @@ import tempfile
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from poc_browser import CHROME, cookie, proxy
+from poc_browser import CHROME, cookie, headless_flag, proxy
 
 
 def fetch(chrome_base, path):
@@ -31,10 +31,22 @@ def fetch(chrome_base, path):
 def dom(chrome_base, project, sid, profile):
     page = "%s/#%s/chat/%s" % (chrome_base, project, sid)
     out = subprocess.run(
-        [CHROME, "--headless=old", "--disable-gpu", "--no-sandbox", "--no-first-run",
+        [CHROME, headless_flag("old"), "--disable-gpu", "--no-sandbox", "--no-first-run",
          "--user-data-dir=" + profile, "--virtual-time-budget=8000", "--dump-dom", page],
         capture_output=True, text=True, timeout=120)
     return out.stdout or ""
+
+
+def shot_width(path):
+    """Ширина снимка в точках: читается из заголовка PNG. Нужна не для красоты, а
+    чтобы снимок отвечал за ширину, которую у него просили: полный Chrome окно
+    уже пятисот точек не открывает, и «снимок на 390» приезжал пятисотточечным
+    (разбор POC DK-397)."""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+        return 0
+    return int.from_bytes(head[16:20], "big")
 
 
 def still(text, css):
@@ -62,7 +74,7 @@ def shot(base, token, project, sid, out):
         subprocess.run(
             # headless=new нарочно: старый режим со снимком на этой машине
             # висит до срока, а разметку он же отдаёт исправно.
-            [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
+            [CHROME, headless_flag("new"), "--disable-gpu", "--no-sandbox", "--no-first-run",
              "--hide-scrollbars", "--user-data-dir=" + profile,
              "--window-size=1400,1100", "--screenshot=" + out, "file://" + html],
             capture_output=True, text=True, timeout=120)

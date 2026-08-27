@@ -1512,7 +1512,7 @@ func TestBoardNarrowNoSideScroll(t *testing.T) {
 	if chrome == "" {
 		t.Skip("движка нет: замер ширины пропущен")
 	}
-	dir, page := chromeStand(t, "narrow_scroll.js")
+	dir, page := chromeStand(t, "narrow_scroll.js", tblColsJSON(t))
 	for _, tab := range []struct{ key, word string }{
 		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
 		{"ask", "вопрос клиента"},
@@ -2104,5 +2104,31 @@ func TestBoardTableLabelsNotCut(t *testing.T) {
 					near.word, got["w_live"], got["w_"+near.key])
 			}
 		}
+	}
+}
+
+// Сторож замера ширины сам обязан быть под сторожем: без него стенд узкой
+// ширины мерил не тот экран и зеленел на любом разъезде. Полный Chrome на macOS
+// окно уже пятисот точек не открывает, и просьба про 390 возвращалась замером
+// пятисот (проверено на этой машине: заголовок стенда приезжал со screen=500).
+func TestChromeMeasureChecksWindow(t *testing.T) {
+	// Браузер отдал не ту ширину: замер обязан быть отвергнут словами про то,
+	// чем это лечится.
+	err := sameWindow("390,844", map[string]int{"screen": 500, "over": 0})
+	if err == nil {
+		t.Fatal("замер на окне 500 сошёл за замер на 390: сторож ширины молчит")
+	}
+	for _, want := range []string{"500", "390", "chrome-headless-shell"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("отказ не называет %q: %v", want, err)
+		}
+	}
+	// Ширина сошлась: замер годен.
+	if err := sameWindow("390,844", map[string]int{"screen": 390}); err != nil {
+		t.Errorf("верный замер отвергнут: %v", err)
+	}
+	// Стенд про ширину ничего не говорит: судить его нечем и не за что.
+	if err := sameWindow("390,844", map[string]int{"seam": 0}); err != nil {
+		t.Errorf("замер без поля screen отвергнут: %v", err)
 	}
 }

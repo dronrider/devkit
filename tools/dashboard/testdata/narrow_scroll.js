@@ -28,8 +28,14 @@ const WHY = "вопрос: DK-466: ветка dk-466 отрезана от main,
 // Шапка колонок раздела (POC DK-397): на телефоне таблица переводится в
 // блочный вид, шапка ложится рядом чипов сортировки, а строка раскладывается по
 // областям. Разметка тут та же, что собирает app.js.
+// Колонки приезжают из самого app.js отдельным скриптом (window.TBLFIT):
+// переписанные руками ширины расходились с кодом молча, и стенд сторожил
+// раскладку, которой на экране уже нет. У колонки действий в этом списке стояли
+// 246 точек ещё долго после того, как их стало 136 (разбор POC DK-397).
+const FIT = window.TBLFIT || {};
+
 const cols = (list) => `<colgroup>` + list.map((c) =>
-  c.w ? `<col style="width:${c.w}px">` : `<col>`).join("") + `</colgroup>`;
+  c.flex ? `<col>` : `<col style="width:${c.w}px">`).join("") + `</colgroup>`;
 
 const head = (kind, list) => `<thead><tr class="tblh h-${kind}">` + list.map((c, at) =>
   `<th class="tblc" scope="col">` +
@@ -37,12 +43,13 @@ const head = (kind, list) => `<thead><tr class="tblh h-${kind}">` + list.map((c,
     : `<span class="tbln"></span>`) +
   (at + 1 < list.length ? `<span class="tblg"></span>` : "") + `</th>`).join("") + `</tr></thead>`;
 
-const TASK_COLS = [{ label: "Номер", w: 88 }, { label: "Задача" }, { label: "Ранг", w: 58 },
-  { label: "Дата", w: 92 }, { label: "", w: 246 }];
-const SESS_COLS = [{ label: "Ход", w: 76 }, { label: "Работа" }, { label: "Идёт", w: 104 },
-  { label: "Активность", w: 108 }, { label: "", w: 110 }];
-const DRAFT_COLS = [{ label: "Приоритет", w: 132 }, { label: "Номер", w: 70 },
-  { label: "Задача" }, { label: "Дата", w: 92 }, { label: "", w: 38 }];
+const TASK_COLS = FIT.tasks || [];
+const SESS_COLS = FIT.sess || [];
+const DRAFT_COLS = FIT.drafts || [];
+if (!TASK_COLS.length || !SESS_COLS.length || !DRAFT_COLS.length) {
+  document.title = "screen=0 колонки не приехали из app.js";
+  throw new Error("нет window.TBLFIT: стенд мерил бы раскладку из головы");
+}
 
 const band = (inside) => `<tr class="band secband"><td class="bcell" colspan="5">${inside}</td></tr>`;
 
@@ -54,7 +61,7 @@ const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", 
       <td class="tt"><span class="cin"><span class="ttl">Дашборд: истёкший логин чата виден состоянием и чинится перезапуском</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">M</span><span class="chip c-block cwhy">блок: ${WHY}</span></span></span></td>
       <td class="rank"><button class="rsum" type="button" aria-expanded="false">62</button><span class="rfold">50+5+3+0+4</span></td>
       <td class="twhen"><span class="stale dashed">2026-08-22</span></td>
-      <td class="meta"><span class="cin"><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button><span class="split"><button class="btn btn-sm btn-acc">Выполнить</button><button class="btn btn-sm btn-acc more2" aria-expanded="false"><span class="car"></span></button><div class="hpop" hidden=""><span class="hph">На какой подписке запустить</span><button class="hrow on" type="button"><span class="h1"><b>claude-code</b><span class="chip">по умолчанию</span></span><div class="qrow"><em>week_all</em><span class="meter"><i style="width: 14%;"></i></span><b>14%</b><span class="qres">до 31.08</span></div><span class="hnote qage q-fresh">снимок 10м назад</span></button><span class="hfoot">Список включённых подписок машины, agentctl harness. Выбор действует на один запуск.</span></div></span></span></td>
+      <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico rdots"><svg data-ico="i-dots" viewBox="0 0 24 24"></svg></button></span></span></td>
     </tr>
     ${band('<div class="btier quiet">ждут задач<span class="n">17</span></div>')}
     ${band('<div class="shead">Backlog<span class="n">1, по рангу</span></div>')}
@@ -65,7 +72,7 @@ const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", 
         <span class="chip c-check">без выката, сценарий пользовательский</span></span></span></td>
       <td class="rank on"><button class="rsum">62</button><span class="rfold">25+6+1+0+2</span></td>
       <td class="twhen"><span class="stale dashed">2026-08-20</span></td>
-      <td class="meta"><span class="cin"><button class="btn btn-sm btn-acc">Выполнить</button></span></td>
+      <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button></span></span></td>
     </tr>
   </tbody></table>`;
 
@@ -133,10 +140,16 @@ const parts = new URLSearchParams(location.search).get("bar") || "tasks";
 const body = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
   drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK }[parts] || TABS + TASK_ROWS;
 document.getElementById("groups").innerHTML = body;
-document.getElementById("pname").textContent = "devkit";
+// Шапка страницы заполняется вместе с разделом: тело вбок не ездит никогда, а
+// уносить его умеет и она. Имя проекта берётся длинное нарочно: в выпадашке
+// стоят имена всех проектов машины, и жмётся она по самому длинному из них.
+document.getElementById("pname").textContent = "it-road-course";
 document.getElementById("psub").textContent = "задачи проекта";
 const sel = document.getElementById("pselect");
-if (sel) sel.innerHTML = "<option>devkit</option>";
+if (sel) {
+  sel.innerHTML = ["devkit", "goonies", "it-road-course", "xr-proxy-и-длинное-имя-проекта"]
+    .map((name) => "<option>" + name + "</option>").join("");
+}
 
 const screen = document.documentElement.clientWidth;
 

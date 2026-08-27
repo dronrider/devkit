@@ -1442,5 +1442,32 @@ func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[stri
 	if len(vals) == 0 {
 		t.Fatalf("замер не вернулся из браузера, заголовок %q\n%s", title, out)
 	}
+	if err := sameWindow(window, vals); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
 	return vals
+}
+
+// sameWindow сверяет ширину, которую отдал браузер, с той, которую просили.
+// Полный Chrome на macOS окно уже пятисот точек не открывает и молча меряет
+// пятьсот вместо телефонных 390: стенд узкой ширины от этого зеленел, потому
+// что мерил не тот экран, а разъезд на 390 жил себе на снимках (разбор POC
+// DK-397). Замер без поля screen про ширину ничего не обещает, и такой стенд
+// тут не судят.
+func sameWindow(window string, vals map[string]int) error {
+	got, ok := vals["screen"]
+	if !ok {
+		return nil
+	}
+	want := window
+	if at := strings.Index(want, ","); at >= 0 {
+		want = want[:at]
+	}
+	px, err := strconv.Atoi(want)
+	if err != nil || got == px {
+		return nil
+	}
+	return fmt.Errorf("браузер отдал окно в %d точек вместо %d: замер говорит о другом "+
+		"экране, а не о том, который сторожат. Полный Chrome окно уже пятисот точек не "+
+		"открывает, стенду нужен chrome-headless-shell (переменная DASHBOARD_CHROME)", got, px)
 }

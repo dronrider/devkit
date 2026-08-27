@@ -25,15 +25,15 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from poc_browser import CHROME, cookie, proxy
-from poc_shot_page import fetch, still
+from poc_browser import CHROME, cookie, headless_flag, proxy
+from poc_shot_page import fetch, shot_width, still
 
 MENU = ('<div class="pmenu"><div class="pmrow">Задача</div>'
         '<div class="pmrow">Черновик</div></div>')
 
 
 def dom(chrome_base, profile, hash_):
-    cmd = [CHROME, "--headless=old", "--disable-gpu", "--no-sandbox", "--no-first-run",
+    cmd = [CHROME, headless_flag("old"), "--disable-gpu", "--no-sandbox", "--no-first-run",
            "--user-data-dir=" + profile, "--virtual-time-budget=4000", "--dump-dom",
            chrome_base + "/#" + hash_]
     # Главная не успокаивается: опросы ленты и подписок идут по таймеру, и срок
@@ -79,7 +79,7 @@ def shot(base, token, out, hash_="", width="1400"):
             # судьба снимка решается по файлу, а не по коду возврата chrome.
             try:
                 subprocess.run(
-                    [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
+                    [CHROME, headless_flag("new"), "--disable-gpu", "--no-sandbox", "--no-first-run",
                      "--hide-scrollbars", "--user-data-dir=" + profile,
                      "--window-size=%s,900" % width, "--screenshot=" + name, "file://" + html],
                     capture_output=True, text=True, timeout=40)
@@ -88,7 +88,17 @@ def shot(base, token, out, hash_="", width="1400"):
         if not os.path.exists(name):
             print("снимок не получился: " + name)
             return 1
-        shots.append(name)
+        # Снимок отвечает за ширину, которую у него просили. Полный Chrome на
+        # macOS окно уже пятисот точек не открывает, и «снимок на 390» приезжал
+        # пятисотточечным: телефонная вёрстка на нём выглядела вылезающей за
+        # экран, а правки её «не чинили», потому что чинить было нечего (разбор
+        # POC DK-397).
+        got = shot_width(name)
+        if got and got != int(width):
+            print("снимок вышел шириной %d точек вместо %d: %s окно такой ширины не "
+                  "открывает, нужен chrome-headless-shell" % (got, int(width), CHROME))
+            return 1
+        shots.append(name + " (" + str(got) + " точек)")
     print("снимки: " + ", ".join(shots))
     return 0
 

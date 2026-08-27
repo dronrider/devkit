@@ -3,16 +3,26 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
+// devkitRoot отдаёт корень того дерева, в котором лежит сам тест. Боевой
+// findDevkit сюда не годится: он первым делом смотрит на DEVKIT_HOME, а в
+// сессиях машины эта переменная показывает на соседний worktree. Тест тогда
+// читает чужие сценарии и чужую раскладку и зеленеет ровно там, где дерево от
+// соседнего отличается.
 func devkitRoot(t *testing.T) string {
 	t.Helper()
-	root, err := findDevkit(".")
-	if err != nil {
-		t.Fatal(err)
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("не узнал путь до собственного файла теста")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(self)))
+	if _, err := os.Stat(filepath.Join(root, devkitMarker)); err != nil {
+		t.Fatalf("корень дерева теста не похож на devkit: %v", err)
 	}
 	return root
 }

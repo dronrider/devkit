@@ -726,6 +726,45 @@ func TestBoardRowRunFromRegistry(t *testing.T) {
 	}
 }
 
+// Живая работа нашей tmux-сессии помечается tmux, каким бы путём её ни узнали.
+// Живой случай: у цели DK-446 ход шёл нашим чатом, работа приезжала записью
+// реестра (via=registry), и по этому пути строка выглядела остановленной: вместо
+// «Стопа» экран предлагал «Продолжить», а нажатие увело бы вводную продолжения
+// в живую сессию посреди её хода.
+func TestRunMarksOwnLiveWorkAsTmux(t *testing.T) {
+	list := []Work{
+		{ID: "XR-100", Kind: "goal", Via: "registry", Own: true, Tmux: "chat-XR-100-1",
+			Live: workBusy},
+		{ID: "XR-002", Via: "registry", Live: workBusy},
+		{ID: "XR-003", Via: "registry", Own: true, Tmux: "chat-XR-003-1", Live: workIdle},
+		{ID: "XR-004", Via: "tmux", Own: true, Tmux: "task-XR-004", Live: workBusy, Talk: true},
+	}
+	marks := runMarks(list)
+	want := map[string]string{"XR-100": "tmux", "XR-002": "registry", "XR-003": "registry"}
+	for id, mark := range want {
+		if got := marks[id]; got != mark {
+			t.Errorf("признак работы %s %q, ожидал %q", id, got, mark)
+		}
+	}
+	// Разговор о задаче признака работы строке не даёт: чат её не ведёт.
+	if got, hit := marks["XR-004"]; hit {
+		t.Errorf("разговор о задаче дал строке признак работы %q", got)
+	}
+	// Ход идёт там, где работа занята, и признак этот свой: запись реестра
+	// стоящей работы остаётся на месте и после конца хода.
+	busy := busyMarks(list)
+	for _, id := range []string{"XR-100", "XR-002"} {
+		if !busy[id] {
+			t.Errorf("по строке %s идёт ход, а признака нет", id)
+		}
+	}
+	for _, id := range []string{"XR-003", "XR-004"} {
+		if busy[id] {
+			t.Errorf("строке %s приписан идущий ход", id)
+		}
+	}
+}
+
 // Работа несёт статус со своей строки доски: подпись на экране «Агенты»
 // называет его словом, а работа, чьей строки на доске нет, остаётся без
 // статуса, а не с выдуманным.

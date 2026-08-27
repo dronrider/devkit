@@ -19,14 +19,14 @@ const app = appPathArg();
 // реестр, груминг через транскрипт. Все три идут нашей сессией.
 const rows = [
   { id: "XR-1", title: "задача в работе", sect: "in-progress", r: 40, r_parts: [10, 8, 7, 8, 7],
-    moved: "2026-08-20", cost: "-", type: "task", run: "tmux" },
+    moved: "2026-08-20", cost: "-", type: "task", run: "tmux", run_busy: true },
   { id: "XR-2", title: "Цель: долгоживущие тексты", sect: "in-progress", r: 40,
-    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "goal", run: "registry" },
+    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "goal", run: "tmux", run_busy: true },
   { id: "XR-3", title: "груминг в разговоре", sect: "in-progress", r: 40,
-    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "task", run: "session" },
+    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "task", run: "tmux", run_busy: true },
   // Ход идёт, но сессия чужая: снимать нечего, и продолжать нельзя тоже.
   { id: "XR-4", title: "работа с чужой машины", sect: "in-progress", r: 40,
-    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "task", run: "registry" },
+    r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "task", run: "registry", run_busy: true },
   // Наши сессии кончились: работа стоит, и продолжение это ровно то, что надо.
   { id: "XR-5", title: "оборванный конвейер", sect: "in-progress", r: 40,
     r_parts: [10, 8, 7, 8, 7], moved: "2026-08-20", cost: "-", type: "task", run: "gone" },

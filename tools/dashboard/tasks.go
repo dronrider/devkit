@@ -65,6 +65,11 @@ type boardRow struct {
 	// списка работ он отвечал ровно на один вопрос, «есть ли сейчас работа с
 	// таким же ID», и оборванный конвейер в нём был неотличим от очереди.
 	Run string `json:"run,omitempty"`
+	// RunBusy говорит, идёт ли по строке ход прямо сейчас. Признак отдельный от
+	// Run: работа бывает видна записью реестра или транскриптом, а ход в ней не
+	// идёт. По нему экран решает, предлагать ли строке продолжение: вводная
+	// продолжения, ушедшая в живой ход, сбивает агента.
+	RunBusy bool `json:"run_busy,omitempty"`
 	// Harness называет подписку, которой закрывать проверенную строку: ту, на
 	// которой работу начинали.
 	Harness string `json:"harness,omitempty"`
@@ -97,16 +102,50 @@ const (
 
 // runMarks собирает живые работы по ID: работа без ID это интерактивная
 // сессия с неузнанной задачей, строки на доске у неё нет.
+// runMarks сводит живые работы в признаки строк: чем работа видна и идёт ли по
+// ней ход прямо сейчас.
+//
+// Работа нашей живой tmux-сессии помечается tmux, каким бы путём её ни узнали.
+// Прежде тут стоял голый Via, а у цели работа приезжает реестром: по этому пути
+// идущая цель выглядела остановленной, и вместо «Стопа» экран предлагал
+// продолжить её посреди хода (замечание пользователя, цель DK-446).
 func runMarks(works []Work) map[string]string {
 	live := map[string]string{}
 	for _, w := range works {
 		// Разговор о задаче признака работы строке не даёт: чат её не ведёт, и
 		// строка остаётся такой, какой была без него (leadsTask).
-		if w.ID != "" && !w.Talk {
-			live[w.ID] = w.Via
+		if w.ID == "" || w.Talk {
+			continue
 		}
+		mark := w.Via
+		if w.Own && w.Tmux != "" && w.Live == workBusy {
+			mark = "tmux"
+		}
+		// Своя живая сессия сильнее прочих: у одной строки бывает и запись
+		// реестра, и сессия, и решает та, которую можно снять.
+		if live[w.ID] == "tmux" && mark != "tmux" {
+			continue
+		}
+		live[w.ID] = mark
 	}
 	return live
+}
+
+// busyMarks называет строки, по которым ход идёт прямо сейчас. Признак
+// отдельный от того, чем работа видна: запись реестра и транскрипт остаются на
+// месте и после конца хода, а продолжение предлагать можно только стоящей
+// строке.
+func busyMarks(works []Work) map[string]bool {
+	busy := map[string]bool{}
+	for _, w := range works {
+		if w.ID == "" || w.Talk {
+			continue
+		}
+		if w.Live == workBusy {
+			busy[w.ID] = true
+		}
+	}
+	return busy
 }
 
 // rowRun называет признак строки: у живой работы это то, чем она видна, у
@@ -152,7 +191,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 	if err := json.Unmarshal(doc["sections"], &secs); err != nil {
 		return raw
 	}
-	live := runMarks(works)
+	live, busy := runMarks(works), busyMarks(works)
 	for _, sec := range secs {
 		var key string
 		json.Unmarshal(sec["key"], &key)
@@ -184,6 +223,16 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 					return raw
 				}
 				row["run"] = mark
+			}
+			// Идёт ли по строке ход прямо сейчас. Признак отдельный от run:
+			// работа бывает видна записью реестра или транскриптом, а ход в ней
+			// не идёт, и продолжение такой строке предлагать можно.
+			if busy[id] {
+				mark, err := json.Marshal(true)
+				if err != nil {
+					return raw
+				}
+				row["run_busy"] = mark
 			}
 			if kind, since := rowStage(stages, run, id); kind != "" {
 				mark, err := json.Marshal(kind)
@@ -506,6 +555,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		// та же задача выглядела бы своей на одном экране и брошенной на
 		// другом.
 		row.Run = rowRun(runMarks(works), mine, id, row.Sect)
+		row.RunBusy = busyMarks(works)[id]
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}
@@ -1052,4 +1102,3 @@ func (s *server) depChange(w http.ResponseWriter, found *Project, id, dep, sub s
 	s.logf("зависимость %s от %s в %s: %s", id, dep, found.Name, out)
 	writeJSON(w, http.StatusOK, resp)
 }
-

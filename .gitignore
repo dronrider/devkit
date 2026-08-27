@@ -4,6 +4,7 @@
 # Бинари утилит, собираются по месту.
 tools/taskctl/taskctl
 tools/shipctl/shipctl
+tools/obeycheck/obeycheck
 
 # Каталог релизной сборки по умолчанию (devkitctl build --release): тарболлы и
 # суммы собираются по месту, в git им делать нечего.

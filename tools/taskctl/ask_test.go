@@ -348,3 +348,90 @@ func writeRegistry(t *testing.T, home, line string) {
 		t.Fatal(err)
 	}
 }
+
+// writeDraft кладёт запись накопителя на её обычное место: по нему ожидание и
+// узнаёт, что за ID стоит черновик, а не строка доски. Путь берётся у того же
+// draftFile, каким его считают тесты накопителя.
+func writeDraft(t *testing.T, root, id, title string) {
+	t.Helper()
+	path := draftFile(root, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# "+id+": "+title+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Ожидание по черновику слушает тот же вход, что и ожидание по задаче:
+// task-<ID>. Именно туда кладёт ответ человека панель дашборда
+// (sessionChatName), и свой draft-<ID> был бы адресом, куда никто не пишет.
+// Живой случай DK-517: агент груминга дважды отстоял по восемь минут, оба раза
+// получил отказ парковки, а вопросы дошли до человека только текстом в чат.
+func TestAskDraftWaitsOnTheSameAddress(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	writeDraft(t, root, "XR-D7", "мысль с телефона")
+	// Ответ лежит там, куда его кладёт панель.
+	say(t, root, chat.TaskName("XR-D7"), "режь на две задачи", "")
+	// Draft тут стоит явно: предмет проверки не угадывание вида, а адрес входа.
+	out, err := st.run(root, AskParams{ID: "XR-D7", Question: "резать или ждать",
+		Wait: 10 * time.Second, Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "режь на две задачи") {
+		t.Fatalf("ответ человека до ожидания черновика не доехал:\n%s", out)
+	}
+	if len(st.parked) != 0 {
+		t.Fatalf("черновик припарковали на доске: %v", st.parked)
+	}
+}
+
+// Вид записи ожидание узнаёт само: заказ груминга зовёт его тем же
+// `taskctl ask <ID>`, что и задачу, без всякого флага. Не дождавшись, оно
+// оставляет вопрос файлом исхода, а парковку не зовёт вовсе: строки у
+// черновика нет, и парковка отвечала бы «нет на доске».
+func TestAskGuessesTheDraft(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	st.deps.IsDraft = func(id string) bool {
+		_, err := os.Stat(draftFile(root, id))
+		return err == nil
+	}
+	writeDraft(t, root, "XR-D8", "вторая мысль")
+	out, err := st.run(root, AskParams{ID: "XR-D8", Question: "заводить строкой",
+		Wait: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.parked) != 0 {
+		t.Fatalf("парковку позвали по черновику: %v", st.parked)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "draft-XR-D8.question")); err != nil {
+		t.Fatalf("вопрос не остался файлом исхода: %v", err)
+	}
+	if !strings.Contains(out, "запись накопителя") {
+		t.Fatalf("агенту не сказали, что ждём по-черновому:\n%s", out)
+	}
+	// Признак ожидания лежал под тем же именем, под которым его читает
+	// дашборд: иначе чип ожидания у записи не зажёгся бы.
+	if !strings.Contains(out, chat.Path(root, chat.TaskName("XR-D8"))) {
+		t.Fatalf("вход ожидания назван не тем адресом:\n%s", out)
+	}
+}
+
+// Строка доски черновиком не считается, даже если файл записи рядом остался:
+// у задачи свой исход по сроку, парковка.
+func TestAskKeepsTheTaskPath(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	st.deps.IsDraft = func(id string) bool { return false }
+	if _, err := st.run(root, AskParams{ID: "XR-005", Question: "как быть",
+		Wait: 2 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.parked) != 1 {
+		t.Fatalf("задачу не припарковали по сроку: %v", st.parked)
+	}
+}

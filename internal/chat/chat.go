@@ -46,11 +46,12 @@ func Root(tree string) string          { return filepath.Join(tree, ".devkit", D
 func Path(tree, name string) string    { return filepath.Join(Root(tree), name+Suffix) }
 func AskPath(tree, name string) string { return filepath.Join(Root(tree), name+AskSuffix) }
 
-// TaskName и DraftName называют разговор задачи и разговор черновика. Имя живёт
-// дольше сессии: task-<ID> переживает парковку задачи, и ответ достаётся той
-// сессии, что задачу продолжит.
-func TaskName(id string) string  { return "task-" + id }
-func DraftName(id string) string { return "draft-" + id }
+// TaskName называет разговор записи доски по её ID. Имя живёт дольше сессии:
+// task-<ID> переживает парковку задачи, и ответ достаётся той сессии, что
+// задачу продолжит. Черновик зовётся тем же именем, а не своим draft-<ID>:
+// панель дашборда кладёт ответ человека именно сюда (sessionChatName), и
+// второй адрес был бы входом, куда никто не пишет (живой случай DK-517).
+func TaskName(id string) string { return "task-" + id }
 
 // Line это строка разговора с адресатом: реплика написана сессии sid и доедет
 // только до неё.

@@ -2377,6 +2377,22 @@ func TestStaticRowRunButton(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Список подписок выбирает сторону раскрытия по месту: у кнопки, перенесённой
+// на второй ряд, слева места нет, и растущий влево список обрезался краем
+// главной части экрана. Сторожит стенд testdata/poc_hpop.mjs.
+func TestStaticHpopSide(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд стороны списка подписок пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_hpop.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("сторона раскрытия списка подписок: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Кнопку работы на форме задачи выбирает идущий ход, а не живое окно: у DK-543
 // сессия была жива, агент в ней простаивал, а форма предлагала «Стоп» вместо
 // пуска. Правило это одно на строку доски и на форму. Сторожит стенд

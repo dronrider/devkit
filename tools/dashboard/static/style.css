@@ -355,6 +355,10 @@ a:hover{text-decoration:underline}
 /* вверх список раскрывается там, где под кнопкой нет места: на телефоне он
    иначе уезжает под нижние вкладки */
 .hpop.up{top:auto;bottom:calc(100% + 6px)}
+/* вправо список раскрывается там, где слева от кнопки нет места: перенесённая
+   на второй ряд кнопка запуска стоит у левого края экрана, и растущий влево
+   список обрезался его границей */
+.hpop.rt{right:auto;left:0}
 .hpop[hidden]{display:none}
 .hph{display:block;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;
   color:var(--tx3);padding:9px 11px 8px}

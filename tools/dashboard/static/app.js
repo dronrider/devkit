@@ -1120,7 +1120,12 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     // телефоне кнопка стоит низко, и раскрытый вниз список уезжает под нижние
     // вкладки. Считается это по месту кнопки на экране, а не по ширине окна:
     // низко она стоит и на ноутбуке, если доска прокручена до конца.
-    if (!pop.hidden) pop.classList.toggle("up", noRoomBelow(more));
+    if (!pop.hidden) {
+      pop.classList.toggle("up", noRoomBelow(more));
+      // Влево список растёт от кнопки, и у перенесённой на второй ряд кнопки
+      // расти ему некуда: слева стоит край главной части экрана.
+      pop.classList.toggle("rt", noRoomLeft(more, pop));
+    }
   });
   grp.append(more, pop);
   return grp;
@@ -1140,6 +1145,36 @@ function noRoomBelow(node) {
 // полосу и полоса ярусов. Точная высота известна только после вставки, а
 // решение о стороне принимается до неё, поэтому тут запас по макету.
 const HPOP_ROOM = 200;
+
+// Хватает ли слева от узла места на раскрытый список. Висит он правым краем на
+// кнопке и растёт влево, и там, где кнопка запуска переносится на второй ряд,
+// расти ему некуда: у главной части экрана свой overflow, и вылезший за её
+// левый край список не ложится поверх боковой колонки, а обрезается по ней
+// (замечание пользователя: выпадашка выбора подписки уезжает под меню). Такому
+// списку место справа от кнопки, и он туда и разворачивается.
+//
+// Ширина спрашивается у самого списка, а не берётся из стилей: на телефоне она
+// своя, и второе объявление её в коде разошлось бы с первым молча. Мерить
+// нечем (стенд, старый браузер), значит сторона остаётся прежней.
+function noRoomLeft(node, pop) {
+  if (!node.getBoundingClientRect || !pop || !pop.getBoundingClientRect) return false;
+  const box = node.getBoundingClientRect();
+  const list = pop.getBoundingClientRect();
+  const width = (list && list.width) || 0;
+  if (!box || !box.right || !width) return false;
+  return box.right - width < screenLeft() + HPOP_EDGE;
+}
+
+// Левый край места, отведённого всплывашке: режет её главная часть экрана, а
+// не окно, и мерить надо её. Нечем мерить, значит краем считается край окна.
+function screenLeft() {
+  const box = document.getElementById("groups");
+  const rect = box && box.getBoundingClientRect ? box.getBoundingClientRect() : null;
+  return (rect && rect.left) || 0;
+}
+
+// Зазор от края: список, прижатый вплотную к границе, читается как обрезанный.
+const HPOP_EDGE = 8;
 
 // Пункт меню строки: та же кнопка, что и в меню плюса, только со своим
 // действием. Кнопкой, а не подписью, потому что жмут её и пальцем, и с

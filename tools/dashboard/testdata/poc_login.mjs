@@ -15,6 +15,8 @@
 
 import { makeSandbox, settle, dump, byClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const app = appPathArg();
 const BYE = "Login expired. Please run /login";
@@ -137,6 +139,18 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   if (!byClass(panel, "cbye").hidden) {
     fail("плашка не погасла после живого ответа: " + dump(byClass(panel, "cbye")));
   }
+  // Вход истекает и во второй раз, тем же разговором: состояние не одноразовое,
+  // и после починки плашка обязана встать заново, а не остаться погашенной.
+  es.onmessage({ data: JSON.stringify({ key: "m-5", role: "assistant", text: BYE,
+    logout: true, time: "2026-08-22T19:40:00+03:00" }) });
+  await settle();
+  if (byClass(panel, "cbye").hidden) {
+    fail("второй разлогин того же разговора плашку не поднял");
+  }
+  es.onmessage({ data: JSON.stringify({ key: "m-6", role: "assistant",
+    text: "снова на связи", time: "2026-08-22T19:45:00+03:00" }) });
+  await settle();
+  if (!byClass(panel, "cbye").hidden) fail("плашка не погасла после второй починки");
   items = [];
 }
 
@@ -163,6 +177,42 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   }
   if (!dump(plate).includes("не дашбордом")) {
     fail("человеку не сказано, почему перезапуска тут нет: " + dump(plate));
+  }
+}
+
+// --- погашенная плашка правда уходит с экрана ---
+//
+// hidden это всего лишь атрибут: прячет узел встроенное правило браузера
+// [hidden]{display:none}, и любое авторское правило с display его перебивает.
+// У плашки разговора display свой, она раскладывается флексом, и без парного
+// правила [hidden] погашенная кодом плашка остаётся на экране. Ровно это и
+// увидел человек: разговор ожил после /login и перезапуска, лента гасила
+// состояние как надо, а «Сессия разлогинена» висела над рабочим разговором.
+// Свойство узла тут проверять нечем, стенд читает настоящий style.css.
+{
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    rules.push({ sel: m[1].replace(/^[\s}]+/, "").trim(), decl: m[2] });
+  }
+  // Правило про сам этот узел, а не про его соседей и потомков: селектор это
+  // цепочка классов, все из которых есть у узла, и ничего сверх них.
+  const own = (sel, classes, withHidden) => sel.split(",").some((part) => {
+    const m = /^((?:\.[A-Za-z0-9_-]+)+)(\[hidden\])?$/.exec(part.trim());
+    if (!m || Boolean(m[2]) !== withHidden) return false;
+    return m[1].split(".").filter(Boolean).every((c) => classes.includes(c));
+  });
+  const panel = sandbox.chatPanel("demo", out("aaaa4660-7777"));
+  await settle();
+  const plate = byClass(panel, "cbye");
+  const classes = String(plate.className).split(" ").filter(Boolean);
+  const shows = rules.filter((r) => own(r.sel, classes, false) && /display\s*:/.test(r.decl));
+  const hides = rules.filter((r) => own(r.sel, classes, true) && /display\s*:\s*none/.test(r.decl));
+  if (shows.length && !hides.length) {
+    fail("display плашке даёт правило " + shows.map((r) => r.sel).join(", ") +
+      ", а парного [hidden]{display:none} в style.css нет: погашенная кодом " +
+      "плашка останется на экране");
   }
 }
 

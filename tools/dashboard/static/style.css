@@ -800,6 +800,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .msg.m-stuck .mm{color:var(--check)}
 .cnote{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-radius:9px;background:color-mix(in oklab,var(--check) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--check) 25%,transparent);font:400 12px/1.5 var(--sans);color:var(--tx2);margin:16px 0 10px}
 .cnote b{color:var(--check);font-weight:600;white-space:nowrap}
+/* Плашка разговора прячется атрибутом hidden, а раскладывается она флексом, и
+   авторское display сильнее встроенного [hidden]{display:none} браузера. Без
+   парного правила плашка разлогина (DK-466) стояла на экране всегда: код гасил
+   её первым же живым ответом агента, а с экрана она не уходила, и человек
+   видел «Сессия разлогинена» над работающим разговором. */
+.cnote[hidden]{display:none}
 .cnote .nx{margin-left:auto;flex:none;width:24px;height:24px;border-radius:6px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
 .cnote .nx svg{width:11px;height:11px;display:block}
 .cnote .nx:hover{color:var(--tx);background:var(--bg2)}

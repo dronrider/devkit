@@ -3590,6 +3590,16 @@ function formPage(cfg) {
       if (!more.disabled && cfg.saveMore.onSave) cfg.saveMore.onSave();
     });
   }
+  // Выход с формы стоит рядом с сохранением: решение «записать или уйти»
+  // человек принимает в одном месте, и держать выход в другом углу экрана
+  // значило бы искать его глазами. У правки задачи выхода нет, там его роль
+  // играет «Отменить правку».
+  const quit = cfg.onQuit ? barBtn("btn bquit", cfg.quitLabel || "Отмена", "close") : null;
+  if (quit) {
+    bar.append(quit);
+    quit.addEventListener("click", () => { cfg.onQuit(quit); });
+  }
+  out.quit = quit;
   bar.append(drop, sep);
   // Кнопки уезжают в командную панель, а подписи причин остаются полосой: в
   // углу строки статуса им не поместиться, а без них погашенная кнопка молчит
@@ -3622,7 +3632,7 @@ function formPage(cfg) {
     }
     // Мера пустоты теперь одна: правка. Действия уехали в командную панель, и
     // полоса живёт ради «Сохранить», «Отменить правку» и отказа.
-    if (!notes.length && save.hidden && (!more || more.hidden) && !bad.textContent) {
+    if (!notes.length && save.hidden && (!more || more.hidden) && !quit && !bad.textContent) {
       if (placed) {
         bar.remove();
         placed = false;
@@ -11555,11 +11565,53 @@ const DRAFT_NOTE = "Задачи на доске у него нет, в рабо
 // и это единственная его особенность, которой не видно глазами.
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 
-// Черновик пишется по SCQA, и подсказка поля говорит это словами, а не ждёт,
-// что человек помнит четыре буквы (скилл board-draft, TASKFORM.md, раздел
-// «Черновик»). Заголовок это первая строка, тело идёт под ней.
-const DRAFT_PLACEHOLDER = "Заголовок-исход одной строкой, дальше по SCQA: " +
-  "что происходит, чем мешает, какой вопрос, какая гипотеза";
+// Черновик пишется по SCQA, и форма спрашивает разделы порознь, а не одним
+// полем: простынёй в одно поле человек писал сплошным текстом, и раскладывать
+// её потом приходилось грумеру (просьба пользователя). Подсказка каждого поля
+// говорит, что в нём пишут, и на этом останавливается: правила лежат в
+// TASKFORM.md, разделе «Черновик», пересказывать их формой незачем.
+const DRAFT_PLACEHOLDER = "Заголовок-исход одной строкой";
+const DRAFT_SECTIONS = [
+  { key: "sit", head: "Ситуация", hint: "что есть сейчас и откуда взялось наблюдение" },
+  { key: "comp", head: "Осложнение", hint: "что в этом не так и чем мешает" },
+  { key: "quest", head: "Вопрос", hint: "что предстоит решить; бывает пустым" },
+  { key: "hyp", head: "Гипотеза", hint: "что изменится снаружи, когда сделано; бывает пустым" },
+];
+// Порог заголовка держит и утилита записи, но узнавать о нём после похода на
+// сервер поздно: тот же рубеж стоит на самой форме.
+const DRAFT_TITLE_LIMIT = 72;
+
+// Текст черновика собирается тем порядком, каким его пишет taskctl draft:
+// заголовок первой строкой, дальше подразделы третьего уровня. Размеченный
+// текст утилита кладёт как есть, поэтому незаполненный раздел уезжает пустым
+// заголовком и на разбор попадает как пустой: вопрос и гипотеза черновику не
+// обязательны.
+function draftText(form) {
+  const out = [String(form.title || "").trim()];
+  for (const sec of DRAFT_SECTIONS) {
+    const body = String(form[sec.key] || "").trim();
+    out.push("### " + sec.head + (body ? "\n\n" + body : ""));
+  }
+  return out.join("\n\n") + "\n";
+}
+
+// Рубеж формы черновика тот же, что у записи: заголовок с ситуацией и
+// осложнением обязательны, вопрос и гипотеза бывают пустыми (TASKFORM.md,
+// раздел «Черновик»).
+function draftFormRefusal(form) {
+  const title = String(form.title || "").trim();
+  if (!title) return "черновик пустым не бывает: первой строкой идёт заголовок-исход";
+  if (title.length > DRAFT_TITLE_LIMIT) {
+    return "заголовок длиннее " + DRAFT_TITLE_LIMIT + " символов: по нему черновик узнают в накопителе";
+  }
+  if (!String(form.sit || "").trim()) {
+    return "ситуация не написана: с неё начинается разбор, и без неё черновик нечем понять";
+  }
+  if (!String(form.comp || "").trim()) {
+    return "осложнение не написано: без него непонятно, чем происходящее мешает";
+  }
+  return "";
+}
 // Вид приёмки выбирается закрытым списком, а не текстом: свободный ввод на
 // телефоне дороже двух тапов, а значения всего три (DK-301).
 const ACCEPT_VALUES = ["agent", "mixed", "user"];
@@ -11585,7 +11637,8 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
-  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "" };
+  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "",
+  sit: "", comp: "", quest: "", hyp: "" };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -11597,6 +11650,21 @@ function resetNewForm(project) {
   newForm.accept = "agent";
   newForm.barrier = "";
   newForm.reason = "";
+  for (const sec of DRAFT_SECTIONS) newForm[sec.key] = "";
+}
+
+// Форма набрана хоть чем-то: пустую закрываем молча, а над набранной сперва
+// спрашиваем. Мера тут одна на оба вида, поля чужого вида стоят нетронутыми.
+function newFormFilled() {
+  if (String(newForm.title || "").trim()) return true;
+  for (const sec of DRAFT_SECTIONS) {
+    if (String(newForm[sec.key] || "").trim()) return true;
+  }
+  if (newForm.draft) return false;
+  return newForm.type !== "task" || newForm.cost !== "-" ||
+    newForm.parts.some((n) => Number(n) !== 0) ||
+    newForm.accept !== "agent" || Boolean(newForm.barrier) ||
+    Boolean(String(newForm.reason || "").trim());
 }
 
 // Отправка гасит кнопки на время запроса: повторное нажатие на медленной
@@ -11685,14 +11753,62 @@ function renderNew(project, kind) {
   // слову в списке этого не прочесть.
   box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField);
 
+  // Разделы черновика: подпись, поле и подсказка в самом поле. Высота поля
+  // растёт по написанному, как у заголовка: раздел бывает и в строку, и в
+  // абзац, а четыре поля в полный рост занимали бы экран целиком.
+  const scqa = el("div", "card");
+  const scqaBox = el("div", "nfbody");
+  scqa.append(scqaBox);
+  for (const sec of DRAFT_SECTIONS) {
+    const field = el("div", "nfsec");
+    field.append(el("span", "flab", sec.head));
+    const area = el("textarea");
+    area.rows = 2;
+    area.value = newForm[sec.key];
+    area.placeholder = sec.hint;
+    area.setAttribute("aria-label", sec.head.toLowerCase() + " черновика");
+    const fit = () => {
+      area.style.height = "auto";
+      if (area.scrollHeight) area.style.height = area.scrollHeight + "px";
+    };
+    area.addEventListener("input", () => {
+      newForm[sec.key] = area.value;
+      fit();
+      view.touch();
+    });
+    setTimeout(fit, 0);
+    field.append(area);
+    scqaBox.append(field);
+  }
+
   let view = null;
+  // Уход с формы. Заведение занимает экран целиком, и выйти с него было нечем,
+  // ни крестика, ни отмены (замечание пользователя). Пустая форма закрывается
+  // сразу, набранная спрашивает второй раз, как спрашивает снятие сессии:
+  // написанное не должно пропадать от промаха по кнопке или по клавише.
+  let quitArmed = false;
+  const leaveNew = (btn) => {
+    if (newFormFilled() && !quitArmed) {
+      quitArmed = true;
+      if (btn) {
+        btn.classList.add("armed");
+        btn.rename(draft ? "Черновик не записан, выйти?" : "Задача не заведена, выйти?");
+      }
+      return;
+    }
+    resetNewForm(project);
+    // Возврат туда, откуда пришли: черновик заводят из накопителя, задачу с
+    // доски.
+    goKeepingChat(draft ? project + "/drafts" : project);
+    refresh().catch(console.error);
+  };
   // Обе кнопки записи ходят одной ручкой и расходятся только дорогой после
   // неё. «Сохранить» возвращает в накопитель, и следующая запись начинается
   // оттуда же, с плюса на списке. «Сохранить и грумить» поднимает разбор без
   // лишних вопросов и открывает экран записи, где виден его ход.
   const saveDraft = (groom) => {
-    const text = newForm.title.trim();
-    if (!text) return;
+    if (draftFormRefusal(newForm)) return;
+    const text = draftText(newForm);
     const btns = [view.save, view.saveMore].filter(Boolean);
     makeDraft(project, text, btns).then(async (done) => {
       if (!done) return;
@@ -11710,15 +11826,17 @@ function renderNew(project, kind) {
   };
   view = formPage({
     key: "new", project, id: "",
-    crumb: [{ text: "Доска " + project, go: () => { goKeepingChat(project); } }],
+    // Крошки «Доска <проект>» у формы нет: она вела туда же, куда ведёт шапка
+    // страницы, и дорога назад стояла на экране дважды (замечание
+    // пользователя).
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
-    lead: draft ? [note] : [], extra: draft ? [] : [card],
+    lead: draft ? [note] : [], extra: draft ? [scqa] : [card],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
-    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: true,
-    titleLabel: draft ? "текст черновика" : "заголовок задачи",
+    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: !draft,
+    titleLabel: draft ? "заголовок черновика" : "заголовок задачи",
     form: newForm, edit: true, always: true,
     saveLabel: draft ? "Сохранить" : "Завести задачу",
     // У черновика кнопок сохранения две, и расходятся они только дорогой
@@ -11726,6 +11844,8 @@ function renderNew(project, kind) {
     // «Записать ещё» и «На доску» между ними нет: обе её дороги закрыты
     // возвратами самих кнопок.
     saveMore: draft ? { label: "Сохранить и грумить", onSave: () => { saveDraft(true); } } : null,
+    quitLabel: draft ? "Не записывать" : "Не заводить",
+    onQuit: (btn) => { leaveNew(btn); },
     actions: [],
     check: () => {
       if (view) paint();
@@ -11733,7 +11853,7 @@ function renderNew(project, kind) {
       // без заголовка и черновика без текста не бывает, а у не агентского вида
       // барьер обязателен.
       if (newForm.draft) {
-        return { dirty: true, refusal: newForm.title.trim() ? "" : "черновик пустым не бывает" };
+        return { dirty: true, refusal: draftFormRefusal(newForm) };
       }
       return { dirty: true, refusal: draftRefusal(newForm, null) ||
         (newForm.accept !== "agent" && !newForm.barrier
@@ -11741,13 +11861,13 @@ function renderNew(project, kind) {
           : "") };
     },
     onSave: () => {
-      const text = newForm.title.trim();
-      if (!text) return;
-      const send = view.save;
       if (newForm.draft) {
         saveDraft(false);
         return;
       }
+      const text = newForm.title.trim();
+      if (!text) return;
+      const send = view.save;
       const body = {
         title: text,
         type: newForm.type,
@@ -11795,7 +11915,29 @@ function renderNew(project, kind) {
     view.rankNote.textContent = "= " + newForm.parts.join("+");
   }
 
+  // Escape уводит с формы той же дорогой, что и кнопка: руки на клавиатуре, и
+  // тянуться к кнопке ради отказа не надо. Вопрос над набранной формой при
+  // этом виден глазами, потому что взводится та же кнопка.
+  newEscape = () => { leaveNew(view.quit); };
+
   view.touch();
+}
+
+// Escape на форме заведения: обработчик один на страницу, а форма подставляет
+// в него свою дорогу. Живёт он ровно пока открыт экран заведения: с чужого
+// экрана клавиша не должна уводить никуда.
+let newEscape = null;
+
+function wireNewKey() {
+  document.addEventListener("keydown", (ev) => {
+    // Всплывашка гасится той же клавишей, и пока она открыта, Escape её и
+    // гасит: уводить с экрана заодно с ней значило бы терять форму на
+    // случайном промахе.
+    if (ev.key !== "Escape" || popupsOpen.size) return;
+    if (!route().make || !newEscape) return;
+    if (ev.preventDefault) ev.preventDefault();
+    newEscape();
+  });
 }
 
 // Экран ленты уведомлений по макету DK-216 («05 Лента»): три типа событий DoD
@@ -13455,10 +13597,18 @@ async function paint() {
     sess: (current.works || []).length,
     drafts: current.drafts || 0,
   });
-  // Внутри проекта заголовок шапки это вход на его доску: экран задачи, форма
-  // заведения, сессии и накопитель уходят с него одним нажатием. Доска ниже
-  // ставит тот же заголовок со своей подсказкой.
-  headName(current.name, "", () => { goKeepingChat(current.name); });
+  // Дорога назад стоит там, откуда есть куда возвращаться: экран задачи,
+  // запись накопителя, документ и список LLD висят под доской, и с них уходят
+  // одним нажатием. Сама доска дороги не носит ни в одном из своих табов
+  // (задачи, сессии, накопитель, выдача поиска): все три это её разделы, и
+  // «назад» вело бы с доски на неё же (замечание пользователя). Форма
+  // заведения дороги тоже не носит, у неё свой выход рядом с записью. Доска
+  // ниже ставит то же место со своей подсказкой.
+  if (rt.id || rt.doc || rt.lldList) {
+    headName(current.name, "", () => { goKeepingChat(current.name); });
+  } else {
+    headHere("Доска " + current.name, "");
+  }
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
@@ -13538,8 +13688,8 @@ async function paint() {
   // человек читал каждый раз заново, отвечая на вопрос, которого не задавал
   // (замечание пользователя). Знание осталось подсказкой на самом названии
   // проекта: там его берут, когда надо.
-  headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""),
-    () => { goKeepingChat(current.name); });
+  headHere("Доска " + current.name,
+    "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""));
   // Данные те же, что и в прошлый заход: списка не касаемся вовсе. Строку
   // задачи двигает человек, а не время, и перебирать сотню строк каждые
   // три секунды (столько ходит круг у живой работы) незачем: перерисовка по
@@ -13566,15 +13716,38 @@ document.getElementById("pname").addEventListener("click", () => {
   if (headGo) headGo();
 });
 
-// go это дорога с названия: с экрана внутри проекта заголовок читается «Доска
-// devkit» и ведёт на неё. Своей ссылки на доску экран задачи больше не носит,
-// она стояла второй такой же строкой ниже (решение пользователя).
+// go это дорога с названия: с экрана внутри проекта шапка читается «Назад на
+// доску», со стрелкой влево, и ведёт на доску проекта. Имя проекта из этих
+// слов ушло, на его месте стоит ответ на вопрос, куда уведёт нажатие (просьба
+// пользователя), а где человек находится, видно рядом: на широком экране
+// текущий проект подсвечен в списке слева, на телефоне он выбран в списке той
+// же шапки. Своей ссылки на доску экран задачи не носит, она стояла второй
+// такой же строкой ниже (решение пользователя).
 function headName(name, tip, go) {
   const node = document.getElementById("pname");
   headGo = go || null;
-  node.textContent = go ? "Доска " + name : name;
+  if (go) {
+    // Стрелка берётся из тех же значков разметки, что и остальные: рисовать её
+    // рамками стилей выходило обрубком. Слова лежат своим узлом, потому что
+    // черта дороги идёт под ними: протянутая на всю ссылку, она перечёркивала
+    // бы стрелку.
+    const back = icon("i-out");
+    back.setAttribute("class", "hgoi");
+    node.replaceChildren(back, el("span", "hgot", "Назад на доску"));
+  } else {
+    node.replaceChildren(document.createTextNode(name));
+  }
   node.title = tip || "";
-  node.classList.toggle("hgo", Boolean(go));
+  node.className = go ? "hgo" : "";
+  return node;
+}
+
+// Шапка самой доски: дороги на себя она не носит, «назад» вело бы с доски на
+// неё же. Место названо теми же словами и тем же кеглем, что и ссылка, только
+// без стрелки и без нажатия.
+function headHere(name, tip) {
+  const node = headName(name, tip);
+  node.classList.add("hhere");
   return node;
 }
 
@@ -13720,6 +13893,7 @@ wireFindField(document.getElementById("hq"), document.getElementById("hq-clear")
 putChatWidth(chatWidth());
 wireChatGrab(document.getElementById("cgrab"));
 wireFindKey();
+wireNewKey();
 // Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале
 // колонки читалась бы как «подписок нет».
 paintQuota();

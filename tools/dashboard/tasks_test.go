@@ -1066,14 +1066,22 @@ func TestStaticTaskNarrowHead(t *testing.T) {
 	if size > 13 {
 		t.Errorf("ссылка на доску набрана кеглем %g: это заголовок, а не ссылка", size)
 	}
-	if !strings.Contains(link, "text-decoration:underline") {
+	// Черта живёт под словами, а не под всей ссылкой: протянутая заодно и под
+	// стрелкой, она читалась зачёркнутым значком.
+	var words string
+	for _, rule := range cssRules(css) {
+		if rule[0] == ".bhead h2.hgo .hgot" {
+			words = rule[1]
+		}
+	}
+	if !strings.Contains(words, "text-decoration:underline") {
 		t.Error("ссылка на доску ничем не показывает, что она ведёт")
 	}
-	// Название проекта в шапке это вход на доску, и на экране задачи он теперь
+	// Шапка внутри проекта это вход на доску, и на экране задачи он теперь
 	// единственный.
 	head := funcBody(t, app, "function headName(")
-	if !strings.Contains(head, `go ? "Доска " + name : name`) {
-		t.Error("название проекта в шапке не читается «Доска <имя>»")
+	if !strings.Contains(head, `"Назад на доску"`) {
+		t.Error("шапка внутри проекта не читается «Назад на доску»")
 	}
 	if strings.Contains(css, ".idsm") {
 		t.Error("в стилях остался номер крошек, которого никто не рисует")
@@ -1082,6 +1090,77 @@ func TestStaticTaskNarrowHead(t *testing.T) {
 	if !strings.Contains(narrow, ".crumb{gap:8px;padding-top:14px;flex-wrap:nowrap") {
 		t.Error("на узком экране крошки записи снова переносятся по словам")
 	}
+}
+
+// Шапка внутри проекта называет переход, а не место: «Назад на доску» со
+// стрелкой слева. Имя проекта из слов ушло, где человек находится, видно рядом
+// в списке проектов, а на самой доске дороги на себя нет вовсе: «назад» вело
+// бы с неё на неё же.
+func TestStaticHeadBack(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	head := funcBody(t, app, "function headName(")
+	for _, want := range []string{`icon("i-out")`, `back.setAttribute("class", "hgoi")`,
+		`el("span", "hgot", "Назад на доску")`} {
+		if !strings.Contains(head, want) {
+			t.Errorf("в шапке нет %q: стрелки слева от слов не будет", want)
+		}
+	}
+	// Стрелка приезжает из значков разметки, а не рисуется рамками стилей.
+	if !strings.Contains(readFile(t, filepath.Join("static", "index.html")), `data-ico="i-out"`) {
+		t.Error("значка стрелки нет среди значков разметки")
+	}
+	// Сама доска зовёт себя по имени и нажатия не ждёт, и это верно для всех
+	// трёх её табов: дорога назад стоит только на экранах под доской.
+	if !strings.Contains(app, `headHere("Доска " + current.name`) {
+		t.Error("шапка доски не называет своё место: она либо пуста, либо зовёт назад на саму себя")
+	}
+	if !strings.Contains(app, "if (rt.id || rt.doc || rt.lldList) {") {
+		t.Error("дорога назад стоит не по месту: табы доски получают её наравне с экранами под доской")
+	}
+	if strings.Contains(funcBody(t, app, "function headHere("), "headGo") {
+		t.Error("шапка доски осталась дорогой на саму себя")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	rule := func(sel string) string {
+		for _, one := range cssRules(css) {
+			if one[0] == sel {
+				return one[1]
+			}
+		}
+		return ""
+	}
+	// Кегль и вес прежние: ссылка стоит рядом с поиском и крупнее подписи быть
+	// не может.
+	link := rule(".bhead h2.hgo")
+	if got := headFontSize(t, link); got != 12.5 {
+		t.Errorf("кегль дороги на доску съехал с 12.5 на %g", got)
+	}
+	if !strings.Contains(link, "font:400 ") {
+		t.Errorf("вес дороги на доску не обычный: %q", link)
+	}
+	// Стрелка ростом со строку слов: крупнее она забирала бы шапку себе.
+	ico := rule(".bhead h2.hgo .hgoi")
+	wide := headFontSize(t, "font-size: "+strings.TrimPrefix(cssValue(ico, "width"), "width:"))
+	if wide < 10 || wide > 16 {
+		t.Errorf("стрелка набрана не под кегль слов: %q", ico)
+	}
+	// Место на доске названо тем же кеглем, что и переход с прочих экранов:
+	// заголовком прежнего кегля оно снова забирало бы первую строку экрана.
+	if got := headFontSize(t, rule(".bhead h2.hhere")); got != 12.5 {
+		t.Errorf("шапка доски набрана кеглем %g, а не кеглем ссылки", got)
+	}
+}
+
+// cssValue достаёт из тела правила одно объявление вместе с именем: свойств в
+// строке несколько, а мерить надо названное.
+func cssValue(rule, prop string) string {
+	for _, part := range strings.Split(rule, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, prop+":") {
+			return part
+		}
+	}
+	return ""
 }
 
 // Ранг на телефоне свёрнут в одну строку и разворачивается нажатием, а

@@ -288,13 +288,25 @@ const doc = {
     return byId.get(id);
   },
   // Обработчики документа складываются так же, как узловые: горячей клавише
-  // («/» ставит курсор в поле поиска) больше неоткуда взяться. Снятие тоже
+  // («/» ставит курсор в поле поиска) больше неоткуда взяться. Одного события
+  // документ слушает по нескольку раз (всплывашки гасятся Escape, форма
+  // заведения им же закрывается, поиск ловит косую черту), и хранить
+  // последний значило бы терять половину поведения: наружу вид прежний,
+  // doc.handlers.keydown(ev), под именем лежит вызов всей пачки. Снятие тоже
   // настоящее: панель разговора вешает на документ слежение за выделением и
   // снимает его при уходе, и молчащий заглушкой стенд об этом бы не узнал.
   handlers: {},
-  addEventListener: (name, fn) => { doc.handlers[name] = fn; },
+  bags: {},
+  addEventListener: (name, fn) => {
+    const bag = doc.bags[name] || (doc.bags[name] = []);
+    bag.push(fn);
+    doc.handlers[name] = (ev) => { for (const f of [...bag]) f(ev); };
+  },
   removeEventListener: (name, fn) => {
-    if (doc.handlers[name] === fn) delete doc.handlers[name];
+    const bag = doc.bags[name] || [];
+    const at = bag.indexOf(fn);
+    if (at >= 0) bag.splice(at, 1);
+    if (!bag.length) delete doc.handlers[name];
   },
 };
 // Корневой узел нужен ширине панели разговора: она уезжает переменной стиля,

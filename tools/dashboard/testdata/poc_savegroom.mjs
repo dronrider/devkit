@@ -48,9 +48,11 @@ const go = async (hash) => {
   await settle();
 };
 
-// Поле текста черновика: своего класса у него нет, ищется по тегу.
-const area = () => (function find(node) {
-  if (node.tagName === "TEXTAREA") return node;
+// Поля формы черновика: своего класса у них нет, различаются подписью для
+// чтения с экрана. Полей теперь пять, заголовок и четыре раздела SCQA.
+const area = (label) => (function find(node) {
+  if (node.tagName === "TEXTAREA" &&
+    (!label || String(node.attrs["aria-label"] || "") === label)) return node;
   for (const kid of node.children || []) {
     const got = typeof kid === "object" && kid && find(kid);
     if (got) return got;
@@ -58,11 +60,19 @@ const area = () => (function find(node) {
   return null;
 })(groups);
 
-const fill = async (text) => {
-  const ta = area();
-  if (!ta) fail("поля текста черновика на форме нет: " + dump(groups).slice(0, 300));
+const put = (label, text) => {
+  const ta = area(label);
+  if (!ta) fail("поля «" + label + "» на форме нет: " + dump(groups).slice(0, 300));
   ta.value = text;
   ta.handlers.input({});
+};
+
+// Записи черновика хватает заголовка с ситуацией и осложнением: вопрос и
+// гипотеза бывают пустыми, и записи это не мешает.
+const fill = async (text) => {
+  put("заголовок черновика", text);
+  put("ситуация черновика", text.trim() ? "замечено на прогоне." : text);
+  put("осложнение черновика", text.trim() ? "мешает работать." : text);
   await settle();
 };
 

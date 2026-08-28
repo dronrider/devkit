@@ -535,15 +535,105 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	if strings.Contains(text, "renderMakePick") {
 		t.Error("экран выбора вернулся вместо выпадашки у кнопки")
 	}
-	// Подсказка про SCQA живёт в самом поле черновика.
-	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "SCQA") {
+	// Разделы SCQA спрашиваются порознь, своим полем каждый: одним полем
+	// черновик писался простынёй (просьба пользователя).
+	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "DRAFT_SECTIONS") {
 		t.Error("форма черновика молчит про SCQA")
+	}
+	// Дороги на доску в теле формы нет: она вела туда же, куда ведёт шапка
+	// страницы, и стояла на экране второй такой же (замечание пользователя).
+	if strings.Contains(form, "crumb:") {
+		t.Error("дублирующая крошка «Доска <проект>» вернулась на форму заведения")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, want := range []string{".pmenu", ".pmrow", ".dnote"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет правила %q", want)
 		}
+	}
+}
+
+// Форма черновика спрашивает SCQA разделами: заголовок-исход отдельным полем,
+// дальше «Ситуация», «Осложнение», «Вопрос» и «Гипотеза», каждый со своей
+// подсказкой. Записанное уезжает тем же порядком, каким пишет taskctl draft, и
+// пустые вопрос с гипотезой записи не мешают (TASKFORM.md, раздел «Черновик»).
+func TestStaticDraftSCQAForm(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`{ key: "sit", head: "Ситуация"`,
+		`{ key: "comp", head: "Осложнение"`, `{ key: "quest", head: "Вопрос"`,
+		`{ key: "hyp", head: "Гипотеза"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в разделах формы черновика нет %q", want)
+		}
+	}
+	// Текст собирается подразделами третьего уровня: размеченный текст утилита
+	// кладёт как есть, и пустой раздел уезжает пустым заголовком.
+	body := funcBody(t, text, "function draftText(")
+	if !strings.Contains(body, `"### " + sec.head`) {
+		t.Error("текст черновика собирается не подразделами: taskctl положит его целиком в «Ситуацию»")
+	}
+	if !strings.Contains(body, `(body ? "\n\n" + body : "")`) {
+		t.Error("пустой раздел черновика уезжает не пустым заголовком")
+	}
+	// Обязательны заголовок с ситуацией и осложнением, вопрос и гипотеза нет.
+	stop := funcBody(t, text, "function draftFormRefusal(")
+	for _, want := range []string{"form.title", "form.sit", "form.comp"} {
+		if !strings.Contains(stop, want) {
+			t.Errorf("рубеж формы черновика не спрашивает %q", want)
+		}
+	}
+	for _, gone := range []string{"form.quest", "form.hyp"} {
+		if strings.Contains(stop, gone) {
+			t.Errorf("рубеж формы черновика отбивает запись из-за %q, а он бывает пустым", gone)
+		}
+	}
+	// Заголовок длиннее семидесяти двух отбивается формой, а не походом на
+	// сервер: тот же порог держит и утилита записи.
+	if !strings.Contains(text, "DRAFT_TITLE_LIMIT = 72") {
+		t.Error("порога заголовка черновика на форме нет: о нём узнают только с ответа сервера")
+	}
+	made := funcBody(t, text, "function renderNew(")
+	if !strings.Contains(made, "extra: draft ? [scqa] : [card]") {
+		t.Error("карточка разделов не встаёт на форму черновика")
+	}
+	if !strings.Contains(made, "const text = draftText(newForm);") {
+		t.Error("запись черновика уезжает не разделами, а одним полем")
+	}
+}
+
+// Выход с формы заведения: кнопка рядом с записью и Escape. Пустая форма
+// закрывается сразу, набранная спрашивает и уходит по второму нажатию, туда
+// же, откуда пришли (замечание пользователя: «передумал, а выйти нечем»).
+func TestStaticNewFormExit(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	form := funcBody(t, text, "function formPage(")
+	if !strings.Contains(form, `barBtn("btn bquit"`) || !strings.Contains(form, "cfg.onQuit(quit)") {
+		t.Error("у формы нет выхода рядом с кнопками записи")
+	}
+	made := funcBody(t, text, "function renderNew(")
+	for _, want := range []string{"onQuit: (btn) => { leaveNew(btn); }",
+		`quitLabel: draft ? "Не записывать" : "Не заводить"`,
+		"if (newFormFilled() && !quitArmed) {",
+		`btn.rename(draft ? "Черновик не записан, выйти?" : "Задача не заведена, выйти?")`,
+		`goKeepingChat(draft ? project + "/drafts" : project)`,
+		"newEscape = () => { leaveNew(view.quit); };"} {
+		if !strings.Contains(made, want) {
+			t.Errorf("выход с формы собран не тем блоком: нет %q", want)
+		}
+	}
+	// Клавиша живёт ровно на своём экране и не отбирает Escape у всплывашек.
+	key := funcBody(t, text, "function wireNewKey(")
+	for _, want := range []string{`ev.key !== "Escape" || popupsOpen.size`, "!route().make || !newEscape"} {
+		if !strings.Contains(key, want) {
+			t.Errorf("Escape формы заведения ловится не по месту: нет %q", want)
+		}
+	}
+	if !strings.Contains(text, "\nwireNewKey();") {
+		t.Error("Escape формы заведения никто не подключает")
+	}
+	// Взведённый выход виден собой, а не одним лишь текстом кнопки.
+	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".bquit.armed{") {
+		t.Error("взведённый выход с формы ничем не отличается от обычного")
 	}
 }
 

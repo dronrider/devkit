@@ -107,6 +107,25 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   }
 }
 
+// Поля формы ищутся по подписи для чтения с экрана: разделов четыре, лежат они
+// одинаковыми узлами, и различать их классом было бы гаданием.
+function fields(root) {
+  const out = [];
+  (function walk(node) {
+    if (node.tagName === "TEXTAREA") out.push(node);
+    for (const kid of node.children || []) if (typeof kid === "object") walk(kid);
+  })(root);
+  return out;
+}
+
+function write(root, label, text) {
+  const area = fields(root).find((n) => String(n.attrs["aria-label"] || "") === label);
+  if (!area) fail("поля «" + label + "» на форме нет");
+  area.value = text;
+  area.handlers.input({});
+  return area;
+}
+
 // --- форма черновика несёт только свои поля ---
 {
   await go("#demo/new/draft");
@@ -116,18 +135,18 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   for (const gone of ["серьёзность", "вид приёмки", "барьер"]) {
     if (shown.includes(gone)) fail("в форме черновика поле задачи «" + gone + "»: " + shown.slice(0, 300));
   }
-  // Подсказка поля говорит, как писать черновик, а не оставляет человека
-  // гадать про четыре буквы. Стоит она в самом поле, поэтому читается у него.
-  const ta = (function find(node) {
-    if (node.tagName === "TEXTAREA") return node;
-    for (const kid of node.children || []) {
-      const got = typeof kid === "object" && find(kid);
-      if (got) return got;
+  // Разделы SCQA спрашиваются порознь, каждый своим полем с подсказкой: одним
+  // полем человек писал в черновик простынёй (просьба пользователя).
+  const areas = fields(groups);
+  const heads = areas.map((n) => String(n.attrs["aria-label"] || ""));
+  for (const want of ["ситуация черновика", "осложнение черновика", "вопрос черновика",
+    "гипотеза черновика"]) {
+    if (!heads.includes(want)) fail("в форме черновика нет поля «" + want + "»: " + JSON.stringify(heads));
+  }
+  for (const area of areas) {
+    if (!String(area.placeholder || "").trim()) {
+      fail("поле «" + area.attrs["aria-label"] + "» стоит без подсказки, что в нём писать");
     }
-    return null;
-  })(groups);
-  if (!ta || !String(ta.placeholder).includes("SCQA")) {
-    fail("форма черновика молчит про SCQA: " + (ta ? ta.placeholder : "поля нет"));
   }
   for (const want of ["Сохранить", "Сохранить и грумить"]) {
     if (!deepBtn(groups, want)) fail("кнопки «" + want + "» на форме черновика нет: " + shown.slice(0, 200));
@@ -151,17 +170,11 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
 {
   await go("#demo/new/draft");
   const field = byClass(groups, "ftitle") || allByClass(groups, "ftitle")[0];
-  const area = (function find(node) {
-    if (node.tagName === "TEXTAREA") return node;
-    for (const kid of node.children || []) {
-      const got = typeof kid === "object" && find(kid);
-      if (got) return got;
-    }
-    return null;
-  })(groups);
-  if (!area) fail("поля текста в форме черновика нет");
-  area.value = "ссылка на черновик из чата не открывается";
-  area.handlers.input({});
+  // Обязательного в черновике трое: заголовок, ситуация и осложнение. Вопрос с
+  // гипотезой уезжают пустыми, и записи это не мешает.
+  write(groups, "заголовок черновика", "ссылка на черновик из чата не открывается");
+  write(groups, "ситуация черновика", "ссылку из чата человек открывает вручную.");
+  write(groups, "осложнение черновика", "разговор теряется, пока ищут запись.");
   await settle();
   deepBtn(groups, "Сохранить").handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -171,6 +184,16 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   }
   if (last.body.type || last.body.r_parts) {
     fail("вместе с черновиком уехали поля задачи: " + JSON.stringify(last.body));
+  }
+  // Уезжает текст тем же порядком, каким его пишет taskctl draft: заголовок
+  // первой строкой, дальше подразделы третьего уровня. Пустой раздел едет
+  // пустым заголовком, а не пропадает.
+  const want = "ссылка на черновик из чата не открывается\n\n" +
+    "### Ситуация\n\nссылку из чата человек открывает вручную.\n\n" +
+    "### Осложнение\n\nразговор теряется, пока ищут запись.\n\n" +
+    "### Вопрос\n\n### Гипотеза\n";
+  if (last.body.text !== want) {
+    fail("черновик уехал не разделами SCQA: " + JSON.stringify(last.body.text));
   }
   void field;
 }

@@ -139,13 +139,22 @@ a:hover{text-decoration:underline}
 .bmain{flex:1;display:flex;flex-direction:column;padding:24px 32px 0;overflow:hidden;min-width:0}
 .bhead{display:flex;align-items:center;gap:14px;flex:none}
 .bhead h2{margin:0;font:600 19px var(--sans)}
-/* название проекта в шапке ведёт на его доску, и это ссылка навигации, а не
-   заголовок страницы: кегль подписи, обычный вес и черта под словами, чтобы
-   дорога была видна до наведения. Заголовком прежним кеглем она забирала
-   первую строку экрана под слово, которое человек и так знает (замечание
-   пользователя) */
-.bhead h2.hgo{font:400 12.5px var(--sans);color:var(--tx2);cursor:pointer;text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
-.bhead h2.hgo:hover{color:var(--acc);text-decoration-color:var(--acc)}
+/* дорога на доску в шапке, и это ссылка навигации, а не заголовок страницы:
+   кегль подписи, обычный вес и черта под словами, чтобы дорога была видна до
+   наведения. Заголовком прежним кеглем она забирала первую строку экрана под
+   слово, которое человек и так знает (замечание пользователя). Слова называют
+   не место, а переход, и слева от них стоит стрелка (просьба пользователя) */
+.bhead h2.hgo{display:flex;align-items:center;gap:5px;min-width:0;font:400 12.5px var(--sans);color:var(--tx2);cursor:pointer}
+/* черта идёт под словами, а не под всей ссылкой: протянутая заодно и под
+   стрелкой, она читалась зачёркнутым значком */
+.bhead h2.hgo .hgot{text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* стрелка ростом со строку слов: кегль тут 12.5 */
+.bhead h2.hgo .hgoi{width:14px;height:14px;flex:none;display:block}
+.bhead h2.hgo:hover{color:var(--acc)}
+.bhead h2.hgo:hover .hgot{text-decoration-color:var(--acc)}
+/* сама доска дороги на себя не носит: там шапка называет место теми же словами
+   и тем же кеглем, что и ссылка, но без стрелки и без нажатия */
+.bhead h2.hhere{font:400 12.5px var(--sans);color:var(--tx2)}
 .hsp{flex:1}
 /* колокольчик в шапке: вход в ленту уведомлений на обоих форм-факторах.
    Рисуется строчным SVG, а не рамками: собранный из рамок он читался кнопкой,
@@ -643,6 +652,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .nfbody{padding:14px 18px;display:flex;flex-direction:column;gap:12px}
 .nfbody textarea{display:block;width:100%;min-height:118px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px/1.6 var(--sans);resize:vertical}
 .nfbody>input{height:42px;padding:0 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px var(--sans)}
+/* поля разделов черновика растут по написанному: четыре поля в полный рост
+   уводили заголовок с кнопками записи за верхний край, а раздел черновика
+   бывает и в одну строку */
+.nfsec textarea{min-height:62px}
+.nfsec+.nfsec{margin-top:2px}
 .nfbody .rrow{padding:8px 0}
 .nfbody .rbig{padding:0}
 .nfbody .error{padding:0}
@@ -1860,6 +1874,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 /* крестик закрытия сессии: взведённая кнопка видна наливом, а вопрос стоит
    подсказкой. Слово «Точно закрыть?» на значок не помещается */
 .sclose.armed{background:color-mix(in oklab,var(--block) 22%,transparent);border-color:var(--block);color:var(--block)}
+/* взведённый выход с формы заведения красится тем же цветом, что и взведённое
+   снятие сессии: вопрос стоит на самой кнопке, и нажатие по нему уводит */
+.bquit.armed{background:color-mix(in oklab,var(--block) 22%,transparent);border-color:var(--block);color:var(--block)}
 
 /* широкий экран: колонка названия и так забирает остаток строки, и подменять
    ширины наведением больше не нужно. Прежний приём (ранг с датой на время

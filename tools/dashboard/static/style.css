@@ -43,7 +43,7 @@
      табах», замечание пользователя). Дальше величина у них одна, и правит её
      одно число, а не три правила разделов. */
   --rowpy:11px;   /* вертикальный отступ ячейки */
-  --rowpx:12px;   /* боковой отступ ячейки */
+  --rowpx:8px;    /* боковой отступ ячейки */
   --rowpl:24px;   /* отступ первой ячейки: в нём висит кружок состояния */
   --rowgap:8px;   /* зазор внутри ряда ячейки */
   /* Зазор между кнопками в хвосте строки и боковой отступ его колонки: число
@@ -438,7 +438,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow .id{position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* кружок состояния висит слева от номера, в отступе ячейки: встань он в поток,
    номера строк с работой и без разъехались бы по колонке */
-.trow .id .sdot{position:absolute;top:calc(50% - 4.5px);left:8px}
+.trow .id .sdot{position:absolute;top:calc(50% - 4.5px);left:var(--rowpx)}
 .trow .tt{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Коробка чипов одна на все разделы: у задач, у записи накопителя и у строки
@@ -488,11 +488,25 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .gslot.gnow{color:var(--acc);border-top:1px solid var(--acc);background:color-mix(in oklab,var(--acc) 10%,transparent)}
 .gslot.gdead,.gslot.gedge{font-family:var(--sans);color:var(--tx3);border-top:1px solid var(--line)}
 
-/* ранг строки: сумма всегда, слагаемые разворотом (подсказка при наведении
-   работает только на ноутбуке) */
+/* Ранг строки: сумма всегда, слагаемые всплывающим блоком.
+
+   Подсказок тут было две, и человек забраковал обе: одна разворачивала
+   слагаемые прямо в ячейке и наползала на соседнюю колонку, вторая была родной
+   подсказкой браузера и выжидала перед показом секунду. Осталась одна, своя:
+   пять показателей именем и числом, под ними итог. Стоит она поверх строки,
+   поэтому в самой строке ничего не двигает, и показывается сразу. */
 .rsum{background:none;border:none;padding:0;cursor:pointer;font:600 13px var(--mono);color:var(--tx)}
-.rfold{display:none;margin-left:6px}
-.rank.on .rfold{display:inline}
+.rank{position:relative}
+.rtip{display:none;position:absolute;left:0;top:calc(100% - 4px);z-index:20;width:190px;
+  padding:var(--sp1) 0;border:1px solid var(--line2);border-radius:var(--rad2);
+  background:var(--bg2);box-shadow:0 14px 32px rgba(0,0,0,0.45);cursor:default}
+.rank:hover .rtip,.rank.on .rtip{display:block}
+.rtl{display:flex;align-items:baseline;gap:var(--sp2);padding:2px var(--sp3);
+  font:400 12px var(--sans);color:var(--tx2);white-space:nowrap}
+.rtn{flex:1;min-width:0}
+.rtv{font:600 12px var(--mono);color:var(--tx)}
+.rtsum{margin-top:var(--sp1);padding-top:5px;border-top:1px solid var(--line)}
+.rtsum .rtn{color:var(--tx);font-weight:600}
 
 /* состав цели сабтасками и накопитель черновиков (макет «06 Цель»): шапка со
    счётчиками и полосой прогресса, строки задач под ней */
@@ -573,7 +587,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    колонке тогда не нужна ширина под него, ей хватает своих полей, и кружки
    двух разделов стоят на одной вертикали. */
 .arow .live{position:relative}
-.arow .live .dot{position:absolute;left:8px;top:calc(50% - 4.5px)}
+.arow .live .dot{position:absolute;left:var(--rowpx);top:calc(50% - 4.5px)}
 .arow .dot{display:inline-block}
 .arow .dot-other{background:var(--check)}
 /* кружки состояния работы: зелёный только у идущего хода, ожидание янтарное,
@@ -1214,12 +1228,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cpanel .chead{min-height:var(--headh);justify-content:center}
 .cpanel .chead .chline{min-height:32px}
 
-/* 14: колонка ранга больше не шире описания. Разбор слагаемых свёрнут всегда, и
-   раскрывает его наведение либо нажатие: на широком экране это подсказка, на
-   телефоне нажатие, которое уже было. */
-.rank{max-width:none}
-.rank .rfold{display:none}
-.rank:hover .rfold,.rank.on .rfold{display:inline}
 /* колонка типа растёт под длинную подпись чипа, а не режет её */
 .srow{grid-template-columns:minmax(60px,auto) 1fr auto;gap:6px;padding:7px 12px}
 
@@ -1750,10 +1758,13 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    разойдись они, подпись встала бы мимо своей ячейки, а это ровно та беда,
    ради которой вид и переписан.
 
-   Двенадцать точек, а не пять: границу колонки движок рисует ровно по кромке
-   ячейки, и в пять точек подпись читалась приклеенной к разделителю
-   («текст колонок стоит слишком близко к разделителю», замечание
-   пользователя). Число сторожит рубеж tblSideMin в board_test.go. */
+   Восемь точек. Пять человек забраковал («текст колонок стоит слишком близко к
+   разделителю»), и в тот заход отступ увели в двенадцать, а двенадцать он
+   потом забраковал с другого конца: «нужно уменьшить отступы во всех колонках
+   и во всех таблицах, кажется они сжирают место». Восемь это тот же зазор,
+   каким внутри ячейки отбиты друг от друга её собственные части (--rowgap), и
+   разделитель получает не меньше воздуха, чем любая пара соседей в ряду. Число
+   сторожит рубеж tblSideMin в board_test.go. */
 .tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:var(--rowpx);padding-right:var(--rowpx)}
 .tbl th:first-child,.tbl td:first-child{padding-left:var(--rowpl)}
 /* Последняя колонка это хвост кнопок во всех трёх разделах, и отступы у неё
@@ -1786,9 +1797,22 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 
 /* ручка тяги стоит на самой границе колонок и ростом с шапку: полоска видна
    всегда слабой чертой, под курсором наливается цветом */
-/* Колонка состояния подписи не носит: шапка у неё это кнопка порядка со
-   значком, и левое поле ей достаточно обычного, а не расширенного под кружок. */
-.h-sess .tblc:first-child{padding-left:var(--rowpx)}
+/* Расширенный отступ первой ячейки нужен там, где кружок состояния стоит рядом
+   с текстом: это колонка номера задачи, кружок висит в отступе слева от номера.
+   У сессий кружок стоит в ячейке один, и отодвигать от него нечего; у
+   накопителя кружка нет вовсе, а лишние пятнадцать точек человек и увидел
+   («колонку с приоритетом в черновиках нужно уменьшить, там огромный отступ в
+   начале»). Обоим достаточно обычного бокового отступа, и берут они его той же
+   переменной, а не своим числом. */
+.t-sess th:first-child,.t-sess td:first-child,
+.t-drafts th:first-child,.t-drafts td:first-child{padding-left:var(--rowpx)}
+
+/* Подпись колонки значком: место она занимает с букву, а держит ту же кнопку
+   сортировки, что и слово. Величина у значка та же, что у стрелки направления
+   рядом, иначе подпись читалась бы крупнее порядка. */
+.tblico{display:inline-flex;align-items:center;flex:none}
+.tblico svg{width:13px;height:13px}
+
 .tblg{position:absolute;top:0;right:-4px;width:8px;height:100%;
   cursor:col-resize;touch-action:none;z-index:2}
 .tblg::after{content:"";position:absolute;left:3px;top:9px;bottom:9px;width:2px;

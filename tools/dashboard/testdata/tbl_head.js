@@ -20,18 +20,25 @@
 const cols = (kind, list) => `<colgroup>` + list.map((c) =>
   c.w ? `<col style="width:${c.w}px">` : `<col>`).join("") + `</colgroup>`;
 
+// Подпись колонки бывает словом и бывает значком (колонка хода): место она
+// занимает разное, а держит ту же кнопку сортировки, и мерить шапку надо с той
+// подписью, какую там рисует экран.
+const label = (c) => c.ico
+  ? `<span class="tblico"><svg viewBox="0 0 24 24"></svg></span>`
+  : `<span class="tbll">${c.label}</span>`;
+
 const head = (kind, list) => `<thead><tr class="tblh h-${kind}">` + list.map((c, at) =>
   `<th class="tblc" scope="col">` +
-  (c.label ? `<button class="tblb" type="button"><span class="tbll">${c.label}</span></button>`
+  (c.label ? `<button class="tblb" type="button">` + label(c) + `</button>`
     : `<span class="tbln"></span>`) +
   (at + 1 < list.length ? `<span class="tblg"></span>` : "") + `</th>`).join("") + `</tr></thead>`;
 
 const TASK_COLS = [{ label: "Номер", w: 88 }, { label: "Задача" }, { label: "Ранг", w: 58 },
   { label: "Дата", w: 92 }, { label: "", w: 246 }];
-// У колонки состояния подписи нет: она несёт кружок, и слово в шапке требовало
-// под себя восемьдесят точек. Колонки возраста сессии тоже нет, её сняли: она
-// показывала то же, что и активность рядом.
-const SESS_COLS = [{ label: "", w: 36 }, { label: "Работа" },
+// У колонки хода подпись значком: слово в шапке требовало под себя восемьдесят
+// точек, а снятый заголовок человек забраковал отдельно. Колонки возраста
+// сессии тут нет, её сняли: она показывала то же, что и активность рядом.
+const SESS_COLS = [{ label: "Ход", ico: true, w: 44 }, { label: "Работа" },
   { label: "Активность", w: 124 }, { label: "", w: 92 }];
 const DRAFT_COLS = [{ label: "Приоритет", w: 132 }, { label: "Номер", w: 70 },
   { label: "Задача" }, { label: "Дата", w: 92 }, { label: "", w: 38 }];
@@ -106,6 +113,9 @@ for (let at = 0; at < Math.min(cells.length, kids.length); at++) {
   // Кромка написанного меряется там, где написано хоть что-то: у колонки без
   // подписи выравнивать нечего, а поле она держит своё, под кружок в отступе.
   if (!(LIST[at] || {}).label) continue;
+  // Подпись значком стоит над кружком, а не над словом: кружок висит в отступе
+  // ячейки, и сравнивать кромки написанного тут не с чем.
+  if ((LIST[at] || {}).ico) continue;
   offin = Math.max(offin, Math.round(Math.abs(inner(cells[at]) - inner(kids[at]))));
 }
 

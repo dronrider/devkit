@@ -24,11 +24,17 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 // Значок направления сортировки стоит у всякой подписи нарочно: на экране он
 // висит у одной колонки, но встать может у любой, и мерить надо тот случай,
 // когда подписи тесно.
+// Подпись колонки бывает словом и бывает значком: колонка хода носит в шапке
+// значок, и место под него занимает такое же, как слово, значит и мерить его
+// надо тем же замером.
+const headLabel = (c) => c.ico
+  ? `<span class="tblico" data-fit="${c.key}"><svg viewBox="0 0 24 24"></svg></span>`
+  : `<span class="tbll" data-fit="${c.key}">${esc(c.label)}</span>`;
+
 const head = () => `<thead><tr class="tblh h-${kind}">` + cols.map((c, at) =>
   `<th class="tblc" scope="col">` +
   (c.label
-    ? `<button class="tblb" type="button"><span class="tbll" data-fit="${c.key}">` +
-      `${esc(c.label)}</span>` +
+    ? `<button class="tblb" type="button">` + headLabel(c) +
       (c.first ? `<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></svg>` : "") +
       `</button>`
     : `<span class="tbln"></span>`) +
@@ -61,7 +67,7 @@ const CELLS = {
       `<span class="rchips"><span class="chip c-run">идёт</span></span></div>` +
       `<div class="l2">DK-452, разговор</div></td>`,
     moved: `<td class="amoved"><span class="stale dashed" data-fit="moved">2026-08-22</span></td>`,
-    act: `<td class="aacts"><span class="cin"><span class="racts">` +
+    act: `<td class="aacts"><span class="cin"><span class="racts" data-fit="act">` +
       `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
       `<button class="btn btn-sm btn-danger btn-ico sclose"><svg viewBox="0 0 24 24">` +
       `</svg></button></span></span></td>`,
@@ -73,7 +79,7 @@ const CELLS = {
     title: `<td class="dtt"><span class="cin"><span class="st">Линт не видит файл задачи, заведённой руками</span>` +
       `<span class="rchips"><span class="chip">отложен 20 авг</span></span></span></td>`,
     date: `<td class="dwhen"><span class="stale dashed" data-fit="date">2026-08-17</span></td>`,
-    act: `<td class="sm"><span class="cin"><span class="racts">` +
+    act: `<td class="sm"><span class="cin"><span class="racts" data-fit="act">` +
       `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
       `</span></span></td>`,
   },
@@ -112,6 +118,57 @@ const over = (node) => {
   return cut;
 };
 
+// Самая узкая ширина, при которой колонка ещё ничего не режет: ни начинку
+// строки, ни собственную подпись в шапке. Считается не формулой, а сужением
+// настоящей колонки до первого обрубка: место под метку складывается из
+// отступов ячейки, зазоров ряда и ширины слова, которую знает только шрифт.
+// Разность между этим числом и шириной из TBL_COLS и есть тот запас, который
+// колонка держит впустую, отнимая место у названия работы.
+const colNodes = [...document.querySelectorAll("colgroup col")];
+
+// Перелив ряда за кромку ячейки. Обрубок многоточием ловится разностью
+// scrollWidth и clientWidth, но так ловится не всё: кнопки в хвосте строки
+// стоят flex:none внутри жмущегося ряда, и при нехватке места они не режутся, а
+// вылезают за ячейку, оставляя обе ширины ряда равными. Поэтому меряется ещё и
+// геометрия: где кончается написанное и где кончается место под него.
+// Открепившиеся узлы (кружок состояния в отступе, ручка тяги на границе)
+// считать нечем, они и стоят снаружи по замыслу.
+const spill = (box) => {
+  const cs = getComputedStyle(box);
+  const rect = box.getBoundingClientRect();
+  const left = rect.left + parseFloat(cs.paddingLeft);
+  const right = rect.right - parseFloat(cs.paddingRight);
+  let out = 0;
+  for (const node of box.querySelectorAll("*")) {
+    if (getComputedStyle(node).position === "absolute") continue;
+    const one = node.getBoundingClientRect();
+    if (!one.width) continue;
+    out = Math.max(out, Math.round(one.right - right), Math.round(left - one.left));
+  }
+  return Math.max(0, out);
+};
+
+const minWidth = (c, at, cell) => {
+  const node = colNodes[at];
+  if (!node) return 0;
+  const was = node.style.width;
+  const label = document.querySelector('.tblh [data-fit="' + c.key + '"]');
+  const cell2 = label ? label.closest("th") : null;
+  const cut = () => {
+    let bad = Math.max(over(cell), spill(cell));
+    for (const n of cell.querySelectorAll("[data-fit]")) bad = Math.max(bad, over(n));
+    return Math.max(bad, over(label), cell2 ? spill(cell2) : 0);
+  };
+  let px = c.w;
+  while (px > 24) {
+    node.style.width = (px - 1) + "px";
+    if (cut() > 1) break;
+    px -= 1;
+  }
+  node.style.width = was;
+  return px;
+};
+
 const out = ["screen=" + document.documentElement.clientWidth, "cols=" + cols.length];
 const row = document.querySelector("." + ROW);
 const cells = [...row.children];
@@ -128,6 +185,7 @@ cols.forEach((c, at) => {
   const label = document.querySelector('.tblh [data-fit="' + c.key + '"]');
   out.push("head_" + c.key + "=" + over(label));
   out.push("w_" + c.key + "=" + Math.round(cell.getBoundingClientRect().width));
+  out.push("min_" + c.key + "=" + minWidth(c, at, cell));
 });
 // --- вид строки: величины, которые обязаны совпадать у трёх разделов ---
 // Разделы собирались разными заходами и разошлись по виду: размеры значков,
@@ -147,6 +205,10 @@ const lastCell = cellsAll[cellsAll.length - 1];
 const look = {
   rowh: high(row),
   padl: cs(cellsAll[0], "padding-left"),
+  // Боковой отступ внутренней ячейки: у крайних свои поля, держащие кромку
+  // карточки, а этот отступ общий и стоит между всякими двумя колонками.
+  padin: cs(cellsAll[1], "padding-left"),
+  padinr: cs(cellsAll[1], "padding-right"),
   padr: cs(lastCell, "padding-right"),
   padt: cs(lastCell, "padding-top"),
   padb: cs(lastCell, "padding-bottom"),

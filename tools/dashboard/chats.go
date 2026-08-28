@@ -1045,12 +1045,121 @@ func (s *server) launchEnv(id, sess string) string {
 	if home := realHome(); home != "" {
 		env = "HOME=" + shQuote(home) + " " + env
 	}
+	// Путь называется по той же причине, что и дом: своим он у поднятой сессии
+	// быть не должен. Каталог экземпляра держит рядом с дашбордом собственные
+	// копии agentctl и taskctl, plist ставит его в PATH первым, и всё, что
+	// демон поднимает, зовёт эти копии. В POC-контуре чата так неделю и шло:
+	// вердикт pick, снимок квоты и гейт бюджета целей считала сборка
+	// трёхдневной давности без версии («dev (unknown)»), а разбор DK-457
+	// наступил на это прямо, проверяя панель квоты чужим бинарём.
+	if p := sessionPath(os.Getenv("PATH"), exeDir(), kitDir()); p != "" {
+		env = "PATH=" + shQuote(p) + " " + env
+	}
 	// Опрос фокуса в сессии, поднятой дашбордом, не нужен вовсе: он ходит в
 	// System Events, а macOS приписывает это дашборду и просит у него
 	// разрешение на управление компьютером, заново после каждой пересборки
 	// (находка одиннадцатого круга POC). Уведомления от такой сессии идут как
 	// при неопределённом фокусе, то есть приходят.
 	return noFocusEnv + " " + env
+}
+
+// kitBins это утилиты кита, которые поднятая сессия зовёт по имени. По ним
+// каталог и узнаётся китовым.
+var kitBins = []string{"agentctl", "taskctl"}
+
+// kitDir это штатный каталог утилит кита на машине. Перебор тот же, каким
+// выбирает каталог назначения установщик (bin_dir в devkitctl update): сперва
+// ~/go/bin, потом ~/.local/bin. Дом берётся машинный, той же дорогой, что и у
+// поднятой сессии: подложный дом демона тут увёл бы в тонкий каталог
+// экземпляра. Пусто, когда кит лежит где-то ещё, и тогда путь остаётся как был.
+// Подменяется прогонами: у стенда кит свой, фикстурами.
+var kitDir = func() string {
+	home := realHome()
+	if home == "" {
+		return ""
+	}
+	for _, rel := range []string{"go/bin", ".local/bin"} {
+		dir := filepath.Join(home, rel)
+		if hasKit([]string{dir}) {
+			return dir
+		}
+	}
+	return ""
+}
+
+// sessionPath это путь поднятой сессии: штатный каталог утилит кита первым, а
+// каталога самого дашборда в нём нет вовсе. Свой каталог дашборду нужен ему
+// самому (binPath ищет соседей раньше пути, и экземпляр от этого
+// самодостаточен), а сессия им берёт копии вместо утилит машины.
+//
+// Одним выбрасыванием своего каталога тут не обойтись: экземпляр POC держит
+// второй кит в подложном доме демона (~/.devkit/dashboard-poc/.local/bin,
+// раскладка devkitctl update под его HOME), и он стоит в том же пути. Штатный
+// каталог машины поэтому называется явно и ставится первым.
+//
+// Пусто значит «путь остаётся как был»: своего каталога в пути нет вовсе,
+// путь и так собран как надо, либо штатного каталога мы не знаем, а кита без
+// каталога дашборда в пути не остаётся, и выбрасывание оставило бы сессию без
+// кита совсем.
+func sessionPath(procPath, own, kit string) string {
+	if procPath == "" {
+		return ""
+	}
+	rest := []string{}
+	found := false
+	for _, p := range filepath.SplitList(procPath) {
+		if p != "" && sameDir(p, own) {
+			found = true
+			continue
+		}
+		if p != "" && sameDir(p, kit) {
+			continue
+		}
+		rest = append(rest, p)
+	}
+	// Своего каталога в пути нет, и раздавать сессии нечего: путь такой она
+	// получит и без нас. Так живёт прогон из исходников, где бинарь собран во
+	// временный каталог.
+	if !found {
+		return ""
+	}
+	if kit != "" {
+		rest = append([]string{kit}, rest...)
+	} else if !hasKit(rest) {
+		return ""
+	}
+	out := strings.Join(rest, string(os.PathListSeparator))
+	if out == procPath {
+		return ""
+	}
+	return out
+}
+
+// sameDir отвечает, тот же это каталог; пустое имя не совпадает ни с чем.
+func sameDir(path, dir string) bool {
+	return dir != "" && filepath.Clean(path) == filepath.Clean(dir)
+}
+
+// hasKit отвечает, лежат ли в этих каталогах обе утилиты кита. Половины мало:
+// без taskctl сессия так же беспомощна, как без agentctl.
+func hasKit(dirs []string) bool {
+	for _, name := range kitBins {
+		found := false
+		for _, dir := range dirs {
+			if dir == "" {
+				continue
+			}
+			fi, err := os.Stat(filepath.Join(dir, name))
+			if err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // noFocusEnv гасит опрос фокуса в хуке уведомителя. Ставится он всему, что

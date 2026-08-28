@@ -543,6 +543,12 @@ func newSmoke(dir string) (*smoke, error) {
 	oldExe := exeDir
 	exeDir = func() string { return s.bin }
 	s.restore = append(s.restore, func() { exeDir = oldExe })
+	// Штатный каталог кита у прогона тоже свой: путь поднятой сессии дашборд
+	// собирает с ним первым (sessionPath, DK-549), и настоящий ~/go/bin поднял
+	// бы живого клиента вместо фикстуры.
+	oldKit := kitDir
+	kitDir = func() string { return s.bin }
+	s.restore = append(s.restore, func() { kitDir = oldKit })
 
 	static, err := fs.Sub(embedded, "static")
 	if err != nil {

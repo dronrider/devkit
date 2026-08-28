@@ -447,6 +447,82 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 	}
 }
 
+// Каталог самого дашборда поднятой сессии не раздаётся, а утилиты кита она
+// берёт из штатного каталога машины. Экземпляр держит рядом с дашбордом свои
+// копии agentctl и taskctl, plist ставит его каталог в PATH первым, и сессия
+// неделю звала копии: вердикт pick, снимок квоты и гейт бюджета целей считала
+// сборка без версии, а разбор DK-457 наступил на это прямо (DK-549).
+func TestLaunchEnvNamesMachineKitInPath(t *testing.T) {
+	inst, kit := t.TempDir(), t.TempDir()
+	writeKit(t, inst)
+	writeKit(t, kit)
+	wasExe, wasKit := exeDir, kitDir
+	exeDir = func() string { return inst }
+	kitDir = func() string { return kit }
+	t.Cleanup(func() { exeDir, kitDir = wasExe, wasKit })
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", inst+sep+"/usr/bin")
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+
+	env := s.launchEnv("XR-9", "task-XR-9")
+	want := "PATH='" + kit + sep + "/usr/bin'"
+	if !strings.Contains(env, want) {
+		t.Fatalf("путь поднятой сессии собран не так: %s\nждал %s", env, want)
+	}
+	if strings.Contains(env, inst) {
+		t.Errorf("каталог экземпляра уехал в сессию: %s", env)
+	}
+}
+
+// Разбор пути по случаям. Второй кит экземпляра тут не выдумка: раскладка
+// devkitctl update под подложным домом демона кладёт полный набор в
+// <дом демона>/.local/bin, и он стоит в том же PATH, что каталог экземпляра.
+func TestSessionPath(t *testing.T) {
+	kit, inst, deep := t.TempDir(), t.TempDir(), t.TempDir()
+	writeKit(t, kit)
+	writeKit(t, inst)
+	writeKit(t, deep)
+	sep := string(os.PathListSeparator)
+	cases := []struct {
+		name string
+		path string
+		own  string
+		kit  string
+		want string
+	}{
+		{"каталог экземпляра уходит, штатный кит встаёт первым",
+			inst + sep + "/usr/bin", inst, kit, kit + sep + "/usr/bin"},
+		{"вторая копия кита в подложном доме проигрывает штатной",
+			inst + sep + "/usr/bin" + sep + deep, inst, kit, kit + sep + "/usr/bin" + sep + deep},
+		{"штатная раскладка остаётся как была",
+			kit + sep + "/usr/bin", kit, kit, ""},
+		{"штатного каталога не знаем, кит есть и без своего",
+			inst + sep + deep + sep + "/usr/bin", inst, "", deep + sep + "/usr/bin"},
+		{"штатного каталога не знаем, и кита без своего не остаётся",
+			inst + sep + "/usr/bin", inst, "", ""},
+		{"своего каталога в пути нет", kit + sep + "/usr/bin", inst, kit, ""},
+		{"пустой путь", "", inst, kit, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionPath(tc.path, tc.own, tc.kit); got != tc.want {
+				t.Errorf("sessionPath(%q, %q, %q) = %q, ждал %q",
+					tc.path, tc.own, tc.kit, got, tc.want)
+			}
+		})
+	}
+}
+
+// writeKit кладёт в каталог пустые исполнимые файлы утилит кита.
+func writeKit(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range kitBins {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // Дома у дашборда и у поднятой сессии разные: сессия получает дом машины (без
 // него раскладка подписок разворачивает тильду в тонкий каталог без логина), а
 // дашборд живёт своим. Реестр из-за этого разъезжается, и читать надо оба дома,

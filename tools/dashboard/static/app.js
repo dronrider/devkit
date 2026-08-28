@@ -6725,14 +6725,36 @@ function chatLast() {
 // Замена адреса без новой записи в истории: так переезжают старые адреса на
 // новые места. Хвост разговора едет с ними, панель это хвост.
 function goSame(hash) {
-  const chat = route().chat;
+  const chat = chatKeepTail(hash);
   const to = "#" + (chat ? hash + "/chat/" + chat : hash);
   if (location.hash !== to) history.replaceState(history.state || {}, "", to);
 }
 
 function goKeepingChat(hash) {
-  const chat = route().chat;
+  const chat = chatKeepTail(hash);
   location.hash = chat ? hash + "/chat/" + chat : hash;
+}
+
+// Хвост разговора, уезжающий на новый адрес. Часть адресов панели ничего не
+// значит сама по себе и читается «в том проекте, что сейчас на доске»: новый
+// чат, чат задачи и общий чат доски. Смена проекта в шапке перечитывала такой
+// хвост заново, и открытый разговор devkit сменялся пустым чатом соседней
+// доски прямо под рукой (жалоба пользователя про «переключается на новый
+// пустой диалог»). Тут хвост закрепляется за своим проектом ровно в тот
+// момент, когда доска под панелью меняется: дальше адрес несёт проект собой и
+// переезда не замечает, как давно не замечает его адрес из ленты.
+function chatKeepTail(to) {
+  const chat = route().chat;
+  if (!chat) return "";
+  const here = route().proj;
+  const there = routeScreen(String(to || "").replace(/^#/, "")).proj;
+  if (!here || !there || here === there) return chat;
+  // Проект уже назван в самом адресе: перечитывать его не по чему.
+  if (chat.includes(CHAT_PROJ_SEP)) return chat;
+  // Адрес сессии значит один и тот же разговор с любой доски, и короткий хвост
+  // ему дороже: закреплять там нечего.
+  if (!chatIsNew(chat) && !chatIsTask(chat) && chat !== CHAT_BOARD) return chat;
+  return here + CHAT_PROJ_SEP + chat;
 }
 
 function chatBase() {
@@ -8909,15 +8931,25 @@ async function chatByTmux(project, name) {
 // завести надо. Своего опроса её сборка не завела: имени сессии тогда ещё не
 // было, оно рождается нажатием, которое идёт позже.
 function chatSewHere(project, id, name) {
-  const here = chatAddrParts(project, route().chat || "");
-  if (here.project !== project || here.addr !== id) return;
+  if (!chatHere(project, id)) return;
   chatSewLoop(project, name, route().chat, 2000, 150).catch(console.error);
+}
+
+// Стоит ли панель на этом разговоре. Один и тот же разговор адресуется двумя
+// видами хвоста, коротким и с проектом впереди, и сравнение строк считало их
+// разными: опрос реестра после смены проекта бросал ждать родившуюся сессию на
+// первом же заходе, а панель оставалась перед пустой лентой.
+function chatHere(project, addr) {
+  const rt = route();
+  const here = chatAddrParts(rt.proj, rt.chat || "");
+  const want = chatAddrParts(project, addr || "");
+  return Boolean(addr) && here.project === want.project && here.addr === want.addr;
 }
 
 async function chatSewLoop(project, name, addr, step, tries) {
   for (let i = 0; i < tries; i += 1) {
     await new Promise((ok) => setTimeout(ok, step));
-    if (!addr || route().chat !== addr) return false;
+    if (!chatHere(project, addr)) return false;
     const hit = await chatByTmux(project, name);
     if (hit) {
       chatLiftDrop(project, addr);

@@ -74,7 +74,6 @@ function tabClipped() {
 // поиска, лупа и колокольчик. Пустая шапка влезала бы в любую ширину, и замер
 // на ней ничего не говорил бы о телефоне (DK-325).
 document.getElementById("pname").textContent = "devkit";
-document.getElementById("psub").textContent = "доска docs/TASKS.md, DK";
 document.getElementById("pselect").innerHTML = "<option>devkit</option>";
 
 const ttl = box(".trow .ttl");

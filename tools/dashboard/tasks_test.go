@@ -1032,10 +1032,42 @@ func TestStaticTaskNarrowHead(t *testing.T) {
 	if !strings.Contains(body, `row.section ? el("span", "chip", row.section) : null`) {
 		t.Error("состояние строки не встало первым чипом полосы задачи")
 	}
-	// Приписка шапки страницы у задачи пуста: номер в ней стоял третьим разом.
-	tail := app[strings.Index(app, "if (rt.id) {"):]
-	if !strings.Contains(tail[:1400], `document.getElementById("psub").textContent = "";`) {
-		t.Error("номер задачи вернулся в приписку шапки страницы")
+	// Приписки в шапке страницы нет вовсе, ни узла, ни присвоений: номер задачи
+	// стоял в ней третьим разом, а на прочих экранах она пересказывала
+	// подсвеченный таб (решение пользователя).
+	if strings.Contains(app, `getElementById("psub")`) {
+		t.Error("приписка шапки страницы вернулась в статику")
+	}
+	if strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="psub"`) {
+		t.Error("узел приписки вернулся в разметку шапки")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	// Кегль ссылки на доску: это навигация, а не заголовок страницы, и рядом с
+	// поиском она не может быть крупнее подписи.
+	var link string
+	for _, rule := range cssRules(css) {
+		if rule[0] == ".bhead h2.hgo" {
+			link = rule[1]
+		}
+	}
+	if link == "" {
+		t.Fatal("правила ссылки на доску в статике нет")
+	}
+	// Своего кегля у правила может и не быть, и тогда ссылка наследует кегль
+	// заголовка: меряется именно тот, каким её увидит человек.
+	size := headFontSize(t, link)
+	if size == 0 {
+		for _, rule := range cssRules(css) {
+			if rule[0] == ".bhead h2" {
+				size = headFontSize(t, rule[1])
+			}
+		}
+	}
+	if size > 13 {
+		t.Errorf("ссылка на доску набрана кеглем %g: это заголовок, а не ссылка", size)
+	}
+	if !strings.Contains(link, "text-decoration:underline") {
+		t.Error("ссылка на доску ничем не показывает, что она ведёт")
 	}
 	// Название проекта в шапке это вход на доску, и на экране задачи он теперь
 	// единственный.
@@ -1043,12 +1075,8 @@ func TestStaticTaskNarrowHead(t *testing.T) {
 	if !strings.Contains(head, `go ? "Доска " + name : name`) {
 		t.Error("название проекта в шапке не читается «Доска <имя>»")
 	}
-	css := readFile(t, filepath.Join("static", "style.css"))
 	if strings.Contains(css, ".idsm") {
 		t.Error("в стилях остался номер крошек, которого никто не рисует")
-	}
-	if !strings.Contains(css, ".bhead h2.hgo{cursor:pointer}") {
-		t.Error("название проекта в шапке не показывает, что оно ведёт на доску")
 	}
 	narrow := funcBody(t, css, "@media (max-width:900px){")
 	if !strings.Contains(narrow, ".crumb{gap:8px;padding-top:14px;flex-wrap:nowrap") {
@@ -1166,6 +1194,31 @@ func TestStaticTaskBarIcons(t *testing.T) {
 			t.Errorf("на узком экране полоса действий не сведена к значкам: нет %q", want)
 		}
 	}
+}
+
+// headFontSize достаёт кегль из сокращённой записи font: «400 12.5px var(--sans)».
+// Считать его глазами нельзя: правило переживает правки, а порог у ссылки в
+// шапке жёсткий.
+// Кегля в правиле может не быть вовсе, и тогда ответ ноль: считать его выше
+// по каскаду это дело зовущего, у него на руках вся статика.
+func headFontSize(t *testing.T, rule string) float64 {
+	t.Helper()
+	for _, part := range strings.Split(rule, ";") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, "font:") && !strings.HasPrefix(part, "font-size:") {
+			continue
+		}
+		for _, word := range strings.Fields(part) {
+			if !strings.HasSuffix(word, "px") {
+				continue
+			}
+			size, err := strconv.ParseFloat(strings.TrimSuffix(word, "px"), 64)
+			if err == nil {
+				return size
+			}
+		}
+	}
+	return 0
 }
 
 // cssRules режет статику на правила «селектор, тело»: правила в style.css

@@ -3429,8 +3429,11 @@ function formPage(cfg) {
   const crumb = el("div", "crumb");
   (cfg.crumb || []).forEach((step, i) => {
     if (i) crumb.append(el("span", "crumb-sep", "/"));
-    const back = el("span", "crumb-back", step.text);
-    back.addEventListener("click", step.go);
+    // Шаг без дороги это не ссылка, а подпись: последняя крошка документа несёт
+    // его путь, и вести ей некуда. Прежде путь стоял припиской в шапке
+    // страницы, а её больше нет.
+    const back = el("span", step.go ? "crumb-back" : "crumb-here", step.text);
+    if (step.go) back.addEventListener("click", step.go);
     crumb.append(back);
   });
   // Крошек может не быть вовсе (экран задачи: дорога на доску живёт названием
@@ -11135,6 +11138,9 @@ async function renderDoc(project, path) {
   if (taskId) {
     crumb.push({ text: taskId, go: () => { goKeepingChat(project + "/" + taskId); } });
   }
+  // Путь документа последней крошкой: по нему файл открывают в редакторе, и
+  // другого места, где его видно, на экране нет.
+  crumb.push({ text: "docs/" + path });
   sync(groups, [{
     key: "doc-page",
     sign: [project, path, said.length, docDraft.dirty, docDraft.edit].join("|"),
@@ -13392,7 +13398,6 @@ async function paint() {
       return;
     }
     headName("Связи нет");
-    document.getElementById("psub").textContent = "";
     showLost(why);
     return;
   }
@@ -13428,10 +13433,6 @@ async function paint() {
   }
   if (rt.home) {
     headName("Проекты");
-    // Приписки у заголовка главной нет вовсе: список досок под ним и так
-    // говорит, что это главная, а откуда они взялись, спрашивают у конфига, а
-    // не у шапки (замечание пользователя).
-    document.getElementById("psub").textContent = "";
     markNav(rt);
     renderHome(projects);
     return;
@@ -13440,7 +13441,6 @@ async function paint() {
     // Сюда доходит только пустой список от ответившего сервера: обрыв связи
     // разобран выше, а поздний ответ чужого экрана сюда не доходит вовсе.
     headName("Проектов нет");
-    document.getElementById("psub").textContent = "";
     showError((body.errors || []).join("; ") || "в корнях конфига не нашлось ни одной доски docs/TASKS.md");
     return;
   }
@@ -13463,7 +13463,6 @@ async function paint() {
     // делает выпадашка у кнопки заведения, а адрес без вида остаётся живым
     // входом для ссылки и закладки.
     const kind = rt.kind === "draft" ? "draft" : "task";
-    document.getElementById("psub").textContent = kind === "draft" ? "новый черновик" : "новая задача";
     markNav(rt);
     renderNew(current.name, kind);
     return;
@@ -13471,7 +13470,6 @@ async function paint() {
   if (rt.drafts) {
     // Накопителю доска тоже не нужна: он читается своей ручкой, и лишний поход
     // за доской стоил бы подпроцесса taskctl на каждый фокус окна.
-    document.getElementById("psub").textContent = "черновики";
     markNav(rt);
     await renderDrafts(current.name, current.works);
     return;
@@ -13479,7 +13477,6 @@ async function paint() {
   if (rt.sess) {
     // Списку сессий доска не нужна: работы приезжают тем же ответом, что и
     // список проектов, и второго похода на сервер таб не стоит.
-    document.getElementById("psub").textContent = "сессии проекта";
     markNav(rt);
     renderSessions(current.name, current.works, rt.q || "");
     return;
@@ -13487,7 +13484,6 @@ async function paint() {
   if (rt.find) {
     // Выдаче доска не нужна: поиск живёт своей ручкой и сам берёт доску из
     // кэша сервера вместе с накопителем и архивом.
-    document.getElementById("psub").textContent = "поиск задач";
     markNav(rt);
     await renderFind(current.name, rt.q);
     return;
@@ -13495,21 +13491,18 @@ async function paint() {
   if (rt.draft && rt.id) {
     // Экрану записи доска тоже не нужна: идущий груминг виден среди живых
     // работ проекта, а исход разбора читает своей ручкой сервер.
-    document.getElementById("psub").textContent = "черновик " + rt.id;
     markNav(rt);
     await renderDraft(current.name, current.works, rt.id);
     return;
   }
   if (rt.doc) {
     // Документу доска не нужна: он читается своей ручкой.
-    document.getElementById("psub").textContent = "docs/" + rt.path;
     markNav(rt);
     await renderDoc(current.name, rt.path);
     return;
   }
   if (rt.lldList) {
     // Списку LLD доска тоже не нужна: раздел живёт своей ручкой.
-    document.getElementById("psub").textContent = "LLD проекта";
     markNav(rt);
     await renderLld(current.name, rt.q);
     return;
@@ -13518,9 +13511,6 @@ async function paint() {
     // Экрану задачи доска не нужна: строку он читает своей ручкой, а живые
     // работы приезжают тем же ответом, что и список проектов. Поход за доской
     // стоил тут целого круга по сети и подпроцесса taskctl на каждый переход.
-    // Номера задачи в шапке страницы нет: он же стоит крупно над заголовком, а
-    // на телефоне это был третий его показ подряд (замечание пользователя).
-    document.getElementById("psub").textContent = "";
     markNav(rt);
     // Заказ отдаётся экрану только если он про тот же проект: имя из адреса и
     // выбранный проект расходятся, когда в адресе стоит незнакомая доска.
@@ -13530,7 +13520,6 @@ async function paint() {
   }
   const r = await api("/api/projects/" + encodeURIComponent(current.name) + "/board");
   if (!r.ok) {
-    document.getElementById("psub").textContent = "";
     showError(r.body.error || ("доска не прочиталась (" + r.status + ")"));
     return;
   }
@@ -13539,15 +13528,13 @@ async function paint() {
   shownWorks = r.body.works || [];
   markNav(rt);
   if (rt.feed) {
-    document.getElementById("psub").textContent = "уведомления";
     renderFeed(current.name);
     return;
   }
   // Путь доски и префикс ID строкой в шапке не стоят: имя файла с префиксом
   // человек читал каждый раз заново, отвечая на вопрос, которого не задавал
-  // (замечание пользователя). Приписка говорит, что за экран открыт, а знание
-  // осталось подсказкой на самом названии проекта: там его берут, когда надо.
-  document.getElementById("psub").textContent = "задачи проекта";
+  // (замечание пользователя). Знание осталось подсказкой на самом названии
+  // проекта: там его берут, когда надо.
   headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""),
     () => { goKeepingChat(current.name); });
   // Данные те же, что и в прошлый заход: списка не касаемся вовсе. Строку

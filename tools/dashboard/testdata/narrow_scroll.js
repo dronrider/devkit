@@ -144,7 +144,6 @@ document.getElementById("groups").innerHTML = body;
 // уносить его умеет и она. Имя проекта берётся длинное нарочно: в выпадашке
 // стоят имена всех проектов машины, и жмётся она по самому длинному из них.
 document.getElementById("pname").textContent = "it-road-course";
-document.getElementById("psub").textContent = "задачи проекта";
 const sel = document.getElementById("pselect");
 if (sel) {
   sel.innerHTML = ["devkit", "goonies", "it-road-course", "xr-proxy-и-длинное-имя-проекта"]

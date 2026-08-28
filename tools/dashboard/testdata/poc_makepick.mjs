@@ -129,9 +129,6 @@ const hashNow = () => sandbox.location.hash.replace(/^#/, "");
   if (!ta || !String(ta.placeholder).includes("SCQA")) {
     fail("форма черновика молчит про SCQA: " + (ta ? ta.placeholder : "поля нет"));
   }
-  if (byId.get("psub").textContent !== "новый черновик") {
-    fail("шапка не назвала, что заводим: " + byId.get("psub").textContent);
-  }
   for (const want of ["Сохранить", "Сохранить и грумить"]) {
     if (!deepBtn(groups, want)) fail("кнопки «" + want + "» на форме черновика нет: " + shown.slice(0, 200));
   }

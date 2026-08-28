@@ -123,11 +123,13 @@ a:hover{text-decoration:underline}
 .bmain{flex:1;display:flex;flex-direction:column;padding:24px 32px 0;overflow:hidden;min-width:0}
 .bhead{display:flex;align-items:center;gap:14px;flex:none}
 .bhead h2{margin:0;font:600 19px var(--sans)}
-/* название проекта в шапке ведёт на его доску: своей ссылки «Доска devkit»
-   экран задачи больше не носит */
-.bhead h2.hgo{cursor:pointer}
-.bhead h2.hgo:hover{color:var(--acc)}
-.bhead .sub{font:400 12px var(--mono);color:var(--tx3)}
+/* название проекта в шапке ведёт на его доску, и это ссылка навигации, а не
+   заголовок страницы: кегль подписи, обычный вес и черта под словами, чтобы
+   дорога была видна до наведения. Заголовком прежним кеглем она забирала
+   первую строку экрана под слово, которое человек и так знает (замечание
+   пользователя) */
+.bhead h2.hgo{font:400 12.5px var(--sans);color:var(--tx2);cursor:pointer;text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
+.bhead h2.hgo:hover{color:var(--acc);text-decoration-color:var(--acc)}
 .hsp{flex:1}
 /* колокольчик в шапке: вход в ленту уведомлений на обоих форм-факторах.
    Рисуется строчным SVG, а не рамками: собранный из рамок он читался кнопкой,
@@ -355,6 +357,8 @@ a:hover{text-decoration:underline}
 .crumb{display:flex;align-items:center;gap:10px;padding:18px 4px 0;font:500 12.5px var(--sans);color:var(--tx3)}
 .crumb-back{color:var(--tx2);cursor:pointer}
 .crumb-back:hover{color:var(--tx)}
+/* крошка без дороги: путь документа стоит подписью, а не ссылкой */
+.crumb-here{color:var(--tx3)}
 .thead{display:flex;align-items:flex-start;gap:14px;margin-top:14px}
 .idbig{font:600 17px var(--mono);color:var(--acc);margin-top:3px;white-space:nowrap}
 .tchips{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
@@ -1725,16 +1729,15 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 @media (max-width:520px){
   .bhead{flex-wrap:wrap;row-gap:8px}
   .bhead::after{content:"";width:100%;order:1}
-  /* подпись экрана и легенда уезжают во вторую строку к кнопкам: первую
-     делят имя и выбор проекта */
-  .bhead .bell,.bhead .sub,#hlegend{order:2}
+  /* легенда уезжает во вторую строку к кнопкам: первую делят имя и выбор
+     проекта */
+  .bhead .bell,#hlegend{order:2}
   /* кнопки прижаты вправо, как стояли в одном ряду */
   .bhead #make-btn{margin-left:auto}
   /* ширины запираются числом, а не ужатием: флекс с переносом не жмёт
      элементы, а уносит селект на свою строку, стоит базовым ширинам
      перерасти строку. 240 это логотип с селектом и зазорами, 226 кнопки */
   .bhead h2{min-width:0;max-width:calc(100% - 240px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .bhead .sub{min-width:0;max-width:calc(100% - 226px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* строка главной: длинная приписка состояния режется многоточием, а не
      распирает список до горизонтальной прокрутки под строками */
   .prow .stale{min-width:0;overflow:hidden;text-overflow:ellipsis}

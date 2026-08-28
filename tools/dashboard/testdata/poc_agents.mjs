@@ -302,7 +302,6 @@ for (const which of ["tmux", "registry"]) {
 // должны: адрес переезжает на таб сессий текущего проекта. Поле шапки тут
 // фильтрует сессии, поэтому и слова в нём про сессии, а на доске про задачи.
 {
-  const psub = byId.get("psub");
   const hq = byId.get("hq");
   const go = async (hash) => {
     sandbox.location.hash = hash;
@@ -314,9 +313,6 @@ for (const which of ["tmux", "registry"]) {
   await go("#/agents");
   if (hashNow() !== "demo/sess") {
     fail("старый адрес раздела не переехал на таб: " + sandbox.location.hash);
-  }
-  if (String(psub.textContent || "").trim() !== "сессии проекта") {
-    fail("шапка не называет открытый таб: " + JSON.stringify(psub.textContent));
   }
   if (hq.placeholder !== "Поиск сессий") {
     fail("поле таба обещает не то, что ищет: " + JSON.stringify(hq.placeholder));

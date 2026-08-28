@@ -17,6 +17,20 @@
 
 import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
   from "./poc_dom.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Стили читаются тем же стендом: кегль ссылки живёт только в них, а мок
+// разметки о них не знает вовсе.
+const here = dirname(fileURLToPath(import.meta.url));
+const css = readFileSync(join(here, "..", "static", "style.css"), "utf8");
+const html = readFileSync(join(here, "..", "static", "index.html"), "utf8");
+const cssRule = (sel) => {
+  const at = css.indexOf(sel + "{");
+  if (at < 0) return "";
+  return css.slice(at + sel.length + 1, css.indexOf("}", at));
+};
 
 const app = appPathArg();
 
@@ -76,15 +90,33 @@ if (said.includes("Доска demo")) {
     fail("номер задачи стоит " + nums.length + " раз(а): " +
       JSON.stringify(nums.map((n) => n.textContent)));
   }
+  // Приписки в шапке нет вовсе, ни узла в разметке, ни присвоений в статике:
+  // номер задачи стоял в ней третьим разом, а на прочих экранах она
+  // пересказывала подсвеченный таб (решение пользователя).
+  if (html.includes('id="psub"')) fail("узел приписки вернулся в разметку шапки");
   if (psub().textContent !== "") {
-    fail("номер задачи вернулся в приписку шапки страницы: " + psub().textContent);
+    fail("приписка шапки страницы снова что-то говорит: " + psub().textContent);
   }
 }
 
-// --- название проекта это вход на доску ---
+// --- название проекта это вход на доску, и это ссылка, а не заголовок ---
 {
   if (pname().textContent !== "Доска demo") {
     fail("заголовок шапки читается не «Доска demo»: " + pname().textContent);
+  }
+  // Кегль ссылки: заголовком прежним кеглем она забирала первую строку экрана
+  // под слово, которое человек и так знает (замечание пользователя). Порог
+  // тринадцать точек, это кегль подписей шапки.
+  const link = cssRule(".bhead h2.hgo");
+  if (!link) fail("правила ссылки на доску в стилях нет");
+  // Своего кегля у правила может и не быть, и тогда ссылка наследует кегль
+  // заголовка: считается именно тот, каким её увидит человек.
+  const px = (rule) => Number((/(?:^|;)\s*font(?:-size)?:[^;]*?(\d+(?:\.\d+)?)px/.exec(rule) || [])[1]);
+  const size = px(link) || px(cssRule(".bhead h2"));
+  if (!size) fail("кегль ссылки на доску не считается ни из её правила, ни из заголовка");
+  if (size > 13) fail("ссылка на доску набрана кеглем " + size + ": это заголовок, а не ссылка");
+  if (!link.includes("text-decoration:underline")) {
+    fail("ссылка на доску ничем не показывает, что она ведёт: " + link);
   }
   if (!String(pname().className).split(" ").includes("hgo")) {
     fail("заголовок шапки не помечен как ведущий: " + pname().className);

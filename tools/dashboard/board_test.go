@@ -2393,6 +2393,22 @@ func TestStaticHpopSide(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Боковая колонка сворачивается и возвращается тем же движением, состояние
+// переживает перезагрузку, а освободившееся место достаётся содержимому.
+// Сторожит стенд testdata/poc_side.mjs.
+func TestStaticSideFold(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд сворачивания колонки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_side.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("сворачивание боковой колонки: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Кнопку работы на форме задачи выбирает идущий ход, а не живое окно: у DK-543
 // сессия была жива, агент в ней простаивал, а форма предлагала «Стоп» вместо
 // пуска. Правило это одно на строку доски и на форму. Сторожит стенд

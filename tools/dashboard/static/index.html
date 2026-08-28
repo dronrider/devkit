@@ -15,6 +15,7 @@
         <h1>Дашборд devkit</h1>
         <p id="brand-note"></p>
       </div>
+      <button class="sfold" id="side-fold" aria-label="Свернуть колонку меню" title="Свернуть колонку меню: место достанется доске" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 7.5L10 12l4.5 4.5"></path><path d="M18 5.5v13"></path></svg></button>
     </div>
     <div class="sgroup">Проекты</div>
     <nav id="projects"></nav>
@@ -27,6 +28,9 @@
   </aside>
   <main class="bmain">
     <div class="bhead">
+      <!-- разворот свёрнутой колонки: кнопка встаёт туда, где был её верхний
+           уголок, и возвращает колонку тем же движением, каким её убрали -->
+      <button class="sfold sfold-back" id="side-show" aria-label="Развернуть колонку меню" title="Развернуть колонку меню" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 7.5L14 12l-4.5 4.5"></path><path d="M6 5.5v13"></path></svg></button>
       <span class="logo logo-top" id="logo-top" title="На главную">dk</span>
       <h2 id="pname"></h2>
       <span id="hlegend"></span>

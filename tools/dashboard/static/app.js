@@ -14082,6 +14082,48 @@ for (const id of ["logo-side", "logo-top", "nav-home", "tab-home"]) {
   });
 }
 
+// Боковая колонка сворачивается: нужна она редко, а место занимает всегда
+// (замечание пользователя). Свёрнутая пропадает целиком, и её ширина достаётся
+// доске и панели разговора, а помнится это между заходами тем же способом, что
+// и ширина панели.
+const SIDE_OFF_KEY = "devkit.side.off";
+
+function sideFolded() {
+  try {
+    return localStorage.getItem(SIDE_OFF_KEY) === "1";
+  } catch (err) {
+    // Приватное окно запрещает хранилище: колонка тогда встречает развёрнутой,
+    // а сворачивается и разворачивается по-прежнему.
+    return false;
+  }
+}
+
+// Показать колонку или убрать. Таблице тут же пересчитываются колонки: ширина
+// экрана стала другой, и без пересчёта строка держала бы прежнюю раскладку до
+// следующей перерисовки, как это было при тяге панели разговора.
+function putSideFold(off) {
+  const screen = document.getElementById("screen");
+  if (screen) screen.classList.toggle("sideoff", off);
+  const fold = document.getElementById("side-fold");
+  if (fold) fold.setAttribute("aria-expanded", off ? "false" : "true");
+  tblWidthsAll();
+}
+
+function foldSide(off) {
+  try {
+    localStorage.setItem(SIDE_OFF_KEY, off ? "1" : "0");
+  } catch (err) {
+    // Память недоступна: на этот заход колонка всё равно свернётся.
+  }
+  putSideFold(off);
+}
+
+for (const [id, off] of [["side-fold", true], ["side-show", false]]) {
+  const btn = document.getElementById(id);
+  if (btn) btn.addEventListener("click", () => { foldSide(off); });
+}
+putSideFold(sideFolded());
+
 document.getElementById("logout").addEventListener("click", async () => {
   await fetch("/api/logout", { method: "POST" });
   location.href = "/login";

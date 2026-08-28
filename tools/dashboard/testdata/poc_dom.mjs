@@ -277,7 +277,10 @@ export function deepBtn(node, what) {
 export function makeSandbox(appPath, reply, opts) {
   const byId = new Map();
   const moves = [];
-  const store = new Map();
+  // Память браузера: стенд заводит её пустой, а opts.store наполняет заранее.
+  // Прошлый заход человека виден коду только так, и без наполнения проверить
+  // «состояние пережило перезагрузку» было нечем.
+  const store = new Map(Object.entries((opts && opts.store) || {}));
   const timers = [];
   const streams = [];
   const asked = [];

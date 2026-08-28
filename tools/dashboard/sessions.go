@@ -283,6 +283,12 @@ type sessionHead struct {
 	// первым (замечание пользователя). Пусто, когда в прочитанном хвосте
 	// содержательных реплик не нашлось.
 	Said string
+	// Bye говорит, что последним словом агента в разговоре была служебная
+	// строка про истёкший логин: клиент не работает и ждёт /login. Признак
+	// живёт при шапке, а не при ленте, потому что спрашивают его список
+	// разговоров и панель, а обе читают шапку и так. Гаснет он сам: следующий
+	// настоящий ответ агента заменяет собой служебную строку.
+	Bye bool
 	// Model это модель, которой сессия работает на самом деле: её пишет харнес
 	// в каждую запись ответа (message.model). Выбор, сохранённый дашбордом,
 	// говорит лишь о том, чем поднимать сессию в следующий раз, а чем она
@@ -348,13 +354,37 @@ func tailReplies(path string, n int) []reply {
 // Читается хвост, а не файл целиком: транскрипт долгого разговора это мегабайты,
 // а последняя реплика лежит в самом конце.
 func lastSaid(path string) string {
+	said, _ := tailFacts(path)
+	return said
+}
+
+// tailFacts читает хвост один раз и отвечает двумя фактами: когда в разговоре
+// последний раз сказали что-то по делу и не отказался ли клиент работать без
+// логина. Разбор хвоста стоит чтения файла, и второго ради одного признака тут
+// не заводится.
+//
+// Разлогин меряется последним ответом агента, а не последней репликой вообще:
+// человек вправе написать после отказа сколько угодно, и разговор от этого не
+// становится рабочим. Настоящий ответ агента признак снимает.
+func tailFacts(path string) (string, bool) {
 	list := tailParsed(path)
+	said, bye, seen := "", false, false
 	for i := len(list) - 1; i >= 0; i-- {
-		if saidReply(list[i]) {
-			return list[i].Time
+		r := list[i]
+		if !saidReply(r) {
+			continue
+		}
+		if said == "" {
+			said = r.Time
+		}
+		if !seen && r.Role == "assistant" {
+			seen, bye = true, loginGone(r.Text)
+		}
+		if said != "" && seen {
+			break
 		}
 	}
-	return ""
+	return said, bye
 }
 
 // saidReply отделяет сказанное от машинного: пузырём в ленте стоят реплика
@@ -435,7 +465,7 @@ func readSessionHead(path string) (sessionHead, bool) {
 			break
 		}
 	}
-	head.Said = lastSaid(path)
+	head.Said, head.Bye = tailFacts(path)
 	return head, full
 }
 
@@ -749,6 +779,12 @@ type reply struct {
 	// это: сколько агент думал. Так же подписывает их расширение для vscode
 	// («Thought for 5s»).
 	Spent int64 `json:"spent,omitempty"`
+	// Logout помечает ответ агента, который на деле служебная строка про
+	// истёкший логин («Login expired. Please run /login»). По ней панель
+	// поднимает состояние разговора, не разбирая слов ответа сама: признак
+	// один и считает его сервер. Следующий настоящий ответ приходит без
+	// пометки и гасит состояние.
+	Logout bool `json:"logout,omitempty"`
 	// Fail помечает ответ инструмента, который вернулся ошибкой (is_error у
 	// tool_result). По нему лента красит точку записи: зелёная у сделанного,
 	// красная у упавшего, и провал видно, не читая вывод.
@@ -2090,7 +2126,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// диспетчером: подпись её ответов считается на каждой порции, а не
 			// один раз на открытие потока.
 			lead := len(subLogs(path)) > 0
-			for _, item := range markLead(list, lead) {
+			for _, item := range markLogout(markLead(list, lead)) {
 				item.Seq = seq
 				seq++
 				sseEvent(w, f, "", marshalReply(item))
@@ -2974,6 +3010,33 @@ const mainSrc = "m"
 // srcName зовёт боковой журнал по имени файла без расширения: agent-<id>.
 func srcName(file string) string {
 	return strings.TrimSuffix(filepath.Base(file), ".jsonl")
+}
+
+// markLogout помечает служебные строки про истёкший логин. Лента показывает их
+// как есть, пузырём: это и правда сказал агент, и прятать сказанное нельзя.
+// Пометка нужна не ленте, а состоянию разговора: панель поднимает по ней плашку
+// разлогина и гасит её следующим настоящим ответом, не разбирая английских слов
+// у себя.
+func markLogout(items []reply) []reply {
+	hit := false
+	for _, it := range items {
+		if it.Role == "assistant" && loginGone(it.Text) {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return items
+	}
+	// Правка идёт по копии по той же причине, что и у подписи диспетчера:
+	// разобранный кусок транскрипта уезжает следующему заходу тем же.
+	items = append([]reply(nil), items...)
+	for i := range items {
+		if items[i].Role == "assistant" && loginGone(items[i].Text) {
+			items[i].Logout = true
+		}
+	}
+	return items
 }
 
 // markLead подписывает ответы главной сессии диспетчерскими. Диспетчер это

@@ -351,7 +351,7 @@ func sessionFeedOf(path string, want int) sessionFeed {
 		for _, f := range files {
 			p := readTail(f.file, f.src, f.label, size[f.src], f.side)
 			if f.src == mainSrc {
-				p.items = markLead(p.items, len(logs) > 0)
+				p.items = markLogout(markLead(p.items, len(logs) > 0))
 			}
 			parts = append(parts, p)
 		}

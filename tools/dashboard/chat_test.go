@@ -2423,3 +2423,138 @@ func TestChatEntryAskFromPaneWithoutJournal(t *testing.T) {
 		t.Errorf("слово вопроса встало на работающем клиенте: %q", got[0].Stuck)
 	}
 }
+
+// Истёкший вход клиента (DK-466). Клиент с протухшим OAuth-токеном отвечает
+// служебной строкой на любую реплику и не делает ни хода. Знал про такой ответ
+// один titleJunk, и то лишь затем, чтобы не пустить его в заголовок: в списке
+// и в панели разговор оставался живым, а отказ стоял обычным пузырём ленты.
+// Теперь это состояние разговора, и считается оно по последнему ответу агента.
+func TestLoginGoneWords(t *testing.T) {
+	yes := []string{
+		"Login expired. Please run /login",
+		"Not logged in",
+		"Invalid API key. Please run /login",
+		"  login expired  ",
+		"OAuth token expired",
+	}
+	for _, said := range yes {
+		if !loginGone(said) {
+			t.Errorf("отказ входа не узнан: %q", said)
+		}
+	}
+	no := []string{
+		"",
+		"готово, ветка собрана",
+		// Рассказ про чужой разлогин это рассказ, а не отказ: длина и держит
+		// эту границу, потому что других признаков у служебной строки нет.
+		"Разобрал инцидент: вчерашние сессии chat-DK-397-1 и chat-DK-397-2 " +
+			"отвечали Login expired после чужого /login, потому что живой процесс " +
+			"держит старый токен в памяти и сам его не перечитывает. Вылечилось " +
+			"снятием их tmux-сессий, продолжение поднял штатный резюм дашборда.",
+	}
+	for _, said := range no {
+		if loginGone(said) {
+			t.Errorf("обычный ответ принят за отказ входа: %q", said)
+		}
+	}
+}
+
+// Строка списка называет разлогин словами, и слово это гаснет само: следующий
+// настоящий ответ агента снимает состояние без всякой отметки со стороны
+// человека.
+func TestChatEntryLoginGone(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "dddd4660-4660-4660-8660-466046604660"
+	said := func(text, at string) string {
+		return `{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4",` +
+			`"content":[{"type":"text","text":"` + text + `"}]},"timestamp":"` + at + `"}` + "\n"
+	}
+	talk := plainTalk + said("Login expired. Please run /login", "2026-08-17T10:00:02.000Z")
+	writeSession(t, e.home, e.proj, "", sid, talk, time.Now())
+
+	got := chatsOf(t, e, c)
+	if len(got) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один: %+v", len(got), got)
+	}
+	if got[0].Login != loginGoneWord {
+		t.Fatalf("разлогин не назван словами: login=%q, ждал %q", got[0].Login, loginGoneWord)
+	}
+	if got[0].Stuck != "" {
+		t.Errorf("разлогин выдан за клин: stuck=%q, а лечится он не перезапуском, а входом", got[0].Stuck)
+	}
+
+	// Человек написал после отказа: разговор от этого рабочим не стал.
+	after := talk + `{"type":"user","message":{"role":"user","content":"ты тут?"},` +
+		`"timestamp":"2026-08-17T10:05:00.000Z"}` + "\n"
+	writeSession(t, e.home, e.proj, "", sid, after, time.Now().Add(time.Second))
+	if got := chatsOf(t, e, c); got[0].Login != loginGoneWord {
+		t.Errorf("реплика человека погасила состояние: login=%q", got[0].Login)
+	}
+
+	// Вошли на машине, разговор перезапустили, агент ответил по делу: состояние
+	// гаснет само.
+	live := after + said("продолжаю с того места, где остановился", "2026-08-17T10:06:00.000Z")
+	writeSession(t, e.home, e.proj, "", sid, live, time.Now().Add(2*time.Second))
+	if got := chatsOf(t, e, c); got[0].Login != "" {
+		t.Errorf("состояние не погасло после живого ответа: login=%q", got[0].Login)
+	}
+}
+
+// Лента помечает служебную строку сама: панель поднимает по этой пометке
+// состояние разлогина, не разбирая английских слов у себя. Сама строка из ленты
+// не прячется, это и правда сказал агент.
+func TestFeedMarksLoginReply(t *testing.T) {
+	e, c := chatEnv(t)
+	forgetChunks()
+	sid := "cccc4661-4661-4661-8661-466146614661"
+	said := func(text, at string) string {
+		return `{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4",` +
+			`"content":[{"type":"text","text":"` + text + `"}]},"timestamp":"` + at + `"}` + "\n"
+	}
+	talk := plainTalk +
+		said("Login expired. Please run /login", "2026-08-17T10:00:02.000Z") +
+		said("продолжаю", "2026-08-17T10:06:00.000Z")
+	writeSession(t, e.home, e.proj, "", sid, talk, time.Now())
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid+"?n=40", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("лента: %d", resp.StatusCode)
+	}
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	marks := map[string]bool{}
+	for _, it := range got.Items {
+		if it.Role == "assistant" {
+			marks[it.Text] = it.Logout
+		}
+	}
+	if !marks["Login expired. Please run /login"] {
+		t.Errorf("служебная строка в ленте не помечена: %+v", got.Items)
+	}
+	if marks["продолжаю"] {
+		t.Errorf("настоящий ответ помечен разлогином: %+v", got.Items)
+	}
+}
+
+// Разлогин в панели: состояние стоит плашкой отдельно от ленты, слова говорят
+// порядок починки, кнопка снимает сессию и поднимает её резюмом, а живой ответ
+// агента гасит плашку сам. Предмет проверки это собранная разметка и порядок
+// вызовов, поэтому статика поднимается в node с заглушкой DOM (стенд
+// testdata/poc_login.mjs). Без node шаг пропускается: узел стенда, а не рабочей
+// части.
+func TestStaticLoginGonePlate(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд разлогиненного разговора пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_login.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("разлогин в панели: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

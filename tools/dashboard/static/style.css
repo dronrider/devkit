@@ -808,6 +808,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cnote.idle{background:color-mix(in oklab,var(--block) 9%,var(--bg1));border-color:color-mix(in oklab,var(--block) 25%,transparent)}
 .cnote.idle b{color:var(--block)}
 .cnote .btn{flex:none;margin-left:auto;height:28px;min-height:28px;padding:0 12px;font-size:12px}
+/* Плашка разлогина (DK-466): та же плашка разговора, но тревожного цвета и с
+   кнопкой починки. Слова и кнопка переносятся: на узком экране кнопка встаёт
+   своей строкой, а не уезжает за край, потому что с телефона путь к починке
+   тот же самый. */
+.cbye{flex-wrap:wrap;background:color-mix(in oklab,var(--wait) 10%,var(--bg1));border-color:color-mix(in oklab,var(--wait) 30%,transparent)}
+.cbye b{color:var(--wait);white-space:normal}
+.cbyew{flex:1 1 240px;min-width:0}
+.cbye .btn{margin-left:auto}
 .cbox{background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}

@@ -77,9 +77,10 @@ class Watch(unittest.TestCase):
             f.write(text)
         return path
 
-    def launch(self, agent_id=AID, description="разбор черновиков", output="/tmp/out.txt"):
+    def launch(self, agent_id=AID, description="разбор черновиков", output="/tmp/out.txt",
+               now=NOW):
         return self.handle(event(hookio.AGENT_LAUNCHED, agent_id=agent_id,
-                                 description=description, output=output))
+                                 description=description, output=output), now=now)
 
     def finish(self, agent_id=AID, message="разобрано три черновика", now=NOW):
         return self.handle(event(hookio.SUBAGENT_DONE, agent_id=agent_id, message=message),
@@ -289,9 +290,13 @@ class Watch(unittest.TestCase):
     # Прогон командой из settings.json
 
     def test_hook_prints_the_decision_and_exits_zero(self):
+        # Единственный заход, где время берётся с часов: сторож в подпроцессе
+        # считает now сам, и запись, заведённая застывшей датой, вымелась бы у
+        # него по LIFETIME на следующий день после написания теста.
         path = self.transcript("")
-        self.launch()
-        self.finish()
+        live = time.time()
+        self.launch(now=live)
+        self.finish(now=live)
         turn = sample("turn-done")
         turn["session_id"] = SID
         turn["transcript_path"] = path

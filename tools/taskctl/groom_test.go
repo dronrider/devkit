@@ -873,3 +873,81 @@ func TestDraftSubcommandsNotTakenForText(t *testing.T) {
 		t.Fatalf("draft list:\n%s", out)
 	}
 }
+
+// TestDraftDropWarnsAboutMentions: снятая запись оставляет за собой мёртвые
+// ссылки. Хранилища у связей нет, они читаются из упоминаний ID прозой
+// постановки, и починить их за человека команда не может, поэтому она называет
+// места. Молчание тут неотличимо от того, что ссылок нет. Архив не смотрится:
+// закрытую работу править никто не пойдёт, а ID целым словом отличает снятый
+// XR-48 от соседнего XR-483.
+func TestDraftDropWarnsAboutMentions(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	id := newDraft(t, root, "предмет пропал")
+	put := func(rel, text string) {
+		t.Helper()
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("docs/tasks/XR-002.md", "# XR-002\n\nупирается в "+id+", ждём разбора\n")
+	put("docs/tasks/archive/2026/XR-900.md", "# XR-900\n\nтут тоже помянут "+id+"\n")
+	put("docs/tasks/XR-003.md", "# XR-003\n\nсовсем другой предмет\n")
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "черновик и соседи")
+
+	msg, err := cmdDraftDrop(root, id, "предмета больше нет", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "docs/tasks/XR-002.md") {
+		t.Fatalf("команда не сказала, что на %s ещё ссылаются: %q", id, msg)
+	}
+	if !strings.Contains(msg, "ещё ссылаются") {
+		t.Fatalf("предупреждение не названо словами: %q", msg)
+	}
+	if strings.Contains(msg, "XR-900") {
+		t.Fatalf("в предупреждение попал архив, а его править никто не пойдёт: %q", msg)
+	}
+	if strings.Contains(msg, "XR-003") {
+		t.Fatalf("в предупреждение попал файл без упоминания: %q", msg)
+	}
+
+	// Ссылок нет, и говорить не о чем: хвост молчит. Ссылка на снятый ID
+	// убирается из соседа руками: освободившийся номер достаётся следующей
+	// записи, и без уборки она нашла бы упоминание сама себя.
+	put("docs/tasks/XR-002.md", "# XR-002\n\nсосед без упоминаний\n")
+	quiet := newDraft(t, root, "на эту запись никто не сослался")
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "вторая запись")
+	msg, err = cmdDraftDrop(root, quiet, "предмета нет", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "ещё ссылаются") {
+		t.Fatalf("предупреждение выдумано на пустом месте: %q", msg)
+	}
+}
+
+// TestMentionsOfWholeWord: ID ищется целым словом, иначе снятый XR-48 находился
+// бы в каждом упоминании XR-483, и предупреждение врало бы о местах.
+func TestMentionsOfWholeWord(t *testing.T) {
+	root := t.TempDir()
+	full := filepath.Join(root, "docs", "tasks", "XR-002.md")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("# XR-002\n\nтут только XR-483 и XR-4831\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if hits := mentionsOf(root, "XR-48"); len(hits) != 0 {
+		t.Fatalf("XR-48 нашёлся внутри соседнего номера: %v", hits)
+	}
+	if hits := mentionsOf(root, "XR-483"); len(hits) != 1 || hits[0] != "docs/tasks/XR-002.md" {
+		t.Fatalf("целое упоминание не нашлось: %v", hits)
+	}
+}

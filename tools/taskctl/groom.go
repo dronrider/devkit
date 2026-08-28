@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -485,7 +486,69 @@ func cmdDraftDrop(root, id, reason string, c CommitOpts) (string, error) {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("%s удалён как протухший: %s%s", id, reason, tail), nil
+	msg := fmt.Sprintf("%s удалён как протухший: %s%s", id, reason, tail)
+	if note := mentionsNote(root, id); note != "" {
+		msg += "\n" + note
+	}
+	return msg, nil
+}
+
+// mentionsCap ограничивает список мест в предупреждении: у заметного ID
+// упоминаний бывает десяток, и вываливать их все в хвост команды незачем,
+// человеку нужно решить, идти ли чинить.
+const mentionsCap = 5
+
+// mentionsNote предупреждает, что на снятый ID где-то ещё ссылаются. Отдельного
+// хранилища у связей нет: экран задачи выводит их из упоминаний ID прозой
+// постановки, и удалённая запись оставляет за собой ссылки, которые ведут в
+// никуда. Переписать чужую постановку команда не берётся, упоминание живёт
+// текстом, а не полем, поэтому она называет места и оставляет решение человеку.
+// Пустая строка это молчание: ссылок нет, и говорить не о чем.
+func mentionsNote(root, id string) string {
+	hits := mentionsOf(root, id)
+	if len(hits) == 0 {
+		return ""
+	}
+	shown := hits
+	tail := ""
+	if len(shown) > mentionsCap {
+		shown, tail = shown[:mentionsCap], fmt.Sprintf(" и ещё %d", len(hits)-mentionsCap)
+	}
+	return fmt.Sprintf("на %s ещё ссылаются: %s%s. Связи читаются из текста, и там они стали мёртвыми",
+		id, strings.Join(shown, ", "), tail)
+}
+
+// mentionsOf собирает файлы docs, где ID помянут прозой. Архив не смотрится:
+// закрытую работу править никто не пойдёт, и её упоминания сделали бы
+// предупреждение шумом. Ищется ID целым словом, иначе снятый XR-48 находился бы
+// в каждом упоминании XR-483.
+func mentionsOf(root, id string) []string {
+	re := regexp.MustCompile(`(?m)(^|[^0-9A-Za-z_-])` + regexp.QuoteMeta(id) + `([^0-9A-Za-z_-]|$)`)
+	var hits []string
+	filepath.Walk(filepath.Join(root, "docs"), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if skipDirs[info.Name()] || info.Name() == "archive" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".md") || strings.HasSuffix(path, "TASKS-archive.md") {
+			return nil
+		}
+		text, err := os.ReadFile(path)
+		if err != nil || !re.Match(text) {
+			return nil
+		}
+		if rel, err := filepath.Rel(root, path); err == nil {
+			hits = append(hits, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(hits)
+	return hits
 }
 
 // removeDraft убирает файл черновика и отвечает, попало ли удаление в индекс.

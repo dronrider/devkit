@@ -99,8 +99,11 @@ func TestDraftPutText(t *testing.T) {
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
 
+	// База правки едет с текстом от той же ручки, что его отдаёт: без неё
+	// сверять правку не с чем, и ручка её не принимает.
 	resp := doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
-		`{"text": "уведомитель шумит из песочницы\n\nвторым абзацем правка с экрана"}`)
+		`{"text": "уведомитель шумит из песочницы\n\nвторым абзацем правка с экрана", "base": `+
+			strconv.Quote(draftBase(t, c, e, "XR-005"))+`}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("правка черновика: %d %s", resp.StatusCode, text)
@@ -1241,4 +1244,144 @@ func TestStaticBoardTableHead(t *testing.T) {
 	if !strings.Contains(css, "  .tbl{display:block}\n  .tbl>colgroup{display:none}") {
 		t.Error("на узком экране таблица держит колонки и унесёт страницу вбок")
 	}
+}
+
+// draftBase спрашивает базу правки у той же ручки, что читает текст записи:
+// экран берёт её оттуда же и возвращает при сохранении.
+func draftBase(t *testing.T, c *http.Client, e *testEnv, id string) string {
+	t.Helper()
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/"+id, "")
+	got := body(t, resp)
+	var v struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Fatalf("текст записи не разобрался: %v %s", err, got)
+	}
+	return v.Hash
+}
+
+// Правка сверяется с базой: экран получает хэш текста вместе с текстом и
+// возвращает его при сохранении. Писателей у записи двое, человек с экрана и
+// разбор, и без сверки правка одного молча затирала бы правку другого. Ответ
+// на разошедшуюся базу несёт текущий текст с хэшем: экран показывает оба, и
+// набранное человеком не пропадает.
+func TestDraftPutBase(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "уведомитель шумит из песочницы"}`).Body.Close()
+	file := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+
+	base := draftBase(t, c, e, "XR-005")
+	if base == "" {
+		t.Fatal("текст записи приехал без базы правки")
+	}
+
+	resp := doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
+		`{"text": "уведомитель шумит из песочницы\n\nправка с базой", "base": `+strconv.Quote(base)+`}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("правка с верной базой: %d %s", resp.StatusCode, text)
+	}
+	var saved struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(text), &saved); err != nil || saved.Hash == "" {
+		t.Fatalf("ответ правки не назвал новую базу: %v %s", err, text)
+	}
+	if saved.Hash == base {
+		t.Errorf("база после правки не поменялась: %s", saved.Hash)
+	}
+	if got := draftBase(t, c, e, "XR-005"); got != saved.Hash {
+		t.Errorf("база в ответе правки %s, а у записи %s", saved.Hash, got)
+	}
+
+	// Та же база второй раз: так выглядит вторая вкладка, читавшая запись до
+	// первой правки.
+	was := readFile(t, file)
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
+		`{"text": "правка второго окна", "base": `+strconv.Quote(base)+`}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "изменилась") {
+		t.Fatalf("правка с разошедшейся базой: %d %s, ожидал 409 со словами", resp.StatusCode, text)
+	}
+	var back struct {
+		Text string `json:"text"`
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(text), &back); err != nil {
+		t.Fatalf("отказ не разобрался: %v %s", err, text)
+	}
+	if back.Text != was || back.Hash != saved.Hash {
+		t.Errorf("отказ не принёс текущий текст с базой: %q %q", back.Text, back.Hash)
+	}
+	if after := readFile(t, file); after != was {
+		t.Errorf("отбитая правка тронула файл:\n%s", after)
+	}
+
+	// Правка без базы это правка вслепую: сверять её не с чем.
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005",
+		`{"text": "правка вслепую"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "без базы") {
+		t.Fatalf("правка без базы: %d %s, ожидал 409 со словами", resp.StatusCode, text)
+	}
+	if after := readFile(t, file); after != was {
+		t.Errorf("правка без базы тронула файл:\n%s", after)
+	}
+}
+
+// Замок разбора: пока по записи идёт грумминг, файл принадлежит агенту, и
+// правка с экрана отбивается. Отпирает замок живое ожидание ответа: агент спит
+// в инструменте ожидания, файла не трогает, и ответ правкой текста это законная
+// дорога.
+func TestDraftPutUnderGroom(t *testing.T) {
+	e, c, _ := draftsEnv(t)
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "task-XR-005\n")
+	id := makeDraft(t, c, e, "две записи об одном и том же")
+	file := filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")
+	base := draftBase(t, c, e, id)
+	was := readFile(t, file)
+
+	resp := doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/"+id,
+		`{"text": "правка под разбором", "base": `+strconv.Quote(base)+`}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "идёт разбор") {
+		t.Fatalf("правка под живым разбором: %d %s, ожидал 409 со словами", resp.StatusCode, text)
+	}
+	if after := readFile(t, file); after != was {
+		t.Errorf("правка под разбором тронула файл:\n%s", after)
+	}
+
+	ask := chat.Ask{Until: time.Now().Add(5 * time.Minute), Task: id, Session: "sid-1",
+		Questions: []chat.Question{{Text: "оставить эту или снять"}}}
+	if err := chat.WriteAsk(e.proj, chat.TaskName(id), ask); err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/"+id,
+		`{"text": "ответ правкой текста", "base": `+strconv.Quote(base)+`}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("правка при живом ожидании: %d %s, ожидал 200", resp.StatusCode, text)
+	}
+	if got := readFile(t, file); !strings.Contains(got, "ответ правкой текста") {
+		t.Errorf("правка при живом ожидании до файла не доехала:\n%s", got)
+	}
+}
+
+// Экранная половина замка: карандаш, плашка и база правки. Проверяется она
+// прогоном самой статики в node (стенд testdata/poc_draftlock.mjs), а не
+// поиском строк в исходнике: предмет тут собранная разметка и поведение
+// обработчиков. Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticDraftEditorLock(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд замка редактора записи пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftlock.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("замок редактора записи: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

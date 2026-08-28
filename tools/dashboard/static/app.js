@@ -11631,15 +11631,39 @@ async function dropDraft(project, id, reason) {
 
 
 
+// Запись переписал кто-то ещё, пока человек правил её тут: текст с диска
+// показывается рядом с формой целиком, а набранное остаётся в поле. Свести их
+// за человека нечем, второго писателя тут двое, разбор и вторая вкладка, и что
+// оставить, знает только он.
+function showDraftClash(said) {
+  const page = findKey(document.getElementById("groups"), "draft-page");
+  if (!page) return;
+  const was = page.querySelector(".dclash");
+  if (was) was.remove();
+  const card = el("div", "card dclash");
+  const head = el("div", "chd");
+  head.append(el("b", "", "Запись на диске изменилась"));
+  head.append(el("span", "stale", "набранное осталось в поле, ниже текст с диска"));
+  card.append(head, el("pre", "dclash-text", said));
+  page.append(card);
+}
+
 // Сохранение записи накопителя: текст правится тем же полем, что и постановка
 // задачи, и уезжает целиком одной ручкой. Пустой текст отбивается до похода на
-// сервер: он затёр бы запись, а удаление у черновика своё, с причиной.
-async function saveDraftText(project, id, text) {
+// сервер: он затёр бы запись, а удаление у черновика своё, с причиной. База это
+// хэш текста, с которым экран открывался: писателей у записи двое, человек и
+// разбор, и без базы сохранение молча затирало бы чужую правку.
+async function saveDraftText(project, id, text, base) {
   sayResult("сохранение черновика " + id + "...");
   const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/drafts/" + encodeURIComponent(id), { method: "PUT", body: { text } });
+    "/drafts/" + encodeURIComponent(id), { method: "PUT", body: { text, base } });
   sayResult(apiSaid(r), !r.ok);
-  if (!r.ok) return false;
+  if (!r.ok) {
+    // Правка остаётся тронутой: перерисовка над тронутой формой не идёт, и
+    // набранное лежит в поле, пока человек не решит его судьбу.
+    if (r.status === 409 && r.body.text) showDraftClash(r.body.text);
+    return false;
+  }
   taskDraft.dirty = false;
   // Сохранение возвращает просмотр: правка кончилась, и держать поле открытым
   // незачем.
@@ -11707,12 +11731,22 @@ async function renderDraft(project, works, id) {
   // остаётся как есть.
   if (taskDraft.id === id && taskDraft.dirty) return;
   const said = text.ok ? String(text.body.text || "") : "";
+  // База правки приезжает тем же ответом, что и текст: она уедет обратно с
+  // сохранением, и разошедшуюся ручка отобьёт вместо тихого затирания.
+  const hash = (text.ok && text.body.hash) || "";
   // Ожидание разговора приезжает тем же ответом, что и текст записи: его считает
   // сервер по признаку ожидания, как и у строки доски.
   const waiting = (text.ok && text.body.waiting) || null;
+  // Замок редактора (решение 3 LLD DK-354): пока разбор идёт, запись
+  // принадлежит агенту, он её читает и уносит исходом, и правка человека либо
+  // пропала бы под ним, либо сделала бы исход ответом не на тот текст.
+  // Отпирает замок живое ожидание: агент спит в инструменте ожидания, файла не
+  // трогает, и ответ правкой текста это законная дорога. Тем же правилом
+  // отвечает и ручка, замок экрана тут не единственный сторож.
+  const locked = running && !waiting;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, running, text.body.error || "", JSON.stringify(waiting)].join("|"),
+    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -11735,12 +11769,37 @@ async function renderDraft(project, works, id) {
           "Провести груминг", false,
           text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
           "", "",
-          (harness, tier) => groomDraft(project, id, "", harness, tier).then((ok) => {
-            if (ok) refresh().catch(console.error);
-            return ok;
-          }),
+          // Несохранённая правка уезжает на диск до подъёма разбора: иначе
+          // агент прочитал бы старый текст, и потеря была бы молчаливой.
+          (harness, tier) => (form.text !== said
+            ? saveDraftText(project, id, form.text, hash)
+            : Promise.resolve(true))
+            .then((ok) => ok && groomDraft(project, id, "", harness, tier))
+            .then((ok) => {
+              if (ok) refresh().catch(console.error);
+              return ok;
+            }),
           harnessTiers());
         actions.push(groom);
+      }
+      // Плашка замка: пока разбор идёт, она говорит, у кого запись и чем её
+      // вернуть, а на живом ожидании меняет слова, потому что меняется и сам
+      // замок. Стоп тут тот же, что у строки доски: другого способа забрать
+      // запись у агента нет.
+      const lockNote = [];
+      if (running || waiting) {
+        const note = el("div", "card dlock");
+        note.append(el("span", "dlock-say", locked
+          ? "Разбор идёт, запись у агента."
+          : "Агент ждёт ответа, правка открыта."));
+        if (running) {
+          note.append(el("span", "gap"));
+          const stop = barBtn("btn btn-danger", "Стоп", "i-stop");
+          withTip(stop, STOP_TIP);
+          stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+          note.append(stop);
+        }
+        lockNote.push(note);
       }
       // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
       // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
@@ -11762,9 +11821,12 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        has: { file: true, pencil: true, read: true, chat: true },
+        // Плашка замка стоит над колонкой текста и говорит, чем поле заперто и
+        // как его отпереть: погашенный карандаш без слов неотличим от поломки.
+        top: lockNote,
+        has: { file: true, pencil: !locked, read: true, chat: true },
         penLabel: "Править запись",
-        edit: taskDraft.id === id && taskDraft.edit,
+        edit: taskDraft.id === id && taskDraft.edit && !locked,
         onEdit: (on) => {
           taskDraft.id = id;
           taskDraft.edit = on;
@@ -11775,7 +11837,7 @@ async function renderDraft(project, works, id) {
           taskDraft.dirty = dirty;
           return { dirty, refusal: form.text.trim() ? "" : "пустой текст затёр бы запись черновика" };
         },
-        onSave: () => { saveDraftText(project, id, form.text).catch(console.error); },
+        onSave: () => { saveDraftText(project, id, form.text, hash).catch(console.error); },
         onDrop: () => {
           taskDraft.dirty = false;
           taskDraft.edit = false;

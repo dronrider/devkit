@@ -1646,10 +1646,14 @@ if (!dump(dchips).includes("груминг идёт")) {
 if (barButton(groups, "Провести груминг")) {
   fail("поверх идущего груминга экран предлагает поднять второй: " + dump(groups));
 }
-// Правка и чтение у записи те же, что у задачи: карандаш и режим чтения стоят
-// в строке статуса.
-if (!barButton(dchips, "Править запись") || !barButton(dchips, "Режим чтения")) {
-  fail("у записи нет кнопок режимов: " + dump(dchips));
+// Пока разбор идёт, запись принадлежит агенту: карандаш с неё уходит, а режим
+// чтения остаётся, читать её никто не мешает. Замок и его слова проверяет свой
+// стенд, poc_draftlock.
+if (barButton(dchips, "Править запись")) {
+  fail("карандаш стоит под живым разбором: " + dump(dchips));
+}
+if (!barButton(dchips, "Режим чтения")) {
+  fail("у записи нет режима чтения: " + dump(dchips));
 }
 // Текст записи стоит разметкой, а не сырым файлом.
 const dtext = find(groups, "draft-text");
@@ -1665,6 +1669,10 @@ dchips = find(groups, "draft-chips");
 if (dump(dchips).includes("груминг идёт")) fail("кончившийся груминг помечен идущим: " + dump(dchips));
 const groomBtn = barButton(groups, "Провести груминг");
 if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(groups).slice(0, 300));
+// Разбор кончился, замок снят: карандаш возвращается на место.
+if (!barButton(dchips, "Править запись")) {
+  fail("карандаш не вернулся после разбора: " + dump(dchips));
+}
 groomBtn.handlers.click({ stopPropagation: () => {} });
 await settle();
 if (groomAsk === null) fail("кнопка груминга не позвала ручку разбора");

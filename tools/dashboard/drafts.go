@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -181,6 +182,34 @@ func draftTitleOf(projectPath, id string) (string, bool) {
 	return searchDocTitle(id, string(text)), true
 }
 
+// draftHash это база правки: короткий хэш текста записи. Экран получает его с
+// текстом и возвращает при сохранении, а ручка сверяет с тем, что лежит на
+// диске. Писателей у файла двое, человек с экрана и агент разбора, и без базы
+// правка одного молча затирала бы правку другого.
+func draftHash(text []byte) string {
+	sum := sha256.Sum256(text)
+	return fmt.Sprintf("%x", sum)[:12]
+}
+
+// draftBusy называет живую сессию разбора этой записи, а пустая строка значит,
+// что запись свободна. Спрашивают его двое: подъём разбора (второй грумер
+// поверх работающего) и правка текста (пока разбор идёт, запись принадлежит
+// агенту, решение 3 LLD DK-354). Разговор про запись работой не считается: у
+// него та же tmux-сессия, а файла он не трогает.
+func (s *server) draftBusy(projPath, id string) string {
+	talk := s.tmuxTalk(projPath)
+	for _, name := range tmuxSessions() {
+		if name != draftSession(id) && name != "goal-"+id {
+			continue
+		}
+		if talk[name] {
+			continue
+		}
+		return name
+	}
+	return ""
+}
+
 func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "черновик")
 	if found == nil {
@@ -201,7 +230,10 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Провести
 	// груминг», и подсказка на ней читает то же поле, что и строка накопителя.
 	out := map[string]any{
-		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, "")}
+		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, ""),
+		// База правки едет вместе с текстом: экран вернёт её при сохранении, и
+		// разошедшуюся ручка отобьёт вместо молчаливого затирания.
+		"hash": draftHash(text)}
 	// И ожидание разговора тем же полем: кнопка чата груминга на экране записи
 	// помечает его так же, как строка накопителя.
 	if wait, ok := askWaiting(found.Path, id, s.now()); ok {
@@ -216,7 +248,8 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 // handleDraftPut переписывает текст записи целиком: экран черновика правит её
 // тем же полем, что экран задачи правит постановку, и своей команды на это у
 // taskctl нет. Пустой текст отбивается до записи: он затёр бы запись, а
-// удаление у черновика своё, с причиной в коммит доски.
+// удаление у черновика своё, с причиной в коммит доски. Отказов, кроме
+// пустоты, два, и оба про второго писателя: живой разбор и разошедшаяся база.
 func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -233,6 +266,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		Base string `json:"base"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit)).Decode(&body); err != nil {
 		var mbe *http.MaxBytesError
@@ -245,7 +279,8 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path, rel := draftPathOf(found.Path, id)
-	if !isFile(path) {
+	was, err := os.ReadFile(path)
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
@@ -255,12 +290,40 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 			"error": "пустой текст затёр бы запись черновика: жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	// Замок разбора: пока по записи идёт грумминг, файл принадлежит агенту, он
+	// его читает, дописывает и уносит исходом. Правка человека под живым
+	// разбором либо пропала бы под ним, либо сделала бы исход ответом не на тот
+	// текст. Исключение одно: агент, ждущий ответа, спит в инструменте ожидания
+	// и файла не трогает, и ответ правкой текста это законная дорога.
+	if _, waits := askWaiting(found.Path, id, s.now()); !waits {
+		if sess := s.draftBusy(found.Path, id); sess != "" {
+			s.logf("правка черновика %s в %s отклонена: разбор идёт (tmux-сессия %s)", id, found.Name, sess)
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": fmt.Sprintf("по записи %s идёт разбор (tmux-сессия %s): пока он идёт, запись принадлежит агенту, сначала стоп", id, sess)})
+			return
+		}
+	}
+	// Сверка базы: запись могли переписать вторым окном или разбором, пока
+	// человек набирал. Текущий текст с хэшем едут в отказ, чтобы экран показал
+	// оба, а набранное не пропало.
+	if now := draftHash(was); body.Base != now {
+		why := fmt.Sprintf("запись %s изменилась с тех пор, как экран её прочитал: правка пришла с базой %q, а на диске %q",
+			id, body.Base, now)
+		if body.Base == "" {
+			why = fmt.Sprintf("правка записи %s пришла без базы: сверять её не с чем, а писателей у записи двое, экран и разбор", id)
+		}
+		s.logf("правка черновика %s в %s отклонена: база разошлась", id, found.Name)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": why, "text": string(was), "hash": now})
+		return
+	}
 	text := strings.TrimRight(body.Text, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("черновик не записался: %v", err)})
 		return
 	}
-	resp := map[string]string{"id": id, "file": rel, "message": fmt.Sprintf("текст %s записан", rel)}
+	resp := map[string]string{"id": id, "file": rel, "hash": draftHash([]byte(text)),
+		"message": fmt.Sprintf("текст %s записан", rel)}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "правка черновика с дашборда"), rel); note != "" {
 		resp["note"] = note
 		s.logf("правка черновика %s в %s: %s", id, found.Name, note)
@@ -348,20 +411,22 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := draftSession(id)
-	talk := s.tmuxTalk(found.Path)
+	// Живой разбор спрашивается тем же вопросом, что и правка текста: разойтись
+	// этим двум местам нельзя, иначе экран запирал бы редактор там, где второй
+	// грумер поднимается, и наоборот.
+	if busy := s.draftBusy(found.Path, id); busy != "" {
+		s.logf("грумминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, busy)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать грумминг поверх живой сессии нельзя, сначала стоп", id, busy)})
+		return
+	}
+	// Остаток прошлого разбора: сессия жива, а хода в ней нет. Повторный
+	// груминг по той же записи как раз с этого и начинается, и отказ тут стоял
+	// бы поперёк собственной кнопки экрана.
 	for _, name := range tmuxSessions() {
 		if name != sess && name != "goal-"+id {
 			continue
 		}
-		if !talk[name] {
-			s.logf("грумминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, name)
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать грумминг поверх живой сессии нельзя, сначала стоп", id, name)})
-			return
-		}
-		// Остаток прошлого разбора: сессия жива, а хода в ней нет. Повторный
-		// груминг по той же записи как раз с этого и начинается, и отказ тут
-		// стоял бы поперёк собственной кнопки экрана.
 		s.logf("грумминг %s в %s: остаток прошлого разбора в tmux-сессии %s снят", id, found.Name, name)
 		runProc("tmux", "kill-session", "-t", name)
 	}

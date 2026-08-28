@@ -120,8 +120,8 @@ func TestParseUsagePanel(t *testing.T) {
 		if err == nil {
 			t.Fatal("жду отказ: общий бакет обязателен")
 		}
-		if !strings.Contains(err.Error(), "не тронут") {
-			t.Fatalf("отказ без обещания не трогать снимок: %v", err)
+		if !strings.Contains(err.Error(), "week_all") {
+			t.Fatalf("отказ не называет недостающий бакет: %v", err)
 		}
 	})
 
@@ -159,8 +159,8 @@ func TestParseUsagePanel(t *testing.T) {
 		if err == nil {
 			t.Fatal("жду отказ: записывать в снимок нечего")
 		}
-		if !strings.Contains(err.Error(), "не тронут") {
-			t.Fatalf("отказ без обещания не трогать снимок: %v", err)
+		if !strings.Contains(err.Error(), "week_all") {
+			t.Fatalf("отказ не называет недостающий бакет: %v", err)
 		}
 	})
 
@@ -672,5 +672,96 @@ func sameFile(t *testing.T, path string, want []byte) {
 	}
 	if len(ents) != 1 {
 		t.Fatalf("в %s остался мусор от записи: %v", dir, ents)
+	}
+}
+
+// Панель клиента 2.1.251: недельный бакет на месте, а разбивки по моделям на
+// экране нет, её клиент подтягивает отдельно и в этом кадре не дождался.
+func TestParseUsagePanelV2251(t *testing.T) {
+	s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-v2251.txt"), testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+	if len(s.Buckets) != 1 {
+		t.Fatalf("бакетов %d, ждали один: %+v", len(s.Buckets), s.Buckets)
+	}
+	b := s.Buckets[0]
+	if b.Name != "week_all" || b.Used != 0.61 {
+		t.Fatalf("бакет разобран неверно: %+v", b)
+	}
+	if got := b.Reset.Format("2006-01-02T15:04"); got != "2026-08-31T15:00" {
+		t.Fatalf("сброс %s, ждали 2026-08-31T15:00", got)
+	}
+}
+
+// Отказ съёмщика показывают человеку, и по нему должно быть видно, что делать.
+func TestPanelFailure(t *testing.T) {
+	snapPath := filepath.Join(t.TempDir(), "claude-code.local")
+	framePath := filepath.Join(filepath.Dir(snapPath), "claude-code.pane.txt")
+
+	t.Run("верх панели уехал за край окна", func(t *testing.T) {
+		pane := readFixture(t, "usage-panel-cropped.txt")
+		q := specAt(t, snapPath)
+		_, err := parseUsagePanel(q, pane, testNow)
+		if err == nil {
+			t.Fatal("срезанная панель разобралась, тест бесполезен")
+		}
+		msg := panelFailure(q, pane, err).Error()
+		for _, want := range []string{"week_all", "не поместился в окно", framePath, "Снимок не тронут"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("в отказе нет %q: %s", want, msg)
+			}
+		}
+		frame, ferr := os.ReadFile(framePath)
+		if ferr != nil {
+			t.Fatalf("кадр панели не сохранён: %v", ferr)
+		}
+		if !strings.Contains(string(frame), "your limits usage") {
+			t.Fatalf("в кадре не тот экран: %.80s", frame)
+		}
+	})
+
+	t.Run("клиент упёрся в частоту обращений", func(t *testing.T) {
+		pane := readFixture(t, "usage-panel-ratelimit.txt")
+		msg := panelFailure(specAt(t, snapPath), pane, nil).Error()
+		if !strings.Contains(msg, "частоту обращений") {
+			t.Fatalf("отказ не называет причину: %s", msg)
+		}
+		if !strings.Contains(msg, framePath) {
+			t.Fatalf("отказ не ведёт к кадру панели: %s", msg)
+		}
+	})
+
+	t.Run("целая панель за отказ клиента не считается", func(t *testing.T) {
+		// Про частоту обращений панель пишет и внутри рабочего экрана, когда не
+		// дождалась одной только разбивки по моделям.
+		if why := panelBlocked(readFixture(t, "usage-panel-v2251.txt")); why != "" {
+			t.Fatalf("рабочая панель принята за отказ: %s", why)
+		}
+	})
+
+	t.Run("панель не открылась вовсе", func(t *testing.T) {
+		msg := panelFailure(specAt(t, snapPath), readFixture(t, "pane-ready.txt"), nil).Error()
+		if !strings.Contains(msg, "не нарисовал панель") {
+			t.Fatalf("отказ не про пустой экран: %s", msg)
+		}
+		if strings.Contains(msg, "не поместился в окно") {
+			t.Fatalf("отказ выдумал срезанный верх: %s", msg)
+		}
+	})
+
+	t.Run("целая панель за срезанную не считается", func(t *testing.T) {
+		if panelCropped(readFixture(t, "usage-panel-v2251.txt")) {
+			t.Fatal("целая панель принята за срезанную")
+		}
+	})
+}
+
+// Окно съёмщика должно вмещать панель целиком: на шестидесяти строках недельный
+// бакет уезжал выше видимой части, и снимок переставал вставать.
+func TestUsagePaneRows(t *testing.T) {
+	panel := strings.Count(readFixture(t, "usage-panel-v2251.txt"), "\n")
+	if usagePaneRows < panel*2 {
+		t.Fatalf("окно съёмщика %d строк при панели в %d, запаса на рост нет", usagePaneRows, panel)
 	}
 }

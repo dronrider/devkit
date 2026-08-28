@@ -29,6 +29,15 @@ const (
 	usagePartialGrace = 3 * time.Second
 )
 
+// Размер окна съёмщика. Панель /usage подросла, под бакетами клиент рисует
+// разбор расхода за сутки, и на шестидесяти строках недельный бакет уезжал выше
+// видимой части, а capture-pane отдаёт только её. Высота взята с запасом на
+// дальнейший рост разбора, лишние строки окна ничего не стоят.
+const (
+	usagePaneCols = 200
+	usagePaneRows = 200
+)
+
 // usageCommand это то, что набирается в строке ввода клиента.
 const usageCommand = "/usage"
 
@@ -110,17 +119,17 @@ func parseUsagePanel(q *quotaSpec, text string, now time.Time) (snapshot, error)
 			continue
 		}
 		if b.Reset.IsZero() {
-			return snapshot{}, fmt.Errorf("у бакета %s в панели нет даты сброса: панель могла измениться, снимок не тронут", name)
+			return snapshot{}, fmt.Errorf("у бакета %s в панели нет даты сброса", name)
 		}
 		// Молча записанный ноль читался бы как нетронутый бакет, то есть как
 		// профицит: непрочитанный процент честнее превратить в отказ.
 		if !gotPercent[name] {
-			return snapshot{}, fmt.Errorf("у бакета %s в панели не нашлось процента: панель могла измениться, снимок не тронут", name)
+			return snapshot{}, fmt.Errorf("у бакета %s в панели не нашлось процента", name)
 		}
 		s.Buckets = append(s.Buckets, *b)
 	}
 	if _, ok := s.bucket(q.Required); !ok {
-		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s: панель могла измениться, снимок не тронут", q.Required)
+		return snapshot{}, fmt.Errorf("в панели не нашлось бакета %s", q.Required)
 	}
 	return s, nil
 }
@@ -359,7 +368,7 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
-	if out, err := tmuxRun("new-session", "-d", "-s", session, "-x", "200", "-y", "60", "claude"); err != nil {
+	if out, err := tmuxRun("new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows), "claude"); err != nil {
 		return snapshot{}, fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
 	}
 	defer tmuxRun("kill-session", "-t", session)
@@ -391,16 +400,112 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	}
 
 	w := panelWaiter{}
-	if err := waitPane(session, usagePanelTimeout, func(text string) bool {
-		s, err := parseUsagePanel(q, text, now)
-		if err != nil {
+	var why error
+	err := waitPane(session, usagePanelTimeout, func(text string) bool {
+		pane = text
+		// Отказ клиента ждать бессмысленно, он держится до нажатия «r», так что
+		// ожидание обрывается на нём и не съедает свои двадцать пять секунд.
+		if panelBlocked(text) != "" {
+			return true
+		}
+		s, perr := parseUsagePanel(q, text, now)
+		why = perr
+		if perr != nil {
 			return false
 		}
 		return w.accept(s, time.Now())
-	}); err != nil {
-		return snapshot{}, fmt.Errorf("панель /usage не узналась за %s: разметка могла измениться, снимок не тронут (образцы панели лежат в tools/agentctl/testdata)", usagePanelTimeout)
+	})
+	if panelBlocked(pane) != "" || err != nil {
+		return snapshot{}, panelFailure(q, pane, why)
 	}
 	return w.snap, nil
+}
+
+// panelFailure объясняет, почему съёмщик ушёл ни с чем. Отказ по одному
+// таймауту бесполезен, разбор спотыкается о живой экран, которого в отказе не
+// видно. Поэтому последний кадр панели ложится файлом рядом со снимком, путь к
+// нему называется прямо в отказе, и дальше разбор чинится по кадру.
+func panelFailure(q *quotaSpec, pane string, why error) error {
+	var b strings.Builder
+	switch blocked := panelBlocked(pane); {
+	case blocked != "":
+		b.WriteString(blocked)
+	case !panelSeen(pane):
+		fmt.Fprintf(&b, "клиент не нарисовал панель %s за %s.", usageCommand, usagePanelTimeout)
+	case why == nil:
+		fmt.Fprintf(&b, "панель %s открылась, но так и не устоялась за %s.", usageCommand, usagePanelTimeout)
+	default:
+		fmt.Fprintf(&b, "панель %s открылась, но за %s разобрать её не вышло, потому что %v.", usageCommand, usagePanelTimeout, why)
+	}
+	if panelCropped(pane) {
+		b.WriteString(" Верх панели не поместился в окно съёмщика, и строки бакетов ушли выше видимой части.")
+	}
+	if path, err := saveFrame(q, pane); err == nil {
+		fmt.Fprintf(&b, " Кадр панели лежит в %s, по нему видно, что съёмщик прочитал с экрана.", path)
+	} else {
+		fmt.Fprintf(&b, " Кадр панели сохранить не удалось (%v).", err)
+	}
+	b.WriteString(" Снимок не тронут.")
+	return errors.New(b.String())
+}
+
+// panelBlocked узнаёт отказ, который клиент печатает вместо цифр, и переводит
+// его на человеческий. Слова берутся точные. Строку про частоту обращений
+// панель печатает и внутри целого экрана, когда не дождалась одной только
+// разбивки по моделям, и там она отказом не является.
+func panelBlocked(pane string) string {
+	low := strings.ToLower(ansiRe.ReplaceAllString(pane, ""))
+	if strings.Contains(low, "usage endpoint is rate limited") {
+		return "клиент упёрся в частоту обращений к панели /usage и цифр не показал. Снимок встанет следующей попыткой, лимит подписки тут ни при чём."
+	}
+	return ""
+}
+
+// panelSeen отвечает, дорисовалась ли вообще панель расхода. Слова взяты те,
+// что панель печатает и в целом виде, и когда верх уехал за край окна.
+func panelSeen(pane string) bool {
+	low := strings.ToLower(ansiRe.ReplaceAllString(pane, ""))
+	for _, mark := range []string{"current week", "current session", "of your usage", "your limits usage"} {
+		if strings.Contains(low, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// panelCropped отвечает, срезан ли верх панели. Панель начинается полосой
+// вкладок, и когда её на экране нет, а разбор расхода под бакетами есть, значит
+// панель длиннее окна и бакеты уехали вверх.
+func panelCropped(pane string) bool {
+	if !panelSeen(pane) {
+		return false
+	}
+	for _, raw := range strings.Split(pane, "\n") {
+		low := strings.ToLower(ansiRe.ReplaceAllString(raw, ""))
+		if strings.Contains(low, "settings") && strings.Contains(low, "usage") && strings.Contains(low, "stats") {
+			return false
+		}
+	}
+	return true
+}
+
+// saveFrame кладёт кадр панели рядом со снимком, под своим именем. Снимок
+// читают утилиты, кадр читает человек, и путать их нельзя.
+func saveFrame(q *quotaSpec, pane string) (string, error) {
+	if q.Path == "" {
+		return "", errors.New("в профиле нет пути снимка")
+	}
+	if strings.TrimSpace(pane) == "" {
+		return "", errors.New("экран оказался пустым")
+	}
+	path := strings.TrimSuffix(q.Path, filepath.Ext(q.Path)) + ".pane.txt"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(ansiRe.ReplaceAllString(pane, "")), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // panelWaiter решает, когда разобранной панели можно верить. Панель приезжает

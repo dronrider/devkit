@@ -1039,6 +1039,52 @@ func TestStaticGroomRunsWithoutConfirm(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Живой случай пользователя: чат записи накопителя открыли пустым, следом
+// подняли разбор, кружок ожил, а лента осталась пустой до перезагрузки. Всё
+// пришивание было заперто на адрес new, а чат записи открывается её же ID.
+func TestStaticGroomSewsPanel(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд пришивания разбора пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_groomsew.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("пришивание панели записи: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Тот же случай со стороны кода: подъём разбора называет свою сессию, пустая
+// панель с привязкой ждёт её опросом, а ворота пачки судят по живой работе, а
+// не по памяти подъёма (иначе повторный разбор запирался бы на четверть часа).
+func TestStaticGroomLiftAndGate(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	groom := funcBody(t, app, "async function groomDraft(")
+	for _, want := range []string{"markRunLive(project, id, r.body.session)",
+		"chatSewHere(project, id, r.body.session)"} {
+		if !strings.Contains(groom, want) {
+			t.Errorf("подъём разбора не оставляет следа сессии: нет %q", want)
+		}
+	}
+	if !strings.Contains(app, "function chatSewHere(") {
+		t.Error("опрос реестра с уже открытой панели заводить нечем")
+	}
+	// Пустая панель с привязкой ждёт сессию тем же опросом, что и адрес new.
+	if !strings.Contains(app, "if (!again && (chatIsNew(st.addr) || (!st.sid && st.task))) {") {
+		t.Error("пустая панель записи не заводит опроса реестра: разбор доедет перезагрузкой")
+	}
+	state := funcBody(t, app, "async function chatState(")
+	if !strings.Contains(state, `chatLiftOf(project, CHAT_NEW + ":" + st.task) ||`) ||
+		!strings.Contains(state, "workSession(st.task, works)") {
+		t.Error("панель записи не берёт имя поднявшейся сессии ни из памяти подъёма, ни из работ")
+	}
+	start := funcBody(t, app, "async function draftGroomStart(")
+	if !strings.Contains(start, "workBusy(id, works)") {
+		t.Error("ворота пачки судят идущий разбор памятью подъёма, а не живой работой")
+	}
+}
+
 // Живой случай DK-482..486: разбор пачки поднял пять сессий, агенты работали, а
 // чаты в панели стояли пустыми. Записи этих сессий легли в реестр дома машины,
 // а дашборд со своим домом читал свой файл. Две половины починки: заказ разбора

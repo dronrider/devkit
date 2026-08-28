@@ -7018,6 +7018,22 @@ function taskLively(project, id, works) {
 const WORK_BUSY = "busy";
 const WORK_WAIT = "waiting";
 
+// Идущая работа задачи или записи накопителя, как её видит tmux. Отличается от
+// taskLively тем, что памяти подъёма не спрашивает: та живёт четверть часа и
+// после умершей сессии, и там, где решают «поднимать ли», нужна правда о tmux.
+function workBusy(id, works) {
+  const w = (works || shownWorks || []).find((x) => x.id === id);
+  return w && (w.live === WORK_BUSY || w.live === WORK_WAIT) ? w : null;
+}
+
+// Имя tmux идущей работы. По нему пустая панель находит сессию, которой ещё нет
+// в списке чатов: реестр чатов собирается из транскриптов, и разговор
+// появляется в нём с первой репликой агента, а работа видна в tmux сразу.
+function workSession(id, works) {
+  const w = workBusy(id, works);
+  return (w && w.session) || "";
+}
+
 // chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
 // Узнавание двумя ключами по убыванию силы: имя tmux-сессии подъёма, если
 // персист его помнит, и сама первая реплика, ведь она уехала клиенту первым
@@ -7158,7 +7174,7 @@ function chatsURL(project) {
 // проектный: диалог ищут по всем проектам разом, и переключение на чужой не
 // требует смены проекта доски. Приезжает он целиком и фильтруется на клиенте:
 // переключатель фильтра тогда работает мгновенно, без похода на сервер.
-async function chatState(project, addr, board) {
+async function chatState(project, addr, board, works) {
   const st = { addr, sid: "", task: "", chats: [], entry: null, note: "",
     error: "", models: [], fresh: false, lost: false, project };
   if (chatIsNew(addr)) {
@@ -7225,6 +7241,14 @@ async function chatState(project, addr, board) {
     const kept = want && list.find((c) => c.id === want);
     if (kept) st.sid = kept.id;
     else if (list.length) st.sid = list[0].id;
+  }
+  // Память подъёма живёт не только у адреса new: разбор записи накопителя
+  // поднимают кнопкой её строки, а чат по ней открывают тем же ID, каким
+  // открывают чат задачи. Панель с привязкой и без диалога ждёт ровно ту же
+  // сессию, что и адрес new, и плашка с запертым полем ей нужна та же.
+  if (!st.sid && st.task && !st.lift) {
+    st.lift = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
+      workSession(st.task, works);
   }
   st.entry = st.chats.find((c) => c.id === st.sid) || null;
   // Проект самого разговора: список общий по машине, и открытый чат бывает не
@@ -8705,6 +8729,15 @@ async function chatByTmux(project, name) {
 // пришивает панель к найденному диалогу: память адреса подъёма вычищается,
 // панель переезжает на живой sid. Уводить человека с другого экрана нельзя,
 // поэтому каждый заход сверяется с адресом панели.
+// Панель уже стоит на этом адресе: пересобирать её незачем, а опрос реестра
+// завести надо. Своего опроса её сборка не завела: имени сессии тогда ещё не
+// было, оно рождается нажатием, которое идёт позже.
+function chatSewHere(project, id, name) {
+  const here = chatAddrParts(project, route().chat || "");
+  if (here.project !== project || here.addr !== id) return;
+  chatSewLoop(project, name, route().chat, 2000, 150).catch(console.error);
+}
+
 async function chatSewLoop(project, name, addr, step, tries) {
   for (let i = 0; i < tries; i += 1) {
     await new Promise((ok) => setTimeout(ok, step));
@@ -9945,15 +9978,21 @@ function chatPanel(project, st) {
     chatLive.push(busy.off);
     // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
     // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-    if (chatIsNew(st.addr) && (echo.waiting() || st.lift)) busy.raise();
+    if (chatIsNew(st.addr) ? (echo.waiting() || st.lift) : (!st.sid && st.lift)) busy.raise();
     // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
     // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
     // только сессия назовётся, панель переедет на живой sid и покажет
     // транскрипт (пришивание, вторая половина chatSewn).
-    if (!again && chatIsNew(st.addr)) {
+    // Ждёт сессию не только адрес new: чат записи накопителя открывают её же
+    // ID, разбор поднимают отдельной кнопкой, и панель для такого адреса
+    // собирается один раз (живой случай: человек открыл пустой чат записи,
+    // поднял разбор, кружок ожил, а лента осталась пустой до перезагрузки).
+    if (!again && (chatIsNew(st.addr) || (!st.sid && st.task))) {
       const names = echo.raised();
-      // Имя подъёма берётся у реплики, а нет её, так у запуска конвейера: ждут
-      // они одного и того же, сессии, которая вот-вот назовётся.
+      // Имя подъёма берётся у реплики, а нет её, так у запуска работы: у
+      // конвейера задачи и у разбора записи это память подъёма, а у идущей
+      // работы её живая tmux-сессия. Ждут они одного и того же, сессии,
+      // которая вот-вот назовётся.
       const name = names.length ? names[names.length - 1] : st.lift;
       if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
     }
@@ -9974,7 +10013,7 @@ function chatPanel(project, st) {
     } else if (!st.sid) {
       if (!again) {
         say(feed, "empty", st.lift
-          ? "конвейер поднят, сессия " + st.lift + " вот-вот назовётся в реестре: " +
+          ? "работа поднята, сессия " + st.lift + " вот-вот назовётся в реестре: " +
             "разговор откроется сам, ждать нажатий не надо"
           : st.fresh
           ? "новый чат: напишите первую реплику, она и поднимет сессию"
@@ -10363,7 +10402,7 @@ async function paintChat(project, addr, board, works) {
     panel.classList.add("cload");
   }
   const rows = board || await chatBoardOf(project);
-  const st = await chatState(project, addr, rows);
+  const st = await chatState(project, addr, rows, works);
   if (gen !== chatGen) return;
   // Ручки разговора живут при его собственном проекте: транскрипт ищется по
   // дереву проекта, и лента чужого разговора, спрошенная у соседней доски,
@@ -10461,6 +10500,14 @@ async function groomDraft(project, id, afterOk, harness, tier) {
     "/drafts/" + encodeURIComponent(id) + "/groom",
     { method: "POST", body: order });
   const said = r.body.message || r.body.error || "";
+  // Имя поднятой сессии остаётся следом: по нему моргает кнопка чата записи,
+  // пока разбор идёт, а пустая панель, открытая по этой записи, ждёт ту же
+  // сессию и переезжает на неё, как только та назовётся в реестре. Без следа
+  // панель молчала до перезагрузки страницы (живой случай пользователя).
+  if (r.ok && r.body.session) {
+    markRunLive(project, id, r.body.session);
+    chatSewHere(project, id, r.body.session);
+  }
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);
     sayResult(said, false);
@@ -10613,7 +10660,12 @@ function draftRunBarFill(bar, project, works) {
 async function draftGroomStart(project, works, harness, tier) {
   const picked = [...draftPick];
   if (!picked.length) return 0;
-  const going = picked.filter((id) => taskLively(project, id, works));
+  // Идущий разбор тут судится живой работой, а не памятью подъёма: память
+  // живёт четверть часа и после умершей сессии, и повторный разбор той же
+  // записи она запирала бы на всё это время. Кнопке чата память нужна ровно
+  // затем, чтобы моргать между нажатием и первым ходом сессии, а воротам
+  // пачки нужна правда о tmux.
+  const going = picked.filter((id) => Boolean(workBusy(id, works)));
   const todo = picked.filter((id) => !going.includes(id));
   if (!todo.length) {
     sayResult("разбор идёт у всех выбранных записей (" + going.join(", ") +

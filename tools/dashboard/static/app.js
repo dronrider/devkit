@@ -893,12 +893,6 @@ function numWord(n) {
   return NUM_WORDS[n] || String(n);
 }
 
-// Витки цели платятся выбранной подпиской наравне с задачей: имя едет оболочке
-// цикла флагом --harness, и она поднимает витки её клиентом. Прежде выбора у
-// цели не было вовсе, а сервер отвечал на него отказом (замечание
-// пользователя).
-const GOAL_HARNESS_TIP = "витки цели пойдут на выбранной подписке: имя едет оболочке цикла";
-
 // Строка списка подписок: одна полоса на подписку, и на ней имя с остатком
 // квоты двумя числами. Прежняя строка везла имя, чип «по умолчанию», две
 // полоски-градусника с датами сброса и возраст снимка, то есть четыре яруса на
@@ -2685,21 +2679,6 @@ function sayDrop(text, undo) {
   resultToast = toast({ parts: [body, back], body, life: DROP_LIFE, cls: "res" });
 }
 
-// Кнопка заведения на доске проекта: мысль приходит вне машины, а не в тот
-// момент, когда открыта нужная доска. На главной такой полосы больше нет,
-// заведение живёт плюсом у самой карточки проекта.
-function newTaskButton(project, label) {
-  const btn = el("button", "btn btn-acc", label);
-  // Что заводят, спрашивает выпадашка у самой кнопки: поля черновика и поля
-  // строки доски живут на разных формах, и выбор между ними стоит одного
-  // нажатия, а не отдельного экрана (решение пользователя).
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    makeMenuAt(btn, project);
-  });
-  return btn;
-}
-
 // Слагаемые ранга по RANKING.md: имя, короткая подсказка и допустимые
 // значения. Правятся по месту списком, а не полем ввода: на телефоне это
 // родной барабан, и невозможного значения в списке просто нет. Сумму R и
@@ -3210,20 +3189,12 @@ function orderHint(order, accept, sect, id) {
   return "Конвейер получит заказ «" + order + "» в tmux-сессии task-" + id + ".";
 }
 
-// Где поднимется работа: подпись кнопки называет заказ дословно, а надпись
-// рядом про место, откуда за ним смотреть.
-function taskActionHint(isGoal, row, id) {
-  if (isGoal) {
-    return "Цель поведёт оболочка goal-run в tmux-сессии goal-" + id +
-      ", состояние следующий виток прочтёт с диска.";
-  }
-  const tip = orderHint(row.order, row.accept, row.sect, id);
-  if (row.sect === "check" && row.accept === "user") return tip;
-  const hint = tip || ("Задачу поднимет headless-сессия конвейера доски в tmux-сессии task-" + id + ".");
-  return row.sect === "check"
-    ? hint + " Агентский сценарий он прогонит сам, пользовательский оставит человеку."
-    : hint;
-}
+// Надписи под полосой действий больше нет вовсе. Она пересказывала устройство
+// («конвейер получит заказ в tmux-сессии task-DK-452, поедет на такую-то
+// подписку») там, где человек жмёт кнопку с понятной подписью, и стояла
+// плашкой в самом начале экрана (замечание пользователя). Заказ и подписка
+// никуда не делись: заказ остался подсказкой самой кнопки, а подписку
+// называет её выпадашка.
 
 // Полоса действий задачи: у живой работы её экран и стоп, у стоящей действие
 // по статусу строки теми же словами, что и на доске. Собрана отдельной
@@ -3299,9 +3270,9 @@ function taskActions(project, id, row, works) {
     // погашенной с причиной, а не пропадает с полосы.
     const wait = barBtn("btn", label, "i-play");
     wait.disabled = true;
+    // Чего ждёт задача, сказано подсказкой кнопки и карточкой зависимостей
+    // ниже. Третьей строкой то же самое стояло плашкой поперёк экрана.
     out.push(withTip(wait, "сначала " + row.after.join(", ")));
-    out.push(el("span", "hint", "Задача ждёт " + row.after.join(", ") +
-      ": пока маркер стоит, конвейер её не возьмёт."));
     return out;
   }
   // Удачный запуск ведёт на экран этой работы: до DK-286 нажатие оставляло
@@ -3325,13 +3296,6 @@ function taskActions(project, id, row, works) {
     pin ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id), afterOk, pin, null,
     isGoal ? { list: harnessTiers(), now: RUN_TIER }
       : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT }));
-  let hint = taskActionHint(isGoal, row, id);
-  // Причина, по которой выбирать не из чего, стоит в той же подписи под
-  // полосой: на широком экране место для неё есть, и подсказкой по наведению
-  // она бы там пряталась.
-  const why = harnessWhy() + (isGoal && harnesses().length > 1 ? ", " + GOAL_HARNESS_TIP : "");
-  if (why) hint += " " + why.charAt(0).toUpperCase() + why.slice(1) + ".";
-  out.push(el("span", "hint", hint));
   return out;
 }
 
@@ -3469,10 +3433,9 @@ function formPage(cfg) {
     back.addEventListener("click", step.go);
     crumb.append(back);
   });
-  // Номер второй раз, мелким: на телефоне доска, номер и статус стоят одной
-  // строкой, и большой номер рядом с заголовком там прячется стилями.
-  for (const chip of cfg.crumbChips || []) crumb.append(chip);
-  page.append(keyed(crumb, cfg.key + "-crumb"));
+  // Крошек может не быть вовсе (экран задачи: дорога на доску живёт названием
+  // проекта в шапке): пустая строка встала бы над заголовком своим отступом.
+  if (crumb.children.length) page.append(keyed(crumb, cfg.key + "-crumb"));
   for (const node of cfg.lead || []) page.append(node);
 
   // Шапка: крупный номер и заголовок. Полем он правится там, где лежит строкой
@@ -3827,13 +3790,11 @@ function goDraftInstead(project, id) {
 function taskShell(project, id) {
   const groups = document.getElementById("groups");
   const page = el("div", "tpage");
-  const crumb = el("div", "crumb");
-  const back = el("span", "crumb-back", "Доска " + project);
-  back.addEventListener("click", () => { goKeepingChat(project); });
-  crumb.append(back, el("span", "idsm", id));
+  // Крошек у экрана задачи нет, и оболочка их не рисует: иначе первый же ход
+  // показывал бы строку, которая тут же пропадёт под настоящим экраном.
   const card = el("div", "card");
   card.append(el("div", "hint", "Читаем " + id + "..."));
-  page.append(crumb, card);
+  page.append(card);
   // Оболочка встаёт тем же ключом, что и настоящий экран, и с отпечатком,
   // какого у данных не бывает: приехавшая строка сменит её одной подменой
   // узла, а не пересборкой коробки.
@@ -3896,26 +3857,25 @@ async function renderTask(project, works, id, pre) {
   // Готовый узел встаёт на место прежнего одной подменой, а не на опустевшей
   // коробке: список тогда не теряет прокрутку.
   const place = (page) => { sync(groups, [{ key: TASK_PKEY, sign, make: () => page }]); };
-  const board = { text: "Доска " + project, go: () => { goKeepingChat(project); } };
 
   if (!r.ok) {
     const page = el("div", "tpage");
-    const crumb = el("div", "crumb");
-    const back = el("span", "crumb-back", board.text);
-    back.addEventListener("click", board.go);
     const card = el("div", "card");
     card.append(el("div", "error", r.body.error || "задача не прочиталась"));
-    page.append(crumb, card);
-    crumb.append(back);
+    page.append(card);
     place(page);
     return;
   }
   const detail = r.body;
   const row = detail.row || {};
-  const crumbChips = [el("span", "idsm", row.id)];
-  if (row.section) crumbChips.push(el("span", "chip", row.section));
+  // Крошек у экрана задачи нет вовсе. Ссылка на доску переехала в название
+  // проекта наверху страницы, а номер стоит крупно над заголовком: строка с
+  // тем же номером и той же ссылкой была третьим показом одного и того же
+  // (разбор пользователя). Состояние строки и дата правки уехали в полосу
+  // чипов, к типу с ценой.
+  const stateChips = [];
   if (row.moved) {
-    crumbChips.push(withTip(el("span", "stale dashed", row.moved), whenTip(row.moved)));
+    stateChips.push(withTip(el("span", "stale dashed", row.moved), whenTip(row.moved)));
   }
 
   // Закрытая задача открывается чтением: строки на доске у неё нет, править
@@ -3923,9 +3883,9 @@ async function renderTask(project, works, id, pre) {
   // Прежде выдача поиска высаживала на такой задаче отказ, и нажатие на
   // найденную строку выглядело сломанным (замечание 4).
   if (row.closed) {
-    crumbChips.push(el("span", "chip c-check", "закрыта " + row.closed));
     place(formPage({
-      key: "task", project, id, detail, crumb: [board], crumbChips,
+      key: "task", project, id, detail,
+      chips: [el("span", "chip c-check", "закрыта " + row.closed)].concat(stateChips),
       num: row.id, titleText: row.title || id,
       form: { text: detail.text || "" },
       has: { file: true, read: true, chat: true },
@@ -3949,7 +3909,11 @@ async function renderTask(project, works, id, pre) {
   // «продолжить или не трогать» принимают чаще всего на этом экране. Признаки
   // живости и этап работы переехали сюда с экрана агента (DK-435): разговор
   // ушёл в панель, а чем занята задача и кто её ведёт это предмет самой задачи.
-  const chips = [liveChip(work), stageChip(row), waitChip(row)].filter(Boolean);
+  // Состояние строки идёт первым чипом полосы: раньше оно стояло отдельной
+  // строкой над заголовком, рядом со ссылкой на доску, и полоса с типом, ценой
+  // и бакетом начиналась мимо него (решение пользователя).
+  const chips = [row.section ? el("span", "chip", row.section) : null,
+    liveChip(work), stageChip(row), waitChip(row)].filter(Boolean);
   if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
@@ -3957,6 +3921,7 @@ async function renderTask(project, works, id, pre) {
   if (row.block) tail.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const check = checkChip(row);
   if (check) tail.push(check);
+  for (const chip of stateChips) tail.push(chip);
 
   const patchBody = () => {
     const out = {};
@@ -3982,7 +3947,7 @@ async function renderTask(project, works, id, pre) {
   }
 
   const view = formPage({
-    key: "task", project, id, detail, crumb: [board], crumbChips,
+    key: "task", project, id, detail,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
@@ -11574,22 +11539,11 @@ async function renderDraft(project, works, id) {
 const DRAFT_NOTE_HEAD = "Черновику доступен только груминг.";
 const DRAFT_NOTE = "Задачи на доске у него нет, в работу его не взять: " +
   "ранг и тип выдаст разбор накопителя, он же заведёт задачу.";
-const DRAFT_HINT = "Ляжет в docs/tasks/drafts/, ID выдаст taskctl. " +
-  "На доске его не будет, пока груминг не заведёт задачу.";
-// Куда ведёт каждая кнопка записи, словами (LLD DK-354, решение 5). Прежде
-// между ними стояла карточка «Черновик записан» с кнопками «Записать ещё» и
-// «На доску»: обе её дороги теперь закрыты возвратами самих кнопок.
-const DRAFT_GO_HINT = "«Сохранить» вернёт в накопитель, оттуда же пишется " +
-  "следующая запись. «Сохранить и грумить» поднимет разбор и откроет экран " +
-  "записи с его ходом.";
-const FULL_HINT = "Встанет в Backlog сразу, место выведется из ранга. " +
-  "Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой. " +
-  "После заведения откроется карточка задачи.";
-// Взять в работу можно только сохранённое: у ненаписанной строки нет ни ID,
-// ни статуса, по которому конвейер выбирает заказ. Кнопки запуска на этом
-// экране нет вовсе, и сказано это словами, а не погашенной кнопкой.
-const NEW_RUN_HINT = "Взять в работу можно с карточки задачи: до заведения " +
-  "у неё нет ни ID, ни статуса, от которого конвейер берёт заказ.";
+// Подписей под формой заведения больше нет ни у черновика, ни у задачи. Они
+// пересказывали устройство (куда ляжет файл, кто выдаст ID, что откроется
+// после записи) и объясняли кнопки, чьи подписи и без того их называют
+// (замечание пользователя). Что остаётся черновику, сказано пометкой сверху,
+// и это единственная его особенность, которой не видно глазами.
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 
 // Черновик пишется по SCQA, и подсказка поля говорит это словами, а не ждёт,
@@ -11716,15 +11670,11 @@ function renderNew(project, kind) {
   reason.setAttribute("aria-label", "причина непригодности обхода");
   reason.addEventListener("input", () => { newForm.reason = reason.value; view.touch(); });
   reasonField.append(reason);
-  box.append(el("div", "hint", P_HINT), acceptBox, el("div", "hint", ACCEPT_HINT),
-    barrierHint, reasonField);
-
-  // Взять в работу с формы нечего, и сказано это словами, а не погашенной
-  // кнопкой: у ненаписанной строки нет ни ID, ни статуса, по которому конвейер
-  // выбирает заказ.
-  const hint = el("div", "hint", draft ? DRAFT_HINT : FULL_HINT);
-  const runHint = el("div", "hint", NEW_RUN_HINT);
-  const goHint = el("div", "hint", DRAFT_GO_HINT);
+  // Подписи про бакет P на форме нет: самого бакета тут не показано, ставить
+  // его нечем, и надпись отвечала на незаданный вопрос. Вид приёмки с барьером
+  // остаётся подписан: он решает, кто будет проверять работу, и по одному
+  // слову в списке этого не прочесть.
+  box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField);
 
   let view = null;
   // Обе кнопки записи ходят одной ручкой и расходятся только дорогой после
@@ -11767,7 +11717,7 @@ function renderNew(project, kind) {
     // «Записать ещё» и «На доску» между ними нет: обе её дороги закрыты
     // возвратами самих кнопок.
     saveMore: draft ? { label: "Сохранить и грумить", onSave: () => { saveDraft(true); } } : null,
-    actions: draft ? [hint, goHint] : [hint, runHint],
+    actions: [],
     check: () => {
       if (view) paint();
       // Рубежи те же, что у ручек: поправка на баг не про новую работу, строки
@@ -12338,7 +12288,10 @@ function homeMenuShut() {
 // человеку лишнего перехода там, где хватает выпадашки (решение пользователя).
 // Закрывается меню теми же тремя путями, что остальные всплывашки дашборда:
 // повторным нажатием, кликом мимо и Escape.
-function makeMenuAt(btn, project) {
+// host это узел, внутри которого ляжет меню: по умолчанию сосед кнопки, а
+// кнопке шапки меню кладётся в неё саму, потому что место всплывашке задаёт
+// ближайший предок с position, и у ряда значков шапки такого предка нет.
+function makeMenuAt(btn, project, host) {
   const had = homeMenu;
   homeMenuShut();
   // Повторное нажатие по той же кнопке закрывает меню, а не собирает его
@@ -12360,7 +12313,7 @@ function makeMenuAt(btn, project) {
     });
     menu.append(opt);
   }
-  btn.parentNode.append(menu);
+  (host || btn.parentNode).append(menu);
   homeMenu = menu;
   homeMenuHeld = popupHold(menu, homeMenuShut);
 }
@@ -12741,14 +12694,24 @@ function agentRow(project, w, now) {
   const row = el("tr", "arow");
   const addr = workChatAddr(w);
   const tips = [];
-  if (addr) tips.push("Открыть разговор этой работы");
+  // Нажатие по строке ведёт туда же, куда ведёт строка доски: на экран задачи,
+  // за которой идёт работа. Прежде оно открывало чат, и кнопка чата в той же
+  // строке делала ровно это же, а до самой задачи со списка сессий было не
+  // добраться иначе как ссылкой на номер (замечание пользователя). У работы без
+  // задачи (разговор без строки) своего экрана нет, и там нажатие остаётся
+  // входом в разговор.
+  const go = w.id
+    ? () => { goKeepingChat(project + "/" + w.id); }
+    : (addr ? () => { openChat(chatAddr(project, addr)); } : null);
+  if (w.id) tips.push("Открыть задачу " + w.id);
+  else if (addr) tips.push("Открыть разговор этой работы");
   // Слова про внешнюю сессию тут те же, что у чипа и у хвоста строки: одно и
   // то же не должно объясняться тремя способами (решение пользователя).
   if (!agentOwn(w)) tips.push(WORK_FOREIGN_TIP);
   if (tips.length) row.title = tips.join(". ");
-  if (addr) {
+  if (go) {
     row.classList.add("atalk");
-    row.addEventListener("click", () => { openChat(chatAddr(project, addr)); });
+    row.addEventListener("click", go);
   }
   const said = workLive(w);
   // Кружок несёт состояние цветом и бегом, и он же говорит его словами: чип
@@ -13489,7 +13452,10 @@ async function paint() {
     sess: (current.works || []).length,
     drafts: current.drafts || 0,
   });
-  headName(current.name);
+  // Внутри проекта заголовок шапки это вход на его доску: экран задачи, форма
+  // заведения, сессии и накопитель уходят с него одним нажатием. Доска ниже
+  // ставит тот же заголовок со своей подсказкой.
+  headName(current.name, "", () => { goKeepingChat(current.name); });
   if (rt.make) {
     // Форме заведения доска не нужна: лишний поход за ней стоил бы своего
     // подпроцесса taskctl на каждый фокус окна.
@@ -13552,7 +13518,9 @@ async function paint() {
     // Экрану задачи доска не нужна: строку он читает своей ручкой, а живые
     // работы приезжают тем же ответом, что и список проектов. Поход за доской
     // стоил тут целого круга по сети и подпроцесса taskctl на каждый переход.
-    document.getElementById("psub").textContent = rt.id;
+    // Номера задачи в шапке страницы нет: он же стоит крупно над заголовком, а
+    // на телефоне это был третий его показ подряд (замечание пользователя).
+    document.getElementById("psub").textContent = "";
     markNav(rt);
     // Заказ отдаётся экрану только если он про тот же проект: имя из адреса и
     // выбранный проект расходятся, когда в адресе стоит незнакомая доска.
@@ -13580,7 +13548,8 @@ async function paint() {
   // (замечание пользователя). Приписка говорит, что за экран открыт, а знание
   // осталось подсказкой на самом названии проекта: там его берут, когда надо.
   document.getElementById("psub").textContent = "задачи проекта";
-  headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""));
+  headName(current.name, "доска docs/TASKS.md" + (board.prefix ? ", префикс " + board.prefix : ""),
+    () => { goKeepingChat(current.name); });
   // Данные те же, что и в прошлый заход: списка не касаемся вовсе. Строку
   // задачи двигает человек, а не время, и перебирать сотню строк каждые
   // три секунды (столько ходит круг у живой работы) незачем: перерисовка по
@@ -13599,10 +13568,23 @@ async function paint() {
 // Заголовок раздела в шапке: имя и подсказка ставятся одним заходом. Порознь
 // подсказка переживала переход на соседний экран и висела там, объясняя чужое
 // название.
-function headName(name, tip) {
+// Куда ведёт название проекта в шапке. Обработчик садится на узел один раз, а
+// не при каждой отрисовке: заголовок переживает переход, и вешать на него по
+// слушателю на заход значило бы копить их сотнями.
+let headGo = null;
+document.getElementById("pname").addEventListener("click", () => {
+  if (headGo) headGo();
+});
+
+// go это дорога с названия: с экрана внутри проекта заголовок читается «Доска
+// devkit» и ведёт на неё. Своей ссылки на доску экран задачи больше не носит,
+// она стояла второй такой же строкой ниже (решение пользователя).
+function headName(name, tip, go) {
   const node = document.getElementById("pname");
-  node.textContent = name;
+  headGo = go || null;
+  node.textContent = go ? "Доска " + name : name;
   node.title = tip || "";
+  node.classList.toggle("hgo", Boolean(go));
   return node;
 }
 
@@ -13673,8 +13655,20 @@ document.getElementById("chats").addEventListener("click", () => {
   if (shownProject) location.hash = shownProject + "/chat/" + addr;
 });
 
+// Кнопка заведения в шапке спрашивает вид тем же меню, что плюс карточки
+// проекта и плавающий плюс телефона. Прежде она вела прямо на форму задачи, и
+// завести черновик с доски было нечем вовсе (замечание пользователя): дорога к
+// нему оставалась одна, через накопитель.
+document.getElementById("make-btn").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  const btn = document.getElementById("make-btn");
+  const project = shownProject || route().proj;
+  // Проекта нет вовсе (пустой конфиг, оборванная связь): заводить некуда, и
+  // меню обещало бы форму, которой не откроется.
+  if (project) makeMenuAt(btn, project, btn);
+});
+
 for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
-  ["make-btn", "/new"],
   ["nav-lld", "/lld"], ["bell", "/feed"], ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без

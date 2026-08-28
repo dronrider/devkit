@@ -14,10 +14,11 @@ const under = new URLSearchParams(location.search).get("bar") === "under";
 const BAR = `
 <div class="card abar"><button class="btn btn-acc">Сохранить</button><span class="div"></span><button class="btn">Живой статус</button><div class="error"></div></div>`;
 
+// Крошек у экрана задачи нет: дорога на доску живёт названием проекта в шапке
+// страницы, а состояние строки стоит первым чипом полосы.
 const HEAD = `
-  <div class="crumb"><span class="crumb-back">Доска devkit</span><span class="idsm">DK-284</span><span class="chip">In progress</span><span class="stale dashed">12 авг</span></div>
   <div class="thead"><span class="idbig">DK-284</span><textarea class="tedit">dashboard: экран задачи на телефоне</textarea></div>
-  <div class="tchips"><span class="pick">тип</span><span class="pick">цена</span><span class="chip dashed">P2</span></div>`;
+  <div class="tchips"><span class="chip">In progress</span><span class="pick">тип</span><span class="pick">цена</span><span class="chip dashed">P2</span></div>`;
 
 const FILE = `
     <div class="card fpanel">

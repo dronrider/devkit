@@ -123,6 +123,10 @@ a:hover{text-decoration:underline}
 .bmain{flex:1;display:flex;flex-direction:column;padding:24px 32px 0;overflow:hidden;min-width:0}
 .bhead{display:flex;align-items:center;gap:14px;flex:none}
 .bhead h2{margin:0;font:600 19px var(--sans)}
+/* название проекта в шапке ведёт на его доску: своей ссылки «Доска devkit»
+   экран задачи больше не носит */
+.bhead h2.hgo{cursor:pointer}
+.bhead h2.hgo:hover{color:var(--acc)}
 .bhead .sub{font:400 12px var(--mono);color:var(--tx3)}
 .hsp{flex:1}
 /* колокольчик в шапке: вход в ленту уведомлений на обоих форм-факторах.
@@ -206,7 +210,10 @@ a:hover{text-decoration:underline}
    главной: меню встаёт под кнопкой, а не у правого края экрана, и на телефоне
    остаётся в его границах, где до пункта достаёт палец */
 .bhead .btn-acc{position:relative}
-.bhead .pmenu{left:0;right:auto;top:44px}
+/* меню кладётся в саму кнопку шапки, и правым краем оно равняется по ней:
+   значок стоит у правого края экрана, и раскрытое влево меню целиком остаётся
+   на виду */
+.bhead .pmenu{left:auto;right:0;top:44px}
 /* плавающий плюс телефона держит то же меню: оно раскрывается над кнопкой,
    потому что снизу нижние вкладки и место кончилось */
 .fab{position:relative}
@@ -350,9 +357,6 @@ a:hover{text-decoration:underline}
 .crumb-back:hover{color:var(--tx)}
 .thead{display:flex;align-items:flex-start;gap:14px;margin-top:14px}
 .idbig{font:600 17px var(--mono);color:var(--acc);margin-top:3px;white-space:nowrap}
-/* номер в хлебных крошках: он для телефона, где доска, номер и статус стоят
-   одной строкой, на ноутбуке номер живёт рядом с заголовком */
-.idsm{display:none}
 .tchips{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
 /* в ряду метаданных чипы и селекты стоят одной высоты, её задаёт селект:
    разнобой высот в ряду был виден на пользовательской проверке */
@@ -916,14 +920,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   /* телефон: с записи чаще смотрят, чем читают её, поэтому исход груминга идёт
      сверху, за ним ход разбора, а текст записи последним */
   .dcol-text .pbd{max-height:44vh}
-  /* телефон: доска, номер и статус одной строкой, заголовок под ними во всю
-     ширину */
+  /* телефон: крошки экрана записи держатся одной строкой и не переносятся,
+     длинное имя обрезается многоточием */
   .crumb{gap:8px;padding-top:14px;flex-wrap:nowrap;min-width:0;overflow:hidden}
   .crumb-back,.crumb .stale{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .crumb .chip{flex:none}
-  .idsm{display:inline;flex:none;font:600 13px var(--mono);color:var(--acc)}
   .thead{gap:0;margin-top:10px}
-  .thead .idbig{display:none}
   /* телефон: ранг свёрнут в одну строку над описанием, описание идёт во всю
      ширину, зависимости уходят под него. Порядок блоков стилями не двигается:
      их переставляет в разметке сама статика, иначе обход табом расходился бы

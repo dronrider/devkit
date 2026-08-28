@@ -1253,16 +1253,15 @@ if (!taskRun) fail("на экране задачи нет кнопки запу�
 if (!String(taskRun.title).includes("Выполни XR-6")) {
   fail("подсказка кнопки запуска не называет заказ дословно: " + JSON.stringify(taskRun.title));
 }
-if (!dump(groups).includes("Выполни XR-6")) {
-  fail("надпись под кнопкой не называет заказ дословно: " + dump(groups).slice(0, 400));
-}
-// Там же сказано, куда поедет работа: при двух подписках надпись называет ту,
-// на которой поднимет широкая часть кнопки (макет, фрейм состояний). До
-// DK-336 подпись появлялась только там, где выбирать не из чего, и человек
-// жал кнопку, не зная, чью квоту он тратит.
-if (!dump(groups).includes("Поедет на " + harnessOne.name + ", подписок на машине две")) {
-  fail("надпись под полосой действий не называет подписку по умолчанию: " +
-    dump(groups).slice(0, 400));
+// Надписи под полосой действий нет вовсе: она пересказывала устройство
+// («конвейер получит заказ в tmux-сессии, поедет на claude-code») там, где
+// человек жмёт кнопку с понятной подписью (замечание пользователя). Заказ
+// остался подсказкой самой кнопки, а подписку называет её выпадашка.
+for (const gone of ["Конвейер получит заказ", "в tmux-сессии task-XR-6",
+  "Поедет на " + harnessOne.name]) {
+  if (dump(groups).includes(gone)) {
+    fail("под полосой действий осталась надпись «" + gone + "»: " + dump(groups).slice(0, 400));
+  }
 }
 timers.length = 0;
 byId.get("flashes").replaceChildren();
@@ -2108,7 +2107,9 @@ await go("#demo");
 // файла не захлопывается. До DK-411 фокус окна звал полную пересборку, и
 // терялось это всё разом.
 await go("#demo/XR-3");
-const tcrumb = find(groups, "task-crumb");
+// Опорный узел экрана это шапка с номером и заголовком: крошек у задачи нет
+// вовсе, дорога на доску живёт названием проекта в шапке страницы.
+const tcrumb = find(groups, "task-head");
 if (!tcrumb) fail("экран задачи не собрался: " + dump(groups).slice(0, 300));
 
 // Раскрыть служебный раздел файла.
@@ -2139,7 +2140,7 @@ const askedBefore = asked.length;
 for (const fn of sandbox.window.listeners.focus || []) fn();
 await settle();
 
-if (find(groups, "task-crumb") !== tcrumb) {
+if (find(groups, "task-head") !== tcrumb) {
   fail("возврат в окно пересобрал экран задачи: узел уехал из-под руки");
 }
 if (groups.scrollTop !== 260) {
@@ -2185,7 +2186,7 @@ const xr3Was = xr3.title;
 xr3.title = "заголовок сменился на доске";
 for (const fn of sandbox.window.listeners.focus || []) fn();
 await settle();
-if (find(groups, "task-crumb") === tcrumb) {
+if (find(groups, "task-head") === tcrumb) {
   fail("уехавшая строка не перерисовала экран задачи: слой держит старые данные");
 }
 // Заголовок задачи правится полем, и новый текст лежит в его значении, а не в

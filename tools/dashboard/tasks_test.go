@@ -891,21 +891,30 @@ func TestStaticTaskActionBar(t *testing.T) {
 // Полоса действий задачи берёт действие из статуса строки, теми же словами,
 // что и доска: у формы своей подписи нет, иначе экран задачи и строка обещали
 // бы конвейеру разное. Заблокированная маркером задача действия не получает.
+//
+// Надписи под полосой нет вовсе: она пересказывала устройство («конвейер
+// получит заказ в tmux-сессии, поедет на такую-то подписку») плашкой в самом
+// начале экрана (замечание пользователя). Заказ остался подсказкой самой
+// кнопки, подписку называет её выпадашка, а чего ждёт заблокированная строка,
+// сказано подсказкой погашенной кнопки и карточкой зависимостей.
 func TestStaticTaskActionBySection(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{"actionLabel(row.sect)", "runControl(project, id",
 		"row.after && row.after.length", "wait.disabled = true",
-		"taskActionHint(isGoal, row, id)"} {
+		`withTip(wait, "сначала " + row.after.join(", "))`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
 	}
-	hint := funcBody(t, app, "function taskActionHint(")
-	for _, want := range []string{"goal-run", "orderHint(row.order, row.accept, row.sect, id)",
-		"Агентский сценарий он прогонит сам, пользовательский оставит человеку"} {
-		if !strings.Contains(hint, want) {
-			t.Errorf("надпись под действием не говорит про %q: откуда смотреть за работой, неясно", want)
+	if strings.Contains(app, "function taskActionHint(") {
+		t.Error("надпись под полосой действий вернулась на экран задачи")
+	}
+	for _, gone := range []string{`el("span", "hint", hint)`, "harnessWhy() + (isGoal",
+		"пока маркер стоит, конвейер её не возьмёт",
+		"Задачу поднимет headless-сессия конвейера доски"} {
+		if strings.Contains(body, gone) || strings.Contains(app, gone) {
+			t.Errorf("на экране задачи снова стоит плашка %q", gone)
 		}
 	}
 }
@@ -1005,25 +1014,45 @@ func TestStaticDepsNamedInWords(t *testing.T) {
 	}
 }
 
-// Шапка задачи на телефоне: доска, номер и статус стоят одной строкой, а
-// заголовок идёт под ними во всю ширину. Тремя уровнями по вертикали они
-// съедали экран до того, как начиналось содержимое задачи.
+// Шапка экрана задачи не повторяет одно и то же. Номер стоял разом в трёх
+// местах (приписка шапки страницы, крошки, крупный номер над заголовком), а
+// ссылка на доску в двух (название проекта наверху и крошки), и на телефоне
+// это съедало экран до того, как начиналось содержимое задачи (разбор
+// пользователя). Крошек у экрана нет вовсе, приписка шапки пуста, дорога на
+// доску живёт названием проекта, а состояние строки уехало первым чипом полосы.
 func TestStaticTaskNarrowHead(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "async function renderTask(")
-	if !strings.Contains(body, `el("span", "idsm", row.id)`) {
-		t.Error("номер задачи не встал в строку с доской и статусом")
+	if strings.Contains(body, `el("span", "idsm", row.id)`) {
+		t.Error("номер вернулся в крошки: он же стоит крупно над заголовком")
+	}
+	if strings.Contains(body, `crumb: [board]`) || strings.Contains(body, "crumbChips") {
+		t.Error("крошки со ссылкой на доску вернулись на экран задачи")
+	}
+	if !strings.Contains(body, `row.section ? el("span", "chip", row.section) : null`) {
+		t.Error("состояние строки не встало первым чипом полосы задачи")
+	}
+	// Приписка шапки страницы у задачи пуста: номер в ней стоял третьим разом.
+	tail := app[strings.Index(app, "if (rt.id) {"):]
+	if !strings.Contains(tail[:1400], `document.getElementById("psub").textContent = "";`) {
+		t.Error("номер задачи вернулся в приписку шапки страницы")
+	}
+	// Название проекта в шапке это вход на доску, и на экране задачи он теперь
+	// единственный.
+	head := funcBody(t, app, "function headName(")
+	if !strings.Contains(head, `go ? "Доска " + name : name`) {
+		t.Error("название проекта в шапке не читается «Доска <имя>»")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	if !strings.Contains(css, ".idsm{display:none}") {
-		t.Error("номер из крошек виден на ноутбуке: он там стоит вторым разом рядом с заголовком")
+	if strings.Contains(css, ".idsm") {
+		t.Error("в стилях остался номер крошек, которого никто не рисует")
+	}
+	if !strings.Contains(css, ".bhead h2.hgo{cursor:pointer}") {
+		t.Error("название проекта в шапке не показывает, что оно ведёт на доску")
 	}
 	narrow := funcBody(t, css, "@media (max-width:900px){")
-	for _, want := range []string{".idsm{display:inline", ".thead .idbig{display:none}",
-		".crumb{gap:8px;padding-top:14px;flex-wrap:nowrap"} {
-		if !strings.Contains(narrow, want) {
-			t.Errorf("на узком экране шапка задачи не собрана в строку: нет %q", want)
-		}
+	if !strings.Contains(narrow, ".crumb{gap:8px;padding-top:14px;flex-wrap:nowrap") {
+		t.Error("на узком экране крошки записи снова переносятся по словам")
 	}
 }
 

@@ -384,10 +384,7 @@ func TestStaticNewTaskForm(t *testing.T) {
 		"Сохранить и грумить",
 		"Что нужно сделать и зачем",
 		"Завести задачу",
-		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
-		"docs/tasks/drafts/",
 		"function renderNew(",
-		"function newTaskButton(",
 		// Вид приёмки на форме (DK-301): закрытые списки вида и барьера, поле
 		// причины и рубеж у не агентского вида без барьера.
 		"const ACCEPT_VALUES",
@@ -425,7 +422,7 @@ func TestStaticNewTaskForm(t *testing.T) {
 	if menu := funcBody(t, text, "function makeMenuAt("); !strings.Contains(menu, `"/new/"`) {
 		t.Error("меню заведения не ведёт в форму")
 	}
-	for _, fn := range []string{"function makePlus(", "function newTaskButton(", "function newTaskFab("} {
+	for _, fn := range []string{"function makePlus(", "function newTaskFab("} {
 		if body := funcBody(t, text, fn); !strings.Contains(body, "makeMenuAt(btn") {
 			t.Errorf("%s не открывает меню заведения", fn)
 		}
@@ -436,13 +433,25 @@ func TestStaticNewTaskForm(t *testing.T) {
 	if body := funcBody(t, text, "function renderDrafts("); strings.Contains(body, "newTaskButton(") {
 		t.Error("в таб черновиков вернулась своя кнопка заведения")
 	}
+	// Кнопки заведения, которую никуда не кладут, в статике нет: разбор входов
+	// в заведение спотыкался о неё как о четвёртую дорогу, которой нет.
+	if strings.Contains(text, "function newTaskButton(") {
+		t.Error("в static/app.js вернулась кнопка заведения, которую никто не рисует")
+	}
 	// С доски заведение это кнопка в шапке рядом с поиском: полоса кнопок над
 	// строками доски занимала место, ради которого экран и открыт.
 	if !strings.Contains(readFile(t, filepath.Join("static", "index.html")), `id="make-btn"`) {
 		t.Error("в шапке нет кнопки заведения задачи")
 	}
-	if !strings.Contains(text, `["make-btn", "/new"]`) {
-		t.Error("кнопка шапки не ведёт на форму заведения")
+	// Кнопка шапки открывает то же меню, что плюс карточки и плавающий плюс, а
+	// не ведёт прямо на форму задачи: прежде черновик с доски было не завести
+	// вовсе (замечание пользователя).
+	if strings.Contains(text, `["make-btn", "/new"]`) {
+		t.Error("кнопка шапки снова ведёт прямо на форму задачи, минуя выбор вида")
+	}
+	if !strings.Contains(text, `document.getElementById("make-btn").addEventListener(`) ||
+		!strings.Contains(text, "if (project) makeMenuAt(btn, project, btn)") {
+		t.Error("кнопка заведения в шапке не открывает меню выбора вида")
 	}
 	if strings.Contains(funcBody(t, text, "function renderBoard("), "newTaskButton(") {
 		t.Error("полоса кнопок вернулась на доску")
@@ -474,12 +483,25 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	for _, want := range []string{
 		"Черновику доступен только груминг",
 		"в работу его не взять",
-		"Ляжет в docs/tasks/drafts/, ID выдаст taskctl",
-		"Встанет в Backlog сразу, место выведется из ранга",
-		"Взять в работу можно с карточки задачи",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет надписи %q", want)
+		}
+	}
+	// Подписей под формой не осталось ни у черновика, ни у задачи: они
+	// пересказывали устройство (куда ляжет файл, кто выдаст ID, что откроется
+	// после записи) и объясняли кнопки, чьи подписи их и называют (замечание
+	// пользователя). Пометка про груминг выше это не подпись формы, а
+	// единственная особенность черновика, которой не видно глазами.
+	for _, gone := range []string{
+		"Ляжет в docs/tasks/drafts/, ID выдаст taskctl",
+		"Встанет в Backlog сразу, место выведется из ранга",
+		"Взять в работу можно с карточки задачи",
+		"«Сохранить» вернёт в накопитель",
+		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
+	} {
+		if strings.Contains(text, gone) {
+			t.Errorf("на форме заведения снова стоит подпись %q", gone)
 		}
 	}
 	cut := strings.Index(text, "function renderNew(")
@@ -534,7 +556,6 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 	for _, want := range []string{
 		`saveLabel: draft ? "Сохранить" : "Завести задачу"`,
 		`label: "Сохранить и грумить"`,
-		"const DRAFT_GO_HINT",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("пара кнопок записи собрана не тем блоком: нет %q", want)

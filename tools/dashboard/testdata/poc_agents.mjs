@@ -130,7 +130,10 @@ for (const which of ["tmux", "registry"]) {
   if (open.disabled) fail("своей работе закрытие погашено: " + dump(mine));
 }
 
-// --- разговор открывается кнопкой и нажатием на строку, адрес от сессии ---
+// --- разговор открывается кнопкой, а строка ведёт на задачу ---
+// Нажатие по строке сессии открывало разговор, и кнопка чата рядом делала то
+// же самое (замечание пользователя). Строка ведёт туда же, куда ведёт строка
+// доски: на экран задачи, за которой идёт работа.
 {
   const row = rowOf(works.tmux);
   sandbox.location.hash = "#/agents";
@@ -142,16 +145,25 @@ for (const which of ["tmux", "registry"]) {
   sandbox.location.hash = "#/agents";
   row.handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (!sandbox.location.hash.includes(works.tmux.session)) {
-    fail("нажатие на строку не открыло разговор: " + sandbox.location.hash);
+  if (sandbox.location.hash.includes("chat/")) {
+    fail("нажатие на строку открыло разговор, а не задачу: " + sandbox.location.hash);
+  }
+  if (!sandbox.location.hash.includes("demo/DK-397")) {
+    fail("нажатие на строку увело не на экран задачи: " + sandbox.location.hash);
   }
 }
 
-// --- у работы без сессии разговор адресуется задачей ---
+// --- строка работы из реестра ведёт на её задачу тем же нажатием ---
 {
   const row = rowOf(works.registry);
   sandbox.location.hash = "#/agents";
   row.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (!sandbox.location.hash.includes("demo/DK-470") || sandbox.location.hash.includes("chat/")) {
+    fail("строка реестровой работы увела не на задачу: " + sandbox.location.hash);
+  }
+  // Разговор у неё есть и адресуется задачей: дорога к нему это кнопка.
+  chatBtn(row).handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes("DK-470")) {
     fail("разговор реестровой работы открылся не по задаче: " + sandbox.location.hash);
@@ -159,6 +171,8 @@ for (const which of ["tmux", "registry"]) {
 }
 
 // --- сессия без задачи: только разговор, ссылки нет ---
+// Экрана работы у неё не существует, и вести строке некуда: нажатие остаётся
+// входом в разговор.
 {
   const row = rowOf(works.bare);
   if (byClass(row, "alink")) fail("у сессии без задачи взялась ссылка на задачу");

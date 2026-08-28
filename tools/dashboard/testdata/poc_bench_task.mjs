@@ -110,8 +110,10 @@ link.handlers.click({ preventDefault: () => {}, stopPropagation: () => {} });
 sandbox.window.fire("hashchange", {});
 const sync = text(groups) !== before;
 const react = await until(() => text(groups) !== before);
-// Готовая форма это не оболочка: у неё есть кнопки правки строки.
-const done = await until(() => text(groups).includes("Отменить правку"), 3000);
+// Готовая форма это не оболочка: у неё есть ранг со слагаемыми, а у оболочки
+// одна строка «Читаем». Кнопки правки в меру не годятся: полоса с ними стоит
+// скрытой до первой правки, а пустой в разметку не встаёт вовсе.
+const done = await until(() => text(groups).includes("серьёзность"), 3000);
 const all = Date.now() - t1;
 const asks = asked.slice(n0);
 

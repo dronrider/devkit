@@ -866,11 +866,21 @@ func TestStaticTaskActionBar(t *testing.T) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
 	}
-	if !strings.Contains(funcBody(t, app, "async function renderTask("), "taskActions(project, id, row, works)") {
+	if !strings.Contains(funcBody(t, app, "async function renderTask("), "taskActions(project, id, row)") {
 		t.Error("экран задачи не приносит в полосу своих действий")
 	}
-	if !strings.Contains(funcBody(t, app, "function taskActions("), `"Стоп"`) {
+	acts := funcBody(t, app, "function taskActions(")
+	if !strings.Contains(acts, `"Стоп"`) {
 		t.Error("в полосе действий задачи нет стопа живой работы")
+	}
+	// Кнопку выбирает то же правило, что и в строке доски, а список работ форма
+	// не перебирает вовсе: живое окно без хода получало «Стоп», хотя снимать в
+	// нём было нечего (живой случай DK-543).
+	if !strings.Contains(acts, "rowOurRun(row)") {
+		t.Error("полоса действий задачи судит о работе своим условием, а не общим правилом строки")
+	}
+	if strings.Contains(acts, "works") {
+		t.Error("полоса действий задачи снова ищет работу в списке works: признаки едут строкой")
 	}
 	for _, gone := range []string{"Правки нет", `el("div", "card act")`, "Изменённое уедет одной кнопкой"} {
 		if strings.Contains(app, gone) {

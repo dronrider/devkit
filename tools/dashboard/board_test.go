@@ -91,10 +91,18 @@ func TestStaticBoardRowActions(t *testing.T) {
 func TestStaticRowRunFromRowData(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	act := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.run", `row.run !== "gone"`, `row.run === "tmux"`} {
-		if !strings.Contains(act, want) {
-			t.Errorf("в rowAction нет %q: признак работы снова собирается на клиенте", want)
+	// Само правило вынесено в rowOurRun: его же спрашивает полоса действий
+	// задачи, и списком условий оно теперь не повторяется.
+	for _, want := range []string{"row.run", `row.run === "tmux"`} {
+		if !strings.Contains(funcBody(t, text, "function rowOurRun("), want) {
+			t.Errorf("в rowOurRun нет %q: признак работы снова собирается на клиенте", want)
 		}
+	}
+	if !strings.Contains(funcBody(t, text, "function rowOnRun("), "row.run_busy") {
+		t.Error("идущий ход строки считается не по признаку сервера: run_busy обязан быть в rowOnRun")
+	}
+	if !strings.Contains(act, "rowOurRun(row)") {
+		t.Error("rowAction выбирает кнопку своим условием, а не общим правилом строки и формы")
 	}
 	if strings.Contains(act, "works") {
 		t.Error("rowAction снова ищет работу в списке works: строка обязана знать про себя сама")
@@ -2365,6 +2373,23 @@ func TestStaticRowRunButton(t *testing.T) {
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("кнопка работы в строке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Кнопку работы на форме задачи выбирает идущий ход, а не живое окно: у DK-543
+// сессия была жива, агент в ней простаивал, а форма предлагала «Стоп» вместо
+// пуска. Правило это одно на строку доски и на форму. Сторожит стенд
+// testdata/poc_taskrun.mjs.
+func TestStaticTaskRunButton(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд кнопки работы на форме пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskrun.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кнопка работы на форме задачи: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }

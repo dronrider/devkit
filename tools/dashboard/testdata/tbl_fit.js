@@ -148,16 +148,27 @@ const spill = (box) => {
   return Math.max(0, out);
 };
 
-const minWidth = (c, at, cell) => {
+// Что держит ширину колонки: данные в строке или подпись в шапке. Вопрос не
+// праздный: у колонки хода ширину держало слово, и колонка под кружок в девять
+// точек занимала восемьдесят. Меряется порознь, сужением до первого обрубка
+// сперва по одной строке, потом по одной шапке; наружу идут оба числа, и
+// большее из них и есть тот, кто держит.
+const minWidth = (c, at, cell, only) => {
   const node = colNodes[at];
   if (!node) return 0;
   const was = node.style.width;
   const label = document.querySelector('.tblh [data-fit="' + c.key + '"]');
   const cell2 = label ? label.closest("th") : null;
-  const cut = () => {
+  const body = () => {
     let bad = Math.max(over(cell), spill(cell));
     for (const n of cell.querySelectorAll("[data-fit]")) bad = Math.max(bad, over(n));
-    return Math.max(bad, over(label), cell2 ? spill(cell2) : 0);
+    return bad;
+  };
+  const headCut = () => Math.max(over(label), cell2 ? spill(cell2) : 0);
+  const cut = () => {
+    if (only === "body") return body();
+    if (only === "head") return headCut();
+    return Math.max(body(), headCut());
   };
   let px = c.w;
   while (px > 24) {
@@ -186,6 +197,8 @@ cols.forEach((c, at) => {
   out.push("head_" + c.key + "=" + over(label));
   out.push("w_" + c.key + "=" + Math.round(cell.getBoundingClientRect().width));
   out.push("min_" + c.key + "=" + minWidth(c, at, cell));
+  out.push("body_" + c.key + "=" + minWidth(c, at, cell, "body"));
+  out.push("head_min_" + c.key + "=" + minWidth(c, at, cell, "head"));
 });
 // --- вид строки: величины, которые обязаны совпадать у трёх разделов ---
 // Разделы собирались разными заходами и разошлись по виду: размеры значков,

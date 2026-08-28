@@ -34,7 +34,9 @@ const { sandbox, byId } = makeSandbox(app, (path_) => {
   if (path_ === "/api/harnesses") return { harnesses: [] };
   if (path_ === "/api/notifications") return { items: [] };
   if (path_.endsWith("/board")) {
-    return { board: { prefix: "XR", sections: [] }, works };
+    return { board: { prefix: "XR", sections: [{ name: "В работе", key: "in-progress",
+      rows: [{ id: "XR-1", title: "строка доски", r: 68, p: "P1", cost: "M",
+        type: "feature", moved: "2026-08-25" }] }] }, works };
   }
   if (path_.endsWith("/works")) return { works };
   if (path_.endsWith("/drafts")) return { drafts: [] };
@@ -111,6 +113,58 @@ const w = /key: "live",[^}]*w: (\d+)/.exec(SRC);
 if (!w) fail("ширина колонки хода в TBL_COLS не читается");
 if (Number(w[1]) > 56) {
   fail("колонка хода снова широкая: " + w[1] + " точек, а несёт она кружок со значком");
+}
+
+// --- та же мерка колонке ранга на доске задач ---
+//
+// Колонка ранга пришла к значку той же дорогой, что колонка хода: замер
+// показал, что ширину держит слово «Ранг» со значком направления, а внутри
+// двузначное число вдвое уже. Проверки тут те же, и стоят они рядом нарочно:
+// правило одно на обе колонки, и разъезжаться им незачем.
+await go("#demo");
+const thead = allByClass(groups, "tblh")
+  .find((h) => String(h.className).split(" ").includes("h-tasks"));
+if (!thead) fail("шапки раздела задач на экране нет");
+const rcell = Array.from(thead.children)
+  .find((th) => byClass(th, "tblb") && /рангу/.test(String(byClass(th, "tblb").title || "")));
+if (!rcell) fail("колонки ранга в шапке доски нет");
+
+if (!byClass(rcell, "tblico")) {
+  fail("в шапке колонки ранга нет значка: подписывать её нечем");
+}
+const rword = byClass(rcell, "tbll");
+if (rword && String(rword.textContent || "").trim()) {
+  fail("колонка ранга подписана словом «" + rword.textContent + "»: под слово она и " +
+    "держала пятьдесят шесть точек при двузначном числе внутри");
+}
+const rnamed = /key: "rank",[^}]*ico: "([a-z0-9-]+)"/.exec(SRC);
+if (!rnamed) fail("у колонки ранга в TBL_COLS не назван значок заголовка");
+if (!HTML.includes('data-ico="' + rnamed[1] + '"')) {
+  fail("значок «" + rnamed[1] + "» шапка просит, а в спрайте index.html его нет");
+}
+
+const rbtn = byClass(rcell, "tblb");
+const rsay = String(rbtn.attrs["aria-label"] || "");
+if (rsay !== String(rbtn.title || "")) {
+  fail("у ранга подсказка и подпись для чтения с экрана разошлись: " + rsay);
+}
+if (!/рангу/.test(rsay)) {
+  fail("подсказка колонки ранга не называет её словами: «" + rsay + "»");
+}
+
+const rankSort = () => sandbox.localStorage.getItem("devkit.dash.tasks.sort") || "";
+rbtn.handlers.click({ stopPropagation() {} });
+await settle();
+if (rankSort() !== "rank:desc") {
+  fail("нажатие на заголовок ранга не задало порядок: " + rankSort());
+}
+
+// Ширина колонки: она несёт двузначное число, и держать её должно содержимое, а
+// не подпись. Сорок точек это тот же рубеж, что у хода со значком.
+const rw = /key: "rank",[^}]*w: (\d+)/.exec(SRC);
+if (!rw) fail("ширина колонки ранга в TBL_COLS не читается");
+if (Number(rw[1]) > 40) {
+  fail("колонка ранга снова широкая: " + rw[1] + " точек при двузначном числе внутри");
 }
 
 console.log("poc_headico: ok");

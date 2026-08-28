@@ -84,15 +84,20 @@ const on = (btn) => Boolean(btn) && String(btn.className).split(" ").includes("t
 // подписи для чтения с экрана.
 const liveCol = () => allByClass(head("sess") || {}, "tblb")
   .find((btn) => String(btn.attrs["aria-label"] || "").includes("ходу работы")) || null;
+// Ранг пришёл к значку той же дорогой, что и ход: слово в шапке держало ширину
+// колонки вдвое шире двузначного числа внутри. Ищется он теперь так же.
+const rankCol = () => allByClass(head("tasks") || {}, "tblb")
+  .find((btn) => String(btn.attrs["aria-label"] || "").includes("рангу")) || null;
 
 // --- доска: шапка колонок над секциями ---
 {
   await go("#demo");
   const h = head("tasks");
   if (!h) fail("шапки колонок над доской нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 400));
-  for (const label of ["Номер", "Задача", "Ранг", "Дата"]) {
+  for (const label of ["Номер", "Задача", "Дата"]) {
     if (!col("tasks", label)) fail("в шапке доски нет колонки «" + label + "»: " + dump(h));
   }
+  if (!rankCol()) fail("в шапке доски нет колонки ранга: " + dump(h));
   // Шапка одна на все секции: карточек у доски четыре, и шапка над каждой
   // перевешивала бы список из двух строк.
   if (allByClass(groups, "tblh").length !== 1) {
@@ -100,7 +105,7 @@ const liveCol = () => allByClass(head("sess") || {}, "tblb")
   }
   // Своего порядка экран доске не назначает: строки стоят так, как их сложила
   // сама доска, и подсвеченной колонки при первом заходе нет.
-  if (["Номер", "Задача", "Ранг", "Дата"].some((l) => on(col("tasks", l)))) {
+  if (["Номер", "Задача", "Дата"].some((l) => on(col("tasks", l))) || on(rankCol())) {
     fail("доска открылась переставленной, хотя порядка никто не просил: " + dump(h));
   }
 }
@@ -129,13 +134,13 @@ const boardIds = () => allByClass(groups, "trow")
   if (JSON.stringify(was) !== JSON.stringify(["XR-101", "XR-102", "XR-103"])) {
     fail("доска открылась не порядком самой доски: " + JSON.stringify(was));
   }
-  await click(col("tasks", "Ранг"));
+  await click(rankCol());
   if (JSON.stringify(boardIds()) !== JSON.stringify(["XR-102", "XR-103", "XR-101"])) {
     fail("очередь не встала по рангу, тяжёлые сверху: " + JSON.stringify(boardIds()));
   }
-  if (!on(col("tasks", "Ранг"))) fail("шапка не подсветила колонку ранга");
-  if (!tag(col("tasks", "Ранг"), "I")) fail("направление порядка не показано значком");
-  await click(col("tasks", "Ранг"));
+  if (!on(rankCol())) fail("шапка не подсветила колонку ранга");
+  if (!tag(rankCol(), "I")) fail("направление порядка не показано значком");
+  await click(rankCol());
   if (JSON.stringify(boardIds()) !== JSON.stringify(["XR-101", "XR-103", "XR-102"])) {
     fail("повторное нажатие не развернуло порядок: " + JSON.stringify(boardIds()));
   }

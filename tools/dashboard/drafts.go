@@ -167,6 +167,20 @@ func draftHere(projectPath, id string) bool {
 	return err == nil && !st.IsDir()
 }
 
+// draftTitleOf читает заголовок записи накопителя и отвечает заодно, лежит ли
+// она на месте. Спрашивает его блок «Связи»: лестница названий кончалась
+// архивом, и упоминание черновика доезжало на экран задачей без названия.
+// Заголовок берётся тем же разбором, что у файла задачи: первая строка вида
+// «# DK-NNN: ...», префикс с номером с неё снимается.
+func draftTitleOf(projectPath, id string) (string, bool) {
+	abs, _ := draftPathOf(projectPath, id)
+	text, err := os.ReadFile(abs)
+	if err != nil {
+		return "", false
+	}
+	return searchDocTitle(id, string(text)), true
+}
+
 func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "черновик")
 	if found == nil {

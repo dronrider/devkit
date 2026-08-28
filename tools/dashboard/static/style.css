@@ -1674,6 +1674,10 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .dcard .lmid .id{white-space:nowrap;flex:none}
 .dcard .lmid .st{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .dcard .st.lnone{color:var(--tx3);font-style:italic}
+/* Мёртвая связь: за ID не стоит ни строки, ни архива, ни черновика. Номер
+   перечёркнут, дороги у строки нет, и живой она уже не выглядит. */
+.dcard .srow.lgone{cursor:default}
+.dcard .srow.lgone .id{text-decoration:line-through;color:var(--tx3)}
 .dcard .lmeta{font:400 11.5px var(--sans);color:var(--tx3);white-space:nowrap}
 .dcard .lmore{display:block;border:none;background:none;color:var(--acc);font:500 12.5px var(--sans);cursor:pointer;padding:8px 16px 10px;text-align:left}
 

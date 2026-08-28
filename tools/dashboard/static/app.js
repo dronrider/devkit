@@ -2908,8 +2908,13 @@ function depRow(project, id, side, dep) {
 // строки не прячется, кнопка заняла бы столько же места.
 const LINKS_SHOW = 8;
 
+// Строка связанной задачи. Дорога у неё двоякая: у записи накопителя своей
+// формы задачи нет, и ведёт она на экран черновика (тем же поворотом, каким
+// уходит туда упоминание в реплике), у прочих на форму задачи. За мёртвым ID
+// не стоит ничего, и дороги у него нет вовсе: клик привёл бы на отказ «нет
+// строки», а связь до клика выглядела бы живой.
 function linkTaskRow(project, t) {
-  const row = el("div", "srow clicky");
+  const row = el("div", "srow" + (t.gone ? " lgone" : " clicky"));
   row.append(el("span", "chip", t.kind || "задача"));
   const mid = el("div", "lmid");
   mid.append(el("span", "id", t.id));
@@ -2920,7 +2925,10 @@ function linkTaskRow(project, t) {
   if (t.rel) meta.push(t.rel);
   if (t.closed) meta.push("закрыта " + t.closed);
   if (meta.length) row.append(el("span", "lmeta", meta.join(", ")));
-  row.addEventListener("click", () => { goKeepingChat(project + "/" + t.id); });
+  if (!t.gone) {
+    const to = t.draft ? project + "/draft/" + t.id : project + "/" + t.id;
+    row.addEventListener("click", () => { goKeepingChat(to); });
+  }
   return row;
 }
 

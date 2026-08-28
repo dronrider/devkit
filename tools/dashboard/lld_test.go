@@ -102,10 +102,10 @@ func TestTaskLinksKindsRelOrder(t *testing.T) {
 	for _, row := range tasks {
 		order = append(order, row["id"].(string))
 	}
-	want := []string{"XR-30", "XR-2", "XR-7", "XR-100", "XR-5", "XR-404", "XR-136"}
+	want := []string{"XR-30", "XR-2", "XR-7", "XR-100", "XR-5", "XR-136", "XR-404"}
 	for i := range want {
 		if i >= len(order) || order[i] != want[i] {
-			t.Fatalf("порядок связей %v, жду %v (блокирующие, открытые по рангу, без ранга по номеру, закрытые внизу)", order, want)
+			t.Fatalf("порядок связей %v, жду %v (блокирующие, открытые по рангу, закрытые ниже, мёртвые в самом низу)", order, want)
 		}
 	}
 	byID := map[string]map[string]any{}
@@ -136,6 +136,90 @@ func TestStaticTaskLinksCard(t *testing.T) {
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("блок связей: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Лестница названий кончается накопителем: за ID без строки и архива может
+// стоять запись черновика, и связь тогда зовётся черновиком, несёт название из
+// первой строки файла и признак draft (по нему показ уводит на экран записи, а
+// не на форму несуществующей задачи). За ID, которого нет нигде, не стоит
+// ничего: связь помечается мёртвой, потому что хранилища у связей нет и снятый
+// ID из чужой постановки сам собой не пропадает.
+func TestTaskLinksDraftAndGone(t *testing.T) {
+	root := t.TempDir()
+	putDoc(t, root, "docs/tasks/drafts/XR-50.md",
+		"# XR-50: чат копит замечания, пока агент занят\n\nзаписан 2026-08-20\n")
+	putDoc(t, root, "docs/tasks/drafts/XR-51.md", "тело записи без заголовка\n")
+	rows := map[string]boardRow{"XR-8": {ID: "XR-8", Title: "живая соседка", R: 20}}
+	text := "поминаем XR-8, XR-50, XR-51 и снятый XR-483"
+	tasks := linkTasks(t, taskLinks(root, "XR-1", "", text, rows, nil, nil))
+	byID := map[string]map[string]any{}
+	for _, row := range tasks {
+		byID[row["id"].(string)] = row
+	}
+	draft := byID["XR-50"]
+	if draft["kind"] != "черновик" {
+		t.Errorf("запись накопителя не названа черновиком: %+v", draft)
+	}
+	if draft["title"] != "чат копит замечания, пока агент занят" {
+		t.Errorf("название черновика не прочиталось из его файла: %+v", draft)
+	}
+	if draft["draft"] != true {
+		t.Errorf("у черновика нет признака дороги в накопитель: %+v", draft)
+	}
+	if draft["gone"] != nil || draft["note"] != nil {
+		t.Errorf("лежащий на месте черновик посчитан пропавшим: %+v", draft)
+	}
+	// Запись без заголовка на месте, и мёртвой её звать не за что.
+	if bare := byID["XR-51"]; bare["gone"] != nil || bare["kind"] != "черновик" || bare["note"] == nil {
+		t.Errorf("черновик без заголовка разобран неверно: %+v", bare)
+	}
+	dead := byID["XR-483"]
+	if dead["gone"] != true {
+		t.Errorf("исчезнувший ID не помечен мёртвым: %+v", dead)
+	}
+	if dead["kind"] == "задача" || dead["title"] != nil {
+		t.Errorf("исчезнувший ID выдаёт себя за живую задачу: %+v", dead)
+	}
+	if dead["note"] == nil {
+		t.Errorf("мёртвая связь не сказала, где её искали: %+v", dead)
+	}
+	// Живая связь мёртвой пометки не получает, иначе признак ничего не значит.
+	if live := byID["XR-8"]; live["gone"] != nil || live["kind"] != "задача" {
+		t.Errorf("живая связь пострадала от разбора мёртвых: %+v", live)
+	}
+	// Мёртвая строка уходит в самый низ: делать с ней нечего, а место наверху
+	// принадлежит живым.
+	if last := tasks[len(tasks)-1]["id"]; last != "XR-483" {
+		t.Errorf("мёртвая связь не легла в самый низ, внизу %v", last)
+	}
+}
+
+// Черновик, разобранный груммингом до строки доски, остаётся задачей: файл
+// записи после грумминга может ещё лежать на месте, и лестница обязана
+// остановиться на строке, а не переназвать живую задачу черновиком.
+func TestTaskLinksBoardRowBeatsDraft(t *testing.T) {
+	root := t.TempDir()
+	putDoc(t, root, "docs/tasks/drafts/XR-50.md", "# XR-50: старая запись накопителя\n")
+	rows := map[string]boardRow{"XR-50": {ID: "XR-50", Title: "разобранная задача", R: 12}}
+	tasks := linkTasks(t, taskLinks(root, "XR-1", "", "поминаем XR-50", rows, nil, nil))
+	if got := tasks[0]; got["kind"] != "задача" || got["title"] != "разобранная задача" || got["draft"] != nil {
+		t.Errorf("строка доски проиграла файлу накопителя: %+v", got)
+	}
+}
+
+// Разметка мёртвой и черновой связи: предмет проверки собранный экран, стенд
+// поднимает статику в node с заглушкой DOM. Без node шаг пропускается.
+func TestStaticTaskLinksGoneRow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд мёртвых связей пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_linkgone.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("мёртвые и черновые связи: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }

@@ -1391,6 +1391,17 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
+	// Сессия стоит на вопросе инструмента ожидания: реплика идёт во вход
+	// разговора, а не в сокет клиента. Ждёт её процесс taskctl ask внутри хода
+	// Bash, и сокета он не слышит вовсе: реплика, ушедшая клиенту, легла бы в
+	// очередь следующего хода, а ожидание тем временем добрало бы свой срок и
+	// припарковало задачу с готовым ответом на руках.
+	if done, ok := s.sayToAsk(found, info, sid, text); ok {
+		s.chatSayDone(sid, claim, "ask")
+		s.saidSay(saidSessionKey(sid), text, "ask")
+		writeJSON(w, http.StatusOK, done)
+		return
+	}
 	// Первым делом канал самого клиента: живая сессия принимает реплику прямо в
 	// свой сокет и просыпается за секунды, чем бы она ни была поднята. Окно
 	// vscode отсюда тоже слышно, и отказывать ему больше не за что.

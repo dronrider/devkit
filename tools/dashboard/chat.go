@@ -83,6 +83,54 @@ func putChat(tree, name, text, line string) (lying string, code int, err error) 
 	return lying, 0, nil
 }
 
+// sayToAsk кладёт реплику во вход разговора, когда сессия стоит на вопросе
+// инструмента ожидания, и говорит ручке чата, что дорога выбрана. Второй
+// возврат false значит, что никто тут не ждёт и реплика едет обычной дорогой.
+//
+// Дорога выбирается не живостью сессии, а живым признаком ожидания: сокет
+// клиента слышит сам клиент, а ждущий сидит в ходе Bash и читает вход
+// разговора раз в секунду. Признак сверяется по сессии, потому что вопрос
+// одного собеседника не делает ждущими всех: ответ соседу забрал бы ждущий, и
+// оба разговора получили бы не своё.
+func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string) (map[string]any, bool) {
+	head := s.sessionHeadCached(info.path, info.stamp)
+	name, _ := s.sessionChatName(p.Path, info, head)
+	if name == "" {
+		// Сессия ведёт цель: у неё свой носитель, «Входящие» файла цели.
+		return nil, false
+	}
+	// Признак лежит во входе основного чекаута: туда его кладёт taskctl ask,
+	// какое бы дерево ни было у самого хода.
+	ask, has := chat.ReadAsk(chat.AskPath(p.Path, name))
+	if !has || !s.now().Before(ask.Until) || ask.Session != sid {
+		return nil, false
+	}
+	tree, ok := sessionTree(p.Path, info.suffix)
+	if !ok {
+		return nil, false
+	}
+	// Строка идёт с адресатом и ложится в дерево ждущей сессии: оттуда её
+	// берёт и само ожидание (оно опрашивает своё дерево и чекаут), и подхват,
+	// если ход ожидания к тому времени уже кончился.
+	lying, _, err := putChat(tree, name, text, chat.Line(s.now(), sid, text))
+	if err != nil {
+		// Вход не взял строку: обычная дорога тут лучше отказа, реплика уедет
+		// сокетом и человек её не потеряет.
+		s.logf("ответ ждущей сессии %s во вход %s не лёг, иду обычной дорогой: %v", sid, name, err)
+		return nil, false
+	}
+	out := map[string]any{"way": "ask", "chat": name, "task": ask.Task,
+		"until": ask.Until.Unix(),
+		"message": fmt.Sprintf(
+			"ответ лёг во вход разговора %s: его ждёт инструмент ожидания и заберёт в тот же ход", name)}
+	if lying != "" {
+		out["message"] = "эта реплика уже лежит во входе разговора " + name + ", второй раз она не поедет"
+	}
+	s.logf("ответ человека сессии %s ушёл во вход разговора %s: сессия стоит на вопросе до %s",
+		sid, name, ask.Until.Format("15:04:05"))
+	return out, true
+}
+
 // handleSessionMessagePost кладёт реплику человека во вход живой сессии.
 func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {

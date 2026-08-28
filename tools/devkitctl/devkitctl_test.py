@@ -1973,7 +1973,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 5, post)
+        self.assertEqual(len(post), 6, post)
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.

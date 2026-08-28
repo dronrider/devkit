@@ -1078,13 +1078,13 @@ const pickRow = find(groups, "XR-5");
 const grp = byClass(pickRow, "racts");
 if (!grp) fail("у строки нет ряда действий: " + dump(pickRow));
 if (!byClass(grp, "rmain")) fail("у свободной строки нет главной кнопки запуска: " + dump(grp));
-const more = byClass(grp, "rmain");
-if (!more) fail("у строки нет кнопки запуска: " + dump(grp));
-if (byClass(grp, "rdots")) fail("три точки вернулись в строку: " + dump(grp));
+const more = byClass(grp, "rdots");
+if (!more) fail("у строки нет трёх точек с выбором подписки: " + dump(grp));
+if (more.disabled) fail("у свободной строки три точки погашены: " + dump(grp));
 const pop = byClass(grp, "rmenu");
 if (!pop || !pop.hidden) fail("выбор подписки открыт до нажатия");
-more.handlers.contextmenu({ preventDefault: () => {}, stopPropagation: () => {} });
-if (pop.hidden) fail("правая кнопка не открыла выбор подписки");
+more.handlers.click({ stopPropagation: () => {} });
+if (pop.hidden) fail("три точки не открыли выбор подписки");
 // Шапка и две подписки. Подвала под списком нет вовсе: он объяснял, откуда
 // список и надолго ли выбор, и пользователь забраковал его прямой оценкой.
 if (!dump(byClass(pop, "hph")).includes("На какой подписке запустить")) {

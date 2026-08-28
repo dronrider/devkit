@@ -45,14 +45,20 @@
   --rowpy:11px;   /* вертикальный отступ ячейки */
   --rowpx:12px;   /* боковой отступ ячейки */
   --rowpl:24px;   /* отступ первой ячейки: в нём висит кружок состояния */
-  --rowpr:16px;   /* отступ последней ячейки, кромка карточки */
   --rowgap:8px;   /* зазор внутри ряда ячейки */
-  --actgap:8px;   /* зазор между кнопками в хвосте строки */
+  /* Зазор между кнопками в хвосте строки и боковой отступ его колонки: число
+     тут одно на оба нарочно. Колонка действий стояла отступами 12 слева и 16
+     справа при зазоре 8, и рядом с тремя кнопками значками это забирало у
+     строки лишнюю треть колонки («уменьши отступы этой колонки и расстояние
+     между кнопками, отступы в колонке и между кнопками должны быть
+     одинаковые», решение пользователя). */
+  --actgap:6px;
   --chipgap:8px;  /* зазор между чипами */
   --rowfs:13.5px; /* кегль заголовка строки */
   --rowfw:400;    /* насыщенность заголовка строки */
   --subfs:11px;   /* кегль подписи: дата, приписка под заголовком */
   --icob:30px;    /* кнопка со значком */
+  --icobm:36px;   /* она же на телефоне: палец мельче не берёт */
   --icosvg:16px;  /* сам значок внутри неё */
   /* Поля и зазоры строки в телефонной раскладке: там ячейки раскладываются по
      областям, и поля держит сама строка. Число тут тоже одно на три раздела:
@@ -271,6 +277,19 @@ a:hover{text-decoration:underline}
 /* погашенная кнопка одинакова везде: до DK-337 её гасили две местные строки, и
    заблокированная задача на доске выглядела нажимаемой */
 .btn[disabled]{opacity:0.45;cursor:default}
+/* Отклик на нажатие принадлежит самой кнопке. Пользователь поймал обратное:
+   «при нажатии кнопок на строке задач происходит выделение блоков внутри
+   серым контуром, которое сохраняется, и весь блок моргает однократно светлым
+   голубым фоном». Голубая вспышка это подсветка нажатия мобильного браузера, и
+   достаётся она не кнопке, а ближайшему нажимаемому предку, то есть всей
+   строке. Серый контур это кольцо фокуса, которое браузер оставляет на кнопке
+   после нажатия мышью или пальцем и держит, пока фокус не уйдёт.
+   Подсветку строки снимаем (правило ниже, у самих строк), кнопке даём свой
+   отклик наливом, а кольцо оставляем ходьбе с клавиатуры: :focus-visible
+   браузер ставит как раз ей и не ставит нажатию. */
+.btn:not([disabled]):active{filter:brightness(0.92)}
+.btn:focus:not(:focus-visible){outline:none}
+.btn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 /* составная кнопка запуска (макет «11 Подписка при запуске»): слева работа,
    справа выбор подписки. Половины одного цвета и делит их полоска внутри
    узкой части, а не зазор: зазором сквозь кнопку виден фон, и две половины
@@ -430,10 +449,26 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    прижимом вправо она уезжала на ширину кнопки там, где у строки не было трёх
    точек, и глаз ловил именно это (замечание пользователя про непонятную
    главную кнопку). */
-.trow .meta>.cin{gap:var(--actgap);justify-content:flex-start}
+/* Зазор в ячейке хвоста тот же, что и между самими кнопками, и правило это
+   одно на три раздела: врозь у задач стояло шесть точек, а у сессий с
+   накопителем восемь, и вид разделов расходился на ровном месте. */
+.trow .meta>.cin,.dsrow .sm>.cin,.arow .aacts>.cin{gap:var(--actgap)}
+.trow .meta>.cin{justify-content:flex-start}
 /* действия строки: главная кнопка, «Стоп» у идущей работы и три точки с
    остальным. Ряд стоит своей коробкой, а не россыпью в ячейке, потому что от
    него отсчитывается место выпавшего меню */
+/* Строку нажимают, чтобы открыть задачу, и мобильный браузер красит её всю
+   своей подсветкой, даже когда палец попал в кнопку внутри. Красит нажатое
+   пусть сама кнопка (.btn:active выше), а строка тут молчит. */
+.trow,.dsrow,.arow,.racts .btn{-webkit-tap-highlight-color:transparent}
+/* Наводить пальцем нечем, и нажатие браузер разбирает как наведение: строка
+   оставалась подсвеченной после нажатия по кнопке внутри неё («на нажатие
+   должна реагировать только конкретная кнопка, а не весь блок», замечание
+   пользователя). Где наведения нет, там нет и подсветки строки. */
+@media (hover:none){
+  .trow:hover>td,.dsrow.clicky:hover>td{background:none}
+  .arow.atalk:hover{background:none}
+}
 .racts{display:inline-flex;position:relative;align-items:center;gap:var(--actgap)}
 .racts .pmenu{right:0;top:34px}
 .racts .pmenu.up{top:auto;bottom:calc(100% + 6px)}
@@ -842,15 +877,15 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
   .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
   .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
-  .trow .meta>.cin{justify-content:flex-start;flex-wrap:wrap}
-  /* телефон: сумма ранга и действие строки с пальцем в 44 пикселя, действие
-     прижато к правому краю */
+  /* телефон: сумма ранга с пальцем в 44 пикселя */
   .rsum{min-width:44px;min-height:44px;text-align:left}
-  .trow .meta .btn{height:36px}
-  /* телефон: вправо уезжает весь ряд действий, а не каждая кнопка по себе.
-     Кнопки в нём значками, и палец держит 36 точек по ширине */
-  .trow .meta .racts{margin-left:auto}
-  .trow .meta .btn-ico{width:36px}
+  /* Хвост строки на телефоне: кнопка значком дорастает до пальца, и правило
+     тут одно на все три раздела. Прежде своё было у каждого: строка доски
+     держала кнопку в 36 точек, запись накопителя в 30, а сессия растягивала
+     свои во всю ширину («кнопки в задаче, сессии, черновике на мобилке разного
+     размера и расположения», замечание пользователя). */
+  .racts .btn{height:var(--icobm);min-height:var(--icobm)}
+  .racts .btn-ico{width:var(--icobm)}
   .split .more2{width:44px}
   .hpop{width:min(326px,86vw)}
   /* телефон: полоса действий задачи собрана значками с пальцем в 44 пикселя
@@ -939,8 +974,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .flash{width:auto}
   .flash:not(:first-child){display:none}
   .flash .nx{width:44px;height:44px}
-  /* телефон: работа встаёт карточкой, кнопки в ряд с пальцем в 44 пикселя */
-  .aacts .btn{flex:1;min-height:44px}
   .aacts .stale{max-width:none;text-align:left}
   .pbd{max-height:60vh}
   .chatfeed{max-height:46vh}
@@ -1723,7 +1756,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    пользователя). Число сторожит рубеж tblSideMin в board_test.go. */
 .tbl th,.tbl td{box-sizing:border-box;text-align:left;padding-left:var(--rowpx);padding-right:var(--rowpx)}
 .tbl th:first-child,.tbl td:first-child{padding-left:var(--rowpl)}
-.tbl th:last-child,.tbl td:last-child{padding-right:var(--rowpr)}
+/* Последняя колонка это хвост кнопок во всех трёх разделах, и отступы у неё
+   свои: те же шесть точек, что стоят между самими кнопками. */
+.tbl th:last-child,.tbl td:last-child{padding-left:var(--actgap);padding-right:var(--actgap)}
 .tbl td{vertical-align:middle;padding-top:var(--rowpy);padding-bottom:var(--rowpy);
   border-top:1px solid var(--line)}
 .tbl thead+tbody>tr:first-child>td{border-top:none}
@@ -1810,7 +1845,7 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
      ставит: на широком экране они держат кромку таблицы, а тут строка
      раскладывается по областям и отступ держит она сама */
   .tbl th:first-child,.tbl td:first-child{padding-left:0}
-  .tbl th:last-child,.tbl td:last-child{padding-right:0}
+  .tbl th:last-child,.tbl td:last-child{padding-left:0;padding-right:0}
   .tbl>tbody>tr{display:block;border-top:1px solid var(--line)}
   .tbl>thead+tbody>tr:first-child{border-top:none}
   .tbl>thead>tr.tblh{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 12px;
@@ -1839,7 +1874,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .tt{grid-column:1 / -1;grid-row:2}
   .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
   .trow .meta{grid-column:4;grid-row:1}
-  .trow .meta>.cin{justify-content:flex-end;flex-wrap:nowrap}
+  /* Хвост прижат к правому краю строки и не переносится: правило одно на три
+     раздела, и стоит оно рядом с раскладкой той строки, которой правит. */
+  .trow .meta>.cin,.dsrow .sm>.cin,.arow .aacts>.cin{justify-content:flex-end;flex-wrap:nowrap}
   /* накопитель ложится тем же ритмом, что и строка доски: отметка с важностью,
      номер и дата первой строкой, название второй во всю ширину. Приписки едут
      под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */
@@ -1856,18 +1893,17 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .dsrow .dtt .st{display:block;white-space:normal;line-height:1.35}
   .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:var(--rowmgy);margin-top:var(--rowmgy);max-width:100%}
   .dsrow .dtt .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-  /* сессии: состояние, работа и возраст одной строкой, дата активности второй,
-     кнопки под ними */
+  /* сессии ложатся тем же ритмом, что строка доски и запись накопителя:
+     состояние, дата активности и кнопки первой полосой, название работы второй
+     во всю ширину. Прежде кнопки уезжали третьей полосой во всю ширину строки,
+     и раздел стоял непохожим на два соседних (замечание пользователя про
+     разную компоновку на телефоне). */
   .tbl>tbody>tr.arow{display:grid;grid-template-columns:18px 1fr auto;
     gap:var(--rowmgy) var(--rowmgx);
-    padding:var(--rowmpy) var(--rowmpx)}
-  .arow>td{padding-top:0;padding-bottom:0;vertical-align:baseline}
+    padding:var(--rowmpy) var(--rowmpx);align-items:center}
+  .arow>td{padding-top:0;padding-bottom:0}
   .arow .live{grid-column:1;grid-row:1}
-  .arow .ab{grid-column:2;grid-row:1}
-  .arow .amoved{grid-column:3;grid-row:1;text-align:right}
-  .arow .aacts{grid-column:1 / -1;grid-row:3;width:100%}
-  .arow .aacts>.cin{flex-wrap:wrap;justify-content:flex-start}
-  /* кнопки в телефонной строке тянутся во всю ширину: коробка хвоста отдаёт им
-     свою ширину, а зазор между ними тот же, что и на широком экране */
-  .arow .aacts .racts{width:100%}
+  .arow .amoved{grid-column:2;grid-row:1;text-align:right}
+  .arow .aacts{grid-column:3;grid-row:1}
+  .arow .ab{grid-column:1 / -1;grid-row:2}
 }

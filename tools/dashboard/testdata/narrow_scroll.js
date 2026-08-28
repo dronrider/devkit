@@ -192,11 +192,19 @@ function dotGap() {
   const row = document.querySelector(".arow") || document.querySelector(".trow");
   if (!row) return NOROW;
   const dot = row.querySelector(".dot") || row.querySelector(".sdot");
-  const next = row.querySelector(".ab") || row.querySelector(".id span:not(.sdot)");
-  if (!dot || !next) return NOROW;
+  if (!dot) return NOROW;
   const box = dot.getBoundingClientRect();
   if (!box.width) return NOWIDTH;
-  return Math.round(next.getBoundingClientRect().left - box.right);
+  // Сосед это тот, кто и правда стоит на одной полосе с кружком. Строка на
+  // телефоне разложена по полосам, и заголовок работы уехал под кружок своей
+  // полосой, а рядом с ним стоит дата активности: слипнуться кружок может
+  // только с тем, что стоит с ним в ряд.
+  const mate = [...row.querySelectorAll(".ab, .amoved, .id span:not(.sdot)")].find((node) => {
+    const near = node.getBoundingClientRect();
+    return near.width && near.top < box.bottom && near.bottom > box.top;
+  });
+  if (!mate) return NOROW;
+  return Math.round(mate.getBoundingClientRect().left - box.right);
 }
 const out = [
   "screen=" + screen,

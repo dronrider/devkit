@@ -12,8 +12,11 @@ import (
 // без стаба notifyScript у большинства тестов уходит в ~/projects/devkit,
 // а там лежит настоящий hooks/notify.py, который на машине разработчика
 // реально дал бы баннер. Тесты самого уведомления включают его точечно.
+// Тем же ходом глохнет shipctl: с DK-312 close зовёт разлив, и без стаба
+// close-тесты звали бы настоящий shipctl с машины (drain_test.go).
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
+	muteShipctlInTests()
 	os.Exit(m.Run())
 }
 

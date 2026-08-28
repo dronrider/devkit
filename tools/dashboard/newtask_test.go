@@ -537,8 +537,8 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	}
 	// Разделы SCQA спрашиваются порознь, своим полем каждый: одним полем
 	// черновик писался простынёй (просьба пользователя).
-	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "DRAFT_SECTIONS") {
-		t.Error("форма черновика молчит про SCQA")
+	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "DRAFT_TEMPLATE") {
+		t.Error("форма черновика молчит про разделы")
 	}
 	// Дороги на доску в теле формы нет: она вела туда же, куда ведёт шапка
 	// страницы, и стояла на экране второй такой же (замечание пользователя).
@@ -553,51 +553,59 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	}
 }
 
-// Форма черновика спрашивает SCQA разделами: заголовок-исход отдельным полем,
-// дальше «Ситуация», «Осложнение», «Вопрос» и «Гипотеза», каждый со своей
-// подсказкой. Записанное уезжает тем же порядком, каким пишет taskctl draft, и
-// пустые вопрос с гипотезой записи не мешают (TASKFORM.md, раздел «Черновик»).
-func TestStaticDraftSCQAForm(t *testing.T) {
-	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{`{ key: "sit", head: "Ситуация"`,
-		`{ key: "comp", head: "Осложнение"`, `{ key: "quest", head: "Вопрос"`,
-		`{ key: "hyp", head: "Гипотеза"`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("в разделах формы черновика нет %q", want)
+// Форма черновика встречает человека шаблоном разделов в единственном поле:
+// заголовок первой строкой, дальше «### Ситуация» и соседи с пустыми местами
+// под текст. Полей на каждый раздел форма не заводит: «нужно было просто в
+// поле редактирования вставить шаблон с разделами, а пользователь сам заполнит
+// их, так гораздо гибче» (решение пользователя). Правит шаблон человек руками,
+// и рубеж формы тот же, что у утилиты записи: непустая первая строка.
+func TestStaticDraftTemplateForm(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`const DRAFT_TEMPLATE = ["", "", "### Ситуация"`,
+		`"### Осложнение"`, `"### Вопрос"`, `"### Гипотеза"`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в шаблоне черновика нет %q", want)
 		}
 	}
-	// Текст собирается подразделами третьего уровня: размеченный текст утилита
-	// кладёт как есть, и пустой раздел уезжает пустым заголовком.
-	body := funcBody(t, text, "function draftText(")
-	if !strings.Contains(body, `"### " + sec.head`) {
-		t.Error("текст черновика собирается не подразделами: taskctl положит его целиком в «Ситуацию»")
-	}
-	if !strings.Contains(body, `(body ? "\n\n" + body : "")`) {
-		t.Error("пустой раздел черновика уезжает не пустым заголовком")
-	}
-	// Обязательны заголовок с ситуацией и осложнением, вопрос и гипотеза нет.
-	stop := funcBody(t, text, "function draftFormRefusal(")
-	for _, want := range []string{"form.title", "form.sit", "form.comp"} {
-		if !strings.Contains(stop, want) {
-			t.Errorf("рубеж формы черновика не спрашивает %q", want)
+	// Полей на разделы нет вовсе, как и сборки текста из них.
+	for _, gone := range []string{"DRAFT_SECTIONS", "function draftText(", `"nfsec"`,
+		"черновика\")", "form.sit", "form.comp"} {
+		if strings.Contains(app, gone) {
+			t.Errorf("отдельные поля разделов остались в статике: нашлось %q", gone)
 		}
 	}
-	for _, gone := range []string{"form.quest", "form.hyp"} {
-		if strings.Contains(stop, gone) {
-			t.Errorf("рубеж формы черновика отбивает запись из-за %q, а он бывает пустым", gone)
+	made := funcBody(t, app, "function renderNew(")
+	// Шаблон кладётся один раз за заход: перерисовка по фокусу окна не должна
+	// возвращать его в очищенное рукой поле.
+	for _, want := range []string{"const seeded = draft && !newForm.seeded && !newForm.title.trim();",
+		"if (seeded) newForm.title = DRAFT_TEMPLATE;",
+		"const text = newForm.title.trim();"} {
+		if !strings.Contains(made, want) {
+			t.Errorf("шаблон кладётся не тем блоком: нет %q", want)
 		}
 	}
-	// Заголовок длиннее семидесяти двух отбивается формой, а не походом на
-	// сервер: тот же порог держит и утилита записи.
-	if !strings.Contains(text, "DRAFT_TITLE_LIMIT = 72") {
+	// Поле у обеих форм одно, и нетронутый шаблон на форму задачи не уезжает:
+	// там он встал бы заголовком строки.
+	if !strings.Contains(made, "if (!draft && newForm.seeded && newForm.title === DRAFT_TEMPLATE) {") {
+		t.Error("шаблон черновика уезжает на форму задачи заголовком строки")
+	}
+	// Курсор встаёт на первую строку, где человек и начинает.
+	if !strings.Contains(made, "view.title.setSelectionRange(0, 0)") {
+		t.Error("курсор не ставится в поле шаблона: человек ищет начало сам")
+	}
+	// Рубеж ровно утилитин: непустая первая строка и её длина, разделов он не
+	// спрашивает.
+	stop := funcBody(t, app, "function draftFormRefusal(")
+	if !strings.Contains(stop, `form.title || "").split("\n", 1)[0]`) {
+		t.Error("рубеж формы черновика меряет не первую строку")
+	}
+	for _, gone := range []string{"ситуация не написана", "осложнение не написано"} {
+		if strings.Contains(app, gone) {
+			t.Errorf("форма всё ещё отбивает запись за раздел: %q", gone)
+		}
+	}
+	if !strings.Contains(app, "DRAFT_TITLE_LIMIT = 72") {
 		t.Error("порога заголовка черновика на форме нет: о нём узнают только с ответа сервера")
-	}
-	made := funcBody(t, text, "function renderNew(")
-	if !strings.Contains(made, "extra: draft ? [scqa] : [card]") {
-		t.Error("карточка разделов не встаёт на форму черновика")
-	}
-	if !strings.Contains(made, "const text = draftText(newForm);") {
-		t.Error("запись черновика уезжает не разделами, а одним полем")
 	}
 }
 

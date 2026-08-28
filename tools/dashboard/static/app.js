@@ -3621,6 +3621,7 @@ function formPage(cfg) {
   save.addEventListener("click", () => { if (!save.disabled && cfg.onSave) cfg.onSave(); });
   drop.addEventListener("click", () => { if (cfg.onDrop) cfg.onDrop(); });
   out.bar = bar;
+  out.title = title;
   out.save = save;
   out.saveMore = more;
   out.bad = bad;
@@ -11623,50 +11624,29 @@ const DRAFT_NOTE = "Задачи на доске у него нет, в рабо
 // и это единственная его особенность, которой не видно глазами.
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 
-// Черновик пишется по SCQA, и форма спрашивает разделы порознь, а не одним
-// полем: простынёй в одно поле человек писал сплошным текстом, и раскладывать
-// её потом приходилось грумеру (просьба пользователя). Подсказка каждого поля
-// говорит, что в нём пишут, и на этом останавливается: правила лежат в
-// TASKFORM.md, разделе «Черновик», пересказывать их формой незачем.
-const DRAFT_PLACEHOLDER = "Заголовок-исход одной строкой";
-const DRAFT_SECTIONS = [
-  { key: "sit", head: "Ситуация", hint: "что есть сейчас и откуда взялось наблюдение" },
-  { key: "comp", head: "Осложнение", hint: "что в этом не так и чем мешает" },
-  { key: "quest", head: "Вопрос", hint: "что предстоит решить; бывает пустым" },
-  { key: "hyp", head: "Гипотеза", hint: "что изменится снаружи, когда сделано; бывает пустым" },
-];
+// Черновик пишется по SCQA, и форма кладёт в поле готовый шаблон разделов:
+// заголовок первой строкой, дальше подразделы третьего уровня с пустыми
+// местами под текст. Полей на каждый раздел форма не заводит: «нужно было
+// просто в поле редактирования вставить шаблон с разделами, а пользователь сам
+// заполнит их, так гораздо гибче» (решение пользователя). Написанное в
+// шаблоне человек волен править как угодно: снять раздел, добавить свой,
+// писать сплошным текстом. Размеченный текст утилита записи кладёт как есть.
+const DRAFT_PLACEHOLDER = "Заголовок-исход первой строкой, дальше разделы";
+const DRAFT_TEMPLATE = ["", "", "### Ситуация", "", "", "### Осложнение", "",
+  "", "### Вопрос", "", "", "### Гипотеза", ""].join("\n");
 // Порог заголовка держит и утилита записи, но узнавать о нём после похода на
 // сервер поздно: тот же рубеж стоит на самой форме.
 const DRAFT_TITLE_LIMIT = 72;
 
-// Текст черновика собирается тем порядком, каким его пишет taskctl draft:
-// заголовок первой строкой, дальше подразделы третьего уровня. Размеченный
-// текст утилита кладёт как есть, поэтому незаполненный раздел уезжает пустым
-// заголовком и на разбор попадает как пустой: вопрос и гипотеза черновику не
-// обязательны.
-function draftText(form) {
-  const out = [String(form.title || "").trim()];
-  for (const sec of DRAFT_SECTIONS) {
-    const body = String(form[sec.key] || "").trim();
-    out.push("### " + sec.head + (body ? "\n\n" + body : ""));
-  }
-  return out.join("\n\n") + "\n";
-}
-
-// Рубеж формы черновика тот же, что у записи: заголовок с ситуацией и
-// осложнением обязательны, вопрос и гипотеза бывают пустыми (TASKFORM.md,
-// раздел «Черновик»).
+// Рубеж формы черновика ровно тот же, что у утилиты записи: непустая первая
+// строка и её длина. Разделов форма не спрашивает вовсе: человек правит текст
+// руками, и отбивать запись за снятый раздел значило бы спорить с его же
+// правкой (решение пользователя).
 function draftFormRefusal(form) {
-  const title = String(form.title || "").trim();
-  if (!title) return "черновик пустым не бывает: первой строкой идёт заголовок-исход";
-  if (title.length > DRAFT_TITLE_LIMIT) {
+  const head = (String(form.title || "").split("\n", 1)[0] || "").trim();
+  if (!head) return "черновик пустым не бывает: первой строкой идёт заголовок-исход";
+  if (head.length > DRAFT_TITLE_LIMIT) {
     return "заголовок длиннее " + DRAFT_TITLE_LIMIT + " символов: по нему черновик узнают в накопителе";
-  }
-  if (!String(form.sit || "").trim()) {
-    return "ситуация не написана: с неё начинается разбор, и без неё черновик нечем понять";
-  }
-  if (!String(form.comp || "").trim()) {
-    return "осложнение не написано: без него непонятно, чем происходящее мешает";
   }
   return "";
 }
@@ -11695,8 +11675,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
-  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "",
-  sit: "", comp: "", quest: "", hyp: "" };
+  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", seeded: false };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -11708,17 +11687,17 @@ function resetNewForm(project) {
   newForm.accept = "agent";
   newForm.barrier = "";
   newForm.reason = "";
-  for (const sec of DRAFT_SECTIONS) newForm[sec.key] = "";
+  newForm.seeded = false;
 }
 
 // Форма набрана хоть чем-то: пустую закрываем молча, а над набранной сперва
 // спрашиваем. Мера тут одна на оба вида, поля чужого вида стоят нетронутыми.
 function newFormFilled() {
-  if (String(newForm.title || "").trim()) return true;
-  for (const sec of DRAFT_SECTIONS) {
-    if (String(newForm[sec.key] || "").trim()) return true;
-  }
-  if (newForm.draft) return false;
+  const text = String(newForm.title || "");
+  // Шаблон разделов сам по себе не написанное: форма с одним шаблоном
+  // закрывается молча, как закрывалась пустая.
+  if (newForm.draft) return text.trim() !== "" && text !== DRAFT_TEMPLATE;
+  if (text.trim()) return true;
   return newForm.type !== "task" || newForm.cost !== "-" ||
     newForm.parts.some((n) => Number(n) !== 0) ||
     newForm.accept !== "agent" || Boolean(newForm.barrier) ||
@@ -11767,6 +11746,21 @@ function renderNew(project, kind) {
   newForm.draft = kind === "draft";
 
   const draft = newForm.draft;
+  // Шаблон разделов встаёт в поле один раз, при заходе на форму. Экран
+  // перечитывается по фокусу окна, и класть шаблон каждой перерисовкой значило
+  // бы возвращать его в очищенное рукой поле, споря с человеком.
+  const seeded = draft && !newForm.seeded && !newForm.title.trim();
+  if (draft && !newForm.seeded) {
+    if (seeded) newForm.title = DRAFT_TEMPLATE;
+    newForm.seeded = true;
+  }
+  // Шаблон принадлежит черновику: поле у обеих форм одно, и нетронутый шаблон,
+  // уехав на форму задачи, встал бы заголовком строки. Написанное рукой при
+  // этом переезжает, как переезжало и раньше.
+  if (!draft && newForm.seeded && newForm.title === DRAFT_TEMPLATE) {
+    newForm.title = "";
+    newForm.seeded = false;
+  }
   // Пометка про груминг стоит только у черновика и говорит сразу обе правды: и
   // чего у него нет, и кто это выдаст.
   const note = el("div", "dnote");
@@ -11811,34 +11805,6 @@ function renderNew(project, kind) {
   // слову в списке этого не прочесть.
   box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField);
 
-  // Разделы черновика: подпись, поле и подсказка в самом поле. Высота поля
-  // растёт по написанному, как у заголовка: раздел бывает и в строку, и в
-  // абзац, а четыре поля в полный рост занимали бы экран целиком.
-  const scqa = el("div", "card");
-  const scqaBox = el("div", "nfbody");
-  scqa.append(scqaBox);
-  for (const sec of DRAFT_SECTIONS) {
-    const field = el("div", "nfsec");
-    field.append(el("span", "flab", sec.head));
-    const area = el("textarea");
-    area.rows = 2;
-    area.value = newForm[sec.key];
-    area.placeholder = sec.hint;
-    area.setAttribute("aria-label", sec.head.toLowerCase() + " черновика");
-    const fit = () => {
-      area.style.height = "auto";
-      if (area.scrollHeight) area.style.height = area.scrollHeight + "px";
-    };
-    area.addEventListener("input", () => {
-      newForm[sec.key] = area.value;
-      fit();
-      view.touch();
-    });
-    setTimeout(fit, 0);
-    field.append(area);
-    scqaBox.append(field);
-  }
-
   let view = null;
   // Уход с формы. Заведение занимает экран целиком, и выйти с него было нечем,
   // ни крестика, ни отмены (замечание пользователя). Пустая форма закрывается
@@ -11866,7 +11832,9 @@ function renderNew(project, kind) {
   // лишних вопросов и открывает экран записи, где виден его ход.
   const saveDraft = (groom) => {
     if (draftFormRefusal(newForm)) return;
-    const text = draftText(newForm);
+    // Уезжает написанное как есть: разметку разделов утилита записи узнаёт
+    // сама, а снятый или добавленный рукой раздел это дело автора.
+    const text = newForm.title.trim();
     const btns = [view.save, view.saveMore].filter(Boolean);
     makeDraft(project, text, btns).then(async (done) => {
       if (!done) return;
@@ -11889,12 +11857,12 @@ function renderNew(project, kind) {
     // пользователя).
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
-    lead: draft ? [note] : [], extra: draft ? [scqa] : [card],
+    lead: draft ? [note] : [], extra: draft ? [] : [card],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
-    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: !draft,
-    titleLabel: draft ? "заголовок черновика" : "заголовок задачи",
+    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: true,
+    titleLabel: draft ? "текст черновика" : "заголовок задачи",
     form: newForm, edit: true, always: true,
     saveLabel: draft ? "Сохранить" : "Завести задачу",
     // У черновика кнопок сохранения две, и расходятся они только дорогой
@@ -11971,6 +11939,15 @@ function renderNew(project, kind) {
     reasonField.hidden = bare;
     view.rankSum.textContent = String(newForm.parts.reduce((a, b) => a + Number(b), 0));
     view.rankNote.textContent = "= " + newForm.parts.join("+");
+  }
+
+  // Курсор встаёт на первую строку шаблона: с заголовка человек и начинает, а
+  // ниже его ждут готовые разделы. Ставится он только вместе со свежим
+  // шаблоном: перерисовка по фокусу окна не должна выдёргивать курсор из того
+  // раздела, где человек пишет.
+  if (seeded && view.title && view.title.focus) {
+    view.title.focus();
+    if (view.title.setSelectionRange) view.title.setSelectionRange(0, 0);
   }
 
   // Escape уводит с формы той же дорогой, что и кнопка: руки на клавиатуре, и

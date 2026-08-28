@@ -53,22 +53,6 @@ const fill = (text) => {
   return area;
 };
 
-// Разделы черновика различаются подписью для чтения с экрана: своего класса у
-// полей нет, а лежат они одинаковыми узлами.
-const fillPart = (label, text) => {
-  const area = (function find(node) {
-    if (node.tagName === "TEXTAREA" && String(node.attrs["aria-label"] || "") === label) return node;
-    for (const kid of node.children || []) {
-      const got = typeof kid === "object" && kid && find(kid);
-      if (got) return got;
-    }
-    return null;
-  })(groups);
-  if (!area) fail("на форме нет поля «" + label + "»: " + dump(groups).slice(0, 200));
-  area.value = text;
-  area.handlers.input({});
-  return area;
-};
 
 // --- задача: после заведения экран сам идёт за свежими данными ---
 // Вид заводимого стоит в адресе: заведение сперва спрашивает, что заводят, и
@@ -123,11 +107,9 @@ if (allByClass(groups, "fresh").length) {
 sandbox.location.hash = "#demo/new/draft";
 await sandbox.refresh();
 await settle();
-fill("свежая мысль");
-// Черновику мало заголовка: ситуация с осложнением обязательны, и без них
-// запись отбивается самой формой.
-fillPart("ситуация черновика", "замечено на прогоне.");
-fillPart("осложнение черновика", "мешает работать.");
+// Поле у черновика одно, и в нём лежит шаблон разделов: заголовок пишется
+// первой строкой поверх шаблона, остальное дело автора.
+fill("свежая мысль\n\n### Ситуация\n\nзамечено на прогоне.\n");
 const write = deepBtn(groups, "Сохранить");
 if (!write) fail("кнопки записи черновика нет: " + dump(groups).slice(0, 300));
 write.handlers.click({ stopPropagation: () => {} });

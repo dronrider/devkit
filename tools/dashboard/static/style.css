@@ -665,11 +665,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .nfbody{padding:14px 18px;display:flex;flex-direction:column;gap:12px}
 .nfbody textarea{display:block;width:100%;min-height:118px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px/1.6 var(--sans);resize:vertical}
 .nfbody>input{height:42px;padding:0 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px var(--sans)}
-/* поля разделов черновика растут по написанному: четыре поля в полный рост
-   уводили заголовок с кнопками записи за верхний край, а раздел черновика
-   бывает и в одну строку */
-.nfsec textarea{min-height:62px}
-.nfsec+.nfsec{margin-top:2px}
 .nfbody .rrow{padding:8px 0}
 .nfbody .rbig{padding:0}
 .nfbody .error{padding:0}

@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"Проведи груминг DK-900"},"timestamp":"2026-08-10T10:00:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"поднимаю разбор записи"}]},"timestamp":"2026-08-10T10:00:02.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"спрашиваю человека, режем или ждём"}]},"timestamp":"2026-08-10T10:00:06.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"завёл строку DK-900"}]},"timestamp":"2026-08-10T10:00:09.000Z"}

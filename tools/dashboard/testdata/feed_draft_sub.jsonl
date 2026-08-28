@@ -1,0 +1,3 @@
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"поищи дубли по доске"},"timestamp":"2026-08-10T10:00:03.000Z"}
+{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"смотрю накопитель"}]},"timestamp":"2026-08-10T10:00:04.000Z"}
+{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"дублей у записи нет"}]},"timestamp":"2026-08-10T10:00:05.000Z"}

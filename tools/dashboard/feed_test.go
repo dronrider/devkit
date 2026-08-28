@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -191,5 +192,109 @@ func TestFeedPagesBackThroughWindow(t *testing.T) {
 	older := page("n=20&before=" + tail[0].Key)
 	if len(older) != 20 || !strings.HasPrefix(older[19].Text, "ход 379 ") {
 		t.Fatalf("страница раньше хвоста: %d записей, последняя %.20q", len(older), older[len(older)-1].Text)
+	}
+}
+
+// fixture читает транскрипт из testdata: без него тесту склейки не на чем
+// стоять, и пустой файл тут это провал стенда, а не пустая лента.
+func fixture(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// fixtureKeys считает по самому файлу, под каким ключом каждая его запись
+// обязана встать в ленту: источник, смещение строки в байтах и номер блока
+// внутри строки. Ключ тут пересчитывается своим счётом, а не берётся у разбора,
+// иначе подмена ключа сошлась бы сама с собой.
+func fixtureKeys(t *testing.T, data, src string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	off := 0
+	for _, line := range strings.SplitAfter(data, "\n") {
+		if strings.TrimSpace(line) == "" {
+			off += len(line)
+			continue
+		}
+		var rec struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("транскрипт из testdata не разобрался: %v", err)
+		}
+		var text string
+		if json.Unmarshal(rec.Message.Content, &text) != nil {
+			var blocks []struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(rec.Message.Content, &blocks); err != nil || len(blocks) == 0 {
+				t.Fatalf("в записи транскрипта нет текста: %s", line)
+			}
+			text = blocks[0].Text
+		}
+		out[text] = fmt.Sprintf("%s:%d.0", src, off)
+		off += len(line)
+	}
+	return out
+}
+
+// Склейка захода в ленту. Разбор записи накопителя идёт сессией, которая зовёт
+// субагентов, и разговор человека с грумером лежит не в одном файле: реплики
+// сессии в её транскрипте, работа субагента в своём боковом журнале. Прежде
+// склейку заходов черновику собирала бы своя серверная ручка (LLD DK-354,
+// решение 2), а собрала её общая лента, и проверяется тут именно она: файлы
+// разговора сливаются по времени, а ключ записи держится за смещение её строки
+// в своём файле. Ключ несущий: по нему режется страница истории и по нему
+// приходит дописанное стримом, поэтому счёт от номера записи в разборе вместо
+// смещения ленту молча разъезжает.
+func TestFeedGluesDraftRunFiles(t *testing.T) {
+	e := newTestEnv(t)
+	forgetChunks()
+	run, side := fixture(t, "testdata/feed_draft_run.jsonl"), fixture(t, "testdata/feed_draft_sub.jsonl")
+	path := writeSession(t, e.home, e.proj, "", "aaa-1", run, time.Now())
+	log := writeSubLog(t, path, "s1", "поиск дублей", side)
+
+	items := sessionFeedOf(path, 0).items
+	var texts []string
+	for _, it := range items {
+		texts = append(texts, it.Text)
+	}
+	want := []string{
+		"Проведи груминг DK-900",
+		"поднимаю разбор записи",
+		"смотрю накопитель",
+		"дублей у записи нет",
+		"спрашиваю человека, режем или ждём",
+		"завёл строку DK-900",
+	}
+	if strings.Join(texts, "|") != strings.Join(want, "|") {
+		t.Fatalf("лента захода собрана не по времени:\n%s\nждали:\n%s",
+			strings.Join(texts, "\n"), strings.Join(want, "\n"))
+	}
+	// Заказ субагенту в ленту не едет: он уже стоит карточкой вызова в
+	// транскрипте, и вторым разом читался бы репликой человека.
+	for _, text := range texts {
+		if text == "поищи дубли по доске" {
+			t.Errorf("заказ субагенту встал в ленту второй копией: %v", texts)
+		}
+	}
+
+	keys := fixtureKeys(t, run, mainSrc)
+	for text, key := range fixtureKeys(t, side, srcName(log)) {
+		keys[text] = key
+	}
+	for _, it := range items {
+		if keys[it.Text] == "" {
+			continue
+		}
+		if it.Key != keys[it.Text] {
+			t.Errorf("ключ записи %q: %q, а по смещению её строки в файле %q",
+				it.Text, it.Key, keys[it.Text])
+		}
 	}
 }

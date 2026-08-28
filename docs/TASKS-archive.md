@@ -361,3 +361,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-168 | Связь из груминга обязательна: вход без маркера «после» это находка doctor | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-168.md](tasks/archive/2026/DK-168.md) |
 | DK-519 | Сессия не узнаёт о завершении фонового субагента | bug | P1 | 2026-08-28 | [tasks/archive/2026/DK-519.md](tasks/archive/2026/DK-519.md) |
 | DK-312 | taskctl close зовёт ship --drain после закрытия задачи | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-312.md](tasks/archive/2026/DK-312.md) |
+| DK-516 | Тик watch закрывает вид agent из Check, status называет ждущих человека | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-516.md](tasks/archive/2026/DK-516.md) |

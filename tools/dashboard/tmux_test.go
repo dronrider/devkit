@@ -784,3 +784,112 @@ func TestParseTmuxAskLiveReview(t *testing.T) {
 		t.Errorf("тот же экран без слов виджета принят за вопрос: %+v", got)
 	}
 }
+
+// liveTrustBarePane это вопрос доверия каталогу, снятый с живой панели
+// 2026-08-28 (сессия dk486-probe в каталоге, которого клиент не знал). Номеров
+// у вариантов нет вовсе, а курсор стоит на «No, exit»: свежий клиент рисует
+// этот виджет иначе, чем рисовал прежде, и прежний разбор его не видел.
+// Именно так встали два чата xr-proxy, о которых сказал пользователь.
+var liveTrustBarePane = strings.Join([]string{
+	"",
+	strings.Repeat("─", 100),
+	" Accessing workspace:",
+	"",
+	" /private/tmp/dk486-untrusted",
+	"",
+	" Quick safety check: Is this a project you created or one you trust? (Like your own code, a",
+	" well-known open source project, or work from your team). If not, take a moment to review what's in",
+	" this folder first.",
+	"",
+	" Claude Code'll be able to read, edit, and execute files here.",
+	"",
+	" Security guide",
+	"",
+	" ❯ No, exit",
+	"   Yes, I trust this folder",
+	"",
+	" Enter to confirm · Esc to cancel",
+}, "\n")
+
+// Вопрос доверия без номеров узнаётся так же, как узнавался нумерованный, и
+// курсор в нём виден: клиент ставит его на «No, exit», то есть слепое
+// подтверждение снимает сессию.
+func TestParseTmuxAskBareTrust(t *testing.T) {
+	ask := parseTmuxAsk(liveTrustBarePane)
+	if len(ask.Options) != 2 {
+		t.Fatalf("вопрос доверия без номеров разобран в %d вариантов: %+v", len(ask.Options), ask.Options)
+	}
+	if ask.Options[0].Text != "No, exit" || ask.Options[1].Text != "Yes, I trust this folder" {
+		t.Fatalf("варианты разобраны не те: %+v", ask.Options)
+	}
+	if ask.At != 1 {
+		t.Errorf("курсор стоит на %d, а клиент держит его на первом пункте", ask.At)
+	}
+	// Номер пункта в таком виджете не работает вовсе: пунктов клиент не
+	// нумеровал, и отвечать ему надо ходом курсора.
+	if ask.Keys != askKeysArrows {
+		t.Errorf("способ ответа назван %q, жду ход стрелками", ask.Keys)
+	}
+	if !strings.Contains(ask.Text, "Quick safety check") {
+		t.Errorf("текст вопроса собран не с панели: %q", ask.Text)
+	}
+}
+
+// Рубеж виджета у блока без номеров тот же: без подсказки навигации под
+// вариантами показывать нечего, иначе кнопками стал бы всякий абзац под
+// строкой ввода клиента.
+func TestParseTmuxAskBareNotWidget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane string
+	}{
+		{"тот же вопрос без подсказки", strings.Replace(liveTrustBarePane,
+			" Enter to confirm · Esc to cancel", " auto mode on (shift+tab to cycle)", 1)},
+		{"реплика человека и текст под ней", strings.Join([]string{
+			strings.Repeat("─", 56),
+			"❯ Заведи 1 и 2, по третьей отдельно разберёмся",
+			"  а четвёртую отложи",
+			strings.Repeat("─", 56),
+		}, "\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseTmuxAsk(tc.pane); len(got.Options) != 0 {
+				t.Fatalf("панель принята за вопрос клиента: %+v", got.Options)
+			}
+		})
+	}
+}
+
+// Ответ виджету без номеров подаётся ходом курсора: клиент держит его на «No,
+// exit», и слепой Enter снял бы сессию вместо подтверждения доверия.
+func TestTmuxAnswerBareTrustKeys(t *testing.T) {
+	ask := parseTmuxAsk(liveTrustBarePane)
+	for _, tc := range []struct {
+		name   string
+		option int
+		keys   []string
+	}{
+		{"доверяю", 2, []string{"Down", "Enter"}},
+		{"не доверяю", 1, []string{"Enter"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			sent := filepath.Join(e.home, "sent.log")
+			writeScript(t, e.bin, "tmux", `case "$1" in
+send-keys) shift; echo "$@" >> `+sent+`;;
+esac
+exit 0`)
+			t.Setenv("PATH", e.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := tmuxAnswer("chat-2", ask, tc.option, ""); err != nil {
+				t.Fatalf("ответ не подался: %v", err)
+			}
+			var got []string
+			for _, ln := range strings.Split(strings.TrimSpace(readFile(t, sent)), "\n") {
+				got = append(got, strings.TrimSpace(strings.TrimPrefix(ln, "-t =chat-2:")))
+			}
+			if strings.Join(got, "|") != strings.Join(tc.keys, "|") {
+				t.Errorf("клавиши поданы не те: %q, жду %q", got, tc.keys)
+			}
+		})
+	}
+}

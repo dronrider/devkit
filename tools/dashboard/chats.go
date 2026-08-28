@@ -268,6 +268,47 @@ func (s *server) markDeaf(sock string) {
 	s.mu.Unlock()
 }
 
+// askSeenTTL держит память снимка виджета. Снимок панели стоит подпроцесса, а
+// спрашивает его теперь не только открытая панель, но и список чатов со
+// строкой доски: без памяти каждая сборка списка гоняла бы capture-pane по
+// всем живым сессиям машины. Вопрос не рассасывается сам за секунды, и десяти
+// секунд тут с запасом.
+const askSeenTTL = 10 * time.Second
+
+// askEntry это разобранный виджет сессии и момент, когда его сняли.
+type askEntry struct {
+	ask  tmuxAsk
+	born time.Time
+}
+
+// tmuxAskOfFn это шов для тестов: боевой сервер снимает настоящую панель,
+// тест подставляет свой снимок и tmux машины не трогает.
+var tmuxAskOfFn = tmuxAskOf
+
+// tmuxAsking отвечает, на каком вопросе стоит клиент сессии. Ответ помнится
+// askSeenTTL: спрашивают его и список чатов, и строка доски, а стоит он
+// подпроцесса на каждую живую сессию.
+func (s *server) tmuxAsking(name string) tmuxAsk {
+	if name == "" || tmuxMissingCheck() != "" {
+		return tmuxAsk{}
+	}
+	now := s.now()
+	s.mu.Lock()
+	e, hit := s.askSeen[name]
+	s.mu.Unlock()
+	if hit && now.Sub(e.born) < askSeenTTL {
+		return e.ask
+	}
+	ask := tmuxAskOfFn(name)
+	s.mu.Lock()
+	if s.askSeen == nil {
+		s.askSeen = map[string]askEntry{}
+	}
+	s.askSeen[name] = askEntry{ask: ask, born: now}
+	s.mu.Unlock()
+	return ask
+}
+
 // healWindow это окно памяти о самолечении. Клин, случившийся позже него, это
 // новая беда, и лечится она заново. Порог клина тут один на всё
 // (stuckLostTerm): раньше него твёрдого признака не бывает вовсе, потому что
@@ -777,6 +818,14 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			// (разрешение, доверие каталогу первого запуска). Мера та же, что
 			// у ответа на реплику: последняя запись сессии в журнале
 			// уведомителя это permission_prompt.
+			e.Stuck = stuckAskWord
+		} else if e.Tmux != "" && alive(e.Tmux) && len(s.tmuxAsking(e.Tmux).Options) > 0 {
+			// Тот же третий род, но по самой панели, а не по журналу
+			// уведомителя. Журнал тут молчит вовсе там, где больнее всего: на
+			// вопросе доверия каталогу сессия ещё не родилась, своего ID у неё
+			// нет, и хук уведомителя не сработал ни разу. Ровно так встали два
+			// чата xr-proxy, и в списке они выглядели живыми (замечание
+			// пользователя 2026-08-28).
 			e.Stuck = stuckAskWord
 		}
 		// Занятость разговора считается для всех живых, а не только для тех, у

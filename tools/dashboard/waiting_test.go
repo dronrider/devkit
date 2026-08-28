@@ -421,3 +421,106 @@ func TestWaitScanReadsLogOnce(t *testing.T) {
 		t.Error("разбор пошёл за журналом второй раз: реестр приехал после снятия хвоста")
 	}
 }
+
+// bindTmuxRecord это запись реестра с tmux-сессией разговора: по ней строка
+// доски и находит клиента, чью панель надо спросить.
+func bindTmuxRecord(stamp, sid, task, tmux string) string {
+	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт /tmp/t.jsonl "+
+		"источник %s повод startup tmux %s\n", stamp, sid, task, bindOrder, tmux)
+}
+
+// fakeTmuxAsking подменяет tmux стенда: сессия одна, живая, и её панель стоит
+// на вопросе доверия каталогу. Настоящий tmux машины стенд не трогает.
+func fakeTmuxAsking(t *testing.T, e *testEnv, name, pane string) {
+	t.Helper()
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo `+name+`;;
+capture-pane) cat <<'PANE'
+`+pane+`
+PANE
+;;
+esac
+exit 0`)
+	t.Setenv("PATH", e.bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Клиент, стоящий на вопросе в своей панели, виден строкой доски и без
+// открытой панели разговора. Прежде это знание жило только в открытом чате:
+// два чата xr-proxy простояли на вопросе доверия до вечера, потому что
+// сессия ещё не родилась, в журнале уведомителя её нет ни строкой, а в панель
+// клиента никто не заглядывал (замечание пользователя 2026-08-28).
+func TestWidgetWaitSeenWithoutPanel(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return waitNow }
+	writeBinds(t, e.home, bindTmuxRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
+	fakeTmuxAsking(t, e, "chat-XR-4-1", liveTrustBarePane)
+
+	look := e.s.waitLookup(e.proj)
+	w, ok := look("XR-4", "in-progress", "")
+	if !ok {
+		t.Fatal("клиент стоит на вопросе, а строка доски молчит")
+	}
+	if w.Source != waitWidget || w.State != waitWidState || w.Note != waitWidNote {
+		t.Fatalf("источник ожидания назван не тем: %+v", w)
+	}
+	if len(w.Questions) != 1 || !strings.Contains(w.Questions[0], "Quick safety check") {
+		t.Errorf("вопрос до строки не доехал: %+v", w.Questions)
+	}
+	if w.Session != "aaaa1111-full-id" {
+		t.Errorf("ждущая сессия названа не та: %q", w.Session)
+	}
+	// Живой виджет точнее парковки: у припаркованной строки захода нет вовсе, а
+	// тут клиент ждёт нажатия прямо сейчас.
+	if w, ok := look("XR-4", "blocked", "вопрос: чинить копией?"); !ok || w.Source != waitWidget {
+		t.Errorf("виджет не перебил парковку: %+v %v", w, ok)
+	}
+	// А живой признак ожидания остаётся точнее виджета: его кладёт сам заход.
+	writeAsk(t, e.proj, "XR-4", waitNow.Add(5*time.Minute), "aaaa1111-full-id", "чинить копией?")
+	look = e.s.waitLookup(e.proj)
+	if w, ok := look("XR-4", "in-progress", ""); !ok || w.Source != waitAsk {
+		t.Errorf("признак ожидания перебит виджетом: %+v %v", w, ok)
+	}
+}
+
+// Молчащий клиент ожидания не заводит: пустая панель это работающая сессия, и
+// чип на ней врал бы.
+func TestWidgetWaitQuietClient(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return waitNow }
+	writeBinds(t, e.home, bindTmuxRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
+	fakeTmuxAsking(t, e, "chat-XR-4-1", "  разбираю задачу, отвечу через минуту")
+
+	if w, ok := e.s.waitLookup(e.proj)("XR-4", "in-progress", ""); ok {
+		t.Fatalf("у работающего клиента завелось ожидание: %+v", w)
+	}
+}
+
+// Снимок панели стоит подпроцесса, и спрашивают его теперь и список чатов, и
+// каждая сборка доски: без памяти capture-pane гонялся бы по всем живым
+// сессиям машины на каждый запрос.
+func TestTmuxAskingRemembersSnapshot(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return waitNow }
+	fakeTmuxAsking(t, e, "chat-XR-4-1", liveTrustBarePane)
+	calls := 0
+	old := tmuxAskOfFn
+	tmuxAskOfFn = func(name string) tmuxAsk {
+		calls++
+		return old(name)
+	}
+	t.Cleanup(func() { tmuxAskOfFn = old })
+
+	for i := 0; i < 3; i++ {
+		if len(e.s.tmuxAsking("chat-XR-4-1").Options) != 2 {
+			t.Fatal("вопрос с панели не разобрался")
+		}
+	}
+	if calls != 1 {
+		t.Errorf("панель снята %d раз подряд, жду один снимок из памяти", calls)
+	}
+	e.s.now = func() time.Time { return waitNow.Add(askSeenTTL + time.Second) }
+	e.s.tmuxAsking("chat-XR-4-1")
+	if calls != 2 {
+		t.Errorf("память снимка не протухла за %s: снимков %d", askSeenTTL, calls)
+	}
+}

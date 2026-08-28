@@ -23,6 +23,7 @@ import (
 // Машинные разряды источника, от точного к запасному.
 const (
 	waitAsk    = "ask"
+	waitWidget = "widget"
 	waitParked = "parked"
 	waitIdle   = "idle"
 )
@@ -30,6 +31,7 @@ const (
 // Состояние словом: его и видно чипом на строке доски.
 const (
 	waitAskState  = "ждёт ответа"
+	waitWidState  = "клиент ждёт ответа"
 	waitParkState = "припаркована вопросом"
 	waitIdleState = "сессия ждёт ввода"
 )
@@ -37,6 +39,7 @@ const (
 // Подпись источника словами: по ней человек понимает, насколько знанию верить.
 const (
 	waitAskNote  = "спросил агент"
+	waitWidNote  = "вопрос в панели клиента"
 	waitParkNote = "парковка"
 	waitIdleNote = "повод из журнала уведомителя"
 )
@@ -201,10 +204,49 @@ func slicesHas(list []string, want string) bool {
 	return false
 }
 
+// widgetWaits собирает второй источник: клиента, который прямо сейчас стоит на
+// своём виджете в tmux. Прежде такой вопрос был виден только в открытой панели
+// разговора, и человек про него не знал вовсе, пока не открывал чат: два чата
+// xr-proxy простояли так до вечера (замечание пользователя 2026-08-28). На
+// вопросе доверия каталогу первый источник и третий молчат оба, потому что
+// сессия ещё не родилась и в журнале уведомителя её нет ни строкой, а панель
+// клиента вопрос показывает.
+func (s *server) widgetWaits(b sessionBinds) map[string]Waiting {
+	alive := tmuxAliveFn()
+	out := map[string]Waiting{}
+	seen := map[string]string{}
+	for sid, rec := range b {
+		if rec.Task == "" || rec.Tmux == "" {
+			continue
+		}
+		// У задачи бывает несколько заходов подряд, и ждёт человека последний:
+		// без этого выбор зависел бы от порядка обхода карты.
+		if at, hit := seen[rec.Task]; hit && at >= rec.Time {
+			continue
+		}
+		name := strings.SplitN(rec.Tmux, ":", 2)[0]
+		if !alive(name) {
+			continue
+		}
+		ask := s.tmuxAsking(name)
+		if len(ask.Options) == 0 {
+			continue
+		}
+		w := Waiting{State: waitWidState, Source: waitWidget, Note: waitWidNote, Session: sid}
+		if text := strings.TrimSpace(ask.Text); text != "" {
+			w.Questions = []string{text}
+		}
+		out[rec.Task] = w
+		seen[rec.Task] = rec.Time
+	}
+	return out
+}
+
 // waitScan это разобранный запасной источник на один заход ответа: карта
 // ожиданий по задачам и невязки по обрезанным сессиям. Журнал и реестр
 // читаются один раз на весь ответ, а не на каждую строку доски.
 type waitScan struct {
+	widget    map[string]Waiting
 	idle      map[string]Waiting
 	unclaimed map[string]string
 }
@@ -213,12 +255,14 @@ type waitScan struct {
 // пустой запасной источник, а не отказ: первые два источника от него не
 // зависят вовсе.
 func (s *server) waitScan() waitScan {
+	b := s.binds()
+	out := waitScan{widget: s.widgetWaits(b)}
 	data, err := os.ReadFile(s.notifyPath())
 	if err != nil {
-		return waitScan{}
+		return out
 	}
-	idle, unclaimed := idleWaits(tailLines(data, waitTail), s.binds(), s.now())
-	return waitScan{idle: idle, unclaimed: unclaimed}
+	out.idle, out.unclaimed = idleWaits(tailLines(data, waitTail), b, s.now())
+	return out
 }
 
 // waitLookup собирает разбор ожидания на один ответ сервера: журнал, реестр и
@@ -229,6 +273,12 @@ func (s *server) waitLookup(projPath string) func(id, sect, block string) (Waiti
 	now := s.now()
 	return func(id, sect, block string) (Waiting, bool) {
 		if w, ok := askWaiting(projPath, id, now); ok {
+			return w, true
+		}
+		// Живой виджет идёт раньше парковки: у припаркованной задачи захода
+		// нет вовсе, а тут клиент стоит и ждёт нажатия прямо сейчас, и это
+		// знание точнее и полезнее.
+		if w, ok := scan.widget[id]; ok {
 			return w, true
 		}
 		if w, ok := parkedWaiting(sect, block); ok {

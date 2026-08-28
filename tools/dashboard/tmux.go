@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -172,6 +173,13 @@ const (
 // сверяются они как есть.
 var askOptionRe = regexp.MustCompile("^\\s*(\u276f\\s*)?(\\d+)\\.\\s+(\\S.*?)\\s*$")
 
+// askCursorRe ловит строку варианта без номера: свежий клиент печатает вопрос
+// доверия каталогу одним знаком курсора, а пункты отбивает отступом, и номеров
+// у них нет вовсе (живой снимок 2026-08-28: «\u276f No, exit» и следом «  Yes, I
+// trust this folder»). Прежний разбор такой виджет не видел, и человек снова
+// оставался перед тишиной: живой случай двух застрявших чатов xr-proxy.
+var askCursorRe = regexp.MustCompile("^(\\s*)\u276f (\\S.*?)\\s*$")
+
 // askMarkRe отрезает флажок множественного выбора от текста варианта: сам
 // флажок это состояние, а не часть слов. Отмеченный флажок клиент печатает и
 // буквой, и знаком галочки (живая проверка: пустой это «[ ]», отмеченный
@@ -253,6 +261,10 @@ func parseTmuxAsk(text string) tmuxAsk {
 	// нижний блок со следом виджета: на нём клиент и стоит, а верхние это
 	// прочитанный текст.
 	blocks := askBlocks(lines)
+	if bare := askBareBlocks(lines); len(bare) > 0 {
+		blocks = append(blocks, bare...)
+		sort.Slice(blocks, func(i, j int) bool { return blocks[i].first < blocks[j].first })
+	}
 	for i := len(blocks) - 1; i >= 0; i-- {
 		b := blocks[i]
 		if len(b.ask.Options) < 2 {
@@ -346,6 +358,83 @@ func askBlocks(lines []string) []askBlock {
 	}
 	shut(false)
 	return out
+}
+
+// askBareBlocks находит блок вариантов без номеров. Такой виджет клиент рисует
+// одним знаком курсора: выбранный пункт помечен «\u276f », остальные стоят под ним
+// с тем же отступом. Опорой служит сам курсор, а соседями считаются только
+// строки, чей текст начинается ровно в том же столбце: без этого блоком стал бы
+// всякий абзац под строкой ввода клиента. Рубеж виджета тот же, что и у
+// нумерованного блока, и держит его askOnWidget: без подсказки навигации под
+// блоком показывать нечего.
+func askBareBlocks(lines []string) []askBlock {
+	var out []askBlock
+	for i, ln := range lines {
+		m := askCursorRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		// Нумерованный вариант и кнопку виджета читает свой разбор: тут только
+		// то, что ему не далось.
+		if _, ok := parseAskLine(ln); ok {
+			continue
+		}
+		col := len(m[1]) + 2
+		first, last := i, i
+		for j := i - 1; j >= 0 && askBareSame(lines[j], col); j-- {
+			first = j
+		}
+		for j := i + 1; j < len(lines) && askBareSame(lines[j], col); j++ {
+			last = j
+		}
+		if last-first < 1 {
+			continue
+		}
+		b := askBlock{first: first, ask: tmuxAsk{Keys: askKeysArrows}, hint: askHintBelow(lines, last)}
+		for j := first; j <= last; j++ {
+			// У строки с курсором текст уже отобран разбором: столбец тут
+			// общий, а знак курсора шире пробела, и резать её по столбцу
+			// значило бы резать посреди знака.
+			text := m[2]
+			if j != i {
+				text = strings.TrimSpace(lines[j][col:])
+			}
+			b.ask.Options = append(b.ask.Options, tmuxPick{Text: text, Kind: pickKindOf(text)})
+		}
+		b.ask.At = i - first + 1
+		out = append(out, b)
+	}
+	return out
+}
+
+// askBareSame отвечает, стоит ли строка соседним пунктом того же блока: текст
+// начинается ровно в столбце col, а сама строка ни курсором, ни номером, ни
+// подсказкой не помечена.
+func askBareSame(ln string, col int) bool {
+	if len(ln) <= col || strings.TrimSpace(ln) == "" {
+		return false
+	}
+	if strings.TrimLeft(ln[:col], " ") != "" || ln[col] == ' ' {
+		return false
+	}
+	if askHintRe.MatchString(ln) {
+		return false
+	}
+	_, ok := parseAskLine(ln)
+	return !ok
+}
+
+// askHintBelow ищет подсказку навигации под блоком: ею клиент кончает виджет,
+// и пустые строки между ними бывают. Первая непустая строка не подсказка
+// значит, что блок кончился чем-то другим, и виджетом он не считается.
+func askHintBelow(lines []string, last int) bool {
+	for j := last + 1; j < len(lines) && j <= last+askGapMax+1; j++ {
+		if strings.TrimSpace(lines[j]) == "" {
+			continue
+		}
+		return askHintRe.MatchString(lines[j])
+	}
+	return false
 }
 
 // askReadAbove читает то, что клиент написал над блоком: полосу шагов, сводку

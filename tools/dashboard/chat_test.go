@@ -2368,3 +2368,38 @@ func TestStaticWedgeHealsItself(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Клиент, вставший на вопросе доверия каталогу, в журнале уведомителя не
+// оставляет ни строки: сессия ещё не родилась, своего ID у неё нет, и хук не
+// сработал ни разу. Прежняя мера тут молчала, и список показывал такой
+// разговор живым, а человек узнавал про вопрос, только открыв панель. Ровно
+// так простояли два чата xr-proxy (замечание пользователя 2026-08-28), и
+// теперь список спрашивает саму панель клиента.
+func TestChatEntryAskFromPaneWithoutJournal(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Date(2026, 8, 28, 17, 30, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T17:29:00 сессия %s задача XR-1 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-13\t1\t1786000000\n")
+	old := tmuxAskOfFn
+	tmuxAskOfFn = func(string) tmuxAsk { return parseTmuxAsk(liveTrustBarePane) }
+	t.Cleanup(func() { tmuxAskOfFn = old })
+
+	got := chatsOf(t, e, c)
+	if len(got) != 1 {
+		t.Fatalf("чатов в списке %d, ждал один: %+v", len(got), got)
+	}
+	if got[0].Stuck != stuckAskWord {
+		t.Errorf("вопрос с панели не узнан: stuck=%q, ждал %q", got[0].Stuck, stuckAskWord)
+	}
+
+	// Панель молчит, значит и слова нет: работающий клиент не стоящий.
+	e.s.askSeen = nil
+	tmuxAskOfFn = func(string) tmuxAsk { return tmuxAsk{} }
+	if got := chatsOf(t, e, c); got[0].Stuck != "" {
+		t.Errorf("слово вопроса встало на работающем клиенте: %q", got[0].Stuck)
+	}
+}

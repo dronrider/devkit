@@ -494,17 +494,14 @@ function rowOrder(sect, r) {
 
 // Признак идущей работы дописывает строкам сервер (boardRuns, tasks.go), и
 // игрушечный сервер повторяет ровно это: у строки с живой работой это то, чем
-// работа видна, у строки In progress без работы gone. Идущий ход едет вторым
-// признаком (run_busy): живое окно и идущий в нём ход это разные вещи, и «Стоп»
-// кнопка получает только по второму. Заказ дописывается той же разметкой.
+// работа видна, у строки In progress без работы gone. Заказ дописывается той
+// же разметкой.
 function marked(list, key) {
   return list.map((r) => {
     const live = works().find((w) => w.id === r.id);
     const run = live ? live.via : (key === "in-progress" ? "gone" : "");
-    const busy = Boolean(live && live.live === "busy");
     const order = rowOrder(key, r);
-    return Object.assign({}, r, run ? { run } : {}, busy ? { run_busy: true } : {},
-      order ? { order } : {});
+    return Object.assign({}, r, run ? { run } : {}, order ? { order } : {});
   });
 }
 
@@ -848,13 +845,10 @@ const sandbox = {
         return refuse(404, { error: "на доске demo нет строки " + id });
       }
       const sect = id === "XR-1" ? "in-progress" : "backlog";
-      // Признаки работы форма задачи получает те же, что и строка доски:
-      // сервер размечает их одной разметкой на оба экрана (handleTask зовёт те
-      // же runMarks и busyMarks, tasks.go). Иначе одна и та же задача
-      // выглядела бы на форме не так, как в списке.
+      const order = rowOrder(sect, r);
       return reply({
         project: "demo", id,
-        row: Object.assign({}, marked([r], sect)[0], { sect, section: sect }),
+        row: Object.assign({}, r, { sect, section: sect }, order ? { order } : {}),
         after: [], blocks: [],
         file: "docs/tasks/" + id + ".md",
         // Постановка со служебным разделом: такие разделы экран сворачивает
@@ -1780,10 +1774,6 @@ if (doc.activeElement !== ta) fail("приход реплики отобрал �
 // остаётся тем же. Панель собрана один раз на разговор, и правится в ней от
 // перерисовки ровно эта плашка.
 running = true;
-// Работа идёт по XR-1: игрушечный сервер держит её одним источником, и
-// признаки строки собираются по нему же, иначе форма задачи узнает о работе
-// не то, что список.
-runningId = "XR-1";
 rows[0].id = "XR-1";
 const chatWork = [{ id: "XR-1", via: "tmux", live: "busy", title: "Цель: дашборд без дёрганья" }];
 const wasWorks = works;

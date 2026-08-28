@@ -88,6 +88,9 @@ const (
 	chatLive   = "live"
 	chatVscode = "vscode"
 	chatDead   = "dead"
+	// chatNotStarted это разговор, заведённый кнопкой «+», в котором ещё не
+	// сказано ни слова: сессии за ним нет, и поднимет её первая реплика.
+	chatNotStarted = "blank"
 )
 
 // chatEntry это строка списка диалогов. Заголовок берётся из первой реплики
@@ -136,6 +139,17 @@ type chatEntry struct {
 	// Archived это убранный в архив разговор: список его прячет, пока человек
 	// не попросит показать архивные, а сам признак живёт памятью диалога.
 	Archived bool `json:"archived,omitempty"`
+	// Blank это строка незачатого разговора: человек завёл его кнопкой «+», а
+	// сессии за ним ещё нет. Транскрипта у такой строки нет, и приходит она не
+	// из обхода каталогов, а из памяти диалогов.
+	Blank bool `json:"blank,omitempty"`
+	// Grown называет сессию, выросшую из незачатой записи: панель, стоящая на
+	// её адресе, переезжает по нему на живой разговор. Строкой списка такая
+	// запись больше не показывается, разговор в нём уже есть своей строкой.
+	Grown string `json:"grown,omitempty"`
+	// Draft это набранная в незачатом разговоре реплика: держать её негде,
+	// кроме памяти диалога, и панель забирает её отсюда.
+	Draft string `json:"draft,omitempty"`
 	// Own говорит, дашбордова ли это сессия: только у своей смена модели
 	// действует сразу следующим подъёмом, чужую до резюма не переубедить.
 	Own bool `json:"own,omitempty"`
@@ -394,6 +408,36 @@ type chatStore struct {
 	// заводит новую сессию со своим транскриптом, и без этой ссылки история
 	// разговора рвалась бы на две строки списка.
 	From string `json:"from,omitempty"`
+	// Blank это разговор, заведённый кнопкой «+» и ещё не начатый. Сессии за
+	// ним нет вовсе: поднимать клиента впустую дорого, и поднимет её первая
+	// реплика человека. До правки такого разговора не существовало нигде,
+	// кроме адресной строки вкладки, и человек не мог ни увидеть его в списке,
+	// ни завести рядом второй (жалоба пользователя).
+	Blank bool `json:"blank,omitempty"`
+	// Born это момент заведения записи в unix-секундах. По нему запись стоит в
+	// списке (реплик у неё нет, и мерить её нечем) и по нему же её метёт
+	// уборка брошенных.
+	Born int64 `json:"born,omitempty"`
+	// Task называет задачу незачатого разговора: реплика поднимет сессию в её
+	// дереве, а список покажет строку под фильтром задачи. У начатого разговора
+	// привязку говорит реестр сессий, и это поле ему не нужно.
+	Task string `json:"task,omitempty"`
+	// Project это проект, в котором запись завели: список общий по машине, и
+	// без имени проекта строку не открыть.
+	Project string `json:"project,omitempty"`
+	// Tmux это имя tmux-сессии, поднятой первой репликой. Ставит его подъём, а
+	// живёт оно до тех пор, пока сессия не назовётся в реестре: панель по нему
+	// узнаёт свой разговор и после перезагрузки вкладки.
+	Tmux string `json:"tmux,omitempty"`
+	// Grown называет сессию, выросшую из записи. С этого момента разговор
+	// живёт своим транскриптом, а запись остаётся дорожным знаком для панели,
+	// стоящей на старом адресе, и метётся уборкой.
+	Grown string `json:"grown,omitempty"`
+	// Draft это набранная, но не отправленная реплика. У начатого разговора
+	// черновик держит вкладка, а у незачатого держать его негде: транскрипта
+	// нет, и с чужого экрана такой разговор выглядел бы пустым. Он же говорит
+	// уборке, что запись человеку нужна.
+	Draft string `json:"draft,omitempty"`
 }
 
 func (s *server) chatStoreRead(key string) chatStore {
@@ -828,6 +872,21 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		list = hit
+	} else {
+		// Незачатые разговоры едут в список отдельным набором: транскрипта у
+		// них нет, и обход каталогов их не находит. Окно свежести им не указ,
+		// их всего горстка, а брошенные стираются уборкой. В выдачу поиска по
+		// имени tmux они не идут вовсе: этим поиском панель узнаёт родившийся
+		// разговор, и подсунуть ей вместо него саму запись значило бы
+		// пришивать панель к тому, на чём она и так стоит.
+		proj := found.Name
+		if r.URL.Query().Get("all") != "" {
+			proj = ""
+		}
+		if blanks := s.chatBlankList(proj); len(blanks) > 0 {
+			list = append(list, blanks...)
+			sortEntries(list)
+		}
 	}
 	if want := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("task"))); want != "" {
 		var hit []chatEntry
@@ -867,6 +926,228 @@ func chatKeepSet(raw string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// Незачатый разговор. Прежде разговор и сессия клиента были одним и тем же:
+// разговор это транскрипт сессии, поэтому до первой реплики его не
+// существовало нигде, кроме адресной строки вкладки, а адрес этот («new») был
+// один на всю вкладку. Отсюда и жалоба пользователя: набранный текст оставался
+// в следующем новом чате, в списке чата не было видно, а завести рядом второй
+// было нечем, кнопка «+» уводила на тот же единственный адрес.
+//
+// Понятия разведены. Кнопка «+» заводит запись разговора сразу, со своим ID и
+// своей строкой в списке; таких записей заводится сколько угодно, у каждой свой
+// черновик. Сессия клиента поднимается по-прежнему первой репликой: поднимать
+// её впустую дорого и незачем. Поднявшаяся сессия пришивается к записи (поле
+// Grown), и дальше разговор живёт своим транскриптом, как все остальные.
+
+// chatBlankID даёт имя незачатой записи. Приставка отличает её от ID сессии
+// глазом, а сита ключа (chatKeyRe) и адреса (sessionIDRe) она проходит как
+// обычный ID: панель адресует такую запись теми же ручками, что и разговор с
+// транскриптом.
+func chatBlankID() string {
+	return "blank-" + msgID()
+}
+
+// chatBlankLife это срок брошенной записи, и он тот же, что окно списка:
+// заведённая нечаянным нажатием запись, в которой нет ни реплики, ни
+// набранного текста, через трое суток пропадает вместе с окном, а не копится
+// мусором. Мера тут та же, что у пустого разговора без реплик (chatBlank), и
+// третьей механики уборки не заводится: то, что человек начал писать, живёт в
+// списке сколько угодно, а убрать начатое рукой можно архивом.
+const chatBlankLife = chatWindowDays * 24 * time.Hour
+
+// chatBlankList отдаёт строки незачатых разговоров: они приходят не из обхода
+// транскриптов, а из памяти диалогов, потому что транскрипта у них нет вовсе.
+// Пустое имя проекта значит общий список машины, где у строки назван её проект.
+// Заодно тут стоит уборка: список спрашивают постоянно, и отдельного сторожка
+// для неё заводить незачем.
+func (s *server) chatBlankList(proj string) []chatEntry {
+	ents, err := os.ReadDir(chatStoreDir(s.cfg.Home))
+	if err != nil {
+		return nil
+	}
+	out := []chatEntry{}
+	recs := map[string][]sessionBind(nil)
+	for _, de := range ents {
+		name := de.Name()
+		if de.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, "tmux-") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".json")
+		st := s.chatStoreRead(id)
+		if !st.Blank {
+			continue
+		}
+		// Пришивание поднявшейся сессии: имя tmux, которым её подняла первая
+		// реплика, реестр отдал родившемуся разговору, и с этой минуты запись
+		// знает своего наследника. Дальше по этому полю переезжает панель,
+		// стоящая на старом адресе, в том числе в соседней вкладке.
+		if st.Grown == "" && st.Tmux != "" {
+			if recs == nil {
+				recs = s.bindsAll()
+			}
+			if owner := sessions.TmuxOwner(recs, st.Tmux); owner != "" && owner != id {
+				st.Grown = owner
+				if err := s.chatStoreWrite(id, st); err != nil {
+					s.logf("запись чата %s не пришилась к сессии %s: %v", id, owner, err)
+				} else {
+					s.logf("незачатый чат %s вырос в сессию %s", id, owner)
+				}
+			}
+		}
+		if s.chatBlankSweep(id, st) {
+			continue
+		}
+		if proj != "" && st.Project != proj {
+			continue
+		}
+		e := chatEntry{ID: id, Blank: true, State: chatNotStarted, Idle: true,
+			Grown: st.Grown, Draft: st.Draft, Tmux: st.Tmux,
+			Model: st.Model, Archived: st.Archived}
+		if proj == "" {
+			e.Project = st.Project
+		}
+		if st.Task != "" {
+			e.Tasks = []string{st.Task}
+		}
+		if st.Born > 0 {
+			e.Mtime = time.Unix(st.Born, 0).UTC().Format(time.RFC3339)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// chatBlankSweep стирает отжившую запись и отвечает, стёрта ли она. Живут
+// вечно две: с набранным текстом и с поднятой, но ещё не назвавшейся сессией.
+// Выросшая запись доживает свой срок дорожным знаком для панели и уходит
+// следом: разговор к тому времени давно стоит в списке своей строкой.
+func (s *server) chatBlankSweep(id string, st chatStore) bool {
+	if st.Born == 0 {
+		return false
+	}
+	if s.now().Sub(time.Unix(st.Born, 0)) <= chatBlankLife {
+		return false
+	}
+	if st.Grown == "" && (st.Draft != "" || st.Tmux != "") {
+		return false
+	}
+	if err := os.Remove(filepath.Join(chatStoreDir(s.cfg.Home), id+".json")); err != nil {
+		s.logf("брошенная запись чата %s не стёрлась: %v", id, err)
+		return false
+	}
+	why := "в ней так и не сказали ни слова"
+	if st.Grown != "" {
+		why = "разговор давно идёт сессией " + st.Grown
+	}
+	s.logf("запись чата %s стёрта: %s", id, why)
+	return true
+}
+
+// handleChatBlank заводит разговор кнопкой «+». Сессию тут никто не поднимает:
+// клиент стоит денег и квоты, а человеку в эту минуту нужна строка в списке и
+// поле, в которое можно писать. Поднимет сессию его первая реплика.
+func (s *server) handleChatBlank(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "новый чат")
+	if found == nil {
+		return
+	}
+	var body struct {
+		ID    string `json:"id"`
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"model\": \"opus\"}"})
+		return
+	}
+	id := strings.ToUpper(strings.TrimSpace(body.ID))
+	if id != "" && !taskParamRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("%q не похоже на ID задачи", body.ID)})
+		return
+	}
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		model = chatModelDefault
+	}
+	key := chatBlankID()
+	rec := chatStore{Blank: true, Born: s.now().Unix(), Project: found.Name, Task: id, Model: model}
+	if err := s.chatStoreWrite(key, rec); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("запись чата не завелась: %v", err)})
+		return
+	}
+	s.logf("заведён чат %s в %s (модель %s, задача %q): сессию поднимет первая реплика", key, found.Name, model, id)
+	writeJSON(w, http.StatusOK, map[string]any{"id": key, "model": model, "task": id,
+		"message": "чат заведён: сессия поднимется первой репликой"})
+}
+
+// handleChatDraft держит набранную, но не отправленную реплику незачатого
+// разговора. У начатого черновик держит сама вкладка: там есть транскрипт, и
+// разговор с чужого экрана виден и без него. У незачатого держать его негде,
+// а он же и говорит уборке, что запись человеку нужна.
+func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	if s.findProject(w, r, "черновик реплики") == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id чата", sid)})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	st := s.chatStoreRead(sid)
+	if !st.Blank {
+		// Отказом это не считается: пока вкладка дописывала черновик,
+		// разговор мог начаться первой репликой, и ронять на человека ошибку
+		// из-за гонки не за что.
+		writeJSON(w, http.StatusOK, map[string]any{"kept": false,
+			"message": "разговор уже начат: черновик остаётся во вкладке"})
+		return
+	}
+	st.Draft = body.Text
+	if err := s.chatStoreWrite(sid, st); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("черновик не записался: %v", err)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"kept": true})
+}
+
+// chatBlankLift пришивает поднятую сессию к незачатой записи: имя tmux ляжет в
+// неё сразу, а ID сессии припишет список, когда клиент назовётся в реестре.
+// Модель тут переписывается той, которой сессию подняли на самом деле: с этой
+// минуты запись говорит о живом разговоре, а не о намерении.
+func (s *server) chatBlankLift(sid, sess, model string) {
+	if sid == "" || !chatKeyRe.MatchString(sid) {
+		return
+	}
+	st := s.chatStoreRead(sid)
+	if !st.Blank || st.Grown != "" {
+		return
+	}
+	st.Tmux, st.Draft = sess, ""
+	if model != "" {
+		st.Model = model
+	}
+	if err := s.chatStoreWrite(sid, st); err != nil {
+		s.logf("запись чата %s не запомнила сессию %s: %v", sid, sess, err)
+	}
 }
 
 // chatNewName выбирает имя tmux-сессии диалога: chat-<ID>-<n> у диалога с
@@ -1182,12 +1463,25 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		ID    string `json:"id"`
 		Text  string `json:"text"`
 		Model string `json:"model"`
+		// Chat называет незачатую запись, из которой человек пишет: подъём
+		// пришьёт к ней поднятую сессию, и разговор останется той же строкой
+		// списка, на которой он начался.
+		Chat string `json:"chat"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
 	id := strings.ToUpper(strings.TrimSpace(body.ID))
+	// Задачу называет сама запись, когда её не назвал заказ: чат заведён с
+	// экрана задачи, и сессия обязана подняться в её дереве, чем бы ни была
+	// занята вкладка.
+	blank := strings.TrimSpace(body.Chat)
+	if id == "" && blank != "" && chatKeyRe.MatchString(blank) {
+		if st := s.chatStoreRead(blank); st.Blank {
+			id = st.Task
+		}
+	}
 	if id != "" && !taskParamRe.MatchString(id) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("%q не похоже на ID задачи", body.ID)})
@@ -1211,14 +1505,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	// Дерево задачи предпочитается корню проекта: разговор про задачу, у которой
-	// заведено боковое дерево, идёт там же, где её работа.
-	dir := found.Path
-	if id != "" {
-		if tree := filepath.Join(filepath.Dir(found.Path), filepath.Base(found.Path)+"-"+strings.ToLower(id)); isDir(tree) {
-			dir = tree
-		}
-	}
+	dir := chatTree(found.Path, id)
 	sess := chatNewName(id, tmuxAliveFn())
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model}); err != nil {
 		s.logf("модель чата %s не записалась: %v", sess, err)
@@ -1230,10 +1517,26 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
+	s.chatBlankLift(blank, sess, model)
 	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"tmux": sess, "model": model, "tree": dir,
 		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
+}
+
+// chatTree выбирает каталог подъёма: боковое дерево задачи предпочитается
+// корню проекта, потому что разговор про задачу, у которой дерево заведено,
+// идёт там же, где её работа. Дороги подъёма две, с кнопки и первой репликой в
+// незачатый разговор, и каталог у них обязан быть один.
+func chatTree(projPath, id string) string {
+	if id == "" {
+		return projPath
+	}
+	tree := filepath.Join(filepath.Dir(projPath), filepath.Base(projPath)+"-"+strings.ToLower(id))
+	if isDir(tree) {
+		return tree
+	}
+	return projPath
 }
 
 // chatText готовит реплику человека к отправке. Переносы строк тут священны:
@@ -1971,18 +2274,25 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	if t := sessions.Touched(recs[sid]); len(t) > 0 {
 		task = t[0]
 	}
+	// Незачатая запись сама называет свою задачу: реестр про неё ничего не
+	// знает, сессии-то ещё не было, а разговор заводили с экрана задачи, и
+	// поднимать его надо в её дереве.
+	if store := s.chatStoreRead(sid); task == "" && store.Blank {
+		task = store.Task
+	}
 	model := s.chatModel(sid, "")
 	sess := chatNewName(task, tmuxAliveFn())
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
 		chatCmd(s.launchEnv(task, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
+	s.chatBlankLift(sid, sess, model)
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
 	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
@@ -2595,6 +2905,11 @@ func (s *server) titleFill(list []chatEntry) {
 	asked := 0
 	for i := range list {
 		e := &list[i]
+		// В незачатом разговоре ни слова не сказано, и называть его нечем:
+		// заказ заголовка поднял бы сессию суммаризации на пустоту.
+		if e.Blank {
+			continue
+		}
 		said, ordered := s.titleFor(e.ID, e.Summary, e.Title, asked < titleAskLimit)
 		e.Title = said
 		if ordered {

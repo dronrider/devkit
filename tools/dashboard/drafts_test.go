@@ -1071,7 +1071,9 @@ func TestStaticGroomLiftAndGate(t *testing.T) {
 		t.Error("опрос реестра с уже открытой панели заводить нечем")
 	}
 	// Пустая панель с привязкой ждёт сессию тем же опросом, что и адрес new.
-	if !strings.Contains(app, "if (!again && (chatIsNew(st.addr) || (!st.sid && st.task))) {") {
+	// Третьим в это же условие встал незачатый разговор (DK-397 POC): он ждёт
+	// ровно ту же сессию, и заводить ему свой опрос было бы нечем.
+	if !strings.Contains(app, "if (!again && (chatIsNew(st.addr) || st.blank || (!st.sid && st.task))) {") {
 		t.Error("пустая панель записи не заводит опроса реестра: разбор доедет перезагрузкой")
 	}
 	state := funcBody(t, app, "async function chatState(")

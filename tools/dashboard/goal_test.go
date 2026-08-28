@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -256,4 +257,68 @@ func TestGoalTasksParse(t *testing.T) {
 	if _, section := goalTasksFromDoc("## Цель\n\nбез нарезки\n", "XR"); section {
 		t.Fatal("раздела «Задачи цели» нет, а разбор его нашёл")
 	}
+}
+
+// Задача цели, которая пока лежит записью накопителя. Строки на доске у неё
+// нет и в архиве её нет тоже, но это не потеря состава, а этап: состав говорит
+// про неё «черновик», берёт заголовок из самой записи и оставляет дорогу на её
+// экран. Фраза про отсутствие строки остаётся только там, где за ID и правда
+// ничего не лежит.
+func TestGoalTasksDraft(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	runTaskctl(t, e.proj, "add", "--id", "XR-110", "--title", "Цель: с черновиком",
+		"--rank", "25+9+3+0+4", "--cost", "XL", "--accept", "agent")
+	goalDoc(t, e, "XR-110", `# XR-110: Цель: с черновиком
+
+## Задачи цели
+
+- XR-011 (task, M, R=30). Первая, пока записью накопителя.
+- XR-012 (task, M, R=20). Вторая, за ней нет вовсе ничего.
+`)
+	dir := filepath.Join(e.proj, "docs", "tasks", "drafts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "XR-011.md"),
+		[]byte("# XR-011: экран записи открывается из состава\n\nТело записи.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tasks := composed(t, goalTasksResp(t, c, e, "XR-110"))
+	if len(tasks) != 2 {
+		t.Fatalf("состав %v, жду две задачи", tasks)
+	}
+	draft := tasks[0]
+	if is, _ := draft["draft"].(bool); !is {
+		t.Errorf("задача записью накопителя не помечена черновиком: %v", draft)
+	}
+	if note, _ := draft["note"].(string); note != "" {
+		t.Errorf("у черновика осталась приписка %q, жду метку вместо неё", note)
+	}
+	if title, _ := draft["title"].(string); title != "экран записи открывается из состава" {
+		t.Errorf("заголовок черновика %q, жду из файла записи", title)
+	}
+	bare := tasks[1]
+	if is, _ := bare["draft"].(bool); is {
+		t.Errorf("задача без записи помечена черновиком: %v", bare)
+	}
+	if note, _ := bare["note"].(string); !strings.Contains(note, "ни на доске") {
+		t.Errorf("у задачи без записи приписка %q, жду прежние слова", note)
+	}
+}
+
+// Черновик в составе цели помечен словом, а не объяснением, открывается со
+// строки и стоит под указателем мыши. Сторожит стенд testdata/poc_goaldraft.mjs.
+// Без node шаг пропускается: узел стенда, а не рабочей машины.
+func TestStaticGoalDraftRow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд состава цели пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_goaldraft.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("черновик в составе цели: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

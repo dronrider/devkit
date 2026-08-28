@@ -2222,8 +2222,11 @@ func TestPlanTakesWorksFromSubLogs(t *testing.T) {
 	if len(plan) != 4 {
 		t.Fatalf("работ в кольце %d, ждал четыре (пункт плана и три работы мимо него): %+v", len(plan), plan)
 	}
-	if plan[0].Text != "первая ходка" {
-		t.Errorf("пункт плана уехал с первого места: %+v", plan)
+	// Место пункту в списке даёт теперь состояние, а не источник: ждущее стоит
+	// последним, чей бы это пункт ни был (TestPlanOrderedByState). Важно тут
+	// одно, что пункт плана не потерялся и остался ждущим.
+	if plan[len(plan)-1].Text != "первая ходка" || plan[len(plan)-1].State != "pending" {
+		t.Errorf("ждущий пункт плана встал не последним: %+v", plan)
 	}
 	byText = map[string]string{}
 	for _, it := range plan {
@@ -2544,5 +2547,53 @@ func TestPlanKeepsToItsOwnSession(t *testing.T) {
 	got := planOf(home, "aaa-своя", "chat-семь", mine, now)
 	if len(got) == 0 || got[0].Text != "Своя работа" {
 		t.Fatalf("свой план по имени tmux потерялся: %+v", got)
+	}
+}
+
+// Порядок работ в кольце. Прежде он собирался из двух кусков подряд: сперва
+// план в том виде, в каком его написал агент, следом работы из журналов,
+// которых в плане не нашлось. Закрытое, идущее и ждущее стояли вперемешку, и
+// читать по кольцу ход работы было нечем («работы в кольце выстроены как
+// зря», замечание пользователя). Теперь сверху закрытое, под ним идущее и
+// ждущее, а внутри каждой группы прежний порядок: пункты плана в порядке
+// письма, работы журналов в порядке своего начала.
+func TestPlanOrderedByState(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	mine := writeSession(t, home, proj, "", "ppp-порядок", transcriptFixture, time.Now())
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath(home, "ppp-порядок"), []byte(`[
+		{"text":"Первый разбор","state":"completed"},
+		{"text":"Правка кода","state":"in_progress"},
+		{"text":"Второй прогон","state":"completed"},
+		{"text":"Дока","state":"pending"},
+		{"text":"Тесты","state":"completed"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Работа из бокового журнала, которой в плане нет: журнал давно молчит,
+	// значит работа закрыта, и место ей в верхней группе, а не в хвосте списка.
+	old := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	log := writeSubLog(t, mine, "one", "Ревью правки", sideLine("готово", old.Format(time.RFC3339)))
+	if err := os.Chtimes(log, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	var got []string
+	for _, it := range planOf(home, "ppp-порядок", "", mine, now) {
+		got = append(got, it.Text+"/"+it.State)
+	}
+	want := []string{
+		"Первый разбор/completed",
+		"Второй прогон/completed",
+		"Тесты/completed",
+		"Ревью правки/completed",
+		"Правка кода/in_progress",
+		"Дока/pending",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("порядок работ в кольце\n получен %v\n жду     %v", got, want)
 	}
 }

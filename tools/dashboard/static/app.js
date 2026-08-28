@@ -3422,7 +3422,12 @@ function shortDate(iso) {
 }
 
 function goalTaskRow(project, task) {
-  const row = el("div", "srow" + (task.done ? " done" : ""));
+  // Открывается строка нажатием, и курсор об этом говорит: класс clicky несёт
+  // указатель и подсветку, без него строка ловила клик, а под мышью выглядела
+  // текстом (замечание пользователя). Закрытая задача уехала в архив, экрана у
+  // неё нет, и указателя тоже.
+  const opens = task.draft || (!task.done && task.section);
+  const row = el("div", "srow" + (task.done ? " done" : "") + (opens ? " clicky" : ""));
   row.append(el("span", "id", task.id));
   // Заголовок берётся со строки доски или из архива, а судьба из нарезки
   // остаётся под ним подсказкой: строка доски говорит, что это за задача, а
@@ -3441,12 +3446,15 @@ function goalTaskRow(project, task) {
   } else if (task.section) {
     meta.append(el("span", "chip " + (SECT_CHIP[task.sect] || ""), task.section));
   }
+  // Задача, которая пока лежит записью накопителя, помечена словом, а не
+  // объяснением: «черновик» это её этап, и экран записи открывается той же
+  // строкой.
+  if (task.draft) meta.append(el("span", "chip", "черновик"));
   if (task.note) meta.append(el("span", "stale", task.note));
   row.append(meta);
-  // Закрытая задача уехала в архив, и экрана задачи у неё нет: строка доски
-  // читается только у живой.
-  if (!task.done && task.section) {
-    row.addEventListener("click", () => { goKeepingChat(project + "/" + task.id); });
+  if (opens) {
+    const to = task.draft ? project + "/draft/" + task.id : project + "/" + task.id;
+    row.addEventListener("click", () => { goKeepingChat(to); });
   }
   return row;
 }

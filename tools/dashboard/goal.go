@@ -32,7 +32,10 @@ type goalTask struct {
 	P       string `json:"p,omitempty"`
 	Closed  string `json:"closed,omitempty"`
 	Done    bool   `json:"done"`
-	Note    string `json:"note,omitempty"`
+	// Draft говорит, что за ID стоит запись накопителя: строки на доске нет,
+	// потому что задача ещё черновик, и это не потеря, а этап.
+	Draft bool   `json:"draft,omitempty"`
+	Note  string `json:"note,omitempty"`
 }
 
 var taskIDRe = regexp.MustCompile(`[A-Za-z]+-[0-9]+`)
@@ -197,7 +200,7 @@ type goalCounts struct {
 // считает счётчики шапки. Вынесено из обработчика, потому что тем же счётом
 // живёт кольцо в шапке разговора (pulse.go): у цели прогресс это доля закрытых
 // задач, и второй счёт разъехался бы с экраном цели на первой же правке.
-func fillGoalTasks(tasks []goalTask, rows map[string]boardRow, arch map[string]archiveRow) goalCounts {
+func fillGoalTasks(projectPath string, tasks []goalTask, rows map[string]boardRow, arch map[string]archiveRow) goalCounts {
 	counts := goalCounts{Total: len(tasks)}
 	for i := range tasks {
 		t := &tasks[i]
@@ -217,7 +220,15 @@ func fillGoalTasks(tasks []goalTask, rows map[string]boardRow, arch map[string]a
 			counts.Closed++
 			continue
 		}
-		t.Note = "ни на доске, ни в архиве: строкой задача ещё не заведена"
+		// Нарезка называет и то, что пока лежит записью накопителя. Прежде такая
+		// задача подписывалась фразой про отсутствие строки, и человек читал её
+		// как поломку состава (замечание пользователя). Черновик тут метка, а
+		// заголовок берётся из самой записи: открыть её экран есть чем.
+		if title, hit := draftTitleOf(projectPath, t.ID); hit {
+			t.Draft, t.Title = true, title
+		} else {
+			t.Note = "ни на доске, ни в архиве: строкой задача ещё не заведена"
+		}
 		counts.Ahead++
 	}
 	return counts
@@ -240,7 +251,7 @@ func (s *server) goalProgress(projectPath, id, prefix string, rows map[string]bo
 	if !section || len(tasks) == 0 {
 		return goalCounts{}, false
 	}
-	return fillGoalTasks(tasks, rows, archiveRows(projectPath)), true
+	return fillGoalTasks(projectPath, tasks, rows, archiveRows(projectPath)), true
 }
 
 func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
@@ -287,7 +298,7 @@ func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	counts := fillGoalTasks(tasks, rows, archiveRows(found.Path))
+	counts := fillGoalTasks(found.Path, tasks, rows, archiveRows(found.Path))
 	resp["tasks"], resp["counts"] = tasks, counts
 	writeJSON(w, http.StatusOK, resp)
 }

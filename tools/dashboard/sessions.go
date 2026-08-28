@@ -3001,7 +3001,37 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 	case todoPlan != nil && todoAt.After(fileAt):
 		said = todoPlan
 	}
-	return withSubWorks(said, subs)
+	return planOrdered(withSubWorks(said, subs))
+}
+
+// planRank это место состояния в списке: сделанное сверху, идущее следом,
+// ждущее последним.
+func planRank(state string) int {
+	switch state {
+	case "completed":
+		return 0
+	case "in_progress":
+		return 1
+	}
+	return 2
+}
+
+// planOrdered выстраивает пункты по состоянию, не трогая порядка внутри
+// состояния. Порядок тут был случаен: сперва шёл план в том виде, в каком его
+// написал агент, а следом работы из журналов, которых в плане не нашлось, и
+// закрытое с ждущим стояли вперемешку («работы в кружке выстроены как зря»,
+// замечание пользователя). Сортировка устойчивая нарочно: внутри состояния
+// хронология уже собрана, пункты плана идут в порядке письма, работы журналов в
+// порядке своего начала, и переставлять их второй раз нечем.
+func planOrdered(plan []planItem) []planItem {
+	if len(plan) < 2 {
+		return plan
+	}
+	out := append([]planItem{}, plan...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return planRank(out[i].State) < planRank(out[j].State)
+	})
+	return out
 }
 
 // mainSrc это имя источника для самого транскрипта сессии в ключах записей.

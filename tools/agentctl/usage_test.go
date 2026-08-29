@@ -316,6 +316,84 @@ func TestPanelWaiter(t *testing.T) {
 	})
 }
 
+// TestPanelConfirm: правило подтверждения одно на весь цикл, отказной экран
+// принимается не с первого кадра, как и готовая панель.
+func TestPanelConfirm(t *testing.T) {
+	stale := readFixture(t, "usage-panel-laststale.txt")
+	full := readFixture(t, "usage-panel-fable.txt")
+	snap, err := parseUsagePanel(specAt(t, ""), full, testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+
+	t.Run("отказной экран подтверждается вторым кадром", func(t *testing.T) {
+		var w panelWaiter
+		if w.blocked(stale) {
+			t.Fatal("отказ принят с одного кадра")
+		}
+		if !w.blocked(stale) {
+			t.Fatal("отказ не принят и со второго кадра")
+		}
+	})
+
+	t.Run("разовый отказной кадр посреди готовых счёта не даёт", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, full)
+		if w.blocked(stale) {
+			t.Fatal("отказ принят по кадру, который сменил исход")
+		}
+		if w.accept(snap, full) {
+			t.Fatal("готовая панель принята, хотя счёт сбросил отказной кадр")
+		}
+	})
+}
+
+// TestPanelUnheard: ожидание держится на словах клиента, а слова меняются с его
+// версией. Не услышав ни одного знакомого, съёмщик не знает про панель ничего,
+// и снимок уходит с оговоркой вместо тихого «всё на месте».
+func TestPanelUnheard(t *testing.T) {
+	q := specAt(t, "")
+	settled := readFixture(t, "usage-panel-settled.txt")
+	drawing := readFixture(t, "usage-panel-partial.txt")
+	snap, err := parseUsagePanel(q, settled, testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+
+	t.Run("незнакомый словарь оставляет след в снимке", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, settled)
+		w.accept(snap, settled)
+		why := w.gap(settled)
+		if !strings.Contains(why, "знакомого слова") {
+			t.Fatalf("молчание панели ничем не помечено: %q", why)
+		}
+		marked := w.snap.markPartial(q, why)
+		if got := marked.partial("week_max"); got != why {
+			t.Fatalf("след до снимка не доехал: %+v", marked.Partial)
+		}
+	})
+
+	t.Run("услышанное слово оговорку снимает", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, drawing)
+		w.accept(snap, settled)
+		w.accept(snap, settled)
+		if why := w.gap(settled); why != "" {
+			t.Fatalf("панель говорила знакомо, а снимок с оговоркой: %q", why)
+		}
+	})
+
+	t.Run("слова панели идут раньше оговорки", func(t *testing.T) {
+		var w panelWaiter
+		v2251 := readFixture(t, "usage-panel-v2251.txt")
+		w.accept(snap, v2251)
+		if why := w.gap(v2251); !strings.Contains(why, "частоте обращений") {
+			t.Fatalf("точная причина заменена оговоркой: %q", why)
+		}
+	})
+}
+
 // TestPanelSettled: признак ожидания это слово панели, а не счёт секунд.
 func TestPanelSettled(t *testing.T) {
 	if panelSettled(readFixture(t, "usage-panel-partial.txt")) {
@@ -817,9 +895,15 @@ func TestPanelFailure(t *testing.T) {
 	})
 
 	t.Run("панель с цифрами прошлого раза в снимок не идёт", func(t *testing.T) {
-		// Свежий момент снятия над старыми цифрами это молчащая ложь: прежний
-		// снимок хотя бы честно показывает свой возраст.
-		pane := "   Current week (all models)\n   41% used\n   Showing last-known usage as of 2h ago (could not refresh)\n"
+		// Кадр настоящий: клиент 2.1.251 с недоступной сетью нарисовал бакеты
+		// из своей памяти и подписал их возрастом. Разбивка по моделям в кадре
+		// есть, и тем опаснее записать его снимком: свежий момент снятия над
+		// цифрами получасовой давности это молчащая ложь, а прежний снимок
+		// хотя бы честно показывает свой возраст.
+		pane := readFixture(t, "usage-panel-laststale.txt")
+		if !strings.Contains(pane, "Current week (Fable)") {
+			t.Fatal("в образце нет разбивки по моделям, случай не тот")
+		}
 		why := panelBlocked(pane)
 		if !strings.Contains(why, "прошлого раза") {
 			t.Fatalf("панель с прошлыми цифрами принята за рабочую: %q", why)

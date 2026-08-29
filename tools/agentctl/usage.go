@@ -407,14 +407,16 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	err := waitPane(session, usagePanelTimeout, func(text string) bool {
 		pane = text
 		// Отказ клиента ждать бессмысленно, он держится до нажатия «r», так что
-		// ожидание обрывается на нём и не съедает весь свой потолок.
+		// ожидание обрывается на нём и не съедает весь свой потолок. Подтвердить
+		// его вторым кадром всё равно надо: разовое совпадение отбросило бы
+		// годный снимок.
 		if panelBlocked(text) != "" {
-			return true
+			return w.blocked(text)
 		}
 		s, perr := parseUsagePanel(q, text, now)
 		why = perr
 		if perr != nil {
-			w.settled = 0
+			w.miss(text)
 			return false
 		}
 		return w.accept(s, text)
@@ -431,7 +433,7 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 		}
 		return w.snap.markPartial(q, fmt.Sprintf("панель не досчитала разбивку за %s", usagePanelTimeout)), nil
 	}
-	return w.snap.markPartial(q, panelNoBreakdown(pane)), nil
+	return w.snap.markPartial(q, w.gap(pane)), nil
 }
 
 // panelFailure объясняет, почему съёмщик ушёл ни с чем. Отказ по одному
@@ -545,32 +547,91 @@ func saveFrame(q *quotaSpec, pane string) (string, error) {
 // оказывается либо разбивка, либо строка о том, что разбивки не будет.
 // Ожидание кончается на этом слове.
 //
-// Двух досчитанных кадров подряд ждём затем, что capture-pane снимает экран в
-// любой момент и один кадр может застать панель на середине перерисовки.
+// Правило подтверждения одно на весь цикл: ни один исход не принимается с
+// одного кадра, ни готовая панель, ни отказной экран. capture-pane снимает
+// экран в любой момент и может застать панель на середине перерисовки, и
+// разовое совпадение стоит одинаково дорого в обе стороны.
+//
+// Отдельно waiter помнит, услышал ли он от панели хоть одно знакомое слово о
+// её состоянии. Ожидание держится на словах клиента, а слова эти меняются с
+// версией, и «ни refreshing, ни loading не нашлось» значит либо «панель
+// досчитала», либо «панель заговорила по-другому». Различить эти два случая
+// внутри кадра нечем, поэтому неуслышанная панель оставляет след в снимке.
 type panelWaiter struct {
-	snap    snapshot
-	settled int
+	snap  snapshot
+	last  string
+	same  int
+	heard bool
 }
 
-const panelSettleFrames = 2
+const panelConfirmFrames = 2
 
+// confirm считает подряд идущие кадры с одним исходом. Смена исхода сбрасывает
+// счёт, и цикл начинает считать заново.
+func (w *panelWaiter) confirm(kind string) bool {
+	if w.last != kind {
+		w.last, w.same = kind, 0
+	}
+	w.same++
+	return w.same >= panelConfirmFrames
+}
+
+// hear отмечает, что панель назвала своё состояние знакомым словом.
+func (w *panelWaiter) hear(pane string) {
+	if panelSpeaking(pane) {
+		w.heard = true
+	}
+}
+
+// accept решает по кадру готовой панели, miss по кадру, который не разобрался,
+// blocked по отказному экрану. Все трое идут через одно правило подтверждения.
 func (w *panelWaiter) accept(s snapshot, pane string) bool {
-	w.snap = s
+	w.hear(pane)
 	if !panelSettled(pane) {
-		w.settled = 0
+		w.confirm("draw")
 		return false
 	}
-	w.settled++
-	return w.settled >= panelSettleFrames
+	w.snap = s
+	return w.confirm("ready")
 }
 
-// panelSettled отвечает, досчитал ли клиент цифры панели. Слова берутся точные,
-// оба из самой панели: «Loading usage data» она пишет вместо бакетов, пока
-// показывать нечего, «Refreshing» подписывает уже нарисованным, пока
-// уточняющий запрос в пути.
-func panelSettled(pane string) bool {
+func (w *panelWaiter) miss(pane string) {
+	w.hear(pane)
+	w.confirm("miss")
+}
+
+func (w *panelWaiter) blocked(pane string) bool {
+	w.hear(pane)
+	return w.confirm("blocked")
+}
+
+// gap объясняет, почему в снимке может не хватать разбивки по моделям. Слова
+// панели идут первыми, они точные. Не услышав от панели ни одного знакомого
+// слова, съёмщик про её состояние не знает ничего: снимок уходит с оговоркой,
+// а не молча.
+func (w *panelWaiter) gap(pane string) string {
+	if why := panelNoBreakdown(pane); why != "" {
+		return why
+	}
+	if !w.heard {
+		return "панель не сказала о себе ни одного знакомого слова, разметка могла смениться"
+	}
+	return ""
+}
+
+// panelSpeaking отвечает, назвала ли панель своё состояние. Слова берутся
+// точные, оба из самой панели: «Loading usage data» она пишет вместо бакетов,
+// пока показывать нечего, «Refreshing» подписывает уже нарисованным, пока
+// уточняющий запрос в пути. Отсюда же берёт слова panelSettled: словарь один,
+// и разъехаться двум местам негде.
+func panelSpeaking(pane string) bool {
 	low := lowPane(pane)
-	return !strings.Contains(low, "loading usage data") && !strings.Contains(low, "refreshing")
+	return strings.Contains(low, "loading usage data") || strings.Contains(low, "refreshing")
+}
+
+// panelSettled отвечает, досчитал ли клиент цифры панели.
+func panelSettled(pane string) bool {
+	return !panelSpeaking(pane)
 }
 
 // panelNoBreakdown переводит на человеческий строку, которой панель объявляет,

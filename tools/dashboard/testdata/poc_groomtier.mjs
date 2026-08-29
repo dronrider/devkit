@@ -40,7 +40,7 @@ await sandbox.loadHarnesses();
 // Полоса пересобирается на всякую правку выбора, поэтому её узлы берутся
 // заново, а не держатся с прошлого раза.
 const bar = sandbox.draftRunBar("demo", []);
-const btn = () => deepBtn(bar, "Провести груминг");
+const btn = () => deepBtn(bar, "Грумить");
 
 // --- при пустом выборе кнопки нет вовсе ---
 {

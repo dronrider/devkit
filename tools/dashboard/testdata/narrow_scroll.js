@@ -111,7 +111,7 @@ const DRAFT_ROWS = `<table class="tbl t-drafts">${cols(DRAFT_COLS)}${head("draft
 
 const GROOM_BAR = `
   <div class="nbar">
-    <span class="grun"><button class="btn btn-sm btn-acc">Провести груминг</button>
+    <span class="grun"><button class="btn btn-sm btn-acc">Грумить</button>
       <select class="cdsel"><option>claude-opus-4-6-20260514</option></select></span>
     <span class="drun"></span>
     <span class="hint">Выбрано 2 записи, каждая пойдёт своим разговором.</span>

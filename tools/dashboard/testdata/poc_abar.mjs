@@ -240,8 +240,8 @@ console.log("строка доски: своя работа продолжает
   const row = { id: "XR-5", title: "проверенная", sect: "check", accept: "mixed", harness: "glm" };
   const bar = sandbox.rowAction("demo", row, "check");
   const btn = byClass(bar, "rmain");
-  if (!btn || btn.attrs["aria-label"] !== "Проверить и закрыть") {
-    fail("кнопки «Проверить и закрыть» на строке Check нет: " + dump(bar));
+  if (!btn || btn.attrs["aria-label"] !== "Проверить") {
+    fail("кнопки «Проверить» на строке Check нет: " + dump(bar));
   }
   // Подписок на машине этого стенда нет вовсе, и выбирать нечего ни одной
   // строке. Сторожится тут именно это: набор кнопок у строки Check тот же, что

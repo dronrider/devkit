@@ -133,7 +133,7 @@ const last = () => calls[calls.length - 1];
   }
   // Строка Check зовётся своим словом: приёмка это не «Выполнить».
   const done = sandbox.rowAction("demo", check, "check");
-  if (String(main(done).attrs["aria-label"]) !== "Проверить и закрыть") {
+  if (String(main(done).attrs["aria-label"]) !== "Проверить") {
     fail("у строки Check кнопка работы названа не приёмкой: " + main(done).attrs["aria-label"]);
   }
   // Разговор за строкой уже есть: кнопка зовётся «Продолжить» и ходит своей
@@ -340,7 +340,7 @@ const last = () => calls[calls.length - 1];
   const row = { id: "XR-6", title: "проверенная", sect: "check", accept: "mixed", harness: "glm-code" };
   const box = sandbox.rowAction("demo", row, "check");
   const btn = main(box);
-  if (!btn || String(btn.attrs["aria-label"]) !== "Проверить и закрыть") {
+  if (!btn || String(btn.attrs["aria-label"]) !== "Проверить") {
     fail("у строки Check главная кнопка не приёмка: " + dump(box));
   }
   if (!String(btn.title || "").includes("glm-code") || !String(btn.title).includes("ваша приёмка")) {

@@ -11,6 +11,19 @@
 import fs from "node:fs";
 import vm from "node:vm";
 
+// Кому достался курсор. Настоящего фокуса у мока дерева нет, а ставит его
+// экран в нескольких местах, и стенду надо знать, куда курсор ушёл: на
+// телефоне выехавшая ради него клавиатура закрывает пол-экрана.
+export const focusLog = { node: null };
+
+export function focused() {
+  return focusLog.node;
+}
+
+export function focusDrop() {
+  focusLog.node = null;
+}
+
 export function fail(msg) {
   console.error(msg);
   process.exit(1);
@@ -114,7 +127,7 @@ export function makeNode(tag) {
   };
   node.removeAttribute = (name) => { delete node.attrs[name]; };
   node.getBoundingClientRect = () => ({ top: 0, bottom: 0, height: 0, width: 0 });
-  node.focus = () => {};
+  node.focus = () => { focusLog.node = node; };
   node.scrollIntoView = () => {};
   node.addEventListener = (name, fn) => { node.handlers[name] = fn; };
   node.removeEventListener = (name) => { delete node.handlers[name]; };

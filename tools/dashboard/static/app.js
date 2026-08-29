@@ -780,7 +780,12 @@ function rankCell(row, tag) {
 // продолжают, проверенную закрывают. Подпись кнопки идёт от той же секции, по
 // которой сервер собирает промпт конвейеру, иначе кнопка обещала бы одно, а
 // агент получал другое.
-const ACTION_BY_SECT = { "in-progress": "Продолжить", check: "Проверить и закрыть" };
+//
+// Подписи тут короткие в одно слово: на телефоне кнопка стоит своей строкой, и
+// «Проверить и закрыть» занимала её половину («кнопки слишком длинные»,
+// замечание пользователя). Закрытие из подписи ушло, а не пропало: о нём
+// говорит подсказка кнопки, и оно следствие проверки, а не второе действие.
+const ACTION_BY_SECT = { "in-progress": "Продолжить", check: "Проверить" };
 
 function actionLabel(sect) {
   return ACTION_BY_SECT[sect] || "Выполнить";
@@ -1122,9 +1127,9 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     // низко она стоит и на ноутбуке, если доска прокручена до конца.
     if (!pop.hidden) {
       pop.classList.toggle("up", noRoomBelow(more));
-      // Влево список растёт от кнопки, и у перенесённой на второй ряд кнопки
-      // расти ему некуда: слева стоит край главной части экрана.
-      pop.classList.toggle("rt", noRoomLeft(more, pop));
+      // Горизонталь считается числом: у списка, который шире места и слева от
+      // кнопки, и справа, верной стороны нет вовсе.
+      popFit(more, pop);
     }
   });
   grp.append(more, pop);
@@ -1146,23 +1151,43 @@ function noRoomBelow(node) {
 // решение о стороне принимается до неё, поэтому тут запас по макету.
 const HPOP_ROOM = 200;
 
-// Хватает ли слева от узла места на раскрытый список. Висит он правым краем на
-// кнопке и растёт влево, и там, где кнопка запуска переносится на второй ряд,
-// расти ему некуда: у главной части экрана свой overflow, и вылезший за её
-// левый край список не ложится поверх боковой колонки, а обрезается по ней
-// (замечание пользователя: выпадашка выбора подписки уезжает под меню). Такому
-// списку место справа от кнопки, и он туда и разворачивается.
+// Горизонталь раскрытого списка. Место ему называется числом, а не выбором
+// стороны: сторона отвечала на вопрос «влево от кнопки или вправо», а у
+// телефона верного ответа среди двух нет вовсе, потому что список шире свободного
+// места с обеих сторон. Тут список ставится туда, где висел бы всегда (правым
+// краем на кнопке), а потом задвигается в границы главной части экрана.
 //
 // Ширина спрашивается у самого списка, а не берётся из стилей: на телефоне она
 // своя, и второе объявление её в коде разошлось бы с первым молча. Мерить
-// нечем (стенд, старый браузер), значит сторона остаётся прежней.
-function noRoomLeft(node, pop) {
-  if (!node.getBoundingClientRect || !pop || !pop.getBoundingClientRect) return false;
+// нечем (стенд, старый браузер), значит список остаётся там, куда его поставил
+// стиль: догадка тут хуже.
+function popFit(node, pop) {
+  if (!pop || !pop.style) return;
+  pop.style.left = "";
+  pop.style.right = "";
+  if (!node.getBoundingClientRect || !pop.getBoundingClientRect) return;
+  const host = pop.parentNode && pop.parentNode.getBoundingClientRect
+    ? pop.parentNode.getBoundingClientRect() : null;
   const box = node.getBoundingClientRect();
   const list = pop.getBoundingClientRect();
   const width = (list && list.width) || 0;
-  if (!box || !box.right || !width) return false;
-  return box.right - width < screenLeft() + HPOP_EDGE;
+  if (!host || !box || !width) return;
+  const edgeL = screenLeft() + HPOP_EDGE;
+  const edgeR = screenRight() - HPOP_EDGE;
+  let want = box.right - width;
+  if (want + width > edgeR) want = edgeR - width;
+  if (want < edgeL) want = edgeL;
+  pop.style.left = Math.round(want - host.left) + "px";
+  // Правый край снимается вместе с постановкой левого: в стилях список висит
+  // на правом крае кнопки, и оба края разом растянули бы его во всю ширину.
+  pop.style.right = "auto";
+}
+
+// Правый край места: у главной части экрана он совпадает с краем окна, и
+// мерить надо именно окно, а не документ, который бывает шире от прокрутки.
+function screenRight() {
+  const doc = document.documentElement;
+  return (doc && doc.clientWidth) || window.innerWidth || 0;
 }
 
 // Левый край места, отведённого всплывашке: режет её главная часть экрана, а
@@ -3391,8 +3416,13 @@ function taskActions(project, id, row) {
   const pin = checkPin(row);
   // Выбор яруса тот же, что и у строки списка: экран задачи и доска не должны
   // предлагать разное.
+  // Подсказка строки Check говорит, что закрытие идёт следом за проверкой: из
+  // подписи кнопки это слово ушло ради ширины, и сказать о нём должно место
+  // рядом. Спрашивается она по секции, а не по прикреплённой подписке: без
+  // подписок на машине приколоть нечего, а закрывать строку всё равно закроют.
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
-    pin ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id), afterOk, pin, null,
+    row.sect === "check" ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id),
+    afterOk, pin, null,
     isGoal ? { list: harnessTiers(), now: RUN_TIER }
       : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT }));
   return out;
@@ -7747,7 +7777,12 @@ function chatDropOpen(project, st, anchor) {
   box.append(top, rows);
   anchor.append(box);
   chatDropSet(box);
-  find.focus();
+  // Курсор в поле поиска ставится только там, где клавиатуре есть где встать.
+  // На телефоне она выезжает на пол-экрана раньше, чем человек успел взглянуть
+  // на список, и первым делом её приходится убирать («фокус сразу попадает на
+  // поле поиска и выезжает клавиатура», замечание пользователя). Порог тот же,
+  // каким отличается весь мобильный вид.
+  if (!narrowScreen()) find.focus();
 }
 
 // Шапка окна: выбор диалога, «+», модель, переключатель фильтра и крестик.
@@ -10910,7 +10945,7 @@ function draftsSorted(drafts) {
     (a, b, dir) => (draftNum(b) - draftNum(a)) * (dir === "asc" ? -1 : 1));
 }
 
-const GROOM_HINT = "«Провести груминг» поднимает сессию разбора: она доведёт " +
+const GROOM_HINT = "«Грумить» поднимает сессию разбора: она доведёт " +
   "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
   "видны на экране записи.";
 
@@ -10949,7 +10984,7 @@ async function groomDraft(project, id, afterOk, harness, tier) {
 }
 
 // Выбор черновиков под разбор: отметки в строках, запуск один на выбранное.
-// Прежде кнопка «Провести груминг» стояла в каждой строке, и разбирать
+// Прежде кнопка груминга стояла в каждой строке, и разбирать
 // накопитель приходилось по одной записи, а нажатие всплывало до обработчика
 // строки и уводило на экран записи вместо запуска (решение пользователя).
 // Память живёт экраном: уход с накопителя её очищает, потому что выбор это
@@ -11063,7 +11098,7 @@ function draftRunBarFill(bar, project, works) {
   const grp = el("span", "grun");
   // Число стоит в самой подписи: подтверждения перед подъёмом больше нет, и
   // сказать, сколько сессий встанет, надо на кнопке.
-  const btn = el("button", "btn btn-sm btn-acc", "Провести груминг (" + picked.length + ")");
+  const btn = el("button", "btn btn-sm btn-acc", "Грумить (" + picked.length + ")");
   withTip(btn, GROOM_HINT);
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -12014,7 +12049,7 @@ async function renderDraft(project, works, id) {
         // «груминг идёт» звала запустить грумера поверх работающего.
         const groom = runControl(project, id,
           (label) => barBtn("btn btn-acc", label, "i-play"),
-          "Провести груминг", false,
+          "Грумить", false,
           text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
           "", "",
           // Несохранённая правка уезжает на диск до подъёма разбора: иначе

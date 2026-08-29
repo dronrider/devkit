@@ -26,7 +26,7 @@ const PANEL = `
               <span class="hq"><em>week_all</em><b>52%</b></span></button>
           </div>
         </span>
-        <button class="btn" id="plain">Провести груминг</button>
+        <button class="btn" id="plain">Грумить</button>
       </div>
       <button class="tpen" id="pen"><span class="car"></span></button>
       <button class="tpen" id="read"><span class="car"></span></button>

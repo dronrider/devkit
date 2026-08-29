@@ -1,6 +1,6 @@
 // Стенд запуска разбора без подтверждения (ветка poc-chat).
 //
-// Прежде «Провести груминг» открывала карточку «Поднимется 3 сессии разбора...»
+// Прежде «Грумить» открывала карточку «Поднимется 3 сессии разбора...»
 // с кнопками «Поднять 3» и «Отмена», а исходная кнопка оставалась доступной:
 // нажать её можно было поверх открытого вопроса. Пользователь спросил, нужен ли
 // этот шаг вообще, и ответил сам: выбор записей отметками это и есть осознанное
@@ -53,7 +53,7 @@ const clearPicks = () => {
   sandbox.draftPickSet("XR-D1", true);
   sandbox.draftPickSet("XR-D2", true);
   const bar = sandbox.draftRunBar("demo", []);
-  const btn = deepBtn(bar, "Провести груминг");
+  const btn = deepBtn(bar, "Грумить");
   if (!btn) fail("кнопки разбора над списком нет вовсе: " + dump(bar));
   if (!dump(btn).includes("(2)")) {
     fail("кнопка не назвала число выбранных записей: " + JSON.stringify(dump(btn)));
@@ -67,7 +67,7 @@ const clearPicks = () => {
   flashClear();
   sandbox.draftPickSet("XR-D1", true);
   const bar = sandbox.draftRunBar("demo", []);
-  const btn = deepBtn(bar, "Провести груминг");
+  const btn = deepBtn(bar, "Грумить");
   btn.handlers.click({ stopPropagation: () => {} });
   // Гашение ставится тем же ходом, что и нажатие: второе нажатие подняло бы
   // пачку дважды.
@@ -100,7 +100,7 @@ const clearPicks = () => {
   // Разбор XR-D2 уже идёт: работа задачи живая.
   const works = [{ id: "XR-D2", kind: "task", live: "busy" }];
   const bar = sandbox.draftRunBar("demo", works);
-  deepBtn(bar, "Провести груминг").handlers.click({ stopPropagation: () => {} });
+  deepBtn(bar, "Грумить").handlers.click({ stopPropagation: () => {} });
   await settle();
   const groom = posted.filter((p) => p.path.includes("/groom"));
   if (groom.length !== 1 || !groom[0].path.includes("XR-D1")) {

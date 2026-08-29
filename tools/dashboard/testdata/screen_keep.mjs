@@ -1304,7 +1304,7 @@ running = false;
 await go("#demo/drafts");
 const wrap = find(groups, "XR-D2");
 if (!wrap) fail("накопитель не собрался: записи XR-D2 нет");
-if (button(wrap, "Провести груминг")) {
+if (button(wrap, "Грумить")) {
   fail("кнопка разбора осталась в строке накопителя: " + dump(wrap));
 }
 if (!byClass(wrap, "dpick")) fail("в строке накопителя нет отметки выбора: " + dump(wrap));
@@ -1335,7 +1335,7 @@ if (groups.scrollTop !== 120) {
 // подпись рядом (решение пользователя).
 // Число выбранных стоит в самой подписи кнопки: подтверждения перед подъёмом
 // нет, и сказать, сколько сессий встанет, надо до нажатия.
-const runBtn = (n) => button(groups, "Провести груминг" + (n ? " (" + n + ")" : ""));
+const runBtn = (n) => button(groups, "Грумить" + (n ? " (" + n + ")" : ""));
 {
   if (runBtn()) fail("кнопка запуска стоит при пустом выборе: " + dump(groups).slice(0, 400));
   const said = dump(groups).replace(/\s+/g, " ");
@@ -1643,7 +1643,7 @@ if (!dump(dchips).includes("черновик")) fail("запись не поме
 if (!dump(dchips).includes("груминг идёт")) {
   fail("идущий груминг ничем не помечен: " + dump(dchips));
 }
-if (barButton(groups, "Провести груминг")) {
+if (barButton(groups, "Грумить")) {
   fail("поверх идущего груминга экран предлагает поднять второй: " + dump(groups));
 }
 // Пока разбор идёт, запись принадлежит агенту: карандаш с неё уходит, а режим
@@ -1667,7 +1667,7 @@ grooming = false;
 await go("#demo/draft/XR-D2");
 dchips = find(groups, "draft-chips");
 if (dump(dchips).includes("груминг идёт")) fail("кончившийся груминг помечен идущим: " + dump(dchips));
-const groomBtn = barButton(groups, "Провести груминг");
+const groomBtn = barButton(groups, "Грумить");
 if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(groups).slice(0, 300));
 // Разбор кончился, замок снят: карандаш возвращается на место.
 if (!barButton(dchips, "Править запись")) {
@@ -1688,7 +1688,7 @@ await go("#demo/draft/XR-D2");
 if (barButton(groups, "Чат груминга")) {
   fail("на форме вернулась вторая дверь в тот же чат: " + dump(groups).slice(0, 300));
 }
-if (!barButton(groups, "Провести груминг")) {
+if (!barButton(groups, "Грумить")) {
   fail("кнопка разбора пропала из-за чата о записи: " + dump(groups).slice(0, 300));
 }
 

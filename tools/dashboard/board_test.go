@@ -169,12 +169,14 @@ func TestStaticBoardEchoOnNotification(t *testing.T) {
 // Действие называется по статусу строки: из Backlog задачу выполняют, начатую
 // продолжают, проверенную проверяют и закрывают. Те же слова сервер кладёт в
 // промпт конвейеру, и подпись кнопки обязана совпадать с заказом. У Check
-// подпись говорит оба дела разом: нажатие человека это его приёмка, а прогон
-// проверки и закрытие идут дальше сами (решение пользователя).
+// подпись стоит одним словом: нажатие человека это его приёмка, а прогон
+// проверки и закрытие идут дальше сами, и о них говорит подсказка кнопки. Двумя
+// делами разом подпись звалась до замера ширины: на телефоне «Проверить и
+// закрыть» занимала строку целиком (замечание пользователя).
 func TestStaticActionLabelBySection(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	labels := funcBody(t, text, "const ACTION_BY_SECT")
-	for _, want := range []string{`"in-progress": "Продолжить"`, `check: "Проверить и закрыть"`, `|| "Выполнить"`} {
+	for _, want := range []string{`"in-progress": "Продолжить"`, `check: "Проверить"`, `|| "Выполнить"`} {
 		if !strings.Contains(labels, want) {
 			t.Errorf("в подписях действий нет %q", want)
 		}
@@ -2391,6 +2393,155 @@ func TestStaticHpopSide(t *testing.T) {
 		t.Fatalf("сторона раскрытия списка подписок: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Командная панель формы меряется настоящим движком поверх настоящего app.js
+// (POC DK-397). Стенды раскладки до сих пор повторяли вёрстку руками, и замер
+// говорил о разметке, которую экран мог давно сменить; тут страницу собирает
+// сам клиент, а сервер подменяет testdata/live_mock.js.
+//
+// Предмет замера два. Раскрытый список подписок обязан стоять в границах
+// экрана на любой ширине: на телефоне кнопка панели переносится на свою строку
+// и встаёт у левого края, а список висел на её правом крае и уходил за границу
+// («выпадающее меню вылезает за пределы экрана», замечание пользователя).
+// Второй предмет это ширина самих кнопок: подписи резались ради телефона, и
+// без замера сокращение слова ничего не говорит о ширине, которую складывают
+// поля, значок и кегль.
+func TestStaticFormPopFits(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер командной панели пропущен")
+	}
+	dir, page := chromeLiveStand(t, "form_pop.js")
+	// Зазор до края: список, прижатый вплотную к границе, читается как
+	// обрезанный, и то же число держит HPOP_EDGE в app.js.
+	const edge = 8
+	for _, form := range []struct {
+		bar   string
+		label string
+		btn   int
+		wide  int
+	}{
+		{"draft", "Грумить", 150, 110},
+		{"task", "Выполнить", 165, 120},
+		{"check", "Проверить", 165, 120},
+	} {
+		narrow := chromeMeasure(t, chrome, dir, page, "390,844", form.bar)
+		if narrow["screen"] != 390 {
+			t.Fatalf("%s: окно стенда не 390 пикселей: %v", form.bar, narrow)
+		}
+		if got := narrow["label-len"]; got != len([]rune(form.label)) {
+			t.Errorf("%s: подпись кнопки длиной %d букв, а ждали «%s»", form.bar, got, form.label)
+		}
+		if narrow["btn-w"] > form.btn {
+			t.Errorf("%s: кнопка «%s» шириной %d при потолке %d: на телефоне она занимает "+
+				"строку целиком", form.bar, form.label, narrow["btn-w"], form.btn)
+		}
+		if narrow["wide-w"] > form.wide {
+			t.Errorf("%s: широкая половина кнопки «%s» шириной %d при потолке %d",
+				form.bar, form.label, narrow["wide-w"], form.wide)
+		}
+		if narrow["gap-left"] < edge {
+			t.Errorf("%s: раскрытый список подписок отстоит от левого края главной части "+
+				"на %d пикселей: он уехал за границу экрана", form.bar, narrow["gap-left"])
+		}
+		if narrow["gap-right"] < edge {
+			t.Errorf("%s: раскрытый список подписок отстоит от правого края окна на %d "+
+				"пикселей: он уехал за границу экрана", form.bar, narrow["gap-right"])
+		}
+
+		// На ноутбуке места вдоволь, и списку двигаться незачем: он висит
+		// правым краем на кнопке, как и рисует макет.
+		wide := chromeMeasure(t, chrome, dir, page, "1280,900", form.bar)
+		if wide["pop-hang"] != 0 {
+			t.Errorf("%s: на ноутбуке список подписок съехал от правого края кнопки на %d "+
+				"пикселей", form.bar, wide["pop-hang"])
+		}
+		if wide["gap-left"] < edge || wide["gap-right"] < edge {
+			t.Errorf("%s: на ноутбуке список вышел за границы: слева %d, справа %d",
+				form.bar, wide["gap-left"], wide["gap-right"])
+		}
+	}
+}
+
+// Кнопка закрытия панели разговора меряется настоящим движком (POC DK-397).
+// Крестик стоял бледным значком без рамки и фона, вдвое меньше соседних кнопок
+// шапки, и попасть в него пальцем было нечем («малозаметный крестик»,
+// замечание пользователя). Своего стиля у кнопки нет: числа она берёт у
+// соседей, и стенд сверяет её именно с ними, а не с записанной константой.
+func TestStaticChatShutLook(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: замер кнопки закрытия панели пропущен")
+	}
+	dir, page := chromeLiveStand(t, "chat_head.js")
+	for _, window := range []string{"1280,900", "390,844"} {
+		got := chromeMeasure(t, chrome, dir, page, window, "chat")
+		t.Logf("окно %s: %v", window, got)
+		if got["kin-w"] == 0 || got["kin-h"] == 0 {
+			t.Fatalf("окно %s: соседние кнопки шапки не померились: %v", window, got)
+		}
+		if got["shut-w"] < got["kin-w"] || got["shut-h"] < got["kin-h"] {
+			t.Errorf("окно %s: кнопка закрытия %dx%d меньше соседней кнопки шапки %dx%d: "+
+				"пальцем в неё не попасть", window, got["shut-w"], got["shut-h"],
+				got["kin-w"], got["kin-h"])
+		}
+		if got["glyph"] < got["kin-glyph"] {
+			t.Errorf("окно %s: крестик шириной %d при значке соседа %d: он теряется в шапке",
+				window, got["glyph"], got["kin-glyph"])
+		}
+		if got["border"] < got["kin-border"] {
+			t.Errorf("окно %s: у кнопки закрытия нет рамки соседей: %d против %d",
+				window, got["border"], got["kin-border"])
+		}
+		if got["filled"] != 1 {
+			t.Errorf("окно %s: кнопка закрытия стоит без фона соседних кнопок и читается "+
+				"голым значком", window)
+		}
+		if got["same-ink"] != 1 {
+			t.Errorf("окно %s: крестик нарисован бледнее соседних кнопок шапки", window)
+		}
+	}
+}
+
+// chromeLiveStand собирает страницу стенда из настоящей статики: мок сети,
+// сам app.js и замерочный скрипт. От chromeStand он отличается тем, что клиент
+// тут работает целиком, а не подменяется рукописной вёрсткой.
+func chromeLiveStand(t *testing.T, probeName string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	page := filepath.Join(dir, "stand.html")
+	html := readFile(t, filepath.Join("static", "index.html"))
+	if html == "" {
+		t.Fatal("static/index.html не прочитан")
+	}
+	src := func(name string) string {
+		path, err := filepath.Abs(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return `<script src="file://` + path + `"></script>`
+	}
+	css, err := filepath.Abs(filepath.Join("static", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html = strings.Replace(html, "/assets/style.css", "file://"+css, 1)
+	// app.js грузится обычным скриптом, а не модулем: замерочному скрипту нужны
+	// функции экрана, а модуль держит их при себе. Разбор модулем сторожит
+	// отдельный тест, тут же важна собранная страница.
+	live := src(filepath.Join("testdata", "live_mock.js")) +
+		src(filepath.Join("static", "app.js")) +
+		src(filepath.Join("testdata", probeName))
+	html = strings.Replace(html,
+		`<script type="module" src="/assets/app.js"></script>`, live, 1)
+	if !strings.Contains(html, probeName) {
+		t.Fatal("замерочный скрипт не встал на место app.js: разметка index.html разъехалась с тестом")
+	}
+	if err := os.WriteFile(page, []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, page
 }
 
 // Боковая колонка сворачивается и возвращается тем же движением, состояние

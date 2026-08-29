@@ -366,15 +366,13 @@ a:hover{text-decoration:underline}
    не заводится, а угол в 45 градусов одинаков в любом кегле */
 .car{width:7px;height:7px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;
   transform:rotate(-45deg);margin-top:-3px;display:block}
-.hpop{position:absolute;right:0;top:38px;width:340px;z-index:30;background:var(--bg2);
+/* шире окна список не бывает ни на каком телефоне: горизонталь ему считает
+   popFit, но упереться в оба края разом он не должен и до счёта */
+.hpop{position:absolute;right:0;top:38px;width:340px;max-width:calc(100vw - 24px);z-index:30;background:var(--bg2);
   border:1px solid var(--line2);border-radius:12px;box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:6px}
 /* вверх список раскрывается там, где под кнопкой нет места: на телефоне он
    иначе уезжает под нижние вкладки */
 .hpop.up{top:auto;bottom:calc(100% + 6px)}
-/* вправо список раскрывается там, где слева от кнопки нет места: перенесённая
-   на второй ряд кнопка запуска стоит у левого края экрана, и растущий влево
-   список обрезался его границей */
-.hpop.rt{right:auto;left:0}
 .hpop[hidden]{display:none}
 .hph{display:block;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;
   color:var(--tx3);padding:9px 11px 8px}
@@ -893,9 +891,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .csub{color:var(--tx3);font-style:italic}
 .cwhy{color:var(--tx3);opacity:.85;max-width:22em;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
-.chead .nx{flex:none;width:28px;height:28px;border-radius:7px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
-.chead .nx svg{width:12px;height:12px;display:block}
-.chead .nx:hover{color:var(--tx);background:var(--bg2)}
+/* Крестик закрытия говорит на языке соседних кнопок шапки: та же коробка, та
+   же рамка, тот же отклик на наведение. Прежде он стоял бледным значком без
+   рамки и фона, вдвое меньше соседей, и пальцем в него не попадали («кнопка
+   закрытия чата сделана малозаметным крестиком», замечание пользователя).
+   Своего стиля у него нет вовсе, числа взяты у .cdbtn рядом */
+.chead .nx{flex:none;width:32px;height:32px;border-radius:9px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx2);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.chead .nx svg{width:14px;height:14px;display:block}
+.chead .nx:hover{color:var(--tx);border-color:var(--acc)}
 .crow2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px}
 .cpanel .chatwrap{max-width:none;margin-top:12px;flex:1;display:flex;flex-direction:column;min-height:0}
 .cpanel .chatfeed{flex:1;max-height:none;min-height:120px}
@@ -1143,6 +1146,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cdbtn{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;font:600 15px var(--sans);display:flex;align-items:center;justify-content:center;padding:0}
 .cdbtn:hover{border-color:var(--acc);color:var(--tx)}
 .cdbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+/* Отклик на нажатие у кнопок шапки тот же, что у .btn: нажатую кнопку видно
+   и там, где палец её закрывает целиком */
+.cdbtn:active,.chead .nx:active{filter:brightness(0.92)}
 /* 14: выбор модели переехал в строку отправки, слева от кнопок. */
 .cmodel{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
 .cdsel{flex:none;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);font:500 12px var(--sans);padding:0 6px;cursor:pointer;outline:none}
@@ -1515,8 +1521,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    карандаша с чтением и держали свои 36px от .btn. Радиус тут не трогается,
    у .btn он тот же, что у .tpen, а слепая правка радиуса скругляла узкую
    половину составной кнопки с той стороны, где у неё стык */
-.tacts .btn{height:var(--ctl);min-height:var(--ctl);font-size:12.5px}
-.tacts .btn:not(.more2){padding:0 11px}
+/* кнопка панели уже обычной: значок стоит вплотную к слову, а поля по бокам
+   срезаны. На телефоне панель переносится своей строкой, и лишние точки по
+   краям читаются как длина («кнопки слишком длинные», замечание пользователя) */
+.tacts .btn{height:var(--ctl);min-height:var(--ctl);font-size:12.5px;gap:6px}
+.tacts .btn:not(.more2){padding:0 10px}
 .tacts .btn svg{width:15px;height:15px;flex:none}
 
 .tchips .gap{flex:1}

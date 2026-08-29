@@ -2195,6 +2195,23 @@ func TestTaskMessageDeliveredWithLead(t *testing.T) {
 	}
 }
 
+// Курсор в поле поиска списка разговоров ставится по ширине экрана: на
+// телефоне выехавшая за ним клавиатура закрывает пол-экрана раньше, чем человек
+// взглянул на список (замечание пользователя), а на ноутбуке она ничего не
+// закрывает и курсор к месту. Сторожит стенд testdata/poc_chatfocus.mjs.
+func TestStaticChatDropFocusByWidth(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд курсора в списке разговоров пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatfocus.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("курсор в списке разговоров: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Повтор и отмена недоставленной реплики на экране: пузырь остаётся на месте и
 // говорит, что реплика уже в очереди, а отмена снимает её и из самой очереди.
 // Предмет проверки это поведение панели, поэтому статика поднимается в node с

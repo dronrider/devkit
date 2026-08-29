@@ -153,7 +153,7 @@ func TestDraftPutText(t *testing.T) {
 }
 
 // Список накопителя и текст записи несут заказ дословно, той же строкой, что
-// унесёт headless-сессии groomPrompt: подсказка кнопки «Провести груминг»
+// унесёт headless-сессии groomPrompt: подсказка кнопки «Грумить»
 // читает готовое поле вместо того, чтобы собирать его второй раз на клиенте
 // (DK-286).
 func TestDraftsCarryOrder(t *testing.T) {
@@ -221,7 +221,7 @@ func TestDraftsSortedByPrio(t *testing.T) {
 	}
 }
 
-// «Провести груминг» поднимает сессию разбора живым чатом: tmux-сессия с
+// «Грумить» поднимает сессию разбора живым чатом: tmux-сессия с
 // интерактивным клиентом, заказом теми же словами, какими груминг просят в
 // чате, и парами окружения, которыми поднятая сессия называет себя в реестре.
 func TestDraftGroomPrompt(t *testing.T) {
@@ -276,7 +276,7 @@ func TestStaticDraftsSection(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		"Черновики",
-		"Провести груминг",
+		"Грумить",
 		"async function renderDrafts(",
 		"async function renderDraft(",
 		"async function groomDraft(",

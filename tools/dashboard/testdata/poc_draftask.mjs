@@ -143,7 +143,7 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   }
 
   // И на самом экране: при живом разговоре о записи пометки разбора нет, а
-  // кнопка «Провести груминг» на месте.
+  // кнопка «Грумить» на месте.
   now.waiting = false;
   now.works = talk;
   await go("#demo");
@@ -152,7 +152,7 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   if (said.includes("груминг идёт")) {
     fail("разговор о записи показан идущим разбором: " + said.slice(0, 300));
   }
-  if (!said.includes("Провести груминг")) {
+  if (!said.includes("Грумить")) {
     fail("кнопка разбора пропала из-за разговора о записи: " + said.slice(0, 300));
   }
   now.works = groom;

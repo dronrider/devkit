@@ -81,7 +81,7 @@ function press(row, target, why) {
 // форму вместо своего дела (замечание пользователя).
 {
   const row = browserKids(sandbox.draftRow("demo", drafts[0]));
-  if (deepBtn(row, "Провести груминг")) fail("кнопка разбора вернулась в строку: " + dump(row));
+  if (deepBtn(row, "Грумить")) fail("кнопка разбора вернулась в строку: " + dump(row));
   const pick = byClass(row, "dpick");
   if (!pick) fail("в строке накопителя нет отметки выбора: " + dump(row));
   const box = byClass(pick, "dbox");

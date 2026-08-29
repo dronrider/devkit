@@ -213,7 +213,7 @@ const click = async (btn) => {
   if (!pick) fail("отметки выбора в строке нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 300));
   pick.handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (!deepBtn(groups, "Провести груминг")) {
+  if (!deepBtn(groups, "Грумить")) {
     fail("кнопка разбора ушла с накопителя: " + dump(groups).replace(/\s+/g, " ").slice(0, 300));
   }
 }

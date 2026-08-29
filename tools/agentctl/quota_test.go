@@ -34,6 +34,9 @@ func specAt(t *testing.T, path string) *quotaSpec {
 		t.Fatal("у claude-code нет объявления квоты")
 	}
 	q.Path, q.From = path, path
+	// Дом пустым не остаётся: съёмщик читает под ним кеш клиента, и на пустом
+	// доме стенд ушёл бы в настоящий ~/.claude.json машины, где гоняются тесты.
+	q.Home = t.TempDir()
 	return q
 }
 
@@ -68,6 +71,9 @@ home = "`+home+`"
 		t.Fatal("у glm-code нет объявления квоты: профиль вернулся к пустой секции [quota]")
 	}
 	q.Path, q.From = path, path
+	// Дом пустым не остаётся: съёмщик читает под ним кеш клиента, и на пустом
+	// доме стенд ушёл бы в настоящий ~/.claude.json машины, где гоняются тесты.
+	q.Home = t.TempDir()
 	return q
 }
 

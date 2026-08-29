@@ -12,13 +12,12 @@ import (
 // временем чтения файла тут же видна.
 const usageCacheFetchedMs = 1785401400000
 
-// cacheSpec это claude-code из настоящего профиля репозитория, которому дом
-// подменён каталогом с кешем. Дом отдельный на каждый стенд: съёмщик читает
-// именно его, а не домашний каталог машины.
+// cacheSpec это claude-code из настоящего профиля репозитория, которому в дом
+// положен кеш. Дом у каждого стенда свой, его выдаёт specAt: съёмщик читает
+// именно его, домашний каталог машины стендам не виден.
 func cacheSpec(t *testing.T, cache string) *quotaSpec {
 	t.Helper()
 	q := specAt(t, filepath.Join(t.TempDir(), "quota.local"))
-	q.Home = t.TempDir()
 	if cache != "" {
 		writeFile(t, q.Home, usageCacheFile, cache)
 	}
@@ -77,14 +76,58 @@ func TestSnapUsageCache(t *testing.T) {
 		}
 	})
 
-	t.Run("кеш без разбивки помечает бакет", func(t *testing.T) {
+	// Здоровый кеш без трат по дорогой модели и кеш, часть строк которого не
+	// далась разбору, снаружи выглядели бы одинаково, если пометку ставить
+	// безусловно. Различает их пустая причина, ровно как на дороге панели.
+	t.Run("разобранный до конца кеш пометки не ставит", func(t *testing.T) {
 		q := cacheSpec(t, cacheWith(`{"kind": "weekly_all", "percent": 69, "resets_at": "2026-07-31T12:00:00+00:00"}`))
+		s, notes, err := snapUsageCache(q)
+		if err != nil {
+			t.Fatalf("кеш не разобран: %v", err)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("знакомому кешу говорить не о чем: %v", notes)
+		}
+		if why := s.partial("week_max"); why != "" {
+			t.Fatalf("трат по модели на неделе не было, а снимок зовёт это неполнотой: %q", why)
+		}
+	})
+
+	t.Run("непонятая строка кеша помечает бакет", func(t *testing.T) {
+		q := cacheSpec(t, cacheWith(`
+			{"kind": "weekly_all", "percent": 69, "resets_at": "2026-07-31T12:00:00+00:00"},
+			{"kind": "weekly_scoped", "percent": 12, "resets_at": "2026-07-31T12:00:00+00:00",
+			 "scope": {"model": {"display_name": "Chartreuse"}}}`))
 		s, _, err := snapUsageCache(q)
 		if err != nil {
 			t.Fatalf("кеш не разобран: %v", err)
 		}
 		if s.partial("week_max") == "" {
-			t.Fatalf("пропажа дорогого бакета осталась без пометки: %+v", s)
+			t.Fatalf("непонятая строка лимита осталась без пометки: %+v", s)
+		}
+	})
+
+	// Три проверки области стоят в одном условии, и стенд гоняет каждую: без
+	// своего случая мутация двух из них прошла бы незамеченной.
+	t.Run("недельный лимит без имени модели называется словами", func(t *testing.T) {
+		for name, scope := range map[string]string{
+			"области нет":       `null`,
+			"модели нет":        `{"model": null}`,
+			"имя модели пустое": `{"model": {"display_name": ""}}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				q := cacheSpec(t, cacheWith(`
+					{"kind": "weekly_all", "percent": 69, "resets_at": "2026-07-31T12:00:00+00:00"},
+					{"kind": "weekly_scoped", "percent": 12, "resets_at": "2026-07-31T12:00:00+00:00",
+					 "scope": `+scope+`}`))
+				_, notes, err := snapUsageCache(q)
+				if err != nil {
+					t.Fatalf("знакомая часть кеша должна разбираться: %v", err)
+				}
+				if !strings.Contains(strings.Join(notes, "\n"), "без имени модели") {
+					t.Fatalf("про лимит без имени модели сказано не было: %v", notes)
+				}
+			})
 		}
 	})
 

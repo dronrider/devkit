@@ -531,6 +531,11 @@ func TestParseResetYearRollover(t *testing.T) {
 // tmux поднимался бы по десятку раз в день впустую.
 func TestCmdQuotaRefreshIfStale(t *testing.T) {
 	q := specAt(t, filepath.Join(t.TempDir(), ".devkit", "quota", "claude-code.local"))
+	// Дом у стенда подставной (specAt), кеша клиента в нём нет, и за порогом
+	// съёмщик уходит на панель. Пустой PATH обрывает эту дорогу сразу: иначе
+	// стенд поднимал бы на машине разработчика настоящую сессию tmux с
+	// настоящим клиентом и ждал её таймаутом.
+	t.Setenv("PATH", t.TempDir())
 	fresh := snapOf(freshAge, bucketAt("week_all", 40, halfWindow))
 	if err := q.write(fresh); err != nil {
 		t.Fatal(err)

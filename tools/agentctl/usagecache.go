@@ -147,7 +147,20 @@ func snapUsageCache(q *quotaSpec) (snapshot, []string, error) {
 	sort.SliceStable(s.Buckets, func(i, j int) bool {
 		return slices.Index(q.Buckets, s.Buckets[i].Name) < slices.Index(q.Buckets, s.Buckets[j].Name)
 	})
-	return s.markPartial(q, "кеш клиента этой модели не знает"), notes, nil
+	return s.markPartial(q, cacheNoBreakdown(notes)), notes, nil
+}
+
+// cacheNoBreakdown объясняет, почему разбивке из кеша нельзя верить целиком.
+// Пустая строка значит, что кеш разобран до последней строки, и пропажу
+// дорогого бакета надо понимать буквально: трат по этой модели на неделе не
+// было либо бакета у подписки нет. Ровно так же читается пустая причина у
+// панели (panelNoBreakdown): здоровый источник, которому нечего показать, от
+// источника, заговорившего незнакомо, отличается тут и там одинаково.
+func cacheNoBreakdown(notes []string) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	return "часть строк кеша клиента разобрать не вышло, разбивка неполная"
 }
 
 // cacheBucketName переводит строку лимита в имя бакета. Пустое имя без причины

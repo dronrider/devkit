@@ -263,10 +263,14 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 // входа берёт подписку по умолчанию, первый пункт. Команда /login подаётся лишь
 // на нарисованную панель: пока клиент разгоняется, панель пуста, и нажатия,
 // поданные вслепую, съедает первый вставший виджет, а Enter в нём подтверждает
-// пункт на курсоре и губит клиента. Пустая вторая строка значит успех.
+// пункт на курсоре и губит клиента. Съеденной бывает и поданная вовремя: после
+// ответа о доверии клиент поднимает REPL заново и вычищает ввод, поэтому команда
+// повторяется с отступом, пока панель не отзовётся виджетом выбора способа.
+// Пустая вторая строка значит успех.
 func (s *server) loginAwaitLink(sess string) (string, string) {
 	deadline := s.now().Add(loginLinkWait)
-	chosen, sent := false, false
+	chosen, trusted := false, false
+	var sent time.Time
 	for {
 		pane, err := loginPane(sess)
 		if err != nil {
@@ -277,26 +281,23 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 		}
 		ask := tmuxAskOf(sess)
 		switch {
-		case loginAskIsTrust(ask):
+		case loginAskIsTrust(ask) && !trusted:
 			if err := tmuxAnswer(sess, ask, loginPickOf(ask), ""); err != nil {
 				return "", fmt.Sprintf("вопрос доверия каталогу не отвечен: %s", procErr(err))
 			}
-			if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
-				return "", fmt.Sprintf("команда /login не подалась после доверия: %s", procErr(err))
-			}
-			sent = true
-		case len(ask.Options) > 0 && !chosen:
+			trusted = true
+		case len(ask.Options) > 0 && !chosen && !loginAskIsTrust(ask):
 			if err := tmuxAnswer(sess, ask, loginPickOf(ask), ""); err != nil {
 				return "", fmt.Sprintf("способ входа не выбрался: %s", procErr(err))
 			}
 			chosen = true
 		case strings.TrimSpace(pane) == "":
 			// Клиент ещё не нарисовал панель: нажатия вслепую не подаются.
-		case !sent:
+		case len(ask.Options) == 0 && (sent.IsZero() || s.now().Sub(sent) >= 2*loginPollEvery):
 			if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
 				return "", fmt.Sprintf("команда /login не подалась в сессию входа: %s", procErr(err))
 			}
-			sent = true
+			sent = s.now()
 		}
 		if !s.now().Before(deadline) {
 			return "", fmt.Sprintf("клиент не напечатал ссылку авторизации за %s: "+

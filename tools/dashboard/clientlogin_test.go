@@ -25,14 +25,16 @@ var (
 )
 
 // Панели стадий входа: пустая панель разгона, вопрос доверия каталогу, REPL без
-// входа, виджет выбора способа, ссылка с полем кода, сделанный вход и отказ
-// кода. Вид взят с живой панели клиента.
+// входа и такой же видом REPL, но вычищающий ввод (клиент после ответа о
+// доверии поднимает REPL заново и съедает поданное в момент пересборки),
+// виджет выбора способа, ссылка с полем кода, сделанный вход и отказ кода.
+// Вид взят с живой панели клиента.
 func loginPaneOf(stage string) string {
 	code := "Paste code here if prompted >" + "\n" + paneCursor + " \n"
 	switch stage {
 	case "boot":
 		return ""
-	case "repl":
+	case "repl", "init":
 		return "Login expired. Please run /login\n\n" + paneCursor + " \n"
 	case "trust":
 		return strings.Join([]string{
@@ -70,16 +72,17 @@ func loginPaneOf(stage string) string {
 
 // fakeTmuxLogin ставит скрипт tmux с панелью входа и возвращает каталог его
 // памяти. Стадии: boot (клиент разгоняется, панель пуста и на третьем снимке
-// рисует REPL), trust (виджет доверия каталогу), repl (REPL без входа), ask
-// (виджет выбора способа), url (ссылка и поле кода), ok (вход сделан), again
-// (код не принят); пропажа файла стадии это смерть сессии. Хвостовая черта в
-// строке фикстуры значит перенос строки пейна: capture-pane с -J склеивает такие
-// строки, как живой tmux. Нажатие на пустой панели оставляет метку early: в
-// ненарисовавшегося клиента нажатия не уходят.
+// рисует REPL), trust (виджет доверия каталогу), init (REPL вида готового, но
+// пересборка вычищает ввод, и со второго снимка он готов по-настоящему), repl
+// (REPL без входа), ask (виджет выбора способа), url (ссылка и поле кода), ok
+// (вход сделан), again (код не принят); пропажа файла стадии это смерть
+// сессии. Хвостовая черта в строке фикстуры значит перенос строки пейна:
+// capture-pane с -J склеивает такие строки, как живой tmux. Нажатие на пустой
+// панели оставляет метку early: в ненарисовавшегося клиента нажатия не уходят.
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
-	for _, stage := range []string{"boot", "repl", "trust", "ask", "url", "ok", "again"} {
+	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again"} {
 		if err := os.WriteFile(filepath.Join(d, "pane-"+stage),
 			[]byte(loginPaneOf(stage)), 0o644); err != nil {
 			t.Fatal(err)
@@ -99,6 +102,10 @@ capture-pane)
     n=$(($(cat "$D/bootN" 2>/dev/null || echo 0)+1)); echo "$n" >"$D/bootN"
     [ "$n" -ge 3 ] && echo repl >"$D/stage"; st=$(cat "$D/stage")
   fi
+  if [ "$st" = "init" ]; then
+    n=$(($(cat "$D/initN" 2>/dev/null || echo 0)+1)); echo "$n" >"$D/initN"
+    [ "$n" -ge 4 ] && echo repl >"$D/stage"; st=$(cat "$D/stage")
+  fi
   pane="$D/pane-$st"
   case " $* " in
   *" -J "*) awk '{ if (sub(/\\$/,"")) printf "%s", $0; else print }' "$pane";;
@@ -106,13 +113,14 @@ capture-pane)
   esac
   ;;
 send-keys)
-  if [ "$4" = "-l" ]; then printf '%s' "$5" >"$D/last"
+  st=$(cat "$D/stage" 2>/dev/null || echo gone)
+  if [ "$4" = "-l" ] && [ "$st" != "init" ]; then printf '%s' "$5" >"$D/last"
   elif [ "$4" = "Enter" ]; then
-    st=$(cat "$D/stage" 2>/dev/null || echo gone)
     last=$(cat "$D/last" 2>/dev/null || true)
     if [ "$st" = "repl" ]; then echo ask >"$D/stage"
     elif [ "$st" = "boot" ]; then touch "$D/early"
-    elif [ "$st" = "trust" ]; then echo repl >"$D/stage"
+    elif [ "$st" = "init" ]; then :
+    elif [ "$st" = "trust" ]; then echo init >"$D/stage"
     elif [ "$st" = "ask" ]; then echo url >"$D/stage"
     elif [ "$st" = "gone" ]; then :
     else

@@ -2655,6 +2655,25 @@ func TestStaticLoginFitsFeed(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Рамка поля правки: у поля внутри карточки рамка одна, поле отличимо от покоя
+// и названо в фокусе. Пользователь выделил на экране задачи карточку панели и
+// поле внутри неё: «нужно убрать вот эту двойную рамку при включении
+// редактирования». Числа тут снимаются с настоящего style.css, чтобы
+// расхождение ловилось впредь (стенд testdata/poc_editframe.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticEditFrameSingle(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд рамки поля правки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_editframe.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("рамка поля правки: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Вид нового чата у привязанного разговора (жалоба пользователя: «нажал + в
 // этом чате, а выбора не было; разве он не привязан к задаче?»). Кнопка
 // спрашивала задачу панели, а та гаснет у чужой доски и заодно фильтрует

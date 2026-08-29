@@ -15,138 +15,20 @@
 
 import { makeSandbox, settle, dump, byClass, fail, appPathArg }
   from "./poc_dom.mjs";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { cssRules, layoutOf, deepFind, hasClass } from "./poc_css.mjs";
 
 const app = appPathArg();
-const show = process.argv.includes("--show");
-const BYE = "Login expired. Please run /login";
+const rules = cssRules(app);
 
-// --- разбор style.css с памятью о медиазапросе ---
-const css = readFileSync(join(dirname(app), "style.css"), "utf8")
-  .replace(/\/\*[\s\S]*?\*\//g, "");
-const rules = [];
-{
-  let i = 0;
-  let media = "";
-  while (i < css.length) {
-    const open = css.indexOf("{", i);
-    if (open < 0) break;
-    const head = css.slice(i, open).replace(/^[\s};]+/, "").trim();
-    if (head.startsWith("@media")) {
-      media = head.slice(6).trim();
-      i = open + 1;
-      continue;
-    }
-    if (head.startsWith("@")) {
-      // Прочие at-правила пропускаются вместе с телом.
-      let depth = 1;
-      let j = open + 1;
-      while (j < css.length && depth > 0) {
-        if (css[j] === "{") depth++;
-        if (css[j] === "}") depth--;
-        j++;
-      }
-      i = j;
-      continue;
-    }
-    const close = css.indexOf("}", open);
-    if (close < 0) break;
-    rules.push({ sel: head, decl: css.slice(open + 1, close), media });
-    i = close + 1;
-    // Закрылся ли заодно медиаблок: считаем по следующей непустой скобке.
-    const rest = css.slice(i);
-    const nextOpen = rest.indexOf("{");
-    const nextClose = rest.indexOf("}");
-    if (media && nextClose >= 0 && (nextOpen < 0 || nextClose < nextOpen)) {
-      media = "";
-      i += nextClose + 1;
-    }
-  }
-}
-
-// Медиазапрос считается по ширине экрана: в стенде важны только потолки и полы.
-const mediaFits = (cond, width) => {
-  if (!cond) return true;
-  let ok = true;
-  for (const m of cond.matchAll(/\((max|min)-width:\s*([0-9.]+)px\)/g)) {
-    ok = ok && (m[1] === "max" ? width <= Number(m[2]) : width >= Number(m[2]));
-  }
-  return ok;
-};
-
-// Цепочка предков узла по классам и тегам.
-const chainOf = (node) => {
-  const out = [];
-  for (let n = node; n; n = n.parentNode) {
-    out.unshift({
-      tag: String(n.tagName || "").toLowerCase(),
-      cls: String(n.className || "").split(" ").filter(Boolean),
-    });
-  }
-  return out;
-};
-
-// Одна ступень селектора вида «div.a.b» или «.a.b». Псевдоклассы и атрибуты
-// стенд не считает: их правила в сверку не идут.
-const stepOf = (part) => {
-  if (/[:\[\]>~+*#]/.test(part)) return null;
-  const m = /^([a-zA-Z]*)((?:\.[A-Za-z0-9_-]+)*)$/.exec(part);
-  if (!m || (!m[1] && !m[2])) return null;
-  return { tag: m[1].toLowerCase(), cls: m[2].split(".").filter(Boolean) };
-};
-
-const stepHits = (step, node) =>
-  (!step.tag || step.tag === node.tag) && step.cls.every((c) => node.cls.includes(c));
-
-// Потомковый разбор справа налево.
-const selHits = (sel, chain) => {
-  const parts = sel.trim().split(/\s+/);
-  const steps = parts.map(stepOf);
-  if (steps.some((s) => !s)) return false;
-  let at = chain.length - 1;
-  if (!stepHits(steps[steps.length - 1], chain[at])) return false;
-  at--;
-  for (let k = steps.length - 2; k >= 0; k--) {
-    let hit = false;
-    while (at >= 0) {
-      if (stepHits(steps[k], chain[at])) { hit = true; at--; break; }
-      at--;
-    }
-    if (!hit) return false;
-  }
-  return true;
-};
-
-// Раскладка узла числом: свойства из списка, последнее правило побеждает.
+// Свойства, которыми меряется вид записи. Список закрытый нарочно: сверять всё
+// подряд значит ловить шум, а не расхождение.
 const WANT = ["max-width", "display", "gap", "margin-top", "margin", "padding",
   "padding-bottom", "border-radius", "font", "font-size", "color", "background",
   "border", "border-color", "overflow-wrap", "opacity", "align-self", "text-align"];
+const fitOf = (node, width) => layoutOf(node, { rules, width, want: WANT });
+const show = process.argv.includes("--show");
+const BYE = "Login expired. Please run /login";
 
-const layoutOf = (node, width) => {
-  const chain = chainOf(node);
-  const got = {};
-  for (const rule of rules) {
-    if (!mediaFits(rule.media, width)) continue;
-    if (!rule.sel.split(",").some((part) => selHits(part, chain))) continue;
-    for (const piece of rule.decl.split(";")) {
-      const at = piece.indexOf(":");
-      if (at < 0) continue;
-      const name = piece.slice(0, at).trim();
-      if (!WANT.includes(name)) continue;
-      got[name] = piece.slice(at + 1).trim();
-    }
-  }
-  return got;
-};
-
-const deepFind = (node, hit, out = []) => {
-  if (!node || typeof node !== "object") return out;
-  if (hit(node)) out.push(node);
-  for (const kid of node.children || []) deepFind(kid, hit, out);
-  return out;
-};
-const hasClass = (cls) => (n) => String(n.className || "").split(" ").includes(cls);
 
 let items = [];
 const { sandbox } = makeSandbox(app, (path) => {
@@ -202,8 +84,8 @@ for (const width of [390, 1440]) {
   for (const [name, a, b] of pairs) {
     if (!a) fail("у записи ленты нет узла «" + name + "»");
     if (!b) fail("у записи входа нет узла «" + name + "»: " + dump(loginMsg));
-    const one = layoutOf(a, width);
-    const two = layoutOf(b, width);
+    const one = fitOf(a, width);
+    const two = fitOf(b, width);
     if (show) {
       console.log("[" + width + "] " + name);
       for (const k of WANT) {

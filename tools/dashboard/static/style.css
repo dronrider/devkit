@@ -457,8 +457,14 @@ a:hover{text-decoration:underline}
 /* Правило display у поля правки перебивало [hidden]: постановка стояла на
    экране дважды, разметкой и полем ввода разом, и правился нижний блок
    (жалоба пользователя про дублирование описания). */
+/* Рамку вокруг поля правки рисует карточка панели, а не само поле: две рамки
+   одна в другой это то, что человек увидел на экране задачи и назвал двойной.
+   Поле остаётся отличимым своей землёй, а правка называется фокусом. */
+.fbody textarea:focus,.nfbody textarea:focus,.nfbody>input:focus{outline:1px solid var(--acc);outline-offset:1px}
+.cbox:focus-within{border-color:var(--acc)}
+.tedit:focus{border-color:var(--acc)}
 .fbody textarea[hidden]{display:none}
-.fbody textarea{display:block;width:100%;min-height:44vh;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 12.5px/1.7 var(--mono);resize:vertical}
+.fbody textarea{display:block;width:100%;min-height:44vh;padding:10px 12px;border-radius:10px;border:none;background:var(--bg0);color:var(--tx);font:400 12.5px/1.7 var(--mono);resize:vertical}
 .rbig{display:flex;align-items:baseline;gap:var(--sp2);padding:var(--sp2) var(--sp4) var(--sp2)}
 .rbig .v{font:600 30px var(--mono);color:var(--tx)}
 .rbig .f{font:500 13px var(--mono);color:var(--tx3)}
@@ -690,8 +696,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .nform{margin-top:16px;max-width:760px}
 .nfhead{padding:13px 18px;border-bottom:1px solid var(--line);font:600 13px var(--sans);color:var(--tx)}
 .nfbody{padding:14px 18px;display:flex;flex-direction:column;gap:12px}
-.nfbody textarea{display:block;width:100%;min-height:118px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px/1.6 var(--sans);resize:vertical}
-.nfbody>input{height:42px;padding:0 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px var(--sans)}
+.nfbody textarea{display:block;width:100%;min-height:118px;padding:10px 12px;border-radius:10px;border:none;background:var(--bg0);color:var(--tx);font:400 13.5px/1.6 var(--sans);resize:vertical}
+.nfbody>input{height:42px;padding:0 12px;border-radius:10px;border:none;background:var(--bg0);color:var(--tx);font:400 13.5px var(--sans)}
 .nfbody .rrow{padding:8px 0}
 .nfbody .rbig{padding:0}
 .nfbody .error{padding:0}

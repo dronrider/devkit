@@ -65,6 +65,18 @@ func (s *server) chatModelOpts() []chatModelOpt {
 	return out
 }
 
+// chatModelNote объясняет пустой выбор моделей. Случая два, и чинятся они
+// по-разному: agentctl не позвался вовсе либо позвался и отдал подписки без
+// маппинга ярусов. Первый случай уже назван плашкой подписок, и слова берутся
+// оттуда же, чтобы экран не говорил о нём двумя голосами.
+func (s *server) chatModelNote() string {
+	if note := s.harnesses().Note; note != "" {
+		return note
+	}
+	return "лестница ярусов пуста: agentctl harness --json не назвал ни одной модели, " +
+		"выбирать не из чего. Ярусы прописываются в машинном слое харнесов."
+}
+
 // chatHarnessOf называет подписку, чьей моделью просят поднять разговор: у
 // второй подписки клиент поднимается своим каталогом конфигурации, и без этого
 // сессия ушла бы на чужую квоту.
@@ -1041,8 +1053,17 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 		list = []chatEntry{}
 	}
 	s.titleFill(list)
-	resp := map[string]any{"project": found.Name, "chats": list, "models": s.chatModelOpts(),
+	opts := s.chatModelOpts()
+	resp := map[string]any{"project": found.Name, "chats": list, "models": opts,
 		"days": days, "older": older}
+	// Пустая лестница это не «моделей нет», а «выбирать нечем»: список моделей
+	// дашборд не сочиняет, он целиком приезжает от agentctl, и без него
+	// выпадающий список схлопывается в одну строку с текущей моделью. Молча это
+	// читается как «модель не поменять» (замечание пользователя), поэтому
+	// причина едет ответом и стоит на самом списке.
+	if len(opts) == 0 {
+		resp["models_note"] = s.chatModelNote()
+	}
 	if len(list) == 0 {
 		if older {
 			resp["note"] = fmt.Sprintf("за последние %d сут. разговоров нет, а раньше они есть: "+

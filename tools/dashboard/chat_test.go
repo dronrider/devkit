@@ -2231,6 +2231,23 @@ func TestStaticChatDropRow(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Выбор модели в незачатом разговоре: список приезжает от agentctl, выбранное
+// живёт при записи и уезжает в подъём первой репликой, а пустая лестница
+// названа словами прямо в списке («нельзя поменять модель в новом чате»,
+// замечание пользователя). Сторожит стенд testdata/poc_saymodel.mjs.
+func TestStaticChatModelPickBlank(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд выбора модели пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_saymodel.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("выбор модели в новом разговоре: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Курсор в поле ввода у только что заведённого разговора: нажатие «+» это и
 // есть намерение писать, а человек платил за него вторым нажатием в поле
 // (замечание пользователя). Открытый прежний разговор фокуса не перехватывает.

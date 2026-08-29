@@ -7437,6 +7437,10 @@ async function chatState(project, addr, board, works) {
   st.days = r.body.days || 0;
   st.older = Boolean(r.body.older);
   if (r.body.models) st.models = r.body.models;
+  // Причина пустого выбора моделей: список приезжает от agentctl целиком, и
+  // без него выбирать нечем. Молчание тут неотличимо от «моделей и правда одна»
+  // (замечание пользователя: «нельзя поменять модель в новом чате»).
+  st.modelsNote = r.body.models_note || "";
   // Пришивание застрявшего нового адреса: первая реплика уходила в чат,
   // которого ещё не было, сессия родилась позже (клиент стоял на вопросе в
   // своём терминале), а панель возвращалась на эфемерный адрес new и молчала,
@@ -7956,8 +7960,18 @@ function modelPick(project, st) {
     if (m.model === shown) o.selected = true;
     model.append(o);
   }
+  // Пустая лестница видна там, где человек её и ищет: он открывает список и
+  // находит в нём одну строку. Строкой же и сказано, что выбора нет, а причина
+  // стоит подсказкой на самом списке.
+  if (!(st.models || []).length) {
+    const none = el("option", "", "выбора нет: лестница моделей не приехала");
+    none.value = "";
+    none.disabled = true;
+    model.append(none);
+  }
   const why = (st.models || []).find((m) => m.model === shown);
-  model.title = why ? shown + ": ярус " + why.tier + ", подписка " + why.harness : "Модель агента";
+  model.title = why ? shown + ": ярус " + why.tier + ", подписка " + why.harness
+    : (st.modelsNote || "Модель агента");
   const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
   const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
   // Разговор на второй подписке моделью отсюда не переубедить: её заказ явной

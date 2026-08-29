@@ -372,3 +372,49 @@ func TestStaticChatBlank(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Пустой выбор моделей называет себя словами. Живой случай: «нельзя поменять
+// модель в новом чате» (замечание пользователя). Список моделей дашборд не
+// сочиняет, он целиком приезжает от agentctl, и когда лестницы ярусов в ответе
+// нет, выпадающий список схлопывается в одну строку с текущей моделью. Молчание
+// тут читается как «модель тут одна», хотя чинится это машинным слоем харнесов.
+func TestChatModelsNoteWhenLadderEmpty(t *testing.T) {
+	e, c := chatEnv(t)
+
+	// Лестницы в ответе нет: подписки есть, ярусов нет.
+	writeAgentctlFake(t, e.bin, harnessJSONFixture)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
+	text := body(t, resp)
+	var got struct {
+		Models []chatModelOpt `json:"models"`
+		Note   string         `json:"models_note"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 0 {
+		t.Fatalf("лестницы в фикстуре нет, а модели взялись: %+v", got.Models)
+	}
+	if got.Note == "" {
+		t.Fatal("пустой выбор моделей молчит: человек читает его как «модель тут одна»")
+	}
+	if !strings.Contains(got.Note, "ярус") {
+		t.Fatalf("причина пустого выбора не названа: %q", got.Note)
+	}
+
+	// Лестница приехала: причине взяться неоткуда, и её в ответе нет.
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	e.s.harn, e.s.harnBorn = nil, time.Time{}
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
+	text = body(t, resp)
+	got.Models, got.Note = nil, ""
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) == 0 {
+		t.Fatal("лестница приехала, а моделей в ответе нет")
+	}
+	if got.Note != "" {
+		t.Fatalf("выбор есть, а причина его пустоты всё равно приехала: %q", got.Note)
+	}
+}

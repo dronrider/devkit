@@ -2561,3 +2561,23 @@ func TestStaticLoginGonePlate(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Вид нового чата у привязанного разговора (жалоба пользователя: «нажал + в
+// этом чате, а выбора не было; разве он не привязан к задаче?»). Кнопка
+// спрашивала задачу панели, а та гаснет у чужой доски и заодно фильтрует
+// список разговоров, поэтому привязанный разговор молча заводил свободный чат.
+// Предмет проверки это собранная разметка и порядок заказов, поэтому статика
+// поднимается в node с заглушкой DOM (стенд testdata/poc_maketask.mjs). Без
+// node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticChatMakeTask(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд вида нового чата пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_maketask.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вид нового чата: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

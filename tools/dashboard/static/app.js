@@ -9012,10 +9012,27 @@ function loginFixable(st) {
 function loginBubble(text) {
   const wrap = el("div", "msg");
   const bb = el("div", "bb");
-  const words = el("div", "loginwords", text || "");
-  bb.append(words);
+  const foot = el("div", "mm", "дашборд");
+  // Внутри записи входа живут кнопки, ссылка и поле кода. Стоят они в том же
+  // пузыре, между словами и подписью: снаружи пузыря они читались бы отдельной
+  // плашкой, от которой пользователь и отказался.
+  const extras = [];
+  let md = mdRender(text || "", chatFeedAt());
+  const draw = () => bb.replaceChildren(md, ...extras, foot);
+  draw();
   wrap.append(bb);
-  return { wrap, bb, words };
+  // Строка ленты берётся тем же сборщиком, что у записи транскрипта: без неё
+  // запись остаётся без левой колонки с нитью и кружком, то есть выглядит
+  // гостем в ленте (замечание пользователя на приёмке).
+  const row = feedRow(wrap, { role: "assistant" }, null, "");
+  return {
+    wrap, bb, row,
+    // Слова переписываются перерисовкой пузыря: текст записи ленты живёт в
+    // узле разметки, и подменять ему содержимое строкой значит терять разбор.
+    say: (text) => { md = mdRender(text || "", chatFeedAt()); draw(); },
+    bad: (on) => { bb.classList.toggle("loginbad", Boolean(on)); },
+    own: (node) => { extras.push(node); draw(); },
+  };
 }
 
 // Дорога входа зависит от того, где браузер. С самой машины клиент ловит код
@@ -9028,20 +9045,22 @@ function loginTalk(project, st, busy) {
   const first = loginBubble("Требуется повторная аутентификация. Войдите " +
     "заново или нажмите «Перезапустить», если уже прошли аутентификацию в " +
     "консоли или другом чате.");
-  box.append(first.wrap);
+  box.append(first.row);
   if (!loginFixable(st)) {
-    first.bb.append(el("div", "loginwords", "Разговор поднят не дашбордом, " +
-      "снять его отсюда нечем: сделайте /login на машине и перезапустите " +
-      "разговор в том окне, где он идёт."));
+    first.say("Требуется повторная аутентификация. Разговор поднят не " +
+      "дашбордом, снять его отсюда нечем: сделайте /login на машине и " +
+      "перезапустите разговор в том окне, где он идёт.");
     return talk;
   }
 
+  // Метка стоит на строке ленты, а не на пузыре: строка и есть запись, её же
+  // гасят и её же ищет стенд.
   const step = loginBubble("");
-  step.wrap.classList.add("loginstep");
-  step.wrap.hidden = true;
+  step.row.classList.add("loginstep");
+  step.row.hidden = true;
   const said = loginBubble("");
-  said.wrap.classList.add("loginsaid");
-  said.wrap.hidden = true;
+  said.row.classList.add("loginsaid");
+  said.row.hidden = true;
 
   // Ссылка человеческая: адрес авторизации это четыреста знаков, и портянкой
   // он занимал весь экран. Полный адрес живёт в самой ссылке, а рядом стоит
@@ -9052,7 +9071,7 @@ function loginTalk(project, st, busy) {
   link.target = "_blank";
   link.rel = "noopener";
   linkRow.append(link);
-  step.bb.append(linkRow);
+  step.own(linkRow);
 
   const codeRow = el("div", "loginrow");
   codeRow.hidden = true;
@@ -9063,13 +9082,13 @@ function loginTalk(project, st, busy) {
   code.setAttribute("aria-label", "Код авторизации");
   const send = el("button", "btn btn-sm btn-acc", "Подтвердить");
   codeRow.append(code, send);
-  step.bb.append(codeRow);
-  box.append(step.wrap, said.wrap);
+  step.own(codeRow);
+  box.append(step.row, said.row);
 
   const say = (text, bad) => {
-    said.words.textContent = text || "";
-    said.words.classList.toggle("bad", Boolean(bad));
-    said.wrap.hidden = !text;
+    said.say(text || "");
+    said.bad(bad);
+    said.row.hidden = !text;
   };
 
   async function start() {
@@ -9081,15 +9100,15 @@ function loginTalk(project, st, busy) {
       say(r.body.error || "вход не поднялся", true);
       return;
     }
-    step.words.textContent = r.body.way === "local"
+    step.say(r.body.way === "local"
       ? "Откройте страницу входа и пройдите аутентификацию. Код дашборд " +
         "возьмёт сам: браузер вернётся прямо в клиент."
       : "Перейдите по ссылке и пройдите процесс аутентификации. Далее " +
-        "скопируйте код и введите его в поле ниже.";
+        "скопируйте код и введите его в поле ниже.");
     link.href = r.body.url;
     linkRow.replaceChildren(link, copyBtn(r.body.url));
     codeRow.hidden = r.body.way !== "code";
-    step.wrap.hidden = false;
+    step.row.hidden = false;
     if (r.body.way === "local") waitLoop().catch(console.error);
   }
 
@@ -9137,12 +9156,13 @@ function loginTalk(project, st, busy) {
   async function done() {
     talk.done = true;
     lock(true);
-    step.wrap.hidden = true;
+    step.row.hidden = true;
     say("Вход сделан. Поднимаю разговор и повторяю запрос, на котором он встал.", false);
     await loginRestart(project, st, busy, talk.ask);
   }
 
   const row = el("div", "loginbtns");
+  first.own(row);
   const enter = el("button", "btn btn-sm btn-acc", "Войти");
   const go = el("button", "btn btn-sm", "Перезапустить");
   // Запертые кнопки и уходят с экрана: запертая кнопка на виду обещает работу,
@@ -9169,7 +9189,6 @@ function loginTalk(project, st, busy) {
     loginRestart(project, st, busy, talk.ask).catch(console.error).finally(free);
   });
   row.append(enter, go);
-  first.bb.append(row);
   send.addEventListener("click", (ev) => {
     ev.stopPropagation();
     send.disabled = true;

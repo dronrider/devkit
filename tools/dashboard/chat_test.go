@@ -2635,6 +2635,26 @@ func TestStaticLoginLinkFlow(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Вид записей входа: раскладка снимается числом с настоящей разметки и
+// настоящего style.css и сверяется с записью ленты на узком экране и на
+// широком. Пользователь на приёмке сказал, что записи входа читаются гостями:
+// «отличаются от стандартных блоков чата по размеру и оформлению». Числа тут
+// нужны затем, чтобы расхождение ловилось впредь, а не подгонялось на глаз
+// (стенд testdata/poc_loginfit.mjs). Без node шаг пропускается: узел стенда, а
+// не рабочей части.
+func TestStaticLoginFitsFeed(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд вида записей входа пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_loginfit.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вид записей входа: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Вид нового чата у привязанного разговора (жалоба пользователя: «нажал + в
 // этом чате, а выбора не было; разве он не привязан к задаче?»). Кнопка
 // спрашивала задачу панели, а та гаснет у чужой доски и заодно фильтрует

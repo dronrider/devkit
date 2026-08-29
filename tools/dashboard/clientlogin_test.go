@@ -79,6 +79,8 @@ func loginPaneOf(stage string) string {
 // сессии. Хвостовая черта в строке фикстуры значит перенос строки пейна:
 // capture-pane с -J склеивает такие строки, как живой tmux. Нажатие на пустой
 // панели оставляет метку early: в ненарисовавшегося клиента нажатия не уходят.
+// ls называет и живую сессию входа с моментом рождения: по списку служба
+// узнаёт сессии, оставшиеся после перезапуска, и подбирает свободное имя.
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
@@ -91,10 +93,13 @@ func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	writeScript(t, e.bin, "tmux", `D="`+d+`"
 echo "$1" >>"$D/calls"
 case "$1" in
-ls) printf 'goal-XR-9\n';;
+ls)
+  printf 'goal-XR-9\n'
+  [ -f "$D/sess" ] && cat "$D/sess";;
 new-session)
-  if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi;;
-kill-session) rm -f "$D/stage";;
+  if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi
+  printf '%s|1|%s\n' "$4" "$(date +%s)" >"$D/sess";;
+kill-session) rm -f "$D/stage" "$D/sess";;
 capture-pane)
   [ -f "$D/stage" ] || exit 3
   st=$(cat "$D/stage")
@@ -486,5 +491,170 @@ func TestClientLoginSweepDropsExpired(t *testing.T) {
 	}
 	if got := sent("new-session"); got != 1 {
 		t.Fatalf("после уборки не поднята свежая сессия входа: new-session %d", got)
+	}
+}
+
+// Соседняя ссылка не приклеивается к найденной. Панель с двумя разными
+// https-ссылками подряд без пустой строки между ними сливалась в кашу: любая
+// строка из URL-знаков глоталась как обрывок без проверки родства. Свой
+// адрес с полной схемой внутри обрывка не встречается, вложенные адреса
+// клиент кодирует процентами, и вторая ссылка это граница, а не кусок первой.
+func TestClientLoginSiblingLinkNotGlued(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		"https://console.anthropic.com/oauth/authorize?client_id=other",
+		"",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём входа: %d, %s", resp.StatusCode, text)
+	}
+	var got struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", text)
+	}
+	if got.URL != first {
+		t.Fatalf("соседняя ссылка приклеилась к найденной: %s", got.URL)
+	}
+}
+
+// Строка-хэш следом за ссылкой не приклеивается. Хэш целиком состоит из
+// URL-знаков, и тихое поглощение любой похожей строки носило бы в ссылку
+// чужой кусок: человек получил бы адрес, который не открывается, без единого
+// признака подмены. Обрывок узнаётся по колонке разрыва, а не по похожести.
+func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		"d41d8cd98f00b204e980",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём входа: %d, %s", resp.StatusCode, text)
+	}
+	var got struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", text)
+	}
+	if got.URL != first {
+		t.Fatalf("строка-хэш приклеилась к ссылке: %s", got.URL)
+	}
+}
+
+// Срок входа считается от последнего признака жизни, а не от подъёма.
+// Повторный запрос ссылки это признак жизни: человек вернулся к плашке,
+// провозился с кодом дольше срока от подъёма, и верный код доезжает живому
+// входу, а не снятому за старость.
+func TestClientLoginAliveFromLastTouch(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("kill-session")
+	// Человек вернулся к плашке на шестой минуте и спросил ссылку снова.
+	base := e.s.now()
+	e.s.now = func() time.Time { return base.Add(6 * time.Minute) }
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
+		t.Fatalf("повторный экран входа не получил ссылку: %d, %s", resp.StatusCode, text)
+	}
+	// Дальше он провозился с кодом: срок от подъёма уже вышел, от последнего
+	// признака жизни ещё нет.
+	e.s.now = func() time.Time { return base.Add(15*time.Minute + 30*time.Second) }
+	e.s.loginSweep()
+	if got := sent("kill-session"); got != 0 {
+		t.Fatalf("уборка сорвала вход, о котором шесть минут назад шла речь: kill-session %d", got)
+	}
+	resp, text = loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"GOOD"}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"ok":true`) {
+		t.Fatalf("верный код не принят после долгого возврата: %d, %s", resp.StatusCode, text)
+	}
+}
+
+// Перезапуск службы не оставляет сессию входа сиротой. Состояние подъёма жило
+// в памяти процесса и умерло вместе с ним, а tmux-сессия входа осталась на
+// машине: следующий вход узнаёт её по панели со ссылкой вместо того, чтобы
+// поднять соседнюю и оставить первую ничьей.
+func TestClientLoginAdoptedAfterRestart(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	_, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if !strings.Contains(text, `"tmux":"login-1"`) {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("new-session")
+	// Перезапуск: память процесса пуста, машина не тронута.
+	e.s.mu.Lock()
+	e.s.loginRun = nil
+	e.s.mu.Unlock()
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход после перезапуска не отвечен: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"tmux":"login-1"`) {
+		t.Fatalf("живая сессия входа не узнана, поднята соседняя: %s", text)
+	}
+	if got := sent("new-session"); got != 0 {
+		t.Fatalf("после перезапуска поднята вторая сессия входа: new-session %d", got)
+	}
+	resp, text = loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"GOOD"}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"ok":true`) {
+		t.Fatalf("код не принят узнанной сессии входа: %d, %s", resp.StatusCode, text)
+	}
+}
+
+// Брошенная сессия входа снимается и после перезапуска службы: учёт умер
+// вместе с процессом, и узнавание различает ждущий вход от забытого по
+// возрасту сессии, а не подбирает всё подряд.
+func TestClientLoginOrphanSweptAfterRestart(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("kill-session")
+	e.s.mu.Lock()
+	e.s.loginRun = nil
+	e.s.mu.Unlock()
+	base := e.s.now()
+	e.s.now = func() time.Time { return base.Add(loginRunTTL + time.Minute) }
+	e.s.loginSweep()
+	if got := sent("kill-session"); got != 1 {
+		t.Fatalf("сирота входа не снят после перезапуска: kill-session %d", got)
 	}
 }

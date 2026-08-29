@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,14 +23,19 @@ import (
 // сессия тоже одна: вторая вкладка получает ту же ссылку, а не соседнюю
 // сессию. Raising значит, что сессия поднята, но ссылка ещё ждётся.
 type loginRun struct {
-	Tmux    string
-	URL     string
-	Started time.Time
+	Tmux string
+	URL  string
+	// Alive это последний признак жизни входа: момент подъёма, а дальше каждый
+	// заход человека по ручкам входа. Срок уборки считается от него, а не от
+	// подъёма: возврат из мобильного OAuth с двухфакторной проверкой занимает
+	// больше десяти минут, и вход живого человека не срывается сроком.
+	Alive   time.Time
 	Raising bool
 }
 
-// loginRunTTL это сколько живёт поднятая сессия входа без исхода. Клиент ждёт
-// код минуты, а не часы, и забытая сессия не должна мешать следующей попытке.
+// loginRunTTL это сколько живёт поднятая сессия входа без признаков жизни:
+// заходов человека по ручкам входа. Клиент ждёт код минуты, а не часы, и
+// забытая сессия не должна мешать следующей попытке.
 const loginRunTTL = 10 * time.Minute
 
 // loginSweepEvery это шаг фоновой уборки входа. Проверка дешёвая: пока срок
@@ -56,8 +63,23 @@ var loginLinkRe = regexp.MustCompile(`^[[:space:]]*(https://[^[:space:]]+)[[:spa
 // пробела на стыке). Слова вокруг ссылки всегда несут пробел и сюда не попадают.
 var loginURLRunes = regexp.MustCompile(`^[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+$`)
 
+// loginSchemes называет схемы чужой ссылки в обрывке. Внутри настоящей ссылки
+// своей полной схемы не встречается: вложенные адреса клиент кодирует
+// процентами, и строка, начинающаяся схемой, это соседняя ссылка, а не кусок
+// найденной.
+var loginSchemes = []string{"https://", "http://"}
+
+// loginLinkMax ограничивает сборку обрывков сверху: живая ссылка входа это
+// сотни знаков, а разросшаяся за тысячи значит склейку чужих строк.
+const loginLinkMax = 2048
+
 // loginLinkOf достаёт ссылку авторизации из снимка панели и собирает её из
-// обрывков по ширине пейна. Пустая строка значит, что ссылки в панели нет.
+// обрывков по ширине пейна. Родство обрывка проверяется, а не предполагается
+// по одним URL-знакам: клиент рвёт ссылку в одной и той же колонке пейна, и
+// обрывок узнаётся по ней и по границам, а не похожестью. Границы две: чужая
+// схема в начале строки и строка короче колонки разрыва, за которой стоит
+// непустой контент (закончившуюся ссылку клиент отбивает пустой строкой).
+// Пустая строка значит, что ссылки в панели нет.
 func loginLinkOf(pane string) string {
 	lines := strings.Split(pane, "\n")
 	for i, ln := range lines {
@@ -66,16 +88,57 @@ func loginLinkOf(pane string) string {
 			continue
 		}
 		url := m[1]
+		torn := len(m[1])
 		for j := i + 1; j < len(lines); j++ {
 			piece := strings.TrimSpace(lines[j])
 			if piece == "" || !loginURLRunes.MatchString(piece) {
 				break
 			}
+			sibling := false
+			for _, sch := range loginSchemes {
+				sibling = sibling || strings.HasPrefix(piece, sch)
+			}
+			if sibling || len(piece) > torn || len(url)+len(piece) > loginLinkMax {
+				break
+			}
+			if len(piece) < torn {
+				// Хвост короче колонки разрыва последний, и за ним клиент
+				// ставит пустую строку; контент следом значит чужую строку.
+				// Пустой элемент за последним переводом строки не считается:
+				// у хвоста в конце панели должна быть своя пустая строка.
+				if j+1 >= len(lines)-1 || strings.TrimSpace(lines[j+1]) != "" {
+					break
+				}
+				url += piece
+				break
+			}
 			url += piece
 		}
-		return url
+		return loginLinkCheck(url)
 	}
 	return ""
+}
+
+// loginLinkCheck меряет собранную ссылку перед отдачей: разбор обязан увидеть
+// один адрес, а не кашу из склеенных строк. Вторая схема внутри или адрес
+// без хоста значит, что родство не поймано, и честнее не найти ссылку вовсе,
+// чем отдать человеку ссылку, которая не открывается.
+func loginLinkCheck(url string) string {
+	if len(url) > loginLinkMax {
+		return ""
+	}
+	schemes := 0
+	for _, sch := range loginSchemes {
+		schemes += strings.Count(url, sch)
+	}
+	if schemes != 1 {
+		return ""
+	}
+	u, err := neturl.Parse(url)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return url
 }
 
 // loginCodeWords узнают поле, в котором клиент ждёт код авторизации. Своих кодов
@@ -153,10 +216,63 @@ func (s *server) loginSweep() {
 	s.mu.Lock()
 	run := s.loginRun
 	s.mu.Unlock()
-	if run == nil || s.now().Sub(run.Started) < loginRunTTL {
+	if run == nil {
+		// Память пуста, а на машине могли остаться сессии входа без учёта:
+		// перезапуск службы стирает состояние из памяти, и уборка заодно
+		// узнаёт живые сессии и снимает сирот.
+		s.loginRecover()
+		return
+	}
+	if s.now().Sub(run.Alive) < loginRunTTL {
 		return
 	}
 	s.loginDrop(run, "срок истёк: к ссылке не вернулись")
+}
+
+// loginNameRe узнаёт имя сессии входа в списке tmux: имена входа отдельны от
+// разговоров, и принадлежат только входу.
+var loginNameRe = regexp.MustCompile(`^login-[0-9]+$`)
+
+// loginRecover узнаёт сессии входа, оставшиеся без учёта. Состояние подъёма
+// живёт в памяти процесса и умирает перезапуском службы, а это штатный шаг
+// выката, тогда как tmux-сессия входа остаётся на машине. Сессия, чья панель
+// всё ещё несёт ссылку и которая моложе срока, поднимается в память заново,
+// срок считается от её рождения; прочие login-N снимаются как сироты: вставшие
+// на полпути никто не доведёт, а человеку проще нажать «Войти» снова. Вызов
+// идёт из уборки и перед подъёмом нового входа: вторая сессия не заводится,
+// пока жива первая.
+func (s *server) loginRecover() {
+	if m := tmuxMissingCheck(); m != "" {
+		return
+	}
+	sessions := tmuxList()
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return sessions[i].Created > sessions[j].Created
+	})
+	for _, sess := range sessions {
+		if !loginNameRe.MatchString(sess.Name) {
+			continue
+		}
+		born := time.Unix(sess.Created, 0)
+		pane, err := loginPane(sess.Name)
+		s.mu.Lock()
+		taken := s.loginRun != nil
+		s.mu.Unlock()
+		if !taken && err == nil && s.now().Sub(born) < loginRunTTL {
+			if url := loginLinkOf(pane); url != "" {
+				s.mu.Lock()
+				if s.loginRun == nil {
+					s.loginRun = &loginRun{Tmux: sess.Name, URL: url, Alive: born}
+					s.mu.Unlock()
+					s.logf("сессия входа %s узнана после перезапуска службы", sess.Name)
+					continue
+				}
+				s.mu.Unlock()
+			}
+		}
+		s.logf("сессия входа %s снята: осталась без учёта после перезапуска службы", sess.Name)
+		runProc("tmux", "kill-session", "-t", "="+sess.Name)
+	}
 }
 
 // loginKeeper снимает просроченные сессии входа по кругу, пока жив демон.
@@ -197,10 +313,23 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	run := s.loginRun
 	s.mu.Unlock()
+	if run == nil {
+		// Память пуста (перезапуск службы), а сессия входа могла остаться на
+		// машине: прежде чем поднимать новую, узнаётся живая.
+		s.loginRecover()
+		s.mu.Lock()
+		run = s.loginRun
+		s.mu.Unlock()
+	}
 	if run != nil {
-		if s.now().Sub(run.Started) < loginRunTTL {
+		if s.now().Sub(run.Alive) < loginRunTTL {
 			if _, err := loginPane(run.Tmux); err == nil {
 				if run.URL != "" {
+					// Повторный заход это признак жизни: срок входа считается
+					// от него, а не от подъёма.
+					s.mu.Lock()
+					run.Alive = s.now()
+					s.mu.Unlock()
 					s.logf("вход клиента в %s: ссылка отдана повторно", found.Name)
 					writeJSON(w, http.StatusOK, map[string]string{
 						"tmux": run.Tmux, "url": run.URL,
@@ -230,7 +359,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.loginRun = &loginRun{Tmux: sess, Started: s.now(), Raising: true}
+	s.loginRun = &loginRun{Tmux: sess, Alive: s.now(), Raising: true}
 	s.mu.Unlock()
 	url, fail := s.loginAwaitLink(sess)
 	if fail != "" {
@@ -366,6 +495,11 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 			"error": "вход ещё не поднят: сперва нажмите кнопку входа на плашке разлогина"})
 		return
 	}
+	// Попытка кода это признак жизни: даже неверный код значит, что человек
+	// дошёл до поля и пробует, и срок входа считается от попытки.
+	s.mu.Lock()
+	run.Alive = s.now()
+	s.mu.Unlock()
 	if err := tmuxAnswerText("="+run.Tmux+":", code); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("код не подался в сессию входа %s: %s", run.Tmux, procErr(err))})

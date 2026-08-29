@@ -1695,7 +1695,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    упавшего. Запись субагента отодвинута глубже, своей линии у неё нет */
 .frow{position:relative;display:flex;padding-left:17px}
 .frow::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--line2)}
-.frow.sub{padding-left:31px}
+/* Боковой журнал субагента отбит нитью, а не ступенькой. Ступенька в
+   четырнадцать точек сдвигала контур записи, и человек видел то, на что жаловался
+   пять заходов подряд: «блоки в чате разной позиции и ширины». Кружок и нить у
+   такой строки и без ступеньки стоят на своём месте (fdot и ::before заданы
+   от края строки), так что вложенность показывает цвет нити, а контуры записей
+   встают на один край. */
+.frow.sub{padding-left:17px}
+.frow.sub::before{background:var(--deleg);width:2px;left:5px}
 .frowb{flex:1;min-width:0;padding:0}
 .fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}

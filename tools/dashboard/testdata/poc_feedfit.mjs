@@ -27,6 +27,7 @@ const rules = cssRules(app);
 const WANT = ["padding", "padding-left", "padding-right", "margin", "margin-left",
   "margin-right", "max-width", "width", "align-self", "border", "border-left",
   "border-right", "background"];
+
 const fit = (node, width) => layoutOf(node, { rules, width, want: WANT });
 
 // Число из объявления: «17px» или «12px 16px» (слева это четвёртое или второе).
@@ -44,6 +45,12 @@ const oneSide = (box, kind, side) => {
   let got = sideOf(box[kind + "-" + side], side);
   if (got === null) got = sideOf(box[kind], side);
   return got === null ? 0 : got;
+};
+
+// Рамкой считается непрозрачная граница: «none» и её отсутствие это не рамка.
+const framed = (box) => {
+  const b = String(box.border || box["border-left"] || "");
+  return b !== "" && b !== "none" && !b.startsWith("0");
 };
 
 // Ширина рамки со стороны: она тоже отодвигает текст.
@@ -159,38 +166,35 @@ for (const width of [390, 1440]) {
     }
   }
 
-  // Второй вопрос, и человек видит именно его: абсолютный левый край записи на
-  // экране. Внутренний отступ сходился и тогда, когда края разъезжались, потому
-  // что сами записи стояли на разной горизонтали (замечание пользователя со
-  // снимком). Считается край от левого края ленты через все поля, рамки и
-  // отступы: это то же число, что даёт getBoundingClientRect живого браузера.
+  // Второй вопрос, и человек видит именно его: видимый контур записи, то есть
+  // прямоугольник рамки или заливки. Внутренний отступ сходился и тогда, когда
+  // контуры разъезжались, потому что сами записи стояли на разной горизонтали
+  // (разбор пользователя по именам блоков: «контур совпадает по правой, а по
+  // левой правее, то есть блок меньше по ширине»). Считается край от левого
+  // края ленты через все поля, рамки и отступы: то же число, что даёт
+  // getBoundingClientRect живого браузера.
   const far = [];
   for (const row of rows) {
     const body = byClass(row, "frowb");
     if (!body) continue;
-    const node = (body.children || []).find((n) => n && !n.hidden);
-    if (!node) continue;
-    far.push({
-      kind: kindOf(row),
-      // Ступенька бокового журнала субагента законная и остаётся: работа ушла
-      // ему, и его записи стоят своей колонкой.
-      sub: String(row.className || "").split(" ").includes("sub"),
-      at: edgeOf(node, feed, width, "left") + inkOf(body, width, "left"),
-    });
+    // Контур это верхний узел записи со своей рамкой или заливкой. У записи без
+    // контура (голая строка) края нет вовсе, и сверять у неё нечего.
+    const box = deepFind(body, (n) => {
+      if (n === body || n.hidden) return false;
+      const own = fit(n, width);
+      const bg = String(own.background || "");
+      return (bg !== "" && bg !== "none") || framed(own);
+    })[0];
+    if (!box) continue;
+    far.push({ kind: kindOf(row), at: edgeOf(box, feed, width, "left") });
   }
   const steps = [...new Set(far.map((f) => f.at))].sort((a, b) => a - b);
-  if (show) console.log("   абсолютный край: " + JSON.stringify(steps));
-  if (steps.length > 2) {
-    fail("на " + width + " точках записи стоят на " + steps.length + " разных краях " +
-      JSON.stringify(steps) + ", а законная ступенька одна: " +
-      JSON.stringify(far.map((f) => f.kind + (f.sub ? "/боковой" : "") + ":" + f.at)));
-  }
-  for (const f of far) {
-    const want = f.sub ? steps[steps.length - 1] : steps[0];
-    if (f.at !== want) {
-      fail("на " + width + " точках край записи «" + f.kind + "» стоит на " + f.at +
-        ", а её ряд на " + want + ": ступенька вложенности расползлась по видам");
-    }
+  if (show) console.log("   контуры слева: " + JSON.stringify(steps));
+  if (!far.length) fail("на " + width + " точках в ленте не нашлось ни одного контура");
+  if (steps.length !== 1) {
+    fail("на " + width + " точках контуры записей стоят на " + steps.length +
+      " разных краях " + JSON.stringify(steps) + ", а край у всех один: " +
+      JSON.stringify(far.map((f) => f.kind + ":" + f.at)));
   }
 }
 

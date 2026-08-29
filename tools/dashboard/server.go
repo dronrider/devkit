@@ -53,6 +53,10 @@ type server struct {
 	// клин лечится один раз подряд. Без памяти повторившийся клин заводил бы
 	// цикл перезапусков, а снятие процесса необратимо.
 	heal map[string]healEntry
+	// Состояние одноразовой сессии входа клиента (clientlogin.go). Вход на
+	// машине один, и сессия одна: повторные экраны получают ту же ссылку,
+	// а не соседнюю сессию.
+	loginRun *loginRun
 	// Шов зонда для тестов: боевой сервер зовёт peerProbe, тест подставляет
 	// свой ответ и не трогает настоящие сокеты машины.
 	probe func(sock string, wait time.Duration) error
@@ -154,6 +158,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/model", s.auth(s.handleChatModel))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/archive", s.auth(s.handleChatArchive))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/draft", s.auth(s.handleChatDraft))
+	mux.HandleFunc("POST /api/projects/{p}/chats/login", s.auth(s.handleClientLogin))
+	mux.HandleFunc("POST /api/projects/{p}/chats/login/code", s.auth(s.handleClientLoginCode))
 	mux.HandleFunc("DELETE /api/projects/{p}/runs/{id}", s.auth(s.handleRunStop))
 	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/log", s.auth(s.handleGoalLog))
 	mux.HandleFunc("GET /api/projects/{p}/goals/{id}/tasks", s.auth(s.handleGoalTasks))

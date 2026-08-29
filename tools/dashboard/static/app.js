@@ -8900,33 +8900,118 @@ function loginFixable(st) {
   return Boolean(e.tmux) || e.state !== "live";
 }
 
-// Плашка разлогина: состояние словами, порядок починки и кнопка на перезапуск.
-// Стоит она над полем ввода, отдельно от ленты: лента показывает сказанное, а
-// это состояние разговора, и место ему рядом с тем, чем человек отвечает.
+// Плашка разлогина: состояние словами, порядок починки и кнопки на вход и
+// перезапуск. Стоит она над полем ввода, отдельно от ленты: лента показывает
+// сказанное, а это состояние разговора, и место ему рядом с тем, чем человек
+// отвечает.
 function loginPlate(project, st, busy) {
   const box = el("div", "cnote cbye");
   box.hidden = true;
   const said = el("span", "cbyew");
   said.append(el("b", "", "Сессия разлогинена."));
   const fix = loginFixable(st)
-    ? " Зайдите на машину, выполните /login в терминале, а потом нажмите " +
-      "«Перезапустить»: живой процесс держит старый вход в памяти и после " +
-      "нового сам его не перечитывает."
+    ? " Войдите кнопкой «Войти»: дашборд поднимет вход своей сессией, отдаст " +
+      "ссылку и примет код здесь же, а после входа нажмите «Перезапустить»: " +
+      "живой процесс держит старый вход в памяти и после нового сам его не " +
+      "перечитывает."
     : " Разговор поднят не дашбордом, снять его отсюда нечем: сделайте /login " +
       "на машине и перезапустите разговор в том окне, где он идёт.";
   said.append(document.createTextNode(
     " Агент отвечает служебной строкой про истёкший вход вместо работы." + fix));
   box.append(said);
   if (loginFixable(st)) {
+    const flow = loginFlow(project, busy);
+    box.append(flow.box);
+    const enter = el("button", "btn btn-sm btn-acc", "Войти");
+    enter.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      enter.disabled = true;
+      flow.start().finally(() => { enter.disabled = false; });
+    });
     const go = el("button", "btn btn-sm btn-acc", "Перезапустить");
     go.addEventListener("click", (ev) => {
       ev.stopPropagation();
       go.disabled = true;
       loginRestart(project, st, busy).catch(console.error);
     });
-    box.append(go);
+    box.append(enter, go);
   }
   return box;
+}
+
+// Шаг входа на плашке разлогина (DK-577): ссылка авторизации, поле кода и
+// слова исхода. Вход поднимается отдельной одноразовой сессией на сервере, и
+// с телефона он идёт целиком здесь: человек открывает ссылку, входит на сайте
+// и возвращает код полем. Код это одноразовый ключ учётной записи, и своей
+// дорогой он идёт нарочно: поле реплики пишет ленту и черновик, а журнал
+// разговора ключ хранить не должен. До нажатия «Войти» шаг скрыт.
+function loginFlow(project, busy) {
+  const box = el("div", "cbyeflow");
+  box.hidden = true;
+  const words = el("span", "loginwords");
+  const link = el("a", "loginurl");
+  link.target = "_blank";
+  link.rel = "noopener";
+  const code = el("input", "logincode");
+  code.type = "text";
+  code.placeholder = "код авторизации";
+  code.autocomplete = "off";
+  code.setAttribute("aria-label", "Код авторизации");
+  const send = el("button", "btn btn-sm btn-acc", "Отправить код");
+  send.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    send.disabled = true;
+    sendCode().finally(() => { send.disabled = false; });
+  });
+  box.append(words, link, code, send);
+
+  // Слова состояния шага: отказ называется своим разрядом, успех говорит, что
+  // делать дальше. Пустая строка слова гасит.
+  const say = (text, bad) => {
+    words.textContent = text || "";
+    words.classList.toggle("bad", Boolean(bad));
+  };
+
+  async function start() {
+    say("", false);
+    busy.heal();
+    const r = await api(chatsURL(project) + "/login", { method: "POST", body: {} });
+    busy.off();
+    if (!r.ok) {
+      // Ссылка не нашлась или сессия не поднялась: слова сервера уже называют
+      // разряд, кнопка «Войти» остаётся на плашке для новой попытки.
+      say(r.body.error || "вход не поднялся", true);
+      return;
+    }
+    link.href = r.body.url;
+    link.textContent = r.body.url;
+    box.hidden = false;
+    say("Откройте ссылку, войдите на сайте и введите код сюда.", false);
+  }
+
+  async function sendCode() {
+    const text = code.value.trim();
+    if (!text) {
+      say("Введите код, который показала страница входа.", true);
+      return;
+    }
+    busy.heal();
+    const r = await api(chatsURL(project) + "/login/code",
+      { method: "POST", body: { code: text } });
+    busy.off();
+    if (!r.ok) {
+      // Отказ называется словами и оставляет поле: код не принят или вход
+      // оборвался, и человеку решать, пробовать ли другой код или снова вход.
+      say(r.body.error || "код не отправился", true);
+      return;
+    }
+    // Код не остаётся ни в поле, ни в ленте: отправленный код уже отработал.
+    code.value = "";
+    say("Вход сделан: свежий токен у клиента в связке ключей. Перезапустите " +
+      "разговор кнопкой «Перезапустить».", false);
+  }
+
+  return { box, start };
 }
 
 // Ответ агента поднимает и гасит плашку: служебная строка про истёкший вход

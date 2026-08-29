@@ -822,6 +822,17 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cbye b{color:var(--wait);white-space:normal}
 .cbyew{flex:1 1 240px;min-width:0}
 .cbye .btn{margin-left:auto}
+/* Шаг входа на плашке разлогина (DK-577): ссылка авторизации, поле кода и
+   слова исхода едут своей полосой, ниже слов состояния и кнопок. Парное
+   [hidden] обязательно: у полосы свой display, и без него погашенный шаг
+   оставался бы на экране. */
+.cbyeflow{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.cbyeflow[hidden]{display:none}
+.loginwords{flex:1 1 100%;min-width:0}
+.loginwords.bad{color:var(--block)}
+.loginurl{flex:1 1 100%;min-width:0;word-break:break-all;font-weight:600}
+.logincode{flex:1 1 140px;min-width:0;height:28px;padding:0 9px;border-radius:8px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx);font:500 12px var(--mono);outline:none}
+.logincode:focus{border-color:var(--acc)}
 .cbox{background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end}

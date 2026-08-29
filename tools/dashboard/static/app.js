@@ -7672,7 +7672,7 @@ function chatDropBtn(project, c, done) {
     btn.disabled = true;
     dropChat(project, c.id).then((ok) => {
       btn.disabled = false;
-      if (ok && done) done();
+      if (ok && done) done(c.id);
     }).catch(console.error);
   });
   return btn;
@@ -7745,7 +7745,9 @@ function chatDropSet(node) {
 // ищут диалог всеми четырьмя способами. Фильтр по задаче панели это стартовое
 // состояние того же поиска, а не жёсткая отсечка: стереть запрос значит
 // увидеть весь список.
-function chatDropOpen(project, st, anchor) {
+// again значит переоткрытие своей же рукой (тумблер фильтра): состав списка
+// правится на месте, и ходить за перечнем заново тут не за чем.
+function chatDropOpen(project, st, anchor, again) {
   chatDropShut();
   popupsShut(null);
   const box = el("div", "cdrop");
@@ -7770,6 +7772,9 @@ function chatDropOpen(project, st, anchor) {
   // Догрузка идёт одна за раз: поиск и «показать раньше» ходят за одним и тем
   // же списком, и два запроса подряд перезаписывали бы друг друга.
   let loading = false;
+  // Перечитывание списка тем же окном идёт своим счётом и словами о себе не
+  // говорит: человек открыл список, а не просил искать.
+  let fresh = false;
   const draw = () => {
     const q = find.value.trim().toLowerCase();
     paintArch();
@@ -7783,7 +7788,7 @@ function chatDropOpen(project, st, anchor) {
     rows.replaceChildren();
     for (const g of chatGroups(list)) {
       if (g.head) rows.append(el("div", "cdday", g.head));
-      for (const c of g.rows) rows.append(chatOption(project, c, st.sid, draw));
+      for (const c of g.rows) rows.append(chatOption(project, c, st.sid, done));
     }
     if (!list.length) {
       // Пустому списку словами отвечает сервер, чем бы ни было поле поиска:
@@ -7815,6 +7820,30 @@ function chatDropOpen(project, st, anchor) {
       rows.append(more);
     }
   };
+  // Список живёт в памяти вкладки, а разговоры родятся и закрываются мимо неё:
+  // свой новый чат заводится тут же в панели, соседний в другой вкладке или с
+  // телефона, а заголовок дописывает фоновая работа. Прежде перечень читался
+  // один раз при сборке панели, и возврат в открытый разговор брал её из пула
+  // готовой, поэтому нового чата в списке не было до перезагрузки страницы
+  // (жалоба пользователя с шагами). Теперь каждое открытие спрашивает список
+  // заново, тем же окном, каким он был прочитан.
+  const refresh = () => {
+    if (fresh) return;
+    fresh = true;
+    chatLoadWindow(project, st, st.days).then((ok) => {
+      fresh = false;
+      // Рисуется только свой список: пока ответ ехал, человек мог закрыть его
+      // или открыть заново, и чужой узел трогать нечем.
+      if (ok && chatDrop === box) draw();
+    }).catch((e) => { fresh = false; console.error(e); });
+  };
+  // Строка закрыта или убрана в архив: список перерисовывается сразу, не
+  // дожидаясь ответа, а свежий перечень подтверждает это следом.
+  function done(gone) {
+    if (gone) st.chats = st.chats.filter((c) => c.id !== gone);
+    draw();
+    refresh();
+  }
   find.addEventListener("input", () => {
     // Поиск общий по всей машине и окна не знает: набрали запрос, значит
     // список догружается целиком, и дальше ищется по всему, что есть на
@@ -7838,6 +7867,7 @@ function chatDropOpen(project, st, anchor) {
   box.append(top, rows);
   anchor.append(box);
   chatDropSet(box);
+  if (!again) refresh();
   // Курсор в поле поиска ставится только там, где клавиатуре есть где встать.
   // На телефоне она выезжает на пол-экрана раньше, чем человек успел взглянуть
   // на список, и первым делом её приходится убирать («фокус сразу попадает на
@@ -8691,7 +8721,7 @@ function chatHead(project, st) {
       paintFilt();
       // Открытый список пересобирается на месте: он и есть всё, что меняет
       // фильтр. Закрытый соберётся с новым фильтром сам, когда его откроют.
-      if (chatDrop) chatDropOpen(project, st, line);
+      if (chatDrop) chatDropOpen(project, st, line, true);
     });
     line.append(filt);
   }

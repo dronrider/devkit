@@ -13,6 +13,9 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import corp  # noqa: E402
+
 TOOL = os.path.join(HERE, "check-traces.py")
 
 # Пометка про префикс стоит и ниже секции, в строке задачи: шапка кончается на
@@ -186,3 +189,65 @@ class TestCommitMessage(TracesCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)
+
+
+class TestContourSideDir(TracesCase):
+    """Боковая директория общая на контур (DK-583): коротким следом там зовётся
+    директория контура, а не проект внутри неё. Имя проекта в корп-репозитории
+    слово обычное, и след по нему валил бы каждый второй коммит."""
+
+    def setUp(self):
+        super().setUp()
+        self.side = os.path.join(self.tmp, "acme-local", "corp")
+        os.makedirs(os.path.join(self.side, "docs"))
+        os.makedirs(os.path.join(self.side, ".devkit"))
+        self.board("XR")
+        subprocess.run(["git", "-C", self.corp, "config", "devkit.local",
+                        "../acme-local/corp"], check=True)
+
+    def test_contour_dir_is_a_trace(self):
+        self.stage("лежит в acme-local рядом")
+        r = self.staged()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("путь боковой", r.stdout + r.stderr)
+
+    def test_project_name_is_not_a_trace(self):
+        self.stage("обычная строка про corp и его дела")
+        self.assertEqual(self.staged().returncode, 0)
+
+
+class TestRigInTheIndex(TracesCase):
+    """Обвязка devkit в индексе корп-коммита (DK-583): ссылка .devkit лежит в
+    дереве открыто, чтобы доску видели поиск и сессия, и «git add .» кладёт её в
+    индекс молча. Хук это последнее место, где видно."""
+
+    def setUp(self):
+        super().setUp()
+        self.redirect()
+        os.symlink("../proj-local", os.path.join(self.corp, ".devkit"))
+        excl = os.path.join(self.corp, ".git", "info", "exclude")
+        os.makedirs(os.path.dirname(excl), exist_ok=True)
+        with open(excl, "a", encoding="utf-8") as f:
+            f.write("\n%s\nCLAUDE.md\n" % corp.EXCLUDE_MARK)
+
+    def add(self, *args):
+        subprocess.run(["git", "-C", self.corp, "add"] + list(args), check=True)
+
+    def test_link_in_the_index_is_refused(self):
+        self.add(".")
+        r = self.staged()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("обвязка devkit в индексе", r.stdout + r.stderr)
+        self.assertIn("git rm --cached", r.stdout + r.stderr)
+
+    def test_thin_file_in_the_index_is_refused(self):
+        with open(os.path.join(self.corp, "CLAUDE.md"), "w", encoding="utf-8") as f:
+            f.write("@.devkit/AGENTS.md\n")
+        self.add("-f", "CLAUDE.md")
+        r = self.staged()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("CLAUDE.md", r.stdout + r.stderr)
+
+    def test_project_files_pass(self):
+        self.stage("обычная правка проекта")
+        self.assertEqual(self.staged().returncode, 0)

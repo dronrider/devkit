@@ -263,3 +263,22 @@ func TestCorpLocalSignal(t *testing.T) {
 	corpGitT(t, clone, "worktree", "add", "-q", "-b", "dk-081-signal", far)
 	corpSame(t, corpLocal(far), local)
 }
+
+// TestFindRootFailureHintContourLocal: боковая директория общая на контур, и
+// привязка лежит подкаталогом ../<контур>-local/<проект> (DK-583). Обвязка
+// клона потеряна, а отказ обязан назвать её так же, как называет соседнюю
+// «<проект>-local» прежней раскладки.
+func TestFindRootFailureHintContourLocal(t *testing.T) {
+	base, clone, _ := corpClone(t)
+	contour := filepath.Join(base, "acme-local", "proj")
+	corpBoard(t, contour)
+	corpWrite(t, filepath.Join(contour, corpTrackerPath), "key = XX\nrepo = "+clone+"\n")
+
+	_, err := findRoot(clone)
+	if err == nil {
+		t.Fatal("findRoot нашёл корень, а доски в дереве клона нет")
+	}
+	if !strings.Contains(err.Error(), contour) {
+		t.Fatalf("отказ не назвал боковую директорию контура: %v", err)
+	}
+}

@@ -543,7 +543,7 @@ func TestSnapshotPartial(t *testing.T) {
 
 	t.Run("пометка переживает запись и чтение", func(t *testing.T) {
 		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow))
-		s = s.markPartial(q, "панель отказала по частоте обращений")
+		s = s.markPartial(q, "свежей разбивки клиент не получил, на панели она из его кеша")
 		if err := q.write(s); err != nil {
 			t.Fatalf("запись снимка: %v", err)
 		}
@@ -551,8 +551,16 @@ func TestSnapshotPartial(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(raw), "partial = week_max: панель отказала по частоте обращений") {
+		if !strings.Contains(string(raw), "# partial week_max: свежей разбивки клиент не получил, на панели она из его кеша") {
 			t.Fatalf("пометки в файле нет:\n%s", raw)
+		}
+		// Пометка обязана быть комментарием: всё, что не taken, читатели снимка
+		// помимо agentctl принимают за бакет и показывают человеку разбор
+		// вместо остатка.
+		for _, ln := range strings.Split(string(raw), "\n") {
+			if strings.Contains(ln, "week_max:") && !strings.HasPrefix(ln, "#") {
+				t.Fatalf("пометка ушла в файл ключом, а не комментарием: %q", ln)
+			}
 		}
 		back, err := q.read()
 		if err != nil {
@@ -561,15 +569,34 @@ func TestSnapshotPartial(t *testing.T) {
 		if len(back.Warns) != 0 {
 			t.Fatalf("пометка прочиталась как мусор: %v", back.Warns)
 		}
-		if why := back.partial("week_max"); why != "панель отказала по частоте обращений" {
+		if why := back.partial("week_max"); why != "свежей разбивки клиент не получил, на панели она из его кеша" {
 			t.Fatalf("причина не прочиталась: %q", why)
 		}
 	})
 
-	t.Run("битая пометка это предупреждение, а не молчание", func(t *testing.T) {
-		s := q.parse("taken = " + at(testNow) + "\npartial = week_max\n")
-		if len(s.Warns) != 1 || !strings.Contains(s.Warns[0], "пометка неполноты") {
-			t.Fatalf("предупреждения нет: %v", s.Warns)
+	t.Run("битая пометка ничего не ломает", func(t *testing.T) {
+		// Пометка это подпись для человека. Бакеты от неё не зависят, и разбор
+		// снимка об неё спотыкаться не должен ни у кого.
+		s := q.parse("taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"# partial week_max\n# partial неведомый: причина\n# просто комментарий\n")
+		if len(s.Warns) != 0 {
+			t.Fatalf("комментарий прочитался как мусор: %v", s.Warns)
+		}
+		if len(s.Buckets) != 1 || len(s.Partial) != 0 {
+			t.Fatalf("разбор поехал: %+v %+v", s.Buckets, s.Partial)
+		}
+	})
+
+	t.Run("снимок прежней правки читается ключом", func(t *testing.T) {
+		// Файлы с ключом partial лежат на машинах, пока refresh не переписал
+		// каждый.
+		s := q.parse("taken = " + at(testNow) + "\npartial = week_max: панель отказала\n")
+		if why := s.partial("week_max"); why != "панель отказала" {
+			t.Fatalf("старый снимок не прочитан: %q, %v", why, s.Warns)
+		}
+		if len(s.Warns) != 0 {
+			t.Fatalf("старый снимок ругается: %v", s.Warns)
 		}
 	})
 
@@ -580,8 +607,8 @@ func TestSnapshotPartial(t *testing.T) {
 		if !strings.Contains(bare, "week_max в снимке нет,") {
 			t.Fatalf("непомеченный снимок звучит иначе: %q", bare)
 		}
-		marked := quotaFactsOf(q, s.markPartial(q, "панель отказала по частоте обращений"), c, false, testNow, q.Harness).note()
-		if !strings.Contains(marked, "week_max в снимке нет, панель отказала по частоте обращений") {
+		marked := quotaFactsOf(q, s.markPartial(q, "свежей разбивки клиент не получил, на панели она из его кеша"), c, false, testNow, q.Harness).note()
+		if !strings.Contains(marked, "week_max в снимке нет, свежей разбивки клиент не получил, на панели она из его кеша") {
 			t.Fatalf("причина неполноты до вердикта не доехала: %q", marked)
 		}
 	})
@@ -589,7 +616,7 @@ func TestSnapshotPartial(t *testing.T) {
 	t.Run("quota печатает пометку строкой", func(t *testing.T) {
 		content := "taken = " + at(testNow) + "\n" +
 			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
-			"partial = week_max: панель отказала по частоте обращений\n"
+			"# partial week_max: свежей разбивки клиент не получил, на панели она из его кеша\n"
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -597,7 +624,7 @@ func TestSnapshotPartial(t *testing.T) {
 		if err != nil {
 			t.Fatalf("quota: %v", err)
 		}
-		if !strings.Contains(out, "week_max: в панели его не было, панель отказала по частоте обращений") {
+		if !strings.Contains(out, "week_max: в панели его не было, свежей разбивки клиент не получил, на панели она из его кеша") {
 			t.Fatalf("вывод молчит о неполноте:\n%s", out)
 		}
 	})

@@ -642,7 +642,13 @@ func panelNoBreakdown(pane string) string {
 	low := lowPane(pane)
 	switch {
 	case strings.Contains(low, "per-model breakdown unavailable"):
-		return "панель отказала по частоте обращений"
+		// Цифры по моделям приходят одним запросом с общими, и отказ по частоте
+		// обращений уносит только их: общий бакет клиент достаёт из заголовков
+		// собственных ответов. Долгоживущая панель в этот момент рисует разбивку
+		// из кеша прошлого удачного запроса (~/.claude.json,
+		// cachedUsageUtilization), и человек видит на экране цифру, которой у
+		// съёмщика нет.
+		return "свежей разбивки клиент не получил, на панели она из его кеша"
 	case strings.Contains(low, "could not refresh usage data"):
 		return "панель не обновила цифры"
 	}

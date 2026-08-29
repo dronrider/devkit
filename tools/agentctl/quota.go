@@ -31,6 +31,15 @@ const (
 // точности показывает панель /usage.
 const quotaTimeLayout = "2006-01-02T15:04"
 
+// partialNote это комментарий, которым снимок помечает бакет, которого панель
+// не показала. Комментарий, а не свой ключ, и это не мелочь оформления. Формат
+// снимка объявляет бакетом всё, что не taken, и читатели помимо agentctl
+// разбирают файл сами (дашборд по решению LLD DK-112 читает каталог с диска).
+// Новый ключ они принимают за бакет и показывают человеку «бакет partial не
+// разобран» вместо остатка. Строку с решёткой пропускают все, и место для
+// пометки в этом формате ровно тут.
+const partialNote = "# partial "
+
 // Окно бакета, от него считается равномерный темп расхода. Берётся из префикса
 // имени: недельные лимиты подписки это week_*, потокенный бюджет чаще месячный,
 // и с недельным окном pace по нему врал бы всемеро. Префикс проверяет валидатор
@@ -360,7 +369,17 @@ func (q *quotaSpec) parse(text string) snapshot {
 	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			rest, marked := strings.CutPrefix(line, partialNote)
+			if name, why, ok := q.parsePartial(rest, marked); ok {
+				if s.Partial == nil {
+					s.Partial = map[string]string{}
+				}
+				s.Partial[name] = why
+			}
 			continue
 		}
 		key, val, ok := strings.Cut(line, "=")
@@ -378,17 +397,16 @@ func (q *quotaSpec) parse(text string) snapshot {
 			s.Taken = t
 			continue
 		}
+		// Ключ partial это как снимок писала первая правка DK-584. Своих файлов
+		// она наплодила на машинах, и читать их надо, пока refresh не перепишет
+		// каждый; пишется пометка только комментарием.
 		if key == "partial" {
-			name, why, ok := strings.Cut(val, ":")
-			name, why = canonBucket(strings.TrimSpace(name)), strings.TrimSpace(why)
-			if !ok || why == "" || !q.known(name) {
-				s.Warns = append(s.Warns, fmt.Sprintf("пометка неполноты %q не разобрана", val))
-				continue
+			if name, why, ok := q.parsePartial(val, true); ok {
+				if s.Partial == nil {
+					s.Partial = map[string]string{}
+				}
+				s.Partial[name] = why
 			}
-			if s.Partial == nil {
-				s.Partial = map[string]string{}
-			}
-			s.Partial[name] = why
 			continue
 		}
 		if !q.known(key) {
@@ -403,6 +421,21 @@ func (q *quotaSpec) parse(text string) snapshot {
 		s.Buckets = append(s.Buckets, b)
 	}
 	return s
+}
+
+// parsePartial разбирает «<бакет>: причина». Незнакомое имя и пустая причина
+// проходят молча: пометка это подпись для человека, и ломать об неё разбор
+// снимка нельзя, бакеты в файле от неё не зависят.
+func (q *quotaSpec) parsePartial(val string, marked bool) (name, why string, ok bool) {
+	if !marked {
+		return "", "", false
+	}
+	name, why, cut := strings.Cut(val, ":")
+	name, why = canonBucket(strings.TrimSpace(name)), strings.TrimSpace(why)
+	if !cut || why == "" || !q.known(name) {
+		return "", "", false
+	}
+	return name, why, true
 }
 
 // parseBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
@@ -445,7 +478,7 @@ func (q *quotaSpec) write(s snapshot) error {
 		fmt.Fprintf(&b, "%s = %d%% сброс %s\n", bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout))
 	}
 	for _, name := range s.partialNames() {
-		fmt.Fprintf(&b, "partial = %s: %s\n", name, s.Partial[name])
+		fmt.Fprintf(&b, "%s%s: %s\n", partialNote, name, s.Partial[name])
 	}
 	dir := filepath.Dir(q.Path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

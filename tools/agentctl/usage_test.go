@@ -388,7 +388,7 @@ func TestPanelUnheard(t *testing.T) {
 		var w panelWaiter
 		v2251 := readFixture(t, "usage-panel-v2251.txt")
 		w.accept(snap, v2251)
-		if why := w.gap(v2251); !strings.Contains(why, "частоте обращений") {
+		if why := w.gap(v2251); !strings.Contains(why, "из его кеша") {
 			t.Fatalf("точная причина заменена оговоркой: %q", why)
 		}
 	})
@@ -413,7 +413,7 @@ func TestPanelSettled(t *testing.T) {
 // это отличимо от подписки, у которой дорогого бакета нет вовсе.
 func TestPanelNoBreakdown(t *testing.T) {
 	why := panelNoBreakdown(readFixture(t, "usage-panel-v2251.txt"))
-	if !strings.Contains(why, "частоте обращений") {
+	if !strings.Contains(why, "из его кеша") {
 		t.Fatalf("причина неполноты не названа: %q", why)
 	}
 	if why := panelNoBreakdown(readFixture(t, "usage-panel-fable.txt")); why != "" {
@@ -436,7 +436,7 @@ func TestMarkPartial(t *testing.T) {
 		t.Fatalf("панель не разобрана: %v", err)
 	}
 	marked := s.markPartial(q, panelNoBreakdown(readFixture(t, "usage-panel-v2251.txt")))
-	if why := marked.partial("week_max"); !strings.Contains(why, "частоте обращений") {
+	if why := marked.partial("week_max"); !strings.Contains(why, "из его кеша") {
 		t.Fatalf("week_max не помечен: %+v", marked.Partial)
 	}
 	if why := marked.partial("week_all"); why != "" {
@@ -887,7 +887,7 @@ func TestPanelFailure(t *testing.T) {
 	})
 
 	t.Run("целая панель за отказ клиента не считается", func(t *testing.T) {
-		// Про частоте обращений панель пишет и внутри рабочего экрана, когда не
+		// Про частоту обращений панель пишет и внутри рабочего экрана, когда не
 		// дождалась одной только разбивки по моделям.
 		if why := panelBlocked(readFixture(t, "usage-panel-v2251.txt")); why != "" {
 			t.Fatalf("рабочая панель принята за отказ: %s", why)

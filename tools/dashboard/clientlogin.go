@@ -193,6 +193,75 @@ func loginSaysRejected(pane string) bool {
 	return false
 }
 
+// loginFailWords узнают отказ входа словами самого клиента. Список нарочно
+// широк: цена пропуска отказа это доклад «вход сделан» там, где входа не было.
+var loginFailWords = []string{"oauth error", "error", "failed", "invalid",
+	"incorrect", "expired", "denied", "unauthorized"}
+
+// loginSaysFailed отдаёт строку клиента про отказ. Пустая строка значит, что
+// отказа в панели не видно. Строка нужна целиком: человеку разбираться с
+// «Request failed with status code 400», а наш пересказ отнял бы у него разбор.
+func loginSaysFailed(pane string) string {
+	for _, ln := range strings.Split(pane, "\n") {
+		line := loginPlainLine(ln)
+		low := strings.ToLower(line)
+		for _, word := range loginFailWords {
+			if strings.Contains(low, word) {
+				return line
+			}
+		}
+	}
+	return ""
+}
+
+// loginScreenWords узнают, что панель всё ещё держит экран входа. Экран входа
+// после кода значит, что вход не кончился ничем понятным: успех уводит клиента
+// обратно к работе, а не оставляет на своих подсказках.
+var loginScreenWords = []string{"esc to cancel", "press enter to retry",
+	"login method", "browser didn't open"}
+
+// loginScreenUp отвечает, стоит ли на панели экран входа клиента.
+func loginScreenUp(pane string) bool {
+	low := strings.ToLower(pane)
+	for _, word := range loginScreenWords {
+		if strings.Contains(low, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// loginPlainLine чистит строку панели от рамки и курсора: наружу идут слова
+// клиента, а не его рисунок.
+func loginPlainLine(ln string) string {
+	line := strings.Map(func(r rune) rune {
+		if r < 0x2000 {
+			return r
+		}
+		return ' '
+	}, ln)
+	return strings.TrimSpace(line)
+}
+
+// loginLastWords достаёт последнюю живую строку панели. Она едет человеку,
+// когда исход не узнан: пусть решает он, чем дашборд соврёт про успех.
+func loginLastWords(pane string) string {
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := loginPlainLine(lines[i])
+		if line == "" || !strings.ContainsFunc(line, func(r rune) bool {
+			return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+		}) {
+			continue
+		}
+		if len(line) > 160 {
+			line = line[:160]
+		}
+		return line
+	}
+	return "панель пуста"
+}
+
 // loginSessName подбирает свободное имя одноразовой сессии входа. Имена свои,
 // отдельные от чатов: список разговоров и реестр сессий не должны считать
 // сессию входа чьим-то разговором.
@@ -604,6 +673,22 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 		// Сессия входа жива и снова ждёт код: человек может ввести другой.
 		s.logf("код входа отклонён клиентом в %s", found.Name)
 		writeJSON(w, http.StatusConflict, map[string]string{"error": words})
+	case "fail":
+		// Клиент назвал отказ своими словами, и они едут человеку целиком.
+		// Ссылка после отказа мертва: сессия снимается, следующий заход берёт
+		// свежую.
+		s.loginDrop(run, "клиент отверг код")
+		s.logf("код входа отвергнут клиентом в %s: %s", found.Name, words)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("клиент отверг код: %s. Ссылка больше не годится, "+
+				"начните вход заново.", words)})
+	case "stuck":
+		// Исход не узнан. Сессия остаётся стоять: успехом это звать нельзя, а
+		// снимать то, чего мы не поняли, значит терять свидетельство.
+		s.logf("исход кода входа не узнан в %s: %s", found.Name, words)
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("клиент ответил на код не тем, чего ждёт дашборд. "+
+				"Последнее, что он сказал: «%s». Вход не сделан.", words)})
 	default:
 		s.loginDrop(run, words)
 		s.logf("вход клиента оборвался в %s: %s", found.Name, words)
@@ -634,6 +719,18 @@ func (s *server) loginAwaitCode(sess string) (string, string) {
 			}
 			if loginWantsCode(pane) {
 				return "again", "клиент вернулся к полю кода без слов: введите код заново"
+			}
+			// Успех узнаётся своими признаками, а не тем, что поле кода ушло.
+			// По уходу поля успехом считался любой экран отказа: клиент писал
+			// «OAuth error: Request failed with status code 400», дашборд
+			// докладывал «вход сделан», снимал сессию, и человек получал
+			// свежую ссылку вместо слов о том, что случилось (жалоба
+			// пользователя на приёмке).
+			if said := loginSaysFailed(pane); said != "" {
+				return "fail", said
+			}
+			if loginScreenUp(pane) {
+				return "stuck", loginLastWords(pane)
 			}
 			return "ok", ""
 		}

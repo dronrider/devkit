@@ -62,6 +62,20 @@ func loginPaneOf(stage string) string {
 		}, "\n")
 	case "ok":
 		return strings.Join([]string{"Welcome back!", "", paneCursor + " \n"}, "\n")
+	case "oauth":
+		// Живой вид отказа, снятый с клиента: поля кода нет, слов про код нет,
+		// и по уходу поля разбор звал это успехом.
+		return strings.Join([]string{
+			"", strings.Repeat(paneFrame, 60), "  Login", "",
+			"  OAuth error: Request failed with status code 400", "", "",
+			"  Press Enter to retry.", "", "  Esc to cancel", "",
+		}, "\n")
+	case "stuck":
+		// Экран входа стоит, а что случилось, по нему не прочесть.
+		return strings.Join([]string{
+			"", strings.Repeat(paneFrame, 60), "  Login", "", "", "",
+			"  Esc to cancel", "",
+		}, "\n")
 	case "again":
 		return strings.Join([]string{
 			"Invalid authorization code. Try again.", "", code,
@@ -84,7 +98,7 @@ func loginPaneOf(stage string) string {
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
-	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again"} {
+	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again", "oauth", "stuck"} {
 		if err := os.WriteFile(filepath.Join(d, "pane-"+stage),
 			[]byte(loginPaneOf(stage)), 0o644); err != nil {
 			t.Fatal(err)
@@ -141,10 +155,13 @@ send-keys)
     elif [ "$st" = "ask" ]; then echo url >"$D/stage"
     elif [ "$st" = "gone" ]; then :
     else
-      case "$last" in
-      GOOD) echo ok >"$D/stage";;
-      *) echo again >"$D/stage";;
-      esac
+      if [ -f "$D/after" ]; then cat "$D/after" >"$D/stage"
+      else
+        case "$last" in
+        GOOD) echo ok >"$D/stage";;
+        *) echo again >"$D/stage";;
+        esac
+      fi
     fi
   fi
   ;;
@@ -833,5 +850,61 @@ func TestClientLoginCodeRefusedToStranger(t *testing.T) {
 	resp, text = loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
 		t.Fatalf("после отказа вход не поднялся заново: %d, %s", resp.StatusCode, text)
+	}
+}
+
+// Отказ клиента не выдаётся за успех. Исход кода читался одним признаком:
+// ушло поле кода, значит вход сделан. Живой отказ клиента поле тоже убирает,
+// и дашборд докладывал «вход сделан», снимал сессию и оставлял человека со
+// свежей ссылкой вместо слов о том, что случилось. Проверено живьём на
+// экземпляре 7131: негодный код дал 200 и «вход сделан», а клиент в это время
+// писал «OAuth error: Request failed with status code 400».
+func TestClientLoginCodeErrorNotSuccess(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	if err := os.WriteFile(filepath.Join(d, "after"), []byte("oauth\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"nosuchcode"}`)
+	if resp.StatusCode == http.StatusOK || strings.Contains(text, `"ok":true`) {
+		t.Fatalf("отказ клиента выдан за сделанный вход: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "status code 400") {
+		t.Fatalf("слова клиента про отказ до человека не доехали: %s", text)
+	}
+}
+
+// Неузнанный исход тоже не успех. Клиент мог остаться на своём экране входа с
+// чем угодно на нём, и назвать это входом дашборду не по чему. Тогда он
+// говорит последними словами клиента и сессию не снимает: свидетельство нужно
+// человеку целым.
+func TestClientLoginCodeStuckNotSuccess(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	if err := os.WriteFile(filepath.Join(d, "after"), []byte("stuck\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"nosuchcode"}`)
+	if resp.StatusCode == http.StatusOK || strings.Contains(text, `"ok":true`) {
+		t.Fatalf("неузнанный исход выдан за сделанный вход: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "Вход не сделан") {
+		t.Fatalf("исход назван невнятно: %s", text)
+	}
+	killed, _ := os.ReadFile(filepath.Join(d, "killed"))
+	if strings.Contains(string(killed), "login-1") {
+		t.Fatalf("сессия снята вместе со свидетельством: %s", killed)
 	}
 }

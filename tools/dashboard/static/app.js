@@ -9341,6 +9341,25 @@ async function loginRestart(project, st, busy, ask) {
 // Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и
 // ID приходит из реестра по имени tmux-сессии: дашборд опрашивает список, пока
 // он не встанет, и переключается на живой диалог сам.
+// chatSayWanted это разговор, заведённый только что нажатием «+». Курсор в поле
+// ввода ставится ровно у него: человек, заводящий чат, собирается писать, и
+// вторым нажатием в поле он платил за то, что и так сказал (замечание
+// пользователя). Открытый прежний разговор фокус не перехватывает: туда
+// приходят и читать, а на телефоне выехавшая клавиатура закрыла бы ленту, ради
+// которой человек и пришёл.
+let chatSayWanted = "";
+let chatSayNode = null;
+
+// chatSayFocusFresh ставит курсор в поле ввода свежего разговора. Зовётся после
+// того, как панель встала в дерево: фокус на неприткнутом узле браузер молча
+// теряет.
+function chatSayFocusFresh(st) {
+  const id = (st && (st.blank || st.addr)) || "";
+  if (!chatSayWanted || chatSayWanted !== id) return;
+  chatSayWanted = "";
+  if (chatSayNode && !chatSayNode.disabled && chatSayNode.focus) chatSayNode.focus();
+}
+
 // chatBlankMake заводит разговор кнопкой «+». Заводится он на сервере, со
 // своим ID, и с этой минуты живёт строкой списка: сессию поднимет первая
 // реплика, а до неё разговор всё равно есть. Прежде нового чата не
@@ -9354,6 +9373,7 @@ async function chatBlankMake(project, task) {
     sayResult(r.body.error || "новый чат не завёлся", true);
     return "";
   }
+  chatSayWanted = r.body.id;
   switchChat(r.body.id);
   return r.body.id;
 }
@@ -10255,7 +10275,11 @@ function chatPanel(project, st) {
   const grip = el("div", "tagrip");
   grip.setAttribute("role", "separator");
   grip.setAttribute("aria-label", "Высота поля ввода");
-  const ta = el("textarea");
+  const ta = el("textarea", "csay");
+  // Поле ввода последней собранной панели: по нему ставится курсор у только что
+  // заведённого разговора. Панель пересобирается целиком на каждом открытии, и
+  // держать узел где-то ещё незачем.
+  chatSayNode = ta;
   // Запертое поле называет свою причину одной строкой. Прежде тут стояло «чат
   // идёт в vscode, пишите там»: отдельного случая окон vscode в разборе давно
   // нет, и запертым полем кончается протухший адрес, куда писать некуда вовсе,
@@ -11166,6 +11190,9 @@ async function paintChat(project, addr, board, works) {
   if (st.task && st.sid) chatTaskLastSet(st.task, st.sid);
   const slot = chatSlotPut(pin, key, [chatHead(project, st), chatPanel(project, st)]);
   panel.classList.remove("cload");
+  // Разговор, заведённый только что: курсор стоит в поле ввода. Открытый
+  // прежний разговор фокуса не получает, его открывают и читать.
+  chatSayFocusFresh(st);
   // Слот помнит, чем поднять своё живое и что в нём стоит: возврат в этот
   // разговор обходится показом и подъёмом, без похода в сеть за состоянием.
   slot.arm = chatArm;

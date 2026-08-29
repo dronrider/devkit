@@ -2231,6 +2231,23 @@ func TestStaticChatDropRow(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Курсор в поле ввода у только что заведённого разговора: нажатие «+» это и
+// есть намерение писать, а человек платил за него вторым нажатием в поле
+// (замечание пользователя). Открытый прежний разговор фокуса не перехватывает.
+// Сторожит стенд testdata/poc_saynew.mjs.
+func TestStaticChatSayFocusFresh(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд курсора в поле ввода пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_saynew.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("курсор в поле ввода свежего разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Курсор в поле поиска списка разговоров ставится по ширине экрана: на
 // телефоне выехавшая за ним клавиатура закрывает пол-экрана раньше, чем человек
 // взглянул на список (замечание пользователя), а на ноутбуке она ничего не

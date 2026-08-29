@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -262,6 +264,71 @@ func loginLastWords(pane string) string {
 	return "панель пуста"
 }
 
+// loginFromMachine отвечает, открыт ли дашборд на самой машине. Мера тут по
+// адресу браузера, и она отвечает ровно на нужный вопрос: код руками нужен
+// лишь тогда, когда браузер и клиент живут на разных машинах. Браузер с самой
+// машины возвращается в клиент петлёй, и код человеку набирать незачем.
+func loginFromMachine(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
+// loginLsof называет утилиты, которыми ищется порт клиента. Полный путь стоит
+// первым: служба поднята launchd, а его PATH каталога /usr/sbin не несёт.
+var loginLsof = []string{"/usr/sbin/lsof", "lsof"}
+
+// loginPortRe вытаскивает порт из строки lsof вида «TCP 127.0.0.1:53535 (LISTEN)».
+var loginPortRe = regexp.MustCompile(`127\.0\.0\.1:([0-9]+) \(LISTEN\)`)
+
+// loginLocalPort находит порт, на котором клиент ждёт возврата браузера. Пока
+// вход поднят, клиент держит петлевой слушатель и сам ловит код: проверено
+// живьём, его /callback отвечает на чужой state отказом 400. Ноль значит, что
+// петли не нашлось, и вход пойдёт кодом.
+func loginLocalPort(sess string) int {
+	out, err := runProc("tmux", "list-panes", "-t", "="+sess+":", "-F", "#{pane_pid}")
+	if err != nil {
+		return 0
+	}
+	pid := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	if pid == "" {
+		return 0
+	}
+	for _, name := range loginLsof {
+		out, err := runProc(name, "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", pid)
+		if err != nil {
+			continue
+		}
+		if m := loginPortRe.FindSubmatch(out); m != nil {
+			port, err := strconv.Atoi(string(m[1]))
+			if err == nil {
+				return port
+			}
+		}
+	}
+	return 0
+}
+
+// loginLoopURL перекладывает ссылку авторизации на возврат в самого клиента.
+// Клиент печатает ссылку ручного вида: code=true и страница-посредник, которая
+// показывает код человеку. Петлевой вид той же ссылки ведёт браузер обратно в
+// клиент, и код никто не набирает. Всё, что вход связывает (client_id, state,
+// code_challenge), остаётся клиентово: подменяется один адрес возврата.
+func loginLoopURL(raw string, port int) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || port == 0 {
+		return ""
+	}
+	q := u.Query()
+	q.Del("code")
+	q.Set("redirect_uri", fmt.Sprintf("http://localhost:%d/callback", port))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // loginSessName подбирает свободное имя одноразовой сессии входа. Имена свои,
 // отдельные от чатов: список разговоров и реестр сессий не должны считать
 // сессию входа чьим-то разговором.
@@ -422,6 +489,83 @@ func (s *server) loginKeeper(stop <-chan struct{}) {
 	}
 }
 
+// loginAnswer отдаёт экрану ссылку и дорогу входа. Дорог две. С самой машины
+// браузер возвращается в клиент петлёй, и человек не набирает ничего: шаг один,
+// открыть ссылку. С другого устройства петля ведёт в никуда (адрес возврата
+// указывает на сам телефон), и код остаётся единственной дорогой.
+func (s *server) loginAnswer(w http.ResponseWriter, r *http.Request, run *loginRun) {
+	url, way := run.URL, "code"
+	message := "откройте ссылку, войдите и введите код в поле на плашке"
+	if loginFromMachine(r) {
+		if loop := loginLoopURL(run.URL, loginLocalPort(run.Tmux)); loop != "" {
+			url, way = loop, "local"
+			message = "откройте ссылку и войдите: код клиент возьмёт сам"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"tmux": run.Tmux, "url": url, "way": way, "message": message})
+}
+
+// handleClientLoginWait ждёт исхода входа, который идёт петлёй. Кода тут нет,
+// и ждать нечего, кроме самого клиента: экран зовёт ручку по кругу, пока она
+// не назовёт исход. Ожидание это признак жизни входа.
+func (s *server) handleClientLoginWait(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "ожидание входа клиента")
+	if found == nil {
+		return
+	}
+	s.mu.Lock()
+	run := s.loginRun
+	s.mu.Unlock()
+	if run == nil || run.URL == "" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "вход ещё не поднят: сперва нажмите кнопку входа"})
+		return
+	}
+	if !s.loginOwns(run.Tmux) {
+		s.mu.Lock()
+		if s.loginRun == run {
+			s.loginRun = nil
+		}
+		s.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("сессия входа %s сменилась под своим именем: поднимите вход заново", run.Tmux)})
+		return
+	}
+	s.mu.Lock()
+	run.Alive = s.now()
+	s.mu.Unlock()
+	kind, words := s.loginAwaitCode(run.Tmux, false)
+	switch kind {
+	case "waiting":
+		writeJSON(w, http.StatusAccepted, map[string]any{"waiting": true,
+			"message": "вход ещё идёт: пройдите его в открывшейся вкладке"})
+	case "ok":
+		s.loginDrop(run, "вход сделан")
+		s.logf("вход клиента сделан петлёй в %s: токен у клиента в связке ключей", found.Name)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true,
+			"message": "вход сделан: свежий токен лёг в связку ключей"})
+	case "fail":
+		s.loginDrop(run, "клиент отверг вход")
+		s.logf("вход клиента отвергнут в %s: %s", found.Name, words)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("вход не прошёл: %s. Начните вход заново.", words)})
+	case "stuck":
+		s.logf("исход входа не узнан в %s: %s", found.Name, words)
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("клиент кончил вход не тем, чего ждёт дашборд. "+
+				"Последнее, что он сказал: «%s». Вход не сделан.", words)})
+	default:
+		s.loginDrop(run, words)
+		s.logf("вход клиента оборвался в %s: %s", found.Name, words)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": words})
+	}
+}
+
 // handleClientLogin поднимает вход клиента и отдаёт ссылку авторизации.
 // Ручка зовётся с плашки разлогина и занимает до loginLinkWait: пока клиент
 // печатает ссылку, запрос стоит на поллинге панели.
@@ -463,9 +607,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 					run.Alive = s.now()
 					s.mu.Unlock()
 					s.logf("вход клиента в %s: ссылка отдана повторно", found.Name)
-					writeJSON(w, http.StatusOK, map[string]string{
-						"tmux": run.Tmux, "url": run.URL,
-						"message": "вход уже поднят: откройте ссылку и введите код"})
+					s.loginAnswer(w, r, run)
 					return
 				}
 				if run.Raising {
@@ -522,8 +664,13 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	s.logf("вход клиента поднят в %s (tmux-сессия %s), ссылка авторизации отдана",
 		found.Name, sess)
-	writeJSON(w, http.StatusOK, map[string]string{"tmux": sess, "url": url,
-		"message": "откройте ссылку, войдите и введите код в поле на плашке"})
+	s.mu.Lock()
+	run = s.loginRun
+	s.mu.Unlock()
+	if run == nil {
+		run = &loginRun{Tmux: sess, URL: url}
+	}
+	s.loginAnswer(w, r, run)
 }
 
 // loginAwaitLink ждёт от панели ссылку авторизации. До ссылки клиент стоит на
@@ -661,7 +808,7 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("код не подался в сессию входа %s: %s", run.Tmux, procErr(err))})
 		return
 	}
-	kind, words := s.loginAwaitCode(run.Tmux)
+	kind, words := s.loginAwaitCode(run.Tmux, true)
 	switch kind {
 	case "ok":
 		s.loginDrop(run, "вход сделан")
@@ -701,7 +848,7 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 // перерисовывает панель, и мера не должна читать мигание как исход. Поле,
 // вернувшееся со словами отклонения, это отказ кода, а молчащее поле до
 // таймаута это тишина клиента. Ошибка снимка значит, что сессия умерла.
-func (s *server) loginAwaitCode(sess string) (string, string) {
+func (s *server) loginAwaitCode(sess string, sent bool) (string, string) {
 	deadline := s.now().Add(loginCodeWait)
 	for {
 		pane, err := loginPane(sess)
@@ -734,10 +881,15 @@ func (s *server) loginAwaitCode(sess string) (string, string) {
 			}
 			return "ok", ""
 		}
-		if loginSaysRejected(pane) {
+		if sent && loginSaysRejected(pane) {
 			return "again", "код не принят: клиент снова ждёт код авторизации, введите другой"
 		}
 		if !s.now().Before(deadline) {
+			if !sent {
+				// Ждём браузер, а не ответ на код: поле кода стоит всё время,
+				// пока человек проходит вход, и это не исход, а «ещё идёт».
+				return "waiting", ""
+			}
 			return "again", fmt.Sprintf("клиент не ответил на код за %s: панель всё ещё ждёт его, "+
 				"введите код заново", loginCodeWait)
 		}

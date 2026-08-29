@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +111,7 @@ case "$1" in
 ls)
   printf 'goal-XR-9\n'
   [ -f "$D/sess" ] && cat "$D/sess";;
+list-panes) echo 4242;;
 new-session)
   if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi
   printf '%s|1|%s\n' "$4" "$(date +%s)" >"$D/sess";;
@@ -906,5 +908,88 @@ func TestClientLoginCodeStuckNotSuccess(t *testing.T) {
 	killed, _ := os.ReadFile(filepath.Join(d, "killed"))
 	if strings.Contains(string(killed), "login-1") {
 		t.Fatalf("сессия снята вместе со свидетельством: %s", killed)
+	}
+}
+
+// Откуда пришёл запрос, оттуда и дорога входа. Код руками нужен ровно тогда,
+// когда браузер и клиент живут на разных машинах.
+func TestLoginFromMachine(t *testing.T) {
+	cases := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:54321", true},
+		{"[::1]:54321", true},
+		{"192.168.1.14:51000", false},
+		{"10.0.0.7:51000", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		r := &http.Request{RemoteAddr: c.addr}
+		if got := loginFromMachine(r); got != c.want {
+			t.Fatalf("адрес %q признан %v, жду %v", c.addr, got, c.want)
+		}
+	}
+}
+
+// Петлевая ссылка это та же ссылка с другим адресом возврата. Всё, чем вход
+// связан (client_id, state, code_challenge), клиентово и остаётся нетронутым:
+// подменяется один адрес, и признак ручного кода снимается.
+func TestLoginLoopURL(t *testing.T) {
+	raw := "https://claude.com/cai/oauth/authorize?code=true&client_id=abc&" +
+		"response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&" +
+		"code_challenge=zzz&code_challenge_method=S256&state=sss"
+	got := loginLoopURL(raw, 53535)
+	u, err := neturl.Parse(got)
+	if err != nil {
+		t.Fatalf("петлевая ссылка не разобралась: %s", got)
+	}
+	q := u.Query()
+	if q.Get("redirect_uri") != "http://localhost:53535/callback" {
+		t.Fatalf("адрес возврата не переложен на клиент: %s", q.Get("redirect_uri"))
+	}
+	if q.Has("code") {
+		t.Fatalf("признак ручного кода остался в петлевой ссылке: %s", got)
+	}
+	for _, k := range []string{"client_id", "state", "code_challenge", "code_challenge_method"} {
+		if q.Get(k) == "" {
+			t.Fatalf("петлевая ссылка потеряла %s: %s", k, got)
+		}
+	}
+	if loginLoopURL(raw, 0) != "" {
+		t.Fatalf("без петлевого порта ссылка обязана быть пустой")
+	}
+}
+
+// Вход с самой машины идёт без кода. Браузер тут живёт на той же машине, что
+// клиент, клиент держит петлевой слушатель и ловит код сам, и поле кода
+// человеку показывать незачем: шаг остаётся один, открыть ссылку.
+func TestClientLoginLocalWayNoCode(t *testing.T) {
+	e := newTestEnv(t)
+	fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	was := loginLsof
+	loginLsof = []string{"lsof"}
+	t.Cleanup(func() { loginLsof = was })
+	writeScript(t, e.bin, "lsof", `echo "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME"
+echo "2.1.251 4242 rider 19u IPv4 0x1b31 0t0 TCP 127.0.0.1:53535 (LISTEN)"`)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход не поднялся: %d, %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Way string `json:"way"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", text)
+	}
+	if got.Way != "local" {
+		t.Fatalf("вход с самой машины пошёл дорогой кода: %s", text)
+	}
+	if !strings.Contains(got.URL, "localhost%3A53535%2Fcallback") &&
+		!strings.Contains(got.URL, "localhost:53535/callback") {
+		t.Fatalf("ссылка не ведёт возврат в клиент: %s", got.URL)
 	}
 }

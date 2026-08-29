@@ -159,6 +159,19 @@ const wordsOf = (panel) => dump(byClass(panel, "loginsaid"));
   if (stepOf("/stop") < 0 || stepOf("/say") < 0) {
     fail("после входа разговор не поднялся сам: " + JSON.stringify(asked));
   }
+  // Пока подъём идёт, кнопки заперты и убраны: блок гаснет приходом свежего
+  // ответа в ленту, а это секунды, и нажатие в это окно отправило бы тот же
+  // запрос вторым разом.
+  const again = deepBtn(panel, "Перезапустить");
+  if (again && !again.disabled) fail("кнопка перезапуска осталась живой во время подъёма");
+  const said = asked.filter((pth) => pth.endsWith("/say")).length;
+  if (again && again.handlers && again.handlers.click) {
+    again.handlers.click({ stopPropagation: () => {} });
+    await settle();
+  }
+  if (asked.filter((pth) => pth.endsWith("/say")).length !== said) {
+    fail("нажатие во время подъёма отправило запрос вторым разом: " + JSON.stringify(asked));
+  }
   // Кнопка перезапуска остаётся: она и поднимает разговоры после входа.
   if (!deepBtn(panel, "Перезапустить")) fail("кнопки перезапуска после входа нет");
 }

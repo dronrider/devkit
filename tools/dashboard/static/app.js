@@ -9131,7 +9131,12 @@ function loginTalk(project, st, busy) {
 
   // После входа разговор поднимается сам и доделывает то, на чём встал:
   // человеку не за чем нажимать вторую кнопку, он уже сказал, чего хочет.
+  // Кнопки на это время запираются и уходят с экрана. Гаснет блок приходом
+  // свежего ответа в ленту, а это секунды, и в это окно второе нажатие
+  // отправило бы тот же запрос вторым разом (замечание ревью).
   async function done() {
+    talk.done = true;
+    lock(true);
     step.wrap.hidden = true;
     say("Вход сделан. Поднимаю разговор и повторяю запрос, на котором он встал.", false);
     await loginRestart(project, st, busy, talk.ask);
@@ -9139,18 +9144,29 @@ function loginTalk(project, st, busy) {
 
   const row = el("div", "loginbtns");
   const enter = el("button", "btn btn-sm btn-acc", "Войти");
+  const go = el("button", "btn btn-sm", "Перезапустить");
+  // Запертые кнопки и уходят с экрана: запертая кнопка на виду обещает работу,
+  // которой по ней не будет.
+  const lock = (on) => {
+    enter.disabled = on;
+    go.disabled = on;
+    row.hidden = on;
+  };
+  const free = () => { if (!talk.done) lock(false); };
+  // Запертость проверяет сам обработчик, а не только атрибут кнопки: атрибут
+  // держит палец, а второе нажатие приходит и мимо него (повтор запроса из
+  // очереди событий, чужой скрипт, стенд).
   enter.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    if (enter.disabled || talk.done) return;
     enter.disabled = true;
-    start().finally(() => { enter.disabled = false; });
+    start().finally(() => { if (!talk.done) enter.disabled = false; });
   });
-  const go = el("button", "btn btn-sm", "Перезапустить");
   go.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    go.disabled = true;
-    loginRestart(project, st, busy, talk.ask)
-      .catch(console.error)
-      .finally(() => { go.disabled = false; });
+    if (go.disabled || talk.done) return;
+    lock(true);
+    loginRestart(project, st, busy, talk.ask).catch(console.error).finally(free);
   });
   row.append(enter, go);
   first.bb.append(row);

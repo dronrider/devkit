@@ -2723,6 +2723,25 @@ func TestStaticFeedKindsAligned(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Варианты в блоке вопроса клиента видны кнопками: рамка, заливка, отклик на
+// наведение и на нажатие, палец на узком экране. Пользователь прислал снимок
+// блока и спросил, что это за странность: нажимать было можно, а понять это по
+// виду нельзя, и человек шёл отвечать в терминал (стенд
+// testdata/poc_caskopt.mjs). Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticClientAskOptionsLookClickable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд вида вариантов вопроса пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_caskopt.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вид вариантов вопроса клиента: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Нить бокового журнала субагента: отрезок её это вся работа, от вызова Agent
 // до вести о том, что фоновый агент закончил, и по дороге нить не рвётся.
 // Пользователь с экрана: «синяя нить начинается не с сообщения субагента, а со

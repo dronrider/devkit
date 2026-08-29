@@ -28,7 +28,7 @@ var (
 // входа, виджет выбора способа, ссылка с полем кода, сделанный вход и отказ
 // кода. Вид взят с живой панели клиента.
 func loginPaneOf(stage string) string {
-	code := "Paste the authorization code below:" + "\n" + paneCursor + " \n"
+	code := "Paste code here if prompted >" + "\n" + paneCursor + " \n"
 	switch stage {
 	case "boot":
 		return ""
@@ -404,6 +404,51 @@ func TestClientLoginWrappedLinkJoins(t *testing.T) {
 	}
 	if got.URL != full {
 		t.Fatalf("ссылка отдалась не целой: %s", got.URL)
+	}
+}
+
+// Ссылка, порванная своими переводами строк клиента, отдаётся целой. Живой
+// клиент режет ссылку сам по ширине пейна: это не мягкий перенос терминала,
+// capture-pane их не клеит, и обрывки собирает разбор. Усечённый обрывок с
+// телефона не открывается, а разбор молчал бы о подмене.
+func TestClientLoginHardWrappedLinkJoins(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	full := "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88" +
+		"ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.co" +
+		"m%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainf" +
+		"erence+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&code_" +
+		"challenge=15xLrGK-0V-FtkmtNIPsRLMJvVmBZgQnLA-BFDCqxyE&code_challenge_method=S256" +
+		"&state=SN8he0RxdleeKwFkRqWs48b2_kWeqEliF5H2gKXHr4w"
+	torn := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		"https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88",
+		"ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.co",
+		"m%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainf",
+		"erence+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&code_",
+		"challenge=15xLrGK-0V-FtkmtNIPsRLMJvVmBZgQnLA-BFDCqxyE&code_challenge_method=S256",
+		"&state=SN8he0RxdleeKwFkRqWs48b2_kWeqEliF5H2gKXHr4w", "",
+		"Hold Shift (Option in iTerm2, Fn in Terminal.app) while selecting to use",
+		"your terminal's native copy", "", "Paste code here if prompted >", "",
+		paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(torn), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём входа: %d, %s", resp.StatusCode, text)
+	}
+	var got struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", text)
+	}
+	if got.URL != full {
+		t.Fatalf("ссылка из обрывков не собрана: %s", got.URL)
 	}
 }
 

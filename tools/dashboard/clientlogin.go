@@ -44,24 +44,43 @@ var (
 	loginPollEvery  = 500 * time.Millisecond
 )
 
-// loginLinkRe узнаёт ссылку авторизации в панели входа. Клиент печатает её
-// одной строкой, какой бы длинной та ни вышла (переносы пейна клеит loginPane),
-// и первой такой строкой в одноразовой сессии бывает именно она: панели больше
-// нечего показывать.
-var loginLinkRe = regexp.MustCompile(`(?m)^[[:space:]]*(https://[^[:space:]]+)[[:space:]]*$`)
+// loginLinkRe узнаёт первую строку ссылки авторизации: строка, где кроме ссылки
+// нет ничего. Первой такой строкой в одноразовой сессии бывает именно она:
+// панели больше нечего показывать.
+var loginLinkRe = regexp.MustCompile(`^[[:space:]]*(https://[^[:space:]]+)[[:space:]]*$`)
 
-// loginLinkOf достаёт ссылку авторизации из снимка панели. Пустая строка
-// значит, что ссылки в панели нет.
+// loginURLRunes узнаёт продолжение ссылки: строка целиком из знаков, которые в
+// URL бывают. Ссылка авторизации длиннее пейна, и клиент рвёт её сам, своими
+// переводами строк, а не мягким переносом терминала, поэтому клеить обрывки
+// приходится разбору, а не capture-pane (живая проверка: четыре обрывка без
+// пробела на стыке). Слова вокруг ссылки всегда несут пробел и сюда не попадают.
+var loginURLRunes = regexp.MustCompile(`^[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+$`)
+
+// loginLinkOf достаёт ссылку авторизации из снимка панели и собирает её из
+// обрывков по ширине пейна. Пустая строка значит, что ссылки в панели нет.
 func loginLinkOf(pane string) string {
-	if m := loginLinkRe.FindStringSubmatch(pane); m != nil {
-		return m[1]
+	lines := strings.Split(pane, "\n")
+	for i, ln := range lines {
+		m := loginLinkRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		url := m[1]
+		for j := i + 1; j < len(lines); j++ {
+			piece := strings.TrimSpace(lines[j])
+			if piece == "" || !loginURLRunes.MatchString(piece) {
+				break
+			}
+			url += piece
+		}
+		return url
 	}
 	return ""
 }
 
 // loginCodeWords узнают поле, в котором клиент ждёт код авторизации. Своих кодов
 // отказа клиент наружу не отдаёт, и мера тут по его же строке приглашения.
-var loginCodeWords = []string{"authorization code", "paste the code", "enter the code"}
+var loginCodeWords = []string{"authorization code", "paste code", "enter the code"}
 
 // loginWantsCode отвечает, ждёт ли панель ввода кода.
 func loginWantsCode(pane string) bool {

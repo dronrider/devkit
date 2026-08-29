@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -352,11 +353,19 @@ func TestQuotaFailReachesPlate(t *testing.T) {
 	if view.Fail == nil {
 		t.Fatal("плашка молчит об отказе: человек остаётся со старым снимком без объяснения")
 	}
-	if !strings.Contains(view.Fail.Reason, "доверие каталогу") {
-		t.Fatalf("причина отказа не названа: %q", view.Fail.Reason)
+	// На экране несколько слов, причина отдельным полем: абзац того, кто
+	// отказал, в строку панели не лезет (замечание пользователя).
+	if view.Fail.Reason != quotaFailSaid {
+		t.Fatalf("на экран уехала не короткая строка, а %q", view.Fail.Reason)
 	}
-	if strings.Contains(view.Fail.Reason, "подтвердить доверие руками") {
-		t.Fatalf("в плашку уехал совет с командами, а не причина: %q", view.Fail.Reason)
+	if len([]rune(view.Fail.Reason)) > 40 {
+		t.Fatalf("строка отказа длиной в %d знаков: %q", len([]rune(view.Fail.Reason)), view.Fail.Reason)
+	}
+	if !strings.Contains(view.Fail.Detail, "доверие каталогу") {
+		t.Fatalf("причина отказа не названа: %q", view.Fail.Detail)
+	}
+	if strings.Contains(view.Fail.Detail, "подтвердить доверие руками") {
+		t.Fatalf("в причину уехал совет с командами: %q", view.Fail.Detail)
 	}
 	if view.Fail.Dir != e.proj {
 		t.Fatalf("отказ не назвал каталог вызова: %q", view.Fail.Dir)
@@ -446,6 +455,56 @@ func TestQuotaFailWords(t *testing.T) {
 	long := "ошибка: " + strings.Repeat("длинн", 60)
 	if got := quotaFailWords(long); len([]rune(got)) > quotaFailMax+3 {
 		t.Fatalf("длинная причина не подрезана: %d знаков", len([]rune(got)))
+	}
+}
+
+// Экран плашки квоты сторожит стенд testdata/poc_quotafail.mjs: строка отказа
+// короткая, причина приходит нажатием, час снимка стоит рядом с давностью.
+func TestStaticQuotaFailLine(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд плашки квоты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_quotafail.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("строка отказа в плашке квоты: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Абзац отказа не уезжает на экран целиком: строка панели говорит, что снимок
+// не обновился, а фразы того, кто отказал, лежат причиной за нажатием. Живой
+// случай: agentctl объясняет человеку в терминале правильно и целыми
+// предложениями, а панель квоты шириной с ладонь, и объяснение вставало в неё
+// портянкой (замечание пользователя).
+func TestQuotaFailSaidShort(t *testing.T) {
+	e := newTestEnv(t)
+	quotaTrustSays(t, e.proj)
+	quotaCatch(t, fmt.Errorf("клиент упёрся в частоту обращений к панели /usage и цифр не "+
+		"показал. Снимок встанет следующей попыткой, лимит подписки тут ни при чём. "+
+		"Кадр панели лежит в /tmp/usage.txt, по нему видно, что съёмщик прочитал с экрана. "+
+		"Снимок не тронут."))
+	e.s.quotaRefresh("agentctl")
+
+	fail := getQuota(t, e).Fail
+	if fail == nil {
+		t.Fatal("плашка молчит об отказе")
+	}
+	if n := len([]rune(fail.Reason)); n > 40 {
+		t.Fatalf("на экран уехала строка в %d знаков: %q", n, fail.Reason)
+	}
+	for _, word := range []string{"/usage", "Кадр", "частоту обращений"} {
+		if strings.Contains(fail.Reason, word) {
+			t.Fatalf("причина развёрнута прямо в строке экрана (%q): %q", word, fail.Reason)
+		}
+	}
+	if !strings.Contains(fail.Detail, "частоту обращений") {
+		t.Fatalf("причина потерялась вовсе: %q", fail.Detail)
+	}
+	// Путь к кадру и советы остаются журналу: причину читают с одного взгляда.
+	if strings.Contains(fail.Detail, "/tmp/usage.txt") {
+		t.Fatalf("в причину уехал путь к кадру: %q", fail.Detail)
 	}
 }
 

@@ -14105,6 +14105,42 @@ function quotaEvery(view) {
   return list;
 }
 
+// Развёрнута ли причина отказа. Состояние живёт снаружи блока: плашка
+// перерисовывается на каждом ответе ручки, и раскрытое человеком схлопывалось бы
+// у него под рукой.
+let quotaWhyOpen = false;
+
+// quotaFailNodes собирает отказ обновления. На экране несколько слов, причина
+// приходит нажатием: тот, кто отказал, пишет человеку в терминал целым абзацем,
+// и абзац этот вставал в колонку шириной с ладонь портянкой (замечание
+// пользователя).
+function quotaFailNodes(fail) {
+  const bad = el("div", "qnote qfail");
+  bad.append(el("span", "", fail.reason));
+  const why = [];
+  if (fail.detail) why.push(fail.detail);
+  if (fail.age) why.push("последняя попытка " + fail.age + " назад");
+  if (fail.dir) why.push("каталог вызова " + fail.dir);
+  bad.title = why.join(", ");
+  const out = [bad];
+  if (!why.length) return out;
+  const more = el("button", "qwhy-b", quotaWhyOpen ? "скрыть" : "почему");
+  more.onclick = () => {
+    quotaWhyOpen = !quotaWhyOpen;
+    paintQuota();
+  };
+  bad.append(more);
+  if (quotaWhyOpen) out.push(el("div", "qnote qwhy", why.join("; ")));
+  return out;
+}
+
+// quotaTook это час и минута снимка: человеку важнее знать, что цифры от 18:51,
+// чем почему они не поехали дальше (замечание пользователя).
+function quotaTook(taken) {
+  const m = /T(\d{2}:\d{2})/.exec(taken || "");
+  return m ? m[1] : "";
+}
+
 function quotaNodes(view) {
   const out = [el("h4", "", "Квота подписок")];
   if (!view) {
@@ -14117,11 +14153,7 @@ function quotaNodes(view) {
   // журнале эта же строка лежала одна и та же каждые десять минут, а человек
   // смотрел на трёхчасовой снимок и объяснения не имел (живой случай).
   if (view.fail && view.fail.reason) {
-    const bad = el("div", "qnote qfail", "обновление не проходит: " + view.fail.reason);
-    const when = view.fail.age ? "последняя попытка " + view.fail.age + " назад" : "";
-    const where = view.fail.dir ? "каталог вызова " + view.fail.dir : "";
-    bad.title = [when, where].filter(Boolean).join(", ");
-    out.push(bad);
+    out.push(...quotaFailNodes(view.fail));
   }
   for (const h of quotaEvery(view)) {
     out.push(el("div", "qsub", h.name));
@@ -14139,7 +14171,9 @@ function quotaNodes(view) {
     // Давность снимка стоит цифрой у каждой подписки, и сравнение человек
     // делает сам: приписка «раньше остальных» у старшего была лишним словом.
     if (h.age) {
-      note.append(el("span", "qage " + quotaAgeClass(h.age_sec), "снимок " + h.age + " назад"));
+      const took = quotaTook(h.taken);
+      note.append(el("span", "qage " + quotaAgeClass(h.age_sec),
+        (took ? "снимок от " + took + ", " : "снимок ") + h.age + " назад"));
     }
     const rest = [];
     // Причина остаётся словами там, где возрасту верить нельзя вовсе: часы

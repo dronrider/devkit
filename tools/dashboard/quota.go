@@ -87,10 +87,23 @@ type QuotaView struct {
 // человек оставался с трёхчасовым снимком на экране и без единого слова о том,
 // почему он такой (живой случай пользователя).
 type QuotaFail struct {
+	// Reason это то, что стоит на экране: несколько слов о том, что снимок не
+	// обновился. Причину сюда не кладут. Панель квоты шириной с ладонь, и текст
+	// отказа пишет не она, а тот, кто отказал: agentctl объясняет человеку в
+	// терминале целым абзацем, и абзац этот в строку панели не лезет (замечание
+	// пользователя, второй такой случай за день).
 	Reason string `json:"reason"`
+	// Detail это причина словами того, кто отказал. Живёт за нажатием «почему»,
+	// на экране сразу не разворачивается.
+	Detail string `json:"detail,omitempty"`
 	Dir    string `json:"dir,omitempty"`
 	Age    string `json:"age,omitempty"`
 }
+
+// quotaFailSaid это строка отказа для экрана. Она одна на все причины: человеку
+// с одного взгляда нужно знать, что цифры не поехали, а чем именно упёрлось
+// обновление, он спрашивает нажатием.
+const quotaFailSaid = "снимок не обновился"
 
 func quotaDir(home string) string {
 	return filepath.Join(home, ".devkit", quotaRel)
@@ -346,9 +359,15 @@ var quotaRefreshRun = func(dir, bin string) error {
 // им причина не названа.
 const quotaFailMin = 24
 
-// quotaFailMax это потолок причины в плашке: блок стоит в колонке шириной с
-// ладонь, и совет с командами человек читает в журнале, а не там.
-const quotaFailMax = 140
+// quotaFailWhy это длина, на которой разбор причины по фразам останавливается.
+// Одной фразы отказу мало: первая называет, обо что упёрлись, а вторая часто
+// говорит, чем это кончится и что снимок цел.
+const quotaFailWhy = 120
+
+// quotaFailMax это потолок причины: она лежит за нажатием и переносится по
+// строкам, поэтому места тут больше, чем было у строки плашки, но абзац с
+// путями и советами всё равно остаётся журналу.
+const quotaFailMax = 220
 
 // quotaFailWords сжимает причину отказа до первой фразы. Разрез по двоеточию
 // нарочно: так причину пишут и agentctl, и подпроцессы девкита, а хвост за ним
@@ -378,10 +397,35 @@ func quotaFailWords(text string) string {
 			break
 		}
 	}
+	out = quotaFailSentence(out)
 	if r := []rune(out); len(r) > quotaFailMax {
-		out = strings.TrimSpace(string(r[:quotaFailMax])) + "..."
+		cut := strings.TrimSpace(string(r[:quotaFailMax]))
+		// Обрыв идёт по концу фразы, когда он есть во второй половине куска:
+		// оборванное на полуслове предложение читается хуже, чем целое.
+		if i := strings.LastIndex(cut, ". "); i > quotaFailMax/2 {
+			return strings.TrimSpace(cut[:i+1])
+		}
+		out = cut + "..."
 	}
 	return out
+}
+
+// quotaFailSentence обрезает причину по концу фразы. Хвост за первой фразой у
+// отказов devkit это путь к кадру, совет и напоминание, что снимок не тронут:
+// человеку у панели они не нужны, а место занимают все.
+func quotaFailSentence(text string) string {
+	out := ""
+	for _, part := range strings.Split(text, ". ") {
+		if out == "" {
+			out = part
+		} else {
+			out += ". " + part
+		}
+		if len([]rune(out)) >= quotaFailWhy {
+			break
+		}
+	}
+	return strings.TrimSpace(out)
 }
 
 // quotaFailLabel узнаёт подпись отказа, стоящую перед самой причиной.
@@ -402,7 +446,7 @@ func (s *server) quotaFail() *QuotaFail {
 	if reason == "" {
 		return nil
 	}
-	fail := &QuotaFail{Reason: reason, Dir: s.quotaRefreshDir()}
+	fail := &QuotaFail{Reason: quotaFailSaid, Detail: reason, Dir: s.quotaRefreshDir()}
 	if !at.IsZero() {
 		fail.Age = humanAge(s.now().Sub(at))
 	}

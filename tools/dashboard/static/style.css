@@ -1703,6 +1703,12 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Отказ обновления снимка: цвет тот же, что у протухшего возраста, потому что
    говорят они об одном и том же. */
 .qfail{color:var(--block)}
+/* Причина отказа лежит за нажатием: на экране несколько слов, абзац того, кто
+   отказал, разворачивается по «почему» и переносится по строкам. */
+.qwhy-b{font:400 10.5px/1.45 var(--mono);color:var(--tx3);background:none;border:none;
+  border-bottom:1px dashed var(--tx3);padding:0;margin-left:6px;cursor:pointer}
+.qwhy-b:hover{color:var(--tx)}
+.qwhy{color:var(--tx3);white-space:normal;overflow-wrap:anywhere;margin-top:4px}
 
 /* Записи разговора стоят на общей вертикальной линии: она одна на всю ленту,
    кружок против первой строки записи перекрывает её собой. Цвет кружка это

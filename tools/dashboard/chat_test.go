@@ -2532,6 +2532,18 @@ func TestChatEntryLoginGone(t *testing.T) {
 	if got[0].Login != loginGoneWord {
 		t.Fatalf("разлогин не назван словами: login=%q, ждал %q", got[0].Login, loginGoneWord)
 	}
+	// Слова состояния про дело человека, а не про наше устройство. «Сессия
+	// разлогинена» говорило про сессию, которой человек не заводил, и его же
+	// приходилось объяснять целым абзацем на плашке (замечание пользователя).
+	// Место в строке списка узкое, поэтому слов немного.
+	for _, own := range []string{"сесси", "токен", "oauth", "клиент"} {
+		if strings.Contains(strings.ToLower(loginGoneWord), own) {
+			t.Fatalf("состояние названо нашим устройством (%q): %q", own, loginGoneWord)
+		}
+	}
+	if n := len([]rune(loginGoneWord)); n > 16 {
+		t.Fatalf("слова состояния не влезут в строку списка: %d знаков в %q", n, loginGoneWord)
+	}
 	if got[0].Stuck != "" {
 		t.Errorf("разлогин выдан за клин: stuck=%q, а лечится он не перезапуском, а входом", got[0].Stuck)
 	}
@@ -2651,6 +2663,24 @@ func TestStaticLoginFitsFeed(t *testing.T) {
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("вид записей входа: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Панель ждущего разговора: пока сессия называет себя в реестре, панель стоит
+// со словами о подъёме, а не хоронит разговор и не показывает плашку
+// протухшего адреса. Стенд лежал в дереве без драйвера, гонять его было некому
+// (стенд testdata/poc_chatlift.mjs). Без node шаг пропускается: узел стенда, а
+// не рабочей части.
+func TestStaticChatLift(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд ждущей панели пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatlift.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("панель ждущего разговора: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }

@@ -27,7 +27,7 @@ const chats = [{ id: "blank-1", project: "demo", blank: true, state: "not-starte
 // решает, что реплика пропала.
 let held = null;
 let raiseFails = false;
-const { sandbox, store } = makeSandbox(app, (path, init) => {
+const { sandbox, store, timers } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST") {
     if (String(path).endsWith("/chats")) {
       if (raiseFails) return { raw: { status: 502, statusText: "Bad Gateway",
@@ -201,6 +201,24 @@ const asks = (panel) => {
   const feed = byClass(back, "chatfeed");
   if (feed && dump(feed).includes("напишите первую реплику")) {
     fail("после перезагрузки лента снова просит написать уже отправленное");
+  }
+  // Срок ожидания эха истекает: отложенный вызов зовётся так же, как его
+  // позвало бы время. Причина, которую пузырь называет после этого, говорила
+  // «доставка не подтверждена» и «эха из транскрипта ещё нет», то есть наше
+  // устройство целиком. Человеку тут надо знать одно: дошло ли, и почему это
+  // до сих пор непонятно.
+  for (const t of fresh.timers) {
+    if (t.ms >= 30000 && t.fn) t.fn();
+  }
+  await settle();
+  const why = dump(allByClass(back, "m-local")[0] || {}).replace(/\s+/g, " ");
+  for (const word of ["эха", "транскрипт", "доставка не подтверждена"]) {
+    if (why.includes(word)) {
+      fail("на пузыре наша механика вместо дела человека: " + why.slice(0, 200));
+    }
+  }
+  if (!why.includes("дошло ли") || !why.includes("не повторил")) {
+    fail("причина у пузыря не сказана словами человека: " + why.slice(0, 200));
   }
 }
 

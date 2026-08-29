@@ -220,10 +220,16 @@ func loginPane(name string) (string, error) {
 // loginDrop снимает сессию входа и забывает её состояние. Сессия одноразовая:
 // после успеха, отказа и забвения по сроку ей стоять нечего.
 func (s *server) loginDrop(run *loginRun, why string) {
-	if why != "" {
-		s.logf("сессия входа %s снята: %s", run.Tmux, why)
+	// Снимается только своё. Имя login-N могло уйти чужой сессии, пока наша
+	// умирала, и снятие по одному имени убило бы соседа.
+	if s.loginOwns(run.Tmux) {
+		if why != "" {
+			s.logf("сессия входа %s снята: %s", run.Tmux, why)
+		}
+		runProc("tmux", "kill-session", "-t", "="+run.Tmux)
+	} else if why != "" {
+		s.logf("сессия входа %s забыта без снятия, имя занято не нами: %s", run.Tmux, why)
 	}
-	runProc("tmux", "kill-session", "-t", "="+run.Tmux)
 	s.mu.Lock()
 	if s.loginRun == run {
 		s.loginRun = nil
@@ -559,6 +565,21 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 	if run == nil || run.URL == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "вход ещё не поднят: сперва нажмите кнопку входа на плашке разлогина"})
+		return
+	}
+	// Метка сессии проверяется перед самой подачей, а не только при узнавании.
+	// Имя login-N держится в памяти с подъёма, и за это время сессия могла
+	// умереть, а имя достаться соседу. Код авторизации одноразовый ключ от
+	// учётной записи, и нажатия в чужую панель ему дорога в один конец.
+	if !s.loginOwns(run.Tmux) {
+		s.mu.Lock()
+		if s.loginRun == run {
+			s.loginRun = nil
+		}
+		s.mu.Unlock()
+		s.logf("код входа не подан: имя %s занято сессией не нашего подъёма", run.Tmux)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("сессия входа %s сменилась под своим именем: поднимите вход заново", run.Tmux)})
 		return
 	}
 	// Попытка кода это признак жизни: даже неверный код значит, что человек

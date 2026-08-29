@@ -797,3 +797,41 @@ func TestClientLoginStrangerNotAdopted(t *testing.T) {
 		t.Fatalf("своя сессия входа снята сиротой: %s", killed)
 	}
 }
+
+// Код авторизации не подаётся в сессию, занявшую имя после нашей. Имя login-N
+// держится в памяти с подъёма, и подача шла по нему без единой проверки: умри
+// наша сессия, имя достанется соседу, и одноразовый ключ от учётной записи
+// уедет нажатиями в чужую панель.
+func TestClientLoginCodeRefusedToStranger(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, `"tmux":"login-1"`) {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("send-keys")
+	// Имя осталось, метка ушла вместе с нашей сессией: под login-1 теперь
+	// стоит сосед.
+	if err := os.Remove(filepath.Join(d, "env-login-1")); err != nil {
+		t.Fatal(err)
+	}
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"GOOD"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("код подан в чужую сессию: %d, %s", resp.StatusCode, text)
+	}
+	if got := sent("send-keys"); got != 0 {
+		t.Fatalf("нажатия ушли в чужую панель: send-keys %d", got)
+	}
+	killed, _ := os.ReadFile(filepath.Join(d, "killed"))
+	if strings.Contains(string(killed), "login-1") {
+		t.Fatalf("снята чужая сессия под нашим именем: %s", killed)
+	}
+	// Плашка после отказа поднимает вход заново, а не упирается в конфликт.
+	resp, text = loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
+		t.Fatalf("после отказа вход не поднялся заново: %d, %s", resp.StatusCode, text)
+	}
+}

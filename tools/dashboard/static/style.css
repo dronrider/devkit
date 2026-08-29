@@ -1726,8 +1726,17 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    куски. Прежние отступы приезжали от чужого правила и от полей пузыря */
 .frow .trow2{margin:2px 0}
 .frow .msg{margin-top:6px;gap:3px}
+/* Текст записи ленты начинается на одном отступе у всех видов. Пузырь задаёт
+   его своими полями и рамкой, а прочим видам он дан явно: без этого размышление
+   и ходы инструментов начинались левее пузыря и тянулись шире, и человек видел
+   плавающий край («все блоки чата должны быть одинаковой ширины и одинаково
+   выровнены»). Меняется только горизонталь: высоту ленты поля не трогают. */
+.frow .foldh,.frow .foldb{padding-left:16px;padding-right:16px}
+.frow .tline{padding-left:17px;padding-right:17px}
+.frow .trow2>.thline{padding-left:17px;padding-right:17px}
+.frow .think{padding-left:17px;padding-right:17px}
 .frow .think{margin:2px 0;font:400 12px/1.35 var(--sans)}
-.frow .svcline{margin:2px 0;padding:0 0 0 9px;font:400 12px/1.35 var(--sans)}
+.frow .svcline{margin:2px 0;padding:0 17px 0 15px;font:400 12px/1.35 var(--sans)}
 .frow .svc.fold{margin:3px 0}
 .frow .tbox{margin-top:3px}
 .frow .tsaid{margin:2px 0 3px}

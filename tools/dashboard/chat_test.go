@@ -2685,6 +2685,25 @@ func TestStaticChatLift(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Выравнивание записей ленты: у текста всех видов один левый край и одна
+// правая граница. Пользователь на снимке: «позиция блоков сообщений в чате
+// слева или отступ плавает, все блоки чата должны быть одинаковой ширины и
+// одинаково выровнены». Виды в наборе сняты с живой ленты разговора, а не
+// выдуманы (стенд testdata/poc_feedfit.mjs, набор testdata/feed_kinds.json).
+// Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticFeedKindsAligned(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд выравнивания ленты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_feedfit.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("выравнивание записей ленты: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Пересказ съеденного начала разговора в ленте: свёрнутый блок со своим
 // заголовком, разворотом и копированием, а не пузырь человека. Живой случай
 // из чата «Выполнение XR-279»: харнес кладёт пересказ записью роли user, и

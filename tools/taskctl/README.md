@@ -94,7 +94,8 @@ dep rm <ID> <DEP-ID>                        снять зависимость
 dep list [ID] [--json]                      кто после кого; без ID вся доска
 sort
 lint
-init --prefix XR [--name "..."]             скелет доски в корне репозитория
+init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
+                                            с --here в названной директории
 catchup [--hook]                            догнать боковое дерево в detached
                                             HEAD до origin/main, отказы с
                                             причиной; --hook это режим

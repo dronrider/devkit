@@ -1423,8 +1423,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* свои реплики, ещё не вернувшиеся из транскрипта: пузырь встаёт сразу по
    нажатию, а состояние видно подписью и прозрачностью (замечание пятого круга) */
 .mlocal{margin-top:0}
-.m-local.m-wait{opacity:0.62}
-.m-local.m-sent{opacity:0.8}
+/* Своя реплика до подтверждения бледнее ленты, но остаётся репликой: на 0.62
+   она читалась тенью под просьбой написать первую реплику, и человек считал её
+   пропавшей. Разница с доставленной остаётся, только мельче */
+.m-local.m-wait{opacity:0.8}
+.m-local.m-sent{opacity:0.92}
 .m-local.m-bad .bb,.m-local.m-held .bb{border-color:color-mix(in oklab,var(--block) 55%,transparent)}
 .m-local.m-bad .mm,.m-local.m-held .mm{color:var(--block)}
 .m-local .linkish{margin-left:8px;font-size:11px}

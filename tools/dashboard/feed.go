@@ -128,11 +128,14 @@ func forgetDigests() {
 	txs.Unlock()
 }
 
-// hasKey говорит, попала ли названная запись в собранное окно ленты.
-func hasKey(items []reply, key string) bool {
-	for _, it := range items {
+// keyRoom говорит, стоит ли курсор страницы истории в окне достаточно глубоко,
+// чтобы страница набралась целиком. Одного попадания в окно мало: курсор,
+// вставший первой записью окна, отдаёт пустую страницу, и лента упиралась в неё
+// на второй ходке назад, не дойдя до начала разговора.
+func keyRoom(items []reply, key string, n int) bool {
+	for i, it := range items {
 		if it.Key == key {
-			return true
+			return i >= n
 		}
 	}
 	return false

@@ -167,6 +167,40 @@ func saidKeys(sid, task string, bound string) []string {
 	return keys
 }
 
+// saidCut оставляет от журнала разговора только то, что попадает в открытое
+// окно ленты. Лента собирается хвостом файла, а журнал лежит целиком, и всё,
+// что старше окна, слияние сваливало одной кучей перед первой записью окна:
+// человек, листавший историю вверх, видел свои реплики за неделю подряд, а не
+// разговор («сгруппировал все сообщения, и теперь мои я вижу одной пачкой»).
+// Записи старше окна принадлежат страницам глубже и приезжают вместе с ними.
+func saidCut(said []reply, from time.Time) []reply {
+	if from.IsZero() || len(said) == 0 {
+		return said
+	}
+	out := make([]reply, 0, len(said))
+	for _, it := range said {
+		t, err := time.Parse(time.RFC3339, it.Time)
+		if err != nil || !t.Before(from) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// feedFrom это нижняя граница окна ленты: время самой ранней записи с меткой.
+// У ленты, собранной целиком, границы нет вовсе, и журнал вплетается весь.
+func feedFrom(items []reply, whole bool) time.Time {
+	if whole {
+		return time.Time{}
+	}
+	for _, it := range items {
+		if t, err := time.Parse(time.RFC3339, it.Time); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 // saidMerge вплетает журнал в ленту по времени. Эхо из транскрипта старше
 // записи журнала: одну и ту же реплику видно один раз, и показывает её тот
 // источник, который агент правда прочитал.

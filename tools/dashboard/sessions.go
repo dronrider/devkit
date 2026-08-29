@@ -1908,10 +1908,14 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	for {
 		feed = sessionFeedOf(path, want)
 		items = feed.items
+		// Журнал разговора режется по тому же окну, каким собран транскрипт:
+		// целиком он старше окна и вставал бы одной кучей перед его первой
+		// записью (saidCut).
+		from := feedFrom(items, feed.whole)
 		for _, key := range keys {
-			items = saidMerge(items, saidLoad(s.cfg.Home, key))
+			items = saidMerge(items, saidCut(saidLoad(s.cfg.Home, key), from))
 		}
-		if feed.whole || !strings.Contains(before, ":") || hasKey(items, before) || want >= feedMost {
+		if feed.whole || !strings.Contains(before, ":") || keyRoom(items, before, n) || want >= feedMost {
 			break
 		}
 		want *= feedGrow
@@ -2028,8 +2032,9 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 	{
 		feed := sessionFeedOf(path, repliesDefault+feedSlack)
 		items := feed.items
+		from := feedFrom(items, feed.whole)
 		for _, key := range keys {
-			items = saidMerge(items, saidLoad(s.cfg.Home, key))
+			items = saidMerge(items, saidCut(saidLoad(s.cfg.Home, key), from))
 		}
 		seq = len(items)
 		for i, t := range saidTails {

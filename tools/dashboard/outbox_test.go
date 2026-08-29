@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -255,5 +256,91 @@ func TestStreamSaidKeysMatchFeed(t *testing.T) {
 	}
 	if !strings.Contains(seen, `"key":"`+want+`"`) {
 		t.Fatalf("поток назвал ту же запись другим ключом: %q (ждали %s)", seen, want)
+	}
+}
+
+// Лента истории идёт разговором: реплика человека из журнала стоит между теми
+// записями транскрипта, между которыми она сказана. Лента собирается хвостом
+// файла, а журнал разговора лежит целиком, и слияние сваливало всё, что старше
+// окна, одной кучей перед первой записью окна. Человек, листавший историю
+// вверх, получал целую страницу своих реплик подряд, за неделю разом:
+// «сгруппировал все сообщения, и теперь мои я вижу одной пачкой все свои
+// сообщения, полистав вверх чат».
+func TestFeedHistoryKeepsSaidInOrder(t *testing.T) {
+	e, c := chatEnv(t)
+	forgetChunks()
+	base := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	at := func(i int) string { return base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339) }
+	// Записи толстые нарочно: окно ленты набирается кусками файла, и на тонком
+	// транскрипте окно накрыло бы разговор целиком, а стенду нужен хвост.
+	pad := strings.Repeat("длинный вывод ", 400)
+	var main strings.Builder
+	for i := 0; i < 400; i++ {
+		main.WriteString(fmt.Sprintf(
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ход %d %s"}]},"timestamp":%q}`,
+			i, pad, at(i)) + "\n")
+	}
+	writeSession(t, e.home, e.proj, "", "aaaa-2222", main.String(), time.Now())
+	// Реплики человека раскиданы по всему разговору, по одной на каждый
+	// десяток ходов, и эха у них в транскрипте нет.
+	for i := 5; i < 400; i += 10 {
+		if err := e.s.saidPut(saidSessionKey("aaaa-2222"),
+			saidRec{Time: at(i), Text: fmt.Sprintf("сказано %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := func(query string) []reply {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/aaaa-2222?"+query, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("лента %s: %d", query, resp.StatusCode)
+		}
+		var got struct {
+			Items []reply `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Items
+	}
+	// Лента собирается так же, как её собирает панель: хвост, дальше страницы
+	// истории приписками сверху по ключу первой показанной записи.
+	talk := page("n=20")
+	if len(talk) == 0 {
+		t.Fatal("хвост ленты пуст")
+	}
+	for i := 0; i < 30 && talk[0].Key != ""; i++ {
+		older := page("n=20&before=" + talk[0].Key)
+		if len(older) == 0 {
+			break
+		}
+		talk = append(append([]reply{}, older...), talk...)
+	}
+	// Каждая реплика человека стоит между своими соседями по времени: слева
+	// ход того же времени, справа следующий.
+	seen := 0
+	for i, it := range talk {
+		if it.Role != "user" {
+			continue
+		}
+		seen++
+		var idx int
+		if _, err := fmt.Sscanf(it.Text, "сказано %d", &idx); err != nil {
+			t.Fatalf("чужая реплика в ленте: %q", it.Text)
+		}
+		before, after := "", ""
+		if i > 0 {
+			before = talk[i-1].Text
+		}
+		if i+1 < len(talk) {
+			after = talk[i+1].Text
+		}
+		if !strings.HasPrefix(before, fmt.Sprintf("ход %d ", idx)) ||
+			!strings.HasPrefix(after, fmt.Sprintf("ход %d ", idx+1)) {
+			t.Fatalf("реплика %q встала не на своё место: перед ней %.12q, за ней %.12q",
+				it.Text, before, after)
+		}
+	}
+	if seen < 10 {
+		t.Fatalf("реплик человека в ленте %d, история их не отдала", seen)
 	}
 }

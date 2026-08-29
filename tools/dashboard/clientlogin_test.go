@@ -99,8 +99,20 @@ ls)
 new-session)
   if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi
   printf '%s|1|%s\n' "$4" "$(date +%s)" >"$D/sess";;
-kill-session) rm -f "$D/stage" "$D/sess";;
+set-environment) printf '%s=%s\n' "$4" "$5" >"$D/env-${3#=}";;
+show-environment)
+  [ -f "$D/env-${3#=}" ] || exit 1
+  grep "^$4=" "$D/env-${3#=}" || exit 1;;
+kill-session)
+  echo "${3#=}" >>"$D/killed"
+  rm -f "$D/stage" "$D/sess" "$D/env-${3#=}";;
 capture-pane)
+  for a in "$@"; do
+    [ "$prev" = "-t" ] && tgt="$a"
+    prev="$a"
+  done
+  nm=${tgt#=}; nm=${nm%:}
+  if [ -f "$D/pane-for-$nm" ]; then cat "$D/pane-for-$nm"; exit 0; fi
   [ -f "$D/stage" ] || exit 3
   st=$(cat "$D/stage")
   if [ "$st" = "boot" ]; then
@@ -685,5 +697,103 @@ func TestClientLoginOrphanSweptAfterRestart(t *testing.T) {
 	e.s.loginSweep()
 	if got := sent("kill-session"); got != 1 {
 		t.Fatalf("сирота входа не снят после перезапуска: kill-session %d", got)
+	}
+}
+
+// Склейка обрывков разбирается по форме панели. Проверка собранного адреса
+// (loginLinkCheck) чужую строку не ловит: приклеенный кусок даёт синтаксически
+// годный адрес, просто не тот, и человек узнал бы о подмене, только не сумев
+// открыть ссылку. Опора тут на колонку разрыва и на пустую строку, которой
+// клиент отбивает конец ссылки.
+func TestLoginLinkOfGlue(t *testing.T) {
+	const torn = 40
+	head := "https://claude.com/x?a=" + strings.Repeat("1", torn-len("https://claude.com/x?a="))
+	body := strings.Repeat("2", torn)
+	tail := strings.Repeat("3", 20)
+	alien := strings.Repeat("9", torn)
+	prompt := "Paste code here if prompted >"
+	cases := []struct {
+		name string
+		pane []string
+		want string
+	}{
+		{"живой вид панели: обрывки по колонке и короткий хвост за ними",
+			[]string{"Use the url below:", "", head, body, tail, "", prompt},
+			head + body + tail},
+		{"соседняя ссылка не приклеивается",
+			[]string{head, "https://console.anthropic.com/oauth?b=2", "", prompt},
+			head},
+		{"строка-хэш без пустой строки за ней не приклеивается",
+			[]string{head, tail, prompt, "", "> "},
+			head},
+		{"чужая строка той же ширины без пустой строки за ней рвёт склейку",
+			[]string{head, body, alien, prompt, "", "> "},
+			""},
+		{"нерваная ссылка отдаётся, даже когда следом сразу проза",
+			[]string{head, prompt, "", "> "},
+			head},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := loginLinkOf(strings.Join(c.pane, "\n")); got != c.want {
+				t.Fatalf("разбор панели дал %q, жду %q", got, c.want)
+			}
+		})
+	}
+}
+
+// Соседняя сессия не выдаётся за свой вход. Узнавание после перезапуска шло по
+// имени login-N, возрасту и любому адресу в панели, и сессия помоложе с
+// посторонней ссылкой забирала себе учёт, а настоящий вход снимался сиротой.
+// Цена ошибки не в путанице: в узнанную сессию уходит код авторизации
+// нажатиями, то есть одноразовый ключ от учётной записи уехал бы чужому.
+func TestClientLoginStrangerNotAdopted(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, `"tmux":"login-1"`) {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("new-session")
+	// Рядом встала посторонняя сессия того же вида: имя login-N, панель со
+	// ссылкой, рождение позже нашего. Метки дашборда у неё нет.
+	born, err := os.ReadFile(filepath.Join(d, "sess"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := string(born) + fmt.Sprintf("login-2|1|%d\n", time.Now().Add(time.Minute).Unix())
+	if err := os.WriteFile(filepath.Join(d, "sess"), []byte(list), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alien := strings.Join([]string{"Смотри сюда:", "",
+		"https://example.invalid/oauth/authorize?client_id=stranger", "", "> "}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-for-login-2"), []byte(alien), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Перезапуск: память процесса пуста, машина не тронута.
+	e.s.mu.Lock()
+	e.s.loginRun = nil
+	e.s.mu.Unlock()
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход после перезапуска не отвечен: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"tmux":"login-1"`) {
+		t.Fatalf("узнана посторонняя сессия вместо своей: %s", text)
+	}
+	if strings.Contains(text, "example.invalid") {
+		t.Fatalf("отдана посторонняя ссылка: %s", text)
+	}
+	if got := sent("new-session"); got != 0 {
+		t.Fatalf("после перезапуска поднята вторая сессия входа: new-session %d", got)
+	}
+	killed, _ := os.ReadFile(filepath.Join(d, "killed"))
+	if strings.Contains(string(killed), "login-2") {
+		t.Fatalf("снята посторонняя сессия, до которой дашборду дела нет: %s", killed)
+	}
+	if strings.Contains(string(killed), "login-1") {
+		t.Fatalf("своя сессия входа снята сиротой: %s", killed)
 	}
 }

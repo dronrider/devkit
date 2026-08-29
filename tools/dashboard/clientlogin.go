@@ -72,6 +72,17 @@ var loginURLRunes = regexp.MustCompile(`^[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+$`
 // найденной.
 var loginSchemes = []string{"https://", "http://"}
 
+// loginSibling отвечает, начинает ли строка соседнюю ссылку, а не продолжает
+// найденную.
+func loginSibling(line string) bool {
+	for _, sch := range loginSchemes {
+		if strings.HasPrefix(line, sch) {
+			return true
+		}
+	}
+	return false
+}
+
 // loginLinkMax ограничивает сборку обрывков сверху: живая ссылка входа это
 // сотни знаков, а разросшаяся за тысячи значит склейку чужих строк.
 const loginLinkMax = 2048
@@ -79,9 +90,13 @@ const loginLinkMax = 2048
 // loginLinkOf достаёт ссылку авторизации из снимка панели и собирает её из
 // обрывков по ширине пейна. Родство обрывка проверяется, а не предполагается
 // по одним URL-знакам: клиент рвёт ссылку в одной и той же колонке пейна, и
-// обрывок узнаётся по ней и по границам, а не похожестью. Границы две: чужая
-// схема в начале строки и строка короче колонки разрыва, за которой стоит
-// непустой контент (закончившуюся ссылку клиент отбивает пустой строкой).
+// обрывок узнаётся по ней, а не похожестью. Границ три. Чужая схема в начале
+// строки. Строка шире колонки разрыва. И конец: закончившуюся ссылку клиент
+// отбивает пустой строкой, поэтому склейка любой ширины, за которой пустой
+// строки не видно, не отдаётся вовсе. Оборванная склейка молчит, а не отдаёт
+// первый кусок: неполная ссылка на вид такая же живая, как целая, и человек
+// узнал бы о подмене, только не сумев открыть её. Молчание тут дешевле,
+// поллинг подъёма спросит панель снова через полсекунды.
 // Пустая строка значит, что ссылки в панели нет.
 func loginLinkOf(pane string) string {
 	lines := strings.Split(pane, "\n")
@@ -92,30 +107,34 @@ func loginLinkOf(pane string) string {
 		}
 		url := m[1]
 		torn := len(m[1])
+		glued, ended := false, false
 		for j := i + 1; j < len(lines); j++ {
 			piece := strings.TrimSpace(lines[j])
-			if piece == "" || !loginURLRunes.MatchString(piece) {
+			if piece == "" {
+				ended = true
 				break
 			}
-			sibling := false
-			for _, sch := range loginSchemes {
-				sibling = sibling || strings.HasPrefix(piece, sch)
-			}
-			if sibling || len(piece) > torn || len(url)+len(piece) > loginLinkMax {
+			if !loginURLRunes.MatchString(piece) || loginSibling(piece) ||
+				len(piece) > torn || len(url)+len(piece) > loginLinkMax {
 				break
 			}
 			if len(piece) < torn {
-				// Хвост короче колонки разрыва последний, и за ним клиент
-				// ставит пустую строку; контент следом значит чужую строку.
-				// Пустой элемент за последним переводом строки не считается:
-				// у хвоста в конце панели должна быть своя пустая строка.
-				if j+1 >= len(lines)-1 || strings.TrimSpace(lines[j+1]) != "" {
-					break
+				// Обрывок короче колонки разрыва последний. Обрывком он
+				// считается, только когда за ним стоит пустая строка; иначе
+				// это чужая строка, а ссылка кончилась перед ней.
+				if j+1 < len(lines) && strings.TrimSpace(lines[j+1]) == "" {
+					url += piece
+					glued, ended = true, true
 				}
-				url += piece
 				break
 			}
-			url += piece
+			url, glued = url+piece, true
+		}
+		if glued && !ended {
+			// Обрывки склеились, а конца ссылки в панели не видно: либо она
+			// ещё дорисовывается, либо следом идёт чужая строка той же
+			// ширины. Отличить их видом нельзя, и склейка не отдаётся.
+			return ""
 		}
 		return loginLinkCheck(url)
 	}
@@ -236,14 +255,49 @@ func (s *server) loginSweep() {
 // разговоров, и принадлежат только входу.
 var loginNameRe = regexp.MustCompile(`^login-[0-9]+$`)
 
+// loginOwnerVar это переменная окружения tmux-сессии, которой дашборд метит
+// поднятый им вход. Имя login-N и вид панели о происхождении сессии не говорят
+// ничего: имя свободно берёт кто угодно, а адрес в панели бывает любой. Метка
+// же ставится тем же вызовом, что поднимает сессию, и живёт ровно столько,
+// сколько сессия. По ней узнавание после перезапуска отличает свой вход от
+// соседнего, и это не косметика: в узнанную сессию уходит код авторизации
+// нажатиями, а он одноразовый ключ от учётной записи.
+const loginOwnerVar = "DEVKIT_LOGIN_OWNER"
+
+// loginMark это метка владельца. Она обязана пережить перезапуск службы и
+// отличать один экземпляр дашборда от другого на той же машине: путь конфига
+// даёт и то, и другое, а два экземпляра (боевой и POC) на одном tmux-сервере
+// живут рядом каждый день.
+func (s *server) loginMark() string {
+	return s.cfg.Path
+}
+
+// loginStamp метит сессию входа сразу после подъёма.
+func (s *server) loginStamp(sess string) error {
+	_, err := runProc("tmux", "set-environment", "-t", "="+sess,
+		loginOwnerVar, s.loginMark())
+	return err
+}
+
+// loginOwns отвечает, наша ли это сессия входа. Чужая и безымянная равно не
+// наши: в первую нельзя слать код, вторую нельзя снимать.
+func (s *server) loginOwns(sess string) bool {
+	out, err := runProc("tmux", "show-environment", "-t", "="+sess, loginOwnerVar)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == loginOwnerVar+"="+s.loginMark()
+}
+
 // loginRecover узнаёт сессии входа, оставшиеся без учёта. Состояние подъёма
 // живёт в памяти процесса и умирает перезапуском службы, а это штатный шаг
-// выката, тогда как tmux-сессия входа остаётся на машине. Сессия, чья панель
-// всё ещё несёт ссылку и которая моложе срока, поднимается в память заново,
-// срок считается от её рождения; прочие login-N снимаются как сироты: вставшие
-// на полпути никто не доведёт, а человеку проще нажать «Войти» снова. Вызов
-// идёт из уборки и перед подъёмом нового входа: вторая сессия не заводится,
-// пока жива первая.
+// выката, тогда как tmux-сессия входа остаётся на машине. Разбирается только
+// помеченное этим экземпляром: чужой login-N не усыновляется и не снимается,
+// его дело чужое. Своя сессия, которая моложе срока и несёт в панели ссылку,
+// поднимается в память заново, срок считается от её рождения. Свои прочие
+// снимаются как сироты: вставшие на полпути никто не доведёт, а человеку проще
+// нажать «Войти» снова. Вызов идёт из уборки и перед подъёмом нового входа:
+// вторая сессия не заводится, пока жива первая.
 func (s *server) loginRecover() {
 	if m := tmuxMissingCheck(); m != "" {
 		return
@@ -253,7 +307,7 @@ func (s *server) loginRecover() {
 		return sessions[i].Created > sessions[j].Created
 	})
 	for _, sess := range sessions {
-		if !loginNameRe.MatchString(sess.Name) {
+		if !loginNameRe.MatchString(sess.Name) || !s.loginOwns(sess.Name) {
 			continue
 		}
 		born := time.Unix(sess.Created, 0)
@@ -357,6 +411,15 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
 		s.launchEnv("", sess)+" "+defaultClient); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию входа %s: %s", sess, procErr(err))
+		s.logf("подъём входа клиента в %s не удался: %s", found.Name, text)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
+		return
+	}
+	if err := s.loginStamp(sess); err != nil {
+		// Без метки сессия ничья: после перезапуска её не узнать и не снять,
+		// а код авторизации ушёл бы в сессию, о которой известно одно имя.
+		runProc("tmux", "kill-session", "-t", "="+sess)
+		text := fmt.Sprintf("сессия входа %s не пометилась владельцем: %s", sess, procErr(err))
 		s.logf("подъём входа клиента в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return

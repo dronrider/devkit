@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,7 +58,8 @@ func loginPaneOf(stage string) string {
 // fakeTmuxLogin ставит скрипт tmux с панелью входа и возвращает каталог его
 // памяти. Стадии: repl (REPL без входа), ask (виджет выбора способа), url
 // (ссылка и поле кода), ok (вход сделан), again (код не принят); пропажа файла
-// стадии это смерть сессии.
+// стадии это смерть сессии. Хвостовая черта в строке фикстуры значит перенос
+// строки пейна: capture-pane с -J склеивает такие строки, как живой tmux.
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
@@ -75,7 +77,11 @@ new-session) echo repl >"$D/stage";;
 kill-session) rm -f "$D/stage";;
 capture-pane)
   [ -f "$D/stage" ] || exit 3
-  cat "$D/pane-$(cat "$D/stage")"
+  pane="$D/pane-$(cat "$D/stage")"
+  case " $* " in
+  *" -J "*) awk '{ if (sub(/\\$/,"")) printf "%s", $0; else print }' "$pane";;
+  *) awk '{ sub(/\\$/,""); print }' "$pane";;
+  esac
   ;;
 send-keys)
   if [ "$4" = "-l" ]; then printf '%s' "$5" >"$D/last"
@@ -109,8 +115,10 @@ func fastLoginWait(t *testing.T, link time.Duration) {
 	was := []time.Duration{loginPollEvery, loginSettleWait, loginLinkWait, loginCodeWait}
 	loginPollEvery, loginSettleWait = 3*time.Millisecond, 3*time.Millisecond
 	loginLinkWait, loginCodeWait = link, 2*time.Second
-	t.Cleanup(func() { loginPollEvery, loginSettleWait, loginLinkWait, loginCodeWait =
-		was[0], was[1], was[2], was[3] })
+	t.Cleanup(func() {
+		loginPollEvery, loginSettleWait, loginLinkWait, loginCodeWait =
+			was[0], was[1], was[2], was[3]
+	})
 }
 
 func loginPost(t *testing.T, c *http.Client, url, path, body string) (*http.Response, string) {
@@ -296,5 +304,69 @@ func TestClientLoginEmptyCode(t *testing.T) {
 	}
 	if got := sent("send-keys"); got != 0 {
 		t.Fatalf("пустой код подался нажатиями: send-keys ещё %d", got)
+	}
+}
+
+// Ссылка, разорванная переносом по ширине пейна, отдаётся целой. Фикстура
+// несёт ссылку кусками без пробела на стыке, как её режет панель в 80 колонок:
+// усечённый обрывок с телефона не открывается, а разбор молчит о подмене.
+func TestClientLoginWrappedLinkJoins(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	full := "https://claude.ai/oauth/authorize?client_id=9dWzLkXA3287fGhQ2vNbT4cR1sY6uBe5HnJmZp" +
+		"&redirect_uri=https%3A%2F%2Fclaude.ai%2Foauth%2Fcallback&state=abc123def456"
+	wrapped := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		"https://claude.ai/oauth/authorize?client_id=9dWzLkXA3\\",
+		"287fGhQ2vNbT4cR1sY6uBe5HnJmZp&redirect_uri=https%3A%2F%\\",
+		"2Fclaude.ai%2Foauth%2Fcallback&state=abc123def456", "",
+		"Paste the authorization code below:", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(wrapped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём входа: %d, %s", resp.StatusCode, text)
+	}
+	var got struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", text)
+	}
+	if got.URL != full {
+		t.Fatalf("ссылка отдалась не целой: %s", got.URL)
+	}
+}
+
+// Просроченный вход снимается фоновым кругом сам, без нового нажатия «Войти»:
+// человек открыл ссылку и не вернулся, и сессия с живым клиентом не стоит
+// бессрочно.
+func TestClientLoginSweepDropsExpired(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("kill-session")
+	base := e.s.now()
+	e.s.now = func() time.Time { return base.Add(loginRunTTL + time.Minute) }
+	e.s.loginSweep()
+	if got := sent("kill-session"); got != 1 {
+		t.Fatalf("просроченная сессия входа не снята уборкой: kill-session %d", got)
+	}
+	// Состояние забыто: следующий вход поднимает свежую сессию, а не конфликт.
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
+		t.Fatalf("после уборки вход не поднялся заново: %d, %s", resp.StatusCode, text)
+	}
+	if got := sent("new-session"); got != 1 {
+		t.Fatalf("после уборки не поднята свежая сессия входа: new-session %d", got)
 	}
 }

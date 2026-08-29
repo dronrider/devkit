@@ -31,6 +31,10 @@ type loginRun struct {
 // код минуты, а не часы, и забытая сессия не должна мешать следующей попытке.
 const loginRunTTL = 10 * time.Minute
 
+// loginSweepEvery это шаг фоновой уборки входа. Проверка дешёвая: пока срок
+// не истёк, она смотрит только память процесса, до tmux дело не доходит.
+const loginSweepEvery = time.Minute
+
 // Ожидания входа. Поллинг панели стоит подпроцесса, поэтому шаг редкий, а в
 // тестах стенд подменяет его на миллисекунды.
 var (
@@ -41,8 +45,9 @@ var (
 )
 
 // loginLinkRe узнаёт ссылку авторизации в панели входа. Клиент печатает её
-// отдельной строкой на всю ширину, и первой такой строкой в одноразовой
-// сессии бывает именно она: панели больше нечего показывать.
+// одной строкой, какой бы длинной та ни вышла (переносы пейна клеит loginPane),
+// и первой такой строкой в одноразовой сессии бывает именно она: панели больше
+// нечего показывать.
 var loginLinkRe = regexp.MustCompile(`(?m)^[[:space:]]*(https://[^[:space:]]+)[[:space:]]*$`)
 
 // loginLinkOf достаёт ссылку авторизации из снимка панели. Пустая строка
@@ -96,9 +101,12 @@ func loginSessName(alive func(string) bool) string {
 	}
 }
 
-// loginPane снимает панель сессии входа. Ошибка значит, что сессии уже нет.
+// loginPane снимает панель сессии входа клеем переносов. Ссылка авторизации
+// длиннее пейна, tmux рвёт её по ширине без пробела на стыке, и без -J разбор
+// забрал бы первый обрывок как готовую ссылку. Ошибка значит, что сессии уже
+// нет.
 func loginPane(name string) (string, error) {
-	out, err := runProc("tmux", "capture-pane", "-p", "-t", "="+name+":")
+	out, err := runProc("tmux", "capture-pane", "-J", "-p", "-t", "="+name+":")
 	if err != nil {
 		return "", err
 	}
@@ -117,6 +125,34 @@ func (s *server) loginDrop(run *loginRun, why string) {
 		s.loginRun = nil
 	}
 	s.mu.Unlock()
+}
+
+// loginSweep снимает просроченную сессию входа. Срок раньше проверялся только
+// лениво, при следующем нажатии «Войти», и человек, открывший ссылку и не
+// вернувшийся, оставлял tmux с живым клиентом стоять бессрочно.
+func (s *server) loginSweep() {
+	s.mu.Lock()
+	run := s.loginRun
+	s.mu.Unlock()
+	if run == nil || s.now().Sub(run.Started) < loginRunTTL {
+		return
+	}
+	s.loginDrop(run, "срок истёк: к ссылке не вернулись")
+}
+
+// loginKeeper снимает просроченные сессии входа по кругу, пока жив демон.
+// Вызов служебный: журнальная строка одна на снятие, ленту он не наполняет.
+func (s *server) loginKeeper(stop <-chan struct{}) {
+	t := time.NewTicker(loginSweepEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			s.loginSweep()
+		}
+	}
 }
 
 // handleClientLogin поднимает вход клиента и отдаёт ссылку авторизации.

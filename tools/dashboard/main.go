@@ -183,9 +183,12 @@ func cmdServe(home, staticDir string) error {
 	httpSrv := httpServer(srv.handler())
 	// Снимок квоты держит свежим сам демон: без этого он обновлялся только
 	// стартом сессии, и на экране почти всегда стоял часовой давности.
-	quotaStop := make(chan struct{})
-	defer close(quotaStop)
-	go srv.quotaKeeper(quotaStop)
+	// Просроченный вход снимается тем же кругом, а не ленивым нажатием
+	// «Войти»: открытая и забытая ссылка иначе держит tmux с живым клиентом.
+	keeperStop := make(chan struct{})
+	defer close(keeperStop)
+	go srv.quotaKeeper(keeperStop)
+	go srv.loginKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

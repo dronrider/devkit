@@ -1596,6 +1596,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    строка хода получала от неё поля, разные на телефоне и на широком экране.
    Отсюда и уезжали кружки: высота первой строки записи ехала за шириной */
 .thline{display:flex;align-items:baseline;gap:8px;min-width:0;margin:0}
+/* Строка заголовка страницы отбита от того, что стоит над ней. В покое коробки
+   поля не видно, и нулевой зазор никого не трогал; в правке коробка проявляется
+   и упирается в соседа сверху (замечание пользователя). Отступ живёт у самой
+   строки, поэтому переход в правку соседей не двигает. */
+.tpage>.thline{margin-top:10px}
 .thline b{flex:none;font:600 12px/1.35 var(--sans);color:var(--tx2)}
 .tabout{flex:1;min-width:0;font:400 12px var(--sans);color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbox{margin-top:5px;border:1px solid var(--line2);border-radius:8px;background:var(--bg2);overflow:hidden}

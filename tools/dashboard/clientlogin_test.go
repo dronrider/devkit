@@ -564,10 +564,39 @@ func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 	}
 }
 
+// Возврат с телефона застаёт вход живым. Срок считался десятью минутами от
+// подъёма, а дорога с ссылкой ведёт на телефон: страница входа, пароль из
+// менеджера, второй фактор из другого приложения. Человек с верным кодом
+// возвращался на одиннадцатой минуте и получал отказ «вход ещё не поднят»,
+// хотя ничего не бросал.
+func TestClientLoginSurvivesMobileOAuth(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	sent("kill-session")
+	// Столько занимает вход на телефоне со вторым фактором.
+	base := e.s.now()
+	e.s.now = func() time.Time { return base.Add(10*time.Minute + 5*time.Second) }
+	e.s.loginSweep()
+	if got := sent("kill-session"); got != 0 {
+		t.Fatalf("уборка сорвала вход, пока человек проходил его на телефоне: kill-session %d", got)
+	}
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"GOOD"}`)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"ok":true`) {
+		t.Fatalf("верный код не принят после входа с телефона: %d, %s", resp.StatusCode, text)
+	}
+}
+
 // Срок входа считается от последнего признака жизни, а не от подъёма.
-// Повторный запрос ссылки это признак жизни: человек вернулся к плашке,
-// провозился с кодом дольше срока от подъёма, и верный код доезжает живому
-// входу, а не снятому за старость.
+// Повторный запрос ссылки это признак жизни: человек вернулся к плашке, взял
+// ссылку заново и провозился дольше срока от подъёма, а верный код доезжает
+// живому входу, а не снятому за старость.
 func TestClientLoginAliveFromLastTouch(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
@@ -578,19 +607,19 @@ func TestClientLoginAliveFromLastTouch(t *testing.T) {
 		t.Fatalf("вход не поднялся: %s", text)
 	}
 	sent("kill-session")
-	// Человек вернулся к плашке на шестой минуте и спросил ссылку снова.
+	// Человек вернулся к плашке под конец срока и спросил ссылку снова.
 	base := e.s.now()
-	e.s.now = func() time.Time { return base.Add(6 * time.Minute) }
+	e.s.now = func() time.Time { return base.Add(loginRunTTL - 4*time.Minute) }
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
 		t.Fatalf("повторный экран входа не получил ссылку: %d, %s", resp.StatusCode, text)
 	}
 	// Дальше он провозился с кодом: срок от подъёма уже вышел, от последнего
 	// признака жизни ещё нет.
-	e.s.now = func() time.Time { return base.Add(15*time.Minute + 30*time.Second) }
+	e.s.now = func() time.Time { return base.Add(loginRunTTL + 2*time.Minute) }
 	e.s.loginSweep()
 	if got := sent("kill-session"); got != 0 {
-		t.Fatalf("уборка сорвала вход, о котором шесть минут назад шла речь: kill-session %d", got)
+		t.Fatalf("уборка сорвала вход, о котором только что шла речь: kill-session %d", got)
 	}
 	resp, text = loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
 		`{"code":"GOOD"}`)

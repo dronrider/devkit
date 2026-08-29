@@ -828,7 +828,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cbyeflow[hidden]{display:none}
 .loginwords{flex:1 1 100%;min-width:0}
 .loginwords.bad{color:var(--block)}
-.loginurl{flex:1 1 100%;min-width:0;word-break:break-all;font-weight:600}
+.loginurl{font-weight:600;word-break:break-word}
+.cbyetalk[hidden]{display:none}
+.msg[hidden]{display:none}
+.cbyetalk .bb{background:color-mix(in oklab,var(--wait) 10%,var(--bg1));border-color:color-mix(in oklab,var(--wait) 30%,transparent)}
+.loginbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.loginrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.loginrow[hidden]{display:none}
 .logincode{flex:1 1 140px;min-width:0;height:28px;padding:0 9px;border-radius:8px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx);font:500 12px var(--mono);outline:none}
 .logincode:focus{border-color:var(--acc)}
 .cbox{background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}

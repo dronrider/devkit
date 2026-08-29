@@ -23,6 +23,8 @@ const bodies = [];
 let loginFails = "";   // слова отказа подъёма входа, пусто значит подъём удался
 let codeFails = "";    // слова отказа кода, пусто значит код принят
 let codeStatus = 409;
+let loginWay = "code";
+let waitLeft = 0;
 
 const { sandbox } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST") {
@@ -33,8 +35,15 @@ const { sandbox } = makeSandbox(app, (path, init) => {
         return { raw: { status: 502, statusText: "Bad Gateway",
           text: JSON.stringify({ error: loginFails }) } };
       }
-      return { tmux: "login-1", url: URL_AUTH,
-        message: "откройте ссылку, войдите и введите код в поле на плашке" };
+      return { tmux: "login-1", url: URL_AUTH, way: loginWay,
+        message: "откройте ссылку и войдите" };
+    }
+    if (path.endsWith("/login/wait")) {
+      if (waitLeft > 0) {
+        waitLeft -= 1;
+        return { waiting: true, message: "вход ещё идёт" };
+      }
+      return { ok: true, message: "вход сделан: свежий токен лёг в связку ключей" };
     }
     if (path.endsWith("/login/code")) {
       if (codeFails) {
@@ -65,19 +74,21 @@ const out = (sid) => ({
 
 const clear = () => { asked.length = 0; bodies.length = 0; };
 const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
-const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
+// Слова исхода живут в своей реплике: разлогин, шаг входа и исход это три
+// разных сообщения чата, и путать их нельзя.
+const wordsOf = (panel) => dump(byClass(panel, "loginsaid"));
 
 // --- до входа: кнопка есть, шаг входа скрыт ---
 {
   clear();
   const panel = sandbox.chatPanel("demo", out("aaaa5770-1111"));
   await settle();
-  const plate = byClass(panel, "cbye");
-  if (!plate || plate.hidden) fail("плашки разлогина нет: " + dump(panel));
+  const plate = byClass(panel, "cbyetalk");
+  if (!plate || plate.hidden) fail("разлогин в чате не сказан: " + dump(panel));
   const enter = deepBtn(panel, "Войти");
-  if (!enter) fail("кнопки входа на плашке нет: " + dump(plate));
+  if (!enter) fail("кнопки входа в реплике нет: " + dump(plate));
   if (!deepBtn(panel, "Перезапустить")) fail("кнопки перезапуска нет: " + dump(plate));
-  const flow = byClass(panel, "cbyeflow");
+  const flow = byClass(panel, "loginstep");
   if (flow && !flow.hidden) fail("шаг входа виден до нажатия кнопки: " + dump(flow));
 }
 
@@ -89,19 +100,29 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (stepOf("/chats/login") < 0) fail("кнопка входа не позвала сервер: " + JSON.stringify(asked));
-  const flow = byClass(panel, "cbyeflow");
+  const flow = byClass(panel, "loginstep");
   if (!flow || flow.hidden) fail("шаг входа не показан после подъёма: " + dump(panel));
   const link = byClass(panel, "loginurl");
   if (!link || String(link.href) !== URL_AUTH) {
     fail("ссылка авторизации не кликабельна или не та: " + dump(flow));
   }
   if (String(link.target) !== "_blank") fail("ссылка не открывается новой вкладкой: " + dump(flow));
-  if (!String(link.textContent).includes("https://claude.ai/")) {
-    fail("ссылка не напечатана словами: " + dump(flow));
+  // Полный адрес живёт в самой ссылке, а на экране стоит короткий текст:
+  // портянка в четыреста знаков занимала весь экран (замечание пользователя).
+  if (String(link.textContent).includes("://")) {
+    fail("адрес напечатан портянкой вместо человеческого текста: " + link.textContent);
+  }
+  if (String(link.textContent).trim().length > 40) {
+    fail("текст ссылки длиннее человеческого: " + link.textContent);
+  }
+  // Вход с другого устройства начинается с переноса адреса, и копировать его
+  // человеку есть чем.
+  if (!deepBtn(flow, "копировать") && !dump(flow).toLowerCase().includes("копи")) {
+    fail("копировать адрес нечем: " + dump(flow));
   }
   const code = byClass(panel, "logincode");
   if (!code) fail("поля кода на шаге входа нет: " + dump(flow));
-  if (!deepBtn(panel, "Отправить код")) fail("кнопки отправки кода нет: " + dump(flow));
+  if (!deepBtn(panel, "Подтвердить")) fail("кнопки отправки кода нет: " + dump(flow));
 }
 
 // --- код уезжает своим ходом и не попадает ни в ленту, ни в поле реплики ---
@@ -113,23 +134,30 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   await settle();
   const code = byClass(panel, "logincode");
   code.value = "SECRET1";
-  deepBtn(panel, "Отправить код").handlers.click({ stopPropagation: () => {} });
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
   await settle();
   const step = stepOf("/login/code");
   if (step < 0) fail("код не отправлен на сервер: " + JSON.stringify(asked));
   if (!bodies[step] || bodies[step].code !== "SECRET1") {
     fail("код уехал не телом кода: " + JSON.stringify(bodies[step]));
   }
-  const say = stepOf("/say");
-  if (say >= 0) fail("код поехал репликой разговора: " + JSON.stringify(asked));
+  // Подъём разговора после входа идёт репликой, и кода в ней быть не должно:
+  // журнал разговора одноразовый ключ хранить не может.
+  for (const body of bodies) {
+    if (body && String(body.text || "").includes("SECRET1")) {
+      fail("код уехал репликой разговора: " + JSON.stringify(body));
+    }
+  }
   if (code.value !== "") fail("код остался в поле после отправки: " + code.value);
   if (dump(panel).includes("SECRET1")) fail("код остался на экране панели: " + dump(panel));
   const feed = byClass(panel, "chatfeed");
   if (feed && dump(feed).includes("SECRET1")) fail("код попал в ленту разговора: " + dump(feed));
   const words = wordsOf(panel);
   if (!words.toLowerCase().includes("вход сделан")) fail("успех входа не назван словами: " + words);
-  if (!words.toLowerCase().includes("перезапустите")) {
-    fail("успех не зовёт перезапускать разговор: " + words);
+  // После входа разговор поднимается сам и доделывает прерванное: второй
+  // кнопки человеку нажимать не за чем.
+  if (stepOf("/stop") < 0 || stepOf("/say") < 0) {
+    fail("после входа разговор не поднялся сам: " + JSON.stringify(asked));
   }
   // Кнопка перезапуска остаётся: она и поднимает разговоры после входа.
   if (!deepBtn(panel, "Перезапустить")) fail("кнопки перезапуска после входа нет");
@@ -147,7 +175,7 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   await settle();
   const words = wordsOf(panel);
   if (!words.includes("не напечатал ссылку")) {
-    fail("пропажа ссылки не названа словами на плашке: " + words);
+    fail("пропажа ссылки не названа словами: " + words);
   }
   if (!wordsOf(panel).includes("разбор")) fail("слова отказа обрезаны: " + words);
   if (enter.disabled) fail("после отказа кнопка входа осталась запертой");
@@ -164,16 +192,16 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   await settle();
   const code = byClass(panel, "logincode");
   code.value = "WRONG1";
-  deepBtn(panel, "Отправить код").handlers.click({ stopPropagation: () => {} });
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!wordsOf(panel).includes("код не принят")) {
-    fail("отказ кода не назван словами на плашке: " + wordsOf(panel));
+    fail("отказ кода не назван словами: " + wordsOf(panel));
   }
-  if (byClass(panel, "cbyeflow").hidden) fail("шаг входа скрыт после отказа кода");
+  if (byClass(panel, "loginstep").hidden) fail("шаг входа скрыт после отказа кода");
   // Вторая попытка в том же шаге доезжает до успеха.
   codeFails = "";
   code.value = "GOOD1";
-  deepBtn(panel, "Отправить код").handlers.click({ stopPropagation: () => {} });
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!wordsOf(panel).toLowerCase().includes("вход сделан")) {
     fail("вторая попытка кода не дошла до успеха: " + wordsOf(panel));
@@ -190,7 +218,7 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
   await settle();
   byClass(panel, "logincode").value = "ANY1";
-  deepBtn(panel, "Отправить код").handlers.click({ stopPropagation: () => {} });
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
   await settle();
   if (!wordsOf(panel).includes("умерла")) {
     fail("смерть сессии входа не названа словами: " + wordsOf(panel));
@@ -217,7 +245,7 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   await settle();
   deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
   await settle();
-  const flow = byClass(panel, "cbyeflow");
+  const flow = byClass(panel, "loginstep");
   const classes = String(flow.className).split(" ").filter(Boolean);
   const shows = rules.filter((r) => own(r.sel, classes, false) && /display\s*:/.test(r.decl));
   const hides = rules.filter((r) => own(r.sel, classes, true) && /display\s*:\s*none/.test(r.decl));
@@ -228,6 +256,38 @@ const wordsOf = (panel) => dump(byClass(panel, "loginwords"));
   }
 }
 
-console.log("ок: вход с телефона идёт целиком на плашке: кнопка поднимает вход, " +
-  "ссылка кликабельна, код едет своим полем мимо ленты, отказы названы словами, " +
-  "успех зовёт перезапустить разговор");
+// --- вход с самой машины идёт без кода: шаг один, открыть ссылку ---
+{
+  loginWay = "local";
+  waitLeft = 2;
+  clear();
+  const panel = sandbox.chatPanel("demo", out("aaaa5770-8888"));
+  await settle();
+  deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  // Шаг входа к этой минуте уже отработал и погас: петля прошла целиком, и
+  // человек видит исход, а не оставленную ссылку.
+  const shown = dump(panel);
+  if (!shown.includes("Код дашборд возьмёт сам")) {
+    fail("слова петлевого входа не сказаны: " + shown);
+  }
+  const code = byClass(panel, "logincode");
+  const row = code && code.parentNode;
+  if (row && !row.hidden) {
+    fail("поле кода показано там, где код берёт сам клиент: " + dump(panel));
+  }
+  if (stepOf("/login/wait") < 0) {
+    fail("исход петлевого входа не ждали: " + JSON.stringify(asked));
+  }
+  if (!wordsOf(panel).toLowerCase().includes("вход сделан")) {
+    fail("успех петлевого входа не назван словами: " + wordsOf(panel));
+  }
+  if (stepOf("/say") < 0) fail("после петлевого входа разговор не поднялся: " + JSON.stringify(asked));
+  loginWay = "code";
+  waitLeft = 0;
+}
+
+console.log("ок: вход идёт репликами чата: кнопка поднимает вход, ссылка " +
+  "человеческая и копируется, с самой машины кода нет вовсе, с другого " +
+  "устройства код едет своим полем мимо ленты, отказы названы словами, " +
+  "успех сам поднимает разговор");

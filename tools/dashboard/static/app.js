@@ -9003,76 +9003,73 @@ function loginFixable(st) {
   return Boolean(e.tmux) || e.state !== "live";
 }
 
-// Плашка разлогина: состояние словами, порядок починки и кнопки на вход и
-// перезапуск. Стоит она над полем ввода, отдельно от ленты: лента показывает
-// сказанное, а это состояние разговора, и место ему рядом с тем, чем человек
-// отвечает.
-function loginPlate(project, st, busy) {
-  const box = el("div", "cnote cbye");
-  box.hidden = true;
-  const said = el("span", "cbyew");
-  said.append(el("b", "", "Сессия разлогинена."));
-  const fix = loginFixable(st)
-    ? " Войдите кнопкой «Войти»: дашборд поднимет вход своей сессией, отдаст " +
-      "ссылку и примет код здесь же, а после входа нажмите «Перезапустить»: " +
-      "живой процесс держит старый вход в памяти и после нового сам его не " +
-      "перечитывает."
-    : " Разговор поднят не дашбордом, снять его отсюда нечем: сделайте /login " +
-      "на машине и перезапустите разговор в том окне, где он идёт.";
-  said.append(document.createTextNode(
-    " Агент отвечает служебной строкой про истёкший вход вместо работы." + fix));
-  box.append(said);
-  if (loginFixable(st)) {
-    const flow = loginFlow(project, busy);
-    box.append(flow.box);
-    const enter = el("button", "btn btn-sm btn-acc", "Войти");
-    enter.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      enter.disabled = true;
-      flow.start().finally(() => { enter.disabled = false; });
-    });
-    const go = el("button", "btn btn-sm btn-acc", "Перезапустить");
-    go.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      go.disabled = true;
-      loginRestart(project, st, busy).catch(console.error);
-    });
-    box.append(enter, go);
-  }
-  return box;
+// Разлогин говорит с человеком лентой, а не щитком над полем ввода. Плашку
+// пользователь на приёмке отверг прямо: «выглядит просто ужасающе, нужно
+// сделать, чтобы весь процесс был в чате». Поэтому тут те же пузыри, что у
+// разговора: сообщение о разлогине с двумя кнопками, ответ со ссылкой и полем
+// кода, слова исхода. Стоит блок последним в разговоре, под лентой и над полем
+// ввода, и лента его не перерисовывает: она живёт своими узлами.
+function loginBubble(text) {
+  const wrap = el("div", "msg");
+  const bb = el("div", "bb");
+  const words = el("div", "loginwords", text || "");
+  bb.append(words);
+  wrap.append(bb);
+  return { wrap, bb, words };
 }
 
-// Шаг входа на плашке разлогина (DK-577): ссылка авторизации, поле кода и
-// слова исхода. Вход поднимается отдельной одноразовой сессией на сервере, и
-// с телефона он идёт целиком здесь: человек открывает ссылку, входит на сайте
-// и возвращает код полем. Код это одноразовый ключ учётной записи, и своей
-// дорогой он идёт нарочно: поле реплики пишет ленту и черновик, а журнал
-// разговора ключ хранить не должен. До нажатия «Войти» шаг скрыт.
-function loginFlow(project, busy) {
-  const box = el("div", "cbyeflow");
+// Дорога входа зависит от того, где браузер. С самой машины клиент ловит код
+// сам, и поле кода не показывается вовсе: шаг один, открыть ссылку. С другого
+// устройства возврат вести некуда, и код набирается руками.
+function loginTalk(project, st, busy) {
+  const box = el("div", "msgs mlocal cbyetalk");
   box.hidden = true;
-  const words = el("span", "loginwords");
-  const link = el("a", "loginurl");
+  const talk = { box, ask: "", lastUser: "" };
+  const first = loginBubble("Требуется повторная аутентификация. Войдите " +
+    "заново или нажмите «Перезапустить», если уже прошли аутентификацию в " +
+    "консоли или другом чате.");
+  box.append(first.wrap);
+  if (!loginFixable(st)) {
+    first.bb.append(el("div", "loginwords", "Разговор поднят не дашбордом, " +
+      "снять его отсюда нечем: сделайте /login на машине и перезапустите " +
+      "разговор в том окне, где он идёт."));
+    return talk;
+  }
+
+  const step = loginBubble("");
+  step.wrap.classList.add("loginstep");
+  step.wrap.hidden = true;
+  const said = loginBubble("");
+  said.wrap.classList.add("loginsaid");
+  said.wrap.hidden = true;
+
+  // Ссылка человеческая: адрес авторизации это четыреста знаков, и портянкой
+  // он занимал весь экран. Полный адрес живёт в самой ссылке, а рядом стоит
+  // кнопка копирования: вход с другого устройства начинается с того, что
+  // адрес переносят руками.
+  const linkRow = el("div", "loginrow");
+  const link = el("a", "loginurl", "Страница входа Claude");
   link.target = "_blank";
   link.rel = "noopener";
+  linkRow.append(link);
+  step.bb.append(linkRow);
+
+  const codeRow = el("div", "loginrow");
+  codeRow.hidden = true;
   const code = el("input", "logincode");
   code.type = "text";
   code.placeholder = "код авторизации";
   code.autocomplete = "off";
   code.setAttribute("aria-label", "Код авторизации");
-  const send = el("button", "btn btn-sm btn-acc", "Отправить код");
-  send.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    send.disabled = true;
-    sendCode().finally(() => { send.disabled = false; });
-  });
-  box.append(words, link, code, send);
+  const send = el("button", "btn btn-sm btn-acc", "Подтвердить");
+  codeRow.append(code, send);
+  step.bb.append(codeRow);
+  box.append(step.wrap, said.wrap);
 
-  // Слова состояния шага: отказ называется своим разрядом, успех говорит, что
-  // делать дальше. Пустая строка слова гасит.
   const say = (text, bad) => {
-    words.textContent = text || "";
-    words.classList.toggle("bad", Boolean(bad));
+    said.words.textContent = text || "";
+    said.words.classList.toggle("bad", Boolean(bad));
+    said.wrap.hidden = !text;
   };
 
   async function start() {
@@ -9081,15 +9078,34 @@ function loginFlow(project, busy) {
     const r = await api(chatsURL(project) + "/login", { method: "POST", body: {} });
     busy.off();
     if (!r.ok) {
-      // Ссылка не нашлась или сессия не поднялась: слова сервера уже называют
-      // разряд, кнопка «Войти» остаётся на плашке для новой попытки.
       say(r.body.error || "вход не поднялся", true);
       return;
     }
+    step.words.textContent = r.body.way === "local"
+      ? "Откройте страницу входа и пройдите аутентификацию. Код дашборд " +
+        "возьмёт сам: браузер вернётся прямо в клиент."
+      : "Перейдите по ссылке и пройдите процесс аутентификации. Далее " +
+        "скопируйте код и введите его в поле ниже.";
     link.href = r.body.url;
-    link.textContent = r.body.url;
-    box.hidden = false;
-    say("Откройте ссылку, войдите на сайте и введите код сюда.", false);
+    linkRow.replaceChildren(link, copyBtn(r.body.url));
+    codeRow.hidden = r.body.way !== "code";
+    step.wrap.hidden = false;
+    if (r.body.way === "local") waitLoop().catch(console.error);
+  }
+
+  // Вход петлёй ждётся опросом: ручка стоит на поллинге панели и отвечает
+  // «ещё идёт», пока человек в браузере.
+  async function waitLoop() {
+    for (;;) {
+      const r = await api(chatsURL(project) + "/login/wait", { method: "POST", body: {} });
+      if (r.ok && r.body && r.body.waiting) continue;
+      if (!r.ok) {
+        say(r.body.error || "вход не прошёл", true);
+        return;
+      }
+      await done();
+      return;
+    }
   }
 
   async function sendCode() {
@@ -9103,41 +9119,83 @@ function loginFlow(project, busy) {
       { method: "POST", body: { code: text } });
     busy.off();
     if (!r.ok) {
-      // Отказ называется словами и оставляет поле: код не принят или вход
-      // оборвался, и человеку решать, пробовать ли другой код или снова вход.
+      // Отказ называется словами клиента целиком: человеку разбираться с
+      // «OAuth error: Request failed with status code 400», а пересказ отнял
+      // бы у него разбор.
       say(r.body.error || "код не отправился", true);
       return;
     }
-    // Код не остаётся ни в поле, ни в ленте: отправленный код уже отработал.
     code.value = "";
-    say("Вход сделан: свежий токен у клиента в связке ключей. Перезапустите " +
-      "разговор кнопкой «Перезапустить».", false);
+    await done();
   }
 
-  return { box, start };
+  // После входа разговор поднимается сам и доделывает то, на чём встал:
+  // человеку не за чем нажимать вторую кнопку, он уже сказал, чего хочет.
+  async function done() {
+    step.wrap.hidden = true;
+    say("Вход сделан. Поднимаю разговор и повторяю запрос, на котором он встал.", false);
+    await loginRestart(project, st, busy, talk.ask);
+  }
+
+  const row = el("div", "loginbtns");
+  const enter = el("button", "btn btn-sm btn-acc", "Войти");
+  enter.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    enter.disabled = true;
+    start().finally(() => { enter.disabled = false; });
+  });
+  const go = el("button", "btn btn-sm", "Перезапустить");
+  go.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    go.disabled = true;
+    loginRestart(project, st, busy, talk.ask)
+      .catch(console.error)
+      .finally(() => { go.disabled = false; });
+  });
+  row.append(enter, go);
+  first.bb.append(row);
+  send.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    send.disabled = true;
+    sendCode().finally(() => { send.disabled = false; });
+  });
+  code.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") send.click();
+  });
+  return talk;
 }
 
-// Ответ агента поднимает и гасит плашку: служебная строка про истёкший вход
-// (пометка сервера) поднимает, любой настоящий ответ гасит. Реплики человека,
-// ходы инструментов и размышления состояния не трогают: разлогин виден только
-// тем, что говорит сам клиент.
-function loginSaw(box, item) {
-  if (!box || !item || item.role !== "assistant" || !item.text) return;
-  box.hidden = !item.logout;
+// Ответ агента поднимает и гасит блок: служебная строка про истёкший вход
+// (пометка сервера) поднимает, любой настоящий ответ гасит. Реплика человека
+// состояния не трогает, но запоминается: это и есть запрос, который отказ
+// оборвал, и после входа разговор доделывает именно его.
+function loginSaw(talk, item) {
+  if (!talk || !item) return;
+  if (item.role === "user" && item.text) {
+    talk.lastUser = item.text;
+    return;
+  }
+  if (item.role !== "assistant" || !item.text) return;
+  talk.box.hidden = !item.logout;
+  if (item.logout && talk.lastUser) talk.ask = talk.lastUser;
 }
 
 // Та же мера по всей ленте: записи доезжают четырьмя дорогами, и состояние
 // считается по последнему ответу в приехавшем, а не по одной записи.
-function loginSawAll(box, list) {
-  for (const item of list || []) loginSaw(box, item);
+function loginSawAll(talk, list) {
+  for (const item of list || []) loginSaw(talk, item);
 }
 
 // Перезапуск разлогиненного разговора: снять сессию и поднять её резюмом. Шаги
 // те же и в том же порядке, что у самолечения клина, и порядок этот обязателен:
 // резюм поверх живого клиента завёл бы второго агента на тот же разговор.
 // Сессии, которой уже нет, снятие отвечает удачей («уже закрыта»), и резюм
-// после него идёт как обычно.
-async function loginRestart(project, st, busy) {
+// после него идёт как обычно. Реплика подъёма это прерванный запрос человека,
+// когда он известен: разговор доделывает начатое, а не начинает с чистого
+// листа. Своих слов человек в этом случае не говорил заново, и говорить за
+// него нельзя, поэтому запасная реплика зовёт продолжить, а не выдумывает
+// заказ.
+async function loginRestart(project, st, busy, ask) {
   const sid = st && st.sid;
   if (!sid) return;
   const url = chatsURL(st.project || project) + "/" + encodeURIComponent(sid);
@@ -9148,14 +9206,17 @@ async function loginRestart(project, st, busy) {
     sayResult(drop.body.error || "сессию разговора не удалось снять", true);
     return;
   }
-  const r = await api(url + "/say", { method: "POST", body: { text: CHAT_RELOGIN } });
+  const text = String(ask || "").trim() || CHAT_RELOGIN;
+  const r = await api(url + "/say", { method: "POST", body: { text } });
   busy.off();
   if (!r.ok) {
     sayResult(r.body.error || "разговор не поднялся резюмом", true);
     return;
   }
   if (r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
-  sayResult("разговор перезапущен: продолжение поднято резюмом");
+  sayResult(ask
+    ? "разговор перезапущен: прерванный запрос повторён"
+    : "разговор перезапущен: продолжение поднято резюмом");
   await repaintChat();
 }
 
@@ -10042,9 +10103,12 @@ function chatPanel(project, st) {
   // Разлогин не лечится сам: сперва человеку надо войти на машине, и до этого
   // перезапуск поднял бы такого же разлогиненного клиента. Состояние стоит
   // плашкой над полем ввода, а второй шаг починки лежит на её кнопке.
-  const bye = loginPlate(project, st, busy);
-  bye.hidden = !(st.entry && st.entry.login);
-  wrap.append(bye);
+  const bye = loginTalk(project, st, busy);
+  bye.box.hidden = !(st.entry && st.entry.login);
+  // Блок стоит там же, где стоят свои реплики. Под лентой, над полем ввода,
+  // тем же узлом сообщений и тем же пузырём: это продолжение разговора, а не
+  // щиток при нём.
+  wrap.append(bye.box);
   // Вопрос клиента кнопками: поднятый в незнакомом каталоге клиент встаёт на
   // вопросе о доверии, а следом на вопросе про внешние импорты правил, и до
   // ответа не делает ни хода. Человек этих вопросов не видел вовсе: лента

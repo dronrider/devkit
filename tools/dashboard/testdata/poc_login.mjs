@@ -6,10 +6,12 @@
 // выглядел живым, отказ стоял обычным пузырём ленты, а пути к починке не было
 // вовсе, и с телефона его нет тем более.
 //
-// Предмет стенда: состояние стоит плашкой отдельно от ленты, слова говорят
-// порядок починки (сперва вход кнопкой «Войти», потом перезапуск), кнопка
-// перезапускает разговор двумя шагами в правильном порядке, живой ответ агента
-// гасит плашку сам, а разговор из чужого окна кнопки не получает вовсе.
+// Предмет стенда: состояние говорится репликой в самом чате, а не плашкой над
+// полем ввода (решение сменил пользователь на приёмке: «нужно сделать, чтобы
+// весь процесс был в чате, а не какими-то плашками отдельными»). Реплика несёт
+// две кнопки, кнопка перезапускает разговор двумя шагами в правильном порядке,
+// перезапуск повторяет прерванный запрос, живой ответ агента гасит блок сам, а
+// разговор из чужого окна кнопок не получает вовсе.
 // Сам вход с телефона разобран отдельным стендом poc_loginlink.mjs.
 //
 // Зовётся: node testdata/poc_login.mjs static/app.js
@@ -62,22 +64,23 @@ const out = (sid, extra) => ({
 const clear = () => { asked.length = 0; bodies.length = 0; };
 const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
 
-// --- состояние видно плашкой, и слова говорят, что делать ---
+// --- состояние видно репликой в чате, и слова говорят, что делать ---
 {
   clear();
   const panel = sandbox.chatPanel("demo", out("aaaa4660-1111"));
   await settle();
-  const plate = byClass(panel, "cbye");
-  if (!plate || plate.hidden) fail("плашки разлогина нет: " + dump(panel));
+  const plate = byClass(panel, "cbyetalk");
+  if (!plate || plate.hidden) fail("разлогин в чате не сказан: " + dump(panel));
   const said = dump(plate);
-  for (const word of ["разлогинена", "Войти", "Перезапустить"]) {
-    if (!said.includes(word)) fail("на плашке нет слова «" + word + "»: " + said);
+  for (const word of ["аутентификация", "Войти", "Перезапустить"]) {
+    if (!said.includes(word)) fail("в реплике нет слова «" + word + "»: " + said);
   }
-  // Состояние стоит отдельно от ленты: плашка это не запись разговора.
-  const feed = byClass(panel, "chatfeed");
-  if (feed && dump(feed).includes("разлогинена")) {
-    fail("состояние уехало в ленту, а ему место рядом с полем ввода: " + dump(feed));
+  // Говорится это репликой разговора, а не щитком при нём: тот же узел
+  // сообщений, что у своих реплик, и тот же пузырь.
+  if (!String(plate.className).includes("msgs")) {
+    fail("блок разлогина стоит не среди реплик: " + plate.className);
   }
+  if (!byClass(plate, "bb")) fail("слова стоят не пузырём реплики: " + said);
 }
 
 // --- кнопка чинит: снятие сессии, потом резюм, и в таком порядке ---
@@ -124,34 +127,34 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
     { key: "m-2", role: "assistant", text: BYE, logout: true, time: "2026-08-22T19:00:02+03:00" }];
   const panel = sandbox.chatPanel("demo", out(sid));
   await settle();
-  const plate = byClass(panel, "cbye");
-  if (plate.hidden) fail("лента с отказом входа плашку не подняла: " + dump(panel));
+  const plate = byClass(panel, "cbyetalk");
+  if (plate.hidden) fail("лента с отказом входа блок не подняла: " + dump(panel));
   const es = streams.find((s) => String(s.url).includes(sid) && String(s.url).includes("stream"));
   if (!es) fail("поток ленты не открыт");
   // Реплика человека состояния не трогает: разлогинен тут клиент, а не человек.
   es.onmessage({ data: JSON.stringify({ key: "m-3", role: "user", text: "ты тут?",
     time: "2026-08-22T19:05:00+03:00" }) });
   await settle();
-  if (byClass(panel, "cbye").hidden) fail("реплика человека погасила плашку разлогина");
+  if (byClass(panel, "cbyetalk").hidden) fail("реплика человека погасила разлогин");
   // Настоящий ответ агента гасит: сессия отвечает, состояния больше нет.
   es.onmessage({ data: JSON.stringify({ key: "m-4", role: "assistant",
     text: "продолжаю с того места, где остановился", time: "2026-08-22T19:06:00+03:00" }) });
   await settle();
-  if (!byClass(panel, "cbye").hidden) {
-    fail("плашка не погасла после живого ответа: " + dump(byClass(panel, "cbye")));
+  if (!byClass(panel, "cbyetalk").hidden) {
+    fail("плашка не погасла после живого ответа: " + dump(byClass(panel, "cbyetalk")));
   }
   // Вход истекает и во второй раз, тем же разговором: состояние не одноразовое,
   // и после починки плашка обязана встать заново, а не остаться погашенной.
   es.onmessage({ data: JSON.stringify({ key: "m-5", role: "assistant", text: BYE,
     logout: true, time: "2026-08-22T19:40:00+03:00" }) });
   await settle();
-  if (byClass(panel, "cbye").hidden) {
+  if (byClass(panel, "cbyetalk").hidden) {
     fail("второй разлогин того же разговора плашку не поднял");
   }
   es.onmessage({ data: JSON.stringify({ key: "m-6", role: "assistant",
     text: "снова на связи", time: "2026-08-22T19:45:00+03:00" }) });
   await settle();
-  if (!byClass(panel, "cbye").hidden) fail("плашка не погасла после второй починки");
+  if (!byClass(panel, "cbyetalk").hidden) fail("плашка не погасла после второй починки");
   items = [];
 }
 
@@ -162,7 +165,7 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   st.entry.login = "";
   const panel = sandbox.chatPanel("demo", st);
   await settle();
-  const plate = byClass(panel, "cbye");
+  const plate = byClass(panel, "cbyetalk");
   if (plate && !plate.hidden) fail("плашка разлогина встала на здоровом разговоре: " + dump(plate));
 }
 
@@ -171,7 +174,7 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   clear();
   const panel = sandbox.chatPanel("demo", out("aaaa4660-6666", { tmux: "", own: false }));
   await settle();
-  const plate = byClass(panel, "cbye");
+  const plate = byClass(panel, "cbyetalk");
   if (!plate || plate.hidden) fail("плашка разлогина пропала у разговора чужого окна");
   if (deepBtn(panel, "Перезапустить")) {
     fail("кнопка обещает перезапуск разговора, который дашборд не поднимал");
@@ -206,7 +209,7 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   });
   const panel = sandbox.chatPanel("demo", out("aaaa4660-7777"));
   await settle();
-  const plate = byClass(panel, "cbye");
+  const plate = byClass(panel, "cbyetalk");
   const classes = String(plate.className).split(" ").filter(Boolean);
   const shows = rules.filter((r) => own(r.sel, classes, false) && /display\s*:/.test(r.decl));
   const hides = rules.filter((r) => own(r.sel, classes, true) && /display\s*:\s*none/.test(r.decl));
@@ -217,5 +220,28 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   }
 }
 
-console.log("ок: разлогин виден плашкой отдельно от ленты, слова говорят порядок починки, " +
-  "кнопка снимает сессию и поднимает резюм, живой ответ гасит состояние сам");
+// --- перезапуск доделывает прерванный запрос, а не начинает с чистого листа ---
+{
+  clear();
+  const sid = "aaaa4660-8888";
+  items = [
+    { key: "m-1", role: "user", text: "посчитай остаток бюджета цели",
+      time: "2026-08-22T19:00:00+03:00" },
+    { key: "m-2", role: "assistant", text: BYE, logout: true,
+      time: "2026-08-22T19:00:02+03:00" },
+  ];
+  const panel = sandbox.chatPanel("demo", out(sid));
+  await settle();
+  deepBtn(panel, "Перезапустить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const say = stepOf("/say");
+  if (say < 0) fail("разговор не подняли: " + JSON.stringify(asked));
+  if (String(bodies[say].text) !== "посчитай остаток бюджета цели") {
+    fail("подъём не повторил прерванный запрос: " + bodies[say].text);
+  }
+  items = [];
+}
+
+console.log("ок: разлогин сказан репликой в чате, слова говорят порядок починки, " +
+  "кнопка снимает сессию и поднимает резюм прерванным запросом, живой ответ " +
+  "гасит состояние сам");

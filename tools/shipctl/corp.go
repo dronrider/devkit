@@ -89,18 +89,39 @@ func corpLostLocal(start string) string {
 			continue
 		}
 		dir := filepath.Join(parent, e.Name())
-		repo := corpTrackerRepo(dir)
-		if repo == "" {
+		if corpBoundTo(dir, clone) {
+			return dir
+		}
+		// Боковая директория контура общая на все его проекты и держит их
+		// подкаталогами, поэтому привязка лежит уровнем ниже (DK-583).
+		inner, err := os.ReadDir(dir)
+		if err != nil {
 			continue
 		}
-		if !filepath.IsAbs(repo) {
-			repo = filepath.Join(dir, repo)
-		}
-		if corpSamePath(repo, clone) {
-			return dir
+		for _, sub := range inner {
+			if !sub.IsDir() {
+				continue
+			}
+			cand := filepath.Join(dir, sub.Name())
+			if corpBoundTo(cand, clone) {
+				return cand
+			}
 		}
 	}
 	return ""
+}
+
+// corpBoundTo говорит, называет ли привязка боковой директории ключом repo
+// именно этот клон. Чужие соседние директории с похожим именем не в счёт.
+func corpBoundTo(dir, clone string) bool {
+	repo := corpTrackerRepo(dir)
+	if repo == "" {
+		return false
+	}
+	if !filepath.IsAbs(repo) {
+		repo = filepath.Join(dir, repo)
+	}
+	return corpSamePath(repo, clone)
 }
 
 // trackerBinding это поля привязки .devkit/tracker.local, нужные shipctl:

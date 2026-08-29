@@ -89,18 +89,25 @@ func loginSibling(line string) bool {
 // сотни знаков, а разросшаяся за тысячи значит склейку чужих строк.
 const loginLinkMax = 2048
 
-// loginLinkOf достаёт ссылку авторизации из снимка панели и собирает её из
-// обрывков по ширине пейна. Родство обрывка проверяется, а не предполагается
-// по одним URL-знакам: клиент рвёт ссылку в одной и той же колонке пейна, и
-// обрывок узнаётся по ней, а не похожестью. Границ три. Чужая схема в начале
-// строки. Строка шире колонки разрыва. И конец: закончившуюся ссылку клиент
-// отбивает пустой строкой, поэтому склейка любой ширины, за которой пустой
-// строки не видно, не отдаётся вовсе. Оборванная склейка молчит, а не отдаёт
-// первый кусок: неполная ссылка на вид такая же живая, как целая, и человек
-// узнал бы о подмене, только не сумев открыть её. Молчание тут дешевле,
-// поллинг подъёма спросит панель снова через полсекунды.
-// Пустая строка значит, что ссылки в панели нет.
-func loginLinkOf(pane string) string {
+// loginPiece отвечает, может ли строка быть продолжением ссылки. Продолжение
+// это сплошные знаки адреса не шире колонки разрыва и без своей схемы: со
+// схемы начинается соседняя ссылка, а не кусок найденной.
+func loginPiece(line string, torn int) bool {
+	return line != "" && len(line) <= torn && loginURLRunes.MatchString(line) &&
+		!loginSibling(line)
+}
+
+// loginLinkOf достаёт ссылку авторизации из снимка панели. Ссылку клиент рвёт
+// своими переводами строк, и склеивать обрывки приходится нам. Родства у
+// обрывка нет: строка из знаков адреса той же ширины выглядит продолжением,
+// чем бы она ни была, и три захода ревью по этому месту показали, что формой
+// соседних строк вопрос не решается. Поэтому тут не догадка, а узкая форма и
+// отказ на всё прочее. Форма рваной ссылки одна: обрывки ровно по колонке
+// разрыва, за ними обрывок короче колонки, за ним пустая строка. Целая ссылка
+// это строка, за которой продолжения нет вовсе. Всё остальное отдаёт пустую
+// ссылку и причину словами: неоткрывающаяся ссылка молчит о подмене, а отказ
+// со словами человек прочтёт и нажмёт «Войти» снова.
+func loginLinkOf(pane string) (string, string) {
 	lines := strings.Split(pane, "\n")
 	for i, ln := range lines {
 		m := loginLinkRe.FindStringSubmatch(ln)
@@ -108,39 +115,47 @@ func loginLinkOf(pane string) string {
 			continue
 		}
 		url := m[1]
-		torn := len(m[1])
-		glued, ended := false, false
+		torn := len(url)
+		if i+1 >= len(lines) || !loginPiece(strings.TrimSpace(lines[i+1]), torn) {
+			// Продолжения нет: ссылка целая, склеивать нечего.
+			return loginLinkCheck(url), ""
+		}
 		for j := i + 1; j < len(lines); j++ {
 			piece := strings.TrimSpace(lines[j])
-			if piece == "" {
-				ended = true
-				break
+			if !loginPiece(piece, torn) || len(url)+len(piece) > loginLinkMax {
+				return "", "обрывки ссылки оборвались на строке, которая продолжением быть не может"
 			}
-			if !loginURLRunes.MatchString(piece) || loginSibling(piece) ||
-				len(piece) > torn || len(url)+len(piece) > loginLinkMax {
-				break
-			}
+			url += piece
 			if len(piece) < torn {
-				// Обрывок короче колонки разрыва последний. Обрывком он
-				// считается, только когда за ним стоит пустая строка; иначе
-				// это чужая строка, а ссылка кончилась перед ней.
 				if j+1 < len(lines) && strings.TrimSpace(lines[j+1]) == "" {
-					url += piece
-					glued, ended = true, true
+					return loginLinkCheck(url), ""
 				}
-				break
+				return "", "за последним обрывком ссылки нет пустой строки, конец ссылки не виден"
 			}
-			url, glued = url+piece, true
 		}
-		if glued && !ended {
-			// Обрывки склеились, а конца ссылки в панели не видно: либо она
-			// ещё дорисовывается, либо следом идёт чужая строка той же
-			// ширины. Отличить их видом нельзя, и склейка не отдаётся.
-			return ""
-		}
-		return loginLinkCheck(url)
+		return "", "обрывки ссылки кончились вместе с панелью, конца ссылки не видно"
 	}
-	return ""
+	return "", ""
+}
+
+// loginFrame сжимает панель до кадра для человека: живые строки без рамки,
+// с головы и с хвоста. Кадр едет в отказ разбора, и по нему видно, что клиент
+// на самом деле нарисовал.
+func loginFrame(pane string) string {
+	live := []string{}
+	for _, ln := range strings.Split(pane, "\n") {
+		if line := loginPlainLine(ln); line != "" {
+			live = append(live, line)
+		}
+	}
+	if len(live) > 12 {
+		live = append(append([]string{}, live[:6]...), append([]string{"..."}, live[len(live)-5:]...)...)
+	}
+	out := strings.Join(live, " | ")
+	if len(out) > 700 {
+		out = out[:700] + "..."
+	}
+	return out
 }
 
 // loginLinkCheck меряет собранную ссылку перед отдачей: разбор обязан увидеть
@@ -485,7 +500,7 @@ func (s *server) loginRecover() {
 		taken := s.loginRun != nil
 		s.mu.Unlock()
 		if !taken && err == nil && s.now().Sub(born) < loginRunTTL {
-			if url := loginLinkOf(pane); url != "" {
+			if url, _ := loginLinkOf(pane); url != "" {
 				s.mu.Lock()
 				if s.loginRun == nil {
 					s.loginRun = &loginRun{Tmux: sess.Name, URL: url, Alive: born}
@@ -715,12 +730,19 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 	deadline := s.now().Add(loginLinkWait)
 	chosen, trusted := false, false
 	var sent time.Time
+	// Последняя причина отказа разбора и кадр панели при ней: если ссылки так
+	// и не вышло, человеку едут они, а не общие слова про сменившийся вид.
+	var whyLast, frame string
 	for {
 		pane, err := loginPane(sess)
 		if err != nil {
 			return "", fmt.Sprintf("сессия входа умерла, не дойдя до ссылки авторизации: %s", procErr(err))
 		}
-		if url := loginLinkOf(pane); url != "" {
+		url, why := loginLinkOf(pane)
+		if why != "" {
+			whyLast, frame = why, loginFrame(pane)
+		}
+		if url != "" {
 			return url, ""
 		}
 		ask := tmuxAskOf(sess)
@@ -744,6 +766,10 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 			sent = s.now()
 		}
 		if !s.now().Before(deadline) {
+			if whyLast != "" {
+				return "", fmt.Sprintf("ссылку разобрать не вышло: %s. Вот кадр панели входа: %s",
+					whyLast, frame)
+			}
 			return "", fmt.Sprintf("клиент не напечатал ссылку авторизации за %s: "+
 				"вид панели входа, видимо, сменился, разбор надо чинить", loginLinkWait)
 		}

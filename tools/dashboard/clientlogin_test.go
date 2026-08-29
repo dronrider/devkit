@@ -561,10 +561,12 @@ func TestClientLoginSiblingLinkNotGlued(t *testing.T) {
 	}
 }
 
-// Строка-хэш следом за ссылкой не приклеивается. Хэш целиком состоит из
-// URL-знаков, и тихое поглощение любой похожей строки носило бы в ссылку
-// чужой кусок: человек получил бы адрес, который не открывается, без единого
-// признака подмены. Обрывок узнаётся по колонке разрыва, а не по похожести.
+// Строка-хэш следом за ссылкой в ссылку не попадает. Хэш целиком состоит из
+// знаков адреса, и тихое поглощение похожей строки носило бы в ссылку чужой
+// кусок: человек получил бы адрес, который не открывается, без единого
+// признака подмены. Отдать вместо этого первую строку разбор тоже не вправе:
+// та же форма бывает у ссылки, порванной ровно по колонке, и первая строка
+// оказалась бы обрезанной ссылкой. Поэтому исход тут отказ со словами.
 func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
@@ -578,20 +580,17 @@ func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, 300*time.Millisecond)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("подъём входа: %d, %s", resp.StatusCode, text)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("подъём отдал ссылку там, где форма не та: %d, %s", resp.StatusCode, text)
 	}
-	var got struct {
-		URL string `json:"url"`
+	if strings.Contains(text, "d41d8cd98f00b204e980"+"&") {
+		t.Fatalf("строка-хэш приклеилась к ссылке: %s", text)
 	}
-	if err := json.Unmarshal([]byte(text), &got); err != nil {
-		t.Fatalf("ответ входа не разобран: %s", text)
-	}
-	if got.URL != first {
-		t.Fatalf("строка-хэш приклеилась к ссылке: %s", got.URL)
+	if !strings.Contains(text, "разобрать не вышло") {
+		t.Fatalf("отказ разбора не назван словами: %s", text)
 	}
 }
 
@@ -719,11 +718,12 @@ func TestClientLoginOrphanSweptAfterRestart(t *testing.T) {
 	}
 }
 
-// Склейка обрывков разбирается по форме панели. Проверка собранного адреса
-// (loginLinkCheck) чужую строку не ловит: приклеенный кусок даёт синтаксически
-// годный адрес, просто не тот, и человек узнал бы о подмене, только не сумев
-// открыть ссылку. Опора тут на колонку разрыва и на пустую строку, которой
-// клиент отбивает конец ссылки.
+// Склейка обрывков разбирается узкой формой, а не догадкой. Родства у обрывка
+// нет: строка из знаков адреса той же ширины выглядит продолжением, чем бы она
+// ни была, и проверка собранного адреса тут бессильна, у каши один хост и одна
+// схема. Три захода ревью по этому месту это подтвердили. Поэтому принимается
+// одна форма (обрывки ровно по колонке, короткий хвост, пустая строка), а всё
+// прочее отдаёт пустую ссылку и причину словами.
 func TestLoginLinkOfGlue(t *testing.T) {
 	const torn = 40
 	head := "https://claude.com/x?a=" + strings.Repeat("1", torn-len("https://claude.com/x?a="))
@@ -735,29 +735,72 @@ func TestLoginLinkOfGlue(t *testing.T) {
 		name string
 		pane []string
 		want string
+		why  bool
 	}{
-		{"живой вид панели: обрывки по колонке и короткий хвост за ними",
+		{"живой вид панели: обрывки по колонке, короткий хвост, пустая строка",
 			[]string{"Use the url below:", "", head, body, tail, "", prompt},
-			head + body + tail},
-		{"соседняя ссылка не приклеивается",
+			head + body + tail, false},
+		{"соседняя ссылка продолжением не считается",
 			[]string{head, "https://console.anthropic.com/oauth?b=2", "", prompt},
-			head},
-		{"строка-хэш без пустой строки за ней не приклеивается",
-			[]string{head, tail, prompt, "", "> "},
-			head},
-		{"чужая строка той же ширины без пустой строки за ней рвёт склейку",
-			[]string{head, body, alien, prompt, "", "> "},
-			""},
+			head, false},
 		{"нерваная ссылка отдаётся, даже когда следом сразу проза",
 			[]string{head, prompt, "", "> "},
-			head},
+			head, false},
+		{"чужая строка той же ширины без пустой строки за ней",
+			[]string{head, body, alien, prompt, "", "> "},
+			"", true},
+		{"чужая строка той же ширины, за которой пустая строка стоит",
+			[]string{head, body, alien, "", prompt},
+			"", true},
+		{"ссылка легла по колонке ровно, короткого хвоста нет",
+			[]string{head, body, "", prompt},
+			"", true},
+		{"строка-хэш на месте хвоста, а пустой строки за ней нет",
+			[]string{head, tail, prompt, "", "> "},
+			"", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := loginLinkOf(strings.Join(c.pane, "\n")); got != c.want {
+			got, why := loginLinkOf(strings.Join(c.pane, "\n"))
+			if got != c.want {
 				t.Fatalf("разбор панели дал %q, жду %q", got, c.want)
 			}
+			if (why != "") != c.why {
+				t.Fatalf("причина отказа %q при ожидании %v", why, c.why)
+			}
 		})
+	}
+}
+
+// Отказ разбора едет человеку словами и кадром панели. Догадка про родство
+// обрывков снята нарочно, и цена решения это отказ там, где форма не та.
+// Молча отдать первый обрывок нельзя: неоткрывающаяся ссылка о подмене
+// молчит, а человеку по кадру видно, что клиент нарисовал на самом деле.
+func TestClientLoginLinkRefusalSaysFrame(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		strings.Repeat("7", len(first)),
+		"",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 300*time.Millisecond)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("каша отдана за ссылку: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разобрать не вышло") {
+		t.Fatalf("отказ разбора не назван словами: %s", text)
+	}
+	if !strings.Contains(text, "Paste code here") {
+		t.Fatalf("кадра панели в отказе нет: %s", text)
 	}
 }
 

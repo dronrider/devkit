@@ -77,24 +77,31 @@ class CorpTest(SandboxCase):
         # Оба импорта клона ведут наружу, и оба записаны путями от его корня
         # через свою ссылку: путь наружу клиент не разворачивает молча (DK-193).
         thin = read(self.clone / "CLAUDE.md").split("\n")
-        self.assertIn("@.devkit/local/AGENTS.md", thin,
+        self.assertIn("@.devkit/AGENTS.md", thin,
                       "тонкий файл клона не импортирует AGENTS.md боковой директории")
-        self.assertIn("@.devkit/devkit/RULES.board.md", thin,
+        self.assertIn("@.devkit/.devkit/devkit/RULES.board.md", thin,
                       "тонкий файл клона не импортирует правила доски через ссылку")
         self.assertFalse([ln for ln in thin if ln.startswith("@..")],
                          "тонкий файл клона зовёт импорт путём наружу: %s" % thin)
-        links = self.clone / rules.LINK_DIR
-        self.assertEqual(os.path.realpath(str(links / rules.DEVKIT_LINK)),
+        link = self.clone / rules.LINK_DIR
+        self.assertTrue(link.is_symlink(),
+                        "каталог обвязки клона это не ссылка на боковую директорию")
+        self.assertEqual(os.path.realpath(str(link)), self.localr,
+                         "ссылка .devkit ведёт не в боковую директорию")
+        self.assertTrue((link / "docs" / "TASKS.md").is_file(),
+                        "доска не открывается из клона путём .devkit/docs/TASKS.md")
+        self.assertEqual(os.path.realpath(str(link / rules.LINK_DIR / rules.DEVKIT_LINK)),
                          os.path.realpath(str(self.box.dk)),
                          "ссылка на дерево devkit ведёт не туда")
-        self.assertEqual(os.path.realpath(str(links / rules.LOCAL_LINK)), self.localr,
-                         "ссылка на боковую директорию ведёт не туда")
-        self.assertIn(rules.LINK_DIR, read(self.clone / ".git" / "info" / "exclude").split("\n"),
-                      "corp не спрятал каталог со ссылками строкой exclude")
+        self.assertNotIn(rules.LINK_DIR, read(self.clone / ".git" / "info" / "exclude").split("\n"),
+                         "corp спрятал ссылку строкой exclude: поиск редактора читает те же "
+                         "источники игнора, и доска перестанет находиться из окна клона")
         self.assertFalse((self.clone / "AGENTS.md").exists(),
                          "corp положил AGENTS.md в дерево корп-клона")
-        self.assertEqual(git(self.clone, "status", "--short")[1].strip(), "",
-                         "обвязка торчит в git status корп-клона")
+        # Ссылка висит в статусе клона одной строкой, и это цена того, что доска
+        # видна поиску: от индекса её стережёт обёртка pre-commit (DK-583).
+        self.assertEqual(git(self.clone, "status", "--short")[1].strip(), "?? .devkit",
+                         "в git status корп-клона не одна ссылка обвязки")
 
     def test_02_chain_on_both_hooks(self):
         # Рубеж по сообщению держит только commit-msg, и клон с одной обёрткой
@@ -322,7 +329,9 @@ class CorpConnectTest(SandboxCase):
         executable(corpbin / "taskctl", cls.box.board_taskctl())
         cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
         cls.clone = cls.box.root / "corp-two"
-        cls.local = cls.box.root / "corp-two-local"
+        # Контур corp2 из флагов: боковая директория общая на контур, проект в
+        # ней подкаталогом (DK-583).
+        cls.local = cls.box.root / "corp2-local" / "corp-two"
         git_init(cls.clone)
         write(cls.clone / "readme.md", "readme\n")
         git(cls.clone, "add", "-A")
@@ -517,7 +526,7 @@ class InteractiveCorpTest(SandboxCase):
         rc, out = self.corp(clone, "--contour", "gatecorp", "--key", "ABC",
                             answers=["", "https://tracker.example", "ivanov"])
         self.assertEqual(rc, 0, "первый прогон под tty не прошёл: %s" % out)
-        board = self.box.root / "corp-gate-local" / "docs" / "TASKS.md"
+        board = self.box.root / "gatecorp-local" / "corp-gate" / "docs" / "TASKS.md"
         self.assertIn_("префикс CG", read(board),
                        "доска заведена не с предложенным по имени клона префиксом")
         contour = read(self.box.home / ".devkit" / "tracker" / "gatecorp.local")
@@ -589,3 +598,205 @@ class InteractiveCorpTest(SandboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CorpWindowTest(SandboxCase):
+    """Одно окно на корп-проект (DK-583): доска лежит за ссылкой .devkit в
+    дереве клона, ссылка не спрятана строкой exclude, и потому её видят и поиск
+    редактора, и сессия. Цена этого одна строка «?? .devkit» в чужом статусе, и
+    держит её обёртка pre-commit: в индекс обвязка не уезжает.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        corpbin = cls.box.root / "winbin"
+        corpbin.mkdir()
+        executable(corpbin / "taskctl", cls.box.board_taskctl())
+        cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
+        cls.clone = cls.box.root / "corp-win"
+        cls.local = cls.box.root / "corp-win-local"
+        git_init(cls.clone)
+        write(cls.clone / "readme.md", "readme\n")
+        git(cls.clone, "add", "-A")
+        git(cls.clone, "commit", "-qm", "init")
+        cls.rc, cls.out = cls.box.dkctl_run("corp", "--prefix", "CW", "-C", str(cls.clone),
+                                            path=cls.corppath)
+        # Хвост подключения (команда тестов, remote доски) заполняется сразу:
+        # ниже проверяется код доктора, и чужие находки мешали бы ему.
+        write(cls.local / ".devkit" / "deploy.local",
+              "deploy = echo выкат\ntest = echo тесты\nautonomous = false\n")
+        run(["git", "init", "-q", "--bare", str(cls.box.root / "corp-win-board.git")])
+        git(cls.local, "remote", "add", "origin", str(cls.box.root / "corp-win-board.git"))
+
+    def test_1_board_opens_from_the_clone(self):
+        self.assertEqual(self.rc, 0, "corp не прошёл: %s" % self.out)
+        board = self.clone / ".devkit" / "docs" / "TASKS.md"
+        self.assertTrue(board.is_file(), "доска не открывается путём .devkit/docs/TASKS.md")
+        self.assertIn("префикс CW", read(board), "за ссылкой лежит не доска проекта")
+
+    def test_2_the_link_is_not_hidden_from_search(self):
+        # Поиск редактора читает те же источники игнора, что git, и спрятанное
+        # от git прячется заодно от него: доска за ссылкой обязана быть видна
+        # обоим, поэтому проверяется сам механизм, а не только строка exclude.
+        rc, _ = git(self.clone, "check-ignore", "-q", ".devkit/docs/TASKS.md")
+        self.assertNotEqual(rc, 0, "доска за ссылкой игнорится, и поиск редактора её не найдёт")
+        rg = shutil.which("rg")
+        if rg:
+            out = run([rg, "--hidden", "--follow", "--files-with-matches", "префикс CW", "."],
+                      cwd=str(self.clone))[1]
+            self.assertIn(".devkit", out, "rg из клона не нашёл текст доски: %s" % out)
+
+    def test_3_index_of_the_corp_commit_is_guarded(self):
+        # Ссылка висит в статусе, и «git add .» кладёт её в индекс молча. Это
+        # последнее место, где видно: дальше она уехала бы в чужую историю.
+        write(self.clone / "note.md", "заметка\n")
+        git(self.clone, "add", ".")
+        rc, out = git(self.clone, "commit", "-m", "chore: правка")
+        self.assertNotEqual(rc, 0, "обвязка devkit прошла в коммит корп-репозитория: %s" % out)
+        self.assertIn_("обвязка devkit в индексе", out, "хук не назвал причину отказа")
+        self.assertIn_("git rm --cached", out, "хук не сказал, чем снять обвязку из индекса")
+        git(self.clone, "rm", "-q", "--cached", ".devkit")
+        rc, out = git(self.clone, "commit", "-m", "chore: правка")
+        self.assertEqual(rc, 0, "коммит без обвязки в индексе не прошёл: %s" % out)
+
+    def test_4_thin_file_in_the_index_is_guarded_too(self):
+        git(self.clone, "add", "-f", "CLAUDE.md")
+        rc, out = git(self.clone, "commit", "-m", "chore: файл контекста")
+        self.assertNotEqual(rc, 0, "тонкий файл контекста прошёл в коммит: %s" % out)
+        self.assertIn_("CLAUDE.md", out, "хук не назвал тонкий файл в индексе")
+        git(self.clone, "rm", "-q", "--cached", "CLAUDE.md")
+
+    def test_5_clean_drops_the_link_and_fix_returns_it(self):
+        # «git clean -xdf» сносит ссылку, а файлы за ней целы: в индексе её нет,
+        # и для git это обычный неотслеживаемый файл.
+        run(["git", "-C", str(self.clone), "clean", "-xdfq"])
+        self.assertFalse((self.clone / ".devkit").exists(), "clean не снёс ссылку, фикстура не та")
+        self.assertTrue((self.local / "docs" / "TASKS.md").is_file(), "clean достал доску за ссылкой")
+        _, out = self.box.dkctl_run("doctor", "-C", str(self.clone), path=self.corppath)
+        self.assertIn_("нет ссылки .devkit", out, "доктор промолчал про снесённую ссылку")
+        rc, out = self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
+        self.assertEqual(rc, 0, "--fix не вернул ссылку: %s" % out)
+        self.assertTrue((self.clone / ".devkit" / "docs" / "TASKS.md").is_file(),
+                        "--fix сказал про ссылку, а доска из клона не открывается")
+
+    def test_6_stale_exclude_line_is_dropped(self):
+        # Клон, подключённый до DK-583, прячет .devkit строкой exclude, и доска
+        # из его окна не находится. Строку убирает тот же --fix.
+        excl = self.clone / ".git" / "info" / "exclude"
+        write(excl, read(excl) + ".devkit\n")
+        _, out = self.box.dkctl_run("doctor", "-C", str(self.clone), path=self.corppath)
+        self.assertIn_("exclude прячет .devkit", out, "доктор промолчал про спрятанную ссылку")
+        rc, out = self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
+        self.assertEqual(rc, 0, "--fix не убрал строку exclude: %s" % out)
+        self.assertNotIn(".devkit", read(excl).split("\n"), "строка exclude осталась после --fix")
+
+    def test_7_old_link_dir_becomes_a_link(self):
+        # Прежняя раскладка держала под этим именем каталог с двумя ссылками на
+        # соседние деревья: подключение заменяет его ссылкой на боковую
+        # директорию, потому что те же ссылки лежат теперь в ней самой.
+        link = self.clone / ".devkit"
+        link.unlink()
+        link.mkdir()
+        (link / "devkit").symlink_to(str(self.box.dk))
+        (link / "local").symlink_to(str(self.local))
+        rc, out = self.box.dkctl_run("corp", "-C", str(self.clone), path=self.corppath)
+        self.assertEqual(rc, 0, "corp не прошёл на клоне прежней раскладки: %s" % out)
+        self.assertTrue(link.is_symlink(), "каталог обвязки не стал ссылкой: %s" % out)
+        self.assertTrue((link / "docs" / "TASKS.md").is_file(),
+                        "после замены каталога доска из клона не открывается")
+
+    def test_8_foreign_dir_under_the_name_is_left_alone(self):
+        # Под тем же именем лежит чужое: сносить его молча дороже, чем сказать.
+        link = self.clone / ".devkit"
+        link.unlink()
+        link.mkdir()
+        write(link / "own.txt", "чужое\n")
+        _, out = self.box.dkctl_run("doctor", "-C", str(self.clone), path=self.corppath)
+        self.assertIn_("это свой каталог или файл", out, "доктор молча снёс бы чужой каталог")
+        _, out = self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
+        self.assertTrue((link / "own.txt").is_file(), "--fix снёс чужой каталог")
+        shutil.rmtree(str(link))
+        self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
+
+
+class CorpContourTest(SandboxCase):
+    """Боковая директория общая на контур (DK-583): два проекта одного контура
+    ложатся подкаталогами ../<контур>-local, репозиторий там один на всех, а
+    путь можно назвать и явным флагом --local.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        corpbin = cls.box.root / "ctbin"
+        corpbin.mkdir()
+        executable(corpbin / "taskctl", cls.box.board_taskctl())
+        cls.corppath = "%s:%s" % (corpbin, cls.box.cleanpath)
+
+    def clone(self, name):
+        root = git_init(self.box.root / name)
+        write(root / "readme.md", "readme\n")
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "init")
+        return root
+
+    def corp(self, clone, *args):
+        return self.box.dkctl_run("corp", "-C", str(clone), *args, path=self.corppath)
+
+    def test_1_two_projects_share_one_repo(self):
+        one, two = self.clone("ct-one"), self.clone("ct-two")
+        rc, out = self.corp(one, "--prefix", "CO", "--contour", "acme")
+        self.assertEqual(rc, 0, "corp первого проекта контура не прошёл: %s" % out)
+        contour = self.box.root / "acme-local"
+        self.assertTrue((contour / "ct-one" / "docs" / "TASKS.md").is_file(),
+                        "доска первого проекта легла не в директорию контура: %s" % out)
+        self.assertTrue((contour / ".git").is_dir(),
+                        "репозиторий заведён не на директории контура: %s" % out)
+        self.assertFalse((contour / "ct-one" / ".git").exists(),
+                         "у проекта контура свой вложенный репозиторий")
+        rc, out = self.corp(two, "--prefix", "CT", "--contour", "acme")
+        self.assertEqual(rc, 0, "corp второго проекта контура не прошёл: %s" % out)
+        self.assertIn_("подкаталогом репозитория", out,
+                       "corp не сказал, что доска легла в готовый репозиторий контура")
+        self.assertFalse((contour / "ct-two" / ".git").exists(),
+                         "второй проект завёл свой репозиторий внутри контура")
+        self.assertEqual(git(one, "config", "--local", "devkit.local")[1].strip(),
+                         "../acme-local/ct-one", "редирект ведёт не в директорию контура")
+        self.assertTrue((one / ".devkit" / "docs" / "TASKS.md").is_file(),
+                        "доска первого проекта не открывается из его клона")
+        self.assertTrue((two / ".devkit" / "docs" / "TASKS.md").is_file(),
+                        "доска второго проекта не открывается из его клона")
+
+    def test_2_lost_rig_is_found_through_the_contour(self):
+        # Редирект потерян переклонированием, а привязка лежит подкаталогом
+        # директории контура: обвязка находится и оттуда.
+        clone = self.box.root / "ct-one"
+        keep = git(clone, "config", "--local", "devkit.local")[1].strip()
+        git(clone, "config", "--unset", "devkit.local")
+        self.assertEqual(os.path.realpath(corp.lost_local(str(clone), str(self.box.dk))),
+                         os.path.realpath(str(self.box.root / "acme-local" / "ct-one")),
+                         "потерянная обвязка не нашлась по соседней директории контура")
+        git(clone, "config", "devkit.local", keep)
+
+    def test_3_local_flag_names_the_path(self):
+        clone = self.clone("ct-three")
+        where = self.box.root / "boards" / "ct-three"
+        rc, out = self.corp(clone, "--prefix", "CF", "--local", str(where))
+        self.assertEqual(rc, 0, "corp с --local не прошёл: %s" % out)
+        self.assertTrue((where / "docs" / "TASKS.md").is_file(),
+                        "доска легла не туда, куда позвал --local: %s" % out)
+        self.assertEqual(os.path.realpath(str(clone / ".devkit")), os.path.realpath(str(where)),
+                         "ссылка клона ведёт не в названную флагом директорию")
+
+    def test_4_old_layout_survives(self):
+        # Клон, подключённый прежней раскладкой, остаётся при своей
+        # ../<проект>-local: редирект называет её явно, и переезжать ему незачем.
+        clone = self.clone("ct-old")
+        old = self.box.root / "ct-old-local"
+        rc, out = self.corp(clone, "--prefix", "CD", "--local", str(old))
+        self.assertEqual(rc, 0, "corp прежней раскладки не прошёл: %s" % out)
+        rc, out = self.corp(clone, "--contour", "acme")
+        self.assertEqual(rc, 0, "повторный corp с контуром не прошёл: %s" % out)
+        self.assertEqual(git(clone, "config", "--local", "devkit.local")[1].strip(), "../ct-old-local",
+                         "повторный прогон утащил прежний клон в директорию контура")

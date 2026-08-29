@@ -68,6 +68,11 @@ CORE_RULES = "RULES" + CORE_SUFFIX
 LINK_DIR = ".devkit"
 DEVKIT_LINK = "devkit"
 LOCAL_LINK = "local"
+# Корп-контур: .devkit клона это ссылка на боковую директорию, поэтому дерево
+# devkit зовётся через её собственный каталог обвязки, а сама боковая
+# директория лежит прямо за ссылкой и промежуточного звена не имеет (DK-583).
+CORP_DEVKIT_LINK = "%s/%s" % (LINK_DIR, DEVKIT_LINK)
+LOCAL_LINK_SELF = ""
 
 GEN_RE = re.compile(r"^<!-- devkit:generated (?:depth=(?P<depth>[a-z]+) )?body=(?P<body>[0-9a-f]{12}) -->$")
 BEGIN_RE = re.compile(r"^<!-- devkit:rules begin (?:depth=[a-z]+ )?src=([0-9a-f]{12}) body=([0-9a-f]{12}) -->$")
@@ -300,7 +305,20 @@ def rule_sources(devkit, root, board, depth=DEPTH_FULL):
     return out
 
 
-def link_dest(root, dest):
+def link_dir(root, name=""):
+    """Каталог, в котором физически лежит ссылка <root>/.devkit/<name>.
+
+    Разрешается по диску, а не лексически: в корп-клоне сам .devkit это ссылка
+    на боковую директорию, и путь до соседнего дерева от него считается от
+    места, куда ссылка ведёт, а не от корня клона (DK-583).
+    """
+    base = Path(root) / LINK_DIR
+    if name:
+        base = base / os.path.dirname(name)
+    return os.path.realpath(str(base))
+
+
+def link_dest(root, dest, name=""):
     """Цель ссылки: путь до соседнего дерева от каталога, где лежит сама ссылка.
 
     Относительный, а не абсолютный: ссылка коммитится вместе с проектом и
@@ -308,18 +326,21 @@ def link_dest(root, dest):
     раздел «Раскладка»). Проекту, лежащему не по правилу, тем же счётом выходит
     цель до его фактического соседа.
     """
-    return Path(os.path.relpath(str(dest), str(Path(root) / LINK_DIR)))
+    return Path(os.path.relpath(os.path.realpath(str(dest)), link_dir(root, name)))
 
 
 def via_link(root, target, name, dest):
     """Путь до target от корня проекта через ссылку .devkit/<name> -> dest.
 
+    Пустое имя это сам каталог обвязки: в корп-клоне .devkit и есть ссылка на
+    боковую директорию, и путь до её файла идёт без промежуточного звена.
     None, если target лежит вне dest: тогда ссылка тут ни при чём.
     """
     rel = os.path.relpath(str(target), str(dest))
     if rel == os.pardir or rel.startswith(os.pardir + os.sep):
         return None
-    return (Path(LINK_DIR) / name / rel).as_posix()
+    base = Path(LINK_DIR) / name if name else Path(LINK_DIR)
+    return (base / rel).as_posix()
 
 
 def import_path(root, target, links):
@@ -345,17 +366,20 @@ def thin_links(root, devkit, agents_root=None):
     """Ссылки, через которые проект зовёт соседние деревья: дерево devkit и, в
     корп-контуре, боковую директорию с AGENTS.md."""
     dk = Path(root) if is_devkit_checkout(root) else Path(devkit)
-    links = [(DEVKIT_LINK, dk)]
-    if agents_root is not None:
-        links.append((LOCAL_LINK, Path(agents_root)))
-    return links
+    if agents_root is None:
+        return [(DEVKIT_LINK, dk)]
+    # Корп-клон зовёт оба дерева через одну ссылку .devkit -> боковая
+    # директория (DK-583): её файлы лежат прямо за ней, а дерево devkit за её
+    # собственным каталогом обвязки, той самой ссылкой, что кладёт себе сама
+    # боковая директория. Второго экземпляра ссылки на devkit клону не нужно.
+    return [(CORP_DEVKIT_LINK, dk), (LOCAL_LINK_SELF, Path(agents_root))]
 
 
 def used_links(texts, links):
     """Из кандидатов остаются те, через которые импорт и правда записан: проекту
     без своих импортов из devkit ссылка не нужна, и класть её ему незачем."""
     return [(name, dest) for name, dest in links
-            if any("%s/%s/" % (LINK_DIR, name) in t for t in texts)]
+            if name and any("%s/%s/" % (LINK_DIR, name) in t for t in texts)]
 
 
 def link_fits(name, path, dest):
@@ -368,7 +392,7 @@ def link_fits(name, path, dest):
     автоматика, она не коммитится, и ей цель сверяется точно.
     """
     target = Path(os.path.join(str(Path(path).parent), os.readlink(str(path))))
-    if name == DEVKIT_LINK:
+    if os.path.basename(name) == DEVKIT_LINK:
         return (target / "RULES.md").is_file()
     return os.path.realpath(str(target)) == os.path.realpath(str(dest))
 
@@ -379,7 +403,7 @@ def check_link(root, name, dest, fix):
     findings, fixed = [], []
     path = Path(root) / LINK_DIR / name
     where = (Path(LINK_DIR) / name).as_posix()
-    want = link_dest(root, dest)
+    want = link_dest(root, dest, name)
     if path.is_symlink():
         have = os.readlink(str(path))
         if link_fits(name, path, dest):

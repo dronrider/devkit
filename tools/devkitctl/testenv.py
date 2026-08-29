@@ -224,6 +224,15 @@ if argv[:1] == ["-C"]:
 if "--prefix" in argv:
     prefix = argv[argv.index("--prefix") + 1]
 if argv[:1] == ["init"]:
+    # Место доски заглушка выбирает как настоящий taskctl: вершина репозитория,
+    # а с --here названная директория. Иначе подключение корп-проекта без флага
+    # зеленело бы на стенде и клало доску одну на весь контур (DK-583).
+    if "--here" not in argv:
+        import subprocess
+        got = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if got.returncode == 0 and got.stdout.strip():
+            root = got.stdout.decode("utf-8").strip()
     os.makedirs(os.path.join(root, "docs", "tasks"), exist_ok=True)
     with open(os.path.join(root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
         f.write("# Задачи проекта (префикс %%s)\\n" %% prefix)

@@ -6,13 +6,14 @@
       включённые харнесы, git-хуки, доска через taskctl init, болванка
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
-  devkitctl corp [--prefix XX] [--name "..."] [-C dir]
+  devkitctl corp [--prefix XX] [--name "..."] [--local dir] [-C dir]
       подключить корп-проект: первый прогон спрашивает недостающее сам (префикс
       доски с предложением по имени клона, адрес трекера и пользователя нового
       контура компании), без tty вопросов нет и недоделанное едет в хвост;
-      боковая директория ../<проект>-local со скелетом
-      доски и своим git-репозиторием, редирект git config devkit.local в клоне,
-      тонкий файл контекста харнеса с импортом на AGENTS.md боковой директории и
+      боковая директория со скелетом доски (по умолчанию общая на контур
+      ../<контур>-local/<проект>, репозиторий один на всю директорию контура),
+      ссылка .devkit из клона на неё, редирект git config devkit.local, тонкий
+      файл контекста харнеса с импортом на AGENTS.md боковой директории и
       строкой в .git/info/exclude, обёртки хуков на pre-commit и commit-msg.
       Прогон повторяемый: боковая директория не трогается, доводится обвязка
       клона, поэтому он же восстанавливает обвязку после переклонирования
@@ -752,13 +753,22 @@ def log_run(root, cmd, code):
         pass
 
 
+def worktree_top(root):
+    """Вершина рабочего дерева. Относительный core.hooksPath git считает от неё,
+    а корень проекта devkit бывает и подкаталогом: боковая директория контура
+    лежит внутри его репозитория (DK-583)."""
+    rc, out = run(["git", "rev-parse", "--show-toplevel"], cwd=root)
+    return Path(out.strip()) if rc == 0 and out.strip() else Path(root)
+
+
 def check_git_hooks(root):
     hooks_dir = (DEVKIT / "hooks").resolve()
+    top = worktree_top(root)
     rc, hp = run(["git", "config", "core.hooksPath"], cwd=root)
     if rc == 0 and hp:
         cand = Path(os.path.expanduser(hp))
         if not cand.is_absolute():
-            cand = root / cand
+            cand = top / cand
         if cand.exists() and cand.resolve() == hooks_dir:
             return None
     else:
@@ -766,7 +776,7 @@ def check_git_hooks(root):
         pre = (Path(gp) if os.path.isabs(gp) else root / gp) / "pre-commit"
         if pre.exists() and Path(os.path.realpath(pre)).parent == hooks_dir:
             return None
-    rel = os.path.relpath(hooks_dir, root)
+    rel = os.path.relpath(hooks_dir, top)
     return "git-хуки devkit не подключены; из корня проекта: git config core.hooksPath %s" % rel
 
 
@@ -782,7 +792,7 @@ def connect_git_hooks(root):
     if custom:
         return None, ("в хуках проекта уже есть свои (%s), core.hooksPath не трогается; "
                       "симлинки на хуки devkit по hooks/README.md" % ", ".join(custom))
-    hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), root)
+    hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), worktree_top(root))
     run(["git", "config", "core.hooksPath", hooks_rel], cwd=root)
     return "git-хуки: core.hooksPath = %s" % hooks_rel, None
 
@@ -2155,6 +2165,10 @@ def doctor(start, fix=False):
         # чекаута, независимо от того, есть там файл или нет.
         main_checkout = corp.checkout(root)
         from_main_checkout = not main_checkout or Path(main_checkout).resolve() == Path(root).resolve()
+        # Боковая директория корп-контура лежит подкаталогом репозитория контура
+        # (DK-583), и родитель git-common-dir там не она: линкованным деревом
+        # она от этого не становится, конфиг выката её собственный.
+        from_main_checkout = from_main_checkout or bool(local)
         if from_main_checkout:
             deploy, test, autonomous = read_deploy(root)
             if deploy is None and fix:
@@ -2581,7 +2595,7 @@ def ask_contour(contour):
             "user": corp.ask("имя пользователя в трекере, от него идут assign и ворклоги")}
 
 
-def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
+def corp_connect(start, prefix, name, contour="", key="", branch="", remote="", local_arg=""):
     # Подключение корп-проекта и оно же восстановление обвязки: заведённое не
     # переписывается, доводится только недостающее, поэтому повторный прогон
     # после переклонирования возвращает клон в рабочее состояние, а доску в
@@ -2592,7 +2606,15 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
                          "обычный проект подключает devkitctl new\n" % root)
         return 2
     clone = Path(corp.checkout(root) or root)
-    local = Path(corp.local_dir(clone, DEVKIT) or (clone.parent / (clone.name + "-local")))
+    # Путь боковой директории: сказанный флагом, иначе тот, куда уже ведёт
+    # редирект (повторный прогон и восстановление обвязки), иначе общая
+    # директория контура. Подключённый до DK-583 клон остаётся на своей
+    # ../<проект>-local: редирект называет её явно, и переезжать ему незачем.
+    # Путь разрешается по диску: сказанный флагом приезжает как есть, а клон
+    # git уже отдаёт разрешённым, и относительный редирект между ними иначе
+    # выходит через корень файловой системы.
+    local = Path(os.path.realpath(local_arg or corp.local_dir(clone, DEVKIT)
+                                  or corp.contour_local(clone, contour)))
     board = local / "docs" / "TASKS.md"
     # Про место рабочих файлов первый прогон говорит до вопросов, а не строкой
     # отчёта в конце: человек зовёт corp из клона и вправе ждать, что доска
@@ -2632,13 +2654,24 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     if not local.is_dir():
         local.mkdir(parents=True)
         done.append("боковая директория %s заведена" % local)
-    if not (local / ".git").exists():
-        rc, out = run(["git", "init", "-q", str(local)])
+    # Репозиторий заводится один на контур, а не на проект: боковая директория
+    # контура держит проекты подкаталогами, и второй git внутри чужого рабочего
+    # дерева был бы вложенным репозиторием (DK-583). Уже накрытый репозиторием
+    # путь не трогается вовсе.
+    top = corp.repo_top(local)
+    if not top:
+        # Общая раскладка кладёт проект подкаталогом ../<контур>-local, и
+        # репозиторий заводится на самой директории контура; прежняя
+        # ../<проект>-local лежит сиблингом клона, и репозиторий её собственный.
+        init_at = local if corp.same_path(local.parent, clone.parent) else local.parent
+        rc, out = run(["git", "init", "-q", str(init_at)])
         if rc != 0:
-            sys.stderr.write("git init %s: %s\n" % (local, out))
+            sys.stderr.write("git init %s: %s\n" % (init_at, out))
             return 1
-        done.append("git-репозиторий боковой директории заведён: доска пушится в личный "
-                    "приватный remote, а не в корп-origin")
+        done.append("git-репозиторий %s заведён: доска пушится в личный приватный remote, "
+                    "а не в корп-origin" % init_at)
+    elif not corp.same_path(top, str(local)):
+        done.append("доска ложится подкаталогом репозитория %s: он один на весь контур" % top)
     (local / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
     (local / ".devkit").mkdir(exist_ok=True)
     if not (local / rules.AGENTS_FILE).exists():
@@ -2654,7 +2687,11 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
             sys.stderr.write("taskctl не в PATH, доску заводить нечем: собрать утилиты "
                              "(python3 %s/tools/devkitctl/devkitctl.py build) и повторить\n" % DEVKIT)
             return 1
-        rc, out = run([tc, "-C", str(local), "init", "--prefix", prefix, "--name", name or clone.name])
+        # Доску заводит --here: боковая директория контура это подкаталог его
+        # репозитория, а init без флага поднялся бы к вершине и положил доску
+        # одну на все проекты контура.
+        rc, out = run([tc, "-C", str(local), "init", "--here",
+                       "--prefix", prefix, "--name", name or clone.name])
         if rc != 0:
             sys.stderr.write("taskctl init: %s\n" % out)
             return 1
@@ -2668,6 +2705,9 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     done += ["боковая директория: %s" % g for g in generated]
     rel = corp.ensure_redirect(clone, local)
     done.append("редирект корня: git config devkit.local %s" % rel)
+    linked = corp.ensure_tree_link(clone, local)
+    if linked:
+        done.append(linked)
     for bkey, bval in corp.ensure_binding(local, clone,
                                           {"contour": contour, "key": key, "branch": branch}):
         why = (" (по нему обвязка клона находится после переклонирования)"
@@ -2691,6 +2731,8 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     done += thin_fixed
     for n in corp.ensure_exclude(clone, corp.hidden_names(corp_thin_names(imports))):
         done.append(".git/info/exclude: спрятан %s" % n)
+    for n in corp.drop_exclude(clone, [corp.LINK_DIR]):
+        done.append(".git/info/exclude: строка %s убрана, доска видна поиску клона" % n)
     for hook, state, chained in corp.ensure_hooks(clone, DEVKIT):
         done.append("хук %s: цепочка %s%s"
                     % (hook, state, " (чужой хук переехал в %s.chained)" % hook if chained else ""))
@@ -2725,6 +2767,9 @@ def main(argv):
     c.add_argument("--key", default="", help="ключ проекта в трекере (ABC), отличный от --prefix")
     c.add_argument("--branch", default="", help="шаблон ветки, по умолчанию решает shipctl")
     c.add_argument("--remote", default="", help="личный приватный remote доски боковой директории")
+    c.add_argument("--local", default="",
+                   help="путь боковой директории с доской; по умолчанию общая на контур "
+                        "../<контур>-local/<проект>, а без --contour прежняя ../<проект>-local")
     b = sub.add_parser("build", help="собрать бинари devkit с зашитой версией")
     b.add_argument("--release", action="store_true",
                    help="четыре пары GOOS/GOARCH, тарболлы и SHA256SUMS")
@@ -2777,7 +2822,7 @@ def main(argv):
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
     elif a.cmd == "corp":
         rc = corp_connect(a.dir, a.prefix.upper(), a.name, a.contour, a.key.upper(),
-                          a.branch, a.remote)
+                          a.branch, a.remote, a.local)
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     elif a.cmd == "build":

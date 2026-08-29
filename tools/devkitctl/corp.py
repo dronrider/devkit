@@ -153,13 +153,20 @@ def lost_local(clone, devkit):
         d = os.path.join(parent, name)
         if not name.endswith("-local") or not os.path.isdir(d):
             continue
-        repo = tracker_value(d, "repo", devkit)
-        if not repo:
-            continue
-        if not os.path.isabs(repo):
-            repo = os.path.join(d, repo)
-        if same_path(repo, base):
-            return d
+        # Директория контура держит проекты подкаталогами, и привязка лежит
+        # тогда на уровень ниже: смотрятся оба уровня, старый и общий.
+        try:
+            inner = [os.path.join(d, n) for n in sorted(os.listdir(d))]
+        except OSError:
+            inner = []
+        for cand in [d] + [i for i in inner if os.path.isdir(i)]:
+            repo = tracker_value(cand, "repo", devkit)
+            if not repo:
+                continue
+            if not os.path.isabs(repo):
+                repo = os.path.join(cand, repo)
+            if same_path(repo, base):
+                return cand
     return ""
 
 
@@ -202,10 +209,15 @@ def exclude_lines(clone):
 
 
 def hidden_names(thin_names):
-    """Что прячется строкой exclude: тонкие файлы харнесов и каталог обвязки со
-    ссылками на соседние деревья. В индекс чужого репозитория не едет ни то, ни
-    другое, а лежать оба обязаны в корне клона."""
-    return list(thin_names) + [LINK_DIR]
+    """Что прячется строкой exclude: тонкие файлы харнесов, и только они.
+
+    Ссылка .devkit из exclude ушла (DK-583): ripgrep и git читают одни и те же
+    источники игнора, и спрятанное от git прячется заодно от поиска редактора,
+    то есть доска перестаёт находиться из окна клона. Ссылка живёт в дереве
+    открыто, висит в git status одной строкой «?? .devkit», а от случайного
+    «git add .» её стережёт обёртка pre-commit.
+    """
+    return list(thin_names)
 
 
 def ensure_exclude(clone, names):
@@ -225,6 +237,108 @@ def ensure_exclude(clone, names):
         f.write(head + "# devkit: обвязка корп-контура, в индекс не едет.\n")
         f.write("".join(n + "\n" for n in missing))
     return missing
+
+
+def drop_exclude(clone, names):
+    """Убрать из .git/info/exclude строки, которые devkit туда клал, а больше не
+    кладёт. Отдаёт убранное; чужие строки не трогаются."""
+    path = exclude_path(clone)
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().split("\n")
+    drop = [n for n in names if n in [ln.strip() for ln in lines]]
+    if not drop:
+        return []
+    kept = [ln for ln in lines if ln.strip() not in drop]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(kept))
+    return drop
+
+
+def link_target(clone, local):
+    """Куда ведёт ссылка .devkit клона: путь до боковой директории от корня
+    клона. Относительный, пока она лежит рядом, как и редирект в конфиге."""
+    return os.path.relpath(local, clone)
+
+
+def tree_link_state(clone, local):
+    """Что лежит в клоне под именем .devkit: «на месте», «ведёт не туда»,
+    «занято» (свой каталог или файл) либо «нет»."""
+    path = os.path.join(clone, LINK_DIR)
+    if os.path.islink(path):
+        return "на месте" if same_path(path, local) else "ведёт не туда"
+    if os.path.exists(path):
+        return "занято"
+    return "нет"
+
+
+def stale_links(path):
+    """Ссылки на соседние деревья в старом каталоге обвязки клона. Пусто, если
+    там лежит хоть что-то своё: тогда каталог не наш и сносить его нельзя."""
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        return []
+    if any(not os.path.islink(os.path.join(path, n)) for n in names):
+        return []
+    return names
+
+
+def ensure_tree_link(clone, local):
+    """Ссылка .devkit -> боковая директория в дереве клона. Отдаёт строку о
+    сделанном либо пусто, когда ссылка уже на месте.
+
+    Клон, подключённый до DK-583, держал под этим именем каталог с двумя
+    ссылками на соседние деревья: он сносится, потому что те же ссылки лежат
+    теперь в самой боковой директории. Каталог со своим содержимым не трогается
+    вовсе, про него говорит находка доктора.
+    """
+    path = os.path.join(clone, LINK_DIR)
+    state = tree_link_state(clone, local)
+    if state == "на месте":
+        return ""
+    want = link_target(clone, local)
+    if state == "занято":
+        names = stale_links(path)
+        if not names:
+            return ""
+        for n in names:
+            os.unlink(os.path.join(path, n))
+        os.rmdir(path)
+        os.symlink(want, path)
+        return ("ссылка %s -> %s заменила каталог обвязки: боковая директория "
+                "открыта из клона одним окном" % (LINK_DIR, want))
+    if state == "ведёт не туда":
+        os.unlink(path)
+    os.symlink(want, path)
+    return "ссылка %s -> %s: доска и файлы задач видны из клона" % (LINK_DIR, want)
+
+
+def contour_local(clone, contour):
+    """Боковая директория по умолчанию: общая на контур
+    ../<контур>-local/<проект>, а без имени контура прежняя ../<проект>-local
+    (DK-074). Одна директория на контур держит сколько угодно проектов, и в
+    рабочей раскладке человека сбоку лежит одна папка, а не по одной на клон."""
+    clone = str(clone)
+    parent = os.path.dirname(os.path.abspath(clone))
+    name = os.path.basename(os.path.abspath(clone))
+    if contour:
+        return os.path.join(parent, contour + "-local", name)
+    return os.path.join(parent, name + "-local")
+
+
+def repo_top(path):
+    """Вершина git-репозитория, которому принадлежит ближайшая существующая
+    директория пути. Пусто, если репозитория там нет: тогда его заводит
+    подключение."""
+    d = os.path.abspath(str(path))
+    while d and not os.path.isdir(d):
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+    return git(d, "rev-parse", "--show-toplevel")
 
 
 def binding_keys(local):
@@ -503,9 +617,33 @@ def check(clone, local, devkit, thin_names, fix):
             for n in ensure_exclude(clone, hide):
                 fixed.append(".git/info/exclude: спрятан %s" % n)
         else:
-            findings.append(".git/info/exclude не прячет %s: обвязка devkit лежит в корне клона "
-                            "(файл контекста харнеса и ссылки на соседние деревья), и без строки "
-                            "exclude она торчит в чужом git status" % ", ".join(missing))
+            findings.append(".git/info/exclude не прячет %s: тонкий файл контекста харнеса лежит "
+                            "в корне клона, и без строки exclude он торчит в чужом git status"
+                            % ", ".join(missing))
+    if LINK_DIR in set(exclude_lines(clone)):
+        if fix:
+            for n in drop_exclude(clone, [LINK_DIR]):
+                fixed.append(".git/info/exclude: строка %s убрана, доска видна поиску" % n)
+        else:
+            findings.append(".git/info/exclude прячет %s: поиск редактора читает те же источники "
+                            "игнора, что git, и доска за ссылкой перестаёт находиться из окна "
+                            "клона; убрать строку: devkitctl doctor --fix" % LINK_DIR)
+    state = tree_link_state(clone, local)
+    if state != "на месте":
+        if state == "занято" and not stale_links(os.path.join(clone, LINK_DIR)):
+            findings.append("%s в клоне это свой каталог или файл, а не ссылка на %s: имя занято "
+                            "чужим, убрать руками (mv %s %s.bak) и повторить devkitctl doctor "
+                            "--fix" % (LINK_DIR, local, os.path.join(clone, LINK_DIR),
+                                       os.path.join(clone, LINK_DIR)))
+        elif fix:
+            done = ensure_tree_link(clone, local)
+            if done:
+                fixed.append(done)
+        else:
+            findings.append("нет ссылки %s -> %s в клоне: доска и файлы задач открываются из окна "
+                            "клона через неё, и без ссылки их не видят ни поиск, ни сессия; "
+                            "положить: devkitctl doctor --fix"
+                            % (LINK_DIR, link_target(clone, local)))
     hf = hook_findings(clone, devkit)
     if hf and fix:
         for name, state, chained in ensure_hooks(clone, devkit):

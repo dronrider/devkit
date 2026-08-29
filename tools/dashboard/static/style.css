@@ -1701,8 +1701,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    такой строки и без ступеньки стоят на своём месте (fdot и ::before заданы
    от края строки), так что вложенность показывает цвет нити, а контуры записей
    встают на один край. */
-.frow.sub{padding-left:17px}
-.frow.sub::before{background:var(--deleg);width:2px;left:5px}
+.frow.sub::before{background:var(--deleg)}
 .frowb{flex:1;min-width:0;padding:0}
 .fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}
@@ -1728,6 +1727,30 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .frow.gend{margin-bottom:18px}
 .frow.gtop.f-bub::before{top:29px}
 .frow.gend.f-bub::before{bottom:auto;height:29px}
+
+/* Отрезок работы субагента: нить идёт от кружка вызова Agent до кружка вести о
+   том, что фоновый агент закончил, и по дороге не рвётся. Рвалась она о щели
+   между записями: линия рисуется по коробке строки, а поле группы в
+   восемнадцать точек ничьё, и на нём отрезок проваливался. Отсюда нить внутри
+   отрезка выходит за коробку на то же поле с обеих сторон, а поднятая к кружку
+   нить первой записи группы внутри работы отменяется: там середина отрезка, а
+   не его край. */
+.frow.sub::before{top:-18px;bottom:-18px;height:auto}
+.frow.sub.gtop.f-bub::before{top:-18px}
+.frow.sub.gend.f-bub::before{bottom:-18px;height:auto}
+/* Концы отрезка стоят ровно на кружках: сверху нить начинается серединой
+   кружка первой записи работы, снизу кончается серединой кружка последней.
+   Число тут это top кружка плюс его половина, по видам записи. */
+.frow.sub.subtop::before{top:9.5px}
+.frow.sub.subtop.f-bub::before{top:29px}
+.frow.sub.subtop.f-fold::before{top:17px}
+.frow.sub.subtop.f-tline::before{top:14.3px}
+.frow.sub.subend::before{top:-18px;bottom:auto;height:27.5px}
+.frow.sub.subend.f-bub::before{height:47px}
+.frow.sub.subend.f-fold::before{height:35px}
+.frow.sub.subend.f-tline::before{height:32.3px}
+/* Работа в одну запись: от кружка до того же кружка рисовать нечего. */
+.frow.sub.subtop.subend::before{display:none}
 
 /* Плотность как в ленте vscode: записи идут подряд, дышат только смысловые
    куски. Прежние отступы приезжали от чужого правила и от полей пузыря */

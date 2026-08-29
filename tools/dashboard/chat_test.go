@@ -2723,6 +2723,25 @@ func TestStaticFeedKindsAligned(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Нить бокового журнала субагента: отрезок её это вся работа, от вызова Agent
+// до вести о том, что фоновый агент закончил, и по дороге нить не рвётся.
+// Пользователь с экрана: «синяя нить начинается не с сообщения субагента, а со
+// следующего сообщения и завершается, не доходя до блока про конец фоновой
+// работы» (стенд testdata/poc_subthread.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticSubThreadSpansWork(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд нити бокового журнала пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_subthread.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("нить бокового журнала субагента: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Пересказ съеденного начала разговора в ленте: свёрнутый блок со своим
 // заголовком, разворотом и копированием, а не пузырь человека. Живой случай
 // из чата «Выполнение XR-279»: харнес кладёт пересказ записью роли user, и

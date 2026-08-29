@@ -5043,7 +5043,8 @@ async function wireFeed(project, sid, opts) {
     const bottom = atBottom(scroll);
     const rest = scroll.scrollHeight - scroll.scrollTop;
     const top = scroll.scrollTop;
-    const marks = feedMarks(talk);
+    const subs = feedSubs(talk);
+    const marks = feedMarks(talk).map((m, i) => (m + " " + subs[i]).trim());
     if (!talk.length) {
       sync(box, empty ? [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }] : []);
       if (opts.onFeed) opts.onFeed(talk);
@@ -5904,8 +5905,52 @@ function feedMarks(list) {
   return marks;
 }
 
+// Работа субагента идёт отрезком, а не россыпью записей: начинает её вызов
+// Agent, дальше боковой журнал перемежается ходами диспетчера, и кончается всё
+// вестью «фоновый агент завершил работу». Кружки у обоих концов синие, они и
+// есть границы работы. Нить, помеченная по одной только записи журнала,
+// начиналась не с того кружка и рвалась на каждом ходе диспетчера посередине:
+// «синяя нить начинается не с сообщения субагента, а со следующего сообщения и
+// завершается, не доходя до блока про конец фоновой работы». Отсюда
+// отрезок считается по всему списку: subtop это первая запись работы, subend
+// последняя, sub всё, что между ними.
+function feedSubs(list) {
+  const out = list.map(() => "");
+  // Вызов, ещё не подтверждённый ни одной записью журнала: субагент мог и не
+  // подняться, и красить нитью один вызов нечего.
+  let call = -1;
+  let span = -1;
+  let last = -1;
+  const close = (end) => {
+    if (span < 0 || end < span) return;
+    for (let j = span; j <= end; j++) out[j] = "sub";
+    out[span] += " subtop";
+    out[end] += " subend";
+    span = -1;
+    call = -1;
+    last = -1;
+  };
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i];
+    if (it.sub) {
+      if (span < 0) span = call >= 0 ? call : i;
+      last = i;
+      continue;
+    }
+    // Конец работы диспетчер пишет своей записью, и она в отрезок входит: это
+    // тот же кружок передачи, только обратной.
+    if (span >= 0 && it.role === "note" && it.mark === "agent") {
+      close(i);
+      continue;
+    }
+    if (span < 0 && isDeleg(it)) call = i;
+  }
+  close(last);
+  return out;
+}
+
 function feedRow(node, item, out, mark) {
-  const row = el("div", "frow r-" + (item.role || "") + (item.sub ? " sub" : "") +
+  const row = el("div", "frow r-" + (item.role || "") +
     (mark ? " " + mark : ""));
   const dot = el("span", "fdot " + dotKind(item, out));
   if (item.sub) {

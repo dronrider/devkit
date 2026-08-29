@@ -31,6 +31,28 @@ func TestParseLineKeepsSpacedPaths(t *testing.T) {
 	}
 }
 
+// Родитель это разговор, раздавший работу: по нему список чатов отличает
+// розданную работу от разговора человека, и старая строка без поля читается
+// сессией без родителя, а не ломает разбор соседнего поля.
+func TestParseLineReadsParent(t *testing.T) {
+	_, b, ok := ParseLine("2026-08-29T12:00:00 сессия bbb-2 задача DK-581 проект devkit " +
+		"дерево /Users/r/projects/devkit транскрипт /tmp/t.jsonl источник заказ повод startup " +
+		"tmux - родитель aaa-1")
+	if !ok {
+		t.Fatal("строка не разобралась")
+	}
+	if b.Parent != "aaa-1" {
+		t.Fatalf("родитель %q, жду aaa-1", b.Parent)
+	}
+	if b.Tmux != "" {
+		t.Fatalf("поле родителя утекло в соседнее: tmux %q", b.Tmux)
+	}
+	_, old, _ := ParseLine(line("2026-08-29T12:00:00", "ccc-3", "DK-581"))
+	if old.Parent != "" {
+		t.Fatalf("у строки без поля родителя нет, а вышло %q", old.Parent)
+	}
+}
+
 // Чужая строка в общем журнале не обрушает разбор: она просто пропускается.
 func TestParseSkipsForeignLines(t *testing.T) {
 	binds := Parse([]byte("мусор без штампа\n" + line("2026-08-19T12:00:00", "aaa-1", "DK-1")))

@@ -357,6 +357,10 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	// едет имя раздавшего разговора: своего реестра у делегата нет, и чью
 	// работу он делает, сказать может только тот, кто его поднял.
 	cmd.Env = append(harnessEnviron(os.Environ(), pairs, who), runDepthEnv+"=1")
+	// Заказ поднявшего сессию у делегата свой. Задача это та, которую ему
+	// отдали, а tmux-сессии у подпроцесса нет вовсе, и унаследованные значения
+	// записали бы его в реестр машины чужой работой.
+	cmd.Env = append(cmd.Env, taskEnv+"="+id, tmuxEnv+"=")
 	if sid := os.Getenv(parentSessionEnv); sid != "" {
 		cmd.Env = append(cmd.Env, parentEnv+"="+sid)
 	}

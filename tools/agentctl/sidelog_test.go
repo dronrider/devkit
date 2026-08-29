@@ -19,7 +19,7 @@ import (
 // доставшееся имя раздавшего разговора в рабочую директорию.
 const sideProfile = `[delegate]
 mode = "cli"
-command = ["/bin/sh", "-c", "mkdir -p $CLAUDE_CONFIG_DIR/projects/-w && printf x > $CLAUDE_CONFIG_DIR/projects/-w/$1.jsonl && printf %s $DEVKIT_PARENT_SESSION > parent.txt", "sh", "{session}"]
+command = ["/bin/sh", "-c", "mkdir -p $CLAUDE_CONFIG_DIR/projects/-w && printf x > $CLAUDE_CONFIG_DIR/projects/-w/$1.jsonl && printf %s $DEVKIT_PARENT_SESSION > parent.txt && printf %s $DEVKIT_TASK > task.txt && printf %s $DEVKIT_TMUX > tmux.txt", "sh", "{session}"]
 
 [hooks]
 
@@ -69,6 +69,10 @@ func TestRunCLISideLog(t *testing.T) {
 	writeMachine(t, kit, strings.Replace(sideMachine, "%s", glm, 1))
 	root := writeBoard(t)
 	transcript := parentTranscript(t, kit, "1e1e1e1e-2222-4333-8444-555555555555")
+	// Заказ раздавшей сессии стоит в её окружении, и подпроцесс наследует его
+	// вместе со всем остальным.
+	t.Setenv("DEVKIT_TASK", "XR-005")
+	t.Setenv("DEVKIT_TMUX", "chat-XR-005-1")
 	work := realPath(t, t.TempDir())
 
 	code, out := runOut(t, root, "T-001", roleExec, work)
@@ -139,6 +143,16 @@ func TestRunCLISideLog(t *testing.T) {
 	parent, err := os.ReadFile(filepath.Join(work, "parent.txt"))
 	if err != nil || string(parent) != "1e1e1e1e-2222-4333-8444-555555555555" {
 		t.Fatalf("подпроцессу не назвали раздавший разговор: %q (%v)", parent, err)
+	}
+	// Заказ раздавшей сессии подпроцессу не наследуется: живьём делегат
+	// вставал в реестр машины чужой задачей и чужим разговором.
+	task, err := os.ReadFile(filepath.Join(work, "task.txt"))
+	if err != nil || string(task) != "T-001" {
+		t.Fatalf("задача подпроцесса %q (%v), жду свою T-001", task, err)
+	}
+	tmux, err := os.ReadFile(filepath.Join(work, "tmux.txt"))
+	if err != nil || string(tmux) != "" {
+		t.Fatalf("имя разговора подпроцессу досталось чужим: %q (%v)", tmux, err)
 	}
 }
 

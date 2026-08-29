@@ -140,9 +140,27 @@ class TestRecord(unittest.TestCase):
                                    env={"DEVKIT_TMUX": "task-DK-431"}, now=0)
         self.assertEqual(line.split(" ")[1::2],
                          ["сессия", "задача", "проект", "дерево", "транскрипт",
-                          "источник", "повод", "tmux"])
+                          "источник", "повод", "tmux", "родитель"])
         self.assertTrue(line.endswith(
-            " источник дерево повод resume tmux task-DK-431\n"), line)
+            " источник дерево повод resume tmux task-DK-431 родитель -\n"), line)
+
+    def test_parent_session_names_the_one_who_handed_out_the_work(self):
+        # Подпроцесс делегирования это не разговор человека, а чужая работа, и
+        # список чатов отличает одно от другого только по этому полю.
+        tree = Tree(self.tmp, "devkit")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"DEVKIT_PARENT_SESSION": "aaa-bbb"}))
+        self.assertEqual(f["родитель"], "aaa-bbb")
+        f, _ = fields(session_task.record(start(tree.root), env={}))
+        self.assertEqual(f["родитель"], "-")
+
+    def test_own_session_is_not_its_own_parent(self):
+        # Переменная едет подпроцессу наследованием, и сессия, поднятая из
+        # сессии подпроцесса, увидела бы в ней себя.
+        tree = Tree(self.tmp, "devkit")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"DEVKIT_PARENT_SESSION": SID}))
+        self.assertEqual(f["родитель"], "-")
 
 
 class TestHook(unittest.TestCase):

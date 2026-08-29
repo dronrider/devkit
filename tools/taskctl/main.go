@@ -126,7 +126,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   dep list [ID]                               кто после кого; без ID вся доска
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
-  init --prefix XR [--name "..."]             скелет доски в корне репозитория
+  init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
+                                             с --here в названной директории
 
 Держать дерево доски свежим:
   catchup [--hook]                            догнать боковое дерево (detached HEAD,
@@ -297,7 +298,9 @@ func main() {
 		var p InitParams
 		fs.StringVar(&p.Prefix, "prefix", "", "префикс ID задач, заглавными (XR)")
 		fs.StringVar(&p.Name, "name", "", "название проекта в шапке, по умолчанию имя директории")
-		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "init --prefix XR [--name \"...\"]")
+		fs.BoolVar(&p.Here, "here", false,
+			"завести доску в названной директории, не поднимаясь к вершине репозитория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "init --prefix XR [--name \"...\"] [--here]")
 		msg, err = cmdInit(*dir, p)
 	case "add":
 		fs := flag.NewFlagSet("add", flag.ExitOnError)

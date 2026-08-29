@@ -13,12 +13,20 @@ var prefixArgRe = regexp.MustCompile(`^[A-ZА-Я]+$`)
 
 type InitParams struct {
 	Prefix, Name string
+	// Here велит завести доску в названной директории, не поднимаясь к вершине
+	// репозитория. Так подключается проект корп-контура: боковая директория
+	// контура лежит подкаталогом его репозитория, и досок в нём столько,
+	// сколько проектов (DK-583).
+	Here bool
 }
 
 // initRoot определяет, где создавать доску: вершина git-репозитория, чтобы
 // запуск из поддиректории не плодил вложенных досок; вне git сама стартовая
 // директория.
-func initRoot(dir string) (string, error) {
+func initRoot(dir string, here bool) (string, error) {
+	if here {
+		return filepath.Abs(dir)
+	}
 	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
@@ -77,7 +85,7 @@ func cmdInit(dir string, p InitParams) (string, error) {
 	if !prefixArgRe.MatchString(p.Prefix) {
 		return "", fmt.Errorf("нужен --prefix заглавными буквами (например XR), получил %q", p.Prefix)
 	}
-	root, err := initRoot(dir)
+	root, err := initRoot(dir, p.Here)
 	if err != nil {
 		return "", err
 	}

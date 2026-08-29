@@ -41,6 +41,16 @@ async function standRun() {
   const p = pop.getBoundingClientRect();
   const chip = document.querySelector(".tchips .chip");
   const chipBox = chip ? chip.getBoundingClientRect() : null;
+  // Соседи по панели это кнопки-значки той же строки: карандаш правки, чтение,
+  // вход в разговор. Стрелка выбора подписки стоит с ними в одном ряду и обязана
+  // быть той же ширины, а числа своего у неё нет.
+  const kin = document.querySelector(".tmodes .btn-ico, .tmodes .tpen");
+  if (!kin) throw new Error("в панели формы нет соседних кнопок-значков");
+  const kinBox = kin.getBoundingClientRect();
+  // Поля основной кнопки меряются по её содержимому: слева до значка, справа
+  // от подписи до стыка с узкой половиной.
+  const glyph = wide.querySelector("svg").getBoundingClientRect();
+  const lb = wide.querySelector(".lb").getBoundingClientRect();
 
   document.title = [
     "screen=" + Math.round(screen),
@@ -59,6 +69,10 @@ async function standRun() {
     // Список висит правым краем на кнопке: там, где места вдоволь, ему двигаться
     // незачем, и замер сторожит, что счёт не растащил его по экрану.
     "pop-hang=" + Math.round(m.right - p.right),
+    "arrow-w=" + Math.round(m.width),
+    "kin-w=" + Math.round(kinBox.width),
+    "pad-left=" + Math.round(glyph.left - w.left),
+    "pad-right=" + Math.round(w.right - lb.right),
   ].join(" ");
 }
 

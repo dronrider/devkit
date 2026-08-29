@@ -1113,8 +1113,12 @@ func TestStaticRunSplitLayout(t *testing.T) {
 		t.Errorf("между половинами кнопки зазор в %d пикселей: приёмка нашла её "+
 			"распавшейся на две кнопки", laptop["seam"])
 	}
-	if laptop["arrow-w"] != 30 {
-		t.Errorf("узкая часть шириной %d, макет держит 30", laptop["arrow-w"])
+	// Узкая часть равна соседней кнопке панели, а не своему числу: раздутая
+	// стрелка тянула составную кнопку вширь, и пользователь просил свести её с
+	// соседями точно.
+	if laptop["arrow-w"] != laptop["pen-w"] {
+		t.Errorf("узкая часть шириной %d, а карандаш рядом %d",
+			laptop["arrow-w"], laptop["pen-w"])
 	}
 	if laptop["arrow-h"] != laptop["wide-h"] {
 		t.Errorf("половины кнопки разной высоты: %d и %d", laptop["wide-h"], laptop["arrow-h"])
@@ -1138,9 +1142,12 @@ func TestStaticRunSplitLayout(t *testing.T) {
 	if narrow["screen"] != 390 {
 		t.Fatalf("окно стенда не 390 пикселей: %v", narrow)
 	}
-	if narrow["arrow-w"] < 44 {
-		t.Errorf("на телефоне узкая часть шириной %d: по ней жмут пальцем, и он просит 44",
-			narrow["arrow-w"])
+	// На телефоне мерка та же: панель это ряд одинаковых коробок, и палец в ней
+	// живёт ростом всей строки, а не отдельной шириной стрелки. Отдельные 44
+	// точки стояли тут до замера соседей и делали составную кнопку шире прочих.
+	if narrow["arrow-w"] != narrow["pen-w"] {
+		t.Errorf("на телефоне узкая часть шириной %d, а карандаш рядом %d",
+			narrow["arrow-w"], narrow["pen-w"])
 	}
 	if narrow["pop-over"] != 0 {
 		t.Errorf("список подписок вылез за край телефона: ширина %d при экране %d",
@@ -1353,8 +1360,12 @@ func TestStaticTactsRowHeights(t *testing.T) {
 			t.Errorf("%s: внешние углы составной кнопки радиусом %d и %d, у карандаша %d",
 				what, got["wide-rl"], got["arrow-rr"], got["pen-r"])
 		}
-		if got["arrow-w"] != 30 {
-			t.Errorf("%s: узкая половина шириной %d, макет держит 30", what, got["arrow-w"])
+		// Узкая половина ровно той же ширины, что и карандаш рядом: панель это
+		// ряд одинаковых коробок, и своего числа у стрелки выбора нет
+		// (замечание пользователя про кнопку с раскрывающимся списком).
+		if got["arrow-w"] != got["pen-w"] {
+			t.Errorf("%s: узкая половина шириной %d, а карандаш рядом %d",
+				what, got["arrow-w"], got["pen-w"])
 		}
 	}
 }
@@ -2416,17 +2427,24 @@ func TestStaticFormPopFits(t *testing.T) {
 	// Зазор до края: список, прижатый вплотную к границе, читается как
 	// обрезанный, и то же число держит HPOP_EDGE в app.js.
 	const edge = 8
+	// Поля основной кнопки. Пол взят не на глаз: внутри кнопки значок отделён от
+	// слова шестью точками, и поле уже этого зазора поставило бы слово ближе к
+	// краю кнопки, чем к её же значку. Потолок на две точки выше пола: панель
+	// стоит своей строкой на телефоне, и каждая лишняя точка по краям читается
+	// длиной.
+	const padFloor, padCap = 8, 8
 	for _, form := range []struct {
 		bar   string
 		label string
 		btn   int
 		wide  int
 	}{
-		{"draft", "Грумить", 150, 110},
-		{"task", "Выполнить", 165, 120},
-		{"check", "Проверить", 165, 120},
+		{"draft", "Грумить", 125, 92},
+		{"task", "Выполнить", 145, 110},
+		{"check", "Проверить", 145, 110},
 	} {
 		narrow := chromeMeasure(t, chrome, dir, page, "390,844", form.bar)
+		t.Logf("%s на телефоне: %v", form.bar, narrow)
 		if narrow["screen"] != 390 {
 			t.Fatalf("%s: окно стенда не 390 пикселей: %v", form.bar, narrow)
 		}
@@ -2440,6 +2458,24 @@ func TestStaticFormPopFits(t *testing.T) {
 		if narrow["wide-w"] > form.wide {
 			t.Errorf("%s: широкая половина кнопки «%s» шириной %d при потолке %d",
 				form.bar, form.label, narrow["wide-w"], form.wide)
+		}
+		// Стрелка выбора подписки стоит в одном ряду с кнопками-значками панели
+		// и обязана быть ровно их ширины: своего числа у неё нет, и раздутая
+		// стрелка тянула составную кнопку вширь (замечание пользователя).
+		if narrow["arrow-w"] != narrow["kin-w"] {
+			t.Errorf("%s: узкая часть с выбором подписки шириной %d при соседних кнопках "+
+				"панели в %d", form.bar, narrow["arrow-w"], narrow["kin-w"])
+		}
+		// Поля основной кнопки: слово не должно липнуть к краю, но и лишних
+		// точек по бокам панель не носит. Потолок тут общий на обе стороны.
+		if narrow["pad-left"] > padCap || narrow["pad-right"] > padCap {
+			t.Errorf("%s: поля кнопки «%s» шире потолка %d: слева %d, справа %d",
+				form.bar, form.label, padCap, narrow["pad-left"], narrow["pad-right"])
+		}
+		if narrow["pad-left"] < padFloor || narrow["pad-right"] < padFloor {
+			t.Errorf("%s: поля кнопки «%s» уже пола %d: подпись липнет к краю, "+
+				"слева %d, справа %d", form.bar, form.label, padFloor,
+				narrow["pad-left"], narrow["pad-right"])
 		}
 		if narrow["gap-left"] < edge {
 			t.Errorf("%s: раскрытый список подписок отстоит от левого края главной части "+

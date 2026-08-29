@@ -75,12 +75,17 @@ const screen = document.documentElement.clientWidth;
 // заведено раскрытие вверх.
 const tabs = document.querySelector(".ptabs").getBoundingClientRect();
 
+// Карандаш стоит в той же панели соседней кнопкой: по нему меряется узкая
+// половина составной кнопки, своего числа у неё нет.
+const pen = box(".tpen");
+
 const out = [
   "screen=" + Math.round(screen),
   // Стык: левый край узкой части стоит там же, где правый край широкой. Зазор
   // в пиксель это два кубика вместо одной кнопки.
   "seam=" + Math.round(arrow.left - wide.right),
   "arrow-w=" + Math.round(arrow.width),
+  "pen-w=" + Math.round(pen.width),
   "arrow-h=" + Math.round(arrow.height),
   "wide-h=" + Math.round(wide.height),
   "car=" + Math.round(car.width),

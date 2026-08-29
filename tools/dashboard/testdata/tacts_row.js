@@ -45,6 +45,7 @@ document.title = [
   "arrow-h=" + Math.round(box("arrow").height),
   "plain-h=" + Math.round(box("plain").height),
   "pen-h=" + Math.round(box("pen").height),
+  "pen-w=" + Math.round(box("pen").width),
   "read-h=" + Math.round(box("read").height),
   // Стык половин: ноль это встык, минус один это наезд рамками в одну линию.
   "seam=" + Math.round(box("arrow").left - box("wide").right),

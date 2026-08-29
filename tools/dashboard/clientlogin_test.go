@@ -912,22 +912,37 @@ func TestClientLoginCodeStuckNotSuccess(t *testing.T) {
 }
 
 // Откуда пришёл запрос, оттуда и дорога входа. Код руками нужен ровно тогда,
-// когда браузер и клиент живут на разных машинах.
+// когда браузер и клиент живут на разных машинах, и одного адреса соединения
+// для этого мало: заход извне идёт через клиента шар на ту же машину, и адрес
+// у него петлевой (README пакета, «Заход извне»). Телефон получил бы режим без
+// кода и ссылку на localhost, которого у него нет.
 func TestLoginFromMachine(t *testing.T) {
 	cases := []struct {
+		name string
 		addr string
+		host string
+		head map[string]string
 		want bool
 	}{
-		{"127.0.0.1:54321", true},
-		{"[::1]:54321", true},
-		{"192.168.1.14:51000", false},
-		{"10.0.0.7:51000", false},
-		{"", false},
+		{"браузер машины по петле", "127.0.0.1:54321", "127.0.0.1:7112", nil, true},
+		{"он же по имени localhost", "[::1]:54321", "localhost:7112", nil, true},
+		{"браузер соседа по сети", "192.168.1.14:51000", "192.168.1.9:7112", nil, false},
+		{"телефон через фронт входа", "127.0.0.1:54321", "127.0.0.1:7112",
+			map[string]string{"X-Forwarded-Host": "dash.example"}, false},
+		{"он же с цепочкой посредников", "127.0.0.1:54321", "127.0.0.1:7112",
+			map[string]string{"X-Forwarded-For": "203.0.113.7"}, false},
+		{"посредник старого образца", "127.0.0.1:54321", "127.0.0.1:7112",
+			map[string]string{"Forwarded": "for=203.0.113.7;host=dash.example"}, false},
+		{"посредник переписал только имя", "127.0.0.1:54321", "dash.example", nil, false},
+		{"адреса нет вовсе", "", "", nil, false},
 	}
 	for _, c := range cases {
-		r := &http.Request{RemoteAddr: c.addr}
+		r := &http.Request{RemoteAddr: c.addr, Host: c.host, Header: http.Header{}}
+		for k, v := range c.head {
+			r.Header.Set(k, v)
+		}
 		if got := loginFromMachine(r); got != c.want {
-			t.Fatalf("адрес %q признан %v, жду %v", c.addr, got, c.want)
+			t.Fatalf("%s: признан %v, жду %v", c.name, got, c.want)
 		}
 	}
 }
@@ -991,5 +1006,53 @@ echo "2.1.251 4242 rider 19u IPv4 0x1b31 0t0 TCP 127.0.0.1:53535 (LISTEN)"`)
 	if !strings.Contains(got.URL, "localhost%3A53535%2Fcallback") &&
 		!strings.Contains(got.URL, "localhost:53535/callback") {
 		t.Fatalf("ссылка не ведёт возврат в клиент: %s", got.URL)
+	}
+}
+
+// Вход через фронт входа идёт кодом. Это боевой путь снаружи: телефон приходит
+// по HTTPS на фронт, тот через relay достаёт клиента шар, а шар проксирует на
+// петлевой порт машины (README пакета, «Заход извне»). Адрес соединения тут
+// петлевой, и по нему одному дашборд прятал поле кода и вёл человека по ссылке
+// на localhost, которого на телефоне нет.
+func TestClientLoginProxiedWayKeepsCode(t *testing.T) {
+	e := newTestEnv(t)
+	fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	was := loginLsof
+	loginLsof = []string{"lsof"}
+	t.Cleanup(func() { loginLsof = was })
+	writeScript(t, e.bin, "lsof", `echo "2.1.251 4242 rider 19u IPv4 0x1b31 0t0 TCP 127.0.0.1:53535 (LISTEN)"`)
+	c := e.loggedClient(t)
+	req, err := http.NewRequest(http.MethodPost,
+		e.srv.URL+"/api/projects/demo/chats/login", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Так заголовки кладёт клиент шар: внешнее имя в X-Forwarded-Host, Origin
+	// по нему же, Host переписан на апстрим.
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Host", "dash.example")
+	req.Header.Set("Origin", "https://dash.example")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход через фронт не поднялся: %d, %s", resp.StatusCode, body)
+	}
+	var got struct {
+		Way string `json:"way"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("ответ входа не разобран: %s", body)
+	}
+	if got.Way != "code" {
+		t.Fatalf("заход через фронт пошёл дорогой без кода: %s", body)
+	}
+	if strings.Contains(got.URL, "localhost") || strings.Contains(got.URL, "127.0.0.1") {
+		t.Fatalf("телефону отдана ссылка на петлевой адрес машины: %s", got.URL)
 	}
 }

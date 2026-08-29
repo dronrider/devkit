@@ -264,17 +264,44 @@ func loginLastWords(pane string) string {
 	return "панель пуста"
 }
 
-// loginFromMachine отвечает, открыт ли дашборд на самой машине. Мера тут по
-// адресу браузера, и она отвечает ровно на нужный вопрос: код руками нужен
-// лишь тогда, когда браузер и клиент живут на разных машинах. Браузер с самой
-// машины возвращается в клиент петлёй, и код человеку набирать незачем.
-func loginFromMachine(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+// loginFwdHeads это заголовки, которыми посредник признаётся посредником.
+var loginFwdHeads = []string{"X-Forwarded-Host", "X-Forwarded-For", "Forwarded"}
+
+// loginLoopback отвечает, петлевой ли это адрес. Имя localhost считается своим
+// наравне с числом: браузер на машине ходит и так, и так.
+func loginLoopback(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
 	if err != nil {
-		host = r.RemoteAddr
+		host = hostport
 	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// loginFromMachine отвечает, открыт ли дашборд браузером самой машины. Вопрос
+// в том, дотянется ли браузер до петлевого адреса клиента, и одного адреса
+// соединения тут мало. Заход извне приходит на ту же машину через клиента шар,
+// и петлевым выглядит тоже (README, «Заход извне»): телефон получил бы режим
+// без кода и ссылку на localhost, которого у него нет, то есть ровно тот путь,
+// ради которого задача заведена, и ломался бы (замечание ревью). Посредник
+// узнаётся по своим заголовкам, а имя, по которому пришёл браузер, обязано
+// быть петлевым: сверка та же, что у sameOrigin, и берётся тем же
+// externalHost. Сомнение тут решается в пользу кода: лишний код человек
+// наберёт, а ссылка в никуда останавливает вход совсем.
+func loginFromMachine(r *http.Request) bool {
+	if !loginLoopback(r.RemoteAddr) {
+		return false
+	}
+	for _, head := range loginFwdHeads {
+		if r.Header.Get(head) != "" {
+			return false
+		}
+	}
+	return loginLoopback(externalHost(r))
 }
 
 // loginLsof называет утилиты, которыми ищется порт клиента. Полный путь стоит

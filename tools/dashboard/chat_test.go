@@ -2685,6 +2685,25 @@ func TestStaticChatLift(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Пересказ съеденного начала разговора в ленте: свёрнутый блок со своим
+// заголовком, разворотом и копированием, а не пузырь человека. Живой случай
+// из чата «Выполнение XR-279»: харнес кладёт пересказ записью роли user, и
+// человек нашёл в чате портянку на несколько тысяч слов, подписанную им самим
+// (стенд testdata/poc_compact.mjs). Без node шаг пропускается: узел стенда, а
+// не рабочей части.
+func TestStaticCompactSummaryFolded(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд записи о сжатии пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_compact.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("запись о сжатии разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Зазор над полем правки: расстояние до соседа сверху одинаково в покое и в
 // правке и не ноль. Пользователь выделил поле заголовка на экране задачи: «при
 // включении редактирования вот этот блок верхней границей касается элементов в

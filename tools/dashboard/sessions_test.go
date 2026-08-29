@@ -1811,7 +1811,7 @@ func TestBackgroundAgentNoteCarriesMark(t *testing.T) {
 	text := "<task-notification>\n<task-id>a08d9d8</task-id>\n<status>completed</status>\n" +
 		"<summary>Agent finished</summary>\n</task-notification>\nразобрал находку"
 	var got []reply
-	addUser(func(r reply) { got = append(got, r) }, "user", "2026-08-20T10:00:00Z", text)
+	addUser(func(r reply) { got = append(got, r) }, "user", "2026-08-20T10:00:00Z", text, false)
 	var note *reply
 	for i := range got {
 		if got[i].Role == roleNote {
@@ -2125,7 +2125,7 @@ func TestFeedSplitsOrderRules(t *testing.T) {
 func TestOrderRulesNoteNamesAgentRules(t *testing.T) {
 	items := []reply{}
 	addUser(func(r reply) { items = append(items, r) }, "user", "2026-08-24T10:00:00Z",
-		"сделай хорошо "+planRule+" "+paceRule)
+		"сделай хорошо "+planRule+" "+paceRule, false)
 	var note *reply
 	for i := range items {
 		if items[i].Role == roleNote {
@@ -2751,5 +2751,60 @@ func TestSubWorkEndedClosesTheWork(t *testing.T) {
 	}
 	if states["DK-577"] != "completed" {
 		t.Errorf("вернувшаяся работа осталась идущей: %v", states)
+	}
+}
+
+// Пересказ съеденного начала разговора не выдаётся за реплику человека. Харнес
+// кладёт его записью роли user с пометкой isCompactSummary, и лента честно
+// рисовала это пузырём человека: несколько тысяч слов по-английски, будто их
+// написал человек (замечание пользователя по чату «Выполнение XR-279»).
+// Узнаётся запись по пометке, а не по первым словам: формулировку харнес
+// меняет, а человек может её процитировать.
+func TestCompactSummaryNotHumanReply(t *testing.T) {
+	head := "This session is being continued from a previous conversation that ran " +
+		"out of context. The summary below covers the earlier portion of the " +
+		"conversation.\nSummary: разобрал очередь слияния и снял два замечания."
+	line := fmt.Sprintf(
+		`{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,`+
+			`"message":{"role":"user","content":%q},"timestamp":%q,"gitBranch":"main"}`,
+		head, "2026-07-30T10:45:41Z") + "\n"
+	got := parseRepliesSpan([]byte(line), 0, parseSpan{src: "s"})
+	if len(got) != 1 {
+		t.Fatalf("записей в ленте %d, ждал одну: %+v", len(got), got)
+	}
+	if got[0].Role != roleNote {
+		t.Fatalf("пересказ выдан за реплику человека: role=%q", got[0].Role)
+	}
+	if got[0].Mark != compactMark {
+		t.Fatalf("пересказ без машинной пометки: mark=%q", got[0].Mark)
+	}
+	if got[0].Note != compactWord {
+		t.Fatalf("заголовок пересказа не назван словами: note=%q", got[0].Note)
+	}
+	if !strings.Contains(got[0].Text, "разобрал очередь слияния") {
+		t.Fatalf("тело пересказа потеряно: %q", got[0].Text)
+	}
+	// Слова заголовка про дело человека, а не про устройство харнеса.
+	for _, own := range []string{"контекст", "токен", "compact", "summary"} {
+		if strings.Contains(strings.ToLower(compactWord), own) {
+			t.Fatalf("заголовок говорит устройством харнеса (%q): %q", own, compactWord)
+		}
+	}
+}
+
+// Служебная строка харнеса, подставленная от имени человека, тоже не пузырь.
+// «Continue from where you left off» человек не писал, и пометка isMeta говорит
+// об этом прямо.
+func TestMetaLineNotHumanReply(t *testing.T) {
+	line := fmt.Sprintf(
+		`{"type":"user","isMeta":true,"message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`,
+		"Continue from where you left off.", "2026-07-30T10:46:00Z") + "\n"
+	got := parseRepliesSpan([]byte(line), 0, parseSpan{src: "s"})
+	if len(got) != 1 {
+		t.Fatalf("записей в ленте %d, ждал одну: %+v", len(got), got)
+	}
+	if got[0].Role != roleNote {
+		t.Fatalf("строка харнеса выдана за реплику человека: role=%q", got[0].Role)
 	}
 }

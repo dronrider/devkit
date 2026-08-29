@@ -1004,7 +1004,15 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 			Type        string `json:"type"`
 			IsSidechain bool   `json:"isSidechain"`
 			Timestamp   string `json:"timestamp"`
-			Message     struct {
+			// Пометки харнеса на записи, которую он подставил от имени
+			// человека. isCompactSummary это пересказ съеденного начала
+			// разговора, isMeta это его же служебные строки вроде «continue
+			// from where you left off». Пузырём человека они были бы враньём:
+			// человек этого не писал (замечание пользователя про портянку на
+			// несколько тысяч слов в чате).
+			IsCompactSummary bool `json:"isCompactSummary"`
+			IsMeta           bool `json:"isMeta"`
+			Message          struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -1019,7 +1027,12 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 			if sock := dashSock(s); sock != "" {
 				dash[sock] = true
 			}
-			addUser(add, rec.Type, rec.Timestamp, s)
+			if rec.IsCompactSummary {
+				add(reply{Role: roleNote, Time: rec.Timestamp, Text: s,
+					Note: compactWord, Mark: compactMark})
+				continue
+			}
+			addUser(add, rec.Type, rec.Timestamp, s, rec.IsMeta)
 			continue
 		}
 		var blocks []struct {
@@ -1042,7 +1055,12 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 				if sock := dashSock(b.Text); sock != "" {
 					dash[sock] = true
 				}
-				addUser(add, rec.Type, rec.Timestamp, b.Text)
+				if rec.IsCompactSummary {
+					add(reply{Role: roleNote, Time: rec.Timestamp, Text: b.Text,
+						Note: compactWord, Mark: compactMark})
+					continue
+				}
+				addUser(add, rec.Type, rec.Timestamp, b.Text, rec.IsMeta)
 			case "thinking":
 				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
 				// сервер выбрасывал его, и на экране стояла метка «размышления
@@ -1497,7 +1515,7 @@ func cutOrderRules(text string) (said, rules string) {
 // же путём). Пузырём человека рисуется только то, что человек написал:
 // служебные вставки харнеса уходят отдельными строками, а реплика, кроме них не
 // несущая ничего, пузыря не заводит вовсе.
-func addUser(add func(reply), role, at, text string) {
+func addUser(add func(reply), role, at, text string, meta bool) {
 	// Приписки заказа отрезаются первыми: они стоят хвостом после слов
 	// человека, а префиксные рамки (картинка, выделение) разбираются дальше по
 	// оставшемуся. В ленту приписки едут свёрнутой служебной строкой после
@@ -1547,8 +1565,22 @@ func addUser(add func(reply), role, at, text string) {
 		// хуже молчания, а сама служебка уже стоит строкой выше.
 		return
 	}
+	if meta {
+		// Запись с пометкой харнеса: пузырём человека она была бы враньём,
+		// человек её не писал.
+		add(reply{Role: roleNote, Time: at, Text: said})
+		return
+	}
 	add(reply{Role: role, Time: at, Text: said})
 }
+
+// compactWord это заголовок записи о сжатии разговора, а compactMark её
+// машинная пометка. Слова тут про дело человека: разговор был длинный, начало
+// съедено, и вместо него лежит пересказ. Про контекст и токены человеку знать
+// незачем, это устройство харнеса.
+const compactWord = "начало разговора сжато в пересказ"
+
+const compactMark = "compact"
 
 // skillBodyRe узнаёт простыню скилла: харнес кладёт её репликой роли user и
 // начинает строкой с каталогом скилла.
@@ -2576,7 +2608,15 @@ func sessionPlan(data []byte) ([]planItem, time.Time) {
 			Type        string `json:"type"`
 			IsSidechain bool   `json:"isSidechain"`
 			Timestamp   string `json:"timestamp"`
-			Message     struct {
+			// Пометки харнеса на записи, которую он подставил от имени
+			// человека. isCompactSummary это пересказ съеденного начала
+			// разговора, isMeta это его же служебные строки вроде «continue
+			// from where you left off». Пузырём человека они были бы враньём:
+			// человек этого не писал (замечание пользователя про портянку на
+			// несколько тысяч слов в чате).
+			IsCompactSummary bool `json:"isCompactSummary"`
+			IsMeta           bool `json:"isMeta"`
+			Message          struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}

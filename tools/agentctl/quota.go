@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -180,10 +181,53 @@ type bucket struct {
 
 // snapshot это разобранный файл снимка. Warns копятся вместо ошибок: битая
 // строка или незнакомый ключ отбрасывают своё, а остальной снимок работает.
+// Partial это бакеты, которых в снимке нет не потому, что их нет у подписки, а
+// потому, что панель их не показала, и причина рядом с именем: без неё
+// «week_max в снимке нет» звучит одинаково у подписки без дорогого бакета и у
+// панели, которая отказала по частоте обращений.
 type snapshot struct {
 	Taken   time.Time
 	Buckets []bucket
+	Partial map[string]string
 	Warns   []string
+}
+
+// partial отвечает, почему названного бакета нет в снимке. Пустая строка это
+// «панель досчитала, и такого бакета у подписки просто нет».
+func (s snapshot) partial(name string) string { return s.Partial[name] }
+
+// partialNames это имена помеченных бакетов в порядке имени: снимок и вывод
+// читают люди, и порядок строк не должен плясать от прохода по карте.
+func (s snapshot) partialNames() []string {
+	out := make([]string, 0, len(s.Partial))
+	for name := range s.Partial {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// markPartial помечает бакеты, которых в кадре не оказалось, когда панель сама
+// сказала, что разбивки по моделям не покажет. Помечаются только бакеты
+// лестницы трат: week_opus вне её, панель его давно не рисует, и пометка про
+// него была бы шумом.
+func (s snapshot) markPartial(q *quotaSpec, why string) snapshot {
+	if why == "" {
+		return s
+	}
+	for _, name := range q.Buckets {
+		if !q.spentByTier(name) {
+			continue
+		}
+		if _, ok := s.bucket(name); ok {
+			continue
+		}
+		if s.Partial == nil {
+			s.Partial = map[string]string{}
+		}
+		s.Partial[name] = why
+	}
+	return s
 }
 
 func (s snapshot) bucket(name string) (bucket, bool) {
@@ -334,6 +378,19 @@ func (q *quotaSpec) parse(text string) snapshot {
 			s.Taken = t
 			continue
 		}
+		if key == "partial" {
+			name, why, ok := strings.Cut(val, ":")
+			name, why = canonBucket(strings.TrimSpace(name)), strings.TrimSpace(why)
+			if !ok || why == "" || !q.known(name) {
+				s.Warns = append(s.Warns, fmt.Sprintf("пометка неполноты %q не разобрана", val))
+				continue
+			}
+			if s.Partial == nil {
+				s.Partial = map[string]string{}
+			}
+			s.Partial[name] = why
+			continue
+		}
 		if !q.known(key) {
 			s.Warns = append(s.Warns, fmt.Sprintf("неизвестный ключ снимка %q, пропущен", key))
 			continue
@@ -386,6 +443,9 @@ func (q *quotaSpec) write(s snapshot) error {
 	fmt.Fprintf(&b, "taken = %s\n", s.Taken.Format(quotaTimeLayout))
 	for _, bk := range s.Buckets {
 		fmt.Fprintf(&b, "%s = %d%% сброс %s\n", bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout))
+	}
+	for _, name := range s.partialNames() {
+		fmt.Fprintf(&b, "partial = %s: %s\n", name, s.Partial[name])
 	}
 	dir := filepath.Dir(q.Path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -504,7 +564,11 @@ func quotaFactsOf(q *quotaSpec, s snapshot, c correction, groom bool, now time.T
 		shown := qualifyBucket(q.Harness, active, name)
 		b, ok := s.bucket(name)
 		if !ok {
-			f.Buckets = append(f.Buckets, shown+" в снимке нет")
+			miss := shown + " в снимке нет"
+			if why := s.partial(name); why != "" {
+				miss += ", " + why
+			}
+			f.Buckets = append(f.Buckets, miss)
 			continue
 		}
 		part := fmt.Sprintf("%s %d%%", shown, int(math.Round(b.Used*100)))
@@ -655,6 +719,9 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",
 			bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout), bk.pace(now), status, note)
+	}
+	for _, name := range s.partialNames() {
+		fmt.Fprintf(&b, "%s: в панели его не было, %s\n", name, s.Partial[name])
 	}
 	if w := q.legacyWarn(); w != "" {
 		fmt.Fprintf(&b, "предупреждение: %s\n", w)

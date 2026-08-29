@@ -532,6 +532,77 @@ func TestQuotaFacts(t *testing.T) {
 	})
 }
 
+// TestSnapshotPartial: неполный снимок называет себя неполным, и причина
+// доезжает до вывода pick. Без этого «week_max в снимке нет» звучит одинаково у
+// подписки без дорогого бакета и у панели, которая отказала по частоте
+// обращений.
+func TestSnapshotPartial(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude-code.local")
+	q := specAt(t, path)
+
+	t.Run("пометка переживает запись и чтение", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow))
+		s = s.markPartial(q, "панель отказала по частоте обращений")
+		if err := q.write(s); err != nil {
+			t.Fatalf("запись снимка: %v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "partial = week_max: панель отказала по частоте обращений") {
+			t.Fatalf("пометки в файле нет:\n%s", raw)
+		}
+		back, err := q.read()
+		if err != nil {
+			t.Fatalf("чтение снимка: %v", err)
+		}
+		if len(back.Warns) != 0 {
+			t.Fatalf("пометка прочиталась как мусор: %v", back.Warns)
+		}
+		if why := back.partial("week_max"); why != "панель отказала по частоте обращений" {
+			t.Fatalf("причина не прочиталась: %q", why)
+		}
+	})
+
+	t.Run("битая пометка это предупреждение, а не молчание", func(t *testing.T) {
+		s := q.parse("taken = " + at(testNow) + "\npartial = week_max\n")
+		if len(s.Warns) != 1 || !strings.Contains(s.Warns[0], "пометка неполноты") {
+			t.Fatalf("предупреждения нет: %v", s.Warns)
+		}
+	})
+
+	t.Run("pick называет причину, а не только пропажу", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow))
+		c := correction{From: "max", Tier: "max"}
+		bare := quotaFactsOf(q, s, c, false, testNow, q.Harness).note()
+		if !strings.Contains(bare, "week_max в снимке нет,") {
+			t.Fatalf("непомеченный снимок звучит иначе: %q", bare)
+		}
+		marked := quotaFactsOf(q, s.markPartial(q, "панель отказала по частоте обращений"), c, false, testNow, q.Harness).note()
+		if !strings.Contains(marked, "week_max в снимке нет, панель отказала по частоте обращений") {
+			t.Fatalf("причина неполноты до вердикта не доехала: %q", marked)
+		}
+	})
+
+	t.Run("quota печатает пометку строкой", func(t *testing.T) {
+		content := "taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"partial = week_max: панель отказала по частоте обращений\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(specAt(t, path), testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "week_max: в панели его не было, панель отказала по частоте обращений") {
+			t.Fatalf("вывод молчит о неполноте:\n%s", out)
+		}
+	})
+}
+
 func TestCmdQuota(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "quota.local")

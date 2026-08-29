@@ -21,12 +21,15 @@ import (
 const (
 	usageReadyTimeout = 20 * time.Second
 	usageEchoTimeout  = 5 * time.Second
-	usagePanelTimeout = 25 * time.Second
 	usagePollEvery    = 400 * time.Millisecond
-	// Сколько ждать дорогой бакет, прежде чем поверить панели с одним общим.
-	// Запас к наблюдаемым полсекунды взят широкий: лишние секунды тут дешевле
-	// снимка без дорогого бакета.
-	usagePartialGrace = 3 * time.Second
+	// Потолок ожидания панели. Прежние двадцать пять секунд отмеряли только
+	// отрисовку, а ждать теперь приходится и запрос за цифрами: клиент даёт ему
+	// пять секунд, повторяет после обновления токена и рисует разбивку по
+	// моделям уже по ответу. Сорок пять это те же двадцать пять плюс две
+	// попытки запроса с запасом на медленную сеть. Потолок тут страховка, а не
+	// рабочий путь: ожидание кончается словом самой панели, и на живой машине
+	// съёмка занимает прежние секунды.
+	usagePanelTimeout = 45 * time.Second
 )
 
 // Размер окна съёмщика. Панель /usage подросла, под бакетами клиент рисует
@@ -404,21 +407,31 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	err := waitPane(session, usagePanelTimeout, func(text string) bool {
 		pane = text
 		// Отказ клиента ждать бессмысленно, он держится до нажатия «r», так что
-		// ожидание обрывается на нём и не съедает свои двадцать пять секунд.
+		// ожидание обрывается на нём и не съедает весь свой потолок.
 		if panelBlocked(text) != "" {
 			return true
 		}
 		s, perr := parseUsagePanel(q, text, now)
 		why = perr
 		if perr != nil {
+			w.settled = 0
 			return false
 		}
-		return w.accept(s, time.Now())
+		return w.accept(s, text)
 	})
-	if panelBlocked(pane) != "" || err != nil {
+	if panelBlocked(pane) != "" {
 		return snapshot{}, panelFailure(q, pane, why)
 	}
-	return w.snap, nil
+	if err != nil {
+		// Панель так и не досчитала за отпущенное время. Разобранный кадр с
+		// общим бакетом всё равно лучше отказа: без снимка корректор выключен
+		// целиком, а про неполноту снимок теперь говорит сам.
+		if len(w.snap.Buckets) == 0 {
+			return snapshot{}, panelFailure(q, pane, why)
+		}
+		return w.snap.markPartial(q, fmt.Sprintf("панель не досчитала разбивку за %s", usagePanelTimeout)), nil
+	}
+	return w.snap.markPartial(q, panelNoBreakdown(pane)), nil
 }
 
 // panelFailure объясняет, почему съёмщик ушёл ни с чем. Отказ по одному
@@ -454,17 +467,30 @@ func panelFailure(q *quotaSpec, pane string, why error) error {
 // панель печатает и внутри целого экрана, когда не дождалась одной только
 // разбивки по моделям, и там она отказом не является.
 func panelBlocked(pane string) string {
-	low := strings.ToLower(ansiRe.ReplaceAllString(pane, ""))
-	if strings.Contains(low, "usage endpoint is rate limited") {
+	low := lowPane(pane)
+	switch {
+	case strings.Contains(low, "usage endpoint is rate limited"):
 		return "клиент упёрся в частоту обращений к панели /usage и цифр не показал. Снимок встанет следующей попыткой, лимит подписки тут ни при чём."
+	case strings.Contains(low, "showing last-known usage"):
+		// Панель тут рисует цифры прошлого раза и честно это подписывает.
+		// Записать их снимком нельзя: свежий момент снятия над старыми цифрами
+		// это ровно та молчащая ложь, ради которой снимок и заводился.
+		return "клиент показал цифры прошлого раза, а свежих не получил: писать их снимком нельзя, прежний снимок остаётся на месте. Повторить через минуту."
 	}
 	return ""
+}
+
+// lowPane чистит кадр от управляющих последовательностей и приводит к нижнему
+// регистру: узнают панель по словам, а capture-pane отдаёт их вперемешку с
+// разметкой цвета.
+func lowPane(pane string) string {
+	return strings.ToLower(ansiRe.ReplaceAllString(pane, ""))
 }
 
 // panelSeen отвечает, дорисовалась ли вообще панель расхода. Слова взяты те,
 // что панель печатает и в целом виде, и когда верх уехал за край окна.
 func panelSeen(pane string) bool {
-	low := strings.ToLower(ansiRe.ReplaceAllString(pane, ""))
+	low := lowPane(pane)
 	for _, mark := range []string{"current week", "current session", "of your usage", "your limits usage"} {
 		if strings.Contains(low, mark) {
 			return true
@@ -481,7 +507,7 @@ func panelCropped(pane string) bool {
 		return false
 	}
 	for _, raw := range strings.Split(pane, "\n") {
-		low := strings.ToLower(ansiRe.ReplaceAllString(raw, ""))
+		low := lowPane(raw)
 		if strings.Contains(low, "settings") && strings.Contains(low, "usage") && strings.Contains(low, "stats") {
 			return false
 		}
@@ -509,27 +535,57 @@ func saveFrame(q *quotaSpec, pane string) (string, error) {
 }
 
 // panelWaiter решает, когда разобранной панели можно верить. Панель приезжает
-// не одним кадром: сначала общий бакет со строками про пересчёт, дорогой
-// дорисовывается примерно полсекунды спустя, и первый же успешный разбор дал бы
-// снимок без него. Такой снимок хуже отказа, он выглядит целым, а корректор по
-// нему молча теряет сдвиг вверх. Поэтому полная панель принимается сразу, а
-// одинокий общий бакет должен продержаться usagePartialGrace: панель без
-// дорогого бакета бывает и настоящей (свой тариф, своя версия клиента).
+// не одним кадром: сначала общий бакет из того, что клиент помнит с прошлого
+// раза, разбивка по моделям позже, по ответу на запрос. Первый же успешный
+// разбор дал бы снимок без разбивки, и такой снимок хуже отказа: он выглядит
+// целым, а корректор по нему молча теряет сдвиг вверх.
+//
+// Мерить это временем значит гадать. Панель говорит о себе сама: пока запрос
+// идёт, внизу висит «Refreshing», а как он сел, строка пропадает и на её месте
+// оказывается либо разбивка, либо строка о том, что разбивки не будет.
+// Ожидание кончается на этом слове.
+//
+// Двух досчитанных кадров подряд ждём затем, что capture-pane снимает экран в
+// любой момент и один кадр может застать панель на середине перерисовки.
 type panelWaiter struct {
 	snap    snapshot
-	partial time.Time
+	settled int
 }
 
-func (w *panelWaiter) accept(s snapshot, at time.Time) bool {
+const panelSettleFrames = 2
+
+func (w *panelWaiter) accept(s snapshot, pane string) bool {
 	w.snap = s
-	if len(s.Buckets) > 1 {
-		return true
-	}
-	if w.partial.IsZero() {
-		w.partial = at
+	if !panelSettled(pane) {
+		w.settled = 0
 		return false
 	}
-	return at.Sub(w.partial) >= usagePartialGrace
+	w.settled++
+	return w.settled >= panelSettleFrames
+}
+
+// panelSettled отвечает, досчитал ли клиент цифры панели. Слова берутся точные,
+// оба из самой панели: «Loading usage data» она пишет вместо бакетов, пока
+// показывать нечего, «Refreshing» подписывает уже нарисованным, пока
+// уточняющий запрос в пути.
+func panelSettled(pane string) bool {
+	low := lowPane(pane)
+	return !strings.Contains(low, "loading usage data") && !strings.Contains(low, "refreshing")
+}
+
+// panelNoBreakdown переводит на человеческий строку, которой панель объявляет,
+// что разбивки по моделям в этом кадре не будет. Пустая строка значит, что
+// панель ни о чём таком не заявляла, и отсутствие дорогого бакета в ней надо
+// понимать буквально: его нет у подписки.
+func panelNoBreakdown(pane string) string {
+	low := lowPane(pane)
+	switch {
+	case strings.Contains(low, "per-model breakdown unavailable"):
+		return "панель отказала по частоте обращений"
+	case strings.Contains(low, "could not refresh usage data"):
+		return "панель не обновила цифры"
+	}
+	return ""
 }
 
 func capturePane(session string) (string, error) {

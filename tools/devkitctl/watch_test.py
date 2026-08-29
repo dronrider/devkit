@@ -673,7 +673,7 @@ class ParkStaleTest(Stand):
         os.utime(str(tr), (when, when))
         log = self.home / ".devkit" / "sessions.log"
         log.write_text("%s сессия %s задача DK-901 проект стенд дерево %s транскрипт %s "
-                       "источник заказ повод startup tmux task-DK-901\n"
+                       "источник заказ повод startup tmux task-DK-901 родитель -\n"
                        % (stamp(self.now), sid, self.proj, tr), encoding="utf-8")
 
     def park(self, taskctl=TASKCTL):

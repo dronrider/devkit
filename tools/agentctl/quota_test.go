@@ -49,6 +49,15 @@ func snapOf(age time.Duration, buckets ...bucket) snapshot {
 // копия здесь разъехалась бы с тем, по чему работает машина.
 func glmSpec(t *testing.T, path string) *quotaSpec {
 	t.Helper()
+	q, _ := glmSpecHome(t, path)
+	return q
+}
+
+// glmSpecHome отдаёт вдобавок каталог, который был записан в машинный профиль:
+// дорогу «home из профиля доезжает до объявления квоты» проверяют сверкой с
+// ним, а не проверкой на пустоту.
+func glmSpecHome(t *testing.T, path string) (*quotaSpec, string) {
+	t.Helper()
 	home := t.TempDir()
 	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
 enabled = ["claude-code", "glm-code"]
@@ -71,10 +80,7 @@ home = "`+home+`"
 		t.Fatal("у glm-code нет объявления квоты: профиль вернулся к пустой секции [quota]")
 	}
 	q.Path, q.From = path, path
-	// Дом пустым не остаётся: съёмщик читает под ним кеш клиента, и на пустом
-	// доме стенд ушёл бы в настоящий ~/.claude.json машины, где гоняются тесты.
-	q.Home = t.TempDir()
-	return q
+	return q, home
 }
 
 // TestGlmCodeQuotaProfile: у второй подписки две шкалы, пятичасовая и недельная,
@@ -82,7 +88,7 @@ home = "`+home+`"
 // замечал пользователь по отказам, а не корректор; тест стоит на том, чтобы
 // секция не опустела снова и обе шкалы в ней остались.
 func TestGlmCodeQuotaProfile(t *testing.T) {
-	q := glmSpec(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
+	q, home := glmSpecHome(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
 	if q.Snap != snapScript || q.Script != "snap/glm-code.sh" {
 		t.Fatalf("остаток снимает не съёмщик из kit/harness/snap: %+v", q)
 	}
@@ -97,8 +103,8 @@ func TestGlmCodeQuotaProfile(t *testing.T) {
 			t.Fatalf("ярус %s тратит не из обоих окон: %v", tier, q.Spend[tier])
 		}
 	}
-	if q.Home == "" {
-		t.Fatal("каталог машинного хозяйства не доехал до объявления квоты: съёмщику не найти токен")
+	if q.Home != home {
+		t.Fatalf("каталог машинного хозяйства доехал до объявления квоты как %q, а в профиле стоит %q: съёмщику не найти токен", q.Home, home)
 	}
 }
 

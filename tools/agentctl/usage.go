@@ -15,9 +15,10 @@ import (
 
 // Съёмщик панели /usage: одноразовая tmux-сессия, claude из PATH, команда,
 // ожидание отрисовки, capture-pane, парсинг, запись снимка, уборка сессии.
-// Программного доступа к остатку нет (расчёт серверный, headless-эквивалента
-// /usage нет), поэтому единственный механический путь это прочитать то же, что
-// видит человек.
+// Дорога эта запасная: первым делом снимок читает кеш расхода самого клиента
+// (usagecache.go), и разбор нарисованного текста остаётся для машин, где кеша
+// нет. Своего эндпоинта у devkit по-прежнему нет, расчёт серверный, поэтому обе
+// дороги ведут к тому же, что видит человек на экране.
 const (
 	usageReadyTimeout = 20 * time.Second
 	usageEchoTimeout  = 5 * time.Second
@@ -149,11 +150,10 @@ func panelSection(low string) (string, bool) {
 		return "", false
 	}
 	switch {
-	case strings.Contains(low, "week") && strings.Contains(low, "opus"):
-		return "week_opus", true
-	case strings.Contains(low, "week") && strings.Contains(low, "fable"):
-		return "week_max", true
 	case strings.Contains(low, "week"):
+		if name, ok := usageModelBucket(low); ok {
+			return name, true
+		}
 		return "week_all", true
 	case strings.Contains(low, "session"):
 		return "", true
@@ -293,10 +293,11 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 		}
 	}
 	var snap snapshot
+	var notes []string
 	var err error
 	switch q.Snap {
 	case snapUsagePane:
-		snap, err = snapUsagePanel(q, now)
+		snap, notes, err = snapClaudeUsage(q, now)
 	case snapScript:
 		snap, err = snapByScript(q, now)
 	default:
@@ -308,7 +309,14 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 	if err := q.write(snap); err != nil {
 		return "", err
 	}
-	return cmdQuota(q, now)
+	out, err := cmdQuota(q, now)
+	if err != nil {
+		return "", err
+	}
+	if len(notes) == 0 {
+		return out, nil
+	}
+	return strings.Join(notes, "\n") + "\n" + out, nil
 }
 
 // snapByScript зовёт сменный съёмщик из kit/harness/snap/. Контракт разобран в

@@ -1,0 +1,45 @@
+{
+  "numStartups": 412,
+  "installMethod": "native",
+  "cachedUsageUtilization": {
+    "fetchedAtMs": 1785401400000,
+    "accountUuid": "a1c498aa-ffd3-4bc3-af04-60516d41f3e9",
+    "utilization": {
+      "five_hour": {"utilization": 9, "resets_at": "2026-07-30T16:10:00.375617+00:00"},
+      "seven_day": {"utilization": 69, "resets_at": "2026-07-31T12:00:00.375647+00:00"},
+      "seven_day_opus": null,
+      "limits": [
+        {
+          "kind": "session",
+          "group": "session",
+          "percent": 9,
+          "severity": "normal",
+          "resets_at": "2026-07-30T16:10:00.375617+00:00",
+          "scope": null,
+          "is_active": false
+        },
+        {
+          "kind": "weekly_all",
+          "group": "weekly",
+          "percent": 69,
+          "severity": "normal",
+          "resets_at": "2026-07-31T12:00:00.375647+00:00",
+          "scope": null,
+          "is_active": true
+        },
+        {
+          "kind": "weekly_scoped",
+          "group": "weekly",
+          "percent": 10,
+          "severity": "normal",
+          "resets_at": "2026-07-31T12:00:00.375886+00:00",
+          "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+          "is_active": false
+        }
+      ],
+      "spend": {"percent": 0, "enabled": false},
+      "member_dashboard_available": false
+    }
+  },
+  "hasCompletedOnboarding": true
+}

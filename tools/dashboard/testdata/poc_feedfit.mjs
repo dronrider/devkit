@@ -53,6 +53,18 @@ const bordOf = (box, side) => {
   return m ? Number(m[1]) : 0;
 };
 
+// Отступ узла от края родителя: складываются поля, рамки и отступы всех узлов
+// на пути. Так считается и своя ступенька строки ленты, и путь внутрь записи.
+const edgeOf = (node, stop, width, side) => {
+  let sum = 0;
+  for (let n = node; n && n !== stop; n = n.parentNode) {
+    const box = fit(n, width);
+    sum += oneSide(box, "margin", side);
+    if (n !== node) sum += oneSide(box, "padding", side) + bordOf(box, side);
+  }
+  return sum;
+};
+
 // Отступ текста от края записи: складываются поля, рамки и отступы всех узлов
 // от тела строки до узла с самим текстом. Считается именно от тела, а не от
 // края ленты: свой отступ строки (нить с кружком, а у бокового журнала
@@ -138,12 +150,46 @@ for (const width of [390, 1440]) {
   const first = seen[0];
   for (const s of seen) {
     if (s.left !== first.left) {
-      fail("на " + width + " точках левый край записей плавает: «" + first.kind +
+      fail("на " + width + " точках отступ текста внутри записи плавает: «" + first.kind +
         "» слева " + first.left + ", «" + s.kind + "» слева " + s.left);
     }
     if (s.right !== first.right) {
-      fail("на " + width + " точках правая граница записей плавает: «" + first.kind +
+      fail("на " + width + " точках правый отступ внутри записи плавает: «" + first.kind +
         "» справа " + first.right + ", «" + s.kind + "» справа " + s.right);
+    }
+  }
+
+  // Второй вопрос, и человек видит именно его: абсолютный левый край записи на
+  // экране. Внутренний отступ сходился и тогда, когда края разъезжались, потому
+  // что сами записи стояли на разной горизонтали (замечание пользователя со
+  // снимком). Считается край от левого края ленты через все поля, рамки и
+  // отступы: это то же число, что даёт getBoundingClientRect живого браузера.
+  const far = [];
+  for (const row of rows) {
+    const body = byClass(row, "frowb");
+    if (!body) continue;
+    const node = (body.children || []).find((n) => n && !n.hidden);
+    if (!node) continue;
+    far.push({
+      kind: kindOf(row),
+      // Ступенька бокового журнала субагента законная и остаётся: работа ушла
+      // ему, и его записи стоят своей колонкой.
+      sub: String(row.className || "").split(" ").includes("sub"),
+      at: edgeOf(node, feed, width, "left") + inkOf(body, width, "left"),
+    });
+  }
+  const steps = [...new Set(far.map((f) => f.at))].sort((a, b) => a - b);
+  if (show) console.log("   абсолютный край: " + JSON.stringify(steps));
+  if (steps.length > 2) {
+    fail("на " + width + " точках записи стоят на " + steps.length + " разных краях " +
+      JSON.stringify(steps) + ", а законная ступенька одна: " +
+      JSON.stringify(far.map((f) => f.kind + (f.sub ? "/боковой" : "") + ":" + f.at)));
+  }
+  for (const f of far) {
+    const want = f.sub ? steps[steps.length - 1] : steps[0];
+    if (f.at !== want) {
+      fail("на " + width + " точках край записи «" + f.kind + "» стоит на " + f.at +
+        ", а её ряд на " + want + ": ступенька вложенности расползлась по видам");
     }
   }
 }

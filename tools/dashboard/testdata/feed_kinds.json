@@ -94,5 +94,38 @@
   "role": "user",
   "text": "<picked screen=\"xr-proxy/XR-226/chat/8257b5e0-a1a7-424c-a334-d9e7d23bccf5\">\n- textarea.tedit.pickhi, внутри div.thline < div.tpage\n</picked>\nПри включении редактирования вот этот блок верхней границей касается элементов в блоке выше.",
   "time": "2026-08-29T15:06:22Z"
+ },
+ {
+  "key": "m:40467612.0",
+  "role": "user",
+  "text": "Про /usage ты мне какую-то ерунду говоришь. Я только что зашёл и вижу что там все нужные цифры есть. Твой исполнитель не обожрался ли контекста?",
+  "time": "2026-08-29T15:26:12.325Z",
+  "shot": "/Users/rider/.devkit/dashboard-poc/.devkit/uploads/8257b5e0-a1a7-424c-a334-d9e7d23bccf5/20260829T182612.jpg"
+ },
+ {
+  "key": "agent-aed868b216928d74b:3054282.0",
+  "role": "tool",
+  "text": "content: [\n  {\"text\": \"Три решённых слова: подъём, состояние входа, причина у пузыря\", \"state\": \"completed\"},\n  {\"text\": \"Зазор над полем правки заголовка\", \"state\": \"completed\"},\n  {\"text\": \"Выравнивание видов записей ленты: замер сделан, цель уточняется\", \"s",
+  "time": "2026-08-29T15:27:12.997Z",
+  "tool": "Write",
+  "note": "/Users/rider/.devkit/plans/8257b5e0-a1a7-424c-a334-d9e7d23bccf5-login2.json",
+  "sub": "Доделать DK-577 после GLM",
+  "args": {
+   "content": "[\n  {\"text\": \"Три решённых слова: подъём, состояние входа, причина у пузыря\", \"state\": \"completed\"},\n  {\"text\": \"Зазор над полем правки заголовка\", \"state\": \"completed\"},\n  {\"text\": \"Выравнивание видо",
+   "file_path": "/Users/rider/.devkit/plans/8257b5e0-a1a7-424c-a334-d9e7d23bccf5-login2.json"
+  }
+ },
+ {
+  "key": "agent-aed868b216928d74b:3389761.0",
+  "role": "tool",
+  "text": "content: [\n  {\"text\": \"Замер краёв текста на живой ленте разговора\", \"state\": \"completed\"},\n  {\"text\": \"Свести текст всех видов записи к одному краю\", \"state\": \"completed\"},\n  {\"text\": \"Стенд выравнивания с набором видов из живой ленты\", \"state\": \"completed\"},",
+  "time": "2026-08-29T15:50:38.557Z",
+  "tool": "Write",
+  "note": "/Users/rider/.devkit/plans/8257b5e0-a1a7-424c-a334-d9e7d23bccf5-login2.json",
+  "sub": "Доделать DK-577 после GLM",
+  "args": {
+   "content": "[\n  {\"text\": \"Замер краёв текста на живой ленте разговора\", \"state\": \"completed\"},\n  {\"text\": \"Свести текст всех видов записи к одному краю\", \"state\": \"completed\"},\n  {\"text\": \"Стенд выравнивания с на",
+   "file_path": "/Users/rider/.devkit/plans/8257b5e0-a1a7-424c-a334-d9e7d23bccf5-login2.json"
+  }
  }
 ]

@@ -1733,6 +1733,13 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    выровнены»). Меняется только горизонталь: высоту ленты поля не трогают. */
 .frow .foldh,.frow .foldb{padding-left:16px;padding-right:16px}
 .frow .tline{padding-left:17px;padding-right:17px}
+/* Значок строки сдвинут на свои три точки влево: внутри своего квадрата он
+   нарисован с полем, и без сдвига его чернила вставали правее текста соседних
+   записей. Отступ самой строки при этом общий, семнадцать, как у всех. */
+.frow .tline .tico{margin-left:-3px}
+.frow .trow2>.tsaid{padding-left:17px;padding-right:17px}
+.frow .trow2>.tdiff .dline{padding-left:16px;padding-right:16px}
+.frow .msg>.mshot{margin-left:17px}
 .frow .trow2>.thline{padding-left:17px;padding-right:17px}
 .frow .think{padding-left:17px;padding-right:17px}
 .frow .think{margin:2px 0;font:400 12px/1.35 var(--sans)}

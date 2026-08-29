@@ -2597,3 +2597,113 @@ func TestPlanOrderedByState(t *testing.T) {
 		t.Errorf("порядок работ в кольце\n получен %v\n жду     %v", got, want)
 	}
 }
+
+// План-объект. Правило велит писать план массивом пунктов, но живые агенты
+// пишут и объектом: пункты полем stages, steps или items, а рядом собственные
+// пометки про цель, виток и ветку. Разбор такой файл ронял целиком, кольцо
+// вставало пустым, и человек видел пустоту у сессии, где этапность есть
+// («кружок этапов не установился», жалоба пользователя по цели XR-286).
+func TestPlanFileReadsObjectShape(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name string
+		body string
+		want []planItem
+	}{
+		{
+			name: "stages",
+			body: `{"goal":"XR-286","turn":1,"stages":[` +
+				`{"text":"Состояние цели","state":"completed"},` +
+				`{"text":"Нарезка","state":"in_progress"}]}`,
+			want: []planItem{
+				{Text: "Состояние цели", State: "completed"},
+				{Text: "Нарезка", State: "in_progress"},
+			},
+		},
+		{
+			name: "steps",
+			body: `{"task":"DK-397","tree":"poc","steps":[` +
+				`{"id":1,"what":"разбор","state":"done"},` +
+				`{"id":2,"what":"правка","state":"pending"}]}`,
+			want: []planItem{
+				{Text: "разбор", State: "completed"},
+				{Text: "правка", State: "pending"},
+			},
+		},
+		{
+			name: "items",
+			body: `{"title":"шесть работ","items":[` +
+				`{"id":1,"text":"колонка действий","status":"in_progress"}]}`,
+			want: []planItem{{Text: "колонка действий", State: "in_progress"}},
+		},
+		{
+			name: "массив как прежде",
+			body: `[{"text":"своя работа","state":"in_progress"}]`,
+			want: []planItem{{Text: "своя работа", State: "in_progress"}},
+		},
+	}
+	for _, c := range cases {
+		path := filepath.Join(dir, c.name+".json")
+		if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, at, bad := readPlanFile(path)
+		if bad {
+			t.Errorf("%s: файл прочитан, а разбор жалуется", c.name)
+		}
+		if at.IsZero() {
+			t.Errorf("%s: у разобранного плана нет метки времени", c.name)
+		}
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: пунктов %d, ждали %d: %+v", c.name, len(got), len(c.want), got)
+		}
+		for i, w := range c.want {
+			if got[i].Text != w.Text || got[i].State != w.State {
+				t.Errorf("%s: пункт %d это %+v, ждали %+v", c.name, i, got[i], w)
+			}
+		}
+	}
+}
+
+// Нечитаемый файл плана говорит о себе. Прежде ошибка разбора возвращалась тем
+// же пустым планом, что и отсутствие файла, и молчание было неотличимо от
+// штатной работы: человек не мог понять, план у сессии не написан или написан
+// так, что дашборд его не взял.
+func TestPlanFileTellsAboutBrokenFile(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	sid := "ppp-битый-план"
+	path := writeSession(t, home, proj, "", sid, transcriptFixture, time.Now())
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := planPath(home, sid)
+	// Объект без известного поля с пунктами: JSON целый, плана в нём нет.
+	if err := os.WriteFile(broken, []byte(`{"task":"DK-397","scope":["static/app.js"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, bad := readPlanFile(broken); !bad {
+		t.Fatal("нечитаемый файл плана прошёл как отсутствие плана")
+	}
+	now := time.Date(2026, 8, 29, 15, 0, 0, 0, time.Local)
+	got := planOf(home, sid, "", path, now)
+	hit := false
+	for _, it := range got {
+		if it.Src == planSrcErr && strings.Contains(it.Text, filepath.Base(broken)) {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatalf("про нечитаемый план в кольце не сказано ничего: %+v", got)
+	}
+
+	// Файла нет вовсе: жаловаться не на что, кольцо молчит, как молчало.
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range planOf(home, sid, "", path, now) {
+		if it.Src == planSrcErr {
+			t.Fatalf("жалоба на разбор у сессии без файла плана: %+v", it)
+		}
+	}
+}

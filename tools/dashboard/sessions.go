@@ -2522,6 +2522,11 @@ type planItem struct {
 // плане у него нет, он машинный след розданной работы.
 const planSrcSub = "sub"
 
+// planSrcErr это пункт-жалоба на нечитаемый файл плана. Кольцо без него молчит
+// ровно так же, как молчит у сессии вовсе без плана, и человек видит пустоту
+// там, где этапность есть (жалоба пользователя по цели XR-286).
+const planSrcErr = "err"
+
 // planFromInput разбирает поле todos вызова TodoWrite.
 func planFromInput(input map[string]any) []planItem {
 	raw, ok := input["todos"].([]any)
@@ -2612,47 +2617,108 @@ func planPath(home, sid string) string {
 	return filepath.Join(planDir(home), sid+".json")
 }
 
-// planFileItem это пункт плана, как его пишет агент: текст и состояние. Форма
-// нарочно короче той, что приходит от TodoWrite: писать план руками надо в два
-// поля, а не в четыре.
+// planFileItem это пункт плана, как его пишет агент. Основная пара это text и
+// state, а what, title и status держатся потому, что живые планы пишутся и так:
+// в ~/.devkit/plans текст лежит в what у 59 пунктов и в title у 8, состояние в
+// status у 15. Пункт с текстом в чужом поле раньше оседал в кольце пустотой.
 type planFileItem struct {
-	Text  string `json:"text"`
-	State string `json:"state"`
+	Text   string `json:"text"`
+	What   string `json:"what"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	Status string `json:"status"`
 }
 
-// readPlanFile читает план сессии из файла. Битый JSON, чужие поля и пустые
-// строки молча пропускаются: план это подспорье, и рушить из-за него ленту
-// нельзя.
-func readPlanFile(path string) ([]planItem, time.Time) {
+// label это текст пункта: первое непустое из трёх известных полей.
+func (it planFileItem) label() string {
+	for _, s := range []string{it.Text, it.What, it.Title} {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// mark это состояние пункта, сведённое к трём известным кольцу. Слово done
+// живые планы пишут наравне с completed, и без перевода закрытая работа
+// показывалась ждущей.
+func (it planFileItem) mark() string {
+	state := it.State
+	if strings.TrimSpace(state) == "" {
+		state = it.Status
+	}
+	switch state {
+	case "pending", "in_progress", "completed":
+		return state
+	case "done":
+		return "completed"
+	}
+	return "pending"
+}
+
+// planFileFields перечисляет поля, за которыми лежат пункты у плана-объекта.
+// Порядок тут это порядок предпочтения, а сам список взят по живым файлам
+// (stages, steps, items), а не придуман.
+var planFileFields = []string{"stages", "steps", "items"}
+
+// planFileItems достаёт пункты из содержимого файла. Вид у планов два: массив
+// пунктов верхнего уровня, как велит правило, и объект, у которого пункты
+// лежат полем, а рядом стоят пометки самого агента (цель, виток, ветка). Второй
+// вид агенты пишут сами, и разбирать его надо наравне с первым. Второе
+// возвращаемое значение говорит, разобрался ли файл вообще: пустой план это не
+// то же самое, что план нечитаемый.
+func planFileItems(data []byte) ([]planFileItem, bool) {
+	var arr []planFileItem
+	if json.Unmarshal(data, &arr) == nil {
+		return arr, true
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(data, &obj) != nil {
+		return nil, false
+	}
+	for _, field := range planFileFields {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		var list []planFileItem
+		if json.Unmarshal(raw, &list) == nil {
+			return list, true
+		}
+	}
+	return nil, false
+}
+
+// readPlanFile читает план сессии из файла. Третье значение это жалоба: файл
+// лежит, а плана из него не вышло. Раньше такой случай возвращался как «плана
+// нет», и ошибка разбора была неотличима от штатной работы.
+func readPlanFile(path string) ([]planItem, time.Time, bool) {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return nil, time.Time{}
+		return nil, time.Time{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, time.Time{}
+		return nil, time.Time{}, false
 	}
-	var raw []planFileItem
-	if json.Unmarshal(data, &raw) != nil {
-		return nil, time.Time{}
+	raw, ok := planFileItems(data)
+	if !ok {
+		return nil, time.Time{}, true
 	}
 	out := make([]planItem, 0, len(raw))
 	for _, it := range raw {
-		if strings.TrimSpace(it.Text) == "" {
+		text := it.label()
+		if text == "" {
 			continue
 		}
-		state := it.State
-		switch state {
-		case "pending", "in_progress", "completed":
-		default:
-			state = "pending"
-		}
-		out = append(out, planItem{Text: truncate(it.Text, 200), State: state})
+		out = append(out, planItem{Text: truncate(text, 200), State: it.mark()})
 	}
 	if len(out) == 0 {
-		return nil, time.Time{}
+		// Пустой список пунктов это пустой план, а список, из которого не
+		// вышло ни одного пункта, это всё та же нечитаемая запись.
+		return nil, time.Time{}, len(raw) > 0
 	}
-	return out, fi.ModTime()
+	return out, fi.ModTime(), false
 }
 
 // subDoneLimit это потолок закрытых работ из журналов: у сессии, которая
@@ -2956,6 +3022,8 @@ func withSubWorks(plan []planItem, subs []subWork) []planItem {
 func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 	var filePlan []planItem
 	var fileAt time.Time
+	// Имя файла, который лежит на месте, но планом не читается.
+	var badFile string
 	// Начало сессии берётся у её же журнала первой записью: по нему запасной
 	// файл плана отличает свой от чужого, оставшегося под тем же именем
 	// tmux-сессии.
@@ -2967,7 +3035,11 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		if dir == "" {
 			continue
 		}
-		plan, at := readPlanFile(planPath(dir, sid))
+		path := planPath(dir, sid)
+		plan, at, bad := readPlanFile(path)
+		if bad {
+			badFile = path
+		}
 		// Запасной адрес правила плана: сессия без CLAUDE_CODE_SESSION_ID
 		// (контур второй подписки) пишет план файлом имени своей tmux-сессии,
 		// а файла по sid у неё не заводится вовсе.
@@ -2979,7 +3051,7 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		// написать её план было некому. Файл по sid этой проверки не просит,
 		// имя сессии не переиспользуется.
 		if plan == nil && tmux != "" {
-			own, ownAt := readPlanFile(planPath(dir, tmux))
+			own, ownAt, _ := readPlanFile(planPath(dir, tmux))
 			if own != nil && (born.IsZero() || !ownAt.Before(born)) {
 				plan, at = own, ownAt
 			}
@@ -3000,6 +3072,15 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		said = todoPlan
 	case todoPlan != nil && todoAt.After(fileAt):
 		said = todoPlan
+	}
+	// Нечитаемый файл плана говорит о себе сам и только когда сказать больше
+	// нечего: слова агента, откуда бы они ни пришли, важнее жалобы на разбор.
+	if said == nil && badFile != "" {
+		said = []planItem{{
+			Text:  "план сессии не разобран: " + filepath.Base(badFile),
+			State: "in_progress",
+			Src:   planSrcErr,
+		}}
 	}
 	return planOrdered(withSubWorks(said, subs))
 }

@@ -1173,6 +1173,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cdarch{position:absolute;top:5px;right:5px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:none;border-radius:6px;background:transparent;color:var(--tx3);cursor:pointer;padding:0}
 .cdarch svg{width:14px;height:14px}
 .cdarch:hover{background:var(--bg3);color:var(--tx)}
+/* Взведённая кнопка закрытия видна собой: крестик наливается цветом отказа, и
+   вопрос стоит в подсказке. Так же взводится снятие сессии (.sclose), и второго
+   языка для одного и того же вопроса заводить незачем */
+.cdrop-x.armed{background:color-mix(in oklab,var(--block) 22%,transparent);color:var(--block)}
 /* Убранный разговор виден и в общем списке: приглушённая строка плюс чип. */
 .cdrow.arch{opacity:0.72}
 .cdrow:hover{border-color:var(--line2);background:var(--bg2)}

@@ -2195,6 +2195,23 @@ func TestTaskMessageDeliveredWithLead(t *testing.T) {
 	}
 }
 
+// Незачатую запись закрывают из списка, где человек её и видит: пустая уходит
+// первым нажатием, запись с набранным текстом сперва спрашивает, а за записью с
+// сессией и за разговором с лентой остаётся прежняя дорога, архив. Сторожит
+// стенд testdata/poc_chatdrop.mjs.
+func TestStaticChatDropRow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд закрытия записи пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatdrop.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("закрытие незачатой записи: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Курсор в поле поиска списка разговоров ставится по ширине экрана: на
 // телефоне выехавшая за ним клавиатура закрывает пол-экрана раньше, чем человек
 // взглянул на список (замечание пользователя), а на ноутбуке она ничего не

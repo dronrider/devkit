@@ -220,12 +220,20 @@ exit 0`)
 	}
 }
 
-// Брошенные записи не копятся мусором: та, в которой нет ни реплики, ни
-// набранного текста, метётся тем же сроком, каким живёт окно списка. Начатое
-// человеком живёт сколько угодно, а убрать его рукой можно архивом.
+// Брошенные записи не копятся мусором. Пустая, без единой буквы и без сессии,
+// уходит через час: хранить в ней нечего, а копилась она сроком окна списка, и
+// за день их набиралась горсть (замечание пользователя, замер дал пять штук за
+// два с половиной часа). Начатое человеком живёт сколько угодно, а выросшая
+// запись доживает дорожным знаком свои трое суток.
 func TestChatBlankSweepsAbandoned(t *testing.T) {
 	e, c := chatEnv(t)
 	old := time.Now().Add(-(chatBlankLife + time.Hour)).Unix()
+	// Час это срок пустой записи, а не всей уборки: дорожный знак выросшей
+	// живёт своим сроком, и час его не трогает.
+	if chatBlankLife != time.Hour {
+		t.Fatalf("срок пустой записи %v, а решением он час", chatBlankLife)
+	}
+	stale := time.Now().Add(-(chatGrownLife + time.Hour)).Unix()
 	put := func(id string, st chatStore) {
 		t.Helper()
 		data, err := json.Marshal(st)
@@ -241,7 +249,8 @@ func TestChatBlankSweepsAbandoned(t *testing.T) {
 	}
 	put("blank-forgotten", chatStore{Blank: true, Born: old, Project: "demo"})
 	put("blank-written", chatStore{Blank: true, Born: old, Project: "demo", Draft: "недописанное"})
-	put("blank-grown", chatStore{Blank: true, Born: old, Project: "demo", Grown: "aaaa-0001"})
+	put("blank-grown", chatStore{Blank: true, Born: stale, Project: "demo", Grown: "aaaa-0001"})
+	put("blank-fresh-grown", chatStore{Blank: true, Born: old, Project: "demo", Grown: "aaaa-0002"})
 	put("blank-today", chatStore{Blank: true, Born: time.Now().Unix(), Project: "demo"})
 
 	list := blankList(t, e, c, "?all=1")
@@ -260,8 +269,88 @@ func TestChatBlankSweepsAbandoned(t *testing.T) {
 	if _, err := os.Stat(blankPath(e.home, "blank-grown")); !os.IsNotExist(err) {
 		t.Errorf("выросшая запись осталась на диске: %v", err)
 	}
+	// Свежая выросшая запись стоит дорожным знаком: панель соседней вкладки
+	// переезжает по ней на живой разговор, и торопить её незачем.
+	if _, err := os.Stat(blankPath(e.home, "blank-fresh-grown")); err != nil {
+		t.Errorf("свежая выросшая запись стёрта, и панели на её адресе некуда идти: %v", err)
+	}
 	if blankRow(list, "blank-today") == nil {
 		t.Errorf("сегодняшняя пустая запись смело уборкой: человек только что её завёл")
+	}
+}
+
+// Запись закрывается рукой, и ждать часа для этого не надо: мусор человек видит
+// сейчас («закрыть их я не могу, просто нет такой возможности», замечание
+// пользователя). Живой сессии закрытие не касается: запись, за которой стоит
+// сессия, ручка не трогает и говорит, куда идти.
+func TestChatBlankDropsByHand(t *testing.T) {
+	e, c := chatEnv(t)
+	put := func(id string, st chatStore) {
+		t.Helper()
+		data, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(chatStoreDir(e.home), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(blankPath(e.home, id), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().Unix()
+	put("blank-empty", chatStore{Blank: true, Born: now, Project: "demo"})
+	put("blank-typed", chatStore{Blank: true, Born: now, Project: "demo", Draft: "недописанное"})
+	put("blank-live", chatStore{Blank: true, Born: now, Project: "demo", Tmux: "devkit-demo-1"})
+	put("blank-owned", chatStore{Blank: true, Born: now, Project: "demo", Grown: "aaaa-0001"})
+
+	drop := func(id string) (int, string) {
+		t.Helper()
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+id+"/drop", "{}")
+		return resp.StatusCode, body(t, resp)
+	}
+
+	// Пустая уходит первым же движением и с диска тоже: ждать её часа человеку
+	// незачем.
+	if code, said := drop("blank-empty"); code != http.StatusOK {
+		t.Fatalf("пустая запись не закрылась рукой: %d %s", code, said)
+	}
+	if _, err := os.Stat(blankPath(e.home, "blank-empty")); !os.IsNotExist(err) {
+		t.Errorf("закрытая запись осталась на диске: %v", err)
+	}
+
+	// Набранный текст закрытию не помеха: спрашивает о нём экран, а решение
+	// человека ручка исполняет.
+	if code, said := drop("blank-typed"); code != http.StatusOK {
+		t.Fatalf("запись с текстом не закрылась рукой: %d %s", code, said)
+	}
+
+	// Запись с поднятой сессией остаётся на месте: снимать сессию походя
+	// закрытие не вправе.
+	code, said := drop("blank-live")
+	if code != http.StatusConflict {
+		t.Errorf("запись с живой сессией закрылась: %d %s", code, said)
+	}
+	if !strings.Contains(said, "devkit-demo-1") {
+		t.Errorf("отказ не назвал сессию, из-за которой запись осталась: %s", said)
+	}
+	if _, err := os.Stat(blankPath(e.home, "blank-live")); err != nil {
+		t.Errorf("запись с живой сессией всё же стёрлась: %v", err)
+	}
+
+	// Выросшая запись это дорожный знак к разговору, и закрывают сам разговор.
+	code, said = drop("blank-owned")
+	if code != http.StatusConflict {
+		t.Errorf("выросшая запись закрылась мимо своего разговора: %d %s", code, said)
+	}
+	if !strings.Contains(said, "aaaa-0001") {
+		t.Errorf("отказ не назвал разговор, в который выросла запись: %s", said)
+	}
+
+	// Повторное закрытие это не поломка: человек просил ровно того, что уже
+	// сошлось.
+	if code, said := drop("blank-empty"); code != http.StatusOK {
+		t.Errorf("повторное закрытие отбито: %d %s", code, said)
 	}
 }
 

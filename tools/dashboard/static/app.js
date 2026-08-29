@@ -7298,6 +7298,16 @@ function chatArchShown(list, mode) {
   return list.filter((c) => !c.archived);
 }
 
+// dropChat закрывает незачатую запись насовсем. Ручка отказывает записи с
+// сессией и разговору с лентой, поэтому отказ тут не поломка, а слова о том,
+// куда идти, и показать их надо человеку.
+async function dropChat(project, sid) {
+  const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/drop",
+    { method: "POST", body: {} });
+  if (!r.ok) sayResult(r.body.error || "запись не закрылась", true);
+  return r.ok;
+}
+
 // archiveChat убирает разговор в архив и возвращает обратно той же ручкой.
 // Живую сессию убранного снимает сервер, тут о ней речи нет.
 async function archiveChat(project, sid, on) {
@@ -7606,15 +7616,10 @@ function chatWhen(c) {
   return c.mtime ? localDay(c.mtime) + ", " + localTime(c.mtime) : "";
 }
 
-// Строка выпадающего списка: заголовок, время, состояние и задачи, которых
-// разговор касался. Задач бывает несколько: одна сессия двигает не одну
-// строку, и привязка тут один ко многим.
-function chatOption(project, c, current, done) {
-  const row = el("div", "cdrow" + (c.id === current ? " on" : "") + (c.archived ? " arch" : ""));
-  row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
-  // Уборка стоит в самой строке: убирают пачкой и как раз из списка, и ходить
-  // за этим в панель значило бы открывать каждый разговор по очереди
-  // (замечание пользователя про десяток отработавших чатов).
+// Кнопка уборки в архив: стоит в самой строке, потому что убирают пачкой и как
+// раз из списка, и ходить за этим в панель значило бы открывать каждый разговор
+// по очереди (замечание пользователя про десяток отработавших чатов).
+function chatArchBtn(project, c, done) {
   const put = el("button", "cdarch");
   put.append(icon(c.archived ? "i-out" : "i-box"));
   put.title = c.archived ? "Вернуть из архива" : "Убрать в архив";
@@ -7632,7 +7637,55 @@ function chatOption(project, c, current, done) {
       if (done) done();
     });
   });
-  row.append(put);
+  return put;
+}
+
+// Кнопка закрытия незачатой записи. Пустую она закрывает первым же нажатием:
+// терять там нечего. Запись с набранным текстом сперва спрашивает, и вопрос
+// стоит там же, где ответ, подсказкой на взведённой кнопке: текст человек писал
+// руками, и молчаливая потеря его была бы хуже лишнего нажатия.
+function chatDropBtn(project, c, done) {
+  const btn = el("button", "cdarch cdrop-x");
+  btn.append(icon("close"));
+  const said = c.draft ? "Закрыть запись: в ней остался набранный текст"
+    : "Закрыть пустую запись";
+  btn.title = said;
+  btn.setAttribute("aria-label", said);
+  let armed = !c.draft;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!armed) {
+      armed = true;
+      btn.classList.add("armed");
+      withTip(btn, "Точно закрыть? Набранный текст пропадёт вместе с записью.");
+      btn.setAttribute("aria-label", "Точно закрыть запись с текстом");
+      return;
+    }
+    btn.disabled = true;
+    dropChat(project, c.id).then((ok) => {
+      btn.disabled = false;
+      if (ok && done) done();
+    }).catch(console.error);
+  });
+  return btn;
+}
+
+// Строка выпадающего списка: заголовок, время, состояние и задачи, которых
+// разговор касался. Задач бывает несколько: одна сессия двигает не одну
+// строку, и привязка тут один ко многим.
+function chatOption(project, c, current, done) {
+  const row = el("div", "cdrow" + (c.id === current ? " on" : "") + (c.archived ? " arch" : ""));
+  row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
+  // Незачатую запись закрывают насовсем, а не прячут в архив: хранить в ней
+  // нечего, и архив оставил бы тот же мусор, только за ширмой («закрыть их я не
+  // могу, просто нет такой возможности», замечание пользователя). Запись с
+  // сессией и разговор с лентой уходят прежней дорогой, архивом: там есть что
+  // хранить, а живую сессию закрытие не трогает.
+  if (c.blank && !c.grown && !c.tmux) {
+    row.append(chatDropBtn(project, c, done));
+  } else {
+    row.append(chatArchBtn(project, c, done));
+  }
   const chips = el("div", "cchips");
   // Принадлежность видна первой: список общий по машине, и без имени проекта
   // строки разных досок неотличимы. Свой проект тоже назван, пустое место у

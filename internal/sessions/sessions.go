@@ -33,6 +33,11 @@ type Bind struct {
 	Transcript string
 	Tmux       string
 	Time       string
+	// Parent это разговор, раздавший работу этой сессии. Пусто у сессии,
+	// которую подняли сами: из терминала, кнопкой дашборда, руками. Непустой
+	// родитель значит, что сессия это чужая работа, а не разговор человека, и
+	// показывать её надо ходом в ленте родителя, а не строкой списка (DK-581).
+	Parent string
 }
 
 // keys это ключевые слова полей строки реестра в порядке записи
@@ -40,6 +45,7 @@ type Bind struct {
 var keys = map[string]bool{
 	"сессия": true, "задача": true, "проект": true, "дерево": true,
 	"транскрипт": true, "источник": true, "повод": true, "tmux": true,
+	"родитель": true,
 }
 
 // dashless читает пустое поле, записанное дефисом.
@@ -91,6 +97,7 @@ func ParseLine(line string) (string, Bind, bool) {
 		Tree:       dashless(vals["дерево"]),
 		Transcript: dashless(vals["транскрипт"]),
 		Tmux:       dashless(vals["tmux"]),
+		Parent:     dashless(vals["родитель"]),
 		Time:       f[0],
 	}
 	return sid, b, true
@@ -228,6 +235,13 @@ func Last(recs []Bind) Bind {
 		}
 		if r.Tmux != "" {
 			b.Tmux = r.Tmux
+		}
+		// Родитель называется при рождении сессии, а последующие записи
+		// (compact, resume) пишет тот же процесс с тем же окружением. Пустое
+		// поле поздней записи родителя не снимает: розданная работа остаётся
+		// розданной до конца сессии.
+		if r.Parent != "" {
+			b.Parent = r.Parent
 		}
 		b.Task, b.Source, b.Time = r.Task, r.Source, r.Time
 	}

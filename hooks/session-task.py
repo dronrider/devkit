@@ -21,7 +21,7 @@
 Строка журнала именованная, как у уведомителя, и читается по ключевым словам:
 
   <время> сессия <ID> задача <DK-431> проект <devkit> дерево <путь>
-  транскрипт <путь> источник <слово> повод <startup> tmux <имя>
+  транскрипт <путь> источник <слово> повод <startup> tmux <имя> родитель <ID>
 
 Задачу хук берёт из двух мест. Переменная DEVKIT_TASK это заказ того, кто
 поднял сессию: её ставит дашборд в начало команды сессии, и только так узнаётся
@@ -70,12 +70,25 @@ BY_TREE = "дерево"
 
 TASK_ENV = "DEVKIT_TASK"
 TMUX_ENV = "DEVKIT_TMUX"
+# Разговор, раздавший работу этой сессии. Ставит его тот, кто поднял подпроцесс
+# (agentctl run), и по нему список чатов отличает розданную работу от разговора
+# человека: работа видна ходом в ленте родителя, своей строки ей не надо
+# (DK-581).
+PARENT_ENV = "DEVKIT_PARENT_SESSION"
 
 
 def dashless(value):
     """Значение поля журнала: пустое место это дефис, как у уведомителя."""
     value = " ".join((value or "").split())
     return value or "-"
+
+
+def parent_session(env, own):
+    """Раздавший разговор из окружения. Своё же имя родителем не считается:
+    переменная едет подпроцессу через наследование, и сессия, поднятая из
+    сессии подпроцесса, увидела бы в ней себя."""
+    sid = (env.get(PARENT_ENV) or "").strip()
+    return "" if sid == own else sid
 
 
 def ordered_task(env):
@@ -110,10 +123,11 @@ def record(start, env=None, now=None):
         task, source = ordered, BY_ORDER
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
     return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
-            "источник %s повод %s tmux %s\n") % (
+            "источник %s повод %s tmux %s родитель %s\n") % (
         stamp, dashless(start.session), dashless(task), dashless(project),
         dashless(root), dashless(start.transcript), dashless(source),
-        dashless(start.source), dashless(env.get(TMUX_ENV)))
+        dashless(start.source), dashless(env.get(TMUX_ENV)),
+        dashless(parent_session(env, start.session)))
 
 
 # Ходы, которые считаются работой в дереве задачи: правка файла это работа, а
@@ -135,9 +149,9 @@ def touch_record(tool, now=None):
         return ""
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
     return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
-            "источник %s повод %s tmux %s\n") % (
+            "источник %s повод %s tmux %s родитель %s\n") % (
         stamp, dashless(tool.session), dashless(task), dashless(project),
-        dashless(root), "-", dashless(BY_WORK), "правка файла", "-")
+        dashless(root), "-", dashless(BY_WORK), "правка файла", "-", "-")
 
 
 def known_touch(path, session, task):

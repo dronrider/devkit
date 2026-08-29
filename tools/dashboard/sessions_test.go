@@ -2707,3 +2707,49 @@ func TestPlanFileTellsAboutBrokenFile(t *testing.T) {
 		}
 	}
 }
+
+// markEnded дописывает в мету работы время возврата, как его пишет agentctl
+// run, когда подпроцесс делегирования кончился.
+func markEnded(t *testing.T, path, id string, at time.Time) {
+	t.Helper()
+	meta := filepath.Join(subDir(path), "agent-"+id+".meta.json")
+	body := fmt.Sprintf(`{"agentType":"exec-high","description":%q,"toolUseId":%q,"ended":%q}`,
+		"DK-577, исполнитель на подписке glm-code", "tool-"+id, at.UTC().Format(time.RFC3339))
+	if err := os.WriteFile(meta, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Работа второй подписки закрывается меткой возврата в мете. Ответа на её
+// вызов в транскрипте разговора нет вовсе (вызывал её не харнес, а run), и без
+// метки свежий журнал держал бы кончившуюся работу идущей ещё полчаса
+// (DK-581).
+func TestSubWorkEndedClosesTheWork(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-time.Minute).Format(time.RFC3339)
+	path := writeSession(t, e.home, e.proj, "", "bbb-2", transcriptFixture, now)
+
+	live := writeSubLog(t, path, "run1", "DK-581, исполнитель на подписке glm-code",
+		sideLine("иду", at))
+	done := writeSubLog(t, path, "run2", "DK-577, исполнитель на подписке glm-code",
+		sideLine("иду", at))
+	markEnded(t, path, "run2", now.Add(-time.Minute))
+	// Журналы у обеих работ свежие: разводит их только метка возврата.
+	for _, file := range []string{live, done} {
+		if err := os.Chtimes(file, now.Add(-30*time.Second), now.Add(-30*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	states := map[string]string{}
+	for _, it := range planOf(e.home, "bbb-2", "", path, now) {
+		states[strings.SplitN(it.Text, ",", 2)[0]] = it.State
+	}
+	if states["DK-581"] != "in_progress" {
+		t.Errorf("идущая работа не идёт: %v", states)
+	}
+	if states["DK-577"] != "completed" {
+		t.Errorf("вернувшаяся работа осталась идущей: %v", states)
+	}
+}

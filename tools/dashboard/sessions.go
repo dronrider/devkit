@@ -2448,6 +2448,12 @@ type subMeta struct {
 	Agent  string `json:"agentType"`
 	About  string `json:"description"`
 	ToolID string `json:"toolUseId"`
+	// Ended это время возврата работы, которое написал тот, кто её ждал.
+	// Своих вызовов харнес так не помечает, поле пишет agentctl run делегату
+	// второй подписки: ответа на вызов в транскрипте разговора у такой работы
+	// нет вовсе, и без метки она висела бы идущей до срока молчания журнала
+	// (DK-581).
+	Ended string `json:"ended"`
 }
 
 // subLabel подписывает субагента в ленте: заказ словами, а при его отсутствии
@@ -2470,6 +2476,7 @@ type subLog struct {
 	File  string
 	Label string
 	About string
+	Ended string
 }
 
 // subLogs сводит боковые журналы транскрипта в отображение «id вызова -> файл».
@@ -2497,7 +2504,8 @@ func subLogs(path string) map[string]subLog {
 		if _, err := os.Stat(log); err != nil {
 			continue
 		}
-		out[m.ToolID] = subLog{File: log, Label: m.label(), About: strings.TrimSpace(m.About)}
+		out[m.ToolID] = subLog{File: log, Label: m.label(), About: strings.TrimSpace(m.About),
+			Ended: strings.TrimSpace(m.Ended)}
 	}
 	return out
 }
@@ -2905,13 +2913,17 @@ func subWorks(path string, closed map[string]bool, now time.Time) []subWork {
 		}
 		// Работа идёт, пока её журнал пишется; ответа на вызов при этом может и
 		// не быть (работа ещё не вернулась) и может быть (её продолжают
-		// репликой). Молчащая работа закрыта: ответом либо сроком.
+		// репликой). Молчащая работа закрыта: ответом либо сроком. Метка
+		// возврата в мете старше обоих признаков: её пишет тот, кто работу
+		// ждал, и знает он точнее всех.
 		state := "completed"
-		switch {
-		case quiet <= subFresh:
-			state = "in_progress"
-		case !closed[id] && quiet <= subStale:
-			state = "in_progress"
+		if log.Ended == "" {
+			switch {
+			case quiet <= subFresh:
+				state = "in_progress"
+			case !closed[id] && quiet <= subStale:
+				state = "in_progress"
+			}
 		}
 		// Подпись работы это заказ, который диспетчер написал субагенту.
 		// Коротким его пишет мета-файл вызова, и он же читается лучше всего;

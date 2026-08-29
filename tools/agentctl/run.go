@@ -307,9 +307,35 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	if err != nil {
 		return 0, err
 	}
-	argv := substituteCommand(tmpl, map[string]string{
+	vals := map[string]string{
 		"model": v.Model, "effort": v.Effort, "workdir": workdir, "prompt": prompt,
-	})
+	}
+	// Ход работы делегата виден в ленте раздавшего разговора, когда клиент
+	// назначения принимает имя сессии снаружи: по этому имени run находит
+	// транскрипт подпроцесса и кладёт его боковым журналом туда, где лента
+	// ищет работы субагентов. Молчать про несобранный журнал нельзя: снаружи
+	// он неотличим от работы, которая просто ещё не написала ни строчки.
+	child, side := "", (*sideLog)(nil)
+	if hasMark(tmpl, sessionMark) {
+		child, err = newSessionID()
+		if err != nil {
+			return 0, err
+		}
+		vals["session"] = child
+		parent := os.Getenv(parentSessionEnv)
+		switch path := transcriptOf(journalHomes(hc.L), parent); {
+		case path == "":
+			fmt.Fprintf(errw, "ход работы в ленте не покажется: транскрипта раздавшего разговора не нашлось (%s=%s), и класть боковой журнал некуда\n", parentSessionEnv, quoteEmpty(parent))
+		default:
+			side, err = openSideLog(path, harnessHome(hc.L, who), child, role+"-"+v.Effort, sideAbout(id, role, who))
+			if err != nil {
+				fmt.Fprintf(errw, "ход работы в ленте не покажется: боковой журнал не завёлся (%v)\n", err)
+			}
+		}
+	} else {
+		fmt.Fprintf(errw, "ход работы в ленте не покажется: профиль %s не назвал %s в [delegate] command, и как зовут сессию подпроцесса, узнать нечем\n", prof.Path, sessionMark)
+	}
+	argv := substituteCommand(tmpl, vals)
 	refreshExecutorQuota(hc.L, who, timeNow())
 	// Пары из env харнеса назначения: ими подпроцесс получает свой каталог
 	// конфигурации (CLAUDE_CONFIG_DIR у второй подписки), а через него base URL и
@@ -321,11 +347,47 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 		tail = ", окружение: " + strings.Join(envNames(pairs), ", ")
 	}
 	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s%s\n", who, prof.Path, argv[0], workdir, tail)
+	if side != nil {
+		fmt.Fprintf(out, "ход работы едет в ленту разговора %s, боковой журнал %s\n", os.Getenv(parentSessionEnv), side.path)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = workdir
 	// Ограничитель вложенности идёт после общей сборки окружения: делегированная
-	// сессия делегировать дальше не вправе, иначе выйдет воронка сессий.
+	// сессия делегировать дальше не вправе, иначе выйдет воронка сессий. Рядом
+	// едет имя раздавшего разговора: своего реестра у делегата нет, и чью
+	// работу он делает, сказать может только тот, кто его поднял.
 	cmd.Env = append(harnessEnviron(os.Environ(), pairs, who), runDepthEnv+"=1")
+	if sid := os.Getenv(parentSessionEnv); sid != "" {
+		cmd.Env = append(cmd.Env, parentEnv+"="+sid)
+	}
 	cmd.Stdout, cmd.Stderr = out, errw
+	if side != nil {
+		stop := make(chan struct{})
+		go side.follow(stop)
+		defer func() {
+			close(stop)
+			side.finish(timeNow())
+		}()
+	}
 	return runChild(cmd, errw, "команду объявляет [delegate] command профиля "+prof.Path)
+}
+
+// hasMark говорит, назван ли плейсхолдер в шаблоне команды. Подстановка идёт
+// внутри элемента, поэтому и признак ищется внутри.
+func hasMark(tmpl []string, mark string) bool {
+	for _, a := range tmpl {
+		if strings.Contains(a, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// quoteEmpty подставляет прочерк пустому значению: строка отказа с висящим
+// «=» читается опечаткой, а не пустой переменной.
+func quoteEmpty(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
 }

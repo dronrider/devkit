@@ -210,12 +210,6 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
-		runProc("tmux", "kill-session", "-t", "="+sess)
-		text := fmt.Sprintf("команда /login не подалась в сессию входа %s: %s", sess, procErr(err))
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
-		return
-	}
 	s.mu.Lock()
 	s.loginRun = &loginRun{Tmux: sess, Started: s.now(), Raising: true}
 	s.mu.Unlock()
@@ -244,11 +238,16 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // loginAwaitLink ждёт от панели ссылку авторизации. До ссылки клиент стоит на
-// выборе способа входа, и выбор проходится за человека: подписка по умолчанию
-// это первый пункт, стоящий на нём курсором. Пустая вторая строка значит успех.
+// вопросах, и они проходятся за человека: вопрос доверия каталогу отвечается
+// пунктом доверия (его поднимает машина, где дом ещё не доверен клиенту, а
+// команда /login уже съедена этим вопросом и подаётся заново), выбор способа
+// входа берёт подписку по умолчанию, первый пункт. Команда /login подаётся лишь
+// на нарисованную панель: пока клиент разгоняется, панель пуста, и нажатия,
+// поданные вслепую, съедает первый вставший виджет, а Enter в нём подтверждает
+// пункт на курсоре и губит клиента. Пустая вторая строка значит успех.
 func (s *server) loginAwaitLink(sess string) (string, string) {
 	deadline := s.now().Add(loginLinkWait)
-	chosen := false
+	chosen, sent := false, false
 	for {
 		pane, err := loginPane(sess)
 		if err != nil {
@@ -257,13 +256,28 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 		if url := loginLinkOf(pane); url != "" {
 			return url, ""
 		}
-		if !chosen {
-			if ask := tmuxAskOf(sess); len(ask.Options) > 0 {
-				if err := tmuxAnswer(sess, ask, loginPickOf(ask), ""); err != nil {
-					return "", fmt.Sprintf("способ входа не выбрался: %s", procErr(err))
-				}
-				chosen = true
+		ask := tmuxAskOf(sess)
+		switch {
+		case loginAskIsTrust(ask):
+			if err := tmuxAnswer(sess, ask, loginPickOf(ask), ""); err != nil {
+				return "", fmt.Sprintf("вопрос доверия каталогу не отвечен: %s", procErr(err))
 			}
+			if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
+				return "", fmt.Sprintf("команда /login не подалась после доверия: %s", procErr(err))
+			}
+			sent = true
+		case len(ask.Options) > 0 && !chosen:
+			if err := tmuxAnswer(sess, ask, loginPickOf(ask), ""); err != nil {
+				return "", fmt.Sprintf("способ входа не выбрался: %s", procErr(err))
+			}
+			chosen = true
+		case strings.TrimSpace(pane) == "":
+			// Клиент ещё не нарисовал панель: нажатия вслепую не подаются.
+		case !sent:
+			if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
+				return "", fmt.Sprintf("команда /login не подалась в сессию входа: %s", procErr(err))
+			}
+			sent = true
 		}
 		if !s.now().Before(deadline) {
 			return "", fmt.Sprintf("клиент не напечатал ссылку авторизации за %s: "+
@@ -273,11 +287,26 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 	}
 }
 
-// loginPickOf выбирает пункт способа входа: со словом subscription, а нет его,
-// первый. Подписка по умолчанию у клиента в списке первая, и слова её называют.
+// loginAskIsTrust узнаёт вопрос доверия каталогу. Он встаёт первым на машине,
+// где клиент ещё не доверял свой дом: до ответа REPL не поднимется, а пункт,
+// стоящий на курсоре, это выход.
+func loginAskIsTrust(ask tmuxAsk) bool {
+	for _, o := range ask.Options {
+		if strings.Contains(strings.ToLower(o.Text), "trust") {
+			return true
+		}
+	}
+	return false
+}
+
+// loginPickOf выбирает пункт виджета входа. Способ входа узнаётся словом
+// subscription, а нет его, берётся первый: подписка по умолчанию у клиента в
+// списке первая, и слова её называют. Вопрос доверия отвечается пунктом
+// доверия: стоящий на курсоре пункт это «No, exit».
 func loginPickOf(ask tmuxAsk) int {
 	for i, o := range ask.Options {
-		if strings.Contains(strings.ToLower(o.Text), "subscription") {
+		low := strings.ToLower(o.Text)
+		if strings.Contains(low, "subscription") || strings.Contains(low, "trust") {
 			return i + 1
 		}
 	}

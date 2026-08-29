@@ -24,13 +24,26 @@ var (
 	paneFrame  = string(rune(0x2500))
 )
 
-// Панели стадий входа: REPL без входа, виджет выбора способа, ссылка с полем
-// кода, сделанный вход и отказ кода. Вид взят с живой панели клиента.
+// Панели стадий входа: пустая панель разгона, вопрос доверия каталогу, REPL без
+// входа, виджет выбора способа, ссылка с полем кода, сделанный вход и отказ
+// кода. Вид взят с живой панели клиента.
 func loginPaneOf(stage string) string {
 	code := "Paste the authorization code below:" + "\n" + paneCursor + " \n"
 	switch stage {
+	case "boot":
+		return ""
 	case "repl":
 		return "Login expired. Please run /login\n\n" + paneCursor + " \n"
+	case "trust":
+		return strings.Join([]string{
+			"", strings.Repeat(paneFrame, 60),
+			" Accessing workspace:", "", " /Users/rider", "",
+			" Quick safety check: is this a project you trust?",
+			paneCursor + " No, exit",
+			"  Yes, I trust this folder", "",
+			" Enter to confirm, Esc to cancel",
+			strings.Repeat(paneFrame, 60), "",
+		}, "\n")
 	case "ask":
 		return strings.Join([]string{
 			"", strings.Repeat(paneFrame, 60),
@@ -56,14 +69,17 @@ func loginPaneOf(stage string) string {
 }
 
 // fakeTmuxLogin ставит скрипт tmux с панелью входа и возвращает каталог его
-// памяти. Стадии: repl (REPL без входа), ask (виджет выбора способа), url
-// (ссылка и поле кода), ok (вход сделан), again (код не принят); пропажа файла
-// стадии это смерть сессии. Хвостовая черта в строке фикстуры значит перенос
-// строки пейна: capture-pane с -J склеивает такие строки, как живой tmux.
+// памяти. Стадии: boot (клиент разгоняется, панель пуста и на третьем снимке
+// рисует REPL), trust (виджет доверия каталогу), repl (REPL без входа), ask
+// (виджет выбора способа), url (ссылка и поле кода), ok (вход сделан), again
+// (код не принят); пропажа файла стадии это смерть сессии. Хвостовая черта в
+// строке фикстуры значит перенос строки пейна: capture-pane с -J склеивает такие
+// строки, как живой tmux. Нажатие на пустой панели оставляет метку early: в
+// ненарисовавшегося клиента нажатия не уходят.
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
-	for _, stage := range []string{"repl", "ask", "url", "ok", "again"} {
+	for _, stage := range []string{"boot", "repl", "trust", "ask", "url", "ok", "again"} {
 		if err := os.WriteFile(filepath.Join(d, "pane-"+stage),
 			[]byte(loginPaneOf(stage)), 0o644); err != nil {
 			t.Fatal(err)
@@ -73,11 +89,17 @@ func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 echo "$1" >>"$D/calls"
 case "$1" in
 ls) printf 'goal-XR-9\n';;
-new-session) echo repl >"$D/stage";;
+new-session)
+  if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi;;
 kill-session) rm -f "$D/stage";;
 capture-pane)
   [ -f "$D/stage" ] || exit 3
-  pane="$D/pane-$(cat "$D/stage")"
+  st=$(cat "$D/stage")
+  if [ "$st" = "boot" ]; then
+    n=$(($(cat "$D/bootN" 2>/dev/null || echo 0)+1)); echo "$n" >"$D/bootN"
+    [ "$n" -ge 3 ] && echo repl >"$D/stage"; st=$(cat "$D/stage")
+  fi
+  pane="$D/pane-$st"
   case " $* " in
   *" -J "*) awk '{ if (sub(/\\$/,"")) printf "%s", $0; else print }' "$pane";;
   *) awk '{ sub(/\\$/,""); print }' "$pane";;
@@ -89,6 +111,8 @@ send-keys)
     st=$(cat "$D/stage" 2>/dev/null || echo gone)
     last=$(cat "$D/last" 2>/dev/null || true)
     if [ "$st" = "repl" ]; then echo ask >"$D/stage"
+    elif [ "$st" = "boot" ]; then touch "$D/early"
+    elif [ "$st" = "trust" ]; then echo repl >"$D/stage"
     elif [ "$st" = "ask" ]; then echo url >"$D/stage"
     elif [ "$st" = "gone" ]; then :
     else
@@ -219,6 +243,47 @@ func TestClientLoginCodeAccepted(t *testing.T) {
 		`{"code":"GOOD"}`)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("код принят вне поднятого входа: %d", resp.StatusCode)
+	}
+}
+
+// Вопрос доверия каталогу проходится сам: на машине, где клиент ещё не доверял
+// дом, виджет доверия встаёт до REPL, съедая команду /login, а пункт на курсоре
+// это выход. Вход отвечает пунктом доверия и подаёт /login заново.
+func TestClientLoginTrustAskedAndPassed(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	if err := os.WriteFile(filepath.Join(d, "first"), []byte("trust"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("подъём входа не прошёл вопрос доверия: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "https://claude.ai/oauth/authorize") {
+		t.Fatalf("ссылка авторизации не приехала после доверия: %s", text)
+	}
+}
+
+// Разгон клиента не получает нажатий вслепую: пока панель пуста, клиент не
+// нарисовал ни REPL, ни виджета, и нажатия достались бы первому вставшему
+// экрану, где Enter подтверждает пункт на курсоре. Вход ждёт отрисовки и лишь
+// потом подаёт команду.
+func TestClientLoginNoKeysIntoBlankPane(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	if err := os.WriteFile(filepath.Join(d, "first"), []byte("boot"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
+		t.Fatalf("подъём входа на разгоняющемся клиенте не прошёл: %d, %s", resp.StatusCode, text)
+	}
+	if _, err := os.Stat(filepath.Join(d, "early")); err == nil {
+		t.Fatal("нажатия ушли в пустую панель до отрисовки клиента")
 	}
 }
 

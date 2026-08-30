@@ -642,6 +642,67 @@ func TestSnapshotPartial(t *testing.T) {
 	})
 }
 
+// Пометка занятой цифры отделена от пометки пропажи, и держат её порознь оба
+// читателя снимка. Слить их в одну значило бы либо печатать под цифрой строку
+// «его не было», либо потерять возраст: обе фразы у пропажи, а живёт пометка на
+// бакете, который в снимке есть.
+func TestSnapshotBorrowed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota.local")
+	q := specAt(t, path)
+	why := "панель разбивку не дала, цифра из кеша клиента возрастом 3ч 0м назад"
+
+	t.Run("пометка переживает запись и чтение", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 17, halfWindow))
+		s.Borrowed = map[string]string{"week_max": why}
+		if err := q.write(s); err != nil {
+			t.Fatalf("запись снимка: %v", err)
+		}
+		back, err := q.read()
+		if err != nil {
+			t.Fatalf("чтение снимка: %v", err)
+		}
+		if got := back.borrowed("week_max"); got != why {
+			t.Fatalf("пометка не доехала через файл: %q, %v", got, back.Warns)
+		}
+		if got := back.partial("week_max"); got != "" {
+			t.Fatalf("занятая цифра прочиталась пропажей: %q", got)
+		}
+		if _, ok := back.bucket("week_max"); !ok {
+			t.Fatalf("бакет с занятой цифрой из файла пропал: %+v", back.Buckets)
+		}
+	})
+
+	t.Run("quota печатает возраст занятой цифры при бакете", func(t *testing.T) {
+		content := "taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"week_max = 17% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			borrowedNote + "week_max: " + why + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(specAt(t, path), testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "week_max: потрачено 17%") || !strings.Contains(out, why) {
+			t.Fatalf("возраст занятой цифры не при бакете:\n%s", out)
+		}
+		if strings.Contains(out, "week_max: в панели его не было") {
+			t.Fatalf("под цифрой напечатано, что цифры нет:\n%s", out)
+		}
+	})
+
+	t.Run("pick видит, что цифра занята", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 17, halfWindow))
+		s.Borrowed = map[string]string{"week_max": why}
+		got := quotaFactsOf(q, s, correction{From: "max", Tier: "max"}, false, testNow, q.Harness).note()
+		if !strings.Contains(got, why) {
+			t.Fatalf("возраст занятой цифры до вердикта не доехал: %q", got)
+		}
+	})
+}
+
 func TestCmdQuota(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "quota.local")

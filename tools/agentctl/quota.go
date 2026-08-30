@@ -40,6 +40,17 @@ const quotaTimeLayout = "2006-01-02T15:04"
 // пометки в этом формате ровно тут.
 const partialNote = "# partial "
 
+// borrowedNote это комментарий про бакет, который в снимке есть, но своей цифры
+// не принёс: панель разбивку не показала, и число занято у кеша клиента. От
+// partialNote пометка отделена сознательно. Тот говорит «бакета нет, и вот
+// почему», и оба читателя, корректор и печать остатка, ведут себя по этому
+// слову: печатают «в панели его не было» и подставляют пометку вместо цифры. Об
+// присутствующий бакет обе фразы ломаются, человек видит «week_max 17%» и
+// строкой ниже «week_max в панели его не было», а корректор возраст занятой
+// цифры теряет вовсе. Комментарий, а не свой ключ, по тому же доводу, что у
+// partialNote: сторонний читатель снимка примет новый ключ за бакет.
+const borrowedNote = "# borrowed "
+
 // Окно бакета, от него считается равномерный темп расхода. Берётся из префикса
 // имени: недельные лимиты подписки это week_*, потокенный бюджет чаще месячный,
 // и с недельным окном pace по нему врал бы всемеро. Префикс проверяет валидатор
@@ -194,11 +205,15 @@ type bucket struct {
 // потому, что панель их не показала, и причина рядом с именем: без неё
 // «week_max в снимке нет» звучит одинаково у подписки без дорогого бакета и у
 // панели, которая отказала по частоте обращений.
+// Borrowed это бакеты, которые в снимке есть, но цифру принесли не свою, и
+// откуда она взялась: панель отдаёт разбивку по моделям не всегда, а терять её
+// на каждом таком отказе значит возвращать человека в кабинет подписки.
 type snapshot struct {
-	Taken   time.Time
-	Buckets []bucket
-	Partial map[string]string
-	Warns   []string
+	Taken    time.Time
+	Buckets  []bucket
+	Partial  map[string]string
+	Borrowed map[string]string
+	Warns    []string
 }
 
 // partial отвечает, почему названного бакета нет в снимке. Пустая строка это
@@ -207,9 +222,20 @@ func (s snapshot) partial(name string) string { return s.Partial[name] }
 
 // partialNames это имена помеченных бакетов в порядке имени: снимок и вывод
 // читают люди, и порядок строк не должен плясать от прохода по карте.
-func (s snapshot) partialNames() []string {
-	out := make([]string, 0, len(s.Partial))
-	for name := range s.Partial {
+func (s snapshot) partialNames() []string { return sortedNames(s.Partial) }
+
+// borrowed отвечает, откуда у названного бакета цифра, если она не своя. Пустая
+// строка это «цифра своя».
+func (s snapshot) borrowed(name string) string { return s.Borrowed[name] }
+
+// borrowedNames это имена бакетов с занятой цифрой в порядке имени.
+func (s snapshot) borrowedNames() []string { return sortedNames(s.Borrowed) }
+
+// sortedNames это ключи карты пометок по алфавиту: снимок и вывод читают люди,
+// и порядок строк не должен плясать от прохода по карте.
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for name := range m {
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -373,12 +399,22 @@ func (q *quotaSpec) parse(text string) snapshot {
 			continue
 		}
 		if strings.HasPrefix(line, "#") {
-			rest, marked := strings.CutPrefix(line, partialNote)
-			if name, why, ok := q.parsePartial(rest, marked); ok {
-				if s.Partial == nil {
-					s.Partial = map[string]string{}
+			if rest, marked := strings.CutPrefix(line, partialNote); marked {
+				if name, why, ok := q.parseNote(rest); ok {
+					if s.Partial == nil {
+						s.Partial = map[string]string{}
+					}
+					s.Partial[name] = why
 				}
-				s.Partial[name] = why
+				continue
+			}
+			if rest, marked := strings.CutPrefix(line, borrowedNote); marked {
+				if name, why, ok := q.parseNote(rest); ok {
+					if s.Borrowed == nil {
+						s.Borrowed = map[string]string{}
+					}
+					s.Borrowed[name] = why
+				}
 			}
 			continue
 		}
@@ -401,7 +437,7 @@ func (q *quotaSpec) parse(text string) snapshot {
 		// она наплодила на машинах, и читать их надо, пока refresh не перепишет
 		// каждый; пишется пометка только комментарием.
 		if key == "partial" {
-			if name, why, ok := q.parsePartial(val, true); ok {
+			if name, why, ok := q.parseNote(val); ok {
 				if s.Partial == nil {
 					s.Partial = map[string]string{}
 				}
@@ -423,13 +459,10 @@ func (q *quotaSpec) parse(text string) snapshot {
 	return s
 }
 
-// parsePartial разбирает «<бакет>: причина». Незнакомое имя и пустая причина
-// проходят молча: пометка это подпись для человека, и ломать об неё разбор
-// снимка нельзя, бакеты в файле от неё не зависят.
-func (q *quotaSpec) parsePartial(val string, marked bool) (name, why string, ok bool) {
-	if !marked {
-		return "", "", false
-	}
+// parseNote разбирает «<бакет>: причина», тело обеих пометок. Незнакомое имя и
+// пустая причина проходят молча: пометка это подпись для человека, и ломать об
+// неё разбор снимка нельзя, бакеты в файле от неё не зависят.
+func (q *quotaSpec) parseNote(val string) (name, why string, ok bool) {
 	name, why, cut := strings.Cut(val, ":")
 	name, why = canonBucket(strings.TrimSpace(name)), strings.TrimSpace(why)
 	if !cut || why == "" || !q.known(name) {
@@ -480,6 +513,9 @@ func (q *quotaSpec) write(s snapshot) error {
 	for _, name := range s.partialNames() {
 		fmt.Fprintf(&b, "%s%s: %s\n", partialNote, name, s.Partial[name])
 	}
+	for _, name := range s.borrowedNames() {
+		fmt.Fprintf(&b, "%s%s: %s\n", borrowedNote, name, s.Borrowed[name])
+	}
 	dir := filepath.Dir(q.Path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -504,6 +540,28 @@ func (q *quotaSpec) write(s snapshot) error {
 	}
 	q.From = q.Path
 	return nil
+}
+
+// keepNewer сторожит время снимка от хода назад. Источник расхода бывает
+// откатным: кеш клиента переписывает всякая живая сессия своей копией в памяти,
+// и долго висящее окно кладёт туда цифры трёхчасовой давности поверх
+// пятиминутных. Записать такое значит на глазах у человека сменить 82% в 21:19
+// на 79% в 17:39 и обвинить в этом экран (живой случай пользователя). Снятое
+// старше лежащего на диске в файл не идёт, а причина уходит словами: молча
+// пропущенная запись выглядела бы отказом снимать.
+//
+// Снимок из будущего сторожем не считается: часы могли разойтись, и такой файл
+// иначе запер бы обновление до самого сброса.
+func (q *quotaSpec) keepNewer(fresh snapshot, now time.Time) (snapshot, string) {
+	old, err := q.read()
+	if err != nil || old.empty() || old.Taken.IsZero() || fresh.Taken.IsZero() {
+		return fresh, ""
+	}
+	if old.Taken.After(now) || !old.Taken.After(fresh.Taken) {
+		return fresh, ""
+	}
+	return old, fmt.Sprintf("снятое (%s) старше снимка на диске (%s): источник расхода откатился назад, цифры на диске оставлены прежними",
+		fresh.Taken.Format(quotaTimeLayout), old.Taken.Format(quotaTimeLayout))
 }
 
 // correction это решение корректора: с какого яруса на какой съехал вердикт и
@@ -607,6 +665,12 @@ func quotaFactsOf(q *quotaSpec, s snapshot, c correction, groom bool, now time.T
 		part := fmt.Sprintf("%s %d%%", shown, int(math.Round(b.Used*100)))
 		if st := b.status(now); st != statusNormal {
 			part += " " + st
+		}
+		// Занятая цифра едет к корректору с возрастом: под свежим моментом
+		// снятия она читалась бы свежей, и вердикт двигался бы по четырёхчасовым
+		// процентам как по сегодняшним.
+		if why := s.borrowed(name); why != "" {
+			part += " (" + why + ")"
 		}
 		f.Buckets = append(f.Buckets, part)
 	}
@@ -749,6 +813,9 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 			note = " (лестницу трат не задаёт, панель его больше не показывает)"
 		case status == statusSurplus && !s.fresh(now):
 			note = " (снимок протух, вверх не двигает)"
+		}
+		if why := s.borrowed(bk.Name); why != "" {
+			note += " (" + why + ")"
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, сброс %s, pace %.1f, %s%s\n",
 			bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout), bk.pace(now), status, note)

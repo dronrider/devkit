@@ -31,7 +31,16 @@ const (
 	// рабочий путь: ожидание кончается словом самой панели, и на живой машине
 	// съёмка занимает прежние секунды.
 	usagePanelTimeout = 45 * time.Second
+	// Клавиша повтора у отказа по частоте обращений: панель подписывает её «r
+	// to retry» сама.
+	usageRetryKey = "r"
 )
+
+// usageRetryPauses это паузы перед повторами отказа по частоте обращений.
+// Растут, чтобы вторая попытка не пришлась на ту же занятую минуту, что первая,
+// и обрываются на трёх: панель, отказавшая полторы минуты подряд, за полминуты
+// не передумает, а снимок к этому времени уже ушёл на запасную дорогу.
+var usageRetryPauses = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 
 // Размер окна съёмщика. Панель /usage подросла, под бакетами клиент рисует
 // разбор расхода за сутки, и на шестидесяти строках недельный бакет уезжал выше
@@ -306,6 +315,10 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	snap, back := q.keepNewer(snap, now)
+	if back != "" {
+		notes = append(notes, back)
+	}
 	if err := q.write(snap); err != nil {
 		return "", err
 	}
@@ -410,25 +423,41 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 		return snapshot{}, fmt.Errorf("не удалось отправить команду: %v", err)
 	}
 
-	w := panelWaiter{}
+	var w panelWaiter
 	var why error
-	err := waitPane(session, usagePanelTimeout, func(text string) bool {
-		pane = text
-		// Отказ клиента ждать бессмысленно, он держится до нажатия «r», так что
-		// ожидание обрывается на нём и не съедает весь свой потолок. Подтвердить
-		// его вторым кадром всё равно надо: разовое совпадение отбросило бы
-		// годный снимок.
-		if panelBlocked(text) != "" {
-			return w.blocked(text)
+	var err error
+	// Отказ по частоте обращений панель предлагает пережать сама («r to
+	// retry»), и уходить с него с первого раза нельзя: эндпоинт расхода общий на
+	// все живые сессии машины, попасть в занятую минуту легко, а платит за это
+	// человек застывшим экраном. Пауза растёт, попыток немного: жать без конца
+	// значит держать ту же очередь, из-за которой отказ и пришёл.
+	for attempt := 0; ; attempt++ {
+		w = panelWaiter{}
+		err = waitPane(session, usagePanelTimeout, func(text string) bool {
+			pane = text
+			// Отказ клиента ждать бессмысленно, он держится до нажатия «r», так
+			// что ожидание обрывается на нём и не съедает весь свой потолок.
+			// Подтвердить его вторым кадром всё равно надо: разовое совпадение
+			// отбросило бы годный снимок.
+			if panelBlocked(text) != "" {
+				return w.blocked(text)
+			}
+			s, perr := parseUsagePanel(q, text, now)
+			why = perr
+			if perr != nil {
+				w.miss(text)
+				return false
+			}
+			return w.accept(s, text)
+		})
+		if !panelRateLimited(pane) || attempt >= len(usageRetryPauses) {
+			break
 		}
-		s, perr := parseUsagePanel(q, text, now)
-		why = perr
-		if perr != nil {
-			w.miss(text)
-			return false
+		time.Sleep(usageRetryPauses[attempt])
+		if _, e := tmuxRun("send-keys", "-t", session, usageRetryKey); e != nil {
+			break
 		}
-		return w.accept(s, text)
-	})
+	}
 	if panelBlocked(pane) != "" {
 		return snapshot{}, panelFailure(q, pane, why)
 	}
@@ -479,8 +508,8 @@ func panelFailure(q *quotaSpec, pane string, why error) error {
 func panelBlocked(pane string) string {
 	low := lowPane(pane)
 	switch {
-	case strings.Contains(low, "usage endpoint is rate limited"):
-		return "клиент упёрся в частоту обращений к панели /usage и цифр не показал. Снимок встанет следующей попыткой, лимит подписки тут ни при чём."
+	case panelRateLimited(pane):
+		return "клиент упёрся в частоту обращений к панели /usage и цифр не показал, пережать её съёмщик уже пробовал. Снимок встанет следующей попыткой, лимит подписки тут ни при чём."
 	case strings.Contains(low, "showing last-known usage"):
 		// Панель тут рисует цифры прошлого раза и честно это подписывает.
 		// Записать их снимком нельзя: свежий момент снятия над старыми цифрами
@@ -488,6 +517,14 @@ func panelBlocked(pane string) string {
 		return "клиент показал цифры прошлого раза, а свежих не получил: писать их снимком нельзя, прежний снимок остаётся на месте. Повторить через минуту."
 	}
 	return ""
+}
+
+// panelRateLimited отвечает, упёрся ли клиент в частоту обращений к эндпоинту
+// расхода. Отказ этот единственный из известных, который панель предлагает
+// пережать на месте, и потому у него своё имя: остальные ждут не нажатия, а
+// следующего захода.
+func panelRateLimited(pane string) bool {
+	return strings.Contains(lowPane(pane), "usage endpoint is rate limited")
 }
 
 // lowPane чистит кадр от управляющих последовательностей и приводит к нижнему

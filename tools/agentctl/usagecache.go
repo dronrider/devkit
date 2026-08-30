@@ -190,21 +190,92 @@ func cacheBucketName(l usageCacheLimit) (name, why string) {
 }
 
 // snapClaudeUsage снимает расход у клиента Claude Code. Дорогу выбирает не
-// профиль, а наличие кеша: это ровно тот источник, который рисует экран
-// человека, он несёт разбивку по моделям и свой момент снятия, и клиента ради
-// него поднимать не надо. Панель остаётся запасной дорогой для машин, где кеша
-// нет: клиент туда ещё не ходил, дом другой, формат файла сменился. Почему
-// дорога сменилась, съёмщик говорит словами: молча уехавший на панель снимок от
-// кешевого не отличить.
+// профиль, а состояние кеша: свежий кеш это ровно тот источник, который рисует
+// экран человека, он несёт разбивку по моделям и свой момент снятия, и клиента
+// ради него поднимать не надо. Кеш сам себя не обновляет: клиент кладёт туда
+// ответ, только когда ходит за расходом сам, и в тихий час цифры застывают на
+// часы. Поэтому дорог две, и порог у них общий со снимком (snapshotMaxAge):
+// пока кеш моложе порога, он и есть снимок, а как перевалил, съёмщик идёт на
+// панель, которая цифры спрашивает заново. Панель остаётся запасной дорогой и
+// там, где кеша нет вовсе: клиент туда ещё не ходил, дом другой, формат файла
+// сменился. Почему дорога сменилась, съёмщик говорит словами: молча уехавший на
+// панель снимок от кешевого не отличить.
 func snapClaudeUsage(q *quotaSpec, now time.Time) (snapshot, []string, error) {
-	s, notes, err := snapUsageCache(q)
-	if err == nil {
-		return s, notes, nil
+	c, notes, err := snapUsageCache(q)
+	if err == nil && c.fresh(now) {
+		return c, notes, nil
 	}
-	notes = append(notes, fmt.Sprintf("%v, снимаем панелью %s", err, usageCommand))
+	if err != nil {
+		notes = append(notes, fmt.Sprintf("%v, снимаем панелью %s", err, usageCommand))
+	} else {
+		notes = append(notes, fmt.Sprintf("кеш клиента снят %s при пороге %s и обновится, только когда клиент сам сходит за расходом; снимаем панелью %s",
+			cacheAge(c, now), humanAge(snapshotMaxAge), usageCommand))
+	}
 	p, perr := snapUsagePanel(q, now)
 	if perr != nil {
-		return snapshot{}, notes, fmt.Errorf("%v Кеш клиента до этого тоже не дался: %v.", perr, err)
+		if err != nil {
+			return snapshot{}, notes, fmt.Errorf("%v Кеш клиента до этого тоже не дался: %v.", perr, err)
+		}
+		// Панель отказала, а протухший кеш есть. Он и уезжает в файл: свой
+		// момент снятия он везёт с собой, и возраст цифр виден и корректору, и
+		// человеку. Отказать тут значило бы оставить на диске снимок ещё старше.
+		notes = append(notes, fmt.Sprintf("панель не далась (%v), в снимок идёт кеш клиента возрастом %s", perr, cacheAge(c, now)))
+		return c, notes, nil
 	}
-	return p, notes, nil
+	p, borrowed := borrowBreakdown(q, p, c, now, err == nil)
+	return p, append(notes, borrowed...), nil
+}
+
+// borrowBreakdown добирает в панельный снимок бакеты, которых панель не дала, а
+// протухший кеш держит. Общие цифры берутся у панели, они свежие, а разбивку по
+// моделям панель отдаёт не всегда: свои цифры по моделям клиент просит тем же
+// запросом, что и общие, и при отказе по частоте обращений рисует их из этого
+// самого кеша. То есть заимствование не выдумывает числа, а повторяет то, что в
+// этот момент стоит у человека на экране, и возраст занятой цифры едет рядом
+// пометкой: без неё «week_max: 17%» под свежим taken читалось бы свежим.
+func borrowBreakdown(q *quotaSpec, p, c snapshot, now time.Time, haveCache bool) (snapshot, []string) {
+	if !haveCache || c.Taken.IsZero() || c.Taken.After(now) {
+		return p, nil
+	}
+	var notes []string
+	age := cacheAge(c, now)
+	for _, name := range q.Buckets {
+		if !q.spentByTier(name) {
+			continue
+		}
+		if _, ok := p.bucket(name); ok {
+			continue
+		}
+		b, ok := c.bucket(name)
+		if !ok {
+			continue
+		}
+		p.Buckets = append(p.Buckets, b)
+		// Панель, отказавшая в разбивке, помечает недостающий бакет своим
+		// «его тут не было». Цифру мы нашли, и пометка эта устарела: оставить её
+		// значит напечатать под цифрой строку, что цифры нет.
+		delete(p.Partial, name)
+		if p.Borrowed == nil {
+			p.Borrowed = map[string]string{}
+		}
+		p.Borrowed[name] = fmt.Sprintf("панель разбивку не дала, цифра из кеша клиента возрастом %s", age)
+		notes = append(notes, fmt.Sprintf("бакет %s панель не показала, взят из кеша клиента возрастом %s", name, age))
+	}
+	sort.SliceStable(p.Buckets, func(i, j int) bool {
+		return slices.Index(q.Buckets, p.Buckets[i].Name) < slices.Index(q.Buckets, p.Buckets[j].Name)
+	})
+	return p, notes
+}
+
+// cacheAge это возраст кеша словами. Часы машины и метка клиента расходятся
+// штатно, и «-3м назад» в такой строке читалось бы поломкой, поэтому будущее
+// называется отдельно.
+func cacheAge(c snapshot, now time.Time) string {
+	if c.Taken.IsZero() {
+		return "неизвестного возраста"
+	}
+	if c.Taken.After(now) {
+		return "временем позже текущего, часы разошлись"
+	}
+	return humanAge(now.Sub(c.Taken)) + " назад"
 }

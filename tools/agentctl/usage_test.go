@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -800,6 +802,57 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		}
 		sameFile(t, q.Path, before)
 	})
+
+	// Нетронутому окну z.ai времени сброса не присылает вовсе: часы окна пускает
+	// первая трата. Прежде этот штатный ответ уносил снимок целиком, и остаток
+	// второй подписки застывал на сутки, а человек шёл смотреть его во второй
+	// кабинет руками (живой случай пользователя).
+	untouched := func(t *testing.T) func() {
+		t.Helper()
+		kept := body
+		body = strings.Replace(kept, `"currentValue":198,"remaining":11801,"percentage":1,"nextResetTime":1787537529792`,
+			`"currentValue":0,"remaining":12000,"percentage":0`, 1)
+		if body == kept {
+			t.Fatal("образец сменился, нетронутое окно из него не собирается")
+		}
+		return func() { body = kept }
+	}
+
+	t.Run("нетронутое окно снимок не уносит", func(t *testing.T) {
+		defer untouched(t)()
+		snap, err := snapByScript(quotaHome(t, token), testNow)
+		if err != nil {
+			t.Fatalf("окно без трат уронило снимок целиком: %v", err)
+		}
+		five, ok := snap.bucket("window5h_all")
+		if !ok || five.Used != 0 {
+			t.Fatalf("нетронутого окна в снимке нет: %+v", snap.Buckets)
+		}
+		if week, ok := snap.bucket("week_all"); !ok || week.Used != 0.09 {
+			t.Fatalf("недельное окно уехало вместе с пятичасовым: %+v", snap.Buckets)
+		}
+		// Сброс считается от длины окна и от часов съёмщика: своих часов у
+		// стенда тут нет, поэтому проверяется коридор, а не минута.
+		now := time.Now()
+		if !five.Reset.After(now) || five.Reset.After(now.Add(6*time.Hour)) {
+			t.Fatalf("сброс нетронутого окна %v, жду примерно пять часов вперёд от %v", five.Reset, now)
+		}
+	})
+
+	t.Run("потраченное окно без сброса это отказ", func(t *testing.T) {
+		// Тратили, а сброса нет: подписка заговорила незнакомо, и считать дату
+		// от длины окна больше не из чего.
+		kept := body
+		body = strings.Replace(kept, `,"nextResetTime":1787537529792`, "", 1)
+		defer func() { body = kept }()
+		q := quotaHome(t, token)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "window5h_all") {
+			t.Fatalf("окно с тратами и без сброса разобралось молча: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
 }
 
 // seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика
@@ -941,5 +994,150 @@ func TestUsagePaneRows(t *testing.T) {
 	panel := strings.Count(readFixture(t, "usage-panel-v2251.txt"), "\n")
 	if usagePaneRows < panel*2 {
 		t.Fatalf("окно съёмщика %d строк при панели в %d, запаса на рост нет", usagePaneRows, panel)
+	}
+}
+
+// TestQuotaRefreshKeepsNewer: источник расхода бывает откатным, и снятое иногда
+// старше того, что уже лежит на диске. Записать такое значит откатить экран
+// человека назад по времени и по процентам, а поводом объявить дашборд.
+func TestQuotaRefreshKeepsNewer(t *testing.T) {
+	older := testNow.Add(-2 * time.Hour)
+	snapText := func(taken time.Time, pct int) string {
+		return "#!/bin/sh\nprintf 'taken = %s\\nweek_all = " + strconv.Itoa(pct) + "%% сброс %s\\n' \"" +
+			at(taken) + "\" \"" + at(testNow.Add(halfWindow)) + "\"\n"
+	}
+
+	t.Run("снятое старше лежащего в файл не идёт", func(t *testing.T) {
+		q := scriptSpec(t, snapText(older, 79))
+		if err := q.write(snapOf(0, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		out, err := cmdQuotaRefresh(q, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if !strings.Contains(out, "откатился назад") {
+			t.Fatalf("пропуск записи прошёл молча: %q", out)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.82 {
+			t.Fatalf("свежие цифры затёрты старыми: %+v", s.Buckets)
+		}
+		if !s.Taken.Equal(testNow) {
+			t.Fatalf("момент снятия %v, жду прежний %v", s.Taken, testNow)
+		}
+	})
+
+	t.Run("снятое свежее лежащего файл переписывает", func(t *testing.T) {
+		q := scriptSpec(t, snapText(testNow, 79))
+		if err := q.write(snapOf(2*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		out, err := cmdQuotaRefresh(q, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if strings.Contains(out, "откатился назад") {
+			t.Fatalf("свежее снятое приняли за откат: %q", out)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.79 {
+			t.Fatalf("свежее снятое в файл не легло: %+v", s.Buckets)
+		}
+	})
+
+	t.Run("снимок из будущего обновление не запирает", func(t *testing.T) {
+		// Часы машины и метка источника расходятся штатно, и файл с датой
+		// вперёд иначе держал бы оборону до самого сброса.
+		q := scriptSpec(t, snapText(testNow, 79))
+		if err := q.write(snapOf(-3*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.79 {
+			t.Fatalf("снимок из будущего запер обновление: %+v", s.Buckets)
+		}
+	})
+}
+
+// TestSnapUsagePanelRetriesRateLimit: эндпоинт расхода общий на все живые
+// сессии машины, и отказ по частоте обращений ловится легко. Панель предлагает
+// пережать его на месте («r to retry»), а съёмщик уходил с первого раза, и
+// человек оставался с застывшим экраном (живой случай пользователя). Стенд
+// поднимает настоящую сессию tmux с подложным клиентом: разговор идёт клавишами
+// через терминал, и проверять его иначе как терминалом нечем.
+func TestSnapUsagePanelRetriesRateLimit(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux в PATH нет, панель снимать нечем")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 в PATH нет, подложного клиента поднять нечем")
+	}
+	bin := t.TempDir()
+	screens := map[string]string{
+		"ready": readFixture(t, "pane-ready.txt"),
+		"rate":  readFixture(t, "usage-panel-ratelimit.txt"),
+		"panel": readFixture(t, "usage-panel-v2251.txt"),
+	}
+	for name, text := range screens {
+		if err := os.WriteFile(filepath.Join(bin, name+".screen"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := "#!/usr/bin/env python3\n" + `
+import sys, termios, tty, pathlib
+
+here = pathlib.Path(__file__).parent
+
+
+def draw(name):
+    sys.stdout.write("\x1b[2J\x1b[H" + (here / (name + ".screen")).read_text())
+    sys.stdout.flush()
+
+
+tty.setcbreak(sys.stdin.fileno())
+draw("ready")
+state, typed = "ready", ""
+while True:
+    c = sys.stdin.read(1)
+    if not c:
+        break
+    if state == "ready":
+        # Эхо набранного рисует сам клиент: cbreak его отключает, а съёмщик ждёт
+        # набранное на экране, прежде чем отправить Enter.
+        sys.stdout.write(c)
+        sys.stdout.flush()
+        typed += c
+        if c in "\r\n" and "/usage" in typed:
+            draw("rate")
+            state = "blocked"
+    elif state == "blocked" and c == "r":
+        draw("panel")
+        state = "panel"
+`
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(client), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	q := specAt(t, filepath.Join(t.TempDir(), "quota.local"))
+	s, err := snapUsagePanel(q, testNow)
+	if err != nil {
+		t.Fatalf("съёмщик ушёл с отказа по частоте обращений, не пережав его: %v", err)
+	}
+	if _, ok := s.bucket("week_all"); !ok {
+		t.Fatalf("после повтора панель разобралась не до бакетов: %+v", s.Buckets)
 	}
 }

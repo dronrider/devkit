@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,4 +231,135 @@ func TestSnapClaudeUsageFallsBack(t *testing.T) {
 // только ими, и полный файл в каждом был бы шумом.
 func cacheWith(limits string) string {
 	return `{"cachedUsageUtilization": {"fetchedAtMs": 1785401400000, "utilization": {"limits": [` + limits + `]}}}`
+}
+
+// cacheAt собирает кеш клиента с заданным моментом удачного запроса: возраст
+// кеша тут предмет проверки, и держать его прибитым к одной дате нельзя.
+func cacheAt(fetched time.Time, limits string) string {
+	return fmt.Sprintf(`{"cachedUsageUtilization": {"fetchedAtMs": %d, "utilization": {"limits": [%s]}}}`,
+		fetched.UnixMilli(), limits)
+}
+
+// weekAllLimit и weekMaxLimit это строки лимитов кеша: общий недельный и
+// добавочный по дорогой модели.
+func weekAllLimit(pct int) string {
+	return fmt.Sprintf(`{"kind": "weekly_all", "percent": %d, "resets_at": "2026-07-31T12:00:00+00:00"}`, pct)
+}
+
+func weekMaxLimit(pct int) string {
+	return fmt.Sprintf(`{"kind": "weekly_scoped", "percent": %d, "resets_at": "2026-07-31T12:00:00+00:00", `+
+		`"scope": {"model": {"display_name": "Fable"}}}`, pct)
+}
+
+// TestSnapClaudeUsageStaleCache: кеш клиента обновляется только тогда, когда
+// клиент сам ходит за расходом, и в тихий час застывает на часы. Съёмщик обязан
+// смотреть на его возраст, а не на одно только наличие: снимок с меткой
+// четырёхчасовой давности это тот самый застывший экран, ради которого задача и
+// заводилась.
+func TestSnapClaudeUsageStaleCache(t *testing.T) {
+	stale := testNow.Add(-4 * time.Hour).Truncate(time.Minute)
+
+	t.Run("протухший кеш уводит на панель", func(t *testing.T) {
+		q := cacheSpec(t, cacheAt(stale, weekAllLimit(79)))
+		// Ни tmux, ни клиента в стенде нет: панель отказывает, и видно, что
+		// съёмщик до неё дошёл.
+		t.Setenv("PATH", t.TempDir())
+		s, notes, err := snapClaudeUsage(q, testNow)
+		if err != nil {
+			t.Fatalf("протухший кеш есть, отказывать нечему: %v", err)
+		}
+		said := strings.Join(notes, "\n")
+		if !strings.Contains(said, usageCommand) {
+			t.Fatalf("съёмщик остался на протухшем кеше и на панель не пошёл: %v", notes)
+		}
+		if !strings.Contains(said, "4ч 0м назад") {
+			t.Fatalf("возраст кеша не назван: %v", notes)
+		}
+		// Панель не далась, и в файл едет кеш со своим моментом снятия: он
+		// честно скажет и корректору, и человеку, что цифрам четыре часа.
+		if !s.Taken.Equal(stale) {
+			t.Fatalf("момент снятия %v, жду момент запроса кеша %v", s.Taken, stale)
+		}
+	})
+
+	t.Run("свежий кеш панель не поднимает", func(t *testing.T) {
+		fresh := testNow.Add(-10 * time.Minute).Truncate(time.Minute)
+		q := cacheSpec(t, cacheAt(fresh, weekAllLimit(79)))
+		t.Setenv("PATH", t.TempDir())
+		s, notes, err := snapClaudeUsage(q, testNow)
+		if err != nil {
+			t.Fatalf("свежий кеш разобран не был: %v", err)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("свежему кешу говорить не о чем: %v", notes)
+		}
+		if !s.Taken.Equal(fresh) {
+			t.Fatalf("момент снятия %v, жду %v", s.Taken, fresh)
+		}
+	})
+}
+
+// TestBorrowBreakdown: общие цифры едут с панели, а разбивку по моделям панель
+// отдаёт не всегда. Занятая у кеша цифра это ровно то, что в этот момент стоит
+// у человека на экране клиента, и возраст её обязан ехать пометкой рядом.
+func TestBorrowBreakdown(t *testing.T) {
+	q := specAt(t, filepath.Join(t.TempDir(), "quota.local"))
+	stale := testNow.Add(-3 * time.Hour)
+	cache := snapshot{Taken: stale, Buckets: []bucket{
+		{Name: "week_all", Used: 0.70, Reset: testNow.Add(halfWindow)},
+		{Name: "week_max", Used: 0.17, Reset: testNow.Add(halfWindow)},
+	}}
+	panel := snapshot{Taken: testNow, Buckets: []bucket{
+		{Name: "week_all", Used: 0.82, Reset: testNow.Add(halfWindow)},
+	}}
+
+	t.Run("недостающий бакет занимается у кеша с пометкой возраста", func(t *testing.T) {
+		s, notes := borrowBreakdown(q, panel, cache, testNow, true)
+		all, ok := s.bucket("week_all")
+		if !ok || all.Used != 0.82 {
+			t.Fatalf("общий бакет обязан остаться панельным: %+v", s.Buckets)
+		}
+		max, ok := s.bucket("week_max")
+		if !ok || max.Used != 0.17 {
+			t.Fatalf("бакет модели у кеша не занят: %+v", s.Buckets)
+		}
+		if why := s.borrowed("week_max"); !strings.Contains(why, "3ч 0м") {
+			t.Fatalf("возраст занятой цифры не помечен: %q", why)
+		}
+		// Пометка «бакета нет» на найденный бакет не годится: обе строки
+		// печатаются человеку, и он читал бы под цифрой, что цифры нет.
+		if why := s.partial("week_max"); why != "" {
+			t.Fatalf("занятый бакет помечен как недостающий: %q", why)
+		}
+		if len(notes) != 1 {
+			t.Fatalf("заимствование прошло молча: %v", notes)
+		}
+		// Порядок бакетов держит профиль, а не порядок дозаписи.
+		if s.Buckets[0].Name != "week_all" {
+			t.Fatalf("порядок бакетов сбился: %+v", s.Buckets)
+		}
+	})
+
+	t.Run("панельный бакет кешем не подменяется", func(t *testing.T) {
+		full := panel
+		full.Buckets = append(append([]bucket{}, panel.Buckets...),
+			bucket{Name: "week_max", Used: 0.20, Reset: testNow.Add(halfWindow)})
+		s, notes := borrowBreakdown(q, full, cache, testNow, true)
+		if max, _ := s.bucket("week_max"); max.Used != 0.20 {
+			t.Fatalf("свежая цифра панели затёрта кешевой: %+v", s.Buckets)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("занимать было нечего, а слова есть: %v", notes)
+		}
+	})
+
+	t.Run("кеша нет, занимать нечего", func(t *testing.T) {
+		s, notes := borrowBreakdown(q, panel, snapshot{}, testNow, false)
+		if _, ok := s.bucket("week_max"); ok {
+			t.Fatalf("бакет взялся из пустого кеша: %+v", s.Buckets)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("занимать было нечего, а слова есть: %v", notes)
+		}
+	})
 }

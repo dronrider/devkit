@@ -187,6 +187,11 @@ type Pulse struct {
 	// OwnWait это ожидание самого открытого разговора: вопрос, адресованный
 	// его сессии, либо парковка задачи, за которую он отвечает.
 	OwnWait *Waiting `json:"own_wait,omitempty"`
+	// Asks это вопросы, адресованные открытому разговору работой, которую он
+	// раздал: субагент ходит с ID внешней сессии, делегата приводит к родителю
+	// реестр, а признак ожидания лежит под именем чужой задачи. Ближний срок
+	// первым, отвечают им по одному.
+	Asks []Waiting `json:"own_asks,omitempty"`
 	// Quiet это порог молчания в секундах: клиент подписывает им тишину, а
 	// своей границы не заводит.
 	Quiet  int          `json:"quiet"`
@@ -648,6 +653,27 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		out.OwnWait = &ask
 		out.Own.State, out.Own.WaitSince = pulseWait, ask.Since
 	}
+	// Вопросы от розданной работы: признак ожидания лежит под именем чужой
+	// задачи, и по строке панели его не найти, а ждёт ответа ровно этот
+	// разговор. До скана вопрос ложился туда, где его никто не смотрел, срок
+	// выходил, и работа вставала парковкой (живой случай: слияние цели
+	// DK-397).
+	if sid != "" && out.OwnWait == nil {
+		for _, h := range handedAsks(found.Path, sid, s.binds(), now) {
+			out.Asks = append(out.Asks, handedWaiting(h))
+		}
+	}
+	if len(out.Asks) > 0 {
+		out.OwnWait = &out.Asks[0]
+		for i := range out.Agents {
+			if out.Agents[i].Session == sid {
+				out.Agents[i].State, out.Agents[i].WaitSince = pulseWait, out.Asks[0].Since
+			}
+		}
+		if out.Own != nil {
+			out.Own.State, out.Own.WaitSince = pulseWait, out.Asks[0].Since
+		}
+	}
 
 	// Разбивка считается после того, как открытый разговор разобрался со своим
 	// ожиданием: безадресный вопрос переводит его в ждущие уже здесь.
@@ -664,7 +690,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	// Ждущей сессии в списке может не быть вовсе: вопрос задал закрывшийся
 	// заход, а у парковки сессии нет по смыслу. Ждёт тогда сама строка, и это
 	// один ждущий, а не ноль.
-	if asking && out.Waiting == 0 {
+	if (asking || len(out.Asks) > 0) && out.Waiting == 0 {
 		out.Waiting = 1
 	}
 	// Ожидание без единой живой сессии идёт от самой строки. Экран говорит о
@@ -675,7 +701,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	out.Flow = out.Working > 0
 
 	switch {
-	case asking:
+	case asking, len(out.Asks) > 0:
 		out.State = pulseWait
 	case out.Count == 0:
 		out.State = pulseEmpty

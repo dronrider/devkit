@@ -2182,3 +2182,7 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .arow .aacts{grid-column:3;grid-row:1}
   .arow .ab{grid-column:1 / -1;grid-row:2}
 }
+.caskq{margin-bottom:10px}
+.caskq:last-child{margin-bottom:0}
+.caskt{font:400 12.5px/1.5 var(--sans);color:var(--tx);margin-bottom:4px}
+.caskopt{font:400 12px/1.5 var(--sans);color:var(--tx2);margin-left:10px}

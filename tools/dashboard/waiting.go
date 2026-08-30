@@ -57,6 +57,10 @@ type Waiting struct {
 	Since     int64    `json:"since,omitempty"`
 	Until     int64    `json:"until,omitempty"`
 	Session   string   `json:"session,omitempty"`
+	// Task называет задачу, по которой задан вопрос. Строке доски это поле не
+	// нужно, у неё задача и есть сама строка, а в разговоре, раздавшем работу,
+	// вопрос приходит без строки, и относить его без имени задачи не к чему.
+	Task string `json:"task,omitempty"`
 }
 
 // askWaiting читает первый источник: признак ожидания во входе задачи
@@ -77,7 +81,7 @@ func askWaiting(tree, id string, now time.Time) (Waiting, bool) {
 		return Waiting{}, false
 	}
 	w := Waiting{State: waitAskState, Source: waitAsk, Note: waitAskNote,
-		Until: a.Until.Unix(), Session: a.Session}
+		Until: a.Until.Unix(), Session: a.Session, Task: id}
 	for _, q := range a.Questions {
 		if text := strings.TrimSpace(q.Text); text != "" {
 			w.Questions = append(w.Questions, text)
@@ -89,6 +93,86 @@ func askWaiting(tree, id string, now time.Time) (Waiting, bool) {
 		w.Since = fi.ModTime().Unix()
 	}
 	return w, true
+}
+
+// handedAsk это живой признак ожидания, найденный по сессии, а не по строке
+// доски: имя разговора нужно ответу, разобранный признак экрану.
+type handedAsk struct {
+	Name  string
+	Ask   chat.Ask
+	Since int64
+}
+
+// handedAsks находит вопросы, адресованные разговору sid, под какой бы задачей
+// они ни лежали. Субагент ходит с ID внешней сессии, и признак, положенный им
+// из чужого дерева, несёт сессию раздавшего разговора; у делегата второй
+// подписки сессия своя, и его вопрос приводит к родителю реестр. До этого
+// скана вопрос был виден только в разговоре задачи, а человек сидел в том
+// разговоре, откуда работу раздал, и молчал до самой парковки (живые случаи
+// DK-517, DK-543 и слияние цели DK-397). Вопросов бывает несколько, пачка
+// исполнителей спрашивает вразнобой: отвечают им по одному, ближний срок
+// первым.
+func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk {
+	if sid == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(chat.Root(projPath))
+	if err != nil {
+		return nil
+	}
+	var out []handedAsk
+	for _, e := range entries {
+		name, found := strings.CutSuffix(e.Name(), chat.AskSuffix)
+		if !found || e.IsDir() {
+			continue
+		}
+		path := chat.AskPath(projPath, name)
+		a, ok := chat.ReadAsk(path)
+		if !ok || a.Session == "" || !now.Before(a.Until) {
+			continue
+		}
+		if a.Session != sid && b[a.Session].Parent != sid {
+			continue
+		}
+		h := handedAsk{Name: name, Ask: a}
+		if fi, err := os.Stat(path); err == nil {
+			h.Since = fi.ModTime().Unix()
+		}
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ask.Until.Before(out[j].Ask.Until) })
+	return out
+}
+
+// askLines разворачивает вопросы признака в строки экрана: текст вопроса, под
+// ним варианты, рекомендованный со звёздочкой. Плоские строки тут не
+// огрубление: человек отвечает словами в поле ввода, и варианты ему подсказка,
+// а не кнопки.
+func askLines(qs []chat.Question) []string {
+	var out []string
+	for _, q := range qs {
+		if text := strings.TrimSpace(q.Text); text != "" {
+			out = append(out, text)
+		}
+		for _, o := range q.Options {
+			mark := "- "
+			if o.Recommended {
+				mark = "* "
+			}
+			if lab := strings.TrimSpace(o.Label + " " + o.Note); lab != "" {
+				out = append(out, mark+lab)
+			}
+		}
+	}
+	return out
+}
+
+// handedWaiting переводит найденный признак в состояние ожидания для экрана:
+// та же точность, что у первого источника, спросил агент.
+func handedWaiting(h handedAsk) Waiting {
+	return Waiting{State: waitAskState, Source: waitAsk, Note: waitAskNote,
+		Task: h.Ask.Task, Questions: askLines(h.Ask.Questions),
+		Since: h.Since, Until: h.Ask.Until.Unix(), Session: h.Ask.Session}
 }
 
 // parkedWaiting читает второй источник: строку в Blocked с машинным разрядом

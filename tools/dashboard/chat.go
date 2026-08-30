@@ -95,12 +95,22 @@ func putChat(tree, name, text, line string) (lying string, code int, err error) 
 func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string) (map[string]any, bool) {
 	head := s.sessionHeadCached(info.path, info.stamp)
 	name, _ := s.sessionChatName(p.Path, info, head)
-	if name == "" {
-		// Сессия ведёт цель: у неё свой носитель, «Входящие» файла цели.
-		return nil, false
+	// У сессии цели имени разговора нет, её реплики живут «Входящими» файла
+	// цели, но вопрос розданной работы задаётся и ей: скан ниже общий для
+	// всех разговоров.
+	if name != "" {
+		if done, ok := s.ownAskReply(p, info, sid, name, text); ok {
+			return done, true
+		}
 	}
-	// Признак лежит во входе основного чекаута: туда его кладёт taskctl ask,
-	// какое бы дерево ни было у самого хода.
+	return s.handedAskReply(p, sid, text)
+}
+
+// ownAskReply отвечает на вопрос, который задан в разговоре этой же задачи:
+// признак лежит под именем разговора сессии, и ждёт ровно она.
+// Признак лежит во входе основного чекаута: туда его кладёт taskctl ask,
+// какое бы дерево ни было у самого хода.
+func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text string) (map[string]any, bool) {
 	ask, has := chat.ReadAsk(chat.AskPath(p.Path, name))
 	if !has || !s.now().Before(ask.Until) || ask.Session != sid {
 		return nil, false
@@ -128,6 +138,46 @@ func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string) (map[s
 	}
 	s.logf("ответ человека сессии %s ушёл во вход разговора %s: сессия стоит на вопросе до %s",
 		sid, name, ask.Until.Format("15:04:05"))
+	return out, true
+}
+
+// handedAskReply отвечает на вопрос розданной работы: признак лежит под именем
+// чужой задачи, а сессией в нём назван этот разговор (субагент ходит с ID
+// внешней сессии) либо его делегат по реестру. Строка идёт безадресной во вход
+// основного чекаута: его опрашивает само ожидание, а не дождавшийся срока
+// заход оставляет её сторожку, и та же строка будит припаркованную вопросом
+// задачу. Вопросов бывает несколько, пачка исполнителей спрашивает вразнобой:
+// ответ уезжает ближнему по сроку, остальные названы в ответе ручки.
+func (s *server) handedAskReply(p *Project, sid, text string) (map[string]any, bool) {
+	asks := handedAsks(p.Path, sid, s.binds(), s.now())
+	if len(asks) == 0 {
+		return nil, false
+	}
+	h := asks[0]
+	lying, _, err := putChat(p.Path, h.Name, text, chat.TaskLine(s.now(), text))
+	if err != nil {
+		// Вход не взял строку: обычная дорога тут лучше отказа, реплика уедет
+		// сокетом и человек её не потеряет.
+		s.logf("ответ раздавшего разговора %s во вход %s не лёг, иду обычной дорогой: %v", sid, h.Name, err)
+		return nil, false
+	}
+	out := map[string]any{"way": "ask", "chat": h.Name, "task": h.Ask.Task,
+		"until": h.Ask.Until.Unix(),
+		"message": fmt.Sprintf(
+			"ответ лёг во вход разговора %s: его ждёт инструмент ожидания и заберёт в тот же ход", h.Name)}
+	if lying != "" {
+		out["message"] = "эта реплика уже лежит во входе разговора " + h.Name + ", второй раз она не поедет"
+	}
+	if len(asks) > 1 {
+		var rest []string
+		for _, a := range asks[1:] {
+			rest = append(rest, a.Ask.Task)
+		}
+		out["message"] = fmt.Sprintf("%s; следом ждут ответа %s",
+			out["message"], strings.Join(rest, ", "))
+	}
+	s.logf("ответ раздавшего разговора %s ушёл во вход %s: вопрос задачи %s ждёт до %s",
+		sid, h.Name, h.Ask.Task, h.Ask.Until.Format("15:04:05"))
 	return out, true
 }
 

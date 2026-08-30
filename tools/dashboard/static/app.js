@@ -8672,6 +8672,44 @@ function ringBlockSay(slot, p) {
   slot.blockChip = chip;
 }
 
+// Плашка вопроса от розданной работы. Субагент или делегат этого разговора
+// спросил человека инструментом ожидания, и его заход стоит, пока ответа нет:
+// вопрос обязан быть виден там, где человек сидит, а не только в разговоре
+// задачи (живые случаи DK-517, DK-543 и слияние цели DK-397, где срок выходил
+// молча). Вопросы приносит пульс полем own_asks, ближний срок первым; ответ
+// пишется в обычное поле ввода, второго поля тут нет нарочно (см. chatWay),
+// а ручка реплики сама кладёт его во вход, который слушает инструмент
+// ожидания. Пересборка на каждом тике безопасна: своего ввода у плашки нет,
+// а отсчёт срока как раз обязан тикать.
+function paintHandedAsks(st, p) {
+  const box = st.handAskBox;
+  if (!box) return;
+  const asks = (p && p.own_asks) || [];
+  if (!asks.length) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  const now = Date.now();
+  box.replaceChildren();
+  asks.forEach((w, i) => {
+    const q = el("div", "caskq");
+    const left = waitLeft(w.until, now);
+    q.append(el("div", "caskh", "Вопрос от " + (w.task || "работы") +
+      (left === "срок вышел" ? ", срок вышел" : left ? ", осталось " + left : "")));
+    for (const line of w.questions || []) {
+      q.append(el("div", /^[-*] /.test(line) ? "caskopt" : "caskt", line));
+    }
+    if (i === 0) {
+      q.append(el("div", "caskhint", asks.length > 1
+        ? "Вопросов несколько: ответ из поля ниже уедет этому, остальные ждут своей очереди"
+        : "Работа стоит до ответа: напишите его в поле ниже, он уедет ждущему заходу"));
+    }
+    box.append(q);
+  });
+  box.hidden = false;
+}
+
 function wireRing(project, st, slot) {
   const put = (p) => {
     // Узел кольца переживает тик: пересборка снимала бы открытый список.
@@ -8679,6 +8717,7 @@ function wireRing(project, st, slot) {
     if (has && has.ringFill) has.ringFill(p);
     else slot.replaceChildren(pulseRing(project, p));
     ringBlockSay(slot, p);
+    paintHandedAsks(st, p);
   };
   const load = async () => {
     const r = await api(pulseURL(project, st));
@@ -10406,6 +10445,13 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
+  // Вопрос от розданной работы стоит тем же местом, что вопрос клиента: под
+  // лентой, над полем ввода. Кормит его пульс (paintHandedAsks), а отвечают
+  // ему обычным полем ввода.
+  const handBox = el("div", "cask");
+  handBox.hidden = true;
+  wrap.append(handBox);
+  st.handAskBox = handBox;
   // Разговор без процесса называет это словами и даёт себя поднять. Стоит
   // строка там же, где стоят остальные слова о состоянии: над полем ввода.
   if (way.kind === "resume") wrap.append(chatNoSessRow(project, st));

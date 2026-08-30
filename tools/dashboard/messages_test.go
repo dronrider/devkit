@@ -832,7 +832,9 @@ func TestStaticChatKeepsPlace(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, text, "async function wireFeed(")
 	measure := strings.Index(body, "const bottom = atBottom(scroll);")
-	rebuild := strings.Index(body, "sync(box, items);")
+	// Сборка ленты зовётся не голым sync: поверх неё красится нить, и точка
+	// пересборки ищется по самому вызову, без хвоста строки.
+	rebuild := strings.Index(body, "sync(box, items)")
 	if measure < 0 || rebuild < 0 || measure > rebuild {
 		t.Error("положение ленты мерится после перерисовки: якорь взят с уже сброшенной прокрутки")
 	}

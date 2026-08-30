@@ -5052,7 +5052,19 @@ async function wireFeed(project, sid, opts) {
     const rest = scroll.scrollHeight - scroll.scrollTop;
     const top = scroll.scrollTop;
     const subs = feedSubs(talk);
+    const thread = feedThread(subs);
     const marks = feedMarks(talk).map((m, i) => (m + " " + subs[i]).trim());
+    // Склеенная пара это одна запись с одним кружком: верхний кусок нити ей
+    // достаётся от первой записи пары, нижний от второй. Метки нити едут
+    // отдельным полем, а не частью подписи записи: подпись сравнивают при
+    // сборке, а цвет соседа меняется и там, где сама запись не тронута, и
+    // запись от этого пересобиралась бы вхолостую (сторож feed_shared).
+    const threadOf = (a, b) => {
+      const out = [];
+      if (thread[b].includes("to-deleg")) out.push("to-deleg");
+      if (thread[a].includes("ti-deleg")) out.push("ti-deleg");
+      return out.join(" ");
+    };
     if (!talk.length) {
       sync(box, empty ? [{ key: "empty", sign: empty, make: () => el("div", "empty", empty) }] : []);
       if (opts.onFeed) opts.onFeed(talk);
@@ -5096,6 +5108,7 @@ async function wireFeed(project, sid, opts) {
         const mark = (marks[i] + " " + marks[i + 1]).trim();
         items.push({
           key: itemKey(item),
+          thread: threadOf(i, i + 1),
           sign: [item.role, item.time, item.text, next.text, item.sub || "", next.fail,
             mark].join("|"),
           make: () => feedRow(safePair(opts.pair, item, next), item, next, mark),
@@ -5105,11 +5118,12 @@ async function wireFeed(project, sid, opts) {
       }
       items.push({
         key: itemKey(item),
+        thread: threadOf(i, i),
         sign: [item.role, item.time, item.text, item.sub || "", item.fail, marks[i]].join("|"),
         make: () => feedRow(safeItem(opts.item, item), item, null, marks[i]),
       });
     }
-    sync(box, items);
+    feedThreadPaint(sync(box, items), items);
     if (bottom) keepBottom(scroll, true);
     else if (prepending) keepPlace(scroll, rest);
     else scroll.scrollTop = top;
@@ -5955,6 +5969,45 @@ function feedSubs(list) {
   }
   close(last);
   return out;
+}
+
+// feedThread красит нить между кружками. Отрезок это промежуток от кружка
+// записи до кружка следующей, и цвет у него один: синий, пока идёт работа
+// субагента, общий во всё остальное время. У записи от этого два куска нити,
+// верхний от прошлого отрезка и нижний от своего, и меняются они ровно на
+// кружке. Считать это в стилях нечем: соседей знает только лента, а класса
+// «предыдущая была такой-то» в CSS нет.
+function feedThread(subs) {
+  // Отрезок subend это последний кружок работы: ниже него нить уже общая.
+  const deleg = subs.map((m) => m.includes("sub") && !m.includes("subend"));
+  return subs.map((_, i) => {
+    const marks = [];
+    if (deleg[i]) marks.push("to-deleg");
+    if (i > 0 && deleg[i - 1]) marks.push("ti-deleg");
+    if (i === 0) marks.push("thead");
+    if (i === subs.length - 1) marks.push("ttail");
+    return marks.join(" ");
+  });
+}
+
+// feedThreadPaint красит нить по собранной ленте. Классы ставятся после сборки,
+// а не при рождении записи: цвет зависит от соседей, а соседи меняются и от
+// подгруженной страницы истории, и от новой записи в конце. Края ленты
+// считаются тут же: выше первого кружка и ниже последнего нити нет.
+function feedThreadPaint(shown, items) {
+  const rows = [];
+  for (let i = 0; i < shown.length; i++) {
+    const node = shown[i];
+    const marks = " " + ((items[i] && items[i].thread) || "") + " ";
+    for (const cls of ["to-deleg", "ti-deleg"]) {
+      node.classList.toggle(cls, marks.includes(" " + cls + " "));
+    }
+    if (String(node.className || "").split(" ").includes("frow")) rows.push(node);
+  }
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle("thead", i === 0);
+    rows[i].classList.toggle("ttail", i === rows.length - 1);
+  }
 }
 
 function feedRow(node, item, out, mark) {

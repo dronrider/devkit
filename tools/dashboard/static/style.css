@@ -1742,14 +1742,37 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    исход: серый у нейтральных, зелёный у сделанного инструментом, красный у
    упавшего. Запись субагента отодвинута глубже, своей линии у неё нет */
 .frow{position:relative;display:flex;padding-left:17px}
-.frow::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--line2)}
+/* Нить одна на всю ленту и вдоль неё не рвётся. Рисуется она у каждой записи
+   двумя кусками, до кружка и после него, и оба выходят на поля группы: линия
+   шла по коробке строки, а поле в восемнадцать точек ничьё, и на стыке работ
+   получался провал («она начинается не от прошлой точки, а с разрывом, и также
+   заканчивается», замечание пользователя). Цвет меняется ровно на кружке:
+   верхний кусок красится концом предыдущего отрезка, нижний своим. Середина
+   кружка по видам записи это --dotc, поля группы --mt и --mb. */
+.frow{--dotc:9.5px;--mt:0px;--mb:0px;--thin:var(--line2);--thout:var(--line2)}
+.frow.f-bub{--dotc:29px}
+.frow.f-fold{--dotc:17px}
+.frow.f-tline{--dotc:14.3px}
+.frow.gtop{--mt:18px}
+.frow.gend{--mb:18px}
+.frow::before{content:"";position:absolute;left:6px;width:1px;
+  top:calc(0px - var(--mt));height:calc(var(--dotc) + var(--mt));background:var(--thin)}
+.frow::after{content:"";position:absolute;left:6px;width:1px;
+  top:var(--dotc);bottom:calc(0px - var(--mb));background:var(--thout)}
+/* Цвет отрезка это цвет работы между двумя кружками: синий у работы субагента,
+   общий у всего остального. Метки ставит лента, потому что знает соседей. */
+.frow.to-deleg{--thout:var(--deleg)}
+.frow.ti-deleg{--thin:var(--deleg)}
+/* Края ленты: выше первого кружка и ниже последнего нити нет, иначе она висит
+   обрубком. */
+.frow.thead{--thin:transparent}
+.frow.ttail{--thout:transparent}
 /* Боковой журнал субагента отбит нитью, а не ступенькой. Ступенька в
    четырнадцать точек сдвигала контур записи, и человек видел то, на что жаловался
    пять заходов подряд: «блоки в чате разной позиции и ширины». Кружок и нить у
    такой строки и без ступеньки стоят на своём месте (fdot и ::before заданы
    от края строки), так что вложенность показывает цвет нити, а контуры записей
    встают на один край. */
-.frow.sub::before{background:var(--deleg)}
 .frowb{flex:1;min-width:0;padding:0}
 .fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}
@@ -1773,8 +1796,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    предыдущей работы. */
 .frow.gtop{margin-top:18px}
 .frow.gend{margin-bottom:18px}
-.frow.gtop.f-bub::before{top:29px}
-.frow.gend.f-bub::before{bottom:auto;height:29px}
 
 /* Отрезок работы субагента: нить идёт от кружка вызова Agent до кружка вести о
    том, что фоновый агент закончил, и по дороге не рвётся. Рвалась она о щели
@@ -1783,22 +1804,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    отрезка выходит за коробку на то же поле с обеих сторон, а поднятая к кружку
    нить первой записи группы внутри работы отменяется: там середина отрезка, а
    не его край. */
-.frow.sub::before{top:-18px;bottom:-18px;height:auto}
-.frow.sub.gtop.f-bub::before{top:-18px}
-.frow.sub.gend.f-bub::before{bottom:-18px;height:auto}
 /* Концы отрезка стоят ровно на кружках: сверху нить начинается серединой
    кружка первой записи работы, снизу кончается серединой кружка последней.
    Число тут это top кружка плюс его половина, по видам записи. */
-.frow.sub.subtop::before{top:9.5px}
-.frow.sub.subtop.f-bub::before{top:29px}
-.frow.sub.subtop.f-fold::before{top:17px}
-.frow.sub.subtop.f-tline::before{top:14.3px}
-.frow.sub.subend::before{top:-18px;bottom:auto;height:27.5px}
-.frow.sub.subend.f-bub::before{height:47px}
-.frow.sub.subend.f-fold::before{height:35px}
-.frow.sub.subend.f-tline::before{height:32.3px}
 /* Работа в одну запись: от кружка до того же кружка рисовать нечего. */
-.frow.sub.subtop.subend::before{display:none}
 
 /* Плотность как в ленте vscode: записи идут подряд, дышат только смысловые
    куски. Прежние отступы приезжали от чужого правила и от полей пузыря */

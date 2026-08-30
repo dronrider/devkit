@@ -862,9 +862,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if wt != "" {
 		workDir = wt
 	}
-	if out, err := git(workDir, "rebase", main); err != nil {
-		git(workDir, "rebase", "--abort")
-		return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", out))
+	// Ветка, уже вобравшая main слиянием, в ребейзе не нуждается: fast-forward
+	// у неё есть, а ребейз тут не бездействует, он расплющивает сшивку и
+	// возвращает разведённые конфликты по одному на коммит. На длинной ветке
+	// это отказ навсегда: развести их заново нечем, и слияние упирается
+	// намертво (DK-637).
+	if _, err := git(workDir, "merge-base", "--is-ancestor", main, "HEAD"); err != nil {
+		if out, err := git(workDir, "rebase", main); err != nil {
+			git(workDir, "rebase", "--abort")
+			return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", out))
+		}
 	}
 	if out, err := runShell(workDir, test); err != nil {
 		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", cmdoutFrame(workDir, "test", out))

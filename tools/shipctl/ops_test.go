@@ -1126,3 +1126,51 @@ func TestCmdoutFrameShortOutput(t *testing.T) {
 		t.Errorf("поле lines_total не должно присутствовать ниже порога: %q", rendered)
 	}
 }
+
+// branchSewnWithMain собирает длинную ветку, которую догнали слиянием, а не
+// ребейзом: ветка и main правят одну строку, конфликт разведён один раз в
+// merge-коммите. Ребейз такую ветку расплющивает и возвращает конфликт по
+// коммиту, поэтому звать его после сшивки нельзя (DK-637).
+func branchSewnWithMain(t *testing.T, root string) {
+	t.Helper()
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "code.txt", "правка ветки\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	gitT(t, root, "checkout", "-q", "main")
+	write(t, root, "code.txt", "правка main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "chore: правка на main")
+	gitT(t, root, "checkout", "-q", "xr-001-fix")
+	if out, err := exec.Command("git", "-C", root, "merge", "main").CombinedOutput(); err == nil {
+		t.Fatalf("сшивка обязана конфликтовать, иначе тест не про то:\n%s", out)
+	}
+	write(t, root, "code.txt", "сшито руками\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "merge: XR-001 сшивка с main")
+}
+
+// TestMergeSewnBranchKeepsHistory: ветка, вобравшая main слиянием, сливается
+// без ребейза. До DK-637 ребейз звался безусловно, расплющивал сшивку и падал
+// на возвращённом конфликте, так что длинная ветка не сливалась вообще никак.
+func TestMergeSewnBranchKeepsHistory(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	branchSewnWithMain(t, root)
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatalf("сшитая ветка не слилась: %v", err)
+	}
+	if !strings.Contains(msg, "слита в main fast-forward") {
+		t.Fatalf("слияние не fast-forward: %q", msg)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "code.txt")); string(got) != "сшито руками\n" {
+		t.Fatalf("на main уехало не разведённое слиянием: %q", got)
+	}
+	log := gitT(t, root, "log", "--format=%s")
+	for _, want := range []string{"fix: XR-001 правка", "merge: XR-001 сшивка с main"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("ребейз расплющил историю, нет %q:\n%s", want, log)
+		}
+	}
+}

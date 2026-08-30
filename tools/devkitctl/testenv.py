@@ -86,7 +86,7 @@ def dispatcher_script(bodies):
 # (FIXTURE_DEVKIT меняется на копию стенда при записи): доктор судит, из того ли
 # дерева зовётся хук, и настоящий ~/projects/devkit тут был бы чужим.
 FIXTURE_DEVKIT = "~/projects/devkit"
-NOTIFY ="python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
+NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
 WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
 SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [

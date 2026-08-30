@@ -7689,8 +7689,20 @@ function chatArchBtn(project, c, done) {
   put.append(icon(c.archived ? "i-out" : "i-box"));
   put.title = c.archived ? "Вернуть из архива" : "Убрать в архив";
   put.setAttribute("aria-label", put.title);
+  // Уборка живого разговора снимает его сессию с машины, и спрашивается это
+  // вторым нажатием, как и всякое другое снятие сессии в панели. Записи без
+  // процесса вопрос не задаётся: терять там нечего (решение пользователя).
+  let armed = !chatArchAsks(c);
   put.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    if (!armed) {
+      armed = true;
+      put.classList.add("armed");
+      withTip(put, "Точно убрать в архив? Сессия снимется с машины. Разговор " +
+        "останется в архиве и вернётся оттуда подъёмом резюмом.");
+      put.setAttribute("aria-label", "Точно убрать в архив: сессия снимется");
+      return;
+    }
     const on = !c.archived;
     // Строка уходит сразу, не дожидаясь ответа: ответ тут только про запись,
     // а список уже показывает то, что человек попросил.
@@ -7703,6 +7715,14 @@ function chatArchBtn(project, c, done) {
     });
   });
   return put;
+}
+
+// chatArchAsks отвечает, спрашивать ли перед уборкой. Спрашивается только у
+// живого разговора и только на пути в архив: возврат из архива ничего не
+// снимает, а у записи без процесса снимать нечего.
+function chatArchAsks(c) {
+  if (!c || c.archived) return false;
+  return c.state === "live" || Boolean(c.sock) || Boolean(c.pid);
 }
 
 // Кнопка закрытия незачатой записи. Пустую она закрывает первым же нажатием:
@@ -9098,6 +9118,53 @@ const CHAT_UNWEDGE = "Разговор завис, процесс был сня�
 const CHAT_RELOGIN = "Разговор встал: у клиента истёк вход, процесс снят и " +
   "поднят заново после /login. Продолжай с того места, где остановился.";
 
+// Реплика, которой разговор поднимается кнопкой «Поднять». Слова те же по
+// смыслу, что и у подъёма после входа: своих слов человек не говорил, и
+// выдумывать за него заказ нельзя.
+const CHAT_LIFT_SAY = "Разговор поднят заново: процесса за ним не было. " +
+  "Продолжай с того места, где остановился.";
+
+// chatLift поднимает разговор резюмом, не дожидаясь реплики человека. Дорога та
+// же, какой реплика поднимает его сама: ручка реплики видит, что процесса нет,
+// и зовёт claude --resume. Кнопка нужна затем, что состояние «сессии нет» иначе
+// неотличимо от живого разговора, и человек пишет в него, не зная, поднимется
+// он или нет (живой случай: разговор, возвращённый из архива, где сессию сняло
+// само архивирование).
+async function chatLift(project, st) {
+  const sid = st && st.sid;
+  if (!sid) return false;
+  const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/say",
+    { method: "POST", body: { text: CHAT_LIFT_SAY } });
+  if (!r.ok) {
+    sayResult(r.body.error || "разговор не поднялся резюмом", true);
+    return false;
+  }
+  if (r.body.way === "resume" || r.body.way === "start") {
+    chatWait(project, r.body.tmux).catch(console.error);
+  }
+  sayResult("разговор поднят резюмом: сессия встаёт");
+  await repaintChat();
+  return true;
+}
+
+// chatNoSessRow говорит, что процесса за разговором нет, и даёт его поднять.
+// Молчание тут неотличимо от живого разговора: реплика в такой чат уезжает
+// резюмом и ответ приходит через минуту, а человек всё это время не знает,
+// работает ли чат вообще (замечание пользователя про разговор из архива).
+function chatNoSessRow(project, st) {
+  const row = el("div", "cnosess");
+  row.append(el("span", "", "сессии нет: реплика поднимет её резюмом"));
+  const up = el("button", "btn btn-sm", "Поднять");
+  up.title = "Поднять сессию резюмом, не дожидаясь реплики";
+  up.setAttribute("aria-label", up.title);
+  up.addEventListener("click", () => {
+    up.disabled = true;
+    chatLift(project, st).catch(console.error).finally(() => { up.disabled = false; });
+  });
+  row.append(up);
+  return row;
+}
+
 // Может ли дашборд перезапустить этот разговор. Чужое окно (vscode) он не
 // поднимал, tmux-сессии у такого разговора нет, и снимать ему нечего: кнопка
 // там обещала бы работу, которой не будет.
@@ -10286,6 +10353,9 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
+  // Разговор без процесса называет это словами и даёт себя поднять. Стоит
+  // строка там же, где стоят остальные слова о состоянии: над полем ввода.
+  if (way.kind === "resume") wrap.append(chatNoSessRow(project, st));
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка

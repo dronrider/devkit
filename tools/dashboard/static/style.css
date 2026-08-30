@@ -1205,6 +1205,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    вопрос стоит в подсказке. Так же взводится снятие сессии (.sclose), и второго
    языка для одного и того же вопроса заводить незачем */
 .cdrop-x.armed{background:color-mix(in oklab,var(--block) 22%,transparent);color:var(--block)}
+/* Взведённая уборка в архив видна собой, теми же цветами, что и всякое другое
+   снятие сессии в панели. Палец на узком экране попадает по всей кнопке, а не
+   по значку: цель растёт до сорока точек, как у соседей. */
+.cdarch.armed{background:color-mix(in oklab,var(--block) 22%,transparent);color:var(--block)}
+@media (max-width:900px){
+  .cdarch{width:40px;height:40px;top:0;right:0}
+  .cdarch svg{width:16px;height:16px}
+}
 /* Убранный разговор виден и в общем списке: приглушённая строка плюс чип. */
 .cdrow.arch{opacity:0.72}
 .cdrow:hover{border-color:var(--line2);background:var(--bg2)}
@@ -1718,6 +1726,16 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   border-bottom:1px dashed var(--tx3);padding:0;margin-left:6px;cursor:pointer}
 .qwhy-b:hover{color:var(--tx)}
 .qwhy{color:var(--tx3);white-space:normal;overflow-wrap:anywhere;margin-top:4px}
+
+/* Разговор без процесса: строка над полем ввода говорит, что сессии нет, и
+   держит кнопку подъёма. Стоит там же, где остальные слова о состоянии, и на
+   узком экране кнопка попадаема пальцем. */
+.cnosess{display:flex;align-items:center;gap:10px;margin:0 0 6px;padding:0 2px;
+  font:400 11.5px/1.4 var(--sans);color:var(--tx3)}
+.cnosess .btn{flex:none}
+@media (max-width:900px){
+  .cnosess .btn{min-height:38px;padding:0 14px}
+}
 
 /* Записи разговора стоят на общей вертикальной линии: она одна на всю ленту,
    кружок против первой строки записи перекрывает её собой. Цвет кружка это

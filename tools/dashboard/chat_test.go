@@ -2231,6 +2231,24 @@ func TestStaticChatDropRow(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Разговор без процесса и уборка в архив: одна и та же пара, снимающая и
+// поднимающая сессию. Живой случай: «чат, который я вернул из архива, больше не
+// работает, при написании в него никакой реакции» (замечание пользователя).
+// Архивирование снимает сессию, возврат её не поднимает, и разговор без
+// процесса на экране неотличим от живого. Сторожит стенд testdata/poc_nosess.mjs.
+func TestStaticChatNoSession(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд разговора без процесса пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_nosess.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("разговор без процесса: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Выбор модели в незачатом разговоре: список приезжает от agentctl, выбранное
 // живёт при записи и уезжает в подъём первой репликой, а пустая лестница
 // названа словами прямо в списке («нельзя поменять модель в новом чате»,

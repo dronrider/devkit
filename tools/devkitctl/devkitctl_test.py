@@ -873,7 +873,7 @@ class MachineContourTest(SandboxCase):
                          "скиллы разложены строкой на скилл, а не одной строкой")
         self.assertRegex(out, r"починено: установлено \d+ определений агентов в[^\n]*exec-medium",
                          "определения агентов разложены строкой на файл")
-        self.assertRegex(out, r"починено: включено \d+ хуков харнеса в[^\n]*quota-refresh\.sh",
+        self.assertRegex(out, r"починено: включено \d+ хук\S* харнеса в[^\n]*quota-refresh\.sh",
                          "хуки харнеса подключены строкой на хук")
         # Права дописываются десятками, и перечислять их человеку незачем:
         # в строке остаётся счёт, а сам перечень лежит в настройках.
@@ -1934,8 +1934,12 @@ class HarnessHooksTest(SandboxCase):
         _, out = self.box.doctor(self.proj, home=self.home2)
         self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",
                          "доктор не заметил неподключённые хуки харнеса")
-        self.assertRegex(out, r"хук харнеса в[^\n]*на событии PreToolUse[^\n]*check-read-secret\.py",
-                         "доктор не заметил PreToolUse-хук чтения секретов")
+        self.assertRegex(out, r"check-read-secret\.py[^\n]*чтение секретов через Bash идёт мимо хука",
+                         "находка про чтение секретов не называет свою дыру")
+        # Рубеж подстановки (DK-452) говорит своей строкой: без неё его
+        # отсутствие выдавалось бы за дыру чтения секретов.
+        self.assertRegex(out, r"check-subst\.py[^\n]*исполняется до их вызова",
+                         "доктор не заметил PreToolUse-хук подстановки DK-452")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-reread\.py|check-reread\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
@@ -1953,20 +1957,22 @@ class HarnessHooksTest(SandboxCase):
         self.assertIn_("не оставляет отметку в журнале сессий", out,
                        "находка не говорит, что ломается без хука отметки работы")
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-symbols\.py на PostToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-symbols\.py на PostToolUse",
                          "--fix не разложил хуки харнеса")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-read-secret\.py на PreToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-read-secret\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук чтения секретов")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-reread\.py на PreToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-subst\.py на PreToolUse",
+                         "--fix не разложил PreToolUse-хук подстановки DK-452")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-reread\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук повторных чтений")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*check-longfile\.py на PreToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-longfile\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук длинных чтений")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*chat-in\.py на PostToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*chat-in\.py на PostToolUse",
                          "--fix не разложил подхват реплики")
         self.assertRegex(out,
-                         r"включено \d+ хуков харнеса в[^\n]*session-task\.py на SessionStart, PostToolUse",
+                         r"включено \d+ хук\S* харнеса в[^\n]*session-task\.py на SessionStart, PostToolUse",
                          "--fix не разложил хук отметки работы")
-        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*agent-watch\.py на PostToolUse",
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*agent-watch\.py на PostToolUse",
                          "--fix не разложил сторожа фоновых субагентов")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
@@ -1994,6 +2000,7 @@ class HarnessHooksTest(SandboxCase):
         # порядок как в HOOK_LAYOUT.
         pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "check-subst.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],

@@ -191,9 +191,16 @@ POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
 # Конфиг порогов сторожа прозы (DK-521). Полноту его смотрит сам хук режимом
 # --config: список метрик живёт в коде хука, и второй копии тут не заводится.
 PROSE_HOOK = "check-prose.py"
-# Хук чтения секретов через Bash (DK-228): PreToolUse на Bash, отдельной
-# категорией от пост-проверок текстов, и в hook_gaps сообщение про него своё.
-PRE_SCRIPTS = ("check-read-secret.py",)
+# Рубежи на PreToolUse Bash: чтение секретов (DK-228) и подстановка в
+# свободном тексте у утилит devkit (DK-452). Записей на матчере Bash две, и
+# сообщение в hook_gaps у каждой своё: неподключённый check-subst это дыра
+# инъекции, а не чтение секретов.
+PRE_SCRIPTS = ("check-read-secret.py", "check-subst.py")
+PRE_GAPS = {
+    "check-read-secret.py": "чтение секретов через Bash идёт мимо хука",
+    "check-subst.py": "подстановка в текстовом аргументе утилит devkit "
+                      "исполняется до их вызова (DK-452)",
+}
 # Рубежи на PreToolUse Read. Категория отдельная от проверок текстов и от чтения
 # секретов через Bash, и сообщение про каждый своё. Записей на одном матчере
 # сколько угодно: check-reread режет повторы, check-longfile режет чтение длинного
@@ -269,6 +276,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
+    ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
@@ -1342,9 +1350,13 @@ def hook_gaps(text, settings):
                         % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_post,
                                      settings, " на событии PostToolUse"))
     if missing_pre:
-        findings.append("%s; чтение секретов через Bash идёт мимо хука (hooks/README.md)"
-                        % say.folded(("не подключён", "не подключено"), HOOK_WORD, missing_pre,
-                                     settings, " на событии PreToolUse"))
+        # У каждого рубежа на Bash своя дыра, и сообщение называет её, а не
+        # общее «чтение секретов»: отсутствующий check-subst про инъекцию.
+        for script in missing_pre:
+            findings.append("%s на PreToolUse Bash; %s (hooks/README.md)"
+                            % (say.folded(("не подключён", "не подключено"), HOOK_WORD,
+                                          [script], settings, ""),
+                               PRE_GAPS.get(script, "команды Bash идут мимо рубежа")))
     if missing_pre_read:
         # Каждый рубеж на Read режет свою дыру, и сообщение про него обязано
         # называть именно её, а не общим «повторные чтения»: иначе отсутствующий

@@ -44,12 +44,23 @@ DEVKIT_TOOLS = frozenset((
 ))
 
 # Обёртки, сквозь которые видно имя утилиты: env GOWORK=off taskctl ... это
-# всё ещё вызов taskctl. Присвоения VAR=x перед командой пропускаются там же.
-WRAPPERS = frozenset(("env", "command", "exec", "nohup"))
+# всё ещё вызов taskctl. Присвоения VAR=x перед командой пропускаются там же,
+# как и ключи с длительностью после обёртки (timeout 60 taskctl ...).
+WRAPPERS = frozenset(("env", "command", "exec", "nohup", "timeout"))
 
-# Ключ вида --flag= или -f= перед подстановкой: --commit=$(git rev-parse HEAD)
-# это то же служебное значение, что и --commit "$(...)".
-FLAG_PREFIX = re.compile(r"--?[A-Za-z][A-Za-z0-9_-]*=")
+# Служебные слова bash перед именем утилиты: if taskctl ...; then это тот же
+# вызов taskctl, и слово if разбор не выключает.
+KEYWORDS = frozenset(("if", "then", "elif", "else", "fi", "for", "in", "do",
+                      "done", "while", "until", "case", "esac", "time",
+                      "!", "{", "}"))
+
+# Длительность или число после обёртки: второй аргумент timeout.
+DURATION = re.compile(r"[0-9]+[smhd]?")
+
+# Ключ вида --flag=, -f= или присвоение VAR= перед подстановкой:
+# --commit=$(git rev-parse HEAD) и FOO=$(date) это то же служебное значение,
+# что и --commit "$(...)".
+FLAG_PREFIX = re.compile(r"(--?[A-Za-z][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_]*)=")
 
 
 class Word(object):
@@ -90,34 +101,41 @@ class Word(object):
 
 
 class Command(object):
-    """Простая команда: слова и признак подстановки в теле heredoc без
-    одинарных кавычек у делимитера."""
+    """Простая команда: слова, признак подстановки в теле heredoc без
+    одинарных кавычек у делимитера и номер конвейера, которым команда связана
+    с соседями через одиночный |."""
 
-    def __init__(self):
+    def __init__(self, pipeline=0):
         self.words = []
         self.heredoc_subst = False
+        self.pipeline = pipeline
 
     def tool(self):
         """Имя утилиты devkit, которой команда принадлежит, либо пустая
-        строка. Присвоения и обёртки перед именем пропускаются."""
+        строка. Присвоения, служебные слова bash и обёртки перед именем
+        пропускаются, у обёртки пропускаются её ключи и длительность."""
+        after_wrapper = False
         for w in self.words:
             name = w.pre + w.post
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", name):
+                continue
+            if name in KEYWORDS:
+                continue
+            if after_wrapper and (name.startswith("-") or DURATION.fullmatch(name)):
+                continue
             if w.substs:
                 return ""
-            if "=" in name and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", name):
-                continue
             base = os.path.basename(name)
             if base in WRAPPERS:
+                after_wrapper = True
                 continue
             return base if base in DEVKIT_TOOLS else ""
         return ""
 
-    def violates(self):
-        if self.tool() == "":
-            return False
-        if self.heredoc_subst:
-            return True
-        return any(w.free_subst() for w in self.words)
+    def has_free(self):
+        """Подстановка в свободном тексте где-то в команде: слово со смешанной
+        подстановкой либо тело heredoc без кавычек у делимитера."""
+        return self.heredoc_subst or any(w.free_subst() for w in self.words)
 
 
 def _skip_subst(text, i):
@@ -189,8 +207,12 @@ def _heredoc_delim(text, i):
 def parse(text):
     """Простые команды строки Bash. Разделители это ;, |, &, перевод строки и
     скобки подоболочки; тела heredoc в слова не идут, а подстановка в теле без
-    кавычек у делимитера помечает команду."""
-    cmds = [Command()]
+    кавычек у делимитера помечает команду. Одиночный | связывает соседние
+    команды одним номером конвейера: по нему found_tools судит, чей вывод
+    течёт в утилиту devkit. Символы редиректа < и > режут слово: цель
+    редиректа это своё слово, и >"$(mktemp)" остаётся чистой подстановкой."""
+    pipeline = 0
+    cmds = [Command(pipeline)]
     word = Word()
     heredocs = []
     i, n = 0, len(text)
@@ -201,10 +223,15 @@ def parse(text):
             cmds[-1].words.append(word)
             word = Word()
 
-    def flush_cmd():
+    def flush_cmd(same_pipe=False):
+        nonlocal pipeline
         flush_word()
+        if not same_pipe:
+            pipeline += 1
         if cmds[-1].words:
-            cmds.append(Command())
+            cmds.append(Command(pipeline))
+        else:
+            cmds[-1].pipeline = pipeline
 
     while i < n:
         c = text[i]
@@ -248,6 +275,9 @@ def parse(text):
             i, delim, quoted = _heredoc_delim(text, i + 2)
             if delim:
                 heredocs.append((delim, quoted, cmds[-1]))
+        elif c in "<>":
+            flush_word()
+            i += 1
         elif c in " \t":
             flush_word()
             i += 1
@@ -262,9 +292,17 @@ def parse(text):
             heredocs = []
             flush_cmd()
             i += 1
-        elif c in ";|&()":
+        elif c == "|":
+            # || это разделитель команд, одиночный | и |& связка конвейера.
+            if text[i + 1:i + 2] == "|":
+                flush_cmd()
+                i += 2
+            else:
+                flush_cmd(same_pipe=True)
+                i += 2 if text[i + 1:i + 2] == "&" else 1
+        elif c in ";&()":
             flush_cmd()
-            i += 1
+            i += 1 + (1 if c == "&" and text[i + 1:i + 2] == "&" else 0)
         else:
             word.literal(c)
             i += 1
@@ -273,14 +311,18 @@ def parse(text):
 
 
 def found_tools(command):
-    """Утилиты devkit, у которых в этой строке подстановка стоит в свободном
-    тексте. Порядок как в команде, без повторов."""
+    """Утилиты devkit, до которых в этой строке дотягивается подстановка в
+    свободном тексте: она стоит в самой команде утилиты либо выше по
+    конвейеру, чей вывод утилита читает. Ниже по конвейеру подстановка до
+    утилиты не течёт и её не трогает. Порядок как в команде, без повторов."""
     tools = []
+    upstream = {}
     for cmd in parse(command):
-        if cmd.violates():
-            t = cmd.tool()
-            if t not in tools:
-                tools.append(t)
+        dirty = upstream.get(cmd.pipeline, False) or cmd.has_free()
+        t = cmd.tool()
+        if t and dirty and t not in tools:
+            tools.append(t)
+        upstream[cmd.pipeline] = dirty
     return tools
 
 

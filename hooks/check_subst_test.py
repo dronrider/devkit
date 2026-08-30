@@ -80,6 +80,40 @@ class TestCommandMode(unittest.TestCase):
         r = run('env GOWORK=off taskctl draft "имя `x`"')
         self.assertEqual(r.returncode, 1)
 
+    def test_pipeline_upstream_subst_is_caught(self):
+        # Обход из ревью DK-452: подстановка в звене выше по конвейеру
+        # разворачивается bash и утекает в stdin утилиты.
+        r = run('echo "имя `x`" | taskctl review add DK-1')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stdout)
+
+    def test_pipeline_downstream_subst_passes(self):
+        # Ниже по конвейеру вывод утилиты уже отдан: подстановка в grep до
+        # taskctl не дотягивается.
+        self.assertEqual(run('taskctl show DK-1 | grep "x $(date)"').returncode, 0)
+
+    def test_pipeline_without_devkit_passes(self):
+        self.assertEqual(run('echo "имя `x`" | grep foo').returncode, 0)
+
+    def test_keywords_before_tool_are_skipped(self):
+        # Обход из ревью DK-452: служебное слово bash перед именем утилиты
+        # выключало разбор.
+        cases = ('if taskctl review add DK-1 "имя `x`"; then :; fi',
+                 'while true; do taskctl draft "имя `x`"; done',
+                 'timeout 60 taskctl review add DK-1 "имя `x`"',
+                 'FOO=$(date) taskctl review add DK-1 "имя `x`"')
+        for c in cases:
+            self.assertEqual(run(c).returncode, 1, c)
+
+    def test_assignment_and_timeout_without_free_text_pass(self):
+        self.assertEqual(run('FOO=$(date) taskctl list').returncode, 0)
+        self.assertEqual(run('timeout 60 taskctl list').returncode, 0)
+
+    def test_redirect_to_subst_passes(self):
+        # Ложный отбой из ревью DK-452: цель редиректа это машинная
+        # подстановка целым словом.
+        self.assertEqual(run('taskctl list >"$(mktemp)"').returncode, 0)
+
     def test_stdin_mode(self):
         r = run("--stdin", input=INJECTION)
         self.assertEqual(r.returncode, 1)

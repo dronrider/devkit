@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -299,16 +298,22 @@ func TestTaskPatchRowAndRank(t *testing.T) {
 		t.Errorf("соседние слагаемые поехали: %v", got)
 	}
 
-	// Порядок строк выводится из ранга: XR-002 встала выше XR-001 сама.
-	// Считается он по разобранным строкам секции, а не по месту номера в
-	// тексте ответа: номер соседки стоит и в маркере зависимостей, и поиском по
+	// Порядок строк выводится из ранга, и выросшая XR-002 тянет за собой свою
+	// предпосылку XR-001: та стоит после неё маркером «после» и по инварианту
+	// зависимости получает тот же ранг 80 (DK-428). При равном ранге
+	// предпосылка идёт первой, поэтому пара всплывает наверх вдвоём. Порядок
+	// считается по разобранным строкам секции, а не по месту номера в тексте
+	// ответа: номер соседки стоит и в маркере зависимостей, и поиском по
 	// тексту порядок читался неверно.
 	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")
 	board := body(t, resp)
 	order := boardSectionIDs(t, board, "backlog")
-	first, second := slices.Index(order, "XR-002"), slices.Index(order, "XR-001")
-	if first < 0 || second < 0 || first > second {
-		t.Errorf("Backlog не отсортирован по рангу после правки: %v\n%s", order, board)
+	if len(order) < 2 || order[0] != "XR-001" || order[1] != "XR-002" {
+		t.Errorf("наверху Backlog ждали пару XR-001, XR-002: %v\n%s", order, board)
+	}
+	held := getTask(t, c, e, "XR-001")
+	if got := taskRowField(t, held, "r"); got != float64(80) {
+		t.Errorf("предпосылка XR-001 не подтянулась под XR-002: R %v", got)
 	}
 
 	git := readFile(t, gitLog)
@@ -355,9 +360,15 @@ func TestHandleTaskOrderOmittedForUserAcceptClose(t *testing.T) {
 func TestTaskPatchTellsPlace(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 
-	// XR-003 (25+0+0+0+0) поднимается ценностью выше XR-002 (R 30) и встаёт
-	// между XR-001 и XR-002: правится одна ценность, как это делает жест.
-	resp := doReq(t, c, "PATCH", taskURL(e, "XR-003", ""), `{"r_parts": [null, 6, null, null, null]}`)
+	// Зависимость XR-003 от XR-002 снимается: предпосылка держит ранг
+	// зависимой и обогнать себя ей не даёт (DK-428), а тут проверяется место
+	// строки, а не инвариант.
+	runTaskctl(t, e.proj, "dep", "rm", "XR-003", "XR-002")
+
+	// XR-003 (25+0+0+0+0) поднимается ценностью выше XR-002 (R 31 с бонусом за
+	// цену M) и встаёт между XR-001 и XR-002: правится одна ценность, как это
+	// делает жест.
+	resp := doReq(t, c, "PATCH", taskURL(e, "XR-003", ""), `{"r_parts": [null, 7, null, null, null]}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("правка ценности: %d %s", resp.StatusCode, text)
@@ -383,19 +394,19 @@ func TestTaskPatchTellsPlace(t *testing.T) {
 		t.Fatalf("ответ правки не разобрался: %v\n%s", err, text)
 	}
 	place := got.Place
-	if place.Sect != "backlog" || place.R != 31 || place.P != "P2" {
-		t.Errorf("место строки: секция %q, R %d, P %q, ожидал backlog, 31, P2", place.Sect, place.R, place.P)
+	if place.Sect != "backlog" || place.R != 32 || place.P != "P2" {
+		t.Errorf("место строки: секция %q, R %d, P %q, ожидал backlog, 32, P2", place.Sect, place.R, place.P)
 	}
-	if fmt.Sprint(place.RParts) != "[25 6 0 0 0]" {
-		t.Errorf("свежая разбивка в ответе %v, ожидал [25 6 0 0 0]", place.RParts)
+	if fmt.Sprint(place.RParts) != "[25 7 0 0 0]" {
+		t.Errorf("свежая разбивка в ответе %v, ожидал [25 7 0 0 0]", place.RParts)
 	}
 	// Соседи те же, что и в самой доске: место читается с переписанного файла,
 	// а не предсказывается по прежнему порядку.
 	if place.Above.ID != "XR-001" || place.Above.R != 55 || place.Above.Title == "" {
 		t.Errorf("сосед сверху %+v, ожидал XR-001 с заголовком и рангом 55", place.Above)
 	}
-	if place.Below.ID != "XR-002" || place.Below.R != 30 {
-		t.Errorf("сосед снизу %+v, ожидал XR-002 с рангом 30", place.Below)
+	if place.Below.ID != "XR-002" || place.Below.R != 31 {
+		t.Errorf("сосед снизу %+v, ожидал XR-002 с рангом 31", place.Below)
 	}
 	order := boardSectionIDs(t, body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/board", "")), "backlog")
 	if len(order) < 3 || order[0] != "XR-001" || order[1] != "XR-003" || order[2] != "XR-002" {
@@ -424,13 +435,13 @@ func TestTaskPatchExpectGuardsUndo(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("откат поверх чужой правки: %d %s", resp.StatusCode, text)
 	}
-	for _, want := range []string{"строку поправили", "ранг сейчас 32", "откат не применён"} {
+	for _, want := range []string{"строку поправили", "ранг сейчас 33", "откат не применён"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в отказе отката нет %q: %s", want, text)
 		}
 	}
 	before := readFile(t, boardPath)
-	if !strings.Contains(before, "32 (25+4+1+0+2)") {
+	if !strings.Contains(before, "33 (25+4+1+0+2, M+1)") {
 		t.Errorf("отбитый откат тронул доску:\n%s", before)
 	}
 

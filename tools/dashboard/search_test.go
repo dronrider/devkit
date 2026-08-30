@@ -106,7 +106,7 @@ func TestSearchGroups(t *testing.T) {
 		t.Errorf("группа «Доска» по запросу «поиск»: %v, ждал XR-010", ids)
 	}
 	board := group(t, got, "board").Rows[0]
-	if board.Sect != "backlog" || board.Section == "" || board.Cost != "M" || board.R != 37 {
+	if board.Sect != "backlog" || board.Section == "" || board.Cost != "M" || board.R != 38 {
 		t.Errorf("строка доски приехала без секции, цены или ранга: %+v", board)
 	}
 	drafts := group(t, got, "drafts")

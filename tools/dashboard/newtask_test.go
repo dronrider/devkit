@@ -159,9 +159,10 @@ func TestTaskCreateRow(t *testing.T) {
 	if !strings.Contains(board, "Пятая, с дашборда") {
 		t.Errorf("строки нет на доске:\n%s", board)
 	}
-	// 50+4+2+0+1 = 57, бакет P1: считает утилита, дашборд передал слагаемые.
+	// 50+4+2+0+1 = 57 плюс бонус за цену S, итог 59 и бакет P1. Считает всё
+	// утилита, дашборд передал слагаемые и цену.
 	task := getTask(t, c, e, "XR-005")
-	if r := taskRowField(t, task, "r"); r != float64(57) {
+	if r := taskRowField(t, task, "r"); r != float64(59) {
 		t.Errorf("сумма R не та: %v", r)
 	}
 	if p := taskRowField(t, task, "p"); p != "P1" {

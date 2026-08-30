@@ -2664,5 +2664,69 @@ class ProseConfigTest(unittest.TestCase):
         self.assertEqual(devkitctl.check_prose_config(), [])
 
 
+class MachineBuildTest(unittest.TestCase):
+    """Сборка на машину: этой дорогой едет выкат, и после укладки победитель
+    PATH обязан отвечать свежей сборкой (DK-599). Go тут заглушка, как в
+    build_test: проверяется сверка вокруг сборки, а не компилятор.
+    """
+
+    NAME = "alfactl"
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="devkitctl-machine-build-test-"))
+        self.dk = git_init(self.root / "devkit")
+        write(self.dk / "tools" / self.NAME / "go.mod",
+              "module github.com/dronrider/devkit/tools/%s\n\ngo 1.26\n" % self.NAME)
+        write(self.dk / "tools" / self.NAME / "main.go", "package main\n\nfunc main() {}\n")
+        git(self.dk, "add", "-A")
+        git(self.dk, "commit", "-qm", "init")
+        self.dest = self.root / "gobin"
+        self.shadow = self.root / "shadow"
+        stub = self.root / "stub"
+        executable(stub / "go", GO_STUB)
+        self.saved = {k: os.environ.get(k) for k in ("PATH", "SANDBOX")}
+        os.environ["SANDBOX"] = str(self.root)
+        os.environ["PATH"] = os.pathsep.join(
+            (str(stub), str(self.shadow), str(self.dest), os.environ["PATH"]))
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(str(self.root), ignore_errors=True)
+
+    def test_clean_machine_is_silent(self):
+        self.assertEqual(devkitctl.machine_build(self.dk, self.dest,
+                                                 log=lambda *a: None), [])
+
+    def test_shadowing_copy_fails_the_build(self):
+        # Живой случай DK-599 в миниатюре: свежая сборка легла в каталог
+        # назначения, а в PATH выигрывает копия из чужого каталога, и без
+        # сверки выкат отчитался бы зелёным при старой команде на машине.
+        executable(self.shadow / self.NAME,
+                   BINARY_STUB % build.version_line(self.NAME, "v0.1.0", "чужое"))
+        found = devkitctl.machine_build(self.dk, self.dest, log=lambda *a: None)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn(self.NAME, found[0])
+        self.assertIn("чужое", found[0])
+        self.assertIn(str(self.dest), found[0], "находка не говорит, где лежит свежая сборка")
+        self.assertEqual(update.binary_stamp(self.dest / self.NAME),
+                         (build.stamp(self.dk)[0], build.stamp(self.dk)[1]),
+                         "сверка PATH обязана идти после укладки, а не вместо неё")
+
+    def test_broken_build_does_not_reach_the_path_check(self):
+        # Проваленная сборка называет свою беду, и сверять победителя PATH
+        # после неё нечем: находки сборки не должны тонуть в находках сверки.
+        os.environ["GO_STUB_NO_FLAG"] = self.NAME
+        try:
+            found = devkitctl.machine_build(self.dk, self.dest, log=lambda *a: None)
+        finally:
+            os.environ.pop("GO_STUB_NO_FLAG", None)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("ждали от --version", found[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -96,7 +96,9 @@
       (DEVKIT_BIN, иначе первый из ~/go/bin и ~/.local/bin, который уже стоит
       в PATH, иначе ~/.local/bin) и самопроверка запуском: каждый свежий
       бинарь обязан напечатать по --version ту строку, которую в него
-      зашивали. --release собирает четыре пары GOOS/GOARCH, пакует тарболл на
+      зашивали, а после укладки каждая утилита сверяется по победителю PATH,
+      и чужая копия, заслоняющая свежую сборку, роняет команду (DK-599).
+      --release собирает четыре пары GOOS/GOARCH, пакует тарболл на
       пару (devkit-<версия>-<os>-<arch>.tar.gz) и кладёт рядом SHA256SUMS;
       живьём там проверяется пара своей машины, остальные три байтовым
       поиском зашитой строки. Каталог назначения по умолчанию dist
@@ -2407,6 +2409,23 @@ def layout_only(start):
     return 0
 
 
+def machine_build(devkit, target, log=print):
+    """Сборка на машину: бинари в каталог назначения плюс сверка победителя PATH.
+
+    Этой дорогой едет выкат devkit (deploy в .devkit/deploy.local зовёт
+    devkitctl build), и до DK-599 она молчала, когда в PATH выигрывала чужая
+    копия: слияние отчитывалось зелёным, а команда на машине оставалась старой
+    сборкой. Теперь после укладки каждая утилита сверяется по победителю PATH,
+    и расхождение роняет сборку, а через неё и выкат.
+    """
+    findings = build.local(devkit, target, log=log)
+    if findings:
+        return findings
+    version, commit = build.stamp(devkit)
+    return update.path_divergence(
+        target, {name: (version, commit) for name in build.tools(devkit)})
+
+
 def build_binaries(release, out):
     """Сборка бинарей devkit, та же командой с машины и с раннера.
 
@@ -2419,9 +2438,12 @@ def build_binaries(release, out):
         return 2
     if release:
         findings = build.release(DEVKIT, out or "dist")
+    elif out:
+        # Явный --out это сборка в сторону (стенд, ручная проверка), PATH ей
+        # не судья.
+        findings = build.local(DEVKIT, Path(out))
     else:
-        target = Path(out) if out else update.bin_dir()
-        findings = build.local(DEVKIT, target)
+        findings = machine_build(DEVKIT, update.bin_dir())
     for f in findings:
         print(f)
     if findings:

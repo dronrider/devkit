@@ -395,6 +395,36 @@ def installed(dest, names):
     return found
 
 
+def path_divergence(dest, expect):
+    """Утилиты, у которых в PATH выигрывает не только что положенная сборка.
+
+    Свежий бинарь лежит в каталоге назначения, а команда на машине зовётся по
+    PATH: копию из чужого каталога (стенд POC, старый go install) укладка не
+    двигает, и правка молча не доезжает до команды (DK-599). Поэтому после
+    укладки каждая утилита сверяется по победителю PATH, и расхождение это
+    отказ, а не совет. Отсутствие имени в PATH расхождением не считается: про
+    каталог мимо PATH говорят находки раскладки, здесь судится подмена.
+    """
+    findings = []
+    for name in sorted(expect):
+        won = shutil.which(name)
+        if not won:
+            continue
+        got = binary_stamp(won)
+        if got == expect[name]:
+            continue
+        fresh = "%s (%s) в %s" % (expect[name] + (dest,))
+        if got is None:
+            findings.append("%s: в PATH выигрывает %s, и на --version он не отвечает, а "
+                            "свежая сборка %s осталась в тени: убрать эту копию из PATH"
+                            % (name, won, fresh))
+        else:
+            findings.append("%s: в PATH выигрывает %s со сборкой %s (%s), а выкат положил "
+                            "%s: правка до команды не доехала, убрать заслоняющую копию "
+                            "из PATH" % ((name, won) + got + (fresh,)))
+    return findings
+
+
 def fetch_url(url, dest, timeout=60):
     """Скачать в файл. Отдаёт (код ответа, текст ошибки); 0 это «до хоста не дошли»."""
     try:
@@ -721,6 +751,14 @@ def run(devkit, from_main, pin=False, check=False, restarted=False,
     rc, placed = install(devkit, tag, log, err)
     if rc != 0:
         return rc
+    # Бинари релиза и сборка на машине едут одной дорогой, в bin_dir, и после
+    # укладки обе сверяются по победителю PATH: вторая сборка, выигравшая в
+    # PATH, пережила бы установку молча, и команда осталась бы старой (DK-599).
+    stale = path_divergence(bin_dir(), installed(bin_dir(), placed))
+    if stale:
+        for m in stale:
+            err(m)
+        return 1
     # Обёртку кладёт раскладка машинного контура, и второй раз тут её не зовут:
     # иначе установка сказала бы про каталог мимо PATH дважды. Без раскладки
     # (её зовут не все, кто зовёт установку) обёртка всё равно обязана лечь,

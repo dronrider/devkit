@@ -263,6 +263,57 @@ class SumsTest(unittest.TestCase):
         self.assertIn("нет строки", update.verify(self.asset, {"чужой.tar.gz": "0"}))
 
 
+class PathDivergenceTest(unittest.TestCase):
+    """Сверка победителя PATH с только что положенной сборкой (DK-599)."""
+
+    NAME = "alfactl"
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="devkitctl-divergence-test-"))
+        self.dest = self.root / "bin"
+        self.shadow = self.root / "shadow"
+        self.saved = os.environ.get("PATH")
+        os.environ["PATH"] = "%s%s%s" % (self.shadow, os.pathsep, self.dest)
+
+    def tearDown(self):
+        os.environ["PATH"] = self.saved
+        shutil.rmtree(str(self.root), ignore_errors=True)
+
+    def lay(self, where, version, commit):
+        executable(where / self.NAME,
+                   BINARY_STUB % build.version_line(self.NAME, version, commit))
+
+    def expect(self):
+        return {self.NAME: ("v1.0.0", "коммит-вершины")}
+
+    def test_fresh_winner_is_silent(self):
+        self.lay(self.dest, "v1.0.0", "коммит-вершины")
+        self.assertEqual(update.path_divergence(self.dest, self.expect()), [])
+
+    def test_shadowing_stale_copy_is_named(self):
+        self.lay(self.dest, "v1.0.0", "коммит-вершины")
+        self.lay(self.shadow, "v0.1.0", "чужое")
+        found = update.path_divergence(self.dest, self.expect())
+        self.assertEqual(len(found), 1, found)
+        for word in (self.NAME, str(self.shadow / self.NAME), "v0.1.0", "чужое",
+                     "v1.0.0", "коммит-вершины"):
+            self.assertIn(word, found[0], "находка не называет %s" % word)
+
+    def test_winner_without_version_is_a_finding(self):
+        self.lay(self.dest, "v1.0.0", "коммит-вершины")
+        executable(self.shadow / self.NAME, "#!/bin/sh\nexit 3\n")
+        found = update.path_divergence(self.dest, self.expect())
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("не отвечает", found[0])
+
+    def test_name_missing_from_path_is_not_judged(self):
+        # Каталог мимо PATH это находка раскладки, а не подмена: про него
+        # говорят доктор и «осталось сделать» установки, сверка молчит.
+        os.environ["PATH"] = str(self.shadow)
+        self.lay(self.dest, "v1.0.0", "коммит-вершины")
+        self.assertEqual(update.path_divergence(self.dest, self.expect()), [])
+
+
 class GitReadCacheTest(UpdateCase):
     """Кеш git-чтений на прогон команды: доктор спрашивает одно и то же по
     многу раз, и каждый git это свой процесс. Проверяется всё водораздела:
@@ -682,6 +733,21 @@ class InstallTest(UpdateCase):
         self.said = []
         self.assertEqual(self.update(), 0, self.out())
         self.assertEqual(update.binary_stamp(self.dest / TOOLS[0]), ("v0.10.0", self.tag_commit))
+
+    def test_shadowing_copy_fails_the_install(self):
+        # Копию из чужого каталога, стоящего в PATH раньше каталога назначения,
+        # установка не двигает: до DK-599 она молчала про такую подмену, и
+        # командой на машине оставалась старая сборка.
+        shadow = self.root / "shadow"
+        executable(shadow / TOOLS[0],
+                   BINARY_STUB % build.version_line(TOOLS[0], "v0.1.0", "чужое"))
+        os.environ["PATH"] = "%s%s%s" % (shadow, os.pathsep, os.environ["PATH"])
+        self.assertEqual(self.install(), 1, self.out())
+        self.assertIn(TOOLS[0], self.out())
+        self.assertIn(str(shadow / TOOLS[0]), self.out())
+        self.assertEqual(update.binary_stamp(self.dest / TOOLS[0]),
+                         ("v0.10.0", self.tag_commit),
+                         "сверка PATH обязана идти после укладки, а не вместо неё")
 
     def test_flipped_byte_leaves_binaries_alone(self):
         asset, _ = update.asset_name("v0.10.0")

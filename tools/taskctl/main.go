@@ -140,8 +140,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               деревьев
 
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
-  review add <ID> "суть замечания"            дописать замечание, файл задачи
-                                              создаётся сам
+  review add <ID> ["суть замечания"]          дописать замечание, файл задачи
+                                              создаётся сам; без текста читает
+                                              stdin: текст с обратными кавычками
+                                              передаётся heredoc с одинарными
+                                              кавычками (<<'EOF'), а не аргументом
   review resolve <ID> <N> fixed|rejected [--reason "..."]
                                               зафиксировать исход замечания N
   review show <ID>                            замечания с номерами и исходами
@@ -514,8 +517,21 @@ func main() {
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 2, 2, "review add <ID> \"суть замечания\"")
-			msg, err = cmdReviewAdd(root(*dir), pos[0], pos[1], c)
+			// Без позиционного текста замечание читается со stdin (DK-452):
+			// текст с обратными кавычками, переданный аргументом, bash
+			// разворачивает подстановкой, а heredoc с одинарными кавычками
+			// довозит его дословно.
+			needArgs(pos, 1, 2, "review add <ID> [\"суть замечания\"] (без текста читается stdin)")
+			note := ""
+			if len(pos) == 2 {
+				note = pos[1]
+			} else {
+				note, err = readStdinAs("жду текст замечания: аргументом (review add <ID> \"суть\") либо на stdin через heredoc с одинарными кавычками")
+				if err != nil {
+					fail(err)
+				}
+			}
+			msg, err = cmdReviewAdd(root(*dir), pos[0], note, c)
 		case "resolve":
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

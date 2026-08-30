@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,38 @@ func readTaskFile(t *testing.T, root, id string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestReviewAddStdin: без позиционного текста review add читает замечание со
+// stdin (DK-452). Так текст с обратными кавычками доезжает дословно, а не
+// исполняется подстановкой bash по дороге.
+func TestReviewAddStdin(t *testing.T) {
+	root := setup(t)
+	note := "позвать `devkitctl update` до отказа"
+	cmd := exec.Command("go", "run", ".", "-C", root, "review", "add", "XR-005")
+	cmd.Stdin = strings.NewReader(note + "\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("review add со stdin: %v\n%s", err, out)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "- "+note+"\n") {
+		t.Fatalf("замечание со stdin не доехало до файла задачи:\n%q", got)
+	}
+}
+
+// TestReviewAddStdinEmpty: пустой stdin без аргумента это отказ с подсказкой
+// про heredoc, а не пустое замечание в файле.
+func TestReviewAddStdinEmpty(t *testing.T) {
+	root := setup(t)
+	cmd := exec.Command("go", "run", ".", "-C", root, "review", "add", "XR-005")
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("пустой stdin должен отбиваться, вывод: %s", out)
+	}
+	if !strings.Contains(string(out), "жду текст замечания") {
+		t.Fatalf("отказ без подсказки: %s", out)
+	}
 }
 
 func TestReviewAddAndResolve(t *testing.T) {

@@ -265,12 +265,18 @@ func dayWord(n int) string {
 // терминале команда ждала бы ввода молча и выглядела бы зависшей, поэтому там
 // она сразу говорит, чего ей не хватает.
 func readStdin() (string, error) {
+	return readStdinAs("нет текста черновика: передай его аргументом (taskctl draft \"...\") либо на stdin")
+}
+
+// readStdinAs это тот же приём для других текстовых команд (review add,
+// DK-452): отказ на терминале у каждой свой, чтение общее.
+func readStdinAs(noText string) (string, error) {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return "", err
 	}
 	if info.Mode()&os.ModeCharDevice != 0 {
-		return "", fmt.Errorf("нет текста черновика: передай его аргументом (taskctl draft \"...\") либо на stdin")
+		return "", fmt.Errorf("%s", noText)
 	}
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {

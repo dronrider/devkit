@@ -2764,8 +2764,16 @@ func TestBoardTabsUseSharedSteps(t *testing.T) {
 	}
 	// Правила разделов: строка доски, строка сессии, запись накопителя и их
 	// ячейки. Величины вида в них обязаны приезжать переменной.
+	// Имена классов сравниваются целиком, а не куском строки: `.trow` куском
+	// ловит `.trow2`, а это чужая родня. Вторая строка живёт в ленте разговора,
+	// её поля привязаны к нити слева, и лестница вида строки доски ей не указ
+	// (краснота ветки poc-chat, где сторож начал ловить правила ленты).
 	marks := []string{".trow", ".arow", ".dsrow", ".aacts", ".dtt", ".dimp", ".dwhen",
-		".twhen", ".amoved", ".atime", ".racts", ".rchips", ".ab ", ".ab."}
+		".twhen", ".amoved", ".atime", ".racts", ".rchips", ".ab"}
+	named := make([]*regexp.Regexp, 0, len(marks))
+	for _, mark := range marks {
+		named = append(named, regexp.MustCompile(regexp.QuoteMeta(mark)+`(?:[^0-9A-Za-z_-]|$)`))
+	}
 	watch := regexp.MustCompile(`(?:^|;)\s*(padding|padding-top|padding-bottom|padding-left|` +
 		`padding-right|gap|row-gap|column-gap|font|font-size)\s*:\s*([^;}]+)`)
 	num := regexp.MustCompile(`\d+(\.\d+)?px`)
@@ -2775,14 +2783,14 @@ func TestBoardTabsUseSharedSteps(t *testing.T) {
 		if strings.HasPrefix(sel, "@") || strings.Contains(sel, ":root") {
 			continue
 		}
-		named := false
-		for _, mark := range marks {
-			if strings.Contains(sel+" ", mark) {
-				named = true
+		hit := false
+		for _, re := range named {
+			if re.MatchString(sel) {
+				hit = true
 				break
 			}
 		}
-		if !named {
+		if !hit {
 			continue
 		}
 		for _, said := range watch.FindAllStringSubmatch(rule[2], -1) {

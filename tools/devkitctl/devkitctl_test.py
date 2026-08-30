@@ -1734,6 +1734,25 @@ class WorktreeTest(SandboxCase):
             self.assertNotIn_("%s не в PATH" % t, out, "из worktree %s объявлен ненайденным" % t)
         self.assertNotIn_("починено", out, "из worktree --fix что-то пересобрал")
 
+    def test_9_hook_paths_are_not_repointed_to_the_branch_tree(self):
+        # Рубеж тот же, что у прав и скиллов, и держит он именно ту беду, с
+        # которой задача завелась (DK-582): пути хуков, переписанные на дерево
+        # ветки, забирают у машины весь канал разом, а на своей ветке этого не
+        # видно. Из основного чекаута их перенацелит --fix, отсюда только
+        # находка с путём выкаченного дерева.
+        home = self.box.make_home(self.box.root / "wthome-hooks")
+        settings = home / ".claude" / "settings.json"
+        wt = os.path.realpath(str(self.box.root / "devkit-wt"))
+        before = read(settings).replace("%s/hooks/" % self.dkreal, "%s/hooks/" % wt)
+        write(settings, before)
+        _, out = self.wtdoc("--fix", home=home)
+        self.assertEqual(read(settings), before,
+                         "с worktree --fix переписал пути хуков на дерево ветки")
+        self.assertIn_("не из выкаченного дерева %s" % self.dkreal, out,
+                       "находка про хуки не называет выкаченное дерево")
+        self.assertIn_("пути хуков с непроверенной ветки на машину не едут", out,
+                       "находка про хуки не называет worktree devkit")
+
 
 class StatsTest(SandboxCase):
     """stats: вывод сводки по журналу запусков, сортировка по частоте."""
@@ -2005,6 +2024,34 @@ class HarnessHooksTest(SandboxCase):
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
         self.assertEqual(len(post), 7, post)
+
+    def test_hooks_from_a_stray_tree_are_repointed(self):
+        # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по
+        # именам скриптов доктор её пропускал, а работает там своя копия файла.
+        # Правка хука в основном чекауте до сессий машины при этом не доезжает
+        # вовсе, и молчание канала от штатной работы не отличить.
+        home = self.box.make_home(self.box.root / "home-stray")
+        settings = home / ".claude" / "settings.json"
+        dkreal = os.path.realpath(str(self.box.dk))
+        stray = str(self.box.root / "devkit-branch")
+        before = read(settings).replace("%s/hooks/notify.py" % dkreal,
+                                        "%s/hooks/notify.py" % stray)
+        write(settings, before)
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertIn_("не из выкаченного дерева %s" % dkreal, out,
+                       "доктор не заметил хук из чужого дерева")
+        self.assertIn_(stray, out, "находка не называет чужое дерево")
+        self.assertIn_("notify.py", out, "находка не называет хук из чужого дерева")
+        self.assertEqual(read(settings), before, "доктор без --fix правил настройки")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("перенацелено", out, "--fix не перенацелил хуки на выкаченное дерево")
+        after = read(settings)
+        self.assertNotIn(stray, after, "путь чужого дерева остался в настройках")
+        self.assertEqual(len([c for c in after.split("\n") if "notify.py" in c]), 5, after)
+        # Повторный доктор про дерево молчит: перенацеливать больше нечего.
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertNotIn_("не из выкаченного дерева", out,
+                          "повторный доктор всё ещё видит хук из чужого дерева")
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.

@@ -82,8 +82,11 @@ def dispatcher_script(bodies):
 
 # Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист.
 # Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
-# и после реза он обязан оставаться разбираемым.
-NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
+# и после реза он обязан оставаться разбираемым. Дерево в путях подставное
+# (FIXTURE_DEVKIT меняется на копию стенда при записи): доктор судит, из того ли
+# дерева зовётся хук, и настоящий ~/projects/devkit тут был бы чужим.
+FIXTURE_DEVKIT = "~/projects/devkit"
+NOTIFY ="python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
 WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
 SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
@@ -510,9 +513,10 @@ class Sandbox:
         (home / ".devkit" / "quota").mkdir(parents=True)
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
+        text = SETTINGS % (allow, deny, WATCH, NOTIFY, NOTIFY, WATCH,
+                           NOTIFY, NOTIFY, WATCH, NOTIFY)
         write(home / ".claude" / "settings.json",
-              SETTINGS % (allow, deny, WATCH, NOTIFY, NOTIFY, WATCH,
-                          NOTIFY, NOTIFY, WATCH, NOTIFY))
+              text.replace(FIXTURE_DEVKIT, os.path.realpath(str(self.dk))))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

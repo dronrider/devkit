@@ -1379,6 +1379,107 @@ def hook_script(command):
     return os.path.basename(parts[1]) if len(parts) > 1 else ""
 
 
+def hook_tree(command):
+    """Дерево devkit, из которого зовётся команда хука, и имя файла хука. Пустая
+    пара значит, что команда на хук devkit не похожа вовсе: у своего скрипта
+    человека каталога hooks на пути может и не быть."""
+    for token in (command or "").split():
+        head, sep, name = token.rpartition("/hooks/")
+        if sep and head and name and "/" not in name:
+            return head, name
+    return "", ""
+
+
+def home_short(path):
+    """Путь с ~ вместо домашней директории: команды хуков в настройках харнеса
+    пишутся так же, как их пишет человек."""
+    home = os.path.expanduser("~")
+    path = str(path)
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def stray_hooks(text, main):
+    """Команды хуков, зовущие файл из чужого дерева devkit: дерево -> имена
+    хуков. Судится только тот скрипт, который в выкаченном дереве есть, свои
+    скрипты человека доктор не трогает."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    table = _hooks_table(data)
+    if table is None:
+        return {}
+    want = Path(main).resolve()
+    strays = {}
+    for cmds in table.values():
+        for cmd in cmds:
+            tree, script = hook_tree(cmd)
+            if not tree or not (want / "hooks" / script).exists():
+                continue
+            if Path(os.path.expanduser(tree)).resolve() == want:
+                continue
+            strays.setdefault(tree, set()).add(script)
+    return strays
+
+
+def stray_findings(strays, settings, main, from_main):
+    """Находка про хуки не из выкаченного дерева. Правка хука в основном чекауте
+    до сессий машины не доезжает вовсе, пока её не возьмёт то дерево, на которое
+    смотрит настройка, и увидеть это по молчанию канала нельзя."""
+    if from_main:
+        how = "перенацелить: devkitctl doctor --fix"
+    else:
+        how = ("devkit тут выложен worktree ветки задачи, пути хуков с непроверенной ветки "
+               "на машину не едут; из основного чекаута: python3 "
+               "%s/tools/devkitctl/devkitctl.py doctor --fix" % main)
+    return ["%s; правка хука в основном чекауте до сессий машины не доезжает, пока её не "
+            "возьмёт то дерево; %s (hooks/README.md)"
+            % (say.folded(("зовётся", "зовутся"), HOOK_WORD, sorted(strays[tree]), settings,
+                          " из %s, а не из выкаченного дерева %s" % (tree, main)), how)
+            for tree in sorted(strays)]
+
+
+def repoint_hooks(settings, strays, main):
+    """Перенацелить команды хуков на выкаченное дерево. Правка точечная: меняется
+    только путь до каталога хуков, а событие, матчер, порядок и хвост команды
+    остаются как были."""
+    data, bad = perms.load(settings)
+    if bad is not None:
+        return []
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    path = home_short(str(main))
+    moved = []
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for h in group.get("hooks") or []:
+                if not isinstance(h, dict):
+                    continue
+                cmd = h.get("command") or ""
+                tree, script = hook_tree(cmd)
+                if not tree or tree not in strays or script not in strays[tree]:
+                    continue
+                h["command"] = cmd.replace("%s/hooks/%s" % (tree, script),
+                                           "%s/hooks/%s" % (path, script), 1)
+                moved.append(script)
+    if not moved:
+        return []
+    tmp = settings.with_name(settings.name + ".devkit-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(settings))
+    n = len(moved)
+    return ["%s %s в %s на выкаченное дерево %s: %s"
+            % ("перенацелен" if n == 1 else "перенацелено", say.counted(n, HOOK_WORD),
+               settings, path, ", ".join(sorted(set(moved))))]
+
+
 def drop_hooks(hooks, names):
     """Убрать из раскладки строки переименованных хуков. Отставная строка зовёт
     файл, которого в чекауте нет, и оставить её рядом с новой значит поменять
@@ -1411,10 +1512,7 @@ def install_hooks(settings, gaps, devkit, stale=()):
     data, bad = perms.load(settings)
     if bad is not None:
         return []
-    home = os.path.expanduser("~")
-    path = str(devkit)
-    if path.startswith(home + os.sep):
-        path = "~" + path[len(home):]
+    path = home_short(devkit)
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         # Структурно необычный hooks раскладкой чинить нельзя: doctor --fix на
@@ -1584,6 +1682,15 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         else:
             findings += gap_findings
+        # Дерево, из которого хук зовётся, тем же рубежом: строка с путём чужого
+        # дерева выглядит подключённым хуком, а работает там своя копия файла, и
+        # правка в основном чекауте до машины не доезжает вовсе (DK-582).
+        strays = stray_hooks(text, main)
+        if strays and fix and from_main:
+            fixed += repoint_hooks(settings, strays, main)
+            text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+        elif strays:
+            findings += stray_findings(strays, settings, main, from_main)
         # Ретрай-вотчдог тем же файлом и тем же рубежом from_main: ключ виден
         # каждой сессии на машине сразу, и ехать туда с непроверенной ветки ему
         # нельзя так же, как хукам и правам.
